@@ -74,7 +74,7 @@ func getAddResourceToAlbumHandler(ctx *mahresourcesContext) func(writer http.Res
 
 func getResourceUploadHandler(ctx *mahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		if err := request.ParseMultipartForm(512 << 20); err != nil {
+		if err := request.ParseMultipartForm(int64(4096) << 20); err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, "error")
 			fmt.Println(err)
@@ -96,6 +96,12 @@ func getResourceUploadHandler(ctx *mahresourcesContext) func(writer http.Respons
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
 			return
+		}
+
+		albumId := getIntFormParameter(request, "albumId", 0)
+
+		if albumId != 0 {
+			_, _ = ctx.addResourceToAlbum(int64(res.ID), albumId)
 		}
 
 		writer.Header().Set("Content-Type", JSON)

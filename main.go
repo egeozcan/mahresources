@@ -52,39 +52,36 @@ func main() {
 		panic("failed to migrate Person")
 	}
 
-	base := afero.NewBasePathFs(afero.NewOsFs(), "G:\\mnt\\md0\\enc\\photos")
+	base := afero.NewBasePathFs(afero.NewOsFs(), "M:\\test")
 	layer := afero.NewMemMapFs()
-	cachedFS := afero.NewCacheOnReadFs(base, layer, 10 * time.Minute)
+	cachedFS := afero.NewCacheOnReadFs(base, layer, 10*time.Minute)
 
 	httpFs := afero.NewHttpFs(cachedFS)
 
 	r := mux.NewRouter()
 
-	r.Methods(GET).Path("/uploadform").HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var tplExample = pongo2.Must(pongo2.FromFile("templates/upload.tpl"))
-		err := tplExample.ExecuteWriter(pongo2.Context{}, writer)
-		if err != nil {
-			http.Error(writer, err.Error(), http.StatusInternalServerError)
-		}
-	})
-
-	r.Methods(GET).Path("/addtoalbum").HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var tplExample = pongo2.Must(pongo2.FromFile("templates/addtoalbum.tpl"))
-		err := tplExample.ExecuteWriter(pongo2.Context{}, writer)
-		if err != nil {
-			http.Error(writer, err.Error(), http.StatusInternalServerError)
-		}
-	})
-
-	r.Methods(GET).Path("/restest").HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var tplExample = pongo2.Must(pongo2.FromFile("templates/show.tpl"))
-		err := tplExample.ExecuteWriter(pongo2.Context{}, writer)
-		if err != nil {
-			http.Error(writer, err.Error(), http.StatusInternalServerError)
-		}
-	})
+	baseTemplateContext := pongo2.Context{
+		"title": "mahresources",
+	}
+	staticTemplateCtx := func(request *http.Request) pongo2.Context { return baseTemplateContext }
 
 	context := newMahresourcesContext(cachedFS, db)
+
+	r.Methods(GET).Path("/uploadform").HandlerFunc(renderTemplate("templates/upload.tpl", staticTemplateCtx))
+	r.Methods(GET).Path("/addtoalbum").HandlerFunc(renderTemplate("templates/addtoalbum.tpl", staticTemplateCtx))
+	r.Methods(GET).Path("/restest").HandlerFunc(renderTemplate("templates/show.tpl", staticTemplateCtx))
+	r.Methods(GET).Path("/albums").HandlerFunc(renderTemplate("templates/albums.tpl", func(request *http.Request) pongo2.Context {
+		offset := (getIntQueryParameter(request, "page", 1) - 1) * MaxResults
+		albums, err := context.getAlbums(int(offset), MaxResults)
+
+		if err != nil {
+			return baseTemplateContext
+		}
+
+		return pongo2.Context{
+			"albums": albums,
+		}.Update(baseTemplateContext)
+	}))
 
 	r.Methods(GET).Path("/v1/albums").HandlerFunc(getAlbumsHandler(context))
 	r.Methods(GET).Path("/v1/album").HandlerFunc(getAlbumHandler(context))
@@ -99,11 +96,21 @@ func main() {
 	r.PathPrefix(filePathPrefix).Handler(http.StripPrefix(filePathPrefix, http.FileServer(httpFs.Dir("/"))))
 
 	srv := &http.Server{
-		Addr:    ":8080",
-		Handler: r,
-		WriteTimeout: 15 * time.Second,
-		ReadTimeout:  15 * time.Second,
+		Addr:         ":8080",
+		Handler:      r,
+		WriteTimeout: 45 * time.Minute,
+		ReadTimeout:  45 * time.Minute,
 	}
 
 	log.Fatal(srv.ListenAndServe())
+}
+
+func renderTemplate(templateName string, templateContext func(request *http.Request) pongo2.Context) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var tplExample = pongo2.Must(pongo2.FromFile(templateName))
+		err := tplExample.ExecuteWriter(templateContext(request), writer)
+		if err != nil {
+			http.Error(writer, err.Error(), http.StatusInternalServerError)
+		}
+	}
 }

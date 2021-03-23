@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Test</title>
+    <title>{{ title }}</title>
 </head>
 <body>
     {% block body %}{% endblock %}
