@@ -70,6 +70,7 @@ func main() {
 	r.Methods(GET).Path("/uploadform").HandlerFunc(renderTemplate("templates/upload.tpl", staticTemplateCtx))
 	r.Methods(GET).Path("/addtoalbum").HandlerFunc(renderTemplate("templates/addtoalbum.tpl", staticTemplateCtx))
 	r.Methods(GET).Path("/restest").HandlerFunc(renderTemplate("templates/show.tpl", staticTemplateCtx))
+	r.Methods(GET).Path("/album/new").HandlerFunc(renderTemplate("templates/createAlbum.tpl", staticTemplateCtx))
 	r.Methods(GET).Path("/albums").HandlerFunc(renderTemplate("templates/albums.tpl", func(request *http.Request) pongo2.Context {
 		offset := (getIntQueryParameter(request, "page", 1) - 1) * MaxResults
 		albums, err := context.getAlbums(int(offset), MaxResults)

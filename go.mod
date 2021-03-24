@@ -3,11 +3,8 @@ module mahresources
 go 1.15
 
 require (
-	github.com/fatih/color v1.10.0 // indirect
 	github.com/flosch/pongo2/v4 v4.0.2
-	github.com/fsnotify/fsnotify v1.4.9 // indirect
 	github.com/gabriel-vasile/mimetype v1.1.2
-	github.com/githubnemo/CompileDaemon v1.2.1 // indirect
 	github.com/gorilla/mux v1.8.0
 	github.com/spf13/afero v1.5.1
 	gorm.io/driver/sqlite v1.1.4

@@ -5,7 +5,7 @@ import (
 	"strconv"
 )
 
-func getQueryParameter(request *http.Request, paramName string, defVal string) string  {
+func getQueryParameter(request *http.Request, paramName string, defVal string) string {
 	paramFromRes := request.URL.Query().Get(paramName)
 
 	if paramFromRes != "" {
@@ -15,7 +15,7 @@ func getQueryParameter(request *http.Request, paramName string, defVal string) s
 	return defVal
 }
 
-func getIntQueryParameter(request *http.Request, paramName string, defVal int64) int64  {
+func getIntQueryParameter(request *http.Request, paramName string, defVal int64) int64 {
 	paramFromRes := getQueryParameter(request, paramName, "")
 
 	if paramFromRes == "" {
@@ -31,9 +31,8 @@ func getIntQueryParameter(request *http.Request, paramName string, defVal int64)
 	return param
 }
 
-
-func getFormParameter(request *http.Request, paramName string, defVal string) string  {
-	paramFromRes := request.Form.Get(paramName)
+func getFormParameter(request *http.Request, paramName string, defVal string) string {
+	paramFromRes := request.PostForm.Get(paramName)
 
 	if paramFromRes != "" {
 		return paramFromRes
@@ -42,7 +41,7 @@ func getFormParameter(request *http.Request, paramName string, defVal string) st
 	return defVal
 }
 
-func getIntFormParameter(request *http.Request, paramName string, defVal int64) int64  {
+func getIntFormParameter(request *http.Request, paramName string, defVal int64) int64 {
 	paramFromRes := getFormParameter(request, paramName, "")
 
 	if paramFromRes == "" {

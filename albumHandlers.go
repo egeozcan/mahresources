@@ -40,7 +40,16 @@ func getAlbumHandler(ctx *mahresourcesContext) func(writer http.ResponseWriter, 
 
 func getAddAlbumHandler(ctx *mahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		err := request.ParseForm()
+
+		if err != nil {
+			writer.WriteHeader(500)
+			fmt.Fprint(writer, err.Error())
+			return
+		}
+
 		name := getFormParameter(request, "name", "")
+		fmt.Println("album name:", name)
 		album, err := ctx.createAlbum(name)
 
 		if err != nil {
