@@ -62,3 +62,35 @@ func getAddAlbumHandler(ctx *mahresourcesContext) func(writer http.ResponseWrite
 		_ = json.NewEncoder(writer).Encode(album)
 	}
 }
+
+func getAlbumUploadPreviewHandler(ctx *mahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		if err := request.ParseMultipartForm(1 << 20); err != nil {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprint(writer, err.Error())
+			return
+		}
+
+		id := getIntFormParameter(request, "id", 0)
+		file, _, err := request.FormFile("resource")
+
+		if err != nil {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprint(writer, err.Error())
+			return
+		}
+
+		defer file.Close()
+
+		resource, err := ctx.addThumbnailToAlbum(file, id)
+
+		if err != nil {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprint(writer, err.Error())
+			return
+		}
+
+		writer.Header().Set("Content-Type", JSON)
+		_ = json.NewEncoder(writer).Encode(resource)
+	}
+}

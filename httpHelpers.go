@@ -32,7 +32,24 @@ func getIntQueryParameter(request *http.Request, paramName string, defVal int64)
 }
 
 func getFormParameter(request *http.Request, paramName string, defVal string) string {
+	_ = request.ParseForm()
 	paramFromRes := request.PostForm.Get(paramName)
+
+	if paramFromRes != "" {
+		return paramFromRes
+	}
+
+	if request.MultipartForm == nil {
+		return defVal
+	}
+
+	values := request.MultipartForm.Value[paramName]
+
+	if values == nil || len(values) == 0 {
+		return defVal
+	}
+
+	paramFromRes = values[0]
 
 	if paramFromRes != "" {
 		return paramFromRes

@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"log"
+	_ "mahresources/templates/filters"
 	"net/http"
 	"os"
 	"time"
@@ -81,6 +82,26 @@ func main() {
 
 		return pongo2.Context{
 			"albums": albums,
+		}.Update(baseTemplateContext)
+	}))
+	r.Methods(GET).Path("/album").HandlerFunc(renderTemplate("templates/albums.tpl", func(request *http.Request) pongo2.Context {
+		page := getIntQueryParameter(request, "page", 1)
+		offset := (page - 1) * MaxResults
+		albums, err := context.getAlbums(int(offset), MaxResults)
+
+		if err != nil {
+			return baseTemplateContext
+		}
+
+		hasNextPage := len(*albums) > MaxResults
+		hasPrevPage := offset > 0
+		limitedAlbums := (*albums)[:MaxResults]
+
+		return pongo2.Context{
+			"albums":      limitedAlbums,
+			"hasNextPage": hasNextPage,
+			"hasPrevPage": hasPrevPage,
+			"page":        page,
 		}.Update(baseTemplateContext)
 	}))
 

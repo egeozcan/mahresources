@@ -22,7 +22,7 @@ type File interface {
 
 type mahresourcesContext struct {
 	Filesystem afero.Fs
-	db *gorm.DB
+	db         *gorm.DB
 }
 
 func newMahresourcesContext(filesystem afero.Fs, db *gorm.DB) *mahresourcesContext {
@@ -60,6 +60,14 @@ func (ctx *mahresourcesContext) getAlbums(offset, maxResults int) (*[]Album, err
 	}
 
 	return &albums, nil
+}
+
+func (ctx *mahresourcesContext) getAlbumCount() (int64, error) {
+	var album Album
+	var count int64
+	ctx.db.Model(&album).Count(&count)
+
+	return count, nil
 }
 
 func (ctx *mahresourcesContext) getResource(id int64) (*Resource, error) {
@@ -191,4 +199,40 @@ func (ctx *mahresourcesContext) addThumbnailToResource(file File, resourceId int
 	})
 
 	return &resource, err
+}
+
+func (ctx *mahresourcesContext) addThumbnailToAlbum(file File, albumId int64) (*Album, error) {
+	var album Album
+
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		tx.First(&album, albumId)
+
+		if album.ID == 0 {
+			return errors.New("not found")
+		}
+
+		fileMime, err := mimetype.DetectReader(file)
+		if err != nil {
+			return err
+		}
+
+		_, err = file.Seek(0, io.SeekStart)
+		if err != nil {
+			return err
+		}
+
+		fileBytes, err := ioutil.ReadAll(file)
+		if err != nil {
+			return err
+		}
+
+		album.Preview = fileBytes
+		album.PreviewContentType = fileMime.String()
+
+		tx.Save(album)
+
+		return nil
+	})
+
+	return &album, err
 }
