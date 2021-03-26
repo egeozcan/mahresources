@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm/logger"
 	"log"
 	_ "mahresources/templates/filters"
+	"mahresources/templates/menu"
 	"net/http"
 	"os"
 	"time"
@@ -63,6 +64,16 @@ func main() {
 
 	baseTemplateContext := pongo2.Context{
 		"title": "mahresources",
+		"menu": []menu.Entry{
+			menu.Entry{
+				Name: "Test",
+				Url:  "/waat",
+			},
+			menu.Entry{
+				Name: "Test2",
+				Url:  "/waat2",
+			},
+		},
 	}
 	staticTemplateCtx := func(request *http.Request) pongo2.Context { return baseTemplateContext }
 

@@ -81,7 +81,7 @@
     <header class="header">
         <nav class="menu">
             {% for menuEntry in menu %}
-            <a class="menuItem">
+            <a href="{{ menuEntry.Url }}" class="menuItem">
                 {{ menuEntry.Name }}
             </a>
             {% endfor %}
