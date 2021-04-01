@@ -1,24 +1,23 @@
 package main
 
 import (
-	"github.com/flosch/pongo2/v4"
 	"github.com/gorilla/mux"
 	"github.com/spf13/afero"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"log"
+	"mahresources/api_handlers"
+	"mahresources/constants"
+	context2 "mahresources/context"
+	"mahresources/models"
+	"mahresources/templates/context_providers"
 	_ "mahresources/templates/filters"
-	"mahresources/templates/menu"
+	"mahresources/templates/handlers"
 	"net/http"
 	"os"
 	"time"
 )
-
-const MaxResults = 10
-const JSON = "application/json"
-const POST = "POST"
-const GET = "GET"
 
 func main() {
 	newLogger := logger.New(
@@ -37,19 +36,19 @@ func main() {
 		panic("failed to connect to the database")
 	}
 
-	err = db.AutoMigrate(&Resource{})
+	err = db.AutoMigrate(&models.Resource{})
 	if err != nil {
 		panic("failed to migrate Resource")
 	}
-	err = db.AutoMigrate(&Album{})
+	err = db.AutoMigrate(&models.Album{})
 	if err != nil {
 		panic("failed to migrate Album")
 	}
-	err = db.AutoMigrate(&Tag{})
+	err = db.AutoMigrate(&models.Tag{})
 	if err != nil {
 		panic("failed to migrate Tag")
 	}
-	err = db.AutoMigrate(&Person{})
+	err = db.AutoMigrate(&models.Person{})
 	if err != nil {
 		panic("failed to migrate Person")
 	}
@@ -62,71 +61,30 @@ func main() {
 
 	r := mux.NewRouter()
 
-	baseTemplateContext := pongo2.Context{
-		"title": "mahresources",
-		"menu": []menu.Entry{
-			menu.Entry{
-				Name: "Test",
-				Url:  "/waat",
-			},
-			menu.Entry{
-				Name: "Test2",
-				Url:  "/waat2",
-			},
-		},
-	}
-	staticTemplateCtx := func(request *http.Request) pongo2.Context { return baseTemplateContext }
+	context := context2.NewMahresourcesContext(cachedFS, db)
 
-	context := newMahresourcesContext(cachedFS, db)
+	r.Methods(constants.GET).Path("/uploadform").HandlerFunc(handlers.RenderTemplate("templates/upload.tpl", context_providers.StaticTemplateCtx))
+	r.Methods(constants.GET).Path("/addtoalbum").HandlerFunc(handlers.RenderTemplate("templates/addtoalbum.tpl", context_providers.StaticTemplateCtx))
+	r.Methods(constants.GET).Path("/restest").HandlerFunc(handlers.RenderTemplate("templates/show.tpl", context_providers.StaticTemplateCtx))
+	r.Methods(constants.GET).Path("/album/new").HandlerFunc(handlers.RenderTemplate("templates/createAlbum.tpl", context_providers.StaticTemplateCtx))
+	r.Methods(constants.GET).Path("/albums").HandlerFunc(handlers.RenderTemplate("templates/albums.tpl", context_providers.AlbumContextProvider(context)))
+	r.Methods(constants.GET).Path("/album").HandlerFunc(handlers.RenderTemplate("templates/albums.tpl", context_providers.StaticTemplateCtx))
+	r.Methods(constants.GET).Path("/").HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Redirect(writer, request, "/albums", http.StatusMovedPermanently)
+	})
 
-	r.Methods(GET).Path("/uploadform").HandlerFunc(renderTemplate("templates/upload.tpl", staticTemplateCtx))
-	r.Methods(GET).Path("/addtoalbum").HandlerFunc(renderTemplate("templates/addtoalbum.tpl", staticTemplateCtx))
-	r.Methods(GET).Path("/restest").HandlerFunc(renderTemplate("templates/show.tpl", staticTemplateCtx))
-	r.Methods(GET).Path("/album/new").HandlerFunc(renderTemplate("templates/createAlbum.tpl", staticTemplateCtx))
-	r.Methods(GET).Path("/albums").HandlerFunc(renderTemplate("templates/albums.tpl", func(request *http.Request) pongo2.Context {
-		offset := (getIntQueryParameter(request, "page", 1) - 1) * MaxResults
-		albums, err := context.getAlbums(int(offset), MaxResults)
+	r.Methods(constants.GET).Path("/v1/albums").HandlerFunc(api_handlers.GetAlbumsHandler(context))
+	r.Methods(constants.GET).Path("/v1/album").HandlerFunc(api_handlers.GetAlbumHandler(context))
+	r.Methods(constants.POST).Path("/v1/album").HandlerFunc(api_handlers.GetAddAlbumHandler(context))
 
-		if err != nil {
-			return baseTemplateContext
-		}
-
-		return pongo2.Context{
-			"albums": albums,
-		}.Update(baseTemplateContext)
-	}))
-	r.Methods(GET).Path("/album").HandlerFunc(renderTemplate("templates/albums.tpl", func(request *http.Request) pongo2.Context {
-		page := getIntQueryParameter(request, "page", 1)
-		offset := (page - 1) * MaxResults
-		albums, err := context.getAlbums(int(offset), MaxResults)
-
-		if err != nil {
-			return baseTemplateContext
-		}
-
-		hasNextPage := len(*albums) > MaxResults
-		hasPrevPage := offset > 0
-		limitedAlbums := (*albums)[:MaxResults]
-
-		return pongo2.Context{
-			"albums":      limitedAlbums,
-			"hasNextPage": hasNextPage,
-			"hasPrevPage": hasPrevPage,
-			"page":        page,
-		}.Update(baseTemplateContext)
-	}))
-
-	r.Methods(GET).Path("/v1/albums").HandlerFunc(getAlbumsHandler(context))
-	r.Methods(GET).Path("/v1/album").HandlerFunc(getAlbumHandler(context))
-	r.Methods(POST).Path("/v1/album").HandlerFunc(getAddAlbumHandler(context))
-
-	r.Methods(GET).Path("/v1/resource").HandlerFunc(getResourceHandler(context))
-	r.Methods(POST).Path("/v1/resource").HandlerFunc(getResourceUploadHandler(context))
-	r.Methods(POST).Path("/v1/resource/preview").HandlerFunc(getResourceUploadPreviewHandler(context))
-	r.Methods(POST).Path("/v1/resource/addToAlbum").HandlerFunc(getAddResourceToAlbumHandler(context))
+	r.Methods(constants.GET).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceHandler(context))
+	r.Methods(constants.POST).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceUploadHandler(context))
+	r.Methods(constants.POST).Path("/v1/resource/preview").HandlerFunc(api_handlers.GetResourceUploadPreviewHandler(context))
+	r.Methods(constants.POST).Path("/v1/resource/addToAlbum").HandlerFunc(api_handlers.GetAddResourceToAlbumHandler(context))
 
 	filePathPrefix := "/files/"
 	r.PathPrefix(filePathPrefix).Handler(http.StripPrefix(filePathPrefix, http.FileServer(httpFs.Dir("/"))))
+	r.PathPrefix("/public/").Handler(http.StripPrefix("/public/", http.FileServer(http.Dir("./public"))))
 
 	srv := &http.Server{
 		Addr:         ":8080",
@@ -136,14 +94,4 @@ func main() {
 	}
 
 	log.Fatal(srv.ListenAndServe())
-}
-
-func renderTemplate(templateName string, templateContext func(request *http.Request) pongo2.Context) func(writer http.ResponseWriter, request *http.Request) {
-	return func(writer http.ResponseWriter, request *http.Request) {
-		var tplExample = pongo2.Must(pongo2.FromFile(templateName))
-		err := tplExample.ExecuteWriter(templateContext(request), writer)
-		if err != nil {
-			http.Error(writer, err.Error(), http.StatusInternalServerError)
-		}
-	}
 }

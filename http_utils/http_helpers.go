@@ -1,11 +1,11 @@
-package main
+package http_utils
 
 import (
 	"net/http"
 	"strconv"
 )
 
-func getQueryParameter(request *http.Request, paramName string, defVal string) string {
+func GetQueryParameter(request *http.Request, paramName string, defVal string) string {
 	paramFromRes := request.URL.Query().Get(paramName)
 
 	if paramFromRes != "" {
@@ -15,8 +15,8 @@ func getQueryParameter(request *http.Request, paramName string, defVal string) s
 	return defVal
 }
 
-func getIntQueryParameter(request *http.Request, paramName string, defVal int64) int64 {
-	paramFromRes := getQueryParameter(request, paramName, "")
+func GetIntQueryParameter(request *http.Request, paramName string, defVal int64) int64 {
+	paramFromRes := GetQueryParameter(request, paramName, "")
 
 	if paramFromRes == "" {
 		return defVal
@@ -31,7 +31,7 @@ func getIntQueryParameter(request *http.Request, paramName string, defVal int64)
 	return param
 }
 
-func getFormParameter(request *http.Request, paramName string, defVal string) string {
+func GetFormParameter(request *http.Request, paramName string, defVal string) string {
 	_ = request.ParseForm()
 	paramFromRes := request.PostForm.Get(paramName)
 
@@ -58,8 +58,8 @@ func getFormParameter(request *http.Request, paramName string, defVal string) st
 	return defVal
 }
 
-func getIntFormParameter(request *http.Request, paramName string, defVal int64) int64 {
-	paramFromRes := getFormParameter(request, paramName, "")
+func GetIntFormParameter(request *http.Request, paramName string, defVal int64) int64 {
+	paramFromRes := GetFormParameter(request, paramName, "")
 
 	if paramFromRes == "" {
 		return defVal
@@ -72,4 +72,22 @@ func getIntFormParameter(request *http.Request, paramName string, defVal int64) 
 	}
 
 	return param
+}
+
+func RedirectBackIfHTMLAccepted(writer http.ResponseWriter, request *http.Request) bool {
+	accepts := request.Header["Accept"]
+
+	if len(accepts) == 0 {
+		return false
+	}
+
+	for _, val := range accepts {
+		if val == "text/html" {
+			http.Redirect(writer, request, request.Referer(), http.StatusSeeOther)
+
+			return true
+		}
+	}
+
+	return false
 }

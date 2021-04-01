@@ -1,7 +1,8 @@
-package main
+package context
 
 import (
 	"crypto/sha1"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"github.com/gabriel-vasile/mimetype"
@@ -10,6 +11,8 @@ import (
 	"gorm.io/gorm/clause"
 	"io"
 	"io/ioutil"
+	"mahresources/context/query"
+	"mahresources/models"
 	"os"
 	"path"
 )
@@ -20,28 +23,39 @@ type File interface {
 	io.Closer
 }
 
-type mahresourcesContext struct {
-	Filesystem afero.Fs
-	db         *gorm.DB
+type MahresourcesContext struct {
+	fs afero.Fs
+	db *gorm.DB
 }
 
-func newMahresourcesContext(filesystem afero.Fs, db *gorm.DB) *mahresourcesContext {
-	return &mahresourcesContext{Filesystem: filesystem, db: db}
+func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB) *MahresourcesContext {
+	return &MahresourcesContext{fs: filesystem, db: db}
 }
 
-func (ctx *mahresourcesContext) createAlbum(name string) (*Album, error) {
-	if name == "" {
+func (ctx *MahresourcesContext) CreateAlbum(albumQuery *query.AlbumCreator) (*models.Album, error) {
+	if albumQuery.Name == "" {
 		return nil, errors.New("album name needed")
 	}
-	album := Album{
-		Name: name,
+
+	preview, err := base64.StdEncoding.DecodeString(albumQuery.Preview)
+
+	if err != nil {
+		return nil, err
+	}
+
+	album := models.Album{
+		Name:               albumQuery.Name,
+		Meta:               albumQuery.Meta,
+		Preview:            preview,
+		PreviewContentType: albumQuery.PreviewContentType,
+		OwnerId:            albumQuery.OwnerId,
 	}
 	ctx.db.Create(&album)
 	return &album, nil
 }
 
-func (ctx *mahresourcesContext) getAlbum(id uint) (*Album, error) {
-	var album Album
+func (ctx *MahresourcesContext) GetAlbum(id uint) (*models.Album, error) {
+	var album models.Album
 	ctx.db.Preload(clause.Associations).First(&album, id)
 
 	if album.ID == 0 {
@@ -51,8 +65,8 @@ func (ctx *mahresourcesContext) getAlbum(id uint) (*Album, error) {
 	return &album, nil
 }
 
-func (ctx *mahresourcesContext) getAlbums(offset, maxResults int) (*[]Album, error) {
-	var albums []Album
+func (ctx *MahresourcesContext) GetAlbums(offset, maxResults int) (*[]models.Album, error) {
+	var albums []models.Album
 	ctx.db.Limit(maxResults).Offset(int(offset)).Preload("Tags").Find(&albums)
 
 	if len(albums) == 0 {
@@ -62,16 +76,16 @@ func (ctx *mahresourcesContext) getAlbums(offset, maxResults int) (*[]Album, err
 	return &albums, nil
 }
 
-func (ctx *mahresourcesContext) getAlbumCount() (int64, error) {
-	var album Album
+func (ctx *MahresourcesContext) GetAlbumCount() (int64, error) {
+	var album models.Album
 	var count int64
 	ctx.db.Model(&album).Count(&count)
 
 	return count, nil
 }
 
-func (ctx *mahresourcesContext) getResource(id int64) (*Resource, error) {
-	var resource Resource
+func (ctx *MahresourcesContext) GetResource(id int64) (*models.Resource, error) {
+	var resource models.Resource
 	ctx.db.Preload(clause.Associations).First(&resource, id)
 
 	if resource.ID == 0 {
@@ -81,10 +95,10 @@ func (ctx *mahresourcesContext) getResource(id int64) (*Resource, error) {
 	return &resource, nil
 }
 
-func (ctx *mahresourcesContext) addResourceToAlbum(resId, albumId int64) (*Resource, error) {
-	var resource Resource
+func (ctx *MahresourcesContext) AddResourceToAlbum(resId, albumId int64) (*models.Resource, error) {
+	var resource models.Resource
 	ctx.db.First(&resource, resId)
-	var album Album
+	var album models.Album
 	ctx.db.First(&album, albumId)
 
 	err := ctx.db.Model(&album).Association("Resources").Append(resource)
@@ -100,7 +114,7 @@ func (ctx *mahresourcesContext) addResourceToAlbum(resId, albumId int64) (*Resou
 	return &resource, nil
 }
 
-func (ctx *mahresourcesContext) addResource(file File, fileName string) (*Resource, error) {
+func (ctx *MahresourcesContext) AddResource(file File, fileName string) (*models.Resource, error) {
 	fileMime, err := mimetype.DetectReader(file)
 
 	if err != nil {
@@ -124,20 +138,20 @@ func (ctx *mahresourcesContext) addResource(file File, fileName string) (*Resour
 	hash := hex.EncodeToString(h.Sum(nil))
 	folder := "/resources/" + hash[0:2] + "/" + hash[2:4] + "/" + hash[4:6] + "/"
 
-	err = ctx.Filesystem.MkdirAll(folder, os.ModeDir)
+	err = ctx.fs.MkdirAll(folder, os.ModeDir)
 
 	if err != nil {
 		return nil, err
 	}
 
 	filePath := path.Join(folder, hash+fileMime.Extension())
-	stat, statError := ctx.Filesystem.Stat(filePath)
+	stat, statError := ctx.fs.Stat(filePath)
 
 	if statError == nil && stat != nil {
 		return nil, errors.New("file already exists")
 	}
 
-	savedFile, err := ctx.Filesystem.Create(filePath)
+	savedFile, err := ctx.fs.Create(filePath)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +162,7 @@ func (ctx *mahresourcesContext) addResource(file File, fileName string) (*Resour
 		return nil, err
 	}
 
-	res := &Resource{
+	res := &models.Resource{
 		Name:               fileName,
 		Hash:               hash,
 		HashType:           "SHA1",
@@ -165,8 +179,8 @@ func (ctx *mahresourcesContext) addResource(file File, fileName string) (*Resour
 	return res, nil
 }
 
-func (ctx *mahresourcesContext) addThumbnailToResource(file File, resourceId int64) (*Resource, error) {
-	var resource Resource
+func (ctx *MahresourcesContext) AddThumbnailToResource(file File, resourceId int64) (*models.Resource, error) {
+	var resource models.Resource
 
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		tx.First(&resource, resourceId)
@@ -201,8 +215,8 @@ func (ctx *mahresourcesContext) addThumbnailToResource(file File, resourceId int
 	return &resource, err
 }
 
-func (ctx *mahresourcesContext) addThumbnailToAlbum(file File, albumId int64) (*Album, error) {
-	var album Album
+func (ctx *MahresourcesContext) AddThumbnailToAlbum(file File, albumId int64) (*models.Album, error) {
+	var album models.Album
 
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		tx.First(&album, albumId)

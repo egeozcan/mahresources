@@ -1,15 +1,18 @@
-package main
+package api_handlers
 
 import (
 	"encoding/json"
 	"fmt"
+	"mahresources/constants"
+	"mahresources/context"
+	"mahresources/http_utils"
 	"net/http"
 )
 
-func getResourceHandler(ctx *mahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
+func GetResourceHandler(ctx *context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		id := getIntQueryParameter(request, "id", 1)
-		resource, err := ctx.getResource(id)
+		id := http_utils.GetIntQueryParameter(request, "id", 1)
+		resource, err := ctx.GetResource(id)
 
 		if err != nil {
 			writer.WriteHeader(http.StatusNotFound)
@@ -17,12 +20,12 @@ func getResourceHandler(ctx *mahresourcesContext) func(writer http.ResponseWrite
 			return
 		}
 
-		writer.Header().Set("Content-Type", JSON)
+		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(resource)
 	}
 }
 
-func getResourceUploadPreviewHandler(ctx *mahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
+func GetResourceUploadPreviewHandler(ctx *context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		if err := request.ParseMultipartForm(1 << 20); err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
@@ -30,7 +33,7 @@ func getResourceUploadPreviewHandler(ctx *mahresourcesContext) func(writer http.
 			return
 		}
 
-		id := getIntFormParameter(request, "id", 0)
+		id := http_utils.GetIntFormParameter(request, "id", 0)
 		file, _, err := request.FormFile("resource")
 
 		if err != nil {
@@ -41,7 +44,7 @@ func getResourceUploadPreviewHandler(ctx *mahresourcesContext) func(writer http.
 
 		defer file.Close()
 
-		resource, err := ctx.addThumbnailToResource(file, id)
+		resource, err := ctx.AddThumbnailToResource(file, id)
 
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
@@ -49,17 +52,17 @@ func getResourceUploadPreviewHandler(ctx *mahresourcesContext) func(writer http.
 			return
 		}
 
-		writer.Header().Set("Content-Type", JSON)
+		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(resource)
 	}
 }
 
-func getAddResourceToAlbumHandler(ctx *mahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddResourceToAlbumHandler(ctx *context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		resId := getIntFormParameter(request, "resId", 0)
-		albumId := getIntFormParameter(request, "albumId", 0)
+		resId := http_utils.GetIntFormParameter(request, "resId", 0)
+		albumId := http_utils.GetIntFormParameter(request, "albumId", 0)
 
-		resource, err := ctx.addResourceToAlbum(resId, albumId)
+		resource, err := ctx.AddResourceToAlbum(resId, albumId)
 
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
@@ -67,12 +70,12 @@ func getAddResourceToAlbumHandler(ctx *mahresourcesContext) func(writer http.Res
 			return
 		}
 
-		writer.Header().Set("Content-Type", JSON)
+		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(resource)
 	}
 }
 
-func getResourceUploadHandler(ctx *mahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
+func GetResourceUploadHandler(ctx *context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		if err := request.ParseMultipartForm(int64(4096) << 20); err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
@@ -90,7 +93,7 @@ func getResourceUploadHandler(ctx *mahresourcesContext) func(writer http.Respons
 		}
 		defer file.Close()
 
-		res, err := ctx.addResource(file, handler.Filename)
+		res, err := ctx.AddResource(file, handler.Filename)
 
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
@@ -98,13 +101,13 @@ func getResourceUploadHandler(ctx *mahresourcesContext) func(writer http.Respons
 			return
 		}
 
-		albumId := getIntFormParameter(request, "albumId", 0)
+		albumId := http_utils.GetIntFormParameter(request, "albumId", 0)
 
 		if albumId != 0 {
-			_, _ = ctx.addResourceToAlbum(int64(res.ID), albumId)
+			_, _ = ctx.AddResourceToAlbum(int64(res.ID), albumId)
 		}
 
-		writer.Header().Set("Content-Type", JSON)
+		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(res)
 	}
 }

@@ -1,14 +1,6 @@
-{% extends "base.tpl" %}
+{% extends "layouts/gallery.tpl" %}
 
-{% block head %}
-    <style>
-        * {
-            color: red;
-        }
-    </style>
-{% endblock %}
-
-{% block body %}
+{% block gallery %}
     {% for album in albums %}
         <div class="album">
             <h3>{{ album.Name }}</h3>
