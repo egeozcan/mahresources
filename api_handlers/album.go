@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"mahresources/constants"
 	"mahresources/context"
-	"mahresources/context/query"
 	"mahresources/http_utils"
+	"mahresources/http_utils/http_query"
 	"net/http"
 )
 
@@ -45,7 +45,16 @@ func GetAlbumUploadPreviewHandler(ctx *context.MahresourcesContext) func(writer 
 func GetAlbumsHandler(ctx *context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		offset := (http_utils.GetIntQueryParameter(request, "page", 1) - 1) * constants.MaxResults
-		albums, err := ctx.GetAlbums(int(offset), constants.MaxResults)
+		var query http_query.AlbumQuery
+		err := decoder.Decode(&query, request.URL.Query())
+
+		if err != nil {
+			writer.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(writer, err.Error())
+			return
+		}
+
+		albums, err := ctx.GetAlbums(int(offset), constants.MaxResults, &query)
 
 		if err != nil {
 			writer.WriteHeader(404)
@@ -84,7 +93,7 @@ func GetAddAlbumHandler(ctx *context.MahresourcesContext) func(writer http.Respo
 			return
 		}
 
-		var creator = query.AlbumCreator{}
+		var creator = http_query.AlbumCreator{}
 		err = decoder.Decode(&creator, request.PostForm)
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)

@@ -1,8 +1,10 @@
 package http_utils
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 func GetQueryParameter(request *http.Request, paramName string, defVal string) string {
@@ -75,19 +77,49 @@ func GetIntFormParameter(request *http.Request, paramName string, defVal int64) 
 }
 
 func RedirectBackIfHTMLAccepted(writer http.ResponseWriter, request *http.Request) bool {
+	backUrl := GetQueryParameter(request, "redirect", "")
+
+	if backUrl != "" {
+		http.Redirect(writer, request, backUrl, http.StatusSeeOther)
+
+		return true
+	}
+
+	referrer := request.Referer()
+
+	if referrer == "" {
+		return false
+	}
+
 	accepts := request.Header["Accept"]
+	fmt.Println("accepts", len(accepts))
 
 	if len(accepts) == 0 {
 		return false
 	}
 
 	for _, val := range accepts {
-		if val == "text/html" {
-			http.Redirect(writer, request, request.Referer(), http.StatusSeeOther)
+
+		fmt.Println("accepts", val)
+		if strings.Contains(val, "text/html") {
+			http.Redirect(writer, request, referrer, http.StatusSeeOther)
 
 			return true
 		}
 	}
 
+	fmt.Println("oops")
 	return false
+}
+
+func RemoveValue(items []string, item string) []string {
+	newitems := []string{}
+
+	for _, i := range items {
+		if i != item {
+			newitems = append(newitems, i)
+		}
+	}
+
+	return newitems
 }

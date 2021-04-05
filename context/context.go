@@ -2,7 +2,6 @@ package context
 
 import (
 	"crypto/sha1"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"github.com/gabriel-vasile/mimetype"
@@ -11,7 +10,6 @@ import (
 	"gorm.io/gorm/clause"
 	"io"
 	"io/ioutil"
-	"mahresources/context/query"
 	"mahresources/models"
 	"os"
 	"path"
@@ -30,58 +28,6 @@ type MahresourcesContext struct {
 
 func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB) *MahresourcesContext {
 	return &MahresourcesContext{fs: filesystem, db: db}
-}
-
-func (ctx *MahresourcesContext) CreateAlbum(albumQuery *query.AlbumCreator) (*models.Album, error) {
-	if albumQuery.Name == "" {
-		return nil, errors.New("album name needed")
-	}
-
-	preview, err := base64.StdEncoding.DecodeString(albumQuery.Preview)
-
-	if err != nil {
-		return nil, err
-	}
-
-	album := models.Album{
-		Name:               albumQuery.Name,
-		Meta:               albumQuery.Meta,
-		Preview:            preview,
-		PreviewContentType: albumQuery.PreviewContentType,
-		OwnerId:            albumQuery.OwnerId,
-	}
-	ctx.db.Create(&album)
-	return &album, nil
-}
-
-func (ctx *MahresourcesContext) GetAlbum(id uint) (*models.Album, error) {
-	var album models.Album
-	ctx.db.Preload(clause.Associations).First(&album, id)
-
-	if album.ID == 0 {
-		return nil, errors.New("could not load album")
-	}
-
-	return &album, nil
-}
-
-func (ctx *MahresourcesContext) GetAlbums(offset, maxResults int) (*[]models.Album, error) {
-	var albums []models.Album
-	ctx.db.Limit(maxResults).Offset(int(offset)).Preload("Tags").Find(&albums)
-
-	if len(albums) == 0 {
-		return nil, errors.New("no albums found")
-	}
-
-	return &albums, nil
-}
-
-func (ctx *MahresourcesContext) GetAlbumCount() (int64, error) {
-	var album models.Album
-	var count int64
-	ctx.db.Model(&album).Count(&count)
-
-	return count, nil
 }
 
 func (ctx *MahresourcesContext) GetResource(id int64) (*models.Resource, error) {

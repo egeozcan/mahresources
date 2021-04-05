@@ -1,12 +1,17 @@
 {% extends "layouts/gallery.tpl" %}
 
 {% block gallery %}
-    {% for album in albums %}
-        <div class="album">
-            <h3>{{ album.Name }}</h3>
-            {% if album.PreviewContentType != "" && len(album.Preview) != 0 %}
-            <img src="data:{{ album.PreviewContentType }};base64,{{ album.Preview|base64 }}" alt="">
+    <form>
+        {% for queryParam, values in queryValues %}
+            {% if queryParam != "Name" && queryParam != "Page" %}
+                {% for value in values %}
+                    <input type="hidden" name="{{ queryParam }}" value="{{ value }}">
+                {% endfor %}
             {% endif %}
-        </div>
-    {% endfor %}
+        {% endfor %}
+        <input type="text" name="Name" value="{{ queryValues.Name.0 }}">
+        <input type="submit">
+    </form>
+    <p>{{ query }}</p>
+    {% include "./partials/albumList.tpl" %}
 {% endblock %}

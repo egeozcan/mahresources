@@ -11,9 +11,9 @@ import (
 	"mahresources/constants"
 	context2 "mahresources/context"
 	"mahresources/models"
-	"mahresources/templates/context_providers"
-	_ "mahresources/templates/filters"
-	"mahresources/templates/handlers"
+	"mahresources/templates/template_context_providers"
+	_ "mahresources/templates/template_filters"
+	"mahresources/templates/template_handlers"
 	"net/http"
 	"os"
 	"time"
@@ -63,12 +63,24 @@ func main() {
 
 	context := context2.NewMahresourcesContext(cachedFS, db)
 
-	r.Methods(constants.GET).Path("/uploadform").HandlerFunc(handlers.RenderTemplate("templates/upload.tpl", context_providers.StaticTemplateCtx))
-	r.Methods(constants.GET).Path("/addtoalbum").HandlerFunc(handlers.RenderTemplate("templates/addtoalbum.tpl", context_providers.StaticTemplateCtx))
-	r.Methods(constants.GET).Path("/restest").HandlerFunc(handlers.RenderTemplate("templates/show.tpl", context_providers.StaticTemplateCtx))
-	r.Methods(constants.GET).Path("/album/new").HandlerFunc(handlers.RenderTemplate("templates/createAlbum.tpl", context_providers.StaticTemplateCtx))
-	r.Methods(constants.GET).Path("/albums").HandlerFunc(handlers.RenderTemplate("templates/albums.tpl", context_providers.AlbumContextProvider(context)))
-	r.Methods(constants.GET).Path("/album").HandlerFunc(handlers.RenderTemplate("templates/albums.tpl", context_providers.StaticTemplateCtx))
+	r.Methods(constants.GET).Path("/uploadform").HandlerFunc(
+		template_handlers.RenderTemplate("templates/upload.tpl", template_context_providers.StaticTemplateCtx),
+	)
+	r.Methods(constants.GET).Path("/addtoalbum").HandlerFunc(
+		template_handlers.RenderTemplate("templates/addtoalbum.tpl", template_context_providers.StaticTemplateCtx),
+	)
+	r.Methods(constants.GET).Path("/restest").HandlerFunc(
+		template_handlers.RenderTemplate("templates/show.tpl", template_context_providers.StaticTemplateCtx),
+	)
+	r.Methods(constants.GET).Path("/album/new").HandlerFunc(
+		template_handlers.RenderTemplate("templates/createAlbum.tpl", template_context_providers.CreateAlbumContextProvider(context)),
+	)
+	r.Methods(constants.GET).Path("/albums").HandlerFunc(
+		template_handlers.RenderTemplate("templates/albums.tpl", template_context_providers.AlbumContextProvider(context)),
+	)
+	r.Methods(constants.GET).Path("/album").HandlerFunc(
+		template_handlers.RenderTemplate("templates/albums.tpl", template_context_providers.StaticTemplateCtx),
+	)
 	r.Methods(constants.GET).Path("/").HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		http.Redirect(writer, request, "/albums", http.StatusMovedPermanently)
 	})

@@ -1,4 +1,4 @@
-package filters
+package template_filters
 
 import (
 	"encoding/base64"

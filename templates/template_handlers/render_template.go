@@ -1,4 +1,4 @@
-package handlers
+package template_handlers
 
 import (
 	"github.com/flosch/pongo2/v4"

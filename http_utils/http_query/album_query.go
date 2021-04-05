@@ -1,4 +1,4 @@
-package query
+package http_query
 
 type AlbumCreator struct {
 	Name               string
@@ -9,7 +9,11 @@ type AlbumCreator struct {
 }
 
 type AlbumQuery struct {
-	Name    string
-	OwnerId uint
-	Tags    []uint
+	Name          string
+	OwnerId       uint
+	People        []uint
+	Tags          []uint
+	CreatedBefore string
+	CreatedAfter  string
+	HasThumbnail  bool
 }
