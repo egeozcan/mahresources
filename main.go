@@ -9,7 +9,7 @@ import (
 	"log"
 	"mahresources/api_handlers"
 	"mahresources/constants"
-	context2 "mahresources/context"
+	"mahresources/context"
 	"mahresources/models"
 	"mahresources/templates/template_context_providers"
 	_ "mahresources/templates/template_filters"
@@ -53,7 +53,7 @@ func main() {
 		panic("failed to migrate Person")
 	}
 
-	base := afero.NewBasePathFs(afero.NewOsFs(), "M:\\test")
+	base := afero.NewBasePathFs(afero.NewOsFs(), "./filezz")
 	layer := afero.NewMemMapFs()
 	cachedFS := afero.NewCacheOnReadFs(base, layer, 10*time.Minute)
 
@@ -61,7 +61,7 @@ func main() {
 
 	r := mux.NewRouter()
 
-	context := context2.NewMahresourcesContext(cachedFS, db)
+	appContext := context.NewMahresourcesContext(cachedFS, db)
 
 	r.Methods(constants.GET).Path("/uploadform").HandlerFunc(
 		template_handlers.RenderTemplate("templates/upload.tpl", template_context_providers.StaticTemplateCtx),
@@ -73,10 +73,10 @@ func main() {
 		template_handlers.RenderTemplate("templates/show.tpl", template_context_providers.StaticTemplateCtx),
 	)
 	r.Methods(constants.GET).Path("/album/new").HandlerFunc(
-		template_handlers.RenderTemplate("templates/createAlbum.tpl", template_context_providers.CreateAlbumContextProvider(context)),
+		template_handlers.RenderTemplate("templates/createAlbum.tpl", template_context_providers.CreateAlbumContextProvider(appContext)),
 	)
 	r.Methods(constants.GET).Path("/albums").HandlerFunc(
-		template_handlers.RenderTemplate("templates/albums.tpl", template_context_providers.AlbumContextProvider(context)),
+		template_handlers.RenderTemplate("templates/albums.tpl", template_context_providers.AlbumContextProvider(appContext)),
 	)
 	r.Methods(constants.GET).Path("/album").HandlerFunc(
 		template_handlers.RenderTemplate("templates/albums.tpl", template_context_providers.StaticTemplateCtx),
@@ -85,14 +85,14 @@ func main() {
 		http.Redirect(writer, request, "/albums", http.StatusMovedPermanently)
 	})
 
-	r.Methods(constants.GET).Path("/v1/albums").HandlerFunc(api_handlers.GetAlbumsHandler(context))
-	r.Methods(constants.GET).Path("/v1/album").HandlerFunc(api_handlers.GetAlbumHandler(context))
-	r.Methods(constants.POST).Path("/v1/album").HandlerFunc(api_handlers.GetAddAlbumHandler(context))
+	r.Methods(constants.GET).Path("/v1/albums").HandlerFunc(api_handlers.GetAlbumsHandler(appContext))
+	r.Methods(constants.GET).Path("/v1/album").HandlerFunc(api_handlers.GetAlbumHandler(appContext))
+	r.Methods(constants.POST).Path("/v1/album").HandlerFunc(api_handlers.GetAddAlbumHandler(appContext))
 
-	r.Methods(constants.GET).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceHandler(context))
-	r.Methods(constants.POST).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceUploadHandler(context))
-	r.Methods(constants.POST).Path("/v1/resource/preview").HandlerFunc(api_handlers.GetResourceUploadPreviewHandler(context))
-	r.Methods(constants.POST).Path("/v1/resource/addToAlbum").HandlerFunc(api_handlers.GetAddResourceToAlbumHandler(context))
+	r.Methods(constants.GET).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceHandler(appContext))
+	r.Methods(constants.POST).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceUploadHandler(appContext))
+	r.Methods(constants.POST).Path("/v1/resource/preview").HandlerFunc(api_handlers.GetResourceUploadPreviewHandler(appContext))
+	r.Methods(constants.POST).Path("/v1/resource/addToAlbum").HandlerFunc(api_handlers.GetAddResourceToAlbumHandler(appContext))
 
 	filePathPrefix := "/files/"
 	r.PathPrefix(filePathPrefix).Handler(http.StripPrefix(filePathPrefix, http.FileServer(httpFs.Dir("/"))))
