@@ -11,7 +11,6 @@ import (
 	"io"
 	"io/ioutil"
 	"mahresources/models"
-	"os"
 	"path"
 )
 
@@ -84,7 +83,7 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string) (*models
 	hash := hex.EncodeToString(h.Sum(nil))
 	folder := "/resources/" + hash[0:2] + "/" + hash[2:4] + "/" + hash[4:6] + "/"
 
-	err = ctx.fs.MkdirAll(folder, os.ModeDir)
+	err = ctx.fs.MkdirAll(folder, 0777)
 
 	if err != nil {
 		return nil, err
