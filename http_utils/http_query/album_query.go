@@ -2,6 +2,7 @@ package http_query
 
 type AlbumCreator struct {
 	Name               string
+	Description        string
 	Meta               string
 	Preview            string
 	PreviewContentType string

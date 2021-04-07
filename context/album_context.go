@@ -22,6 +22,7 @@ func (ctx *MahresourcesContext) CreateAlbum(albumQuery *http_query.AlbumCreator)
 
 	album := models.Album{
 		Name:               albumQuery.Name,
+		Description:        albumQuery.Description,
 		Meta:               albumQuery.Meta,
 		Preview:            preview,
 		PreviewContentType: albumQuery.PreviewContentType,

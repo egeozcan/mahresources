@@ -68,6 +68,10 @@ func AlbumContextProvider(context *context.MahresourcesContext) func(request *ht
 				Name: "Create",
 				Url:  "/album/new",
 			},
+			"search": template_entities.Search{
+				QueryParamName: "Name",
+				Text:           "Search for an album",
+			},
 		}.Update(baseContext)
 	}
 }
@@ -76,10 +80,6 @@ func CreateAlbumContextProvider(context *context.MahresourcesContext) func(reque
 	return func(request *http.Request) pongo2.Context {
 		return pongo2.Context{
 			"pageTitle": "Create Album",
-			"action": template_entities.Entry{
-				Name: "Create",
-				Url:  "/album/new",
-			},
 		}.Update(StaticTemplateCtx(request))
 	}
 }

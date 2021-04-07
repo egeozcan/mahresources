@@ -23,12 +23,14 @@
     <article class="content">
         {% include "../partials/title.tpl" %}
 
+        {% if tags %}
         <div class="tags mb-10" style="margin-left: -0.5rem">
             {% for tag in tags.Tags %}
                 {% include "../partials/tag.tpl" %}
             {% endfor %}
         </div>
-
+        {% endif %}
+        {% block search %}{% endblock %}
         {% block body %}{% endblock %}
     </article>
     <footer class="footer">
