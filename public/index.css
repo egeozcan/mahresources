@@ -3,29 +3,10 @@
     --spacing: 0.5rem;
 }
 
-html,
-body {
-    padding: 0;
-    margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen,
-    Ubuntu, Cantarell, Fira Sans, Droid Sans, Helvetica Neue, sans-serif;
-    font-size: 16px;
-}
-
-a {
-    color: inherit;
-}
-
-* {
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-}
-
 .site {
     padding: 1rem;
     display: grid;
-    grid-template-rows: auto 1fr auto;
+    grid-template-rows: auto auto 1fr auto;
     height: 100vh;
     grid-gap: 1rem;
 }
@@ -35,8 +16,32 @@ a {
     background-color: var(--bg-accent);
 }
 
-.content {
+.title {
     grid-row: 2 / 3;
+}
+
+.content {
+    grid-row: 3 / 4;
+    display: grid;
+    grid-template-columns: auto 300px;
+    grid-auto-flow: column;
+    gap: calc(var(--spacing) * 3);
+}
+
+.content .sidebar {
+    grid-column: 2 / 3;
+}
+
+@media only screen and (max-width: 900px) {
+    .content {
+        grid-template-columns: 1fr;
+        grid-auto-flow: row;
+        gap: calc(var(--spacing) * 2);
+    }
+
+    .content > * {
+        grid-column: 1 !important;
+    }
 }
 
 .album-container {
@@ -57,28 +62,9 @@ a {
 }
 
 .footer {
-    grid-row: 3 / 4;
-}
-
-.menu {
-    display: flex;
-    align-items: start;
-    align-content: start;
+    grid-row: 4 / 5;
 }
 
 .menu-item {
-    display: inline-grid;
-    place-content: center;
-    place-items: center;
-    height: 2rem;
     padding: var(--spacing);
-}
-
-.menu-item.selected {
-    text-decoration: none;
-    font-weight: bold;
-}
-
-.spanner {
-    flex: 1;
 }

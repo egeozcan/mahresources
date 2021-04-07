@@ -68,10 +68,6 @@ func AlbumContextProvider(context *context.MahresourcesContext) func(request *ht
 				Name: "Create",
 				Url:  "/album/new",
 			},
-			"search": template_entities.Search{
-				QueryParamName: "Name",
-				Text:           "Search for an album",
-			},
 		}.Update(baseContext)
 	}
 }

@@ -1,5 +1,5 @@
 {% if pagination != nil %}
-<nav class="border-t border-gray-200 px-4 flex items-center justify-between sm:px-0">
+<nav class="border-t border-gray-200 px-4 flex items-center justify-between sm:px-0 pb-2">
     <div class="-mt-px w-0 flex-1 flex {% if pagination.PrevLink.Link == '' %}invisible{% endif %}">
         <a href="{{ pagination.PrevLink.Link }}" class="border-t-2 border-transparent pt-4 pr-1 inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300">
             <!-- Heroicon name: solid/arrow-narrow-left -->

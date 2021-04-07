@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{{ title }}</title>
     <link rel="stylesheet" href="/public/index.css">
     <link rel="stylesheet" href="/public/tailwind.css">
@@ -11,27 +12,24 @@
 </head>
 <body class="site">
     <header class="header">
-        <nav class="menu" x-data="{ path: window.location.pathname }">
-            {% for menuEntry in menu %}
-            <a href="{{ menuEntry.Url }}" class="menu-item" :class="{ selected: path == '{{ menuEntry.Url }}' }">
-                {{ menuEntry.Name }}
-            </a>
-            {% endfor %}
-        </nav>
+        {% include "../partials/menu.tpl" %}
         {% block header %}{% endblock %}
     </header>
+    {% include "../partials/title.tpl" %}
     <article class="content">
-        {% include "../partials/title.tpl" %}
-
-        {% if tags %}
-        <div class="tags mb-10" style="margin-left: -0.5rem">
-            {% for tag in tags.Tags %}
+        <section class="sidebar">
+            {% if tags %}
+            <div class="tags mb-2" style="margin-left: -0.5rem">
+                {% for tag in tags.Tags %}
                 {% include "../partials/tag.tpl" %}
-            {% endfor %}
-        </div>
-        {% endif %}
-        {% block search %}{% endblock %}
-        {% block body %}{% endblock %}
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% block sidebar %}{% endblock %}
+        </section>
+        <section class="main">
+            {% block body %}{% endblock %}
+        </section>
     </article>
     <footer class="footer">
         {% include "../partials/pagination.tpl" %}

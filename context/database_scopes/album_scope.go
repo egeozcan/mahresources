@@ -38,7 +38,7 @@ func AlbumQuery(query *http_query.AlbumQuery) func(db *gorm.DB) *gorm.DB {
 		}
 
 		if query.HasThumbnail {
-			dbQuery = dbQuery.Where("name LIKE ?", "%"+query.Name+"%")
+			dbQuery = dbQuery.Where("preview IS NOT NULL")
 		}
 
 		if query.OwnerId != 0 {

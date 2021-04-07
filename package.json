@@ -1,0 +1,28 @@
+{
+  "name": "mahresources",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "css-gen": "postcss ./index.css -o ./public/tailwind.css -w"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/egeozcan/mahresources.git"
+  },
+  "author": "Yavuz Ege ÖZCAN",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/egeozcan/mahresources/issues"
+  },
+  "homepage": "https://github.com/egeozcan/mahresources#readme",
+  "devDependencies": {
+    "autoprefixer": "^10.2.5",
+    "postcss": "^8.2.9",
+    "postcss-cli": "^8.3.1",
+    "tailwindcss": "^2.1.1",
+    "@tailwindcss/forms": "^0.3.2",
+    "tailwindcss-cli": "^0.1.2"
+  },
+  "dependencies": {}
+}

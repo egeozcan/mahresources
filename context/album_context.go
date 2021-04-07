@@ -3,7 +3,11 @@ package context
 import (
 	"encoding/base64"
 	"errors"
+	"github.com/gabriel-vasile/mimetype"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"io"
+	"io/ioutil"
 	"mahresources/context/database_scopes"
 	"mahresources/http_utils/http_query"
 	"mahresources/models"
@@ -72,4 +76,40 @@ func (ctx *MahresourcesContext) GetTagsForAlbums() (*[]models.Tag, error) {
 	`).Scan(&tags)
 
 	return &tags, nil
+}
+
+func (ctx *MahresourcesContext) AddThumbnailToAlbum(file File, albumId int64) (*models.Album, error) {
+	var album models.Album
+
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		tx.First(&album, albumId)
+
+		if album.ID == 0 {
+			return errors.New("not found")
+		}
+
+		fileMime, err := mimetype.DetectReader(file)
+		if err != nil {
+			return err
+		}
+
+		_, err = file.Seek(0, io.SeekStart)
+		if err != nil {
+			return err
+		}
+
+		fileBytes, err := ioutil.ReadAll(file)
+		if err != nil {
+			return err
+		}
+
+		album.Preview = fileBytes
+		album.PreviewContentType = fileMime.String()
+
+		tx.Save(album)
+
+		return nil
+	})
+
+	return &album, err
 }
