@@ -11,11 +11,11 @@ import (
 	"net/http"
 )
 
-func AlbumListContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func ResourceListContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		page := http_utils.GetIntQueryParameter(request, "page", 1)
 		offset := (page - 1) * constants.MaxResults
-		var query http_query.AlbumQuery
+		var query http_query.ResourceQuery
 		err := decoder.Decode(&query, request.URL.Query())
 		baseContext := StaticTemplateCtx(request)
 
@@ -25,7 +25,7 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 			return baseContext
 		}
 
-		albums, err := context.GetAlbums(int(offset), constants.MaxResults, &query)
+		resources, err := context.GetResources(int(offset), constants.MaxResults, &query)
 
 		if err != nil {
 			fmt.Println(err)
@@ -33,7 +33,7 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 			return baseContext
 		}
 
-		albumCount, err := context.GetAlbumCount(&query)
+		resourceCount, err := context.GetResourceCount(&query)
 
 		if err != nil {
 			fmt.Println(err)
@@ -41,7 +41,7 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 			return baseContext
 		}
 
-		pagination, err := template_entities.GeneratePagination(request.URL.String(), albumCount, constants.MaxResults, int(page))
+		pagination, err := template_entities.GeneratePagination(request.URL.String(), resourceCount, constants.MaxResults, int(page))
 
 		if err != nil {
 			fmt.Println(err)
@@ -49,7 +49,7 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 			return baseContext
 		}
 
-		tags, err := context.GetTagsForAlbums()
+		tags, err := context.GetTagsForResources()
 
 		if err != nil {
 			fmt.Println(err)
@@ -60,22 +60,22 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 		tagsDisplay := template_entities.GenerateTagsSelection(query.Tags, tags, request.URL.String(), true, "tags")
 
 		return pongo2.Context{
-			"pageTitle":  "Albums",
-			"albums":     albums,
+			"pageTitle":  "Resources",
+			"resources":  resources,
 			"pagination": pagination,
 			"tags":       tagsDisplay,
 			"action": template_entities.Entry{
 				Name: "Create",
-				Url:  "/album/new",
+				Url:  "/resource/new",
 			},
 		}.Update(baseContext)
 	}
 }
 
-func AlbumCreateContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func ResourceCreateContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		return pongo2.Context{
-			"pageTitle": "Create Album",
+			"pageTitle": "Create Resource",
 		}.Update(StaticTemplateCtx(request))
 	}
 }

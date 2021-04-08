@@ -73,10 +73,10 @@ func main() {
 		template_handlers.RenderTemplate("templates/show.tpl", template_context_providers.StaticTemplateCtx),
 	)
 	r.Methods(constants.GET).Path("/album/new").HandlerFunc(
-		template_handlers.RenderTemplate("templates/createAlbum.tpl", template_context_providers.CreateAlbumContextProvider(appContext)),
+		template_handlers.RenderTemplate("templates/createAlbum.tpl", template_context_providers.AlbumCreateContextProvider(appContext)),
 	)
 	r.Methods(constants.GET).Path("/albums").HandlerFunc(
-		template_handlers.RenderTemplate("templates/albums.tpl", template_context_providers.AlbumContextProvider(appContext)),
+		template_handlers.RenderTemplate("templates/albums.tpl", template_context_providers.AlbumListContextProvider(appContext)),
 	)
 	r.Methods(constants.GET).Path("/album").HandlerFunc(
 		template_handlers.RenderTemplate("templates/albums.tpl", template_context_providers.StaticTemplateCtx),

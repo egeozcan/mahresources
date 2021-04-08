@@ -26,6 +26,14 @@ func (ctx *MahresourcesContext) GetResource(id int64) (*models.Resource, error) 
 	return &resource, nil
 }
 
+func (ctx *MahresourcesContext) GetResourceCount(query *http_query.ResourceQuery) (int64, error) {
+	var resource models.Resource
+	var count int64
+	ctx.db.Scopes(database_scopes.ResourceQuery(query)).Model(&resource).Count(&count)
+
+	return count, nil
+}
+
 func (ctx *MahresourcesContext) GetResources(offset, maxResults int, query *http_query.ResourceQuery) (*[]models.Resource, error) {
 	var resources []models.Resource
 
@@ -116,6 +124,21 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string) (*models
 	}
 
 	return res, nil
+}
+
+func (ctx *MahresourcesContext) GetTagsForResources() (*[]models.Tag, error) {
+	var tags []models.Tag
+	ctx.db.Raw(`SELECT
+					  Count(*)
+					  , id
+					  , name
+					from tags t
+					join resource_tags rt on t.id = rt.tag_id
+					group by t.name, t.id
+					order by count(*) desc
+	`).Scan(&tags)
+
+	return &tags, nil
 }
 
 func (ctx *MahresourcesContext) AddThumbnailToResource(file File, resourceId int64) (*models.Resource, error) {
