@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/flosch/pongo2/v4"
 	"github.com/gorilla/mux"
 	"github.com/spf13/afero"
 	"gorm.io/driver/sqlite"
@@ -63,24 +64,28 @@ func main() {
 
 	appContext := context.NewMahresourcesContext(cachedFS, db)
 
-	r.Methods(constants.GET).Path("/uploadform").HandlerFunc(
-		template_handlers.RenderTemplate("templates/upload.tpl", template_context_providers.StaticTemplateCtx),
-	)
-	r.Methods(constants.GET).Path("/addtoalbum").HandlerFunc(
-		template_handlers.RenderTemplate("templates/addtoalbum.tpl", template_context_providers.StaticTemplateCtx),
-	)
-	r.Methods(constants.GET).Path("/restest").HandlerFunc(
-		template_handlers.RenderTemplate("templates/show.tpl", template_context_providers.StaticTemplateCtx),
-	)
+	r.Methods(constants.GET).Path("/test").HandlerFunc(template_handlers.RenderTemplate("templates/actest.tpl", func(request *http.Request) pongo2.Context {
+		selectedTags, _ := appContext.GetTags("", 1000)
+
+		return pongo2.Context{
+			"selectedTags": selectedTags,
+		}.Update(template_context_providers.StaticTemplateCtx(request))
+	}))
+
 	r.Methods(constants.GET).Path("/album/new").HandlerFunc(
 		template_handlers.RenderTemplate("templates/createAlbum.tpl", template_context_providers.AlbumCreateContextProvider(appContext)),
 	)
 	r.Methods(constants.GET).Path("/albums").HandlerFunc(
 		template_handlers.RenderTemplate("templates/albums.tpl", template_context_providers.AlbumListContextProvider(appContext)),
 	)
-	r.Methods(constants.GET).Path("/album").HandlerFunc(
-		template_handlers.RenderTemplate("templates/albums.tpl", template_context_providers.StaticTemplateCtx),
+
+	r.Methods(constants.GET).Path("/resource/new").HandlerFunc(
+		template_handlers.RenderTemplate("templates/createResource.tpl", template_context_providers.ResourceCreateContextProvider(appContext)),
 	)
+	r.Methods(constants.GET).Path("/resources").HandlerFunc(
+		template_handlers.RenderTemplate("templates/resources.tpl", template_context_providers.ResourceListContextProvider(appContext)),
+	)
+
 	r.Methods(constants.GET).Path("/").HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		http.Redirect(writer, request, "/albums", http.StatusMovedPermanently)
 	})
@@ -93,6 +98,8 @@ func main() {
 	r.Methods(constants.POST).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceUploadHandler(appContext))
 	r.Methods(constants.POST).Path("/v1/resource/preview").HandlerFunc(api_handlers.GetResourceUploadPreviewHandler(appContext))
 	r.Methods(constants.POST).Path("/v1/resource/addToAlbum").HandlerFunc(api_handlers.GetAddResourceToAlbumHandler(appContext))
+
+	r.Methods(constants.GET).Path("/v1/tags").HandlerFunc(api_handlers.GetTagsHandler(appContext))
 
 	filePathPrefix := "/files/"
 	r.PathPrefix(filePathPrefix).Handler(http.StripPrefix(filePathPrefix, http.FileServer(httpFs.Dir("/"))))

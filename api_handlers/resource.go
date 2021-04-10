@@ -6,6 +6,7 @@ import (
 	"mahresources/constants"
 	"mahresources/context"
 	"mahresources/http_utils"
+	"mahresources/http_utils/http_query"
 	"net/http"
 )
 
@@ -93,18 +94,21 @@ func GetResourceUploadHandler(ctx *context.MahresourcesContext) func(writer http
 		}
 		defer file.Close()
 
-		res, err := ctx.AddResource(file, handler.Filename)
+		var creator = http_query.ResourceCreator{}
+		err = decoder.Decode(&creator, request.PostForm)
+		if err != nil {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprint(writer, err.Error())
+		}
+
+		name := handler.Filename
+
+		res, err := ctx.AddResource(file, name, &creator)
 
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
 			return
-		}
-
-		albumId := http_utils.GetIntFormParameter(request, "albumId", 0)
-
-		if albumId != 0 {
-			_, _ = ctx.AddResourceToAlbum(int64(res.ID), albumId)
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)

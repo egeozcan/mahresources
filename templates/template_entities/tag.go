@@ -8,14 +8,16 @@ import (
 )
 
 type TagsDisplay struct {
-	Tags   *[]*DisplayedTag
-	TagMap *map[uint]*DisplayedTag
+	Tags         *[]*DisplayedTag
+	SelectedTags *[]*DisplayedTag
+	TagMap       *map[uint]*DisplayedTag
 }
 
 type DisplayedTag struct {
 	Name   string
 	Link   string
 	Active bool
+	ID     uint
 }
 
 func (td *TagsDisplay) GetTag(id uint) *DisplayedTag {
@@ -24,6 +26,7 @@ func (td *TagsDisplay) GetTag(id uint) *DisplayedTag {
 
 func GenerateTagsSelection(selectedIds []uint, tags *[]models.Tag, reqUrl string, resetPage bool, tagsParam string) *TagsDisplay {
 	displayedTags := make([]*DisplayedTag, 0, 10)
+	selectedTags := make([]*DisplayedTag, 0, 10)
 	tagMap := make(map[uint]*DisplayedTag)
 	existingTags := make(map[uint]struct{})
 	member := struct{}{}
@@ -58,14 +61,21 @@ func GenerateTagsSelection(selectedIds []uint, tags *[]models.Tag, reqUrl string
 			Name:   tag.Name,
 			Link:   parsedBaseUrl.String(),
 			Active: active,
+			ID:     tag.ID,
 		}
 
 		displayedTags = append(displayedTags, &displayedTag)
+
+		if active {
+			selectedTags = append(selectedTags, &displayedTag)
+		}
+
 		tagMap[tag.ID] = &displayedTag
 	}
 
 	return &TagsDisplay{
-		Tags:   &displayedTags,
-		TagMap: &tagMap,
+		Tags:         &displayedTags,
+		SelectedTags: &selectedTags,
+		TagMap:       &tagMap,
 	}
 }

@@ -18,13 +18,6 @@
     {% include "../partials/title.tpl" %}
     <article class="content">
         <section class="sidebar">
-            {% if tags %}
-            <div class="tags mb-2" style="margin-left: -0.5rem">
-                {% for tag in tags.Tags %}
-                {% include "../partials/tag.tpl" %}
-                {% endfor %}
-            </div>
-            {% endif %}
             {% block sidebar %}{% endblock %}
         </section>
         <section class="main">

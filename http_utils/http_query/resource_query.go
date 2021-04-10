@@ -1,6 +1,16 @@
 package http_query
 
 type ResourceCreator struct {
+	Name               string
+	Description        string
+	People             []uint
+	Tags               []uint
+	Albums             []uint
+	Meta               string
+	Preview            string
+	ContentCategory    string
+	Category           string
+	PreviewContentType string
 }
 
 type ResourceQuery struct {

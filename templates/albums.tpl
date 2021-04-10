@@ -7,13 +7,12 @@
 {% endblock %}
 
 {% block sidebar %}
-    <form>
-        {% for value in queryValues.tags %}
-            <input type="hidden" name="tag" value="{{ value }}">
-        {% endfor %}
+    <h3 class="font-regular text-base md:text-lg leading-snug truncate">Filter</h3>
+    <form class="mt-5">
+        {% include "./partials/form/autocompleter.tpl" with url='/v1/tags' elName='tags' title='Tags' selectedItems=tags.SelectedTags id="autocompleter"|nanoid %}
         <label for="search"
-               class="block text-sm font-medium text-gray-700">
-            Filter by name
+               class="block text-sm font-medium text-gray-700 mt-2">
+            Name
         </label>
         <input type="text"
                name="Name"

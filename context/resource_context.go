@@ -2,6 +2,7 @@ package context
 
 import (
 	"crypto/sha1"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"github.com/gabriel-vasile/mimetype"
@@ -61,8 +62,14 @@ func (ctx *MahresourcesContext) AddResourceToAlbum(resId, albumId int64) (*model
 	return &resource, nil
 }
 
-func (ctx *MahresourcesContext) AddResource(file File, fileName string) (*models.Resource, error) {
+func (ctx *MahresourcesContext) AddResource(file File, fileName string, resourceQuery *http_query.ResourceCreator) (*models.Resource, error) {
 	fileMime, err := mimetype.DetectReader(file)
+
+	if err != nil {
+		return nil, err
+	}
+
+	preview, err := base64.StdEncoding.DecodeString(resourceQuery.Preview)
 
 	if err != nil {
 		return nil, err
@@ -109,19 +116,27 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string) (*models
 		return nil, err
 	}
 
+	name := fileName
+
+	if resourceQuery.Name != "" {
+		name = resourceQuery.Name
+	}
+
 	res := &models.Resource{
-		Name:               fileName,
+		Name:               name,
 		Hash:               hash,
 		HashType:           "SHA1",
 		Location:           filePath,
-		Meta:               "",
-		Category:           "",
+		Meta:               resourceQuery.Meta,
+		Category:           resourceQuery.Category,
 		ContentType:        fileMime.String(),
-		ContentCategory:    "",
-		Preview:            nil,
-		PreviewContentType: "",
+		ContentCategory:    resourceQuery.ContentCategory,
+		Preview:            preview,
+		PreviewContentType: resourceQuery.PreviewContentType,
 		FileSize:           int64(len(fileBytes)) << 3,
 	}
+
+	ctx.db.Save(res)
 
 	return res, nil
 }
