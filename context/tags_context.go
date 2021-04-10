@@ -7,7 +7,13 @@ import (
 func (ctx *MahresourcesContext) GetTags(name string, limit int) (*[]models.Tag, error) {
 	var tags []models.Tag
 
-	ctx.db.Where("name like ?", "%"+name+"%").Order("name").Limit(limit).Find(&tags)
+	query := ctx.db.Where("name like ?", "%"+name+"%").Order("name")
+
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+
+	query.Find(&tags)
 
 	return &tags, nil
 }

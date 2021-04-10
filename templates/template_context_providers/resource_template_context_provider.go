@@ -49,7 +49,7 @@ func ResourceListContextProvider(context *context.MahresourcesContext) func(requ
 			return baseContext
 		}
 
-		tags, err := context.GetTagsForResources()
+		tags, err := context.GetTags("", 0)
 
 		if err != nil {
 			fmt.Println(err)

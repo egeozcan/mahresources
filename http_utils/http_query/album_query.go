@@ -11,6 +11,7 @@ type AlbumCreator struct {
 
 type AlbumQuery struct {
 	Name          string
+	Description   string
 	OwnerId       uint
 	People        []uint
 	Tags          []uint

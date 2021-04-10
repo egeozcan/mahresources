@@ -49,7 +49,7 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 			return baseContext
 		}
 
-		tags, err := context.GetTagsForAlbums()
+		tags, err := context.GetTags("", 0)
 
 		if err != nil {
 			fmt.Println(err)

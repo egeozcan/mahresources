@@ -37,6 +37,10 @@ func AlbumQuery(query *http_query.AlbumQuery) func(db *gorm.DB) *gorm.DB {
 			dbQuery = dbQuery.Where("name LIKE ?", "%"+query.Name+"%")
 		}
 
+		if query.Description != "" {
+			dbQuery = dbQuery.Where("description LIKE ?", "%"+query.Description+"%")
+		}
+
 		if query.HasThumbnail {
 			dbQuery = dbQuery.Where("preview IS NOT NULL")
 		}
