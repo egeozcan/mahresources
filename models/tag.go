@@ -8,3 +8,23 @@ type Tag struct {
 	Resources []*Resource `gorm:"many2many:resource_tags;"`
 	Albums    []*Album    `gorm:"many2many:album_tags;"`
 }
+
+func (t Tag) GetId() uint {
+	return t.ID
+}
+
+func (t Tag) GetName() string {
+	return t.Name
+}
+
+type TagList []Tag
+
+func (tags *TagList) ToNamedEntities() *[]NamedEntity {
+	list := make([]NamedEntity, len(*tags))
+
+	for i, v := range *tags {
+		list[i] = v
+	}
+
+	return &list
+}

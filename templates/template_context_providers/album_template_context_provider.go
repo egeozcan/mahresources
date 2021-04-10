@@ -7,6 +7,7 @@ import (
 	"mahresources/context"
 	"mahresources/http_utils"
 	"mahresources/http_utils/http_query"
+	"mahresources/models"
 	"mahresources/templates/template_entities"
 	"net/http"
 )
@@ -57,7 +58,8 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 			return baseContext
 		}
 
-		tagsDisplay := template_entities.GenerateTagsSelection(query.Tags, tags, request.URL.String(), true, "tags")
+		tagList := models.TagList(*tags)
+		tagsDisplay := template_entities.GenerateRelationsDisplay(query.Tags, tagList.ToNamedEntities(), request.URL.String(), true, "tags")
 
 		return pongo2.Context{
 			"pageTitle":  "Albums",
