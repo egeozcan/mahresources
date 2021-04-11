@@ -93,6 +93,7 @@ func main() {
 	r.Methods(constants.POST).Path("/v1/album").HandlerFunc(api_handlers.GetAddAlbumHandler(appContext))
 
 	r.Methods(constants.GET).Path("/v1/people").HandlerFunc(api_handlers.GetPeopleHandler(appContext))
+	r.Methods(constants.GET).Path("/v1/people/autocomplete").HandlerFunc(api_handlers.GetPeopleAutocompleteHandler(appContext))
 	r.Methods(constants.GET).Path("/v1/person").HandlerFunc(api_handlers.GetPersonHandler(appContext))
 	r.Methods(constants.POST).Path("/v1/person").HandlerFunc(api_handlers.GetAddPersonHandler(appContext))
 

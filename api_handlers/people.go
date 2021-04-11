@@ -35,6 +35,23 @@ func GetPeopleHandler(ctx *context.MahresourcesContext) func(writer http.Respons
 	}
 }
 
+func GetPeopleAutocompleteHandler(ctx *context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		name := http_utils.GetQueryParameter(request, "name", "")
+
+		people, err := ctx.GetPeopleAutoComplete(name, constants.MaxResults)
+
+		if err != nil {
+			writer.WriteHeader(404)
+			fmt.Fprint(writer, err.Error())
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(people)
+	}
+}
+
 func GetPersonHandler(ctx *context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := uint(http_utils.GetIntQueryParameter(request, "id", 0))

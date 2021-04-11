@@ -19,7 +19,7 @@ func ResourceQuery(query *http_query.ResourceQuery) func(db *gorm.DB) *gorm.DB {
 
 		if query.People != nil && len(query.People) > 0 {
 			dbQuery = dbQuery.Where(
-				"(SELECT Count(*) FROM people_related_resources prr WHERE prr.person_id IN ? AND prt.resource_id = resources.id) = ?",
+				"(SELECT Count(*) FROM people_related_resources prr WHERE prr.person_id IN ? AND prr.resource_id = resources.id) = ?",
 				query.People,
 				len(query.People),
 			)

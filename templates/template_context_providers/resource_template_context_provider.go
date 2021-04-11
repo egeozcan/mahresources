@@ -65,12 +65,17 @@ func ResourceListContextProvider(context *context.MahresourcesContext) func(requ
 		albumList := models.AlbumList(*albums)
 		albumsDisplay := template_entities.GenerateRelationsDisplay(query.Albums, albumList.ToNamedEntities(), request.URL.String(), true, "albums")
 
+		people, _ := context.GetPeopleWithIds(query.People)
+		peopleList := models.PersonList(*people)
+		peopleDisplay := template_entities.GenerateRelationsDisplay(query.People, peopleList.ToNamedEntities(), request.URL.String(), true, "people")
+
 		return pongo2.Context{
 			"pageTitle":  "Resources",
 			"resources":  resources,
 			"pagination": pagination,
 			"tags":       tagsDisplay,
 			"albums":     albumsDisplay,
+			"people":     peopleDisplay,
 			"action": template_entities.Entry{
 				Name: "Create",
 				Url:  "/resource/new",

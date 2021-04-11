@@ -71,6 +71,10 @@ func GetAddResourceToAlbumHandler(ctx *context.MahresourcesContext) func(writer 
 			return
 		}
 
+		if http_utils.RedirectBackIfHTMLAccepted(writer, request) {
+			return
+		}
+
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(resource)
 	}

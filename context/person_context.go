@@ -3,6 +3,7 @@ package context
 import (
 	"errors"
 	"gorm.io/gorm/clause"
+	"mahresources/api_model"
 	"mahresources/database_scopes"
 	"mahresources/http_query"
 	"mahresources/models"
@@ -39,6 +40,23 @@ func (ctx *MahresourcesContext) GetPeople(offset, maxResults int, query *http_qu
 	ctx.db.Scopes(database_scopes.PersonQuery(query)).Limit(maxResults).Offset(int(offset)).Preload("Tags").Find(&people)
 
 	return &people, nil
+}
+
+func (ctx *MahresourcesContext) GetPeopleAutoComplete(name string, maxResults int) (*[]api_model.AutoCompleteResult, error) {
+	var people []models.Person
+
+	ctx.db.Where("name LIKE ?", "%"+name+"%").Or("surname LIKE ?", "%"+name+"%").Limit(maxResults).Find(&people)
+
+	results := make([]api_model.AutoCompleteResult, len(people))
+
+	for i, v := range people {
+		results[i] = api_model.AutoCompleteResult{
+			Name: v.Name + " " + v.Surname,
+			ID:   v.ID,
+		}
+	}
+
+	return &results, nil
 }
 
 func (ctx *MahresourcesContext) GetPeopleWithIds(ids []uint) (*[]models.Person, error) {
