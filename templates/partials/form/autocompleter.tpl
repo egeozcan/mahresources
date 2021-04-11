@@ -30,12 +30,11 @@
     "
     class="relative"
 >
-    <label class="block text-sm font-medium text-gray-700" for="{{ id }}">{{ title }}</label>
-    <div class="mt-1">
+    <label class="block text-sm font-medium text-gray-700 mt-3" for="{{ id }}">{{ title }}</label>
     <input
         id="{{ id }}"
         type="text"
-        class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md"
+        class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md mt-2"
         @keydown.arrow-up.prevent="selectedIndex = selectedIndex - 1; if (selectedIndex < 0) selectedIndex = results.length - 1;"
         @keydown.arrow-down.prevent="selectedIndex = (selectedIndex + 1) % results.length"
         @keydown.enter.prevent="
@@ -76,7 +75,6 @@
             requestAborter = abort;
         "
     >
-    </div>
     <template x-for="(result, index) in selectedResults">
         <p class="
             inline-flex rounded-full items-center py-0.5 pl-2.5 pr-1 text-sm font-medium bg-indigo-100
@@ -100,7 +98,7 @@
     </template>
     <div x-ref="inputs"></div>
     <template x-if="dropdownActive && results.length > 0">
-        <div class="absolute mt-1 w-full border bg-white shadow-xl rounded" style="top:3.8rem">
+        <div class="absolute mt-1 w-full border bg-white shadow-xl rounded z-50" style="top:3.8rem">
             <div class="p-3">
                 <div x-ref="list">
                     <template x-for="(result, index) in results" :key="index">

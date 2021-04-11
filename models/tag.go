@@ -7,6 +7,7 @@ type Tag struct {
 	Name      string      `gorm:"index"`
 	Resources []*Resource `gorm:"many2many:resource_tags;"`
 	Albums    []*Album    `gorm:"many2many:album_tags;"`
+	People    []*Person   `gorm:"many2many:person_tags;"`
 }
 
 func (t Tag) GetId() uint {

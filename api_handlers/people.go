@@ -10,42 +10,10 @@ import (
 	"net/http"
 )
 
-func GetAlbumUploadPreviewHandler(ctx *context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
-	return func(writer http.ResponseWriter, request *http.Request) {
-		if err := request.ParseMultipartForm(1 << 20); err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
-			return
-		}
-
-		id := http_utils.GetIntFormParameter(request, "id", 0)
-		file, _, err := request.FormFile("resource")
-
-		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
-			return
-		}
-
-		defer file.Close()
-
-		resource, err := ctx.AddThumbnailToAlbum(file, id)
-
-		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
-			return
-		}
-
-		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(resource)
-	}
-}
-
-func GetAlbumsHandler(ctx *context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
+func GetPeopleHandler(ctx *context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		offset := (http_utils.GetIntQueryParameter(request, "page", 1) - 1) * constants.MaxResults
-		var query http_query.AlbumQuery
+		var query http_query.PersonQuery
 		err := decoder.Decode(&query, request.URL.Query())
 
 		if err != nil {
@@ -54,7 +22,7 @@ func GetAlbumsHandler(ctx *context.MahresourcesContext) func(writer http.Respons
 			return
 		}
 
-		albums, err := ctx.GetAlbums(int(offset), constants.MaxResults, &query)
+		people, err := ctx.GetPeople(int(offset), constants.MaxResults, &query)
 
 		if err != nil {
 			writer.WriteHeader(404)
@@ -63,14 +31,14 @@ func GetAlbumsHandler(ctx *context.MahresourcesContext) func(writer http.Respons
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(albums)
+		_ = json.NewEncoder(writer).Encode(people)
 	}
 }
 
-func GetAlbumHandler(ctx *context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
+func GetPersonHandler(ctx *context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := uint(http_utils.GetIntQueryParameter(request, "id", 0))
-		album, err := ctx.GetAlbum(id)
+		person, err := ctx.GetPerson(id)
 
 		if err != nil {
 			writer.WriteHeader(404)
@@ -79,11 +47,11 @@ func GetAlbumHandler(ctx *context.MahresourcesContext) func(writer http.Response
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(album)
+		_ = json.NewEncoder(writer).Encode(person)
 	}
 }
 
-func GetAddAlbumHandler(ctx *context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddPersonHandler(ctx *context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		err := request.ParseForm()
 
@@ -93,14 +61,14 @@ func GetAddAlbumHandler(ctx *context.MahresourcesContext) func(writer http.Respo
 			return
 		}
 
-		var creator = http_query.AlbumCreator{}
+		var creator = http_query.PersonCreator{}
 		err = decoder.Decode(&creator, request.PostForm)
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
 		}
 
-		album, err := ctx.CreateAlbum(&creator)
+		album, err := ctx.CreatePerson(&creator)
 
 		if err != nil {
 			writer.WriteHeader(400)

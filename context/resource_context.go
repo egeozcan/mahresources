@@ -10,8 +10,8 @@ import (
 	"gorm.io/gorm/clause"
 	"io"
 	"io/ioutil"
-	"mahresources/context/database_scopes"
-	"mahresources/http_utils/http_query"
+	"mahresources/database_scopes"
+	"mahresources/http_query"
 	"mahresources/models"
 	"path"
 )

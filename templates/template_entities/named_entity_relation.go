@@ -8,7 +8,6 @@ import (
 )
 
 type NamedEntityRelationDisplay struct {
-	Relations         *[]*DisplayedRelation
 	SelectedRelations *[]*DisplayedRelation
 	RelationsMap      *map[uint]*DisplayedRelation
 }
@@ -25,7 +24,6 @@ func (td *NamedEntityRelationDisplay) GetRelation(id uint) *DisplayedRelation {
 }
 
 func GenerateRelationsDisplay(selectedIds []uint, namedEntities *[]models.NamedEntity, reqUrl string, resetPage bool, urlParam string) *NamedEntityRelationDisplay {
-	displayedRelations := make([]*DisplayedRelation, 0, 10)
 	selectedRelations := make([]*DisplayedRelation, 0, 10)
 	relationMap := make(map[uint]*DisplayedRelation)
 	existingRelations := make(map[uint]struct{})
@@ -64,8 +62,6 @@ func GenerateRelationsDisplay(selectedIds []uint, namedEntities *[]models.NamedE
 			ID:     entity.GetId(),
 		}
 
-		displayedRelations = append(displayedRelations, &displayedRelation)
-
 		if active {
 			selectedRelations = append(selectedRelations, &displayedRelation)
 		}
@@ -74,7 +70,6 @@ func GenerateRelationsDisplay(selectedIds []uint, namedEntities *[]models.NamedE
 	}
 
 	return &NamedEntityRelationDisplay{
-		Relations:         &displayedRelations,
 		SelectedRelations: &selectedRelations,
 		RelationsMap:      &relationMap,
 	}

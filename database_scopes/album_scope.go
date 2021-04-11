@@ -2,7 +2,7 @@ package database_scopes
 
 import (
 	"gorm.io/gorm"
-	"mahresources/http_utils/http_query"
+	"mahresources/http_query"
 )
 
 func AlbumQuery(query *http_query.AlbumQuery) func(db *gorm.DB) *gorm.DB {
@@ -19,17 +19,9 @@ func AlbumQuery(query *http_query.AlbumQuery) func(db *gorm.DB) *gorm.DB {
 
 		if query.People != nil && len(query.People) > 0 {
 			dbQuery = dbQuery.Where(
-				`EXISTS (
-							SELECT 1 FROM people p 
-								JOIN people_related_resources prr 
-									ON p.id = prr.person_id
-								JOIN resources r
-									ON r.id = prr.resource_id
-								JOIN resource_albums ra
-									ON ra.resource_id = r.id AND ra.album_id = albums.id
-							WHERE p.id IN ?)
-					  `,
+				"(SELECT Count(*) FROM people_related_albums pra WHERE pra.person_id IN ? AND pra.album_id = albums.id) = ?",
 				query.People,
+				len(query.People),
 			)
 		}
 
@@ -47,6 +39,14 @@ func AlbumQuery(query *http_query.AlbumQuery) func(db *gorm.DB) *gorm.DB {
 
 		if query.OwnerId != 0 {
 			dbQuery = dbQuery.Where("owner = ?", query.OwnerId)
+		}
+
+		if query.CreatedBefore != "" {
+			dbQuery = dbQuery.Where("created_at <= ?", query.CreatedBefore)
+		}
+
+		if query.CreatedAfter != "" {
+			dbQuery = dbQuery.Where("created_at >= ?", query.CreatedAfter)
 		}
 
 		return dbQuery

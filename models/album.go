@@ -14,3 +14,23 @@ type Album struct {
 	People             []*Person   `gorm:"many2many:people_related_albums;"`
 	OwnerId            uint
 }
+
+func (a Album) GetId() uint {
+	return a.ID
+}
+
+func (a Album) GetName() string {
+	return a.Name
+}
+
+type AlbumList []Album
+
+func (albums *AlbumList) ToNamedEntities() *[]NamedEntity {
+	list := make([]NamedEntity, len(*albums))
+
+	for i, v := range *albums {
+		list[i] = v
+	}
+
+	return &list
+}

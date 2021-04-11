@@ -8,8 +8,8 @@ import (
 	"gorm.io/gorm/clause"
 	"io"
 	"io/ioutil"
-	"mahresources/context/database_scopes"
-	"mahresources/http_utils/http_query"
+	"mahresources/database_scopes"
+	"mahresources/http_query"
 	"mahresources/models"
 )
 
@@ -51,6 +51,14 @@ func (ctx *MahresourcesContext) GetAlbums(offset, maxResults int, query *http_qu
 	var albums []models.Album
 
 	ctx.db.Scopes(database_scopes.AlbumQuery(query)).Limit(maxResults).Offset(int(offset)).Preload("Tags").Find(&albums)
+
+	return &albums, nil
+}
+
+func (ctx *MahresourcesContext) GetAlbumsWithIds(ids []uint) (*[]models.Album, error) {
+	var albums []models.Album
+
+	ctx.db.Find(&albums, ids)
 
 	return &albums, nil
 }

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"mahresources/constants"
 	"mahresources/context"
+	"mahresources/http_query"
 	"mahresources/http_utils"
-	"mahresources/http_utils/http_query"
 	"net/http"
 )
 

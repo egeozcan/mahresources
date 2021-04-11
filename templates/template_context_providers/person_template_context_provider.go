@@ -12,11 +12,11 @@ import (
 	"net/http"
 )
 
-func AlbumListContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func PeopleListContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		page := http_utils.GetIntQueryParameter(request, "page", 1)
 		offset := (page - 1) * constants.MaxResults
-		var query http_query.AlbumQuery
+		var query http_query.PersonQuery
 		err := decoder.Decode(&query, request.URL.Query())
 		baseContext := StaticTemplateCtx(request)
 
@@ -26,7 +26,7 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 			return baseContext
 		}
 
-		albums, err := context.GetAlbums(int(offset), constants.MaxResults, &query)
+		people, err := context.GetPeople(int(offset), constants.MaxResults, &query)
 
 		if err != nil {
 			fmt.Println(err)
@@ -34,7 +34,7 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 			return baseContext
 		}
 
-		albumCount, err := context.GetAlbumCount(&query)
+		peopleCount, err := context.GetPeopleCount(&query)
 
 		if err != nil {
 			fmt.Println(err)
@@ -42,7 +42,7 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 			return baseContext
 		}
 
-		pagination, err := template_entities.GeneratePagination(request.URL.String(), albumCount, constants.MaxResults, int(page))
+		pagination, err := template_entities.GeneratePagination(request.URL.String(), peopleCount, constants.MaxResults, int(page))
 
 		if err != nil {
 			fmt.Println(err)
@@ -62,22 +62,22 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 		tagsDisplay := template_entities.GenerateRelationsDisplay(query.Tags, tagList.ToNamedEntities(), request.URL.String(), true, "tags")
 
 		return pongo2.Context{
-			"pageTitle":  "Albums",
-			"albums":     albums,
+			"pageTitle":  "People",
+			"people":     people,
 			"pagination": pagination,
 			"tags":       tagsDisplay,
 			"action": template_entities.Entry{
-				Name: "Create",
-				Url:  "/album/new",
+				Name: "Add",
+				Url:  "/person/new",
 			},
 		}.Update(baseContext)
 	}
 }
 
-func AlbumCreateContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func PersonCreateContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		return pongo2.Context{
-			"pageTitle": "Create Album",
+			"pageTitle": "Add New Person",
 		}.Update(StaticTemplateCtx(request))
 	}
 }

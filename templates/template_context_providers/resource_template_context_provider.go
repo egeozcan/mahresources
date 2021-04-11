@@ -5,8 +5,8 @@ import (
 	"github.com/flosch/pongo2/v4"
 	"mahresources/constants"
 	"mahresources/context"
+	"mahresources/http_query"
 	"mahresources/http_utils"
-	"mahresources/http_utils/http_query"
 	"mahresources/models"
 	"mahresources/templates/template_entities"
 	"net/http"
@@ -61,11 +61,16 @@ func ResourceListContextProvider(context *context.MahresourcesContext) func(requ
 		tagList := models.TagList(*tags)
 		tagsDisplay := template_entities.GenerateRelationsDisplay(query.Tags, tagList.ToNamedEntities(), request.URL.String(), true, "tags")
 
+		albums, _ := context.GetAlbumsWithIds(query.Albums)
+		albumList := models.AlbumList(*albums)
+		albumsDisplay := template_entities.GenerateRelationsDisplay(query.Albums, albumList.ToNamedEntities(), request.URL.String(), true, "albums")
+
 		return pongo2.Context{
 			"pageTitle":  "Resources",
 			"resources":  resources,
 			"pagination": pagination,
 			"tags":       tagsDisplay,
+			"albums":     albumsDisplay,
 			"action": template_entities.Entry{
 				Name: "Create",
 				Url:  "/resource/new",

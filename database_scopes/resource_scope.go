@@ -2,7 +2,7 @@ package database_scopes
 
 import (
 	"gorm.io/gorm"
-	"mahresources/http_utils/http_query"
+	"mahresources/http_query"
 )
 
 func ResourceQuery(query *http_query.ResourceQuery) func(db *gorm.DB) *gorm.DB {
@@ -47,6 +47,14 @@ func ResourceQuery(query *http_query.ResourceQuery) func(db *gorm.DB) *gorm.DB {
 
 		if query.OwnerId != 0 {
 			dbQuery = dbQuery.Where("owner = ?", query.OwnerId)
+		}
+
+		if query.CreatedBefore != "" {
+			dbQuery = dbQuery.Where("created_at <= ?", query.CreatedBefore)
+		}
+
+		if query.CreatedAfter != "" {
+			dbQuery = dbQuery.Where("created_at >= ?", query.CreatedAfter)
 		}
 
 		return dbQuery

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"github.com/flosch/pongo2/v4"
 	"github.com/gorilla/mux"
 	"github.com/spf13/afero"
 	"gorm.io/driver/sqlite"
@@ -12,9 +11,9 @@ import (
 	"mahresources/constants"
 	"mahresources/context"
 	"mahresources/models"
-	"mahresources/templates/template_context_providers"
+	contextProviders "mahresources/templates/template_context_providers"
 	_ "mahresources/templates/template_filters"
-	"mahresources/templates/template_handlers"
+	handlers "mahresources/templates/template_handlers"
 	"net/http"
 	"os"
 	"time"
@@ -64,26 +63,25 @@ func main() {
 
 	appContext := context.NewMahresourcesContext(cachedFS, db)
 
-	r.Methods(constants.GET).Path("/test").HandlerFunc(template_handlers.RenderTemplate("templates/actest.tpl", func(request *http.Request) pongo2.Context {
-		selectedTags, _ := appContext.GetTags("", 1000)
-
-		return pongo2.Context{
-			"selectedTags": selectedTags,
-		}.Update(template_context_providers.StaticTemplateCtx(request))
-	}))
-
 	r.Methods(constants.GET).Path("/album/new").HandlerFunc(
-		template_handlers.RenderTemplate("templates/createAlbum.tpl", template_context_providers.AlbumCreateContextProvider(appContext)),
+		handlers.RenderTemplate("templates/createAlbum.tpl", contextProviders.AlbumCreateContextProvider(appContext)),
 	)
 	r.Methods(constants.GET).Path("/albums").HandlerFunc(
-		template_handlers.RenderTemplate("templates/albums.tpl", template_context_providers.AlbumListContextProvider(appContext)),
+		handlers.RenderTemplate("templates/albums.tpl", contextProviders.AlbumListContextProvider(appContext)),
 	)
 
 	r.Methods(constants.GET).Path("/resource/new").HandlerFunc(
-		template_handlers.RenderTemplate("templates/createResource.tpl", template_context_providers.ResourceCreateContextProvider(appContext)),
+		handlers.RenderTemplate("templates/createResource.tpl", contextProviders.ResourceCreateContextProvider(appContext)),
 	)
 	r.Methods(constants.GET).Path("/resources").HandlerFunc(
-		template_handlers.RenderTemplate("templates/resources.tpl", template_context_providers.ResourceListContextProvider(appContext)),
+		handlers.RenderTemplate("templates/resources.tpl", contextProviders.ResourceListContextProvider(appContext)),
+	)
+
+	r.Methods(constants.GET).Path("/person/new").HandlerFunc(
+		handlers.RenderTemplate("templates/createPerson.tpl", contextProviders.PersonCreateContextProvider(appContext)),
+	)
+	r.Methods(constants.GET).Path("/people").HandlerFunc(
+		handlers.RenderTemplate("templates/people.tpl", contextProviders.PeopleListContextProvider(appContext)),
 	)
 
 	r.Methods(constants.GET).Path("/").HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -93,6 +91,10 @@ func main() {
 	r.Methods(constants.GET).Path("/v1/albums").HandlerFunc(api_handlers.GetAlbumsHandler(appContext))
 	r.Methods(constants.GET).Path("/v1/album").HandlerFunc(api_handlers.GetAlbumHandler(appContext))
 	r.Methods(constants.POST).Path("/v1/album").HandlerFunc(api_handlers.GetAddAlbumHandler(appContext))
+
+	r.Methods(constants.GET).Path("/v1/people").HandlerFunc(api_handlers.GetPeopleHandler(appContext))
+	r.Methods(constants.GET).Path("/v1/person").HandlerFunc(api_handlers.GetPersonHandler(appContext))
+	r.Methods(constants.POST).Path("/v1/person").HandlerFunc(api_handlers.GetAddPersonHandler(appContext))
 
 	r.Methods(constants.GET).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceHandler(appContext))
 	r.Methods(constants.POST).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceUploadHandler(appContext))

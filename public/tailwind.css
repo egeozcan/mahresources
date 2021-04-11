@@ -750,6 +750,9 @@ select {
 .top-10 {
 	top: 2.5rem;
 }
+.z-50 {
+	z-index: 50;
+}
 .my-1 {
 	margin-top: 0.25rem;
 	margin-bottom: 0.25rem;
