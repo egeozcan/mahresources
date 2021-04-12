@@ -111,6 +111,8 @@
                         >
                             <span
                                 x-text="result.Name"
+                                class="overflow-ellipsis overflow-hidden"
+                                :title="result.Name"
                             ></span>
                         </span>
                     </template>
