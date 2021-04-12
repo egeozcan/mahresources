@@ -59,8 +59,8 @@ func (ctx *MahresourcesContext) GetPeopleAutoComplete(name string, maxResults in
 	return &results, nil
 }
 
-func (ctx *MahresourcesContext) GetPeopleWithIds(ids []uint) (*[]models.Person, error) {
-	var people []models.Person
+func (ctx *MahresourcesContext) GetPeopleWithIds(ids []uint) (*[]*models.Person, error) {
+	var people []*models.Person
 
 	ctx.db.Find(&people, ids)
 

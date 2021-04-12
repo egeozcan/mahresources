@@ -67,21 +67,21 @@ func main() {
 		handlers.RenderTemplate("templates/createAlbum.tpl", contextProviders.AlbumCreateContextProvider(appContext)),
 	)
 	r.Methods(constants.GET).Path("/albums").HandlerFunc(
-		handlers.RenderTemplate("templates/albums.tpl", contextProviders.AlbumListContextProvider(appContext)),
+		handlers.RenderTemplate("templates/listAlbums.tpl", contextProviders.AlbumListContextProvider(appContext)),
 	)
 
 	r.Methods(constants.GET).Path("/resource/new").HandlerFunc(
 		handlers.RenderTemplate("templates/createResource.tpl", contextProviders.ResourceCreateContextProvider(appContext)),
 	)
 	r.Methods(constants.GET).Path("/resources").HandlerFunc(
-		handlers.RenderTemplate("templates/resources.tpl", contextProviders.ResourceListContextProvider(appContext)),
+		handlers.RenderTemplate("templates/listResources.tpl", contextProviders.ResourceListContextProvider(appContext)),
 	)
 
 	r.Methods(constants.GET).Path("/person/new").HandlerFunc(
 		handlers.RenderTemplate("templates/createPerson.tpl", contextProviders.PersonCreateContextProvider(appContext)),
 	)
 	r.Methods(constants.GET).Path("/people").HandlerFunc(
-		handlers.RenderTemplate("templates/people.tpl", contextProviders.PeopleListContextProvider(appContext)),
+		handlers.RenderTemplate("templates/listPeople.tpl", contextProviders.PeopleListContextProvider(appContext)),
 	)
 
 	r.Methods(constants.GET).Path("/").HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

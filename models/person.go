@@ -22,7 +22,7 @@ func (p Person) GetName() string {
 	return p.Name + " " + p.Surname
 }
 
-type PersonList []Person
+type PersonList []*Person
 
 func (people *PersonList) ToNamedEntities() *[]NamedEntity {
 	list := make([]NamedEntity, len(*people))

@@ -61,9 +61,14 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 		tagList := models.TagList(*tags)
 		tagsDisplay := template_entities.GenerateRelationsDisplay(query.Tags, tagList.ToNamedEntities(), request.URL.String(), true, "tags")
 
+		people, _ := context.GetPeopleWithIds(query.People)
+		peopleList := models.PersonList(*people)
+		peopleDisplay := template_entities.GenerateRelationsDisplay(query.People, peopleList.ToNamedEntities(), request.URL.String(), true, "people")
+
 		return pongo2.Context{
 			"pageTitle":  "Albums",
 			"albums":     albums,
+			"people":     peopleDisplay,
 			"pagination": pagination,
 			"tags":       tagsDisplay,
 			"action": template_entities.Entry{

@@ -20,6 +20,20 @@ func (ctx *MahresourcesContext) CreateAlbum(albumQuery *http_query.AlbumCreator)
 
 	preview, err := base64.StdEncoding.DecodeString(albumQuery.Preview)
 
+	tags := make([]*models.Tag, 0)
+
+	if len(albumQuery.Tags) > 0 {
+		dbTags, _ := ctx.GetTagsWithIds(&albumQuery.Tags, 0)
+		tags = *dbTags
+	}
+
+	people := make([]*models.Person, 0)
+
+	if len(albumQuery.People) > 0 {
+		dbPeople, _ := ctx.GetPeopleWithIds(albumQuery.People)
+		people = *dbPeople
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -31,6 +45,8 @@ func (ctx *MahresourcesContext) CreateAlbum(albumQuery *http_query.AlbumCreator)
 		Preview:            preview,
 		PreviewContentType: albumQuery.PreviewContentType,
 		OwnerId:            albumQuery.OwnerId,
+		Tags:               tags,
+		People:             people,
 	}
 	ctx.db.Create(&album)
 	return &album, nil
