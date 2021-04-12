@@ -8,6 +8,7 @@ type PersonCreator struct {
 
 type PersonQuery struct {
 	Name          string
+	Surname       string
 	Description   string
 	Tags          []uint
 	Albums        []uint
