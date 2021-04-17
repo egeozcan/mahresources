@@ -37,6 +37,19 @@
                         <textarea id="description" name="Description" rows="3" class="max-w-lg shadow-sm block w-full focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm border-gray-300 rounded-md"></textarea>
                     </div>
                 </div>
+
+                <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-gray-200 sm:pt-5">
+                    <span class="block text-sm font-medium text-gray-700">
+                        Relations
+                    </span>
+                    <div class="mt-1 sm:mt-0 sm:col-span-2">
+                        <div class="flex gap-2">
+                            <div class="flex-1">
+                                {% include "./partials/form/autocompleter.tpl" with url='/v1/tags' elName='tags' title='Tags' id="autocompleter"|nanoid %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

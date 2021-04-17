@@ -2,6 +2,7 @@ package context
 
 import (
 	"errors"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"mahresources/api_model"
 	"mahresources/database_scopes"
@@ -20,6 +21,21 @@ func (ctx *MahresourcesContext) CreatePerson(personQuery *http_query.PersonCreat
 		Description: personQuery.Description,
 	}
 	ctx.db.Create(&person)
+
+	if len(personQuery.Tags) > 0 {
+		tags := make([]models.Tag, len(personQuery.Tags))
+		for i, v := range personQuery.Tags {
+			tags[i] = models.Tag{
+				Model: gorm.Model{ID: v},
+			}
+		}
+		createTagsErr := ctx.db.Model(&person).Association("Tags").Append(&tags)
+
+		if createTagsErr != nil {
+			return nil, createTagsErr
+		}
+	}
+
 	return &person, nil
 }
 

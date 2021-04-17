@@ -107,7 +107,7 @@
                             class="cursor-pointer p-2 flex block w-full rounded"
                             :class="{'bg-blue-500': index === selectedIndex}"
                             @click="selectedResults.push(result); dropdownActive = false;"
-                            @mouseover="selectedIndex = index; console.log(selectedIndex);"
+                            @mouseover="selectedIndex = index;"
                         >
                             <span
                                 x-text="result.Name"

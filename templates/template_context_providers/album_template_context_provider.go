@@ -50,7 +50,7 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 			return baseContext
 		}
 
-		tags, err := context.GetTags("", 0)
+		tags, err := context.GetTagsByName("", 0)
 
 		if err != nil {
 			fmt.Println(err)

@@ -44,3 +44,14 @@ function abortableFetch(request, opts) {
         ready: fetch(request, { ...opts, signal })
     };
 }
+
+window.Spruce.store('bulkSelection', {
+    selected: new Set(),
+    select(num) {
+        if (this.selected.has(num)) {
+            this.selected.delete(num);
+            return;
+        }
+        this.selected.add(num);
+    },
+});

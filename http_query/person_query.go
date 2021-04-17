@@ -4,6 +4,7 @@ type PersonCreator struct {
 	Name        string
 	Surname     string
 	Description string
+	Tags        []uint
 }
 
 type PersonQuery struct {

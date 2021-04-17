@@ -59,6 +59,25 @@
                         </div>
                     </div>
                 </div>
+
+                <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-gray-200 sm:pt-5">
+                    <span class="block text-sm font-medium text-gray-700">
+                        Relations
+                    </span>
+                    <div class="mt-1 sm:mt-0 sm:col-span-2">
+                        <div class="flex gap-2">
+                            <div class="flex-1">
+                                {% include "./partials/form/autocompleter.tpl" with url='/v1/tags' elName='tags' title='Tags' id="autocompleter"|nanoid %}
+                            </div>
+                            <div class="flex-1">
+                                {% include "./partials/form/autocompleter.tpl" with url='/v1/people/autocomplete' elName='people' title='People' id="autocompleter"|nanoid %}
+                            </div>
+                            <div class="flex-1">
+                                {% include "./partials/form/autocompleter.tpl" with url='/v1/albums' elName='albums' title='Albums' id="autocompleter"|nanoid %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

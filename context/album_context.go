@@ -20,20 +20,6 @@ func (ctx *MahresourcesContext) CreateAlbum(albumQuery *http_query.AlbumCreator)
 
 	preview, err := base64.StdEncoding.DecodeString(albumQuery.Preview)
 
-	tags := make([]*models.Tag, 0)
-
-	if len(albumQuery.Tags) > 0 {
-		dbTags, _ := ctx.GetTagsWithIds(&albumQuery.Tags, 0)
-		tags = *dbTags
-	}
-
-	people := make([]*models.Person, 0)
-
-	if len(albumQuery.People) > 0 {
-		dbPeople, _ := ctx.GetPeopleWithIds(albumQuery.People)
-		people = *dbPeople
-	}
-
 	if err != nil {
 		return nil, err
 	}
@@ -45,10 +31,37 @@ func (ctx *MahresourcesContext) CreateAlbum(albumQuery *http_query.AlbumCreator)
 		Preview:            preview,
 		PreviewContentType: albumQuery.PreviewContentType,
 		OwnerId:            albumQuery.OwnerId,
-		Tags:               tags,
-		People:             people,
 	}
 	ctx.db.Create(&album)
+
+	if len(albumQuery.People) > 0 {
+		people := make([]models.Person, len(albumQuery.People))
+		for i, v := range albumQuery.People {
+			people[i] = models.Person{
+				Model: gorm.Model{ID: v},
+			}
+		}
+		createPeopleErr := ctx.db.Model(&album).Association("People").Append(&people)
+
+		if createPeopleErr != nil {
+			return nil, createPeopleErr
+		}
+	}
+
+	if len(albumQuery.Tags) > 0 {
+		tags := make([]models.Tag, len(albumQuery.Tags))
+		for i, v := range albumQuery.Tags {
+			tags[i] = models.Tag{
+				Model: gorm.Model{ID: v},
+			}
+		}
+		createTagsErr := ctx.db.Model(&album).Association("Tags").Append(&tags)
+
+		if createTagsErr != nil {
+			return nil, createTagsErr
+		}
+	}
+
 	return &album, nil
 }
 

@@ -1,6 +1,10 @@
 package models
 
-import "gorm.io/gorm"
+import (
+	"gorm.io/gorm"
+	"strings"
+	"unicode"
+)
 
 type Person struct {
 	gorm.Model
@@ -19,7 +23,23 @@ func (p Person) GetId() uint {
 }
 
 func (p Person) GetName() string {
-	return p.Name + " " + p.Surname
+	return limit(strings.ToTitleSpecial(unicode.TurkishCase, p.Name+" "+p.Surname), 200)
+}
+
+func (p Person) Initials() string {
+	res := ""
+
+	if len(p.Name) > 0 {
+		r := firstRune(p.Name)
+		res = string(r)
+	}
+
+	if len(p.Surname) > 0 {
+		r := firstRune(p.Surname)
+		res += string(r)
+	}
+
+	return strings.ToUpper(res)
 }
 
 type PersonList []*Person
@@ -32,4 +52,30 @@ func (people *PersonList) ToNamedEntities() *[]NamedEntity {
 	}
 
 	return &list
+}
+
+func firstRune(str string) (r rune) {
+	for _, r = range str {
+		return
+	}
+	return
+}
+
+func limit(str string, maxLen int) string {
+	if len(str) < maxLen {
+		return str
+	}
+
+	res := ""
+	lenWithDots := maxLen - 3
+
+	for i, s := range str {
+		if i >= lenWithDots {
+			return res + "..."
+		}
+
+		res += string(s)
+	}
+
+	return res
 }

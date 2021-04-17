@@ -84,6 +84,13 @@ func main() {
 		handlers.RenderTemplate("templates/listPeople.tpl", contextProviders.PeopleListContextProvider(appContext)),
 	)
 
+	r.Methods(constants.GET).Path("/tag/new").HandlerFunc(
+		handlers.RenderTemplate("templates/createTag.tpl", contextProviders.TagCreateContextProvider(appContext)),
+	)
+	r.Methods(constants.GET).Path("/tags").HandlerFunc(
+		handlers.RenderTemplate("templates/listTags.tpl", contextProviders.TagListContextProvider(appContext)),
+	)
+
 	r.Methods(constants.GET).Path("/").HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		http.Redirect(writer, request, "/albums", http.StatusMovedPermanently)
 	})
@@ -103,6 +110,7 @@ func main() {
 	r.Methods(constants.POST).Path("/v1/resource/addToAlbum").HandlerFunc(api_handlers.GetAddResourceToAlbumHandler(appContext))
 
 	r.Methods(constants.GET).Path("/v1/tags").HandlerFunc(api_handlers.GetTagsHandler(appContext))
+	r.Methods(constants.POST).Path("/v1/tag").HandlerFunc(api_handlers.GetAddTagHandler(appContext))
 
 	filePathPrefix := "/files/"
 	r.PathPrefix(filePathPrefix).Handler(http.StripPrefix(filePathPrefix, http.FileServer(httpFs.Dir("/"))))

@@ -7,16 +7,15 @@ import (
 	"mahresources/context"
 	"mahresources/http_query"
 	"mahresources/http_utils"
-	"mahresources/models"
 	"mahresources/templates/template_entities"
 	"net/http"
 )
 
-func PeopleListContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func TagListContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		page := http_utils.GetIntQueryParameter(request, "page", 1)
 		offset := (page - 1) * constants.MaxResults
-		var query http_query.PersonQuery
+		var query http_query.TagQuery
 		err := decoder.Decode(&query, request.URL.Query())
 		baseContext := StaticTemplateCtx(request)
 
@@ -26,7 +25,7 @@ func PeopleListContextProvider(context *context.MahresourcesContext) func(reques
 			return baseContext
 		}
 
-		people, err := context.GetPeople(int(offset), constants.MaxResults, &query)
+		tags, err := context.GetTags(int(offset), constants.MaxResults, &query)
 
 		if err != nil {
 			fmt.Println(err)
@@ -34,7 +33,7 @@ func PeopleListContextProvider(context *context.MahresourcesContext) func(reques
 			return baseContext
 		}
 
-		peopleCount, err := context.GetPeopleCount(&query)
+		tagsCount, err := context.GetTagsCount(&query)
 
 		if err != nil {
 			fmt.Println(err)
@@ -42,42 +41,30 @@ func PeopleListContextProvider(context *context.MahresourcesContext) func(reques
 			return baseContext
 		}
 
-		pagination, err := template_entities.GeneratePagination(request.URL.String(), peopleCount, constants.MaxResults, int(page))
+		pagination, err := template_entities.GeneratePagination(request.URL.String(), tagsCount, constants.MaxResults, int(page))
 
 		if err != nil {
 			fmt.Println(err)
 
 			return baseContext
 		}
-
-		tags, err := context.GetTagsByName("", 0)
-
-		if err != nil {
-			fmt.Println(err)
-
-			return baseContext
-		}
-
-		tagList := models.TagList(*tags)
-		tagsDisplay := template_entities.GenerateRelationsDisplay(query.Tags, tagList.ToNamedEntities(), request.URL.String(), true, "tags")
 
 		return pongo2.Context{
-			"pageTitle":  "People",
-			"people":     people,
+			"pageTitle":  "Tags",
+			"tags":       tags,
 			"pagination": pagination,
-			"tags":       tagsDisplay,
 			"action": template_entities.Entry{
 				Name: "Add",
-				Url:  "/person/new",
+				Url:  "/tag/new",
 			},
 		}.Update(baseContext)
 	}
 }
 
-func PersonCreateContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func TagCreateContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		return pongo2.Context{
-			"pageTitle": "Add New Person",
+			"pageTitle": "Add New Tag",
 		}.Update(StaticTemplateCtx(request))
 	}
 }

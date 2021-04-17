@@ -1,9 +1,11 @@
-{% extends "layouts/gallery.tpl" %}
+{% extends "layouts/base.tpl" %}
 
-{% block gallery %}
-    {% for person in people %}
-        {% include "./partials/person.tpl" %}
-    {% endfor %}
+{% block body %}
+    <div class="flex flex-col gap-4">
+        {% for person in people %}
+            {% include "./partials/person.tpl" %}
+        {% endfor %}
+    </div>
 {% endblock %}
 
 {% block sidebar %}

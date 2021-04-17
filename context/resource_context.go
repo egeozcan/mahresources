@@ -138,6 +138,48 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 
 	ctx.db.Save(res)
 
+	if len(resourceQuery.People) > 0 {
+		people := make([]models.Person, len(resourceQuery.People))
+		for i, v := range resourceQuery.People {
+			people[i] = models.Person{
+				Model: gorm.Model{ID: v},
+			}
+		}
+		createPeopleErr := ctx.db.Model(&res).Association("People").Append(&people)
+
+		if createPeopleErr != nil {
+			return nil, createPeopleErr
+		}
+	}
+
+	if len(resourceQuery.Albums) > 0 {
+		albums := make([]models.Album, len(resourceQuery.Albums))
+		for i, v := range resourceQuery.Albums {
+			albums[i] = models.Album{
+				Model: gorm.Model{ID: v},
+			}
+		}
+		createAlbumsErr := ctx.db.Model(&res).Association("Albums").Append(&albums)
+
+		if createAlbumsErr != nil {
+			return nil, createAlbumsErr
+		}
+	}
+
+	if len(resourceQuery.Tags) > 0 {
+		tags := make([]models.Tag, len(resourceQuery.Tags))
+		for i, v := range resourceQuery.Tags {
+			tags[i] = models.Tag{
+				Model: gorm.Model{ID: v},
+			}
+		}
+		createTagsErr := ctx.db.Model(&res).Association("Tags").Append(&tags)
+
+		if createTagsErr != nil {
+			return nil, createTagsErr
+		}
+	}
+
 	return res, nil
 }
 
