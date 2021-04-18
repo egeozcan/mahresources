@@ -69,6 +69,9 @@ func main() {
 	r.Methods(constants.GET).Path("/albums").HandlerFunc(
 		handlers.RenderTemplate("templates/listAlbums.tpl", contextProviders.AlbumListContextProvider(appContext)),
 	)
+	r.Methods(constants.GET).Path("/album").HandlerFunc(
+		handlers.RenderTemplate("templates/displayAlbum.tpl", contextProviders.AlbumContextProvider(appContext)),
+	)
 
 	r.Methods(constants.GET).Path("/resource/new").HandlerFunc(
 		handlers.RenderTemplate("templates/createResource.tpl", contextProviders.ResourceCreateContextProvider(appContext)),

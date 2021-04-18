@@ -29,3 +29,13 @@ func (tags *TagList) ToNamedEntities() *[]NamedEntity {
 
 	return &list
 }
+
+func (tags *TagList) GetIds() *[]uint {
+	list := make([]uint, len(*tags))
+
+	for i, v := range *tags {
+		list[i] = v.ID
+	}
+
+	return &list
+}

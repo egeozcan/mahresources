@@ -10,6 +10,7 @@ import (
 	"mahresources/models"
 	"mahresources/templates/template_entities"
 	"net/http"
+	"strconv"
 )
 
 func AlbumListContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
@@ -84,5 +85,36 @@ func AlbumCreateContextProvider(context *context.MahresourcesContext) func(reque
 		return pongo2.Context{
 			"pageTitle": "Create Album",
 		}.Update(StaticTemplateCtx(request))
+	}
+}
+
+func AlbumContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+	return func(request *http.Request) pongo2.Context {
+		var query http_query.EntityIdQuery
+		err := decoder.Decode(&query, request.URL.Query())
+		baseContext := StaticTemplateCtx(request)
+
+		if err != nil {
+			fmt.Println(err)
+
+			return baseContext
+		}
+
+		album, err := context.GetAlbum(query.ID)
+
+		if err != nil {
+			fmt.Println(err)
+
+			return baseContext
+		}
+
+		return pongo2.Context{
+			"pageTitle": "Albums",
+			"album":     album,
+			"action": template_entities.Entry{
+				Name: "Edit",
+				Url:  "/album/edit?id=" + strconv.Itoa(int(query.ID)),
+			},
+		}.Update(baseContext)
 	}
 }
