@@ -72,6 +72,9 @@ func main() {
 	r.Methods(constants.GET).Path("/album").HandlerFunc(
 		handlers.RenderTemplate("templates/displayAlbum.tpl", contextProviders.AlbumContextProvider(appContext)),
 	)
+	r.Methods(constants.GET).Path("/album/edit").HandlerFunc(
+		handlers.RenderTemplate("templates/createAlbum.tpl", contextProviders.AlbumCreateContextProvider(appContext)),
+	)
 
 	r.Methods(constants.GET).Path("/resource/new").HandlerFunc(
 		handlers.RenderTemplate("templates/createResource.tpl", contextProviders.ResourceCreateContextProvider(appContext)),
@@ -85,6 +88,9 @@ func main() {
 	)
 	r.Methods(constants.GET).Path("/people").HandlerFunc(
 		handlers.RenderTemplate("templates/listPeople.tpl", contextProviders.PeopleListContextProvider(appContext)),
+	)
+	r.Methods(constants.GET).Path("/person").HandlerFunc(
+		handlers.RenderTemplate("templates/displayPerson.tpl", contextProviders.PersonContextProvider(appContext)),
 	)
 
 	r.Methods(constants.GET).Path("/tag/new").HandlerFunc(

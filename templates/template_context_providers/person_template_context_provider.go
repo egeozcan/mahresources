@@ -81,3 +81,30 @@ func PersonCreateContextProvider(context *context.MahresourcesContext) func(requ
 		}.Update(StaticTemplateCtx(request))
 	}
 }
+
+func PersonContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+	return func(request *http.Request) pongo2.Context {
+		var query http_query.EntityIdQuery
+		err := decoder.Decode(&query, request.URL.Query())
+		baseContext := StaticTemplateCtx(request)
+
+		if err != nil {
+			fmt.Println(err)
+
+			return baseContext
+		}
+
+		person, err := context.GetPerson(query.ID)
+
+		if err != nil {
+			fmt.Println(err)
+
+			return baseContext
+		}
+
+		return pongo2.Context{
+			"pageTitle": "Details: " + person.Name,
+			"person":    person,
+		}.Update(baseContext)
+	}
+}

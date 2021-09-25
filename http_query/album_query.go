@@ -11,6 +11,11 @@ type AlbumCreator struct {
 	OwnerId            uint
 }
 
+type AlbumEditor struct {
+	AlbumCreator
+	ID uint
+}
+
 type AlbumQuery struct {
 	Name          string
 	Description   string

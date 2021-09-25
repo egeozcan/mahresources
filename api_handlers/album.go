@@ -93,14 +93,14 @@ func GetAddAlbumHandler(ctx *context.MahresourcesContext) func(writer http.Respo
 			return
 		}
 
-		var creator = http_query.AlbumCreator{}
-		err = decoder.Decode(&creator, request.PostForm)
+		var queryVars = http_query.AlbumEditor{}
+		err = decoder.Decode(&queryVars, request.PostForm)
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
 		}
 
-		album, err := ctx.CreateAlbum(&creator)
+		album, err := ctx.CreateOrUpdateAlbum(&queryVars)
 
 		if err != nil {
 			writer.WriteHeader(400)

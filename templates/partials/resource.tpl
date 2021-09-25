@@ -6,6 +6,8 @@
         <h4>{{ resource.FileSize | humanReadableSize }}</h4>
         {% if resource.PreviewContentType != "" && len(resource.Preview) != 0 %}
             <img src="data:{{ resource.PreviewContentType }};base64,{{ resource.Preview|base64 }}" alt="">
+        {% else %}
+            <img src="/public/placeholders/file.jpg" alt="">
         {% endif %}
     </a>
     <div class="tags mt-3 mb-2" style="margin-left: -0.5rem">

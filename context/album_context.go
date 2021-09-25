@@ -13,7 +13,7 @@ import (
 	"mahresources/models"
 )
 
-func (ctx *MahresourcesContext) CreateAlbum(albumQuery *http_query.AlbumCreator) (*models.Album, error) {
+func (ctx *MahresourcesContext) CreateOrUpdateAlbum(albumQuery *http_query.AlbumEditor) (*models.Album, error) {
 	if albumQuery.Name == "" {
 		return nil, errors.New("album name needed")
 	}
@@ -24,15 +24,36 @@ func (ctx *MahresourcesContext) CreateAlbum(albumQuery *http_query.AlbumCreator)
 		return nil, err
 	}
 
-	album := models.Album{
-		Name:               albumQuery.Name,
-		Description:        albumQuery.Description,
-		Meta:               albumQuery.Meta,
-		Preview:            preview,
-		PreviewContentType: albumQuery.PreviewContentType,
-		OwnerId:            albumQuery.OwnerId,
+	var album models.Album
+
+	if albumQuery.ID == 0 {
+		album = models.Album{
+			Name:               albumQuery.Name,
+			Description:        albumQuery.Description,
+			Meta:               albumQuery.Meta,
+			Preview:            preview,
+			PreviewContentType: albumQuery.PreviewContentType,
+			OwnerId:            albumQuery.OwnerId,
+		}
+		ctx.db.Create(&album)
+	} else {
+		ctx.db.First(&album, albumQuery.ID)
+		album.Name = albumQuery.Name
+		album.Description = albumQuery.Description
+		album.Meta = albumQuery.Meta
+		album.PreviewContentType = albumQuery.PreviewContentType
+		album.Preview = preview
+		album.OwnerId = albumQuery.OwnerId
+		ctx.db.Save(&album)
+		err := ctx.db.Model(&album).Association("People").Clear()
+		if err != nil {
+			return nil, err
+		}
+		err = ctx.db.Model(&album).Association("Tags").Clear()
+		if err != nil {
+			return nil, err
+		}
 	}
-	ctx.db.Create(&album)
 
 	if len(albumQuery.People) > 0 {
 		people := make([]models.Person, len(albumQuery.People))

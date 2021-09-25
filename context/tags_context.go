@@ -37,8 +37,8 @@ func (ctx *MahresourcesContext) GetTagsByName(name string, limit int) (*[]models
 	return &tags, nil
 }
 
-func (ctx *MahresourcesContext) GetTagsWithIds(ids *[]uint, limit int) (*[]*models.Tag, error) {
-	var tags []*models.Tag
+func (ctx *MahresourcesContext) GetTagsWithIds(ids *[]uint, limit int) (*[]models.Tag, error) {
+	var tags []models.Tag
 
 	query := ctx.db
 

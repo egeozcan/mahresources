@@ -113,13 +113,13 @@ func RedirectBackIfHTMLAccepted(writer http.ResponseWriter, request *http.Reques
 }
 
 func RemoveValue(items []string, item string) []string {
-	newitems := []string{}
+	var newItems []string
 
 	for _, i := range items {
 		if i != item {
-			newitems = append(newitems, i)
+			newItems = append(newItems, i)
 		}
 	}
 
-	return newitems
+	return newItems
 }

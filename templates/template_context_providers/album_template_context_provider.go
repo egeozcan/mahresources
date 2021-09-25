@@ -82,9 +82,63 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 
 func AlbumCreateContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		return pongo2.Context{
+		tplContext := pongo2.Context{
 			"pageTitle": "Create Album",
 		}.Update(StaticTemplateCtx(request))
+
+		var query http_query.EntityIdQuery
+		err := decoder.Decode(&query, request.URL.Query())
+
+		if err != nil {
+			return tplContext
+		}
+
+		album, err := context.GetAlbum(query.ID)
+
+		if err != nil {
+			return tplContext
+		}
+
+		tagIDs := make([]uint, len(album.Tags))
+
+		for i, tag := range album.Tags {
+			tagIDs[i] = tag.ID
+		}
+
+		tags, err := context.GetTagsWithIds(&tagIDs, 0)
+
+		if err != nil {
+			fmt.Println(err)
+
+			return tplContext
+		}
+
+		peopleIDs := make([]uint, len(album.People))
+
+		for i, person := range album.People {
+			peopleIDs[i] = person.ID
+		}
+
+		people, err := context.GetPeopleWithIds(peopleIDs)
+
+		if err != nil {
+			fmt.Println(err)
+
+			return tplContext
+		}
+
+		tagList := models.TagList(*tags)
+		tagsDisplay := template_entities.GenerateRelationsDisplay(tagIDs, tagList.ToNamedEntities(), request.URL.String(), true, "tags")
+
+		peopleList := models.PersonList(*people)
+		peopleDisplay := template_entities.GenerateRelationsDisplay(peopleIDs, peopleList.ToNamedEntities(), request.URL.String(), true, "people")
+
+		tplContext["album"] = album
+		tplContext["pageTitle"] = "Edit Album"
+		tplContext["tags"] = tagsDisplay
+		tplContext["people"] = peopleDisplay
+
+		return tplContext
 	}
 }
 
