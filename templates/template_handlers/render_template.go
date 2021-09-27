@@ -1,10 +1,11 @@
 package template_handlers
 
 import (
-	_ "github.com/flosch/pongo2-addons"
 	"github.com/flosch/pongo2/v4"
 	"net/http"
 )
+
+import _ "github.com/flosch/pongo2-addons"
 
 func RenderTemplate(templateName string, templateContext func(request *http.Request) pongo2.Context) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
