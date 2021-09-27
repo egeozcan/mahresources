@@ -60,8 +60,16 @@ func (ctx *MahresourcesContext) UpdatePerson(personQuery *http_query.PersonEdito
 		Name:        personQuery.Name,
 		Surname:     personQuery.Surname,
 		Description: personQuery.Description,
-		Tags:        tags,
 	}
+
+	err := ctx.db.Model(&person).Association("Tags").Clear()
+
+	if err != nil {
+		return nil, err
+	}
+
+	person.Tags = tags
+
 	ctx.db.Save(&person)
 
 	return &person, nil
