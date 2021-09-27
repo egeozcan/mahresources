@@ -105,7 +105,7 @@ func PersonCreateContextProvider(context *context.MahresourcesContext) func(requ
 
 		tplContext["person"] = person
 		tplContext["pageTitle"] = "Edit Person"
-		tplContext["tags"] = tagsDisplay
+		tplContext["tags"] = tagsDisplay.SelectedRelations
 
 		return tplContext
 	}

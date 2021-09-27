@@ -2,8 +2,10 @@
 <div
     x-data="{
         max: parseInt('{{ max }}') || 0,
+        min: parseInt('{{ min }}') || 0,
         results: [],
         selectedIndex: -1,
+        errorMessage: '',
         dropdownActive: false,
         selectedResults: {{ selectedItems|json }} || [],
         selectedIds: new Set(),
@@ -42,12 +44,21 @@
                 selectedIds.add(val.ID);
             });
         });
+        $refs.inputs.closest('form').addEventListener('submit', (e) => {
+            if (selectedResults.length < min) {
+                e.preventDefault();
+                $refs.autocompleter.focus();
+                errorMessage = 'boom';
+            }
+        });
     "
     class="relative"
 >
     <label class="block text-sm font-medium text-gray-700 mt-3" for="{{ id }}">{{ title }}</label>
+    <span x-show="errorMessage" x-text="errorMessage" class="block text-sm font-medium text-red-400 mt-3"></span>
     <input
         id="{{ id }}"
+        x-ref="autocompleter"
         type="text"
         class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md mt-2"
         @keydown.escape.prevent="$event.target.blur();"
@@ -96,6 +107,7 @@
             <button
                     @click="selectedResults.splice(index, 1);"
                     type="button"
+                    x-show="selectedResults.length > min"
                     class="
                         flex-shrink-0 ml-0.5 h-4 w-4 rounded-md inline-flex items-center justify-center
                         text-indigo-400 hover:bg-indigo-200 hover:text-indigo-500 focus:outline-none

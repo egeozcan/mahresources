@@ -13,5 +13,13 @@ func nanoidFilter(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *pongo2
 		return pongo2.AsValue(input), nil
 	}
 
-	return pongo2.AsValue(input + "___" + id), nil
+	var res string
+
+	if input != "" {
+		res = input + "___" + id
+	} else {
+		res = id
+	}
+
+	return pongo2.AsValue(res), nil
 }

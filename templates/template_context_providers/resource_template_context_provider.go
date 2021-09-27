@@ -133,9 +133,9 @@ func ResourceCreateContextProvider(context *context.MahresourcesContext) func(re
 
 		tplContext["resource"] = resource
 		tplContext["pageTitle"] = "Edit Resource"
-		tplContext["tags"] = tagsDisplay
-		tplContext["people"] = peopleDisplay
-		tplContext["albums"] = albumDisplay
+		tplContext["tags"] = tagsDisplay.SelectedRelations
+		tplContext["people"] = peopleDisplay.SelectedRelations
+		tplContext["albums"] = albumDisplay.SelectedRelations
 
 		return tplContext
 	}

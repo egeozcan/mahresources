@@ -123,8 +123,8 @@ func AlbumCreateContextProvider(context *context.MahresourcesContext) func(reque
 
 		tplContext["album"] = album
 		tplContext["pageTitle"] = "Edit Album"
-		tplContext["tags"] = tagsDisplay
-		tplContext["people"] = peopleDisplay
+		tplContext["tags"] = tagsDisplay.SelectedRelations
+		tplContext["people"] = peopleDisplay.SelectedRelations
 
 		return tplContext
 	}
