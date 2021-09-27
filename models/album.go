@@ -23,7 +23,7 @@ func (a Album) GetName() string {
 	return a.Name
 }
 
-type AlbumList []Album
+type AlbumList []*Album
 
 func (albums *AlbumList) ToNamedEntities() *[]NamedEntity {
 	list := make([]NamedEntity, len(*albums))

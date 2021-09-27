@@ -16,7 +16,7 @@ import (
 	"path"
 )
 
-func (ctx *MahresourcesContext) GetResource(id int64) (*models.Resource, error) {
+func (ctx *MahresourcesContext) GetResource(id uint) (*models.Resource, error) {
 	var resource models.Resource
 	ctx.db.Preload(clause.Associations).First(&resource, id)
 
@@ -60,6 +60,78 @@ func (ctx *MahresourcesContext) AddResourceToAlbum(resId, albumId int64) (*model
 	}
 
 	return &resource, nil
+}
+
+func (ctx *MahresourcesContext) EditResource(resourceQuery *http_query.ResourceEditor) (*models.Resource, error) {
+	resource, err := ctx.GetResource(resourceQuery.ID)
+
+	if err != nil {
+		return nil, err
+	}
+
+	err = ctx.db.Model(&resource).Association("People").Clear()
+
+	if err != nil {
+		return nil, err
+	}
+
+	err = ctx.db.Model(&resource).Association("Tags").Clear()
+
+	if err != nil {
+		return nil, err
+	}
+
+	err = ctx.db.Model(&resource).Association("Albums").Clear()
+
+	if err != nil {
+		return nil, err
+	}
+
+	people := make([]models.Person, len(resourceQuery.People))
+	for i, v := range resourceQuery.People {
+		people[i] = models.Person{
+			Model: gorm.Model{ID: v},
+		}
+	}
+	err = ctx.db.Model(&resource).Association("People").Append(&people)
+
+	if err != nil {
+		return nil, err
+	}
+
+	albums := make([]models.Album, len(resourceQuery.Albums))
+	for i, v := range resourceQuery.Albums {
+		albums[i] = models.Album{
+			Model: gorm.Model{ID: v},
+		}
+	}
+	err = ctx.db.Model(&resource).Association("Albums").Append(&albums)
+
+	if err != nil {
+		return nil, err
+	}
+
+	tags := make([]models.Tag, len(resourceQuery.Tags))
+	for i, v := range resourceQuery.Tags {
+		tags[i] = models.Tag{
+			Model: gorm.Model{ID: v},
+		}
+	}
+	err = ctx.db.Model(&resource).Association("Tags").Append(&tags)
+
+	if err != nil {
+		return nil, err
+	}
+
+	resource.Name = resourceQuery.Name
+	resource.Meta = resourceQuery.Meta
+	resource.Description = resourceQuery.Description
+	resource.Category = resourceQuery.Category
+	resource.ContentCategory = resourceQuery.ContentCategory
+
+	ctx.db.Save(resource)
+
+	return resource, nil
 }
 
 func (ctx *MahresourcesContext) AddResource(file File, fileName string, resourceQuery *http_query.ResourceCreator) (*models.Resource, error) {

@@ -10,6 +10,7 @@ import (
 	"mahresources/models"
 	"mahresources/templates/template_entities"
 	"net/http"
+	"strconv"
 )
 
 func ResourceListContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
@@ -86,8 +87,87 @@ func ResourceListContextProvider(context *context.MahresourcesContext) func(requ
 
 func ResourceCreateContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		return pongo2.Context{
+		tplContext := pongo2.Context{
 			"pageTitle": "Create Resource",
 		}.Update(StaticTemplateCtx(request))
+
+		var query http_query.EntityIdQuery
+		err := decoder.Decode(&query, request.URL.Query())
+
+		if err != nil {
+			return tplContext
+		}
+
+		resource, err := context.GetResource(query.ID)
+
+		if err != nil {
+			return tplContext
+		}
+
+		tagIDs := make([]uint, len(resource.Tags))
+
+		for i, tag := range resource.Tags {
+			tagIDs[i] = tag.ID
+		}
+
+		tagList := models.TagList(resource.Tags)
+		tagsDisplay := template_entities.GenerateRelationsDisplay(tagIDs, tagList.ToNamedEntities(), request.URL.String(), true, "tags")
+
+		peopleIDs := make([]uint, len(resource.People))
+
+		for i, person := range resource.People {
+			peopleIDs[i] = person.ID
+		}
+
+		peopleList := models.PersonList(resource.People)
+		peopleDisplay := template_entities.GenerateRelationsDisplay(peopleIDs, peopleList.ToNamedEntities(), request.URL.String(), true, "people")
+
+		albumIDs := make([]uint, len(resource.Albums))
+
+		for i, album := range resource.Albums {
+			albumIDs[i] = album.ID
+		}
+
+		albumList := models.AlbumList(resource.Albums)
+		albumDisplay := template_entities.GenerateRelationsDisplay(albumIDs, albumList.ToNamedEntities(), request.URL.String(), true, "albums")
+
+		tplContext["resource"] = resource
+		tplContext["pageTitle"] = "Edit Resource"
+		tplContext["tags"] = tagsDisplay
+		tplContext["people"] = peopleDisplay
+		tplContext["albums"] = albumDisplay
+
+		return tplContext
+	}
+}
+
+func ResourceContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+	return func(request *http.Request) pongo2.Context {
+		var query http_query.EntityIdQuery
+		err := decoder.Decode(&query, request.URL.Query())
+		baseContext := StaticTemplateCtx(request)
+
+		if err != nil {
+			fmt.Println(err)
+
+			return baseContext
+		}
+
+		resource, err := context.GetResource(query.ID)
+
+		if err != nil {
+			fmt.Println(err)
+
+			return baseContext
+		}
+
+		return pongo2.Context{
+			"pageTitle": "Resource " + resource.Name,
+			"resource":  resource,
+			"action": template_entities.Entry{
+				Name: "Edit",
+				Url:  "/resource/edit?id=" + strconv.Itoa(int(query.ID)),
+			},
+		}.Update(baseContext)
 	}
 }

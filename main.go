@@ -59,75 +59,91 @@ func main() {
 
 	httpFs := afero.NewHttpFs(cachedFS)
 
-	r := mux.NewRouter()
+	router := mux.NewRouter()
 
 	appContext := context.NewMahresourcesContext(cachedFS, db)
 
-	r.Methods(constants.GET).Path("/album/new").HandlerFunc(
+	router.Methods(constants.GET).Path("/album/new").HandlerFunc(
 		handlers.RenderTemplate("templates/createAlbum.tpl", contextProviders.AlbumCreateContextProvider(appContext)),
 	)
-	r.Methods(constants.GET).Path("/albums").HandlerFunc(
+	router.Methods(constants.GET).Path("/albums").HandlerFunc(
 		handlers.RenderTemplate("templates/listAlbums.tpl", contextProviders.AlbumListContextProvider(appContext)),
 	)
-	r.Methods(constants.GET).Path("/album").HandlerFunc(
+	router.Methods(constants.GET).Path("/album").HandlerFunc(
 		handlers.RenderTemplate("templates/displayAlbum.tpl", contextProviders.AlbumContextProvider(appContext)),
 	)
-	r.Methods(constants.GET).Path("/album/edit").HandlerFunc(
+	router.Methods(constants.GET).Path("/album/edit").HandlerFunc(
 		handlers.RenderTemplate("templates/createAlbum.tpl", contextProviders.AlbumCreateContextProvider(appContext)),
 	)
 
-	r.Methods(constants.GET).Path("/resource/new").HandlerFunc(
+	router.Methods(constants.GET).Path("/resource/new").HandlerFunc(
 		handlers.RenderTemplate("templates/createResource.tpl", contextProviders.ResourceCreateContextProvider(appContext)),
 	)
-	r.Methods(constants.GET).Path("/resources").HandlerFunc(
+	router.Methods(constants.GET).Path("/resources").HandlerFunc(
 		handlers.RenderTemplate("templates/listResources.tpl", contextProviders.ResourceListContextProvider(appContext)),
 	)
+	router.Methods(constants.GET).Path("/resource").HandlerFunc(
+		handlers.RenderTemplate("templates/displayResource.tpl", contextProviders.ResourceContextProvider(appContext)),
+	)
+	router.Methods(constants.GET).Path("/resource/edit").HandlerFunc(
+		handlers.RenderTemplate("templates/createResource.tpl", contextProviders.ResourceCreateContextProvider(appContext)),
+	)
 
-	r.Methods(constants.GET).Path("/person/new").HandlerFunc(
+	router.Methods(constants.GET).Path("/person/new").HandlerFunc(
 		handlers.RenderTemplate("templates/createPerson.tpl", contextProviders.PersonCreateContextProvider(appContext)),
 	)
-	r.Methods(constants.GET).Path("/people").HandlerFunc(
+	router.Methods(constants.GET).Path("/person/edit").HandlerFunc(
+		handlers.RenderTemplate("templates/createPerson.tpl", contextProviders.PersonCreateContextProvider(appContext)),
+	)
+	router.Methods(constants.GET).Path("/people").HandlerFunc(
 		handlers.RenderTemplate("templates/listPeople.tpl", contextProviders.PeopleListContextProvider(appContext)),
 	)
-	r.Methods(constants.GET).Path("/person").HandlerFunc(
+	router.Methods(constants.GET).Path("/person").HandlerFunc(
 		handlers.RenderTemplate("templates/displayPerson.tpl", contextProviders.PersonContextProvider(appContext)),
 	)
 
-	r.Methods(constants.GET).Path("/tag/new").HandlerFunc(
+	router.Methods(constants.GET).Path("/tag/new").HandlerFunc(
 		handlers.RenderTemplate("templates/createTag.tpl", contextProviders.TagCreateContextProvider(appContext)),
 	)
-	r.Methods(constants.GET).Path("/tags").HandlerFunc(
+	router.Methods(constants.GET).Path("/tag/edit").HandlerFunc(
+		handlers.RenderTemplate("templates/createTag.tpl", contextProviders.TagCreateContextProvider(appContext)),
+	)
+	router.Methods(constants.GET).Path("/tags").HandlerFunc(
 		handlers.RenderTemplate("templates/listTags.tpl", contextProviders.TagListContextProvider(appContext)),
 	)
+	router.Methods(constants.GET).Path("/tag").HandlerFunc(
+		handlers.RenderTemplate("templates/displayTag.tpl", contextProviders.TagContextProvider(appContext)),
+	)
 
-	r.Methods(constants.GET).Path("/").HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	router.Methods(constants.GET).Path("/").HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		http.Redirect(writer, request, "/albums", http.StatusMovedPermanently)
 	})
 
-	r.Methods(constants.GET).Path("/v1/albums").HandlerFunc(api_handlers.GetAlbumsHandler(appContext))
-	r.Methods(constants.GET).Path("/v1/album").HandlerFunc(api_handlers.GetAlbumHandler(appContext))
-	r.Methods(constants.POST).Path("/v1/album").HandlerFunc(api_handlers.GetAddAlbumHandler(appContext))
+	router.Methods(constants.GET).Path("/v1/albums").HandlerFunc(api_handlers.GetAlbumsHandler(appContext))
+	router.Methods(constants.GET).Path("/v1/album").HandlerFunc(api_handlers.GetAlbumHandler(appContext))
+	router.Methods(constants.POST).Path("/v1/album").HandlerFunc(api_handlers.GetAddAlbumHandler(appContext))
 
-	r.Methods(constants.GET).Path("/v1/people").HandlerFunc(api_handlers.GetPeopleHandler(appContext))
-	r.Methods(constants.GET).Path("/v1/people/autocomplete").HandlerFunc(api_handlers.GetPeopleAutocompleteHandler(appContext))
-	r.Methods(constants.GET).Path("/v1/person").HandlerFunc(api_handlers.GetPersonHandler(appContext))
-	r.Methods(constants.POST).Path("/v1/person").HandlerFunc(api_handlers.GetAddPersonHandler(appContext))
+	router.Methods(constants.GET).Path("/v1/people").HandlerFunc(api_handlers.GetPeopleHandler(appContext))
+	router.Methods(constants.GET).Path("/v1/people/autocomplete").HandlerFunc(api_handlers.GetPeopleAutocompleteHandler(appContext))
+	router.Methods(constants.GET).Path("/v1/person").HandlerFunc(api_handlers.GetPersonHandler(appContext))
+	router.Methods(constants.POST).Path("/v1/person").HandlerFunc(api_handlers.GetAddPersonHandler(appContext))
 
-	r.Methods(constants.GET).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceHandler(appContext))
-	r.Methods(constants.POST).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceUploadHandler(appContext))
-	r.Methods(constants.POST).Path("/v1/resource/preview").HandlerFunc(api_handlers.GetResourceUploadPreviewHandler(appContext))
-	r.Methods(constants.POST).Path("/v1/resource/addToAlbum").HandlerFunc(api_handlers.GetAddResourceToAlbumHandler(appContext))
+	router.Methods(constants.GET).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceHandler(appContext))
+	router.Methods(constants.POST).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceUploadHandler(appContext))
+	router.Methods(constants.POST).Path("/v1/resource/edit").HandlerFunc(api_handlers.GetResourceEditHandler(appContext))
+	router.Methods(constants.POST).Path("/v1/resource/preview").HandlerFunc(api_handlers.GetResourceUploadPreviewHandler(appContext))
+	router.Methods(constants.POST).Path("/v1/resource/addToAlbum").HandlerFunc(api_handlers.GetAddResourceToAlbumHandler(appContext))
 
-	r.Methods(constants.GET).Path("/v1/tags").HandlerFunc(api_handlers.GetTagsHandler(appContext))
-	r.Methods(constants.POST).Path("/v1/tag").HandlerFunc(api_handlers.GetAddTagHandler(appContext))
+	router.Methods(constants.GET).Path("/v1/tags").HandlerFunc(api_handlers.GetTagsHandler(appContext))
+	router.Methods(constants.POST).Path("/v1/tag").HandlerFunc(api_handlers.GetAddTagHandler(appContext))
 
 	filePathPrefix := "/files/"
-	r.PathPrefix(filePathPrefix).Handler(http.StripPrefix(filePathPrefix, http.FileServer(httpFs.Dir("/"))))
-	r.PathPrefix("/public/").Handler(http.StripPrefix("/public/", http.FileServer(http.Dir("./public"))))
+	router.PathPrefix(filePathPrefix).Handler(http.StripPrefix(filePathPrefix, http.FileServer(httpFs.Dir("/"))))
+	router.PathPrefix("/public/").Handler(http.StripPrefix("/public/", http.FileServer(http.Dir("./public"))))
 
 	srv := &http.Server{
 		Addr:         ":8080",
-		Handler:      r,
+		Handler:      router,
 		WriteTimeout: 45 * time.Minute,
 		ReadTimeout:  45 * time.Minute,
 	}

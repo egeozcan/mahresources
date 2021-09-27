@@ -33,6 +33,22 @@ func GetIntQueryParameter(request *http.Request, paramName string, defVal int64)
 	return param
 }
 
+func GetUIntQueryParameter(request *http.Request, paramName string, defVal uint) uint {
+	paramFromRes := GetQueryParameter(request, paramName, "")
+
+	if paramFromRes == "" {
+		return defVal
+	}
+
+	param, err := strconv.ParseUint(paramFromRes, 10, 0)
+
+	if err != nil {
+		return defVal
+	}
+
+	return uint(param)
+}
+
 func GetFormParameter(request *http.Request, paramName string, defVal string) string {
 	_ = request.ParseForm()
 	paramFromRes := request.PostForm.Get(paramName)
@@ -76,18 +92,22 @@ func GetIntFormParameter(request *http.Request, paramName string, defVal int64) 
 	return param
 }
 
-func RedirectBackIfHTMLAccepted(writer http.ResponseWriter, request *http.Request) bool {
-	backUrl := GetQueryParameter(request, "redirect", "")
+func RedirectIfHTMLAccepted(writer http.ResponseWriter, request *http.Request, url string) bool {
+	requestedBackUrl := GetQueryParameter(request, "redirect", "")
 
-	if backUrl != "" {
-		http.Redirect(writer, request, backUrl, http.StatusSeeOther)
+	if requestedBackUrl != "" {
+		http.Redirect(writer, request, requestedBackUrl, http.StatusSeeOther)
 
 		return true
 	}
 
-	referrer := request.Referer()
+	backUrl := url
 
-	if referrer == "" {
+	if url == "" {
+		backUrl = request.Referer()
+	}
+
+	if backUrl == "" {
 		return false
 	}
 
@@ -102,7 +122,7 @@ func RedirectBackIfHTMLAccepted(writer http.ResponseWriter, request *http.Reques
 
 		fmt.Println("accepts", val)
 		if strings.Contains(val, "text/html") {
-			http.Redirect(writer, request, referrer, http.StatusSeeOther)
+			http.Redirect(writer, request, backUrl, http.StatusSeeOther)
 
 			return true
 		}

@@ -13,6 +13,18 @@ type ResourceCreator struct {
 	PreviewContentType string
 }
 
+type ResourceEditor struct {
+	ID              uint
+	Name            string
+	Description     string
+	People          []uint
+	Tags            []uint
+	Albums          []uint
+	Meta            string
+	ContentCategory string
+	Category        string
+}
+
 type ResourceQuery struct {
 	Name          string
 	Description   string

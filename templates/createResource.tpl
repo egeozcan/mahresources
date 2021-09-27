@@ -1,9 +1,14 @@
 {% extends "layouts/base.tpl" %}
 
 {% block body %}
-<form class="space-y-8" method="post" action="/v1/resource?redirect=%2Fresources" enctype="multipart/form-data" x-data="{ preview: '', previewVisible: true }">
+<form class="space-y-8" method="post" action="/v1/resource{% if resource %}/edit{% endif %}" enctype="{% if !resource %}multipart/form-data{% endif %}" x-data="{ preview: '{{ resource.Preview|base64 }}', previewVisible: true }">
+    {% if resource %}
+    <input type="hidden" value="{{ resource.ID }}" name="ID">
+    {% endif %}
+    {% if !resource %}
     <input type="hidden" :value="preview ? preview : ''" name="Preview">
     <input type="hidden" :value="preview ? 'image/png' : ''" name="PreviewContentType">
+    {% endif %}
     <div class="space-y-8 sm:space-y-5">
         <div>
             <div class="mt-6 sm:mt-5 space-y-6 sm:space-y-5">
@@ -14,6 +19,7 @@
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="max-w-lg flex rounded-md shadow-sm">
                             <input
+                                    value="{{ resource.Name }}"
                                     type="text"
                                     name="Name"
                                     placeholder="If you leave this empty, the name of the uploaded file will be used"
@@ -29,11 +35,12 @@
                         Description
                     </label>
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
-                        <textarea id="description" name="Description" rows="3" class="max-w-lg shadow-sm block w-full focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm border-gray-300 rounded-md"></textarea>
+                        <textarea id="description" name="Description" rows="3" class="max-w-lg shadow-sm block w-full focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm border-gray-300 rounded-md">{{ resource.Description }}</textarea>
                         <p class="mt-2 text-sm text-gray-500">Describe the resource.</p>
                     </div>
                 </div>
 
+                {% if !resource %}
                 <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-gray-200 sm:pt-5">
                     <label for="resource" class="block text-sm font-medium text-gray-700">
                         Resource
@@ -59,6 +66,7 @@
                         </div>
                     </div>
                 </div>
+                {% endif %}
 
                 <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-gray-200 sm:pt-5">
                     <span class="block text-sm font-medium text-gray-700">
@@ -67,13 +75,13 @@
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="flex gap-2">
                             <div class="flex-1">
-                                {% include "./partials/form/autocompleter.tpl" with url='/v1/tags' elName='tags' title='Tags' id="autocompleter"|nanoid %}
+                                {% include "./partials/form/autocompleter.tpl" with url='/v1/tags' elName='tags' title='Tags' selectedItems=resource.Tags id="autocompleter"|nanoid %}
                             </div>
                             <div class="flex-1">
-                                {% include "./partials/form/autocompleter.tpl" with url='/v1/people/autocomplete' elName='people' title='People' id="autocompleter"|nanoid %}
+                                {% include "./partials/form/autocompleter.tpl" with url='/v1/people/autocomplete' elName='people' title='People' selectedItems=resource.People id="autocompleter"|nanoid %}
                             </div>
                             <div class="flex-1">
-                                {% include "./partials/form/autocompleter.tpl" with url='/v1/albums' elName='albums' title='Albums' id="autocompleter"|nanoid %}
+                                {% include "./partials/form/autocompleter.tpl" with url='/v1/albums' elName='albums' title='Albums' selectedItems=resource.Albums id="autocompleter"|nanoid %}
                             </div>
                         </div>
                     </div>

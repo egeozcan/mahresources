@@ -1,12 +1,16 @@
 {% extends "layouts/base.tpl" %}
 
 {% block body %}
-    <h3>{{ album.Name }}</h3>
     <div class="flex">
-        <div class="flex-1">
+        <p class="flex-1 mb-6">
             {{ album.Description }}
-        </div>
+        </p>
     </div>
+    <section class="album-container">
+        {% for resource in album.Resources %}
+            {% include "./partials/resource.tpl" %}
+        {% endfor %}
+    </section>
 {% endblock %}
 
 {% block sidebar %}
@@ -16,7 +20,12 @@
     <h3 class="font-regular text-base md:text-lg leading-snug truncate">Tags</h3>
     <div class="mt-2 -ml-2">
         {% for tag in album.Tags %}
-            {% include "./partials/tag.tpl" with name=tag.Name %}
+            {% include "./partials/tag.tpl" with name=tag.Name ID=tag.ID %}
+        {% endfor %}
+    </div>
+    <div class="mt-2 -ml-2">
+        {% for person in album.People %}
+            {% include "./partials/person.tpl" %}
         {% endfor %}
     </div>
 {% endblock %}

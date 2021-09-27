@@ -2,7 +2,7 @@
 
 <div class="album">
     <a href="/album?id={{ album.ID }}">
-        <h3>{{ album.Name }}</h3>
+        <h3 class="mb-2">{{ album.Name }}</h3>
         {% if album.PreviewContentType != "" && len(album.Preview) != 0 %}
         <img src="data:{{ album.PreviewContentType }};base64,{{ album.Preview|base64 }}" alt="">
         {% else %}

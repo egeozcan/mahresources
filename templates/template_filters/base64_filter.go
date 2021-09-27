@@ -6,6 +6,17 @@ import (
 )
 
 func base64Filter(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *pongo2.Error) {
-	input := in.Interface().([]byte)
+	i := in.Interface()
+
+	if i == nil {
+		return pongo2.AsValue(""), nil
+	}
+
+	input := i.([]byte)
+
+	if input == nil || len(input) == 0 {
+		return pongo2.AsValue(""), nil
+	}
+
 	return pongo2.AsValue(base64.StdEncoding.EncodeToString(input)), nil
 }

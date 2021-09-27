@@ -9,6 +9,7 @@ import (
 	"mahresources/http_utils"
 	"mahresources/templates/template_entities"
 	"net/http"
+	"strconv"
 )
 
 func TagListContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
@@ -63,8 +64,53 @@ func TagListContextProvider(context *context.MahresourcesContext) func(request *
 
 func TagCreateContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		return pongo2.Context{
-			"pageTitle": "Add New Tag",
+		tplContext := pongo2.Context{
+			"pageTitle": "Create Tag",
 		}.Update(StaticTemplateCtx(request))
+
+		var query http_query.EntityIdQuery
+		err := decoder.Decode(&query, request.URL.Query())
+
+		tag, err := context.GetTag(query.ID)
+
+		if err != nil {
+			return tplContext
+		}
+
+		tplContext["pageTitle"] = "Edit Tag"
+		tplContext["tag"] = tag
+
+		return tplContext
+	}
+}
+
+func TagContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+	return func(request *http.Request) pongo2.Context {
+		var query http_query.EntityIdQuery
+		err := decoder.Decode(&query, request.URL.Query())
+		baseContext := StaticTemplateCtx(request)
+
+		if err != nil {
+			fmt.Println(err)
+
+			return baseContext
+		}
+
+		tag, err := context.GetTag(query.ID)
+
+		if err != nil {
+			fmt.Println(err)
+
+			return baseContext
+		}
+
+		return pongo2.Context{
+			"pageTitle": "Tag " + tag.Name,
+			"tag":       tag,
+			"action": template_entities.Entry{
+				Name: "Edit",
+				Url:  "/tag/edit?id=" + strconv.Itoa(int(query.ID)),
+			},
+		}.Update(baseContext)
 	}
 }

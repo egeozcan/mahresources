@@ -38,6 +38,34 @@ func (ctx *MahresourcesContext) CreatePerson(personQuery *http_query.PersonCreat
 
 	return &person, nil
 }
+func (ctx *MahresourcesContext) UpdatePerson(personQuery *http_query.PersonEditor) (*models.Person, error) {
+	if personQuery.Name == "" {
+		return nil, errors.New("person name needed")
+	}
+
+	tags := make([]*models.Tag, len(personQuery.Tags))
+
+	for i, tag := range personQuery.Tags {
+		tags[i] = &models.Tag{
+			Model: gorm.Model{
+				ID: tag,
+			},
+		}
+	}
+
+	person := models.Person{
+		Model: gorm.Model{
+			ID: personQuery.ID,
+		},
+		Name:        personQuery.Name,
+		Surname:     personQuery.Surname,
+		Description: personQuery.Description,
+		Tags:        tags,
+	}
+	ctx.db.Save(&person)
+
+	return &person, nil
+}
 
 func (ctx *MahresourcesContext) GetPerson(id uint) (*models.Person, error) {
 	var person models.Person

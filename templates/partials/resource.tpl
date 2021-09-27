@@ -1,9 +1,11 @@
 {% import "../macros/subTags.tpl" sub_tags %}
 
 <div class="resource">
-    <a href="/files/{{ resource.Location }}">
+    <a href="/resource?id={{ resource.ID }}">
         <h3>{{ resource.Name }}</h3>
         <h4>{{ resource.FileSize | humanReadableSize }}</h4>
+    </a>
+    <a href="/files/{{ resource.Location }}">
         {% if resource.PreviewContentType != "" && len(resource.Preview) != 0 %}
             <img src="data:{{ resource.PreviewContentType }};base64,{{ resource.Preview|base64 }}" alt="">
         {% else %}

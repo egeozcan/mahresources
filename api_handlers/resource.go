@@ -7,12 +7,14 @@ import (
 	"mahresources/context"
 	"mahresources/http_query"
 	"mahresources/http_utils"
+	"mahresources/models"
 	"net/http"
+	"strconv"
 )
 
 func GetResourceHandler(ctx *context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		id := http_utils.GetIntQueryParameter(request, "id", 1)
+		id := http_utils.GetUIntQueryParameter(request, "id", 1)
 		resource, err := ctx.GetResource(id)
 
 		if err != nil {
@@ -71,7 +73,7 @@ func GetAddResourceToAlbumHandler(ctx *context.MahresourcesContext) func(writer 
 			return
 		}
 
-		if http_utils.RedirectBackIfHTMLAccepted(writer, request) {
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "") {
 			return
 		}
 
@@ -89,6 +91,16 @@ func GetResourceUploadHandler(ctx *context.MahresourcesContext) func(writer http
 			return
 		}
 
+		var res *models.Resource
+		var err error
+
+		var creator = http_query.ResourceCreator{}
+		if err := decoder.Decode(&creator, request.PostForm); err != nil {
+			fmt.Println("Error parsing")
+			fmt.Println(err)
+			return
+		}
+
 		file, handler, err := request.FormFile("resource")
 
 		if err != nil {
@@ -96,22 +108,53 @@ func GetResourceUploadHandler(ctx *context.MahresourcesContext) func(writer http
 			fmt.Println(err)
 			return
 		}
+
 		defer file.Close()
 
-		var creator = http_query.ResourceCreator{}
-		err = decoder.Decode(&creator, request.PostForm)
+		name := handler.Filename
+		res, err = ctx.AddResource(file, name, &creator)
+
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
-		name := handler.Filename
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/resource?id="+strconv.Itoa(int(res.ID))) {
+			return
+		}
 
-		res, err := ctx.AddResource(file, name, &creator)
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(res)
+	}
+}
+
+func GetResourceEditHandler(ctx *context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		if err := request.ParseForm(); err != nil {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprint(writer, "error")
+			fmt.Println(err)
+			return
+		}
+
+		var editor = http_query.ResourceEditor{}
+
+		if err := decoder.Decode(&editor, request.PostForm); err != nil {
+			fmt.Println("Error parsing")
+			fmt.Println(err)
+			return
+		}
+
+		res, err := ctx.EditResource(&editor)
 
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
+		}
+
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/resource?id="+strconv.Itoa(int(res.ID))) {
 			return
 		}
 

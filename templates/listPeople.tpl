@@ -1,7 +1,7 @@
 {% extends "layouts/base.tpl" %}
 
 {% block body %}
-    <div class="flex flex-col gap-4">
+    <div class="flex flex-col">
         {% for person in people %}
             {% include "./partials/person.tpl" %}
         {% endfor %}

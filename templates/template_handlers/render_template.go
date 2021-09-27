@@ -1,6 +1,7 @@
 package template_handlers
 
 import (
+	_ "github.com/flosch/pongo2-addons"
 	"github.com/flosch/pongo2/v4"
 	"net/http"
 )

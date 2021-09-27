@@ -7,6 +7,11 @@ type PersonCreator struct {
 	Tags        []uint
 }
 
+type PersonEditor struct {
+	PersonCreator
+	ID uint
+}
+
 type PersonQuery struct {
 	Name          string
 	Surname       string

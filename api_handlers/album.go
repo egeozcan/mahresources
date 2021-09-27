@@ -108,7 +108,7 @@ func GetAddAlbumHandler(ctx *context.MahresourcesContext) func(writer http.Respo
 			return
 		}
 
-		if http_utils.RedirectBackIfHTMLAccepted(writer, request) {
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "") {
 			return
 		}
 

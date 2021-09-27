@@ -18,7 +18,7 @@ func (t Tag) GetName() string {
 	return t.Name
 }
 
-type TagList []Tag
+type TagList []*Tag
 
 func (tags *TagList) ToNamedEntities() *[]NamedEntity {
 	list := make([]NamedEntity, len(*tags))

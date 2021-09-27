@@ -1,6 +1,7 @@
 
 <div
     x-data="{
+        max: parseInt('{{ max }}') || 0,
         results: [],
         selectedIndex: -1,
         dropdownActive: false,
@@ -13,6 +14,20 @@
             name: '{{ elName }}',
             value: val.ID
         })),
+        pushVal($event) {
+            if (!this.results[this.selectedIndex]) return;
+            this.selectedResults.push(this.results[this.selectedIndex]);
+
+            if (this.max !== 0 && this.selectedResults.length > this.max) {
+                this.selectedResults.splice(0, 1);
+                console.log(this.selectedResults, this.max);
+            } else {
+                console.log(this.selectedResults, this.max);
+            }
+
+            $event.target.value = '';
+            $event.target.dispatchEvent(new Event('input'));
+        }
     }"
     x-init="
         selectedResults.forEach(val => {
@@ -35,13 +50,10 @@
         id="{{ id }}"
         type="text"
         class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md mt-2"
+        @keydown.escape.prevent="$event.target.blur();"
         @keydown.arrow-up.prevent="selectedIndex = selectedIndex - 1; if (selectedIndex < 0) selectedIndex = results.length - 1;"
         @keydown.arrow-down.prevent="selectedIndex = (selectedIndex + 1) % results.length"
-        @keydown.enter.prevent="
-            if (!results[selectedIndex]) return;
-            selectedResults.push(results[selectedIndex]);
-            $event.target.dispatchEvent(new Event('input'));
-        "
+        @keydown.enter.prevent="pushVal"
         @blur="
             if (document.activeElement === $event.target) return;
             setTimeout(() => {
@@ -106,7 +118,7 @@
                             :active="false"
                             class="cursor-pointer p-2 flex block w-full rounded"
                             :class="{'bg-blue-500': index === selectedIndex}"
-                            @click="selectedResults.push(result); dropdownActive = false;"
+                            @click="pushVal"
                             @mouseover="selectedIndex = index;"
                         >
                             <span

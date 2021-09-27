@@ -7,7 +7,9 @@ import (
 	"mahresources/context"
 	"mahresources/http_query"
 	"mahresources/http_utils"
+	"mahresources/models"
 	"net/http"
+	"strconv"
 )
 
 func GetTagsHandler(ctx *context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
@@ -52,7 +54,13 @@ func GetAddTagHandler(ctx *context.MahresourcesContext) func(writer http.Respons
 			_, _ = fmt.Fprint(writer, err.Error())
 		}
 
-		album, err := ctx.CreateTag(&creator)
+		var tag *models.Tag
+
+		if creator.ID != 0 {
+			tag, err = ctx.UpdateTag(&creator)
+		} else {
+			tag, err = ctx.CreateTag(&creator)
+		}
 
 		if err != nil {
 			writer.WriteHeader(400)
@@ -60,11 +68,11 @@ func GetAddTagHandler(ctx *context.MahresourcesContext) func(writer http.Respons
 			return
 		}
 
-		if http_utils.RedirectBackIfHTMLAccepted(writer, request) {
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/tag?id="+strconv.Itoa(int(tag.ID))) {
 			return
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(album)
+		_ = json.NewEncoder(writer).Encode(tag)
 	}
 }

@@ -105,13 +105,7 @@ func AlbumCreateContextProvider(context *context.MahresourcesContext) func(reque
 			tagIDs[i] = tag.ID
 		}
 
-		tags, err := context.GetTagsWithIds(&tagIDs, 0)
-
-		if err != nil {
-			fmt.Println(err)
-
-			return tplContext
-		}
+		tags := album.Tags
 
 		peopleIDs := make([]uint, len(album.People))
 
@@ -119,18 +113,12 @@ func AlbumCreateContextProvider(context *context.MahresourcesContext) func(reque
 			peopleIDs[i] = person.ID
 		}
 
-		people, err := context.GetPeopleWithIds(peopleIDs)
+		people := album.People
 
-		if err != nil {
-			fmt.Println(err)
-
-			return tplContext
-		}
-
-		tagList := models.TagList(*tags)
+		tagList := models.TagList(tags)
 		tagsDisplay := template_entities.GenerateRelationsDisplay(tagIDs, tagList.ToNamedEntities(), request.URL.String(), true, "tags")
 
-		peopleList := models.PersonList(*people)
+		peopleList := models.PersonList(people)
 		peopleDisplay := template_entities.GenerateRelationsDisplay(peopleIDs, peopleList.ToNamedEntities(), request.URL.String(), true, "people")
 
 		tplContext["album"] = album
@@ -163,7 +151,7 @@ func AlbumContextProvider(context *context.MahresourcesContext) func(request *ht
 		}
 
 		return pongo2.Context{
-			"pageTitle": "Albums",
+			"pageTitle": "Album " + album.Name,
 			"album":     album,
 			"action": template_entities.Entry{
 				Name: "Edit",

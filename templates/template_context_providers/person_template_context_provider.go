@@ -10,6 +10,7 @@ import (
 	"mahresources/models"
 	"mahresources/templates/template_entities"
 	"net/http"
+	"strconv"
 )
 
 func PeopleListContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
@@ -76,9 +77,37 @@ func PeopleListContextProvider(context *context.MahresourcesContext) func(reques
 
 func PersonCreateContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		return pongo2.Context{
+		tplContext := pongo2.Context{
 			"pageTitle": "Add New Person",
 		}.Update(StaticTemplateCtx(request))
+
+		var query http_query.EntityIdQuery
+		err := decoder.Decode(&query, request.URL.Query())
+
+		if err != nil {
+			return tplContext
+		}
+
+		person, err := context.GetPerson(query.ID)
+
+		if err != nil {
+			return tplContext
+		}
+
+		tagIDs := make([]uint, len(person.Tags))
+
+		for i, tag := range person.Tags {
+			tagIDs[i] = tag.ID
+		}
+
+		tagList := models.TagList(person.Tags)
+		tagsDisplay := template_entities.GenerateRelationsDisplay(tagIDs, tagList.ToNamedEntities(), request.URL.String(), true, "tags")
+
+		tplContext["person"] = person
+		tplContext["pageTitle"] = "Edit Person"
+		tplContext["tags"] = tagsDisplay
+
+		return tplContext
 	}
 }
 
@@ -105,6 +134,10 @@ func PersonContextProvider(context *context.MahresourcesContext) func(request *h
 		return pongo2.Context{
 			"pageTitle": "Details: " + person.Name,
 			"person":    person,
+			"action": template_entities.Entry{
+				Name: "Edit",
+				Url:  "/person/edit?id=" + strconv.Itoa(int(query.ID)),
+			},
 		}.Update(baseContext)
 	}
 }

@@ -1,7 +1,10 @@
 {% extends "layouts/base.tpl" %}
 
 {% block body %}
-<form class="space-y-8" method="post" action="/v1/tag?redirect=%2Ftags">
+<form class="space-y-8" method="post" action="/v1/tag">
+    {% if tag %}
+    <input type="hidden" value="{{ tag.ID }}" name="ID">
+    {% endif %}
     <div class="space-y-8 sm:space-y-5">
         <div>
             <div class="mt-6 sm:mt-5 space-y-6 sm:space-y-5">
@@ -11,7 +14,7 @@
                     </label>
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="max-w-lg flex rounded-md shadow-sm">
-                            <input type="text" name="Name" id="name" autocomplete="name" class="flex-1 block w-full focus:ring-indigo-500 focus:border-indigo-500 min-w-0 rounded-md sm:text-sm border-gray-300">
+                            <input value="{{ tag.Name }}" type="text" name="Name" id="name" autocomplete="name" class="flex-1 block w-full focus:ring-indigo-500 focus:border-indigo-500 min-w-0 rounded-md sm:text-sm border-gray-300">
                         </div>
                     </div>
                 </div>

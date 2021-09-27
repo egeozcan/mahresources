@@ -4,7 +4,7 @@ go 1.15
 
 require (
 	github.com/c2h5oh/datasize v0.0.0-20200825124411-48ed595a09d2
-	github.com/disintegration/imaging v1.6.2 // indirect
+	github.com/flosch/pongo2-addons v0.0.0-20210526150811-f969446c5b72
 	github.com/flosch/pongo2/v4 v4.0.2
 	github.com/gabriel-vasile/mimetype v1.1.2
 	github.com/gorilla/mux v1.8.0

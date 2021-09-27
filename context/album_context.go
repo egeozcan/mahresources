@@ -105,8 +105,8 @@ func (ctx *MahresourcesContext) GetAlbums(offset, maxResults int, query *http_qu
 	return &albums, nil
 }
 
-func (ctx *MahresourcesContext) GetAlbumsWithIds(ids []uint) (*[]models.Album, error) {
-	var albums []models.Album
+func (ctx *MahresourcesContext) GetAlbumsWithIds(ids []uint) (*[]*models.Album, error) {
+	var albums []*models.Album
 
 	ctx.db.Find(&albums, ids)
 
