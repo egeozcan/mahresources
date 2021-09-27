@@ -131,6 +131,21 @@ func ResourceCreateContextProvider(context *context.MahresourcesContext) func(re
 		albumList := models.AlbumList(resource.Albums)
 		albumDisplay := template_entities.GenerateRelationsDisplay(albumIDs, albumList.ToNamedEntities(), request.URL.String(), true, "albums")
 
+		if resource.OwnerId != 0 {
+			ownerEntity, err := context.GetPerson(resource.OwnerId)
+
+			if err == nil {
+				owner := &template_entities.DisplayedRelation{
+					Name:   ownerEntity.GetName(),
+					Link:   "",
+					Active: false,
+					ID:     resource.OwnerId,
+				}
+
+				tplContext["owner"] = []*template_entities.DisplayedRelation{owner}
+			}
+		}
+
 		tplContext["resource"] = resource
 		tplContext["pageTitle"] = "Edit Resource"
 		tplContext["tags"] = tagsDisplay.SelectedRelations

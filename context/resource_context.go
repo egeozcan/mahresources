@@ -128,6 +128,7 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *http_query.ResourceE
 	resource.Description = resourceQuery.Description
 	resource.Category = resourceQuery.Category
 	resource.ContentCategory = resourceQuery.ContentCategory
+	resource.OwnerId = resourceQuery.OwnerId
 
 	ctx.db.Save(resource)
 
@@ -206,6 +207,7 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 		Preview:            preview,
 		PreviewContentType: resourceQuery.PreviewContentType,
 		FileSize:           int64(len(fileBytes)) << 3,
+		OwnerId:            resourceQuery.OwnerId,
 	}
 
 	ctx.db.Save(res)

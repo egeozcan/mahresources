@@ -20,9 +20,13 @@
 
 
 {% block sidebar %}
-    {% if resource.PreviewContentType != "" && len(resource.Preview) != 0 %}
-        <img class="mb-2" src="data:{{ resource.PreviewContentType }};base64,{{ resource.Preview|base64 }}" alt="">
-    {% endif %}
+    <a href="/files/{{ resource.Location }}">
+        {% if resource.PreviewContentType != "" && len(resource.Preview) != 0 %}
+            <img src="data:{{ resource.PreviewContentType }};base64,{{ resource.Preview|base64 }}" alt="">
+        {% else %}
+            <img src="/public/placeholders/file.jpg" alt="">
+        {% endif %}
+    </a>
     <h3 class="font-regular text-base md:text-lg leading-snug truncate">Tags</h3>
     <div class="mt-2 -ml-2">
         {% for tag in resource.Tags %}

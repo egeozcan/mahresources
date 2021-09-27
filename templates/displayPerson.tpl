@@ -26,6 +26,26 @@
             {% include "./partials/album.tpl" %}
         {% endfor %}
     </section>
+    <div class="flex">
+        <div class="flex-1 text-2xl mb-2 mt-6">
+            Own Resources
+        </div>
+    </div>
+    <section class="album-container">
+        {% for resource in person.OwnResources %}
+            {% include "./partials/resource.tpl" %}
+        {% endfor %}
+    </section>
+    <div class="flex">
+        <div class="flex-1 text-2xl mb-2 mt-6">
+            Related Resources
+        </div>
+    </div>
+    <section class="album-container">
+        {% for resource in person.RelatedResources %}
+            {% include "./partials/resource.tpl" %}
+        {% endfor %}
+    </section>
 {% endblock %}
 
 {% block sidebar %}
