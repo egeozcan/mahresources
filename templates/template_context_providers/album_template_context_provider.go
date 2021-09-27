@@ -126,6 +126,21 @@ func AlbumCreateContextProvider(context *context.MahresourcesContext) func(reque
 		tplContext["tags"] = tagsDisplay.SelectedRelations
 		tplContext["people"] = peopleDisplay.SelectedRelations
 
+		if album.OwnerId != 0 {
+			ownerEntity, err := context.GetPerson(album.OwnerId)
+
+			if err == nil {
+				owner := &template_entities.DisplayedRelation{
+					Name:   ownerEntity.GetName(),
+					Link:   "",
+					Active: false,
+					ID:     album.OwnerId,
+				}
+
+				tplContext["owner"] = []*template_entities.DisplayedRelation{owner}
+			}
+		}
+
 		return tplContext
 	}
 }
@@ -151,7 +166,7 @@ func AlbumContextProvider(context *context.MahresourcesContext) func(request *ht
 		}
 
 		return pongo2.Context{
-			"pageTitle": "Album " + album.Name,
+			"pageTitle": "Album: " + album.GetName(),
 			"album":     album,
 			"action": template_entities.Entry{
 				Name: "Edit",

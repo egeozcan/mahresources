@@ -8,6 +8,7 @@ import (
 	"mahresources/http_query"
 	"mahresources/http_utils"
 	"net/http"
+	"strconv"
 )
 
 func GetAlbumUploadPreviewHandler(ctx *context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
@@ -108,7 +109,7 @@ func GetAddAlbumHandler(ctx *context.MahresourcesContext) func(writer http.Respo
 			return
 		}
 
-		if http_utils.RedirectIfHTMLAccepted(writer, request, "") {
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/album?id="+strconv.Itoa(int(album.ID))) {
 			return
 		}
 

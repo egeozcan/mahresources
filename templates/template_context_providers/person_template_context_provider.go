@@ -132,7 +132,7 @@ func PersonContextProvider(context *context.MahresourcesContext) func(request *h
 		}
 
 		return pongo2.Context{
-			"pageTitle": "Details: " + person.Name,
+			"pageTitle": "Person: " + person.GetName(),
 			"person":    person,
 			"action": template_entities.Entry{
 				Name: "Edit",

@@ -1,7 +1,7 @@
 {% extends "layouts/base.tpl" %}
 
 {% block body %}
-<form class="space-y-8" method="post" action="/v1/album?redirect=%2Falbums" x-data="{ preview: '{{ album.Preview|base64 }}' }">
+<form class="space-y-8" method="post" action="/v1/album" x-data="{ preview: '{{ album.Preview|base64 }}' }">
     <input type="hidden" value="{{ album.ID }}" name="ID">
     <input type="hidden" value="{{ album.Preview|base64 }}" :value="preview" name="Preview">
     <input type="hidden" value="{{ album.PreviewContentType }}" :value="preview ? 'image/png' : ''" name="PreviewContentType">
@@ -50,7 +50,10 @@
                                 {% include "./partials/form/autocompleter.tpl" with url='/v1/tags' elName='tags' title='Tags' selectedItems=tags id="autocompleter"|nanoid %}
                             </div>
                             <div class="flex-1">
-                                {% include "./partials/form/autocompleter.tpl" with url='/v1/people' elName='albums' title='People' selectedItems=people id="autocompleter"|nanoid %}
+                                {% include "./partials/form/autocompleter.tpl" with url='/v1/people' elName='people' title='People' selectedItems=people id="autocompleter"|nanoid %}
+                            </div>
+                            <div class="flex-1">
+                                {% include "./partials/form/autocompleter.tpl" with url='/v1/people' elName='ownerId' title='Owner' selectedItems=owner min=1 max=1 id="autocompleter"|nanoid %}
                             </div>
                         </div>
                     </div>

@@ -5,7 +5,7 @@
         min: parseInt('{{ min }}') || 0,
         results: [],
         selectedIndex: -1,
-        errorMessage: '',
+        errorMessage: false,
         dropdownActive: false,
         selectedResults: {{ selectedItems|json }} || [],
         selectedIds: new Set(),
@@ -47,8 +47,7 @@
         $refs.inputs.closest('form').addEventListener('submit', (e) => {
             if (selectedResults.length < min) {
                 e.preventDefault();
-                $refs.autocompleter.focus();
-                errorMessage = 'boom';
+                errorMessage = 'Please select at least ' + min + ' ' + (min === 1 ? 'value' : 'values');
             }
         });
     "
