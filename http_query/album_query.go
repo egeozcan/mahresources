@@ -4,7 +4,7 @@ type AlbumCreator struct {
 	Name               string
 	Description        string
 	Tags               []uint
-	People             []uint
+	Groups             []uint
 	Meta               string
 	Preview            string
 	PreviewContentType string
@@ -20,7 +20,7 @@ type AlbumQuery struct {
 	Name          string
 	Description   string
 	OwnerId       uint
-	People        []uint
+	Groups        []uint
 	Tags          []uint
 	CreatedBefore string
 	CreatedAfter  string

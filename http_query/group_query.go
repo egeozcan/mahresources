@@ -1,20 +1,18 @@
 package http_query
 
-type PersonCreator struct {
+type GroupCreator struct {
 	Name        string
-	Surname     string
 	Description string
 	Tags        []uint
 }
 
-type PersonEditor struct {
-	PersonCreator
+type GroupEditor struct {
+	GroupCreator
 	ID uint
 }
 
-type PersonQuery struct {
+type GroupQuery struct {
 	Name          string
-	Surname       string
 	Description   string
 	Tags          []uint
 	Albums        []uint

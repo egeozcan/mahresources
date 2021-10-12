@@ -24,8 +24,8 @@
         {% endfor %}
     </div>
     <div class="mt-2 -ml-2">
-        {% for person in album.People %}
-            {% include "./partials/person.tpl" %}
+        {% for group in album.Groups %}
+            {% include "./partials/group.tpl" %}
         {% endfor %}
     </div>
 {% endblock %}

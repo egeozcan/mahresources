@@ -23,11 +23,10 @@
     </section>
 {% endblock %}
 
-
 {% block sidebar %}
     <div class="mt-2 -ml-2">
-        {% for person in tag.People %}
-            {% include "./partials/person.tpl" %}
+        {% for group in tag.Groups %}
+            {% include "./partials/group.tpl" %}
         {% endfor %}
     </div>
 {% endblock %}

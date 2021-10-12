@@ -11,7 +11,7 @@ type Album struct {
 	PreviewContentType string
 	Tags               []*Tag      `gorm:"many2many:album_tags;"`
 	Resources          []*Resource `gorm:"many2many:resource_albums;"`
-	People             []*Person   `gorm:"many2many:people_related_albums;"`
+	Groups             []*Group    `gorm:"many2many:groups_related_albums;"`
 	OwnerId            uint
 }
 

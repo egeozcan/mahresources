@@ -1,9 +1,9 @@
 {% extends "layouts/base.tpl" %}
 
 {% block body %}
-<form class="space-y-8" method="post" action="/v1/person">
-    {% if person %}
-    <input type="hidden" value="{{ person.ID }}" name="ID">
+<form class="space-y-8" method="post" action="/v1/group">
+    {% if group %}
+    <input type="hidden" value="{{ group.ID }}" name="ID">
     {% endif %}
     <div class="space-y-8 sm:space-y-5">
         <div>
@@ -14,20 +14,7 @@
                     </label>
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="max-w-lg flex rounded-md shadow-sm">
-                            <input type="text" name="Name" value="{{ person.Name }}" id="name" autocomplete="name" class="flex-1 block w-full focus:ring-indigo-500 focus:border-indigo-500 min-w-0 rounded-md sm:text-sm border-gray-300">
-                        </div>
-                    </div>
-                </div>
-
-                <div class="mt-6 sm:mt-5 space-y-6 sm:space-y-5">
-                    <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-start sm:border-gray-200">
-                        <label for="surname" class="block text-sm font-medium text-gray-700 sm:mt-px sm:pt-2">
-                            Surname
-                        </label>
-                        <div class="mt-1 sm:mt-0 sm:col-span-2">
-                            <div class="max-w-lg flex rounded-md shadow-sm">
-                                <input type="text" name="Surname" value="{{ person.Surname }}" id="surname" autocomplete="surname" class="flex-1 block w-full focus:ring-indigo-500 focus:border-indigo-500 min-w-0 rounded-md sm:text-sm border-gray-300">
-                            </div>
+                            <input type="text" name="Name" value="{{ group.Name }}" id="name" autocomplete="name" class="flex-1 block w-full focus:ring-indigo-500 focus:border-indigo-500 min-w-0 rounded-md sm:text-sm border-gray-300">
                         </div>
                     </div>
                 </div>
@@ -37,7 +24,7 @@
                         Description
                     </label>
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
-                        <textarea id="description" name="Description" rows="3" class="max-w-lg shadow-sm block w-full focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm border-gray-300 rounded-md">{{ person.Description }}</textarea>
+                        <textarea id="description" name="Description" rows="3" class="max-w-lg shadow-sm block w-full focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm border-gray-300 rounded-md">{{ group.Description }}</textarea>
                     </div>
                 </div>
 
@@ -48,7 +35,7 @@
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="flex gap-2">
                             <div class="flex-1">
-                                {% include "./partials/form/autocompleter.tpl" with url='/v1/tags' elName='tags' title='Tags' selectedItems=person.Tags id="autocompleter"|nanoid %}
+                                {% include "./partials/form/autocompleter.tpl" with url='/v1/tags' elName='tags' title='Tags' selectedItems=group.Tags id="autocompleter"|nanoid %}
                             </div>
                         </div>
                     </div>

@@ -69,7 +69,7 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *http_query.ResourceE
 		return nil, err
 	}
 
-	err = ctx.db.Model(&resource).Association("People").Clear()
+	err = ctx.db.Model(&resource).Association("Groups").Clear()
 
 	if err != nil {
 		return nil, err
@@ -87,13 +87,13 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *http_query.ResourceE
 		return nil, err
 	}
 
-	people := make([]models.Person, len(resourceQuery.People))
-	for i, v := range resourceQuery.People {
-		people[i] = models.Person{
+	groups := make([]models.Group, len(resourceQuery.Groups))
+	for i, v := range resourceQuery.Groups {
+		groups[i] = models.Group{
 			Model: gorm.Model{ID: v},
 		}
 	}
-	err = ctx.db.Model(&resource).Association("People").Append(&people)
+	err = ctx.db.Model(&resource).Association("Groups").Append(&groups)
 
 	if err != nil {
 		return nil, err
@@ -212,17 +212,17 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 
 	ctx.db.Save(res)
 
-	if len(resourceQuery.People) > 0 {
-		people := make([]models.Person, len(resourceQuery.People))
-		for i, v := range resourceQuery.People {
-			people[i] = models.Person{
+	if len(resourceQuery.Groups) > 0 {
+		groups := make([]models.Group, len(resourceQuery.Groups))
+		for i, v := range resourceQuery.Groups {
+			groups[i] = models.Group{
 				Model: gorm.Model{ID: v},
 			}
 		}
-		createPeopleErr := ctx.db.Model(&res).Association("People").Append(&people)
+		createGroupsErr := ctx.db.Model(&res).Association("Groups").Append(&groups)
 
-		if createPeopleErr != nil {
-			return nil, createPeopleErr
+		if createGroupsErr != nil {
+			return nil, createGroupsErr
 		}
 	}
 

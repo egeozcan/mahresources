@@ -22,8 +22,8 @@ var BaseTemplateContext = pongo2.Context{
 			Url:  "/tags",
 		},
 		template_entities.Entry{
-			Name: "People",
-			Url:  "/people",
+			Name: "Groups",
+			Url:  "/groups",
 		},
 	},
 }

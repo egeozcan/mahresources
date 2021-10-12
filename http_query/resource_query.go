@@ -3,7 +3,7 @@ package http_query
 type ResourceQueryBase struct {
 	Name            string
 	Description     string
-	People          []uint
+	Groups          []uint
 	Tags            []uint
 	Albums          []uint
 	Meta            string
@@ -28,7 +28,7 @@ type ResourceQuery struct {
 	Name          string
 	Description   string
 	OwnerId       uint
-	People        []uint
+	Groups        []uint
 	Tags          []uint
 	Albums        []uint
 	CreatedBefore string

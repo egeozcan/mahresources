@@ -18,8 +18,8 @@ type Resource struct {
 	ContentCategory    string `gorm:"index"`
 	Preview            []byte
 	PreviewContentType string
-	Tags               []*Tag    `gorm:"many2many:resource_tags;"`
-	Albums             []*Album  `gorm:"many2many:resource_albums;"`
-	People             []*Person `gorm:"many2many:people_related_resources;"`
+	Tags               []*Tag   `gorm:"many2many:resource_tags;"`
+	Albums             []*Album `gorm:"many2many:resource_albums;"`
+	Groups             []*Group `gorm:"many2many:groups_related_resources;"`
 	OwnerId            uint
 }

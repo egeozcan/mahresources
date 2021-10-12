@@ -66,9 +66,9 @@ func ResourceListContextProvider(context *context.MahresourcesContext) func(requ
 		albumList := models.AlbumList(*albums)
 		albumsDisplay := template_entities.GenerateRelationsDisplay(query.Albums, albumList.ToNamedEntities(), request.URL.String(), true, "albums")
 
-		people, _ := context.GetPeopleWithIds(query.People)
-		peopleList := models.PersonList(*people)
-		peopleDisplay := template_entities.GenerateRelationsDisplay(query.People, peopleList.ToNamedEntities(), request.URL.String(), true, "people")
+		groups, _ := context.GetGroupsWithIds(query.Groups)
+		groupsList := models.GroupList(*groups)
+		groupsDisplay := template_entities.GenerateRelationsDisplay(query.Groups, groupsList.ToNamedEntities(), request.URL.String(), true, "groups")
 
 		return pongo2.Context{
 			"pageTitle":  "Resources",
@@ -76,7 +76,7 @@ func ResourceListContextProvider(context *context.MahresourcesContext) func(requ
 			"pagination": pagination,
 			"tags":       tagsDisplay,
 			"albums":     albumsDisplay,
-			"people":     peopleDisplay,
+			"groups":     groupsDisplay,
 			"action": template_entities.Entry{
 				Name: "Create",
 				Url:  "/resource/new",
@@ -94,7 +94,7 @@ func ResourceCreateContextProvider(context *context.MahresourcesContext) func(re
 		var query http_query.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())
 
-		if err != nil {
+		if err != nil || query.ID == 0 {
 			return tplContext
 		}
 
@@ -113,14 +113,14 @@ func ResourceCreateContextProvider(context *context.MahresourcesContext) func(re
 		tagList := models.TagList(resource.Tags)
 		tagsDisplay := template_entities.GenerateRelationsDisplay(tagIDs, tagList.ToNamedEntities(), request.URL.String(), true, "tags")
 
-		peopleIDs := make([]uint, len(resource.People))
+		groupsIDs := make([]uint, len(resource.Groups))
 
-		for i, person := range resource.People {
-			peopleIDs[i] = person.ID
+		for i, group := range resource.Groups {
+			groupsIDs[i] = group.ID
 		}
 
-		peopleList := models.PersonList(resource.People)
-		peopleDisplay := template_entities.GenerateRelationsDisplay(peopleIDs, peopleList.ToNamedEntities(), request.URL.String(), true, "people")
+		groupsList := models.GroupList(resource.Groups)
+		groupsDisplay := template_entities.GenerateRelationsDisplay(groupsIDs, groupsList.ToNamedEntities(), request.URL.String(), true, "groups")
 
 		albumIDs := make([]uint, len(resource.Albums))
 
@@ -132,7 +132,7 @@ func ResourceCreateContextProvider(context *context.MahresourcesContext) func(re
 		albumDisplay := template_entities.GenerateRelationsDisplay(albumIDs, albumList.ToNamedEntities(), request.URL.String(), true, "albums")
 
 		if resource.OwnerId != 0 {
-			ownerEntity, err := context.GetPerson(resource.OwnerId)
+			ownerEntity, err := context.GetGroup(resource.OwnerId)
 
 			if err == nil {
 				owner := &template_entities.DisplayedRelation{
@@ -149,7 +149,7 @@ func ResourceCreateContextProvider(context *context.MahresourcesContext) func(re
 		tplContext["resource"] = resource
 		tplContext["pageTitle"] = "Edit Resource"
 		tplContext["tags"] = tagsDisplay.SelectedRelations
-		tplContext["people"] = peopleDisplay.SelectedRelations
+		tplContext["groups"] = groupsDisplay.SelectedRelations
 		tplContext["albums"] = albumDisplay.SelectedRelations
 
 		return tplContext

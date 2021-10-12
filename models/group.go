@@ -6,27 +6,26 @@ import (
 	"unicode"
 )
 
-type Person struct {
+type Group struct {
 	gorm.Model
 	Name             string      `gorm:"index"`
-	Surname          string      `gorm:"index"`
 	Description      string      `gorm:"index"`
-	RelatedResources []*Resource `gorm:"many2many:people_related_resources;"`
-	RelatedAlbums    []*Album    `gorm:"many2many:people_related_albums;"`
+	RelatedResources []*Resource `gorm:"many2many:groups_related_resources;"`
+	RelatedAlbums    []*Album    `gorm:"many2many:groups_related_albums;"`
 	OwnResources     []Resource  `gorm:"foreignKey:OwnerId"`
 	OwnAlbums        []Album     `gorm:"foreignKey:OwnerId"`
-	Tags             []*Tag      `gorm:"many2many:person_tags;"`
+	Tags             []*Tag      `gorm:"many2many:group_tags;"`
 }
 
-func (p Person) GetId() uint {
+func (p Group) GetId() uint {
 	return p.ID
 }
 
-func (p Person) GetName() string {
-	return limit(strings.ToTitleSpecial(unicode.TurkishCase, p.Name+" "+p.Surname), 200)
+func (p Group) GetName() string {
+	return limit(strings.ToTitleSpecial(unicode.TurkishCase, p.Name), 200)
 }
 
-func (p Person) Initials() string {
+func (p Group) Initials() string {
 	res := ""
 
 	if len(p.Name) > 0 {
@@ -34,20 +33,15 @@ func (p Person) Initials() string {
 		res = string(r)
 	}
 
-	if len(p.Surname) > 0 {
-		r := firstRune(p.Surname)
-		res += string(r)
-	}
-
 	return strings.ToUpper(res)
 }
 
-type PersonList []*Person
+type GroupList []*Group
 
-func (people *PersonList) ToNamedEntities() *[]NamedEntity {
-	list := make([]NamedEntity, len(*people))
+func (groups *GroupList) ToNamedEntities() *[]NamedEntity {
+	list := make([]NamedEntity, len(*groups))
 
-	for i, v := range *people {
+	for i, v := range *groups {
 		list[i] = v
 	}
 

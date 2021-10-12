@@ -18,7 +18,6 @@
     </section>
 {% endblock %}
 
-
 {% block sidebar %}
     <a href="/files/{{ resource.Location }}">
         {% if resource.PreviewContentType != "" && len(resource.Preview) != 0 %}
@@ -33,10 +32,10 @@
             {% include "./partials/tag.tpl" with name=tag.Name ID=tag.ID %}
         {% endfor %}
     </div>
-    <h3 class="font-regular text-base md:text-lg leading-snug truncate">People</h3>
+    <h3 class="font-regular text-base md:text-lg leading-snug truncate">Groups</h3>
     <div class="mt-2 -ml-2">
-        {% for person in resource.People %}
-            {% include "./partials/person.tpl" %}
+        {% for group in resource.Groups %}
+            {% include "./partials/group.tpl" %}
         {% endfor %}
     </div>
 {% endblock %}

@@ -62,14 +62,14 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 		tagList := models.TagList(*tags)
 		tagsDisplay := template_entities.GenerateRelationsDisplay(query.Tags, tagList.ToNamedEntities(), request.URL.String(), true, "tags")
 
-		people, _ := context.GetPeopleWithIds(query.People)
-		peopleList := models.PersonList(*people)
-		peopleDisplay := template_entities.GenerateRelationsDisplay(query.People, peopleList.ToNamedEntities(), request.URL.String(), true, "people")
+		groups, _ := context.GetGroupsWithIds(query.Groups)
+		groupsList := models.GroupList(*groups)
+		groupsDisplay := template_entities.GenerateRelationsDisplay(query.Groups, groupsList.ToNamedEntities(), request.URL.String(), true, "groups")
 
 		return pongo2.Context{
 			"pageTitle":  "Albums",
 			"albums":     albums,
-			"people":     peopleDisplay,
+			"groups":     groupsDisplay,
 			"pagination": pagination,
 			"tags":       tagsDisplay,
 			"action": template_entities.Entry{
@@ -89,7 +89,7 @@ func AlbumCreateContextProvider(context *context.MahresourcesContext) func(reque
 		var query http_query.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())
 
-		if err != nil {
+		if err != nil || query.ID == 0 {
 			return tplContext
 		}
 
@@ -107,27 +107,27 @@ func AlbumCreateContextProvider(context *context.MahresourcesContext) func(reque
 
 		tags := album.Tags
 
-		peopleIDs := make([]uint, len(album.People))
+		groupsIDs := make([]uint, len(album.Groups))
 
-		for i, person := range album.People {
-			peopleIDs[i] = person.ID
+		for i, group := range album.Groups {
+			groupsIDs[i] = group.ID
 		}
 
-		people := album.People
+		groups := album.Groups
 
 		tagList := models.TagList(tags)
 		tagsDisplay := template_entities.GenerateRelationsDisplay(tagIDs, tagList.ToNamedEntities(), request.URL.String(), true, "tags")
 
-		peopleList := models.PersonList(people)
-		peopleDisplay := template_entities.GenerateRelationsDisplay(peopleIDs, peopleList.ToNamedEntities(), request.URL.String(), true, "people")
+		groupsList := models.GroupList(groups)
+		groupsDisplay := template_entities.GenerateRelationsDisplay(groupsIDs, groupsList.ToNamedEntities(), request.URL.String(), true, "groups")
 
 		tplContext["album"] = album
 		tplContext["pageTitle"] = "Edit Album"
 		tplContext["tags"] = tagsDisplay.SelectedRelations
-		tplContext["people"] = peopleDisplay.SelectedRelations
+		tplContext["groups"] = groupsDisplay.SelectedRelations
 
 		if album.OwnerId != 0 {
-			ownerEntity, err := context.GetPerson(album.OwnerId)
+			ownerEntity, err := context.GetGroup(album.OwnerId)
 
 			if err == nil {
 				owner := &template_entities.DisplayedRelation{

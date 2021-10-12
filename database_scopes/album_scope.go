@@ -17,11 +17,11 @@ func AlbumQuery(query *http_query.AlbumQuery) func(db *gorm.DB) *gorm.DB {
 			)
 		}
 
-		if query.People != nil && len(query.People) > 0 {
+		if query.Groups != nil && len(query.Groups) > 0 {
 			dbQuery = dbQuery.Where(
-				"(SELECT Count(*) FROM people_related_albums pra WHERE pra.person_id IN ? AND pra.album_id = albums.id) = ?",
-				query.People,
-				len(query.People),
+				"(SELECT Count(*) FROM groups_related_albums pra WHERE pra.group_id IN ? AND pra.album_id = albums.id) = ?",
+				query.Groups,
+				len(query.Groups),
 			)
 		}
 

@@ -45,7 +45,7 @@ func (ctx *MahresourcesContext) CreateOrUpdateAlbum(albumQuery *http_query.Album
 		album.Preview = preview
 		album.OwnerId = albumQuery.OwnerId
 		ctx.db.Save(&album)
-		err := ctx.db.Model(&album).Association("People").Clear()
+		err := ctx.db.Model(&album).Association("Groups").Clear()
 		if err != nil {
 			return nil, err
 		}
@@ -55,17 +55,17 @@ func (ctx *MahresourcesContext) CreateOrUpdateAlbum(albumQuery *http_query.Album
 		}
 	}
 
-	if len(albumQuery.People) > 0 {
-		people := make([]models.Person, len(albumQuery.People))
-		for i, v := range albumQuery.People {
-			people[i] = models.Person{
+	if len(albumQuery.Groups) > 0 {
+		groups := make([]models.Group, len(albumQuery.Groups))
+		for i, v := range albumQuery.Groups {
+			groups[i] = models.Group{
 				Model: gorm.Model{ID: v},
 			}
 		}
-		createPeopleErr := ctx.db.Model(&album).Association("People").Append(&people)
+		createGroupsErr := ctx.db.Model(&album).Association("Groups").Append(&groups)
 
-		if createPeopleErr != nil {
-			return nil, createPeopleErr
+		if createGroupsErr != nil {
+			return nil, createGroupsErr
 		}
 	}
 

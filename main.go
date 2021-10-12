@@ -48,9 +48,9 @@ func main() {
 	if err != nil {
 		panic("failed to migrate Tag")
 	}
-	err = db.AutoMigrate(&models.Person{})
+	err = db.AutoMigrate(&models.Group{})
 	if err != nil {
-		panic("failed to migrate Person")
+		panic("failed to migrate Group")
 	}
 
 	base := afero.NewBasePathFs(afero.NewOsFs(), "./filezz")
@@ -89,17 +89,17 @@ func main() {
 		handlers.RenderTemplate("templates/createResource.tpl", contextProviders.ResourceCreateContextProvider(appContext)),
 	)
 
-	router.Methods(constants.GET).Path("/person/new").HandlerFunc(
-		handlers.RenderTemplate("templates/createPerson.tpl", contextProviders.PersonCreateContextProvider(appContext)),
+	router.Methods(constants.GET).Path("/group/new").HandlerFunc(
+		handlers.RenderTemplate("templates/createGroup.tpl", contextProviders.GroupCreateContextProvider(appContext)),
 	)
-	router.Methods(constants.GET).Path("/person/edit").HandlerFunc(
-		handlers.RenderTemplate("templates/createPerson.tpl", contextProviders.PersonCreateContextProvider(appContext)),
+	router.Methods(constants.GET).Path("/group/edit").HandlerFunc(
+		handlers.RenderTemplate("templates/createGroup.tpl", contextProviders.GroupCreateContextProvider(appContext)),
 	)
-	router.Methods(constants.GET).Path("/people").HandlerFunc(
-		handlers.RenderTemplate("templates/listPeople.tpl", contextProviders.PeopleListContextProvider(appContext)),
+	router.Methods(constants.GET).Path("/groups").HandlerFunc(
+		handlers.RenderTemplate("templates/listGroups.tpl", contextProviders.GroupsListContextProvider(appContext)),
 	)
-	router.Methods(constants.GET).Path("/person").HandlerFunc(
-		handlers.RenderTemplate("templates/displayPerson.tpl", contextProviders.PersonContextProvider(appContext)),
+	router.Methods(constants.GET).Path("/group").HandlerFunc(
+		handlers.RenderTemplate("templates/displayGroup.tpl", contextProviders.GroupContextProvider(appContext)),
 	)
 
 	router.Methods(constants.GET).Path("/tag/new").HandlerFunc(
@@ -123,10 +123,10 @@ func main() {
 	router.Methods(constants.GET).Path("/v1/album").HandlerFunc(api_handlers.GetAlbumHandler(appContext))
 	router.Methods(constants.POST).Path("/v1/album").HandlerFunc(api_handlers.GetAddAlbumHandler(appContext))
 
-	router.Methods(constants.GET).Path("/v1/people").HandlerFunc(api_handlers.GetPeopleHandler(appContext))
-	router.Methods(constants.GET).Path("/v1/people/autocomplete").HandlerFunc(api_handlers.GetPeopleAutocompleteHandler(appContext))
-	router.Methods(constants.GET).Path("/v1/person").HandlerFunc(api_handlers.GetPersonHandler(appContext))
-	router.Methods(constants.POST).Path("/v1/person").HandlerFunc(api_handlers.GetAddPersonHandler(appContext))
+	router.Methods(constants.GET).Path("/v1/groups").HandlerFunc(api_handlers.GetGroupsHandler(appContext))
+	router.Methods(constants.GET).Path("/v1/groups/autocomplete").HandlerFunc(api_handlers.GetGroupsAutocompleteHandler(appContext))
+	router.Methods(constants.GET).Path("/v1/group").HandlerFunc(api_handlers.GetGroupHandler(appContext))
+	router.Methods(constants.POST).Path("/v1/group").HandlerFunc(api_handlers.GetAddGroupHandler(appContext))
 
 	router.Methods(constants.GET).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceHandler(appContext))
 	router.Methods(constants.POST).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceUploadHandler(appContext))

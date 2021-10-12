@@ -13,11 +13,11 @@ import (
 	"strconv"
 )
 
-func PeopleListContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func GroupsListContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		page := http_utils.GetIntQueryParameter(request, "page", 1)
 		offset := (page - 1) * constants.MaxResults
-		var query http_query.PersonQuery
+		var query http_query.GroupQuery
 		err := decoder.Decode(&query, request.URL.Query())
 		baseContext := StaticTemplateCtx(request)
 
@@ -27,7 +27,7 @@ func PeopleListContextProvider(context *context.MahresourcesContext) func(reques
 			return addErrContext(err, baseContext)
 		}
 
-		people, err := context.GetPeople(int(offset), constants.MaxResults, &query)
+		groups, err := context.GetGroups(int(offset), constants.MaxResults, &query)
 
 		if err != nil {
 			fmt.Println(err)
@@ -35,7 +35,7 @@ func PeopleListContextProvider(context *context.MahresourcesContext) func(reques
 			return addErrContext(err, baseContext)
 		}
 
-		peopleCount, err := context.GetPeopleCount(&query)
+		groupsCount, err := context.GetGroupsCount(&query)
 
 		if err != nil {
 			fmt.Println(err)
@@ -43,7 +43,7 @@ func PeopleListContextProvider(context *context.MahresourcesContext) func(reques
 			return addErrContext(err, baseContext)
 		}
 
-		pagination, err := template_entities.GeneratePagination(request.URL.String(), peopleCount, constants.MaxResults, int(page))
+		pagination, err := template_entities.GeneratePagination(request.URL.String(), groupsCount, constants.MaxResults, int(page))
 
 		if err != nil {
 			fmt.Println(err)
@@ -63,55 +63,55 @@ func PeopleListContextProvider(context *context.MahresourcesContext) func(reques
 		tagsDisplay := template_entities.GenerateRelationsDisplay(query.Tags, tagList.ToNamedEntities(), request.URL.String(), true, "tags")
 
 		return pongo2.Context{
-			"pageTitle":  "People",
-			"people":     people,
+			"pageTitle":  "Groups",
+			"groups":     groups,
 			"pagination": pagination,
 			"tags":       tagsDisplay,
 			"action": template_entities.Entry{
 				Name: "Add",
-				Url:  "/person/new",
+				Url:  "/group/new",
 			},
 		}.Update(baseContext)
 	}
 }
 
-func PersonCreateContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func GroupCreateContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
-			"pageTitle": "Add New Person",
+			"pageTitle": "Add New Group",
 		}.Update(StaticTemplateCtx(request))
 
 		var query http_query.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())
 
-		if err != nil {
+		if err != nil || query.ID == 0 {
 			return tplContext
 		}
 
-		person, err := context.GetPerson(query.ID)
+		group, err := context.GetGroup(query.ID)
 
 		if err != nil {
 			return addErrContext(err, tplContext)
 		}
 
-		tagIDs := make([]uint, len(person.Tags))
+		tagIDs := make([]uint, len(group.Tags))
 
-		for i, tag := range person.Tags {
+		for i, tag := range group.Tags {
 			tagIDs[i] = tag.ID
 		}
 
-		tagList := models.TagList(person.Tags)
+		tagList := models.TagList(group.Tags)
 		tagsDisplay := template_entities.GenerateRelationsDisplay(tagIDs, tagList.ToNamedEntities(), request.URL.String(), true, "tags")
 
-		tplContext["person"] = person
-		tplContext["pageTitle"] = "Edit Person"
+		tplContext["group"] = group
+		tplContext["pageTitle"] = "Edit Group"
 		tplContext["tags"] = tagsDisplay.SelectedRelations
 
 		return tplContext
 	}
 }
 
-func PersonContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func GroupContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		var query http_query.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())
@@ -123,7 +123,7 @@ func PersonContextProvider(context *context.MahresourcesContext) func(request *h
 			return addErrContext(err, baseContext)
 		}
 
-		person, err := context.GetPerson(query.ID)
+		group, err := context.GetGroup(query.ID)
 
 		if err != nil {
 			fmt.Println(err)
@@ -132,11 +132,11 @@ func PersonContextProvider(context *context.MahresourcesContext) func(request *h
 		}
 
 		return pongo2.Context{
-			"pageTitle": "Person: " + person.GetName(),
-			"person":    person,
+			"pageTitle": "Group: " + group.GetName(),
+			"group":     group,
 			"action": template_entities.Entry{
 				Name: "Edit",
-				Url:  "/person/edit?id=" + strconv.Itoa(int(query.ID)),
+				Url:  "/group/edit?id=" + strconv.Itoa(int(query.ID)),
 			},
 		}.Update(baseContext)
 	}
