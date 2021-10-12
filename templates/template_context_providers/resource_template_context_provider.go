@@ -24,7 +24,7 @@ func ResourceListContextProvider(context *context.MahresourcesContext) func(requ
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		resources, err := context.GetResources(int(offset), constants.MaxResults, &query)
@@ -32,7 +32,7 @@ func ResourceListContextProvider(context *context.MahresourcesContext) func(requ
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		resourceCount, err := context.GetResourceCount(&query)
@@ -40,7 +40,7 @@ func ResourceListContextProvider(context *context.MahresourcesContext) func(requ
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), resourceCount, constants.MaxResults, int(page))
@@ -48,7 +48,7 @@ func ResourceListContextProvider(context *context.MahresourcesContext) func(requ
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		tags, err := context.GetTagsByName("", 0)
@@ -56,7 +56,7 @@ func ResourceListContextProvider(context *context.MahresourcesContext) func(requ
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		tagList := models.TagList(*tags)
@@ -101,7 +101,7 @@ func ResourceCreateContextProvider(context *context.MahresourcesContext) func(re
 		resource, err := context.GetResource(query.ID)
 
 		if err != nil {
-			return tplContext
+			return addErrContext(err, tplContext)
 		}
 
 		tagIDs := make([]uint, len(resource.Tags))
@@ -165,7 +165,7 @@ func ResourceContextProvider(context *context.MahresourcesContext) func(request 
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		resource, err := context.GetResource(query.ID)
@@ -173,7 +173,7 @@ func ResourceContextProvider(context *context.MahresourcesContext) func(request 
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		return pongo2.Context{

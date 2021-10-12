@@ -23,7 +23,7 @@ func TagListContextProvider(context *context.MahresourcesContext) func(request *
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		tags, err := context.GetTags(int(offset), constants.MaxResults, &query)
@@ -31,7 +31,7 @@ func TagListContextProvider(context *context.MahresourcesContext) func(request *
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		tagsCount, err := context.GetTagsCount(&query)
@@ -39,7 +39,7 @@ func TagListContextProvider(context *context.MahresourcesContext) func(request *
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), tagsCount, constants.MaxResults, int(page))
@@ -47,7 +47,7 @@ func TagListContextProvider(context *context.MahresourcesContext) func(request *
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		return pongo2.Context{
@@ -93,7 +93,7 @@ func TagContextProvider(context *context.MahresourcesContext) func(request *http
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		tag, err := context.GetTag(query.ID)
@@ -101,7 +101,7 @@ func TagContextProvider(context *context.MahresourcesContext) func(request *http
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		return pongo2.Context{

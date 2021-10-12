@@ -24,7 +24,7 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		albums, err := context.GetAlbums(int(offset), constants.MaxResults, &query)
@@ -32,7 +32,7 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		albumCount, err := context.GetAlbumCount(&query)
@@ -40,7 +40,7 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), albumCount, constants.MaxResults, int(page))
@@ -48,7 +48,7 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		tags, err := context.GetTagsByName("", 0)
@@ -56,7 +56,7 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		tagList := models.TagList(*tags)
@@ -96,7 +96,7 @@ func AlbumCreateContextProvider(context *context.MahresourcesContext) func(reque
 		album, err := context.GetAlbum(query.ID)
 
 		if err != nil {
-			return tplContext
+			return addErrContext(err, tplContext)
 		}
 
 		tagIDs := make([]uint, len(album.Tags))
@@ -154,7 +154,7 @@ func AlbumContextProvider(context *context.MahresourcesContext) func(request *ht
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		album, err := context.GetAlbum(query.ID)
@@ -162,7 +162,7 @@ func AlbumContextProvider(context *context.MahresourcesContext) func(request *ht
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		return pongo2.Context{

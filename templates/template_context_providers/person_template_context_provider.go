@@ -24,7 +24,7 @@ func PeopleListContextProvider(context *context.MahresourcesContext) func(reques
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		people, err := context.GetPeople(int(offset), constants.MaxResults, &query)
@@ -32,7 +32,7 @@ func PeopleListContextProvider(context *context.MahresourcesContext) func(reques
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		peopleCount, err := context.GetPeopleCount(&query)
@@ -40,7 +40,7 @@ func PeopleListContextProvider(context *context.MahresourcesContext) func(reques
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), peopleCount, constants.MaxResults, int(page))
@@ -48,7 +48,7 @@ func PeopleListContextProvider(context *context.MahresourcesContext) func(reques
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		tags, err := context.GetTagsByName("", 0)
@@ -56,7 +56,7 @@ func PeopleListContextProvider(context *context.MahresourcesContext) func(reques
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		tagList := models.TagList(*tags)
@@ -91,7 +91,7 @@ func PersonCreateContextProvider(context *context.MahresourcesContext) func(requ
 		person, err := context.GetPerson(query.ID)
 
 		if err != nil {
-			return tplContext
+			return addErrContext(err, tplContext)
 		}
 
 		tagIDs := make([]uint, len(person.Tags))
@@ -120,7 +120,7 @@ func PersonContextProvider(context *context.MahresourcesContext) func(request *h
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		person, err := context.GetPerson(query.ID)
@@ -128,7 +128,7 @@ func PersonContextProvider(context *context.MahresourcesContext) func(request *h
 		if err != nil {
 			fmt.Println(err)
 
-			return baseContext
+			return addErrContext(err, baseContext)
 		}
 
 		return pongo2.Context{
