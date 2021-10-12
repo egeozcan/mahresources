@@ -8,12 +8,12 @@
     </div>
     <div class="flex">
         <div class="flex-1 text-2xl mb-2">
-            Albums
+            Notes
         </div>
     </div>
-    <section class="album-container">
-        {% for album in resource.Albums %}
-            {% include "./partials/album.tpl" %}
+    <section class="note-container">
+        {% for note in resource.Notes %}
+            {% include "./partials/note.tpl" %}
         {% endfor %}
     </section>
 {% endblock %}

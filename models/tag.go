@@ -6,7 +6,7 @@ type Tag struct {
 	gorm.Model
 	Name      string      `gorm:"index"`
 	Resources []*Resource `gorm:"many2many:resource_tags;"`
-	Albums    []*Album    `gorm:"many2many:album_tags;"`
+	Notes     []*Note     `gorm:"many2many:note_tags;"`
 	Groups    []*Group    `gorm:"many2many:group_tags;"`
 }
 

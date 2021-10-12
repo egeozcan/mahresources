@@ -1,10 +1,8 @@
 {% extends "layouts/base.tpl" %}
 
 {% block body %}
-<form class="space-y-8" method="post" action="/v1/album" x-data="{ preview: '{{ album.Preview|base64 }}' }">
-    <input type="hidden" value="{{ album.ID }}" name="ID">
-    <input type="hidden" value="{{ album.Preview|base64 }}" :value="preview" name="Preview">
-    <input type="hidden" value="{{ album.PreviewContentType }}" :value="preview ? 'image/png' : ''" name="PreviewContentType">
+<form class="space-y-8" method="post" action="/v1/note" x-data="{ preview: '{{ note.Preview|base64 }}' }">
+    <input type="hidden" value="{{ note.ID }}" name="ID">
     <div class="space-y-8 sm:space-y-5">
         <div>
             <div class="mt-6 sm:mt-5 space-y-6 sm:space-y-5">
@@ -14,7 +12,7 @@
                     </label>
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="max-w-lg flex rounded-md shadow-sm">
-                            <input type="text" name="Name" id="name" value="{{ album.Name }}" autocomplete="name" class="flex-1 block w-full focus:ring-indigo-500 focus:border-indigo-500 min-w-0 rounded-md sm:text-sm border-gray-300">
+                            <input type="text" name="Name" id="name" value="{{ note.Name }}" autocomplete="name" class="flex-1 block w-full focus:ring-indigo-500 focus:border-indigo-500 min-w-0 rounded-md sm:text-sm border-gray-300">
                         </div>
                     </div>
                 </div>
@@ -24,19 +22,8 @@
                         Description
                     </label>
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
-                        <textarea id="description" name="Description" rows="3" class="max-w-lg shadow-sm block w-full focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm border-gray-300 rounded-md">{{ album.Description }}</textarea>
-                        <p class="mt-2 text-sm text-gray-500">Describe what will be stored on this album.</p>
-                    </div>
-                </div>
-
-                <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-gray-200 sm:pt-5">
-                    <label for="photo" class="block text-sm font-medium text-gray-700">
-                        Preview
-                    </label>
-                    <div class="mt-1 sm:mt-0 sm:col-span-2">
-                        <div class="flex items-center">
-                            <input id="photo" @change="generatePreviewFromFile($event).then(val => preview = val).catch(console.error)" type="file">
-                        </div>
+                        <textarea id="description" name="Description" rows="3" class="max-w-lg shadow-sm block w-full focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm border-gray-300 rounded-md">{{ note.Description }}</textarea>
+                        <p class="mt-2 text-sm text-gray-500">Describe what will be stored on this note.</p>
                     </div>
                 </div>
 

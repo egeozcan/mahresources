@@ -10,8 +10,8 @@ var BaseTemplateContext = pongo2.Context{
 	"title": "mahresources",
 	"menu": []template_entities.Entry{
 		template_entities.Entry{
-			Name: "Albums",
-			Url:  "/albums",
+			Name: "Notes",
+			Url:  "/notes",
 		},
 		template_entities.Entry{
 			Name: "Resources",

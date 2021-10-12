@@ -19,17 +19,19 @@ func ResourceQuery(query *http_query.ResourceQuery) func(db *gorm.DB) *gorm.DB {
 
 		if query.Groups != nil && len(query.Groups) > 0 {
 			dbQuery = dbQuery.Where(
-				"(SELECT Count(*) FROM groups_related_resources prr WHERE prr.group_id IN ? AND prr.resource_id = resources.id) = ?",
+				`(
+					SELECT Count(*) 
+					FROM groups_related_resources prr WHERE prr.group_id IN ? AND prr.resource_id = resources.id) = ?`,
 				query.Groups,
 				len(query.Groups),
 			)
 		}
 
-		if query.Albums != nil && len(query.Albums) > 0 {
+		if query.Notes != nil && len(query.Notes) > 0 {
 			dbQuery = dbQuery.Where(
-				"(SELECT Count(*) FROM resource_albums ra WHERE ra.album_id IN ? AND ra.resource_id = resources.id) = ?",
-				query.Albums,
-				len(query.Albums),
+				"(SELECT Count(*) FROM resource_notes ra WHERE ra.note_id IN ? AND ra.resource_id = resources.id) = ?",
+				query.Notes,
+				len(query.Notes),
 			)
 		}
 

@@ -43,19 +43,19 @@ func (ctx *MahresourcesContext) GetResources(offset, maxResults int, query *http
 	return &resources, nil
 }
 
-func (ctx *MahresourcesContext) AddResourceToAlbum(resId, albumId int64) (*models.Resource, error) {
+func (ctx *MahresourcesContext) AddResourceToNote(resId, noteId int64) (*models.Resource, error) {
 	var resource models.Resource
 	ctx.db.First(&resource, resId)
-	var album models.Album
-	ctx.db.First(&album, albumId)
+	var note models.Note
+	ctx.db.First(&note, noteId)
 
-	err := ctx.db.Model(&album).Association("Resources").Append(resource)
+	err := ctx.db.Model(&note).Association("Resources").Append(resource)
 
 	if err != nil {
 		return nil, err
 	}
 
-	if resource.ID == 0 || album.ID == 0 {
+	if resource.ID == 0 || note.ID == 0 {
 		return nil, errors.New("could not find relevant resources")
 	}
 
@@ -81,7 +81,7 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *http_query.ResourceE
 		return nil, err
 	}
 
-	err = ctx.db.Model(&resource).Association("Albums").Clear()
+	err = ctx.db.Model(&resource).Association("Notes").Clear()
 
 	if err != nil {
 		return nil, err
@@ -99,13 +99,13 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *http_query.ResourceE
 		return nil, err
 	}
 
-	albums := make([]models.Album, len(resourceQuery.Albums))
-	for i, v := range resourceQuery.Albums {
-		albums[i] = models.Album{
+	notes := make([]models.Note, len(resourceQuery.Notes))
+	for i, v := range resourceQuery.Notes {
+		notes[i] = models.Note{
 			Model: gorm.Model{ID: v},
 		}
 	}
-	err = ctx.db.Model(&resource).Association("Albums").Append(&albums)
+	err = ctx.db.Model(&resource).Association("Notes").Append(&notes)
 
 	if err != nil {
 		return nil, err
@@ -226,17 +226,17 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 		}
 	}
 
-	if len(resourceQuery.Albums) > 0 {
-		albums := make([]models.Album, len(resourceQuery.Albums))
-		for i, v := range resourceQuery.Albums {
-			albums[i] = models.Album{
+	if len(resourceQuery.Notes) > 0 {
+		notes := make([]models.Note, len(resourceQuery.Notes))
+		for i, v := range resourceQuery.Notes {
+			notes[i] = models.Note{
 				Model: gorm.Model{ID: v},
 			}
 		}
-		createAlbumsErr := ctx.db.Model(&res).Association("Albums").Append(&albums)
+		createNotesErr := ctx.db.Model(&res).Association("Notes").Append(&notes)
 
-		if createAlbumsErr != nil {
-			return nil, createAlbumsErr
+		if createNotesErr != nil {
+			return nil, createNotesErr
 		}
 	}
 

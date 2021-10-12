@@ -5,7 +5,7 @@ type ResourceQueryBase struct {
 	Description     string
 	Groups          []uint
 	Tags            []uint
-	Albums          []uint
+	Notes           []uint
 	Meta            string
 	ContentCategory string
 	Category        string
@@ -30,7 +30,7 @@ type ResourceQuery struct {
 	OwnerId       uint
 	Groups        []uint
 	Tags          []uint
-	Albums        []uint
+	Notes         []uint
 	CreatedBefore string
 	CreatedAfter  string
 	HasThumbnail  bool

@@ -62,9 +62,9 @@ func ResourceListContextProvider(context *context.MahresourcesContext) func(requ
 		tagList := models.TagList(*tags)
 		tagsDisplay := template_entities.GenerateRelationsDisplay(query.Tags, tagList.ToNamedEntities(), request.URL.String(), true, "tags")
 
-		albums, _ := context.GetAlbumsWithIds(query.Albums)
-		albumList := models.AlbumList(*albums)
-		albumsDisplay := template_entities.GenerateRelationsDisplay(query.Albums, albumList.ToNamedEntities(), request.URL.String(), true, "albums")
+		notes, _ := context.GetNotesWithIds(query.Notes)
+		noteList := models.NoteList(*notes)
+		notesDisplay := template_entities.GenerateRelationsDisplay(query.Notes, noteList.ToNamedEntities(), request.URL.String(), true, "notes")
 
 		groups, _ := context.GetGroupsWithIds(query.Groups)
 		groupsList := models.GroupList(*groups)
@@ -75,7 +75,7 @@ func ResourceListContextProvider(context *context.MahresourcesContext) func(requ
 			"resources":  resources,
 			"pagination": pagination,
 			"tags":       tagsDisplay,
-			"albums":     albumsDisplay,
+			"notes":      notesDisplay,
 			"groups":     groupsDisplay,
 			"action": template_entities.Entry{
 				Name: "Create",
@@ -122,14 +122,14 @@ func ResourceCreateContextProvider(context *context.MahresourcesContext) func(re
 		groupsList := models.GroupList(resource.Groups)
 		groupsDisplay := template_entities.GenerateRelationsDisplay(groupsIDs, groupsList.ToNamedEntities(), request.URL.String(), true, "groups")
 
-		albumIDs := make([]uint, len(resource.Albums))
+		noteIDs := make([]uint, len(resource.Notes))
 
-		for i, album := range resource.Albums {
-			albumIDs[i] = album.ID
+		for i, note := range resource.Notes {
+			noteIDs[i] = note.ID
 		}
 
-		albumList := models.AlbumList(resource.Albums)
-		albumDisplay := template_entities.GenerateRelationsDisplay(albumIDs, albumList.ToNamedEntities(), request.URL.String(), true, "albums")
+		noteList := models.NoteList(resource.Notes)
+		noteDisplay := template_entities.GenerateRelationsDisplay(noteIDs, noteList.ToNamedEntities(), request.URL.String(), true, "notes")
 
 		if resource.OwnerId != 0 {
 			ownerEntity, err := context.GetGroup(resource.OwnerId)
@@ -150,7 +150,7 @@ func ResourceCreateContextProvider(context *context.MahresourcesContext) func(re
 		tplContext["pageTitle"] = "Edit Resource"
 		tplContext["tags"] = tagsDisplay.SelectedRelations
 		tplContext["groups"] = groupsDisplay.SelectedRelations
-		tplContext["albums"] = albumDisplay.SelectedRelations
+		tplContext["notes"] = noteDisplay.SelectedRelations
 
 		return tplContext
 	}

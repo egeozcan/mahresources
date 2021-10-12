@@ -15,7 +15,7 @@ type GroupQuery struct {
 	Name          string
 	Description   string
 	Tags          []uint
-	Albums        []uint
+	Notes         []uint
 	CreatedBefore string
 	CreatedAfter  string
 }

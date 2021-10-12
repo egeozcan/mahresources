@@ -3,12 +3,12 @@
 {% block body %}
     <div class="flex">
         <div class="flex-1 text-2xl mb-2">
-            Albums
+            Notes
         </div>
     </div>
-    <section class="album-container">
-        {% for album in tag.Albums %}
-            {% include "./partials/album.tpl" %}
+    <section class="note-container">
+        {% for note in tag.Notes %}
+            {% include "./partials/note.tpl" %}
         {% endfor %}
     </section>
     <div class="flex">
@@ -16,7 +16,7 @@
             Resources
         </div>
     </div>
-    <section class="album-container">
+    <section class="note-container">
         {% for resource in tag.Resources %}
             {% include "./partials/resource.tpl" %}
         {% endfor %}

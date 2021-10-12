@@ -8,22 +8,22 @@
     </p>
     <div class="flex">
         <div class="flex-1 text-2xl mb-2 mt-6">
-            Own Albums
+            Own Notes
         </div>
     </div>
-    <section class="album-container">
-        {% for album in group.OwnAlbums %}
-            {% include "./partials/album.tpl" %}
+    <section class="note-container">
+        {% for note in group.OwnNotes %}
+            {% include "./partials/note.tpl" %}
         {% endfor %}
     </section>
     <div class="flex">
         <div class="flex-1 text-2xl mb-2 mt-6">
-            Related Albums
+            Related Notes
         </div>
     </div>
-    <section class="album-container">
-        {% for album in group.RelatedAlbums %}
-            {% include "./partials/album.tpl" %}
+    <section class="note-container">
+        {% for note in group.RelatedNotes %}
+            {% include "./partials/note.tpl" %}
         {% endfor %}
     </section>
     <div class="flex">
@@ -31,7 +31,7 @@
             Own Resources
         </div>
     </div>
-    <section class="album-container">
+    <section class="note-container">
         {% for resource in group.OwnResources %}
             {% include "./partials/resource.tpl" %}
         {% endfor %}
@@ -41,7 +41,7 @@
             Related Resources
         </div>
     </div>
-    <section class="album-container">
+    <section class="note-container">
         {% for resource in group.RelatedResources %}
             {% include "./partials/resource.tpl" %}
         {% endfor %}

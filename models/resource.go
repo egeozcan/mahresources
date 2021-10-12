@@ -19,7 +19,7 @@ type Resource struct {
 	Preview            []byte
 	PreviewContentType string
 	Tags               []*Tag   `gorm:"many2many:resource_tags;"`
-	Albums             []*Album `gorm:"many2many:resource_albums;"`
+	Notes              []*Note  `gorm:"many2many:resource_notes;"`
 	Groups             []*Group `gorm:"many2many:groups_related_resources;"`
 	OwnerId            uint
 }

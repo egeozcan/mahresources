@@ -40,9 +40,9 @@ func main() {
 	if err != nil {
 		panic("failed to migrate Resource")
 	}
-	err = db.AutoMigrate(&models.Album{})
+	err = db.AutoMigrate(&models.Note{})
 	if err != nil {
-		panic("failed to migrate Album")
+		panic("failed to migrate Note")
 	}
 	err = db.AutoMigrate(&models.Tag{})
 	if err != nil {
@@ -63,17 +63,17 @@ func main() {
 
 	appContext := context.NewMahresourcesContext(cachedFS, db)
 
-	router.Methods(constants.GET).Path("/album/new").HandlerFunc(
-		handlers.RenderTemplate("templates/createAlbum.tpl", contextProviders.AlbumCreateContextProvider(appContext)),
+	router.Methods(constants.GET).Path("/note/new").HandlerFunc(
+		handlers.RenderTemplate("templates/createNote.tpl", contextProviders.NoteCreateContextProvider(appContext)),
 	)
-	router.Methods(constants.GET).Path("/albums").HandlerFunc(
-		handlers.RenderTemplate("templates/listAlbums.tpl", contextProviders.AlbumListContextProvider(appContext)),
+	router.Methods(constants.GET).Path("/notes").HandlerFunc(
+		handlers.RenderTemplate("templates/listNotes.tpl", contextProviders.NoteListContextProvider(appContext)),
 	)
-	router.Methods(constants.GET).Path("/album").HandlerFunc(
-		handlers.RenderTemplate("templates/displayAlbum.tpl", contextProviders.AlbumContextProvider(appContext)),
+	router.Methods(constants.GET).Path("/note").HandlerFunc(
+		handlers.RenderTemplate("templates/displayNote.tpl", contextProviders.NoteContextProvider(appContext)),
 	)
-	router.Methods(constants.GET).Path("/album/edit").HandlerFunc(
-		handlers.RenderTemplate("templates/createAlbum.tpl", contextProviders.AlbumCreateContextProvider(appContext)),
+	router.Methods(constants.GET).Path("/note/edit").HandlerFunc(
+		handlers.RenderTemplate("templates/createNote.tpl", contextProviders.NoteCreateContextProvider(appContext)),
 	)
 
 	router.Methods(constants.GET).Path("/resource/new").HandlerFunc(
@@ -116,12 +116,12 @@ func main() {
 	)
 
 	router.Methods(constants.GET).Path("/").HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		http.Redirect(writer, request, "/albums", http.StatusMovedPermanently)
+		http.Redirect(writer, request, "/notes", http.StatusMovedPermanently)
 	})
 
-	router.Methods(constants.GET).Path("/v1/albums").HandlerFunc(api_handlers.GetAlbumsHandler(appContext))
-	router.Methods(constants.GET).Path("/v1/album").HandlerFunc(api_handlers.GetAlbumHandler(appContext))
-	router.Methods(constants.POST).Path("/v1/album").HandlerFunc(api_handlers.GetAddAlbumHandler(appContext))
+	router.Methods(constants.GET).Path("/v1/notes").HandlerFunc(api_handlers.GetNotesHandler(appContext))
+	router.Methods(constants.GET).Path("/v1/note").HandlerFunc(api_handlers.GetNoteHandler(appContext))
+	router.Methods(constants.POST).Path("/v1/note").HandlerFunc(api_handlers.GetAddNoteHandler(appContext))
 
 	router.Methods(constants.GET).Path("/v1/groups").HandlerFunc(api_handlers.GetGroupsHandler(appContext))
 	router.Methods(constants.GET).Path("/v1/groups/autocomplete").HandlerFunc(api_handlers.GetGroupsAutocompleteHandler(appContext))
@@ -132,7 +132,7 @@ func main() {
 	router.Methods(constants.POST).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceUploadHandler(appContext))
 	router.Methods(constants.POST).Path("/v1/resource/edit").HandlerFunc(api_handlers.GetResourceEditHandler(appContext))
 	router.Methods(constants.POST).Path("/v1/resource/preview").HandlerFunc(api_handlers.GetResourceUploadPreviewHandler(appContext))
-	router.Methods(constants.POST).Path("/v1/resource/addToAlbum").HandlerFunc(api_handlers.GetAddResourceToAlbumHandler(appContext))
+	router.Methods(constants.POST).Path("/v1/resource/addToNote").HandlerFunc(api_handlers.GetAddResourceToNoteHandler(appContext))
 
 	router.Methods(constants.GET).Path("/v1/tags").HandlerFunc(api_handlers.GetTagsHandler(appContext))
 	router.Methods(constants.POST).Path("/v1/tag").HandlerFunc(api_handlers.GetAddTagHandler(appContext))

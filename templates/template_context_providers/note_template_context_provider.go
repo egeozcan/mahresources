@@ -13,11 +13,11 @@ import (
 	"strconv"
 )
 
-func AlbumListContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func NoteListContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		page := http_utils.GetIntQueryParameter(request, "page", 1)
 		offset := (page - 1) * constants.MaxResults
-		var query http_query.AlbumQuery
+		var query http_query.NoteQuery
 		err := decoder.Decode(&query, request.URL.Query())
 		baseContext := StaticTemplateCtx(request)
 
@@ -27,7 +27,7 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 			return addErrContext(err, baseContext)
 		}
 
-		albums, err := context.GetAlbums(int(offset), constants.MaxResults, &query)
+		notes, err := context.GetNotes(int(offset), constants.MaxResults, &query)
 
 		if err != nil {
 			fmt.Println(err)
@@ -35,7 +35,7 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 			return addErrContext(err, baseContext)
 		}
 
-		albumCount, err := context.GetAlbumCount(&query)
+		noteCount, err := context.GetNoteCount(&query)
 
 		if err != nil {
 			fmt.Println(err)
@@ -43,7 +43,7 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 			return addErrContext(err, baseContext)
 		}
 
-		pagination, err := template_entities.GeneratePagination(request.URL.String(), albumCount, constants.MaxResults, int(page))
+		pagination, err := template_entities.GeneratePagination(request.URL.String(), noteCount, constants.MaxResults, int(page))
 
 		if err != nil {
 			fmt.Println(err)
@@ -67,23 +67,23 @@ func AlbumListContextProvider(context *context.MahresourcesContext) func(request
 		groupsDisplay := template_entities.GenerateRelationsDisplay(query.Groups, groupsList.ToNamedEntities(), request.URL.String(), true, "groups")
 
 		return pongo2.Context{
-			"pageTitle":  "Albums",
-			"albums":     albums,
+			"pageTitle":  "Notes",
+			"notes":      notes,
 			"groups":     groupsDisplay,
 			"pagination": pagination,
 			"tags":       tagsDisplay,
 			"action": template_entities.Entry{
 				Name: "Create",
-				Url:  "/album/new",
+				Url:  "/note/new",
 			},
 		}.Update(baseContext)
 	}
 }
 
-func AlbumCreateContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func NoteCreateContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
-			"pageTitle": "Create Album",
+			"pageTitle": "Create Note",
 		}.Update(StaticTemplateCtx(request))
 
 		var query http_query.EntityIdQuery
@@ -93,27 +93,27 @@ func AlbumCreateContextProvider(context *context.MahresourcesContext) func(reque
 			return tplContext
 		}
 
-		album, err := context.GetAlbum(query.ID)
+		note, err := context.GetNote(query.ID)
 
 		if err != nil {
 			return addErrContext(err, tplContext)
 		}
 
-		tagIDs := make([]uint, len(album.Tags))
+		tagIDs := make([]uint, len(note.Tags))
 
-		for i, tag := range album.Tags {
+		for i, tag := range note.Tags {
 			tagIDs[i] = tag.ID
 		}
 
-		tags := album.Tags
+		tags := note.Tags
 
-		groupsIDs := make([]uint, len(album.Groups))
+		groupsIDs := make([]uint, len(note.Groups))
 
-		for i, group := range album.Groups {
+		for i, group := range note.Groups {
 			groupsIDs[i] = group.ID
 		}
 
-		groups := album.Groups
+		groups := note.Groups
 
 		tagList := models.TagList(tags)
 		tagsDisplay := template_entities.GenerateRelationsDisplay(tagIDs, tagList.ToNamedEntities(), request.URL.String(), true, "tags")
@@ -121,20 +121,20 @@ func AlbumCreateContextProvider(context *context.MahresourcesContext) func(reque
 		groupsList := models.GroupList(groups)
 		groupsDisplay := template_entities.GenerateRelationsDisplay(groupsIDs, groupsList.ToNamedEntities(), request.URL.String(), true, "groups")
 
-		tplContext["album"] = album
-		tplContext["pageTitle"] = "Edit Album"
+		tplContext["note"] = note
+		tplContext["pageTitle"] = "Edit Note"
 		tplContext["tags"] = tagsDisplay.SelectedRelations
 		tplContext["groups"] = groupsDisplay.SelectedRelations
 
-		if album.OwnerId != 0 {
-			ownerEntity, err := context.GetGroup(album.OwnerId)
+		if note.OwnerId != 0 {
+			ownerEntity, err := context.GetGroup(note.OwnerId)
 
 			if err == nil {
 				owner := &template_entities.DisplayedRelation{
 					Name:   ownerEntity.GetName(),
 					Link:   "",
 					Active: false,
-					ID:     album.OwnerId,
+					ID:     note.OwnerId,
 				}
 
 				tplContext["owner"] = []*template_entities.DisplayedRelation{owner}
@@ -145,7 +145,7 @@ func AlbumCreateContextProvider(context *context.MahresourcesContext) func(reque
 	}
 }
 
-func AlbumContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func NoteContextProvider(context *context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		var query http_query.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())
@@ -157,7 +157,7 @@ func AlbumContextProvider(context *context.MahresourcesContext) func(request *ht
 			return addErrContext(err, baseContext)
 		}
 
-		album, err := context.GetAlbum(query.ID)
+		note, err := context.GetNote(query.ID)
 
 		if err != nil {
 			fmt.Println(err)
@@ -166,11 +166,11 @@ func AlbumContextProvider(context *context.MahresourcesContext) func(request *ht
 		}
 
 		return pongo2.Context{
-			"pageTitle": "Album: " + album.GetName(),
-			"album":     album,
+			"pageTitle": "Note: " + note.GetName(),
+			"note":      note,
 			"action": template_entities.Entry{
 				Name: "Edit",
-				Url:  "/album/edit?id=" + strconv.Itoa(int(query.ID)),
+				Url:  "/note/edit?id=" + strconv.Itoa(int(query.ID)),
 			},
 		}.Update(baseContext)
 	}

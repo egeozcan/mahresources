@@ -11,9 +11,9 @@ type Group struct {
 	Name             string      `gorm:"index"`
 	Description      string      `gorm:"index"`
 	RelatedResources []*Resource `gorm:"many2many:groups_related_resources;"`
-	RelatedAlbums    []*Album    `gorm:"many2many:groups_related_albums;"`
+	RelatedNotes     []*Note     `gorm:"many2many:groups_related_notes;"`
 	OwnResources     []Resource  `gorm:"foreignKey:OwnerId"`
-	OwnAlbums        []Album     `gorm:"foreignKey:OwnerId"`
+	OwnNotes         []Note      `gorm:"foreignKey:OwnerId"`
 	Tags             []*Tag      `gorm:"many2many:group_tags;"`
 }
 

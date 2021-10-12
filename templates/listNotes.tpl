@@ -1,8 +1,8 @@
 {% extends "layouts/gallery.tpl" %}
 
 {% block gallery %}
-    {% for album in albums %}
-        {% include "./partials/album.tpl" %}
+    {% for note in notes %}
+        {% include "./partials/note.tpl" %}
     {% endfor %}
 {% endblock %}
 

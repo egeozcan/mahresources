@@ -81,7 +81,7 @@
                                 {% include "./partials/form/autocompleter.tpl" with url='/v1/groups/autocomplete' elName='groups' title='Groups' selectedItems=resource.Groups id="autocompleter"|nanoid %}
                             </div>
                             <div class="flex-1">
-                                {% include "./partials/form/autocompleter.tpl" with url='/v1/albums' elName='albums' title='Albums' selectedItems=resource.Albums id="autocompleter"|nanoid %}
+                                {% include "./partials/form/autocompleter.tpl" with url='/v1/notes' elName='notes' title='Notes' selectedItems=resource.Notes id="autocompleter"|nanoid %}
                             </div>
                         </div>
                     </div>

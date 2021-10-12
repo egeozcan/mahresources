@@ -60,12 +60,12 @@ func GetResourceUploadPreviewHandler(ctx *context.MahresourcesContext) func(writ
 	}
 }
 
-func GetAddResourceToAlbumHandler(ctx *context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddResourceToNoteHandler(ctx *context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		resId := http_utils.GetIntFormParameter(request, "resId", 0)
-		albumId := http_utils.GetIntFormParameter(request, "albumId", 0)
+		noteId := http_utils.GetIntFormParameter(request, "noteId", 0)
 
-		resource, err := ctx.AddResourceToAlbum(resId, albumId)
+		resource, err := ctx.AddResourceToNote(resId, noteId)
 
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
