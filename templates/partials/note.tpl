@@ -1,5 +1,3 @@
-{% import "../macros/subTags.tpl" sub_tags %}
-
 <div class="note">
     <a href="/note?id={{ note.ID }}">
         <h3 class="mb-2">{{ note.Name }}</h3>
@@ -7,7 +5,6 @@
         <p>{{ note.Description|truncatechars:250 }}</p>
         {% endif %}
     </a>
-    {% if tags %}
     <div class="tags mt-3 mb-2" style="margin-left: -0.5rem">
         {% for tag in note.Tags %}
             <a class="no-underline" href='{{ withQuery("tags", stringId(tag.ID), true) }}'>
@@ -15,5 +12,4 @@
             </a>
         {% endfor %}
     </div>
-    {% endif %}
 </div>

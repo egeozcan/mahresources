@@ -1,5 +1,3 @@
-{% import "../macros/subTags.tpl" sub_tags %}
-
 <div class="resource">
     <a href="/resource?id={{ resource.ID }}">
         <h3>{{ resource.Name }}</h3>
