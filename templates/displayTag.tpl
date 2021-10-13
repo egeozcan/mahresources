@@ -24,7 +24,7 @@
 {% endblock %}
 
 {% block sidebar %}
-    <div class="mt-2 -ml-2">
+    <div>
         {% for group in tag.Groups %}
             {% include "./partials/group.tpl" %}
         {% endfor %}

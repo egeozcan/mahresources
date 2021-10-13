@@ -7,8 +7,8 @@
 {% endblock %}
 
 {% block sidebar %}
-<h3 class="font-regular text-base md:text-lg leading-snug truncate">Filter</h3>
-<form class="mt-5">
+{% include "./partials/sideTitle.tpl" with title="Filter" %}
+<form>
     {% include "./partials/form/autocompleter.tpl" with url='/v1/tags' elName='tags' title='Tags' selectedItems=tags id="autocompleter"|nanoid %}
     {% include "./partials/form/autocompleter.tpl" with url='/v1/notes' elName='notes' title='Notes' selectedItems=notes id="autocompleter"|nanoid %}
     {% include "./partials/form/autocompleter.tpl" with url='/v1/groups' elName='groups' title='Groups' selectedItems=groups id="autocompleter"|nanoid %}

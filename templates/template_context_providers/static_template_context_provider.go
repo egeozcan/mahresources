@@ -45,8 +45,9 @@ var StaticTemplateCtx = func(request *http.Request) pongo2.Context {
 		"queryValues": request.URL.Query(),
 		"path":        request.URL.Path,
 		"withQuery": func(name, value string, resetPage bool) string {
-			parsedBaseUrl, _ := url.Parse(request.URL.String())
-			q := request.URL.Query()
+			parsedBaseUrl := &url.URL{}
+			*parsedBaseUrl = *request.URL
+			q := parsedBaseUrl.Query()
 
 			if resetPage {
 				q.Del("page")

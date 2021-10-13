@@ -1,4 +1,4 @@
-<div class="group min-w-0 mt-6">
+<div class="group min-w-0">
     <div class="flex gap-3 content-center items-center mb-2 min-w-0">
         {% include "./avatar.tpl" with initials=group.Initials() %}
         <a class="min-w-0 overflow-ellipsis break-words flex-shrink" href="/group?id={{ group.ID }}">

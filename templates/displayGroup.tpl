@@ -1,56 +1,56 @@
 {% extends "layouts/base.tpl" %}
 
 {% block body %}
-    <p class="flex mb-6">
+
+    {% if group.Description %}
+    <div class="flex mb-6">
         <div class="flex-1">
             {{ group.Description|markdown }}
         </div>
-    </p>
-    <div class="flex">
-        <div class="flex-1 text-2xl mb-2 mt-6">
-            Own Notes
-        </div>
     </div>
-    <section class="note-container">
-        {% for note in group.OwnNotes %}
-            {% include "./partials/note.tpl" %}
-        {% endfor %}
-    </section>
-    <div class="flex">
-        <div class="flex-1 text-2xl mb-2 mt-6">
-            Related Notes
-        </div>
-    </div>
-    <section class="note-container">
-        {% for note in group.RelatedNotes %}
-            {% include "./partials/note.tpl" %}
-        {% endfor %}
-    </section>
-    <div class="flex">
-        <div class="flex-1 text-2xl mb-2 mt-6">
-            Own Resources
-        </div>
-    </div>
-    <section class="note-container">
-        {% for resource in group.OwnResources %}
+    {% endif %}
+
+    {% if group.OwnNotes %}
+        {% include "./partials/subtitle.tpl" with title="Notes" %}
+        <section class="note-container">
+            {% for note in group.OwnNotes %}
+                {% include "./partials/note.tpl" %}
+            {% endfor %}
+        </section>
+    {% endif %}
+
+    {% if group.OwnResources %}
+        {% include "./partials/subtitle.tpl" with title="Resources" %}
+        <section class="note-container">
+            {% for resource in group.OwnResources %}
             {% include "./partials/resource.tpl" %}
-        {% endfor %}
-    </section>
-    <div class="flex">
-        <div class="flex-1 text-2xl mb-2 mt-6">
-            Related Resources
-        </div>
-    </div>
-    <section class="note-container">
-        {% for resource in group.RelatedResources %}
-            {% include "./partials/resource.tpl" %}
-        {% endfor %}
-    </section>
+            {% endfor %}
+        </section>
+    {% endif %}
+
+    {% if group.RelatedNotes %}
+        {% include "./partials/subtitle.tpl" with title="Related Notes" %}
+        <section class="note-container">
+            {% for note in group.RelatedNotes %}
+                {% include "./partials/note.tpl" %}
+            {% endfor %}
+        </section>
+    {% endif %}
+
+    {% if group.RelatedResources %}
+        {% include "./partials/subtitle.tpl" with title="Related Resources" %}
+        <section class="note-container">
+            {% for resource in group.RelatedResources %}
+                {% include "./partials/resource.tpl" %}
+            {% endfor %}
+        </section>
+    {% endif %}
+
 {% endblock %}
 
 {% block sidebar %}
-    <h3 class="font-regular text-base md:text-lg leading-snug truncate">Tags</h3>
-    <div class="mt-2 -ml-2">
+    {% include "./partials/sideTitle.tpl" with title="Tags" %}
+    <div>
         {% for tag in group.Tags %}
             {% include "./partials/tag.tpl" with name=tag.Name ID=tag.ID %}
         {% endfor %}

@@ -9,8 +9,8 @@
 {% endblock %}
 
 {% block sidebar %}
-    <h3 class="font-regular text-base md:text-lg leading-snug truncate">Filter</h3>
-    <form class="mt-5">
+    {% include "./partials/sideTitle.tpl" with title="Filter" %}
+    <form>
         {% include "./partials/form/textInput.tpl" with name='Name' label='Name' value=queryValues.Name.0 %}
         {% include "./partials/form/searchButton.tpl" %}
     </form>
