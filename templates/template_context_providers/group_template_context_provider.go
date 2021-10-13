@@ -51,7 +51,7 @@ func GroupsListContextProvider(context *context.MahresourcesContext) func(reques
 			return addErrContext(err, baseContext)
 		}
 
-		tags, err := context.GetTagsByName("", 0)
+		tags, err := context.GetTagsWithIds(&query.Tags, 0)
 
 		if err != nil {
 			fmt.Println(err)
@@ -59,14 +59,11 @@ func GroupsListContextProvider(context *context.MahresourcesContext) func(reques
 			return addErrContext(err, baseContext)
 		}
 
-		tagList := models.TagList(*tags)
-		tagsDisplay := template_entities.GenerateRelationsDisplay(query.Tags, tagList.ToNamedEntities(), request.URL.String(), true, "tags")
-
 		return pongo2.Context{
 			"pageTitle":  "Groups",
 			"groups":     groups,
 			"pagination": pagination,
-			"tags":       tagsDisplay,
+			"tags":       tags,
 			"action": template_entities.Entry{
 				Name: "Add",
 				Url:  "/group/new",
@@ -94,18 +91,15 @@ func GroupCreateContextProvider(context *context.MahresourcesContext) func(reque
 			return addErrContext(err, tplContext)
 		}
 
-		tagIDs := make([]uint, len(group.Tags))
-
-		for i, tag := range group.Tags {
-			tagIDs[i] = tag.ID
+		if group.CategoryId != 0 && group.Category.ID != 0 {
+			if err == nil {
+				tplContext["category"] = []*models.Category{&group.Category}
+			}
 		}
-
-		tagList := models.TagList(group.Tags)
-		tagsDisplay := template_entities.GenerateRelationsDisplay(tagIDs, tagList.ToNamedEntities(), request.URL.String(), true, "tags")
 
 		tplContext["group"] = group
 		tplContext["pageTitle"] = "Edit Group"
-		tplContext["tags"] = tagsDisplay.SelectedRelations
+		tplContext["tags"] = &group.Tags
 
 		return tplContext
 	}

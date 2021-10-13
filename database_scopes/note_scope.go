@@ -19,7 +19,26 @@ func NoteQuery(query *http_query.NoteQuery) func(db *gorm.DB) *gorm.DB {
 
 		if query.Groups != nil && len(query.Groups) > 0 {
 			dbQuery = dbQuery.Where(
-				"(SELECT Count(*) FROM groups_related_notes pra WHERE pra.group_id IN ? AND pra.note_id = notes.id) = ?",
+				`
+					(
+						SELECT 
+							Count(*) 
+						FROM 
+							groups_related_notes grn 
+						WHERE 
+							grn.group_id IN ? 
+							AND grn.note_id = notes.id
+							AND notes.owner_id <> grn.group_id
+					) + (
+						SELECT
+							CASE
+								WHEN 
+									notes.owner_id IN ?
+								THEN 1
+								ELSE 0
+							END
+					) = ?`,
+				query.Groups,
 				query.Groups,
 				len(query.Groups),
 			)
@@ -33,12 +52,8 @@ func NoteQuery(query *http_query.NoteQuery) func(db *gorm.DB) *gorm.DB {
 			dbQuery = dbQuery.Where("description LIKE ?", "%"+query.Description+"%")
 		}
 
-		if query.HasThumbnail {
-			dbQuery = dbQuery.Where("preview IS NOT NULL")
-		}
-
 		if query.OwnerId != 0 {
-			dbQuery = dbQuery.Where("owner = ?", query.OwnerId)
+			dbQuery = dbQuery.Where("owner_id = ?", query.OwnerId)
 		}
 
 		if query.CreatedBefore != "" {

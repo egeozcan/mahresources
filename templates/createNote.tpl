@@ -8,18 +8,18 @@
             <div class="mt-6 sm:mt-5 space-y-6 sm:space-y-5">
                 <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-start sm:border-gray-200">
                     <label for="name" class="block text-sm font-medium text-gray-700 sm:mt-px sm:pt-2">
-                        Name
+                        Title
                     </label>
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="max-w-lg flex rounded-md shadow-sm">
-                            <input type="text" name="Name" id="name" value="{{ note.Name }}" autocomplete="name" class="flex-1 block w-full focus:ring-indigo-500 focus:border-indigo-500 min-w-0 rounded-md sm:text-sm border-gray-300">
+                            <input type="text" name="Name" id="name" value="{{ note.Name }}" required autocomplete="name" class="flex-1 block w-full focus:ring-indigo-500 focus:border-indigo-500 min-w-0 rounded-md sm:text-sm border-gray-300">
                         </div>
                     </div>
                 </div>
 
                 <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-start sm:border-t sm:border-gray-200 sm:pt-5">
                     <label for="description" class="block text-sm font-medium text-gray-700 sm:mt-px sm:pt-2">
-                        Description
+                        Text
                     </label>
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <textarea id="description" name="Description" rows="3" class="max-w-lg shadow-sm block w-full focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm border-gray-300 rounded-md">{{ note.Description }}</textarea>

@@ -78,7 +78,7 @@
                                 {% include "./partials/form/autocompleter.tpl" with url='/v1/tags' elName='tags' title='Tags' selectedItems=resource.Tags id="autocompleter"|nanoid %}
                             </div>
                             <div class="flex-1">
-                                {% include "./partials/form/autocompleter.tpl" with url='/v1/groups/autocomplete' elName='groups' title='Groups' selectedItems=resource.Groups id="autocompleter"|nanoid %}
+                                {% include "./partials/form/autocompleter.tpl" with url='/v1/groups' elName='groups' title='Groups' selectedItems=resource.Groups id="autocompleter"|nanoid %}
                             </div>
                             <div class="flex-1">
                                 {% include "./partials/form/autocompleter.tpl" with url='/v1/notes' elName='notes' title='Notes' selectedItems=resource.Notes id="autocompleter"|nanoid %}

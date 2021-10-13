@@ -38,6 +38,7 @@ func main() {
 
 	err = db.AutoMigrate(&models.Resource{})
 	if err != nil {
+		println(err.Error())
 		panic("failed to migrate Resource")
 	}
 	err = db.AutoMigrate(&models.Note{})
@@ -51,6 +52,10 @@ func main() {
 	err = db.AutoMigrate(&models.Group{})
 	if err != nil {
 		panic("failed to migrate Group")
+	}
+	err = db.AutoMigrate(&models.Category{})
+	if err != nil {
+		panic("failed to migrate Category")
 	}
 
 	base := afero.NewBasePathFs(afero.NewOsFs(), "./filezz")
@@ -124,9 +129,10 @@ func main() {
 	router.Methods(constants.POST).Path("/v1/note").HandlerFunc(api_handlers.GetAddNoteHandler(appContext))
 
 	router.Methods(constants.GET).Path("/v1/groups").HandlerFunc(api_handlers.GetGroupsHandler(appContext))
-	router.Methods(constants.GET).Path("/v1/groups/autocomplete").HandlerFunc(api_handlers.GetGroupsAutocompleteHandler(appContext))
 	router.Methods(constants.GET).Path("/v1/group").HandlerFunc(api_handlers.GetGroupHandler(appContext))
 	router.Methods(constants.POST).Path("/v1/group").HandlerFunc(api_handlers.GetAddGroupHandler(appContext))
+
+	router.Methods(constants.GET).Path("/v1/categories").HandlerFunc(api_handlers.GetCategoriesHandler(appContext))
 
 	router.Methods(constants.GET).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceHandler(appContext))
 	router.Methods(constants.POST).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceUploadHandler(appContext))

@@ -19,9 +19,26 @@ func ResourceQuery(query *http_query.ResourceQuery) func(db *gorm.DB) *gorm.DB {
 
 		if query.Groups != nil && len(query.Groups) > 0 {
 			dbQuery = dbQuery.Where(
-				`(
-					SELECT Count(*) 
-					FROM groups_related_resources prr WHERE prr.group_id IN ? AND prr.resource_id = resources.id) = ?`,
+				`
+					(
+						SELECT 
+							Count(*) 
+						FROM 
+							groups_related_resources prr 
+						WHERE 
+							prr.group_id IN ? 
+							AND prr.resource_id = resources.id
+							AND resources.owner_id <> prr.group_id
+					) + (
+						SELECT
+							CASE
+								WHEN 
+									resources.owner_id IN ?
+								THEN 1
+								ELSE 0
+							END
+					) = ?`,
+				query.Groups,
 				query.Groups,
 				len(query.Groups),
 			)
@@ -48,7 +65,7 @@ func ResourceQuery(query *http_query.ResourceQuery) func(db *gorm.DB) *gorm.DB {
 		}
 
 		if query.OwnerId != 0 {
-			dbQuery = dbQuery.Where("owner = ?", query.OwnerId)
+			dbQuery = dbQuery.Where("owner_id = ?", query.OwnerId)
 		}
 
 		if query.CreatedBefore != "" {

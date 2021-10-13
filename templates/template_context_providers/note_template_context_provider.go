@@ -51,7 +51,7 @@ func NoteListContextProvider(context *context.MahresourcesContext) func(request 
 			return addErrContext(err, baseContext)
 		}
 
-		tags, err := context.GetTagsByName("", 0)
+		tags, err := context.GetTagsWithIds(&query.Tags, 0)
 
 		if err != nil {
 			fmt.Println(err)
@@ -59,19 +59,20 @@ func NoteListContextProvider(context *context.MahresourcesContext) func(request 
 			return addErrContext(err, baseContext)
 		}
 
-		tagList := models.TagList(*tags)
-		tagsDisplay := template_entities.GenerateRelationsDisplay(query.Tags, tagList.ToNamedEntities(), request.URL.String(), true, "tags")
+		groups, err := context.GetGroupsWithIds(query.Groups)
 
-		groups, _ := context.GetGroupsWithIds(query.Groups)
-		groupsList := models.GroupList(*groups)
-		groupsDisplay := template_entities.GenerateRelationsDisplay(query.Groups, groupsList.ToNamedEntities(), request.URL.String(), true, "groups")
+		if err != nil {
+			fmt.Println(err)
+
+			return addErrContext(err, baseContext)
+		}
 
 		return pongo2.Context{
 			"pageTitle":  "Notes",
 			"notes":      notes,
-			"groups":     groupsDisplay,
+			"groups":     groups,
 			"pagination": pagination,
-			"tags":       tagsDisplay,
+			"tags":       tags,
 			"action": template_entities.Entry{
 				Name: "Create",
 				Url:  "/note/new",
@@ -105,39 +106,22 @@ func NoteCreateContextProvider(context *context.MahresourcesContext) func(reques
 			tagIDs[i] = tag.ID
 		}
 
-		tags := note.Tags
-
 		groupsIDs := make([]uint, len(note.Groups))
 
 		for i, group := range note.Groups {
 			groupsIDs[i] = group.ID
 		}
 
-		groups := note.Groups
-
-		tagList := models.TagList(tags)
-		tagsDisplay := template_entities.GenerateRelationsDisplay(tagIDs, tagList.ToNamedEntities(), request.URL.String(), true, "tags")
-
-		groupsList := models.GroupList(groups)
-		groupsDisplay := template_entities.GenerateRelationsDisplay(groupsIDs, groupsList.ToNamedEntities(), request.URL.String(), true, "groups")
-
 		tplContext["note"] = note
 		tplContext["pageTitle"] = "Edit Note"
-		tplContext["tags"] = tagsDisplay.SelectedRelations
-		tplContext["groups"] = groupsDisplay.SelectedRelations
+		tplContext["tags"] = &note.Tags
+		tplContext["groups"] = &note.Groups
 
 		if note.OwnerId != 0 {
 			ownerEntity, err := context.GetGroup(note.OwnerId)
 
 			if err == nil {
-				owner := &template_entities.DisplayedRelation{
-					Name:   ownerEntity.GetName(),
-					Link:   "",
-					Active: false,
-					ID:     note.OwnerId,
-				}
-
-				tplContext["owner"] = []*template_entities.DisplayedRelation{owner}
+				tplContext["owner"] = []*models.Group{ownerEntity}
 			}
 		}
 

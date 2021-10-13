@@ -9,7 +9,11 @@
     </a>
     {% if tags %}
     <div class="tags mt-3 mb-2" style="margin-left: -0.5rem">
-        {{ sub_tags(tags, note.Tags) }}
+        {% for tag in note.Tags %}
+            <a class="no-underline" href='{{ withQuery("tags", stringId(tag.ID), true) }}'>
+                {% include "./tag.tpl" with name=tag.Name active=hasQuery("tags", stringId(tag.ID)) %}
+            </a>
+        {% endfor %}
     </div>
     {% endif %}
 </div>

@@ -33,6 +33,10 @@ func GroupQuery(query *http_query.GroupQuery) func(db *gorm.DB) *gorm.DB {
 			dbQuery = dbQuery.Where("created_at >= ?", query.CreatedAfter)
 		}
 
+		if query.CategoryId != 0 {
+			dbQuery = dbQuery.Where("category_id >= ?", query.CategoryId)
+		}
+
 		return dbQuery
 	}
 }

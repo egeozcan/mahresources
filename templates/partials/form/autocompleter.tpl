@@ -97,6 +97,29 @@
             requestAborter = abort;
         "
     >
+    <template x-if="dropdownActive && results.length > 0">
+        <div class="absolute mt-1 w-full border bg-white shadow-xl rounded z-50">
+            <div class="p-3">
+                <div x-ref="list">
+                    <template x-for="(result, index) in results" :key="index">
+                        <span
+                            :active="false"
+                            class="cursor-pointer p-2 flex block w-full rounded"
+                            :class="{'bg-blue-500': index === selectedIndex}"
+                            @click="pushVal"
+                            @mouseover="selectedIndex = index;"
+                        >
+                            <span
+                                x-text="result.Name"
+                                class="overflow-ellipsis overflow-hidden"
+                                :title="result.Name"
+                            ></span>
+                        </span>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </template>
     <template x-for="(result, index) in selectedResults">
         <p class="
             inline-flex rounded-md items-center py-0.5 pl-2.5 pr-1 text-sm font-medium bg-indigo-100
@@ -120,27 +143,4 @@
         </p>
     </template>
     <div x-ref="inputs"></div>
-    <template x-if="dropdownActive && results.length > 0">
-        <div class="absolute mt-1 w-full border bg-white shadow-xl rounded z-50" style="top:3.8rem">
-            <div class="p-3">
-                <div x-ref="list">
-                    <template x-for="(result, index) in results" :key="index">
-                        <span
-                            :active="false"
-                            class="cursor-pointer p-2 flex block w-full rounded"
-                            :class="{'bg-blue-500': index === selectedIndex}"
-                            @click="pushVal"
-                            @mouseover="selectedIndex = index;"
-                        >
-                            <span
-                                x-text="result.Name"
-                                class="overflow-ellipsis overflow-hidden"
-                                :title="result.Name"
-                            ></span>
-                        </span>
-                    </template>
-                </div>
-            </div>
-        </div>
-    </template>
 </div>

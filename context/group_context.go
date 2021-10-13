@@ -4,7 +4,6 @@ import (
 	"errors"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"mahresources/api_model"
 	"mahresources/database_scopes"
 	"mahresources/http_query"
 	"mahresources/models"
@@ -18,6 +17,7 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *http_query.GroupCreator)
 	group := models.Group{
 		Name:        groupQuery.Name,
 		Description: groupQuery.Description,
+		CategoryId:  groupQuery.CategoryId,
 	}
 	ctx.db.Create(&group)
 
@@ -58,6 +58,7 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *http_query.GroupEditor) 
 		},
 		Name:        groupQuery.Name,
 		Description: groupQuery.Description,
+		CategoryId:  groupQuery.CategoryId,
 	}
 
 	err := ctx.db.Model(&group).Association("Tags").Clear()
@@ -92,25 +93,12 @@ func (ctx *MahresourcesContext) GetGroups(offset, maxResults int, query *http_qu
 	return &groups, nil
 }
 
-func (ctx *MahresourcesContext) GetGroupsAutoComplete(name string, maxResults int) (*[]api_model.AutoCompleteResult, error) {
-	var groups []models.Group
-
-	ctx.db.Where("name LIKE ?", "%"+name+"%").Limit(maxResults).Find(&groups)
-
-	results := make([]api_model.AutoCompleteResult, len(groups))
-
-	for i, v := range groups {
-		results[i] = api_model.AutoCompleteResult{
-			Name: v.Name,
-			ID:   v.ID,
-		}
-	}
-
-	return &results, nil
-}
-
 func (ctx *MahresourcesContext) GetGroupsWithIds(ids []uint) (*[]*models.Group, error) {
 	var groups []*models.Group
+
+	if len(ids) == 0 {
+		return &groups, nil
+	}
 
 	ctx.db.Find(&groups, ids)
 

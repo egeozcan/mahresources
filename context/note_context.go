@@ -94,6 +94,10 @@ func (ctx *MahresourcesContext) GetNotes(offset, maxResults int, query *http_que
 func (ctx *MahresourcesContext) GetNotesWithIds(ids []uint) (*[]*models.Note, error) {
 	var notes []*models.Note
 
+	if len(ids) == 0 {
+		return &notes, nil
+	}
+
 	ctx.db.Find(&notes, ids)
 
 	return &notes, nil

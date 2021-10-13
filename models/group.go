@@ -3,7 +3,6 @@ package models
 import (
 	"gorm.io/gorm"
 	"strings"
-	"unicode"
 )
 
 type Group struct {
@@ -15,6 +14,8 @@ type Group struct {
 	OwnResources     []Resource  `gorm:"foreignKey:OwnerId"`
 	OwnNotes         []Note      `gorm:"foreignKey:OwnerId"`
 	Tags             []*Tag      `gorm:"many2many:group_tags;"`
+	CategoryId       uint
+	Category         Category
 }
 
 func (p Group) GetId() uint {
@@ -22,7 +23,7 @@ func (p Group) GetId() uint {
 }
 
 func (p Group) GetName() string {
-	return limit(strings.ToTitleSpecial(unicode.TurkishCase, p.Name), 200)
+	return limit(p.Name, 200)
 }
 
 func (p Group) Initials() string {

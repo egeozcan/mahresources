@@ -60,6 +60,10 @@ func (ctx *MahresourcesContext) GetTag(id uint) (*models.Tag, error) {
 func (ctx *MahresourcesContext) GetTagsWithIds(ids *[]uint, limit int) (*[]models.Tag, error) {
 	var tags []models.Tag
 
+	if len(*ids) == 0 {
+		return &tags, nil
+	}
+
 	query := ctx.db
 
 	if limit > 0 {

@@ -4,6 +4,7 @@ type GroupCreator struct {
 	Name        string
 	Description string
 	Tags        []uint
+	CategoryId  uint
 }
 
 type GroupEditor struct {
@@ -16,6 +17,7 @@ type GroupQuery struct {
 	Description   string
 	Tags          []uint
 	Notes         []uint
+	CategoryId    uint
 	CreatedBefore string
 	CreatedAfter  string
 }

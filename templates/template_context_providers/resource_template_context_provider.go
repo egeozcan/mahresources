@@ -51,7 +51,7 @@ func ResourceListContextProvider(context *context.MahresourcesContext) func(requ
 			return addErrContext(err, baseContext)
 		}
 
-		tags, err := context.GetTagsByName("", 0)
+		tags, err := context.GetTagsWithIds(&query.Tags, 0)
 
 		if err != nil {
 			fmt.Println(err)
@@ -59,24 +59,16 @@ func ResourceListContextProvider(context *context.MahresourcesContext) func(requ
 			return addErrContext(err, baseContext)
 		}
 
-		tagList := models.TagList(*tags)
-		tagsDisplay := template_entities.GenerateRelationsDisplay(query.Tags, tagList.ToNamedEntities(), request.URL.String(), true, "tags")
-
 		notes, _ := context.GetNotesWithIds(query.Notes)
-		noteList := models.NoteList(*notes)
-		notesDisplay := template_entities.GenerateRelationsDisplay(query.Notes, noteList.ToNamedEntities(), request.URL.String(), true, "notes")
-
 		groups, _ := context.GetGroupsWithIds(query.Groups)
-		groupsList := models.GroupList(*groups)
-		groupsDisplay := template_entities.GenerateRelationsDisplay(query.Groups, groupsList.ToNamedEntities(), request.URL.String(), true, "groups")
 
 		return pongo2.Context{
 			"pageTitle":  "Resources",
 			"resources":  resources,
 			"pagination": pagination,
-			"tags":       tagsDisplay,
-			"notes":      notesDisplay,
-			"groups":     groupsDisplay,
+			"tags":       tags,
+			"notes":      notes,
+			"groups":     groups,
 			"action": template_entities.Entry{
 				Name: "Create",
 				Url:  "/resource/new",
@@ -104,53 +96,19 @@ func ResourceCreateContextProvider(context *context.MahresourcesContext) func(re
 			return addErrContext(err, tplContext)
 		}
 
-		tagIDs := make([]uint, len(resource.Tags))
-
-		for i, tag := range resource.Tags {
-			tagIDs[i] = tag.ID
-		}
-
-		tagList := models.TagList(resource.Tags)
-		tagsDisplay := template_entities.GenerateRelationsDisplay(tagIDs, tagList.ToNamedEntities(), request.URL.String(), true, "tags")
-
-		groupsIDs := make([]uint, len(resource.Groups))
-
-		for i, group := range resource.Groups {
-			groupsIDs[i] = group.ID
-		}
-
-		groupsList := models.GroupList(resource.Groups)
-		groupsDisplay := template_entities.GenerateRelationsDisplay(groupsIDs, groupsList.ToNamedEntities(), request.URL.String(), true, "groups")
-
-		noteIDs := make([]uint, len(resource.Notes))
-
-		for i, note := range resource.Notes {
-			noteIDs[i] = note.ID
-		}
-
-		noteList := models.NoteList(resource.Notes)
-		noteDisplay := template_entities.GenerateRelationsDisplay(noteIDs, noteList.ToNamedEntities(), request.URL.String(), true, "notes")
-
 		if resource.OwnerId != 0 {
 			ownerEntity, err := context.GetGroup(resource.OwnerId)
 
 			if err == nil {
-				owner := &template_entities.DisplayedRelation{
-					Name:   ownerEntity.GetName(),
-					Link:   "",
-					Active: false,
-					ID:     resource.OwnerId,
-				}
-
-				tplContext["owner"] = []*template_entities.DisplayedRelation{owner}
+				tplContext["owner"] = []*models.Group{ownerEntity}
 			}
 		}
 
 		tplContext["resource"] = resource
 		tplContext["pageTitle"] = "Edit Resource"
-		tplContext["tags"] = tagsDisplay.SelectedRelations
-		tplContext["groups"] = groupsDisplay.SelectedRelations
-		tplContext["notes"] = noteDisplay.SelectedRelations
+		tplContext["tags"] = &resource.Tags
+		tplContext["groups"] = &resource.Groups
+		tplContext["notes"] = &resource.Notes
 
 		return tplContext
 	}

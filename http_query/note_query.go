@@ -22,5 +22,4 @@ type NoteQuery struct {
 	Tags          []uint
 	CreatedBefore string
 	CreatedAfter  string
-	HasThumbnail  bool
 }

@@ -37,23 +37,6 @@ func GetGroupsHandler(ctx *context.MahresourcesContext) func(writer http.Respons
 	}
 }
 
-func GetGroupsAutocompleteHandler(ctx *context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
-	return func(writer http.ResponseWriter, request *http.Request) {
-		name := http_utils.GetQueryParameter(request, "name", "")
-
-		groups, err := ctx.GetGroupsAutoComplete(name, constants.MaxResults)
-
-		if err != nil {
-			writer.WriteHeader(404)
-			fmt.Fprint(writer, err.Error())
-			return
-		}
-
-		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(groups)
-	}
-}
-
 func GetGroupHandler(ctx *context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := uint(http_utils.GetIntQueryParameter(request, "id", 0))
