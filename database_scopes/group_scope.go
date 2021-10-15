@@ -37,6 +37,10 @@ func GroupQuery(query *http_query.GroupQuery) func(db *gorm.DB) *gorm.DB {
 			dbQuery = dbQuery.Where("category_id >= ?", query.CategoryId)
 		}
 
+		if len(query.Categories) != 0 {
+			dbQuery = dbQuery.Where("category_id IN ?", query.Categories)
+		}
+
 		return dbQuery
 	}
 }

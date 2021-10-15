@@ -59,9 +59,18 @@ func GroupsListContextProvider(context *context.MahresourcesContext) func(reques
 			return addErrContext(err, baseContext)
 		}
 
+		categories, err := context.GetCategoriesWithIds(&query.Categories, 0)
+
+		if err != nil {
+			fmt.Println(err)
+
+			return addErrContext(err, baseContext)
+		}
+
 		return pongo2.Context{
 			"pageTitle":  "Groups",
 			"groups":     groups,
+			"categories": categories,
 			"pagination": pagination,
 			"tags":       tags,
 			"action": template_entities.Entry{

@@ -29,6 +29,7 @@ var BaseTemplateContext = pongo2.Context{
 			Url:  "/groups",
 		},
 	},
+	"partial": func(name string) string { return "/partials/" + name + ".tpl" },
 }
 
 func contains(s []string, e string) bool {

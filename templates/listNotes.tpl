@@ -1,18 +1,18 @@
 {% extends "layouts/gallery.tpl" %}
 
 {% block gallery %}
-    {% for note in notes %}
-        {% include "./partials/note.tpl" %}
+    {% for entity in notes %}
+        {% include "/partials/note.tpl" %}
     {% endfor %}
 {% endblock %}
 
 {% block sidebar %}
-    {% include "./partials/sideTitle.tpl" with title="Filter" %}
+    {% include "/partials/sideTitle.tpl" with title="Filter" %}
     <form>
-        {% include "./partials/form/autocompleter.tpl" with url='/v1/tags' elName='tags' title='Tags' selectedItems=tags id="autocompleter"|nanoid %}
-        {% include "./partials/form/autocompleter.tpl" with url='/v1/groups' elName='groups' title='Groups' selectedItems=groups id="autocompleter"|nanoid %}
-        {% include "./partials/form/textInput.tpl" with name='Name' label='Name' value=queryValues.Name.0 %}
-        {% include "./partials/form/textInput.tpl" with name='Description' label='Description' value=queryValues.Description.0 %}
-        {% include "./partials/form/searchButton.tpl" %}
+        {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' elName='tags' title='Tags' selectedItems=tags id="autocompleter"|nanoid %}
+        {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='groups' title='Groups' selectedItems=groups id="autocompleter"|nanoid %}
+        {% include "/partials/form/textInput.tpl" with name='Name' label='Name' value=queryValues.Name.0 %}
+        {% include "/partials/form/textInput.tpl" with name='Description' label='Description' value=queryValues.Description.0 %}
+        {% include "/partials/form/searchButton.tpl" %}
     </form>
 {% endblock %}

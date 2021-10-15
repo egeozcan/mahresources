@@ -9,10 +9,10 @@
         </div>
     {% endif %}
 
-    {% include "./partials/subtitle.tpl" with title="Related Notes" %}
+    {% include "/partials/subtitle.tpl" with title="Related Notes" %}
     <section class="note-container">
-        {% for note in resource.Notes %}
-            {% include "./partials/note.tpl" %}
+        {% for entity in resource.Notes %}
+            {% include "/partials/note.tpl" %}
         {% endfor %}
     </section>
 {% endblock %}
@@ -25,16 +25,16 @@
             <img src="/public/placeholders/file.jpg" alt="">
         {% endif %}
     </a>
-    {% include "./partials/sideTitle.tpl" with title="Tags" %}
+    {% include "/partials/sideTitle.tpl" with title="Tags" %}
     <div>
         {% for tag in resource.Tags %}
-            {% include "./partials/tag.tpl" with name=tag.Name ID=tag.ID %}
+            {% include "/partials/tag.tpl" with name=tag.Name ID=tag.ID %}
         {% endfor %}
     </div>
-    {% include "./partials/sideTitle.tpl" with title="Groups" %}
+    {% include "/partials/sideTitle.tpl" with title="Groups" %}
     <div>
         {% for group in resource.Groups %}
-            {% include "./partials/group.tpl" %}
+            {% include "/partials/group.tpl" %}
         {% endfor %}
     </div>
 {% endblock %}

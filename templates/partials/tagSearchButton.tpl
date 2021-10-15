@@ -1,3 +1,3 @@
 <a class="no-underline" href="{{ tag.Link }}">
-    {% include "./tag.tpl" with name=tag.Name active=tag.Active %}
+    {% include "partials/tag.tpl" with name=tag.Name active=tag.Active %}
 </a>

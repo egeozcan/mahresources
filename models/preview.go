@@ -12,6 +12,8 @@ import (
 type Preview struct {
 	gorm.Model
 	Data        []byte
+	Width       uint
+	Height      uint
 	ContentType string
 	OwnerHash   string
 }

@@ -13,10 +13,10 @@
 </head>
 <body class="site">
     <header class="header">
-        {% include "../partials/menu.tpl" %}
+        {% include "/partials/menu.tpl" %}
         {% block header %}{% endblock %}
     </header>
-    {% include "../partials/title.tpl" %}
+    {% include "/partials/title.tpl" %}
     <article class="content">
         <section class="sidebar">
             {% block sidebar %}{% endblock %}
@@ -26,7 +26,7 @@
         </section>
     </article>
     <footer class="footer">
-        {% include "../partials/pagination.tpl" %}
+        {% include "/partials/pagination.tpl" %}
         {% block footer %}{% endblock %}
     </footer>
 </body>

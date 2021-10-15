@@ -1,4 +1,4 @@
-{% extends "base.tpl" %}
+{% extends "layouts/base.tpl" %}
 
 {% block body %}
     <section class="note-container">

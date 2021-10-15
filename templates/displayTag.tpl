@@ -7,8 +7,8 @@
         </div>
     </div>
     <section class="note-container">
-        {% for note in tag.Notes %}
-            {% include "./partials/note.tpl" %}
+        {% for entity in tag.Notes %}
+            {% include "/partials/note.tpl" %}
         {% endfor %}
     </section>
     <div class="flex">
@@ -17,8 +17,8 @@
         </div>
     </div>
     <section class="note-container">
-        {% for resource in tag.Resources %}
-            {% include "./partials/resource.tpl" %}
+        {% for entity in tag.Resources %}
+            {% include "/partials/resource.tpl" %}
         {% endfor %}
     </section>
 {% endblock %}
@@ -26,7 +26,7 @@
 {% block sidebar %}
     <div>
         {% for group in tag.Groups %}
-            {% include "./partials/group.tpl" %}
+            {% include "/partials/group.tpl" %}
         {% endfor %}
     </div>
 {% endblock %}

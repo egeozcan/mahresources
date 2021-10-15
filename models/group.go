@@ -7,8 +7,9 @@ import (
 
 type Group struct {
 	gorm.Model
-	Name             string      `gorm:"index"`
-	Description      string      `gorm:"index"`
+	Name             string `gorm:"index"`
+	Description      string `gorm:"index"`
+	Meta             string
 	RelatedResources []*Resource `gorm:"many2many:groups_related_resources;"`
 	RelatedNotes     []*Note     `gorm:"many2many:groups_related_notes;"`
 	OwnResources     []Resource  `gorm:"foreignKey:OwnerId"`

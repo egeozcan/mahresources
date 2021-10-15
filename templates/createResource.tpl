@@ -75,13 +75,13 @@
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="flex gap-2">
                             <div class="flex-1">
-                                {% include "./partials/form/autocompleter.tpl" with url='/v1/tags' elName='tags' title='Tags' selectedItems=resource.Tags id="autocompleter"|nanoid %}
+                                {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' elName='tags' title='Tags' selectedItems=resource.Tags id="autocompleter"|nanoid %}
                             </div>
                             <div class="flex-1">
-                                {% include "./partials/form/autocompleter.tpl" with url='/v1/groups' elName='groups' title='Groups' selectedItems=resource.Groups id="autocompleter"|nanoid %}
+                                {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='groups' title='Groups' selectedItems=resource.Groups id="autocompleter"|nanoid %}
                             </div>
                             <div class="flex-1">
-                                {% include "./partials/form/autocompleter.tpl" with url='/v1/notes' elName='notes' title='Notes' selectedItems=resource.Notes id="autocompleter"|nanoid %}
+                                {% include "/partials/form/autocompleter.tpl" with url='/v1/notes' elName='notes' title='Notes' selectedItems=resource.Notes id="autocompleter"|nanoid %}
                             </div>
                         </div>
                     </div>
@@ -94,7 +94,7 @@
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="flex gap-2">
                             <div class="flex-1">
-                                {% include "./partials/form/autocompleter.tpl" with url='/v1/groups' elName='ownerId' title='' selectedItems=owner min=1 max=1 id="autocompleter"|nanoid %}
+                                {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='ownerId' title='' selectedItems=owner min=1 max=1 id="autocompleter"|nanoid %}
                             </div>
                         </div>
                     </div>

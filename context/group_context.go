@@ -3,7 +3,6 @@ package context
 import (
 	"errors"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 	"mahresources/database_scopes"
 	"mahresources/http_query"
 	"mahresources/models"
@@ -76,7 +75,21 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *http_query.GroupEditor) 
 
 func (ctx *MahresourcesContext) GetGroup(id uint) (*models.Group, error) {
 	var group models.Group
-	ctx.db.Preload(clause.Associations).First(&group, id)
+
+	preloadQuery := func(sortField string) func(db *gorm.DB) *gorm.DB {
+		return func(db *gorm.DB) *gorm.DB {
+			return db.Limit(10).Order(sortField)
+		}
+	}
+
+	ctx.db.
+		Preload("RelatedResources", preloadQuery("resources.updated_at DESC")).
+		Preload("RelatedNotes", preloadQuery("notes.updated_at DESC")).
+		Preload("OwnResources", preloadQuery("resources.updated_at DESC")).
+		Preload("OwnNotes", preloadQuery("notes.updated_at DESC")).
+		Preload("Tags").
+		Preload("Category").
+		First(&group, id)
 
 	if group.ID == 0 {
 		return nil, errors.New("could not load group")
@@ -88,7 +101,7 @@ func (ctx *MahresourcesContext) GetGroup(id uint) (*models.Group, error) {
 func (ctx *MahresourcesContext) GetGroups(offset, maxResults int, query *http_query.GroupQuery) (*[]models.Group, error) {
 	var groups []models.Group
 
-	ctx.db.Scopes(database_scopes.GroupQuery(query)).Limit(maxResults).Offset(int(offset)).Preload("Tags").Find(&groups)
+	ctx.db.Scopes(database_scopes.GroupQuery(query)).Limit(maxResults).Offset(int(offset)).Preload("Tags").Preload("Category").Find(&groups)
 
 	return &groups, nil
 }

@@ -69,55 +69,55 @@ func main() {
 	appContext := context.NewMahresourcesContext(cachedFS, db)
 
 	router.Methods(constants.GET).Path("/note/new").HandlerFunc(
-		handlers.RenderTemplate("templates/createNote.tpl", contextProviders.NoteCreateContextProvider(appContext)),
+		handlers.RenderTemplate("createNote.tpl", contextProviders.NoteCreateContextProvider(appContext)),
 	)
 	router.Methods(constants.GET).Path("/notes").HandlerFunc(
-		handlers.RenderTemplate("templates/listNotes.tpl", contextProviders.NoteListContextProvider(appContext)),
+		handlers.RenderTemplate("listNotes.tpl", contextProviders.NoteListContextProvider(appContext)),
 	)
 	router.Methods(constants.GET).Path("/note").HandlerFunc(
-		handlers.RenderTemplate("templates/displayNote.tpl", contextProviders.NoteContextProvider(appContext)),
+		handlers.RenderTemplate("displayNote.tpl", contextProviders.NoteContextProvider(appContext)),
 	)
 	router.Methods(constants.GET).Path("/note/edit").HandlerFunc(
-		handlers.RenderTemplate("templates/createNote.tpl", contextProviders.NoteCreateContextProvider(appContext)),
+		handlers.RenderTemplate("createNote.tpl", contextProviders.NoteCreateContextProvider(appContext)),
 	)
 
 	router.Methods(constants.GET).Path("/resource/new").HandlerFunc(
-		handlers.RenderTemplate("templates/createResource.tpl", contextProviders.ResourceCreateContextProvider(appContext)),
+		handlers.RenderTemplate("createResource.tpl", contextProviders.ResourceCreateContextProvider(appContext)),
 	)
 	router.Methods(constants.GET).Path("/resources").HandlerFunc(
-		handlers.RenderTemplate("templates/listResources.tpl", contextProviders.ResourceListContextProvider(appContext)),
+		handlers.RenderTemplate("listResources.tpl", contextProviders.ResourceListContextProvider(appContext)),
 	)
 	router.Methods(constants.GET).Path("/resource").HandlerFunc(
-		handlers.RenderTemplate("templates/displayResource.tpl", contextProviders.ResourceContextProvider(appContext)),
+		handlers.RenderTemplate("displayResource.tpl", contextProviders.ResourceContextProvider(appContext)),
 	)
 	router.Methods(constants.GET).Path("/resource/edit").HandlerFunc(
-		handlers.RenderTemplate("templates/createResource.tpl", contextProviders.ResourceCreateContextProvider(appContext)),
+		handlers.RenderTemplate("createResource.tpl", contextProviders.ResourceCreateContextProvider(appContext)),
 	)
 
 	router.Methods(constants.GET).Path("/group/new").HandlerFunc(
-		handlers.RenderTemplate("templates/createGroup.tpl", contextProviders.GroupCreateContextProvider(appContext)),
+		handlers.RenderTemplate("createGroup.tpl", contextProviders.GroupCreateContextProvider(appContext)),
 	)
 	router.Methods(constants.GET).Path("/group/edit").HandlerFunc(
-		handlers.RenderTemplate("templates/createGroup.tpl", contextProviders.GroupCreateContextProvider(appContext)),
+		handlers.RenderTemplate("createGroup.tpl", contextProviders.GroupCreateContextProvider(appContext)),
 	)
 	router.Methods(constants.GET).Path("/groups").HandlerFunc(
-		handlers.RenderTemplate("templates/listGroups.tpl", contextProviders.GroupsListContextProvider(appContext)),
+		handlers.RenderTemplate("listGroups.tpl", contextProviders.GroupsListContextProvider(appContext)),
 	)
 	router.Methods(constants.GET).Path("/group").HandlerFunc(
-		handlers.RenderTemplate("templates/displayGroup.tpl", contextProviders.GroupContextProvider(appContext)),
+		handlers.RenderTemplate("displayGroup.tpl", contextProviders.GroupContextProvider(appContext)),
 	)
 
 	router.Methods(constants.GET).Path("/tag/new").HandlerFunc(
-		handlers.RenderTemplate("templates/createTag.tpl", contextProviders.TagCreateContextProvider(appContext)),
+		handlers.RenderTemplate("createTag.tpl", contextProviders.TagCreateContextProvider(appContext)),
 	)
 	router.Methods(constants.GET).Path("/tag/edit").HandlerFunc(
-		handlers.RenderTemplate("templates/createTag.tpl", contextProviders.TagCreateContextProvider(appContext)),
+		handlers.RenderTemplate("createTag.tpl", contextProviders.TagCreateContextProvider(appContext)),
 	)
 	router.Methods(constants.GET).Path("/tags").HandlerFunc(
-		handlers.RenderTemplate("templates/listTags.tpl", contextProviders.TagListContextProvider(appContext)),
+		handlers.RenderTemplate("listTags.tpl", contextProviders.TagListContextProvider(appContext)),
 	)
 	router.Methods(constants.GET).Path("/tag").HandlerFunc(
-		handlers.RenderTemplate("templates/displayTag.tpl", contextProviders.TagContextProvider(appContext)),
+		handlers.RenderTemplate("displayTag.tpl", contextProviders.TagContextProvider(appContext)),
 	)
 
 	router.Methods(constants.GET).Path("/").HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

@@ -17,6 +17,7 @@ type GroupQuery struct {
 	Description   string
 	Tags          []uint
 	Notes         []uint
+	Categories    []uint
 	CategoryId    uint
 	CreatedBefore string
 	CreatedAfter  string
