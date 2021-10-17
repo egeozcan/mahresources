@@ -21,8 +21,18 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB) *MahresourcesConte
 	return &MahresourcesContext{fs: filesystem, db: db}
 }
 
-func preloadQuery(sortField string) func(db *gorm.DB) *gorm.DB {
+func standardSort(sortField string) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
-		return db.Limit(10).Order(sortField)
+		return db.Order(sortField)
+	}
+}
+
+func standardLimit(db *gorm.DB) *gorm.DB {
+	return db.Limit(10)
+}
+
+func standardSortAndLimit(sortField string) func(db *gorm.DB) *gorm.DB {
+	return func(db *gorm.DB) *gorm.DB {
+		return standardLimit(standardSort(sortField)(db))
 	}
 }

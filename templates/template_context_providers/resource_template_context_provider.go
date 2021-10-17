@@ -59,8 +59,8 @@ func ResourceListContextProvider(context *context.MahresourcesContext) func(requ
 			return addErrContext(err, baseContext)
 		}
 
-		notes, _ := context.GetNotesWithIds(query.Notes)
-		groups, _ := context.GetGroupsWithIds(query.Groups)
+		notes, _ := context.GetNotesWithIds(&query.Notes)
+		groups, _ := context.GetGroupsWithIds(&query.Groups)
 
 		return pongo2.Context{
 			"pageTitle":  "Resources",

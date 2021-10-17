@@ -58,6 +58,19 @@ func GroupsListContextProvider(context *context.MahresourcesContext) func(reques
 
 			return addErrContext(err, baseContext)
 		}
+		if err != nil {
+			fmt.Println(err)
+
+			return addErrContext(err, baseContext)
+		}
+
+		notes, err := context.GetNotesWithIds(&query.Notes)
+
+		if err != nil {
+			fmt.Println(err)
+
+			return addErrContext(err, baseContext)
+		}
 
 		categories, err := context.GetCategoriesWithIds(&query.Categories, 0)
 
@@ -73,6 +86,7 @@ func GroupsListContextProvider(context *context.MahresourcesContext) func(reques
 			"categories": categories,
 			"pagination": pagination,
 			"tags":       tags,
+			"notes":      notes,
 			"action": template_entities.Entry{
 				Name: "Add",
 				Url:  "/group/new",
@@ -135,7 +149,8 @@ func GroupContextProvider(context *context.MahresourcesContext) func(request *ht
 		}
 
 		return pongo2.Context{
-			"pageTitle": "Group: " + group.GetName(),
+			"pageTitle": group.GetName(),
+			"prefix":    group.Category.Name,
 			"group":     group,
 			"action": template_entities.Entry{
 				Name: "Edit",

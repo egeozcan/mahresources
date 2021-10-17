@@ -59,7 +59,7 @@ func NoteListContextProvider(context *context.MahresourcesContext) func(request 
 			return addErrContext(err, baseContext)
 		}
 
-		groups, err := context.GetGroupsWithIds(query.Groups)
+		groups, err := context.GetGroupsWithIds(&query.Groups)
 
 		if err != nil {
 			fmt.Println(err)

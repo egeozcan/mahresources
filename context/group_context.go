@@ -77,10 +77,10 @@ func (ctx *MahresourcesContext) GetGroup(id uint) (*models.Group, error) {
 	var group models.Group
 
 	ctx.db.
-		Preload("RelatedResources", preloadQuery("resources.updated_at DESC")).
-		Preload("RelatedNotes", preloadQuery("notes.updated_at DESC")).
-		Preload("OwnResources", preloadQuery("resources.updated_at DESC")).
-		Preload("OwnNotes", preloadQuery("notes.updated_at DESC")).
+		Preload("RelatedResources", standardSortAndLimit("resources.updated_at DESC")).
+		Preload("RelatedNotes", standardSortAndLimit("notes.updated_at DESC")).
+		Preload("OwnResources", standardSortAndLimit("resources.updated_at DESC")).
+		Preload("OwnNotes", standardSortAndLimit("notes.updated_at DESC")).
 		Preload("Tags").
 		Preload("Category").
 		First(&group, id)
@@ -100,10 +100,10 @@ func (ctx *MahresourcesContext) GetGroups(offset, maxResults int, query *http_qu
 	return &groups, nil
 }
 
-func (ctx *MahresourcesContext) GetGroupsWithIds(ids []uint) (*[]*models.Group, error) {
+func (ctx *MahresourcesContext) GetGroupsWithIds(ids *[]uint) (*[]*models.Group, error) {
 	var groups []*models.Group
 
-	if len(ids) == 0 {
+	if len(*ids) == 0 {
 		return &groups, nil
 	}
 

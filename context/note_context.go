@@ -91,10 +91,10 @@ func (ctx *MahresourcesContext) GetNotes(offset, maxResults int, query *http_que
 	return &notes, nil
 }
 
-func (ctx *MahresourcesContext) GetNotesWithIds(ids []uint) (*[]*models.Note, error) {
+func (ctx *MahresourcesContext) GetNotesWithIds(ids *[]uint) (*[]*models.Note, error) {
 	var notes []*models.Note
 
-	if len(ids) == 0 {
+	if len(*ids) == 0 {
 		return &notes, nil
 	}
 

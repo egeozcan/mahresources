@@ -17,6 +17,14 @@ func GroupQuery(query *http_query.GroupQuery) func(db *gorm.DB) *gorm.DB {
 			)
 		}
 
+		if query.Notes != nil && len(query.Notes) > 0 {
+			dbQuery = dbQuery.Where(
+				"(SELECT Count(*) FROM groups_related_notes grn WHERE grn.note_id IN ? AND grn.group_id = groups.id) = ?",
+				query.Notes,
+				len(query.Notes),
+			)
+		}
+
 		if query.Name != "" {
 			dbQuery = dbQuery.Where("name LIKE ?", "%"+query.Name+"%")
 		}
