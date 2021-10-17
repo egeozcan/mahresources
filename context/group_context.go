@@ -76,12 +76,6 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *http_query.GroupEditor) 
 func (ctx *MahresourcesContext) GetGroup(id uint) (*models.Group, error) {
 	var group models.Group
 
-	preloadQuery := func(sortField string) func(db *gorm.DB) *gorm.DB {
-		return func(db *gorm.DB) *gorm.DB {
-			return db.Limit(10).Order(sortField)
-		}
-	}
-
 	ctx.db.
 		Preload("RelatedResources", preloadQuery("resources.updated_at DESC")).
 		Preload("RelatedNotes", preloadQuery("notes.updated_at DESC")).

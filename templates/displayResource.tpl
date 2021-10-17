@@ -1,20 +1,10 @@
 {% extends "layouts/base.tpl" %}
 
 {% block body %}
-    {% if resource.Description %}
-        <div class="flex mb-6">
-            <div class="flex-1">
-                {{ resource.Description|markdown }}
-            </div>
-        </div>
-    {% endif %}
+    {% include "/partials/description.tpl" with description=resource.Description %}
 
-    {% include "/partials/subtitle.tpl" with title="Related Notes" %}
-    <section class="note-container">
-        {% for entity in resource.Notes %}
-            {% include "/partials/note.tpl" %}
-        {% endfor %}
-    </section>
+    {% include "/partials/seeAll.tpl" with entities=resource.Notes subtitle="Notes" formAction="/resources" formID=resource.ID formParamName="resources" entityName="note" %}
+    {% include "/partials/seeAll.tpl" with entities=resource.Groups subtitle="Groups" formAction="/resources" formID=resource.ID formParamName="resources" entityName="group" %}
 {% endblock %}
 
 {% block sidebar %}
@@ -29,12 +19,6 @@
     <div>
         {% for tag in resource.Tags %}
             {% include "/partials/tag.tpl" with name=tag.Name ID=tag.ID %}
-        {% endfor %}
-    </div>
-    {% include "/partials/sideTitle.tpl" with title="Groups" %}
-    <div>
-        {% for group in resource.Groups %}
-            {% include "/partials/group.tpl" %}
         {% endfor %}
     </div>
 {% endblock %}
