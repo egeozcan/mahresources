@@ -1,0 +1,1 @@
+{% include "partials/group.tpl" with entity=entity.ToGroup relation=entity noDescription=true %}

@@ -1,0 +1,33 @@
+{
+  "name": "mahresources",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build-css": "postcss ./index.css -o ./public/tailwind.css",
+    "css-gen": "postcss ./index.css -o ./public/tailwind.css -w",
+    "watch": "CompileDaemon -exclude-dir=\".git\" -exclude-dir=\"node_modules\" -command=\"npm run build-css && mahresources\" -build=\"go build --tags json1\"",
+    "build": "npm run build-css && echo \"css built\\n\" && go build --tags json1 && echo \"server built\\n\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/egeozcan/mahresources.git"
+  },
+  "author": "Yavuz Ege ÖZCAN",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/egeozcan/mahresources/issues"
+  },
+  "homepage": "https://github.com/egeozcan/mahresources#readme",
+  "devDependencies": {
+    "@tailwindcss/forms": "0.3.3",
+    "autoprefixer": "10.3.5",
+    "postcss": "8.3.8",
+    "postcss-cli": "9.0.0",
+    "tailwindcss": "2.2.15",
+    "tailwindcss-cli": "^0.1.2"
+  },
+  "dependencies": {
+    "@tailwindcss/typography": "^0.4.1"
+  }
+}

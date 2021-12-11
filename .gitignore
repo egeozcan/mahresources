@@ -1,0 +1,9 @@
+/.env
+/mahresources
+/mahresources.exe
+/test2.db
+/filezz/
+/files/
+/node_modules/
+/*.db
+/.idea

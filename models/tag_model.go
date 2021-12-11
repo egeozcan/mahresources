@@ -1,0 +1,28 @@
+package models
+
+import (
+	"time"
+)
+
+type Tag struct {
+	ID          uint `gorm:"primarykey"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	Name        string      `gorm:"uniqueIndex:unique_tag_name"`
+	Description string      `gorm:"index"`
+	Resources   []*Resource `gorm:"many2many:resource_tags;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	Notes       []*Note     `gorm:"many2many:note_tags;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	Groups      []*Group    `gorm:"many2many:group_tags;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+}
+
+func (t Tag) setId(id uint) {
+	t.ID = id
+}
+
+func (t Tag) getId() uint {
+	return t.ID
+}
+
+func (t Tag) getName() string {
+	return t.Name
+}
