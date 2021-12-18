@@ -11,9 +11,9 @@
                                 @mouseover="selectedIndex = index;"
                         >
                             <span
-                                    x-text="result.Name"
+                                    x-text="getItemDisplayName(result)"
                                     class="overflow-ellipsis overflow-hidden"
-                                    :title="result.Name"
+                                    :title="getItemDisplayName(result)"
                             ></span>
                         </span>
                 </template>

@@ -3,7 +3,7 @@
             inline-flex rounded-md items-center py-0.5 pl-2.5 pr-1 text-sm font-medium bg-indigo-100
             text-indigo-700 my-1 mr-1
         ">
-        <span class="break-all" x-text="result.Name"></span>
+        <span class="break-all" x-text="getItemDisplayName(result)"></span>
         <button
                 @click="selectedResults.splice(index, 1);"
                 type="button"

@@ -2,7 +2,7 @@ package application_context
 
 import (
 	"errors"
-	"gorm.io/gorm/clause"
+	"gorm.io/gorm"
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
@@ -177,7 +177,7 @@ func (ctx *MahresourcesContext) GetGroupsWithIds(ids *[]uint) (*[]*models.Group,
 		return &groups, nil
 	}
 
-	return &groups, ctx.db.Find(&groups, ids).Error
+	return &groups, ctx.db.Preload("Category").Find(&groups, ids).Error
 }
 
 func (ctx *MahresourcesContext) GetGroupsCount(query *query_models.GroupQuery) (int64, error) {
@@ -190,7 +190,20 @@ func (ctx *MahresourcesContext) GetGroupsCount(query *query_models.GroupQuery) (
 func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {
 	group := models.Group{ID: groupId}
 
-	return ctx.db.Select(clause.Associations).Delete(&group).Error
+	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		ctx.EnsureForeignKeysActive(tx)
+
+		return tx.
+			Select("OwnGroups").
+			Select("OwnNotes").
+			Select("RelatedResources").
+			Select("RelatedNotes").
+			Select("RelatedGroups").
+			Select("Relationships").
+			Select("BackRelations").
+			Select("Tags").
+			Delete(&group).Error
+	})
 }
 
 func (ctx *MahresourcesContext) GroupMetaKeys() (*[]fieldResult, error) {

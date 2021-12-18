@@ -10,31 +10,27 @@ import (
 	"mahresources/server/api_handlers/interfaces"
 	"mahresources/server/http_utils"
 	"net/http"
-	"strconv"
 )
 
 func GetNotesHandler(ctx interfaces.NoteReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		offset := (http_utils.GetIntQueryParameter(request, "page", 1) - 1) * constants.MaxResultsPerPage
 		var query query_models.NoteQuery
-		err := decoder.Decode(&query, request.URL.Query())
 
-		if err != nil {
+		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
 			writer.WriteHeader(http.StatusBadRequest)
 			_, _ = fmt.Fprint(writer, err.Error())
 			return
 		}
 
-		notes, err := ctx.GetNotes(int(offset), constants.MaxResultsPerPage, &query)
-
-		if err != nil {
+		if notes, err := ctx.GetNotes(int(offset), constants.MaxResultsPerPage, &query); err != nil {
 			writer.WriteHeader(404)
 			_, _ = fmt.Fprint(writer, err.Error())
 			return
+		} else {
+			writer.Header().Set("Content-Type", constants.JSON)
+			_ = json.NewEncoder(writer).Encode(notes)
 		}
-
-		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(notes)
 	}
 }
 
@@ -56,17 +52,9 @@ func GetNoteHandler(ctx interfaces.NoteReader) func(writer http.ResponseWriter, 
 
 func GetAddNoteHandler(ctx interfaces.NoteWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		err := request.ParseForm()
-
-		if err != nil {
-			writer.WriteHeader(500)
-			_, _ = fmt.Fprint(writer, err.Error())
-			return
-		}
-
 		var queryVars = query_models.NoteEditor{}
-		err = decoder.Decode(&queryVars, request.PostForm)
-		if err != nil {
+
+		if err := tryFillStructValuesFromRequest(&queryVars, request); err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
 		}
@@ -79,7 +67,7 @@ func GetAddNoteHandler(ctx interfaces.NoteWriter) func(writer http.ResponseWrite
 			return
 		}
 
-		if http_utils.RedirectIfHTMLAccepted(writer, request, "/note?id="+strconv.Itoa(int(note.ID))) {
+		if http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/note?id=%v", note.ID)) {
 			return
 		}
 

@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func CreateServer(appContext *application_context.MahresourcesContext, fs afero.Fs, altFs map[string]afero.Fs) *http.Server {
+func CreateServer(appContext *application_context.MahresourcesContext, fs afero.Fs, altFs map[string]string) *http.Server {
 	router := mux.NewRouter()
 
 	registerRoutes(router, appContext)
@@ -18,7 +18,8 @@ func CreateServer(appContext *application_context.MahresourcesContext, fs afero.
 	router.PathPrefix(filePathPrefix).Handler(http.StripPrefix(filePathPrefix, http.FileServer(afero.NewHttpFs(fs).Dir("/"))))
 	router.PathPrefix("/public/").Handler(http.StripPrefix("/public/", http.FileServer(http.Dir("./public"))))
 
-	for key, system := range altFs {
+	for key, systemName := range altFs {
+		system := createCachedStorage(systemName)
 		pathKey := fmt.Sprintf("/%v/", key)
 		router.PathPrefix(pathKey).Handler(http.StripPrefix(pathKey, http.FileServer(afero.NewHttpFs(system).Dir("/"))))
 	}
@@ -29,4 +30,10 @@ func CreateServer(appContext *application_context.MahresourcesContext, fs afero.
 		WriteTimeout: 45 * time.Minute,
 		ReadTimeout:  45 * time.Minute,
 	}
+}
+
+func createCachedStorage(path string) afero.Fs {
+	base := afero.NewBasePathFs(afero.NewOsFs(), path)
+	layer := afero.NewMemMapFs()
+	return afero.NewCacheOnReadFs(base, layer, 10*time.Minute)
 }

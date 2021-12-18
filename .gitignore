@@ -6,5 +6,7 @@
 /files/
 /node_modules/
 /*.db
+/*.wdb
 /.idea
 /public/*.json
+/*.output.png

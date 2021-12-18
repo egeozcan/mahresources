@@ -8,6 +8,12 @@ import (
 
 func GroupQuery(query *query_models.GroupQuery) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
+		likeOperator := "LIKE"
+
+		if db.Config.Dialector.Name() == "postgres" {
+			likeOperator = "ILIKE"
+		}
+
 		dbQuery := db
 
 		if query.Tags != nil && len(query.Tags) > 0 {
@@ -120,11 +126,11 @@ func GroupQuery(query *query_models.GroupQuery) func(db *gorm.DB) *gorm.DB {
 		}
 
 		if query.Name != "" {
-			dbQuery = dbQuery.Where("name LIKE ?", "%"+query.Name+"%")
+			dbQuery = dbQuery.Where("name "+likeOperator+" ?", "%"+query.Name+"%")
 		}
 
 		if query.Description != "" {
-			dbQuery = dbQuery.Where("description LIKE ?", "%"+query.Description+"%")
+			dbQuery = dbQuery.Where("description "+likeOperator+" ?", "%"+query.Description+"%")
 		}
 
 		if query.CreatedBefore != "" {

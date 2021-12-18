@@ -36,9 +36,14 @@ Or something like that, depending on if you are using postgres or sqlite.
 ## maybe do
 
 - [ ] Make note categories work
+- [X] Sorting lists
 - [X] Inline add for tags, groups, categories, and so on
+- [ ] relationship editor with multiple groups (m x n, creating m * n relationships, and their reverse when applicable)
+- [ ] bulk editor for lists
 - [ ] Breadcrumbs for groups
-- [ ] support multiple file system attach points
+- [X] video preview generation
+- [ ] faster image previews with libvips?
+- [X] support multiple file system attach points
 - [ ] some integration tests, perhaps behavioral test
 - [ ] importers like perkeep? maybe.
 - [ ] sync could be interesting

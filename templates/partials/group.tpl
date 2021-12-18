@@ -1,3 +1,4 @@
+{% if entity %}
 <div class="group min-w-0">
     <div class="flex gap-3 content-center items-center mb-2 min-w-0">
         {% include "partials/avatar.tpl" with initials=entity.Initials() %}
@@ -18,7 +19,9 @@
                 &nbsp;{{ relation.RelationType.Name }}
             </a>
         {% endif %}
-        {% include "partials/category.tpl" with name=entity.Category.Name link=withQuery("categories", stringId(entity.CategoryId), true) active=hasQuery("categories", stringId(entity.CategoryId)) %}
+        {% if entity.Category %}
+            {% include "partials/category.tpl" with name=entity.Category.Name link=withQuery("categories", stringId(entity.CategoryId), true) active=hasQuery("categories", stringId(entity.CategoryId)) %}
+        {% endif %}
     </div>
     {% if !reverse && relation && relation.Description && !noRelDescription %}
         <a href="/relation?id={{ relation.ID }}">
@@ -40,3 +43,4 @@
     </div>
     {% endif %}
 </div>
+{% endif %}

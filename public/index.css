@@ -11,6 +11,10 @@
     grid-gap: 1rem;
 }
 
+.simple.site {
+    padding: 0;
+}
+
 .header {
     grid-row: 1 / 2;
     background-color: var(--bg-accent);
@@ -26,6 +30,21 @@
     grid-template-columns: minmax(529px, 1fr) 400px;
     grid-auto-flow: column;
     gap: calc(var(--spacing) * 3);
+}
+
+.simple .content {
+    grid-template-columns: 1fr;
+    grid-row: unset;
+}
+
+.simple :is(.description, h2, h3, h4, header, .title) {
+    display: none;
+}
+
+.simple [alt='Preview'] {
+    max-height: 25vh;
+    object-fit: contain;
+    width: auto;
 }
 
 .content .sidebar {

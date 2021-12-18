@@ -12,7 +12,7 @@ type Group struct {
 	UpdatedAt time.Time
 
 	Name        string `gorm:"index"`
-	Description string `gorm:"index"`
+	Description string
 	Meta        types.JSON
 
 	Owner   *Group `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
@@ -22,7 +22,7 @@ type Group struct {
 	RelatedNotes     []*Note     `gorm:"many2many:groups_related_notes;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	RelatedGroups    []*Group    `gorm:"many2many:group_related_groups;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 
-	OwnResources []*Resource `gorm:"foreignKey:OwnerId;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	OwnResources []*Resource `gorm:"foreignKey:OwnerId;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 	OwnNotes     []*Note     `gorm:"foreignKey:OwnerId;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	OwnGroups    []*Group    `gorm:"foreignKey:OwnerId;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 

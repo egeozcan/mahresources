@@ -21,3 +21,8 @@ func addErrContext(err error, ctx pongo2.Context) pongo2.Context {
 		"errorMessage": err.Error(),
 	})
 }
+
+type SortColumn struct {
+	Name  string
+	Value string
+}

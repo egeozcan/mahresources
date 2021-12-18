@@ -22,10 +22,11 @@ var templates = map[string]templateInformation{
 	"/note":      {template_context_providers.NoteContextProvider, "displayNote.tpl", http.MethodGet},
 	"/note/edit": {template_context_providers.NoteCreateContextProvider, "createNote.tpl", http.MethodGet},
 
-	"/resource/new":  {template_context_providers.ResourceCreateContextProvider, "createResource.tpl", http.MethodGet},
-	"/resources":     {template_context_providers.ResourceListContextProvider, "listResources.tpl", http.MethodGet},
-	"/resource":      {template_context_providers.ResourceContextProvider, "displayResource.tpl", http.MethodGet},
-	"/resource/edit": {template_context_providers.ResourceCreateContextProvider, "createResource.tpl", http.MethodGet},
+	"/resource/new":     {template_context_providers.ResourceCreateContextProvider, "createResource.tpl", http.MethodGet},
+	"/resources":        {template_context_providers.ResourceListContextProvider, "listResources.tpl", http.MethodGet},
+	"/resources/simple": {template_context_providers.ResourceListContextProvider, "simpleResources.tpl", http.MethodGet},
+	"/resource":         {template_context_providers.ResourceContextProvider, "displayResource.tpl", http.MethodGet},
+	"/resource/edit":    {template_context_providers.ResourceCreateContextProvider, "createResource.tpl", http.MethodGet},
 
 	"/group/new":  {template_context_providers.GroupCreateContextProvider, "createGroup.tpl", http.MethodGet},
 	"/groups":     {template_context_providers.GroupsListContextProvider, "listGroups.tpl", http.MethodGet},
@@ -90,6 +91,8 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/resources").HandlerFunc(api_handlers.GetResourcesHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/resources/meta/keys").HandlerFunc(api_handlers.GetResourceMetaKeysHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceUploadHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/resource/local").HandlerFunc(api_handlers.GetResourceAddLocalHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/resource/remote").HandlerFunc(api_handlers.GetResourceAddRemoteHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resource/delete").HandlerFunc(api_handlers.GetRemoveResourceHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resource/edit").HandlerFunc(api_handlers.GetResourceEditHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/resource/preview").HandlerFunc(api_handlers.GetResourceThumbnailHandler(appContext))

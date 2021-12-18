@@ -36,7 +36,7 @@
                                 {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' addUrl='/v1/tag' elName='tags' title='Tags' selectedItems=tags id="autocompleter"|nanoid %}
                             </div>
                             <div class="flex-1">
-                                {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='groups' title='Groups' selectedItems=groups id="autocompleter"|nanoid %}
+                                {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='groups' title='Groups' selectedItems=groups id="autocompleter"|nanoid extraInfo="Category" %}
                             </div>
                         </div>
                     </div>
@@ -49,7 +49,7 @@
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="flex gap-2">
                             <div class="flex-1">
-                                {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='ownerId' title='' selectedItems=owner max=1 id="autocompleter"|nanoid %}
+                                {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='ownerId' title='' selectedItems=owner max=1 id="autocompleter"|nanoid extraInfo="Category" %}
                             </div>
                         </div>
                     </div>

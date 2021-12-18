@@ -25,7 +25,7 @@ type Resource struct {
 	Tags            []*Tag   `gorm:"many2many:resource_tags;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	Notes           []*Note  `gorm:"many2many:resource_notes;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	Groups          []*Group `gorm:"many2many:groups_related_resources;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
-	Owner           *Group   `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	Owner           *Group   `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 	OwnerId         *uint
 	Previews        []*Preview `gorm:"foreignKey:ResourceId;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 }

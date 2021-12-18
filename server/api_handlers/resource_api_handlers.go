@@ -16,7 +16,7 @@ import (
 func GetResourcesHandler(ctx interfaces.ResourceReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		offset := (http_utils.GetIntQueryParameter(request, "page", 1) - 1) * constants.MaxResultsPerPage
-		var query query_models.ResourceQuery
+		var query query_models.ResourceSearchQuery
 
 		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
 			writer.WriteHeader(http.StatusBadRequest)
@@ -118,6 +118,62 @@ func GetResourceUploadHandler(ctx interfaces.ResourceWriter) func(writer http.Re
 
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(resources)
+	}
+}
+
+func GetResourceAddLocalHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+
+		var creator = query_models.ResourceFromLocalCreator{}
+
+		if err := tryFillStructValuesFromRequest(&creator, request); err != nil {
+			writer.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprint(writer, err.Error())
+			return
+		}
+
+		res, err := ctx.AddLocalResource(creator.Name, &creator)
+
+		if err != nil {
+			writer.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprint(writer, err.Error())
+			return
+		}
+
+		if http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", res.ID)) {
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(res)
+	}
+}
+
+func GetResourceAddRemoteHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+
+		var creator = query_models.ResourceFromRemoteCreator{}
+
+		if err := tryFillStructValuesFromRequest(&creator, request); err != nil {
+			writer.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprint(writer, err.Error())
+			return
+		}
+
+		res, err := ctx.AddRemoteResource(&creator)
+
+		if err != nil {
+			writer.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprint(writer, err.Error())
+			return
+		}
+
+		if http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", res.ID)) {
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(res)
 	}
 }
 

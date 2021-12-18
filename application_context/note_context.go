@@ -88,6 +88,23 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 		}
 	}
 
+	if len(noteQuery.Resources) > 0 {
+		resources := make([]models.Resource, len(noteQuery.Groups))
+
+		for i, v := range noteQuery.Resources {
+			resources[i] = models.Resource{
+				ID: v,
+			}
+		}
+
+		createGroupsErr := tx.Model(&note).Association("Resources").Append(&resources)
+
+		if createGroupsErr != nil {
+			tx.Rollback()
+			return nil, createGroupsErr
+		}
+	}
+
 	if len(noteQuery.Tags) > 0 {
 		tags := make([]models.Tag, len(noteQuery.Tags))
 

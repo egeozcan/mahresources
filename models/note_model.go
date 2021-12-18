@@ -10,7 +10,7 @@ type Note struct {
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 	Name        string `gorm:"index"`
-	Description string `gorm:"index"`
+	Description string
 	Meta        types.JSON
 	Tags        []*Tag      `gorm:"many2many:note_tags;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	Resources   []*Resource `gorm:"many2many:resource_notes;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`

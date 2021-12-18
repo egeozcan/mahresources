@@ -114,8 +114,10 @@ func (ctx *MahresourcesContext) AddRelationType(query *query_models.Relationship
 				ToCategoryId:   &query.FromCategory,
 			}
 
-			if err := tx.Where(&backRelationType).First(&backRelationType).Error; err != nil {
-				return err
+			if err := tx.Where(&backRelationType).First(&backRelationType).Error; err == nil {
+				if backRelationType.BackRelationId != nil {
+					return errors.New("back relation is already associated with something else")
+				}
 			}
 
 			backRelationType.BackRelationId = &relationType.ID

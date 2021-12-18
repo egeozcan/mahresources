@@ -12,7 +12,7 @@ import (
 func (ctx *MahresourcesContext) GetCategory(id uint) (*models.Category, error) {
 	var category models.Category
 
-	return &category, ctx.db.Preload(clause.Associations).First(&category, id).Error
+	return &category, ctx.db.Preload(clause.Associations, pageLimit).First(&category, id).Error
 }
 
 func (ctx *MahresourcesContext) GetCategories(offset, maxResults int, query *query_models.CategoryQuery) (*[]models.Category, error) {

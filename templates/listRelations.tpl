@@ -20,8 +20,8 @@
         {% include "/partials/form/textInput.tpl" with name='Name' label='Name' value=queryValues.Name.0 %}
         {% include "/partials/form/textInput.tpl" with name='Description' label='Description' value=queryValues.Description.0 %}
         {% include "/partials/form/autocompleter.tpl" with url='/v1/relationTypes' elName='GroupRelationTypeId' title='Type' max=1 selectedItems=fromTypes id="autocompleter"|nanoid %}
-        {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='FromGroupId' title='From Group' max=1 selectedItems=fromGroups id="autocompleter"|nanoid %}
-        {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='ToGroupId' title='To Group' max=1 selectedItems=toGroups id="autocompleter"|nanoid %}
+        {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='FromGroupId' title='From Group' max=1 selectedItems=fromGroups id="autocompleter"|nanoid extraInfo="Category" %}
+        {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='ToGroupId' title='To Group' max=1 selectedItems=toGroups id="autocompleter"|nanoid extraInfo="Category" %}
         {% include "/partials/form/searchButton.tpl" %}
     </form>
 {% endblock %}

@@ -8,7 +8,8 @@
         url: '{{ url }}',
         addUrl: '{{ addUrl }}',
         elName: '{{ elName }}',
-        filterEls: '{{ filterEls }}' || []
+        filterEls: '{{ filterEls }}' || [],
+        extraInfo: '{{ extraInfo }}',
     })"
     class="relative w-full"
 >

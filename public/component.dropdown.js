@@ -8,6 +8,7 @@ document.addEventListener('alpine:init', () => {
         elName,
         filterEls = [],
         addUrl = "",
+        extraInfo = "",
     }) => {
         if (typeof filterEls === "string") {
             try {
@@ -29,6 +30,8 @@ document.addEventListener('alpine:init', () => {
             selectedIds: new Set(),
             url,
             addUrl,
+            extraInfo,
+            filterEls,
             requestAborter: null,
             addModeForTag: false,
             loading: false,
@@ -64,12 +67,13 @@ document.addEventListener('alpine:init', () => {
                 try {
                     const newVal = await fetch(this.addUrl, {
                         method: 'POST',
-                        body: JSON.stringify({ Name: this.addModeForTag }),
+                        body: JSON.stringify({ Name: this.addModeForTag, ...this.getAdditionalParams() }),
                         headers: {
                             "Content-Type": "application/json",
                         },
                     }).then(x => x.json());
                     this.selectedResults.push(newVal);
+                    this.ensureMaxItems();
                 } catch (e) {
                     this.errorMessage = `Could not add ${this.addModeForTag}`
                 } finally {
@@ -115,13 +119,24 @@ document.addEventListener('alpine:init', () => {
                 }
 
                 this.selectedResults.push(this.results[this.selectedIndex]);
-
-                if (this.max !== 0 && this.selectedResults.length > this.max) {
-                    this.selectedResults.splice(0, 1);
-                }
+                this.ensureMaxItems();
 
                 $event.target.value = '';
                 $event.target.dispatchEvent(new Event('input'));
+            },
+
+            ensureMaxItems() {
+                while (this.max !== 0 && this.selectedResults.length > Math.max(this.max, 0)) {
+                    this.selectedResults.splice(0, 1);
+                }
+            },
+
+            getItemDisplayName(item) {
+                if (!this.extraInfo || !item[this.extraInfo]?.Name) {
+                    return item.Name;
+                }
+
+                return `${item.Name} (${item[this.extraInfo].Name})`
             },
 
             inputEvents: {
@@ -181,19 +196,7 @@ document.addEventListener('alpine:init', () => {
                         this.requestAborter = null;
                     }
 
-                    const params = new URLSearchParams({ name: target.value });
-
-                    if (ownerId) {
-                        params.append("ownerId", ownerId);
-                    }
-
-                    if (filterEls && Array.isArray(filterEls)) {
-                        for (const filter of filterEls) {
-                            document.querySelectorAll(`input[name=${filter.nameInput}]`).forEach((input) => {
-                                params.append(filter.nameGet, input.value);
-                            });
-                        }
-                    }
+                    const params = new URLSearchParams({ name: target.value, ...this.getAdditionalParams() })
 
                     const {
                         abort,
@@ -210,10 +213,30 @@ document.addEventListener('alpine:init', () => {
                             this.dropdownActive = true;
                             this.selectedIndex = 0;
                         }
+                    }).catch(err => {
+                        this.errorMessage = err.toString();
                     });
 
                     this.requestAborter = abort;
                 }
+            },
+
+            getAdditionalParams() {
+                const params = { };
+
+                if (this.ownerId) {
+                    params.ownerId = this.ownerId;
+                }
+
+                if (this.filterEls && Array.isArray(this.filterEls)) {
+                    for (const filter of this.filterEls) {
+                        document.querySelectorAll(`input[name=${filter.nameInput}]`).forEach((input) => {
+                            params[filter.nameGet] = input.value;
+                        });
+                    }
+                }
+
+                return params;
             }
         }
     })

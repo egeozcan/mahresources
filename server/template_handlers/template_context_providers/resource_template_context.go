@@ -11,13 +11,22 @@ import (
 	"mahresources/server/template_handlers/template_entities"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 func ResourceListContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		page := http_utils.GetIntQueryParameter(request, "page", 1)
-		offset := (page - 1) * constants.MaxResultsPerPage
-		var query query_models.ResourceQuery
+		var resultsPerPage = constants.MaxResultsPerPage
+
+		simpleMode := strings.HasSuffix(request.URL.Path, "/simple")
+
+		if simpleMode {
+			resultsPerPage = constants.MaxResultsPerPage * 4
+		}
+
+		offset := (page - 1) * int64(resultsPerPage)
+		var query query_models.ResourceSearchQuery
 		err := decoder.Decode(&query, request.URL.Query())
 		baseContext := staticTemplateCtx(request)
 
@@ -27,7 +36,7 @@ func ResourceListContextProvider(context *application_context.MahresourcesContex
 			return addErrContext(err, baseContext)
 		}
 
-		resources, err := context.GetResources(int(offset), constants.MaxResultsPerPage, &query)
+		resources, err := context.GetResources(int(offset), resultsPerPage, &query)
 
 		if err != nil {
 			fmt.Println(err)
@@ -43,7 +52,7 @@ func ResourceListContextProvider(context *application_context.MahresourcesContex
 			return addErrContext(err, baseContext)
 		}
 
-		pagination, err := template_entities.GeneratePagination(request.URL.String(), resourceCount, constants.MaxResultsPerPage, int(page))
+		pagination, err := template_entities.GeneratePagination(request.URL.String(), resourceCount, resultsPerPage, int(page))
 
 		if err != nil {
 			fmt.Println(err)
@@ -62,17 +71,33 @@ func ResourceListContextProvider(context *application_context.MahresourcesContex
 		notes, _ := context.GetNotesWithIds(&query.Notes)
 		groups, _ := context.GetGroupsWithIds(&query.Groups)
 
+		owner := make([]*models.Group, 0)
+		if query.OwnerId != 0 {
+			ownerEntity, err := context.GetGroup(query.OwnerId)
+
+			if err == nil {
+				owner = []*models.Group{ownerEntity}
+			}
+		}
+
 		return pongo2.Context{
 			"pageTitle":   "Resources",
 			"resources":   resources,
 			"pagination":  pagination,
 			"tags":        tags,
 			"notes":       notes,
+			"owner":       owner,
 			"groups":      groups,
 			"parsedQuery": query,
+			"simpleMode":  simpleMode,
 			"action": template_entities.Entry{
 				Name: "Create",
 				Url:  "/resource/new",
+			},
+			"sortValues": []SortColumn{
+				{Name: "Created", Value: "created_at"},
+				{Name: "Name", Value: "name"},
+				{Name: "Updated", Value: "updated_at"},
 			},
 		}.Update(baseContext)
 	}
@@ -88,7 +113,7 @@ func ResourceCreateContextProvider(context *application_context.MahresourcesCont
 		err := decoder.Decode(&query, request.URL.Query())
 
 		if err != nil || query.ID == 0 {
-			var resourceTpl query_models.ResourceQuery
+			var resourceTpl query_models.ResourceSearchQuery
 			err := decoder.Decode(&resourceTpl, request.URL.Query())
 
 			if err == nil {

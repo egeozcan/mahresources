@@ -10,7 +10,6 @@ import (
 	"mahresources/server/api_handlers/interfaces"
 	"mahresources/server/http_utils"
 	"net/http"
-	"strconv"
 )
 
 func GetGroupsHandler(ctx interfaces.GroupReader) func(writer http.ResponseWriter, request *http.Request) {
@@ -56,37 +55,26 @@ func GetGroupHandler(ctx interfaces.GroupReader) func(writer http.ResponseWriter
 
 func GetAddGroupHandler(ctx interfaces.GroupWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		err := request.ParseForm()
-
-		if err != nil {
-			writer.WriteHeader(500)
-			_, _ = fmt.Fprint(writer, err.Error())
-			return
-		}
-
 		var editor = query_models.GroupEditor{}
 		var group *models.Group
+		var err error
 
-		if err = decoder.Decode(&editor, request.PostForm); err != nil || editor.ID == 0 {
-			var creator = query_models.GroupCreator{}
-			creatorErr := decoder.Decode(&creator, request.PostForm)
-			if creatorErr != nil {
+		if err = tryFillStructValuesFromRequest(&editor, request); err == nil && editor.ID == 0 {
+			if editor.Name == "" {
 				writer.WriteHeader(http.StatusInternalServerError)
-				_, _ = fmt.Fprint(writer, creatorErr.Error())
 			}
 
-			group, err = ctx.CreateGroup(&creator)
-		} else {
+			group, err = ctx.CreateGroup(&editor.GroupCreator)
+		} else if err == nil {
 			group, err = ctx.UpdateGroup(&editor)
 		}
 
 		if err != nil {
 			writer.WriteHeader(400)
-			_, _ = fmt.Fprint(writer, err.Error())
 			return
 		}
 
-		if http_utils.RedirectIfHTMLAccepted(writer, request, "/group?id="+strconv.Itoa(int(group.ID))) {
+		if http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/group?id=%v", group.ID)) {
 			return
 		}
 

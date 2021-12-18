@@ -6,24 +6,52 @@ import (
 	"gorm.io/gorm"
 	"io"
 	"mahresources/constants"
+	"mahresources/storage"
 	"time"
 )
 
 type File interface {
 	io.Reader
-	io.Seeker
 	io.Closer
+}
+
+type MahresourcesConfig struct {
+	DbType         string
+	AltFileSystems map[string]string
+	FfmpegPath     string
 }
 
 type MahresourcesContext struct {
 	fs             afero.Fs
 	db             *gorm.DB
-	dbType         string
+	config         *MahresourcesConfig
 	altFileSystems map[string]afero.Fs
 }
 
-func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, dbType string, altFileSystems map[string]afero.Fs) *MahresourcesContext {
-	return &MahresourcesContext{fs: filesystem, db: db, dbType: dbType, altFileSystems: altFileSystems}
+func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, config *MahresourcesConfig) *MahresourcesContext {
+	altFileSystems := make(map[string]afero.Fs, len(config.AltFileSystems))
+
+	for key, path := range config.AltFileSystems {
+		altFileSystems[key] = storage.CreateStorage(path)
+	}
+
+	return &MahresourcesContext{fs: filesystem, db: db, config: config, altFileSystems: altFileSystems}
+}
+
+// EnsureForeignKeysActive ensures that sqlite connection somehow didn't manage to deactivate foreign keys
+// I really don't know why this happens, so @todo please remove this if you can fix the root issue
+func (ctx *MahresourcesContext) EnsureForeignKeysActive(db *gorm.DB) {
+	if ctx.config.DbType != "SQLITE" {
+		return
+	}
+
+	query := "PRAGMA foreign_keys = ON;"
+
+	if db == nil {
+		ctx.db.Exec(query)
+	}
+
+	db.Exec(query)
 }
 
 func parseHTMLTime(timeStr string) *time.Time {
@@ -51,14 +79,14 @@ type fieldResult struct {
 func metaKeys(ctx *MahresourcesContext, table string) (*[]fieldResult, error) {
 	var results []fieldResult
 
-	if ctx.dbType == "POSTGRES" {
+	if ctx.config.DbType == "POSTGRES" {
 		if err := ctx.db.
 			Table(table).
 			Select("DISTINCT jsonb_object_keys(Meta) as Key").
 			Scan(&results).Error; err != nil {
 			return nil, err
 		}
-	} else if ctx.dbType == "SQLITE" {
+	} else if ctx.config.DbType == "SQLITE" {
 		if err := ctx.db.
 			Table(fmt.Sprintf("%v, json_each(%v.meta)", table, table)).
 			Select("DISTINCT json_each.key as Key").

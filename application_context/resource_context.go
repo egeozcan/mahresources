@@ -9,6 +9,7 @@ import (
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/nfnt/resize"
 	"github.com/spf13/afero"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"image"
 	"image/jpeg"
@@ -17,6 +18,9 @@ import (
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
+	"net/http"
+	"os"
+	"os/exec"
 	"path"
 	"strings"
 
@@ -32,17 +36,17 @@ func (ctx *MahresourcesContext) GetResource(id uint) (*models.Resource, error) {
 	return &resource, ctx.db.Preload(clause.Associations).First(&resource, id).Error
 }
 
-func (ctx *MahresourcesContext) GetResourceCount(query *query_models.ResourceQuery) (int64, error) {
+func (ctx *MahresourcesContext) GetResourceCount(query *query_models.ResourceSearchQuery) (int64, error) {
 	var resource models.Resource
 	var count int64
 
-	return count, ctx.db.Scopes(database_scopes.ResourceQuery(query)).Model(&resource).Count(&count).Error
+	return count, ctx.db.Scopes(database_scopes.ResourceQuery(query, true)).Model(&resource).Count(&count).Error
 }
 
-func (ctx *MahresourcesContext) GetResources(offset, maxResults int, query *query_models.ResourceQuery) (*[]models.Resource, error) {
+func (ctx *MahresourcesContext) GetResources(offset, maxResults int, query *query_models.ResourceSearchQuery) (*[]models.Resource, error) {
 	var resources []models.Resource
 
-	return &resources, ctx.db.Scopes(database_scopes.ResourceQuery(query)).Limit(maxResults).Offset(offset).Preload("Tags").Find(&resources).Error
+	return &resources, ctx.db.Scopes(database_scopes.ResourceQuery(query, false)).Limit(maxResults).Offset(offset).Preload("Tags").Find(&resources).Error
 }
 
 func (ctx *MahresourcesContext) GetResourcesWithIds(ids *[]uint) (*[]*models.Resource, error) {
@@ -138,6 +142,106 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 	return &resource, tx.Commit().Error
 }
 
+func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.ResourceFromRemoteCreator) (*models.Resource, error) {
+	resp, err := http.Get(resourceQuery.URL)
+
+	if err != nil {
+		return nil, err
+	}
+
+	defer resp.Body.Close()
+
+	if resourceQuery.GroupName != "" {
+		category := models.Category{Name: resourceQuery.GroupCategoryName}
+
+		if resourceQuery.GroupCategoryName != "" {
+			if err := ctx.db.Where(&category).First(&category).Error; err != nil {
+				if err := ctx.db.Save(&category).Error; err != nil {
+					return nil, err
+				}
+			}
+		}
+
+		group := models.Group{CategoryId: &category.ID, Name: resourceQuery.GroupName}
+
+		if err := ctx.db.Where(&group).First(&group).Error; err != nil {
+			if err := ctx.db.Save(&group).Error; err != nil {
+				return nil, err
+			}
+		}
+
+		resourceQuery.OwnerId = group.ID
+	}
+
+	return ctx.AddResource(resp.Body, resourceQuery.FileName, &query_models.ResourceCreator{
+		ResourceQueryBase: resourceQuery.ResourceQueryBase,
+	})
+}
+
+func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery *query_models.ResourceFromLocalCreator) (*models.Resource, error) {
+	var existingResource models.Resource
+
+	query := ctx.db.Where("location = ? AND storage_location = ?", resourceQuery.LocalPath, resourceQuery.PathName).First(&existingResource)
+	if err := query.Error; err == nil && existingResource.ID != 0 {
+		fmt.Println(fmt.Sprintf("we already have %v, moving on", resourceQuery.LocalPath))
+		// this resource is already saved, return it instead
+		return &existingResource, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		// some other db problem. record not found would have been ok, as we actually expect it to be the case.
+		// here something else went wrong
+		return nil, err
+	}
+
+	fs, err := ctx.getFsForStorageLocation(&resourceQuery.PathName)
+
+	if err != nil {
+		return nil, err
+	}
+
+	file, err := fs.Open(resourceQuery.LocalPath)
+
+	if err != nil {
+		return nil, err
+	}
+
+	fileMime, err := mimetype.DetectReader(file)
+
+	if err != nil {
+		return nil, err
+	}
+
+	fileBytes, err := ioutil.ReadAll(file)
+
+	if err != nil {
+		return nil, err
+	}
+
+	h := sha1.New()
+	h.Write(fileBytes)
+	hash := hex.EncodeToString(h.Sum(nil))
+
+	res := &models.Resource{
+		Name:            fileName,
+		Hash:            hash,
+		HashType:        "SHA1",
+		Location:        resourceQuery.LocalPath,
+		Meta:            []byte(resourceQuery.Meta),
+		Category:        resourceQuery.Category,
+		ContentType:     fileMime.String(),
+		ContentCategory: resourceQuery.ContentCategory,
+		FileSize:        int64(len(fileBytes)) << 3,
+		OwnerId:         &resourceQuery.OwnerId,
+		StorageLocation: &resourceQuery.PathName,
+		Description:     resourceQuery.Description,
+	}
+
+	if err := ctx.db.Save(res).Error; err != nil {
+		return nil, err
+	}
+
+	return res, nil
+}
+
 func (ctx *MahresourcesContext) AddResource(file File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
 	tx := ctx.db.Begin()
 	defer func() {
@@ -146,19 +250,14 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 		}
 	}()
 
-	fileMime, err := mimetype.DetectReader(file)
+	fileBytes, err := ioutil.ReadAll(file)
 
 	if err != nil {
 		tx.Rollback()
 		return nil, err
 	}
 
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		tx.Rollback()
-		return nil, err
-	}
-
-	fileBytes, err := ioutil.ReadAll(file)
+	fileMime, err := mimetype.DetectReader(bytes.NewBuffer(fileBytes))
 
 	if err != nil {
 		tx.Rollback()
@@ -218,6 +317,7 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 		ContentCategory: resourceQuery.ContentCategory,
 		FileSize:        int64(len(fileBytes)) << 3,
 		OwnerId:         &resourceQuery.OwnerId,
+		Description:     resourceQuery.Description,
 	}
 
 	if err := tx.Save(res).Error; err != nil {
@@ -272,25 +372,23 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 
 func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, width, height uint) (*models.Preview, error) {
 	var existingThumbnail models.Preview
-	ctx.db.Where(&models.Preview{Width: width, Height: height, ResourceId: &resourceId}).First(&existingThumbnail)
+	var fileBytes []byte
 
-	if existingThumbnail.ID != 0 {
+	if err := ctx.db.Where(&models.Preview{Width: width, Height: height, ResourceId: &resourceId}).First(&existingThumbnail).Error; err == nil {
 		return &existingThumbnail, nil
 	}
 
 	resource, err := ctx.GetResource(resourceId)
+
+	if err != nil {
+		return nil, err
+	}
 
 	fs, storageError := ctx.getFsForStorageLocation(resource.StorageLocation)
 
 	if storageError != nil {
 		return nil, storageError
 	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	var newImage image.Image
 
 	if strings.HasPrefix(resource.ContentType, "image/") {
 		file, err := fs.Open(resource.Location)
@@ -299,22 +397,66 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, wid
 			return nil, err
 		}
 
+		var newImage image.Image
+
 		originalImage, _, err := image.Decode(file)
+
+		if err != nil {
+			return nil, err
+		}
+
 		newImage = resize.Resize(width, height, originalImage, resize.Lanczos3)
+
+		var buf bytes.Buffer
+
+		if err := jpeg.Encode(&buf, newImage, nil); err != nil {
+			return nil, err
+		}
+
+		fileBytes, err = ioutil.ReadAll(&buf)
+
+		if err != nil {
+			return nil, err
+		}
+
 	} else if strings.HasPrefix(resource.ContentType, "video/") {
+		file, err := fs.Open(resource.Location)
+
+		if err != nil {
+			return nil, err
+		}
+
+		var newImage image.Image
+
+		resultBuffer := bytes.NewBuffer(make([]byte, 0))
+		sectionReader := io.NewSectionReader(file, 0, 5000000)
+
+		if err := ctx.createThumbFromVideo(sectionReader, resultBuffer); err != nil {
+			return nil, err
+		}
+
+		originalImage, _, err := image.Decode(resultBuffer)
+
+		if err != nil {
+			return nil, err
+		}
+
+		newImage = resize.Resize(width, height, originalImage, resize.Lanczos3)
+
+		var buf bytes.Buffer
+
+		if err := jpeg.Encode(&buf, newImage, nil); err != nil {
+			return nil, err
+		}
+
+		fileBytes, err = ioutil.ReadAll(&buf)
+
+		if err != nil {
+			return nil, err
+		}
+
+	} else {
 		return nil, nil
-	}
-
-	if newImage == nil {
-		return nil, nil
-	}
-
-	var buf bytes.Buffer
-	err = jpeg.Encode(&buf, newImage, nil)
-	fileBytes, err := ioutil.ReadAll(&buf)
-
-	if err != nil {
-		return nil, err
 	}
 
 	preview := &models.Preview{
@@ -322,13 +464,58 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, wid
 		Width:       width,
 		Height:      height,
 		ContentType: "image/jpeg",
-		Resource:    resource,
 		ResourceId:  &resource.ID,
 	}
 
 	ctx.db.Save(preview)
 
 	return preview, nil
+}
+
+func (ctx *MahresourcesContext) createThumbFromVideo(file io.Reader, resultBuffer *bytes.Buffer) error {
+	var buffer []byte
+
+	if buf, err := ioutil.ReadAll(file); err != nil {
+		return err
+	} else {
+		buffer = buf
+	}
+
+	cmd := exec.Command(ctx.config.FfmpegPath,
+		"-i", "-", // stdin
+		"-ss", "00:00:0",
+		"-vframes", "1",
+		"-c:v", "png",
+		"-f", "image2pipe",
+		"-",
+	)
+
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = resultBuffer
+
+	var stdin io.WriteCloser
+
+	if stdinAtt, err := cmd.StdinPipe(); err != nil {
+		return err
+	} else {
+		stdin = stdinAtt
+	}
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	_, _ = stdin.Write(buffer)
+
+	if err := stdin.Close(); err != nil {
+		return err
+	}
+
+	if err := cmd.Wait(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (ctx *MahresourcesContext) getFsForStorageLocation(storageLocation *string) (afero.Fs, error) {

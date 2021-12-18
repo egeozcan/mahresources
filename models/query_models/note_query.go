@@ -5,6 +5,7 @@ type noteCreator struct {
 	Description string
 	Tags        []uint
 	Groups      []uint
+	Resources   []uint
 	Meta        string
 	StartDate   string
 	EndDate     string

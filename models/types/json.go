@@ -181,23 +181,45 @@ func (jsonQuery *JSONQueryExpression) Build(builder clause.Builder) {
 				}
 			case OperatorEquals, OperatorNotEquals, OperatorLike, OperatorNotLike, OperatorGreaterThan, OperatorGreaterThanOrEquals, OperatorLessThan, OperatorLessThanOrEquals:
 				if len(jsonQuery.keys) > 0 {
-					builder.WriteString(fmt.Sprintf("json_extract_path_text(%v::json,", stmt.Quote(jsonQuery.column)))
 
+					builder.WriteString(fmt.Sprintf("json_extract_path_text(%v::json,", stmt.Quote(jsonQuery.column)))
 					for idx, key := range jsonQuery.keys {
 						if idx > 0 {
 							builder.WriteByte(',')
 						}
 						stmt.AddVar(builder, key)
 					}
-					builder.WriteString(fmt.Sprintf(") %v ", jsonQuery.operation))
+
+					addStandard := func() {
+						builder.WriteString(fmt.Sprintf(") %v ", jsonQuery.operation))
+					}
+
+					switch jsonQuery.value.(type) {
+					case float64:
+						switch jsonQuery.operation {
+						case OperatorEquals, OperatorNotEquals, OperatorGreaterThan, OperatorGreaterThanOrEquals, OperatorLessThan, OperatorLessThanOrEquals:
+							builder.WriteString(fmt.Sprintf(")::float %v ", jsonQuery.operation))
+						default:
+							addStandard()
+						}
+					case bool:
+						switch jsonQuery.operation {
+						case OperatorEquals, OperatorNotEquals:
+							builder.WriteString(fmt.Sprintf(")::bool %v ", jsonQuery.operation))
+						default:
+							addStandard()
+						}
+					default:
+						addStandard()
+					}
+
+					if jsonQuery.operation == OperatorLike || jsonQuery.operation == OperatorNotLike {
+						jsonQuery.value = fmt.Sprintf("%%%v%%", jsonQuery.value)
+					}
 
 					if _, ok := jsonQuery.value.(string); ok {
 						stmt.AddVar(builder, jsonQuery.value)
 					} else {
-						if jsonQuery.operation == OperatorLike || jsonQuery.operation == OperatorNotLike {
-							jsonQuery.value = fmt.Sprintf("%%%v%%", jsonQuery.value)
-						}
-
 						stmt.AddVar(builder, fmt.Sprint(jsonQuery.value))
 					}
 				}
