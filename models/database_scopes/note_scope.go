@@ -4,11 +4,26 @@ import (
 	"gorm.io/gorm"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
+	"regexp"
 )
 
-func NoteQuery(query *query_models.NoteQuery) func(db *gorm.DB) *gorm.DB {
+func NoteQuery(query *query_models.NoteQuery, ignoreSort bool) func(db *gorm.DB) *gorm.DB {
+	sortColumnMatcher := regexp.MustCompile("^[a-z_]+(\\s(desc|asc))?$")
+
 	return func(db *gorm.DB) *gorm.DB {
+		likeOperator := "LIKE"
+
+		if db.Config.Dialector.Name() == "postgres" {
+			likeOperator = "ILIKE"
+		}
+
 		dbQuery := db
+
+		if !ignoreSort && query.SortBy != "" && sortColumnMatcher.MatchString(query.SortBy) {
+			dbQuery = dbQuery.Order(query.SortBy)
+		} else if !ignoreSort {
+			dbQuery = dbQuery.Order("created_at desc")
+		}
 
 		if query.Tags != nil && len(query.Tags) > 0 {
 			dbQuery = dbQuery.Where(
@@ -46,11 +61,11 @@ func NoteQuery(query *query_models.NoteQuery) func(db *gorm.DB) *gorm.DB {
 		}
 
 		if query.Name != "" {
-			dbQuery = dbQuery.Where("name LIKE ?", "%"+query.Name+"%")
+			dbQuery = dbQuery.Where("name "+likeOperator+" ?", "%"+query.Name+"%")
 		}
 
 		if query.Description != "" {
-			dbQuery = dbQuery.Where("description LIKE ?", "%"+query.Description+"%")
+			dbQuery = dbQuery.Where("description "+likeOperator+" ?", "%"+query.Description+"%")
 		}
 
 		if query.OwnerId != 0 {

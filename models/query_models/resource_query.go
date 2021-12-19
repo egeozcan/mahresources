@@ -28,6 +28,7 @@ type ResourceFromRemoteCreator struct {
 	FileName          string
 	GroupCategoryName string
 	GroupName         string
+	GroupMeta         string
 }
 
 type ResourceEditor struct {

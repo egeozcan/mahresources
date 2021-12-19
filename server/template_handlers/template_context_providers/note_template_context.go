@@ -87,6 +87,11 @@ func NoteListContextProvider(context *application_context.MahresourcesContext) f
 				Name: "Create",
 				Url:  "/note/new",
 			},
+			"sortValues": []SortColumn{
+				{Name: "Created", Value: "created_at"},
+				{Name: "Name", Value: "name"},
+				{Name: "Updated", Value: "updated_at"},
+			},
 		}.Update(baseContext)
 	}
 }

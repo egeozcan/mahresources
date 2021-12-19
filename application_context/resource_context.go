@@ -165,6 +165,7 @@ func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.Re
 		group := models.Group{CategoryId: &category.ID, Name: resourceQuery.GroupName}
 
 		if err := ctx.db.Where(&group).First(&group).Error; err != nil {
+			group.Meta = []byte(resourceQuery.GroupMeta)
 			if err := ctx.db.Save(&group).Error; err != nil {
 				return nil, err
 			}

@@ -11,6 +11,12 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool) fun
 	sortColumnMatcher := regexp.MustCompile("^[a-z_]+(\\s(desc|asc))?$")
 
 	return func(db *gorm.DB) *gorm.DB {
+		likeOperator := "LIKE"
+
+		if db.Config.Dialector.Name() == "postgres" {
+			likeOperator = "ILIKE"
+		}
+
 		dbQuery := db
 
 		if !ignoreSort && query.SortBy != "" && sortColumnMatcher.MatchString(query.SortBy) {
@@ -63,11 +69,11 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool) fun
 		}
 
 		if query.Name != "" {
-			dbQuery = dbQuery.Where("name LIKE ?", "%"+query.Name+"%")
+			dbQuery = dbQuery.Where("name "+likeOperator+" ?", "%"+query.Name+"%")
 		}
 
 		if query.Description != "" {
-			dbQuery = dbQuery.Where("description LIKE ?", "%"+query.Description+"%")
+			dbQuery = dbQuery.Where("description "+likeOperator+" ?", "%"+query.Description+"%")
 		}
 
 		if query.OwnerId != 0 {

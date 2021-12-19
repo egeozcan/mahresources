@@ -9,6 +9,8 @@
 {% block sidebar %}
     {% include "/partials/sideTitle.tpl" with title="Filter" %}
     <form class="flex gap-2 items-start flex-col">
+        {% include "/partials/sideTitle.tpl" with title="Sort" %}
+        {% include "/partials/form/selectInput.tpl" with name='SortBy' label='Sort' values=sortValues %}
         {% include "/partials/form/textInput.tpl" with name='Name' label='Name' value=queryValues.Name.0 %}
         {% include "/partials/form/textInput.tpl" with name='Description' label='Text' value=queryValues.Description.0 %}
         {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' elName='tags' title='Tags' selectedItems=tags id="autocompleter"|nanoid %}

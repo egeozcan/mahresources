@@ -29,5 +29,6 @@ type NoteQuery struct {
 	StartDateAfter  string
 	EndDateBefore   string
 	EndDateAfter    string
+	SortBy          string
 	MetaQuery       []ColumnMeta
 }

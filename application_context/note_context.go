@@ -131,7 +131,7 @@ func (ctx *MahresourcesContext) GetNote(id uint) (*models.Note, error) {
 
 func (ctx *MahresourcesContext) GetNotes(offset, maxResults int, query *query_models.NoteQuery) (*[]models.Note, error) {
 	var notes []models.Note
-	noteScope := database_scopes.NoteQuery(query)
+	noteScope := database_scopes.NoteQuery(query, false)
 
 	return &notes, ctx.db.Scopes(noteScope).Limit(maxResults).Offset(offset).Preload("Tags").Find(&notes).Error
 }
@@ -150,7 +150,7 @@ func (ctx *MahresourcesContext) GetNoteCount(query *query_models.NoteQuery) (int
 	var note models.Note
 	var count int64
 
-	return count, ctx.db.Scopes(database_scopes.NoteQuery(query)).Model(&note).Count(&count).Error
+	return count, ctx.db.Scopes(database_scopes.NoteQuery(query, true)).Model(&note).Count(&count).Error
 }
 
 func (ctx *MahresourcesContext) DeleteNote(noteId uint) error {
