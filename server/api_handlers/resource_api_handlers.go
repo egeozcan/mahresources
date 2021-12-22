@@ -24,7 +24,7 @@ func GetResourcesHandler(ctx interfaces.ResourceReader) func(writer http.Respons
 			return
 		}
 
-		notes, err := ctx.GetResources(int(offset), constants.MaxResultsPerPage, &query)
+		resources, err := ctx.GetResources(int(offset), constants.MaxResultsPerPage, &query)
 
 		if err != nil {
 			writer.WriteHeader(404)
@@ -33,7 +33,7 @@ func GetResourcesHandler(ctx interfaces.ResourceReader) func(writer http.Respons
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(notes)
+		_ = json.NewEncoder(writer).Encode(resources)
 	}
 }
 

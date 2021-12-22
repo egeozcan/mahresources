@@ -3,6 +3,27 @@
 {% block body %}
     {% include "/partials/description.tpl" with description=resource.Description %}
 
+    <table class="w-full">
+        <tbody>
+        <tr>
+            <th scope="row">
+                Original Name
+            </th>
+            <td class="break-all">
+                {{ resource.OriginalName }}
+            </td>
+        </tr>
+        <tr>
+            <th scope="row">
+                Original Location
+            </th>
+            <td class="break-all">
+                {{ resource.OriginalLocation }}
+            </td>
+        </tr>
+        </tbody>
+    </table>
+
     {% include "/partials/seeAll.tpl" with entities=resource.Notes subtitle="Notes" formAction="/notes" formID=resource.ID formParamName="resources" templateName="note" %}
     {% include "/partials/seeAll.tpl" with entities=resource.Groups subtitle="Groups" formAction="/groups" formID=resource.ID formParamName="resources" templateName="group" %}
 {% endblock %}

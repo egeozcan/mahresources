@@ -4,9 +4,12 @@ import (
 	"gorm.io/gorm"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
+	"regexp"
 )
 
-func GroupQuery(query *query_models.GroupQuery) func(db *gorm.DB) *gorm.DB {
+func GroupQuery(query *query_models.GroupQuery, ignoreSort bool) func(db *gorm.DB) *gorm.DB {
+	sortColumnMatcher := regexp.MustCompile("^[a-z_]+(\\s(desc|asc))?$")
+
 	return func(db *gorm.DB) *gorm.DB {
 		likeOperator := "LIKE"
 
@@ -15,6 +18,12 @@ func GroupQuery(query *query_models.GroupQuery) func(db *gorm.DB) *gorm.DB {
 		}
 
 		dbQuery := db
+
+		if !ignoreSort && query.SortBy != "" && sortColumnMatcher.MatchString(query.SortBy) {
+			dbQuery = dbQuery.Order(query.SortBy)
+		} else if !ignoreSort {
+			dbQuery = dbQuery.Order("created_at desc")
+		}
 
 		if query.Tags != nil && len(query.Tags) > 0 {
 			dbQuery = dbQuery.Where(
@@ -146,7 +155,7 @@ func GroupQuery(query *query_models.GroupQuery) func(db *gorm.DB) *gorm.DB {
 		}
 
 		if query.OwnerId != 0 {
-			dbQuery = dbQuery.Where("owner_id >= ?", query.OwnerId)
+			dbQuery = dbQuery.Where("owner_id = ?", query.OwnerId)
 		}
 
 		if len(query.Categories) != 0 {

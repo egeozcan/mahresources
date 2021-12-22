@@ -76,6 +76,14 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool) fun
 			dbQuery = dbQuery.Where("description "+likeOperator+" ?", "%"+query.Description+"%")
 		}
 
+		if query.OriginalName != "" {
+			dbQuery = dbQuery.Where("original_name "+likeOperator+" ?", "%"+query.OriginalName+"%")
+		}
+
+		if query.OriginalLocation != "" {
+			dbQuery = dbQuery.Where("original_location "+likeOperator+" ?", "%"+query.OriginalLocation+"%")
+		}
+
 		if query.OwnerId != 0 {
 			dbQuery = dbQuery.Where("owner_id = ?", query.OwnerId)
 		}

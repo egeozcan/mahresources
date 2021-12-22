@@ -13,6 +13,8 @@
     {% include "/partials/sideTitle.tpl" with title="Filter" %}
     {% include "/partials/form/textInput.tpl" with name='Name' label='Name' value=queryValues.Name.0 %}
     {% include "/partials/form/textInput.tpl" with name='Description' label='Description' value=queryValues.Description.0 %}
+    {% include "/partials/form/textInput.tpl" with name='OriginalName' label='Original Name' value=queryValues.OriginalName.0 %}
+    {% include "/partials/form/textInput.tpl" with name='OriginalLocation' label='Original Location' value=queryValues.OriginalLocation.0 %}
     {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' elName='tags' title='Tags' selectedItems=tags id="autocompleter"|nanoid %}
     {% include "/partials/form/autocompleter.tpl" with url='/v1/notes' elName='notes' title='Notes' selectedItems=notes id="autocompleter"|nanoid %}
     {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='groups' title='Groups' selectedItems=groups id="autocompleter"|nanoid extraInfo="Category" %}

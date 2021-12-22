@@ -110,6 +110,7 @@ func RelationTypeContextProvider(context *application_context.MahresourcesContex
 				Name: "Delete",
 				Url:  fmt.Sprintf("/v1/relationType/delete?Id=%v", relationType.ID),
 			},
+			"mainEntity": relationType,
 		}.Update(baseContext)
 	}
 }
@@ -282,6 +283,7 @@ func RelationContextProvider(context *application_context.MahresourcesContext) f
 				Name: "Edit",
 				Url:  fmt.Sprintf("/relation/edit?id=%v", relation.ID),
 			},
+			"mainEntity": relation,
 		}.Update(baseContext)
 	}
 }

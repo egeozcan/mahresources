@@ -164,7 +164,7 @@ func (ctx *MahresourcesContext) GetGroup(id uint) (*models.Group, error) {
 
 func (ctx *MahresourcesContext) GetGroups(offset, maxResults int, query *query_models.GroupQuery) (*[]models.Group, error) {
 	var groups []models.Group
-	groupScope := database_scopes.GroupQuery(query)
+	groupScope := database_scopes.GroupQuery(query, false)
 
 	return &groups, ctx.db.Scopes(groupScope).Limit(maxResults).
 		Offset(offset).Preload("Tags").Preload("Category").Find(&groups).Error
@@ -184,7 +184,7 @@ func (ctx *MahresourcesContext) GetGroupsCount(query *query_models.GroupQuery) (
 	var group models.Group
 	var count int64
 
-	return count, ctx.db.Scopes(database_scopes.GroupQuery(query)).Model(&group).Count(&count).Error
+	return count, ctx.db.Scopes(database_scopes.GroupQuery(query, true)).Model(&group).Count(&count).Error
 }
 
 func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {

@@ -40,6 +40,10 @@
     {% include "/partials/title.tpl" %}
     <article class="content">
         <section class="sidebar">
+            {% if mainEntity %}
+            <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-400">Updated: </span>{{ mainEntity.UpdatedAt|date:"2006-01-02 15:04" }}</small>
+            <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-400">Created: </span>{{ mainEntity.CreatedAt|date:"2006-01-02 15:04" }}</small>
+            {% endif %}
             {% block sidebar %}{% endblock %}
         </section>
         <section class="main">

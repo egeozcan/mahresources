@@ -1,9 +1,15 @@
+.tableContainer {
+    overflow: auto;
+    max-width: 100%;
+}
+
 .jsonTable {
     border-spacing: 0;
     width: 100%;
     border: 1px solid #a7a7a7;
     border-collapse: collapse;
     border-left-width: 0;
+    overflow: auto;
 }
 
 .jsonTable .jsonTable {

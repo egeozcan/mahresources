@@ -12,6 +12,8 @@
             <h3 class="min-w-0 font-bold whitespace-nowrap overflow-hidden overflow-ellipsis">
                 {{ entity.GetName() }}
             </h3>
+            <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-400">Updated: </span>{{ entity.UpdatedAt|date:"2006-01-02 15:04" }}</small>
+            <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-400">Created: </span>{{ entity.CreatedAt|date:"2006-01-02 15:04" }}</small>
         </a>
         {% if relation && !reverse %}
             <a href="/relation?id={{ relation.ID }}" class="inline-flex items-center px-3 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">

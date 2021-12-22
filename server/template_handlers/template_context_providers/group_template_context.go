@@ -119,6 +119,11 @@ func GroupsListContextProvider(context *application_context.MahresourcesContext)
 				Name: "Add",
 				Url:  "/group/new",
 			},
+			"sortValues": []SortColumn{
+				{Name: "Created", Value: "created_at"},
+				{Name: "Name", Value: "name"},
+				{Name: "Updated", Value: "updated_at"},
+			},
 		}.Update(baseContext)
 	}
 }
@@ -210,6 +215,7 @@ func GroupContextProvider(context *application_context.MahresourcesContext) func
 				Name: "Delete",
 				Url:  fmt.Sprintf("/v1/group/delete?Id=%v", group.ID),
 			},
+			"mainEntity": group,
 		}.Update(baseContext)
 	}
 }

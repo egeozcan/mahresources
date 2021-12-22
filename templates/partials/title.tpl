@@ -1,9 +1,9 @@
 {% if pageTitle != nil %}
-<section class="title md:flex md:items-center md:justify-between border-b-2 border-light-blue-400 pb-3">
-    <div class="flex items-end flex-1 min-w-0 gap-3">
-        <h2 class="flex flex-col items-start gap-2 text-2xl font-bold leading-7 text-gray-900 sm:text-3xl sm:truncate">
-            {% if prefix %}<small class="px-2 text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 ">{{ prefix }}</small>{% endif %}
-            <span>{{ pageTitle }}</span>
+<section class="title border-b-2 border-light-blue-400 pb-3">
+    <div class="flex items-center flex-1 min-w-0 gap-3">
+        <h2 class="items-start gap-2 text-2xl font-bold leading-7 text-gray-900 sm:text-3xl flex-col">
+            {% if prefix %}<small class="break-words px-2 text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 ">{{ prefix }}</small>{% endif %}
+            <span class="break-all">{{ pageTitle }}</span>
         </h2>
         {% if action %}
         <a href="{{ action.Url }}" class="

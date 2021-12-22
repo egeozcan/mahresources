@@ -45,8 +45,13 @@ func (ctx *MahresourcesContext) GetResourceCount(query *query_models.ResourceSea
 
 func (ctx *MahresourcesContext) GetResources(offset, maxResults int, query *query_models.ResourceSearchQuery) (*[]models.Resource, error) {
 	var resources []models.Resource
+	resLimit := maxResults
 
-	return &resources, ctx.db.Scopes(database_scopes.ResourceQuery(query, false)).Limit(maxResults).Offset(offset).Preload("Tags").Find(&resources).Error
+	if query.MaxResults > 0 {
+		resLimit = int(query.MaxResults)
+	}
+
+	return &resources, ctx.db.Scopes(database_scopes.ResourceQuery(query, false)).Limit(resLimit).Offset(offset).Preload("Tags").Find(&resources).Error
 }
 
 func (ctx *MahresourcesContext) GetResourcesWithIds(ids *[]uint) (*[]*models.Resource, error) {
@@ -130,6 +135,8 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 		resource.Meta = []byte(resourceQuery.Meta)
 	}
 	resource.Description = resourceQuery.Description
+	resource.OriginalName = resourceQuery.OriginalName
+	resource.OriginalLocation = resourceQuery.OriginalLocation
 	resource.Category = resourceQuery.Category
 	resource.ContentCategory = resourceQuery.ContentCategory
 	resource.OwnerId = &resourceQuery.OwnerId
@@ -222,18 +229,20 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 	hash := hex.EncodeToString(h.Sum(nil))
 
 	res := &models.Resource{
-		Name:            fileName,
-		Hash:            hash,
-		HashType:        "SHA1",
-		Location:        resourceQuery.LocalPath,
-		Meta:            []byte(resourceQuery.Meta),
-		Category:        resourceQuery.Category,
-		ContentType:     fileMime.String(),
-		ContentCategory: resourceQuery.ContentCategory,
-		FileSize:        int64(len(fileBytes)) << 3,
-		OwnerId:         &resourceQuery.OwnerId,
-		StorageLocation: &resourceQuery.PathName,
-		Description:     resourceQuery.Description,
+		Name:             fileName,
+		Hash:             hash,
+		HashType:         "SHA1",
+		Location:         resourceQuery.LocalPath,
+		Meta:             []byte(resourceQuery.Meta),
+		Category:         resourceQuery.Category,
+		ContentType:      fileMime.String(),
+		ContentCategory:  resourceQuery.ContentCategory,
+		FileSize:         int64(len(fileBytes)) << 3,
+		OwnerId:          &resourceQuery.OwnerId,
+		StorageLocation:  &resourceQuery.PathName,
+		Description:      resourceQuery.Description,
+		OriginalLocation: resourceQuery.OriginalLocation,
+		OriginalName:     resourceQuery.OriginalName,
 	}
 
 	if err := ctx.db.Save(res).Error; err != nil {
@@ -308,17 +317,19 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 	}
 
 	res := &models.Resource{
-		Name:            name,
-		Hash:            hash,
-		HashType:        "SHA1",
-		Location:        filePath,
-		Meta:            []byte(resourceQuery.Meta),
-		Category:        resourceQuery.Category,
-		ContentType:     fileMime.String(),
-		ContentCategory: resourceQuery.ContentCategory,
-		FileSize:        int64(len(fileBytes)) << 3,
-		OwnerId:         &resourceQuery.OwnerId,
-		Description:     resourceQuery.Description,
+		Name:             name,
+		Hash:             hash,
+		HashType:         "SHA1",
+		Location:         filePath,
+		Meta:             []byte(resourceQuery.Meta),
+		Category:         resourceQuery.Category,
+		ContentType:      fileMime.String(),
+		ContentCategory:  resourceQuery.ContentCategory,
+		FileSize:         int64(len(fileBytes)) << 3,
+		OwnerId:          &resourceQuery.OwnerId,
+		Description:      resourceQuery.Description,
+		OriginalLocation: resourceQuery.OriginalLocation,
+		OriginalName:     resourceQuery.OriginalName,
 	}
 
 	if err := tx.Save(res).Error; err != nil {
