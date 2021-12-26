@@ -1,5 +1,9 @@
 {% if entity %}
-<div class="group min-w-0">
+<div class="group min-w-0 flex gap-4" {% if selectable %} x-data="selectableItem({ itemId: {{ entity.ID }} })" {% endif %}>
+    {% if selectable %}
+    <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" class="mt-6 focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded">
+    {% endif %}
+    <div>
     <div class="flex gap-3 content-center items-center mb-2 min-w-0">
         {% include "partials/avatar.tpl" with initials=entity.Initials() %}
         {% if relation && reverse %}
@@ -25,8 +29,13 @@
             {% include "partials/category.tpl" with name=entity.Category.Name link=withQuery("categories", stringId(entity.CategoryId), true) active=hasQuery("categories", stringId(entity.CategoryId)) %}
         {% endif %}
     </div>
+    {% if entity.URL %}
+    <a class="p-2 pt-0 block ml-14 text-blue-600" target="_blank" referrerpolicy="no-referrer" href="{{ entity.URL|printUrl }}">{{ entity.URL|printUrl }}</a>
+    {% endif %}
+
+
     {% if !reverse && relation && relation.Description && !noRelDescription %}
-        <a href="/relation?id={{ relation.ID }}">
+        <a target="_blank" href="/relation?id={{ relation.ID }}" referrerpolicy="no-referrer">
             {% include "partials/description.tpl" with description=relation.Description preview=true %}
         </a>
     {% endif %}
@@ -44,5 +53,6 @@
         {% endfor %}
     </div>
     {% endif %}
+    </div>
 </div>
 {% endif %}

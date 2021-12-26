@@ -6,6 +6,8 @@ import (
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
+	"mahresources/models/types"
+	"net/url"
 )
 
 func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreator) (*models.Group, error) {
@@ -24,11 +26,20 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 		}
 	}()
 
+	parsedURL, err := url.Parse(groupQuery.URL)
+
+	if groupQuery.URL != "" && err != nil {
+		return nil, err
+	}
+
+	groupUrl := (*types.URL)(parsedURL)
+
 	group := models.Group{
 		Name:        groupQuery.Name,
 		Description: groupQuery.Description,
 		CategoryId:  &groupQuery.CategoryId,
 		Meta:        []byte(groupQuery.Meta),
+		URL:         groupUrl,
 	}
 
 	if groupQuery.OwnerId != 0 {
@@ -111,6 +122,24 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 		Meta:        []byte(groupQuery.Meta),
 	}
 
+	if groupQuery.URL != "" {
+		parsedURL, err := url.Parse(groupQuery.URL)
+
+		if groupQuery.URL != "" && err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+
+		groupUrl := (*types.URL)(parsedURL)
+		group.URL = groupUrl
+	} else {
+		group.URL = nil
+		if err := tx.Model(&group).Update("url", nil).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+
 	if groupQuery.OwnerId != 0 {
 		group.OwnerId = &groupQuery.OwnerId
 	} else if err := tx.Model(group).Association("Owner").Clear(); err != nil {
@@ -164,7 +193,7 @@ func (ctx *MahresourcesContext) GetGroup(id uint) (*models.Group, error) {
 
 func (ctx *MahresourcesContext) GetGroups(offset, maxResults int, query *query_models.GroupQuery) (*[]models.Group, error) {
 	var groups []models.Group
-	groupScope := database_scopes.GroupQuery(query, false)
+	groupScope := database_scopes.GroupQuery(query, false, ctx.db)
 
 	return &groups, ctx.db.Scopes(groupScope).Limit(maxResults).
 		Offset(offset).Preload("Tags").Preload("Category").Find(&groups).Error
@@ -184,7 +213,7 @@ func (ctx *MahresourcesContext) GetGroupsCount(query *query_models.GroupQuery) (
 	var group models.Group
 	var count int64
 
-	return count, ctx.db.Scopes(database_scopes.GroupQuery(query, true)).Model(&group).Count(&count).Error
+	return count, ctx.db.Scopes(database_scopes.GroupQuery(query, true, ctx.db)).Model(&group).Count(&count).Error
 }
 
 func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {
@@ -208,4 +237,48 @@ func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {
 
 func (ctx *MahresourcesContext) GroupMetaKeys() (*[]fieldResult, error) {
 	return metaKeys(ctx, "groups")
+}
+
+func (ctx *MahresourcesContext) BulkAddTagsToGroups(query *query_models.BulkEditQuery) error {
+	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		for _, editedId := range query.EditedId {
+			tag, err := ctx.GetTag(editedId)
+
+			if err != nil {
+				return err
+			}
+
+			for _, groupId := range query.ID {
+				appendErr := tx.Model(&models.Group{ID: groupId}).Association("Tags").Append(tag)
+
+				if appendErr != nil {
+					return appendErr
+				}
+			}
+		}
+
+		return nil
+	})
+}
+
+func (ctx *MahresourcesContext) BulkRemoveTagsFromGroups(query *query_models.BulkEditQuery) error {
+	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		for _, editedId := range query.EditedId {
+			tag, err := ctx.GetTag(editedId)
+
+			if err != nil {
+				return err
+			}
+
+			for _, groupId := range query.ID {
+				appendErr := tx.Model(&models.Group{ID: groupId}).Association("Tags").Delete(tag)
+
+				if appendErr != nil {
+					return appendErr
+				}
+			}
+		}
+
+		return nil
+	})
 }

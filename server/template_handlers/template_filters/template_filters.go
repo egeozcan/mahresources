@@ -35,4 +35,10 @@ func init() {
 	if jsonErr != nil {
 		fmt.Println("error when registering json filter", jsonErr)
 	}
+
+	urlErr := pongo2.RegisterFilter("printUrl", urlFilter)
+
+	if urlErr != nil {
+		fmt.Println("error when registering url print filter", urlErr)
+	}
 }

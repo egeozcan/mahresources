@@ -52,6 +52,7 @@ type ResourceSearchQuery struct {
 	MaxResults       uint
 	OriginalName     string
 	OriginalLocation string
+	Hash             string
 }
 
 type ResourceThumbnailQuery struct {

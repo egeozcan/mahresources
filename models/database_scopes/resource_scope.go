@@ -88,6 +88,10 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool) fun
 			dbQuery = dbQuery.Where("owner_id = ?", query.OwnerId)
 		}
 
+		if query.Hash != "" {
+			dbQuery = dbQuery.Where("hash = ?", query.Hash)
+		}
+
 		if query.CreatedBefore != "" {
 			dbQuery = dbQuery.Where("created_at <= ?", query.CreatedBefore)
 		}

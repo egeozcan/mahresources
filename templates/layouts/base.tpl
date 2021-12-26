@@ -7,12 +7,15 @@
     <link rel="stylesheet" href="/public/index.css">
     <link rel="stylesheet" href="/public/tailwind.css">
     <link rel="stylesheet" href="/public/jsonTable.css">
-    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.4.2/dist/cdn.min.js" integrity="sha256-vtZIstyQ+MiaMGIEM80mS+F02WGC6ErZjQ/caLHUiO8=" crossorigin="anonymous" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/@alpinejs/morph@3.7.1/dist/cdn.min.js" integrity="sha256-XE/w2V39jXnBKCRGZ1fvmk/Lm2CPoX/O1Wg6zZiC8nM=" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.7.1/dist/cdn.min.js" integrity="sha256-af97dBGKswyyDty+OFWDWqySs/sB3xba6yBlexfWgEw=" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.7.1/dist/cdn.min.js" integrity="sha256-ljXOAtV44dsTkF1cLRUKa5vcd0Lbv1iiyT3qnWiM4m0=" crossorigin="anonymous" defer></script>
     <script src="/public/index.js"></script>
     <script src="/public/component.dropdown.js"></script>
     <script src="/public/component.confirmAction.js"></script>
     <script src="/public/component.freeFields.js"></script>
     <script src="/public/component.accordion.js"></script>
+    <script src="/public/component.bulkSelection.js"></script>
     <script src="/public/tableMaker.js"></script>
     <link rel="apple-touch-icon" sizes="57x57" href="/public/favicon/apple-icon-57x57.png">
     <link rel="apple-touch-icon" sizes="60x60" href="/public/favicon/apple-icon-60x60.png">

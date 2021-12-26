@@ -1,9 +1,25 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
+    <div class="sticky top-0 flex -ml-2 gap-4 flex-wrap  bg-white" x-show="[...$store.bulkSelection.selectedIds].length > 0" x-collapse x-data>
+        <form class="mb-6 p-4" method="post" :action="'/v1/groups/addTags?redirect=' + encodeURIComponent(window.location)">
+            {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
+            <div class="flex gap-2 items-end">
+                {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' addUrl='/v1/tag' elName='editedId' title='Add Tag' id="tag_autocompleter"|nanoid %}
+                {% include "/partials/form/searchButton.tpl" with text="Add" %}
+            </div>
+        </form>
+        <form class="mb-6 p-4" method="post" :action="'/v1/groups/removeTags?redirect=' + encodeURIComponent(window.location)">
+            {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
+            <div class="flex gap-2 items-end">
+                {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' elName='editedId' title='Remove Tag' id="tag_autocompleter"|nanoid %}
+                {% include "/partials/form/searchButton.tpl" with text="Remove" %}
+            </div>
+        </form>
+    </div>
     <div class="flex flex-col gap-4">
         {% for entity in groups %}
-            {% include "/partials/group.tpl" %}
+            {% include "/partials/group.tpl" with selectable=true %}
         {% endfor %}
     </div>
 {% endblock %}
@@ -15,7 +31,12 @@
         {% include "/partials/sideTitle.tpl" with title="Filter" %}
         {% include "/partials/form/textInput.tpl" with name='Name' label='Name' value=queryValues.Name.0 %}
         {% include "/partials/form/textInput.tpl" with name='Description' label='Description' value=queryValues.Description.0 %}
+        {% include "/partials/form/textInput.tpl" with name='URL' label='URL' value=queryValues.URL.0 %}
+
         {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' elName='tags' title='Tags' selectedItems=tags id="autocompleter"|nanoid %}
+        {% include "/partials/form/checkboxInput.tpl" with name='SearchParentsForTags' label='Search Parents For Tags' value=queryValues.SearchParentsForTags.0 id="SearchParentsForTags"|nanoid %}
+        {% include "/partials/form/checkboxInput.tpl" with name='SearchChildrenForTags' label='Search Children For Tags' value=queryValues.SearchChildrenForTags.0 id="SearchChildrenForTags"|nanoid %}
+
         {% include "/partials/form/autocompleter.tpl" with url='/v1/categories' elName='categories' title='Categories' selectedItems=categories id="autocompleter"|nanoid %}
         {% include "/partials/form/autocompleter.tpl" with url='/v1/notes' elName='notes' title='Notes' selectedItems=notes id="autocompleter"|nanoid %}
         {% include "/partials/form/autocompleter.tpl" with url='/v1/resources' elName='resources' title='Resources' selectedItems=resources id="autocompleter"|nanoid %}

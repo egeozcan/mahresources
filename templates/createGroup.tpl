@@ -25,6 +25,7 @@
 
                 {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" value=group.Name required=true %}
                 {% include "/partials/form/createFormTextareaInput.tpl" with title="Description" name="Description" value=group.Description %}
+                {% include "/partials/form/createFormTextInput.tpl" with type="url" title="URL" name="URL" value=group.URL|printUrl %}
 
                 <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-gray-200 sm:pt-5">
                     <span class="block text-sm font-medium text-gray-700">

@@ -13,6 +13,8 @@ type GroupReader interface {
 type GroupWriter interface {
 	CreateGroup(g *query_models.GroupCreator) (*models.Group, error)
 	UpdateGroup(g *query_models.GroupEditor) (*models.Group, error)
+	BulkAddTagsToGroups(query *query_models.BulkEditQuery) error
+	BulkRemoveTagsFromGroups(query *query_models.BulkEditQuery) error
 }
 
 type GroupDeleter interface {

@@ -8,6 +8,7 @@ type GroupCreator struct {
 	CategoryId  uint
 	OwnerId     uint
 	Meta        string
+	URL         string
 }
 
 type GroupEditor struct {
@@ -16,19 +17,22 @@ type GroupEditor struct {
 }
 
 type GroupQuery struct {
-	Name           string
-	Description    string
-	Tags           []uint
-	Notes          []uint
-	Groups         []uint
-	OwnerId        uint
-	Resources      []uint
-	Categories     []uint
-	CategoryId     uint
-	CreatedBefore  string
-	CreatedAfter   string
-	RelationTypeId uint
-	RelationSide   uint
-	MetaQuery      []ColumnMeta
-	SortBy         string
+	Name                  string
+	Description           string
+	Tags                  []uint
+	SearchParentsForTags  bool
+	SearchChildrenForTags bool
+	Notes                 []uint
+	Groups                []uint
+	OwnerId               uint
+	Resources             []uint
+	Categories            []uint
+	CategoryId            uint
+	CreatedBefore         string
+	CreatedAfter          string
+	RelationTypeId        uint
+	RelationSide          uint
+	MetaQuery             []ColumnMeta
+	SortBy                string
+	URL                   string
 }

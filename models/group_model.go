@@ -13,7 +13,9 @@ type Group struct {
 
 	Name        string `gorm:"index"`
 	Description string
-	Meta        types.JSON
+	URL         *types.URL `gorm:"index"`
+
+	Meta types.JSON
 
 	Owner   *Group `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	OwnerId *uint

@@ -5,9 +5,10 @@ import (
 	"mahresources/models/query_models"
 	"mahresources/models/types"
 	"regexp"
+	"strings"
 )
 
-func GroupQuery(query *query_models.GroupQuery, ignoreSort bool) func(db *gorm.DB) *gorm.DB {
+func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gorm.DB) func(db *gorm.DB) *gorm.DB {
 	sortColumnMatcher := regexp.MustCompile("^[a-z_]+(\\s(desc|asc))?$")
 
 	return func(db *gorm.DB) *gorm.DB {
@@ -26,11 +27,27 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool) func(db *gorm.D
 		}
 
 		if query.Tags != nil && len(query.Tags) > 0 {
-			dbQuery = dbQuery.Where(
-				"(SELECT Count(*) FROM group_tags pt WHERE pt.tag_id IN ? AND pt.group_id = groups.id) = ?",
-				query.Tags,
-				len(query.Tags),
-			)
+			subSelectCondition := originalDB.
+				Where("groups.id = gt.group_id")
+
+			if query.SearchParentsForTags {
+				dbQuery = dbQuery.
+					Joins("LEFT JOIN groups parent ON parent.id = groups.owner_id")
+				subSelectCondition = subSelectCondition.Or("parent.id = gt.group_id")
+			}
+
+			if query.SearchChildrenForTags {
+				subSelectCondition = subSelectCondition.
+					Or("gt.group_id IN (SELECT id FROM groups child WHERE child.owner_id = groups.id)")
+			}
+
+			subSelect := originalDB.
+				Table("group_tags gt").
+				Select("count(distinct tag_id)").
+				Where("gt.tag_id IN ?", query.Tags).
+				Where(subSelectCondition)
+
+			dbQuery = dbQuery.Where("(?) = ?", subSelect, len(query.Tags))
 		}
 
 		if query.Notes != nil && len(query.Notes) > 0 {
@@ -135,31 +152,35 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool) func(db *gorm.D
 		}
 
 		if query.Name != "" {
-			dbQuery = dbQuery.Where("name "+likeOperator+" ?", "%"+query.Name+"%")
+			dbQuery = dbQuery.Where("groups.name "+likeOperator+" ?", "%"+query.Name+"%")
 		}
 
 		if query.Description != "" {
-			dbQuery = dbQuery.Where("description "+likeOperator+" ?", "%"+query.Description+"%")
+			dbQuery = dbQuery.Where("groups.description "+likeOperator+" ?", "%"+query.Description+"%")
+		}
+
+		if query.URL != "" {
+			dbQuery = dbQuery.Where("groups.url "+likeOperator+" ?", "%"+query.URL+"%")
 		}
 
 		if query.CreatedBefore != "" {
-			dbQuery = dbQuery.Where("created_at <= ?", query.CreatedBefore)
+			dbQuery = dbQuery.Where("groups.created_at <= ?", query.CreatedBefore)
 		}
 
 		if query.CreatedAfter != "" {
-			dbQuery = dbQuery.Where("created_at >= ?", query.CreatedAfter)
+			dbQuery = dbQuery.Where("groups.created_at >= ?", query.CreatedAfter)
 		}
 
 		if query.CategoryId != 0 {
-			dbQuery = dbQuery.Where("category_id >= ?", query.CategoryId)
+			dbQuery = dbQuery.Where("groups.category_id >= ?", query.CategoryId)
 		}
 
 		if query.OwnerId != 0 {
-			dbQuery = dbQuery.Where("owner_id = ?", query.OwnerId)
+			dbQuery = dbQuery.Where("groups.owner_id = ?", query.OwnerId)
 		}
 
 		if len(query.Categories) != 0 {
-			dbQuery = dbQuery.Where("category_id IN ?", query.Categories)
+			dbQuery = dbQuery.Where("groups.category_id IN ?", query.Categories)
 		}
 
 		if len(query.MetaQuery) > 0 {
@@ -168,7 +189,19 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool) func(db *gorm.D
 					continue
 				}
 
-				dbQuery = dbQuery.Where(types.JSONQuery("meta").Operation(getOperationType(v.Operation), v.Value, v.Key))
+				if strings.HasPrefix(v.Key, "parent.") {
+					key := strings.TrimPrefix(v.Key, "parent.")
+
+					subSelect := originalDB.
+						Table("groups p").
+						Select("count(*)").
+						Where(types.JSONQuery("p.meta").Operation(getOperationType(v.Operation), v.Value, key)).
+						Where("groups.owner_id = p.id")
+
+					dbQuery = dbQuery.Where("(?) = 1", subSelect)
+				} else {
+					dbQuery = dbQuery.Where(types.JSONQuery("groups.meta").Operation(getOperationType(v.Operation), v.Value, v.Key))
+				}
 			}
 		}
 

@@ -7,14 +7,20 @@ import (
 
 func RelationTypeQuery(query *query_models.RelationshipTypeQuery) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
+		likeOperator := "LIKE"
+
+		if db.Config.Dialector.Name() == "postgres" {
+			likeOperator = "ILIKE"
+		}
+
 		dbQuery := db
 
 		if query.Name != "" {
-			dbQuery = dbQuery.Where("name LIKE ?", "%"+query.Name+"%")
+			dbQuery = dbQuery.Where("name "+likeOperator+" ?", "%"+query.Name+"%")
 		}
 
 		if query.Description != "" {
-			dbQuery = dbQuery.Where("description LIKE ?", "%"+query.Description+"%")
+			dbQuery = dbQuery.Where("description "+likeOperator+" ?", "%"+query.Description+"%")
 		}
 
 		if query.ForFromGroup != 0 {
@@ -63,6 +69,12 @@ func RelationQuery(query *query_models.GroupRelationshipQuery) func(db *gorm.DB)
 	return func(db *gorm.DB) *gorm.DB {
 		dbQuery := db
 
+		likeOperator := "LIKE"
+
+		if db.Config.Dialector.Name() == "postgres" {
+			likeOperator = "ILIKE"
+		}
+
 		if query.FromGroupId != 0 {
 			dbQuery = dbQuery.Where("from_group_id = ?", query.FromGroupId)
 		}
@@ -76,11 +88,11 @@ func RelationQuery(query *query_models.GroupRelationshipQuery) func(db *gorm.DB)
 		}
 
 		if query.Name != "" {
-			dbQuery = dbQuery.Where("name LIKE ?", "%"+query.Name+"%")
+			dbQuery = dbQuery.Where("name "+likeOperator+" ?", "%"+query.Name+"%")
 		}
 
 		if query.Description != "" {
-			dbQuery = dbQuery.Where("description LIKE ?", "%"+query.Description+"%")
+			dbQuery = dbQuery.Where("description "+likeOperator+" ?", "%"+query.Description+"%")
 		}
 
 		return dbQuery

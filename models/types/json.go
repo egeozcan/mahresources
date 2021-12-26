@@ -24,11 +24,11 @@ const (
 	OperatorGreaterThanOrEquals               = ">="
 	OperatorLessThan                          = "<"
 	OperatorLessThanOrEquals                  = "<="
-	operatorHasKeys                           = "HAS_KEYS"
+	OperatorHasKeys                           = "HAS_KEYS"
 )
 
 // JSON defined JSON data type, need to implements driver.Valuer, sql.Scanner interface
-// it's taken from
+// taken from https://github.com/go-gorm/datatypes/blob/master/json.go and was modified a bit to add operator support
 type JSON json.RawMessage
 
 // Value return json value, implement driver.Valuer interface
@@ -119,7 +119,7 @@ func JSONQuery(column string) *JSONQueryExpression {
 //goland:noinspection GoUnnecessarilyExportedIdentifiers
 func (jsonQuery *JSONQueryExpression) HasKey(keys ...string) *JSONQueryExpression {
 	jsonQuery.keys = keys
-	jsonQuery.operation = operatorHasKeys
+	jsonQuery.operation = OperatorHasKeys
 	return jsonQuery
 }
 
@@ -142,7 +142,7 @@ func (jsonQuery *JSONQueryExpression) Build(builder clause.Builder) {
 		switch stmt.Dialector.Name() {
 		case "mysql", "sqlite":
 			switch jsonQuery.operation {
-			case operatorHasKeys:
+			case OperatorHasKeys:
 				if len(jsonQuery.keys) > 0 {
 					builder.WriteString("JSON_EXTRACT(" + stmt.Quote(jsonQuery.column) + ",")
 					builder.AddVar(stmt, "$."+strings.Join(jsonQuery.keys, "."))
@@ -167,7 +167,7 @@ func (jsonQuery *JSONQueryExpression) Build(builder clause.Builder) {
 			}
 		case "postgres":
 			switch jsonQuery.operation {
-			case operatorHasKeys:
+			case OperatorHasKeys:
 				if len(jsonQuery.keys) > 0 {
 					stmt.WriteQuoted(jsonQuery.column)
 					stmt.WriteString("::jsonb")

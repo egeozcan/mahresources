@@ -13,7 +13,7 @@
     })"
     class="relative w-full"
 >
-    <label class="block text-sm font-medium text-gray-700 mt-3" for="{{ id }}">{{ title }}</label>
+    {% if title %}<label class="block text-sm font-medium text-gray-700 mt-3" for="{{ id }}">{{ title }}</label>{% endif %}
     {% include "/partials/form/formParts/errorMessage.tpl" %}
     <template x-if="addModeForTag == ''">
         <div>
