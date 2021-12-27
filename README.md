@@ -39,7 +39,7 @@ Or something like that, depending on if you are using postgres or sqlite.
 - [X] Sorting lists
 - [X] Inline add for tags, groups, categories, and so on
 - [ ] relationship editor with multiple groups (m x n, creating m * n relationships, and their reverse when applicable)
-- [ ] bulk editor for lists
+- [X] bulk editor for lists
 - [ ] Breadcrumbs for groups
 - [X] video preview generation
 - [ ] faster image previews with libvips?

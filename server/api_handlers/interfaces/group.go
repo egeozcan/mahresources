@@ -15,6 +15,7 @@ type GroupWriter interface {
 	UpdateGroup(g *query_models.GroupEditor) (*models.Group, error)
 	BulkAddTagsToGroups(query *query_models.BulkEditQuery) error
 	BulkRemoveTagsFromGroups(query *query_models.BulkEditQuery) error
+	BulkAddMetaToGroups(query *query_models.BulkEditMetaQuery) error
 }
 
 type GroupDeleter interface {

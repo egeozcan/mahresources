@@ -16,6 +16,13 @@
                 {% include "/partials/form/searchButton.tpl" with text="Remove" %}
             </div>
         </form>
+        <form class="mb-6 p-4" method="post" :action="'/v1/groups/addMeta?redirect=' + encodeURIComponent(window.location)">
+            {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
+            <div class="flex gap-2 items-end">
+                {% include "/partials/form/freeFields.tpl" with name="Meta" url='/v1/groups/meta/keys' fields=parsedQuery.MetaQuery jsonOutput="true" id="freeField"|nanoid %}
+                {% include "/partials/form/searchButton.tpl" with text="Add" %}
+            </div>
+        </form>
     </div>
     <div class="flex flex-col gap-4">
         {% for entity in groups %}

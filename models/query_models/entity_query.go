@@ -12,3 +12,8 @@ type BulkEditQuery struct {
 	BulkQuery
 	EditedId []uint
 }
+
+type BulkEditMetaQuery struct {
+	BulkQuery
+	Meta string
+}

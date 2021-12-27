@@ -145,6 +145,27 @@ func GetRemoveTagsFromGroupsHandler(ctx interfaces.GroupWriter) func(writer http
 	}
 }
 
+func GetAddMetaToGroupsHandler(ctx interfaces.GroupWriter) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var editor = query_models.BulkEditMetaQuery{}
+		var err error
+
+		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprint(writer, err.Error())
+		}
+
+		err = ctx.BulkAddMetaToGroups(&editor)
+
+		if err != nil {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprint(writer, err.Error())
+		}
+
+		http_utils.RedirectIfHTMLAccepted(writer, request, "/groups")
+	}
+}
+
 func GetGroupMetaKeysHandler(ctx *application_context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		keys, err := ctx.GroupMetaKeys()

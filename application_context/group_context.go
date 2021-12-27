@@ -282,3 +282,12 @@ func (ctx *MahresourcesContext) BulkRemoveTagsFromGroups(query *query_models.Bul
 		return nil
 	})
 }
+
+func (ctx *MahresourcesContext) BulkAddMetaToGroups(query *query_models.BulkEditMetaQuery) error {
+	var group models.Group
+
+	return ctx.db.
+		Model(&group).
+		Where("id in ?", query.ID).
+		Update("Meta", gorm.Expr("Meta || ?", query.Meta)).Error
+}

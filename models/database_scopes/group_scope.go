@@ -51,61 +51,43 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 		}
 
 		if query.Notes != nil && len(query.Notes) > 0 {
-			dbQuery = dbQuery.Where(
-				`
-					(
-						SELECT 
-							Count(*) 
-						FROM 
-							notes n
-						JOIN
-							groups_related_notes grn on n.id = grn.note_id
-							AND n.owner_id <> grn.group_id
-						WHERE 
-							n.id IN ?
-							AND grn.group_id = groups.id
-					) + (
-						SELECT
-							Count(*) 
-						FROM 
-							notes n 
-						WHERE 
-							n.id IN ? 
-							AND n.owner_id = groups.id
-					) = ?`,
-				query.Notes,
-				query.Notes,
-				len(query.Notes),
-			)
+			justRelatedNotesSubQuery := originalDB.
+				Table("notes n").
+				Select("count(*)").
+				Joins("JOIN groups_related_notes grn on n.id = grn.note_id").
+				// filter out the ones of which the group is the owner
+				// prevents counting 2 times when we are both related AND the owner
+				Where("n.owner_id <> grn.group_id").
+				Where("n.id IN ?", query.Notes).
+				Where("grn.group_id = groups.id")
+
+			justOwnedNotesSubquery := originalDB.
+				Table("notes n").
+				Select("count(*)").
+				Where("n.id IN ?", query.Notes).
+				Where("n.owner_id = groups.id")
+
+			dbQuery = dbQuery.Where("(?) + (?) = ?", justRelatedNotesSubQuery, justOwnedNotesSubquery, len(query.Notes))
 		}
 
 		if query.Resources != nil && len(query.Resources) > 0 {
-			dbQuery = dbQuery.Where(
-				`
-					(
-						SELECT 
-							Count(*) 
-						FROM 
-							resources r
-						JOIN
-							groups_related_resources grr on r.id = grr.resource_id
-							AND r.owner_id <> grr.group_id
-						WHERE 
-							r.id IN ?
-							AND grr.group_id = groups.id
-					) + (
-						SELECT
-							Count(*) 
-						FROM 
-							resources r 
-						WHERE 
-							r.id IN ? 
-							AND r.owner_id = groups.id
-					) = ?`,
-				query.Resources,
-				query.Resources,
-				len(query.Resources),
-			)
+			justRelatedResourcesQuery := originalDB.
+				Table("resources r").
+				Select("count(*)").
+				Joins("JOIN groups_related_resources grr on r.id = grr.resource_id").
+				// filter out the ones of which the group is the owner
+				// prevents counting 2 times when we are both related AND the owner
+				Where("grr.group_id <> r.owner_id").
+				Where("grr.group_id = groups.id").
+				Where("r.id IN ?", query.Resources)
+
+			justOwnedResourcesQuery := originalDB.
+				Table("resources r").
+				Select("count(*)").
+				Where("r.owner_id = groups.id").
+				Where("r.id IN ?", query.Resources)
+
+			dbQuery = dbQuery.Where("(?) + (?) = ?", justRelatedResourcesQuery, justOwnedResourcesQuery, len(query.Resources))
 		}
 
 		if query.Groups != nil && len(query.Groups) > 0 {
@@ -122,33 +104,21 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 					) = ?`,
 				query.Groups,
 				len(query.Groups),
-			).Or("owner_id IN ?", query.Groups)
+			).Or("groups.owner_id IN ?", query.Groups)
 		}
 
 		if query.RelationTypeId != 0 {
+			relationSubquery := originalDB.
+				Table("group_relation_types grt").
+				Where("grt.id = ?", query.RelationTypeId)
+
 			if query.RelationSide == 0 {
-				dbQuery = dbQuery.Where(`
-					groups.category_id = (
-						SELECT
-							from_category_id
-						FROM
-							group_relation_types grt
-						WHERE
-							grt.id = ?
-					)
-				`, query.RelationTypeId)
+				relationSubquery = relationSubquery.Select("grt.from_category_id")
 			} else {
-				dbQuery = dbQuery.Where(`
-					groups.category_id = (
-						SELECT
-							to_category_id
-						FROM
-							group_relation_types grt
-						WHERE
-							grt.id = ?
-					)
-				`, query.RelationTypeId)
+				relationSubquery = relationSubquery.Select("grt.to_category_id")
 			}
+
+			dbQuery = dbQuery.Where("groups.category_id = (?)", relationSubquery)
 		}
 
 		if query.Name != "" {
@@ -189,14 +159,27 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 					continue
 				}
 
-				if strings.HasPrefix(v.Key, "parent.") {
-					key := strings.TrimPrefix(v.Key, "parent.")
+				parentPrefix := "parent."
+				childPrefix := "child."
+
+				if strings.HasPrefix(v.Key, parentPrefix) {
+					key := strings.TrimPrefix(v.Key, parentPrefix)
 
 					subSelect := originalDB.
 						Table("groups p").
 						Select("count(*)").
 						Where(types.JSONQuery("p.meta").Operation(getOperationType(v.Operation), v.Value, key)).
 						Where("groups.owner_id = p.id")
+
+					dbQuery = dbQuery.Where("(?) = 1", subSelect)
+				} else if strings.HasPrefix(v.Key, childPrefix) {
+					key := strings.TrimPrefix(v.Key, childPrefix)
+
+					subSelect := originalDB.
+						Table("groups p").
+						Select("count(*)").
+						Where(types.JSONQuery("p.meta").Operation(getOperationType(v.Operation), v.Value, key)).
+						Where("groups.id = p.owner_id")
 
 					dbQuery = dbQuery.Where("(?) = 1", subSelect)
 				} else {
