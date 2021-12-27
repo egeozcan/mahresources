@@ -1,9 +1,34 @@
-{% extends "/layouts/gallery.tpl" %}
+{% extends "/layouts/base.tpl" %}
 
-{% block gallery %}
-    {% for entity in resources %}
-        {% include "/partials/resource.tpl" %}
-    {% endfor %}
+{% block body %}
+    <div class="sticky top-0 flex -ml-2 gap-4 flex-wrap  bg-white" x-show="[...$store.bulkSelection.selectedIds].length > 0" x-collapse x-data>
+        <form class="mb-6 p-4" method="post" :action="'/v1/resources/addTags?redirect=' + encodeURIComponent(window.location)">
+            {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
+            <div class="flex gap-2 items-start">
+                {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' addUrl='/v1/tag' elName='editedId' title='Add Tag' id="tag_autocompleter"|nanoid %}
+                <div class="mt-7">{% include "/partials/form/searchButton.tpl" with text="Add" %}</div>
+            </div>
+        </form>
+        <form class="mb-6 p-4" method="post" :action="'/v1/resources/removeTags?redirect=' + encodeURIComponent(window.location)">
+            {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
+            <div class="flex gap-2 items-start">
+                {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' elName='editedId' title='Remove Tag' id="tag_autocompleter"|nanoid %}
+                <div class="mt-7">{% include "/partials/form/searchButton.tpl" with text="Remove" %}</div>
+            </div>
+        </form>
+        <form class="mb-6 p-4" method="post" :action="'/v1/resources/addMeta?redirect=' + encodeURIComponent(window.location)">
+            {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
+            <div class="flex gap-2 items-start">
+                {% include "/partials/form/freeFields.tpl" with name="Meta" url='/v1/groups/meta/keys' jsonOutput="true" id="freeField"|nanoid %}
+                <div class="mt-7">{% include "/partials/form/searchButton.tpl" with text="Add" %}</div>
+            </div>
+        </form>
+    </div>
+    <section class="note-container">
+        {% for entity in resources %}
+            {% include "/partials/resource.tpl" with selectable=true %}
+        {% endfor %}
+    </section>
 {% endblock %}
 
 {% block sidebar %}

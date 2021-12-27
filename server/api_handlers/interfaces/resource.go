@@ -11,6 +11,9 @@ type ResourceWriter interface {
 	AddLocalResource(fileName string, resourceQuery *query_models.ResourceFromLocalCreator) (*models.Resource, error)
 	AddRemoteResource(resourceQuery *query_models.ResourceFromRemoteCreator) (*models.Resource, error)
 	EditResource(resourceQuery *query_models.ResourceEditor) (*models.Resource, error)
+	BulkRemoveTagsFromResources(query *query_models.BulkEditQuery) error
+	BulkAddMetaToResources(query *query_models.BulkEditMetaQuery) error
+	BulkAddTagsToResources(query *query_models.BulkEditQuery) error
 }
 
 type ResourceReader interface {

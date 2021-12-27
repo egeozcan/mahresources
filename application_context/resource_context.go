@@ -567,3 +567,56 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 func (ctx *MahresourcesContext) ResourceMetaKeys() (*[]fieldResult, error) {
 	return metaKeys(ctx, "resources")
 }
+
+func (ctx *MahresourcesContext) BulkRemoveTagsFromResources(query *query_models.BulkEditQuery) error {
+	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		for _, editedId := range query.EditedId {
+			tag, err := ctx.GetTag(editedId)
+
+			if err != nil {
+				return err
+			}
+
+			for _, id := range query.ID {
+				appendErr := tx.Model(&models.Resource{ID: id}).Association("Tags").Delete(tag)
+
+				if appendErr != nil {
+					return appendErr
+				}
+			}
+		}
+
+		return nil
+	})
+}
+
+func (ctx *MahresourcesContext) BulkAddMetaToResources(query *query_models.BulkEditMetaQuery) error {
+	var resource models.Resource
+
+	return ctx.db.
+		Model(&resource).
+		Where("id in ?", query.ID).
+		Update("Meta", gorm.Expr("Meta || ?", query.Meta)).Error
+}
+
+func (ctx *MahresourcesContext) BulkAddTagsToResources(query *query_models.BulkEditQuery) error {
+	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		for _, editedId := range query.EditedId {
+			tag, err := ctx.GetTag(editedId)
+
+			if err != nil {
+				return err
+			}
+
+			for _, id := range query.ID {
+				appendErr := tx.Model(&models.Resource{ID: id}).Association("Tags").Append(tag)
+
+				if appendErr != nil {
+					return appendErr
+				}
+			}
+		}
+
+		return nil
+	})
+}

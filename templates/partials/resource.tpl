@@ -1,4 +1,7 @@
-<div class="resource">
+<div class="resource"  {% if selectable %} x-data="selectableItem({ itemId: {{ entity.ID }} })" {% endif %}>
+    {% if selectable %}
+    <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" class="mt-6 focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded">
+    {% endif %}
     <a href="/resource?id={{ entity.ID }}">
         <h3 class="min-w-0 font-bold whitespace-nowrap overflow-hidden overflow-ellipsis">{{ entity.Name }}</h3>
         <h4>{{ entity.FileSize | humanReadableSize }}</h4>

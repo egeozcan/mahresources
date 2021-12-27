@@ -269,3 +269,66 @@ func GetResourceMetaKeysHandler(ctx *application_context.MahresourcesContext) fu
 		_ = json.NewEncoder(writer).Encode(keys)
 	}
 }
+
+func GetAddTagsToResourcesHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var editor = query_models.BulkEditQuery{}
+		var err error
+
+		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprint(writer, err.Error())
+		}
+
+		err = ctx.BulkAddTagsToResources(&editor)
+
+		if err != nil {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprint(writer, err.Error())
+		}
+
+		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
+	}
+}
+
+func GetRemoveTagsFromResourcesHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var editor = query_models.BulkEditQuery{}
+		var err error
+
+		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprint(writer, err.Error())
+		}
+
+		err = ctx.BulkRemoveTagsFromResources(&editor)
+
+		if err != nil {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprint(writer, err.Error())
+		}
+
+		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
+	}
+}
+
+func GetAddMetaToResourcesHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var editor = query_models.BulkEditMetaQuery{}
+		var err error
+
+		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprint(writer, err.Error())
+		}
+
+		err = ctx.BulkAddMetaToResources(&editor)
+
+		if err != nil {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprint(writer, err.Error())
+		}
+
+		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
+	}
+}

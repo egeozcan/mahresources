@@ -1075,6 +1075,9 @@ select {
 .top-0 {
 	top: 0px;
 }
+.bottom-0 {
+	bottom: 0px;
+}
 .z-50 {
 	z-index: 50;
 }
@@ -1474,6 +1477,12 @@ select {
 }
 .pl-2 {
 	padding-left: 0.5rem;
+}
+.pb-12 {
+	padding-bottom: 3rem;
+}
+.pb-16 {
+	padding-bottom: 4rem;
 }
 .text-left {
 	text-align: left;
