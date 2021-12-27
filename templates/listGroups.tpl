@@ -4,23 +4,23 @@
     <div class="sticky top-0 flex -ml-2 gap-4 flex-wrap  bg-white" x-show="[...$store.bulkSelection.selectedIds].length > 0" x-collapse x-data>
         <form class="mb-6 p-4" method="post" :action="'/v1/groups/addTags?redirect=' + encodeURIComponent(window.location)">
             {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
-            <div class="flex gap-2 items-end">
+            <div class="flex gap-2 items-start">
                 {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' addUrl='/v1/tag' elName='editedId' title='Add Tag' id="tag_autocompleter"|nanoid %}
-                {% include "/partials/form/searchButton.tpl" with text="Add" %}
+                <div class="mt-7">{% include "/partials/form/searchButton.tpl" with text="Add" %}</div>
             </div>
         </form>
         <form class="mb-6 p-4" method="post" :action="'/v1/groups/removeTags?redirect=' + encodeURIComponent(window.location)">
             {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
-            <div class="flex gap-2 items-end">
+            <div class="flex gap-2 items-start">
                 {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' elName='editedId' title='Remove Tag' id="tag_autocompleter"|nanoid %}
-                {% include "/partials/form/searchButton.tpl" with text="Remove" %}
+                <div class="mt-7">{% include "/partials/form/searchButton.tpl" with text="Remove" %}</div>
             </div>
         </form>
         <form class="mb-6 p-4" method="post" :action="'/v1/groups/addMeta?redirect=' + encodeURIComponent(window.location)">
             {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
-            <div class="flex gap-2 items-end">
-                {% include "/partials/form/freeFields.tpl" with name="Meta" url='/v1/groups/meta/keys' fields=parsedQuery.MetaQuery jsonOutput="true" id="freeField"|nanoid %}
-                {% include "/partials/form/searchButton.tpl" with text="Add" %}
+            <div class="flex gap-2 items-start">
+                {% include "/partials/form/freeFields.tpl" with name="Meta" url='/v1/groups/meta/keys' jsonOutput="true" id="freeField"|nanoid %}
+                <div class="mt-7">{% include "/partials/form/searchButton.tpl" with text="Add" %}</div>
             </div>
         </form>
     </div>

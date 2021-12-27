@@ -1137,6 +1137,15 @@ select {
 .ml-0 {
 	margin-left: 0px;
 }
+.mt-4 {
+	margin-top: 1rem;
+}
+.mt-8 {
+	margin-top: 2rem;
+}
+.mt-7 {
+	margin-top: 1.75rem;
+}
 .block {
 	display: block;
 }
