@@ -6,15 +6,15 @@ import (
 )
 
 type Resource struct {
-	ID               uint `gorm:"primarykey"`
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-	Name             string `gorm:"index"`
-	OriginalName     string `gorm:"index"`
-	OriginalLocation string `gorm:"index"`
-	Hash             string `gorm:"index"`
-	HashType         string `gorm:"index"`
-	Location         string `gorm:"index"`
+	ID               uint      `gorm:"primarykey"`
+	CreatedAt        time.Time `gorm:"index"`
+	UpdatedAt        time.Time `gorm:"index"`
+	Name             string    `gorm:"index"`
+	OriginalName     string    `gorm:"index"`
+	OriginalLocation string    `gorm:"index"`
+	Hash             string    `gorm:"index"`
+	HashType         string    `gorm:"index"`
+	Location         string    `gorm:"index"`
 	StorageLocation  *string
 	Description      string
 	Meta             types.JSON

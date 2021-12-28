@@ -291,6 +291,27 @@ func GetAddTagsToResourcesHandler(ctx interfaces.ResourceWriter) func(writer htt
 	}
 }
 
+func GetAddGroupsToResourcesHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var editor = query_models.BulkEditQuery{}
+		var err error
+
+		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprint(writer, err.Error())
+		}
+
+		err = ctx.BulkAddGroupsToResources(&editor)
+
+		if err != nil {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprint(writer, err.Error())
+		}
+
+		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
+	}
+}
+
 func GetRemoveTagsFromResourcesHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BulkEditQuery{}

@@ -53,6 +53,7 @@ type ResourceSearchQuery struct {
 	OriginalName     string
 	OriginalLocation string
 	Hash             string
+	ShowWithoutOwner bool
 }
 
 type ResourceThumbnailQuery struct {

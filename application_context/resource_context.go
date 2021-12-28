@@ -40,7 +40,7 @@ func (ctx *MahresourcesContext) GetResourceCount(query *query_models.ResourceSea
 	var resource models.Resource
 	var count int64
 
-	return count, ctx.db.Scopes(database_scopes.ResourceQuery(query, true)).Model(&resource).Count(&count).Error
+	return count, ctx.db.Scopes(database_scopes.ResourceQuery(query, true, ctx.db)).Model(&resource).Count(&count).Error
 }
 
 func (ctx *MahresourcesContext) GetResources(offset, maxResults int, query *query_models.ResourceSearchQuery) (*[]models.Resource, error) {
@@ -51,7 +51,7 @@ func (ctx *MahresourcesContext) GetResources(offset, maxResults int, query *quer
 		resLimit = int(query.MaxResults)
 	}
 
-	return &resources, ctx.db.Scopes(database_scopes.ResourceQuery(query, false)).Limit(resLimit).Offset(offset).Preload("Tags").Find(&resources).Error
+	return &resources, ctx.db.Scopes(database_scopes.ResourceQuery(query, false, ctx.db)).Limit(resLimit).Offset(offset).Preload("Tags").Find(&resources).Error
 }
 
 func (ctx *MahresourcesContext) GetResourcesWithIds(ids *[]uint) (*[]*models.Resource, error) {
@@ -277,6 +277,17 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 	h := sha1.New()
 	h.Write(fileBytes)
 	hash := hex.EncodeToString(h.Sum(nil))
+
+	var existingResource models.Resource
+
+	if err := tx.Where("hash = ?", hash).First(&existingResource).Error; err == nil {
+		if resourceQuery.OwnerId == *existingResource.OwnerId {
+			return nil, errors.New("existing resource with same parent")
+		}
+
+		return &existingResource, tx.Model(&existingResource).Association("Groups").Append(&models.Group{ID: resourceQuery.OwnerId})
+	}
+
 	folder := "/resources/" + hash[0:2] + "/" + hash[2:4] + "/" + hash[4:6] + "/"
 
 	if err := ctx.fs.MkdirAll(folder, 0777); err != nil {
@@ -610,6 +621,28 @@ func (ctx *MahresourcesContext) BulkAddTagsToResources(query *query_models.BulkE
 
 			for _, id := range query.ID {
 				appendErr := tx.Model(&models.Resource{ID: id}).Association("Tags").Append(tag)
+
+				if appendErr != nil {
+					return appendErr
+				}
+			}
+		}
+
+		return nil
+	})
+}
+
+func (ctx *MahresourcesContext) BulkAddGroupsToResources(query *query_models.BulkEditQuery) error {
+	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		for _, editedId := range query.EditedId {
+			group, err := ctx.GetGroup(editedId)
+
+			if err != nil {
+				return err
+			}
+
+			for _, id := range query.ID {
+				appendErr := tx.Model(&models.Resource{ID: id}).Association("Groups").Append(group)
 
 				if appendErr != nil {
 					return appendErr

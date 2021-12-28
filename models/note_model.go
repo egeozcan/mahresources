@@ -6,10 +6,10 @@ import (
 )
 
 type Note struct {
-	ID          uint `gorm:"primarykey"`
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	Name        string `gorm:"index"`
+	ID          uint      `gorm:"primarykey"`
+	CreatedAt   time.Time `gorm:"index"`
+	UpdatedAt   time.Time `gorm:"index"`
+	Name        string    `gorm:"index"`
 	Description string
 	Meta        types.JSON
 	Tags        []*Tag      `gorm:"many2many:note_tags;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`

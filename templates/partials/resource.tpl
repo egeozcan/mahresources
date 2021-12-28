@@ -1,12 +1,14 @@
-<div class="resource"  {% if selectable %} x-data="selectableItem({ itemId: {{ entity.ID }} })" {% endif %}>
-    {% if selectable %}
-    <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" class="mt-6 focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded">
-    {% endif %}
-    <a href="/resource?id={{ entity.ID }}">
-        <h3 class="min-w-0 font-bold whitespace-nowrap overflow-hidden overflow-ellipsis">{{ entity.Name }}</h3>
-        <h4>{{ entity.FileSize | humanReadableSize }}</h4>
-    </a>
-    {% include "partials/description.tpl" with description=entity.Description preview=true %}
+<div class="resource {% if selectable %} pl-4 {% endif %}"  {% if selectable %} x-data="selectableItem({ itemId: {{ entity.ID }} })" {% endif %}>
+    <div class="flex gap-2 items-center">
+        {% if selectable %}
+        <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" class="focus:ring-indigo-500 h-8 w-8 text-indigo-600 border-gray-300 rounded">
+        {% endif %}
+        <a class="min-w-0" href="/resource?id={{ entity.ID }}">
+            <h3 class="min-w-0 font-bold whitespace-nowrap overflow-hidden overflow-ellipsis">{{ entity.Name }}</h3>
+            <h4>{{ entity.FileSize | humanReadableSize }}</h4>
+        </a>
+        {% include "partials/description.tpl" with description=entity.Description preview=true %}
+    </div>
     <a href="/{% if entity.StorageLocation %}{{ entity.StorageLocation }}{% else %}files{% endif %}{{ entity.Location }}">
         <img height="300" src="/v1/resource/preview?id={{ entity.ID }}&height=300" alt="Preview">
     </a>

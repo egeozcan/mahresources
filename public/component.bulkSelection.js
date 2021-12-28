@@ -61,6 +61,11 @@ document.addEventListener("alpine:init", () => {
     registerOption(option) {
       option.itemNo = option.itemNo || ++currentIndex;
       this.elements[option.itemNo] = option;
+
+      if (!window.selectionModeActive) {
+        activateSelectionMode();
+        window.selectionModeActive = true;
+      }
     },
   });
 
@@ -77,6 +82,9 @@ document.addEventListener("alpine:init", () => {
       },
 
       events: {
+        /**
+         * @param {MouseEvent} e
+         */
         ["@click"](e) {
           this.$store.bulkSelection.toggle(itemId);
 
@@ -92,3 +100,63 @@ document.addEventListener("alpine:init", () => {
     };
   });
 });
+
+function activateSelectionMode() {
+  const selection = new SelectionArea({
+    selectionAreaClass: "selection-area",
+    selectionContainerClass: "selection-area-container",
+    container: "body",
+    selectables: [".main [type='checkbox']"],
+    startareas: ["body", "html", ".site"],
+    boundaries: ["body"],
+    behaviour: {
+      overlap: "keep",
+    },
+  });
+
+  selection.on("stop", (e) => {
+    let selected = e.store?.changed?.added ?? e.selected;
+
+    if (!selected || selected.length === 0) {
+      selected = e.store?.selected ?? [];
+    }
+
+    document
+      .querySelectorAll(".main [type='checkbox']")
+      .forEach((x) => x.checked && x.click());
+
+    setTimeout(() => {
+      selected.forEach((target) => {
+        if (!target.checked) {
+          target.click();
+        }
+      });
+    }, 100);
+    document.body.style.userSelect = "";
+  });
+
+  selection.on("beforestart", (evt) => {
+    let canBeActivated =
+      evt.event.target.tagName.toLowerCase() !== "a" &&
+      evt.event.target.tagName.toLowerCase() !== "input" &&
+      evt.event.target.tagName.toLowerCase() !== "select" &&
+      evt.event.target.tagName.toLowerCase() !== "button" &&
+      evt.event.target.tagName.toLowerCase() !== "textarea" &&
+      evt.event.target.tagName.toLowerCase() !== "h1" &&
+      evt.event.target.tagName.toLowerCase() !== "h2" &&
+      evt.event.target.tagName.toLowerCase() !== "h3" &&
+      evt.event.target.tagName.toLowerCase() !== "h4" &&
+      evt.event.target.tagName.toLowerCase() !== "img";
+
+    if (canBeActivated) {
+      document.body.style.userSelect = "none";
+    }
+
+    return canBeActivated;
+  });
+
+  selection.on("start", (e) => {
+    document.body.style.userSelect = "none";
+    selection.clearSelection();
+  });
+}

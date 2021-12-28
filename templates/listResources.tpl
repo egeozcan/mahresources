@@ -19,7 +19,14 @@
         <form class="mb-6 p-4" method="post" :action="'/v1/resources/addMeta?redirect=' + encodeURIComponent(window.location)">
             {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
             <div class="flex gap-2 items-start">
-                {% include "/partials/form/freeFields.tpl" with name="Meta" url='/v1/groups/meta/keys' jsonOutput="true" id="freeField"|nanoid %}
+                {% include "/partials/form/freeFields.tpl" with name="Meta" url='/v1/resources/meta/keys' jsonOutput="true" id="freeField"|nanoid %}
+                <div class="mt-7">{% include "/partials/form/searchButton.tpl" with text="Add" %}</div>
+            </div>
+        </form>
+        <form class="mb-6 p-4" method="post" :action="'/v1/resources/addGroups?redirect=' + encodeURIComponent(window.location)">
+            {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
+            <div class="flex gap-2 items-start">
+                {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='editedId' title='Add Groups' id="autocompleter"|nanoid extraInfo="Category" %}
                 <div class="mt-7">{% include "/partials/form/searchButton.tpl" with text="Add" %}</div>
             </div>
         </form>

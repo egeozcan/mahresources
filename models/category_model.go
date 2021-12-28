@@ -5,9 +5,9 @@ import (
 )
 
 type Category struct {
-	ID        uint `gorm:"primarykey"`
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID        uint      `gorm:"primarykey"`
+	CreatedAt time.Time `gorm:"index"`
+	UpdatedAt time.Time `gorm:"index"`
 
 	Name        string   `gorm:"uniqueIndex:unique_category_name"`
 	Description string   `gorm:"index"`

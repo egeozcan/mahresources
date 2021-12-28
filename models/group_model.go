@@ -7,9 +7,9 @@ import (
 )
 
 type Group struct {
-	ID        uint `gorm:"primarykey"`
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID        uint      `gorm:"primarykey"`
+	CreatedAt time.Time `gorm:"index"`
+	UpdatedAt time.Time `gorm:"index"`
 
 	Name        string `gorm:"index"`
 	Description string

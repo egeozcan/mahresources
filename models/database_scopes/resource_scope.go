@@ -7,7 +7,7 @@ import (
 	"regexp"
 )
 
-func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool) func(db *gorm.DB) *gorm.DB {
+func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, originalDb *gorm.DB) func(db *gorm.DB) *gorm.DB {
 	sortColumnMatcher := regexp.MustCompile("^[a-z_]+(\\s(desc|asc))?$")
 
 	return func(db *gorm.DB) *gorm.DB {
@@ -26,10 +26,16 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool) fun
 		}
 
 		if query.Tags != nil && len(query.Tags) > 0 {
+			subQuery := originalDb.
+				Table("resource_tags rt").
+				Where("rt.tag_id IN ?", query.Tags).
+				Group("rt.resource_id").
+				Having("count(*) = ?", len(query.Tags)).
+				Select("rt.resource_id")
+
 			dbQuery = dbQuery.Where(
-				"(SELECT Count(*) FROM resource_tags rt WHERE rt.tag_id IN ? AND rt.resource_id = resources.id) = ?",
-				query.Tags,
-				len(query.Tags),
+				"resources.id IN (?)",
+				subQuery,
 			)
 		}
 
@@ -69,35 +75,39 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool) fun
 		}
 
 		if query.Name != "" {
-			dbQuery = dbQuery.Where("name "+likeOperator+" ?", "%"+query.Name+"%")
+			dbQuery = dbQuery.Where("resources.name "+likeOperator+" ?", "%"+query.Name+"%")
 		}
 
 		if query.Description != "" {
-			dbQuery = dbQuery.Where("description "+likeOperator+" ?", "%"+query.Description+"%")
+			dbQuery = dbQuery.Where("resources.description "+likeOperator+" ?", "%"+query.Description+"%")
 		}
 
 		if query.OriginalName != "" {
-			dbQuery = dbQuery.Where("original_name "+likeOperator+" ?", "%"+query.OriginalName+"%")
+			dbQuery = dbQuery.Where("resources.original_name "+likeOperator+" ?", "%"+query.OriginalName+"%")
 		}
 
 		if query.OriginalLocation != "" {
-			dbQuery = dbQuery.Where("original_location "+likeOperator+" ?", "%"+query.OriginalLocation+"%")
+			dbQuery = dbQuery.Where("resources.original_location "+likeOperator+" ?", "%"+query.OriginalLocation+"%")
 		}
 
 		if query.OwnerId != 0 {
-			dbQuery = dbQuery.Where("owner_id = ?", query.OwnerId)
+			dbQuery = dbQuery.Where("resources.owner_id = ?", query.OwnerId)
 		}
 
 		if query.Hash != "" {
-			dbQuery = dbQuery.Where("hash = ?", query.Hash)
+			dbQuery = dbQuery.Where("resources.hash = ?", query.Hash)
 		}
 
 		if query.CreatedBefore != "" {
-			dbQuery = dbQuery.Where("created_at <= ?", query.CreatedBefore)
+			dbQuery = dbQuery.Where("resources.created_at <= ?", query.CreatedBefore)
 		}
 
 		if query.CreatedAfter != "" {
-			dbQuery = dbQuery.Where("created_at >= ?", query.CreatedAfter)
+			dbQuery = dbQuery.Where("resources.created_at >= ?", query.CreatedAfter)
+		}
+
+		if query.ShowWithoutOwner {
+			dbQuery = dbQuery.Where("resources.owner_id IS NULL")
 		}
 
 		if len(query.MetaQuery) > 0 {
@@ -106,7 +116,7 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool) fun
 					continue
 				}
 
-				dbQuery = dbQuery.Where(types.JSONQuery("meta").Operation(getOperationType(v.Operation), v.Value, v.Key))
+				dbQuery = dbQuery.Where(types.JSONQuery("resources.meta").Operation(getOperationType(v.Operation), v.Value, v.Key))
 			}
 		}
 

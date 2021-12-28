@@ -5,10 +5,10 @@ import (
 )
 
 type GroupRelationType struct {
-	ID             uint `gorm:"primarykey"`
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	Name           string `gorm:"uniqueIndex:unique_rel_type"`
+	ID             uint      `gorm:"primarykey"`
+	CreatedAt      time.Time `gorm:"index"`
+	UpdatedAt      time.Time `gorm:"index"`
+	Name           string    `gorm:"uniqueIndex:unique_rel_type"`
 	Description    string
 	FromCategory   *Category          `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	FromCategoryId *uint              `gorm:"uniqueIndex:unique_rel_type"`
