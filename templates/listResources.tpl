@@ -55,6 +55,13 @@
 
 {% block sidebar %}
 <form class="flex gap-2 items-start flex-col">
+    <div class="tags mt-3 mb-2 gap-1 flex flex-wrap" style="margin-left: -0.5rem">
+        {% for tag in popularTags %}
+        <a class="no-underline" href='{{ withQuery("tags", stringId(tag.Id), true) }}'>
+            {% include "partials/tag.tpl" with name=tag.Name active=hasQuery("tags", stringId(tag.Id)) %}
+        </a>
+        {% endfor %}
+    </div>
     {% include "/partials/sideTitle.tpl" with title="Sort" %}
     {% include "/partials/form/selectInput.tpl" with name='SortBy' label='Sort' values=sortValues %}
     {% include "/partials/sideTitle.tpl" with title="Filter" %}

@@ -1176,9 +1176,6 @@ select {
 .h-2 {
 	height: 0.5rem;
 }
-.max-h-\[30vh\] {
-	max-height: 30vh;
-}
 .w-full {
 	width: 100%;
 }
@@ -1265,6 +1262,9 @@ select {
 }
 .gap-3 {
 	gap: 0.75rem;
+}
+.gap-1 {
+	gap: 0.25rem;
 }
 .space-y-8 > :not([hidden]) ~ :not([hidden]) {
 	--tw-space-y-reverse: 0;
@@ -1540,6 +1540,10 @@ select {
 	--tw-text-opacity: 1;
 	color: rgba(107, 114, 128, var(--tw-text-opacity));
 }
+.text-blue-600 {
+	--tw-text-opacity: 1;
+	color: rgba(37, 99, 235, var(--tw-text-opacity));
+}
 .text-red-400 {
 	--tw-text-opacity: 1;
 	color: rgba(248, 113, 113, var(--tw-text-opacity));
@@ -1563,10 +1567,6 @@ select {
 .text-indigo-800 {
 	--tw-text-opacity: 1;
 	color: rgba(55, 48, 163, var(--tw-text-opacity));
-}
-.text-blue-600 {
-	--tw-text-opacity: 1;
-	color: rgba(37, 99, 235, var(--tw-text-opacity));
 }
 .text-gray-900 {
 	--tw-text-opacity: 1;

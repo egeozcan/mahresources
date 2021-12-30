@@ -690,3 +690,25 @@ func (ctx *MahresourcesContext) BulkDeleteResources(query *query_models.BulkQuer
 
 	return nil
 }
+
+func (ctx *MahresourcesContext) GetPopularResourceTags() ([]struct {
+	Name  string
+	Id    uint
+	count int
+}, error) {
+	var res []struct {
+		Name  string
+		Id    uint
+		count int
+	}
+
+	return res, ctx.db.
+		Table("resource_tags").
+		Select("t.id AS Id, t.name AS name, count(*) AS count").
+		Joins("INNER JOIN tags t ON t.id = resource_tags.tag_id").
+		Group("t.id, t.name").
+		Order("count(*) DESC").
+		Limit(20).
+		Scan(&res).
+		Error
+}

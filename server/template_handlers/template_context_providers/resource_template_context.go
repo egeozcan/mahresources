@@ -80,11 +80,18 @@ func ResourceListContextProvider(context *application_context.MahresourcesContex
 			}
 		}
 
+		popularTags, err := context.GetPopularResourceTags()
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
 		return pongo2.Context{
 			"pageTitle":   "Resources",
 			"resources":   resources,
 			"pagination":  pagination,
 			"tags":        tags,
+			"popularTags": popularTags,
 			"notes":       notes,
 			"owner":       owner,
 			"groups":      groups,
