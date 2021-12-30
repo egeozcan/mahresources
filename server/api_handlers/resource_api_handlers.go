@@ -11,6 +11,7 @@ import (
 	"mahresources/server/http_utils"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 func GetResourcesHandler(ctx interfaces.ResourceReader) func(writer http.ResponseWriter, request *http.Request) {
@@ -214,6 +215,26 @@ func GetResourceThumbnailHandler(ctx *application_context.MahresourcesContext) f
 			return
 		}
 
+		resource, err := ctx.GetResource(query.ID)
+
+		if err != nil {
+			writer.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprint(writer, err.Error())
+			return
+		}
+
+		e := fmt.Sprintf(`"%v"`, resource.Hash)
+
+		writer.Header().Set("Etag", e)
+		writer.Header().Set("Cache-Control", "max-age=2592000")
+
+		if match := request.Header.Get("If-None-Match"); match != "" {
+			if strings.Contains(match, e) {
+				writer.WriteHeader(http.StatusNotModified)
+				return
+			}
+		}
+
 		thumbnail, err := ctx.LoadOrCreateThumbnailForResource(query.ID, query.Width, query.Height)
 
 		if err != nil || thumbnail == nil {
@@ -222,6 +243,7 @@ func GetResourceThumbnailHandler(ctx *application_context.MahresourcesContext) f
 		}
 
 		writer.Header().Set("Content-Type", thumbnail.ContentType)
+		writer.Header().Set("Content-Length", strconv.Itoa(len(thumbnail.Data)))
 		_, err = writer.Write(thumbnail.Data)
 
 		if err != nil {
@@ -266,6 +288,7 @@ func GetResourceMetaKeysHandler(ctx *application_context.MahresourcesContext) fu
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
+		writer.Header().Set("Cache-Control", "max-age=259200")
 		_ = json.NewEncoder(writer).Encode(keys)
 	}
 }
@@ -344,6 +367,27 @@ func GetAddMetaToResourcesHandler(ctx interfaces.ResourceWriter) func(writer htt
 		}
 
 		err = ctx.BulkAddMetaToResources(&editor)
+
+		if err != nil {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprint(writer, err.Error())
+		}
+
+		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
+	}
+}
+
+func GetBulkDeleteResourcesHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var editor = query_models.BulkQuery{}
+		var err error
+
+		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprint(writer, err.Error())
+		}
+
+		err = ctx.BulkDeleteResources(&editor)
 
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)

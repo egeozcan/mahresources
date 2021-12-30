@@ -10,7 +10,6 @@
     <script src="https://cdn.jsdelivr.net/npm/@alpinejs/morph@3.7.1/dist/cdn.min.js" integrity="sha256-XE/w2V39jXnBKCRGZ1fvmk/Lm2CPoX/O1Wg6zZiC8nM=" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.7.1/dist/cdn.min.js" integrity="sha256-af97dBGKswyyDty+OFWDWqySs/sB3xba6yBlexfWgEw=" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.7.1/dist/cdn.min.js" integrity="sha256-ljXOAtV44dsTkF1cLRUKa5vcd0Lbv1iiyT3qnWiM4m0=" crossorigin="anonymous" defer></script>
-    <script src="https://cdn.jsdelivr.net/npm/@viselect/vanilla@3.0.0-beta.13/lib/viselect.cjs.js" integrity="sha256-tP46xxVQ+2jYcoUEH3+NYP6w7S8zsGJHES4B0ySOW6M=" crossorigin="anonymous"></script>
     <script src="/public/index.js"></script>
     <script src="/public/component.dropdown.js"></script>
     <script src="/public/component.confirmAction.js"></script>

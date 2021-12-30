@@ -1,6 +1,6 @@
 package constants
 
-const MaxResultsPerPage = 10
+const MaxResultsPerPage = 30
 const JSON = "application/json"
 const UrlEncodedForm = "application/x-www-form-urlencoded"
 const MultiPartForm = "multipart/form-data"

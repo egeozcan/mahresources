@@ -291,3 +291,13 @@ func (ctx *MahresourcesContext) BulkAddMetaToGroups(query *query_models.BulkEdit
 		Where("id in ?", query.ID).
 		Update("Meta", gorm.Expr("Meta || ?", query.Meta)).Error
 }
+
+func (ctx *MahresourcesContext) BulkDeleteGroups(query *query_models.BulkQuery) error {
+	for _, id := range query.ID {
+		if err := ctx.DeleteGroup(id); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}

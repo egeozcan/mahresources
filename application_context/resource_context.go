@@ -51,7 +51,13 @@ func (ctx *MahresourcesContext) GetResources(offset, maxResults int, query *quer
 		resLimit = int(query.MaxResults)
 	}
 
-	return &resources, ctx.db.Scopes(database_scopes.ResourceQuery(query, false, ctx.db)).Limit(resLimit).Offset(offset).Preload("Tags").Find(&resources).Error
+	return &resources, ctx.db.Scopes(database_scopes.ResourceQuery(query, false, ctx.db)).
+		Limit(resLimit).
+		Offset(offset).
+		Preload("Tags").
+		Preload("Owner").
+		Find(&resources).
+		Error
 }
 
 func (ctx *MahresourcesContext) GetResourcesWithIds(ids *[]uint) (*[]*models.Resource, error) {
@@ -280,12 +286,29 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 
 	var existingResource models.Resource
 
-	if err := tx.Where("hash = ?", hash).First(&existingResource).Error; err == nil {
+	if existingNotFoundErr := tx.Where("hash = ?", hash).Preload("Groups").First(&existingResource).Error; existingNotFoundErr == nil {
 		if resourceQuery.OwnerId == *existingResource.OwnerId {
+			tx.Rollback()
 			return nil, errors.New("existing resource with same parent")
 		}
 
-		return &existingResource, tx.Model(&existingResource).Association("Groups").Append(&models.Group{ID: resourceQuery.OwnerId})
+		for _, group := range existingResource.Groups {
+			if resourceQuery.OwnerId == group.ID {
+				tx.Rollback()
+				return nil, errors.New("existing resource with same relation")
+			}
+		}
+
+		groups := &[]*models.Group{
+			{ID: resourceQuery.OwnerId},
+		}
+
+		if attachToGroupErr := tx.Model(&existingResource).Association("Groups").Append(groups); attachToGroupErr != nil {
+			tx.Rollback()
+			return nil, attachToGroupErr
+		}
+
+		return &existingResource, tx.Commit().Error
 	}
 
 	folder := "/resources/" + hash[0:2] + "/" + hash[2:4] + "/" + hash[4:6] + "/"
@@ -318,6 +341,10 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 	}
 
 	name := fileName
+
+	if resourceQuery.OriginalName == "" {
+		resourceQuery.OriginalName = fileName
+	}
 
 	if resourceQuery.Name != "" {
 		name = resourceQuery.Name
@@ -652,4 +679,14 @@ func (ctx *MahresourcesContext) BulkAddGroupsToResources(query *query_models.Bul
 
 		return nil
 	})
+}
+
+func (ctx *MahresourcesContext) BulkDeleteResources(query *query_models.BulkQuery) error {
+	for _, id := range query.ID {
+		if err := ctx.DeleteResource(id); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

@@ -15,6 +15,7 @@ type ResourceWriter interface {
 	BulkAddMetaToResources(query *query_models.BulkEditMetaQuery) error
 	BulkAddTagsToResources(query *query_models.BulkEditQuery) error
 	BulkAddGroupsToResources(query *query_models.BulkEditQuery) error
+	BulkDeleteResources(query *query_models.BulkQuery) error
 }
 
 type ResourceReader interface {

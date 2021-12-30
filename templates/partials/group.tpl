@@ -1,7 +1,7 @@
 {% if entity %}
 <div class="group min-w-0 flex gap-4" {% if selectable %} x-data="selectableItem({ itemId: {{ entity.ID }} })" {% endif %}>
     {% if selectable %}
-    <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" class="mt-6 focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded">
+    <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" class="mt-4 focus:ring-indigo-500 h-8 w-8 text-indigo-600 border-gray-300 rounded">
     {% endif %}
     <div class="max-w-full">
     <div class="flex gap-3 content-center items-center mb-2 min-w-0">

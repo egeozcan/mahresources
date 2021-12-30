@@ -1,7 +1,9 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
-    <div class="sticky top-0 flex -ml-2 gap-4 flex-wrap  bg-white" x-show="[...$store.bulkSelection.selectedIds].length > 0" x-collapse x-data>
+    {% include "/partials/form/formParts/connected/selectAllButton.tpl" %}
+    <div class="sticky top-0 flex pl-4 gap-4 flex-wrap  bg-white items-center" x-show="[...$store.bulkSelection.selectedIds].length > 0" x-collapse x-data>
+        {% include "/partials/form/formParts/connected/deselectButton.tpl" %}
         <form class="mb-6 p-4" method="post" :action="'/v1/resources/addTags?redirect=' + encodeURIComponent(window.location)">
             {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
             <div class="flex gap-2 items-start">
@@ -28,6 +30,19 @@
             <div class="flex gap-2 items-start">
                 {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='editedId' title='Add Groups' id="autocompleter"|nanoid extraInfo="Category" %}
                 <div class="mt-7">{% include "/partials/form/searchButton.tpl" with text="Add" %}</div>
+            </div>
+        </form>
+        <form
+            class="mb-6 p-4"
+            method="post"
+            :action="'/v1/resources/delete?redirect=' + encodeURIComponent(window.location)"
+            x-data="confirmAction('Are you sure you want to delete the selected resources?')"
+            x-bind="events"
+        >
+            {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
+            <div class="flex flex-col">
+                <span class="block text-sm font-medium text-gray-700 mt-3">Delete Selected</span>
+                {% include "/partials/form/searchButton.tpl" with text="Delete" %}
             </div>
         </form>
     </div>

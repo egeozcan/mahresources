@@ -4,7 +4,9 @@ document.addEventListener("alpine:init", () => {
   Alpine.store("bulkSelection", {
     selectedIds: new Set(),
     elements: [],
+    options: {},
     activeEditor: null,
+    lastSelected: null,
 
     isSelected(id) {
       return this.selectedIds.has(id);
@@ -15,19 +17,25 @@ document.addEventListener("alpine:init", () => {
     },
 
     select(id) {
+      this.lastSelected = id;
+
       if (this.isSelected(id)) {
         return;
       }
 
       this.selectedIds.add(id);
+      setCheckBox(this.options[id].el, true);
     },
 
     deselect(id) {
+      this.lastSelected = id;
+
       if (!this.isSelected(id)) {
         return;
       }
 
       this.selectedIds.delete(id);
+      setCheckBox(this.options[id].el, false);
     },
 
     toggle(id) {
@@ -36,6 +44,34 @@ document.addEventListener("alpine:init", () => {
       } else {
         this.select(id);
       }
+    },
+
+    selectUntil(id) {
+      if (!this.lastSelected) {
+        this.toggle(id);
+        return;
+      }
+
+      const from = this.options[this.lastSelected].itemNo;
+      const to = this.options[id].itemNo;
+      const elementsToProcess = [...this.elements].slice(
+        Math.min(from, to),
+        Math.max(from, to) + 1
+      );
+
+      if (this.isSelected(id)) {
+        elementsToProcess.forEach((option) => this.deselect(option.itemId));
+      } else {
+        elementsToProcess.forEach((option) => this.select(option.itemId));
+      }
+    },
+
+    deselectAll() {
+      this.selectedIds.forEach((x) => this.deselect(x));
+    },
+
+    selectAll() {
+      this.elements.forEach((option) => this.select(option.itemId));
     },
 
     hasActiveEditor() {
@@ -61,10 +97,12 @@ document.addEventListener("alpine:init", () => {
     registerOption(option) {
       option.itemNo = option.itemNo || ++currentIndex;
       this.elements[option.itemNo] = option;
+      this.options[option.itemId] = option;
 
-      if (!window.selectionModeActive) {
-        activateSelectionMode();
-        window.selectionModeActive = true;
+      if (option.el.checked) {
+        this.select(option.itemId);
+      } else {
+        this.deselect(option.itemId);
       }
     },
   });
@@ -72,9 +110,13 @@ document.addEventListener("alpine:init", () => {
   window.Alpine.data("selectableItem", ({ itemNo, itemId } = {}) => {
     return {
       init() {
-        this.$store.bulkSelection.registerOption({ itemNo, itemId });
-        this.$root.querySelector("input[type='checkbox']").checked =
-          this.$store.bulkSelection.isSelected(itemId);
+        const el = this.$root.querySelector("input[type='checkbox']");
+
+        this.$store.bulkSelection.registerOption({
+          itemNo,
+          itemId,
+          el,
+        });
       },
 
       selected() {
@@ -86,77 +128,70 @@ document.addEventListener("alpine:init", () => {
          * @param {MouseEvent} e
          */
         ["@click"](e) {
-          this.$store.bulkSelection.toggle(itemId);
-
-          if (this.selected()) {
-            e.target.setAttribute("checked", "checked");
-            e.target.checked = true;
-          } else {
-            e.target.removeAttribute("checked");
-            e.target.checked = false;
+          if (e.shiftKey) {
+            this.$store.bulkSelection.selectUntil(itemId);
+            return;
           }
+
+          this.$store.bulkSelection.toggle(itemId);
+        },
+        ["@contextmenu"](e) {
+          e.preventDefault();
+          this.$store.bulkSelection.selectUntil(itemId);
         },
       },
     };
   });
-});
 
-function activateSelectionMode() {
-  const selection = new SelectionArea({
-    selectionAreaClass: "selection-area",
-    selectionContainerClass: "selection-area-container",
-    container: "body",
-    selectables: [".main [type='checkbox']"],
-    startareas: ["body", "html", ".site"],
-    boundaries: ["body"],
-    behaviour: {
-      overlap: "keep",
-    },
-  });
-
-  selection.on("stop", (e) => {
-    let selected = e.store?.changed?.added ?? e.selected;
-
-    if (!selected || selected.length === 0) {
-      selected = e.store?.selected ?? [];
+  function setCheckBox(checkBox, checked) {
+    if (checked) {
+      checkBox.setAttribute("checked", "checked");
+    } else {
+      checkBox.removeAttribute("checked");
     }
 
-    document
-      .querySelectorAll(".main [type='checkbox']")
-      .forEach((x) => x.checked && x.click());
+    checkBox.checked = checked;
+  }
 
-    setTimeout(() => {
-      selected.forEach((target) => {
-        if (!target.checked) {
-          target.click();
+  document.addEventListener("keypress", function (e) {
+    if (e.key !== " ") {
+      return;
+    }
+
+    const list = new Set();
+    const selection = window.getSelection();
+    const rangeCount = selection.rangeCount;
+
+    if (selection.type !== "Range") {
+      return;
+    }
+
+    e.preventDefault();
+
+    for (let i = 0; i < rangeCount; i++) {
+      const { startContainer, endContainer } = selection.getRangeAt(i);
+
+      if (startContainer.querySelector) {
+        const checkBox = startContainer.querySelector(['[type="checkbox"]']);
+
+        if (checkBox) {
+          list.add(checkBox);
         }
-      });
-    }, 100);
-    document.body.style.userSelect = "";
-  });
+      }
 
-  selection.on("beforestart", (evt) => {
-    let canBeActivated =
-      evt.event.target.tagName.toLowerCase() !== "a" &&
-      evt.event.target.tagName.toLowerCase() !== "input" &&
-      evt.event.target.tagName.toLowerCase() !== "select" &&
-      evt.event.target.tagName.toLowerCase() !== "button" &&
-      evt.event.target.tagName.toLowerCase() !== "textarea" &&
-      evt.event.target.tagName.toLowerCase() !== "h1" &&
-      evt.event.target.tagName.toLowerCase() !== "h2" &&
-      evt.event.target.tagName.toLowerCase() !== "h3" &&
-      evt.event.target.tagName.toLowerCase() !== "h4" &&
-      evt.event.target.tagName.toLowerCase() !== "img";
+      if (endContainer.querySelector) {
+        const checkBox = endContainer.querySelector(['[type="checkbox"]']);
 
-    if (canBeActivated) {
-      document.body.style.userSelect = "none";
+        if (checkBox) {
+          list.add(checkBox);
+        }
+      }
     }
 
-    return canBeActivated;
-  });
+    for (const checkBox of list) {
+      checkBox.click();
+    }
 
-  selection.on("start", (e) => {
-    document.body.style.userSelect = "none";
-    selection.clearSelection();
+    selection.empty();
   });
-}
+});
