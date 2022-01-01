@@ -126,7 +126,7 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 func (ctx *MahresourcesContext) GetNote(id uint) (*models.Note, error) {
 	var note models.Note
 
-	return &note, ctx.db.Preload(clause.Associations).First(&note, id).Error
+	return &note, ctx.db.Preload(clause.Associations, pageLimit).First(&note, id).Error
 }
 
 func (ctx *MahresourcesContext) GetNotes(offset, maxResults int, query *query_models.NoteQuery) (*[]models.Note, error) {

@@ -82,7 +82,7 @@ func GetResourceUploadHandler(ctx interfaces.ResourceWriter) func(writer http.Re
 		var resources = make([]*models.Resource, len(files))
 
 		for i := range files {
-			func() {
+			func(i int) {
 				var res *models.Resource
 				file, err := files[i].Open()
 
@@ -102,7 +102,7 @@ func GetResourceUploadHandler(ctx interfaces.ResourceWriter) func(writer http.Re
 					_, _ = fmt.Fprint(writer, err.Error())
 					return
 				}
-			}()
+			}(i)
 		}
 
 		var redirectUrl string

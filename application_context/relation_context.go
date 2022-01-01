@@ -78,14 +78,14 @@ func (ctx *MahresourcesContext) AddRelation(fromGroupId, toGroupId, relationType
 func (ctx *MahresourcesContext) GetRelation(id uint) (*models.GroupRelation, error) {
 	var relation models.GroupRelation
 
-	return &relation, ctx.db.Preload(clause.Associations).First(&relation, id).Error
+	return &relation, ctx.db.Preload(clause.Associations, pageLimit).First(&relation, id).Error
 }
 
 func (ctx *MahresourcesContext) GetRelationType(id uint) (*models.GroupRelationType, error) {
 	var relationType models.GroupRelationType
-	ctx.db.Preload(clause.Associations).First(&relationType, id)
+	ctx.db.Preload(clause.Associations, pageLimit).First(&relationType, id)
 
-	return &relationType, ctx.db.Preload(clause.Associations).First(&relationType, id).Error
+	return &relationType, ctx.db.Preload(clause.Associations, pageLimit).First(&relationType, id).Error
 }
 
 func (ctx *MahresourcesContext) AddRelationType(query *query_models.RelationshipTypeEditorQuery) (*models.GroupRelationType, error) {
@@ -170,7 +170,7 @@ func (ctx *MahresourcesContext) GetRelationTypesCount(query *query_models.Relati
 func (ctx *MahresourcesContext) GetRelations(offset int, maxResults int, query *query_models.GroupRelationshipQuery) (*[]*models.GroupRelation, error) {
 	var groupRelations []*models.GroupRelation
 
-	return &groupRelations, ctx.db.Scopes(database_scopes.RelationQuery(query)).Preload(clause.Associations).Limit(maxResults).Offset(offset).Find(&groupRelations).Error
+	return &groupRelations, ctx.db.Scopes(database_scopes.RelationQuery(query)).Preload(clause.Associations, pageLimit).Limit(maxResults).Offset(offset).Find(&groupRelations).Error
 }
 
 func (ctx *MahresourcesContext) GetRelationsCount(query *query_models.GroupRelationshipQuery) (int64, error) {

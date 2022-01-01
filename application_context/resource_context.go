@@ -33,7 +33,7 @@ import (
 func (ctx *MahresourcesContext) GetResource(id uint) (*models.Resource, error) {
 	var resource models.Resource
 
-	return &resource, ctx.db.Preload(clause.Associations).First(&resource, id).Error
+	return &resource, ctx.db.Preload(clause.Associations, pageLimit).First(&resource, id).Error
 }
 
 func (ctx *MahresourcesContext) GetResourceCount(query *query_models.ResourceSearchQuery) (int64, error) {
@@ -80,7 +80,7 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 
 	var resource models.Resource
 
-	if err := tx.Preload(clause.Associations).First(&resource, resourceQuery.ID).Error; err != nil {
+	if err := tx.Preload(clause.Associations, pageLimit).First(&resource, resourceQuery.ID).Error; err != nil {
 		tx.Rollback()
 		return nil, err
 	}
