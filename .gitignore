@@ -1,6 +1,6 @@
 /.env
 /mahresources
-/mahresources.exe
+/*.exe
 /test2.db
 /filezz/
 /files/
