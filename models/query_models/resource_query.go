@@ -41,6 +41,7 @@ type ResourceEditor struct {
 type ResourceSearchQuery struct {
 	Name             string
 	Description      string
+	ContentType      string
 	OwnerId          uint
 	Groups           []uint
 	Tags             []uint

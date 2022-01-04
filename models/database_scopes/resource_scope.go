@@ -82,6 +82,10 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 			dbQuery = dbQuery.Where("resources.description "+likeOperator+" ?", "%"+query.Description+"%")
 		}
 
+		if query.ContentType != "" {
+			dbQuery = dbQuery.Where("resources.content_type "+likeOperator+" ?", "%"+query.ContentType+"%")
+		}
+
 		if query.OriginalName != "" {
 			dbQuery = dbQuery.Where("resources.original_name "+likeOperator+" ?", "%"+query.OriginalName+"%")
 		}

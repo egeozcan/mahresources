@@ -218,6 +218,8 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		return nil, err
 	}
 
+	defer file.Close()
+
 	fileMime, err := mimetype.DetectReader(file)
 
 	if err != nil {
@@ -447,6 +449,8 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, wid
 			return nil, err
 		}
 
+		defer file.Close()
+
 		var newImage image.Image
 
 		originalImage, _, err := image.Decode(file)
@@ -475,6 +479,8 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, wid
 		if err != nil {
 			return nil, err
 		}
+
+		defer file.Close()
 
 		var newImage image.Image
 
@@ -531,7 +537,7 @@ func (ctx *MahresourcesContext) createThumbFromVideo(file io.Reader, resultBuffe
 		buffer = buf
 	}
 
-	cmd := exec.Command(ctx.config.FfmpegPath,
+	cmd := exec.Command(ctx.Config.FfmpegPath,
 		"-i", "-", // stdin
 		"-ss", "00:00:0",
 		"-vframes", "1",

@@ -71,19 +71,5 @@ func CreateDatabaseConnection(dbType, dsn, logType string) (*gorm.DB, error) {
 		return nil, errors.New("please set the DB_TYPE env var to SQLITE or POSTGRES")
 	}
 
-	if err := db.AutoMigrate(
-		&Resource{},
-		&Note{},
-		&Tag{},
-		&Group{},
-		&Category{},
-		&NoteType{},
-		&Preview{},
-		&GroupRelation{},
-		&GroupRelationType{},
-	); err != nil {
-		log.Fatalf("failed to migrate: %v", err)
-	}
-
 	return db, nil
 }
