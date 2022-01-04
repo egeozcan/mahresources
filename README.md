@@ -42,7 +42,7 @@ don't need to do this if you don't need additional utility classes.
 
 You probably need to import your own data, and you can do it via the HTTP API, or you can directly use the library
 functions. For an example, see /cmd/importExisting/main.go, which can be run like 
-`go run .\cmd\importExisting\main.go -target "/some/folder" -ownerId 1234`.
+`go run ./cmd/importExisting/main.go -target "/some/folder" -ownerId 1234`.
 
 The structure is very modular. I'll make it even more so
 as I continue to develop. 
