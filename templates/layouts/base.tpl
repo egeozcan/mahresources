@@ -14,7 +14,6 @@
     <script src="/public/component.dropdown.js"></script>
     <script src="/public/component.confirmAction.js"></script>
     <script src="/public/component.freeFields.js"></script>
-    <script src="/public/component.accordion.js"></script>
     <script src="/public/component.bulkSelection.js"></script>
     <script src="/public/tableMaker.js"></script>
     <link rel="apple-touch-icon" sizes="57x57" href="/public/favicon/apple-icon-57x57.png">
