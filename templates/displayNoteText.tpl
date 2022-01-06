@@ -4,7 +4,7 @@
     <a class="text-blue-600" href="/note?id={{ note.ID }}">Go back to the note</a>
     {% autoescape off %}
         <div class="prose lg:prose-xl max-w-full">
-        {{ note.Description|markdown }}
+        {{ note.Description|markdown2 }}
         </div>
     {% endautoescape %}
 {% endblock %}
