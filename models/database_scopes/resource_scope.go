@@ -40,38 +40,27 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 		}
 
 		if query.Groups != nil && len(query.Groups) > 0 {
-			dbQuery = dbQuery.Where(
-				`
-					(
-						SELECT 
-							Count(*) 
-						FROM 
-							groups_related_resources prr 
-						WHERE 
-							prr.group_id IN ? 
-							AND prr.resource_id = resources.id
-							AND resources.owner_id <> prr.group_id
-					) + (
-						SELECT
-							CASE
-								WHEN 
-									resources.owner_id IN ?
-								THEN 1
-								ELSE 0
-							END
-					) = ?`,
-				query.Groups,
-				query.Groups,
-				len(query.Groups),
-			)
+			subQuery := originalDb.
+				Table("resources r").
+				Joins("LEFT JOIN groups_related_resources grr on grr.resource_id = r.id").
+				Where(originalDb.
+					Where("grr.group_id IN ?", query.Groups).
+					Or("r.owner_id IN ?", query.Groups)).
+				Group("r.id").
+				Having("count(*) = ?", len(query.Groups)).
+				Select("r.id")
+
+			dbQuery = dbQuery.Where("resources.id IN (?)", subQuery)
 		}
 
 		if query.Notes != nil && len(query.Notes) > 0 {
-			dbQuery = dbQuery.Where(
-				"(SELECT Count(*) FROM resource_notes ra WHERE ra.note_id IN ? AND ra.resource_id = resources.id) = ?",
-				query.Notes,
-				len(query.Notes),
-			)
+			subQuery := originalDb.
+				Table("resource_notes rn").
+				Where("rn.note_id IN ?", query.Notes).
+				Group("rn.resource_id").
+				Select("rn.resource_id")
+
+			dbQuery = dbQuery.Where("resources.id IN (?)", subQuery)
 		}
 
 		if query.Name != "" {
