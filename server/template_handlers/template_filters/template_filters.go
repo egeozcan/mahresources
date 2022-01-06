@@ -41,4 +41,10 @@ func init() {
 	if urlErr != nil {
 		fmt.Println("error when registering url print filter", urlErr)
 	}
+
+	markdownErr := pongo2.RegisterFilter("markdown2", markDownFilter)
+
+	if markdownErr != nil {
+		fmt.Println("error when registering url markdown2 filter", markdownErr)
+	}
 }
