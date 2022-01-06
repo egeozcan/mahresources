@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 )
 
 var baseTemplateContext = pongo2.Context{
@@ -100,20 +99,6 @@ var staticTemplateCtx = func(request *http.Request) pongo2.Context {
 				return strconv.Itoa(int(*u))
 			}
 			return ""
-		},
-		"split": func(content interface{}, splitBy string) []string {
-			if splitBy == "" {
-				splitBy = "\n"
-			}
-
-			if str, ok := content.(string); ok {
-				return strings.Split(str, splitBy)
-			}
-			if str, ok := content.(*string); ok {
-				return strings.Split(*str, splitBy)
-			}
-
-			return []string{}
 		},
 	}
 

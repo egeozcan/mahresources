@@ -43,7 +43,6 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 				"withQuery": true,
 				"hasQuery":  true,
 				"stringId":  true,
-				"split":     true,
 			}, context))
 
 			if err != nil {
