@@ -1,12 +1,14 @@
 package template_context_providers
 
 import (
+	"fmt"
 	"github.com/flosch/pongo2/v4"
 	"mahresources/server/http_utils"
 	"mahresources/server/template_handlers/template_entities"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 var baseTemplateContext = pongo2.Context{
@@ -107,4 +109,27 @@ var staticTemplateCtx = func(request *http.Request) pongo2.Context {
 	}
 
 	return context.Update(baseTemplateContext)
+}
+
+func createSortCols(standardCols []SortColumn, currentSortVal string) []SortColumn {
+	if strings.TrimSpace(currentSortVal) == "" {
+		return standardCols
+	}
+
+	customSort := strings.Split(currentSortVal, " ")[0]
+
+	res := []SortColumn{
+		{
+			Name:  fmt.Sprintf("Custom (%v)", customSort),
+			Value: customSort,
+		},
+	}
+
+	for _, col := range standardCols {
+		if col.Value == currentSortVal {
+			return standardCols
+		}
+	}
+
+	return append(res, standardCols...)
 }

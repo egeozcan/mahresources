@@ -426,13 +426,13 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, wid
 	var existingThumbnail models.Preview
 	var fileBytes []byte
 
-	if err := ctx.db.Where(&models.Preview{Width: width, Height: height, ResourceId: &resourceId}).First(&existingThumbnail).Error; err == nil {
+	if err := ctx.db.Where(&models.Preview{Width: width, Height: height, ResourceId: &resourceId}).Omit(clause.Associations).First(&existingThumbnail).Error; err == nil {
 		return &existingThumbnail, nil
 	}
 
-	resource, err := ctx.GetResource(resourceId)
+	var resource models.Resource
 
-	if err != nil {
+	if err := ctx.db.First(&resource, resourceId).Error; err != nil {
 		return nil, err
 	}
 

@@ -9,7 +9,7 @@ import (
 )
 
 func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gorm.DB) func(db *gorm.DB) *gorm.DB {
-	sortColumnMatcher := regexp.MustCompile("^[a-z_]+(\\s(desc|asc))?$")
+	sortColumnMatcher := regexp.MustCompile("^(meta->>?'[a-z_]+'|[a-z_]+)(\\s(desc|asc))?$")
 
 	return func(db *gorm.DB) *gorm.DB {
 		likeOperator := "LIKE"

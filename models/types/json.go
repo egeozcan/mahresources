@@ -182,44 +182,32 @@ func (jsonQuery *JSONQueryExpression) Build(builder clause.Builder) {
 			case OperatorEquals, OperatorNotEquals, OperatorLike, OperatorNotLike, OperatorGreaterThan, OperatorGreaterThanOrEquals, OperatorLessThan, OperatorLessThanOrEquals:
 				if len(jsonQuery.keys) > 0 {
 
-					builder.WriteString(fmt.Sprintf("json_extract_path_text(%v::json,", stmt.Quote(jsonQuery.column)))
-					for idx, key := range jsonQuery.keys {
-						if idx > 0 {
-							builder.WriteByte(',')
-						}
-						stmt.AddVar(builder, key)
-					}
+					builder.WriteString(fmt.Sprintf("%v::jsonb #> ", stmt.Quote(jsonQuery.column)))
 
-					addStandard := func() {
-						builder.WriteString(fmt.Sprintf(") %v ", jsonQuery.operation))
-					}
+					stmt.AddVar(builder, fmt.Sprintf("{%v}", strings.Join(jsonQuery.keys, ",")))
 
-					switch jsonQuery.value.(type) {
-					case float64:
-						switch jsonQuery.operation {
-						case OperatorEquals, OperatorNotEquals, OperatorGreaterThan, OperatorGreaterThanOrEquals, OperatorLessThan, OperatorLessThanOrEquals:
-							builder.WriteString(fmt.Sprintf(")::float %v ", jsonQuery.operation))
-						default:
-							addStandard()
-						}
-					case bool:
-						switch jsonQuery.operation {
-						case OperatorEquals, OperatorNotEquals:
-							builder.WriteString(fmt.Sprintf(")::bool %v ", jsonQuery.operation))
-						default:
-							addStandard()
-						}
-					default:
-						addStandard()
+					if jsonQuery.value == nil && jsonQuery.operation == OperatorNotEquals {
+						builder.WriteString(" IS NOT ")
+					} else if jsonQuery.value == nil && jsonQuery.operation == OperatorEquals {
+						builder.WriteString(" IS ")
+					} else {
+						builder.WriteString(fmt.Sprintf(" %v ", jsonQuery.operation))
 					}
 
 					if jsonQuery.operation == OperatorLike || jsonQuery.operation == OperatorNotLike {
 						jsonQuery.value = fmt.Sprintf("%%%v%%", jsonQuery.value)
 					}
 
-					if _, ok := jsonQuery.value.(string); ok {
+					switch jsonQuery.value.(type) {
+					case string:
+						stmt.WriteString("to_jsonb(")
 						stmt.AddVar(builder, jsonQuery.value)
-					} else {
+						stmt.WriteString("::text)")
+					case bool, float64:
+						stmt.WriteString(fmt.Sprintf("to_jsonb(%v)", jsonQuery.value))
+					case nil:
+						stmt.WriteString("NULL")
+					default:
 						stmt.AddVar(builder, fmt.Sprint(jsonQuery.value))
 					}
 				}

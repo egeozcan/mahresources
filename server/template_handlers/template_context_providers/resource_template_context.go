@@ -101,11 +101,11 @@ func ResourceListContextProvider(context *application_context.MahresourcesContex
 				Name: "Create",
 				Url:  "/resource/new",
 			},
-			"sortValues": []SortColumn{
+			"sortValues": createSortCols([]SortColumn{
 				{Name: "Created", Value: "created_at"},
 				{Name: "Name", Value: "name"},
 				{Name: "Updated", Value: "updated_at"},
-			},
+			}, query.SortBy),
 		}.Update(baseContext)
 	}
 }

@@ -8,7 +8,7 @@ import (
 )
 
 func NoteQuery(query *query_models.NoteQuery, ignoreSort bool) func(db *gorm.DB) *gorm.DB {
-	sortColumnMatcher := regexp.MustCompile("^[a-z_]+(\\s(desc|asc))?$")
+	sortColumnMatcher := regexp.MustCompile("^(meta->>?'[a-z_]+'|[a-z_]+)(\\s(desc|asc))?$")
 
 	return func(db *gorm.DB) *gorm.DB {
 		likeOperator := "LIKE"

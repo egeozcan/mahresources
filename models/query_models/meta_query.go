@@ -25,10 +25,10 @@ func ParseMeta(input string) ColumnMeta {
 			operation = parts[1]
 		}
 
-		if value == "true" {
-			parsedValue = true
-		} else if value == "false" {
-			parsedValue = false
+		if value == "true" || value == "false" {
+			parsedValue = value == "true"
+		} else if value == "null" {
+			parsedValue = nil
 		} else if strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"") && strings.Count(value, "\"") == 2 {
 			parsedValue = strings.Trim(value, "\"")
 		} else {
