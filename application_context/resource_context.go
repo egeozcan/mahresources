@@ -206,7 +206,7 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		return nil, err
 	}
 
-	fs, err := ctx.getFsForStorageLocation(&resourceQuery.PathName)
+	fs, err := ctx.GetFsForStorageLocation(&resourceQuery.PathName)
 
 	if err != nil {
 		return nil, err
@@ -436,7 +436,7 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, wid
 		return nil, err
 	}
 
-	fs, storageError := ctx.getFsForStorageLocation(resource.StorageLocation)
+	fs, storageError := ctx.GetFsForStorageLocation(resource.StorageLocation)
 
 	if storageError != nil {
 		return nil, storageError
@@ -574,7 +574,7 @@ func (ctx *MahresourcesContext) createThumbFromVideo(file io.Reader, resultBuffe
 	return nil
 }
 
-func (ctx *MahresourcesContext) getFsForStorageLocation(storageLocation *string) (afero.Fs, error) {
+func (ctx *MahresourcesContext) GetFsForStorageLocation(storageLocation *string) (afero.Fs, error) {
 	if storageLocation != nil {
 		altFs, ok := ctx.altFileSystems[*storageLocation]
 
@@ -595,7 +595,7 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 		return err
 	}
 
-	fs, storageError := ctx.getFsForStorageLocation(resource.StorageLocation)
+	fs, storageError := ctx.GetFsForStorageLocation(resource.StorageLocation)
 
 	if storageError != nil {
 		return storageError

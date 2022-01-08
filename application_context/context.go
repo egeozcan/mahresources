@@ -76,6 +76,12 @@ func pageLimit(db *gorm.DB) *gorm.DB {
 	return db.Limit(constants.MaxResultsPerPage)
 }
 
+func pageLimitCustom(maxResults int) func(db *gorm.DB) *gorm.DB {
+	return func(db *gorm.DB) *gorm.DB {
+		return db.Limit(maxResults)
+	}
+}
+
 type fieldResult struct {
 	Key string
 }

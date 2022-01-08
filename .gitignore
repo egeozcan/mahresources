@@ -9,4 +9,5 @@
 /*.wdb
 /.idea
 /public/*.json
+/public/*.html
 /*.output.png

@@ -3,6 +3,7 @@ module mahresources
 go 1.15
 
 require (
+	github.com/Nr90/imgsim v0.0.0-20180202144352-5caa057144b0 // indirect
 	github.com/c2h5oh/datasize v0.0.0-20200825124411-48ed595a09d2
 	github.com/flosch/pongo2-addons v0.0.0-20210526150811-f969446c5b72
 	github.com/flosch/pongo2/v4 v4.0.2
