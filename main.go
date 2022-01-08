@@ -25,6 +25,7 @@ func main() {
 		&models.Preview{},
 		&models.GroupRelation{},
 		&models.GroupRelationType{},
+		&models.ImageHash{},
 	); err != nil {
 		log.Fatalf("failed to migrate: %v", err)
 	}

@@ -52,6 +52,7 @@ func GetAddCategoryHandler(ctx interfaces.CategoryWriter) func(writer http.Respo
 		if err = tryFillStructValuesFromRequest(&categoryEditor, request); err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		var category *models.Category
@@ -92,6 +93,7 @@ func GetRemoveCategoryHandler(ctx interfaces.CategoryDeleter) func(writer http.R
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		if http_utils.RedirectIfHTMLAccepted(writer, request, "/categories") {

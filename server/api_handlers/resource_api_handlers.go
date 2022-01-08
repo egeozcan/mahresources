@@ -249,6 +249,7 @@ func GetResourceThumbnailHandler(ctx *application_context.MahresourcesContext) f
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 	}
 }
@@ -285,6 +286,7 @@ func GetResourceMetaKeysHandler(ctx *application_context.MahresourcesContext) fu
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
@@ -301,6 +303,7 @@ func GetAddTagsToResourcesHandler(ctx interfaces.ResourceWriter) func(writer htt
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		err = ctx.BulkAddTagsToResources(&editor)
@@ -308,6 +311,7 @@ func GetAddTagsToResourcesHandler(ctx interfaces.ResourceWriter) func(writer htt
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
@@ -322,6 +326,7 @@ func GetAddGroupsToResourcesHandler(ctx interfaces.ResourceWriter) func(writer h
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		err = ctx.BulkAddGroupsToResources(&editor)
@@ -329,6 +334,7 @@ func GetAddGroupsToResourcesHandler(ctx interfaces.ResourceWriter) func(writer h
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
@@ -343,6 +349,7 @@ func GetRemoveTagsFromResourcesHandler(ctx interfaces.ResourceWriter) func(write
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		err = ctx.BulkRemoveTagsFromResources(&editor)
@@ -350,6 +357,7 @@ func GetRemoveTagsFromResourcesHandler(ctx interfaces.ResourceWriter) func(write
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
@@ -364,6 +372,7 @@ func GetAddMetaToResourcesHandler(ctx interfaces.ResourceWriter) func(writer htt
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		err = ctx.BulkAddMetaToResources(&editor)
@@ -371,6 +380,7 @@ func GetAddMetaToResourcesHandler(ctx interfaces.ResourceWriter) func(writer htt
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
@@ -385,6 +395,7 @@ func GetBulkDeleteResourcesHandler(ctx interfaces.ResourceWriter) func(writer ht
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		err = ctx.BulkDeleteResources(&editor)
@@ -392,8 +403,32 @@ func GetBulkDeleteResourcesHandler(ctx interfaces.ResourceWriter) func(writer ht
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
+	}
+}
+
+func GetMergeResourcesHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var editor = query_models.MergeQuery{}
+		var err error
+
+		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprint(writer, err.Error())
+			return
+		}
+
+		err = ctx.MergeResources(editor.Winner, editor.Losers)
+
+		if err != nil {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprint(writer, err.Error())
+			return
+		}
+
+		http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", editor.Winner))
 	}
 }

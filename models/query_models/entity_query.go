@@ -17,3 +17,8 @@ type BulkEditMetaQuery struct {
 	BulkQuery
 	Meta string
 }
+
+type MergeQuery struct {
+	Winner uint
+	Losers []uint
+}

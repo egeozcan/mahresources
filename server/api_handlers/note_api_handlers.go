@@ -57,6 +57,7 @@ func GetAddNoteHandler(ctx interfaces.NoteWriter) func(writer http.ResponseWrite
 		if err := tryFillStructValuesFromRequest(&queryVars, request); err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		note, err := ctx.CreateOrUpdateNote(&queryVars)
@@ -85,6 +86,7 @@ func GetRemoveNoteHandler(ctx interfaces.NoteDeleter) func(writer http.ResponseW
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		if http_utils.RedirectIfHTMLAccepted(writer, request, "/notes") {
@@ -103,6 +105,7 @@ func GetNoteMetaKeysHandler(ctx *application_context.MahresourcesContext) func(w
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)

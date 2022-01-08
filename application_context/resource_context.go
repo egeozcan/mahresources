@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/gabriel-vasile/mimetype"
@@ -18,6 +19,7 @@ import (
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
+	"mahresources/models/types"
 	"net/http"
 	"os"
 	"os/exec"
@@ -432,7 +434,7 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, wid
 
 	var resource models.Resource
 
-	if err := ctx.db.First(&resource, resourceId).Error; err != nil {
+	if err := ctx.db.Omit(clause.Associations).First(&resource, resourceId).Error; err != nil {
 		return nil, err
 	}
 
@@ -595,12 +597,49 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 		return err
 	}
 
-	fs, storageError := ctx.GetFsForStorageLocation(resource.StorageLocation)
+	fs, storageErr := ctx.GetFsForStorageLocation(resource.StorageLocation)
 
-	if storageError != nil {
-		return storageError
+	if storageErr != nil {
+		return storageErr
 	}
 
+	subFolder := "deleted"
+
+	if resource.StorageLocation != nil && *resource.StorageLocation != "" {
+		subFolder = *resource.StorageLocation
+	}
+
+	folder := fmt.Sprintf("/deleted/%v/", subFolder)
+
+	if err := ctx.fs.MkdirAll(folder, 0777); err != nil {
+		return err
+	}
+
+	filePath := path.Join(folder, fmt.Sprintf("%v__%v__%v___%v", resource.Hash, resource.ID, *resource.OwnerId, strings.ReplaceAll(path.Clean(path.Base(resource.Location)), "\\", "_")))
+
+	file, openErr := fs.Open(resource.Location)
+
+	if openErr != nil {
+		return openErr
+	}
+
+	backup, createErr := ctx.fs.Create(filePath)
+
+	if createErr != nil {
+		_ = file.Close()
+		return createErr
+	}
+
+	defer backup.Close()
+
+	_, copyErr := io.Copy(backup, file)
+
+	if copyErr != nil {
+		_ = file.Close()
+		return copyErr
+	}
+
+	_ = file.Close()
 	if err := fs.Remove(resource.Location); err != nil {
 		return err
 	}
@@ -717,4 +756,70 @@ func (ctx *MahresourcesContext) GetPopularResourceTags() ([]struct {
 		Limit(20).
 		Scan(&res).
 		Error
+}
+
+func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) error {
+	var losers []*models.Resource
+
+	if loadResourcesErr := ctx.db.Preload(clause.Associations).Find(&losers, &loserIds).Error; loadResourcesErr != nil {
+		return loadResourcesErr
+	}
+
+	if winnerId == 0 || loserIds == nil || len(loserIds) == 0 {
+		return nil
+	}
+
+	var winner models.Resource
+
+	if err := ctx.db.Preload(clause.Associations).First(&winner, winnerId).Error; err != nil {
+		return err
+	}
+
+	deletedResBackups := make(map[string]types.JSON)
+
+	for _, loser := range losers {
+
+		winner.Tags = append(winner.Tags, loser.Tags...)
+		winner.Groups = append(winner.Groups, loser.Groups...)
+		winner.Groups = append(winner.Groups, loser.Owner)
+		winner.Notes = append(winner.Notes, loser.Notes...)
+
+		backupData, err := json.Marshal(loser)
+
+		if err != nil {
+			return err
+		}
+
+		deletedResBackups[fmt.Sprintf("resource_%v", loser.ID)] = backupData
+		fmt.Printf("%#v\n", deletedResBackups)
+
+		err = ctx.DeleteResource(loser.ID)
+
+		if err != nil {
+			return err
+		}
+	}
+
+	fmt.Printf("%#v\n", deletedResBackups)
+
+	if err := ctx.db.Omit("Previews").Save(&winner).Error; err != nil {
+		return err
+	}
+
+	backupObj := make(map[string]interface{})
+	backupObj["backups"] = deletedResBackups
+
+	backups, err := json.Marshal(&backupObj)
+
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(string(backups))
+
+	if err := ctx.db.Exec("update resources set meta = meta || ? where id = ?", backups, winner.ID).Error; err != nil {
+		return err
+	}
+
+	return nil
 }

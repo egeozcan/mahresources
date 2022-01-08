@@ -92,6 +92,7 @@ func GetRemoveGroupHandler(ctx interfaces.GroupDeleter) func(writer http.Respons
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		if http_utils.RedirectIfHTMLAccepted(writer, request, "/groups") {
@@ -111,6 +112,7 @@ func GetAddTagsToGroupsHandler(ctx interfaces.GroupWriter) func(writer http.Resp
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		err = ctx.BulkAddTagsToGroups(&editor)
@@ -118,6 +120,7 @@ func GetAddTagsToGroupsHandler(ctx interfaces.GroupWriter) func(writer http.Resp
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		http_utils.RedirectIfHTMLAccepted(writer, request, "/groups")
@@ -132,6 +135,7 @@ func GetRemoveTagsFromGroupsHandler(ctx interfaces.GroupWriter) func(writer http
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		err = ctx.BulkRemoveTagsFromGroups(&editor)
@@ -139,6 +143,7 @@ func GetRemoveTagsFromGroupsHandler(ctx interfaces.GroupWriter) func(writer http
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		http_utils.RedirectIfHTMLAccepted(writer, request, "/groups")
@@ -153,6 +158,7 @@ func GetBulkDeleteGroupsHandler(ctx interfaces.GroupWriter) func(writer http.Res
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		err = ctx.BulkDeleteGroups(&editor)
@@ -160,6 +166,7 @@ func GetBulkDeleteGroupsHandler(ctx interfaces.GroupWriter) func(writer http.Res
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		http_utils.RedirectIfHTMLAccepted(writer, request, "/groups")
@@ -174,6 +181,7 @@ func GetAddMetaToGroupsHandler(ctx interfaces.GroupWriter) func(writer http.Resp
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		err = ctx.BulkAddMetaToGroups(&editor)
@@ -181,6 +189,7 @@ func GetAddMetaToGroupsHandler(ctx interfaces.GroupWriter) func(writer http.Resp
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		http_utils.RedirectIfHTMLAccepted(writer, request, "/groups")
@@ -194,6 +203,7 @@ func GetGroupMetaKeysHandler(ctx *application_context.MahresourcesContext) func(
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(writer, err.Error())
+			return
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
