@@ -65,7 +65,7 @@ func main() {
 				defer wg.Done()
 				sem <- struct{}{}
 
-				imgFile, err := storage.Open(resource.Location)
+				imgFile, err := storage.Open(resource.GetCleanLocation())
 
 				if err != nil {
 					<-sem

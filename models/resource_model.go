@@ -2,6 +2,8 @@ package models
 
 import (
 	"mahresources/models/types"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -30,4 +32,8 @@ type Resource struct {
 	Owner            *Group     `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 	OwnerId          *uint      `gorm:"index"`
 	Previews         []*Preview `gorm:"foreignKey:ResourceId;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+}
+
+func (r Resource) GetCleanLocation() string {
+	return filepath.FromSlash(strings.ReplaceAll(r.Location, "\\", "/"))
 }

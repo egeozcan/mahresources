@@ -450,7 +450,7 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, wid
 	}
 
 	if strings.HasPrefix(resource.ContentType, "image/") {
-		file, err := fs.Open(resource.Location)
+		file, err := fs.Open(resource.GetCleanLocation())
 
 		if err != nil {
 			return nil, err
@@ -481,7 +481,7 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, wid
 		}
 
 	} else if strings.HasPrefix(resource.ContentType, "video/") {
-		file, err := fs.Open(resource.Location)
+		file, err := fs.Open(resource.GetCleanLocation())
 
 		if err != nil {
 			return nil, err
@@ -620,9 +620,9 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 		return err
 	}
 
-	filePath := path.Join(folder, fmt.Sprintf("%v__%v__%v___%v", resource.Hash, resource.ID, *resource.OwnerId, strings.ReplaceAll(path.Clean(path.Base(resource.Location)), "\\", "_")))
+	filePath := path.Join(folder, fmt.Sprintf("%v__%v__%v___%v", resource.Hash, resource.ID, *resource.OwnerId, strings.ReplaceAll(path.Clean(path.Base(resource.GetCleanLocation())), "\\", "_")))
 
-	file, openErr := fs.Open(resource.Location)
+	file, openErr := fs.Open(resource.GetCleanLocation())
 
 	if openErr != nil {
 		return openErr
@@ -645,7 +645,7 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 	}
 
 	_ = file.Close()
-	if err := fs.Remove(resource.Location); err != nil {
+	if err := fs.Remove(resource.GetCleanLocation()); err != nil {
 		return err
 	}
 
