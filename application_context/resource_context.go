@@ -780,9 +780,12 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 	for _, loser := range losers {
 
 		winner.Tags = append(winner.Tags, loser.Tags...)
-		winner.Groups = append(winner.Groups, loser.Groups...)
-		winner.Groups = append(winner.Groups, loser.Owner)
 		winner.Notes = append(winner.Notes, loser.Notes...)
+		winner.Groups = append(winner.Groups, loser.Groups...)
+
+		if winner.OwnerId != loser.OwnerId {
+			winner.Groups = append(winner.Groups, loser.Owner)
+		}
 
 		backupData, err := json.Marshal(loser)
 

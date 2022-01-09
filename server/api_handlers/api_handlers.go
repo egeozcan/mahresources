@@ -13,6 +13,7 @@ import (
 var decoder = schema.NewDecoder()
 
 func init() {
+	decoder.IgnoreUnknownKeys(true)
 	decoder.RegisterConverter(query_models.ColumnMeta{}, func(s string) reflect.Value {
 		return reflect.ValueOf(query_models.ParseMeta(s))
 	})

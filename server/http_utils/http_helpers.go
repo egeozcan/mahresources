@@ -1,6 +1,8 @@
 package http_utils
 
 import (
+	"fmt"
+	"mahresources/constants"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -113,6 +115,24 @@ func contains(s []string, e string) bool {
 		}
 	}
 	return false
+}
+
+func handleError(err error, writer http.ResponseWriter, request *http.Request, responseCode int) {
+	writer.WriteHeader(responseCode)
+
+	if requestAcceptsHTML(request) {
+		writer.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprintf(writer, `
+			<html>
+				<head><title>Error</title></head>
+				<body><h1>An error has occured:</h1><pre><code>%v</code></pre></body>
+			</html>
+		`, err.Error())
+		return
+	}
+
+	writer.Header().Set("Content-Type", constants.JSON)
+	_, _ = fmt.Fprint(writer, err.Error())
 }
 
 func SetParameter(name, value string, resetPage bool, reqUrl *url.URL) string {

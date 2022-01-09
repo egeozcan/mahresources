@@ -64,13 +64,34 @@ func GetResourceHandler(ctx interfaces.ResourceReader) func(writer http.Response
 func GetResourceUploadHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 
-		var creator = query_models.ResourceCreator{}
+		var remoteCreator = query_models.ResourceFromRemoteCreator{}
 
-		if err := tryFillStructValuesFromRequest(&creator, request); err != nil {
+		if err := tryFillStructValuesFromRequest(&remoteCreator, request); err != nil {
 			writer.WriteHeader(http.StatusBadRequest)
 			_, _ = fmt.Fprint(writer, err.Error())
 			return
 		}
+
+		if remoteCreator.URL != "" {
+			res, err := ctx.AddRemoteResource(&remoteCreator)
+
+			if err != nil {
+				writer.WriteHeader(http.StatusBadRequest)
+				_, _ = fmt.Fprint(writer, err.Error())
+				return
+			}
+
+			if http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", res.ID)) {
+				return
+			}
+
+			writer.Header().Set("Content-Type", constants.JSON)
+			_ = json.NewEncoder(writer).Encode(res)
+
+			return
+		}
+
+		creator := query_models.ResourceCreator{ResourceQueryBase: remoteCreator.ResourceQueryBase}
 
 		files := request.MultipartForm.File["resource"]
 
@@ -94,6 +115,7 @@ func GetResourceUploadHandler(ctx interfaces.ResourceWriter) func(writer http.Re
 				defer file.Close()
 
 				name := files[i].Filename
+
 				res, err = ctx.AddResource(file, name, &creator)
 				resources[i] = res
 
@@ -110,7 +132,7 @@ func GetResourceUploadHandler(ctx interfaces.ResourceWriter) func(writer http.Re
 		if len(files) == 1 {
 			redirectUrl = fmt.Sprintf("/resource?id=%v", resources[0].ID)
 		} else {
-			redirectUrl = fmt.Sprintf("/group?id=%v", creator.OwnerId)
+			redirectUrl = fmt.Sprintf("/group?id=%v", remoteCreator.OwnerId)
 		}
 
 		if http_utils.RedirectIfHTMLAccepted(writer, request, redirectUrl) {

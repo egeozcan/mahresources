@@ -15,13 +15,14 @@
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="max-w-lg flex rounded-md shadow-sm">
                             <input
-                                    value="{{ resource.Name }}"
-                                    type="text"
-                                    name="Name"
-                                    placeholder="If you leave this empty, the name of the uploaded file will be used"
-                                    id="name"
-                                    autocomplete="name"
-                                    class="flex-1 block w-full focus:ring-indigo-500 focus:border-indigo-500 min-w-0 rounded-md sm:text-sm border-gray-300">
+                                value="{{ resource.Name }}"
+                                type="text"
+                                name="Name"
+                                placeholder="If you leave this empty, the name of the uploaded file will be used"
+                                id="name"
+                                autocomplete="name"
+                                class="flex-1 block w-full focus:ring-indigo-500 focus:border-indigo-500 min-w-0 rounded-md sm:text-sm border-gray-300"
+                            >
                         </div>
                     </div>
                 </div>
@@ -44,6 +45,20 @@
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="flex items-center">
                             <input id="resource" name="resource" multiple type="file">
+                        </div>
+                    </div>
+                    <label for="resource" class="block text-sm font-medium text-gray-700">
+                        URL
+                        <p class="mt-2 text-sm text-gray-500">If you fill this, the contents of the file picker will be ignored and remote data will be downloaded.</p>
+                    </label>
+                    <div class="mt-1 sm:mt-0 sm:col-span-2">
+                        <div class="max-w-lg flex rounded-md shadow-sm">
+                            <input
+                                type="text"
+                                name="URL"
+                                placeholder="If you fill this, the contents of the file picker will be ignored and remote data will be downloaded"
+                                class="flex-1 block w-full focus:ring-indigo-500 focus:border-indigo-500 min-w-0 rounded-md sm:text-sm border-gray-300"
+                            >
                         </div>
                     </div>
                 </div>

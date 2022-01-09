@@ -57,6 +57,7 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 
 			if err != nil {
 				http.Error(writer, err.Error(), http.StatusInternalServerError)
+				return
 			}
 
 			return

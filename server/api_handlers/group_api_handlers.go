@@ -62,6 +62,7 @@ func GetAddGroupHandler(ctx interfaces.GroupWriter) func(writer http.ResponseWri
 		if err = tryFillStructValuesFromRequest(&editor, request); err == nil && editor.ID == 0 {
 			if editor.Name == "" {
 				writer.WriteHeader(http.StatusInternalServerError)
+				return
 			}
 
 			group, err = ctx.CreateGroup(&editor.GroupCreator)
@@ -70,7 +71,7 @@ func GetAddGroupHandler(ctx interfaces.GroupWriter) func(writer http.ResponseWri
 		}
 
 		if err != nil {
-			writer.WriteHeader(400)
+			writer.WriteHeader(http.StatusBadRequest)
 			return
 		}
 
