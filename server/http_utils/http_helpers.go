@@ -4,20 +4,9 @@ import (
 	"fmt"
 	"mahresources/constants"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 )
-
-func getQueryParameter(request *http.Request, paramName string, defVal string) string {
-	paramFromRes := request.URL.Query().Get(paramName)
-
-	if paramFromRes != "" {
-		return paramFromRes
-	}
-
-	return defVal
-}
 
 func GetIntQueryParameter(request *http.Request, paramName string, defVal int64) int64 {
 	paramFromRes := getQueryParameter(request, paramName, "")
@@ -49,23 +38,6 @@ func GetUIntQueryParameter(request *http.Request, paramName string, defVal uint)
 	}
 
 	return uint(param)
-}
-
-func requestAcceptsHTML(request *http.Request) bool {
-	accepts := request.Header["Accept"]
-
-	if len(accepts) == 0 {
-		return false
-	}
-
-	for _, val := range accepts {
-
-		if strings.Contains(val, "text/html") {
-			return true
-		}
-	}
-
-	return false
 }
 
 func RedirectIfHTMLAccepted(writer http.ResponseWriter, request *http.Request, url string) bool {
@@ -108,17 +80,9 @@ func RemoveValue(items []string, item string) []string {
 	return newItems
 }
 
-func contains(s []string, e string) bool {
-	for _, a := range s {
-		if a == e {
-			return true
-		}
-	}
-	return false
-}
-
 func HandleError(err error, writer http.ResponseWriter, request *http.Request, responseCode int) {
 	writer.WriteHeader(responseCode)
+	fmt.Printf("\n[ERROR]: %v\n", err)
 
 	if requestAcceptsHTML(request) {
 		writer.Header().Set("Content-Type", "text/html")
@@ -135,24 +99,29 @@ func HandleError(err error, writer http.ResponseWriter, request *http.Request, r
 	_, _ = fmt.Fprint(writer, err.Error())
 }
 
-func SetParameter(name, value string, resetPage bool, reqUrl *url.URL) string {
-	parsedBaseUrl := &url.URL{}
-	*parsedBaseUrl = *reqUrl
-	q := parsedBaseUrl.Query()
+func requestAcceptsHTML(request *http.Request) bool {
+	accepts := request.Header["Accept"]
 
-	if resetPage {
-		q.Del("page")
+	if len(accepts) == 0 {
+		return false
 	}
 
-	if q.Get(name) == "" {
-		q.Set(name, value)
-	} else if existingValue, ok := q[name]; ok && !contains(existingValue, value) {
-		q[name] = append(existingValue, value)
-	} else {
-		q[name] = RemoveValue(q[name], value)
+	for _, val := range accepts {
+
+		if strings.Contains(val, "text/html") {
+			return true
+		}
 	}
 
-	parsedBaseUrl.RawQuery = q.Encode()
+	return false
+}
 
-	return parsedBaseUrl.String()
+func getQueryParameter(request *http.Request, paramName string, defVal string) string {
+	paramFromRes := request.URL.Query().Get(paramName)
+
+	if paramFromRes != "" {
+		return paramFromRes
+	}
+
+	return defVal
 }
