@@ -245,6 +245,7 @@ func GetResourceThumbnailHandler(ctx *application_context.MahresourcesContext) f
 		thumbnail, err := ctx.LoadOrCreateThumbnailForResource(query.ID, query.Width, query.Height)
 
 		if err != nil || thumbnail == nil {
+			fmt.Printf("\n[ERROR]: %v\n", err)
 			http.Redirect(writer, request, "/public/placeholders/file.jpg", http.StatusMovedPermanently)
 			return
 		}
