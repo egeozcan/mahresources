@@ -803,17 +803,23 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 
 		switch ctx.Config.DbType {
 		case constants.DbTypePosgres:
-			ctx.db.Exec(`
+			err = ctx.db.Exec(`
 				UPDATE resources
-				SET meta = meta || coalesce((SELECT meta FROM resources WHERE id = ?), '{}'::jsonb)
+				SET meta = coalesce((SELECT meta FROM resources WHERE id = ?), '{}'::jsonb) || meta
 				WHERE id = ?
-			`, loser.ID, winnerId)
+			`, loser.ID, winnerId).Error
 		case constants.DbTypeSqlite:
-			ctx.db.Exec(`
+			err = ctx.db.Exec(`
 				UPDATE resources
 				SET meta = json_patch(meta, coalesce((SELECT meta FROM resources WHERE id = ?), '{}'))
 				WHERE id = ?
-			`, loser.ID, winnerId)
+			`, loser.ID, winnerId).Error
+		default:
+			err = errors.New("db doesn't support merging meta")
+		}
+
+		if err != nil {
+			return err
 		}
 
 		err = ctx.DeleteResource(loser.ID)
@@ -840,8 +846,10 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 
 	fmt.Println(string(backups))
 
-	if err := ctx.db.Exec("update resources set meta = meta || ? where id = ?", backups, winner.ID).Error; err != nil {
-		return err
+	if ctx.Config.DbType == constants.DbTypePosgres {
+		if err := ctx.db.Exec("update resources set meta = meta || ? where id = ?", backups, winner.ID).Error; err != nil {
+			return err
+		}
 	}
 
 	return nil
