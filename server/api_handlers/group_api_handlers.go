@@ -19,16 +19,14 @@ func GetGroupsHandler(ctx interfaces.GroupReader) func(writer http.ResponseWrite
 		err := decoder.Decode(&query, request.URL.Query())
 
 		if err != nil {
-			writer.WriteHeader(http.StatusBadRequest)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		groups, err := ctx.GetGroups(int(offset), constants.MaxResultsPerPage, &query)
 
 		if err != nil {
-			writer.WriteHeader(404)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusNotFound)
 			return
 		}
 
@@ -43,8 +41,7 @@ func GetGroupHandler(ctx interfaces.GroupReader) func(writer http.ResponseWriter
 		group, err := ctx.GetGroup(id)
 
 		if err != nil {
-			writer.WriteHeader(404)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusNotFound)
 			return
 		}
 
@@ -91,8 +88,7 @@ func GetRemoveGroupHandler(ctx interfaces.GroupDeleter) func(writer http.Respons
 
 		err := ctx.DeleteGroup(id)
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
@@ -111,16 +107,14 @@ func GetAddTagsToGroupsHandler(ctx interfaces.GroupWriter) func(writer http.Resp
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		err = ctx.BulkAddTagsToGroups(&editor)
 
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
@@ -134,16 +128,14 @@ func GetRemoveTagsFromGroupsHandler(ctx interfaces.GroupWriter) func(writer http
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		err = ctx.BulkRemoveTagsFromGroups(&editor)
 
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
@@ -157,16 +149,14 @@ func GetBulkDeleteGroupsHandler(ctx interfaces.GroupWriter) func(writer http.Res
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		err = ctx.BulkDeleteGroups(&editor)
 
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
@@ -180,16 +170,14 @@ func GetAddMetaToGroupsHandler(ctx interfaces.GroupWriter) func(writer http.Resp
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		err = ctx.BulkAddMetaToGroups(&editor)
 
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
@@ -202,8 +190,7 @@ func GetGroupMetaKeysHandler(ctx *application_context.MahresourcesContext) func(
 		keys, err := ctx.GroupMetaKeys()
 
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 

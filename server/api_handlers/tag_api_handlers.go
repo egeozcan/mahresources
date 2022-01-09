@@ -2,7 +2,6 @@ package api_handlers
 
 import (
 	"encoding/json"
-	"fmt"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -18,16 +17,14 @@ func GetTagsHandler(ctx interfaces.TagsReader) func(writer http.ResponseWriter, 
 		var query query_models.TagQuery
 
 		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
-			writer.WriteHeader(http.StatusBadRequest)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		tags, err := ctx.GetTags(int(offset), constants.MaxResultsPerPage, &query)
 
 		if err != nil {
-			writer.WriteHeader(404)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusNotFound)
 			return
 		}
 
@@ -41,8 +38,7 @@ func GetAddTagHandler(ctx interfaces.TagsWriter) func(writer http.ResponseWriter
 		var creator = query_models.TagCreator{}
 
 		if err := tryFillStructValuesFromRequest(&creator, request); err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
@@ -56,8 +52,7 @@ func GetAddTagHandler(ctx interfaces.TagsWriter) func(writer http.ResponseWriter
 		}
 
 		if err != nil {
-			writer.WriteHeader(400)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -75,15 +70,13 @@ func GetRemoveTagHandler(ctx interfaces.TagDeleter) func(writer http.ResponseWri
 		var query query_models.EntityIdQuery
 
 		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
-			writer.WriteHeader(http.StatusBadRequest)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		err := ctx.DeleteTag(query.ID)
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 

@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"mahresources/constants"
 	"os"
 )
 
@@ -49,7 +50,7 @@ func CreateDatabaseConnection(dbType, dsn, logType string) (*gorm.DB, error) {
 	}
 
 	switch dbType {
-	case "POSTGRES":
+	case constants.DbTypePosgres:
 		if pgDb, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 			Logger: dbLogger,
 		}); err != nil {
@@ -57,7 +58,7 @@ func CreateDatabaseConnection(dbType, dsn, logType string) (*gorm.DB, error) {
 		} else {
 			db = pgDb
 		}
-	case "SQLITE":
+	case constants.DbTypeSqlite:
 		if sqliteDb, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
 			Logger: dbLogger,
 		}); err != nil {

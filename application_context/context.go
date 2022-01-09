@@ -89,14 +89,14 @@ type fieldResult struct {
 func metaKeys(ctx *MahresourcesContext, table string) (*[]fieldResult, error) {
 	var results []fieldResult
 
-	if ctx.Config.DbType == "POSTGRES" {
+	if ctx.Config.DbType == constants.DbTypePosgres {
 		if err := ctx.db.
 			Table(table).
 			Select("DISTINCT jsonb_object_keys(Meta) as Key").
 			Scan(&results).Error; err != nil {
 			return nil, err
 		}
-	} else if ctx.Config.DbType == "SQLITE" {
+	} else if ctx.Config.DbType == constants.DbTypeSqlite {
 		if err := ctx.db.
 			Table(fmt.Sprintf("%v, json_each(%v.meta)", table, table)).
 			Select("DISTINCT json_each.key as Key").

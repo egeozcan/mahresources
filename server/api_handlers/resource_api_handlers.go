@@ -20,16 +20,14 @@ func GetResourcesHandler(ctx interfaces.ResourceReader) func(writer http.Respons
 		var query query_models.ResourceSearchQuery
 
 		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
-			writer.WriteHeader(http.StatusBadRequest)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		resources, err := ctx.GetResources(int(offset), constants.MaxResultsPerPage, &query)
 
 		if err != nil {
-			writer.WriteHeader(404)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusNotFound)
 			return
 		}
 
@@ -43,16 +41,14 @@ func GetResourceHandler(ctx interfaces.ResourceReader) func(writer http.Response
 		var query query_models.EntityIdQuery
 
 		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
-			writer.WriteHeader(http.StatusBadRequest)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		resource, err := ctx.GetResource(query.ID)
 
 		if err != nil {
-			writer.WriteHeader(http.StatusNotFound)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusNotFound)
 			return
 		}
 
@@ -67,8 +63,7 @@ func GetResourceUploadHandler(ctx interfaces.ResourceWriter) func(writer http.Re
 		var remoteCreator = query_models.ResourceFromRemoteCreator{}
 
 		if err := tryFillStructValuesFromRequest(&remoteCreator, request); err != nil {
-			writer.WriteHeader(http.StatusBadRequest)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -76,8 +71,7 @@ func GetResourceUploadHandler(ctx interfaces.ResourceWriter) func(writer http.Re
 			res, err := ctx.AddRemoteResource(&remoteCreator)
 
 			if err != nil {
-				writer.WriteHeader(http.StatusBadRequest)
-				_, _ = fmt.Fprint(writer, err.Error())
+				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 				return
 			}
 
@@ -120,8 +114,7 @@ func GetResourceUploadHandler(ctx interfaces.ResourceWriter) func(writer http.Re
 				resources[i] = res
 
 				if err != nil {
-					writer.WriteHeader(http.StatusInternalServerError)
-					_, _ = fmt.Fprint(writer, err.Error())
+					http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 					return
 				}
 			}(i)
@@ -150,16 +143,14 @@ func GetResourceAddLocalHandler(ctx interfaces.ResourceWriter) func(writer http.
 		var creator = query_models.ResourceFromLocalCreator{}
 
 		if err := tryFillStructValuesFromRequest(&creator, request); err != nil {
-			writer.WriteHeader(http.StatusBadRequest)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		res, err := ctx.AddLocalResource(creator.Name, &creator)
 
 		if err != nil {
-			writer.WriteHeader(http.StatusBadRequest)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -178,16 +169,14 @@ func GetResourceAddRemoteHandler(ctx interfaces.ResourceWriter) func(writer http
 		var creator = query_models.ResourceFromRemoteCreator{}
 
 		if err := tryFillStructValuesFromRequest(&creator, request); err != nil {
-			writer.WriteHeader(http.StatusBadRequest)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		res, err := ctx.AddRemoteResource(&creator)
 
 		if err != nil {
-			writer.WriteHeader(http.StatusBadRequest)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -205,16 +194,14 @@ func GetResourceEditHandler(ctx interfaces.ResourceWriter) func(writer http.Resp
 		var editor = query_models.ResourceEditor{}
 		err := tryFillStructValuesFromRequest(&editor, request)
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		res, err := ctx.EditResource(&editor)
 
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
@@ -232,16 +219,14 @@ func GetResourceThumbnailHandler(ctx *application_context.MahresourcesContext) f
 		var query = query_models.ResourceThumbnailQuery{}
 		err := tryFillStructValuesFromRequest(&query, request)
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		resource, err := ctx.GetResource(query.ID)
 
 		if err != nil {
-			writer.WriteHeader(http.StatusNotFound)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusNotFound)
 			return
 		}
 
@@ -269,8 +254,7 @@ func GetResourceThumbnailHandler(ctx *application_context.MahresourcesContext) f
 		_, err = writer.Write(thumbnail.Data)
 
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 	}
@@ -281,14 +265,12 @@ func GetRemoveResourceHandler(ctx interfaces.ResourceDeleter) func(writer http.R
 		var query = query_models.EntityIdQuery{}
 
 		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		if err := ctx.DeleteResource(query.ID); err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
@@ -306,8 +288,7 @@ func GetResourceMetaKeysHandler(ctx *application_context.MahresourcesContext) fu
 		keys, err := ctx.ResourceMetaKeys()
 
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
@@ -323,16 +304,14 @@ func GetAddTagsToResourcesHandler(ctx interfaces.ResourceWriter) func(writer htt
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		err = ctx.BulkAddTagsToResources(&editor)
 
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
@@ -346,16 +325,14 @@ func GetAddGroupsToResourcesHandler(ctx interfaces.ResourceWriter) func(writer h
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		err = ctx.BulkAddGroupsToResources(&editor)
 
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
@@ -369,16 +346,14 @@ func GetRemoveTagsFromResourcesHandler(ctx interfaces.ResourceWriter) func(write
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		err = ctx.BulkRemoveTagsFromResources(&editor)
 
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
@@ -392,16 +367,14 @@ func GetAddMetaToResourcesHandler(ctx interfaces.ResourceWriter) func(writer htt
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		err = ctx.BulkAddMetaToResources(&editor)
 
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
@@ -415,16 +388,14 @@ func GetBulkDeleteResourcesHandler(ctx interfaces.ResourceWriter) func(writer ht
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		err = ctx.BulkDeleteResources(&editor)
 
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
@@ -438,16 +409,14 @@ func GetMergeResourcesHandler(ctx interfaces.ResourceWriter) func(writer http.Re
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		err = ctx.MergeResources(editor.Winner, editor.Losers)
 
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 

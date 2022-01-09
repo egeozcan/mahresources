@@ -18,14 +18,12 @@ func GetNotesHandler(ctx interfaces.NoteReader) func(writer http.ResponseWriter,
 		var query query_models.NoteQuery
 
 		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
-			writer.WriteHeader(http.StatusBadRequest)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		if notes, err := ctx.GetNotes(int(offset), constants.MaxResultsPerPage, &query); err != nil {
-			writer.WriteHeader(404)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusNotFound)
 			return
 		} else {
 			writer.Header().Set("Content-Type", constants.JSON)
@@ -40,8 +38,7 @@ func GetNoteHandler(ctx interfaces.NoteReader) func(writer http.ResponseWriter, 
 		note, err := ctx.GetNote(id)
 
 		if err != nil {
-			writer.WriteHeader(404)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusNotFound)
 			return
 		}
 
@@ -55,16 +52,14 @@ func GetAddNoteHandler(ctx interfaces.NoteWriter) func(writer http.ResponseWrite
 		var queryVars = query_models.NoteEditor{}
 
 		if err := tryFillStructValuesFromRequest(&queryVars, request); err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		note, err := ctx.CreateOrUpdateNote(&queryVars)
 
 		if err != nil {
-			writer.WriteHeader(400)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -84,8 +79,7 @@ func GetRemoveNoteHandler(ctx interfaces.NoteDeleter) func(writer http.ResponseW
 
 		err := ctx.DeleteNote(id)
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
@@ -103,8 +97,7 @@ func GetNoteMetaKeysHandler(ctx *application_context.MahresourcesContext) func(w
 		keys, err := ctx.NoteMetaKeys()
 
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 

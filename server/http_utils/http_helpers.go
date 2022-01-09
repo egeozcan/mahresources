@@ -117,7 +117,7 @@ func contains(s []string, e string) bool {
 	return false
 }
 
-func handleError(err error, writer http.ResponseWriter, request *http.Request, responseCode int) {
+func HandleError(err error, writer http.ResponseWriter, request *http.Request, responseCode int) {
 	writer.WriteHeader(responseCode)
 
 	if requestAcceptsHTML(request) {

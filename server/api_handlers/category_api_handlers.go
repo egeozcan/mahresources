@@ -2,7 +2,7 @@ package api_handlers
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -19,16 +19,14 @@ func GetCategoriesHandler(ctx interfaces.CategoryReader) func(writer http.Respon
 		err := decoder.Decode(&query, request.URL.Query())
 
 		if err != nil {
-			writer.WriteHeader(http.StatusBadRequest)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		categories, err := ctx.GetCategories(int(offset), constants.MaxResultsPerPage, &query)
 
 		if err != nil {
-			writer.WriteHeader(404)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusNotFound)
 			return
 		}
 
@@ -42,16 +40,14 @@ func GetAddCategoryHandler(ctx interfaces.CategoryWriter) func(writer http.Respo
 		err := request.ParseForm()
 
 		if err != nil {
-			writer.WriteHeader(500)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		var categoryEditor = query_models.CategoryEditor{}
 
 		if err = tryFillStructValuesFromRequest(&categoryEditor, request); err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
@@ -64,8 +60,7 @@ func GetAddCategoryHandler(ctx interfaces.CategoryWriter) func(writer http.Respo
 		}
 
 		if err != nil {
-			writer.WriteHeader(400)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -84,15 +79,13 @@ func GetRemoveCategoryHandler(ctx interfaces.CategoryDeleter) func(writer http.R
 		id := http_utils.GetUIntQueryParameter(request, "Id", 0)
 
 		if id == 0 {
-			writer.WriteHeader(500)
-			_, _ = fmt.Fprint(writer, "no id found")
+			http_utils.HandleError(errors.New("category id is needed"), writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		err := ctx.DeleteCategory(id)
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 

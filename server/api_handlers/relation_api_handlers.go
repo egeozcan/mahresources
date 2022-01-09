@@ -16,16 +16,14 @@ func GetAddGroupRelationTypeHandler(ctx interfaces.RelationshipWriter) func(writ
 		var editor = query_models.RelationshipTypeEditorQuery{}
 
 		if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		relationType, err := ctx.AddRelationType(&editor)
 
 		if err != nil {
-			writer.WriteHeader(500)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
@@ -43,16 +41,14 @@ func GetEditGroupRelationTypeHandler(ctx interfaces.RelationshipWriter) func(wri
 		var editor = query_models.RelationshipTypeEditorQuery{}
 
 		if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		relationType, err := ctx.EditRelationType(&editor)
 
 		if err != nil {
-			writer.WriteHeader(500)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
@@ -70,8 +66,7 @@ func GetAddRelationHandler(ctx interfaces.RelationshipWriter) func(writer http.R
 		var editor = query_models.GroupRelationshipQuery{}
 
 		if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
@@ -109,16 +104,14 @@ func GetRelationTypesHandler(ctx interfaces.RelationshipReader) func(writer http
 		var query = query_models.RelationshipTypeQuery{}
 
 		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		relationships, err := ctx.GetRelationTypes(int(offset), constants.MaxResultsPerPage, &query)
 
 		if err != nil {
-			writer.WriteHeader(404)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusNotFound)
 			return
 		}
 
@@ -134,8 +127,7 @@ func GetRemoveRelationHandler(ctx interfaces.RelationshipDeleter) func(writer ht
 
 		err := ctx.DeleteRelationship(id)
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
@@ -155,8 +147,7 @@ func GetRemoveRelationTypeHandler(ctx interfaces.RelationshipDeleter) func(write
 
 		err := ctx.DeleteRelationshipType(id)
 		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			_, _ = fmt.Fprint(writer, err.Error())
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
