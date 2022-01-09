@@ -23,6 +23,7 @@ type MahresourcesConfig struct {
 	DbType         string
 	AltFileSystems map[string]string
 	FfmpegPath     string
+	BindAddress    string
 }
 
 type MahresourcesContext struct {
@@ -119,6 +120,7 @@ func CreateContext() (*MahresourcesContext, *gorm.DB, afero.Fs) {
 	dsn := os.Getenv("DB_DSN")
 	logType := os.Getenv("DB_LOG_FILE")
 	fileSavePath := os.Getenv("FILE_SAVE_PATH")
+	bindAddress := os.Getenv("BIND_ADDRESS")
 	if fileAltCount, err := strconv.ParseInt(os.Getenv("FILE_ALT_COUNT"), 10, 8); err == nil {
 		numAlt = fileAltCount
 	}
@@ -146,5 +148,6 @@ func CreateContext() (*MahresourcesContext, *gorm.DB, afero.Fs) {
 		DbType:         dbType,
 		AltFileSystems: altFSystems,
 		FfmpegPath:     ffMpegPath,
+		BindAddress:    bindAddress,
 	}), db, mainFs
 }

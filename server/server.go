@@ -25,7 +25,7 @@ func CreateServer(appContext *application_context.MahresourcesContext, fs afero.
 	}
 
 	return &http.Server{
-		Addr:         ":8080",
+		Addr:         appContext.Config.BindAddress,
 		Handler:      router,
 		WriteTimeout: 45 * time.Minute,
 		ReadTimeout:  45 * time.Minute,
