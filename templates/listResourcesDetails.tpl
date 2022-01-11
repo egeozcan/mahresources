@@ -28,13 +28,13 @@
                                         <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" class="focus:ring-indigo-500 h-8 w-8 text-indigo-600 border-gray-300 rounded">
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        <a href="/resource?id={{ entity.ID }}">{{ entity.ID }}</a>
+                                        <a class="max-w-lg overflow-ellipsis overflow-hidden block" href="/resource?id={{ entity.ID }}">{{ entity.ID }}</a>
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                                        <a href="/resource?id={{ entity.ID }}">{{ entity.Name }}</a>
+                                        <a class="max-w-lg overflow-ellipsis overflow-hidden block" href="/resource?id={{ entity.ID }}">{{ entity.Name }}</a>
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        <a href="/{% if entity.StorageLocation %}{{ entity.StorageLocation }}{% else %}files{% endif %}{{ entity.Location }}">
+                                        <a class="max-w-lg overflow-ellipsis overflow-hidden block" href="/{% if entity.StorageLocation %}{{ entity.StorageLocation }}{% else %}files{% endif %}{{ entity.Location }}">
                                             <img height="50" src="/v1/resource/preview?id={{ entity.ID }}&height=50" alt="Preview">
                                         </a>
                                     </td>
@@ -47,8 +47,8 @@
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                         <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-400">Updated: </span>{{ entity.UpdatedAt|date:"2006-01-02 15:04" }}</small>
                                     </td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ entity.OriginalName }}</td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ entity.OriginalLocation }}</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><span class="max-w-lg overflow-ellipsis overflow-hidden block">{{ entity.OriginalName }}</span></td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><span class="max-w-lg overflow-ellipsis overflow-hidden block">{{ entity.OriginalLocation }}</span></td>
                                 </tr>
                             {% endfor %}
                         </tbody>
