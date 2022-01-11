@@ -24,4 +24,7 @@ function pick(obj, ...keys) {
   );
 }
 
-window.addEventListener("load", () => baguetteBox.run(".note-container"));
+window.addEventListener("load", () => {
+  baguetteBox.run(".note-container");
+  baguetteBox.run(".gallery");
+});
