@@ -23,3 +23,5 @@ function pick(obj, ...keys) {
     Object.entries(obj).filter((x) => keys.includes(x[0]))
   );
 }
+
+window.addEventListener("load", () => baguetteBox.run(".note-container"));

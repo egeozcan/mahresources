@@ -10,6 +10,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@alpinejs/morph@3.7.1/dist/cdn.min.js" integrity="sha256-XE/w2V39jXnBKCRGZ1fvmk/Lm2CPoX/O1Wg6zZiC8nM=" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.7.1/dist/cdn.min.js" integrity="sha256-af97dBGKswyyDty+OFWDWqySs/sB3xba6yBlexfWgEw=" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.7.1/dist/cdn.min.js" integrity="sha256-ljXOAtV44dsTkF1cLRUKa5vcd0Lbv1iiyT3qnWiM4m0=" crossorigin="anonymous" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/baguettebox.js@1.11.1/dist/baguetteBox.min.js" integrity="sha256-ULQV01VS9LCI2ePpLsmka+W0mawFpEA0rtxnezUj4A4=" crossorigin="anonymous"></script>
     <script src="/public/index.js"></script>
     <script src="/public/component.dropdown.js"></script>
     <script src="/public/component.confirmAction.js"></script>
@@ -29,6 +30,7 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/public/favicon/favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="96x96" href="/public/favicon/favicon-96x96.png">
     <link rel="icon" type="image/png" sizes="16x16" href="/public/favicon/favicon-16x16.png">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/baguettebox.js@1.11.1/dist/baguetteBox.min.css" integrity="sha256-cLMYWYYutHkt+KpNqjg7NVkYSQ+E2VbrXsEvOqU7mL0=" crossorigin="anonymous">
     <meta name="msapplication-TileColor" content="#ffffff">
     <meta name="msapplication-TileImage" content="/public/favicon/ms-icon-144x144.png">
     <meta name="theme-color" content="#ffffff">
