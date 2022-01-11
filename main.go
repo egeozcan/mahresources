@@ -4,6 +4,7 @@ import (
 	"github.com/joho/godotenv"
 	"log"
 	"mahresources/application_context"
+	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/util"
 	"mahresources/server"
@@ -36,12 +37,29 @@ func main() {
 		"CREATE INDEX IF NOT EXISTS idx__resource_notes__note_id ON resource_notes(note_id)",
 		"CREATE INDEX IF NOT EXISTS idx__resource_notes__resource_id ON resource_notes(resource_id)",
 		"CREATE INDEX IF NOT EXISTS idx__groups_related_resources__resource_id ON groups_related_resources(resource_id)",
+		"CREATE INDEX IF NOT EXISTS idx__groups_related_resources__resource_id___hash ON groups_related_resources USING HASH (resource_id);",
 		"CREATE INDEX IF NOT EXISTS idx__groups_related_resources__group_id ON groups_related_resources(group_id)",
 	}
 
-	for _, query := range indexQueries {
-		if err := db.Exec(query).Error; err != nil {
-			log.Fatalf("Error when creating index: %v", err)
+	indexQueriesSqlite := [...]string{
+		"CREATE INDEX IF NOT EXISTS idx__resource_notes__note_id ON resource_notes(note_id)",
+		"CREATE INDEX IF NOT EXISTS idx__resource_notes__resource_id ON resource_notes(resource_id)",
+		"CREATE INDEX IF NOT EXISTS idx__groups_related_resources__resource_id ON groups_related_resources(resource_id)",
+		"CREATE INDEX IF NOT EXISTS idx__groups_related_resources__resource_id___hash ON groups_related_resources(resource_id);",
+		"CREATE INDEX IF NOT EXISTS idx__groups_related_resources__group_id ON groups_related_resources(group_id)",
+	}
+
+	if context.Config.DbType == constants.DbTypePosgres {
+		for _, query := range indexQueries {
+			if err := db.Exec(query).Error; err != nil {
+				log.Fatalf("Error when creating index: %v", err)
+			}
+		}
+	} else {
+		for _, query := range indexQueriesSqlite {
+			if err := db.Exec(query).Error; err != nil {
+				log.Fatalf("Error when creating index: %v", err)
+			}
 		}
 	}
 
