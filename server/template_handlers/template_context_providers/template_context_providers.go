@@ -26,3 +26,9 @@ type SortColumn struct {
 	Name  string
 	Value string
 }
+
+type SelectOption struct {
+	Link   string
+	Title  string
+	Active bool
+}

@@ -23,11 +23,12 @@ var templates = map[string]templateInformation{
 	"/note/text": {template_context_providers.NoteContextProvider, "displayNoteText.tpl", http.MethodGet},
 	"/note/edit": {template_context_providers.NoteCreateContextProvider, "createNote.tpl", http.MethodGet},
 
-	"/resource/new":     {template_context_providers.ResourceCreateContextProvider, "createResource.tpl", http.MethodGet},
-	"/resources":        {template_context_providers.ResourceListContextProvider, "listResources.tpl", http.MethodGet},
-	"/resources/simple": {template_context_providers.ResourceListContextProvider, "simpleResources.tpl", http.MethodGet},
-	"/resource":         {template_context_providers.ResourceContextProvider, "displayResource.tpl", http.MethodGet},
-	"/resource/edit":    {template_context_providers.ResourceCreateContextProvider, "createResource.tpl", http.MethodGet},
+	"/resource/new":      {template_context_providers.ResourceCreateContextProvider, "createResource.tpl", http.MethodGet},
+	"/resources":         {template_context_providers.ResourceListContextProvider, "listResources.tpl", http.MethodGet},
+	"/resources/details": {template_context_providers.ResourceListContextProvider, "listResourcesDetails.tpl", http.MethodGet},
+	"/resources/simple":  {template_context_providers.ResourceListContextProvider, "listResourcesSimple.tpl", http.MethodGet},
+	"/resource":          {template_context_providers.ResourceContextProvider, "displayResource.tpl", http.MethodGet},
+	"/resource/edit":     {template_context_providers.ResourceCreateContextProvider, "createResource.tpl", http.MethodGet},
 
 	"/group/new":  {template_context_providers.GroupCreateContextProvider, "createGroup.tpl", http.MethodGet},
 	"/groups":     {template_context_providers.GroupsListContextProvider, "listGroups.tpl", http.MethodGet},

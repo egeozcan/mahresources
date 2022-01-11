@@ -105,7 +105,13 @@ func ResourceListContextProvider(context *application_context.MahresourcesContex
 				{Name: "Created", Value: "created_at"},
 				{Name: "Name", Value: "name"},
 				{Name: "Updated", Value: "updated_at"},
+				{Name: "Size", Value: "file_size"},
 			}, query.SortBy),
+			"displayOptions": getPathExtensionOptions(request.URL.Path, &[]*SelectOption{
+				{Title: "Thumbnails", Link: "/resources"},
+				{Title: "Details", Link: "/resources/details"},
+				{Title: "Simple", Link: "/resources/simple"},
+			}),
 		}.Update(baseContext)
 	}
 }
