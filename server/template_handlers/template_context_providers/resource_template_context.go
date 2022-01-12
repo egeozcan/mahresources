@@ -107,7 +107,7 @@ func ResourceListContextProvider(context *application_context.MahresourcesContex
 				{Name: "Updated", Value: "updated_at"},
 				{Name: "Size", Value: "file_size"},
 			}, query.SortBy),
-			"displayOptions": getPathExtensionOptions(request.URL.Path, &[]*SelectOption{
+			"displayOptions": getPathExtensionOptions(request.URL, &[]*SelectOption{
 				{Title: "Thumbnails", Link: "/resources"},
 				{Title: "Details", Link: "/resources/details"},
 				{Title: "Simple", Link: "/resources/simple"},
@@ -176,12 +176,18 @@ func ResourceCreateContextProvider(context *application_context.MahresourcesCont
 func ResourceContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
-		err := decoder.Decode(&query, request.URL.Query())
+
 		baseContext := staticTemplateCtx(request)
+
+		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
+			fmt.Println(err)
+			return addErrContext(err, baseContext)
+		}
+
+		similarResources, err := context.GetSimilarResources(query.ID)
 
 		if err != nil {
 			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
@@ -189,13 +195,13 @@ func ResourceContextProvider(context *application_context.MahresourcesContext) f
 
 		if err != nil {
 			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		return pongo2.Context{
-			"pageTitle": "Resource " + resource.Name,
-			"resource":  resource,
+			"pageTitle":        "Resource " + resource.Name,
+			"resource":         resource,
+			"similarResources": similarResources,
 			"action": template_entities.Entry{
 				Name: "Edit",
 				Url:  "/resource/edit?id=" + strconv.Itoa(int(query.ID)),

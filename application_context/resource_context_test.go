@@ -2,12 +2,52 @@ package application_context
 
 import (
 	"bytes"
+	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"gorm.io/gorm"
 	"io"
+	"log"
 	"os"
+	"path"
 	"testing"
 )
+
+var context *MahresourcesContext
+
+func init() {
+	curPath, err := os.Getwd()
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	filesToTry := []string{".test.env", ".env"}
+	curPathHasEnvFile := func(curPath string) *string {
+		for _, file := range filesToTry {
+			if _, err := os.Stat(path.Join(curPath, file)); err == nil {
+				return &file
+			}
+		}
+		return nil
+	}
+
+	for true {
+		if len(curPath) <= 3 {
+			log.Fatal("no env file found")
+		}
+
+		file := curPathHasEnvFile(curPath)
+
+		if file == nil {
+			curPath = path.Join(curPath, "..")
+			continue
+		}
+
+		_ = godotenv.Load(path.Join(curPath, *file))
+		break
+	}
+
+	context, _, _ = CreateContext()
+}
 
 func getMeTheFileOrPanic(path string) io.Reader {
 	file, err := os.Open(path)
@@ -63,6 +103,34 @@ func TestMahresourcesContext_createThumbFromVideo(t *testing.T) {
 			if err := ctx.createThumbFromVideo(tt.args.file, tt.args.resultBuffer); (err != nil) != tt.wantErr {
 				t.Errorf("createThumbFromVideo() error = %v, wantErr %v", err, tt.wantErr)
 				return
+			}
+		})
+	}
+}
+
+func TestMahresourcesContext_GetSimilarResources(t *testing.T) {
+	type args struct {
+		id uint
+	}
+	tests := []struct {
+		name    string
+		context *MahresourcesContext
+		args    args
+		wantLen int
+		wantErr bool
+	}{
+		{name: "Gets us something", context: context, args: args{id: 1}, wantLen: 1, wantErr: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := tt.context
+			got, err := ctx.GetSimilarResources(tt.args.id)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("GetSimilarResources() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if len(*got) != tt.wantLen {
+				t.Errorf("GetSimilarResources() got = %v, want %v", len(*got), tt.wantLen)
 			}
 		})
 	}

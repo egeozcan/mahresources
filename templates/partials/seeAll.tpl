@@ -2,7 +2,7 @@
     <section class="mb-6">
         <div class="flex gap-4 items-center mb-4">
             {% include "partials/subtitle.tpl" with small=true title=subtitle %}
-            {% if entities %}
+            {% if entities && formParamName %}
                 <form action="{{ formAction }}">
                     <input type="hidden" name="{{ formParamName }}" value="{{ formID }}">
                     {% include "partials/form/searchButton.tpl" with small=true text="See All" %}

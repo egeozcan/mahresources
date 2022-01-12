@@ -40,6 +40,27 @@ func (ctx *MahresourcesContext) GetResource(id uint) (*models.Resource, error) {
 	return &resource, ctx.db.Preload(clause.Associations, pageLimit).First(&resource, id).Error
 }
 
+func (ctx *MahresourcesContext) GetSimilarResources(id uint) (*[]*models.Resource, error) {
+	var resources []*models.Resource
+
+	hashQuery := ctx.db.Table("image_hashes rootHash").
+		Select("d_hash").
+		Where("rootHash.resource_id = ?", id).
+		Limit(1)
+
+	sameHashIdsQuery := ctx.db.Table("image_hashes").
+		Select("resource_id").
+		Group("resource_id").
+		Where("d_hash = (?)", hashQuery)
+
+	return &resources, ctx.db.
+		Preload("Tags").
+		Joins("Owner").
+		Where("resources.id IN (?)", sameHashIdsQuery).
+		Where("resources.id <> ?", id).
+		Find(&resources).Error
+}
+
 func (ctx *MahresourcesContext) GetResourceCount(query *query_models.ResourceSearchQuery) (int64, error) {
 	var resource models.Resource
 	var count int64

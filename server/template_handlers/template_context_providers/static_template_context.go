@@ -144,12 +144,20 @@ func getWithQuery(request *http.Request) func(name, value string, resetPage bool
 	}
 }
 
-func getPathExtensionOptions(path string, options *[]*SelectOption) *[]*SelectOption {
+func getURLWithNewPath(url *url.URL, path string) url.URL {
+	newURL := *url
+	newURL.Path = path
+
+	return newURL
+}
+
+func getPathExtensionOptions(url *url.URL, options *[]*SelectOption) *[]*SelectOption {
 	for _, option := range *options {
-		if strings.HasSuffix(path, option.Link) {
+		if strings.HasSuffix(url.Path, option.Link) {
 			(*option).Active = true
-			break
 		}
+		urlWithNewPath := getURLWithNewPath(url, option.Link)
+		(*option).Link = urlWithNewPath.String()
 	}
 
 	return options
