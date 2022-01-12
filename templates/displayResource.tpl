@@ -13,7 +13,7 @@
 
 {% block sidebar %}
     {% include "/partials/ownerDisplay.tpl" with owner=resource.Owner %}
-    <a href="/{% if resource.StorageLocation %}{{ resource.StorageLocation }}{% else %}files{% endif %}{{ resource.Location }}">
+    <a href="/v1/resource/view?id={{ resource.ID }}#{{ entity.ContentType }}">
         <img height="300" src="/v1/resource/preview?id={{ resource.ID }}&height=300" alt="Preview">
     </a>
     {% include "/partials/sideTitle.tpl" with title="Tags" %}

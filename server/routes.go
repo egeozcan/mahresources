@@ -101,6 +101,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/resource/remote").HandlerFunc(api_handlers.GetResourceAddRemoteHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resource/delete").HandlerFunc(api_handlers.GetRemoveResourceHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resource/edit").HandlerFunc(api_handlers.GetResourceEditHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/resource/view").HandlerFunc(api_handlers.GetResourceContentHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/resource/preview").HandlerFunc(api_handlers.GetResourceThumbnailHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resources/addTags").HandlerFunc(api_handlers.GetAddTagsToResourcesHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resources/addGroups").HandlerFunc(api_handlers.GetAddGroupsToResourcesHandler(appContext))

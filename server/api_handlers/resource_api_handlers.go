@@ -2,6 +2,7 @@ package api_handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"mahresources/application_context"
 	"mahresources/constants"
@@ -10,6 +11,7 @@ import (
 	"mahresources/server/api_handlers/interfaces"
 	"mahresources/server/http_utils"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 )
@@ -54,6 +56,45 @@ func GetResourceHandler(ctx interfaces.ResourceReader) func(writer http.Response
 
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(resource)
+	}
+}
+
+func GetResourceContentHandler(ctx interfaces.ResourceReader) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var query query_models.EntityIdQuery
+		var detailsQuery query_models.ResourceSearchQuery
+		var resource *models.Resource
+
+		if err := tryFillStructValuesFromRequest(&query, request); err != nil || query.ID == 0 {
+			if err := tryFillStructValuesFromRequest(&detailsQuery, request); err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+				return
+			} else {
+				resources, err := ctx.GetResources(0, 1, &detailsQuery)
+
+				if err != nil || len(*resources) != 1 {
+					http_utils.HandleError(errors.New("no suitable resource found"), writer, request, http.StatusNotFound)
+					return
+				}
+
+				resource = &(*resources)[0]
+			}
+		} else {
+			resource, err = ctx.GetResource(query.ID)
+
+			if err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusNotFound)
+				return
+			}
+		}
+
+		storage := "files"
+
+		if resource.StorageLocation != nil && *resource.StorageLocation != "" {
+			storage = *resource.StorageLocation
+		}
+
+		http.Redirect(writer, request, path.Join("/", storage, resource.GetCleanLocation()), http.StatusFound)
 	}
 }
 

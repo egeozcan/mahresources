@@ -10,7 +10,7 @@
             </a>
         </div>
         {% include "partials/description.tpl" with description=entity.Description preview=true %}
-        <a href="/{% if entity.StorageLocation %}{{ entity.StorageLocation }}{% else %}files{% endif %}{{ entity.Location }}">
+        <a href="/v1/resource/view?id={{ entity.ID }}#{{ entity.ContentType }}">
             <img height="300" src="/v1/resource/preview?id={{ entity.ID }}&height=300" alt="Preview">
         </a>
         <div class="tags mt-3 mb-2" style="margin-left: -0.5rem">

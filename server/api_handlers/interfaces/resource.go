@@ -21,7 +21,7 @@ type ResourceWriter interface {
 
 type ResourceReader interface {
 	GetResource(id uint) (*models.Resource, error)
-	GetResources(i int, page int, h *query_models.ResourceSearchQuery) (*[]models.Resource, error)
+	GetResources(offset int, maxResults int, h *query_models.ResourceSearchQuery) (*[]models.Resource, error)
 }
 
 type ResourceDeleter interface {

@@ -46,7 +46,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, config *Mahresourc
 // EnsureForeignKeysActive ensures that sqlite connection somehow didn't manage to deactivate foreign keys
 // I really don't know why this happens, so @todo please remove this if you can fix the root issue
 func (ctx *MahresourcesContext) EnsureForeignKeysActive(db *gorm.DB) {
-	if ctx.Config.DbType != "SQLITE" {
+	if ctx.Config.DbType != constants.DbTypeSqlite {
 		return
 	}
 
