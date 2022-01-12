@@ -11,13 +11,13 @@
     {% include "/partials/seeAll.tpl" with entities=resource.Groups subtitle="Groups" formAction="/groups" formID=resource.ID formParamName="resources" templateName="group" %}
     {% if similarResources %}
         {% include "/partials/seeAll.tpl" with entities=similarResources subtitle="Similar Resources" templateName="resource" %}
-        <form x-data action="/v1/resources/merge" method="post" :action="'/v1/resources/merge?redirect=' + encodeURIComponent(window.location)">
+        <form x-data="confirmAction('All the similar resources will be deleted. Are you sure?')" action="/v1/resources/merge" method="post" :action="'/v1/resources/merge?redirect=' + encodeURIComponent(window.location)">
             <input type="hidden" name="winner" value="{{ resource.ID }}">
             {% for entity in similarResources %}
                 <input type="hidden" name="losers" value="{{ entity.ID }}">
             {% endfor %}
             <p>Merge others with this resource ({{ resource.FileSize | humanReadableSize }})?</p>
-            <div class="mt-2">{% include "/partials/form/searchButton.tpl" with text="Add" %}</div>
+            <div class="mt-2">{% include "/partials/form/searchButton.tpl" with text="Merge Others To This" %}</div>
         </form>
     {% endif %}
 {% endblock %}
