@@ -12,7 +12,7 @@
     {% if similarResources %}
         {% include "/partials/seeAll.tpl" with entities=similarResources subtitle="Similar Resources" templateName="resource" %}
         <form
-            x-data="confirmAction('All the similar resources will be deleted. Are you sure?')"
+            x-data="confirmAction({ message: 'All the similar resources will be deleted. Are you sure?' })"
             action="/v1/resources/merge"
             method="post" :action="'/v1/resources/merge?redirect=' + encodeURIComponent(window.location)"
             x-bind="events"
