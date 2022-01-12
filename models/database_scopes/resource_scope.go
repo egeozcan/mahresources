@@ -60,6 +60,17 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 			dbQuery = dbQuery.Where("resources.id IN (?)", subQuery)
 		}
 
+		if query.ShowWithSimilar {
+			dbQuery = dbQuery.Where(`
+				resources.id in (select rh.id from resources rh
+					join image_hashes ih on rh.id = ih.resource_id
+					join image_hashes i on ih.d_hash = i.d_hash
+					group by rh.id
+					having count(*) > 1
+					order by count(*) desc)
+			`)
+		}
+
 		if query.Name != "" {
 			dbQuery = dbQuery.Where("resources.name "+likeOperator+" ?", "%"+query.Name+"%")
 		}
