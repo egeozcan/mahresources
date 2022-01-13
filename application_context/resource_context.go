@@ -270,7 +270,7 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		Category:         resourceQuery.Category,
 		ContentType:      fileMime.String(),
 		ContentCategory:  resourceQuery.ContentCategory,
-		FileSize:         int64(len(fileBytes)) << 3,
+		FileSize:         int64(len(fileBytes)),
 		OwnerId:          &resourceQuery.OwnerId,
 		StorageLocation:  &resourceQuery.PathName,
 		Description:      resourceQuery.Description,
@@ -390,7 +390,7 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 		Category:         resourceQuery.Category,
 		ContentType:      fileMime.String(),
 		ContentCategory:  resourceQuery.ContentCategory,
-		FileSize:         int64(len(fileBytes)) << 3,
+		FileSize:         int64(len(fileBytes)),
 		OwnerId:          &resourceQuery.OwnerId,
 		Description:      resourceQuery.Description,
 		OriginalLocation: resourceQuery.OriginalLocation,
@@ -645,30 +645,27 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 
 	file, openErr := fs.Open(resource.GetCleanLocation())
 
-	if openErr != nil {
-		return openErr
-	}
+	if openErr == nil {
+		backup, createErr := ctx.fs.Create(filePath)
 
-	backup, createErr := ctx.fs.Create(filePath)
+		if createErr != nil {
+			_ = file.Close()
+			return createErr
+		}
 
-	if createErr != nil {
+		defer backup.Close()
+
+		_, copyErr := io.Copy(backup, file)
+
+		if copyErr != nil {
+			_ = file.Close()
+			return copyErr
+		}
+
 		_ = file.Close()
-		return createErr
 	}
 
-	defer backup.Close()
-
-	_, copyErr := io.Copy(backup, file)
-
-	if copyErr != nil {
-		_ = file.Close()
-		return copyErr
-	}
-
-	_ = file.Close()
-	if err := fs.Remove(resource.GetCleanLocation()); err != nil {
-		return err
-	}
+	_ = fs.Remove(resource.GetCleanLocation())
 
 	return ctx.db.Select(clause.Associations).Delete(&resource).Error
 }
