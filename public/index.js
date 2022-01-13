@@ -26,6 +26,11 @@ function pick(obj, ...keys) {
 
 window.addEventListener("load", () => {
   const filter = /#image\//;
-  baguetteBox.run(".note-container", { filter });
-  baguetteBox.run(".gallery", { filter });
+  const fullScreen = false;
+  const animation = false;
+
+  const options = { filter, fullScreen, animation }
+
+  baguetteBox.run(".note-container", options);
+  baguetteBox.run(".gallery", options);
 });
