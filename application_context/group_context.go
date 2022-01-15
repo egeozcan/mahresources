@@ -1,8 +1,12 @@
 package application_context
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
@@ -232,6 +236,146 @@ func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {
 			Select("BackRelations").
 			Select("Tags").
 			Delete(&group).Error
+	})
+}
+
+func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) error {
+	if len(loserIds) == 0 {
+		return errors.New("one or more losers required")
+	}
+
+	for _, id := range loserIds {
+		if id == winnerId {
+			return errors.New("winner cannot also be the loser")
+		}
+	}
+
+	return ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
+		var losers []*models.Group
+
+		if loadErr := altCtx.db.Preload(clause.Associations).Find(&losers, &loserIds).Error; loadErr != nil {
+			return loadErr
+		}
+
+		var winner models.Group
+
+		if err := altCtx.db.Preload(clause.Associations).First(&winner, winnerId).Error; err != nil {
+			return err
+		}
+
+		backups := make(map[string]types.JSON)
+
+		for _, loser := range losers {
+			if loser.ID == *winner.OwnerId {
+				if err := altCtx.db.Exec(`UPDATE groups set owner_id = NULL where id = ?`, winnerId).Error; err != nil {
+					return err
+				}
+			}
+
+			for _, tag := range loser.Tags {
+				if err := altCtx.db.Exec(`INSERT INTO group_tags (group_id, tag_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, winnerId, tag.ID).Error; err != nil {
+					return err
+				}
+			}
+
+			if err := altCtx.db.Exec(`UPDATE groups SET owner_id = ? WHERE owner_id = ?`, winnerId, loser.ID).Error; err != nil {
+				return err
+			}
+
+			for _, group := range loser.RelatedGroups {
+				if group.ID == winnerId {
+					continue
+				}
+				if err := altCtx.db.Exec(`INSERT INTO group_related_groups (group_id, related_group_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, winnerId, group.ID).Error; err != nil {
+					return err
+				}
+			}
+
+			if err := altCtx.db.Exec(`UPDATE notes SET owner_id = ? WHERE owner_id = ?`, winnerId, loser.ID).Error; err != nil {
+				return err
+			}
+
+			for _, note := range loser.RelatedNotes {
+				if err := altCtx.db.Exec(`INSERT INTO groups_related_notes (group_id, note_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, winnerId, note.ID).Error; err != nil {
+					return err
+				}
+			}
+
+			if err := altCtx.db.Exec(`UPDATE resources SET owner_id = ? WHERE owner_id = ?`, winnerId, loser.ID).Error; err != nil {
+				return err
+			}
+
+			for _, resource := range loser.RelatedResources {
+				if err := altCtx.db.Exec(`INSERT INTO groups_related_resources (group_id, resource_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, winnerId, resource.ID).Error; err != nil {
+					return err
+				}
+			}
+
+			if err := altCtx.db.Exec(`UPDATE group_relations SET from_group_id = ? WHERE from_group_id = ? AND to_group_id <> ?`, winnerId, loser.ID, winnerId).Error; err != nil {
+				return err
+			}
+
+			if err := altCtx.db.Exec(`UPDATE group_relations SET to_group_id = ? WHERE to_group_id = ? AND to_group_id <> ?`, winnerId, loser.ID, winnerId).Error; err != nil {
+				return err
+			}
+
+			backupData, err := json.Marshal(loser)
+
+			if err != nil {
+				return err
+			}
+
+			backups[fmt.Sprintf("resource_%v", loser.ID)] = backupData
+			fmt.Printf("%#v\n", backups)
+
+			switch altCtx.Config.DbType {
+			case constants.DbTypePosgres:
+				err = altCtx.db.Exec(`
+				UPDATE groups
+				SET meta = coalesce((SELECT meta FROM groups WHERE id = ?), '{}'::jsonb) || meta
+				WHERE id = ?
+			`, loser.ID, winnerId).Error
+			case constants.DbTypeSqlite:
+				err = altCtx.db.Exec(`
+				UPDATE groups
+				SET meta = json_patch(meta, coalesce((SELECT meta FROM groups WHERE id = ?), '{}'))
+				WHERE id = ?
+			`, loser.ID, winnerId).Error
+			default:
+				err = errors.New("db doesn't support merging meta")
+			}
+
+			if err != nil {
+				return err
+			}
+
+			err = altCtx.DeleteGroup(loser.ID)
+
+			if err != nil {
+				return err
+			}
+		}
+
+		fmt.Printf("%#v\n", backups)
+
+		backupObj := make(map[string]interface{})
+		backupObj["backups"] = backups
+
+		backupsBytes, err := json.Marshal(&backupObj)
+
+		if err != nil {
+			return err
+		}
+
+		fmt.Println(string(backupsBytes))
+
+		if ctx.Config.DbType == constants.DbTypePosgres {
+			if err := altCtx.db.Exec("update resources set meta = meta || ? where id = ?", backupsBytes, winner.ID).Error; err != nil {
+				return err
+			}
+		}
+
+		return nil
 	})
 }
 

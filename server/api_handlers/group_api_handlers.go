@@ -198,3 +198,24 @@ func GetGroupMetaKeysHandler(ctx *application_context.MahresourcesContext) func(
 		_ = json.NewEncoder(writer).Encode(keys)
 	}
 }
+
+func GetMergeGroupsHandler(ctx interfaces.GroupWriter) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var editor = query_models.MergeQuery{}
+		var err error
+
+		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		err = ctx.MergeGroups(editor.Winner, editor.Losers)
+
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", editor.Winner))
+	}
+}

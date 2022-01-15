@@ -41,4 +41,17 @@
 
     {% include "/partials/sideTitle.tpl" with title="Meta Data" %}
     {% include "/partials/json.tpl" with jsonData=group.Meta %}
+
+    <form
+        x-data="confirmAction({ message: `Selected groups will be deleted and merged to {{ group.Name|json }}. Are you sure?` })"
+        action="/v1/groups/merge"
+        :action="'/v1/groups/merge?redirect=' + encodeURIComponent(window.location)"
+        method="post"
+        x-bind="events"
+    >
+        <input type="hidden" name="winner" value="{{ group.ID }}">
+        <p>Merge others with this group?</p>
+        {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='losers' title='Groups To Merge' id="autocompleter"|nanoid %}
+        <div class="mt-2">{% include "/partials/form/searchButton.tpl" with text="Merge" %}</div>
+    </form>
 {% endblock %}

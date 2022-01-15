@@ -17,6 +17,7 @@ type GroupWriter interface {
 	BulkRemoveTagsFromGroups(query *query_models.BulkEditQuery) error
 	BulkAddMetaToGroups(query *query_models.BulkEditMetaQuery) error
 	BulkDeleteGroups(query *query_models.BulkQuery) error
+	MergeGroups(winnerId uint, loserIds []uint) error
 }
 
 type GroupDeleter interface {

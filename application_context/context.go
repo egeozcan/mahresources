@@ -59,6 +59,13 @@ func (ctx *MahresourcesContext) EnsureForeignKeysActive(db *gorm.DB) {
 	db.Exec(query)
 }
 
+func (ctx *MahresourcesContext) WithTransaction(txFn func(transactionCtx *MahresourcesContext) error) error {
+	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		altContext := NewMahresourcesContext(ctx.fs, tx, ctx.Config)
+		return txFn(altContext)
+	})
+}
+
 func parseHTMLTime(timeStr string) *time.Time {
 	return timeOrNil(time.Parse(constants.TimeFormat, timeStr))
 }
