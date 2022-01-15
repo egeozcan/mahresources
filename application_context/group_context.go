@@ -266,7 +266,7 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 		backups := make(map[string]types.JSON)
 
 		for _, loser := range losers {
-			if loser.ID == *winner.OwnerId {
+			if winner.OwnerId != nil && loser.ID == *winner.OwnerId {
 				if err := altCtx.db.Exec(`UPDATE groups set owner_id = NULL where id = ?`, winnerId).Error; err != nil {
 					return err
 				}
