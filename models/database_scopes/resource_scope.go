@@ -45,7 +45,7 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 					FROM groups_related_resources grr 
 					WHERE grr.resource_id = resources.id AND grr.group_id IN ? AND grr.group_id <> resources.owner_id)
 				= ? 
-			`, query.Groups, query.Groups, len(query.Groups))
+			`, query.Groups, len(query.Groups))
 		}
 
 		if query.Notes != nil && len(query.Notes) > 0 {
