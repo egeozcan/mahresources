@@ -41,10 +41,11 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 
 		if query.Groups != nil && len(query.Groups) > 0 {
 			dbQuery = dbQuery.Where(`
-				(SELECT count(*) 
-					FROM groups_related_resources grr 
-					WHERE grr.resource_id = resources.id AND grr.group_id IN ?)
-				= ? 
+				resources.id IN (SELECT resource_id
+				FROM groups_related_resources grr
+				WHERE grr.group_id IN (?)
+				group by resource_id
+				HAVING count(*) = ?) 
 			`, query.Groups, len(query.Groups))
 		}
 
