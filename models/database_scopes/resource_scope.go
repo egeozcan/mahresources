@@ -40,13 +40,14 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 		}
 
 		if query.Groups != nil && len(query.Groups) > 0 {
-			dbQuery = dbQuery.Where(`
-				resources.id IN (SELECT resource_id
-				FROM groups_related_resources grr
-				WHERE grr.group_id IN (?)
-				group by resource_id
-				HAVING count(*) = ?) 
-			`, query.Groups, len(query.Groups))
+			subQuery := originalDb.
+				Table("groups_related_resources grr").
+				Select("grr.resource_id").
+				Where("grr.group_id IN (?)", query.Groups).
+				Group("grr.resource_id").
+				Having("count(*) = ?", len(query.Groups))
+
+			dbQuery = dbQuery.Where(`resources.id IN (?)`, subQuery)
 		}
 
 		if query.Notes != nil && len(query.Notes) > 0 {
@@ -61,12 +62,12 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 
 		if query.ShowWithSimilar {
 			subQuery := originalDb.
-				Table("resources rh").
-				Joins("JOIN image_hashes ih ON rh.id = ih.resource_id").
+				Table("resources hasSimilarResource").
+				Joins("JOIN image_hashes ih ON hasSimilarResource.id = ih.resource_id").
 				Joins("JOIN image_hashes i ON ih.d_hash = i.d_hash").
 				Having("count(*) > 1").
-				Group("rh.id").
-				Select("rh.id")
+				Group("hasSimilarResource.id").
+				Select("hasSimilarResource.id")
 			dbQuery = dbQuery.Where("resources.id IN (?)", subQuery)
 		}
 

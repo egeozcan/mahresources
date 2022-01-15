@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/Nr90/imgsim"
-	"github.com/jmoiron/sqlx"
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"gorm.io/gorm"
@@ -114,107 +113,4 @@ func main() {
 	if batchErr != nil {
 		log.Fatalln("batch error", batchErr)
 	}
-
-	var results []DuplicateResult
-
-	sqlDb, _ := db.DB()
-
-	sqlXDb := sqlx.NewDb(sqlDb, "postgres")
-
-	err := sqlXDb.Select(&results, `
-		select
-			   a_hash AHash
-			 , json_agg(r.id)::jsonb Resources
-			 , jsonb_agg(r.owner_id)::jsonb Owners
-			 , jsonb_agg(r.hash)::jsonb Hashes
-			 , jsonb_agg(r.file_size) Sizes
-			 , count(*)
-		from
-			 image_hashes
-		join
-				 resources r on r.id = image_hashes.resource_id
-		join groups g on g.id = r.owner_id
-		group by a_hash
-		having count(*) > 1
-	`)
-
-	fmt.Println(len(results), "results found")
-
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	deleteOpCount := 0
-
-out:
-	for _, result := range results {
-		var ownerIds []uint
-		var resIds []uint
-		var sizes []uint
-		var hashes []string
-
-		ownersDifferent := false
-
-		err := json.Unmarshal(result.Owners, &ownerIds)
-		if err != nil {
-			log.Fatalln(err)
-		}
-
-		err = json.Unmarshal(result.Resources, &resIds)
-		if err != nil {
-			log.Fatalln(err)
-		}
-
-		err = json.Unmarshal(result.Hashes, &hashes)
-		if err != nil {
-			log.Fatalln(err)
-		}
-
-		err = json.Unmarshal(result.Sizes, &sizes)
-		if err != nil {
-			log.Fatalln(err)
-		}
-
-		for i := 0; i < result.Count; i++ {
-			println(ownerIds[i], resIds[i], hashes[i])
-
-			if i == 0 {
-				continue
-			}
-
-			if hashes[i] != hashes[i-1] {
-				println("Skipping because hashes are different")
-				continue out
-			}
-
-			if sizes[i] != sizes[i-1] {
-				println("Different sizes?")
-				break out
-			}
-
-			if ownerIds[i] != ownerIds[i-1] {
-				ownersDifferent = true
-			}
-
-			if i == result.Count-1 {
-				fmt.Printf("will delete %v %v %v \n\n", ownerIds, resIds, hashes)
-
-				if !ownersDifferent {
-					err := context.MergeResources(resIds[i], resIds[:i])
-					if err != nil {
-						log.Fatalln(err)
-					}
-				} else {
-					err := context.MergeResources(resIds[0], resIds[1:])
-					if err != nil {
-						log.Fatalln(err)
-					}
-				}
-			}
-		}
-
-	}
-
-	fmt.Printf("delete count %v \n", deleteOpCount)
-
 }
