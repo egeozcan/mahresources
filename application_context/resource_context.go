@@ -786,10 +786,26 @@ func (ctx *MahresourcesContext) GetPopularResourceTags() ([]struct {
 }
 
 func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) error {
+	if len(loserIds) == 0 || winnerId == 0 {
+		return errors.New("incorrect parameters")
+	}
+
+	for i, id := range loserIds {
+		if id == 0 {
+			return errors.New(fmt.Sprintf("loser number %v has 0 id", i+1))
+		}
+
+		if id == winnerId {
+			return errors.New("winner cannot be one of the losers")
+		}
+	}
+
 	return ctx.WithTransaction(func(transactionCtx *MahresourcesContext) error {
 		var losers []*models.Resource
 
-		if loadResourcesErr := transactionCtx.db.Preload(clause.Associations).Find(&losers, &loserIds).Error; loadResourcesErr != nil {
+		tx := transactionCtx.db
+
+		if loadResourcesErr := tx.Preload(clause.Associations).Find(&losers, &loserIds).Error; loadResourcesErr != nil {
 			return loadResourcesErr
 		}
 
@@ -799,7 +815,7 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 
 		var winner models.Resource
 
-		if err := transactionCtx.db.Preload(clause.Associations).First(&winner, winnerId).Error; err != nil {
+		if err := tx.Preload(clause.Associations).First(&winner, winnerId).Error; err != nil {
 			return err
 		}
 
@@ -808,23 +824,19 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 		for _, loser := range losers {
 
 			for _, tag := range loser.Tags {
-				if err := transactionCtx.db.Exec(`INSERT INTO group_tags (group_id, tag_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, winnerId, tag.ID).Error; err != nil {
+				if err := tx.Exec(`INSERT INTO resource_tags (resource_id, tag_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, winnerId, tag.ID).Error; err != nil {
 					return err
 				}
 			}
 			for _, note := range loser.Notes {
-				if err := transactionCtx.db.Exec(`INSERT INTO groups_related_notes (group_id, note_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, winnerId, note.ID).Error; err != nil {
+				if err := tx.Exec(`INSERT INTO resource_notes (resource_id, note_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, winnerId, note.ID).Error; err != nil {
 					return err
 				}
 			}
 			for _, group := range loser.Groups {
-				if err := transactionCtx.db.Exec(`INSERT INTO group_related_groups (group_id, related_group_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, winnerId, group.ID).Error; err != nil {
+				if err := tx.Exec(`INSERT INTO groups_related_resources (resource_id, group_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, winnerId, group.ID).Error; err != nil {
 					return err
 				}
-			}
-
-			if winner.OwnerId != loser.OwnerId {
-				winner.Groups = append(winner.Groups, loser.Owner)
 			}
 
 			backupData, err := json.Marshal(loser)
@@ -838,13 +850,13 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 
 			switch transactionCtx.Config.DbType {
 			case constants.DbTypePosgres:
-				err = transactionCtx.db.Exec(`
+				err = tx.Exec(`
 				UPDATE resources
 				SET meta = coalesce((SELECT meta FROM resources WHERE id = ?), '{}'::jsonb) || meta
 				WHERE id = ?
 			`, loser.ID, winnerId).Error
 			case constants.DbTypeSqlite:
-				err = transactionCtx.db.Exec(`
+				err = tx.Exec(`
 				UPDATE resources
 				SET meta = json_patch(meta, coalesce((SELECT meta FROM resources WHERE id = ?), '{}'))
 				WHERE id = ?
@@ -866,10 +878,6 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 
 		fmt.Printf("%#v\n", deletedResBackups)
 
-		if err := transactionCtx.db.Omit("Previews").Save(&winner).Error; err != nil {
-			return err
-		}
-
 		backupObj := make(map[string]interface{})
 		backupObj["backups"] = deletedResBackups
 
@@ -882,7 +890,7 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 		fmt.Println(string(backups))
 
 		if transactionCtx.Config.DbType == constants.DbTypePosgres {
-			if err := transactionCtx.db.Exec("update resources set meta = meta || ? where id = ?", backups, winner.ID).Error; err != nil {
+			if err := tx.Exec("update resources set meta = meta || ? where id = ?", backups, winner.ID).Error; err != nil {
 				return err
 			}
 		}

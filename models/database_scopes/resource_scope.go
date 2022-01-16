@@ -47,7 +47,14 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 				Group("grr.resource_id").
 				Having("count(*) = ?", len(query.Groups))
 
-			dbQuery = dbQuery.Where(`resources.id IN (?)`, subQuery)
+			if len(query.Groups) == 1 {
+				dbQuery = dbQuery.Where(originalDb.
+					Where(`resources.id IN (?)`, subQuery).
+					Or("resources.owner_id = ?", query.Groups[0]),
+				)
+			} else {
+				dbQuery = dbQuery.Where(`resources.id IN (?)`, subQuery)
+			}
 		}
 
 		if query.Notes != nil && len(query.Notes) > 0 {
