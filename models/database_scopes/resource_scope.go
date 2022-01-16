@@ -62,12 +62,12 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 
 		if query.ShowWithSimilar {
 			subQuery := originalDb.
-				Table("resources hasSimilarResource").
-				Joins("JOIN image_hashes ih ON hasSimilarResource.id = ih.resource_id").
+				Table("resources \"hasSimilarResource\"").
+				Joins("JOIN image_hashes ih ON \"hasSimilarResource\".id = ih.resource_id").
 				Joins("JOIN image_hashes i ON ih.d_hash = i.d_hash").
 				Having("count(*) > 1").
-				Group("hasSimilarResource.id").
-				Select("hasSimilarResource.id")
+				Group("\"hasSimilarResource\".id").
+				Select("\"hasSimilarResource\".id")
 			dbQuery = dbQuery.Where("resources.id IN (?)", subQuery)
 		}
 
