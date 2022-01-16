@@ -5,6 +5,7 @@
                 <template x-for="(result, index) in results" :key="index">
                         <span
                                 :active="false"
+                                :id="'{{ id }}' + '_dropresult' + index"
                                 class="cursor-pointer p-2 flex block w-full rounded"
                                 :class="{'bg-blue-500': index === selectedIndex}"
                                 @mousedown="{{ action }}"

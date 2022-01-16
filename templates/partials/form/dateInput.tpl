@@ -1,4 +1,4 @@
-{% with id=name|nanoid %}
+{% with id=getName(name) %}
 <label for="{{ name }}"
        class="block text-sm font-medium text-gray-700 mt-2">
     {{ label }}

@@ -56,12 +56,18 @@ func contains(s []string, e string) bool {
 }
 
 var staticTemplateCtx = func(request *http.Request) pongo2.Context {
+	currentId := 0
+
 	context := pongo2.Context{
 		"queryValues": request.URL.Query(),
 		"path":        request.URL.Path,
 		"withQuery":   getWithQuery(request),
 		"hasQuery":    getHasQuery(request),
 		"stringId":    stringId,
+		"getNextId": func(elName string) string {
+			currentId += 1
+			return fmt.Sprintf("input_%v_%v", elName, currentId)
+		},
 	}
 
 	if errMessage := request.URL.Query().Get("Error"); errMessage != "" {

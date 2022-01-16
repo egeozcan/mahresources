@@ -4,28 +4,28 @@
     <form class="mb-6 p-4" method="post" :action="'/v1/resources/addTags?redirect=' + encodeURIComponent(window.location)">
         {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
         <div class="flex gap-2 items-start">
-            {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' addUrl='/v1/tag' elName='editedId' title='Add Tag' id="tag_autocompleter"|nanoid %}
+            {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' addUrl='/v1/tag' elName='editedId' title='Add Tag' id=getNextId("tag_autocompleter") %}
             <div class="mt-7">{% include "/partials/form/searchButton.tpl" with text="Add" %}</div>
         </div>
     </form>
     <form class="mb-6 p-4" method="post" :action="'/v1/resources/removeTags?redirect=' + encodeURIComponent(window.location)">
         {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
         <div class="flex gap-2 items-start">
-            {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' elName='editedId' title='Remove Tag' id="tag_autocompleter"|nanoid %}
+            {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' elName='editedId' title='Remove Tag' id=getNextId("tag_autocompleter") %}
             <div class="mt-7">{% include "/partials/form/searchButton.tpl" with text="Remove" %}</div>
         </div>
     </form>
     <form class="mb-6 p-4" method="post" :action="'/v1/resources/addMeta?redirect=' + encodeURIComponent(window.location)">
         {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
         <div class="flex gap-2 items-start">
-            {% include "/partials/form/freeFields.tpl" with name="Meta" url='/v1/resources/meta/keys' jsonOutput="true" id="freeField"|nanoid %}
+            {% include "/partials/form/freeFields.tpl" with name="Meta" url='/v1/resources/meta/keys' jsonOutput="true" id=getNextId("freeField") %}
             <div class="mt-7">{% include "/partials/form/searchButton.tpl" with text="Add" %}</div>
         </div>
     </form>
     <form class="mb-6 p-4" method="post" :action="'/v1/resources/addGroups?redirect=' + encodeURIComponent(window.location)">
         {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
         <div class="flex gap-2 items-start">
-            {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='editedId' title='Add Groups' id="autocompleter"|nanoid extraInfo="Category" %}
+            {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='editedId' title='Add Groups' id=getNextId("autocompleter") extraInfo="Category" %}
             <div class="mt-7">{% include "/partials/form/searchButton.tpl" with text="Add" %}</div>
         </div>
     </form>
