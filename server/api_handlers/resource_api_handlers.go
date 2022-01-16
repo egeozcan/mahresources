@@ -136,6 +136,7 @@ func GetResourceUploadHandler(ctx interfaces.ResourceWriter) func(writer http.Re
 		}
 
 		var resources = make([]*models.Resource, len(files))
+		var errorMessages = make([]string, 0)
 
 		for i := range files {
 			func(i int) {
@@ -155,10 +156,16 @@ func GetResourceUploadHandler(ctx interfaces.ResourceWriter) func(writer http.Re
 				resources[i] = res
 
 				if err != nil {
-					http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
-					return
+					errorMessages = append(errorMessages, err.Error())
 				}
 			}(i)
+		}
+
+		if len(errorMessages) > 0 {
+			messageText := strings.Join(errorMessages, ", ")
+			aggregateError := errors.New(fmt.Sprintf("following errors were encountered: %v", messageText))
+			http_utils.HandleError(aggregateError, writer, request, http.StatusInternalServerError)
+			return
 		}
 
 		var redirectUrl string
