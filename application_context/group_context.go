@@ -311,11 +311,11 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 				}
 			}
 
-			if err := altCtx.db.Exec(`UPDATE group_relations SET from_group_id = ? WHERE from_group_id = ? AND to_group_id <> ? ON CONFLICT DO NOTHING`, winnerId, loser.ID, winnerId).Error; err != nil {
+			if err := altCtx.db.Exec(`INSERT INTO group_relations (from_group_id, to_group_id) SELECT ? as from_group_id, to_group_id FROM group_relations WHERE from_group_id = ? ON CONFLICT DO NOTHING`, winnerId, loser.ID).Error; err != nil {
 				return err
 			}
 
-			if err := altCtx.db.Exec(`UPDATE group_relations SET to_group_id = ? WHERE to_group_id = ? AND to_group_id <> ? ON CONFLICT DO NOTHING`, winnerId, loser.ID, winnerId).Error; err != nil {
+			if err := altCtx.db.Exec(`INSERT INTO group_relations (from_group_id, to_group_id) SELECT from_group_id, ? as to_group_id FROM group_relations WHERE to_group_id = ? ON CONFLICT DO NOTHING`, winnerId, loser.ID).Error; err != nil {
 				return err
 			}
 
