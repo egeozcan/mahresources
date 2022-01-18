@@ -311,11 +311,11 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 				}
 			}
 
-			if err := altCtx.db.Exec(`UPDATE group_relations SET from_group_id = ? WHERE from_group_id = ? AND to_group_id <> ?`, winnerId, loser.ID, winnerId).Error; err != nil {
+			if err := altCtx.db.Exec(`UPDATE group_relations SET from_group_id = ? WHERE from_group_id = ? AND to_group_id <> ? ON CONFLICT DO NOTHING`, winnerId, loser.ID, winnerId).Error; err != nil {
 				return err
 			}
 
-			if err := altCtx.db.Exec(`UPDATE group_relations SET to_group_id = ? WHERE to_group_id = ? AND to_group_id <> ?`, winnerId, loser.ID, winnerId).Error; err != nil {
+			if err := altCtx.db.Exec(`UPDATE group_relations SET to_group_id = ? WHERE to_group_id = ? AND to_group_id <> ? ON CONFLICT DO NOTHING`, winnerId, loser.ID, winnerId).Error; err != nil {
 				return err
 			}
 
@@ -373,6 +373,10 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 			if err := altCtx.db.Exec("update resources set meta = meta || ? where id = ?", backupsBytes, winner.ID).Error; err != nil {
 				return err
 			}
+		}
+
+		if err := altCtx.db.Exec(`DELETE FROM group_relations WHERE to_group_id = from_group_id`).Error; err != nil {
+			return err
 		}
 
 		return nil
