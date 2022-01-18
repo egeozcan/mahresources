@@ -838,6 +838,9 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 					return err
 				}
 			}
+			if err := tx.Exec(`INSERT INTO groups_related_resources (resource_id, group_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, winnerId, loser.OwnerId).Error; err != nil {
+				return err
+			}
 
 			backupData, err := json.Marshal(loser)
 
