@@ -98,19 +98,19 @@ func createSortCols(standardCols []SortColumn, currentSortVal string) []SortColu
 		return standardCols
 	}
 
-	customSort := strings.Split(currentSortVal, " ")[0]
+	currentSort := strings.Split(currentSortVal, " ")[0]
+
+	for _, col := range standardCols {
+		if col.Value == currentSort {
+			return standardCols
+		}
+	}
 
 	res := []SortColumn{
 		{
-			Name:  fmt.Sprintf("Custom (%v)", customSort),
-			Value: customSort,
+			Name:  fmt.Sprintf("Custom (%v)", currentSort),
+			Value: currentSort,
 		},
-	}
-
-	for _, col := range standardCols {
-		if col.Value == currentSortVal {
-			return standardCols
-		}
 	}
 
 	return append(res, standardCols...)
