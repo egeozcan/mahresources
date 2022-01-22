@@ -24,7 +24,7 @@ function pick(obj, ...keys) {
   );
 }
 
-window.addEventListener("load", () => {
+document.addEventListener("DOMContentLoaded", () => {
   const filter = /#image\//;
   const fullScreen = false;
   const animation = false;
@@ -33,4 +33,12 @@ window.addEventListener("load", () => {
 
   baguetteBox.run(".note-container", options);
   baguetteBox.run(".gallery", options);
+});
+
+window.addEventListener('paste', e => {
+  const fileInput = document.querySelector("input[type='file']");
+  if (!fileInput || !e.clipboardData.files || !e.clipboardData.files.length) {
+    return;
+  }
+  fileInput.files = e.clipboardData.files;
 });

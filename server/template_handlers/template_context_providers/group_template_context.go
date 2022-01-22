@@ -203,6 +203,24 @@ func GroupContextProvider(context *application_context.MahresourcesContext) func
 			return addErrContext(err, baseContext)
 		}
 
+		parents, err := context.FindParentsOfGroup(group.ID)
+
+		if err != nil {
+			fmt.Println(err)
+
+			return addErrContext(err, baseContext)
+		}
+
+		breadcrumbEls := make([]template_entities.Entry, len(*parents))
+
+		for i, m := range *parents {
+			breadcrumbEls[i] = template_entities.Entry{
+				Name: m.Name,
+				ID:   m.ID,
+				Url:  fmt.Sprintf("/group?id=%v", m.ID),
+			}
+		}
+
 		return pongo2.Context{
 			"pageTitle": group.GetName(),
 			"prefix":    group.Category.Name,
@@ -216,6 +234,11 @@ func GroupContextProvider(context *application_context.MahresourcesContext) func
 				Url:  fmt.Sprintf("/v1/group/delete?Id=%v", group.ID),
 			},
 			"mainEntity": group,
+			"breadcrumb": pongo2.Context{
+				"HomeName": "Groups",
+				"HomeUrl":  "groups",
+				"Entries":  breadcrumbEls,
+			},
 		}.Update(baseContext)
 	}
 }

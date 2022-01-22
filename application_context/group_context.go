@@ -449,3 +449,24 @@ func (ctx *MahresourcesContext) BulkDeleteGroups(query *query_models.BulkQuery) 
 
 	return nil
 }
+
+func (ctx *MahresourcesContext) FindParentsOfGroup(id uint) (*[]models.Group, error) {
+	var results []models.Group
+	var ids []uint
+
+	findIdErr := ctx.db.Raw(`
+		WITH RECURSIVE cte as (
+			SELECT id, owner_id FROM groups WHERE id = ?
+			UNION ALL
+			SELECT g.id, g.owner_id FROM groups g
+			INNER JOIN cte ON cte.owner_id = g.id
+		)
+		SELECT id FROM cte
+	`, id).Scan(&ids).Error
+
+	if findIdErr != nil {
+		return nil, findIdErr
+	}
+
+	return &results, ctx.db.Find(&results, ids).Error
+}

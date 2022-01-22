@@ -66,15 +66,8 @@ and bulk edit the results. I'd rather keep developing than adding up-to-date scr
 
 ## maybe do
 
-- [ ] detect similar images
 - [ ] Make note categories work
-- [X] Sorting lists
-- [X] Inline add for tags, groups, categories, and so on
-- [X] bulk editor for lists
-- [ ] Breadcrumbs for groups
-- [X] video preview generation
 - [ ] faster image previews with libvips?
-- [X] support multiple file system attach points
 - [ ] some integration tests, perhaps behavioral test
 - [ ] importers like perkeep? maybe.
 - [ ] sync could be interesting

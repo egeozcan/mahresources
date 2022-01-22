@@ -50,6 +50,21 @@ func GetGroupHandler(ctx interfaces.GroupReader) func(writer http.ResponseWriter
 	}
 }
 
+func GetGroupsParentsHandler(ctx interfaces.GroupReader) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		id := uint(http_utils.GetIntQueryParameter(request, "id", 0))
+		groups, err := ctx.FindParentsOfGroup(id)
+
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusNotFound)
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(groups)
+	}
+}
+
 func GetAddGroupHandler(ctx interfaces.GroupWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.GroupEditor{}

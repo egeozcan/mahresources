@@ -1,6 +1,9 @@
 {% if pageTitle != nil %}
 <section class="title border-b-2 border-light-blue-400 pb-3">
-    <div class="flex items-center flex-1 min-w-0 gap-3">
+    {% if breadcrumb && breadcrumb.HomeUrl %}
+        {% include "/partials/breadcrumb.tpl" with HomeName=breadcrumb.HomeName HomeUrl=breadcrumb.HomeUrl Entries=breadcrumb.Entries %}
+    {% endif %}
+    <div class="flex items-center flex-1 min-w-0 gap-3 {% if breadcrumb && breadcrumb.HomeUrl %}mt-3{% endif %}">
         <h2 class="items-start gap-2 text-2xl font-bold leading-7 text-gray-900 sm:text-3xl flex-col">
             {% if prefix %}<small class="break-words px-2 text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 ">{{ prefix }}</small>{% endif %}
             <span class="break-all">{{ pageTitle }}</span>

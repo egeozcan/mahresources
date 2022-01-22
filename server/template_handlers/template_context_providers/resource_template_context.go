@@ -198,6 +198,34 @@ func ResourceContextProvider(context *application_context.MahresourcesContext) f
 			return addErrContext(err, baseContext)
 		}
 
+		var breadcrumbEls []template_entities.Entry
+
+		if resource.OwnerId != nil {
+			parents, err := context.FindParentsOfGroup(*resource.OwnerId)
+			breadcrumbEls := make([]template_entities.Entry, len(*parents)+1)
+
+			if err != nil {
+				fmt.Println(err)
+
+				return addErrContext(err, baseContext)
+			}
+
+			for i, m := range *parents {
+				fmt.Println(len(*parents)+1, i, m)
+				breadcrumbEls[i] = template_entities.Entry{
+					Name: m.Name,
+					ID:   m.ID,
+					Url:  fmt.Sprintf("/group?id=%v", m.ID),
+				}
+			}
+
+			breadcrumbEls[len(*parents)] = template_entities.Entry{
+				Name: resource.Name,
+				ID:   resource.ID,
+				Url:  fmt.Sprintf("/resouce?id=%v", resource.ID),
+			}
+		}
+
 		return pongo2.Context{
 			"pageTitle":        "Resource " + resource.Name,
 			"resource":         resource,
@@ -210,6 +238,11 @@ func ResourceContextProvider(context *application_context.MahresourcesContext) f
 				Name: "Delete",
 				Url:  "/v1/resource/delete",
 				ID:   resource.ID,
+			},
+			"breadcrumb": pongo2.Context{
+				"HomeName": "Groups",
+				"HomeUrl":  "groups",
+				"Entries":  breadcrumbEls,
 			},
 		}.Update(baseContext)
 	}

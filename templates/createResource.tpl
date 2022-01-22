@@ -44,7 +44,13 @@
                     </label>
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="flex items-center">
-                            <input id="resource" name="resource" multiple type="file">
+                            <input
+                                id="resource"
+                                name="resource"
+                                multiple
+                                type="file"
+                                x-data
+                            >
                         </div>
                     </div>
                     <label for="resource" class="block text-sm font-medium text-gray-700">
