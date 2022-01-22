@@ -16,7 +16,7 @@
         <a
           class="ml-4 text-sm font-medium text-gray-500 hover:text-gray-700 overflow-ellipsis whitespace-nowrap overflow-hidden max-w-sm "
           href="{{ entry.Url }}"
-        >{{ entry.Name }}aaa</a>
+        >{{ entry.Name }}</a>
       </div>
     </li>
     {% endfor %}

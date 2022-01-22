@@ -198,7 +198,20 @@ func ResourceContextProvider(context *application_context.MahresourcesContext) f
 			return addErrContext(err, baseContext)
 		}
 
-		var breadcrumbEls []template_entities.Entry
+		result := pongo2.Context{
+			"pageTitle":        "Resource " + resource.Name,
+			"resource":         resource,
+			"similarResources": similarResources,
+			"action": template_entities.Entry{
+				Name: "Edit",
+				Url:  "/resource/edit?id=" + strconv.Itoa(int(query.ID)),
+			},
+			"deleteAction": template_entities.Entry{
+				Name: "Delete",
+				Url:  "/v1/resource/delete",
+				ID:   resource.ID,
+			},
+		}
 
 		if resource.OwnerId != nil {
 			parents, err := context.FindParentsOfGroup(*resource.OwnerId)
@@ -224,26 +237,14 @@ func ResourceContextProvider(context *application_context.MahresourcesContext) f
 				ID:   resource.ID,
 				Url:  fmt.Sprintf("/resouce?id=%v", resource.ID),
 			}
-		}
 
-		return pongo2.Context{
-			"pageTitle":        "Resource " + resource.Name,
-			"resource":         resource,
-			"similarResources": similarResources,
-			"action": template_entities.Entry{
-				Name: "Edit",
-				Url:  "/resource/edit?id=" + strconv.Itoa(int(query.ID)),
-			},
-			"deleteAction": template_entities.Entry{
-				Name: "Delete",
-				Url:  "/v1/resource/delete",
-				ID:   resource.ID,
-			},
-			"breadcrumb": pongo2.Context{
+			result["breadcrumb"] = pongo2.Context{
 				"HomeName": "Groups",
 				"HomeUrl":  "groups",
 				"Entries":  breadcrumbEls,
-			},
-		}.Update(baseContext)
+			}
+		}
+
+		return result.Update(baseContext)
 	}
 }
