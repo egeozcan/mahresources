@@ -59,6 +59,8 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 			return
 		}
 
+		writer.Header().Add("Content-Type", constants.HTML)
+
 		if errMessage := context["errorMessage"]; errMessage != nil && errMessage != "" {
 			err := errorTemplate.ExecuteWriter(context, writer)
 
