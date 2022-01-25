@@ -1,9 +1,17 @@
+const btnClasses = `inline-flex justify-center
+        py-2 px-4 mt-3
+        border border-transparent
+        items-center
+        shadow-sm text-sm font-medium rounded-md text-white 
+        bg-gray-500 hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500`;
+
 document.addEventListener("alpine:init", () => {
   let currentIndex = 0;
 
   Alpine.store("bulkSelection", {
     selectedIds: new Set(),
     elements: [],
+    editors: [],
     options: {},
     activeEditor: null,
     lastSelected: null,
@@ -18,6 +26,7 @@ document.addEventListener("alpine:init", () => {
 
     select(id) {
       this.lastSelected = id;
+      this.setActiveEditor(null);
 
       if (this.isSelected(id)) {
         return;
@@ -29,6 +38,7 @@ document.addEventListener("alpine:init", () => {
 
     deselect(id) {
       this.lastSelected = id;
+      this.setActiveEditor(null);
 
       if (!this.isSelected(id)) {
         return;
@@ -84,6 +94,11 @@ document.addEventListener("alpine:init", () => {
 
     setActiveEditor(el) {
       this.activeEditor = el;
+      this.editors.forEach(form => {
+        const activeEditor = this.isActiveEditor(form);
+        form.style.display = activeEditor ? "block" : "none";
+        form.classList.toggle("active", activeEditor);
+      });
     },
 
     closeEditor(el) {
@@ -105,7 +120,27 @@ document.addEventListener("alpine:init", () => {
         this.deselect(option.itemId);
       }
     },
+
+    registerForm(form) {
+      const btn = document.createElement("button");
+      btn.innerText = form.querySelector("label, button").innerText;
+      btn.className = btnClasses;
+      form.insertAdjacentElement("afterend", btn);
+      btn.addEventListener("click", () => {
+        this.setActiveEditor(form);
+      });
+      this.editors.push(form);
+      form.style.display = "none";
+    },
   });
+
+  window.Alpine.data("bulkSelectionForms", () => {
+    return {
+      init() {
+        this.$root.querySelectorAll("form").forEach(form => this.$store.bulkSelection.registerForm(form));
+      }
+    }
+  })
 
   window.Alpine.data("selectableItem", ({ itemNo, itemId } = {}) => {
     return {

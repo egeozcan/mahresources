@@ -1,4 +1,4 @@
-<div class="grid grid-cols-3 gap-3 sm:grid-cols-6">
+<div class="grid grid-cols-3 gap-3 sm:grid-cols-6 pb-2">
     {% for option in options %}
         <a href="{{ option.Link }}"
                 class="

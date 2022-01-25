@@ -96,3 +96,19 @@
     border: 2px solid rgba(98, 155, 255, 0.81);
     border-radius: 0.1em;
 }
+
+.bulk-editors form.active + button {
+    display: none;
+}
+
+.bulk-editors button {
+    order: 1;
+}
+
+.bulk-editors form {
+    order: 2;
+}
+
+.bulk-editors form.active {
+    flex-basis: 100%;
+}

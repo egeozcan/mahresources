@@ -2,7 +2,7 @@
 
 {% block body %}
     {% include "/partials/form/formParts/connected/selectAllButton.tpl" %}
-    <div class="sticky top-0 flex pl-4 gap-4 flex-wrap  bg-white items-center" x-show="[...$store.bulkSelection.selectedIds].length > 0" x-collapse x-data>
+    <div class="sticky top-0 flex pl-4 pb-2 gap-4 flex-wrap  bg-white items-center" x-show="[...$store.bulkSelection.selectedIds].length > 0" x-collapse x-data="bulkSelectionForms">
         {% include "/partials/form/formParts/connected/deselectButton.tpl" %}
         <form class="mb-6 p-4" method="post" :action="'/v1/groups/addTags?redirect=' + encodeURIComponent(window.location)">
             {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
