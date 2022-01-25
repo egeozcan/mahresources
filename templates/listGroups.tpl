@@ -1,6 +1,6 @@
 {% extends "/layouts/base.tpl" %}
 
-{% block body %}
+{% block prebody %}
     {% include "/partials/form/formParts/connected/selectAllButton.tpl" %}
     <div class="sticky top-0 flex pl-4 pb-2 gap-4 flex-wrap  bg-white items-center" x-show="[...$store.bulkSelection.selectedIds].length > 0" x-collapse x-data="bulkSelectionForms">
         {% include "/partials/form/formParts/connected/deselectButton.tpl" %}
@@ -39,12 +39,16 @@
             </div>
         </form>
     </div>
+{% endblock %}
+
+{% block body %}
     <div class="flex flex-col gap-4">
         {% for entity in groups %}
             {% include "/partials/group.tpl" with selectable=true %}
         {% endfor %}
     </div>
 {% endblock %}
+
 
 {% block sidebar %}
     <form class="flex gap-2 items-start flex-col">

@@ -35,4 +35,5 @@ type GroupQuery struct {
 	MetaQuery             []ColumnMeta
 	SortBy                string
 	URL                   string
+	Ids                   []uint
 }

@@ -15,13 +15,14 @@ import (
 // BaseDirectory capabilities. The access to the local filesystem is unrestricted.
 type LocalFilesystemLoader struct {
 	baseDir string
+	replace map[string]string
 }
 
 // MustNewLocalFileSystemLoader creates a new LocalFilesystemLoader instance
 // and panics if there's any error during instantiation. The parameters
 // are the same like NewLocalFileSystemLoader.
-func MustNewLocalFileSystemLoader(baseDir string) *LocalFilesystemLoader {
-	fs, err := NewLocalFileSystemLoader(baseDir)
+func MustNewLocalFileSystemLoader(baseDir string, replace map[string]string) *LocalFilesystemLoader {
+	fs, err := NewLocalFileSystemLoader(baseDir, replace)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -34,8 +35,10 @@ func MustNewLocalFileSystemLoader(baseDir string) *LocalFilesystemLoader {
 // for path calculation in template inclusions/imports. Otherwise the path
 // is calculated based relatively to the including template's path.
 //goland:noinspection ALL
-func NewLocalFileSystemLoader(baseDir string) (*LocalFilesystemLoader, error) {
-	fs := &LocalFilesystemLoader{}
+func NewLocalFileSystemLoader(baseDir string, replace map[string]string) (*LocalFilesystemLoader, error) {
+	fs := &LocalFilesystemLoader{
+		replace: replace,
+	}
 	if baseDir != "" {
 		if err := fs.setBaseDir(baseDir); err != nil {
 			return nil, err
@@ -85,6 +88,12 @@ func (fs *LocalFilesystemLoader) Get(path string) (io.Reader, error) {
 // might be a path of a template which includes another template) or
 // the current working directory.
 func (fs *LocalFilesystemLoader) Abs(base, name string) string {
+	for key, value := range fs.replace {
+		if strings.HasSuffix(name, key) {
+			name = strings.TrimSuffix(name, key) + value
+		}
+	}
+
 	if (base != "" && strings.HasPrefix(name, base)) || (fs.baseDir != "" && strings.HasPrefix(name, fs.baseDir)) {
 		return name
 	}

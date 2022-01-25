@@ -26,6 +26,10 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 			dbQuery = dbQuery.Order("created_at desc")
 		}
 
+		if query.Ids != nil && len(query.Ids) > 0 {
+			dbQuery = dbQuery.Where("groups.id IN (?)", query.Ids)
+		}
+
 		if query.Tags != nil && len(query.Tags) > 0 {
 			subSelectCondition := originalDB.
 				Where("groups.id = gt.group_id")

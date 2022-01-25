@@ -46,6 +46,7 @@ type ResourceSearchQuery struct {
 	Groups           []uint
 	Tags             []uint
 	Notes            []uint
+	Ids              []uint
 	CreatedBefore    string
 	CreatedAfter     string
 	MetaQuery        []ColumnMeta

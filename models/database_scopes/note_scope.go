@@ -33,6 +33,10 @@ func NoteQuery(query *query_models.NoteQuery, ignoreSort bool) func(db *gorm.DB)
 			)
 		}
 
+		if query.Ids != nil && len(query.Ids) > 0 {
+			dbQuery = dbQuery.Where("notes.id IN (?)", query.Ids)
+		}
+
 		if query.Groups != nil && len(query.Groups) > 0 {
 			dbQuery = dbQuery.Where(
 				`

@@ -26,11 +26,18 @@ func discardFields(fields map[string]bool, intMap map[string]interface{}) map[st
 }
 
 func RenderTemplate(templateName string, templateContextGenerator func(request *http.Request) pongo2.Context) func(writer http.ResponseWriter, request *http.Request) {
-	templateSet := pongo2.NewSet("", loaders.MustNewLocalFileSystemLoader("./templates"))
+	templateSet := pongo2.NewSet("", loaders.MustNewLocalFileSystemLoader("./templates", make(map[string]string)))
+	bodyOnlyTemplateSet := pongo2.NewSet("", loaders.MustNewLocalFileSystemLoader("./templates", map[string]string{"/base.tpl": "/bodyOnly.tpl"}))
 
 	return func(writer http.ResponseWriter, request *http.Request) {
-		var template = pongo2.Must(templateSet.FromFile(templateName))
-		var errorTemplate = pongo2.Must(templateSet.FromFile("error.tpl"))
+		renderer := templateSet
+
+		if strings.HasSuffix(request.URL.Path, ".body") {
+			renderer = bodyOnlyTemplateSet
+		}
+
+		var template = pongo2.Must(renderer.FromFile(templateName))
+		var errorTemplate = pongo2.Must(renderer.FromFile("error.tpl"))
 
 		context := templateContextGenerator(request)
 

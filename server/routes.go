@@ -64,6 +64,10 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 		router.Methods(templateInfo.method).Path(path + ".json").HandlerFunc(
 			template_handlers.RenderTemplate(templateInfo.templateName, templateInfo.contextFn(appContext)),
 		)
+
+		router.Methods(templateInfo.method).Path(path + ".body").HandlerFunc(
+			template_handlers.RenderTemplate(templateInfo.templateName, templateInfo.contextFn(appContext)),
+		)
 	}
 
 	router.Methods(http.MethodGet).Path("/").HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

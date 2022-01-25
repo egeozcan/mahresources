@@ -25,6 +25,10 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 			dbQuery = dbQuery.Order("created_at desc")
 		}
 
+		if query.Ids != nil && len(query.Ids) > 0 {
+			dbQuery = dbQuery.Where("resources.id IN (?)", query.Ids)
+		}
+
 		if query.Tags != nil && len(query.Tags) > 0 {
 			subQuery := originalDb.
 				Table("resource_tags rt").

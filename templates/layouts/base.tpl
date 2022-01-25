@@ -51,6 +51,7 @@
             {% block sidebar %}{% endblock %}
         </section>
         <section class="main">
+            {% block prebody %}{% endblock %}
             {% block body %}{% endblock %}
         </section>
     </article>

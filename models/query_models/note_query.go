@@ -30,5 +30,6 @@ type NoteQuery struct {
 	EndDateBefore   string
 	EndDateAfter    string
 	SortBy          string
+	Ids             []uint
 	MetaQuery       []ColumnMeta
 }
