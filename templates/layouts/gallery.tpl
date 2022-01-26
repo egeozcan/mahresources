@@ -2,7 +2,7 @@
 
 {% block body %}
     {% block top %}{% endblock %}
-    <section class="note-container">
+    <section class="list-container">
         {% block gallery %}{% endblock %}
     </section>
 {% endblock %}

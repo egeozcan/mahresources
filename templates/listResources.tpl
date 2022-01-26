@@ -6,7 +6,7 @@
 {% endblock %}
 
 {% block body %}
-    <section class="note-container">
+    <section class="list-container">
         {% for entity in resources %}
             {% include "/partials/resource.tpl" with selectable=true %}
         {% endfor %}

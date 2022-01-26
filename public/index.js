@@ -31,7 +31,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const options = { filter, fullScreen, animation }
 
-  baguetteBox.run(".note-container", options);
+  baguetteBox.run(".list-container", options);
   baguetteBox.run(".gallery", options);
 });
 

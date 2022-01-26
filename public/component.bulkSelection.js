@@ -1,9 +1,11 @@
+const btnDefaultClass = "bg-gray-500";
+const btnActiveClass = "bg-indigo-600";
 const btnClasses = `inline-flex justify-center
         py-2 px-4 mt-3
         border border-transparent
         items-center
         shadow-sm text-sm font-medium rounded-md text-white 
-        bg-gray-500 hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500`;
+        ${btnDefaultClass} focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500`;
 
 document.addEventListener("alpine:init", () => {
   let currentIndex = 0;
@@ -106,7 +108,7 @@ document.addEventListener("alpine:init", () => {
         return;
       }
 
-      this.activeEditor = null;
+      this.setActiveEditor(null);
     },
 
     registerOption(option) {
@@ -127,10 +129,29 @@ document.addEventListener("alpine:init", () => {
       btn.className = btnClasses;
       form.insertAdjacentElement("afterend", btn);
       btn.addEventListener("click", () => {
-        this.setActiveEditor(form);
+        if (this.isActiveEditor(form)) {
+          this.closeEditor();
+        } else {
+          this.setActiveEditor(form);
+        }
+        const isActive = this.isActiveEditor(form);
+        btn.parentElement.querySelectorAll("button").forEach((x) => {
+          x.classList.remove(btnActiveClass);
+          x.classList.add(btnDefaultClass);
+        });
+        btn.classList.toggle(btnActiveClass, isActive);
+        btn.classList.toggle(btnDefaultClass, !isActive);
       });
       this.editors.push(form);
       form.style.display = "none";
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        await fetch(form.action, { method: "POST", body: new FormData(form) });
+        const url = new URL(window.location);
+        url.pathname = url.pathname + ".body";
+        const newHtml = await fetch(url.toString()).then(x => x.text());
+        Alpine.morph(document.querySelector(".list-container"), newHtml);
+      })
     },
   });
 

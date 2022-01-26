@@ -19,7 +19,7 @@
             {% endif %}
         </div>
         {% if entities %}
-        <div class="note-container">
+        <div class="list-container">
             {% for entity in entities %}
                 {% include partial(templateName) %}
             {% endfor %}
