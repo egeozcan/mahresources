@@ -97,9 +97,13 @@ document.addEventListener("alpine:init", () => {
     setActiveEditor(el) {
       this.activeEditor = el;
       this.editors.forEach(form => {
-        const activeEditor = this.isActiveEditor(form);
-        form.style.display = activeEditor ? "block" : "none";
-        form.classList.toggle("active", activeEditor);
+        const isActive = this.isActiveEditor(form);
+        const btn = form.nextElementSibling;
+
+        form.style.display = isActive ? "block" : "none";
+        form.classList.toggle("active", isActive);
+        btn?.classList.toggle(btnActiveClass, isActive);
+        btn?.classList.toggle(btnDefaultClass, !isActive);
       });
     },
 
@@ -134,23 +138,26 @@ document.addEventListener("alpine:init", () => {
         } else {
           this.setActiveEditor(form);
         }
-        const isActive = this.isActiveEditor(form);
-        btn.parentElement.querySelectorAll("button").forEach((x) => {
-          x.classList.remove(btnActiveClass);
-          x.classList.add(btnDefaultClass);
-        });
-        btn.classList.toggle(btnActiveClass, isActive);
-        btn.classList.toggle(btnDefaultClass, !isActive);
       });
       this.editors.push(form);
       form.style.display = "none";
+      if (form.classList.contains("no-ajax")) {
+        return;
+      }
       form.addEventListener("submit", async (e) => {
         e.preventDefault();
-        await fetch(form.action, { method: "POST", body: new FormData(form) });
-        const url = new URL(window.location);
-        url.pathname = url.pathname + ".body";
-        const newHtml = await fetch(url.toString()).then(x => x.text());
-        Alpine.morph(document.querySelector(".list-container"), newHtml);
+        try {
+          form.parentElement.classList.add("pointer-events-none");
+          await fetch(form.action, { method: "POST", body: new FormData(form) });
+          const url = new URL(window.location);
+          url.pathname = url.pathname + ".body";
+          const newHtml = await fetch(url.toString()).then(x => x.text());
+          form.reset();
+          this.deselectAll();
+          Alpine.morph(document.querySelector(".list-container"), newHtml);
+        } finally {
+          form.parentElement.classList.remove("pointer-events-none");
+        }
       })
     },
   });

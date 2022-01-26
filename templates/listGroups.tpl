@@ -1,9 +1,12 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block prebody %}
-    {% include "/partials/form/formParts/connected/selectAllButton.tpl" %}
+    <div class="pb-3" x-data x-show="[...$store.bulkSelection.selectedIds].length === 0" x-collapse>
+        {% include "/partials/form/formParts/connected/selectAllButton.tpl" %}
+    </div>
     <div class="sticky top-0 flex pl-4 pb-2 gap-4 flex-wrap  bg-white items-center" x-show="[...$store.bulkSelection.selectedIds].length > 0" x-collapse x-data="bulkSelectionForms">
         {% include "/partials/form/formParts/connected/deselectButton.tpl" %}
+        {% include "/partials/form/formParts/connected/selectAllButton.tpl" %}
         <form class="mb-6 p-4" method="post" :action="'/v1/groups/addTags?redirect=' + encodeURIComponent(window.location)">
             {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
             <div class="flex gap-2 items-start">
@@ -26,7 +29,7 @@
             </div>
         </form>
         <form
-                class="mb-6 p-4"
+                class="mb-6 p-4 no-ajax"
                 method="post"
                 :action="'/v1/groups/delete?redirect=' + encodeURIComponent(window.location)"
                 x-data="confirmAction('Are you sure you want to delete the selected groups?')"
@@ -35,7 +38,7 @@
             {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
             <div class="flex flex-col">
                 <span class="block text-sm font-medium text-gray-700 mt-3">Delete Selected</span>
-                {% include "/partials/form/searchButton.tpl" with text="Delete" %}
+                {% include "/partials/form/searchButton.tpl" with text="Delete" danger=true %}
             </div>
         </form>
     </div>
