@@ -11,7 +11,7 @@ document.addEventListener('alpine:init', () => {
             const store = isLocal ? localStorage : sessionStorage;
 
             if (typeof el.checked !== "undefined") {
-                setCheckBox(el, settings[el.name].toString() === "true");
+                setCheckBox(el, settings[el.name]?.toString() === "true");
             } else {
                 el.value = settings[el.name];
             }
