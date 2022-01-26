@@ -16,6 +16,7 @@
     <script src="/public/component.confirmAction.js"></script>
     <script src="/public/component.freeFields.js"></script>
     <script src="/public/component.bulkSelection.js"></script>
+    <script src="/public/component.storeConfig.js"></script>
     <script src="/public/tableMaker.js"></script>
     <link rel="apple-touch-icon" sizes="57x57" href="/public/favicon/apple-icon-57x57.png">
     <link rel="apple-touch-icon" sizes="60x60" href="/public/favicon/apple-icon-60x60.png">
@@ -37,8 +38,14 @@
     {% block head %}{% endblock %}
 </head>
 <body class="site">
-    <header class="header">
+    <header class="header flex justify-between align-middle">
         {% include "/partials/menu.tpl" %}
+        <div x-cloak x-data="{ active: false }" class="settings relative inline-flex align-middle">
+            <button class="text-lg" @click="active = !active" @click.outside="setTimeout(() => active = false, 100)">⚙</button>
+            <div x-show="active" class="absolute p-4 mt-6 top-0 right-0 bg-white" style="max-width: 50vw; min-width: 170px;">
+                {% block settings %}{% endblock %}
+            </div>
+        </div>
         {% block header %}{% endblock %}
     </header>
     {% include "/partials/title.tpl" %}

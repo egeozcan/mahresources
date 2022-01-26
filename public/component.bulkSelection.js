@@ -90,6 +90,10 @@ document.addEventListener("alpine:init", () => {
       return this.activeEditor !== null;
     },
 
+    toggleEditor(form) {
+      this.isActiveEditor(form) ? this.closeEditor() : this.setActiveEditor(form);
+    },
+
     isActiveEditor(el) {
       return this.activeEditor === el;
     },
@@ -98,10 +102,8 @@ document.addEventListener("alpine:init", () => {
       this.activeEditor = el;
       this.editors.forEach(form => {
         const isActive = this.isActiveEditor(form);
-        const btn = form.nextElementSibling;
+        const btn = form.previousElementSibling;
 
-        form.style.display = isActive ? "block" : "none";
-        form.classList.toggle("active", isActive);
         btn?.classList.toggle(btnActiveClass, isActive);
         btn?.classList.toggle(btnDefaultClass, !isActive);
       });
@@ -129,16 +131,22 @@ document.addEventListener("alpine:init", () => {
 
     registerForm(form) {
       const btn = document.createElement("button");
+
       btn.innerText = form.querySelector("label, button").innerText;
       btn.className = btnClasses;
-      form.insertAdjacentElement("afterend", btn);
-      btn.addEventListener("click", () =>
-          this.isActiveEditor(form) ? this.closeEditor() : this.setActiveEditor(form));
+      btn.addEventListener("click", () => this.toggleEditor(form));
+
+      form.setAttribute("x-show", "$store.bulkSelection.isActiveEditor($el)");
+      form.setAttribute("x-collapse", "");
+      form.setAttribute(":class", "$store.bulkSelection.isActiveEditor($el) && 'active'");
+      form.insertAdjacentElement("beforebegin", btn);
+
       this.editors.push(form);
-      form.style.display = "none";
+
       if (form.classList.contains("no-ajax")) {
         return;
       }
+
       form.addEventListener("submit", async (e) => {
         e.preventDefault();
         try {
@@ -200,16 +208,6 @@ document.addEventListener("alpine:init", () => {
       },
     };
   });
-
-  function setCheckBox(checkBox, checked) {
-    if (checked) {
-      checkBox.setAttribute("checked", "checked");
-    } else {
-      checkBox.removeAttribute("checked");
-    }
-
-    checkBox.checked = checked;
-  }
 
   document.addEventListener("keypress", function (e) {
     if (e.key !== " ") {

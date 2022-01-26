@@ -1,5 +1,12 @@
 {% extends "/layouts/base.tpl" %}
 
+{% block settings %}
+<label class="flex justify-between items-center content-center">
+    Show Descriptions
+    <input type="checkbox" name="showDescriptions" x-data x-init="$store.savedSetting.registerEl($root)" />
+</label>
+{% endblock %}
+
 {% block prebody %}
     {% include "/partials/boxSelect.tpl" with options=displayOptions %}
     {% include "/partials/bulkEditorResource.tpl" %}

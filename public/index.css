@@ -98,3 +98,7 @@
 .bulk-editors form.active {
     flex-basis: 100%;
 }
+
+[x-cloak] {
+    display: none !important;
+}

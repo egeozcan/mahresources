@@ -42,3 +42,13 @@ window.addEventListener('paste', e => {
   }
   fileInput.files = e.clipboardData.files;
 });
+
+function setCheckBox(checkBox, checked) {
+  if (checked) {
+    checkBox.setAttribute("checked", "checked");
+  } else {
+    checkBox.removeAttribute("checked");
+  }
+
+  checkBox.checked = checked;
+}

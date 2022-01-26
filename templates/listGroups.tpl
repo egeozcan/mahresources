@@ -1,5 +1,12 @@
 {% extends "/layouts/base.tpl" %}
 
+{% block settings %}
+<label class="flex justify-between items-center content-center">
+    Show Descriptions
+    <input type="checkbox" name="showDescriptions" x-data x-init="$store.savedSetting.registerEl($root)" />
+</label>
+{% endblock %}
+
 {% block prebody %}
     <div class="pb-3" x-data x-show="[...$store.bulkSelection.selectedIds].length === 0" x-collapse>
         {% include "/partials/form/formParts/connected/selectAllButton.tpl" %}

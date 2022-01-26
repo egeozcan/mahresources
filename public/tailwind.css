@@ -1075,6 +1075,9 @@ select {
 .top-0 {
 	top: 0px;
 }
+.right-0 {
+	right: 0px;
+}
 .bottom-0 {
 	bottom: 0px;
 }
@@ -1114,14 +1117,14 @@ select {
 .mt-7 {
 	margin-top: 1.75rem;
 }
+.mt-4 {
+	margin-top: 1rem;
+}
 .ml-4 {
 	margin-left: 1rem;
 }
 .mb-2 {
 	margin-bottom: 0.5rem;
-}
-.mt-4 {
-	margin-top: 1rem;
 }
 .ml-14 {
 	margin-left: 3.5rem;
@@ -1560,6 +1563,10 @@ select {
 .text-xs {
 	font-size: 0.75rem;
 	line-height: 1rem;
+}
+.text-lg {
+	font-size: 1.125rem;
+	line-height: 1.75rem;
 }
 .text-xl {
 	font-size: 1.25rem;
