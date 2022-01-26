@@ -132,13 +132,8 @@ document.addEventListener("alpine:init", () => {
       btn.innerText = form.querySelector("label, button").innerText;
       btn.className = btnClasses;
       form.insertAdjacentElement("afterend", btn);
-      btn.addEventListener("click", () => {
-        if (this.isActiveEditor(form)) {
-          this.closeEditor();
-        } else {
-          this.setActiveEditor(form);
-        }
-      });
+      btn.addEventListener("click", () =>
+          this.isActiveEditor(form) ? this.closeEditor() : this.setActiveEditor(form));
       this.editors.push(form);
       form.style.display = "none";
       if (form.classList.contains("no-ajax")) {

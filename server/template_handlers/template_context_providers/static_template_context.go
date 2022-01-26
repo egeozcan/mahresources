@@ -145,6 +145,8 @@ func getWithQuery(request *http.Request) func(name, value string, resetPage bool
 		}
 
 		parsedBaseUrl.RawQuery = q.Encode()
+		// we don't want to rewrite pointing to a partial
+		parsedBaseUrl.Path = strings.TrimSuffix(parsedBaseUrl.Path, ".body")
 
 		return parsedBaseUrl.String()
 	}
