@@ -55,6 +55,10 @@ document.addEventListener('alpine:init', () => {
                         this.errorMessage = 'Please select at least ' + min + ' ' + (min === 1 ? 'value' : 'values');
                     }
                 });
+
+                this.$el.closest('form').addEventListener('reset', (e) => {
+                    this.selectedResults = [];
+                });
             },
 
             async addVal() {
