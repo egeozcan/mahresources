@@ -33,12 +33,7 @@
     <a href="/v1/resource/view?id={{ resource.ID }}#{{ entity.ContentType }}">
         <img height="300" src="/v1/resource/preview?id={{ resource.ID }}&height=300" alt="Preview">
     </a>
-    {% include "/partials/sideTitle.tpl" with title="Tags" %}
-    <div>
-        {% for tag in resource.Tags %}
-            {% include "/partials/tag.tpl" with name=tag.Name ID=tag.ID %}
-        {% endfor %}
-    </div>
+    {% include "/partials/tagList.tpl" with tags=resource.Tags addTagUrl='/v1/resources/addTags' id=resource.ID %}
 
     {% include "/partials/sideTitle.tpl" with title="Meta Data" %}
     {% include "/partials/json.tpl" with jsonData=resource.Meta %}

@@ -37,7 +37,7 @@
 
 {% block sidebar %}
     {% if group.Owner %}{% include "/partials/ownerDisplay.tpl" with owner=group.Owner %}{% endif %}
-    {% include "/partials/tagList.tpl" with tags=group.Tags %}
+    {% include "/partials/tagList.tpl" with tags=group.Tags addTagUrl='/v1/groups/addTags' id=group.ID %}
 
     {% include "/partials/sideTitle.tpl" with title="Meta Data" %}
     {% include "/partials/json.tpl" with jsonData=group.Meta %}

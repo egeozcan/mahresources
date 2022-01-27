@@ -11,5 +11,5 @@
         bg-indigo-600 hover:bg-indigo-700 focus:ring-indigo-500
     {% endif %}
     focus:outline-none focus:ring-2 focus:ring-offset-2 ">
-    {% if text %}{{ text }}{% else %}Search{% endif %}
+    {% if text %}{% autoescape off %}{{ text }}{% endautoescape %}{% else %}Search{% endif %}
 </button>
