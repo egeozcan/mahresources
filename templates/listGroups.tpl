@@ -52,7 +52,7 @@
 {% endblock %}
 
 {% block body %}
-    <div class="flex flex-col gap-4">
+    <div class="flex flex-col gap-4 items-container">
         {% for entity in groups %}
             {% include "/partials/group.tpl" with selectable=true %}
         {% endfor %}

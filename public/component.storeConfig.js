@@ -1,6 +1,4 @@
 document.addEventListener('alpine:init', () => {
-    const listeners = new WeakMap();
-
     window.Alpine.store('savedSetting', {
         sessionSettings: JSON.parse(sessionStorage.getItem("settings") || '{}'),
         localSettings: JSON.parse(localStorage.getItem("settings") || '{}'),
@@ -17,17 +15,11 @@ document.addEventListener('alpine:init', () => {
                 el.value = settings[el.name] ?? defVal;
             }
 
-            const listener = () => {
+            el.addEventListener("change", () => {
                 const value = el.checked ?? el.value;
                 store.setItem("settings", JSON.stringify({ ...settings, [el.name]: value }));
                 settings[el.name] = value;
-            };
-
-            if (listeners.has(el)) {
-                el.removeEventListener("change", listeners.get(el))
-            }
-
-            el.addEventListener("change", listener);
+            });
         }
     });
 });

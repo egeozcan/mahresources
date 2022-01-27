@@ -157,7 +157,7 @@ document.addEventListener("alpine:init", () => {
           const newHtml = await fetch(url.toString()).then(x => x.text());
           form.reset();
           this.deselectAll();
-          Alpine.morph(document.querySelector(".list-container"), newHtml);
+          Alpine.morph(document.querySelector(".list-container, .items-container"), newHtml);
         } finally {
           form.parentElement.classList.remove("pointer-events-none");
         }
