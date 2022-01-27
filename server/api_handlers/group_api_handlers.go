@@ -158,7 +158,7 @@ func GetRemoveTagsFromGroupsHandler(ctx interfaces.GroupWriter) func(writer http
 	}
 }
 
-func GetBulkDeleteGroupsHandler(ctx interfaces.GroupWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetBulkDeleteGroupsHandler(ctx interfaces.GroupDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BulkQuery{}
 		var err error
@@ -232,5 +232,29 @@ func GetMergeGroupsHandler(ctx interfaces.GroupWriter) func(writer http.Response
 		}
 
 		http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", editor.Winner))
+	}
+}
+
+func GetDuplicateGroupHandler(ctx interfaces.GroupWriter) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var editor query_models.EntityIdQuery
+
+		if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		group, err := ctx.DuplicateGroup(editor.ID)
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		if http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/group?id=%v", group.ID)) {
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(&group)
 	}
 }

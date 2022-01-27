@@ -470,3 +470,27 @@ func (ctx *MahresourcesContext) FindParentsOfGroup(id uint) (*[]models.Group, er
 
 	return &results, ctx.db.Find(&results, ids).Error
 }
+
+func (ctx *MahresourcesContext) DuplicateGroup(id uint) (*models.Group, error) {
+	var result *models.Group
+	var original models.Group
+
+	if err := ctx.db.First(&original, id).Error; err != nil {
+		return nil, err
+	}
+
+	result = &models.Group{
+		Name:             original.Name,
+		Description:      original.Description,
+		URL:              original.URL,
+		Meta:             original.Meta,
+		OwnerId:          original.OwnerId,
+		RelatedResources: original.RelatedResources,
+		RelatedNotes:     original.RelatedNotes,
+		RelatedGroups:    original.RelatedGroups,
+		Tags:             original.Tags,
+		CategoryId:       original.CategoryId,
+	}
+
+	return result, ctx.db.Save(result).Error
+}

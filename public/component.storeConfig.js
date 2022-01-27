@@ -5,15 +5,16 @@ document.addEventListener('alpine:init', () => {
         sessionSettings: JSON.parse(sessionStorage.getItem("settings") || '{}'),
         localSettings: JSON.parse(localStorage.getItem("settings") || '{}'),
         /** @param {HTMLInputElement} el
-         * @param {boolean} isLocal */
-        registerEl(el, isLocal = true) {
+         @param {boolean} isLocal
+         @param {boolean} defVal */
+        registerEl(el, isLocal = true, defVal = true) {
             const settings = isLocal ? this.localSettings : this.sessionSettings;
             const store = isLocal ? localStorage : sessionStorage;
 
             if (typeof el.checked !== "undefined") {
-                setCheckBox(el, settings[el.name]?.toString() === "true");
+                setCheckBox(el, (settings[el.name] ?? defVal)?.toString() === "true");
             } else {
-                el.value = settings[el.name];
+                el.value = settings[el.name] ?? defVal;
             }
 
             const listener = () => {

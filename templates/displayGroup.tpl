@@ -54,4 +54,14 @@
         {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='losers' title='Groups To Merge' id=getNextId("autocompleter") extraInfo="Category" %}
         <div class="mt-2">{% include "/partials/form/searchButton.tpl" with text="Merge" %}</div>
     </form>
+
+    <form
+        action="/v1/group/clone"
+        :action="'/v1/group/clone?redirect=' + encodeURIComponent(window.location)"
+        method="post"
+    >
+        <input type="hidden" name="Id" value="{{ group.ID }}">
+        <p>Clone group?</p>
+        <div class="mt-2">{% include "/partials/form/searchButton.tpl" with text="Clone" %}</div>
+    </form>
 {% endblock %}
