@@ -1,12 +1,5 @@
 {% extends "/layouts/gallery.tpl" %}
 
-{% block settings %}
-<label class="flex justify-between items-center content-center">
-    <span>Show Text</span>
-    <input type="checkbox" name="showDescriptions" x-data x-init="$store.savedSetting.registerEl($root)" />
-</label>
-{% endblock %}
-
 {% block gallery %}
     {% for entity in notes %}
         {% include "/partials/note.tpl" %}

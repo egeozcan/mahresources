@@ -43,6 +43,10 @@
         <div x-cloak x-data="{ active: false }" class="settings relative inline-flex align-middle">
             <button class="text-lg" @click="active = !active" @click.outside="setTimeout(() => active = false, 100)">⚙</button>
             <div x-show="active" class="absolute p-4 mt-6 top-0 right-0 bg-white" style="max-width: 50vw; min-width: 170px;">
+                <label class="flex justify-between items-center content-center">
+                    Show Descriptions
+                    <input type="checkbox" name="showDescriptions" x-data x-init="$store.savedSetting.registerEl($root)" />
+                </label>
                 {% block settings %}{% endblock %}
             </div>
         </div>
