@@ -24,6 +24,7 @@
                     class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md mt-2"
                     x-bind="inputEvents"
                     x-init="setTimeout(() => { addModeForTag !== false && $el.focus(); }, 1)"
+                    autocomplete="off"
             >
             {% include "/partials/form/formParts/dropDownResults.tpl" with condition="dropdownActive && results.length > 0" action="pushVal" %}
             {% include "/partials/form/formParts/dropDownSelectedResults.tpl" %}
