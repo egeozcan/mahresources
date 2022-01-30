@@ -190,7 +190,8 @@ func (jsonQuery *JSONQueryExpression) Build(builder clause.Builder) {
 
 					builder.WriteString(fmt.Sprintf("(%v::jsonb #> ", stmt.Quote(jsonQuery.column)))
 
-					stmt.AddVar(builder, fmt.Sprintf("{%v})", strings.Join(jsonQuery.keys, ",")))
+					stmt.AddVar(builder, fmt.Sprintf("{%v}", strings.Join(jsonQuery.keys, ",")))
+					builder.WriteString(")")
 
 					if isTextBased {
 						stmt.WriteString("::text")
@@ -210,14 +211,14 @@ func (jsonQuery *JSONQueryExpression) Build(builder clause.Builder) {
 
 					switch jsonQuery.value.(type) {
 					case string:
-						if isTextBased {
+						if !isTextBased {
 							stmt.WriteString("to_jsonb")
 						}
 						stmt.WriteString("(")
 						stmt.AddVar(builder, jsonQuery.value)
 						stmt.WriteString("::text)")
 					case bool, float64:
-						if isTextBased {
+						if !isTextBased {
 							stmt.WriteString("to_jsonb")
 						}
 						stmt.WriteString(fmt.Sprintf("to_jsonb(%v)", jsonQuery.value))
