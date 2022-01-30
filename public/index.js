@@ -52,3 +52,18 @@ function setCheckBox(checkBox, checked) {
 
   checkBox.checked = checked;
 }
+
+function updateClipboard(newClip) {
+  navigator.clipboard.writeText(newClip).catch(function () {
+    const copyText = document.createElement("input");
+    setTimeout(() => copyText.remove(), 100);
+    document.body.append(copyText);
+    copyText.value = newClip;
+    copyText.select();
+    if (!document.execCommand("copy")) {
+      throw new Error("execcommand failed");
+    }
+  }).catch(function() {
+    prompt("", newClip)
+  });
+}

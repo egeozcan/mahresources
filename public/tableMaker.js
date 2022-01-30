@@ -1,6 +1,6 @@
-function renderJsonTable(data) {
+function renderJsonTable(data, path = ["$"]) {
     if (Array.isArray(data)) {
-        return generateArrayTable(data);
+        return generateArrayTable(data, path);
     }
 
     if (data instanceof Date) {
@@ -8,7 +8,7 @@ function renderJsonTable(data) {
     }
 
     if (typeof data === "object" && data !== undefined) {
-        return generateObjectTable(data);
+        return generateObjectTable(data, path);
     }
 
     if (typeof data === "string") {
@@ -24,7 +24,7 @@ function renderJsonTable(data) {
     );
 }
 
-function generateObjectTable(obj) {
+function generateObjectTable(obj, path = ["$"]) {
     const table = document.createElement("table");
     const tbody = document.createElement("tbody");
 
@@ -38,10 +38,15 @@ function generateObjectTable(obj) {
     Object.keys(obj).forEach(key => {
         const row = tbody.insertRow(-1);
         const header = document.createElement("th");
-        const content = renderJsonTable(obj[key]);
+        const subPath = [...path, escapeKey(key)];
+        const pathText = subPath.join("");
+        const content = renderJsonTable(obj[key], subPath);
 
         row.appendChild(header);
         header.innerHTML = escapeHTML(key);
+        header.title = pathText;
+        addCopyListener(header, pathText);
+        addCopyListener(row, pathText);
 
         if (typeof content === "string") {
             const contentCell = row.insertCell();
@@ -50,6 +55,7 @@ function generateObjectTable(obj) {
         } else {
             row.classList.add("hasSubTable");
             content.classList.add("subTable");
+            addCopyListener(content, pathText);
             header.colSpan = 2;
             header.appendChild(content);
         }
@@ -58,7 +64,7 @@ function generateObjectTable(obj) {
     return table;
 }
 
-function generateArrayTable(arr) {
+function generateArrayTable(arr, path = ["$"]) {
     const table = document.createElement("table");
     const tbody = document.createElement("tbody");
 
@@ -76,14 +82,18 @@ function generateArrayTable(arr) {
         !isRenderableAsArray(firstRow)
         || arr.some(el => !isRenderableAsArray(el, titles))
     ) {
-        arr.forEach(el => {
+        arr.forEach((el, i) => {
             const row = tbody.insertRow();
             const contentCell = row.insertCell();
-            const content = renderJsonTable(el);
+            const subPath = [...path, escapeKey(i)];
+            const pathText = subPath.join("");
+            const content = renderJsonTable(el, subPath);
+            addCopyListener(row, pathText);
 
             if (typeof content === "string") {
                 contentCell.innerHTML = escapeHTML(content);
             } else {
+                addCopyListener(content, pathText);
                 contentCell.appendChild(content);
             }
         });
@@ -103,17 +113,23 @@ function generateArrayTable(arr) {
     arr.forEach((el, idx) => {
         const row = tbody.insertRow();
         const cellClass = idx % 2 === 0 ? "even" : "odd";
+        addCopyListener(row, [...path, escapeKey(idx)].join(""));
 
         titles.forEach(title => {
             const contentCell = row.insertCell();
-            const content = renderJsonTable(el[title]);
+            const subPath = [...path, escapeKey(idx), escapeKey(title)];
+            const pathText = subPath.join("");
+            addCopyListener(contentCell, pathText);
+            const content = renderJsonTable(el[title], subPath);
 
             contentCell.classList.add(cellClass);
+            contentCell.title = subPath.join("");
 
             if (typeof content === "string") {
                 contentCell.innerHTML = escapeHTML(content);
             } else {
                 contentCell.appendChild(content);
+                addCopyListener(content, pathText);
             }
         });
     });
@@ -153,4 +169,32 @@ function escapeHTML(str) {
 
     p.appendChild(text);
     return p.innerHTML;
+}
+
+/**
+ * @param {string|number} key
+ * @returns {string}
+ */
+function escapeKey(key) {
+    if (typeof key === "number") {
+        return `[${key}]`
+    }
+
+    if (key.match(/^[a-z_]([a-z0-9_]+)?$/i)) {
+        return `.${key}`
+    }
+
+    return `["${key.replaceAll('"', '\\"')}"]`;
+}
+
+/**
+ *
+ * @param {HTMLElement} el
+ * @param {string} text
+ */
+function addCopyListener(el, text) {
+    el.addEventListener("click", (e) => {
+        updateClipboard(text);
+        e.stopPropagation();
+    });
 }

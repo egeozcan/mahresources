@@ -182,9 +182,19 @@ func (jsonQuery *JSONQueryExpression) Build(builder clause.Builder) {
 			case OperatorEquals, OperatorNotEquals, OperatorLike, OperatorNotLike, OperatorGreaterThan, OperatorGreaterThanOrEquals, OperatorLessThan, OperatorLessThanOrEquals:
 				if len(jsonQuery.keys) > 0 {
 
-					builder.WriteString(fmt.Sprintf("%v::jsonb #> ", stmt.Quote(jsonQuery.column)))
+					isTextBased := false
 
-					stmt.AddVar(builder, fmt.Sprintf("{%v}", strings.Join(jsonQuery.keys, ",")))
+					if jsonQuery.operation == OperatorLike || jsonQuery.operation == OperatorNotLike {
+						isTextBased = true
+					}
+
+					builder.WriteString(fmt.Sprintf("(%v::jsonb #> ", stmt.Quote(jsonQuery.column)))
+
+					stmt.AddVar(builder, fmt.Sprintf("{%v})", strings.Join(jsonQuery.keys, ",")))
+
+					if isTextBased {
+						stmt.WriteString("::text")
+					}
 
 					if jsonQuery.value == nil && jsonQuery.operation == OperatorNotEquals {
 						builder.WriteString(" IS NOT ")
@@ -200,10 +210,16 @@ func (jsonQuery *JSONQueryExpression) Build(builder clause.Builder) {
 
 					switch jsonQuery.value.(type) {
 					case string:
-						stmt.WriteString("to_jsonb(")
+						if isTextBased {
+							stmt.WriteString("to_jsonb")
+						}
+						stmt.WriteString("(")
 						stmt.AddVar(builder, jsonQuery.value)
 						stmt.WriteString("::text)")
 					case bool, float64:
+						if isTextBased {
+							stmt.WriteString("to_jsonb")
+						}
 						stmt.WriteString(fmt.Sprintf("to_jsonb(%v)", jsonQuery.value))
 					case nil:
 						stmt.WriteString("NULL")

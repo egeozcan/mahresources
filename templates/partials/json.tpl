@@ -23,5 +23,5 @@
             @click.prevent="expanded = !expanded"
             x-text="expanded ? 'Minimize' : 'Fullscreen'">
     </button>
-    <div x-html="renderJsonTable(keys ? pick(jsonData, ...keys.split(',')) : jsonData).outerHTML"></div>
+    <div x-init="$el.appendChild(renderJsonTable(keys ? pick(jsonData, ...keys.split(',')) : jsonData))"></div>
 </div>
