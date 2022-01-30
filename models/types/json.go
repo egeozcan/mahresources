@@ -221,7 +221,7 @@ func (jsonQuery *JSONQueryExpression) Build(builder clause.Builder) {
 						if !isTextBased {
 							stmt.WriteString("to_jsonb")
 						}
-						stmt.WriteString(fmt.Sprintf("to_jsonb(%v)", jsonQuery.value))
+						stmt.WriteString(fmt.Sprintf("(%v)", jsonQuery.value))
 					case nil:
 						stmt.WriteString("NULL")
 					default:
