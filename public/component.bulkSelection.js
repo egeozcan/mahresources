@@ -1,16 +1,16 @@
-const btnDefaultClass = "bg-gray-500";
-const btnActiveClass = "bg-indigo-600";
-const btnClasses = `inline-flex justify-center
+document.addEventListener("alpine:init", () => {
+  const btnDefaultClass = "bg-gray-500";
+  const btnActiveClass = "bg-indigo-600";
+  const btnClasses = `inline-flex justify-center
         py-2 px-4 mt-3
         border border-transparent
         items-center
         shadow-sm text-sm font-medium rounded-md text-white 
         ${btnDefaultClass} focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500`;
 
-document.addEventListener("alpine:init", () => {
   let currentIndex = 0;
 
-  Alpine.store("bulkSelection", {
+  window.Alpine.store("bulkSelection", {
     selectedIds: new Set(),
     elements: [],
     editors: [],
@@ -98,15 +98,12 @@ document.addEventListener("alpine:init", () => {
       return this.activeEditor === el;
     },
 
+    /**
+     * @param {HTMLFormElement} el
+     */
     setActiveEditor(el) {
       this.activeEditor = el;
-      this.editors.forEach(form => {
-        const isActive = this.isActiveEditor(form);
-        const btn = form.previousElementSibling;
-
-        btn?.classList.toggle(btnActiveClass, isActive);
-        btn?.classList.toggle(btnDefaultClass, !isActive);
-      });
+      setTimeout(() => el?.querySelector("input:not([type='hidden'])")?.focus?.(), 200);
     },
 
     closeEditor(el) {
@@ -135,6 +132,11 @@ document.addEventListener("alpine:init", () => {
       btn.innerText = form.querySelector("label, button").innerText;
       btn.className = btnClasses;
       btn.addEventListener("click", () => this.toggleEditor(form));
+      btn.setAttribute("x-effect", `() => {
+        const isActive = $store.bulkSelection.isActiveEditor($el.nextElementSibling);
+        $el.classList.toggle("${btnActiveClass}", isActive);
+        $el.classList.toggle("${btnDefaultClass}", !isActive);
+      }`);
 
       form.setAttribute("x-show", "$store.bulkSelection.isActiveEditor($el)");
       form.setAttribute("x-collapse", "");
