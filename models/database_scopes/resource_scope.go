@@ -53,7 +53,8 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 					  UNION ALL
 					  SELECT id AS res_id FROM resources WHERE owner_id IN ?
 					)
-					SELECT res_id FROM cte GROUP BY res_id HAVING count(*) = ?)`,
+					SELECT res_id FROM cte GROUP BY res_id HAVING count(*) = ?
+				)`,
 				query.Groups,
 				query.Groups,
 				len(query.Groups),
@@ -71,19 +72,19 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 		}
 
 		if query.ShowWithSimilar {
-			subSubQuery := originalDb.
+			findDifferentHashToCurrent := originalDb.
 				Table("image_hashes i").
 				Where("ih.d_hash = i.d_hash").
 				Where("ih.id <> i.id").
 				Select("1")
 
-			subQuery := originalDb.
+			hashAndHashDuplicateExists := originalDb.
 				Table("image_hashes ih").
 				Where("resources.id = ih.resource_id").
-				Where("EXISTS (?)", subSubQuery).
+				Where("EXISTS (?)", findDifferentHashToCurrent).
 				Select("1")
 
-			dbQuery = dbQuery.Where("EXISTS (?)", subQuery)
+			dbQuery = dbQuery.Where("EXISTS (?)", hashAndHashDuplicateExists)
 		}
 
 		if query.Name != "" {

@@ -9,7 +9,7 @@ import (
 )
 
 func GetIntQueryParameter(request *http.Request, paramName string, defVal int64) int64 {
-	paramFromRes := getQueryParameter(request, paramName, "")
+	paramFromRes := GetQueryParameter(request, paramName, "")
 
 	if paramFromRes == "" {
 		return defVal
@@ -25,7 +25,7 @@ func GetIntQueryParameter(request *http.Request, paramName string, defVal int64)
 }
 
 func GetUIntQueryParameter(request *http.Request, paramName string, defVal uint) uint {
-	paramFromRes := getQueryParameter(request, paramName, "")
+	paramFromRes := GetQueryParameter(request, paramName, "")
 
 	if paramFromRes == "" {
 		return defVal
@@ -41,7 +41,7 @@ func GetUIntQueryParameter(request *http.Request, paramName string, defVal uint)
 }
 
 func RedirectIfHTMLAccepted(writer http.ResponseWriter, request *http.Request, url string) bool {
-	requestedBackUrl := getQueryParameter(request, "redirect", "")
+	requestedBackUrl := GetQueryParameter(request, "redirect", "")
 
 	if requestedBackUrl != "" {
 		http.Redirect(writer, request, requestedBackUrl, http.StatusSeeOther)
@@ -116,7 +116,7 @@ func requestAcceptsHTML(request *http.Request) bool {
 	return false
 }
 
-func getQueryParameter(request *http.Request, paramName string, defVal string) string {
+func GetQueryParameter(request *http.Request, paramName string, defVal string) string {
 	paramFromRes := request.URL.Query().Get(paramName)
 
 	if paramFromRes != "" {

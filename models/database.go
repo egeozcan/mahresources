@@ -2,6 +2,7 @@ package models
 
 import (
 	"errors"
+	"github.com/jmoiron/sqlx"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -73,4 +74,8 @@ func CreateDatabaseConnection(dbType, dsn, logType string) (*gorm.DB, error) {
 	}
 
 	return db, nil
+}
+
+func CreateReadOnlyDatabaseConnection(dbType, dsn string) (*sqlx.DB, error) {
+	return sqlx.Open(dbType, dsn)
 }

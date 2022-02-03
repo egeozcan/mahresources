@@ -17,6 +17,7 @@ func main() {
 	context, db, mainFs := application_context.CreateContext()
 
 	if err := db.AutoMigrate(
+		&models.Query{},
 		&models.Resource{},
 		&models.Note{},
 		&models.Tag{},

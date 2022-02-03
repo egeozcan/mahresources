@@ -10,9 +10,11 @@ require (
 	github.com/gabriel-vasile/mimetype v1.4.0
 	github.com/gorilla/mux v1.8.0
 	github.com/gorilla/schema v1.2.0
-	github.com/jmoiron/sqlx v1.3.4 // indirect
+	github.com/jmoiron/sqlx v1.3.4
 	github.com/joho/godotenv v1.4.0
+	github.com/lib/pq v1.10.2
 	github.com/matoous/go-nanoid/v2 v2.0.0
+	github.com/mattn/go-sqlite3 v1.14.9
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/spf13/afero v1.6.0

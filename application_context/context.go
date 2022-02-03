@@ -2,6 +2,9 @@ package application_context
 
 import (
 	"fmt"
+	"github.com/jmoiron/sqlx"
+	_ "github.com/lib/pq"
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/spf13/afero"
 	"gorm.io/gorm"
 	"io"
@@ -11,6 +14,7 @@ import (
 	"mahresources/storage"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -27,20 +31,25 @@ type MahresourcesConfig struct {
 }
 
 type MahresourcesContext struct {
-	fs             afero.Fs
-	db             *gorm.DB
-	Config         *MahresourcesConfig
+	// the main file system
+	fs afero.Fs
+	// the db connection to the main db with read and write rights
+	db *gorm.DB
+	// the db readonly connection to the main db
+	readOnlyDB *sqlx.DB
+	Config     *MahresourcesConfig
+	// these are the alternative locations to look at files or import them from
 	altFileSystems map[string]afero.Fs
 }
 
-func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, config *MahresourcesConfig) *MahresourcesContext {
+func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.DB, config *MahresourcesConfig) *MahresourcesContext {
 	altFileSystems := make(map[string]afero.Fs, len(config.AltFileSystems))
 
 	for key, path := range config.AltFileSystems {
 		altFileSystems[key] = storage.CreateStorage(path)
 	}
 
-	return &MahresourcesContext{fs: filesystem, db: db, Config: config, altFileSystems: altFileSystems}
+	return &MahresourcesContext{fs: filesystem, db: db, readOnlyDB: readOnlyDB, Config: config, altFileSystems: altFileSystems}
 }
 
 // EnsureForeignKeysActive ensures that sqlite connection somehow didn't manage to deactivate foreign keys
@@ -61,7 +70,7 @@ func (ctx *MahresourcesContext) EnsureForeignKeysActive(db *gorm.DB) {
 
 func (ctx *MahresourcesContext) WithTransaction(txFn func(transactionCtx *MahresourcesContext) error) error {
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
-		altContext := NewMahresourcesContext(ctx.fs, tx, ctx.Config)
+		altContext := NewMahresourcesContext(ctx.fs, tx, ctx.readOnlyDB, ctx.Config)
 		return txFn(altContext)
 	})
 }
@@ -125,6 +134,7 @@ func CreateContext() (*MahresourcesContext, *gorm.DB, afero.Fs) {
 	ffMpegPath := os.Getenv("FFMPEG_PATH")
 	dbType := os.Getenv("DB_TYPE")
 	dsn := os.Getenv("DB_DSN")
+	readOnlyDsn := os.Getenv("DB_READONLY_DSN")
 	logType := os.Getenv("DB_LOG_FILE")
 	fileSavePath := os.Getenv("FILE_SAVE_PATH")
 	bindAddress := os.Getenv("BIND_ADDRESS")
@@ -144,6 +154,12 @@ func CreateContext() (*MahresourcesContext, *gorm.DB, afero.Fs) {
 		db = connectedDB
 	}
 
+	readOnlyDb, err := models.CreateReadOnlyDatabaseConnection(strings.ToLower(dbType), readOnlyDsn)
+
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+
 	mainFs := storage.CreateStorage(fileSavePath)
 	altFSystems := make(map[string]string, numAlt)
 
@@ -151,7 +167,7 @@ func CreateContext() (*MahresourcesContext, *gorm.DB, afero.Fs) {
 		altFSystems[os.Getenv(fmt.Sprintf("FILE_ALT_NAME_%v", i+1))] = os.Getenv(fmt.Sprintf("FILE_ALT_PATH_%v", i+1))
 	}
 
-	return NewMahresourcesContext(mainFs, db, &MahresourcesConfig{
+	return NewMahresourcesContext(mainFs, db, readOnlyDb, &MahresourcesConfig{
 		DbType:         dbType,
 		AltFileSystems: altFSystems,
 		FfmpegPath:     ffMpegPath,

@@ -124,4 +124,10 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/categories").HandlerFunc(api_handlers.GetCategoriesHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/category").HandlerFunc(api_handlers.GetAddCategoryHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/category/delete").HandlerFunc(api_handlers.GetRemoveCategoryHandler(appContext))
+
+	router.Methods(http.MethodGet).Path("/v1/queries").HandlerFunc(api_handlers.GetQueriesHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/query").HandlerFunc(api_handlers.GetQueryHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/query").HandlerFunc(api_handlers.GetAddQueryHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/query/delete").HandlerFunc(api_handlers.GetRemoveQueryHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/query/run").HandlerFunc(api_handlers.GetRunQueryHandler(appContext))
 }
