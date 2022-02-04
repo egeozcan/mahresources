@@ -35,8 +35,21 @@ func sQLToMap(rows *sqlx.Rows) ([]map[string]interface{}, error) {
 
 		m := make(map[string]interface{})
 		for i, colName := range cols {
-			val := columnPointers[i].(*interface{})
-			m[colName] = *val
+
+			switch columns[i].(type) {
+			case []uint8:
+				var jsonVal json.RawMessage
+				if err := json.Unmarshal(columns[i].([]byte), &jsonVal); err == nil {
+					m[colName] = jsonVal
+				} else {
+					val := columnPointers[i].(*interface{})
+					m[colName] = *val
+				}
+			default:
+				val := columnPointers[i].(*interface{})
+				m[colName] = *val
+			}
+
 		}
 
 		data = append(data, m)
