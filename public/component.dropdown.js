@@ -5,6 +5,7 @@ document.addEventListener('alpine:init', () => {
         min,
         ownerId,
         url,
+        sortBy,
         elName,
         filterEls = [],
         addUrl = "",
@@ -32,6 +33,7 @@ document.addEventListener('alpine:init', () => {
             addUrl,
             extraInfo,
             filterEls,
+            sortBy,
             requestAborter: null,
             addModeForTag: false,
             loading: false,
@@ -230,6 +232,10 @@ document.addEventListener('alpine:init', () => {
 
                 if (this.ownerId) {
                     params.ownerId = this.ownerId;
+                }
+
+                if (this.sortBy) {
+                    params.SortBy = this.sortBy;
                 }
 
                 if (this.filterEls && Array.isArray(this.filterEls)) {

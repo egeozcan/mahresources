@@ -12,14 +12,14 @@ import (
 func (ctx *MahresourcesContext) GetTags(offset, maxResults int, query *query_models.TagQuery) (*[]models.Tag, error) {
 	var tags []models.Tag
 
-	return &tags, ctx.db.Scopes(database_scopes.TagQuery(query)).Limit(maxResults).Offset(offset).Find(&tags).Error
+	return &tags, ctx.db.Scopes(database_scopes.TagQuery(query, false)).Limit(maxResults).Offset(offset).Find(&tags).Error
 }
 
 func (ctx *MahresourcesContext) GetTagsCount(query *query_models.TagQuery) (int64, error) {
 	var tag models.Tag
 	var count int64
 
-	return count, ctx.db.Scopes(database_scopes.TagQuery(query)).Model(&tag).Count(&count).Error
+	return count, ctx.db.Scopes(database_scopes.TagQuery(query, true)).Model(&tag).Count(&count).Error
 }
 
 func (ctx *MahresourcesContext) GetTag(id uint) (*models.Tag, error) {

@@ -10,6 +10,7 @@
         elName: '{{ elName }}',
         filterEls: '{{ filterEls }}' || [],
         extraInfo: '{{ extraInfo }}',
+        sortBy: '{{ sortBy }}',
     })"
     class="relative w-full"
 >

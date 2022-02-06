@@ -1,11 +1,16 @@
 package database_scopes
 
 import (
+	"fmt"
 	"gorm.io/gorm"
 	"mahresources/models/query_models"
+	"regexp"
+	"strings"
 )
 
-func TagQuery(query *query_models.TagQuery) func(db *gorm.DB) *gorm.DB {
+func TagQuery(query *query_models.TagQuery, ignoreSort bool) func(db *gorm.DB) *gorm.DB {
+	sortColumnMatcher := regexp.MustCompile("^(meta->>?'[a-z_]+'|[a-z_]+)(\\s(desc|asc))?$")
+
 	return func(db *gorm.DB) *gorm.DB {
 		likeOperator := "LIKE"
 
@@ -14,6 +19,18 @@ func TagQuery(query *query_models.TagQuery) func(db *gorm.DB) *gorm.DB {
 		}
 
 		dbQuery := db
+
+		if !ignoreSort && query.SortBy != "" && sortColumnMatcher.MatchString(query.SortBy) {
+			prefix := "most_used_"
+			if strings.HasPrefix(query.SortBy, prefix) {
+				tableName := fmt.Sprintf("%v_tags", strings.TrimPrefix(query.SortBy, prefix))
+				dbQuery.Order(fmt.Sprintf("(SELECT count(*) FROM %v jt WHERE jt.tag_id = tags.id) desc", tableName))
+			} else {
+				dbQuery = dbQuery.Order(query.SortBy)
+			}
+		} else if !ignoreSort {
+			dbQuery = dbQuery.Order("created_at desc")
+		}
 
 		if query.Name != "" {
 			dbQuery = dbQuery.Where("name "+likeOperator+" ?", "%"+query.Name+"%")

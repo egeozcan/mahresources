@@ -266,6 +266,7 @@ document.addEventListener("alpine:init", () => {
 
         url.searchParams.append("selectedItems", "entity.Tags");
         url.searchParams.append("title", "");
+        url.searchParams.append("sortBy", `most_used_${location.pathname.slice(1, -1)}`);
         url.searchParams.append("id", `tagEditor_${Math.random()}`);
         url.searchParams.append("elName", "editedId");
         url.searchParams.append("url", "/v1/tags");
