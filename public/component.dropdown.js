@@ -128,6 +128,9 @@ document.addEventListener('alpine:init', () => {
                 this.ensureMaxItems();
 
                 $event.target.value = '';
+                if (this.$refs?.autocompleter) {
+                    this.$refs.autocompleter.value = '';
+                }
                 $event.target.dispatchEvent(new Event('input'));
             },
 
