@@ -291,6 +291,8 @@ document.addEventListener("alpine:init", () => {
 
       container.innerHTML = "";
       container.appendChild(form);
+
+      setTimeout(() => form.querySelector("[x-ref='autocompleter']")?.focus(), 10);
     })
   });
 });
