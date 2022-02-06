@@ -8,6 +8,12 @@ import (
 //goland:noinspection GoUnusedParameter
 func jsonFilter(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *pongo2.Error) {
 	input := in.Interface()
+
+	switch input.(type) {
+	case string:
+		return pongo2.AsValue(input.(string)), nil
+	}
+
 	jsonValue, err := json.Marshal(&input)
 
 	if err != nil {

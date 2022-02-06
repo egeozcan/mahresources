@@ -26,7 +26,7 @@ document.addEventListener('alpine:init', () => {
             selectedIndex: -1,
             errorMessage: false,
             dropdownActive: false,
-            selectedResults: selectedResults || [],
+            selectedResults: typeof selectedResults === "string" ? JSON.parse(selectedResults) : (selectedResults || []),
             selectedIds: new Set(),
             url,
             addUrl,
@@ -37,7 +37,7 @@ document.addEventListener('alpine:init', () => {
             loading: false,
 
             init() {
-                selectedResults.forEach(val => {
+                this.selectedResults.forEach(val => {
                     this.selectedIds.add(val.ID);
                 });
 

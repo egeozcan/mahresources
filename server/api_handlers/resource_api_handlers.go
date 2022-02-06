@@ -410,6 +410,27 @@ func GetRemoveTagsFromResourcesHandler(ctx interfaces.ResourceWriter) func(write
 	}
 }
 
+func GetReplaceTagsOfResourcesHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var editor = query_models.BulkEditQuery{}
+		var err error
+
+		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		err = ctx.BulkReplaceTagsFromResources(&editor)
+
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
+	}
+}
+
 func GetAddMetaToResourcesHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BulkEditMetaQuery{}

@@ -700,6 +700,32 @@ func (ctx *MahresourcesContext) BulkRemoveTagsFromResources(query *query_models.
 	})
 }
 
+func (ctx *MahresourcesContext) BulkReplaceTagsFromResources(query *query_models.BulkEditQuery) error {
+	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		tags := make([]*models.Tag, len(query.EditedId))
+
+		for i, editedId := range query.EditedId {
+			tag, err := ctx.GetTag(editedId)
+
+			if err != nil {
+				return err
+			}
+
+			tags[i] = tag
+		}
+
+		for _, id := range query.ID {
+			appendErr := tx.Model(&models.Resource{ID: id}).Association("Tags").Replace(tags)
+
+			if appendErr != nil {
+				return appendErr
+			}
+		}
+
+		return nil
+	})
+}
+
 func (ctx *MahresourcesContext) BulkAddMetaToResources(query *query_models.BulkEditMetaQuery) error {
 	var resource models.Resource
 

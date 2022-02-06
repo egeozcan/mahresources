@@ -100,6 +100,14 @@
     flex-basis: 100%;
 }
 
+.edit-in-list {
+    display: none;
+}
+
+.list-container .edit-in-list {
+    display: inline-block;
+}
+
 [x-cloak] {
     display: none !important;
 }

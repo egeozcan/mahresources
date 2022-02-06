@@ -70,6 +70,11 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 		)
 	}
 
+	router.Methods(http.MethodGet).
+		Path("/partials/autocompleter").
+		HandlerFunc(template_handlers.
+			RenderTemplate("partials/form/autocompleter.tpl", template_context_providers.PartialContextProvider(appContext)))
+
 	router.Methods(http.MethodGet).Path("/").HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		http.Redirect(writer, request, "/notes", http.StatusMovedPermanently)
 	})
@@ -113,6 +118,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/resources/addTags").HandlerFunc(api_handlers.GetAddTagsToResourcesHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resources/addGroups").HandlerFunc(api_handlers.GetAddGroupsToResourcesHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resources/removeTags").HandlerFunc(api_handlers.GetRemoveTagsFromResourcesHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/resources/replaceTags").HandlerFunc(api_handlers.GetReplaceTagsOfResourcesHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resources/addMeta").HandlerFunc(api_handlers.GetAddMetaToResourcesHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resources/delete").HandlerFunc(api_handlers.GetBulkDeleteResourcesHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resources/merge").HandlerFunc(api_handlers.GetMergeResourcesHandler(appContext))

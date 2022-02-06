@@ -12,6 +12,7 @@ type ResourceWriter interface {
 	AddRemoteResource(resourceQuery *query_models.ResourceFromRemoteCreator) (*models.Resource, error)
 	EditResource(resourceQuery *query_models.ResourceEditor) (*models.Resource, error)
 	BulkRemoveTagsFromResources(query *query_models.BulkEditQuery) error
+	BulkReplaceTagsFromResources(query *query_models.BulkEditQuery) error
 	BulkAddMetaToResources(query *query_models.BulkEditMetaQuery) error
 	BulkAddTagsToResources(query *query_models.BulkEditQuery) error
 	BulkAddGroupsToResources(query *query_models.BulkEditQuery) error

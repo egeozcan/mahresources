@@ -252,4 +252,44 @@ document.addEventListener("alpine:init", () => {
 
     selection.empty();
   });
+
+  [...document.querySelectorAll(".list-container .tags")].forEach(async (container) => {
+    container.addEventListener("click", async function (e) {
+      if (!e.target.classList.contains("edit-in-list")) {
+        return;
+      }
+
+      e.preventDefault();
+
+      const res = await (async function() {
+        const url = new URL("http://localhost:9090/partials/autocompleter");
+
+        url.searchParams.append("selectedItems", "entity.Tags");
+        url.searchParams.append("title", "");
+        url.searchParams.append("id", `tagEditor_${Math.random()}`);
+        url.searchParams.append("elName", "editedId");
+        url.searchParams.append("url", "/v1/tags");
+        url.searchParams.append("addUrl", "/v1/tag");
+
+        return fetch(url.toString()).then(x => x.text());
+      })();
+
+      const form = document.createElement("form");
+      form.addEventListener("multiple-input", e => {
+        fetch('/v1' + location.pathname + '/replaceTags', { method: "POST", body: new FormData(form) });
+      })
+      form.className = "mb-6 p-4 active";
+
+      const elInput = document.createElement("input");
+      elInput.setAttribute(":value", "entity.ID");
+      elInput.name = "ID";
+      elInput.type = "hidden";
+
+      form.innerHTML = res;
+      form.appendChild(elInput);
+
+      container.innerHTML = "";
+      container.appendChild(form);
+    })
+  });
 });
