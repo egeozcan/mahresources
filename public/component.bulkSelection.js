@@ -262,7 +262,7 @@ document.addEventListener("alpine:init", () => {
       e.preventDefault();
 
       const res = await (async function() {
-        const url = new URL("/partials/autocompleter");
+        const url = new URL(`${window.location.origin}/partials/autocompleter`);
 
         url.searchParams.append("selectedItems", "entity.Tags");
         url.searchParams.append("title", "");
