@@ -12,6 +12,7 @@ import (
 	"log"
 	"mahresources/constants"
 	"os"
+	"strings"
 )
 
 func CreateDatabaseConnection(dbType, dsn, logType string) (*gorm.DB, error) {
@@ -77,5 +78,9 @@ func CreateDatabaseConnection(dbType, dsn, logType string) (*gorm.DB, error) {
 }
 
 func CreateReadOnlyDatabaseConnection(dbType, dsn string) (*sqlx.DB, error) {
+	if dbType == strings.ToLower(constants.DbTypeSqlite) {
+		dbType = "sqlite3"
+	}
+
 	return sqlx.Open(dbType, dsn)
 }

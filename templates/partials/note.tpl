@@ -1,8 +1,8 @@
 <div class="note">
     <a href="/note?id={{ entity.ID }}">
         <h3 class="mb-2 font-bold">{{ entity.Name }}</h3>
-        {% include "partials/description.tpl" with description=entity.Description preview=true %}
     </a>
+    {% include "partials/description.tpl" with description=entity.Description descriptionEditUrl="/blabla" preview=true %}
     <div class="tags mt-3 mb-2" style="margin-left: -0.5rem">
         {% for tag in entity.Tags %}
             <a class="no-underline" href='{{ withQuery("tags", stringId(tag.ID), true) }}'>

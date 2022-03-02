@@ -315,6 +315,12 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 
 	if existingNotFoundErr := tx.Where("hash = ?", hash).Preload("Groups").First(&existingResource).Error; existingNotFoundErr == nil {
 		if resourceQuery.OwnerId == *existingResource.OwnerId {
+			if len(resourceQuery.Groups) > 0 {
+				go func() {
+					groups, _ := ctx.GetGroupsWithIds(&resourceQuery.Groups)
+					_ = ctx.db.Model(&existingResource).Association("Groups").Append(groups)
+				}()
+			}
 			tx.Rollback()
 			return nil, errors.New("existing resource with same parent")
 		}
