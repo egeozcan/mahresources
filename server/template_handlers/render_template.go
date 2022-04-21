@@ -13,8 +13,8 @@ import (
 
 import _ "github.com/flosch/pongo2-addons"
 
-func discardFields(fields map[string]bool, intMap map[string]interface{}) map[string]interface{} {
-	res := make(map[string]interface{})
+func discardFields(fields map[string]bool, intMap map[string]any) map[string]any {
+	res := make(map[string]any)
 
 	for key, value := range intMap {
 		if _, exists := fields[key]; !exists && value != nil {

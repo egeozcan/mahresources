@@ -358,7 +358,7 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 
 		fmt.Printf("%#v\n", backups)
 
-		backupObj := make(map[string]interface{})
+		backupObj := make(map[string]any)
 		backupObj["backups"] = backups
 
 		backupsBytes, err := json.Marshal(&backupObj)

@@ -7,7 +7,7 @@ import (
 
 type URL url.URL
 
-func (u *URL) Scan(value interface{}) error {
+func (u *URL) Scan(value any) error {
 	url, err := url.Parse(value.(string))
 
 	if err != nil {

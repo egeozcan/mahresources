@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-func (ctx *MahresourcesContext) RunReadOnlyQuery(queryId uint, params map[string]interface{}) (*sqlx.Rows, error) {
+func (ctx *MahresourcesContext) RunReadOnlyQuery(queryId uint, params map[string]any) (*sqlx.Rows, error) {
 	var query models.Query
 
 	if err := ctx.db.First(&query, queryId).Error; err != nil {
@@ -20,7 +20,7 @@ func (ctx *MahresourcesContext) RunReadOnlyQuery(queryId uint, params map[string
 	return ctx.readOnlyDB.NamedQuery(query.Text, params)
 }
 
-func (ctx *MahresourcesContext) RunReadOnlyQueryByName(queryName string, params map[string]interface{}) (*sqlx.Rows, error) {
+func (ctx *MahresourcesContext) RunReadOnlyQueryByName(queryName string, params map[string]any) (*sqlx.Rows, error) {
 	var query models.Query
 
 	if err := ctx.db.Where("name = ?", queryName).First(&query).Error; err != nil {

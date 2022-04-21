@@ -19,7 +19,7 @@ func init() {
 	})
 }
 
-func tryFillStructValuesFromRequest(dst interface{}, request *http.Request) error {
+func tryFillStructValuesFromRequest(dst any, request *http.Request) error {
 	contentTypeHeader := request.Header.Get("Content-type")
 
 	if contentTypeHeader == constants.JSON {

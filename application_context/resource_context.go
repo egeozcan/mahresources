@@ -913,7 +913,7 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 
 		fmt.Printf("%#v\n", deletedResBackups)
 
-		backupObj := make(map[string]interface{})
+		backupObj := make(map[string]any)
 		backupObj["backups"] = deletedResBackups
 
 		backups, err := json.Marshal(&backupObj)

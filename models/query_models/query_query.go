@@ -14,4 +14,4 @@ type QueryQuery struct {
 	Name string
 }
 
-type QueryParameters = map[string]interface{}
+type QueryParameters = map[string]any

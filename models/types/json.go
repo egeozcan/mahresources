@@ -41,7 +41,7 @@ func (j JSON) Value() (driver.Value, error) {
 }
 
 // Scan scan value into Jsonb, implements sql.Scanner interface
-func (j *JSON) Scan(value interface{}) error {
+func (j *JSON) Scan(value any) error {
 	if value == nil {
 		*j = JSON("null")
 		return nil
@@ -107,7 +107,7 @@ type JSONQueryExpression struct {
 	column    string
 	keys      []string
 	operation JsonOperation
-	value     interface{}
+	value     any
 }
 
 // JSONQuery query column as json
@@ -124,7 +124,7 @@ func (jsonQuery *JSONQueryExpression) HasKey(keys ...string) *JSONQueryExpressio
 }
 
 // Operation returns clause.Expression
-func (jsonQuery *JSONQueryExpression) Operation(operation JsonOperation, value interface{}, keys ...string) *JSONQueryExpression {
+func (jsonQuery *JSONQueryExpression) Operation(operation JsonOperation, value any, keys ...string) *JSONQueryExpression {
 	if len(keys) == 1 && strings.Contains(keys[0], ".") {
 		keys = strings.Split(keys[0], ".")
 	}

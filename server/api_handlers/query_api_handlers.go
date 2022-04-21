@@ -14,17 +14,17 @@ import (
 	"strconv"
 )
 
-func sQLToMap(rows *sqlx.Rows) ([]map[string]interface{}, error) {
+func sQLToMap(rows *sqlx.Rows) ([]map[string]any, error) {
 	cols, err := rows.Columns()
 	if err != nil {
 		return nil, fmt.Errorf("column error: %v", err)
 	}
 
-	data := make([]map[string]interface{}, 0)
+	data := make([]map[string]any, 0)
 
 	for rows.Next() {
-		columns := make([]interface{}, len(cols))
-		columnPointers := make([]interface{}, len(cols))
+		columns := make([]any, len(cols))
+		columnPointers := make([]any, len(cols))
 		for i, _ := range columns {
 			columnPointers[i] = &columns[i]
 		}
@@ -33,7 +33,7 @@ func sQLToMap(rows *sqlx.Rows) ([]map[string]interface{}, error) {
 			return nil, err
 		}
 
-		m := make(map[string]interface{})
+		m := make(map[string]any)
 		for i, colName := range cols {
 
 			switch columns[i].(type) {
@@ -42,11 +42,11 @@ func sQLToMap(rows *sqlx.Rows) ([]map[string]interface{}, error) {
 				if err := json.Unmarshal(columns[i].([]byte), &jsonVal); err == nil {
 					m[colName] = jsonVal
 				} else {
-					val := columnPointers[i].(*interface{})
+					val := columnPointers[i].(*any)
 					m[colName] = *val
 				}
 			default:
-				val := columnPointers[i].(*interface{})
+				val := columnPointers[i].(*any)
 				m[colName] = *val
 			}
 

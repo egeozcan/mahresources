@@ -21,6 +21,6 @@ type QueryDeleter interface {
 }
 
 type QueryRunner interface {
-	RunReadOnlyQuery(queryId uint, params map[string]interface{}) (*sqlx.Rows, error)
-	RunReadOnlyQueryByName(queryName string, params map[string]interface{}) (*sqlx.Rows, error)
+	RunReadOnlyQuery(queryId uint, params map[string]any) (*sqlx.Rows, error)
+	RunReadOnlyQueryByName(queryName string, params map[string]any) (*sqlx.Rows, error)
 }

@@ -6,9 +6,9 @@ import (
 )
 
 type ColumnMeta struct {
-	Key       string      `json:"name"`
-	Value     interface{} `json:"value"`
-	Operation string      `json:"operation"`
+	Key       string `json:"name"`
+	Value     any    `json:"value"`
+	Operation string `json:"operation"`
 }
 
 func ParseMeta(input string) ColumnMeta {
@@ -16,7 +16,7 @@ func ParseMeta(input string) ColumnMeta {
 	parts := strings.Split(input, ":")
 	switch len(parts) {
 	case 2, 3:
-		var parsedValue interface{}
+		var parsedValue any
 		value := parts[1]
 		operation := "LI"
 

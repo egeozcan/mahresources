@@ -116,7 +116,7 @@ func createSortCols(standardCols []SortColumn, currentSortVal string) []SortColu
 	return append(res, standardCols...)
 }
 
-func stringId(id interface{}) string {
+func stringId(id any) string {
 	if u, ok := id.(uint); ok {
 		return strconv.Itoa(int(u))
 	}
