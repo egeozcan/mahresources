@@ -67,8 +67,6 @@ func main() {
 			"-i", path,
 			"-ss", "00:00:0",
 			"-vframes", "1",
-			"-c:v", "png",
-			"-f", "image2pipe",
 			thumbPath,
 		)
 

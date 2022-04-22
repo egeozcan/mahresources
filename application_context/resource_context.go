@@ -491,7 +491,7 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, wid
 					Data:        fileBytes,
 					Width:       0,
 					Height:      0,
-					ContentType: "image/png",
+					ContentType: "image/jpeg",
 					ResourceId:  &resource.ID,
 				}
 

@@ -16,4 +16,4 @@ var DbTypeSqlite string = "SQLITE"
 var MaxThumbWidth float64 = 600
 var MaxThumbHeight float64 = 600
 
-var ThumbFileSuffix = ".thumbnail.png"
+var ThumbFileSuffix = ".thumbnail.jpg"
