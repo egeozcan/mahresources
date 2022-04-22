@@ -1,12 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"errors"
 	"flag"
 	"fmt"
 	"github.com/joho/godotenv"
-	"io"
 	"io/fs"
 	"log"
 	"mahresources/application_context"
@@ -49,13 +47,9 @@ func main() {
 	}
 
 	walkErr := filepath.Walk(*target, func(path string, info fs.FileInfo, err error) error {
-		fmt.Println(path)
-
 		if !strings.HasSuffix(path, ".mp4") || info.IsDir() {
 			return nil
 		}
-
-		resultBuffer := bytes.NewBuffer(make([]byte, 0))
 
 		if err != nil {
 			return err
@@ -67,35 +61,24 @@ func main() {
 			return nil
 		}
 
+		fmt.Println(path)
+
 		cmd := exec.Command(context.Config.FfmpegPath,
 			"-i", path,
 			"-ss", "00:00:0",
 			"-vframes", "1",
 			"-c:v", "png",
 			"-f", "image2pipe",
-			"-",
+			thumbPath,
 		)
 
 		cmd.Stderr = os.Stderr
-		cmd.Stdout = resultBuffer
 
 		if err := cmd.Start(); err != nil {
 			return err
 		}
 
 		if err := cmd.Wait(); err != nil {
-			return err
-		}
-
-		thumbFile, err := os.Create(thumbPath)
-
-		if err != nil {
-			return err
-		}
-
-		_, err = io.Copy(thumbFile, resultBuffer)
-
-		if err != nil {
 			return err
 		}
 
