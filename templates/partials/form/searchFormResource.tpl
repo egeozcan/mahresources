@@ -13,6 +13,7 @@
     {% include "/partials/form/textInput.tpl" with name='Description' label='Description' value=queryValues.Description.0 %}
     {% include "/partials/form/textInput.tpl" with name='OriginalName' label='Original Name' value=queryValues.OriginalName.0 %}
     {% include "/partials/form/textInput.tpl" with name='Hash' label='Hash' value=queryValues.Hash.0 %}
+    {% include "/partials/form/textInput.tpl" with name='ContentType' label='Content Type' value=queryValues.ContentType.0 %}
     {% include "/partials/form/textInput.tpl" with name='OriginalLocation' label='Original Location' value=queryValues.OriginalLocation.0 %}
     {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' elName='tags' title='Tags' selectedItems=tags id=getNextId("autocompleter") %}
     {% include "/partials/form/autocompleter.tpl" with url='/v1/notes' elName='notes' title='Notes' selectedItems=notes id=getNextId("autocompleter") %}
@@ -21,5 +22,6 @@
     {% include "/partials/form/freeFields.tpl" with name="MetaQuery" url='/v1/resources/meta/keys' fields=parsedQuery.MetaQuery id=getNextId("freeField") %}
     {% include "/partials/form/dateInput.tpl" with name='CreatedBefore' label='Created Before' value=queryValues.CreatedBefore.0 %}
     {% include "/partials/form/dateInput.tpl" with name='CreatedAfter' label='Created After' value=queryValues.CreatedAfter.0 %}
+    {% include "/partials/form/checkboxInput.tpl" with name='ShowWithSimilar' label='Show Only With Existing Similar Images' value=queryValues.ShowWithSimilar.0 id=getNextId("ShowWithSimilar") %}
     {% include "/partials/form/searchButton.tpl" %}
 </form>
