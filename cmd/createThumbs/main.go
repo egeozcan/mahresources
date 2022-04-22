@@ -75,11 +75,13 @@ func main() {
 		cmd.Stderr = os.Stderr
 
 		if err := cmd.Start(); err != nil {
-			return err
+			fmt.Println(err.Error())
+			return nil
 		}
 
 		if err := cmd.Wait(); err != nil {
-			return err
+			fmt.Println(err.Error())
+			return nil
 		}
 
 		return nil
