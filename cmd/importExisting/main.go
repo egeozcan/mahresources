@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log"
 	"mahresources/application_context"
+	"mahresources/constants"
 	"mahresources/models/query_models"
 	"os"
 	"path/filepath"
@@ -59,6 +60,10 @@ func main() {
 	}
 
 	walkErr := filepath.Walk(*target, func(path string, info fs.FileInfo, err error) error {
+		if strings.HasSuffix(path, constants.ThumbFileSuffix) {
+			return nil
+		}
+
 		relPath := strings.TrimPrefix(path, fileSystemPath)
 
 		fmt.Println(relPath, info, err)

@@ -455,6 +455,7 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 
 func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, width, height uint) (*models.Preview, error) {
 	var existingThumbnail models.Preview
+	var nullThumbnail *models.Preview
 	var fileBytes []byte
 
 	width = uint(math.Min(constants.MaxThumbWidth, float64(width)))
@@ -476,7 +477,55 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, wid
 		return nil, storageError
 	}
 
-	if strings.HasPrefix(resource.ContentType, "image/") {
+	if err := ctx.db.Where(&models.Preview{Width: 0, Height: 0, ResourceId: &resourceId}).Omit(clause.Associations).First(nullThumbnail).Error; err != nil {
+		name := resource.GetCleanLocation() + constants.ThumbFileSuffix
+		println("will try opening", name)
+
+		if file, fopenErr := fs.Open(name); fopenErr == nil && file != nil {
+			defer file.Close()
+
+			fileBytes, err = ioutil.ReadAll(file)
+
+			if err == nil {
+				nullThumbnail = &models.Preview{
+					Data:        fileBytes,
+					Width:       0,
+					Height:      0,
+					ContentType: "image/png",
+					ResourceId:  &resource.ID,
+				}
+
+				ctx.db.Save(nullThumbnail)
+			}
+		} else {
+			fmt.Println("ok", file, fopenErr)
+		}
+	}
+
+	if nullThumbnail != nil {
+		var newImage image.Image
+
+		originalImage, _, err := image.Decode(bytes.NewReader((*nullThumbnail).Data))
+
+		if err != nil {
+			return nil, err
+		}
+
+		newImage = resize.Resize(width, height, originalImage, resize.Lanczos3)
+
+		var buf bytes.Buffer
+
+		if err := jpeg.Encode(&buf, newImage, nil); err != nil {
+			return nil, err
+		}
+
+		fileBytes, err = ioutil.ReadAll(&buf)
+
+		if err != nil {
+			return nil, err
+		}
+
+	} else if strings.HasPrefix(resource.ContentType, "image/") {
 		file, err := fs.Open(resource.GetCleanLocation())
 
 		if err != nil {
