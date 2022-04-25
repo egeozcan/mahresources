@@ -13,7 +13,7 @@
                         &nbsp;{{ relation.RelationType.Name }}
                     </a>
                     {% endif %}
-                    <a class="min-w-0 overflow-ellipsis break-words flex-shrink" href="/group?id={{ entity.ID }}">
+                    <a class="min-w-0 overflow-ellipsis break-words flex-shrink" href="/group?id={{ entity.ID }}" title="{{ entity.GetName() }}">
                         <h3 class="min-w-0 font-bold whitespace-nowrap overflow-hidden overflow-ellipsis">
                             {{ entity.GetName() }}
                         </h3>
