@@ -1081,12 +1081,6 @@ select {
 .bottom-0 {
 	bottom: 0px;
 }
-.top-2 {
-	top: 0.5rem;
-}
-.right-2 {
-	right: 0.5rem;
-}
 .z-50 {
 	z-index: 50;
 }
@@ -1288,9 +1282,6 @@ select {
 .items-stretch {
 	align-items: stretch;
 }
-.justify-start {
-	justify-content: flex-start;
-}
 .justify-end {
 	justify-content: flex-end;
 }
@@ -1379,9 +1370,6 @@ select {
 }
 .border-4 {
 	border-width: 4px;
-}
-.border-0 {
-	border-width: 0px;
 }
 .border-t-0 {
 	border-top-width: 0px;

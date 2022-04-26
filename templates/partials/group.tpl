@@ -14,7 +14,7 @@
                     </a>
                     {% endif %}
                     <a class="min-w-0 overflow-ellipsis break-words flex-shrink" href="/group?id={{ entity.ID }}" title="{{ entity.GetName() }}">
-                        <h3 class="min-w-0 font-bold whitespace-nowrap overflow-hidden overflow-ellipsis">
+                        <h3 class="min-w-0 font-bold whitespace-nowrap overflow-hidden overflow-ellipsis text-left" style="direction: rtl">
                             {{ entity.GetName() }}
                         </h3>
                         <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-400">Updated: </span>{{ entity.UpdatedAt|date:"2006-01-02 15:04" }}</small>
