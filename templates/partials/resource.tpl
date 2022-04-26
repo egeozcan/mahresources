@@ -5,7 +5,7 @@
             <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" class="focus:ring-indigo-500 h-8 w-8 text-indigo-600 border-gray-300 rounded">
             {% endif %}
             <a title="{{ entity.Name }}" class="min-w-0" href="/resource?id={{ entity.ID }}">
-                <h3 class="min-w-0 font-bold whitespace-nowrap overflow-hidden overflow-ellipsis">{{ entity.Name }}</h3>
+                <h3 class="min-w-0 font-bold whitespace-nowrap overflow-hidden overflow-ellipsis text-left" style="direction: rtl">{{ entity.Name }}</h3>
                 <h4>{{ entity.FileSize | humanReadableSize }}</h4>
             </a>
         </div>
