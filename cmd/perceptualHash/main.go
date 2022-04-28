@@ -46,13 +46,13 @@ func main() {
 	}
 
 	batchErr := query.FindInBatches(&resources, 512, func(tx *gorm.DB, batch int) error {
-		sem := make(chan struct{}, 32)
+		sem := make(chan struct{}, 4)
 		var wg sync.WaitGroup
 		startTime := time.Now()
 
 		for _, resource := range resources {
 			storage, err := context.GetFsForStorageLocation(resource.StorageLocation)
-			fmt.Println(resource.ID)
+			println(resource.ID)
 
 			if err != nil {
 				return err
@@ -67,6 +67,7 @@ func main() {
 				imgFile, err := storage.Open(resource.GetCleanLocation())
 
 				if err != nil {
+					println(err.Error())
 					<-sem
 					return
 				}
@@ -76,6 +77,7 @@ func main() {
 				img, err := jpeg.Decode(imgFile)
 
 				if err != nil {
+					println(err.Error())
 					<-sem
 					return
 				}
