@@ -17,7 +17,7 @@ func (ctx *MahresourcesContext) RunReadOnlyQuery(queryId uint, params map[string
 		return nil, err
 	}
 
-	return ctx.readOnlyDB.NamedQuery(query.Text, params)
+	return ctx.readOnlyDB.NamedQuery(strings.ReplaceAll(query.Text, "::", "::::"), params)
 }
 
 func (ctx *MahresourcesContext) RunReadOnlyQueryByName(queryName string, params map[string]any) (*sqlx.Rows, error) {
