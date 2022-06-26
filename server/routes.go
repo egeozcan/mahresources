@@ -53,6 +53,11 @@ var templates = map[string]templateInformation{
 	"/categories":    {template_context_providers.CategoryListContextProvider, "listCategories.tpl", http.MethodGet},
 	"/category":      {template_context_providers.CategoryContextProvider, "displayCategory.tpl", http.MethodGet},
 	"/category/edit": {template_context_providers.CategoryCreateContextProvider, "createCategory.tpl", http.MethodGet},
+
+	"/query/new":  {template_context_providers.QueryCreateContextProvider, "createQuery.tpl", http.MethodGet},
+	"/queries":    {template_context_providers.QueryListContextProvider, "listQueries.tpl", http.MethodGet},
+	"/query":      {template_context_providers.QueryContextProvider, "displayQuery.tpl", http.MethodGet},
+	"/query/edit": {template_context_providers.QueryCreateContextProvider, "createQuery.tpl", http.MethodGet},
 }
 
 func registerRoutes(router *mux.Router, appContext *application_context.MahresourcesContext) {

@@ -63,12 +63,12 @@ func main() {
 			go func(resource models.Resource, storage afero.Fs) {
 				defer wg.Done()
 				sem <- struct{}{}
+				defer func() { <-sem }()
 
 				imgFile, err := storage.Open(resource.GetCleanLocation())
 
 				if err != nil {
 					println(err.Error())
-					<-sem
 					return
 				}
 
@@ -78,7 +78,6 @@ func main() {
 
 				if err != nil {
 					println(err.Error())
-					<-sem
 					return
 				}
 
@@ -92,8 +91,6 @@ func main() {
 				}
 
 				db.Save(&imgHash)
-
-				<-sem
 
 				processed++
 			}(resource, storage)

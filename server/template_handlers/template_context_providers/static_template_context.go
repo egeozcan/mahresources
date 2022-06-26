@@ -31,6 +31,10 @@ var baseTemplateContext = pongo2.Context{
 			Url:  "/groups",
 		},
 		{
+			Name: "Queries",
+			Url:  "/queries",
+		},
+		{
 			Name: "Categories",
 			Url:  "/categories",
 		},

@@ -260,13 +260,14 @@ document.addEventListener("alpine:init", () => {
       }
 
       e.preventDefault();
+      const entityType = e.target.dataset.entityType;
 
       const res = await (async function() {
         const url = new URL(`${window.location.origin}/partials/autocompleter`);
 
         url.searchParams.append("selectedItems", "entity.Tags");
         url.searchParams.append("title", "");
-        url.searchParams.append("sortBy", `most_used_${location.pathname.slice(1, -1)}`);
+        url.searchParams.append("sortBy", `most_used_${entityType}`);
         url.searchParams.append("id", `tagEditor_${Math.random()}`);
         url.searchParams.append("elName", "editedId");
         url.searchParams.append("url", "/v1/tags");
@@ -277,7 +278,7 @@ document.addEventListener("alpine:init", () => {
 
       const form = document.createElement("form");
       form.addEventListener("multiple-input", e => {
-        fetch('/v1' + location.pathname + '/replaceTags', { method: "POST", body: new FormData(form) });
+        fetch('/v1/' + entityType + 's/replaceTags', { method: "POST", body: new FormData(form) });
       })
       form.className = "mb-6 p-4 active";
 

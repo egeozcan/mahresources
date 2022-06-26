@@ -19,6 +19,10 @@ func QueryQuery(query *query_models.QueryQuery) func(db *gorm.DB) *gorm.DB {
 			dbQuery = dbQuery.Where("name "+likeOperator+" ?", "%"+query.Name+"%")
 		}
 
+		if query.Text != "" {
+			dbQuery = dbQuery.Where("text "+likeOperator+" ?", "%"+query.Text+"%")
+		}
+
 		return dbQuery
 	}
 }

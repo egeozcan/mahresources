@@ -12,6 +12,7 @@ type QueryEditor struct {
 
 type QueryQuery struct {
 	Name string
+	Text string
 }
 
 type QueryParameters = map[string]any

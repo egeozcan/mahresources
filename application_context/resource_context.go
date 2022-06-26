@@ -92,7 +92,7 @@ func (ctx *MahresourcesContext) GetResourcesWithIds(ids *[]uint) (*[]*models.Res
 		return &resources, nil
 	}
 
-	return &resources, ctx.db.Find(&resources, ids).Error
+	return &resources, ctx.db.Find(&resources, ids).Preload("Tags").Error
 }
 
 func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.ResourceEditor) (*models.Resource, error) {

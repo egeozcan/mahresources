@@ -114,6 +114,7 @@ func GetQueryHandler(ctx interfaces.QueryReader) func(writer http.ResponseWriter
 func GetQueriesHandler(ctx interfaces.QueryReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var query query_models.QueryQuery
+		offset := (http_utils.GetIntQueryParameter(request, "page", 1) - 1) * constants.MaxResultsPerPage
 		err := decoder.Decode(&query, request.URL.Query())
 
 		if err != nil {
@@ -121,7 +122,7 @@ func GetQueriesHandler(ctx interfaces.QueryReader) func(writer http.ResponseWrit
 			return
 		}
 
-		queries, err := ctx.GetQueries(&query)
+		queries, err := ctx.GetQueries(int(offset), constants.MaxResultsPerPage, &query)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusNotFound)

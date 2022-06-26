@@ -21,7 +21,7 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 		dbQuery := db
 
 		if !ignoreSort && query.SortBy != "" && sortColumnMatcher.MatchString(query.SortBy) {
-			dbQuery = dbQuery.Order(query.SortBy)
+			dbQuery = dbQuery.Order(query.SortBy).Order("created_at desc")
 		} else if !ignoreSort {
 			dbQuery = dbQuery.Order("created_at desc")
 		}

@@ -63,8 +63,9 @@ func (ctx *MahresourcesContext) UpdateTag(tagQuery *query_models.TagCreator) (*m
 	}
 
 	tag := models.Tag{
-		ID:   tagQuery.ID,
-		Name: tagQuery.Name,
+		ID:          tagQuery.ID,
+		Name:        tagQuery.Name,
+		Description: tagQuery.Description,
 	}
 
 	return &tag, ctx.db.Save(&tag).Error

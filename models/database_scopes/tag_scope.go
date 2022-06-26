@@ -24,9 +24,9 @@ func TagQuery(query *query_models.TagQuery, ignoreSort bool) func(db *gorm.DB) *
 			prefix := "most_used_"
 			if strings.HasPrefix(query.SortBy, prefix) {
 				tableName := fmt.Sprintf("%v_tags", strings.TrimPrefix(query.SortBy, prefix))
-				dbQuery.Order(fmt.Sprintf("(SELECT count(*) FROM %v jt WHERE jt.tag_id = tags.id) desc", tableName))
+				dbQuery.Order(fmt.Sprintf("(SELECT count(*) FROM %v jt WHERE jt.tag_id = tags.id) desc", tableName)).Order("created_at desc")
 			} else {
-				dbQuery = dbQuery.Order(query.SortBy)
+				dbQuery = dbQuery.Order(query.SortBy).Order("created_at desc")
 			}
 		} else if !ignoreSort {
 			dbQuery = dbQuery.Order("created_at desc")

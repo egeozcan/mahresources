@@ -7,7 +7,7 @@ import (
 )
 
 type QueryReader interface {
-	GetQueries(searchQuery *query_models.QueryQuery) ([]models.Query, error)
+	GetQueries(offset, maxResults int, searchQuery *query_models.QueryQuery) ([]models.Query, error)
 	GetQuery(id uint) (*models.Query, error)
 }
 
