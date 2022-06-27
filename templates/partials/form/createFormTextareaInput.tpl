@@ -4,7 +4,7 @@
         {{ label }}{{ title }}
     </label>
     <div class="mt-1 sm:mt-0 sm:col-span-2">
-        <textarea id="{{ id }}" name="{{ name }}" rows="3" class="max-w-lg shadow-sm block w-full focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm border-gray-300 rounded-md">{{ value }}</textarea>
+        <textarea id="{{ id }}" name="{{ name }}" rows="3" class="{% if big %}{% else %}max-w-lg{% endif %} shadow-sm block w-full focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm border-gray-300 rounded-md">{{ value }}</textarea>
     </div>
 </div>
 {% endwith %}
