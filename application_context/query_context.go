@@ -62,8 +62,9 @@ func (ctx *MahresourcesContext) CreateQuery(queryQuery *query_models.QueryCreato
 	}
 
 	query := models.Query{
-		Name: queryQuery.Name,
-		Text: queryQuery.QueryText,
+		Name:     queryQuery.Name,
+		Text:     queryQuery.Text,
+		Template: queryQuery.Template,
 	}
 
 	return &query, ctx.db.Create(&query).Error
@@ -75,9 +76,10 @@ func (ctx *MahresourcesContext) UpdateQuery(queryQuery *query_models.QueryEditor
 	}
 
 	query := models.Query{
-		ID:   queryQuery.ID,
-		Name: queryQuery.Name,
-		Text: queryQuery.QueryText,
+		ID:       queryQuery.ID,
+		Name:     queryQuery.Name,
+		Text:     queryQuery.Text,
+		Template: queryQuery.Template,
 	}
 
 	return &query, ctx.db.Save(&query).Error

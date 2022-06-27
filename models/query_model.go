@@ -9,6 +9,7 @@ type Query struct {
 	CreatedAt time.Time `gorm:"index"`
 	UpdatedAt time.Time `gorm:"index"`
 
-	Name string `gorm:"uniqueIndex:unique_query_name"`
-	Text string `gorm:"index"`
+	Name     string `gorm:"uniqueIndex:unique_query_name"`
+	Text     string `gorm:"index"`
+	Template string
 }

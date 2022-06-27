@@ -67,3 +67,15 @@ function updateClipboard(newClip) {
     prompt("", newClip)
   });
 }
+
+
+function parseQueryParams(query) {
+  const res = {};
+  const params = (query.match(/:[\w\d_]+/g) || []).map(x => x.substring(1));
+
+  for (const param of params) {
+    res[param] = "";
+  }
+
+  return res;
+}

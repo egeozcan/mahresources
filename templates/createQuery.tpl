@@ -7,7 +7,8 @@
     {% endif %}
 
     {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" value=query.Name required=true %}
-    {% include "/partials/form/createFormTextareaInput.tpl" with title="Query" name="QueryText" value=query.Text %}
+    {% include "/partials/form/createFormTextareaInput.tpl" with title="Query" name="Text" value=query.Text %}
+    {% include "/partials/form/createFormTextareaInput.tpl" with title="Template" name="Template" value=query.Template %}
     {% include "/partials/form/createFormSubmit.tpl" %}
 
 </form>
