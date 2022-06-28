@@ -31,22 +31,20 @@
         <code x-ref="query" class="bg-gray-100 mb-4 p-4 block">
             {{ query.Text }}
         </code>
-
-        <template x-if="!loading">
-            <div x-init="queryParams = parseQueryParams($refs.query.innerHTML)">
-
-                <template x-for="(queryVal, queryParamName) in queryParams">
-                    <div>
-                        <p x-text="queryParamName"></p>
-                        <input class="mb-4" type="text" @input="e => queryParams[queryParamName] = getJSONValue(e.target.value)" @keyup="e => e.key === 'Enter' && query()" >
-                    </div>
-                </template>
-
-                <button
-                        @click="query"
-                        x-effect="$refs.output.replaceChildren(resultTable)"
-                        type="submit"
-                        class="
+        <div x-init="queryParams = parseQueryParams($refs.query.innerHTML)">
+            <template x-for="(queryVal, queryParamName) in queryParams">
+                <div>
+                    <p x-text="queryParamName"></p>
+                    <input class="mb-4" type="text" @input="e => queryParams[queryParamName] = getJSONValue(e.target.value)" @keyup="e => e.key === 'Enter' && query()" >
+                </div>
+            </template>
+            <template x-if="!loading">
+                <div>
+                    <button
+                            @click="query"
+                            x-effect="$refs.output.replaceChildren(resultTable)"
+                            type="submit"
+                            class="
                             inline-flex justify-center
                             py-2 px-4
                             border border-transparent
@@ -54,31 +52,32 @@
                             text-white bg-green-600 hover:bg-green-700
                             focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500
                         "
-                >
-                    Run
-                </button>
-                <template x-if="updated">
-                    <p class="mt-2">
-                        Updated on
-                        <span class="text-green-800" x-text="updated"></span>
-                    </p>
-                </template>
-                <template x-if="!error && results && results.length > 0">
-                    <div class="result-container mt-2 mb-2">
-                        {% autoescape off %}
-                        {{ query.Template }}
-                        {% endautoescape %}
-                    </div>
-                </template>
-                <div class="output mt-2" x-ref="output"></div>
-                <template x-if="error">
-                    <div>
-                        <h3>Something went wrong.</h3>
-                        <p class="text-red-800" x-text="(error.message || 'unknown error')"></p>
-                    </div>
-                </template>
-            </div>
-        </template>
+                    >
+                        Run
+                    </button>
+                    <template x-if="updated">
+                        <p class="mt-2">
+                            Updated on
+                            <span class="text-green-800" x-text="updated"></span>
+                        </p>
+                    </template>
+                    <template x-if="!error && results && results.length > 0">
+                        <div class="result-container mt-2 mb-2">
+                            {% autoescape off %}
+                            {{ query.Template }}
+                            {% endautoescape %}
+                        </div>
+                    </template>
+                    <div class="output mt-2" x-ref="output"></div>
+                    <template x-if="error">
+                        <div>
+                            <h3>Something went wrong.</h3>
+                            <p class="text-red-800" x-text="(error.message || 'unknown error')"></p>
+                        </div>
+                    </template>
+                </div>
+            </template>
+        </div>
 
         <template x-if="loading">
             <div class="flex items-center justify-start space-x-2 animate-pulse">
