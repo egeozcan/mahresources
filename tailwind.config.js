@@ -1,13 +1,10 @@
 module.exports = {
   mode: 'jit',
-  purge: {
-    preserveHtmlElements: false,
-    content: [
-      './templates/**/*.tpl',
-      './templates/**/*.html',
-    ]
-  },
-  darkMode: false, // or 'media' or 'class'
+  content: [
+    './templates/**/*.tpl',
+    './templates/**/*.html',
+  ],
+  darkMode: 'media', // or 'media' or 'class'
   theme: {
     extend: {},
   },
