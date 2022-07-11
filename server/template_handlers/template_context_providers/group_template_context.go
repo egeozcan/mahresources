@@ -8,6 +8,7 @@ import (
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
+	"mahresources/server/interfaces"
 	"mahresources/server/template_handlers/template_entities"
 	"net/http"
 	"strconv"
@@ -124,6 +125,10 @@ func GroupsListContextProvider(context *application_context.MahresourcesContext)
 				{Name: "Name", Value: "name"},
 				{Name: "Updated", Value: "updated_at"},
 			}, query.SortBy),
+			"displayOptions": getPathExtensionOptions(request.URL, &[]*SelectOption{
+				{Title: "List", Link: "/groups"},
+				{Title: "Text", Link: "/groups/text"},
+			}),
 		}.Update(baseContext)
 	}
 }
@@ -184,6 +189,10 @@ func GroupCreateContextProvider(context *application_context.MahresourcesContext
 }
 
 func GroupContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+	return groupContextProviderImpl(context)
+}
+
+func groupContextProviderImpl(context interfaces.GroupReader) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())

@@ -1161,6 +1161,9 @@ select {
 .h-2 {
   height: 0.5rem;
 }
+.max-h-80 {
+  max-height: 20rem;
+}
 .w-full {
   width: 100%;
 }

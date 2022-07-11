@@ -6,8 +6,8 @@ import (
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
-	"mahresources/server/api_handlers/interfaces"
 	"mahresources/server/http_utils"
+	"mahresources/server/interfaces"
 	"net/http"
 	"strconv"
 )

@@ -30,10 +30,11 @@ var templates = map[string]templateInformation{
 	"/resource":          {template_context_providers.ResourceContextProvider, "displayResource.tpl", http.MethodGet},
 	"/resource/edit":     {template_context_providers.ResourceCreateContextProvider, "createResource.tpl", http.MethodGet},
 
-	"/group/new":  {template_context_providers.GroupCreateContextProvider, "createGroup.tpl", http.MethodGet},
-	"/groups":     {template_context_providers.GroupsListContextProvider, "listGroups.tpl", http.MethodGet},
-	"/group":      {template_context_providers.GroupContextProvider, "displayGroup.tpl", http.MethodGet},
-	"/group/edit": {template_context_providers.GroupCreateContextProvider, "createGroup.tpl", http.MethodGet},
+	"/group/new":   {template_context_providers.GroupCreateContextProvider, "createGroup.tpl", http.MethodGet},
+	"/groups":      {template_context_providers.GroupsListContextProvider, "listGroups.tpl", http.MethodGet},
+	"/groups/text": {template_context_providers.GroupsListContextProvider, "listGroupsText.tpl", http.MethodGet},
+	"/group":       {template_context_providers.GroupContextProvider, "displayGroup.tpl", http.MethodGet},
+	"/group/edit":  {template_context_providers.GroupCreateContextProvider, "createGroup.tpl", http.MethodGet},
 
 	"/tag/new":  {template_context_providers.TagCreateContextProvider, "createTag.tpl", http.MethodGet},
 	"/tags":     {template_context_providers.TagListContextProvider, "listTags.tpl", http.MethodGet},
