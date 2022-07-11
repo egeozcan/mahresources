@@ -1,7 +1,7 @@
 <div class="pb-3" x-data x-show="[...$store.bulkSelection.selectedIds].length === 0" x-collapse>
     {% include "/partials/form/formParts/connected/selectAllButton.tpl" %}
 </div>
-<div class="sticky top-0 flex pl-4 pb-2 lg:gap-4 gap-1 flex-wrap  bg-white items-center" x-show="[...$store.bulkSelection.selectedIds].length > 0" x-collapse x-data="bulkSelectionForms">
+<div class="sticky top-0 flex pl-4 pb-2 lg:gap-4 gap-1 flex-wrap  bg-white items-center z-50" x-show="[...$store.bulkSelection.selectedIds].length > 0" x-collapse x-data="bulkSelectionForms">
     {% include "/partials/form/formParts/connected/deselectButton.tpl" %}
     {% include "/partials/form/formParts/connected/selectAllButton.tpl" %}
     <form class="px-4" method="post" :action="'/v1/groups/addTags?redirect=' + encodeURIComponent(window.location)">
