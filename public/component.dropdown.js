@@ -171,6 +171,11 @@ document.addEventListener('alpine:init', () => {
                 },
 
                 ['@keydown.enter.prevent'](e) {
+                    if (e.target.value === '' && !this.dropdownActive) {
+                        e.target.closest('form').dispatchEvent(new Event('submit'));
+                        return;
+                    }
+
                     this.pushVal(e);
 
                     if (this.selectedResults.length === max) {
