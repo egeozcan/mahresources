@@ -1,3 +1,9 @@
+/***
+ * abortableFetch - fetch with abortable promise
+ * @param request
+ * @param opts
+ * @returns {{abort: (function(): void), ready: Promise<Response>}}
+ */
 function abortableFetch(request, opts) {
   const controller = new AbortController();
   const signal = controller.signal;
@@ -8,16 +14,32 @@ function abortableFetch(request, opts) {
   };
 }
 
+/**
+ * isUndef - check if value is undefined
+ * @param x
+ * @returns {boolean}
+ */
 function isUndef(x) {
   return typeof x === "undefined";
 }
 
 const numberCheck = /^\d+?(\.\d+?)?$/;
 
+/**
+ * isNumeric - check if value is numeric
+ * @param x
+ * @returns {boolean}
+ */
 function isNumeric(x) {
   return numberCheck.test(x) && !isNaN(parseFloat(x));
 }
 
+/**
+ * pick - pick values from object
+ * @param obj
+ * @param keys
+ * @returns {{[p: string]: unknown}}
+ */
 function pick(obj, ...keys) {
   return Object.fromEntries(
     Object.entries(obj).filter((x) => keys.includes(x[0]))
@@ -43,6 +65,11 @@ window.addEventListener('paste', e => {
   fileInput.files = e.clipboardData.files;
 });
 
+/**
+ * setCheckBox - set checkbox value
+ * @param {HTMLInputElement} checkBox
+ * @param checked
+ */
 function setCheckBox(checkBox, checked) {
   if (checked) {
     checkBox.setAttribute("checked", "checked");
@@ -53,6 +80,10 @@ function setCheckBox(checkBox, checked) {
   checkBox.checked = checked;
 }
 
+/**
+ * updateClipboard - update clipboard with text
+ * @param newClip
+ */
 function updateClipboard(newClip) {
   navigator.clipboard.writeText(newClip).catch(function () {
     const copyText = document.createElement("input");
@@ -68,10 +99,14 @@ function updateClipboard(newClip) {
   });
 }
 
-
-function parseQueryParams(query) {
+/**
+ * parseQueryParams - parse query params
+ * @param queryString
+ * @returns {{}}
+ */
+function parseQueryParams(queryString) {
   const res = {};
-  const params = (query.match(/:[\w\d_]+/g) || []).map(x => x.substring(1));
+  const params = (queryString.match(/:[\w\d_]+/g) || []).map(x => x.substring(1));
 
   for (const param of params) {
     res[param] = "";
