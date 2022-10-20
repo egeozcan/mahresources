@@ -10,12 +10,12 @@
                     {% include "partials/avatar.tpl" with initials=entity.Initials() %}
                 {% endif %}
                 {% if relation && reverse %}
-                    <a href="/relation?id={{ relation.ID }}" class="overflow-hidden inline-flex items-center px-3 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
+                    <a href="/relation?id={{ relation.ID }}" class="inline-flex items-center px-3 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
                         <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24"><path d="M21 12l-18 12v-24z"/></svg>
                         &nbsp;{{ relation.RelationType.Name }}
                     </a>
                 {% endif %}
-                <a class="min-w-0 overflow-ellipsis break-words flex-shrink" href="/group?id={{ entity.ID }}" title="{{ entity.GetName() }}">
+                <a class="overflow-hidden min-w-0 overflow-ellipsis break-words flex-shrink" href="/group?id={{ entity.ID }}" title="{{ entity.GetName() }}">
                     <h3 class="min-w-0 font-bold whitespace-nowrap overflow-hidden overflow-ellipsis">
                         {{ entity.GetName() }}
                     </h3>
@@ -25,7 +25,7 @@
                     {% endif %}
                 </a>
                 {% if relation && !reverse %}
-                    <a href="/relation?id={{ relation.ID }}" class="overflow-hidden inline-flex items-center px-3 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
+                    <a href="/relation?id={{ relation.ID }}" class="inline-flex items-center px-3 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
                         <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24"><path d="M21 12l-18 12v-24z"/></svg>
                         &nbsp;{{ relation.RelationType.Name }}
                     </a>
