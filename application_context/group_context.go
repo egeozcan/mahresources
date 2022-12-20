@@ -7,11 +7,13 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"mahresources/constants"
+	"mahresources/lib"
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
 	"net/url"
+	"sort"
 )
 
 func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreator) (*models.Group, error) {
@@ -458,19 +460,29 @@ func (ctx *MahresourcesContext) FindParentsOfGroup(id uint) (*[]models.Group, er
 
 	findIdErr := ctx.db.Raw(`
 		WITH RECURSIVE cte as (
-			SELECT id, owner_id FROM groups WHERE id = ?
+			SELECT id, owner_id, 1 as level FROM groups WHERE id = ?
 			UNION ALL
-			SELECT g.id, g.owner_id FROM groups g
+			SELECT g.id, g.owner_id, cte.level + 1 as level FROM groups g
 			INNER JOIN cte ON cte.owner_id = g.id
 		)
-		SELECT id FROM cte
+		SELECT id FROM cte order by level
 	`, id).Scan(&ids).Error
 
 	if findIdErr != nil {
 		return nil, findIdErr
 	}
 
-	return &results, ctx.db.Find(&results, ids).Error
+	findIdErr = ctx.db.Find(&results, ids).Error
+
+	if findIdErr != nil {
+		return nil, findIdErr
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return lib.IndexOf(ids, results[i].ID) > lib.IndexOf(ids, results[j].ID)
+	})
+
+	return &results, nil
 }
 
 func (ctx *MahresourcesContext) DuplicateGroup(id uint) (*models.Group, error) {
