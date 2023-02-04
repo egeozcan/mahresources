@@ -59,12 +59,11 @@
                     </label>
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="max-w-lg flex rounded-md shadow-sm">
-                            <input
-                                type="text"
+                            <textarea
                                 name="URL"
                                 placeholder="If you fill this, the contents of the file picker will be ignored and remote data will be downloaded"
                                 class="flex-1 block w-full focus:ring-indigo-500 focus:border-indigo-500 min-w-0 rounded-md sm:text-sm border-gray-300"
-                            >
+                            ></textarea>
                         </div>
                     </div>
                 </div>

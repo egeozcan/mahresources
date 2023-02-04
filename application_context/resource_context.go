@@ -181,40 +181,85 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 }
 
 func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.ResourceFromRemoteCreator) (*models.Resource, error) {
-	resp, err := http.Get(resourceQuery.URL)
+	urls := strings.Split(resourceQuery.URL, "\n")
+	var firstResource *models.Resource
+	var firstError error
 
-	if err != nil {
-		return nil, err
+	setError := func(err error) {
+		if firstError == nil {
+			firstError = err
+		}
+		print(err)
 	}
 
-	defer resp.Body.Close()
+	for _, url := range urls {
+		(func(url string) {
+			resp, err := http.Get(url)
 
-	if resourceQuery.GroupName != "" {
-		category := models.Category{Name: resourceQuery.GroupCategoryName}
+			if err != nil {
+				setError(err)
+				return
+			}
 
-		if resourceQuery.GroupCategoryName != "" {
-			if err := ctx.db.Where(&category).First(&category).Error; err != nil {
-				if err := ctx.db.Save(&category).Error; err != nil {
-					return nil, err
+			defer resp.Body.Close()
+
+			if resourceQuery.GroupName != "" {
+				category := models.Category{Name: resourceQuery.GroupCategoryName}
+
+				if resourceQuery.GroupCategoryName != "" {
+					if err := ctx.db.Where(&category).First(&category).Error; err != nil {
+						if err := ctx.db.Save(&category).Error; err != nil {
+							setError(err)
+							return
+						}
+					}
 				}
+
+				group := models.Group{CategoryId: &category.ID, Name: resourceQuery.GroupName}
+
+				if err := ctx.db.Where(&group).First(&group).Error; err != nil {
+					group.Meta = []byte(resourceQuery.GroupMeta)
+					if err := ctx.db.Save(&group).Error; err != nil {
+						setError(err)
+						return
+					}
+				}
+
+				resourceQuery.OwnerId = group.ID
 			}
-		}
 
-		group := models.Group{CategoryId: &category.ID, Name: resourceQuery.GroupName}
+			res, err := ctx.AddResource(resp.Body, resourceQuery.FileName, &query_models.ResourceCreator{
+				ResourceQueryBase: query_models.ResourceQueryBase{
+					Name:             resourceQuery.Name,
+					Description:      resourceQuery.Description,
+					OwnerId:          resourceQuery.OwnerId,
+					Groups:           resourceQuery.Groups,
+					Tags:             resourceQuery.Tags,
+					Notes:            resourceQuery.Notes,
+					Meta:             resourceQuery.Meta,
+					ContentCategory:  resourceQuery.ContentCategory,
+					Category:         resourceQuery.Category,
+					OriginalName:     url,
+					OriginalLocation: url,
+				},
+			})
 
-		if err := ctx.db.Where(&group).First(&group).Error; err != nil {
-			group.Meta = []byte(resourceQuery.GroupMeta)
-			if err := ctx.db.Save(&group).Error; err != nil {
-				return nil, err
+			if firstResource == nil {
+				firstResource = res
 			}
-		}
 
-		resourceQuery.OwnerId = group.ID
+			if err != nil {
+				setError(err)
+				return
+			}
+		})(strings.TrimSpace(url))
 	}
 
-	return ctx.AddResource(resp.Body, resourceQuery.FileName, &query_models.ResourceCreator{
-		ResourceQueryBase: resourceQuery.ResourceQueryBase,
-	})
+	if firstResource == nil {
+		return nil, firstError
+	}
+
+	return firstResource, nil
 }
 
 func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery *query_models.ResourceFromLocalCreator) (*models.Resource, error) {
