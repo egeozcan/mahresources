@@ -110,6 +110,7 @@ func metaKeys(ctx *MahresourcesContext, table string) (*[]fieldResult, error) {
 		if err := ctx.db.
 			Table(table).
 			Select("DISTINCT jsonb_object_keys(Meta) as Key").
+			Where("Meta IS NOT NULL").
 			Scan(&results).Error; err != nil {
 			return nil, err
 		}
@@ -117,6 +118,7 @@ func metaKeys(ctx *MahresourcesContext, table string) (*[]fieldResult, error) {
 		if err := ctx.db.
 			Table(fmt.Sprintf("%v, json_each(%v.meta)", table, table)).
 			Select("DISTINCT json_each.key as Key").
+			Where("Meta IS NOT NULL").
 			Scan(&results).Error; err != nil {
 			return nil, err
 		}

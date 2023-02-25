@@ -224,7 +224,6 @@ func ResourceContextProvider(context *application_context.MahresourcesContext) f
 			}
 
 			for i, m := range *parents {
-				fmt.Println(len(*parents)+1, i, m)
 				breadcrumbEls[i] = template_entities.Entry{
 					Name: m.Name,
 					ID:   m.ID,
