@@ -396,15 +396,17 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 		return nil, err
 	}
 
+	var savedFile afero.File
+
 	filePath := path.Join(folder, hash+fileMime.Extension())
 	stat, statError := ctx.fs.Stat(filePath)
 
 	if statError == nil && stat != nil {
-		tx.Rollback()
-		return nil, errors.New("file already exists: " + filePath)
+		savedFile, err = ctx.fs.Open(filePath)
+		println("reusing stale file at " + filePath)
+	} else {
+		savedFile, err = ctx.fs.Create(filePath)
 	}
-
-	savedFile, err := ctx.fs.Create(filePath)
 
 	if err != nil {
 		tx.Rollback()
