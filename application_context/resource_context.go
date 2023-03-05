@@ -401,7 +401,7 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 
 	if statError == nil && stat != nil {
 		tx.Rollback()
-		return nil, errors.New("file already exists")
+		return nil, errors.New("file already exists: " + filePath)
 	}
 
 	savedFile, err := ctx.fs.Create(filePath)
