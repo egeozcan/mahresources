@@ -397,6 +397,7 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 	}
 
 	var savedFile afero.File
+	fileExists := false
 
 	filePath := path.Join(folder, hash+fileMime.Extension())
 	stat, statError := ctx.fs.Stat(filePath)
@@ -404,6 +405,7 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 	if statError == nil && stat != nil {
 		savedFile, err = ctx.fs.Open(filePath)
 		println("reusing stale file at " + filePath)
+		fileExists = true
 	} else {
 		savedFile, err = ctx.fs.Create(filePath)
 	}
@@ -415,9 +417,11 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 
 	defer func(savedFile afero.File) { _ = savedFile.Close() }(savedFile)
 
-	if _, err := savedFile.Write(fileBytes); err != nil {
-		tx.Rollback()
-		return nil, err
+	if !fileExists {
+		if _, err := savedFile.Write(fileBytes); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
 	}
 
 	name := fileName
