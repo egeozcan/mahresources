@@ -360,9 +360,20 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 		return nil, err
 	}
 
+	_, err = tempFile.Seek(0, io.SeekStart)
+	if err != nil {
+		return nil, err
+	}
+
 	// Calculate the SHA1 hash of the uploaded file
 	h := sha1.New()
 	_, err = io.Copy(h, tempFile)
+
+	_, err = tempFile.Seek(0, io.SeekStart)
+	if err != nil {
+		return nil, err
+	}
+
 	if err != nil {
 		tx.Rollback()
 		return nil, err
@@ -434,6 +445,11 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 		_, err = io.Copy(savedFile, tempFile)
 		if err != nil {
 			tx.Rollback()
+			return nil, err
+		}
+
+		_, err = tempFile.Seek(0, io.SeekStart)
+		if err != nil {
 			return nil, err
 		}
 	}
