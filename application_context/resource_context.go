@@ -7,11 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gabriel-vasile/mimetype"
-	"github.com/nfnt/resize"
-	"github.com/spf13/afero"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 	"image"
 	"image/jpeg"
 	"io"
@@ -28,10 +23,17 @@ import (
 	"path"
 	"strings"
 
-	_ "golang.org/x/image/bmp"
-	_ "golang.org/x/image/webp"
+	"github.com/gabriel-vasile/mimetype"
+	"github.com/nfnt/resize"
+	"github.com/spf13/afero"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+
 	_ "image/gif"
 	_ "image/png"
+
+	_ "golang.org/x/image/bmp"
+	_ "golang.org/x/image/webp"
 )
 
 func (ctx *MahresourcesContext) GetResource(id uint) (*models.Resource, error) {
@@ -338,22 +340,33 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 		}
 	}()
 
-	fileBytes, err := ioutil.ReadAll(file)
+	tempFile, err := os.CreateTemp("", "upload-")
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	defer os.Remove(tempFile.Name())
 
+	// Copy the contents of the uploaded file to the temporary file
+	_, err = io.Copy(tempFile, file)
 	if err != nil {
 		tx.Rollback()
 		return nil, err
 	}
 
-	fileMime, err := mimetype.DetectReader(bytes.NewBuffer(fileBytes))
-
+	fileMime, err := mimetype.DetectFile(tempFile.Name())
 	if err != nil {
 		tx.Rollback()
 		return nil, err
 	}
 
+	// Calculate the SHA1 hash of the uploaded file
 	h := sha1.New()
-	h.Write(fileBytes)
+	_, err = io.Copy(h, tempFile)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
 	hash := hex.EncodeToString(h.Sum(nil))
 
 	var existingResource models.Resource
@@ -418,7 +431,8 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 	defer func(savedFile afero.File) { _ = savedFile.Close() }(savedFile)
 
 	if !fileExists {
-		if _, err := savedFile.Write(fileBytes); err != nil {
+		_, err = io.Copy(savedFile, tempFile)
+		if err != nil {
 			tx.Rollback()
 			return nil, err
 		}
@@ -438,6 +452,13 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 		resourceQuery.Meta = "{}"
 	}
 
+	fileInfo, err := tempFile.Stat()
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	fileSize := fileInfo.Size()
+
 	res := &models.Resource{
 		Name:             name,
 		Hash:             hash,
@@ -447,7 +468,7 @@ func (ctx *MahresourcesContext) AddResource(file File, fileName string, resource
 		Category:         resourceQuery.Category,
 		ContentType:      fileMime.String(),
 		ContentCategory:  resourceQuery.ContentCategory,
-		FileSize:         int64(len(fileBytes)),
+		FileSize:         fileSize,
 		OwnerId:          &resourceQuery.OwnerId,
 		Description:      resourceQuery.Description,
 		OriginalLocation: resourceQuery.OriginalLocation,
