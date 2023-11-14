@@ -1,6 +1,9 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
+    {% autoescape off %}
+        {{ group.Category.CustomHeader }}
+    {% endautoescape %}
 
     {% include "/partials/description.tpl" with description=group.Description %}
 
@@ -36,6 +39,10 @@
 {% endblock %}
 
 {% block sidebar %}
+    {% autoescape off %}
+        {{ group.Category.CustomSidebar }}
+    {% endautoescape %}
+
     {% if group.Owner %}{% include "/partials/ownerDisplay.tpl" with owner=group.Owner %}{% endif %}
     {% include "/partials/tagList.tpl" with tags=group.Tags addTagUrl='/v1/groups/addTags' id=group.ID %}
 

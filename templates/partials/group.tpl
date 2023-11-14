@@ -33,6 +33,9 @@
                 {% if entity.Category && !fullText %}
                     {% include "partials/category.tpl" with name=entity.Category.Name link=withQuery("categories", stringId(entity.CategoryId), true) active=hasQuery("categories", stringId(entity.CategoryId)) %}
                 {% endif %}
+                {% autoescape off %}
+                    {{ entity.Category.CustomSummary }}
+                {% endautoescape %}
             </div>
             {% if entity.URL && !fullText %}
                 <a class="p-2 pt-0 block ml-14 text-blue-600" target="_blank" referrerpolicy="no-referrer" href="{{ entity.URL|printUrl }}">{{ entity.URL|printUrl }}</a>

@@ -51,8 +51,12 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 	}
 
 	category := models.Category{
-		Name:        categoryQuery.Name,
-		Description: categoryQuery.Description,
+		Name:          categoryQuery.Name,
+		Description:   categoryQuery.Description,
+		CustomHeader:  categoryQuery.CustomHeader,
+		CustomSidebar: categoryQuery.CustomSidebar,
+		CustomSummary: categoryQuery.CustomSummary,
+		CustomAvatar:  categoryQuery.CustomAvatar,
 	}
 
 	return &category, ctx.db.Create(&category).Error
@@ -64,9 +68,13 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 	}
 
 	category := models.Category{
-		ID:          categoryQuery.ID,
-		Name:        categoryQuery.Name,
-		Description: categoryQuery.Description,
+		ID:            categoryQuery.ID,
+		Name:          categoryQuery.Name,
+		Description:   categoryQuery.Description,
+		CustomHeader:  categoryQuery.CustomHeader,
+		CustomSidebar: categoryQuery.CustomSidebar,
+		CustomSummary: categoryQuery.CustomSummary,
+		CustomAvatar:  categoryQuery.CustomAvatar,
 	}
 
 	return &category, ctx.db.Save(&category).Error

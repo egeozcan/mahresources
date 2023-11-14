@@ -3,6 +3,11 @@ package query_models
 type CategoryCreator struct {
 	Name        string
 	Description string
+
+	CustomHeader  string
+	CustomSidebar string
+	CustomSummary string
+	CustomAvatar  string
 }
 
 type CategoryEditor struct {

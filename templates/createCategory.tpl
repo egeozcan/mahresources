@@ -8,7 +8,12 @@
 
     {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" value=category.Name required=true %}
     {% include "/partials/form/createFormTextareaInput.tpl" with title="Description" name="Description" value=category.Description %}
-    {% include "/partials/form/createFormSubmit.tpl" %}
 
+    {% include "/partials/form/createFormTextareaInput.tpl" with title="Custom Header" name="CustomHeader" value=category.CustomHeader %}
+    {% include "/partials/form/createFormTextareaInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=category.CustomSidebar %}
+    {% include "/partials/form/createFormTextareaInput.tpl" with title="Custom Summary" name="CustomSummary" value=category.CustomSummary %}
+    {% include "/partials/form/createFormTextareaInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=category.CustomAvatar %}
+
+    {% include "/partials/form/createFormSubmit.tpl" %}
 </form>
 {% endblock %}
