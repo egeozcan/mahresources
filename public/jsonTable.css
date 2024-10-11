@@ -82,3 +82,26 @@
 body > div {
     margin-bottom: 20px;
 }
+
+.toggler {
+    cursor: pointer;
+    display: inline-block;
+    font-size: 1.3rem;
+    user-select: none;
+    padding: 0.2rem 0.2rem;
+    background: white;
+    margin: 0.3rem 0.6rem;
+    border-radius: 0.7rem;
+    border: 1px solid coral;
+}
+
+.emptyTable::after {
+    display: block;
+    content: "empty";
+    background: red;
+    color: white;
+}
+
+th:hover, td:hover {
+    background: #fddea2;
+}

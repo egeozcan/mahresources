@@ -3,6 +3,7 @@ package template_handlers
 import (
 	"encoding/json"
 	"fmt"
+	_ "github.com/flosch/pongo2-addons"
 	"github.com/flosch/pongo2/v4"
 	"mahresources/constants"
 	"mahresources/server/template_handlers/loaders"
@@ -11,15 +12,14 @@ import (
 	"strings"
 )
 
-import _ "github.com/flosch/pongo2-addons"
-
 func discardFields(fields map[string]bool, intMap map[string]any) map[string]any {
-	res := make(map[string]any)
+	res := make(map[string]any, len(intMap))
 
 	for key, value := range intMap {
-		if _, exists := fields[key]; !exists && value != nil {
-			res[key] = value
+		if _, exists := fields[key]; exists || value == nil {
+			continue
 		}
+		res[key] = value
 	}
 
 	return res
@@ -31,51 +31,38 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 
 	return func(writer http.ResponseWriter, request *http.Request) {
 		renderer := templateSet
-
 		if strings.HasSuffix(request.URL.Path, ".body") {
 			renderer = bodyOnlyTemplateSet
 		}
 
-		var template = pongo2.Must(renderer.FromFile(templateName))
-		var errorTemplate = pongo2.Must(renderer.FromFile("error.tpl"))
-
+		template := pongo2.Must(renderer.FromFile(templateName))
+		errorTemplate := pongo2.Must(renderer.FromFile("error.tpl"))
 		context := templateContextGenerator(request)
 
-		if request.Header.Get("Content-type") == constants.JSON || strings.HasSuffix(request.URL.Path, ".json") {
-			writer.Header()["Content-Type"] = []string{constants.JSON}
-
-			err := json.NewEncoder(writer).Encode(discardFields(map[string]bool{
+		if contentType := request.Header.Get("Content-type"); contentType == constants.JSON || strings.HasSuffix(request.URL.Path, ".json") {
+			writer.Header().Set("Content-Type", constants.JSON)
+			if err := json.NewEncoder(writer).Encode(discardFields(map[string]bool{
 				"partial":   true,
 				"path":      true,
 				"withQuery": true,
 				"hasQuery":  true,
 				"stringId":  true,
 				"getNextId": true,
-			}, context))
-
-			if err != nil {
+			}, context)); err != nil {
 				fmt.Println(err)
 			}
-
 			return
 		}
 
-		writer.Header().Add("Content-Type", constants.HTML)
-
+		writer.Header().Set("Content-Type", constants.HTML)
 		if errMessage := context["errorMessage"]; errMessage != nil && errMessage != "" {
-			err := errorTemplate.ExecuteWriter(context, writer)
-
-			if err != nil {
+			if err := errorTemplate.ExecuteWriter(context, writer); err != nil {
 				http.Error(writer, err.Error(), http.StatusInternalServerError)
-				return
 			}
-
 			return
 		}
 
-		err := template.ExecuteWriter(context, writer)
-
-		if err != nil {
+		if err := template.ExecuteWriter(context, writer); err != nil {
 			http.Error(writer, err.Error(), http.StatusInternalServerError)
 		}
 	}

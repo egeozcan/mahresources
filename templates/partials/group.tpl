@@ -9,37 +9,41 @@
                 {% if !fullText %}
                     {% include "partials/avatar.tpl" with initials=entity.Initials() %}
                 {% endif %}
-                {% if relation && reverse %}
-                    <a href="/relation?id={{ relation.ID }}" class="inline-flex items-center px-3 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24"><path d="M21 12l-18 12v-24z"/></svg>
-                        &nbsp;{{ relation.RelationType.Name }}
-                    </a>
-                {% endif %}
-                <a class="overflow-hidden min-w-0 overflow-ellipsis break-words flex-shrink" href="/group?id={{ entity.ID }}" title="{{ entity.GetName() }}">
-                    <h3 class="min-w-0 font-bold whitespace-nowrap overflow-hidden overflow-ellipsis">
-                        {{ entity.GetName() }}
-                    </h3>
-                    {% if !fullText %}
-                    <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-400">Updated: </span>{{ entity.UpdatedAt|date:"2006-01-02 15:04" }}</small>
-                    <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-400">Created: </span>{{ entity.CreatedAt|date:"2006-01-02 15:04" }}</small>
+                <div>
+                    <div class="flex gap-3 content-center items-center min-w-0">
+                        {% if relation && reverse %}
+                            <a href="/relation?id={{ relation.ID }}" class="inline-flex items-center px-3 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24"><path d="M21 12l-18 12v-24z"/></svg>
+                                &nbsp;{{ relation.RelationType.Name }}
+                            </a>
+                        {% endif %}
+                        <a class="overflow-hidden min-w-0 overflow-ellipsis break-words flex-shrink" href="/group?id={{ entity.ID }}" title="{{ entity.GetName() }}">
+                            <h3 class="min-w-0 font-bold whitespace-nowrap overflow-hidden overflow-ellipsis">
+                                {{ entity.GetName() }}
+                            </h3>
+                            {% if !fullText %}
+                                <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-400">Updated: </span>{{ entity.UpdatedAt|date:"2006-01-02 15:04" }}</small>
+                                <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-400">Created: </span>{{ entity.CreatedAt|date:"2006-01-02 15:04" }}</small>
+                            {% endif %}
+                        </a>
+                        {% if relation && !reverse %}
+                            <a href="/relation?id={{ relation.ID }}" class="inline-flex items-center px-3 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24"><path d="M21 12l-18 12v-24z"/></svg>
+                                &nbsp;{{ relation.RelationType.Name }}
+                            </a>
+                        {% endif %}
+                        {% if entity.Category && !fullText %}
+                            {% include "partials/category.tpl" with name=entity.Category.Name link=withQuery("categories", stringId(entity.CategoryId), true) active=hasQuery("categories", stringId(entity.CategoryId)) %}
+                        {% endif %}
+                    </div>
+                    {% if entity.URL && !fullText %}
+                        <a class="block text-blue-600" target="_blank" referrerpolicy="no-referrer" href="{{ entity.URL|printUrl }}">{{ entity.URL|printUrl }}</a>
                     {% endif %}
-                </a>
-                {% if relation && !reverse %}
-                    <a href="/relation?id={{ relation.ID }}" class="inline-flex items-center px-3 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24"><path d="M21 12l-18 12v-24z"/></svg>
-                        &nbsp;{{ relation.RelationType.Name }}
-                    </a>
-                {% endif %}
-                {% if entity.Category && !fullText %}
-                    {% include "partials/category.tpl" with name=entity.Category.Name link=withQuery("categories", stringId(entity.CategoryId), true) active=hasQuery("categories", stringId(entity.CategoryId)) %}
-                {% endif %}
-                {% autoescape off %}
-                    {{ entity.Category.CustomSummary }}
-                {% endautoescape %}
+                </div>
             </div>
-            {% if entity.URL && !fullText %}
-                <a class="p-2 pt-0 block ml-14 text-blue-600" target="_blank" referrerpolicy="no-referrer" href="{{ entity.URL|printUrl }}">{{ entity.URL|printUrl }}</a>
-            {% endif %}
+            {% autoescape off %}
+                {{ entity.Category.CustomSummary }}
+            {% endautoescape %}
 
             {% if !reverse && relation && relation.Description && !noRelDescription %}
                 <a target="_blank" href="/relation?id={{ relation.ID }}" referrerpolicy="no-referrer">

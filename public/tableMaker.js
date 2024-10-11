@@ -1,3 +1,6 @@
+const plusEmoji = "➕";
+const minusEmoji = "➖";
+
 function renderJsonTable(data, path = ["$"]) {
     if (Array.isArray(data)) {
         return generateArrayTable(data, path);
@@ -12,7 +15,9 @@ function renderJsonTable(data, path = ["$"]) {
     }
 
     if (typeof data === "string") {
-        return data;
+        const node = document.createElement("expandable-text");
+        node.innerHTML = escapeHTML(data);
+        return node;
     }
 
     return (
@@ -27,15 +32,17 @@ function renderJsonTable(data, path = ["$"]) {
 function generateObjectTable(obj, path = ["$"]) {
     const table = document.createElement("table");
     const tbody = document.createElement("tbody");
+    const objKeys = Object.keys(obj || {});
+
+    if (!obj || objKeys.length === 0) {
+        table.classList.add("emptyTable");
+        return table;
+    }
 
     table.classList.add("objectTable", "jsonTable");
     table.appendChild(tbody);
 
-    if (!obj) {
-        return table;
-    }
-
-    Object.keys(obj).forEach(key => {
+    objKeys.forEach(key => {
         const row = tbody.insertRow(-1);
         const header = document.createElement("th");
         const subPath = [...path, escapeKey(key)];
@@ -52,11 +59,57 @@ function generateObjectTable(obj, path = ["$"]) {
             const contentCell = row.insertCell();
 
             contentCell.innerHTML = escapeHTML(content);
+        } else if (content?.matches?.("expandable-text")) {
+            const contentCell = row.insertCell();
+
+            contentCell.appendChild(content);
+
         } else {
             row.classList.add("hasSubTable");
             content.classList.add("subTable");
             addCopyListener(content, pathText);
             header.colSpan = 2;
+
+            const toggler = document.createElement("button");
+
+            toggler.title = "Click to expand/collapse, shift-click to expand/collapse all subtables";
+            toggler.classList.add("toggler");
+            toggler.innerHTML = plusEmoji;
+            toggler.tabIndex = 0;
+
+            header.appendChild(toggler);
+
+            const listener = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const isHidden = content.classList.toggle("hidden");
+
+                // if the shift key is pressed, expand/contract all subtables
+                if (e.shiftKey) {
+                    const subTables = content.querySelectorAll(".subTable");
+
+                    // expand all subtables, update the toggler emoji
+                    subTables.forEach(table => {
+                        table.classList.toggle("hidden", isHidden);
+
+                        if (table.previousElementSibling && table.previousElementSibling.matches(".toggler")) {
+                            table.previousElementSibling.innerHTML = isHidden ? plusEmoji : minusEmoji;
+                        }
+                    });
+                }
+
+                toggler.innerHTML = isHidden ? plusEmoji : minusEmoji;
+            }
+
+            toggler.addEventListener("click", listener);
+            toggler.addEventListener("keydown", (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                    listener(e);
+                }
+            });
+
+            content.classList.add("hidden");
             header.appendChild(content);
         }
     });
@@ -72,26 +125,26 @@ function generateArrayTable(arr, path = ["$"]) {
     table.appendChild(tbody);
 
     if (arr.length === 0) {
+        table.classList.add("emptyTable");
         return table;
     }
 
-    const firstRow = arr[0];
-    const titles = Object.keys(firstRow);
+    const titles = getAllKeysFromObjArray(arr);
 
-    if (
-        !isRenderableAsArray(firstRow)
-        || arr.some(el => !isRenderableAsArray(el, titles))
-    ) {
+    if (arr.some(el => !isRenderableAsArray(el))) {
         arr.forEach((el, i) => {
             const row = tbody.insertRow();
             const contentCell = row.insertCell();
             const subPath = [...path, escapeKey(i)];
             const pathText = subPath.join("");
             const content = renderJsonTable(el, subPath);
+
             addCopyListener(row, pathText);
 
             if (typeof content === "string") {
                 contentCell.innerHTML = escapeHTML(content);
+            } else if (content?.matches?.("expandable-text")) {
+                contentCell.appendChild(content);
             } else {
                 addCopyListener(content, pathText);
                 contentCell.appendChild(content);
@@ -127,6 +180,8 @@ function generateArrayTable(arr, path = ["$"]) {
 
             if (typeof content === "string") {
                 contentCell.innerHTML = escapeHTML(content);
+            } else if (content?.matches?.("expandable-text")) {
+                contentCell.appendChild(content);
             } else {
                 contentCell.appendChild(content);
                 addCopyListener(content, pathText);
@@ -137,22 +192,8 @@ function generateArrayTable(arr, path = ["$"]) {
     return table;
 }
 
-function isRenderableAsArray(obj, mustHaveExactlyTheseKeys = []) {
-    if (Array.isArray(obj) || typeof obj !== "object" || obj instanceof Date) {
-        return false;
-    }
-
-    if (mustHaveExactlyTheseKeys.length === 0) {
-        return true;
-    }
-
-    const ownKeys = Object.keys(obj);
-
-    return (
-        ownKeys.length === mustHaveExactlyTheseKeys.length
-        && ownKeys.every(key => mustHaveExactlyTheseKeys.indexOf(key) >= 0)
-        && mustHaveExactlyTheseKeys.every(key => ownKeys.indexOf(key) >= 0)
-    );
+function isRenderableAsArray(obj) {
+    return !(Array.isArray(obj) || typeof obj !== "object" || obj instanceof Date);
 }
 
 function escapeHTML(str) {
@@ -194,7 +235,34 @@ function escapeKey(key) {
  */
 function addCopyListener(el, text) {
     el.addEventListener("click", (e) => {
+        // if the target is a button, ignore the click event
+        if (e.target.matches("button") || e.target.matches("expandable-text")) {
+            return;
+        }
+
         updateClipboard(text);
         e.stopPropagation();
     });
+}
+
+/**
+ * Get all keys from an array of objects
+ *
+ * @param arr
+ * @returns {any[]}
+ */
+function getAllKeysFromObjArray(arr) {
+    const keys = new Set();
+
+    for (const obj of arr) {
+        if (!obj || typeof obj !== "object") {
+            continue;
+        }
+
+        for (const key of Object.keys(obj)) {
+            keys.add(key);
+        }
+    }
+
+    return Array.from(keys);
 }
