@@ -700,17 +700,9 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, wid
 }
 
 func (ctx *MahresourcesContext) createThumbFromVideo(file io.Reader, resultBuffer *bytes.Buffer) error {
-	var buffer []byte
-
-	if buf, err := ioutil.ReadAll(file); err != nil {
-		return err
-	} else {
-		buffer = buf
-	}
-
 	cmd := exec.Command(ctx.Config.FfmpegPath,
+		"-ss", "00:00:00",
 		"-i", "-", // stdin
-		"-ss", "00:00:0",
 		"-vframes", "1",
 		"-c:v", "png",
 		"-f", "image2pipe",
@@ -719,26 +711,9 @@ func (ctx *MahresourcesContext) createThumbFromVideo(file io.Reader, resultBuffe
 
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = resultBuffer
+	cmd.Stdin = file // Stream input directly
 
-	var stdin io.WriteCloser
-
-	if stdinAtt, err := cmd.StdinPipe(); err != nil {
-		return err
-	} else {
-		stdin = stdinAtt
-	}
-
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-
-	_, _ = stdin.Write(buffer)
-
-	if err := stdin.Close(); err != nil {
-		return err
-	}
-
-	if err := cmd.Wait(); err != nil {
+	if err := cmd.Run(); err != nil {
 		return err
 	}
 
