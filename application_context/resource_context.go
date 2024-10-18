@@ -701,12 +701,13 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, wid
 
 func (ctx *MahresourcesContext) createThumbFromVideo(file io.Reader, resultBuffer *bytes.Buffer) error {
 	cmd := exec.Command(ctx.Config.FfmpegPath,
-		"-ss", "00:00:00",
-		"-i", "-", // stdin
-		"-vframes", "1",
-		"-c:v", "png",
-		"-f", "image2pipe",
-		"-",
+		"-i", "-", // input from stdin
+		"-ss", "00:00:01", // capture frame at 1 second
+		"-vframes", "1", // grab one frame
+		"-vf", "scale=320:-1", // scale the image if needed
+		"-c:v", "png", // encode to PNG
+		"-f", "image2pipe", // output format
+		"-", // output to stdout (pipe)
 	)
 
 	cmd.Stderr = os.Stderr
