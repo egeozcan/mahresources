@@ -9,17 +9,15 @@ require (
 	github.com/flosch/pongo2/v4 v4.0.2
 	github.com/gabriel-vasile/mimetype v1.4.0
 	github.com/gorilla/mux v1.8.0
-	github.com/gorilla/schema v1.2.0
+	github.com/gorilla/schema v1.4.1
 	github.com/invopop/jsonschema v0.7.0
 	github.com/jmoiron/sqlx v1.3.4
 	github.com/joho/godotenv v1.4.0
 	github.com/lib/pq v1.10.2
-	github.com/maragudk/gomponents v0.20.1
 	github.com/matoous/go-nanoid/v2 v2.0.0
 	github.com/mattn/go-sqlite3 v1.14.9
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
 	github.com/spf13/afero v1.6.0
-	github.com/swaggo/swag v1.16.2
 	github.com/yuin/goldmark v1.4.13
 	golang.org/x/image v0.0.0-20211028202545-6944b10bf410
 	gorm.io/driver/postgres v1.2.3

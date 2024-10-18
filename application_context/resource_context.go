@@ -173,6 +173,7 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 	resource.Category = resourceQuery.Category
 	resource.ContentCategory = resourceQuery.ContentCategory
 	resource.OwnerId = &resourceQuery.OwnerId
+	resource.Owner = &models.Group{ID: resourceQuery.OwnerId}
 
 	if err := tx.Save(resource).Error; err != nil {
 		tx.Rollback()
@@ -656,9 +657,8 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, wid
 		var newImage image.Image
 
 		resultBuffer := bytes.NewBuffer(make([]byte, 0))
-		sectionReader := io.NewSectionReader(file, 0, 5000000)
 
-		if err := ctx.createThumbFromVideo(sectionReader, resultBuffer); err != nil {
+		if err := ctx.createThumbFromVideo(file, resultBuffer); err != nil {
 			return nil, err
 		}
 

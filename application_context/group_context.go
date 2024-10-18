@@ -148,6 +148,7 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 
 	if groupQuery.OwnerId != 0 {
 		group.OwnerId = &groupQuery.OwnerId
+		group.Owner = &models.Group{ID: groupQuery.OwnerId}
 	} else if err := tx.Model(group).Association("Owner").Clear(); err != nil {
 		tx.Rollback()
 		return nil, err
@@ -459,13 +460,16 @@ func (ctx *MahresourcesContext) FindParentsOfGroup(id uint) (*[]models.Group, er
 	var ids []uint
 
 	findIdErr := ctx.db.Raw(`
-		WITH RECURSIVE cte as (
-			SELECT id, owner_id, 1 as level FROM groups WHERE id = ?
+		WITH RECURSIVE cte AS (
+			SELECT id, owner_id, 1 AS level FROM groups WHERE id = ?
 			UNION ALL
-			SELECT g.id, g.owner_id, cte.level + 1 as level FROM groups g
+			SELECT g.id, g.owner_id, cte.level + 1 AS level FROM groups g
 			INNER JOIN cte ON cte.owner_id = g.id
+			WHERE cte.level < 20
 		)
-		SELECT id FROM cte order by level
+		SELECT id 
+		FROM cte 
+		ORDER BY level;
 	`, id).Scan(&ids).Error
 
 	if findIdErr != nil {
