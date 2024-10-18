@@ -699,12 +699,32 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, wid
 	return preview, nil
 }
 
-func (ctx *MahresourcesContext) createThumbFromVideo(file io.Reader, resultBuffer *bytes.Buffer) error {
+func (ctx *MahresourcesContext) createThumbFromVideo(file io.ReadSeeker, resultBuffer *bytes.Buffer) error {
+	// First attempt to create thumbnail at 1 second
+	err := ctx.createThumbFromVideoAtGivenTime(file, resultBuffer, 1)
+
+	// If the first attempt fails or returns no data, try again at 0 seconds
+	if err != nil || resultBuffer.Len() == 0 {
+		resultBuffer.Reset()
+
+		// Reset the reader back to the beginning
+		_, err := file.Seek(0, io.SeekStart)
+		if err != nil {
+			return err
+		}
+
+		return ctx.createThumbFromVideoAtGivenTime(file, resultBuffer, 0)
+	}
+
+	return nil
+}
+
+func (ctx *MahresourcesContext) createThumbFromVideoAtGivenTime(file io.Reader, resultBuffer *bytes.Buffer, secondsIn int) error {
 	cmd := exec.Command(ctx.Config.FfmpegPath,
 		"-i", "-", // input from stdin
-		"-ss", "00:00:01", // capture frame at 1 second
+		"-ss", fmt.Sprintf("00:00:%02d", secondsIn), // capture frame at secondsIn
 		"-vframes", "1", // grab one frame
-		"-vf", "scale=320:-1", // scale the image if needed
+		"-vf", "scale=640:-1", // scale the image if needed
 		"-c:v", "png", // encode to PNG
 		"-f", "image2pipe", // output format
 		"-", // output to stdout (pipe)
