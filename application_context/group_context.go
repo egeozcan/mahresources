@@ -372,10 +372,12 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 			return err
 		}
 
-		fmt.Println(string(backupsBytes))
-
 		if ctx.Config.DbType == constants.DbTypePosgres {
 			if err := altCtx.db.Exec("update resources set meta = meta || ? where id = ?", backupsBytes, winner.ID).Error; err != nil {
+				return err
+			}
+		} else if ctx.Config.DbType == constants.DbTypeSqlite {
+			if err := altCtx.db.Exec("update resources set meta = json_patch(meta, ?) where id = ?", backupsBytes, winner.ID).Error; err != nil {
 				return err
 			}
 		}
@@ -437,12 +439,23 @@ func (ctx *MahresourcesContext) BulkRemoveTagsFromGroups(query *query_models.Bul
 }
 
 func (ctx *MahresourcesContext) BulkAddMetaToGroups(query *query_models.BulkEditMetaQuery) error {
+	if json.Valid([]byte(query.Meta)) == false {
+		return errors.New("invalid json")
+	}
+
 	var group models.Group
+	var expr clause.Expr
+
+	if ctx.Config.DbType == constants.DbTypePosgres {
+		expr = gorm.Expr("meta || ?", query.Meta)
+	} else {
+		expr = gorm.Expr("json_patch(meta, ?)", query.Meta)
+	}
 
 	return ctx.db.
 		Model(&group).
 		Where("id in ?", query.ID).
-		Update("Meta", gorm.Expr("Meta || ?", query.Meta)).Error
+		Update("Meta", expr).Error
 }
 
 func (ctx *MahresourcesContext) BulkDeleteGroups(query *query_models.BulkQuery) error {

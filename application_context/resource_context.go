@@ -868,10 +868,18 @@ func (ctx *MahresourcesContext) BulkReplaceTagsFromResources(query *query_models
 func (ctx *MahresourcesContext) BulkAddMetaToResources(query *query_models.BulkEditMetaQuery) error {
 	var resource models.Resource
 
+	var expr clause.Expr
+
+	if ctx.Config.DbType == constants.DbTypePosgres {
+		expr = gorm.Expr("meta || ?", query.Meta)
+	} else {
+		expr = gorm.Expr("json_patch(meta, ?)", query.Meta)
+	}
+
 	return ctx.db.
 		Model(&resource).
 		Where("id in ?", query.ID).
-		Update("Meta", gorm.Expr("Meta || ?", query.Meta)).Error
+		Update("Meta", expr).Error
 }
 
 func (ctx *MahresourcesContext) BulkAddTagsToResources(query *query_models.BulkEditQuery) error {
@@ -1059,6 +1067,10 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 
 		if transactionCtx.Config.DbType == constants.DbTypePosgres {
 			if err := tx.Exec("update resources set meta = meta || ? where id = ?", backups, winner.ID).Error; err != nil {
+				return err
+			}
+		} else if transactionCtx.Config.DbType == constants.DbTypeSqlite {
+			if err := tx.Exec("update resources set meta = json_patch(meta, ?) where id = ?", backups, winner.ID).Error; err != nil {
 				return err
 			}
 		}

@@ -114,3 +114,37 @@ function parseQueryParams(queryString) {
 
   return res;
 }
+
+/**
+ * addMeta - add meta to a group
+ * @param {number} id
+ * @param {object} val
+ * @returns {Promise<Response>}
+ */
+function addMetaToGroup(id, val) {
+  return fetch("/v1/groups/addMeta", {
+    method: 'POST',
+    body: JSON.stringify({ id: [id], Meta: JSON.stringify(val) }),
+    headers: {
+      "Accept": "application/json",
+      "Content-Type": "application/json",
+    }
+  })
+}
+
+/**
+ * addMetaToResource - add meta to resource
+ * @param {number} id
+ * @param {object} val
+ * @returns {Promise<Response>}
+ */
+function addMetaToResource(id, val) {
+  return fetch("/v1/resources/addMeta", {
+    method: 'POST',
+    body: JSON.stringify({ id: [id], Meta: JSON.stringify(val) }),
+    headers: {
+      "Accept": "application/json",
+      "Content-Type": "application/json",
+    }
+  });
+}
