@@ -148,6 +148,29 @@ document.addEventListener('alpine:init', () => {
                 return `${item.Name} (${item[this.extraInfo].Name})`
             },
 
+            // scrolls mthe container to the selected item
+            async showSelected() {
+                await this.$nextTick();
+
+                const list = this.$refs?.list;
+
+                if (!list) {
+                    return;
+                }
+
+                const selected = list.querySelector('.bg-blue-500');
+
+                if (!selected) {
+                    return;
+                }
+
+                // scroll the selected item into view
+                selected.scrollIntoView({
+                    inline: 'nearest',
+                    block: 'center',
+                });
+            },
+
             inputEvents: {
                 ['@keydown.escape'](e) {
                     if (!this.dropdownActive) {
@@ -159,15 +182,15 @@ document.addEventListener('alpine:init', () => {
                 },
 
                 ['@keydown.arrow-up.prevent']() {
-                    this.selectedIndex = this.selectedIndex - 1;
+                    this.selectedIndex = this.selectedIndex === 0 ? this.results.length - 1 : this.selectedIndex - 1;
 
-                    if (this.selectedIndex < 0) {
-                        this.selectedIndex = this.results.length - 1;
-                    }
+                    this.showSelected();
                 },
 
                 ['@keydown.arrow-down.prevent']() {
                     this.selectedIndex = (this.selectedIndex + 1) % this.results.length;
+
+                    this.showSelected();
                 },
 
                 ['@keydown.enter.prevent'](e) {
