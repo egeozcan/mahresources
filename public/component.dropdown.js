@@ -152,7 +152,7 @@ document.addEventListener('alpine:init', () => {
             async showSelected() {
                 await this.$nextTick();
 
-                const list = this.$refs?.list;
+                const list = this.$refs?.list?.closest(".overflow-x-auto");
 
                 if (!list) {
                     return;
@@ -164,11 +164,12 @@ document.addEventListener('alpine:init', () => {
                     return;
                 }
 
-                // scroll the selected item into view
-                selected.scrollIntoView({
-                    inline: 'nearest',
-                    block: 'center',
-                });
+                // scroll the selected item into view if it's not already
+                if (selected.offsetTop < list.scrollTop) {
+                    list.scrollTop = selected.offsetTop;
+                } else if (selected.offsetTop + selected.offsetHeight > list.scrollTop + list.clientHeight) {
+                    list.scrollTop = selected.offsetTop + selected.offsetHeight - list.clientHeight;
+                }
             },
 
             inputEvents: {
