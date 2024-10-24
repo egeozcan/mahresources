@@ -18,7 +18,7 @@ type Group struct {
 	Meta types.JSON
 
 	Owner   *Group `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
-	OwnerId *uint
+	OwnerId *uint  `gorm:"index"`
 
 	RelatedResources []*Resource `gorm:"many2many:groups_related_resources;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	RelatedNotes     []*Note     `gorm:"many2many:groups_related_notes;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`

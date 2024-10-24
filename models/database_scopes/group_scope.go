@@ -147,38 +147,31 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 
 		if query.Name != "" {
 			var operator = likeOperator
-			var padCharacter = "%"
+			var name = "%" + query.Name + "%"
 
-			// if query name starts and ends with a quote, we will search for exact match and replace \" with ", while removing the quotes
 			if strings.HasPrefix(query.Name, "\"") && strings.HasSuffix(query.Name, "\"") {
 				operator = "="
-				query.Name = strings.ReplaceAll(query.Name[1:len(query.Name)-1], "\\\"", "\"")
-				padCharacter = ""
+				name = strings.ReplaceAll(query.Name[1:len(query.Name)-1], "\\\"", "\"")
 			}
 
-			// Base subselect condition for "g.name"
-			subselectCondition := originalDB.Where("g.name "+operator+" ?", padCharacter+query.Name+padCharacter).Where("groups.id = g.id")
+			conditions := []string{"groups.name " + operator + " ?"}
+			params := []interface{}{name}
 
-			// Check if parent name should be included
 			if query.SearchParentsForName {
 				addParentSubquery()
-				subselectCondition = subselectCondition.Or("parent.name "+operator+" ?", padCharacter+query.Name+padCharacter).Where("groups.owner_id = parent.id")
+				conditions = append(conditions, "parent.name "+operator+" ?")
+				params = append(params, name)
 			}
 
-			// Check if child name should be included
 			if query.SearchChildrenForName {
 				addChildSubquery()
-				subselectCondition = subselectCondition.Or("child.name "+operator+" ?", padCharacter+query.Name+padCharacter).Where("groups.id = child.owner_id")
+				conditions = append(conditions, "child.name "+operator+" ?")
+				params = append(params, name)
 			}
 
-			// Construct the final subquery
-			subSelect := originalDB.
-				Table("groups g").
-				Select("count(*)").
-				Where(subselectCondition)
+			conditionString := strings.Join(conditions, " OR ")
 
-			// Apply subselect condition to main query
-			dbQuery = dbQuery.Where("(?) > 0", subSelect)
+			dbQuery = dbQuery.Where(conditionString, params...)
 		}
 
 		if query.Description != "" {
