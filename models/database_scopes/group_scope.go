@@ -21,9 +21,30 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 		dbQuery := db
 
 		if !ignoreSort && query.SortBy != "" && sortColumnMatcher.MatchString(query.SortBy) {
-			dbQuery = dbQuery.Order(query.SortBy).Order("created_at desc")
+			dbQuery = dbQuery.Order("groups." + query.SortBy).Order("groups.created_at desc")
 		} else if !ignoreSort {
-			dbQuery = dbQuery.Order("created_at desc")
+			dbQuery = dbQuery.Order("groups.created_at desc")
+		}
+
+		var parentAdded = false
+		var childAdded = false
+
+		var addParentSubquery = func() {
+			if parentAdded {
+				return
+			}
+			dbQuery = dbQuery.
+				Joins("LEFT JOIN groups parent ON parent.id = groups.owner_id")
+			parentAdded = true
+		}
+
+		var addChildSubquery = func() {
+			if childAdded {
+				return
+			}
+			dbQuery = dbQuery.
+				Joins("LEFT JOIN groups child ON child.owner_id = groups.id")
+			childAdded = true
 		}
 
 		if query.Ids != nil && len(query.Ids) > 0 {
@@ -35,14 +56,13 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 				Where("groups.id = gt.group_id")
 
 			if query.SearchParentsForTags {
-				dbQuery = dbQuery.
-					Joins("LEFT JOIN groups parent ON parent.id = groups.owner_id")
+				addParentSubquery()
 				subSelectCondition = subSelectCondition.Or("parent.id = gt.group_id")
 			}
 
 			if query.SearchChildrenForTags {
-				subSelectCondition = subSelectCondition.
-					Or("gt.group_id IN (SELECT id FROM groups child WHERE child.owner_id = groups.id)")
+				addChildSubquery()
+				subSelectCondition = subSelectCondition.Or("child.id = gt.group_id")
 			}
 
 			subSelect := originalDB.
@@ -126,7 +146,39 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 		}
 
 		if query.Name != "" {
-			dbQuery = dbQuery.Where("groups.name "+likeOperator+" ?", "%"+query.Name+"%")
+			var operator = likeOperator
+			var padCharacter = "%"
+
+			// if query name starts and ends with a quote, we will search for exact match and replace \" with ", while removing the quotes
+			if strings.HasPrefix(query.Name, "\"") && strings.HasSuffix(query.Name, "\"") {
+				operator = "="
+				query.Name = strings.ReplaceAll(query.Name[1:len(query.Name)-1], "\\\"", "\"")
+				padCharacter = ""
+			}
+
+			// Base subselect condition for "g.name"
+			subselectCondition := originalDB.Where("g.name "+operator+" ?", padCharacter+query.Name+padCharacter).Where("groups.id = g.id")
+
+			// Check if parent name should be included
+			if query.SearchParentsForName {
+				addParentSubquery()
+				subselectCondition = subselectCondition.Or("parent.name "+operator+" ?", padCharacter+query.Name+padCharacter).Where("groups.owner_id = parent.id")
+			}
+
+			// Check if child name should be included
+			if query.SearchChildrenForName {
+				addChildSubquery()
+				subselectCondition = subselectCondition.Or("child.name "+operator+" ?", padCharacter+query.Name+padCharacter).Where("groups.id = child.owner_id")
+			}
+
+			// Construct the final subquery
+			subSelect := originalDB.
+				Table("groups g").
+				Select("count(*)").
+				Where(subselectCondition)
+
+			// Apply subselect condition to main query
+			dbQuery = dbQuery.Where("(?) > 0", subSelect)
 		}
 
 		if query.Description != "" {

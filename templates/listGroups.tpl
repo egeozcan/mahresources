@@ -19,7 +19,11 @@
         {% include "/partials/sideTitle.tpl" with title="Sort" %}
         {% include "/partials/form/selectInput.tpl" with name='SortBy' label='Sort' values=sortValues %}
         {% include "/partials/sideTitle.tpl" with title="Filter" %}
+
         {% include "/partials/form/textInput.tpl" with name='Name' label='Name' value=queryValues.Name.0 %}
+        {% include "/partials/form/checkboxInput.tpl" with name='SearchParentsForName' label='Search Parents For Name' value=queryValues.SearchParentsForName.0 id=getNextId("SearchParentsForName") %}
+        {% include "/partials/form/checkboxInput.tpl" with name='SearchChildrenForName' label='Search Children For Name' value=queryValues.SearchChildrenForName.0 id=getNextId("SearchChildrenForName") %}
+
         {% include "/partials/form/textInput.tpl" with name='Description' label='Description' value=queryValues.Description.0 %}
         {% include "/partials/form/textInput.tpl" with name='URL' label='URL' value=queryValues.URL.0 %}
 

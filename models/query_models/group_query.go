@@ -18,6 +18,8 @@ type GroupEditor struct {
 
 type GroupQuery struct {
 	Name                  string
+	SearchParentsForName  bool
+	SearchChildrenForName bool
 	Description           string
 	Tags                  []uint
 	SearchParentsForTags  bool
