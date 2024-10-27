@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var baseTemplateContext = pongo2.Context{
@@ -72,6 +73,7 @@ var staticTemplateCtx = func(request *http.Request) pongo2.Context {
 			currentId += 1
 			return fmt.Sprintf("input_%v_%v", elName, currentId)
 		},
+		"dereference": dereference,
 	}
 
 	if errMessage := request.URL.Query().Get("Error"); errMessage != "" {
@@ -173,4 +175,17 @@ func getPathExtensionOptions(url *url.URL, options *[]*SelectOption) *[]*SelectO
 	}
 
 	return options
+}
+
+func dereference(v interface{}) interface{} {
+	switch v.(type) {
+	case *uint:
+		return *v.(*uint)
+	case *string:
+		return *v.(*string)
+	case *time.Time:
+		return *v.(*time.Time)
+	default:
+		return v
+	}
 }
