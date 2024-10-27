@@ -18,6 +18,8 @@ type ResourceWriter interface {
 	EditResource(resourceQuery *query_models.ResourceEditor) (*models.Resource, error)
 	BulkRemoveTagsFromResources(query *query_models.BulkEditQuery) error
 	BulkReplaceTagsFromResources(query *query_models.BulkEditQuery) error
+	RecalculateResourceDimensions(query *query_models.EntityIdQuery) error
+	SetResourceDimensions(resourceId uint, width, height uint) error
 	BulkAddMetaToResources(query *query_models.BulkEditMetaQuery) error
 	BulkAddTagsToResources(query *query_models.BulkEditQuery) error
 	BulkAddGroupsToResources(query *query_models.BulkEditQuery) error

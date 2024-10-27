@@ -232,9 +232,16 @@ func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.Re
 				resourceQuery.OwnerId = group.ID
 			}
 
+			name := resourceQuery.FileName
+
+			// if the name is an empty string, try to get the name from the URL
+			if name == "" {
+				name = path.Base(url)
+			}
+
 			res, err := ctx.AddResource(resp.Body, resourceQuery.FileName, &query_models.ResourceCreator{
 				ResourceQueryBase: query_models.ResourceQueryBase{
-					Name:             resourceQuery.Name,
+					Name:             name,
 					Description:      resourceQuery.Description,
 					OwnerId:          resourceQuery.OwnerId,
 					Groups:           resourceQuery.Groups,
@@ -470,6 +477,19 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 		resourceQuery.Meta = "{}"
 	}
 
+	width := 0
+	height := 0
+
+	// if it's an image, add the width and height to the meta
+	if strings.HasPrefix(fileMime.String(), "image/") {
+		img, _, err := image.Decode(tempFile)
+		if err == nil {
+			bounds := img.Bounds()
+			width = bounds.Max.X
+			height = bounds.Max.Y
+		}
+	}
+
 	fileInfo, err := tempFile.Stat()
 	if err != nil {
 		tx.Rollback()
@@ -491,6 +511,8 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 		Description:      resourceQuery.Description,
 		OriginalLocation: resourceQuery.OriginalLocation,
 		OriginalName:     resourceQuery.OriginalName,
+		Width:            uint(width),
+		Height:           uint(height),
 	}
 
 	if err := tx.Save(res).Error; err != nil {
@@ -864,6 +886,54 @@ func (ctx *MahresourcesContext) BulkReplaceTagsFromResources(query *query_models
 
 		return nil
 	})
+}
+
+func (ctx *MahresourcesContext) RecalculateResourceDimensions(query *query_models.EntityIdQuery) error {
+	var resource models.Resource
+
+	if err := ctx.db.First(&resource, query.ID).Error; err != nil {
+		return err
+	}
+
+	fs, storageErr := ctx.GetFsForStorageLocation(resource.StorageLocation)
+
+	if storageErr != nil {
+		return storageErr
+	}
+
+	file, openErr := fs.Open(resource.GetCleanLocation())
+
+	if openErr != nil {
+		return openErr
+	}
+
+	defer file.Close()
+
+	img, _, err := image.Decode(file)
+
+	if err != nil {
+		return err
+	}
+
+	bounds := img.Bounds()
+
+	resource.Width = uint(bounds.Max.X)
+	resource.Height = uint(bounds.Max.Y)
+
+	return ctx.db.Save(&resource).Error
+}
+
+func (ctx *MahresourcesContext) SetResourceDimensions(resourceId uint, width, height uint) error {
+	var resource models.Resource
+
+	if err := ctx.db.First(&resource, resourceId).Error; err != nil {
+		return err
+	}
+
+	resource.Width = width
+	resource.Height = height
+
+	return ctx.db.Save(&resource).Error
 }
 
 func (ctx *MahresourcesContext) BulkAddMetaToResources(query *query_models.BulkEditMetaQuery) error {

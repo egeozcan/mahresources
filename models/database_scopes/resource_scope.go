@@ -127,6 +127,22 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 			dbQuery = dbQuery.Where("resources.owner_id IS NULL")
 		}
 
+		if query.MinWidth > 0 {
+			dbQuery = dbQuery.Where("resources.width >= ?", query.MinWidth)
+		}
+
+		if query.MaxWidth > 0 {
+			dbQuery = dbQuery.Where("resources.width <= ?", query.MaxWidth)
+		}
+
+		if query.MinHeight > 0 {
+			dbQuery = dbQuery.Where("resources.height >= ?", query.MinHeight)
+		}
+
+		if query.MaxHeight > 0 {
+			dbQuery = dbQuery.Where("resources.height <= ?", query.MaxHeight)
+		}
+
 		if len(query.MetaQuery) > 0 {
 			for _, v := range query.MetaQuery {
 				if v.Key == "" {

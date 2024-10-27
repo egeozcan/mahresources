@@ -12,6 +12,8 @@ type ResourceQueryBase struct {
 	Category         string
 	OriginalName     string
 	OriginalLocation string
+	Width            uint
+	Height           uint
 }
 
 type ResourceCreator struct {
@@ -57,6 +59,10 @@ type ResourceSearchQuery struct {
 	Hash             string
 	ShowWithoutOwner bool
 	ShowWithSimilar  bool
+	MinWidth         uint
+	MinHeight        uint
+	MaxWidth         uint
+	MaxHeight        uint
 }
 
 type ResourceThumbnailQuery struct {

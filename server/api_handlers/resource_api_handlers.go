@@ -493,3 +493,45 @@ func GetMergeResourcesHandler(ctx interfaces.ResourceWriter) func(writer http.Re
 		http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", editor.Winner))
 	}
 }
+
+func GetResourceRecalculateDimensionsHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var editor = query_models.EntityIdQuery{}
+		var err error
+
+		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		err = ctx.RecalculateResourceDimensions(&editor)
+
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", editor.ID))
+	}
+}
+
+func GetResourceSetDimensionsHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var editor = query_models.ResourceEditor{}
+		var err error
+
+		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		err = ctx.SetResourceDimensions(editor.ID, editor.Width, editor.Height)
+
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", editor.ID))
+	}
+}

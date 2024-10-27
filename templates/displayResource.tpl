@@ -4,7 +4,7 @@
     {% include "/partials/description.tpl" with description=resource.Description %}
 
     <div class="mb-6">
-        {% include "/partials/json.tpl" with jsonData=resource keys="ID,CreatedAt,UpdatedAt,Name,OriginalName,OriginalLocation,Hash,HashType,Location,StorageLocation,Description" %}
+        {% include "/partials/json.tpl" with jsonData=resource keys="ID,CreatedAt,UpdatedAt,Name,OriginalName,OriginalLocation,Hash,HashType,Location,StorageLocation,Description,Width,Height" %}
     </div>
 
     {% include "/partials/seeAll.tpl" with entities=resource.Notes subtitle="Notes" formAction="/notes" formID=resource.ID formParamName="resources" templateName="note" %}
@@ -34,6 +34,14 @@
         <img height="300" src="/v1/resource/preview?id={{ resource.ID }}&height=300" alt="Preview">
     </a>
     {% include "/partials/tagList.tpl" with tags=resource.Tags addTagUrl='/v1/resources/addTags' id=resource.ID %}
+
+    {% if recalculateDimensionsAllowed %}
+        {% include "/partials/sideTitle.tpl" with title="Update Dimensions" %}
+        <form action="/v1/resource/recalculateDimensions" method="post">
+            <input type="hidden" name="id" value="{{ resource.ID }}">
+            <button type="submit" class="ml-3 inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">Recalculate Dimensions</button>
+        </form>
+    {% endif %}
 
     {% include "/partials/sideTitle.tpl" with title="Meta Data" %}
     {% include "/partials/json.tpl" with jsonData=resource.Meta %}

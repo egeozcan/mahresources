@@ -22,6 +22,10 @@
     {% include "/partials/form/freeFields.tpl" with name="MetaQuery" url='/v1/resources/meta/keys' fields=parsedQuery.MetaQuery id=getNextId("freeField") %}
     {% include "/partials/form/dateInput.tpl" with name='CreatedBefore' label='Created Before' value=queryValues.CreatedBefore.0 %}
     {% include "/partials/form/dateInput.tpl" with name='CreatedAfter' label='Created After' value=queryValues.CreatedAfter.0 %}
+    {% include "/partials/form/textInput.tpl" with name='MinWidth' label='Min Width' value=queryValues.MinWidth.0 %}
+    {% include "/partials/form/textInput.tpl" with name='MaxWidth' label='Max Width' value=queryValues.MaxWidth.0 %}
+    {% include "/partials/form/textInput.tpl" with name='MinHeight' label='Min Height' value=queryValues.MinHeight.0 %}
+    {% include "/partials/form/textInput.tpl" with name='MaxHeight' label='Max Height' value=queryValues.MaxHeight.0 %}
     {% include "/partials/form/checkboxInput.tpl" with name='ShowWithSimilar' label='Show Only With Existing Similar Images' value=queryValues.ShowWithSimilar.0 id=getNextId("ShowWithSimilar") %}
     {% include "/partials/form/searchButton.tpl" %}
 </form>
