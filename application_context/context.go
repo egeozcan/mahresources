@@ -7,7 +7,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/spf13/afero"
 	"gorm.io/gorm"
-	"io"
 	"log"
 	"mahresources/constants"
 	"mahresources/models"
@@ -17,11 +16,6 @@ import (
 	"strings"
 	"time"
 )
-
-type File interface {
-	io.Reader
-	io.Closer
-}
 
 type MahresourcesConfig struct {
 	DbType         string

@@ -115,6 +115,8 @@ func QueryContextProvider(context *application_context.MahresourcesContext) func
 				Name: "Delete",
 				Url:  fmt.Sprintf("/v1/query/delete?Id=%v", query.ID),
 			},
+			"mainEntity":     query,
+			"mainEntityType": "query",
 		}.Update(baseContext)
 	}
 }

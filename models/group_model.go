@@ -36,13 +36,15 @@ type Group struct {
 	Category   *Category `gorm:"foreignKey:CategoryId;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 }
 
-func (g Group) getId() uint {
+func (g Group) GetId() uint {
 	return g.ID
 }
 
 func (g Group) GetName() string {
 	return limit(g.Name, 200)
 }
+
+func (g Group) GetDescription() string { return g.Description }
 
 func (g Group) initials() string {
 	res := ""

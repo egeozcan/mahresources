@@ -4,6 +4,11 @@ type EntityIdQuery struct {
 	ID uint
 }
 
+type BasicEntityQuery struct {
+	Name        string
+	Description string
+}
+
 type BulkQuery struct {
 	ID []uint
 }

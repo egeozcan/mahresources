@@ -18,6 +18,7 @@
     <script src="/public/component.bulkSelection.js"></script>
     <script src="/public/component.storeConfig.js"></script>
     <script type="module" src="/public/webcomponent.expandabletext.js"></script>
+    <script type="module" src="/public/webcomponent.inlineedit.js"></script>
     <script src="/public/tableMaker.js"></script>
     <link rel="apple-touch-icon" sizes="57x57" href="/public/favicon/apple-icon-57x57.png">
     <link rel="apple-touch-icon" sizes="60x60" href="/public/favicon/apple-icon-60x60.png">

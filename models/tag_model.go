@@ -19,10 +19,14 @@ func (t Tag) setId(id uint) {
 	t.ID = id
 }
 
-func (t Tag) getId() uint {
+func (t Tag) GetId() uint {
 	return t.ID
 }
 
-func (t Tag) getName() string {
+func (t Tag) GetName() string {
 	return t.Name
+}
+
+func (t Tag) GetDescription() string {
+	return t.Description
 }

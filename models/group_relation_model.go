@@ -31,3 +31,27 @@ type GroupRelation struct {
 	RelationType   *GroupRelationType `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	RelationTypeId *uint              `gorm:"uniqueIndex:unique_rel"`
 }
+
+func (r GroupRelation) GetId() uint {
+	return r.ID
+}
+
+func (r GroupRelation) GetName() string {
+	return r.Name
+}
+
+func (r GroupRelation) GetDescription() string {
+	return r.Description
+}
+
+func (r GroupRelationType) GetId() uint {
+	return r.ID
+}
+
+func (r GroupRelationType) GetName() string {
+	return r.Name
+}
+
+func (r GroupRelationType) GetDescription() string {
+	return r.Description
+}

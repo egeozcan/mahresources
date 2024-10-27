@@ -116,6 +116,8 @@ func TagContextProvider(context *application_context.MahresourcesContext) func(r
 				Url:  "/v1/tag/delete",
 				ID:   tag.ID,
 			},
+			"mainEntity":     tag,
+			"mainEntityType": "tag",
 		}.Update(baseContext)
 	}
 }

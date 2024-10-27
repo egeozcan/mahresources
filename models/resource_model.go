@@ -37,3 +37,15 @@ type Resource struct {
 func (r Resource) GetCleanLocation() string {
 	return filepath.FromSlash(strings.ReplaceAll(r.Location, "\\", "/"))
 }
+
+func (r Resource) GetId() uint {
+	return r.ID
+}
+
+func (r Resource) GetName() string {
+	return r.Name
+}
+
+func (r Resource) GetDescription() string {
+	return r.Description
+}

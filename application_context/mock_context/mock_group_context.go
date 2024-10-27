@@ -53,6 +53,16 @@ func (r MockGroupContext) BulkDeleteGroups(query *query_models.BulkQuery) error 
 	panic("implement me")
 }
 
+func (r MockGroupContext) UpdateGroupName(id uint, name string) error {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (r MockGroupContext) UpdateGroupDescription(id uint, description string) error {
+	//TODO implement me
+	panic("implement me")
+}
+
 func NewMockGroupContext() *MockGroupContext {
 	return &MockGroupContext{}
 }

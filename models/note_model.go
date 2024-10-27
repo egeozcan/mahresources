@@ -23,10 +23,14 @@ type Note struct {
 	NoteTypeId  *uint
 }
 
-func (a Note) getId() uint {
+func (a Note) GetId() uint {
 	return a.ID
 }
 
 func (a Note) GetName() string {
 	return a.Name
+}
+
+func (a Note) GetDescription() string {
+	return a.Description
 }

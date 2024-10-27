@@ -6,7 +6,11 @@
     <div class="flex items-center flex-1 min-w-0 gap-3 {% if breadcrumb && breadcrumb.HomeUrl %}mt-3{% endif %}">
         <h2 class="items-start gap-2 text-2xl font-bold leading-7 text-gray-900 sm:text-3xl flex-col">
             {% if prefix %}<small class="break-words px-2 text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 ">{{ prefix }}</small>{% endif %}
-            <span class="break-all">{{ pageTitle }}</span>
+            {% if mainEntityType && mainEntity %}
+                <span class="break-all"><inline-edit post="/v1/{{ mainEntityType }}/editName?id={{ mainEntity.ID }}" name="name">{{ pageTitle }}</inline-edit></span>
+            {% else %}
+                <span class="break-all">{{ pageTitle }}</span>
+            {% endif %}
         </h2>
         {% if action %}
         <a href="{{ action.Url }}" class="

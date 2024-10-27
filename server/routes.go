@@ -4,6 +4,7 @@ import (
 	"github.com/flosch/pongo2/v4"
 	"github.com/gorilla/mux"
 	"mahresources/application_context"
+	"mahresources/models"
 	"mahresources/server/api_handlers"
 	"mahresources/server/template_handlers"
 	"mahresources/server/template_handlers/template_context_providers"
@@ -85,11 +86,21 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 		http.Redirect(writer, request, "/notes", http.StatusMovedPermanently)
 	})
 
+	basicGroupWriter := application_context.NewEntityWriter[models.Group](appContext)
+	basicNoteWriter := application_context.NewEntityWriter[models.Note](appContext)
+	basicResourceWriter := application_context.NewEntityWriter[models.Resource](appContext)
+	basicTagWriter := application_context.NewEntityWriter[models.Tag](appContext)
+	basicCategoryWriter := application_context.NewEntityWriter[models.Category](appContext)
+	basicQueryWriter := application_context.NewEntityWriter[models.Query](appContext)
+	basicRelationTypeWriter := application_context.NewEntityWriter[models.GroupRelationType](appContext)
+
 	router.Methods(http.MethodGet).Path("/v1/notes").HandlerFunc(api_handlers.GetNotesHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/notes/meta/keys").HandlerFunc(api_handlers.GetNoteMetaKeysHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/note").HandlerFunc(api_handlers.GetNoteHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/note").HandlerFunc(api_handlers.GetAddNoteHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/note/delete").HandlerFunc(api_handlers.GetRemoveNoteHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/note/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Note](basicNoteWriter, "note"))
+	router.Methods(http.MethodPost).Path("/v1/note/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.Note](basicNoteWriter, "note"))
 
 	router.Methods(http.MethodGet).Path("/v1/groups").HandlerFunc(api_handlers.GetGroupsHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/groups/meta/keys").HandlerFunc(api_handlers.GetGroupMetaKeysHandler(appContext))
@@ -97,12 +108,15 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/group/parents").HandlerFunc(api_handlers.GetGroupsParentsHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/group/clone").HandlerFunc(api_handlers.GetDuplicateGroupHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/group").HandlerFunc(api_handlers.GetAddGroupHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/group").HandlerFunc(api_handlers.GetAddGroupHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/group/delete").HandlerFunc(api_handlers.GetRemoveGroupHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/groups/addTags").HandlerFunc(api_handlers.GetAddTagsToGroupsHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/groups/removeTags").HandlerFunc(api_handlers.GetRemoveTagsFromGroupsHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/groups/addMeta").HandlerFunc(api_handlers.GetAddMetaToGroupsHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/groups/delete").HandlerFunc(api_handlers.GetBulkDeleteGroupsHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/groups/merge").HandlerFunc(api_handlers.GetMergeGroupsHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/group/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Group](basicGroupWriter, "group"))
+	router.Methods(http.MethodPost).Path("/v1/group/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.Group](basicGroupWriter, "group"))
 
 	router.Methods(http.MethodPost).Path("/v1/relation").HandlerFunc(api_handlers.GetAddRelationHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/relation/delete").HandlerFunc(api_handlers.GetRemoveRelationHandler(appContext))
@@ -110,6 +124,8 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/relationType/delete").HandlerFunc(api_handlers.GetRemoveRelationTypeHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/relationType/edit").HandlerFunc(api_handlers.GetEditGroupRelationTypeHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/relationTypes").HandlerFunc(api_handlers.GetRelationTypesHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/relation/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.GroupRelation](basicRelationTypeWriter, "relation"))
+	router.Methods(http.MethodGet).Path("/v1/relation/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.GroupRelation](basicRelationTypeWriter, "relation"))
 
 	router.Methods(http.MethodGet).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/resources").HandlerFunc(api_handlers.GetResourcesHandler(appContext))
@@ -128,18 +144,26 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/resources/addMeta").HandlerFunc(api_handlers.GetAddMetaToResourcesHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resources/delete").HandlerFunc(api_handlers.GetBulkDeleteResourcesHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resources/merge").HandlerFunc(api_handlers.GetMergeResourcesHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/resource/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Resource](basicResourceWriter, "resource"))
+	router.Methods(http.MethodPost).Path("/v1/resource/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.Resource](basicResourceWriter, "resource"))
 
 	router.Methods(http.MethodGet).Path("/v1/tags").HandlerFunc(api_handlers.GetTagsHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/tag").HandlerFunc(api_handlers.GetAddTagHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/tag/delete").HandlerFunc(api_handlers.GetRemoveTagHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/tag/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Tag](basicTagWriter, "tag"))
+	router.Methods(http.MethodPost).Path("/v1/tag/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.Tag](basicTagWriter, "tag"))
 
 	router.Methods(http.MethodGet).Path("/v1/categories").HandlerFunc(api_handlers.GetCategoriesHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/category").HandlerFunc(api_handlers.GetAddCategoryHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/category/delete").HandlerFunc(api_handlers.GetRemoveCategoryHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/category/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Category](basicCategoryWriter, "category"))
+	router.Methods(http.MethodPost).Path("/v1/category/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.Category](basicCategoryWriter, "category"))
 
 	router.Methods(http.MethodGet).Path("/v1/queries").HandlerFunc(api_handlers.GetQueriesHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/query").HandlerFunc(api_handlers.GetQueryHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/query").HandlerFunc(api_handlers.GetAddQueryHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/query/delete").HandlerFunc(api_handlers.GetRemoveQueryHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/query/run").HandlerFunc(api_handlers.GetRunQueryHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/query/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Query](basicQueryWriter, "query"))
+	router.Methods(http.MethodPost).Path("/v1/query/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.Query](basicQueryWriter, "query"))
 }

@@ -242,7 +242,8 @@ func groupContextProviderImpl(context interfaces.GroupReader) func(request *http
 				Name: "Delete",
 				Url:  fmt.Sprintf("/v1/group/delete?Id=%v", group.ID),
 			},
-			"mainEntity": group,
+			"mainEntity":     group,
+			"mainEntityType": "group",
 			"breadcrumb": pongo2.Context{
 				"HomeName": "Groups",
 				"HomeUrl":  "groups",

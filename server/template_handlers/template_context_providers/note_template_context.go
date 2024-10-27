@@ -181,7 +181,8 @@ func NoteContextProvider(context *application_context.MahresourcesContext) func(
 				Name: "Delete",
 				Url:  fmt.Sprintf("/v1/note/delete?Id=%v", note.ID),
 			},
-			"mainEntity": note,
+			"mainEntity":     note,
+			"mainEntityType": "note",
 		}.Update(baseContext)
 	}
 }

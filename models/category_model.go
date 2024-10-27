@@ -22,3 +22,15 @@ type Category struct {
 	// CustomAvatar is used when linking to a group with this category
 	CustomAvatar string `gorm:"type:text"`
 }
+
+func (c Category) GetId() uint {
+	return c.ID
+}
+
+func (c Category) GetName() string {
+	return c.Name
+}
+
+func (c Category) GetDescription() string {
+	return c.Description
+}

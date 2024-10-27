@@ -19,7 +19,7 @@
                         {% endif %}
                         <a class="overflow-hidden min-w-0 overflow-ellipsis break-words flex-shrink" href="/group?id={{ entity.ID }}" title="{{ entity.GetName() }}">
                             <h3 class="min-w-0 font-bold whitespace-nowrap overflow-hidden overflow-ellipsis">
-                                {{ entity.GetName() }}
+                                <inline-edit post="/v1/group/editName?id={{ entity.ID }}" name="name">{{ entity.GetName() }}</inline-edit>
                             </h3>
                             {% if !fullText %}
                                 <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-400">Updated: </span>{{ entity.UpdatedAt|date:"2006-01-02 15:04" }}</small>

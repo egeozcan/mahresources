@@ -16,6 +16,7 @@ import (
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
+	"mahresources/server/interfaces"
 	"math"
 	"net/http"
 	"os"
@@ -333,7 +334,7 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 	return res, nil
 }
 
-func (ctx *MahresourcesContext) AddResource(file File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
+func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
 	tx := ctx.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {

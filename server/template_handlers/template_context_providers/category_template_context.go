@@ -115,6 +115,8 @@ func CategoryContextProvider(context *application_context.MahresourcesContext) f
 				Name: "Delete",
 				Url:  fmt.Sprintf("/v1/category/delete?Id=%v", category.ID),
 			},
+			"mainEntity":     category,
+			"mainEntityType": "category",
 		}.Update(baseContext)
 	}
 }
