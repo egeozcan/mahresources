@@ -35,11 +35,17 @@
     </a>
     {% include "/partials/tagList.tpl" with tags=resource.Tags addTagUrl='/v1/resources/addTags' id=resource.ID %}
 
-    {% if recalculateDimensionsAllowed %}
+    {% if isImage %}
         {% include "/partials/sideTitle.tpl" with title="Update Dimensions" %}
         <form action="/v1/resource/recalculateDimensions" method="post">
             <input type="hidden" name="id" value="{{ resource.ID }}">
             <button type="submit" class="ml-3 inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">Recalculate Dimensions</button>
+        </form>
+        {% include "/partials/sideTitle.tpl" with title="Rotate 90 Degrees" %}
+        <form action="/v1/resources/rotate" method="post">
+            <input type="hidden" name="id" value="{{ resource.ID }}">
+            <input type="hidden" name="degrees" value="90">
+            <button type="submit" class="ml-3 inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">Rotate</button>
         </form>
     {% endif %}
 

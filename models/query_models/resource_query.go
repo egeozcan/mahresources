@@ -70,3 +70,8 @@ type ResourceThumbnailQuery struct {
 	Width  uint
 	Height uint
 }
+
+type RotateResourceQuery struct {
+	ID      uint
+	Degrees int
+}

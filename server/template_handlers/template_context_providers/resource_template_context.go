@@ -211,9 +211,9 @@ func ResourceContextProvider(context *application_context.MahresourcesContext) f
 				Url:  "/v1/resource/delete",
 				ID:   resource.ID,
 			},
-			"recalculateDimensionsAllowed": strings.HasPrefix(resource.ContentType, "image/"),
-			"mainEntity":                   resource,
-			"mainEntityType":               "resource",
+			"isImage":        resource.IsImage(),
+			"mainEntity":     resource,
+			"mainEntityType": "resource",
 		}
 
 		if resource.OwnerId != nil {

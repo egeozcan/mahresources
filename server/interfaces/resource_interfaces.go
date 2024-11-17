@@ -25,6 +25,7 @@ type ResourceWriter interface {
 	BulkAddGroupsToResources(query *query_models.BulkEditQuery) error
 	BulkDeleteResources(query *query_models.BulkQuery) error
 	MergeResources(winnerId uint, loserIds []uint) error
+	RotateResource(resourceId uint, degrees int) error
 }
 
 type ResourceReader interface {

@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/anthonynsimon/bild/imgio"
+	"github.com/anthonynsimon/bild/transform"
 	"image"
 	"image/jpeg"
 	"io"
@@ -1148,4 +1150,67 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 
 		return nil
 	})
+}
+
+func (ctx *MahresourcesContext) RotateResource(resourceId uint, degrees int) error {
+	var resource models.Resource
+
+	if err := ctx.db.First(&resource, resourceId).Error; err != nil {
+		return err
+	}
+
+	if !resource.IsImage() {
+		return errors.New("not an image")
+	}
+
+	f, err := ctx.fs.Open(resource.GetCleanLocation())
+
+	if err != nil {
+		return err
+	}
+
+	img, _, err := image.Decode(f)
+
+	if err != nil {
+		return err
+	}
+
+	if err := f.Close(); err != nil {
+		return err
+	}
+
+	rotatedImage := transform.Rotate(img, float64(degrees), &transform.RotationOptions{ResizeBounds: true})
+
+	var buf bytes.Buffer
+	if err := imgio.JPEGEncoder(100)(&buf, rotatedImage); err != nil {
+		return err
+	}
+
+	newFile, err := ctx.fs.Create(resource.GetCleanLocation() + ".rotated")
+	if err != nil {
+		return err
+	}
+
+	if _, err := io.Copy(newFile, &buf); err != nil {
+		return err
+	}
+
+	if err := ctx.fs.Remove(resource.GetCleanLocation()); err != nil {
+		return err
+	}
+
+	if err := newFile.Close(); err != nil {
+		return err
+	}
+
+	if err := ctx.fs.Rename(resource.GetCleanLocation()+".rotated", resource.GetCleanLocation()); err != nil {
+		return err
+	}
+
+	// delete the thumbnail(s)
+	if err := ctx.db.Where("resource_id = ?", resourceId).Delete(&models.Preview{}).Error; err != nil {
+		return err
+	}
+
+	return ctx.RecalculateResourceDimensions(&query_models.EntityIdQuery{ID: resourceId})
 }

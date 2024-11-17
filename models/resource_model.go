@@ -49,3 +49,11 @@ func (r Resource) GetName() string {
 func (r Resource) GetDescription() string {
 	return r.Description
 }
+
+func (r Resource) IsImage() bool {
+	return strings.HasPrefix(r.ContentType, "image/")
+}
+
+func (r Resource) IsVideo() bool {
+	return strings.HasPrefix(r.ContentType, "video/")
+}
