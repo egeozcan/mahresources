@@ -66,6 +66,7 @@ var staticTemplateCtx = func(request *http.Request) pongo2.Context {
 	context := pongo2.Context{
 		"queryValues": request.URL.Query(),
 		"path":        request.URL.Path,
+		"url":         request.URL.String(),
 		"withQuery":   getWithQuery(request),
 		"hasQuery":    getHasQuery(request),
 		"stringId":    stringId,

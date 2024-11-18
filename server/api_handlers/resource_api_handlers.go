@@ -515,9 +515,9 @@ func GetRotateResourceHandler(ctx interfaces.ResourceWriter) func(writer http.Re
 	}
 }
 
-func GetResourceRecalculateDimensionsHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetBulkCalculateDimensionsHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		var editor = query_models.EntityIdQuery{}
+		var editor = query_models.BulkQuery{}
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
@@ -525,14 +525,22 @@ func GetResourceRecalculateDimensionsHandler(ctx interfaces.ResourceWriter) func
 			return
 		}
 
-		err = ctx.RecalculateResourceDimensions(&editor)
+		encounteredErrors := make([]error, 0)
 
-		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+		for _, id := range editor.ID {
+			err = ctx.RecalculateResourceDimensions(&query_models.EntityIdQuery{ID: id})
+
+			if err != nil {
+				encounteredErrors = append(encounteredErrors, err)
+			}
+		}
+
+		if len(encounteredErrors) > 0 {
+			http_utils.HandleError(errors.New("encountered errors during dimension calculation"), writer, request, http.StatusInternalServerError)
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", editor.ID))
+		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
 	}
 }
 

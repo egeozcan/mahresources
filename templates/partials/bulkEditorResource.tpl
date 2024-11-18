@@ -32,6 +32,13 @@
             <div class="mt-7">{% include "/partials/form/searchButton.tpl" with text="Add" %}</div>
         </div>
     </form>
+    <form class="px-4" method="post" :action="'/v1/resource/recalculateDimensions?redirect=' + encodeURIComponent(window.location)">
+        {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
+        <div class="flex flex-col">
+            <span class="block text-sm font-medium text-gray-700 mt-3">Update Dimensions</span>
+            {% include "/partials/form/searchButton.tpl" with text="Update Dimensions" %}
+        </div>
+    </form>
     <form
             class="px-4 no-ajax"
             method="post"
