@@ -17,6 +17,7 @@
                         this.error = null;
                         this.updated = new Date();
                         this.results = json;
+                        window.results = json;
                     })
                     : x.text().then(e => {
                         this.results = [];

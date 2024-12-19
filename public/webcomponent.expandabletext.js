@@ -1,8 +1,27 @@
 class ExpandableText extends HTMLElement {
     constructor() {
         super();
-        const shadow = this.attachShadow({ mode: 'open' });
+        this.attachShadow({ mode: 'open' });
 
+        // Append styles immediately
+        const style = document.createElement('style');
+        style.textContent = `
+          .container {
+            font-family: Arial, sans-serif;
+          }
+          button {
+            cursor: pointer;
+            display: inline;
+            margin-left: 1rem;
+          }
+          button + button {
+            margin-left: 0.5rem;
+          }
+        `;
+        this.shadowRoot.appendChild(style);
+    }
+
+    connectedCallback() {
         const container = document.createElement('span');
         container.setAttribute('class', 'container');
 
@@ -21,8 +40,6 @@ class ExpandableText extends HTMLElement {
 
         // Create the toggle button (inline) only if the text is longer than 30 characters
         let button = null;
-
-        // Create a copy button
         const copyButton = document.createElement('button');
 
         if (fullText.length > 30) {
@@ -34,7 +51,7 @@ class ExpandableText extends HTMLElement {
                 if (fullTextSpan.style.display === 'none') {
                     fullTextSpan.style.display = 'inline';
                     previewSpan.style.display = 'none';
-                    button.textContent = ' Read less';
+                    button.textContent = 'Read less';
                 } else {
                     fullTextSpan.style.display = 'none';
                     previewSpan.style.display = 'inline';
@@ -48,22 +65,6 @@ class ExpandableText extends HTMLElement {
             });
         }
 
-        // Apply some styles
-        const style = document.createElement('style');
-        style.textContent = `
-      .container {
-        font-family: Arial, sans-serif;
-      }
-      button {
-        cursor: pointer;
-        display: inline;
-        margin-left: 1rem;
-      }
-      button + button {
-        margin-left: 0.5rem;
-      }
-    `;
-
         // Append elements to the shadow DOM
         container.appendChild(previewSpan);
         container.appendChild(fullTextSpan);
@@ -73,8 +74,7 @@ class ExpandableText extends HTMLElement {
             container.appendChild(copyButton);
         }
 
-        shadow.appendChild(style);
-        shadow.appendChild(container);
+        this.shadowRoot.appendChild(container);
     }
 }
 
