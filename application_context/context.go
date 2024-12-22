@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 	"log"
 	"mahresources/constants"
+	"mahresources/lib"
 	"mahresources/models"
 	"mahresources/storage"
 	"os"
@@ -24,6 +25,11 @@ type MahresourcesConfig struct {
 	BindAddress    string
 }
 
+type MahresourcesLocks struct {
+	ThumbnailGenerationLock      *lib.IDLock[uint]
+	VideoThumbnailGenerationLock *lib.IDLock[uint]
+}
+
 type MahresourcesContext struct {
 	// the main file system
 	fs afero.Fs
@@ -34,6 +40,7 @@ type MahresourcesContext struct {
 	Config     *MahresourcesConfig
 	// these are the alternative locations to look at files or import them from
 	altFileSystems map[string]afero.Fs
+	locks          MahresourcesLocks
 }
 
 func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.DB, config *MahresourcesConfig) *MahresourcesContext {
@@ -43,7 +50,20 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		altFileSystems[key] = storage.CreateStorage(path)
 	}
 
-	return &MahresourcesContext{fs: filesystem, db: db, readOnlyDB: readOnlyDB, Config: config, altFileSystems: altFileSystems}
+	thumbnailGenerationLock := lib.NewIDLock[uint](uint(10))
+	videoThumbnailGenerationLock := lib.NewIDLock[uint](uint(1))
+
+	return &MahresourcesContext{
+		fs:             filesystem,
+		db:             db,
+		readOnlyDB:     readOnlyDB,
+		Config:         config,
+		altFileSystems: altFileSystems,
+		locks: MahresourcesLocks{
+			ThumbnailGenerationLock:      thumbnailGenerationLock,
+			VideoThumbnailGenerationLock: videoThumbnailGenerationLock,
+		},
+	}
 }
 
 // EnsureForeignKeysActive ensures that sqlite connection somehow didn't manage to deactivate foreign keys

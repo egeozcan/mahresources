@@ -572,6 +572,10 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, wid
 	var nullThumbnail *models.Preview
 	var fileBytes []byte
 
+	ctx.locks.ThumbnailGenerationLock.Acquire(resourceId)
+
+	defer ctx.locks.ThumbnailGenerationLock.Release(resourceId)
+
 	width = uint(math.Min(constants.MaxThumbWidth, float64(width)))
 	height = uint(math.Min(constants.MaxThumbHeight, float64(height)))
 
@@ -683,7 +687,7 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, wid
 
 		resultBuffer := bytes.NewBuffer(make([]byte, 0))
 
-		if err := ctx.createThumbFromVideo(file, resultBuffer); err != nil {
+		if err := ctx.createThumbFromVideo(file, resultBuffer, resourceId); err != nil {
 			return nil, err
 		}
 
@@ -724,7 +728,11 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, wid
 	return preview, nil
 }
 
-func (ctx *MahresourcesContext) createThumbFromVideo(file io.ReadSeeker, resultBuffer *bytes.Buffer) error {
+func (ctx *MahresourcesContext) createThumbFromVideo(file io.ReadSeeker, resultBuffer *bytes.Buffer, jobId uint) error {
+	ctx.locks.VideoThumbnailGenerationLock.Acquire(jobId)
+
+	defer ctx.locks.VideoThumbnailGenerationLock.Release(jobId)
+
 	// First attempt to create thumbnail at 1 second
 	err := ctx.createThumbFromVideoAtGivenTime(file, resultBuffer, 1)
 

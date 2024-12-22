@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 	"io"
 	"log"
+	"mahresources/lib"
 	"os"
 	"path"
 	"testing"
@@ -49,7 +50,7 @@ func init() {
 	context, _, _ = CreateContext()
 }
 
-func getMeTheFileOrPanic(path string) io.Reader {
+func getMeTheFileOrPanic(path string) io.ReadSeeker {
 	file, err := os.Open(path)
 
 	if err != nil {
@@ -69,7 +70,7 @@ func TestMahresourcesContext_createThumbFromVideo(t *testing.T) {
 		altFileSystems map[string]afero.Fs
 	}
 	type args struct {
-		file         io.Reader
+		file         io.ReadSeeker
 		resultBuffer *bytes.Buffer
 	}
 	tests := []struct {
@@ -93,14 +94,22 @@ func TestMahresourcesContext_createThumbFromVideo(t *testing.T) {
 			wantErr: false,
 		},
 	}
+
+	lock := lib.NewIDLock[uint](uint(1))
+	videoThumbGenLock := lib.NewIDLock[uint](uint(1))
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := &MahresourcesContext{
 				fs:             tt.fields.fs,
 				db:             tt.fields.db,
 				altFileSystems: tt.fields.altFileSystems,
+				locks: MahresourcesLocks{
+					ThumbnailGenerationLock:      lock,
+					VideoThumbnailGenerationLock: videoThumbGenLock,
+				},
 			}
-			if err := ctx.createThumbFromVideo(tt.args.file, tt.args.resultBuffer); (err != nil) != tt.wantErr {
+			if err := ctx.createThumbFromVideo(tt.args.file, tt.args.resultBuffer, 1); (err != nil) != tt.wantErr {
 				t.Errorf("createThumbFromVideo() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
