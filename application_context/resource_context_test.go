@@ -109,7 +109,7 @@ func TestMahresourcesContext_createThumbFromVideo(t *testing.T) {
 					VideoThumbnailGenerationLock: videoThumbGenLock,
 				},
 			}
-			if err := ctx.createThumbFromVideo(tt.args.file, tt.args.resultBuffer, 1); (err != nil) != tt.wantErr {
+			if err := ctx.createThumbFromVideo(tt.args.file, tt.args.resultBuffer); (err != nil) != tt.wantErr {
 				t.Errorf("createThumbFromVideo() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}

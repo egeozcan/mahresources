@@ -16,9 +16,6 @@ type IDLock[T comparable] struct {
 
 // NewIDLock creates a new IDLock with the specified maximum parallel operations.
 func NewIDLock[T comparable](maxParallel uint) *IDLock[T] {
-	if maxParallel == 0 {
-		maxParallel = 1 // Default to 1 if maxParallel is 0
-	}
 	return &IDLock[T]{
 		locks:        make(map[T]*sync.Mutex),
 		maxParallel:  maxParallel,
