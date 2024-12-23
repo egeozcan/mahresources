@@ -29,14 +29,8 @@ func NewIDLock[T comparable](maxParallel uint) *IDLock[T] {
 	}
 }
 
-// Acquire grabs a global token (if needed) and then pushes into the channel for that ID,
-// blocking until the channel is free.
-func (l *IDLock[T]) Acquire(id T) {
-	if l.maxParallel > 0 {
-		l.globalTokens <- struct{}{}
-	}
-
-	l.mu.Lock()
+// getOrCreateState finds or creates the idLockState for a given ID.
+func (l *IDLock[T]) getOrCreateState(id T) *idLockState {
 	state, ok := l.locks[id]
 	if !ok {
 		state = &idLockState{
@@ -45,6 +39,40 @@ func (l *IDLock[T]) Acquire(id T) {
 		}
 		l.locks[id] = state
 	}
+	return state
+}
+
+// rollbackState decrements refs and removes the state if no one else is using it.
+func (l *IDLock[T]) rollbackState(id T, state *idLockState) {
+	state.refs--
+	if state.refs == 0 {
+		delete(l.locks, id)
+	}
+}
+
+// releaseGlobalToken frees one global token (if any are in use).
+func (l *IDLock[T]) releaseGlobalToken() {
+	if l.maxParallel > 0 {
+		// We know we must have a token if Acquire succeeded,
+		// but we still do 'select' to preserve your existing logic.
+		select {
+		case <-l.globalTokens:
+			// Freed a global token
+		default:
+			// Shouldn’t happen
+		}
+	}
+}
+
+// Acquire grabs a global token (if needed) and then pushes into the channel for that ID,
+// blocking until the channel is free.
+func (l *IDLock[T]) Acquire(id T) {
+	if l.maxParallel > 0 {
+		l.globalTokens <- struct{}{}
+	}
+
+	l.mu.Lock()
+	state := l.getOrCreateState(id)
 	state.refs++
 	l.mu.Unlock()
 
@@ -60,25 +88,14 @@ func (l *IDLock[T]) Release(id T) {
 		// Pop from the channel
 		select {
 		case <-state.ch:
-			state.refs--
-			if state.refs == 0 {
-				delete(l.locks, id)
-			}
+			l.rollbackState(id, state)
 		default:
-			// Shouldn’t happen if we only call Release after Acquire,
-			// but we'll test it anyway for coverage.
+			// Shouldn’t happen if Acquire was truly successful
 		}
 	}
 	l.mu.Unlock()
 
-	if l.maxParallel > 0 {
-		select {
-		case <-l.globalTokens:
-			// Freed a global token
-		default:
-			// Shouldn’t happen if we only Acquire->Release properly
-		}
-	}
+	l.releaseGlobalToken()
 }
 
 // AcquireWithTimeout tries to Acquire the ID lock (and global token) within 'timeout'.
@@ -103,14 +120,7 @@ func (l *IDLock[T]) AcquireWithTimeout(id T, timeout time.Duration) bool {
 
 		// Non-blocking attempt to "create or find" the ID’s channel
 		l.mu.Lock()
-		state, ok := l.locks[id]
-		if !ok {
-			state = &idLockState{
-				ch:   make(chan struct{}, 1),
-				refs: 0,
-			}
-			l.locks[id] = state
-		}
+		state := l.getOrCreateState(id)
 		state.refs++
 		l.mu.Unlock()
 
@@ -122,19 +132,11 @@ func (l *IDLock[T]) AcquireWithTimeout(id T, timeout time.Duration) bool {
 		default:
 			// lock is in use, revert
 			l.mu.Lock()
-			state.refs--
-			if state.refs == 0 {
-				delete(l.locks, id)
-			}
+			l.rollbackState(id, state)
 			l.mu.Unlock()
 
 			if l.maxParallel > 0 {
-				select {
-				case <-l.globalTokens:
-					// freed token
-				default:
-					// shouldn't happen
-				}
+				l.releaseGlobalToken()
 			}
 			return false
 		}
@@ -154,14 +156,7 @@ func (l *IDLock[T]) AcquireWithTimeout(id T, timeout time.Duration) bool {
 
 	// 2) Now handle the per-ID lock (channel).
 	l.mu.Lock()
-	state, ok := l.locks[id]
-	if !ok {
-		state = &idLockState{
-			ch:   make(chan struct{}, 1),
-			refs: 0,
-		}
-		l.locks[id] = state
-	}
+	state := l.getOrCreateState(id)
 	state.refs++
 	l.mu.Unlock()
 
@@ -174,19 +169,11 @@ func (l *IDLock[T]) AcquireWithTimeout(id T, timeout time.Duration) bool {
 	case <-time.After(remaining):
 		// timed out, so revert the ref count and free global token if needed
 		l.mu.Lock()
-		state.refs--
-		if state.refs == 0 {
-			delete(l.locks, id)
-		}
+		l.rollbackState(id, state)
 		l.mu.Unlock()
 
 		if l.maxParallel > 0 {
-			select {
-			case <-l.globalTokens:
-				// Freed token
-			default:
-				// Shouldn’t happen
-			}
+			l.releaseGlobalToken()
 		}
 		return false
 	}
