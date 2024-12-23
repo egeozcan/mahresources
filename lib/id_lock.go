@@ -29,8 +29,8 @@ func NewIDLock[T comparable](maxParallel uint) *IDLock[T] {
 	}
 }
 
-// Acquire grabs a global token (if needed) and then pushes into the channel for that ID.
-// This blocks until the channel is free (i.e., until the ID is “unlocked”).
+// Acquire grabs a global token (if needed) and then pushes into the channel for that ID,
+// blocking until the channel is free.
 func (l *IDLock[T]) Acquire(id T) {
 	if l.maxParallel > 0 {
 		l.globalTokens <- struct{}{}
@@ -48,16 +48,16 @@ func (l *IDLock[T]) Acquire(id T) {
 	state.refs++
 	l.mu.Unlock()
 
-	// Acquire the ID's "lock" by pushing into the channel.
+	// Acquire the ID's "lock" by pushing into the channel (blocks if channel is full).
 	state.ch <- struct{}{}
 }
 
-// Release pops from the channel (thus “unlocking”) and frees a global token (if any).
+// Release pops from the channel (thus unlocking) and frees a global token (if any).
 func (l *IDLock[T]) Release(id T) {
 	l.mu.Lock()
 	state, ok := l.locks[id]
 	if ok {
-		// Pop from the channel to unlock
+		// Pop from the channel
 		select {
 		case <-state.ch:
 			state.refs--
@@ -65,19 +65,81 @@ func (l *IDLock[T]) Release(id T) {
 				delete(l.locks, id)
 			}
 		default:
-			// Shouldn’t happen if we only call Release after Acquire
+			// Shouldn’t happen if we only call Release after Acquire,
+			// but we'll test it anyway for coverage.
 		}
 	}
 	l.mu.Unlock()
 
 	if l.maxParallel > 0 {
-		<-l.globalTokens
+		select {
+		case <-l.globalTokens:
+			// Freed a global token
+		default:
+			// Shouldn’t happen if we only Acquire->Release properly
+		}
 	}
 }
 
 // AcquireWithTimeout tries to Acquire the ID lock (and global token) within 'timeout'.
 // Returns true if successful, false otherwise. No leftover goroutine is spawned.
 func (l *IDLock[T]) AcquireWithTimeout(id T, timeout time.Duration) bool {
+	// 1) If timeout < 0, always fail
+	if timeout < 0 {
+		return false
+	}
+
+	// 2) If timeout == 0, do a purely non-blocking attempt
+	if timeout == 0 {
+		// Non-blocking attempt to acquire a global token (if needed)
+		if l.maxParallel > 0 {
+			select {
+			case l.globalTokens <- struct{}{}:
+				// success
+			default:
+				return false
+			}
+		}
+
+		// Non-blocking attempt to "create or find" the ID’s channel
+		l.mu.Lock()
+		state, ok := l.locks[id]
+		if !ok {
+			state = &idLockState{
+				ch:   make(chan struct{}, 1),
+				refs: 0,
+			}
+			l.locks[id] = state
+		}
+		state.refs++
+		l.mu.Unlock()
+
+		// Non-blocking attempt to send into the channel
+		select {
+		case state.ch <- struct{}{}:
+			// success, got the lock
+			return true
+		default:
+			// lock is in use, revert
+			l.mu.Lock()
+			state.refs--
+			if state.refs == 0 {
+				delete(l.locks, id)
+			}
+			l.mu.Unlock()
+
+			if l.maxParallel > 0 {
+				select {
+				case <-l.globalTokens:
+					// freed token
+				default:
+					// shouldn't happen
+				}
+			}
+			return false
+		}
+	}
+
 	deadline := time.Now().Add(timeout)
 
 	// 1) Acquire global token or fail in time
@@ -119,7 +181,12 @@ func (l *IDLock[T]) AcquireWithTimeout(id T, timeout time.Duration) bool {
 		l.mu.Unlock()
 
 		if l.maxParallel > 0 {
-			<-l.globalTokens
+			select {
+			case <-l.globalTokens:
+				// Freed token
+			default:
+				// Shouldn’t happen
+			}
 		}
 		return false
 	}
@@ -152,8 +219,8 @@ func (l *IDLock[T]) TryRunWithTimeout(id T, lockTimeout, runTimeout time.Duratio
 	case <-done:
 		return true
 	case <-ctx.Done():
-		// The function timed out. We can’t forcibly kill the goroutine,
-		// but logically we’re done waiting.
+		// Timed out, but we did acquire the lock, so return true to indicate
+		// the function got the lock (even though it’s still running).
 		return true
 	}
 }
