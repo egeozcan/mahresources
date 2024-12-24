@@ -24,10 +24,10 @@ func getJSONSchema(document interface{}) *jsonschema.Schema {
 // supports integer, boolean, string and arrays of these, with all possible options
 func getHTMLForm(schema *jsonschema.Schema, jsonData map[string]interface{}) string {
 	form := "<form>\n"
-	for _, key := range schema.Properties.Keys() {
+	/*for _, key := range schema.Properties.Keys() {
 		prop, _ := schema.Properties.Get(key)
 
-	}
+	}*/
 	form += "</form>\n"
 	return form
 }

@@ -230,9 +230,17 @@ func groupContextProviderImpl(context interfaces.GroupReader) func(request *http
 			}
 		}
 
+		var prefix string
+
+		if group.Category != nil {
+			prefix = group.Category.Name
+		} else {
+			prefix = "Uncategorized"
+		}
+
 		return pongo2.Context{
 			"pageTitle": group.GetName(),
-			"prefix":    group.Category.Name,
+			"prefix":    prefix,
 			"group":     group,
 			"action": template_entities.Entry{
 				Name: "Edit",
