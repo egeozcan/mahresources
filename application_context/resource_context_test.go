@@ -30,7 +30,7 @@ func init() {
 		return nil
 	}
 
-	for true {
+	for {
 		log.Println("trying", curPath)
 
 		if len(curPath) <= 3 {

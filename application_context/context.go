@@ -50,8 +50,8 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		altFileSystems[key] = storage.CreateStorage(path)
 	}
 
-	thumbnailGenerationLock := lib.NewIDLock[uint](uint(0))
-	videoThumbnailGenerationLock := lib.NewIDLock[uint](uint(1))
+	thumbnailGenerationLock := lib.NewIDLock[uint](uint(0), nil)
+	videoThumbnailGenerationLock := lib.NewIDLock[uint](uint(1), nil)
 
 	return &MahresourcesContext{
 		fs:             filesystem,

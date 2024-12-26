@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
@@ -12,7 +13,6 @@ import (
 	"image"
 	"image/jpeg"
 	"io"
-	"io/ioutil"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/database_scopes"
@@ -25,6 +25,7 @@ import (
 	"os/exec"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/nfnt/resize"
@@ -309,7 +310,7 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		return nil, err
 	}
 
-	fileBytes, err := ioutil.ReadAll(file)
+	fileBytes, err := io.ReadAll(file)
 
 	if err != nil {
 		return nil, err
@@ -568,44 +569,58 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 }
 
 func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, width, height uint) (*models.Preview, error) {
+	// Acquire the ThumbnailGenerationLock for the given resourceId
 	ctx.locks.ThumbnailGenerationLock.Acquire(resourceId)
-
 	defer ctx.locks.ThumbnailGenerationLock.Release(resourceId)
 
 	var existingThumbnail models.Preview
-	var nullThumbnail *models.Preview
 	var fileBytes []byte
 
+	// Ensure width and height do not exceed maximum allowed values
 	width = uint(math.Min(constants.MaxThumbWidth, float64(width)))
 	height = uint(math.Min(constants.MaxThumbHeight, float64(height)))
 
-	if err := ctx.db.Where(&models.Preview{Width: width, Height: height, ResourceId: &resourceId}).Omit(clause.Associations).First(&existingThumbnail).Error; err == nil {
+	// Check if a thumbnail with the specified dimensions already exists
+	if err := ctx.db.
+		Where(&models.Preview{Width: width, Height: height, ResourceId: &resourceId}).
+		Omit(clause.Associations).
+		First(&existingThumbnail).Error; err == nil {
 		return &existingThumbnail, nil
 	}
 
 	var resource models.Resource
 
-	if err := ctx.db.Omit(clause.Associations).First(&resource, resourceId).Error; err != nil {
+	// Retrieve the resource from the database
+	if err := ctx.db.
+		Omit(clause.Associations).
+		First(&resource, resourceId).Error; err != nil {
 		return nil, err
 	}
 
 	fs, storageError := ctx.GetFsForStorageLocation(resource.StorageLocation)
-
 	if storageError != nil {
 		return nil, storageError
 	}
 
-	if err := ctx.db.Where(&models.Preview{Width: 0, Height: 0, ResourceId: &resourceId}).Omit(clause.Associations).First(nullThumbnail).Error; err != nil {
-		name := resource.GetCleanLocation() + constants.ThumbFileSuffix
-		println("will try opening", name)
+	// Attempt to find a null thumbnail (original image without size)
+	var nullThumbnail models.Preview
+	if err := ctx.db.
+		Where(&models.Preview{Width: 0, Height: 0, ResourceId: &resourceId}).
+		Omit(clause.Associations).
+		First(&nullThumbnail).Error; err != nil {
 
-		if file, fopenErr := fs.Open(name); fopenErr == nil && file != nil {
+		name := resource.GetCleanLocation() + constants.ThumbFileSuffix
+		fmt.Println("Attempting to open", name)
+
+		file, fopenErr := fs.Open(name)
+		if fopenErr == nil && file != nil {
 			defer file.Close()
 
-			fileBytes, err = ioutil.ReadAll(file)
-
+			// Read the file bytes
+			fileBytes, err := io.ReadAll(file)
 			if err == nil {
-				nullThumbnail = &models.Preview{
+				// Initialize nullThumbnail correctly
+				nullThumbnail = models.Preview{
 					Data:        fileBytes,
 					Width:       0,
 					Height:      0,
@@ -613,112 +628,128 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, wid
 					ResourceId:  &resource.ID,
 				}
 
-				ctx.db.Save(nullThumbnail)
+				// Save the null thumbnail to the database
+				if err := ctx.db.Save(&nullThumbnail).Error; err != nil {
+					return nil, err
+				}
 			}
 		} else {
-			fmt.Println("ok", file, fopenErr)
+			fmt.Println("Failed to open file:", fopenErr)
 		}
 	}
 
-	if nullThumbnail != nil {
-		var newImage image.Image
-
-		originalImage, _, err := image.Decode(bytes.NewReader((*nullThumbnail).Data))
-
+	// If a null thumbnail exists, resize it to the desired dimensions
+	if nullThumbnail.ID != 0 {
+		originalImage, _, err := image.Decode(bytes.NewReader(nullThumbnail.Data))
 		if err != nil {
 			return nil, err
 		}
 
-		newImage = resize.Resize(width, height, originalImage, resize.Lanczos3)
+		newImage := resize.Resize(width, height, originalImage, resize.Lanczos3)
 
 		var buf bytes.Buffer
-
 		if err := jpeg.Encode(&buf, newImage, nil); err != nil {
 			return nil, err
 		}
 
-		fileBytes, err = ioutil.ReadAll(&buf)
-
+		fileBytes, err = io.ReadAll(&buf)
 		if err != nil {
 			return nil, err
 		}
 
 	} else if strings.HasPrefix(resource.ContentType, "image/") {
+		// Handle image resources
 		file, err := fs.Open(resource.GetCleanLocation())
-
 		if err != nil {
 			return nil, err
 		}
-
 		defer file.Close()
 
-		var newImage image.Image
-
 		originalImage, _, err := image.Decode(file)
-
 		if err != nil {
 			return nil, err
 		}
 
-		newImage = resize.Resize(width, height, originalImage, resize.Lanczos3)
+		newImage := resize.Resize(width, height, originalImage, resize.Lanczos3)
 
 		var buf bytes.Buffer
-
 		if err := jpeg.Encode(&buf, newImage, nil); err != nil {
 			return nil, err
 		}
 
-		fileBytes, err = ioutil.ReadAll(&buf)
-
+		fileBytes, err = io.ReadAll(&buf)
 		if err != nil {
 			return nil, err
 		}
 
 	} else if strings.HasPrefix(resource.ContentType, "video/") {
-		ctx.locks.VideoThumbnailGenerationLock.Acquire(resourceId)
+		// Handle video resources
 
-		defer ctx.locks.VideoThumbnailGenerationLock.Release(resourceId)
+		maxDuration := 10 * time.Second
 
-		file, err := fs.Open(resource.GetCleanLocation())
+		// Execute thumbnail generation with lock and timeout using context
+		lockAcquired, err := ctx.locks.VideoThumbnailGenerationLock.RunWithLockTimeout(
+			resourceId,
+			30*time.Second, // lockTimeout
+			maxDuration,    // runTimeout
+			func() error {
+				// Perform thumbnail generation
+				file, err := fs.Open(resource.GetCleanLocation())
+				if err != nil {
+					return fmt.Errorf("failed to open video file: %w", err)
+				}
+				defer file.Close()
 
+				// Create thumbnail from video
+				resultBuffer := bytes.NewBuffer([]byte{})
+				if err := ctx.createThumbFromVideo(file, resultBuffer); err != nil {
+					return fmt.Errorf("failed to create thumbnail from video: %w", err)
+				}
+
+				// Decode the generated thumbnail image
+				originalImage, _, err := image.Decode(resultBuffer)
+				if err != nil {
+					return fmt.Errorf("failed to decode thumbnail image: %w", err)
+				}
+
+				// Resize the image to desired dimensions
+				newImage := resize.Resize(width, height, originalImage, resize.Lanczos3)
+
+				var buf bytes.Buffer
+				if err := jpeg.Encode(&buf, newImage, nil); err != nil {
+					return fmt.Errorf("failed to encode resized image: %w", err)
+				}
+
+				// Read the resized image bytes
+				fileBytes, err = io.ReadAll(&buf)
+				if err != nil {
+					return fmt.Errorf("failed to read resized image bytes: %w", err)
+				}
+
+				// Indicate success
+				return nil
+			},
+		)
+
+		// Check if the lock was successfully acquired
+		if !lockAcquired {
+			return nil, errors.New("failed to acquire video thumbnail generation lock")
+		}
+
+		// Handle potential errors from thumbnail generation
 		if err != nil {
-			return nil, err
-		}
-
-		defer file.Close()
-
-		var newImage image.Image
-
-		resultBuffer := bytes.NewBuffer(make([]byte, 0))
-
-		if err := ctx.createThumbFromVideo(file, resultBuffer); err != nil {
-			return nil, err
-		}
-
-		originalImage, _, err := image.Decode(resultBuffer)
-
-		if err != nil {
-			return nil, err
-		}
-
-		newImage = resize.Resize(width, height, originalImage, resize.Lanczos3)
-
-		var buf bytes.Buffer
-
-		if err := jpeg.Encode(&buf, newImage, nil); err != nil {
-			return nil, err
-		}
-
-		fileBytes, err = ioutil.ReadAll(&buf)
-
-		if err != nil {
-			return nil, err
+			if errors.Is(err, context.DeadlineExceeded) {
+				return nil, errors.New("video thumbnail generation timed out")
+			}
+			return nil, fmt.Errorf("video thumbnail generation error: %w", err)
 		}
 
 	} else {
+		// Unsupported content type
 		return nil, nil
 	}
 
+	// Create and save the new preview
 	preview := &models.Preview{
 		Data:        fileBytes,
 		Width:       width,
@@ -727,7 +758,9 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(resourceId, wid
 		ResourceId:  &resource.ID,
 	}
 
-	ctx.db.Save(preview)
+	if err := ctx.db.Save(preview).Error; err != nil {
+		return nil, err
+	}
 
 	return preview, nil
 }
