@@ -290,7 +290,7 @@ func GetResourceThumbnailHandler(ctx *application_context.MahresourcesContext) f
 			}
 		}
 
-		thumbnail, err := ctx.LoadOrCreateThumbnailForResource(query.ID, query.Width, query.Height)
+		thumbnail, err := ctx.LoadOrCreateThumbnailForResource(query.ID, query.Width, query.Height, request.Context())
 
 		if err != nil || thumbnail == nil {
 			fmt.Printf("\n[ERROR]: %v\n", err)
