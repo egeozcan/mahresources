@@ -4,8 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build-css": "postcss ./index.css -o ./public/tailwind.css",
-    "css-gen": "postcss ./index.css -o ./public/tailwind.css -w",
+    "build-css": "tailwindcss -i ./index.css -o ./public/tailwind.css",
+    "css-gen": "tailwindcss -i ./index.css -o ./public/tailwind.css --watch",
     "watch": "CompileDaemon -exclude-dir=\".git\" -exclude-dir=\"node_modules\" -command=\"npm run build-css && mahresources\" -build=\"go build --tags json1\"",
     "build": "npm run build-css && echo \"css built\\n\" && go build --tags json1 && echo \"server built\\n\""
   },
@@ -22,9 +22,9 @@
   "devDependencies": {
     "@tailwindcss/forms": "0.5.2",
     "@tailwindcss/typography": "0.5.2",
-    "autoprefixer": "10.4.7",
-    "postcss": "8.4.14",
-    "postcss-cli": "10.0.0",
+    "autoprefixer": "^10.4.17",
+    "postcss": "^8.4.35",
+    "postcss-cli": "^11.0.0",
     "tailwindcss": "3.1.4"
   }
 }
