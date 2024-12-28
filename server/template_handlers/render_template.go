@@ -42,12 +42,13 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 		if contentType := request.Header.Get("Content-type"); contentType == constants.JSON || strings.HasSuffix(request.URL.Path, ".json") {
 			writer.Header().Set("Content-Type", constants.JSON)
 			if err := json.NewEncoder(writer).Encode(discardFields(map[string]bool{
-				"partial":   true,
-				"path":      true,
-				"withQuery": true,
-				"hasQuery":  true,
-				"stringId":  true,
-				"getNextId": true,
+				"partial":     true,
+				"path":        true,
+				"withQuery":   true,
+				"hasQuery":    true,
+				"stringId":    true,
+				"getNextId":   true,
+				"dereference": true,
 			}, context)); err != nil {
 				fmt.Println(err)
 			}

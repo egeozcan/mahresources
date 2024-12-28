@@ -1,0 +1,1209 @@
+openapi: 3.0.0
+info:
+  title: mahresources
+  version: v1
+paths:
+  /note:
+    get:
+      description: Get a note
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: integer
+          required: true
+      responses:
+        '200':
+          description: The requested note
+    post:
+      description: Create or update a note
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/NoteEditor'
+      responses:
+        '200':
+          description: The created note
+  /note/editName:
+    post:
+      description: Edit a note's name
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BasicEntityQuery'
+      responses:
+        '200':
+          description: The note with the name changed
+  /note/editDescription:
+    post:
+      description: Edit a note's description
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BasicEntityQuery'
+      responses:
+        '200':
+          description: The note with the description changed
+  /note/delete:
+    post:
+      description: Delete a note
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/EntityIdQuery'
+      responses:
+        '200':
+          description: The deleted note
+  /group:
+    get:
+      description: Get a group
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: integer
+          required: true
+      responses:
+        '200':
+          description: The requested group
+    post:
+      description: Create or update a group
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/GroupEditor'
+      responses:
+        '200':
+          description: The created group
+  /group/parents:
+    get:
+      description: Get parents of a group
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: integer
+          required: true
+      responses:
+        '200':
+          description: The parents of the group
+  /group/editName:
+    post:
+      description: Edit a group's name
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BasicEntityQuery'
+      responses:
+        '200':
+          description: The group with the name changed
+  /group/editDescription:
+    post:
+      description: Edit a group's description
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BasicEntityQuery'
+      responses:
+        '200':
+          description: The group with the description changed
+  /group/delete:
+    post:
+      description: Delete a group
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/EntityIdQuery'
+      responses:
+        '200':
+          description: The deleted group
+  /group/clone:
+    post:
+      description: Clone a group
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/EntityIdQuery'
+      responses:
+        '200':
+          description: The cloned group
+  /groups/delete:
+    post:
+      description: Bulk delete groups
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BulkQuery'
+      responses:
+        '200':
+          description: Result of the operation
+  /groups/addTags:
+    post:
+      description: Bulk add tags to groups
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BulkEditQuery'
+      responses:
+        '200':
+          description: Result of the operation
+  /groups/removeTags:
+    post:
+      description: Bulk remove tags from groups
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BulkEditQuery'
+      responses:
+        '200':
+          description: Result of the operation
+  /groups/addMeta:
+    post:
+      description: Bulk add meta to groups
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BulkEditMetaQuery'
+      responses:
+        '200':
+          description: Result of the operation
+  /groups/merge:
+    post:
+      description: Merge groups
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MergeQuery'
+      responses:
+        '200':
+          description: Result of the operation
+  /resource:
+    get:
+      description: Get a resource
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: integer
+          required: true
+      responses:
+        '200':
+          description: The requested resource
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Resource'
+    post:
+      description: Create a resource
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                resource:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        '200':
+          description: The created resource
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Resource'
+        '400':
+          description: Bad Request - Invalid input or missing fields
+        '500':
+          description: Internal Server Error - Server-side issue occurred
+  /resource/view:
+    get:
+      description: View a resource
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: integer
+          required: true
+      responses:
+        '302':
+          description: Redirect to resource
+  /resource/delete:
+    post:
+      description: Delete a resource
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/EntityIdQuery'
+      responses:
+        '200':
+          description: The deleted resource
+  /resource/edit:
+    post:
+      description: Edit a resource
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ResourceEditor'
+      responses:
+        '200':
+          description: The edited resource
+  /resource/local:
+    post:
+      description: Add a local resource
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ResourceFromLocalCreator'
+      responses:
+        '200':
+          description: The created resource
+  /resource/remote:
+    post:
+      description: Add a remote resource
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ResourceFromRemoteCreator'
+      responses:
+        '200':
+          description: The created resource
+  /resource/editName:
+    post:
+      description: Edit a resource's name
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BasicEntityQuery'
+      responses:
+        '200':
+          description: The resource with the name changed
+  /resource/editDescription:
+    post:
+      description: Edit a resource's description
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BasicEntityQuery'
+      responses:
+        '200':
+          description: The resource with the description changed
+  /resource/recalculateDimensions:
+    post:
+      description: Recalculate dimensions of a resource
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/EntityIdQuery'
+      responses:
+        '200':
+          description: Result of the operation
+  /resources/setDimensions:
+    post:
+      description: Set resource dimensions
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                ID:
+                  type: integer
+                Width:
+                  type: integer
+                Height:
+                  type: integer
+      responses:
+        '200':
+          description: Result of the operation
+  /resources/addTags:
+    post:
+      description: Bulk add tags to resources
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BulkEditQuery'
+      responses:
+        '200':
+          description: Result of the operation
+  /resources/addGroups:
+    post:
+      description: Bulk add groups to resources
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BulkEditQuery'
+      responses:
+        '200':
+          description: Result of the operation
+  /resources/removeTags:
+    post:
+      description: Bulk remove tags from resources
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BulkEditQuery'
+      responses:
+        '200':
+          description: Result of the operation
+  /resources/replaceTags:
+    post:
+      description: Bulk replace tags of resources
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BulkEditQuery'
+      responses:
+        '200':
+          description: Result of the operation
+  /resources/addMeta:
+    post:
+      description: Bulk add meta to resources
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BulkEditMetaQuery'
+      responses:
+        '200':
+          description: Result of the operation
+  /resources/delete:
+    post:
+      description: Bulk delete resources
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BulkQuery'
+      responses:
+        '200':
+          description: Result of the operation
+  /resources/merge:
+    post:
+      description: Merge resources
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MergeQuery'
+      responses:
+        '200':
+          description: Result of the operation
+  /resources/rotate:
+    post:
+      description: Rotate resource
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/RotateResourceQuery'
+      responses:
+        '200':
+          description: Result of the operation
+  /tag:
+    get:
+      description: Get a tag
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: integer
+          required: true
+      responses:
+        '200':
+          description: The requested tag
+    post:
+      description: Create or update a tag
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TagCreator'
+      responses:
+        '200':
+          description: The created tag
+  /tag/editName:
+    post:
+      description: Edit a tag's name
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BasicEntityQuery'
+      responses:
+        '200':
+          description: The tag with the name changed
+  /tag/editDescription:
+    post:
+      description: Edit a tag's description
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BasicEntityQuery'
+      responses:
+        '200':
+          description: The tag with the description changed
+  /tag/delete:
+    post:
+      description: Delete a tag
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/EntityIdQuery'
+      responses:
+        '200':
+          description: The deleted tag
+  /category:
+    get:
+      description: Get a category
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: integer
+          required: true
+      responses:
+        '200':
+          description: The requested category
+    post:
+      description: Create or update a category
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/CategoryEditor'
+      responses:
+        '200':
+          description: The created category
+  /category/editName:
+    post:
+      description: Edit a category's name
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BasicEntityQuery'
+      responses:
+        '200':
+          description: The category with the name changed
+  /category/editDescription:
+    post:
+      description: Edit a category's description
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BasicEntityQuery'
+      responses:
+        '200':
+          description: The category with the description changed
+  /category/delete:
+    post:
+      description: Delete a category
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/EntityIdQuery'
+      responses:
+        '200':
+          description: The deleted category
+  /query:
+    get:
+      description: Get a query
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: integer
+          required: true
+      responses:
+        '200':
+          description: The requested query
+    post:
+      description: Create or update a query
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/QueryEditor'
+      responses:
+        '200':
+          description: The created query
+  /query/run:
+    post:
+      description: Run a query
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: integer
+          required: true
+      responses:
+        '200':
+          description: The result of the query
+  /query/editName:
+    post:
+      description: Edit a query's name
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BasicEntityQuery'
+      responses:
+        '200':
+          description: The query with the name changed
+  /query/editDescription:
+    post:
+      description: Edit a query's description
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BasicEntityQuery'
+      responses:
+        '200':
+          description: The query with the description changed
+  /query/delete:
+    post:
+      description: Delete a query
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/EntityIdQuery'
+      responses:
+        '200':
+          description: The deleted query
+  /notes:
+    get:
+      description: Get all notes
+      responses:
+        '200':
+          description: All notes
+  /notes/addTags:
+    post:
+      description: Bulk add tags to notes
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BulkEditQuery'
+      responses:
+        '200':
+          description: Result of the operation
+  /notes/removeTags:
+    post:
+      description: Bulk remove tags from notes
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BulkEditQuery'
+      responses:
+        '200':
+          description: Result of the operation
+  /notes/delete:
+    post:
+      description: Bulk delete notes
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BulkQuery'
+      responses:
+        '200':
+          description: Result of the operation
+  /groups:
+    get:
+      description: Get all groups
+      responses:
+        '200':
+          description: All groups
+  /resources:
+    get:
+      description: Get all resources
+      responses:
+        '200':
+          description: All resources
+  /tags:
+    get:
+      description: Get all tags
+      responses:
+        '200':
+          description: All tags
+  /categories:
+    get:
+      description: Get all categories
+      responses:
+        '200':
+          description: All categories
+  /queries:
+    get:
+      description: Get all queries
+      responses:
+        '200':
+          description: All queries
+  /relations:
+    get:
+      description: Get all relations
+      responses:
+        '200':
+          description: All relations
+  /relations/add:
+    post:
+      description: Add a relation
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/RelationCreator'
+      responses:
+        '200':
+          description: The created relation
+  /relations/delete:
+    post:
+      description: Delete a relation
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/RelationDeleter'
+      responses:
+        '200':
+          description: Result of the operation
+  /notes/meta/keys:
+    get:
+      description: Get all meta keys for notes
+      responses:
+        '200':
+          description: A list of meta keys for notes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+
+  /groups/meta/keys:
+    get:
+      description: Get all meta keys for groups
+      responses:
+        '200':
+          description: A list of meta keys for groups
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+
+  /resources/meta/keys:
+    get:
+      description: Get all meta keys for resources
+      responses:
+        '200':
+          description: A list of meta keys for resources
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+
+  /resource/preview:
+    get:
+      description: Get a preview image for a resource
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: integer
+          required: true
+      responses:
+        '200':
+          description: The preview image for the resource
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Resource or preview not found
+
+  /relation/editName:
+    get:  # Assuming this is a GET request, as in the provided code
+      description: Edit the name of a relation type (not a specific relation instance)
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: integer
+          required: true
+        - in: query
+          name: name
+          schema:
+            type: string
+          required: true
+      responses:
+        '200':
+          description: The updated relation type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupRelation'  # Assuming GroupRelation is the relation type model
+        '400':
+          description: Bad Request - Invalid input or missing parameters
+        '404':
+          description: Relation type not found
+
+  /relation/editDescription:
+    get:  # Assuming this is a GET request, as in the provided code
+      description: Edit the description of a relation type (not a specific relation instance)
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: integer
+          required: true
+        - in: query
+          name: description
+          schema:
+            type: string
+          required: true
+      responses:
+        '200':
+          description: The updated relation type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupRelation'  # Assuming GroupRelation is the relation type model
+        '400':
+          description: Bad Request - Invalid input or missing parameters
+        '404':
+          description: Relation type not found
+
+components:
+  schemas:
+    NoteEditor:
+      type: object
+      properties:
+        ID:
+          type: integer
+        Name:
+          type: string
+        Description:
+          type: string
+        NoteTypeID:
+          type: integer
+    BasicEntityQuery:
+      type: object
+      properties:
+        ID:
+          type: integer
+        Name:
+          type: string
+        Description:
+          type: string
+    EntityIdQuery:
+      type: object
+      properties:
+        ID:
+          type: integer
+    GroupEditor:
+      type: object
+      properties:
+        ID:
+          type: integer
+        Name:
+          type: string
+        Description:
+          type: string
+    BulkQuery:
+      type: object
+      properties:
+        IDs:
+          type: string
+    BulkEditQuery:
+      type: object
+      properties:
+        IDs:
+          type: string
+        Tags:
+          type: string
+    BulkEditMetaQuery:
+      type: object
+      properties:
+        IDs:
+          type: string
+        MetaKey:
+          type: string
+        MetaValue:
+          type: string
+    MergeQuery:
+      type: object
+      properties:
+        IDs:
+          type: string
+        TargetID:
+          type: integer
+    Resource:
+      type: object
+      properties:
+        ID:
+          type: integer
+          readOnly: true
+        CreatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        UpdatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        Name:
+          type: string
+        OriginalName:
+          type: string
+          readOnly: true
+        OriginalLocation:
+          type: string
+          readOnly: true
+        Hash:
+          type: string
+          readOnly: true
+        HashType:
+          type: string
+          readOnly: true
+        Location:
+          type: string
+          readOnly: true
+        StorageLocation:
+          type: string
+          readOnly: true
+        Description:
+          type: string
+        Meta:
+          type: object
+        Width:
+          type: integer
+        Height:
+          type: integer
+        FileSize:
+          type: integer
+        Category:
+          type: string
+        ContentType:
+          type: string
+          readOnly: true
+        ContentCategory:
+          type: string
+        Tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+        Notes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Note'
+        Groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/Group'
+        Owner:
+          $ref: '#/components/schemas/Group'
+        OwnerId:
+          type: integer
+          readOnly: true
+        Previews:
+          type: array
+          items:
+            $ref: '#/components/schemas/Preview'
+    Tag:
+      type: object
+      properties:
+        ID:
+          type: integer
+          readOnly: true
+        CreatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        UpdatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        Name:
+          type: string
+        Description:
+          type: string
+
+    ResourceEditor:
+      type: object
+      properties:
+        ID:
+          type: integer
+        Name:
+          type: string
+        Description:
+          type: string
+        Filename:
+          type: string
+        Tags:
+          type: string
+        Groups:
+          type: string
+    ResourceFromLocalCreator:
+      type: object
+      properties:
+        Filename:
+          type: string
+        Data:
+          type: string
+    ResourceFromRemoteCreator:
+      type: object
+      properties:
+        URL:
+          type: string
+    RotateResourceQuery:
+      type: object
+      properties:
+        ID:
+          type: integer
+        Rotation:
+          type: integer
+    TagCreator:
+      type: object
+      properties:
+        ID:
+          type: integer
+        Name:
+          type: string
+        Description:
+          type: string
+        CategoryID:
+          type: integer
+    CategoryEditor:
+      type: object
+      properties:
+        ID:
+          type: integer
+        Name:
+          type: string
+        Description:
+          type: string
+    QueryEditor:
+      type: object
+      properties:
+        ID:
+          type: integer
+        Name:
+          type: string
+        Description:
+          type: string
+        Query:
+          type: string
+    RelationCreator:
+      type: object
+      properties:
+        FromID:
+          type: integer
+        ToID:
+          type: integer
+        Kind:
+          type: string
+    RelationDeleter:
+      type: object
+      properties:
+        FromID:
+          type: integer
+        ToID:
+          type: integer
+    Note:
+      type: object
+      properties:
+        ID:
+          type: integer
+          readOnly: true
+        CreatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        UpdatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        Name:
+          type: string
+        Description:
+          type: string
+        Meta:
+          type: object
+        Tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+        Resources:
+          type: array
+          items:
+            $ref: '#/components/schemas/Resource'
+        Groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/Group'
+        Owner:
+          $ref: '#/components/schemas/Group'
+        OwnerId:
+          type: integer
+          readOnly: true
+        StartDate:
+          type: string
+          format: date-time
+        EndDate:
+          type: string
+          format: date-time
+        NoteType:
+          $ref: '#/components/schemas/NoteType'
+        NoteTypeId:
+          type: integer
+    Group:
+      type: object
+      properties:
+        ID:
+          type: integer
+          readOnly: true
+        CreatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        UpdatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        Name:
+          type: string
+        Description:
+          type: string
+        URL:
+          type: string
+          format: url
+        Meta:
+          type: object
+        Tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+        Resources:
+          type: array
+          items:
+            $ref: '#/components/schemas/Resource'
+        Notes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Note'
+        Owner:
+          $ref: '#/components/schemas/Group'
+        OwnerId:
+          type: integer
+          readOnly: true
+        Members:
+          type: array
+          items:
+            $ref: '#/components/schemas/Group'
+    NoteType:
+      type: object
+      properties:
+        ID:
+          type: integer
+          readOnly: true
+        CreatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        UpdatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        Name:
+          type: string
+        Description:
+          type: string
+        Icon:
+          type: string
+        Color:
+          type: string
+        Notes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Note'
+    Preview:
+      type: object
+      properties:
+        ID:
+          type: integer
+          readOnly: true
+        CreatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        UpdatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        Data:
+          type: string
+          format: byte
+        Width:
+          type: integer
+        Height:
+          type: integer
+        ContentType:
+          type: string
+    GroupRelation:
+      type: object
+      properties:
+        ID:
+          type: integer
+          readOnly: true
+        CreatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        UpdatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        FromGroupId:
+          type: integer
+        ToGroupId:
+          type: integer
+        RelationTypeId:
+          type: integer
