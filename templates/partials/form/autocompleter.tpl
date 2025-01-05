@@ -1,6 +1,5 @@
-
 <div
-    x-data="autocompleter({
+        x-data="autocompleter({
         selectedResults: {{ selectedItems|json }} || [],
         min: parseInt('{{ min }}') || 0,
         max: parseInt('{{ max }}') || 0,
@@ -12,9 +11,11 @@
         extraInfo: '{{ extraInfo }}',
         sortBy: '{{ sortBy }}',
     })"
-    class="relative w-full"
+        class="relative w-full"
 >
-    {% if title %}<label class="block text-sm font-medium text-gray-700 mt-3" for="{{ id }}">{{ title }}</label>{% endif %}
+    {% if title %}
+    <label class="block text-sm font-medium text-gray-700 mt-3" id="{{ id }}-label" for="{{ id }}">{{ title }}</label>
+    {% endif %}
     {% include "/partials/form/formParts/errorMessage.tpl" %}
     <template x-if="addModeForTag == ''">
         <div>
@@ -26,6 +27,11 @@
                     x-bind="inputEvents"
                     x-init="setTimeout(() => { addModeForTag !== false && $el.focus(); }, 1)"
                     autocomplete="off"
+                    role="combobox"
+                    aria-autocomplete="list"
+                    aria-expanded="false"
+                    aria-controls="{{ id }}-listbox"
+                    aria-describedby="{{ id }}-label"
             >
             {% include "/partials/form/formParts/dropDownResults.tpl" with condition="dropdownActive && results.length > 0" action="pushVal" %}
             {% include "/partials/form/formParts/dropDownSelectedResults.tpl" %}
@@ -34,26 +40,26 @@
     <template x-if="addModeForTag">
         <div class="flex gap-2 items-stretch justify-between mt-2">
             <button
-                type="button"
-                class="
+                    type="button"
+                    class="
                     border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600
                     hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500
                     inline-flex justify-center items-center py-1 px-2"
-                x-text="'Add ' + addModeForTag + '?'"
-                x-init="setTimeout(() => $el.focus(), 1)"
-                @keydown.escape.prevent="exitAdd"
-                @keydown.enter.prevent="addVal"
-                @keyup.prevent=""
+                    x-text="'Add ' + addModeForTag + '?'"
+                    x-init="setTimeout(() => $el.focus(), 1)"
+                    @keydown.escape.prevent="exitAdd"
+                    @keydown.enter.prevent="addVal"
+                    @keyup.prevent=""
             ></button>
             <button
-                type="button"
-                class="
+                    type="button"
+                    class="
                     border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-red-600
                     hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500
                     inline-flex justify-center items-center py-1 px-2"
-                x-ref="cancelAdd"
-                @click="exitAdd"
-                @keydown.escape.prevent="exitAdd"
+                    x-ref="cancelAdd"
+                    @click="exitAdd"
+                    @keydown.escape.prevent="exitAdd"
             >Cancel</button>
         </div>
     </template>
