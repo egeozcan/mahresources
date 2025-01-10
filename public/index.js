@@ -106,7 +106,8 @@ function updateClipboard(newClip) {
  */
 function parseQueryParams(queryString) {
   const res = {};
-  const params = (queryString.match(/:[\w\d_]+/g) || []).map(x => x.substring(1));
+  // match a colon that is not preceded or followed by another colon
+  const params = (queryString.match(/(?<!:):\w+(?!:)/g) || []).map(x => x.substring(1));
 
   for (const param of params) {
     res[param] = "";
@@ -114,6 +115,7 @@ function parseQueryParams(queryString) {
 
   return res;
 }
+
 
 /**
  * addMeta - add meta to a group
