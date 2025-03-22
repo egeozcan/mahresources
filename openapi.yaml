@@ -609,6 +609,12 @@ paths:
       responses:
         '200':
           description: All notes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Note'
   /notes/addTags:
     post:
       description: Bulk add tags to notes
@@ -648,36 +654,72 @@ paths:
       responses:
         '200':
           description: All groups
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Group'
   /resources:
     get:
       description: Get all resources
       responses:
         '200':
           description: All resources
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Resource'
   /tags:
     get:
       description: Get all tags
       responses:
         '200':
           description: All tags
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tag'
   /categories:
     get:
       description: Get all categories
       responses:
         '200':
           description: All categories
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Category'
   /queries:
     get:
       description: Get all queries
       responses:
         '200':
           description: All queries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Query'
   /relations:
     get:
       description: Get all relations
       responses:
         '200':
           description: All relations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GroupRelation'
   /relations/add:
     post:
       description: Add a relation
@@ -760,52 +802,56 @@ paths:
           description: Resource or preview not found
 
   /relation/editName:
-    get:  # Assuming this is a GET request, as in the provided code
+    post:
       description: Edit the name of a relation type (not a specific relation instance)
-      parameters:
-        - in: query
-          name: id
-          schema:
-            type: integer
-          required: true
-        - in: query
-          name: name
-          schema:
-            type: string
-          required: true
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: integer
+                name:
+                  type: string
+              required:
+                - id
+                - name
       responses:
         '200':
           description: The updated relation type
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GroupRelation'  # Assuming GroupRelation is the relation type model
+                $ref: '#/components/schemas/GroupRelation'
         '400':
           description: Bad Request - Invalid input or missing parameters
         '404':
           description: Relation type not found
 
   /relation/editDescription:
-    get:  # Assuming this is a GET request, as in the provided code
+    post:
       description: Edit the description of a relation type (not a specific relation instance)
-      parameters:
-        - in: query
-          name: id
-          schema:
-            type: integer
-          required: true
-        - in: query
-          name: description
-          schema:
-            type: string
-          required: true
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: integer
+                description:
+                  type: string
+              required:
+                - id
+                - description
       responses:
         '200':
           description: The updated relation type
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GroupRelation'  # Assuming GroupRelation is the relation type model
+                $ref: '#/components/schemas/GroupRelation'
         '400':
           description: Bad Request - Invalid input or missing parameters
         '404':
@@ -851,7 +897,9 @@ components:
       type: object
       properties:
         IDs:
-          type: string
+          type: array
+          items:
+            type: integer
     BulkEditQuery:
       type: object
       properties:
