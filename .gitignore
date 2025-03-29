@@ -12,3 +12,4 @@
 /public/*.html
 /*.output.png
 /=file
+.aider*

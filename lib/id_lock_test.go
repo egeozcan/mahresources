@@ -316,25 +316,54 @@ func TestRunWithLockTimeout_GlobalTokenTimeout(t *testing.T) {
 }
 
 func TestRunWithLockTimeout_PanicRecovery(t *testing.T) {
-	lock := NewIDLock[string](0, nil)
-	id := "testID"
+	// t.Parallel() // This test modifies shared state (logger), maybe avoid parallel if using mock assertions heavily
+	mockLogger := &MockLogger{} // Use mock logger to check output if needed
+	lock := NewIDLock[string](0, mockLogger)
+	id := "testIDPanicRecovery" // Use a distinct ID
+	panicMsg := "Intentional panic"
+	expectedErrStr := fmt.Sprintf("panic in locked function: %v", panicMsg)
 
+	// --- First execution that panics ---
 	success, err := lock.RunWithLockTimeout(id, 1*time.Second, 500*time.Millisecond, func() error {
-		panic("Intentional panic")
+		panic(panicMsg)
 	})
 	if !success {
-		t.Error("Expected true (lock acquired) even if function panicked")
+		t.Errorf("Expected success=true (lock acquired) even if function panicked")
 	}
-	if err == nil || !strings.Contains(err.Error(), "panic: Intentional panic") {
-		t.Errorf("Expected panic error, got: %v", err)
+	// Updated check for the new error format
+	if err == nil || err.Error() != expectedErrStr {
+		t.Fatalf("Expected panic error '%s', got: %v", expectedErrStr, err) // Use Fatalf to stop if basic check fails
 	}
 
-	// Confirm the lock is free now
-	success, err = lock.RunWithLockTimeout(id, 1*time.Second, 100*time.Millisecond, func() error {
+	// Check logger output
+	foundLog := false
+	mockLogger.mu.Lock() // Lock the mock logger for reading
+	logs := make([]string, len(mockLogger.Logs))
+	copy(logs, mockLogger.Logs)
+	mockLogger.mu.Unlock()
+
+	for _, logMsg := range logs {
+		if strings.Contains(logMsg, panicMsg) && strings.Contains(logMsg, id) {
+			foundLog = true
+			break
+		}
+	}
+	if !foundLog {
+		t.Errorf("Expected log message containing panic info for ID '%s'", id)
+	}
+
+	// --- Second execution to confirm lock release ---
+	// Confirm the lock is free now by trying RunWithLockTimeout again
+	var ranAfter bool
+	successAfter, errAfter := lock.RunWithLockTimeout(id, 100*time.Millisecond, 100*time.Millisecond, func() error {
+		ranAfter = true
 		return nil
 	})
-	if !success || err != nil {
-		t.Errorf("Expected to succeed but got %v, %v", success, err)
+	if !successAfter || errAfter != nil {
+		t.Errorf("Expected RunWithLockTimeout to succeed after panic recovery but got success=%v, err=%v", successAfter, errAfter)
+	}
+	if !ranAfter {
+		t.Errorf("Expected function to run in the second RunWithLockTimeout call after panic")
 	}
 }
 
@@ -384,14 +413,24 @@ func TestAcquireContext_Success(t *testing.T) {
 
 // TestAcquireContext_Canceled ensures that if our context is canceled, we fail to acquire.
 func TestAcquireContext_Canceled(t *testing.T) {
+	t.Parallel()
 	lock := NewIDLock[string](0, nil)
-	id := "contextCanceledID"
+	id := "contextCanceledIDOriginal" // Use a distinct ID
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // immediately cancel
 
-	if err := lock.AcquireContext(ctx, id); err == nil {
-		t.Errorf("Expected error due to context cancellation, got nil")
+	// This call should now reliably return an error because of the fix
+	if err := lock.AcquireContext(ctx, id); !errors.Is(err, context.Canceled) {
+		t.Errorf("Expected context.Canceled due to immediate context cancellation, got: %v", err)
+	}
+
+	// Verify internal state cleanup
+	lock.mu.Lock()
+	_, exists := lock.locks[id]
+	lock.mu.Unlock()
+	if exists {
+		t.Errorf("Lock state should not exist after failed acquire with canceled context")
 	}
 }
 
@@ -428,4 +467,104 @@ func TestAcquireContext_GlobalLimit(t *testing.T) {
 	if err := lock.AcquireContext(ctx, "anotherID"); err == nil {
 		t.Errorf("Expected context deadline exceeded due to no global tokens, got nil")
 	}
+}
+
+// TestAcquireContext_AlreadyCanceled_LockFree verifies fix for race condition
+// where context is canceled *before* calling AcquireContext and the lock is free.
+func TestAcquireContext_AlreadyCanceled_LockFree(t *testing.T) {
+	t.Parallel()                      // Mark as parallelizable
+	lock := NewIDLock[string](0, nil) // No global limit needed for this specific race
+	id := "alreadyCanceledFree"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	err := lock.AcquireContext(ctx, id)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Expected context.Canceled when acquiring with already canceled context (lock free), got: %v", err)
+	}
+
+	// Verify internal state: refs should be 0 and map entry deleted
+	lock.mu.Lock()
+	state, exists := lock.locks[id]
+	if exists {
+		t.Errorf("Lock state for ID '%s' should not exist after failed acquire, but found state with refs: %d", id, state.refs)
+	}
+	lock.mu.Unlock()
+
+	// Verify lock is actually free by acquiring normally
+	acquired := lock.AcquireWithTimeout(id, 0)
+	if !acquired {
+		t.Errorf("Lock should be free after failed acquire with canceled context, but AcquireWithTimeout(0) failed")
+	} else {
+		lock.Release(id)
+	}
+}
+
+// TestAcquireContext_AlreadyCanceled_LockFree_GlobalLimit does the same check
+// but with a global limit active, ensuring the fix works with global tokens.
+func TestAcquireContext_AlreadyCanceled_LockFree_GlobalLimit(t *testing.T) {
+	t.Parallel()
+	lock := NewIDLock[string](1, nil) // With global limit
+	id := "alreadyCanceledFreeGlobal"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	err := lock.AcquireContext(ctx, id)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Expected context.Canceled when acquiring with already canceled context (global limit, lock free), got: %v", err)
+	}
+
+	// Verify internal state: refs should be 0 and map entry deleted
+	lock.mu.Lock()
+	state, exists := lock.locks[id]
+	if exists {
+		t.Errorf("Lock state for ID '%s' should not exist after failed acquire (global limit), but found state with refs: %d", id, state.refs)
+	}
+	// Verify global token count (should be 0 used, buffer capacity 1)
+	if len(lock.globalTokens) != 0 {
+		t.Errorf("Expected 0 global tokens in use after failed acquire, got %d", len(lock.globalTokens))
+	}
+	lock.mu.Unlock()
+
+	// Verify lock is actually free by acquiring normally
+	acquired := lock.AcquireWithTimeout(id, 0)
+	if !acquired {
+		t.Errorf("Lock should be free after failed acquire with canceled context (global limit), but AcquireWithTimeout(0) failed")
+	} else {
+		lock.Release(id)
+	}
+}
+
+// TestAcquireContext_AlreadyCanceled_LockHeld verifies behavior when context
+// is canceled *before* the call, but the lock is already held by someone else.
+func TestAcquireContext_AlreadyCanceled_LockHeld(t *testing.T) {
+	t.Parallel()
+	lock := NewIDLock[string](0, nil)
+	id := "alreadyCanceledHeld"
+
+	// Acquire the lock first
+	lock.Acquire(id)
+	defer lock.Release(id) // Ensure release even on test failure
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	// Attempt to acquire with the canceled context
+	err := lock.AcquireContext(ctx, id)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Expected context.Canceled when acquiring with already canceled context (lock held), got: %v", err)
+	}
+
+	// Verify internal state: The original holder's ref should still be there
+	lock.mu.Lock()
+	state, exists := lock.locks[id]
+	if !exists || state.refs != 1 {
+		t.Errorf("Lock state for ID '%s' should still exist with 1 ref after failed acquire attempt, but exists=%v, refs=%d", id, exists, state.refs)
+	}
+	lock.mu.Unlock()
 }

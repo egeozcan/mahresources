@@ -1,6 +1,8 @@
 module mahresources
 
-go 1.18
+go 1.21
+
+toolchain go1.24.1
 
 require (
 	github.com/Nr90/imgsim v0.0.0-20180202144352-5caa057144b0
