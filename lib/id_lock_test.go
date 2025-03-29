@@ -246,19 +246,32 @@ func TestRunWithLockTimeout_Success(t *testing.T) {
 
 // If the function runs too long, we still return true once it's timed out because we did acquire the lock
 func TestRunWithLockTimeout_TimeoutButAcquired(t *testing.T) {
+	// t.Parallel() // Avoid parallel if modifying shared state like this without atomic/channels
 	lock := NewIDLock[string](0, nil)
-	id := "testID"
+	id := "testIDTimeoutButAcquired" // Use distinct ID
 
-	started := false
+	var mu sync.Mutex // Mutex to protect 'started'
+	started := false  // Shared variable
+
 	success, err := lock.RunWithLockTimeout(id, 200*time.Millisecond, 100*time.Millisecond, func() error {
-		started = true
+		mu.Lock()
+		started = true // Write under lock
+		mu.Unlock()
 		time.Sleep(300 * time.Millisecond) // exceeds runTimeout
 		return nil
 	})
+
 	if !success || !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("Expected true (lock acquired), and DeadlineExceeded error but got: %v, %v", success, err)
+		// Use Fatalf as the test state is invalid if this fails
+		t.Fatalf("Expected true (lock acquired), and DeadlineExceeded error but got: success=%v, err=%v", success, err)
 	}
-	if !started {
+
+	// Read the value under the lock to ensure visibility
+	mu.Lock()
+	localStarted := started
+	mu.Unlock()
+
+	if !localStarted {
 		t.Error("Expected the function to have started executing")
 	}
 }
