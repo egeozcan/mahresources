@@ -29,9 +29,12 @@
                     autocomplete="off"
                     role="combobox"
                     aria-autocomplete="list"
-                    aria-expanded="false"
+                    aria-expanded="${dropdownActive}"
                     aria-controls="{{ id }}-listbox"
-                    aria-describedby="{{ id }}-label"
+                    aria-describedby="{{ id }}-label {% if errorMessage %}{{ id }}-error{% endif %}"
+                    aria-autocomplete="list"
+                    aria-owns="{{ id }}-listbox"
+                    aria-activedescendant="${results[selectedIndex] ? '{{ id }}-result-' + selectedIndex : ''}"
             >
             {% include "/partials/form/formParts/dropDownResults.tpl" with condition="dropdownActive && results.length > 0" action="pushVal" %}
             {% include "/partials/form/formParts/dropDownSelectedResults.tpl" %}

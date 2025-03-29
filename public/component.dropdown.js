@@ -43,12 +43,27 @@ document.addEventListener('alpine:init', () => {
                     this.selectedIds.add(val.ID);
                 });
 
+                // Add ARIA live region for announcements
+                const liveRegion = document.createElement('div');
+                liveRegion.setAttribute('aria-live', 'polite');
+                liveRegion.setAttribute('aria-atomic', 'true');
+                liveRegion.className = 'sr-only';
+                this.$el.appendChild(liveRegion);
+                this.liveRegion = liveRegion;
+
                 this.$watch('selectedResults', values => {
                     this.selectedIds.clear();
                     values.forEach(val => {
                         this.selectedIds.add(val.ID);
                     });
                     this.$dispatch('multiple-input', { value: selectedResults, name: elName });
+                    
+                    // Announce selection changes
+                    if(values.length > this.selectedResults.length) {
+                        this.liveRegion.textContent = `Added ${values[values.length-1].Name}`;
+                    } else {
+                        this.liveRegion.textContent = `Removed item, ${values.length} items remaining`;
+                    }
                 });
 
                 this.$el.closest('form').addEventListener('submit', (e) => {
@@ -99,6 +114,12 @@ document.addEventListener('alpine:init', () => {
             pushVal($event) {
                 if (this.loading) {
                     return;
+                }
+
+                // Announce selection
+                if (this.results[this.selectedIndex]) {
+                    const selectedName = this.getItemDisplayName(this.results[this.selectedIndex]);
+                    this.liveRegion.textContent = `${selectedName} selected. Use arrow keys to navigate and enter to confirm.`;
                 }
 
                 /*
