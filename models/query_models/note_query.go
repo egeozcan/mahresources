@@ -10,6 +10,7 @@ type noteCreator struct {
 	StartDate   string
 	EndDate     string
 	OwnerId     uint
+	NoteTypeId  uint
 }
 
 type NoteEditor struct {
@@ -32,4 +33,5 @@ type NoteQuery struct {
 	SortBy          string
 	Ids             []uint
 	MetaQuery       []ColumnMeta
+	NoteTypeId      uint
 }

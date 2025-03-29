@@ -100,6 +100,10 @@ func NoteQuery(query *query_models.NoteQuery, ignoreSort bool) func(db *gorm.DB)
 			dbQuery = dbQuery.Where("end_date >= ?", query.EndDateAfter)
 		}
 
+		if query.NoteTypeId != 0 {
+			dbQuery = dbQuery.Where("note_type_id = ?", query.NoteTypeId)
+		}
+
 		if len(query.MetaQuery) > 0 {
 			for _, v := range query.MetaQuery {
 				if v.Key == "" {
