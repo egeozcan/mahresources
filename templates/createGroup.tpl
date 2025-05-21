@@ -56,7 +56,18 @@
                     </div>
                 </div>
 
-                {% include "/partials/form/freeFields.tpl" with name="Meta" url='/v1/groups/meta/keys' fromJSON=group.Meta jsonOutput="true" id=getNextId("freeField") %}
+                {# {% include "/partials/form/freeFields.tpl" with name="Meta" url='/v1/groups/meta/keys' fromJSON=group.Meta jsonOutput="true" id=getNextId("freeField") %} #}
+
+                <div class="sm:border-t sm:border-gray-200 sm:pt-5">
+                    <h3 class="text-lg leading-6 font-medium text-gray-900">Custom Fields</h3>
+                    <p class="mt-1 text-sm text-gray-500">
+                        Fill in the custom fields based on the selected category. If no category is selected, or the category has no custom fields, this section will be empty.
+                    </p>
+                    <div class="mt-4">
+                        {% include "/partials/form/customDataFields.tpl" with definitions=customFieldDefinitions, metaData=meta, name="Meta" %}
+                    </div>
+                </div>
+
             </div>
         </div>
     </div>

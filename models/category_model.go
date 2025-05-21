@@ -2,6 +2,8 @@ package models
 
 import (
 	"time"
+
+	"mahresources/models/types"
 )
 
 type Category struct {
@@ -21,6 +23,9 @@ type Category struct {
 	CustomSummary string `gorm:"type:text"`
 	// CustomAvatar is used when linking to a group with this category
 	CustomAvatar string `gorm:"type:text"`
+
+	// CustomFieldsDefinition stores an array of custom field definitions for the category
+	CustomFieldsDefinition types.JSON `gorm:"type:json"`
 }
 
 func (c Category) GetId() uint {

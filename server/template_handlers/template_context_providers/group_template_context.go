@@ -8,11 +8,20 @@ import (
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
+	"encoding/json"
 	"mahresources/server/interfaces"
 	"mahresources/server/template_handlers/template_entities"
 	"net/http"
 	"strconv"
 )
+
+// FieldDefinition is used to parse the CustomFieldsDefinition from a Category
+type FieldDefinition struct {
+	Name    string                 `json:"name"`
+	Label   string                 `json:"label"`
+	Type    string                 `json:"type"`
+	Options map[string]interface{} `json:"options"`
+}
 
 func GroupsListContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
@@ -105,7 +114,7 @@ func GroupsListContextProvider(context *application_context.MahresourcesContext)
 			return addErrContext(err, baseContext)
 		}
 
-		return pongo2.Context{
+		tplCtx := pongo2.Context{
 			"pageTitle":       "Groups",
 			"groups":          groups,
 			"owners":          owners,
@@ -129,7 +138,22 @@ func GroupsListContextProvider(context *application_context.MahresourcesContext)
 				{Title: "List", Link: "/groups"},
 				{Title: "Text", Link: "/groups/text"},
 			}),
-		}.Update(baseContext)
+		}
+
+		// If filtered by a single category, parse its custom field definitions
+		if len(query.Categories) == 1 && len(*categories) == 1 {
+			selectedCategory := (*categories)[0]
+			if len(selectedCategory.CustomFieldsDefinition) > 0 {
+				var customFieldDefs []FieldDefinition
+				if err := json.Unmarshal(selectedCategory.CustomFieldsDefinition, &customFieldDefs); err == nil {
+					tplCtx["singleCategoryCustomFieldDefinitions"] = customFieldDefs
+				} else {
+					fmt.Println("Error parsing CustomFieldsDefinition for single category filter:", err)
+				}
+			}
+		}
+
+		return tplCtx.Update(baseContext)
 	}
 }
 
@@ -164,6 +188,26 @@ func GroupCreateContextProvider(context *application_context.MahresourcesContext
 
 				tplContext["tags"] = tags
 				tplContext["groups"] = groups
+
+				// Handle Custom Fields for new group with category pre-selected
+				if groupQuery.CategoryId != 0 {
+					category, _ := context.GetCategory(groupQuery.CategoryId) // Assuming GetCategory fetches a single category
+					if category != nil && len(category.CustomFieldsDefinition) > 0 {
+						var customFieldDefs []FieldDefinition
+						if err := json.Unmarshal(category.CustomFieldsDefinition, &customFieldDefs); err == nil {
+							tplContext["customFieldDefinitions"] = customFieldDefs
+						} else {
+							fmt.Println("Error parsing CustomFieldsDefinition for new group:", err)
+						}
+						// For a new group, Meta would typically be empty or come from query defaults
+						if groupQuery.Meta != nil {
+							var metaMap map[string]interface{}
+							if err := json.Unmarshal(groupQuery.Meta, &metaMap); err == nil {
+								tplContext["meta"] = metaMap
+							}
+						}
+					}
+				}
 			}
 
 			return tplContext
@@ -183,6 +227,26 @@ func GroupCreateContextProvider(context *application_context.MahresourcesContext
 		if group.Owner != nil {
 			tplContext["owner"] = []*models.Group{group.Owner}
 		}
+
+		// Handle Custom Fields for existing group
+		if group.Category != nil && len(group.Category.CustomFieldsDefinition) > 0 {
+			var customFieldDefs []FieldDefinition
+			if err := json.Unmarshal(group.Category.CustomFieldsDefinition, &customFieldDefs); err == nil {
+				tplContext["customFieldDefinitions"] = customFieldDefs
+			} else {
+				fmt.Println("Error parsing CustomFieldsDefinition for group:", group.ID, err)
+			}
+		}
+		if group.Meta != nil {
+			var metaMap map[string]interface{}
+			// Assuming group.Meta is types.JSON which is effectively []byte
+			if err := json.Unmarshal(group.Meta, &metaMap); err == nil {
+				tplContext["meta"] = metaMap
+			} else {
+                 fmt.Println("Error parsing Meta for group:", group.ID, err)
+            }
+		}
+
 
 		return tplContext
 	}
@@ -238,7 +302,7 @@ func groupContextProviderImpl(context interfaces.GroupReader) func(request *http
 			prefix = "Uncategorized"
 		}
 
-		return pongo2.Context{
+		ctxData := pongo2.Context{
 			"pageTitle": group.GetName(),
 			"prefix":    prefix,
 			"group":     group,
@@ -257,6 +321,27 @@ func groupContextProviderImpl(context interfaces.GroupReader) func(request *http
 				"HomeUrl":  "groups",
 				"Entries":  breadcrumbEls,
 			},
-		}.Update(baseContext)
+		}
+
+		// Add custom fields definitions and meta for display
+		if group.Category != nil && len(group.Category.CustomFieldsDefinition) > 0 {
+			var customFieldDefs []FieldDefinition
+			if err := json.Unmarshal(group.Category.CustomFieldsDefinition, &customFieldDefs); err == nil {
+				ctxData["customFieldDefinitions"] = customFieldDefs
+
+				if group.Meta != nil {
+					var metaMap map[string]interface{}
+					if err := json.Unmarshal(group.Meta, &metaMap); err == nil {
+						ctxData["meta"] = metaMap
+					} else {
+                        fmt.Println("Error parsing Meta for group display:", group.ID, err)
+                    }
+				}
+			} else {
+                fmt.Println("Error parsing CustomFieldsDefinition for group display:", group.ID, err)
+            }
+		}
+
+		return ctxData.Update(baseContext)
 	}
 }

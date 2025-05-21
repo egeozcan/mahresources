@@ -8,6 +8,8 @@ type CategoryCreator struct {
 	CustomSidebar string
 	CustomSummary string
 	CustomAvatar  string
+
+	CustomFieldsDefinition string `json:"CustomFieldsDefinition,omitempty"`
 }
 
 type CategoryEditor struct {

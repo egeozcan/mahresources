@@ -14,6 +14,16 @@
     {% include "/partials/form/createFormTextareaInput.tpl" with title="Custom Summary" name="CustomSummary" value=category.CustomSummary %}
     {% include "/partials/form/createFormTextareaInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=category.CustomAvatar %}
 
+    <div class="py-4">
+        <h3 class="text-lg leading-6 font-medium text-gray-900">Custom Field Definitions</h3>
+        <p class="mt-1 text-sm text-gray-500">Define the custom fields that will be available for items in this category.</p>
+        {% set cfd = category.CustomFieldsDefinition %}
+        {% if not cfd or cfd == "" or cfd == "null" %}
+            {% set cfd = "[]" %}
+        {% endif %}
+        {% include "/partials/form/freeFields.tpl" with name="CustomFieldsDefinition", jsonOutput=true, fieldsTitle="Define Custom Fields", id="customFieldsDefCategory", fromJSON=cfd %}
+    </div>
+
     {% include "/partials/form/createFormSubmit.tpl" %}
 </form>
 {% endblock %}

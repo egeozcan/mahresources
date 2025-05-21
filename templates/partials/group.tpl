@@ -55,6 +55,19 @@
                 {% include "partials/description.tpl" with description=entity.Description preview=!fullText %}
             {% endif %}
 
+            {% if singleCategoryCustomFieldDefinitions and singleCategoryCustomFieldDefinitions|length > 0 and !fullText %}
+            <div class="mt-2 text-xs text-gray-600">
+                <span class="font-semibold">Custom Fields:</span>
+                {% for fieldDef in singleCategoryCustomFieldDefinitions|slice:":2" %}
+                    <span>{{ fieldDef.label }}{% if not loop.last %}, {% endif %}</span>
+                {% endfor %}
+                {% if singleCategoryCustomFieldDefinitions|length > 2 %}
+                    <span>...</span>
+                {% endif %}
+                <span class="italic ml-1">(View details for values)</span>
+            </div>
+            {% endif %}
+
             {% if !noTag %}
                 <div class="tags mt-3 mb-2">
                     {% for tag in entity.Tags %}

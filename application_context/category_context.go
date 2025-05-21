@@ -6,6 +6,7 @@ import (
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
+	"mahresources/models/types"
 	"strings"
 )
 
@@ -57,6 +58,7 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 		CustomSidebar: categoryQuery.CustomSidebar,
 		CustomSummary: categoryQuery.CustomSummary,
 		CustomAvatar:  categoryQuery.CustomAvatar,
+		CustomFieldsDefinition: types.JSON(categoryQuery.CustomFieldsDefinition),
 	}
 
 	return &category, ctx.db.Create(&category).Error
@@ -75,6 +77,7 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 		CustomSidebar: categoryQuery.CustomSidebar,
 		CustomSummary: categoryQuery.CustomSummary,
 		CustomAvatar:  categoryQuery.CustomAvatar,
+		CustomFieldsDefinition: types.JSON(categoryQuery.CustomFieldsDefinition),
 	}
 
 	return &category, ctx.db.Save(&category).Error
