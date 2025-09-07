@@ -1,1257 +1,1369 @@
 openapi: 3.0.0
 info:
   title: mahresources
-  version: v1
+  version: "1.0" # Changed from v1 to 1.0 as per common practice
+servers:
+  - url: /v1
+    description: API Version 1
+
+components:
+  schemas:
+    # --- Core Models (Responses) ---
+    Note:
+      type: object
+      properties:
+        ID: { type: integer, readOnly: true }
+        CreatedAt: { type: string, format: date-time, readOnly: true }
+        UpdatedAt: { type: string, format: date-time, readOnly: true }
+        Name: { type: string }
+        Description: { type: string }
+        Meta: { type: object, additionalProperties: true, description: "Arbitrary JSON data." } # Or type: string, description: "A JSON string."
+        Tags: { type: array, items: { $ref: '#/components/schemas/Tag' } }
+        Resources: { type: array, items: { $ref: '#/components/schemas/Resource' } }
+        Groups: { type: array, items: { $ref: '#/components/schemas/GroupPartial' } } # Use partial to avoid deep circular refs
+        Owner: { $ref: '#/components/schemas/GroupPartial' }
+        OwnerId: { type: integer }
+        StartDate: { type: string, format: date-time, nullable: true }
+        EndDate: { type: string, format: date-time, nullable: true }
+        NoteType: { $ref: '#/components/schemas/NoteType' }
+        NoteTypeId: { type: integer, nullable: true }
+    Group:
+      type: object
+      properties:
+        ID: { type: integer, readOnly: true }
+        CreatedAt: { type: string, format: date-time, readOnly: true }
+        UpdatedAt: { type: string, format: date-time, readOnly: true }
+        Name: { type: string }
+        Description: { type: string }
+        URL: { type: string, format: url, nullable: true }
+        Meta: { type: object, additionalProperties: true, description: "Arbitrary JSON data." }
+        Owner: { $ref: '#/components/schemas/GroupPartial' }
+        OwnerId: { type: integer, nullable: true }
+        RelatedResources: { type: array, items: { $ref: '#/components/schemas/ResourcePartial' } }
+        RelatedNotes: { type: array, items: { $ref: '#/components/schemas/NotePartial' } }
+        RelatedGroups: { type: array, items: { $ref: '#/components/schemas/GroupPartial' } }
+        OwnResources: { type: array, items: { $ref: '#/components/schemas/ResourcePartial' } }
+        OwnNotes: { type: array, items: { $ref: '#/components/schemas/NotePartial' } }
+        OwnGroups: { type: array, items: { $ref: '#/components/schemas/GroupPartial' } }
+        Relationships: { type: array, items: { $ref: '#/components/schemas/GroupRelation' } }
+        BackRelations: { type: array, items: { $ref: '#/components/schemas/GroupRelation' } }
+        Tags: { type: array, items: { $ref: '#/components/schemas/Tag' } }
+        Category: { $ref: '#/components/schemas/Category' }
+        CategoryId: { type: integer, nullable: true }
+    GroupPartial: # For avoiding deep recursion in Group schema
+      type: object
+      properties:
+        ID: { type: integer }
+        Name: { type: string }
+        Category: { $ref: '#/components/schemas/CategoryPartial' }
+    NotePartial:
+      type: object
+      properties:
+        ID: { type: integer }
+        Name: { type: string }
+    ResourcePartial:
+      type: object
+      properties:
+        ID: { type: integer }
+        Name: { type: string }
+    Resource:
+      type: object
+      properties:
+        ID: { type: integer, readOnly: true }
+        CreatedAt: { type: string, format: date-time, readOnly: true }
+        UpdatedAt: { type: string, format: date-time, readOnly: true }
+        Name: { type: string }
+        OriginalName: { type: string }
+        OriginalLocation: { type: string }
+        Hash: { type: string, readOnly: true }
+        HashType: { type: string, readOnly: true }
+        Location: { type: string, readOnly: true }
+        StorageLocation: { type: string, nullable: true, readOnly: true }
+        Description: { type: string }
+        Meta: { type: object, additionalProperties: true, description: "Arbitrary JSON data." }
+        Width: { type: integer }
+        Height: { type: integer }
+        FileSize: { type: integer, format: int64 }
+        Category: { type: string }
+        ContentType: { type: string, readOnly: true }
+        ContentCategory: { type: string }
+        Tags: { type: array, items: { $ref: '#/components/schemas/Tag' } }
+        Notes: { type: array, items: { $ref: '#/components/schemas/NotePartial' } }
+        Groups: { type: array, items: { $ref: '#/components/schemas/GroupPartial' } }
+        Owner: { $ref: '#/components/schemas/GroupPartial' }
+        OwnerId: { type: integer, nullable: true }
+        Previews: { type: array, items: { $ref: '#/components/schemas/Preview' }, readOnly: true }
+    Tag:
+      type: object
+      properties:
+        ID: { type: integer, readOnly: true }
+        CreatedAt: { type: string, format: date-time, readOnly: true }
+        UpdatedAt: { type: string, format: date-time, readOnly: true }
+        Name: { type: string }
+        Description: { type: string }
+    Category:
+      type: object
+      properties:
+        ID: { type: integer, readOnly: true }
+        CreatedAt: { type: string, format: date-time, readOnly: true }
+        UpdatedAt: { type: string, format: date-time, readOnly: true }
+        Name: { type: string }
+        Description: { type: string }
+        CustomHeader: { type: string }
+        CustomSidebar: { type: string }
+        CustomSummary: { type: string }
+        CustomAvatar: { type: string }
+    CategoryPartial: # For GroupPartial
+      type: object
+      properties:
+        ID: { type: integer }
+        Name: { type: string }
+    Query:
+      type: object
+      properties:
+        ID: { type: integer, readOnly: true }
+        CreatedAt: { type: string, format: date-time, readOnly: true }
+        UpdatedAt: { type: string, format: date-time, readOnly: true }
+        Name: { type: string }
+        Text: { type: string }
+        Template: { type: string }
+        Description: { type: string }
+    NoteType:
+      type: object
+      properties:
+        ID: { type: integer, readOnly: true }
+        CreatedAt: { type: string, format: date-time, readOnly: true }
+        UpdatedAt: { type: string, format: date-time, readOnly: true }
+        Name: { type: string }
+        Description: { type: string }
+        # Notes: { type: array, items: { $ref: '#/components/schemas/Note' } } # Avoid circular if possible
+    Preview:
+      type: object
+      properties:
+        ID: { type: integer, readOnly: true }
+        CreatedAt: { type: string, format: date-time, readOnly: true }
+        UpdatedAt: { type: string, format: date-time, readOnly: true }
+        # Data: { type: string, format: byte } # Usually not sent in JSON
+        Width: { type: integer }
+        Height: { type: integer }
+        ContentType: { type: string }
+    GroupRelationType:
+      type: object
+      properties:
+        ID: { type: integer, readOnly: true }
+        CreatedAt: { type: string, format: date-time, readOnly: true }
+        UpdatedAt: { type: string, format: date-time, readOnly: true }
+        Name: { type: string }
+        Description: { type: string }
+        FromCategory: { $ref: '#/components/schemas/CategoryPartial' }
+        FromCategoryId: { type: integer }
+        ToCategory: { $ref: '#/components/schemas/CategoryPartial' }
+        ToCategoryId: { type: integer }
+        BackRelation: { $ref: '#/components/schemas/GroupRelationTypePartial' }
+        BackRelationId: { type: integer, nullable: true }
+    GroupRelationTypePartial: # For GroupRelationType
+      type: object
+      properties:
+        ID: { type: integer }
+        Name: { type: string }
+    GroupRelation:
+      type: object
+      properties:
+        ID: { type: integer, readOnly: true }
+        CreatedAt: { type: string, format: date-time, readOnly: true }
+        UpdatedAt: { type: string, format: date-time, readOnly: true }
+        Name: { type: string }
+        Description: { type: string }
+        FromGroup: { $ref: '#/components/schemas/GroupPartial' }
+        FromGroupId: { type: integer }
+        ToGroup: { $ref: '#/components/schemas/GroupPartial' }
+        ToGroupId: { type: integer }
+        RelationType: { $ref: '#/components/schemas/GroupRelationTypePartial' }
+        RelationTypeId: { type: integer }
+    MetaKeyResult:
+      type: object
+      properties:
+        Key: { type: string }
+
+    # --- Request Body / Query Param Schemas ---
+    EntityIdQuery:
+      type: object
+      properties:
+        Id: # Changed from ID to Id to match query param usage in handlers
+          type: integer
+      required: [Id]
+    BasicEntityEditQuery: # For editName/editDescription, ID is a query param
+      type: object
+      properties:
+        Name: { type: string }
+        Description: { type: string }
+      # required: one of name or description depending on endpoint
+    NoteCreator: # Base for NoteEditor
+      type: object
+      properties:
+        Name: { type: string }
+        Description: { type: string, nullable: true }
+        Tags: { type: array, items: { type: integer }, nullable: true }
+        Groups: { type: array, items: { type: integer }, nullable: true }
+        Resources: { type: array, items: { type: integer }, nullable: true }
+        Meta: { type: string, description: "A JSON string.", nullable: true }
+        StartDate: { type: string, format: html-datetime-local, nullable: true, description: "Format: YYYY-MM-DDTHH:MM" }
+        EndDate: { type: string, format: html-datetime-local, nullable: true, description: "Format: YYYY-MM-DDTHH:MM" }
+        OwnerId: { type: integer }
+        NoteTypeId: { type: integer, nullable: true }
+      required: [Name, OwnerId]
+    NoteEditor:
+      allOf:
+        - $ref: '#/components/schemas/NoteCreator'
+        - type: object
+          properties:
+            ID: { type: integer }
+          required: [ID]
+    GroupCreator: # Base for GroupEditor
+      type: object
+      properties:
+        Name: { type: string }
+        Description: { type: string, nullable: true }
+        Tags: { type: array, items: { type: integer }, nullable: true }
+        Groups: { type: array, items: { type: integer }, nullable: true }
+        CategoryId: { type: integer }
+        OwnerId: { type: integer, nullable: true }
+        Meta: { type: string, description: "A JSON string.", nullable: true }
+        URL: { type: string, format: url, nullable: true }
+      required: [Name, CategoryId]
+    GroupEditor:
+      allOf:
+        - $ref: '#/components/schemas/GroupCreator'
+        - type: object
+          properties:
+            ID: { type: integer }
+          required: [ID]
+    ResourceQueryBase:
+      type: object
+      properties:
+        Name: { type: string, nullable: true } # Can be derived from filename
+        Description: { type: string, nullable: true }
+        OwnerId: { type: integer }
+        Groups: { type: array, items: { type: integer }, nullable: true }
+        Tags: { type: array, items: { type: integer }, nullable: true }
+        Notes: { type: array, items: { type: integer }, nullable: true }
+        Meta: { type: string, description: "A JSON string.", nullable: true }
+        ContentCategory: { type: string, nullable: true }
+        Category: { type: string, nullable: true }
+        OriginalName: { type: string, nullable: true }
+        OriginalLocation: { type: string, nullable: true }
+        Width: { type: integer, nullable: true }
+        Height: { type: integer, nullable: true }
+      required: [OwnerId]
+    ResourceCreator:
+      allOf:
+        - $ref: '#/components/schemas/ResourceQueryBase'
+    ResourceFromLocalCreator:
+      allOf:
+        - $ref: '#/components/schemas/ResourceQueryBase'
+        - type: object
+          properties:
+            LocalPath: { type: string }
+            PathName: { type: string }
+          required: [LocalPath, PathName]
+    ResourceFromRemoteCreator:
+      allOf:
+        - $ref: '#/components/schemas/ResourceQueryBase'
+        - type: object
+          properties:
+            URL: { type: string, format: url }
+            FileName: { type: string, nullable: true } # Optional, can be derived
+            GroupCategoryName: { type: string, nullable: true }
+            GroupName: { type: string, nullable: true }
+            GroupMeta: { type: string, description: "A JSON string.", nullable: true }
+          required: [URL]
+    ResourceEditor:
+      allOf:
+        - $ref: '#/components/schemas/ResourceQueryBase'
+        - type: object
+          properties:
+            ID: { type: integer }
+          required: [ID]
+    TagCreator:
+      type: object
+      properties:
+        ID: { type: integer, description: "Include for update, omit for create." }
+        Name: { type: string }
+        Description: { type: string, nullable: true }
+      required: [Name]
+    CategoryCreator: # Base for CategoryEditor
+      type: object
+      properties:
+        Name: { type: string }
+        Description: { type: string, nullable: true }
+        CustomHeader: { type: string, nullable: true }
+        CustomSidebar: { type: string, nullable: true }
+        CustomSummary: { type: string, nullable: true }
+        CustomAvatar: { type: string, nullable: true }
+      required: [Name]
+    CategoryEditor:
+      allOf:
+        - $ref: '#/components/schemas/CategoryCreator'
+        - type: object
+          properties:
+            ID: { type: integer }
+          required: [ID]
+    QueryCreator: # Base for QueryEditor
+      type: object
+      properties:
+        Name: { type: string }
+        Text: { type: string }
+        Template: { type: string, nullable: true }
+        Description: { type: string, nullable: true } # Added from model
+      required: [Name, Text]
+    QueryEditor:
+      allOf:
+        - $ref: '#/components/schemas/QueryCreator'
+        - type: object
+          properties:
+            ID: { type: integer }
+          required: [ID]
+    GroupRelationshipQuery: # For creating/editing relation instances
+      type: object
+      properties:
+        Id: { type: integer, description: "Relation instance ID, for editing." }
+        FromGroupId: { type: integer }
+        ToGroupId: { type: integer }
+        GroupRelationTypeId: { type: integer }
+        Name: { type: string, nullable: true }
+        Description: { type: string, nullable: true }
+      required: [FromGroupId, ToGroupId, GroupRelationTypeId]
+    RelationshipTypeEditorQuery: # For creating/editing relation types
+      type: object
+      properties:
+        Id: { type: integer, description: "Relation type ID, for editing." }
+        Name: { type: string }
+        Description: { type: string, nullable: true }
+        FromCategory: { type: integer }
+        ToCategory: { type: integer }
+        ReverseName: { type: string, nullable: true }
+      required: [Name, FromCategory, ToCategory]
+    BulkQuery:
+      type: object
+      properties:
+        ID: # Field name from Go struct
+          type: array
+          items: { type: integer }
+      required: [ID]
+    BulkEditQuery:
+      type: object
+      properties:
+        ID: # From embedded BulkQuery
+          type: array
+          items: { type: integer }
+        EditedId: # Field name for tags/groups to add/remove
+          type: array
+          items: { type: integer }
+      required: [ID, EditedId]
+    BulkEditMetaQuery:
+      type: object
+      properties:
+        ID: # From embedded BulkQuery
+          type: array
+          items: { type: integer }
+        Meta: # JSON string
+          type: string
+          description: "A JSON string representing the meta fields to merge."
+      required: [ID, Meta]
+    MergeQuery:
+      type: object
+      properties:
+        Winner: { type: integer }
+        Losers: { type: array, items: { type: integer } }
+      required: [Winner, Losers]
+    RotateResourceQuery:
+      type: object
+      properties:
+        ID: { type: integer }
+        Degrees: { type: integer } # Was "Rotation" in spec, Go uses "Degrees"
+      required: [ID, Degrees]
+    ResourceSetDimensionsBody:
+      type: object
+      properties:
+        ID: { type: integer }
+        Width: { type: integer }
+        Height: { type: integer }
+      required: [ID, Width, Height]
+
+    # --- Query Param Schemas (for documentation clarity, not direct $ref usually) ---
+    NoteQueryParameters:
+      type: object
+      properties:
+        Name: { type: string }
+        Description: { type: string }
+        OwnerId: { type: integer }
+        Groups: { type: array, items: { type: integer } }
+        Tags: { type: array, items: { type: integer } }
+        CreatedBefore: { type: string, format: date }
+        CreatedAfter: { type: string, format: date }
+        StartDateBefore: { type: string, format: date }
+        StartDateAfter: { type: string, format: date }
+        EndDateBefore: { type: string, format: date }
+        EndDateAfter: { type: string, format: date }
+        SortBy: { type: string }
+        Ids: { type: array, items: { type: integer } }
+        MetaQuery: { type: array, items: { $ref: '#/components/schemas/ColumnMetaInput' } }
+        NoteTypeId: { type: integer }
+        page: { type: integer, default: 1 }
+    ColumnMetaInput: # For MetaQuery in query params
+      type: string
+      description: "Meta query string, e.g., 'key:OP:value'. OP can be EQ, LI, NE, NL, GT, GE, LT, LE. Value can be string (quoted if it contains spaces/colons), number, boolean, or null."
+      example: "priority:EQ:1"
+    GroupQueryParameters:
+      type: object
+      properties:
+        Name: { type: string }
+        SearchParentsForName: { type: boolean }
+        SearchChildrenForName: { type: boolean }
+        Description: { type: string }
+        Tags: { type: array, items: { type: integer } }
+        SearchParentsForTags: { type: boolean }
+        SearchChildrenForTags: { type: boolean }
+        Notes: { type: array, items: { type: integer } }
+        Groups: { type: array, items: { type: integer } }
+        OwnerId: { type: integer }
+        Resources: { type: array, items: { type: integer } }
+        Categories: { type: array, items: { type: integer } }
+        CategoryId: { type: integer }
+        CreatedBefore: { type: string, format: date }
+        CreatedAfter: { type: string, format: date }
+        RelationTypeId: { type: integer }
+        RelationSide: { type: integer, enum: [0, 1], description: "0 for From, 1 for To" }
+        MetaQuery: { type: array, items: { $ref: '#/components/schemas/ColumnMetaInput' } }
+        SortBy: { type: string }
+        URL: { type: string }
+        Ids: { type: array, items: { type: integer } }
+        page: { type: integer, default: 1 }
+    ResourceSearchQueryParameters:
+      type: object
+      properties:
+        Name: { type: string }
+        Description: { type: string }
+        ContentType: { type: string }
+        OwnerId: { type: integer }
+        Groups: { type: array, items: { type: integer } }
+        Tags: { type: array, items: { type: integer } }
+        Notes: { type: array, items: { type: integer } }
+        Ids: { type: array, items: { type: integer } }
+        CreatedBefore: { type: string, format: date }
+        CreatedAfter: { type: string, format: date }
+        MetaQuery: { type: array, items: { $ref: '#/components/schemas/ColumnMetaInput' } }
+        SortBy: { type: string }
+        MaxResults: { type: integer }
+        OriginalName: { type: string }
+        OriginalLocation: { type: string }
+        Hash: { type: string }
+        ShowWithoutOwner: { type: boolean }
+        ShowWithSimilar: { type: boolean }
+        MinWidth: { type: integer }
+        MinHeight: { type: integer }
+        MaxWidth: { type: integer }
+        MaxHeight: { type: integer }
+        page: { type: integer, default: 1 }
+    TagQueryParameters:
+      type: object
+      properties:
+        Name: { type: string }
+        Description: { type: string }
+        CreatedBefore: { type: string, format: date }
+        CreatedAfter: { type: string, format: date }
+        SortBy: { type: string }
+        page: { type: integer, default: 1 }
+    CategoryQueryParameters:
+      type: object
+      properties:
+        Name: { type: string }
+        Description: { type: string }
+        page: { type: integer, default: 1 }
+    QueryQueryParameters: # For listing queries
+      type: object
+      properties:
+        Name: { type: string }
+        Text: { type: string }
+        page: { type: integer, default: 1 }
+    RunQueryParameters: # For running a query
+      type: object
+      additionalProperties: true
+      description: "Key-value pairs for query parameters."
+    RelationshipTypeQueryParameters:
+      type: object
+      properties:
+        Name: { type: string }
+        Description: { type: string }
+        ForFromGroup: { type: integer }
+        ForToGroup: { type: integer }
+        FromCategory: { type: integer }
+        ToCategory: { type: integer }
+        page: { type: integer, default: 1 }
+
 paths:
-  /note:
+  # Notes
+  /notes:
     get:
-      description: Get a note
+      summary: List notes
+      description: Get all notes, paginated, with optional filters.
       parameters:
-        - in: query
-          name: id
-          schema:
-            type: integer
-          required: true
+        # Use 'oneOf' or 'anyOf' if you want to explicitly list all query params from NoteQueryParameters
+        # For brevity, I'll imply them. For a full spec, list each param.
+        - { name: Name, in: query, schema: { type: string }, required: false }
+        - { name: Description, in: query, schema: { type: string }, required: false }
+        - { name: OwnerId, in: query, schema: { type: integer }, required: false }
+        - { name: Groups,in: query, style: form, explode: true, schema: {type: array, items: {type: integer}}, required: false }
+        - { name: Tags, in: query, style: form, explode: true, schema: { type: array, items: { type: integer } }, required: false }
+        - { name: CreatedBefore, in: query, schema: { type: string, format: date }, required: false }
+        - { name: CreatedAfter, in: query, schema: { type: string, format: date }, required: false }
+        - { name: StartDateBefore, in: query, schema: { type: string, format: date }, required: false }
+        - { name: StartDateAfter, in: query, schema: { type: string, format: date }, required: false }
+        - { name: EndDateBefore, in: query, schema: { type: string, format: date }, required: false }
+        - { name: EndDateAfter, in: query, schema: { type: string, format: date }, required: false }
+        - { name: SortBy, in: query, schema: { type: string }, required: false }
+        - { name: Ids, in: query, style: form, explode: true, schema: { type: array, items: { type: integer } }, required: false }
+        - { name: MetaQuery, in: query, style: form, explode: false, schema: { type: array, items: { $ref: '#/components/schemas/ColumnMetaInput' } }, required: false, description: "e.g. MetaQuery=key1:EQ:value1&MetaQuery=key2:LI:value2" }
+        - { name: NoteTypeId, in: query, schema: { type: integer }, required: false }
+        - { name: page, in: query, schema: { type: integer, default: 1 }, required: false }
       responses:
         '200':
-          description: The requested note
-    post:
-      description: Create or update a note
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/NoteEditor'
-      responses:
-        '200':
-          description: The created note
-  /note/editName:
-    post:
-      description: Edit a note's name
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BasicEntityQuery'
-      responses:
-        '200':
-          description: The note with the name changed
-  /note/editDescription:
-    post:
-      description: Edit a note's description
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BasicEntityQuery'
-      responses:
-        '200':
-          description: The note with the description changed
-  /note/delete:
-    post:
-      description: Delete a note
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/EntityIdQuery'
-      responses:
-        '200':
-          description: The deleted note
-  /group:
-    get:
-      description: Get a group
-      parameters:
-        - in: query
-          name: id
-          schema:
-            type: integer
-          required: true
-      responses:
-        '200':
-          description: The requested group
-    post:
-      description: Create or update a group
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/GroupEditor'
-      responses:
-        '200':
-          description: The created group
-  /group/parents:
-    get:
-      description: Get parents of a group
-      parameters:
-        - in: query
-          name: id
-          schema:
-            type: integer
-          required: true
-      responses:
-        '200':
-          description: The parents of the group
-  /group/editName:
-    post:
-      description: Edit a group's name
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BasicEntityQuery'
-      responses:
-        '200':
-          description: The group with the name changed
-  /group/editDescription:
-    post:
-      description: Edit a group's description
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BasicEntityQuery'
-      responses:
-        '200':
-          description: The group with the description changed
-  /group/delete:
-    post:
-      description: Delete a group
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/EntityIdQuery'
-      responses:
-        '200':
-          description: The deleted group
-  /group/clone:
-    post:
-      description: Clone a group
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/EntityIdQuery'
-      responses:
-        '200':
-          description: The cloned group
-  /groups/delete:
-    post:
-      description: Bulk delete groups
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BulkQuery'
-      responses:
-        '200':
-          description: Result of the operation
-  /groups/addTags:
-    post:
-      description: Bulk add tags to groups
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BulkEditQuery'
-      responses:
-        '200':
-          description: Result of the operation
-  /groups/removeTags:
-    post:
-      description: Bulk remove tags from groups
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BulkEditQuery'
-      responses:
-        '200':
-          description: Result of the operation
-  /groups/addMeta:
-    post:
-      description: Bulk add meta to groups
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BulkEditMetaQuery'
-      responses:
-        '200':
-          description: Result of the operation
-  /groups/merge:
-    post:
-      description: Merge groups
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/MergeQuery'
-      responses:
-        '200':
-          description: Result of the operation
-  /resource:
-    get:
-      description: Get a resource
-      parameters:
-        - in: query
-          name: id
-          schema:
-            type: integer
-          required: true
-      responses:
-        '200':
-          description: The requested resource
+          description: A list of notes.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Resource'
+                type: array
+                items: { $ref: '#/components/schemas/Note' }
+  /note:
+    get:
+      summary: Get a specific note
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: The requested note.
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Note' } }
+        '404': { description: Note not found }
     post:
-      description: Create a resource
+      summary: Create or update a note
       requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema: { $ref: '#/components/schemas/NoteEditor' }
+          application/json:
+            schema: { $ref: '#/components/schemas/NoteEditor' }
+      responses:
+        '200':
+          description: The created or updated note.
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Note' } }
+        '400': { description: Invalid input }
+  /note/editName:
+    post:
+      summary: Edit a note's name
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties: { Name: { type: string } }
+              required: [Name]
+      responses:
+        '200': { description: Note name updated successfully. }
+  /note/editDescription:
+    post:
+      summary: Edit a note's description
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties: { Description: { type: string } }
+              required: [Description]
+      responses:
+        '200': { description: Note description updated successfully. }
+  /note/delete:
+    post:
+      summary: Delete a note
+      parameters: # Changed from requestBody to query parameter
+        - name: Id # Matches Go handler query param name
+          in: query
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Note deleted successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { ID: { type: integer } } # Returns the ID of deleted note
+  /notes/meta/keys:
+    get:
+      summary: Get all unique meta keys used in notes
+      responses:
+        '200':
+          description: A list of meta keys.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MetaKeyResult' }
+
+  # Groups (Follow similar pattern for parameters and full schema refs)
+  /groups:
+    get:
+      summary: List groups
+      parameters: # Add all relevant query params from GroupQueryParameters
+        - { name: page, in: query, schema: { type: integer, default: 1 }, required: false }
+        - { name: Name, in: query, schema: { type: string }, required: false }
+        # ... other params from GroupQueryParameters
+      responses:
+        '200':
+          description: A list of groups.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Group' } }
+  /group:
+    get:
+      summary: Get a specific group
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: The requested group.
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Group' } }
+        '404': { description: Group not found }
+    post:
+      summary: Create or update a group
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema: { $ref: '#/components/schemas/GroupEditor' }
+          application/json:
+            schema: { $ref: '#/components/schemas/GroupEditor' }
+      responses:
+        '200':
+          description: The created or updated group.
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Group' } }
+  /group/parents:
+    get:
+      summary: Get parents of a group
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: Parents of the group.
+          content:
+            application/json: { type: array, items: { $ref: '#/components/schemas/Group' } }
+  /group/editName:
+    post:
+      summary: Edit a group's name
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema: { type: object, properties: { Name: { type: string } }, required: [Name] }
+      responses:
+        '200': { description: Group name updated. }
+  /group/editDescription:
+    post:
+      summary: Edit a group's description
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema: { type: object, properties: { Description: { type: string } }, required: [Description] }
+      responses:
+        '200': { description: Group description updated. }
+  /group/delete: # Single delete
+    post:
+      summary: Delete a group
+      parameters:
+        - { name: Id, in: query, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: Group deleted.
+          content:
+            application/json: { type: object, properties: { ID: { type: integer } } }
+  /group/clone:
+    post:
+      summary: Clone a group
+      requestBody: # Uses EntityIdQuery struct, so ID should be in body
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema: { type: object, properties: { ID: { type: integer } }, required: [ID] }
+          application/json:
+            schema: { type: object, properties: { ID: { type: integer } }, required: [ID] }
+      responses:
+        '200':
+          description: The cloned group.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Group' } } }
+  /groups/delete: # Bulk delete
+    post:
+      summary: Bulk delete groups
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/BulkQuery' } }
+          application/json: { schema: { $ref: '#/components/schemas/BulkQuery' } }
+      responses:
+        '200': { description: Operation result. }
+  /groups/addTags:
+    post:
+      summary: Bulk add tags to groups
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
+          application/json: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
+      responses:
+        '200': { description: Operation result. }
+  /groups/removeTags:
+    post:
+      summary: Bulk remove tags from groups
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
+          application/json: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
+      responses:
+        '200': { description: Operation result. }
+  /groups/addMeta:
+    post:
+      summary: Bulk add/merge meta to groups
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/BulkEditMetaQuery' } }
+          application/json: { schema: { $ref: '#/components/schemas/BulkEditMetaQuery' } }
+      responses:
+        '200': { description: Operation result. }
+  /groups/merge:
+    post:
+      summary: Merge groups
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/MergeQuery' } }
+          application/json: { schema: { $ref: '#/components/schemas/MergeQuery' } }
+      responses:
+        '200': { description: Operation result. }
+  /groups/meta/keys:
+    get:
+      summary: Get all unique meta keys used in groups
+      responses:
+        '200':
+          description: A list of meta keys.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/MetaKeyResult' } }
+
+  # Resources
+  /resources:
+    get:
+      summary: List resources
+      parameters: # Add all relevant query params from ResourceSearchQueryParameters
+        - { name: page, in: query, schema: { type: integer, default: 1 }, required: false }
+        - { name: Name, in: query, schema: { type: string }, required: false }
+        # ... other params
+      responses:
+        '200':
+          description: A list of resources.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Resource' } }
+  /resource:
+    get:
+      summary: Get a specific resource
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: The requested resource.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Resource' } } }
+        '404': { description: Resource not found }
+    post:
+      summary: Create a resource (upload file or from URL)
+      requestBody:
+        required: true
         content:
           multipart/form-data:
             schema:
               type: object
               properties:
-                resource:
+                resource: # File upload
                   type: array
-                  items:
-                    type: string
-                    format: binary
+                  items: { type: string, format: binary }
+                # Include all fields from ResourceFromRemoteCreator as optional form fields
+                URL: { type: string, format: url, description: "If provided, file upload is ignored and content is fetched from this URL." }
+                Name: { type: string }
+                Description: { type: string }
+                OwnerId: { type: integer }
+                Groups: { type: array, items: { type: integer } } # Sent as multiple form fields with same name
+                Tags: { type: array, items: { type: integer } }
+                Notes: { type: array, items: { type: integer } }
+                Meta: { type: string, description: "A JSON string." }
+                ContentCategory: { type: string }
+                Category: { type: string }
+                OriginalName: { type: string }
+                OriginalLocation: { type: string }
+                FileName: { type: string, description: "Used if URL is provided."}
+                GroupCategoryName: { type: string, description: "Used if URL and GroupName are provided." }
+                GroupName: { type: string, description: "Used if URL is provided, creates/uses this group as owner." }
+                GroupMeta: { type: string, description: "A JSON string for group meta if URL and GroupName are provided." }
       responses:
         '200':
-          description: The created resource
+          description: The created resource(s).
           content:
-            application/json:
+            application/json: # Can be single or array depending on input
               schema:
-                $ref: '#/components/schemas/Resource'
-        '400':
-          description: Bad Request - Invalid input or missing fields
-        '500':
-          description: Internal Server Error - Server-side issue occurred
+                oneOf:
+                  - $ref: '#/components/schemas/Resource'
+                  - type: array
+                    items: { $ref: '#/components/schemas/Resource' }
+        '400': { description: Invalid input }
   /resource/view:
     get:
-      description: View a resource
+      summary: View a resource's content
       parameters:
-        - in: query
-          name: id
-          schema:
-            type: integer
-          required: true
+        - { name: id, in: query, schema: { type: integer }, required: false }
+        # Add params for ResourceSearchQuery if filtering is intended for single view
       responses:
-        '302':
-          description: Redirect to resource
-  /resource/delete:
+        '302': { description: Redirect to the resource file. }
+        '404': { description: Resource not found. }
+  /resource/delete: # Single delete
     post:
-      description: Delete a resource
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/EntityIdQuery'
+      summary: Delete a resource
+      parameters:
+        - { name: Id, in: query, required: true, schema: { type: integer } }
       responses:
         '200':
-          description: The deleted resource
+          description: Resource deleted.
+          content: { application/json: { type: object, properties: { ID: { type: integer } } } }
   /resource/edit:
     post:
-      description: Edit a resource
+      summary: Edit a resource
       requestBody:
+        required: true
         content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/ResourceEditor'
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/ResourceEditor' } }
+          application/json: { schema: { $ref: '#/components/schemas/ResourceEditor' } }
       responses:
         '200':
-          description: The edited resource
+          description: The updated resource.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Resource' } } }
   /resource/local:
     post:
-      description: Add a local resource
+      summary: Add a resource from a local server path
       requestBody:
+        required: true
         content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/ResourceFromLocalCreator'
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/ResourceFromLocalCreator' } }
+          application/json: { schema: { $ref: '#/components/schemas/ResourceFromLocalCreator' } }
       responses:
         '200':
-          description: The created resource
-  /resource/remote:
+          description: The created resource.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Resource' } } }
+  /resource/remote: # This might be covered by /resource POST with URL. If distinct, keep it.
     post:
-      description: Add a remote resource
+      summary: Add a resource from a remote URL (alternative to multipart upload)
       requestBody:
+        required: true
         content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/ResourceFromRemoteCreator'
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/ResourceFromRemoteCreator' } }
+          application/json: { schema: { $ref: '#/components/schemas/ResourceFromRemoteCreator' } }
       responses:
         '200':
-          description: The created resource
+          description: The created resource.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Resource' } } }
   /resource/editName:
     post:
-      description: Edit a resource's name
+      summary: Edit a resource's name
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: integer } }
       requestBody:
+        required: true
         content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BasicEntityQuery'
+          application/x-www-form-urlencoded: { schema: { type: object, properties: { Name: { type: string } }, required: [Name] } }
       responses:
-        '200':
-          description: The resource with the name changed
+        '200': { description: Resource name updated. }
   /resource/editDescription:
     post:
-      description: Edit a resource's description
+      summary: Edit a resource's description
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: integer } }
       requestBody:
+        required: true
         content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BasicEntityQuery'
+          application/x-www-form-urlencoded: { schema: { type: object, properties: { Description: { type: string } }, required: [Description] } }
       responses:
-        '200':
-          description: The resource with the description changed
+        '200': { description: Resource description updated. }
   /resource/recalculateDimensions:
     post:
-      description: Recalculate dimensions of a resource
+      summary: Recalculate dimensions for resources (bulk)
       requestBody:
+        required: true
         content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/EntityIdQuery'
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/BulkQuery' } }
+          application/json: { schema: { $ref: '#/components/schemas/BulkQuery' } }
       responses:
-        '200':
-          description: Result of the operation
+        '200': { description: Dimensions recalculated. }
   /resources/setDimensions:
     post:
-      description: Set resource dimensions
+      summary: Set dimensions for a resource
       requestBody:
+        required: true
         content:
-          application/x-www-form-urlencoded:
-            schema:
-              type: object
-              properties:
-                ID:
-                  type: integer
-                Width:
-                  type: integer
-                Height:
-                  type: integer
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/ResourceSetDimensionsBody' } }
+          application/json: { schema: { $ref: '#/components/schemas/ResourceSetDimensionsBody' } }
       responses:
-        '200':
-          description: Result of the operation
+        '200': { description: Dimensions set. }
   /resources/addTags:
     post:
-      description: Bulk add tags to resources
+      summary: Bulk add tags to resources
       requestBody:
+        required: true
         content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BulkEditQuery'
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
+          application/json: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
       responses:
-        '200':
-          description: Result of the operation
+        '200': { description: Operation result. }
   /resources/addGroups:
     post:
-      description: Bulk add groups to resources
+      summary: Bulk add groups to resources
       requestBody:
+        required: true
         content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BulkEditQuery'
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
+          application/json: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
       responses:
-        '200':
-          description: Result of the operation
+        '200': { description: Operation result. }
   /resources/removeTags:
     post:
-      description: Bulk remove tags from resources
+      summary: Bulk remove tags from resources
       requestBody:
+        required: true
         content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BulkEditQuery'
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
+          application/json: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
       responses:
-        '200':
-          description: Result of the operation
+        '200': { description: Operation result. }
   /resources/replaceTags:
     post:
-      description: Bulk replace tags of resources
+      summary: Bulk replace tags of resources
       requestBody:
+        required: true
         content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BulkEditQuery'
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
+          application/json: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
       responses:
-        '200':
-          description: Result of the operation
+        '200': { description: Operation result. }
   /resources/addMeta:
     post:
-      description: Bulk add meta to resources
+      summary: Bulk add/merge meta to resources
       requestBody:
+        required: true
         content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BulkEditMetaQuery'
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/BulkEditMetaQuery' } }
+          application/json: { schema: { $ref: '#/components/schemas/BulkEditMetaQuery' } }
       responses:
-        '200':
-          description: Result of the operation
-  /resources/delete:
+        '200': { description: Operation result. }
+  /resources/delete: # Bulk delete
     post:
-      description: Bulk delete resources
+      summary: Bulk delete resources
       requestBody:
+        required: true
         content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BulkQuery'
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/BulkQuery' } }
+          application/json: { schema: { $ref: '#/components/schemas/BulkQuery' } }
       responses:
-        '200':
-          description: Result of the operation
+        '200': { description: Operation result. }
   /resources/merge:
     post:
-      description: Merge resources
+      summary: Merge resources
       requestBody:
+        required: true
         content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/MergeQuery'
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/MergeQuery' } }
+          application/json: { schema: { $ref: '#/components/schemas/MergeQuery' } }
       responses:
-        '200':
-          description: Result of the operation
+        '200': { description: Operation result. }
   /resources/rotate:
     post:
-      description: Rotate resource
+      summary: Rotate a resource image
       requestBody:
+        required: true
         content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/RotateResourceQuery'
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/RotateResourceQuery' } }
+          application/json: { schema: { $ref: '#/components/schemas/RotateResourceQuery' } }
       responses:
-        '200':
-          description: Result of the operation
-  /tag:
-    get:
-      description: Get a tag
-      parameters:
-        - in: query
-          name: id
-          schema:
-            type: integer
-          required: true
-      responses:
-        '200':
-          description: The requested tag
-    post:
-      description: Create or update a tag
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/TagCreator'
-      responses:
-        '200':
-          description: The created tag
-  /tag/editName:
-    post:
-      description: Edit a tag's name
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BasicEntityQuery'
-      responses:
-        '200':
-          description: The tag with the name changed
-  /tag/editDescription:
-    post:
-      description: Edit a tag's description
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BasicEntityQuery'
-      responses:
-        '200':
-          description: The tag with the description changed
-  /tag/delete:
-    post:
-      description: Delete a tag
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/EntityIdQuery'
-      responses:
-        '200':
-          description: The deleted tag
-  /category:
-    get:
-      description: Get a category
-      parameters:
-        - in: query
-          name: id
-          schema:
-            type: integer
-          required: true
-      responses:
-        '200':
-          description: The requested category
-    post:
-      description: Create or update a category
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/CategoryEditor'
-      responses:
-        '200':
-          description: The created category
-  /category/editName:
-    post:
-      description: Edit a category's name
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BasicEntityQuery'
-      responses:
-        '200':
-          description: The category with the name changed
-  /category/editDescription:
-    post:
-      description: Edit a category's description
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BasicEntityQuery'
-      responses:
-        '200':
-          description: The category with the description changed
-  /category/delete:
-    post:
-      description: Delete a category
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/EntityIdQuery'
-      responses:
-        '200':
-          description: The deleted category
-  /query:
-    get:
-      description: Get a query
-      parameters:
-        - in: query
-          name: id
-          schema:
-            type: integer
-          required: true
-      responses:
-        '200':
-          description: The requested query
-    post:
-      description: Create or update a query
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/QueryEditor'
-      responses:
-        '200':
-          description: The created query
-  /query/run:
-    post:
-      description: Run a query
-      parameters:
-        - in: query
-          name: id
-          schema:
-            type: integer
-          required: true
-      responses:
-        '200':
-          description: The result of the query
-  /query/editName:
-    post:
-      description: Edit a query's name
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BasicEntityQuery'
-      responses:
-        '200':
-          description: The query with the name changed
-  /query/editDescription:
-    post:
-      description: Edit a query's description
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BasicEntityQuery'
-      responses:
-        '200':
-          description: The query with the description changed
-  /query/delete:
-    post:
-      description: Delete a query
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/EntityIdQuery'
-      responses:
-        '200':
-          description: The deleted query
-  /notes:
-    get:
-      description: Get all notes
-      responses:
-        '200':
-          description: All notes
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Note'
-  /notes/addTags:
-    post:
-      description: Bulk add tags to notes
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BulkEditQuery'
-      responses:
-        '200':
-          description: Result of the operation
-  /notes/removeTags:
-    post:
-      description: Bulk remove tags from notes
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BulkEditQuery'
-      responses:
-        '200':
-          description: Result of the operation
-  /notes/delete:
-    post:
-      description: Bulk delete notes
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BulkQuery'
-      responses:
-        '200':
-          description: Result of the operation
-  /groups:
-    get:
-      description: Get all groups
-      responses:
-        '200':
-          description: All groups
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Group'
-  /resources:
-    get:
-      description: Get all resources
-      responses:
-        '200':
-          description: All resources
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Resource'
-  /tags:
-    get:
-      description: Get all tags
-      responses:
-        '200':
-          description: All tags
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Tag'
-  /categories:
-    get:
-      description: Get all categories
-      responses:
-        '200':
-          description: All categories
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Category'
-  /queries:
-    get:
-      description: Get all queries
-      responses:
-        '200':
-          description: All queries
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Query'
-  /relations:
-    get:
-      description: Get all relations
-      responses:
-        '200':
-          description: All relations
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/GroupRelation'
-  /relations/add:
-    post:
-      description: Add a relation
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/RelationCreator'
-      responses:
-        '200':
-          description: The created relation
-  /relations/delete:
-    post:
-      description: Delete a relation
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/RelationDeleter'
-      responses:
-        '200':
-          description: Result of the operation
-  /notes/meta/keys:
-    get:
-      description: Get all meta keys for notes
-      responses:
-        '200':
-          description: A list of meta keys for notes
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: string
-
-  /groups/meta/keys:
-    get:
-      description: Get all meta keys for groups
-      responses:
-        '200':
-          description: A list of meta keys for groups
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: string
-
+        '200': { description: Resource rotated. }
   /resources/meta/keys:
     get:
-      description: Get all meta keys for resources
+      summary: Get all unique meta keys used in resources
       responses:
         '200':
-          description: A list of meta keys for resources
+          description: A list of meta keys.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/MetaKeyResult' } }
+  /resource/preview:
+    get:
+      summary: Get a preview image for a resource
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: integer } }
+        - { name: Width, in: query, schema: { type: integer }, required: false }
+        - { name: Height, in: query, schema: { type: integer }, required: false }
+      responses:
+        '200':
+          description: The preview image.
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+        '302': { description: Redirect to placeholder if preview generation fails or not applicable. }
+        '404': { description: Resource not found. }
+
+  # Tags (Follow similar pattern)
+  /tags:
+    get:
+      summary: List tags
+      parameters: # from TagQueryParameters
+        - { name: page, in: query, schema: { type: integer, default: 1 }, required: false }
+        - { name: Name, in: query, schema: { type: string }, required: false }
+        # ...
+      responses:
+        '200':
+          description: A list of tags.
+          content:
+            application/json: { type: array, items: { $ref: '#/components/schemas/Tag' } }
+  /tag:
+    get:
+      summary: Get a specific tag
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: The requested tag.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Tag' } } }
+    post:
+      summary: Create or update a tag
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/TagCreator' } }
+          application/json: { schema: { $ref: '#/components/schemas/TagCreator' } }
+      responses:
+        '200':
+          description: The created or updated tag.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Tag' } } }
+  /tag/editName:
+    post:
+      summary: Edit a tag's name
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded: { schema: { type: object, properties: { Name: { type: string } }, required: [Name] } }
+      responses:
+        '200': { description: Tag name updated. }
+  /tag/editDescription:
+    post:
+      summary: Edit a tag's description
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded: { schema: { type: object, properties: { Description: { type: string } }, required: [Description] } }
+      responses:
+        '200': { description: Tag description updated. }
+  /tag/delete:
+    post:
+      summary: Delete a tag
+      requestBody: # This handler uses the EntityIdQuery struct directly
+        required: true
+        content:
+          application/x-www-form-urlencoded: { schema: { type: object, properties: { ID: { type: integer } }, required: [ID] } } # Match EntityIdQuery.ID
+          application/json: { schema: { type: object, properties: { ID: { type: integer } }, required: [ID] } }
+      responses:
+        '200':
+          description: Tag deleted.
+          content: { application/json: { type: object, properties: { ID: { type: integer } } } }
+
+  # Categories (Follow similar pattern)
+  /categories:
+    get:
+      summary: List categories
+      parameters: # from CategoryQueryParameters
+        - { name: page, in: query, schema: { type: integer, default: 1 }, required: false }
+        - { name: Name, in: query, schema: { type: string }, required: false }
+        # ...
+      responses:
+        '200':
+          description: A list of categories.
+          content:
+            application/json: { type: array, items: { $ref: '#/components/schemas/Category' } }
+  /category:
+    get:
+      summary: Get a specific category
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: The requested category.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Category' } } }
+    post:
+      summary: Create or update a category
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/CategoryEditor' } }
+          application/json: { schema: { $ref: '#/components/schemas/CategoryEditor' } }
+      responses:
+        '200':
+          description: The created or updated category.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Category' } } }
+  /category/editName:
+    post:
+      summary: Edit a category's name
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded: { schema: { type: object, properties: { Name: { type: string } }, required: [Name] } }
+      responses:
+        '200': { description: Category name updated. }
+  /category/editDescription:
+    post:
+      summary: Edit a category's description
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded: { schema: { type: object, properties: { Description: { type: string } }, required: [Description] } }
+      responses:
+        '200': { description: Category description updated. }
+  /category/delete:
+    post:
+      summary: Delete a category
+      parameters:
+        - { name: Id, in: query, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: Category deleted.
+          content: { application/json: { type: object, properties: { ID: { type: integer } } } }
+
+  # Queries (Follow similar pattern)
+  /queries:
+    get:
+      summary: List queries
+      parameters: # from QueryQueryParameters
+        - { name: page, in: query, schema: { type: integer, default: 1 }, required: false }
+        - { name: Name, in: query, schema: { type: string }, required: false }
+        # ...
+      responses:
+        '200':
+          description: A list of queries.
+          content:
+            application/json: { type: array, items: { $ref: '#/components/schemas/Query' } }
+  /query:
+    get:
+      summary: Get a specific query
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: The requested query.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Query' } } }
+    post:
+      summary: Create or update a query
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/QueryEditor' } }
+          application/json: { schema: { $ref: '#/components/schemas/QueryEditor' } }
+      responses:
+        '200':
+          description: The created or updated query.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Query' } } }
+  /query/run:
+    post:
+      summary: Run a saved query
+      parameters:
+        - { name: id, in: query, schema: { type: integer }, required: false, description: "ID of the query to run." }
+        - { name: name, in: query, schema: { type: string }, required: false, description: "Name of the query to run (alternative to id)." }
+      requestBody:
+        description: Key-value pairs for query parameters.
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RunQueryParameters' }
+          application/x-www-form-urlencoded: # Also supported by handler
+            schema: { $ref: '#/components/schemas/RunQueryParameters' }
+      responses:
+        '200':
+          description: Query results.
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  type: string
-
-  /resource/preview:
-    get:
-      description: Get a preview image for a resource
+                  type: object
+                  additionalProperties: true
+        '404': { description: Query not found. }
+  /query/editName:
+    post:
+      summary: Edit a query's name
       parameters:
-        - in: query
-          name: id
-          schema:
-            type: integer
-          required: true
-      responses:
-        '200':
-          description: The preview image for the resource
-          content:
-            image/jpeg:
-              schema:
-                type: string
-                format: binary
-        '404':
-          description: Resource or preview not found
-
-  /relation/editName:
-    post:
-      description: Edit the name of a relation type (not a specific relation instance)
+        - { name: id, in: query, required: true, schema: { type: integer } }
       requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded: { schema: { type: object, properties: { Name: { type: string } }, required: [Name] } }
+      responses:
+        '200': { description: Query name updated. }
+  /query/editDescription: # Note: Query model has Text and Template, not a single "Description" for its main content.
+    post:
+      summary: Edit a query's main text/template (description field in model is separate)
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
         content:
           application/x-www-form-urlencoded:
             schema:
-              type: object
-              properties:
-                id:
-                  type: integer
-                name:
-                  type: string
-              required:
-                - id
-                - name
+              type: object # This assumes you are updating the 'Description' field of the Query model.
+              properties: { Description: { type: string } } # If it's 'Text' or 'Template', adjust here.
+              required: [Description]
       responses:
-        '200':
-          description: The updated relation type
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/GroupRelation'
-        '400':
-          description: Bad Request - Invalid input or missing parameters
-        '404':
-          description: Relation type not found
-
-  /relation/editDescription:
+        '200': { description: Query field updated. }
+  /query/delete:
     post:
-      description: Edit the description of a relation type (not a specific relation instance)
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              type: object
-              properties:
-                id:
-                  type: integer
-                description:
-                  type: string
-              required:
-                - id
-                - description
+      summary: Delete a query
+      parameters:
+        - { name: Id, in: query, required: true, schema: { type: integer } }
       responses:
         '200':
-          description: The updated relation type
+          description: Query deleted.
+          content: { application/json: { type: object, properties: { ID: { type: integer } } } }
+
+  # Relations
+  /relationTypes:
+    get:
+      summary: List relation types
+      parameters: # from RelationshipTypeQueryParameters
+        - { name: page, in: query, schema: { type: integer, default: 1 }, required: false }
+        - { name: Name, in: query, schema: { type: string }, required: false }
+        # ...
+      responses:
+        '200':
+          description: A list of relation types.
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/GroupRelation'
-        '400':
-          description: Bad Request - Invalid input or missing parameters
-        '404':
-          description: Relation type not found
-
-components:
-  schemas:
-    NoteEditor:
-      type: object
-      properties:
-        ID:
-          type: integer
-        Name:
-          type: string
-        Description:
-          type: string
-        NoteTypeID:
-          type: integer
-    BasicEntityQuery:
-      type: object
-      properties:
-        ID:
-          type: integer
-        Name:
-          type: string
-        Description:
-          type: string
-    EntityIdQuery:
-      type: object
-      properties:
-        ID:
-          type: integer
-    GroupEditor:
-      type: object
-      properties:
-        ID:
-          type: integer
-        Name:
-          type: string
-        Description:
-          type: string
-    BulkQuery:
-      type: object
-      properties:
-        IDs:
-          type: array
-          items:
-            type: integer
-    BulkEditQuery:
-      type: object
-      properties:
-        IDs:
-          type: string
-        Tags:
-          type: string
-    BulkEditMetaQuery:
-      type: object
-      properties:
-        IDs:
-          type: string
-        MetaKey:
-          type: string
-        MetaValue:
-          type: string
-    MergeQuery:
-      type: object
-      properties:
-        IDs:
-          type: string
-        TargetID:
-          type: integer
-    Resource:
-      type: object
-      properties:
-        ID:
-          type: integer
-          readOnly: true
-        CreatedAt:
-          type: string
-          format: date-time
-          readOnly: true
-        UpdatedAt:
-          type: string
-          format: date-time
-          readOnly: true
-        Name:
-          type: string
-        OriginalName:
-          type: string
-          readOnly: true
-        OriginalLocation:
-          type: string
-          readOnly: true
-        Hash:
-          type: string
-          readOnly: true
-        HashType:
-          type: string
-          readOnly: true
-        Location:
-          type: string
-          readOnly: true
-        StorageLocation:
-          type: string
-          readOnly: true
-        Description:
-          type: string
-        Meta:
-          type: object
-        Width:
-          type: integer
-        Height:
-          type: integer
-        FileSize:
-          type: integer
-        Category:
-          type: string
-        ContentType:
-          type: string
-          readOnly: true
-        ContentCategory:
-          type: string
-        Tags:
-          type: array
-          items:
-            $ref: '#/components/schemas/Tag'
-        Notes:
-          type: array
-          items:
-            $ref: '#/components/schemas/Note'
-        Groups:
-          type: array
-          items:
-            $ref: '#/components/schemas/Group'
-        Owner:
-          $ref: '#/components/schemas/Group'
-        OwnerId:
-          type: integer
-          readOnly: true
-        Previews:
-          type: array
-          items:
-            $ref: '#/components/schemas/Preview'
-    Tag:
-      type: object
-      properties:
-        ID:
-          type: integer
-          readOnly: true
-        CreatedAt:
-          type: string
-          format: date-time
-          readOnly: true
-        UpdatedAt:
-          type: string
-          format: date-time
-          readOnly: true
-        Name:
-          type: string
-        Description:
-          type: string
-
-    ResourceEditor:
-      type: object
-      properties:
-        ID:
-          type: integer
-        Name:
-          type: string
-        Description:
-          type: string
-        Filename:
-          type: string
-        Tags:
-          type: string
-        Groups:
-          type: string
-    ResourceFromLocalCreator:
-      type: object
-      properties:
-        Filename:
-          type: string
-        Data:
-          type: string
-    ResourceFromRemoteCreator:
-      type: object
-      properties:
-        URL:
-          type: string
-    RotateResourceQuery:
-      type: object
-      properties:
-        ID:
-          type: integer
-        Rotation:
-          type: integer
-    TagCreator:
-      type: object
-      properties:
-        ID:
-          type: integer
-        Name:
-          type: string
-        Description:
-          type: string
-        CategoryID:
-          type: integer
-    CategoryEditor:
-      type: object
-      properties:
-        ID:
-          type: integer
-        Name:
-          type: string
-        Description:
-          type: string
-    QueryEditor:
-      type: object
-      properties:
-        ID:
-          type: integer
-        Name:
-          type: string
-        Description:
-          type: string
-        Query:
-          type: string
-    RelationCreator:
-      type: object
-      properties:
-        FromID:
-          type: integer
-        ToID:
-          type: integer
-        Kind:
-          type: string
-    RelationDeleter:
-      type: object
-      properties:
-        FromID:
-          type: integer
-        ToID:
-          type: integer
-    Note:
-      type: object
-      properties:
-        ID:
-          type: integer
-          readOnly: true
-        CreatedAt:
-          type: string
-          format: date-time
-          readOnly: true
-        UpdatedAt:
-          type: string
-          format: date-time
-          readOnly: true
-        Name:
-          type: string
-        Description:
-          type: string
-        Meta:
-          type: object
-        Tags:
-          type: array
-          items:
-            $ref: '#/components/schemas/Tag'
-        Resources:
-          type: array
-          items:
-            $ref: '#/components/schemas/Resource'
-        Groups:
-          type: array
-          items:
-            $ref: '#/components/schemas/Group'
-        Owner:
-          $ref: '#/components/schemas/Group'
-        OwnerId:
-          type: integer
-          readOnly: true
-        StartDate:
-          type: string
-          format: date-time
-        EndDate:
-          type: string
-          format: date-time
-        NoteType:
-          $ref: '#/components/schemas/NoteType'
-        NoteTypeId:
-          type: integer
-    Group:
-      type: object
-      properties:
-        ID:
-          type: integer
-          readOnly: true
-        CreatedAt:
-          type: string
-          format: date-time
-          readOnly: true
-        UpdatedAt:
-          type: string
-          format: date-time
-          readOnly: true
-        Name:
-          type: string
-        Description:
-          type: string
-        URL:
-          type: string
-          format: url
-        Meta:
-          type: object
-        Tags:
-          type: array
-          items:
-            $ref: '#/components/schemas/Tag'
-        Resources:
-          type: array
-          items:
-            $ref: '#/components/schemas/Resource'
-        Notes:
-          type: array
-          items:
-            $ref: '#/components/schemas/Note'
-        Owner:
-          $ref: '#/components/schemas/Group'
-        OwnerId:
-          type: integer
-          readOnly: true
-        Members:
-          type: array
-          items:
-            $ref: '#/components/schemas/Group'
-    NoteType:
-      type: object
-      properties:
-        ID:
-          type: integer
-          readOnly: true
-        CreatedAt:
-          type: string
-          format: date-time
-          readOnly: true
-        UpdatedAt:
-          type: string
-          format: date-time
-          readOnly: true
-        Name:
-          type: string
-        Description:
-          type: string
-        Icon:
-          type: string
-        Color:
-          type: string
-        Notes:
-          type: array
-          items:
-            $ref: '#/components/schemas/Note'
-    Preview:
-      type: object
-      properties:
-        ID:
-          type: integer
-          readOnly: true
-        CreatedAt:
-          type: string
-          format: date-time
-          readOnly: true
-        UpdatedAt:
-          type: string
-          format: date-time
-          readOnly: true
-        Data:
-          type: string
-          format: byte
-        Width:
-          type: integer
-        Height:
-          type: integer
-        ContentType:
-          type: string
-    GroupRelation:
-      type: object
-      properties:
-        ID:
-          type: integer
-          readOnly: true
-        CreatedAt:
-          type: string
-          format: date-time
-          readOnly: true
-        UpdatedAt:
-          type: string
-          format: date-time
-          readOnly: true
-        FromGroupId:
-          type: integer
-        ToGroupId:
-          type: integer
-        RelationTypeId:
-          type: integer
+              schema: { type: array, items: { $ref: '#/components/schemas/GroupRelationType' } }
+  /relationType:
+    post:
+      summary: Create a new relation type
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/RelationshipTypeEditorQuery' } }
+          application/json: { schema: { $ref: '#/components/schemas/RelationshipTypeEditorQuery' } }
+      responses:
+        '200':
+          description: The created relation type.
+          content: { application/json: { schema: { $ref: '#/components/schemas/GroupRelationType' } } }
+  /relationType/edit:
+    post:
+      summary: Edit an existing relation type
+      requestBody: # ID must be in the body for RelationshipTypeEditorQuery
+        required: true
+        content:
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/RelationshipTypeEditorQuery' } }
+          application/json: { schema: { $ref: '#/components/schemas/RelationshipTypeEditorQuery' } }
+      responses:
+        '200':
+          description: The updated relation type.
+          content: { application/json: { schema: { $ref: '#/components/schemas/GroupRelationType' } } }
+  /relationType/delete:
+    post:
+      summary: Delete a relation type
+      parameters:
+        - { name: Id, in: query, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: Relation type deleted.
+          content: { application/json: { type: object, properties: { ID: { type: integer } } } }
+  /relation:
+    post:
+      summary: Create or edit a group relation instance
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/GroupRelationshipQuery' } }
+          application/json: { schema: { $ref: '#/components/schemas/GroupRelationshipQuery' } }
+      responses:
+        '200':
+          description: The created or updated relation instance.
+          content: { application/json: { schema: { $ref: '#/components/schemas/GroupRelation' } } }
+  /relation/delete:
+    post:
+      summary: Delete a group relation instance
+      parameters:
+        - { name: Id, in: query, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: Relation instance deleted.
+          content: { application/json: { type: object, properties: { ID: { type: integer } } } }
+  # Generic editName/editDescription for relation instances (GroupRelation model)
+  /relation/editName: # Name of the specific relation instance
+    post:
+      summary: Edit a relation instance's name
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded: { schema: { type: object, properties: { Name: { type: string } }, required: [Name] } }
+      responses:
+        '200': { description: Relation instance name updated. }
+  /relation/editDescription: # Description of the specific relation instance
+    post:
+      summary: Edit a relation instance's description
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded: { schema: { type: object, properties: { Description: { type: string } }, required: [Description] } }
+      responses:
+        '200': { description: Relation instance description updated. }
