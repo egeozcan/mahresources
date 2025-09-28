@@ -6,29 +6,41 @@ import (
 )
 
 func AddInitialData(db *gorm.DB) {
-	var count int64
-	db.Model(&models.Category{}).Count(&count)
+	var categoryCount int64
+	db.Model(&models.Category{}).Count(&categoryCount)
 
-	if count > 0 {
-		return
+	if categoryCount == 0 {
+		personCategory := &models.Category{Name: "Person", Description: "A person. Likely a human."}
+		db.Create(personCategory)
+		locationCategory := &models.Category{Name: "Location", Description: "Some place you know about."}
+		db.Create(locationCategory)
+		businessCategory := &models.Category{Name: "Business", Description: "Some business you know about."}
+		db.Create(businessCategory)
+
+		db.Create(&models.GroupRelationType{
+			Name:           "Address",
+			FromCategoryId: &personCategory.ID,
+			ToCategoryId:   &locationCategory.ID,
+		})
+
+		db.Create(&models.GroupRelationType{
+			Name:           "Employer",
+			FromCategoryId: &personCategory.ID,
+			ToCategoryId:   &businessCategory.ID,
+		})
 	}
 
-	personCategory := &models.Category{Name: "Person", Description: "A person. Likely a human."}
-	db.Create(personCategory)
-	locationCategory := &models.Category{Name: "Location", Description: "Some place you know about."}
-	db.Create(locationCategory)
-	businessCategory := &models.Category{Name: "Business", Description: "Some business you know about."}
-	db.Create(businessCategory)
+	var noteTypeCount int64
+	db.Model(&models.NoteType{}).Count(&noteTypeCount)
 
-	db.Create(&models.GroupRelationType{
-		Name:           "Address",
-		FromCategoryId: &personCategory.ID,
-		ToCategoryId:   &locationCategory.ID,
-	})
+	if noteTypeCount == 0 {
+		var noteCount int64
+		db.Model(&models.Note{}).Count(&noteCount)
 
-	db.Create(&models.GroupRelationType{
-		Name:           "Employer",
-		FromCategoryId: &personCategory.ID,
-		ToCategoryId:   &businessCategory.ID,
-	})
+		if noteCount > 0 {
+			defaultNoteType := &models.NoteType{Name: "Default", Description: "Default note type for existing notes."}
+			db.Create(defaultNoteType)
+			db.Model(&models.Note{}).Where("note_type_id IS NULL").Update("note_type_id", defaultNoteType.ID)
+		}
+	}
 }

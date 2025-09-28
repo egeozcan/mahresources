@@ -17,3 +17,11 @@ type NoteWriter interface {
 type NoteDeleter interface {
 	DeleteNote(noteId uint) error
 }
+
+type NoteTypeWriter interface {
+	CreateOrUpdateNoteType(query *query_models.NoteTypeEditor) (*models.NoteType, error)
+}
+
+type NoteTypeDeleter interface {
+	DeleteNoteType(noteTypeId uint) error
+}

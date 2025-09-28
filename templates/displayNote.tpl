@@ -20,7 +20,7 @@
 
     {% if note.NoteType %}
         {% include "/partials/sideTitle.tpl" with title="Note Type" %}
-        <a href="/note-type?id={{ note.NoteType.ID }}" class="text-blue-600 hover:underline">{{ note.NoteType.Name }}</a>
+        <a href="/noteType?id={{ note.NoteType.ID }}" class="text-blue-600 hover:underline">{{ note.NoteType.Name }}</a>
     {% endif %}
 
     {% include "/partials/tagList.tpl" with tags=note.Tags %}

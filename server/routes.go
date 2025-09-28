@@ -18,11 +18,15 @@ type templateInformation struct {
 }
 
 var templates = map[string]templateInformation{
-	"/note/new":  {template_context_providers.NoteCreateContextProvider, "createNote.tpl", http.MethodGet},
-	"/notes":     {template_context_providers.NoteListContextProvider, "listNotes.tpl", http.MethodGet},
-	"/note":      {template_context_providers.NoteContextProvider, "displayNote.tpl", http.MethodGet},
-	"/note/text": {template_context_providers.NoteContextProvider, "displayNoteText.tpl", http.MethodGet},
-	"/note/edit": {template_context_providers.NoteCreateContextProvider, "createNote.tpl", http.MethodGet},
+	"/note/new":      {template_context_providers.NoteCreateContextProvider, "createNote.tpl", http.MethodGet},
+	"/notes":         {template_context_providers.NoteListContextProvider, "listNotes.tpl", http.MethodGet},
+	"/note":          {template_context_providers.NoteContextProvider, "displayNote.tpl", http.MethodGet},
+	"/note/text":     {template_context_providers.NoteContextProvider, "displayNoteText.tpl", http.MethodGet},
+	"/note/edit":     {template_context_providers.NoteCreateContextProvider, "createNote.tpl", http.MethodGet},
+	"/noteType/new":  {template_context_providers.NoteTypeCreateContextProvider, "createNoteType.tpl", http.MethodGet},
+	"/noteTypes":     {template_context_providers.NoteTypeListContextProvider, "listNoteTypes.tpl", http.MethodGet},
+	"/noteType":      {template_context_providers.NoteTypeContextProvider, "displayNoteType.tpl", http.MethodGet},
+	"/noteType/edit": {template_context_providers.NoteTypeCreateContextProvider, "createNoteType.tpl", http.MethodGet},
 
 	"/resource/new":      {template_context_providers.ResourceCreateContextProvider, "createResource.tpl", http.MethodGet},
 	"/resources":         {template_context_providers.ResourceListContextProvider, "listResources.tpl", http.MethodGet},
@@ -93,6 +97,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	basicCategoryWriter := application_context.NewEntityWriter[models.Category](appContext)
 	basicQueryWriter := application_context.NewEntityWriter[models.Query](appContext)
 	basicRelationTypeWriter := application_context.NewEntityWriter[models.GroupRelationType](appContext)
+	basicNoteTypeWriter := application_context.NewEntityWriter[models.NoteType](appContext)
 
 	router.Methods(http.MethodGet).Path("/v1/notes").HandlerFunc(api_handlers.GetNotesHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/notes/meta/keys").HandlerFunc(api_handlers.GetNoteMetaKeysHandler(appContext))
@@ -101,6 +106,12 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/note/delete").HandlerFunc(api_handlers.GetRemoveNoteHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/note/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Note](basicNoteWriter, "note"))
 	router.Methods(http.MethodPost).Path("/v1/note/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.Note](basicNoteWriter, "note"))
+	router.Methods(http.MethodGet).Path("/v1/note/noteTypes").HandlerFunc(api_handlers.GetNoteTypesHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/note/noteType").HandlerFunc(api_handlers.GetAddNoteTypeHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/note/noteType/edit").HandlerFunc(api_handlers.GetAddNoteTypeHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/note/noteType/delete").HandlerFunc(api_handlers.GetRemoveNoteTypeHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/noteType/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.NoteType](basicNoteTypeWriter, "noteType"))
+	router.Methods(http.MethodPost).Path("/v1/noteType/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.NoteType](basicNoteTypeWriter, "noteType"))
 
 	router.Methods(http.MethodGet).Path("/v1/groups").HandlerFunc(api_handlers.GetGroupsHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/groups/meta/keys").HandlerFunc(api_handlers.GetGroupMetaKeysHandler(appContext))

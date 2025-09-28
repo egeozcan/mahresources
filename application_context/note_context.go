@@ -6,6 +6,7 @@ import (
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
+	"strings"
 )
 
 func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteEditor) (*models.Note, error) {
@@ -17,6 +18,11 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 
 	if noteQuery.Meta == "" {
 		noteQuery.Meta = "{}"
+	}
+
+	var noteTypeId *uint
+	if noteQuery.NoteTypeId != 0 {
+		noteTypeId = &noteQuery.NoteTypeId
 	}
 
 	tx := ctx.db.Begin()
@@ -35,6 +41,7 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 			OwnerId:     &noteQuery.OwnerId,
 			StartDate:   parseHTMLTime(noteQuery.StartDate),
 			EndDate:     parseHTMLTime(noteQuery.EndDate),
+			NoteTypeId:  noteTypeId,
 		}
 
 		if err := tx.Create(&note).Error; err != nil {
@@ -54,6 +61,7 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 		note.OwnerId = &noteQuery.OwnerId
 		note.StartDate = parseHTMLTime(noteQuery.StartDate)
 		note.EndDate = parseHTMLTime(noteQuery.EndDate)
+		note.NoteTypeId = noteTypeId
 
 		if err := tx.Save(&note).Error; err != nil {
 			tx.Rollback()
@@ -161,4 +169,49 @@ func (ctx *MahresourcesContext) DeleteNote(noteId uint) error {
 
 func (ctx *MahresourcesContext) NoteMetaKeys() (*[]fieldResult, error) {
 	return metaKeys(ctx, "notes")
+}
+
+func (ctx *MahresourcesContext) GetNoteType(id uint) (*models.NoteType, error) {
+	var noteType models.NoteType
+	return &noteType, ctx.db.Preload(clause.Associations).First(&noteType, id).Error
+}
+
+func (ctx *MahresourcesContext) GetNoteTypes(query *query_models.NoteTypeQuery, offset, maxResults int) (*[]models.NoteType, error) {
+	var noteTypes []models.NoteType
+	err := ctx.db.Scopes(database_scopes.NoteTypeQuery(query)).Limit(maxResults).Offset(offset).Find(&noteTypes).Error
+	return &noteTypes, err
+}
+
+func (ctx *MahresourcesContext) GetNoteTypesWithIds(ids []uint) (*[]models.NoteType, error) {
+	var noteTypes []models.NoteType
+	if len(ids) == 0 || (len(ids) == 1 && ids[0] == 0) {
+		return &noteTypes, nil
+	}
+	return &noteTypes, ctx.db.Find(&noteTypes, ids).Error
+}
+
+func (ctx *MahresourcesContext) GetNoteTypesCount(query *query_models.NoteTypeQuery) (int64, error) {
+	var noteType models.NoteType
+	var count int64
+	return count, ctx.db.Scopes(database_scopes.NoteTypeQuery(query)).Model(&noteType).Count(&count).Error
+}
+
+func (ctx *MahresourcesContext) CreateOrUpdateNoteType(query *query_models.NoteTypeEditor) (*models.NoteType, error) {
+	if strings.TrimSpace(query.Name) == "" {
+		return nil, errors.New("note type name must be non-empty")
+	}
+	var noteType models.NoteType
+	if query.ID != 0 {
+		if err := ctx.db.First(&noteType, query.ID).Error; err != nil {
+			return nil, err
+		}
+	}
+	noteType.Name = query.Name
+	noteType.Description = query.Description
+	return &noteType, ctx.db.Save(&noteType).Error
+}
+
+func (ctx *MahresourcesContext) DeleteNoteType(noteTypeId uint) error {
+	noteType := models.NoteType{ID: noteTypeId}
+	return ctx.db.Select(clause.Associations).Delete(&noteType).Error
 }

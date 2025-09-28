@@ -1169,6 +1169,10 @@ select {
   margin-top: 0.75rem;
 }
 
+.ml-4 {
+  margin-left: 1rem;
+}
+
 .mt-7 {
   margin-top: 1.75rem;
 }
@@ -1187,10 +1191,6 @@ select {
 
 .ml-2 {
   margin-left: 0.5rem;
-}
-
-.ml-4 {
-  margin-left: 1rem;
 }
 
 .mr-1 {
@@ -1688,11 +1688,6 @@ select {
   padding-bottom: 0.25rem;
 }
 
-.px-2 {
-  padding-left: 0.5rem;
-  padding-right: 0.5rem;
-}
-
 .px-3 {
   padding-left: 0.75rem;
   padding-right: 0.75rem;
@@ -1706,6 +1701,11 @@ select {
 .py-0 {
   padding-top: 0px;
   padding-bottom: 0px;
+}
+
+.px-2 {
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
 }
 
 .pt-5 {
@@ -1992,6 +1992,10 @@ select {
 .hover\:text-indigo-500:hover {
   --tw-text-opacity: 1;
   color: rgb(99 102 241 / var(--tw-text-opacity));
+}
+
+.hover\:underline:hover {
+  text-decoration-line: underline;
 }
 
 .focus\:border-indigo-500:focus {

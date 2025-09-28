@@ -75,6 +75,14 @@ func NoteListContextProvider(context *application_context.MahresourcesContext) f
 			return addErrContext(err, baseContext)
 		}
 
+		noteTypes, err := context.GetNoteTypesWithIds([]uint{query.NoteTypeId})
+
+		if err != nil {
+			fmt.Println(err)
+
+			return addErrContext(err, baseContext)
+		}
+
 		return pongo2.Context{
 			"pageTitle":   "Notes",
 			"notes":       notes,
@@ -82,6 +90,7 @@ func NoteListContextProvider(context *application_context.MahresourcesContext) f
 			"owners":      owners,
 			"pagination":  pagination,
 			"tags":        tags,
+			"noteTypes":   noteTypes,
 			"parsedQuery": query,
 			"action": template_entities.Entry{
 				Name: "Create",
@@ -146,6 +155,13 @@ func NoteCreateContextProvider(context *application_context.MahresourcesContext)
 			}
 		}
 
+		if note.NoteTypeId != nil {
+			noteType, err := context.GetNoteType(*note.NoteTypeId)
+			if err == nil {
+				tplContext["noteType"] = []*models.NoteType{noteType}
+			}
+		}
+
 		return tplContext
 	}
 }
@@ -183,6 +199,107 @@ func NoteContextProvider(context *application_context.MahresourcesContext) func(
 			},
 			"mainEntity":     note,
 			"mainEntityType": "note",
+		}.Update(baseContext)
+	}
+}
+
+func NoteTypeListContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+	return func(request *http.Request) pongo2.Context {
+		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		offset := (page - 1) * constants.MaxResultsPerPage
+		var query query_models.NoteTypeQuery
+		err := decoder.Decode(&query, request.URL.Query())
+		baseContext := staticTemplateCtx(request)
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		noteTypes, err := context.GetNoteTypes(&query, int(offset), constants.MaxResultsPerPage)
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		noteTypesCount, err := context.GetNoteTypesCount(&query)
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		pagination, err := template_entities.GeneratePagination(request.URL.String(), noteTypesCount, constants.MaxResultsPerPage, int(page))
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		return pongo2.Context{
+			"pageTitle":  "Note Types",
+			"noteTypes":  noteTypes,
+			"pagination": pagination,
+			"action": template_entities.Entry{
+				Name: "Add",
+				Url:  "/noteType/new",
+			},
+		}.Update(baseContext)
+	}
+}
+
+func NoteTypeCreateContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+	return func(request *http.Request) pongo2.Context {
+		tplContext := pongo2.Context{
+			"pageTitle": "Create Note Type",
+		}.Update(staticTemplateCtx(request))
+
+		var query query_models.EntityIdQuery
+		err := decoder.Decode(&query, request.URL.Query())
+
+		if err != nil || query.ID == 0 {
+			return tplContext
+		}
+
+		noteType, err := context.GetNoteType(query.ID)
+
+		if err != nil {
+			return tplContext
+		}
+
+		tplContext["pageTitle"] = "Edit Note Type"
+		tplContext["noteType"] = noteType
+
+		return tplContext
+	}
+}
+
+func NoteTypeContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+	return func(request *http.Request) pongo2.Context {
+		var query query_models.EntityIdQuery
+		err := decoder.Decode(&query, request.URL.Query())
+		baseContext := staticTemplateCtx(request)
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		noteType, err := context.GetNoteType(query.ID)
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		return pongo2.Context{
+			"pageTitle": "Note Type " + noteType.Name,
+			"noteType":  noteType,
+			"action": template_entities.Entry{
+				Name: "Edit",
+				Url:  "/noteType/edit?id=" + strconv.Itoa(int(query.ID)),
+			},
+			"deleteAction": template_entities.Entry{
+				Name: "Delete",
+				Url:  fmt.Sprintf("/v1/note/noteType/delete?Id=%v", noteType.ID),
+			},
+			"mainEntity":     noteType,
+			"mainEntityType": "noteType",
 		}.Update(baseContext)
 	}
 }

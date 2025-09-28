@@ -117,3 +117,20 @@ func NoteQuery(query *query_models.NoteQuery, ignoreSort bool) func(db *gorm.DB)
 		return dbQuery
 	}
 }
+
+func NoteTypeQuery(query *query_models.NoteTypeQuery) func(db *gorm.DB) *gorm.DB {
+	return func(db *gorm.DB) *gorm.DB {
+		dbQuery := db
+		likeOperator := "LIKE"
+		if db.Config.Dialector.Name() == "postgres" {
+			likeOperator = "ILIKE"
+		}
+		if query.Name != "" {
+			dbQuery = dbQuery.Where("name "+likeOperator+" ?", "%"+query.Name+"%")
+		}
+		if query.Description != "" {
+			dbQuery = dbQuery.Where("description "+likeOperator+" ?", "%"+query.Description+"%")
+		}
+		return dbQuery
+	}
+}

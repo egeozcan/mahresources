@@ -105,3 +105,69 @@ func GetNoteMetaKeysHandler(ctx *application_context.MahresourcesContext) func(w
 		_ = json.NewEncoder(writer).Encode(keys)
 	}
 }
+
+func GetNoteTypesHandler(context *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		offset := (http_utils.GetIntQueryParameter(request, "page", 1) - 1) * constants.MaxResultsPerPage
+		var query query_models.NoteTypeQuery
+		err := decoder.Decode(&query, request.URL.Query())
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		noteTypes, err := context.GetNoteTypes(&query, int(offset), constants.MaxResultsPerPage)
+
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(noteTypes)
+	}
+}
+
+func GetAddNoteTypeHandler(ctx interfaces.NoteTypeWriter) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var editor = query_models.NoteTypeEditor{}
+
+		if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		noteType, err := ctx.CreateOrUpdateNoteType(&editor)
+
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/noteTypes") {
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(noteType)
+	}
+}
+
+func GetRemoveNoteTypeHandler(ctx interfaces.NoteTypeDeleter) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		id := http_utils.GetUIntQueryParameter(request, "Id", 0)
+
+		err := ctx.DeleteNoteType(id)
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/noteTypes") {
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(&models.NoteType{ID: id})
+	}
+}

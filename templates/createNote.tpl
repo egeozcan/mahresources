@@ -72,7 +72,7 @@
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="flex gap-2">
                             <div class="flex-1">
-                                {% include "/partials/form/autocompleter.tpl" with url='/v1/note-types' elName='noteTypeId' title='' selectedItems=noteType min=1 max=1 id=getNextId("autocompleter") %}
+                                {% include "/partials/form/autocompleter.tpl" with url='/v1/note/noteTypes' elName='NoteTypeId' title='' selectedItems=noteType min=0 max=1 id=getNextId("autocompleter") %}
                             </div>
                         </div>
                     </div>

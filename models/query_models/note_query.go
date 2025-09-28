@@ -35,3 +35,14 @@ type NoteQuery struct {
 	MetaQuery       []ColumnMeta
 	NoteTypeId      uint
 }
+
+type NoteTypeEditor struct {
+	ID          uint
+	Name        string
+	Description string
+}
+
+type NoteTypeQuery struct {
+	Name        string
+	Description string
+}
