@@ -10,6 +10,11 @@
 {% endblock %}
 
 {% block sidebar %}
+    <div x-data="{ entity: {{ note|json }} }">
+        {% autoescape off %}
+            {{ note.NoteType.CustomSidebar }}
+        {% endautoescape %}
+    </div>
     {% include "/partials/ownerDisplay.tpl" with owner=note.Owner %}
     {% include "/partials/tagList.tpl" with tags=note.Tags %}
 

@@ -2,6 +2,7 @@ package models
 
 import (
 	"mahresources/models/types"
+	"strings"
 	"time"
 )
 
@@ -33,4 +34,15 @@ func (a Note) GetName() string {
 
 func (a Note) GetDescription() string {
 	return a.Description
+}
+
+func (a Note) Initials() string {
+	res := ""
+
+	if len(a.Name) > 0 {
+		r := firstRune(a.Name)
+		res = string(r)
+	}
+
+	return strings.ToUpper(res)
 }

@@ -57,13 +57,6 @@ func (g Group) initials() string {
 	return strings.ToUpper(res)
 }
 
-func firstRune(str string) (r rune) {
-	for _, r = range str {
-		return
-	}
-	return
-}
-
 func limit(str string, maxLen int) string {
 	if len(str) < maxLen {
 		return str

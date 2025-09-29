@@ -37,9 +37,13 @@ type NoteQuery struct {
 }
 
 type NoteTypeEditor struct {
-	ID          uint
-	Name        string
-	Description string
+	ID            uint
+	Name          string
+	Description   string
+	CustomHeader  string
+	CustomSidebar string
+	CustomSummary string
+	CustomAvatar  string
 }
 
 type NoteTypeQuery struct {

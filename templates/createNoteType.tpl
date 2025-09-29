@@ -8,6 +8,12 @@
 
     {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" value=noteType.Name required=true %}
     {% include "/partials/form/createFormTextareaInput.tpl" with title="Description" name="Description" value=noteType.Description %}
+
+    {% include "/partials/form/createFormTextareaInput.tpl" with title="Custom Header" name="CustomHeader" value=noteType.CustomHeader %}
+    {% include "/partials/form/createFormTextareaInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=noteType.CustomSidebar %}
+    {% include "/partials/form/createFormTextareaInput.tpl" with title="Custom Summary" name="CustomSummary" value=noteType.CustomSummary %}
+    {% include "/partials/form/createFormTextareaInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=noteType.CustomAvatar %}
+
     {% include "/partials/form/createFormSubmit.tpl" %}
 
 </form>

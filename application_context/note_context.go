@@ -141,7 +141,7 @@ func (ctx *MahresourcesContext) GetNotes(offset, maxResults int, query *query_mo
 	var notes []models.Note
 	noteScope := database_scopes.NoteQuery(query, false)
 
-	return &notes, ctx.db.Scopes(noteScope).Limit(maxResults).Offset(offset).Preload("Tags").Find(&notes).Error
+	return &notes, ctx.db.Scopes(noteScope).Limit(maxResults).Offset(offset).Preload("Tags").Preload("NoteType").Find(&notes).Error
 }
 
 func (ctx *MahresourcesContext) GetNotesWithIds(ids *[]uint) (*[]*models.Note, error) {
@@ -208,6 +208,10 @@ func (ctx *MahresourcesContext) CreateOrUpdateNoteType(query *query_models.NoteT
 	}
 	noteType.Name = query.Name
 	noteType.Description = query.Description
+	noteType.CustomHeader = query.CustomHeader
+	noteType.CustomSidebar = query.CustomSidebar
+	noteType.CustomSummary = query.CustomSummary
+	noteType.CustomAvatar = query.CustomAvatar
 	return &noteType, ctx.db.Save(&noteType).Error
 }
 

@@ -11,6 +11,14 @@ type NoteType struct {
 	Name        string    `gorm:"index"`
 	Description string
 	Notes       []*Note `gorm:"foreignKey:NoteTypeId;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	// CustomHeader is used in the note page
+	CustomHeader string `gorm:"type:text"`
+	// CustomSidebar is used in the note page
+	CustomSidebar string `gorm:"type:text"`
+	// CustomSummary is used in the note list page
+	CustomSummary string `gorm:"type:text"`
+	// CustomAvatar is used when linking to a note with this type
+	CustomAvatar string `gorm:"type:text"`
 }
 
 func (a NoteType) GetId() uint {
