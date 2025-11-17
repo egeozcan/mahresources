@@ -5,7 +5,21 @@ info:
 servers:
   - url: /v1
     description: API Version 1
-
+tags:
+  - name: notes
+    description: Operations related to notes
+  - name: groups
+    description: Operations related to groups
+  - name: resources
+    description: Operations related to resources
+  - name: tags
+    description: Operations related to tags
+  - name: categories
+    description: Operations related to categories
+  - name: queries
+    description: Operations related to queries
+  - name: relations
+    description: Operations related to relations
 components:
   schemas:
     # --- Core Models (Responses) ---
@@ -219,6 +233,17 @@ components:
           properties:
             ID: { type: integer }
           required: [ID]
+    NoteTypeEditor:
+      type: object
+      properties:
+        ID: { type: integer, description: "Include for update, omit for create." }
+        Name: { type: string }
+        Description: { type: string, nullable: true }
+        CustomHeader: { type: string, nullable: true }
+        CustomSidebar: { type: string, nullable: true }
+        CustomSummary: { type: string, nullable: true }
+        CustomAvatar: { type: string, nullable: true }
+      required: [Name]
     GroupCreator: # Base for GroupEditor
       type: object
       properties:
@@ -254,7 +279,6 @@ components:
         OriginalLocation: { type: string, nullable: true }
         Width: { type: integer, nullable: true }
         Height: { type: integer, nullable: true }
-      required: [OwnerId]
     ResourceCreator:
       allOf:
         - $ref: '#/components/schemas/ResourceQueryBase'
@@ -503,29 +527,78 @@ components:
 
 paths:
   # Notes
-  /notes:
+  /v1/notes:
     get:
       summary: List notes
+      operationId: listNotes
       description: Get all notes, paginated, with optional filters.
+      tags: [notes]
       parameters:
-        # Use 'oneOf' or 'anyOf' if you want to explicitly list all query params from NoteQueryParameters
-        # For brevity, I'll imply them. For a full spec, list each param.
-        - { name: Name, in: query, schema: { type: string }, required: false }
-        - { name: Description, in: query, schema: { type: string }, required: false }
-        - { name: OwnerId, in: query, schema: { type: integer }, required: false }
-        - { name: Groups,in: query, style: form, explode: true, schema: {type: array, items: {type: integer}}, required: false }
-        - { name: Tags, in: query, style: form, explode: true, schema: { type: array, items: { type: integer } }, required: false }
-        - { name: CreatedBefore, in: query, schema: { type: string, format: date }, required: false }
-        - { name: CreatedAfter, in: query, schema: { type: string, format: date }, required: false }
-        - { name: StartDateBefore, in: query, schema: { type: string, format: date }, required: false }
-        - { name: StartDateAfter, in: query, schema: { type: string, format: date }, required: false }
-        - { name: EndDateBefore, in: query, schema: { type: string, format: date }, required: false }
-        - { name: EndDateAfter, in: query, schema: { type: string, format: date }, required: false }
-        - { name: SortBy, in: query, schema: { type: string }, required: false }
-        - { name: Ids, in: query, style: form, explode: true, schema: { type: array, items: { type: integer } }, required: false }
-        - { name: MetaQuery, in: query, style: form, explode: false, schema: { type: array, items: { $ref: '#/components/schemas/ColumnMetaInput' } }, required: false, description: "e.g. MetaQuery=key1:EQ:value1&MetaQuery=key2:LI:value2" }
-        - { name: NoteTypeId, in: query, schema: { type: integer }, required: false }
-        - { name: page, in: query, schema: { type: integer, default: 1 }, required: false }
+        - in: query
+          name: Name
+          schema: { type: string }
+        - in: query
+          name: Description
+          schema: { type: string }
+        - in: query
+          name: OwnerId
+          schema: { type: integer }
+        - in: query
+          name: Groups
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { type: integer }
+        - in: query
+          name: Tags
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { type: integer }
+        - in: query
+          name: CreatedBefore
+          schema: { type: string, format: date }
+        - in: query
+          name: CreatedAfter
+          schema: { type: string, format: date }
+        - in: query
+          name: StartDateBefore
+          schema: { type: string, format: date }
+        - in: query
+          name: StartDateAfter
+          schema: { type: string, format: date }
+        - in: query
+          name: EndDateBefore
+          schema: { type: string, format: date }
+        - in: query
+          name: EndDateAfter
+          schema: { type: string, format: date }
+        - in: query
+          name: SortBy
+          schema: { type: string }
+        - in: query
+          name: Ids
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { type: integer }
+        - in: query
+          name: MetaQuery
+          style: form
+          explode: false
+          schema:
+            type: array
+            items: { $ref: '#/components/schemas/ColumnMetaInput' }
+          description: "e.g. MetaQuery=key1:EQ:value1&MetaQuery=key2:LI:value2"
+        - in: query
+          name: NoteTypeId
+          schema: { type: integer }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
       responses:
         '200':
           description: A list of notes.
@@ -534,9 +607,13 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/Note' }
-  /note:
+        '400':
+          description: Invalid input
+  /v1/note:
     get:
       summary: Get a specific note
+      operationId: getNote
+      tags: [notes]
       parameters:
         - name: id
           in: query
@@ -547,9 +624,12 @@ paths:
           description: The requested note.
           content:
             application/json: { schema: { $ref: '#/components/schemas/Note' } }
-        '404': { description: Note not found }
+        '404':
+          description: Note not found
     post:
       summary: Create or update a note
+      operationId: createOrUpdateNote
+      tags: [notes]
       requestBody:
         required: true
         content:
@@ -562,10 +642,15 @@ paths:
           description: The created or updated note.
           content:
             application/json: { schema: { $ref: '#/components/schemas/Note' } }
-        '400': { description: Invalid input }
-  /note/editName:
+        '400':
+          description: Invalid input
+        '500':
+          description: Internal server error
+  /v1/note/editName:
     post:
       summary: Edit a note's name
+      operationId: editNoteName
+      tags: [notes]
       parameters:
         - name: id
           in: query
@@ -580,10 +665,13 @@ paths:
               properties: { Name: { type: string } }
               required: [Name]
       responses:
-        '200': { description: Note name updated successfully. }
-  /note/editDescription:
+        '200':
+          description: Note name updated successfully.
+  /v1/note/editDescription:
     post:
       summary: Edit a note's description
+      operationId: editNoteDescription
+      tags: [notes]
       parameters:
         - name: id
           in: query
@@ -598,10 +686,13 @@ paths:
               properties: { Description: { type: string } }
               required: [Description]
       responses:
-        '200': { description: Note description updated successfully. }
-  /note/delete:
+        '200':
+          description: Note description updated successfully.
+  /v1/note/delete:
     post:
       summary: Delete a note
+      operationId: deleteNote
+      tags: [notes]
       parameters: # Changed from requestBody to query parameter
         - name: Id # Matches Go handler query param name
           in: query
@@ -615,9 +706,13 @@ paths:
               schema:
                 type: object
                 properties: { ID: { type: integer } } # Returns the ID of deleted note
-  /notes/meta/keys:
+        '500':
+          description: Internal server error
+  /v1/notes/meta/keys:
     get:
       summary: Get all unique meta keys used in notes
+      operationId: getNoteMetaKeys
+      tags: [notes]
       responses:
         '200':
           description: A list of meta keys.
@@ -626,24 +721,172 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/MetaKeyResult' }
+        '500':
+          description: Internal server error
+
+  /v1/note/noteTypes:
+    get:
+      summary: Get all note types
+      operationId: getNoteTypes
+      tags: [notes]
+      parameters:
+        - in: query
+          name: Name
+          schema: { type: string }
+        - in: query
+          name: Description
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+      responses:
+        '200':
+          description: A list of note types.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/NoteType' }
+        '500':
+          description: Internal server error
+  /v1/note/noteType:
+    post:
+      summary: Create a new note type
+      operationId: createNoteType
+      tags: [notes]
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema: { $ref: '#/components/schemas/NoteTypeEditor' }
+          application/json:
+            schema: { $ref: '#/components/schemas/NoteTypeEditor' }
+      responses:
+        '200':
+          description: The created note type.
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/NoteType' } }
+        '500':
+          description: Internal server error
+  /v1/note/noteType/edit:
+    post:
+      summary: Edit a note type
+      operationId: editNoteType
+      tags: [notes]
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema: { $ref: '#/components/schemas/NoteTypeEditor' }
+          application/json:
+            schema: { $ref: '#/components/schemas/NoteTypeEditor' }
+      responses:
+        '200':
+          description: The updated note type.
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/NoteType' } }
+        '500':
+          description: Internal server error
+  /v1/note/noteType/delete:
+    post:
+      summary: Delete a note type
+      operationId: deleteNoteType
+      tags: [notes]
+      parameters:
+        - name: Id
+          in: query
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Note type deleted successfully.
+        '500':
+          description: Internal server error
+  /v1/noteType/editName:
+    post:
+      summary: Edit a note type's name
+      operationId: editNoteTypeName
+      tags: [notes]
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties: { Name: { type: string } }
+              required: [Name]
+      responses:
+        '200':
+          description: Note type name updated successfully.
+  /v1/noteType/editDescription:
+    post:
+      summary: Edit a note type's description
+      operationId: editNoteTypeDescription
+      tags: [notes]
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties: { Description: { type: string } }
+              required: [Description]
+      responses:
+        '200':
+          description: Note type description updated successfully.
 
   # Groups (Follow similar pattern for parameters and full schema refs)
-  /groups:
+  /v1/groups:
     get:
       summary: List groups
+      operationId: listGroups
+      tags: [groups]
       parameters: # Add all relevant query params from GroupQueryParameters
         - { name: page, in: query, schema: { type: integer, default: 1 }, required: false }
         - { name: Name, in: query, schema: { type: string }, required: false }
-        # ... other params from GroupQueryParameters
+        - { name: SearchParentsForName, in: query, schema: { type: boolean }, required: false }
+        - { name: SearchChildrenForName, in: query, schema: { type: boolean }, required: false }
+        - { name: Description, in: query, schema: { type: string }, required: false }
+        - { name: Tags, in: query, style: form, explode: true, schema: { type: array, items: { type: integer } }, required: false }
+        - { name: SearchParentsForTags, in: query, schema: { type: boolean }, required: false }
+        - { name: SearchChildrenForTags, in: query, schema: { type: boolean }, required: false }
+        - { name: Notes, in: query, style: form, explode: true, schema: { type: array, items: { type: integer } }, required: false }
+        - { name: Groups, in: query, style: form, explode: true, schema: { type: array, items: { type: integer } }, required: false }
+        - { name: OwnerId, in: query, schema: { type: integer }, required: false }
+        - { name: Resources, in: query, style: form, explode: true, schema: { type: array, items: { type: integer } }, required: false }
+        - { name: Categories, in: query, style: form, explode: true, schema: { type: array, items: { type: integer } }, required: false }
+        - { name: CategoryId, in: query, schema: { type: integer }, required: false }
+        - { name: CreatedBefore, in: query, schema: { type: string, format: date }, required: false }
+        - { name: CreatedAfter, in: query, schema: { type: string, format: date }, required: false }
+        - { name: RelationTypeId, in: query, schema: { type: integer }, required: false }
+        - { name: RelationSide, in: query, schema: { type: integer, enum: [0, 1] }, required: false, description: "0 for From, 1 for To" }
+        - { name: MetaQuery, in: query, style: form, explode: false, schema: { type: array, items: { $ref: '#/components/schemas/ColumnMetaInput' } }, required: false, description: "e.g. MetaQuery=key1:EQ:value1&MetaQuery=key2:LI:value2" }
+        - { name: SortBy, in: query, schema: { type: string }, required: false }
+        - { name: URL, in: query, schema: { type: string, format: url }, required: false }
+        - { name: Ids, in: query, style: form, explode: true, schema: { type: array, items: { type: integer } }, required: false }
       responses:
         '200':
           description: A list of groups.
           content:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/Group' } }
-  /group:
+        '404':
+          description: Not found
+  /v1/group:
     get:
       summary: Get a specific group
+      operationId: getGroup
+      tags: [groups]
       parameters:
         - { name: id, in: query, required: true, schema: { type: integer } }
       responses:
@@ -651,9 +894,12 @@ paths:
           description: The requested group.
           content:
             application/json: { schema: { $ref: '#/components/schemas/Group' } }
-        '404': { description: Group not found }
+        '404':
+          description: Group not found
     post:
       summary: Create or update a group
+      operationId: createOrUpdateGroup
+      tags: [groups]
       requestBody:
         required: true
         content:
@@ -666,9 +912,15 @@ paths:
           description: The created or updated group.
           content:
             application/json: { schema: { $ref: '#/components/schemas/Group' } }
-  /group/parents:
+        '400':
+          description: Invalid input
+        '500':
+          description: Internal server error
+  /v1/group/parents:
     get:
       summary: Get parents of a group
+      operationId: getGroupParents
+      tags: [groups]
       parameters:
         - { name: id, in: query, required: true, schema: { type: integer } }
       responses:
@@ -676,9 +928,13 @@ paths:
           description: Parents of the group.
           content:
             application/json: { type: array, items: { $ref: '#/components/schemas/Group' } }
-  /group/editName:
+        '404':
+          description: Group not found
+  /v1/group/editName:
     post:
       summary: Edit a group's name
+      operationId: editGroupName
+      tags: [groups]
       parameters:
         - { name: id, in: query, required: true, schema: { type: integer } }
       requestBody:
@@ -687,10 +943,13 @@ paths:
           application/x-www-form-urlencoded:
             schema: { type: object, properties: { Name: { type: string } }, required: [Name] }
       responses:
-        '200': { description: Group name updated. }
-  /group/editDescription:
+        '200':
+          description: Group name updated.
+  /v1/group/editDescription:
     post:
       summary: Edit a group's description
+      operationId: editGroupDescription
+      tags: [groups]
       parameters:
         - { name: id, in: query, required: true, schema: { type: integer } }
       requestBody:
@@ -699,10 +958,13 @@ paths:
           application/x-www-form-urlencoded:
             schema: { type: object, properties: { Description: { type: string } }, required: [Description] }
       responses:
-        '200': { description: Group description updated. }
-  /group/delete: # Single delete
+        '200':
+          description: Group description updated.
+  /v1/group/delete: # Single delete
     post:
       summary: Delete a group
+      operationId: deleteGroup
+      tags: [groups]
       parameters:
         - { name: Id, in: query, required: true, schema: { type: integer } }
       responses:
@@ -710,9 +972,13 @@ paths:
           description: Group deleted.
           content:
             application/json: { type: object, properties: { ID: { type: integer } } }
-  /group/clone:
+        '500':
+          description: Internal server error
+  /v1/group/clone:
     post:
       summary: Clone a group
+      operationId: cloneGroup
+      tags: [groups]
       requestBody: # Uses EntityIdQuery struct, so ID should be in body
         required: true
         content:
@@ -724,92 +990,142 @@ paths:
         '200':
           description: The cloned group.
           content: { application/json: { schema: { $ref: '#/components/schemas/Group' } } }
-  /groups/delete: # Bulk delete
+        '404':
+          description: Group not found
+  /v1/groups/delete: # Bulk delete
     post:
       summary: Bulk delete groups
+      operationId: bulkDeleteGroups
+      tags: [groups]
       requestBody:
         required: true
         content:
           application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/BulkQuery' } }
           application/json: { schema: { $ref: '#/components/schemas/BulkQuery' } }
       responses:
-        '200': { description: Operation result. }
-  /groups/addTags:
+        '200':
+          description: Operation result.
+  /v1/groups/addTags:
     post:
       summary: Bulk add tags to groups
+      operationId: bulkAddTagsToGroups
+      tags: [groups]
       requestBody:
         required: true
         content:
           application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
           application/json: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
       responses:
-        '200': { description: Operation result. }
-  /groups/removeTags:
+        '200':
+          description: Operation result.
+  /v1/groups/removeTags:
     post:
       summary: Bulk remove tags from groups
+      operationId: bulkRemoveTagsFromGroups
+      tags: [groups]
       requestBody:
         required: true
         content:
           application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
           application/json: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
       responses:
-        '200': { description: Operation result. }
-  /groups/addMeta:
+        '200':
+          description: Operation result.
+  /v1/groups/addMeta:
     post:
       summary: Bulk add/merge meta to groups
+      operationId: bulkAddMetaToGroups
+      tags: [groups]
       requestBody:
         required: true
         content:
           application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/BulkEditMetaQuery' } }
           application/json: { schema: { $ref: '#/components/schemas/BulkEditMetaQuery' } }
       responses:
-        '200': { description: Operation result. }
-  /groups/merge:
+        '200':
+          description: Operation result.
+  /v1/groups/merge:
     post:
       summary: Merge groups
+      operationId: mergeGroups
+      tags: [groups]
       requestBody:
         required: true
         content:
           application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/MergeQuery' } }
           application/json: { schema: { $ref: '#/components/schemas/MergeQuery' } }
       responses:
-        '200': { description: Operation result. }
-  /groups/meta/keys:
+        '200':
+          description: Operation result.
+  /v1/groups/meta/keys:
     get:
       summary: Get all unique meta keys used in groups
+      operationId: getGroupMetaKeys
+      tags: [groups]
       responses:
         '200':
           description: A list of meta keys.
           content:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/MetaKeyResult' } }
+        '500':
+          description: Internal server error
 
   # Resources
-  /resources:
+  /v1/resources:
     get:
       summary: List resources
+      operationId: listResources
+      tags: [resources]
       parameters: # Add all relevant query params from ResourceSearchQueryParameters
         - { name: page, in: query, schema: { type: integer, default: 1 }, required: false }
         - { name: Name, in: query, schema: { type: string }, required: false }
-        # ... other params
+        - { name: Description, in: query, schema: { type: string }, required: false }
+        - { name: ContentType, in: query, schema: { type: string }, required: false }
+        - { name: OwnerId, in: query, schema: { type: integer }, required: false }
+        - { name: Groups, in: query, style: form, explode: true, schema: { type: array, items: { type: integer } }, required: false }
+        - { name: Tags, in: query, style: form, explode: true, schema: { type: array, items: { type: integer } }, required: false }
+        - { name: Notes, in: query, style: form, explode: true, schema: { type: array, items: { type: integer } }, required: false }
+        - { name: Ids, in: query, style: form, explode: true, schema: { type: array, items: { type: integer } }, required: false }
+        - { name: CreatedBefore, in: query, schema: { type: string, format: date }, required: false }
+        - { name: CreatedAfter, in: query, schema: { type: string, format: date }, required: false }
+        - { name: MetaQuery, in: query, style: form, explode: false, schema: { type: array, items: { $ref: '#/components/schemas/ColumnMetaInput' } }, required: false, description: "e.g. MetaQuery=key1:EQ:value1&MetaQuery=key2:LI:value2" }
+        - { name: SortBy, in: query, schema: { type: string }, required: false }
+        - { name: MaxResults, in: query, schema: { type: integer }, required: false }
+        - { name: OriginalName, in: query, schema: { type: string }, required: false }
+        - { name: OriginalLocation, in: query, schema: { type: string }, required: false }
+        - { name: Hash, in: query, schema: { type: string }, required: false }
+        - { name: ShowWithoutOwner, in: query, schema: { type: boolean }, required: false }
+        - { name: ShowWithSimilar, in: query, schema: { type: boolean }, required: false }
+        - { name: MinWidth, in: query, schema: { type: integer }, required: false }
+        - { name: MinHeight, in: query, schema: { type: integer }, required: false }
+        - { name: MaxWidth, in: query, schema: { type: integer }, required: false }
+        - { name: MaxHeight, in: query, schema: { type: integer }, required: false }
       responses:
         '200':
           description: A list of resources.
           content:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/Resource' } }
-  /resource:
+        '404':
+          description: Not found
+  /v1/resource:
     get:
       summary: Get a specific resource
+      operationId: getResource
+      tags: [resources]
       parameters:
         - { name: id, in: query, required: true, schema: { type: integer } }
       responses:
         '200':
           description: The requested resource.
           content: { application/json: { schema: { $ref: '#/components/schemas/Resource' } } }
-        '404': { description: Resource not found }
+        '404':
+          description: Resource not found
     post:
       summary: Create a resource (upload file or from URL)
+      operationId: createResource
+      tags: [resources]
       requestBody:
         required: true
         content:
@@ -847,28 +1163,41 @@ paths:
                   - $ref: '#/components/schemas/Resource'
                   - type: array
                     items: { $ref: '#/components/schemas/Resource' }
-        '400': { description: Invalid input }
-  /resource/view:
+        '400':
+          description: Invalid input
+        '500':
+          description: Internal server error
+  /v1/resource/view:
     get:
       summary: View a resource's content
+      operationId: viewResource
+      tags: [resources]
       parameters:
         - { name: id, in: query, schema: { type: integer }, required: false }
         # Add params for ResourceSearchQuery if filtering is intended for single view
       responses:
-        '302': { description: Redirect to the resource file. }
-        '404': { description: Resource not found. }
-  /resource/delete: # Single delete
+        '302':
+          description: Redirect to the resource file.
+        '404':
+          description: Resource not found.
+  /v1/resource/delete: # Single delete
     post:
       summary: Delete a resource
+      operationId: deleteResource
+      tags: [resources]
       parameters:
         - { name: Id, in: query, required: true, schema: { type: integer } }
       responses:
         '200':
           description: Resource deleted.
           content: { application/json: { type: object, properties: { ID: { type: integer } } } }
-  /resource/edit:
+        '500':
+          description: Internal server error
+  /v1/resource/edit:
     post:
       summary: Edit a resource
+      operationId: editResource
+      tags: [resources]
       requestBody:
         required: true
         content:
@@ -878,9 +1207,17 @@ paths:
         '200':
           description: The updated resource.
           content: { application/json: { schema: { $ref: '#/components/schemas/Resource' } } }
-  /resource/local:
+        '400':
+          description: Invalid input
+        '404':
+          description: Resource not found
+        '500':
+          description: Internal server error
+  /v1/resource/local:
     post:
       summary: Add a resource from a local server path
+      operationId: addLocalResource
+      tags: [resources]
       requestBody:
         required: true
         content:
@@ -890,9 +1227,13 @@ paths:
         '200':
           description: The created resource.
           content: { application/json: { schema: { $ref: '#/components/schemas/Resource' } } }
-  /resource/remote: # This might be covered by /resource POST with URL. If distinct, keep it.
+        '500':
+          description: Internal server error
+  /v1/resource/remote: # This might be covered by /resource POST with URL. If distinct, keep it.
     post:
       summary: Add a resource from a remote URL (alternative to multipart upload)
+      operationId: addRemoteResource
+      tags: [resources]
       requestBody:
         required: true
         content:
@@ -902,9 +1243,13 @@ paths:
         '200':
           description: The created resource.
           content: { application/json: { schema: { $ref: '#/components/schemas/Resource' } } }
-  /resource/editName:
+        '500':
+          description: Internal server error
+  /v1/resource/editName:
     post:
       summary: Edit a resource's name
+      operationId: editResourceName
+      tags: [resources]
       parameters:
         - { name: id, in: query, required: true, schema: { type: integer } }
       requestBody:
@@ -912,10 +1257,13 @@ paths:
         content:
           application/x-www-form-urlencoded: { schema: { type: object, properties: { Name: { type: string } }, required: [Name] } }
       responses:
-        '200': { description: Resource name updated. }
-  /resource/editDescription:
+        '200':
+          description: Resource name updated.
+  /v1/resource/editDescription:
     post:
       summary: Edit a resource's description
+      operationId: editResourceDescription
+      tags: [resources]
       parameters:
         - { name: id, in: query, required: true, schema: { type: integer } }
       requestBody:
@@ -923,121 +1271,158 @@ paths:
         content:
           application/x-www-form-urlencoded: { schema: { type: object, properties: { Description: { type: string } }, required: [Description] } }
       responses:
-        '200': { description: Resource description updated. }
-  /resource/recalculateDimensions:
+        '200':
+          description: Resource description updated.
+  /v1/resource/recalculateDimensions:
     post:
       summary: Recalculate dimensions for resources (bulk)
+      operationId: bulkRecalculateDimensions
+      tags: [resources]
       requestBody:
         required: true
         content:
           application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/BulkQuery' } }
           application/json: { schema: { $ref: '#/components/schemas/BulkQuery' } }
       responses:
-        '200': { description: Dimensions recalculated. }
-  /resources/setDimensions:
+        '200':
+          description: Dimensions recalculated.
+  /v1/resources/setDimensions:
     post:
       summary: Set dimensions for a resource
+      operationId: setResourceDimensions
+      tags: [resources]
       requestBody:
         required: true
         content:
           application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/ResourceSetDimensionsBody' } }
           application/json: { schema: { $ref: '#/components/schemas/ResourceSetDimensionsBody' } }
       responses:
-        '200': { description: Dimensions set. }
-  /resources/addTags:
+        '200':
+          description: Dimensions set.
+  /v1/resources/addTags:
     post:
       summary: Bulk add tags to resources
+      operationId: bulkAddTagsToResources
+      tags: [resources]
       requestBody:
         required: true
         content:
           application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
           application/json: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
       responses:
-        '200': { description: Operation result. }
-  /resources/addGroups:
+        '200':
+          description: Operation result.
+  /v1/resources/addGroups:
     post:
       summary: Bulk add groups to resources
+      operationId: bulkAddGroupsToResources
+      tags: [resources]
       requestBody:
         required: true
         content:
           application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
           application/json: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
       responses:
-        '200': { description: Operation result. }
-  /resources/removeTags:
+        '200':
+          description: Operation result.
+  /v1/resources/removeTags:
     post:
       summary: Bulk remove tags from resources
+      operationId: bulkRemoveTagsFromResources
+      tags: [resources]
       requestBody:
         required: true
         content:
           application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
           application/json: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
       responses:
-        '200': { description: Operation result. }
-  /resources/replaceTags:
+        '200':
+          description: Operation result.
+  /v1/resources/replaceTags:
     post:
       summary: Bulk replace tags of resources
+      operationId: bulkReplaceTagsOfResources
+      tags: [resources]
       requestBody:
         required: true
         content:
           application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
           application/json: { schema: { $ref: '#/components/schemas/BulkEditQuery' } }
       responses:
-        '200': { description: Operation result. }
-  /resources/addMeta:
+        '200':
+          description: Operation result.
+  /v1/resources/addMeta:
     post:
       summary: Bulk add/merge meta to resources
+      operationId: bulkAddMetaToResources
+      tags: [resources]
       requestBody:
         required: true
         content:
           application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/BulkEditMetaQuery' } }
           application/json: { schema: { $ref: '#/components/schemas/BulkEditMetaQuery' } }
       responses:
-        '200': { description: Operation result. }
-  /resources/delete: # Bulk delete
+        '200':
+          description: Operation result.
+  /v1/resources/delete: # Bulk delete
     post:
       summary: Bulk delete resources
+      operationId: bulkDeleteResources
+      tags: [resources]
       requestBody:
         required: true
         content:
           application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/BulkQuery' } }
           application/json: { schema: { $ref: '#/components/schemas/BulkQuery' } }
       responses:
-        '200': { description: Operation result. }
-  /resources/merge:
+        '200':
+          description: Operation result.
+  /v1/resources/merge:
     post:
       summary: Merge resources
+      operationId: mergeResources
+      tags: [resources]
       requestBody:
         required: true
         content:
           application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/MergeQuery' } }
           application/json: { schema: { $ref: '#/components/schemas/MergeQuery' } }
       responses:
-        '200': { description: Operation result. }
-  /resources/rotate:
+        '200':
+          description: Operation result.
+  /v1/resources/rotate:
     post:
       summary: Rotate a resource image
+      operationId: rotateResource
+      tags: [resources]
       requestBody:
         required: true
         content:
           application/x-www-form-urlencoded: { schema: { $ref: '#/components/schemas/RotateResourceQuery' } }
           application/json: { schema: { $ref: '#/components/schemas/RotateResourceQuery' } }
       responses:
-        '200': { description: Resource rotated. }
-  /resources/meta/keys:
+        '200':
+          description: Resource rotated.
+  /v1/resources/meta/keys:
     get:
       summary: Get all unique meta keys used in resources
+      operationId: getResourceMetaKeys
+      tags: [resources]
       responses:
         '200':
           description: A list of meta keys.
           content:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/MetaKeyResult' } }
-  /resource/preview:
+        '500':
+          description: Internal server error
+  /v1/resource/preview:
     get:
       summary: Get a preview image for a resource
+      operationId: getResourcePreview
+      tags: [resources]
       parameters:
-        - { name: id, in: query, required: true, schema: { type: integer } }
+        - { name: ID, in: query, required: true, schema: { type: integer } }
         - { name: Width, in: query, schema: { type: integer }, required: false }
         - { name: Height, in: query, schema: { type: integer }, required: false }
       responses:
@@ -1046,33 +1431,48 @@ paths:
           content:
             image/jpeg: { schema: { type: string, format: binary } }
             image/png: { schema: { type: string, format: binary } }
-        '302': { description: Redirect to placeholder if preview generation fails or not applicable. }
-        '404': { description: Resource not found. }
+        '302':
+          description: Redirect to placeholder if preview generation fails or not applicable.
+        '404':
+          description: Resource not found.
 
   # Tags (Follow similar pattern)
-  /tags:
+  /v1/tags:
     get:
       summary: List tags
+      operationId: listTags
+      tags: [tags]
       parameters: # from TagQueryParameters
         - { name: page, in: query, schema: { type: integer, default: 1 }, required: false }
         - { name: Name, in: query, schema: { type: string }, required: false }
-        # ...
+        - { name: Description, in: query, schema: { type: string }, required: false }
+        - { name: CreatedBefore, in: query, schema: { type: string, format: date }, required: false }
+        - { name: CreatedAfter, in: query, schema: { type: string, format: date }, required: false }
+        - { name: SortBy, in: query, schema: { type: string }, required: false }
       responses:
         '200':
           description: A list of tags.
           content:
             application/json: { type: array, items: { $ref: '#/components/schemas/Tag' } }
-  /tag:
+        '500':
+          description: Internal server error
+  /v1/tag:
     get:
       summary: Get a specific tag
+      operationId: getTag
+      tags: [tags]
       parameters:
         - { name: id, in: query, required: true, schema: { type: integer } }
       responses:
         '200':
           description: The requested tag.
           content: { application/json: { schema: { $ref: '#/components/schemas/Tag' } } }
+        '404':
+          description: Tag not found
     post:
       summary: Create or update a tag
+      operationId: createOrUpdateTag
+      tags: [tags]
       requestBody:
         required: true
         content:
@@ -1082,9 +1482,13 @@ paths:
         '200':
           description: The created or updated tag.
           content: { application/json: { schema: { $ref: '#/components/schemas/Tag' } } }
-  /tag/editName:
+        '500':
+          description: Internal server error
+  /v1/tag/editName:
     post:
       summary: Edit a tag's name
+      operationId: editTagName
+      tags: [tags]
       parameters:
         - { name: id, in: query, required: true, schema: { type: integer } }
       requestBody:
@@ -1092,10 +1496,13 @@ paths:
         content:
           application/x-www-form-urlencoded: { schema: { type: object, properties: { Name: { type: string } }, required: [Name] } }
       responses:
-        '200': { description: Tag name updated. }
-  /tag/editDescription:
+        '200':
+          description: Tag name updated.
+  /v1/tag/editDescription:
     post:
       summary: Edit a tag's description
+      operationId: editTagDescription
+      tags: [tags]
       parameters:
         - { name: id, in: query, required: true, schema: { type: integer } }
       requestBody:
@@ -1103,10 +1510,13 @@ paths:
         content:
           application/x-www-form-urlencoded: { schema: { type: object, properties: { Description: { type: string } }, required: [Description] } }
       responses:
-        '200': { description: Tag description updated. }
-  /tag/delete:
+        '200':
+          description: Tag description updated.
+  /v1/tag/delete:
     post:
       summary: Delete a tag
+      operationId: deleteTag
+      tags: [tags]
       requestBody: # This handler uses the EntityIdQuery struct directly
         required: true
         content:
@@ -1116,31 +1526,43 @@ paths:
         '200':
           description: Tag deleted.
           content: { application/json: { type: object, properties: { ID: { type: integer } } } }
+        '500':
+          description: Internal server error
 
   # Categories (Follow similar pattern)
-  /categories:
+  /v1/categories:
     get:
       summary: List categories
+      operationId: listCategories
+      tags: [categories]
       parameters: # from CategoryQueryParameters
         - { name: page, in: query, schema: { type: integer, default: 1 }, required: false }
         - { name: Name, in: query, schema: { type: string }, required: false }
-        # ...
+        - { name: Description, in: query, schema: { type: string }, required: false }
       responses:
         '200':
           description: A list of categories.
           content:
             application/json: { type: array, items: { $ref: '#/components/schemas/Category' } }
-  /category:
+        '500':
+          description: Internal server error
+  /v1/category:
     get:
       summary: Get a specific category
+      operationId: getCategory
+      tags: [categories]
       parameters:
         - { name: id, in: query, required: true, schema: { type: integer } }
       responses:
         '200':
           description: The requested category.
           content: { application/json: { schema: { $ref: '#/components/schemas/Category' } } }
+        '404':
+          description: Category not found
     post:
       summary: Create or update a category
+      operationId: createOrUpdateCategory
+      tags: [categories]
       requestBody:
         required: true
         content:
@@ -1150,9 +1572,13 @@ paths:
         '200':
           description: The created or updated category.
           content: { application/json: { schema: { $ref: '#/components/schemas/Category' } } }
-  /category/editName:
+        '500':
+          description: Internal server error
+  /v1/category/editName:
     post:
       summary: Edit a category's name
+      operationId: editCategoryName
+      tags: [categories]
       parameters:
         - { name: id, in: query, required: true, schema: { type: integer } }
       requestBody:
@@ -1160,10 +1586,13 @@ paths:
         content:
           application/x-www-form-urlencoded: { schema: { type: object, properties: { Name: { type: string } }, required: [Name] } }
       responses:
-        '200': { description: Category name updated. }
-  /category/editDescription:
+        '200':
+          description: Category name updated.
+  /v1/category/editDescription:
     post:
       summary: Edit a category's description
+      operationId: editCategoryDescription
+      tags: [categories]
       parameters:
         - { name: id, in: query, required: true, schema: { type: integer } }
       requestBody:
@@ -1171,41 +1600,56 @@ paths:
         content:
           application/x-www-form-urlencoded: { schema: { type: object, properties: { Description: { type: string } }, required: [Description] } }
       responses:
-        '200': { description: Category description updated. }
-  /category/delete:
+        '200':
+          description: Category description updated.
+  /v1/category/delete:
     post:
       summary: Delete a category
+      operationId: deleteCategory
+      tags: [categories]
       parameters:
         - { name: Id, in: query, required: true, schema: { type: integer } }
       responses:
         '200':
           description: Category deleted.
           content: { application/json: { type: object, properties: { ID: { type: integer } } } }
+        '500':
+          description: Internal server error
 
   # Queries (Follow similar pattern)
-  /queries:
+  /v1/queries:
     get:
       summary: List queries
+      operationId: listQueries
+      tags: [queries]
       parameters: # from QueryQueryParameters
         - { name: page, in: query, schema: { type: integer, default: 1 }, required: false }
         - { name: Name, in: query, schema: { type: string }, required: false }
-        # ...
+        - { name: Text, in: query, schema: { type: string }, required: false }
       responses:
         '200':
           description: A list of queries.
           content:
             application/json: { type: array, items: { $ref: '#/components/schemas/Query' } }
-  /query:
+        '500':
+          description: Internal server error
+  /v1/query:
     get:
       summary: Get a specific query
+      operationId: getQuery
+      tags: [queries]
       parameters:
         - { name: id, in: query, required: true, schema: { type: integer } }
       responses:
         '200':
           description: The requested query.
           content: { application/json: { schema: { $ref: '#/components/schemas/Query' } } }
+        '404':
+          description: Query not found
     post:
       summary: Create or update a query
+      operationId: createOrUpdateQuery
+      tags: [queries]
       requestBody:
         required: true
         content:
@@ -1215,9 +1659,13 @@ paths:
         '200':
           description: The created or updated query.
           content: { application/json: { schema: { $ref: '#/components/schemas/Query' } } }
-  /query/run:
+        '500':
+          description: Internal server error
+  /v1/query/run:
     post:
       summary: Run a saved query
+      operationId: runQuery
+      tags: [queries]
       parameters:
         - { name: id, in: query, schema: { type: integer }, required: false, description: "ID of the query to run." }
         - { name: name, in: query, schema: { type: string }, required: false, description: "Name of the query to run (alternative to id)." }
@@ -1239,10 +1687,13 @@ paths:
                 items:
                   type: object
                   additionalProperties: true
-        '404': { description: Query not found. }
-  /query/editName:
+        '404':
+          description: Query not found
+  /v1/query/editName:
     post:
       summary: Edit a query's name
+      operationId: editQueryName
+      tags: [queries]
       parameters:
         - { name: id, in: query, required: true, schema: { type: integer } }
       requestBody:
@@ -1250,10 +1701,13 @@ paths:
         content:
           application/x-www-form-urlencoded: { schema: { type: object, properties: { Name: { type: string } }, required: [Name] } }
       responses:
-        '200': { description: Query name updated. }
-  /query/editDescription: # Note: Query model has Text and Template, not a single "Description" for its main content.
+        '200':
+          description: Query name updated.
+  /v1/query/editDescription: # Note: Query model has Text and Template, not a single "Description" for its main content.
     post:
       summary: Edit a query's main text/template (description field in model is separate)
+      operationId: editQueryDescription
+      tags: [queries]
       parameters:
         - { name: id, in: query, required: true, schema: { type: integer } }
       requestBody:
@@ -1265,34 +1719,49 @@ paths:
               properties: { Description: { type: string } } # If it's 'Text' or 'Template', adjust here.
               required: [Description]
       responses:
-        '200': { description: Query field updated. }
-  /query/delete:
+        '200':
+          description: Query field updated.
+  /v1/query/delete:
     post:
       summary: Delete a query
+      operationId: deleteQuery
+      tags: [queries]
       parameters:
         - { name: Id, in: query, required: true, schema: { type: integer } }
       responses:
         '200':
           description: Query deleted.
           content: { application/json: { type: object, properties: { ID: { type: integer } } } }
+        '500':
+          description: Internal server error
 
   # Relations
-  /relationTypes:
+  /v1/relationTypes:
     get:
       summary: List relation types
+      operationId: listRelationTypes
+      tags: [relations]
       parameters: # from RelationshipTypeQueryParameters
         - { name: page, in: query, schema: { type: integer, default: 1 }, required: false }
         - { name: Name, in: query, schema: { type: string }, required: false }
-        # ...
+        - { name: Description, in: query, schema: { type: string }, required: false }
+        - { name: ForFromGroup, in: query, schema: { type: integer }, required: false }
+        - { name: ForToGroup, in: query, schema: { type: integer }, required: false }
+        - { name: FromCategory, in: query, schema: { type: integer }, required: false }
+        - { name: ToCategory, in: query, schema: { type: integer }, required: false }
       responses:
         '200':
           description: A list of relation types.
           content:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/GroupRelationType' } }
-  /relationType:
+        '500':
+          description: Internal server error
+  /v1/relationType:
     post:
       summary: Create a new relation type
+      operationId: createRelationType
+      tags: [relations]
       requestBody:
         required: true
         content:
@@ -1302,9 +1771,13 @@ paths:
         '200':
           description: The created relation type.
           content: { application/json: { schema: { $ref: '#/components/schemas/GroupRelationType' } } }
-  /relationType/edit:
+        '500':
+          description: Internal server error
+  /v1/relationType/edit:
     post:
       summary: Edit an existing relation type
+      operationId: editRelationType
+      tags: [relations]
       requestBody: # ID must be in the body for RelationshipTypeEditorQuery
         required: true
         content:
@@ -1314,18 +1787,26 @@ paths:
         '200':
           description: The updated relation type.
           content: { application/json: { schema: { $ref: '#/components/schemas/GroupRelationType' } } }
-  /relationType/delete:
+        '500':
+          description: Internal server error
+  /v1/relationType/delete:
     post:
       summary: Delete a relation type
+      operationId: deleteRelationType
+      tags: [relations]
       parameters:
         - { name: Id, in: query, required: true, schema: { type: integer } }
       responses:
         '200':
           description: Relation type deleted.
           content: { application/json: { type: object, properties: { ID: { type: integer } } } }
-  /relation:
+        '500':
+          description: Internal server error
+  /v1/relation:
     post:
       summary: Create or edit a group relation instance
+      operationId: createOrUpdateRelation
+      tags: [relations]
       requestBody:
         required: true
         content:
@@ -1335,19 +1816,27 @@ paths:
         '200':
           description: The created or updated relation instance.
           content: { application/json: { schema: { $ref: '#/components/schemas/GroupRelation' } } }
-  /relation/delete:
+        '500':
+          description: Internal server error
+  /v1/relation/delete:
     post:
       summary: Delete a group relation instance
+      operationId: deleteRelation
+      tags: [relations]
       parameters:
         - { name: Id, in: query, required: true, schema: { type: integer } }
       responses:
         '200':
           description: Relation instance deleted.
           content: { application/json: { type: object, properties: { ID: { type: integer } } } }
+        '500':
+          description: Internal server error
   # Generic editName/editDescription for relation instances (GroupRelation model)
-  /relation/editName: # Name of the specific relation instance
+  /v1/relation/editName: # Name of the specific relation instance
     post:
       summary: Edit a relation instance's name
+      operationId: editRelationName
+      tags: [relations]
       parameters:
         - { name: id, in: query, required: true, schema: { type: integer } }
       requestBody:
@@ -1355,10 +1844,13 @@ paths:
         content:
           application/x-www-form-urlencoded: { schema: { type: object, properties: { Name: { type: string } }, required: [Name] } }
       responses:
-        '200': { description: Relation instance name updated. }
-  /relation/editDescription: # Description of the specific relation instance
+        '200':
+          description: Relation instance name updated.
+  /v1/relation/editDescription: # Description of the specific relation instance
     post:
       summary: Edit a relation instance's description
+      operationId: editRelationDescription
+      tags: [relations]
       parameters:
         - { name: id, in: query, required: true, schema: { type: integer } }
       requestBody:
@@ -1366,4 +1858,5 @@ paths:
         content:
           application/x-www-form-urlencoded: { schema: { type: object, properties: { Description: { type: string } }, required: [Description] } }
       responses:
-        '200': { description: Relation instance description updated. }
+        '200':
+          description: Relation instance description updated.
