@@ -57,6 +57,7 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 		CustomSidebar: categoryQuery.CustomSidebar,
 		CustomSummary: categoryQuery.CustomSummary,
 		CustomAvatar:  categoryQuery.CustomAvatar,
+		MetaSchema:    categoryQuery.MetaSchema,
 	}
 
 	return &category, ctx.db.Create(&category).Error
@@ -75,6 +76,7 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 		CustomSidebar: categoryQuery.CustomSidebar,
 		CustomSummary: categoryQuery.CustomSummary,
 		CustomAvatar:  categoryQuery.CustomAvatar,
+		MetaSchema:    categoryQuery.MetaSchema,
 	}
 
 	return &category, ctx.db.Save(&category).Error

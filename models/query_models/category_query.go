@@ -8,6 +8,7 @@ type CategoryCreator struct {
 	CustomSidebar string
 	CustomSummary string
 	CustomAvatar  string
+	MetaSchema    string
 }
 
 type CategoryEditor struct {

@@ -23,7 +23,7 @@
                 </div>
                 {% endif %}
 
-                {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" value=group.Name required=true %}
+                {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" value=group.Name required=true id="form-name" %}
                 {% include "/partials/form/createFormTextareaInput.tpl" with title="Description" name="Description" value=group.Description %}
                 {% include "/partials/form/createFormTextInput.tpl" with type="url" title="URL" name="URL" value=group.URL|printUrl %}
 
@@ -56,7 +56,43 @@
                     </div>
                 </div>
 
-                {% include "/partials/form/freeFields.tpl" with name="Meta" url='/v1/groups/meta/keys' fromJSON=group.Meta jsonOutput="true" id=getNextId("freeField") %}
+                {% set initialSchema = "" %}
+                {% if group.Category %}
+                    {% set initialSchema = group.Category.MetaSchema %}
+                {% elif category && category.0 %}
+                    {% set initialSchema = category.0.MetaSchema %}
+                {% endif %}
+
+                <div x-data="{
+                         currentSchema: {{ initialSchema|default:'null' }},
+                         handleCategoryChange(e) {
+                             if (e.detail.value.length > 0) {
+                                 this.currentSchema = e.detail.value[0].MetaSchema;
+                             } else {
+                                 this.currentSchema = null;
+                             }
+                         }
+                    }"
+                    @multiple-input.window="if ($event.detail.name === 'categoryId') handleCategoryChange($event)"
+                    class="w-full"
+                >
+                    <template x-if="currentSchema">
+                        <div class="border p-4 rounded-md bg-gray-50 mt-5">
+                            <h3 class="text-sm font-medium text-gray-700 mb-3">Meta Data (Schema Enforced)</h3>
+                            <div x-data="schemaForm({
+                                schema: currentSchema,
+                                value: {{ group.Meta|json }} || {},
+                                name: 'Meta'
+                            })">
+                                <div x-ref="container"></div>
+                                <input type="hidden" :name="name" :value="jsonText">
+                            </div>
+                        </div>
+                    </template>
+                    <template x-if="!currentSchema">
+                        {% include "/partials/form/freeFields.tpl" with name="Meta" url='/v1/groups/meta/keys' fromJSON=group.Meta jsonOutput="true" id=getNextId("freeField") %}
+                    </template>
+                </div>
             </div>
         </div>
     </div>

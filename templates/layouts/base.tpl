@@ -17,6 +17,7 @@
     <script src="/public/component.freeFields.js"></script>
     <script src="/public/component.bulkSelection.js"></script>
     <script src="/public/component.storeConfig.js"></script>
+    <script src="/public/component.schemaForm.js"></script>
     <script type="module" src="/public/webcomponent.expandabletext.js"></script>
     <script type="module" src="/public/webcomponent.inlineedit.js"></script>
     <script src="/public/tableMaker.js"></script>
