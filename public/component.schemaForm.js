@@ -31,8 +31,25 @@ document.addEventListener("alpine:init", () => {
     });
 });
 
+function inferType(val) {
+    if (Array.isArray(val)) return 'array';
+    if (val === null) return 'string';
+    const t = typeof val;
+    if (t === 'number') {
+        return Number.isInteger(val) ? 'integer' : 'number';
+    }
+    return t;
+}
+
+function inferSchema(val) {
+    const type = inferType(val);
+    if (type === 'object') return { type: 'object', properties: {} };
+    if (type === 'array') return { type: 'array', items: val.length ? inferSchema(val[0]) : {type: 'string'} };
+    return { type };
+}
+
 function generateFormElement(schema, data, onChange) {
-    const type = schema.type;
+    const type = schema.type || inferType(data);
 
     if (type === 'object') {
         const container = document.createElement('div');
@@ -58,6 +75,7 @@ function generateFormElement(schema, data, onChange) {
             container.appendChild(desc);
         }
 
+        // Defined Properties
         if (schema.properties) {
             for (const key in schema.properties) {
                 const propSchema = schema.properties[key];
@@ -85,6 +103,61 @@ function generateFormElement(schema, data, onChange) {
                 container.appendChild(wrapper);
             }
         }
+
+        // Extra Properties
+        const knownKeys = new Set(schema.properties ? Object.keys(schema.properties) : []);
+        const extraKeys = Object.keys(data).filter(k => !knownKeys.has(k));
+
+        if (extraKeys.length > 0) {
+            const extraContainer = document.createElement('div');
+            extraContainer.className = "mt-4 pt-4 border-t border-gray-200";
+            const extraTitle = document.createElement('h5');
+            extraTitle.className = "text-xs font-bold text-gray-500 uppercase tracking-wider mb-2";
+            extraTitle.innerText = "Additional Properties";
+            extraContainer.appendChild(extraTitle);
+
+            extraKeys.forEach(key => {
+                const row = document.createElement('div');
+                row.className = "mb-2 border border-dashed border-gray-300 p-2 rounded relative";
+
+                const header = document.createElement('div');
+                header.className = "flex justify-between items-center mb-1";
+
+                const label = document.createElement('label');
+                label.className = "block text-sm font-medium text-gray-500 italic";
+                label.innerText = key;
+                header.appendChild(label);
+
+                const removeBtn = document.createElement('button');
+                removeBtn.type = "button";
+                removeBtn.innerText = "×";
+                removeBtn.className = "text-gray-400 hover:text-red-600 font-bold";
+                removeBtn.title = "Remove field";
+                removeBtn.onclick = () => {
+                    delete data[key];
+                    onChange(data);
+                    row.remove();
+                    if (extraContainer.children.length <= 1) { // Title only
+                        extraContainer.remove();
+                    }
+                };
+                header.appendChild(removeBtn);
+                row.appendChild(header);
+
+                const propData = data[key];
+                const inferredSchema = inferSchema(propData);
+
+                const inputEl = generateFormElement(inferredSchema, propData, (val) => {
+                    data[key] = val;
+                    onChange(data);
+                });
+
+                row.appendChild(inputEl);
+                extraContainer.appendChild(row);
+            });
+            container.appendChild(extraContainer);
+        }
+
         return container;
     }
 
@@ -113,12 +186,14 @@ function generateFormElement(schema, data, onChange) {
                 const row = document.createElement('div');
                 row.className = "flex gap-2 items-start";
 
-                const itemInput = generateFormElement(schema.items, item, (val) => {
+                // For array items, we use schema.items.
+                // If schema.items is generic (e.g. inferred), it works.
+                const itemSchema = schema.items || inferSchema(item);
+                const itemInput = generateFormElement(itemSchema, item, (val) => {
                     data[index] = val;
                     onChange(data);
                 });
 
-                // Wrap input to grow
                 const inputWrapper = document.createElement('div');
                 inputWrapper.className = "flex-grow";
                 inputWrapper.appendChild(itemInput);
@@ -147,7 +222,7 @@ function generateFormElement(schema, data, onChange) {
         addBtn.innerText = "Add Item";
         addBtn.className = "mt-2 inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-indigo-700 bg-indigo-100 hover:bg-indigo-200";
         addBtn.onclick = () => {
-            data.push(getDefaultValue(schema.items));
+            data.push(getDefaultValue(schema.items || {type:'string'}));
             onChange(data);
             renderList();
         };
