@@ -75,7 +75,7 @@ function generateFormElement(schema, data, onChange) {
             container.appendChild(desc);
         }
 
-        // Defined Properties
+        // 1. Render Schema-Defined Properties (Fixed Keys)
         if (schema.properties) {
             for (const key in schema.properties) {
                 const propSchema = schema.properties[key];
@@ -104,59 +104,158 @@ function generateFormElement(schema, data, onChange) {
             }
         }
 
-        // Extra Properties
-        const knownKeys = new Set(schema.properties ? Object.keys(schema.properties) : []);
-        const extraKeys = Object.keys(data).filter(k => !knownKeys.has(k));
+        // 2. Render Extra Properties (Editable Keys) aka Free Fields
+        const extraContainer = document.createElement('div');
+        container.appendChild(extraContainer);
 
-        if (extraKeys.length > 0) {
-            const extraContainer = document.createElement('div');
-            extraContainer.className = "mt-4 pt-4 border-t border-gray-200";
-            const extraTitle = document.createElement('h5');
-            extraTitle.className = "text-xs font-bold text-gray-500 uppercase tracking-wider mb-2";
-            extraTitle.innerText = "Additional Properties";
-            extraContainer.appendChild(extraTitle);
+        const renderExtras = () => {
+            extraContainer.innerHTML = '';
+
+            const knownKeys = new Set(schema.properties ? Object.keys(schema.properties) : []);
+            const extraKeys = Object.keys(data).filter(k => !knownKeys.has(k));
+
+            if (extraKeys.length > 0) {
+                const divider = document.createElement('div');
+                divider.className = "relative py-2";
+                divider.innerHTML = '<div class="absolute inset-0 flex items-center" aria-hidden="true"><div class="w-full border-t border-gray-300"></div></div><div class="relative flex justify-start"><span class="pr-2 bg-gray-50 text-xs text-gray-500">Additional Properties</span></div>';
+                extraContainer.appendChild(divider);
+            }
 
             extraKeys.forEach(key => {
                 const row = document.createElement('div');
-                row.className = "mb-2 border border-dashed border-gray-300 p-2 rounded relative";
+                row.className = "flex gap-2 items-start mb-2 bg-white p-2 rounded border border-gray-200 shadow-sm";
 
-                const header = document.createElement('div');
-                header.className = "flex justify-between items-center mb-1";
+                // Key Input
+                const keyWrapper = document.createElement('div');
+                keyWrapper.className = "w-1/3";
+                const keyInput = document.createElement('input');
+                keyInput.type = "text";
+                keyInput.value = key;
+                keyInput.className = "shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md";
+                keyInput.placeholder = "Key";
+                keyInput.onchange = (e) => {
+                    const newKey = e.target.value;
+                    if (newKey && newKey !== key) {
+                        if (data[newKey] !== undefined) {
+                            alert('Key already exists');
+                            e.target.value = key;
+                            return;
+                        }
+                        const val = data[key];
+                        delete data[key];
+                        data[newKey] = val;
+                        onChange(data);
+                        renderExtras();
+                    }
+                };
+                keyWrapper.appendChild(keyInput);
 
-                const label = document.createElement('label');
-                label.className = "block text-sm font-medium text-gray-500 italic";
-                label.innerText = key;
-                header.appendChild(label);
+                // Value Input
+                const valWrapper = document.createElement('div');
+                valWrapper.className = "flex-grow";
 
+                const propData = data[key];
+
+                // Check if complex type
+                if (typeof propData === 'object' && propData !== null) {
+                    const inferredSchema = inferSchema(propData);
+                    const inputEl = generateFormElement(inferredSchema, propData, (val) => {
+                        data[key] = val;
+                        onChange(data);
+                    });
+                    valWrapper.appendChild(inputEl);
+                } else {
+                    // Smart Input for primitives
+                    const inputEl = document.createElement('input');
+                    inputEl.type = "text";
+                    inputEl.className = "shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md";
+
+                    let displayVal = propData;
+                    if (typeof propData === 'string') {
+                        // Check if it looks like JSON but not string
+                        try {
+                            const parsed = JSON.parse(propData);
+                            if (typeof parsed !== 'string') {
+                                displayVal = JSON.stringify(propData);
+                            }
+                        } catch {
+                            // keep raw string
+                        }
+                    } else {
+                        // Number, boolean, null
+                        if (propData === undefined) displayVal = "";
+                        else displayVal = JSON.stringify(propData);
+                    }
+
+                    inputEl.value = displayVal;
+
+                    inputEl.oninput = (e) => {
+                        // Sync raw string value during typing so data is not lost on submit before blur
+                        data[key] = e.target.value;
+                        onChange(data);
+                    };
+
+                    inputEl.onblur = (e) => {
+                        const val = e.target.value;
+                        let finalVal = val;
+                        try {
+                            finalVal = JSON.parse(val);
+                        } catch {
+                            // keep as string
+                        }
+
+                        // Update if changed (type or value)
+                        if (data[key] !== finalVal) {
+                            data[key] = finalVal;
+                            onChange(data);
+                            renderExtras();
+                        }
+                    };
+
+                    inputEl.onkeyup = (e) => {
+                        if(e.key === 'Enter') e.target.blur();
+                    };
+
+                    valWrapper.appendChild(inputEl);
+                }
+
+                // Remove Button
                 const removeBtn = document.createElement('button');
                 removeBtn.type = "button";
                 removeBtn.innerText = "×";
-                removeBtn.className = "text-gray-400 hover:text-red-600 font-bold";
+                removeBtn.className = "text-red-600 font-bold px-2 py-1 border rounded hover:bg-red-50 self-start mt-0.5";
                 removeBtn.title = "Remove field";
                 removeBtn.onclick = () => {
                     delete data[key];
                     onChange(data);
-                    row.remove();
-                    if (extraContainer.children.length <= 1) { // Title only
-                        extraContainer.remove();
-                    }
+                    renderExtras();
                 };
-                header.appendChild(removeBtn);
-                row.appendChild(header);
 
-                const propData = data[key];
-                const inferredSchema = inferSchema(propData);
-
-                const inputEl = generateFormElement(inferredSchema, propData, (val) => {
-                    data[key] = val;
-                    onChange(data);
-                });
-
-                row.appendChild(inputEl);
+                row.appendChild(keyWrapper);
+                row.appendChild(valWrapper);
+                row.appendChild(removeBtn);
                 extraContainer.appendChild(row);
             });
-            container.appendChild(extraContainer);
-        }
+
+            // Add Button
+            const addBtn = document.createElement('button');
+            addBtn.type = "button";
+            addBtn.innerText = "Add Field";
+            addBtn.className = "mt-2 inline-flex items-center px-2.5 py-1.5 border border-gray-300 shadow-sm text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500";
+            addBtn.onclick = () => {
+                let newKey = "newField";
+                let counter = 1;
+                while (data[newKey] !== undefined) {
+                    newKey = `newField${counter++}`;
+                }
+                data[newKey] = "";
+                onChange(data);
+                renderExtras();
+            };
+            extraContainer.appendChild(addBtn);
+        };
+
+        renderExtras();
 
         return container;
     }
@@ -194,6 +293,7 @@ function generateFormElement(schema, data, onChange) {
                     onChange(data);
                 });
 
+                // Wrap input to grow
                 const inputWrapper = document.createElement('div');
                 inputWrapper.className = "flex-grow";
                 inputWrapper.appendChild(itemInput);

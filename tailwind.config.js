@@ -3,6 +3,7 @@ module.exports = {
   content: [
     './templates/**/*.tpl',
     './templates/**/*.html',
+    './public/**/*.js',
   ],
   darkMode: 'media', // or 'media' or 'class'
   theme: {
