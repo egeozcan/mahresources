@@ -48,7 +48,102 @@ function inferSchema(val) {
     return { type };
 }
 
+function scoreSchemaMatch(schema, data) {
+    if (schema.const !== undefined) return schema.const === data ? 100 : 0;
+    const dataType = inferType(data);
+    if (schema.type && schema.type !== dataType) return 0;
+
+    if (dataType === 'object' && schema.properties) {
+        const dataKeys = Object.keys(data);
+        const schemaKeys = Object.keys(schema.properties);
+        const matchCount = dataKeys.filter(k => schemaKeys.includes(k)).length;
+        return matchCount + 1; // +1 for type match
+    }
+    return 1; // Type match
+}
+
 function generateFormElement(schema, data, onChange) {
+    // Handle oneOf
+    if (schema.oneOf && Array.isArray(schema.oneOf)) {
+        const container = document.createElement('div');
+        container.className = "space-y-2 border-l-4 border-indigo-100 pl-4 py-2 my-2";
+
+        if (schema.title) {
+            const title = document.createElement('h4');
+            title.className = "font-bold text-gray-900 text-sm";
+            title.innerText = schema.title;
+            container.appendChild(title);
+        }
+
+        let activeIndex = 0;
+        if (data !== undefined) {
+            let maxScore = -1;
+            schema.oneOf.forEach((s, idx) => {
+                const score = scoreSchemaMatch(s, data);
+                if (score > maxScore) {
+                    maxScore = score;
+                    activeIndex = idx;
+                }
+            });
+        }
+
+        const select = document.createElement('select');
+        select.className = "block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md mb-2";
+
+        schema.oneOf.forEach((opt, idx) => {
+            const option = document.createElement('option');
+            option.value = idx;
+            option.text = opt.title || opt.description || `Option ${idx + 1} (${opt.type || 'mixed'})`;
+            if (idx === activeIndex) option.selected = true;
+            select.appendChild(option);
+        });
+
+        const formWrapper = document.createElement('div');
+
+        const renderOption = (idx) => {
+            formWrapper.innerHTML = '';
+            const optSchema = schema.oneOf[idx];
+
+            const el = generateFormElement(optSchema, data, (val) => {
+                data = val;
+                onChange(val);
+            });
+            formWrapper.appendChild(el);
+        };
+
+        select.onchange = (e) => {
+            const idx = parseInt(e.target.value);
+            const optSchema = schema.oneOf[idx];
+            data = getDefaultValue(optSchema);
+            onChange(data);
+            renderOption(idx);
+        };
+
+        container.appendChild(select);
+        container.appendChild(formWrapper);
+
+        if (data === undefined) {
+            data = getDefaultValue(schema.oneOf[activeIndex]);
+            onChange(data);
+        }
+
+        renderOption(activeIndex);
+        return container;
+    }
+
+    // Handle const
+    if (schema.const !== undefined) {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = schema.const;
+        input.disabled = true;
+        input.className = "shadow-sm bg-gray-100 block w-full sm:text-sm border-gray-300 rounded-md mt-1 text-gray-500";
+        if (data !== schema.const) {
+            setTimeout(() => onChange(schema.const), 0);
+        }
+        return input;
+    }
+
     const type = schema.type || inferType(data);
 
     if (type === 'object') {
@@ -93,8 +188,7 @@ function generateFormElement(schema, data, onChange) {
                     wrapper.appendChild(desc);
                 }
 
-                const propData = data[key];
-                const inputEl = generateFormElement(propSchema, propData, (val) => {
+                const inputEl = generateFormElement(propSchema, data[key], (val) => {
                     data[key] = val;
                     onChange(data);
                 });
@@ -156,7 +250,6 @@ function generateFormElement(schema, data, onChange) {
 
                 const propData = data[key];
 
-                // Check if complex type
                 if (typeof propData === 'object' && propData !== null) {
                     const inferredSchema = inferSchema(propData);
                     const inputEl = generateFormElement(inferredSchema, propData, (val) => {
@@ -165,14 +258,12 @@ function generateFormElement(schema, data, onChange) {
                     });
                     valWrapper.appendChild(inputEl);
                 } else {
-                    // Smart Input for primitives
                     const inputEl = document.createElement('input');
                     inputEl.type = "text";
                     inputEl.className = "shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md";
 
                     let displayVal = propData;
                     if (typeof propData === 'string') {
-                        // Check if it looks like JSON but not string
                         try {
                             const parsed = JSON.parse(propData);
                             if (typeof parsed !== 'string') {
@@ -182,7 +273,6 @@ function generateFormElement(schema, data, onChange) {
                             // keep raw string
                         }
                     } else {
-                        // Number, boolean, null
                         if (propData === undefined) displayVal = "";
                         else displayVal = JSON.stringify(propData);
                     }
@@ -190,7 +280,6 @@ function generateFormElement(schema, data, onChange) {
                     inputEl.value = displayVal;
 
                     inputEl.oninput = (e) => {
-                        // Sync raw string value during typing so data is not lost on submit before blur
                         data[key] = e.target.value;
                         onChange(data);
                     };
@@ -204,7 +293,6 @@ function generateFormElement(schema, data, onChange) {
                             // keep as string
                         }
 
-                        // Update if changed (type or value)
                         if (data[key] !== finalVal) {
                             data[key] = finalVal;
                             onChange(data);
@@ -219,7 +307,6 @@ function generateFormElement(schema, data, onChange) {
                     valWrapper.appendChild(inputEl);
                 }
 
-                // Remove Button
                 const removeBtn = document.createElement('button');
                 removeBtn.type = "button";
                 removeBtn.innerText = "×";
@@ -237,7 +324,6 @@ function generateFormElement(schema, data, onChange) {
                 extraContainer.appendChild(row);
             });
 
-            // Add Button
             const addBtn = document.createElement('button');
             addBtn.type = "button";
             addBtn.innerText = "Add Field";
@@ -285,15 +371,12 @@ function generateFormElement(schema, data, onChange) {
                 const row = document.createElement('div');
                 row.className = "flex gap-2 items-start";
 
-                // For array items, we use schema.items.
-                // If schema.items is generic (e.g. inferred), it works.
                 const itemSchema = schema.items || inferSchema(item);
                 const itemInput = generateFormElement(itemSchema, item, (val) => {
                     data[index] = val;
                     onChange(data);
                 });
 
-                // Wrap input to grow
                 const inputWrapper = document.createElement('div');
                 inputWrapper.className = "flex-grow";
                 inputWrapper.appendChild(itemInput);
@@ -359,6 +442,8 @@ function generateFormElement(schema, data, onChange) {
 }
 
 function getDefaultValue(schema) {
+    if (schema.default !== undefined) return schema.default;
+    if (schema.const !== undefined) return schema.const;
     if (schema.type === 'object') return {};
     if (schema.type === 'array') return [];
     if (schema.type === 'boolean') return false;
