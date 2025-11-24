@@ -26,11 +26,10 @@ document.addEventListener("alpine:init", () => {
                         const oldVal = this.value;
                         this.value = newVal;
                         this.updateJson();
-                        // Re-render root if transitioning from/to null (e.g. initialization)
                         if ((oldVal === null && newVal !== null) || (oldVal !== null && newVal === null)) {
                             renderRoot();
                         }
-                    });
+                    }, this.schema);
                     this.$refs.container.appendChild(element);
                 };
 
@@ -57,7 +56,30 @@ function inferSchema(val) {
     return { type };
 }
 
-function scoreSchemaMatch(schema, data) {
+function resolveRef(ref, root) {
+    if (typeof ref !== 'string' || !ref.startsWith('#/')) return null;
+    const parts = ref.split('/').slice(1);
+    let current = root;
+    for (const part of parts) {
+        if (current && typeof current === 'object' && part in current) {
+            current = current[part];
+        } else {
+            return null;
+        }
+    }
+    return current;
+}
+
+function scoreSchemaMatch(schema, data, rootSchema) {
+    // Resolve ref if present for scoring
+    if (schema.$ref) {
+        const resolved = resolveRef(schema.$ref, rootSchema);
+        if (resolved) {
+            // Simple merge for scoring
+            schema = { ...resolved, ...schema };
+        }
+    }
+
     if (schema.const !== undefined) return schema.const === data ? 100 : 0;
 
     const dataType = inferType(data);
@@ -85,7 +107,24 @@ function scoreSchemaMatch(schema, data) {
     return 10;
 }
 
-function generateFormElement(schema, data, onChange) {
+function generateFormElement(schema, data, onChange, rootSchema) {
+    rootSchema = rootSchema || schema;
+
+    // Handle $ref
+    if (schema.$ref) {
+        const resolved = resolveRef(schema.$ref, rootSchema);
+        if (resolved) {
+            const mergedSchema = { ...resolved, ...schema };
+            delete mergedSchema.$ref;
+            return generateFormElement(mergedSchema, data, onChange, rootSchema);
+        }
+        // If ref not found, display error or fallback?
+        const err = document.createElement('div');
+        err.className = "text-red-500 text-xs";
+        err.innerText = "Unresolvable reference: " + schema.$ref;
+        return err;
+    }
+
     // Handle oneOf
     if (schema.oneOf && Array.isArray(schema.oneOf)) {
         const container = document.createElement('div');
@@ -98,11 +137,18 @@ function generateFormElement(schema, data, onChange) {
             container.appendChild(title);
         }
 
+        if (schema.description) {
+            const desc = document.createElement('p');
+            desc.className = "text-xs text-gray-500 mb-2";
+            desc.innerText = schema.description;
+            container.appendChild(desc);
+        }
+
         let activeIndex = 0;
         if (data !== undefined) {
             let maxScore = -1;
             schema.oneOf.forEach((s, idx) => {
-                const score = scoreSchemaMatch(s, data);
+                const score = scoreSchemaMatch(s, data, rootSchema);
                 if (score > maxScore) {
                     maxScore = score;
                     activeIndex = idx;
@@ -116,8 +162,11 @@ function generateFormElement(schema, data, onChange) {
         schema.oneOf.forEach((opt, idx) => {
             const option = document.createElement('option');
             option.value = idx;
+
             let typeLabel = opt.type;
             if(Array.isArray(opt.type)) typeLabel = opt.type.join('/');
+            if(opt.$ref) typeLabel = "ref"; // Simplified label for refs
+
             option.text = opt.title || opt.description || `Option ${idx + 1} (${typeLabel || 'mixed'})`;
             if (idx === activeIndex) option.selected = true;
             select.appendChild(option);
@@ -136,14 +185,14 @@ function generateFormElement(schema, data, onChange) {
                 if ((oldVal === null && val !== null) || (oldVal !== null && val === null)) {
                     renderOption(idx);
                 }
-            });
+            }, rootSchema);
             formWrapper.appendChild(el);
         };
 
         select.onchange = (e) => {
             const idx = parseInt(e.target.value);
             const optSchema = schema.oneOf[idx];
-            data = getDefaultValue(optSchema);
+            data = getDefaultValue(optSchema, rootSchema);
             onChange(data);
             renderOption(idx);
         };
@@ -152,7 +201,7 @@ function generateFormElement(schema, data, onChange) {
         container.appendChild(formWrapper);
 
         if (data === undefined) {
-            data = getDefaultValue(schema.oneOf[activeIndex]);
+            data = getDefaultValue(schema.oneOf[activeIndex], rootSchema);
             onChange(data);
         }
 
@@ -306,6 +355,7 @@ function generateFormElement(schema, data, onChange) {
                 const renderProp = () => {
                     inputContainer.innerHTML = '';
                     const propData = data[key];
+
                     const inputEl = generateFormElement(propSchema, propData, (val) => {
                         const oldVal = data[key];
                         data[key] = val;
@@ -313,7 +363,7 @@ function generateFormElement(schema, data, onChange) {
                         if ((oldVal === null && val !== null) || (oldVal !== null && val === null)) {
                             renderProp();
                         }
-                    });
+                    }, rootSchema);
                     inputContainer.appendChild(inputEl);
                 };
 
@@ -378,7 +428,7 @@ function generateFormElement(schema, data, onChange) {
                         const inputEl = generateFormElement(inferredSchema, propData, (val) => {
                             data[key] = val;
                             onChange(data);
-                        });
+                        }, rootSchema);
                         valWrapper.appendChild(inputEl);
                     } else {
                         const inputEl = document.createElement('input');
@@ -490,7 +540,7 @@ function generateFormElement(schema, data, onChange) {
                         if ((oldVal === null && val !== null) || (oldVal !== null && val === null)) {
                             renderItem();
                         }
-                    });
+                    }, rootSchema);
                     inputWrapper.appendChild(itemInput);
                 };
                 renderItem();
@@ -519,7 +569,7 @@ function generateFormElement(schema, data, onChange) {
         addBtn.innerText = "Add Item";
         addBtn.className = "mt-2 inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-indigo-700 bg-indigo-100 hover:bg-indigo-200";
         addBtn.onclick = () => {
-            data.push(getDefaultValue(schema.items || {type:'string'}));
+            data.push(getDefaultValue(schema.items || {type:'string'}, rootSchema));
             onChange(data);
             renderList();
         };
@@ -571,7 +621,13 @@ function generateFormElement(schema, data, onChange) {
     return input;
 }
 
-function getDefaultValue(schema) {
+function getDefaultValue(schema, rootSchema) {
+    if (schema.$ref) {
+        const resolved = resolveRef(schema.$ref, rootSchema || schema);
+        if (resolved) {
+            return getDefaultValue({...resolved, ...schema, $ref: undefined}, rootSchema);
+        }
+    }
     if (schema.default !== undefined) return schema.default;
     if (schema.const !== undefined) return schema.const;
     if (schema.type === 'object') return {};
@@ -588,7 +644,7 @@ function getDefaultValue(schema) {
         if (schema.type.includes('null')) return null;
     }
 
-    if (schema.oneOf && schema.oneOf.length > 0) return getDefaultValue(schema.oneOf[0]);
+    if (schema.oneOf && schema.oneOf.length > 0) return getDefaultValue(schema.oneOf[0], rootSchema);
 
     return "";
 }
