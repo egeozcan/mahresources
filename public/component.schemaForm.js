@@ -20,12 +20,21 @@ document.addEventListener("alpine:init", () => {
                 this.$refs.container.innerHTML = '';
                 if (!this.schema || Object.keys(this.schema).length === 0) return;
 
-                const element = generateFormElement(this.schema, this.value, (newVal) => {
-                    this.value = newVal;
-                    this.updateJson();
-                });
+                const renderRoot = () => {
+                    this.$refs.container.innerHTML = '';
+                    const element = generateFormElement(this.schema, this.value, (newVal) => {
+                        const oldVal = this.value;
+                        this.value = newVal;
+                        this.updateJson();
+                        // Re-render root if transitioning from/to null (e.g. initialization)
+                        if ((oldVal === null && newVal !== null) || (oldVal !== null && newVal === null)) {
+                            renderRoot();
+                        }
+                    });
+                    this.$refs.container.appendChild(element);
+                };
 
-                this.$refs.container.appendChild(element);
+                renderRoot();
             }
         }
     });
@@ -54,20 +63,15 @@ function scoreSchemaMatch(schema, data) {
     const dataType = inferType(data);
     let schemaType = schema.type;
 
-    // Handle array of types in schema e.g. ["string", "null"]
     if (Array.isArray(schemaType)) {
         if (schemaType.includes(dataType)) return 10;
-        // Fuzzy match number/integer
         if (dataType === 'integer' && schemaType.includes('number')) return 9;
-        // Fuzzy match null in primitives
         if (dataType === 'null' && (schemaType.includes('string') || schemaType.includes('number'))) return 5;
         return 0;
     }
 
     if (schemaType && schemaType !== dataType) {
-        // Allow integer data for number schema
         if (schemaType === 'number' && dataType === 'integer') return 9;
-        // Allow null data for complex schema if nullable not explicitly set but implied? (Unlikely in rigorous schema)
         return 0;
     }
 
@@ -78,7 +82,6 @@ function scoreSchemaMatch(schema, data) {
         return matchCount + 10;
     }
 
-    // Default match for matching types
     return 10;
 }
 
@@ -96,7 +99,6 @@ function generateFormElement(schema, data, onChange) {
         }
 
         let activeIndex = 0;
-        // Determine best match
         if (data !== undefined) {
             let maxScore = -1;
             schema.oneOf.forEach((s, idx) => {
@@ -114,10 +116,8 @@ function generateFormElement(schema, data, onChange) {
         schema.oneOf.forEach((opt, idx) => {
             const option = document.createElement('option');
             option.value = idx;
-
             let typeLabel = opt.type;
             if(Array.isArray(opt.type)) typeLabel = opt.type.join('/');
-
             option.text = opt.title || opt.description || `Option ${idx + 1} (${typeLabel || 'mixed'})`;
             if (idx === activeIndex) option.selected = true;
             select.appendChild(option);
@@ -129,15 +129,13 @@ function generateFormElement(schema, data, onChange) {
             formWrapper.innerHTML = '';
             const optSchema = schema.oneOf[idx];
 
-            // If switching schemas and data is incompatible, reset data
-            // Simple check: if types mismatch drastically.
-            // For now, rely on generateFormElement to adapt or reset if needed inside.
-            // But strictly, we should maybe reset to default of new schema if score is 0.
-            // Let's keep current data and let inner logic handle/cast it.
-
             const el = generateFormElement(optSchema, data, (val) => {
+                const oldVal = data;
                 data = val;
                 onChange(val);
+                if ((oldVal === null && val !== null) || (oldVal !== null && val === null)) {
+                    renderOption(idx);
+                }
             });
             formWrapper.appendChild(el);
         };
@@ -145,7 +143,6 @@ function generateFormElement(schema, data, onChange) {
         select.onchange = (e) => {
             const idx = parseInt(e.target.value);
             const optSchema = schema.oneOf[idx];
-            // Reset data to default of new schema
             data = getDefaultValue(optSchema);
             onChange(data);
             renderOption(idx);
@@ -168,10 +165,8 @@ function generateFormElement(schema, data, onChange) {
         const select = document.createElement('select');
         select.className = "shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md mt-1";
 
-        // Check if current data is in enum. If not, we might need to prepend it or default.
         let hasValue = false;
 
-        // Add a blank option if current data is null/undefined and null is allowed or not in enum
         if (data === null || data === undefined) {
             const nullOpt = document.createElement('option');
             nullOpt.value = "";
@@ -201,18 +196,13 @@ function generateFormElement(schema, data, onChange) {
 
         select.onchange = (e) => {
             const valStr = e.target.value;
-            // Attempt to find correct typed value from enum
-            // Note: this simple logic assumes string representation matches.
-            // JSON enum can have mixed types.
             let val = valStr;
             const match = schema.enum.find(ev => String(ev) === valStr);
             if (match !== undefined) val = match;
 
-            // Handle number conversion if schema implies it
             if (match === undefined && (schema.type === 'integer' || schema.type === 'number')) {
                 val = parseFloat(valStr);
             }
-
             onChange(val);
         };
         return select;
@@ -231,31 +221,24 @@ function generateFormElement(schema, data, onChange) {
         return input;
     }
 
-    // Normalize Type (handle array of types e.g. ["string", "null"])
+    // Normalize Type
     let type = schema.type;
     if (Array.isArray(type)) {
         const currentType = inferType(data);
         if (type.includes(currentType)) {
             type = currentType;
         } else {
-            // Prefer non-null
             type = type.find(t => t !== 'null') || type[0];
         }
     }
-    // Fallback inference
     type = type || inferType(data);
 
     // Null type handling
     if (type === 'null') {
-        // If schema forces null, show it.
-        // If schema is ["object", "null"] and we decided on "null" because data is null,
-        // we might want to allow switching to object.
-        // For now, simple display.
         const wrapper = document.createElement('div');
         wrapper.className = "mt-1 flex items-center text-sm text-gray-500 italic";
         wrapper.innerHTML = "<span>null</span>";
 
-        // If schema allowed other types (from array), give a button to switch (primitive oneOf)
         if (Array.isArray(schema.type) && schema.type.length > 1) {
             const switchBtn = document.createElement('button');
             switchBtn.type = "button";
@@ -263,9 +246,13 @@ function generateFormElement(schema, data, onChange) {
             switchBtn.innerText = "Initialize";
             switchBtn.onclick = () => {
                 const nextType = schema.type.find(t => t !== 'null');
-                if (nextType === 'object') onChange({});
-                else if (nextType === 'array') onChange([]);
-                else onChange(""); // default string
+                let newVal;
+                if (nextType === 'object') newVal = {};
+                else if (nextType === 'array') newVal = [];
+                else if (nextType === 'boolean') newVal = false;
+                else if (nextType === 'number' || nextType === 'integer') newVal = 0;
+                else newVal = "";
+                onChange(newVal);
             };
             wrapper.appendChild(switchBtn);
         }
@@ -277,8 +264,6 @@ function generateFormElement(schema, data, onChange) {
         container.className = "space-y-4 border-l-2 border-gray-200 pl-4 my-2";
 
         if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-            // If data mismatches, we might want to reset, or just error.
-            // Resetting safe default:
             data = {};
             setTimeout(() => onChange(data), 0);
         }
@@ -315,19 +300,29 @@ function generateFormElement(schema, data, onChange) {
                     wrapper.appendChild(desc);
                 }
 
-                // Pass undefined if key missing, let child handle default if needed
-                const inputEl = generateFormElement(propSchema, data[key], (val) => {
-                    data[key] = val;
-                    onChange(data);
-                });
+                const inputContainer = document.createElement('div');
+                wrapper.appendChild(inputContainer);
 
-                wrapper.appendChild(inputEl);
+                const renderProp = () => {
+                    inputContainer.innerHTML = '';
+                    const propData = data[key];
+                    const inputEl = generateFormElement(propSchema, propData, (val) => {
+                        const oldVal = data[key];
+                        data[key] = val;
+                        onChange(data);
+                        if ((oldVal === null && val !== null) || (oldVal !== null && val === null)) {
+                            renderProp();
+                        }
+                    });
+                    inputContainer.appendChild(inputEl);
+                };
+
+                renderProp();
                 container.appendChild(wrapper);
             }
         }
 
         // 2. Render Extra Properties (Free Fields)
-        // Only if additionalProperties is not false (default true)
         if (schema.additionalProperties !== false) {
             const extraContainer = document.createElement('div');
             container.appendChild(extraContainer);
@@ -349,7 +344,6 @@ function generateFormElement(schema, data, onChange) {
                     const row = document.createElement('div');
                     row.className = "flex gap-2 items-start mb-2 bg-white p-2 rounded border border-gray-200 shadow-sm";
 
-                    // Key Input
                     const keyWrapper = document.createElement('div');
                     keyWrapper.className = "w-1/3";
                     const keyInput = document.createElement('input');
@@ -374,7 +368,6 @@ function generateFormElement(schema, data, onChange) {
                     };
                     keyWrapper.appendChild(keyInput);
 
-                    // Value Input
                     const valWrapper = document.createElement('div');
                     valWrapper.className = "flex-grow";
 
@@ -388,7 +381,6 @@ function generateFormElement(schema, data, onChange) {
                         });
                         valWrapper.appendChild(inputEl);
                     } else {
-                        // Smart Input
                         const inputEl = document.createElement('input');
                         inputEl.type = "text";
                         inputEl.className = "shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md";
@@ -419,7 +411,6 @@ function generateFormElement(schema, data, onChange) {
                         valWrapper.appendChild(inputEl);
                     }
 
-                    // Remove Button
                     const removeBtn = document.createElement('button');
                     removeBtn.type = "button";
                     removeBtn.innerText = "×";
@@ -437,7 +428,6 @@ function generateFormElement(schema, data, onChange) {
                     extraContainer.appendChild(row);
                 });
 
-                // Add Button
                 const addBtn = document.createElement('button');
                 addBtn.type = "button";
                 addBtn.innerText = "Add Field";
@@ -486,15 +476,24 @@ function generateFormElement(schema, data, onChange) {
                 const row = document.createElement('div');
                 row.className = "flex gap-2 items-start";
 
-                const itemSchema = schema.items || inferSchema(item);
-                const itemInput = generateFormElement(itemSchema, item, (val) => {
-                    data[index] = val;
-                    onChange(data);
-                });
-
                 const inputWrapper = document.createElement('div');
                 inputWrapper.className = "flex-grow";
-                inputWrapper.appendChild(itemInput);
+
+                const renderItem = () => {
+                    inputWrapper.innerHTML = '';
+                    const currentItem = data[index];
+                    const itemSchema = schema.items || inferSchema(currentItem);
+                    const itemInput = generateFormElement(itemSchema, currentItem, (val) => {
+                        const oldVal = data[index];
+                        data[index] = val;
+                        onChange(data);
+                        if ((oldVal === null && val !== null) || (oldVal !== null && val === null)) {
+                            renderItem();
+                        }
+                    });
+                    inputWrapper.appendChild(itemInput);
+                };
+                renderItem();
 
                 const removeBtn = document.createElement('button');
                 removeBtn.type = "button";
@@ -541,7 +540,6 @@ function generateFormElement(schema, data, onChange) {
     } else {
         input.className = "shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md mt-1";
 
-        // Handle formats and patterns
         if (schema.format === 'date') input.type = 'date';
         else if (schema.format === 'date-time') input.type = 'datetime-local';
         else if (schema.format === 'email') input.type = 'email';
@@ -558,8 +556,6 @@ function generateFormElement(schema, data, onChange) {
             input.oninput = (e) => {
                 const val = e.target.value;
                 if (val === '') {
-                    // If field allowed null, maybe set null? But standard HTML number input clears to "".
-                    // If schema says ["number", "null"], we might want null.
                     if (Array.isArray(schema.type) && schema.type.includes('null')) onChange(null);
                     else onChange(undefined);
                 } else {
