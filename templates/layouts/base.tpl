@@ -17,6 +17,7 @@
     <script src="/public/component.freeFields.js"></script>
     <script src="/public/component.bulkSelection.js"></script>
     <script src="/public/component.storeConfig.js"></script>
+    <script src="/public/component.globalSearch.js"></script>
     <script src="/public/component.schemaForm.js"></script>
     <script type="module" src="/public/webcomponent.expandabletext.js"></script>
     <script type="module" src="/public/webcomponent.inlineedit.js"></script>
@@ -41,9 +42,11 @@
     {% block head %}{% endblock %}
 </head>
 <body class="site">
-    <header class="header flex justify-between align-middle">
+    <header class="header flex justify-between align-middle items-center">
         {% include "/partials/menu.tpl" %}
-        <div x-cloak x-data="{ active: false }" class="settings relative inline-flex align-middle">
+        <div class="flex items-center gap-2">
+            {% include "/partials/globalSearch.tpl" %}
+            <div x-cloak x-data="{ active: false }" class="settings relative inline-flex align-middle">
             <button class="text-lg" @click="active = !active" @click.outside="setTimeout(() => active = false, 100)">⚙</button>
             <div x-show="active" class="absolute p-4 mt-6 top-0 right-0 bg-white" style="max-width: 50vw; min-width: 170px;">
                 <label class="flex justify-between items-center content-center">
@@ -51,6 +54,7 @@
                     <input type="checkbox" name="showDescriptions" x-data x-init="$store.savedSetting.registerEl($root)" />
                 </label>
                 {% block settings %}{% endblock %}
+            </div>
             </div>
         </div>
         {% block header %}{% endblock %}
