@@ -127,6 +127,7 @@ components:
         CustomSidebar: { type: string }
         CustomSummary: { type: string }
         CustomAvatar: { type: string }
+        MetaSchema: { type: string, description: "JSON schema for the meta field of groups in this category" }
     CategoryPartial: # For GroupPartial
       type: object
       properties:

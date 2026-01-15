@@ -96,7 +96,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	basicTagWriter := application_context.NewEntityWriter[models.Tag](appContext)
 	basicCategoryWriter := application_context.NewEntityWriter[models.Category](appContext)
 	basicQueryWriter := application_context.NewEntityWriter[models.Query](appContext)
-	basicRelationTypeWriter := application_context.NewEntityWriter[models.GroupRelationType](appContext)
+	basicRelationWriter := application_context.NewEntityWriter[models.GroupRelation](appContext)
 	basicNoteTypeWriter := application_context.NewEntityWriter[models.NoteType](appContext)
 
 	router.Methods(http.MethodGet).Path("/v1/notes").HandlerFunc(api_handlers.GetNotesHandler(appContext))
@@ -135,8 +135,8 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/relationType/delete").HandlerFunc(api_handlers.GetRemoveRelationTypeHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/relationType/edit").HandlerFunc(api_handlers.GetEditGroupRelationTypeHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/relationTypes").HandlerFunc(api_handlers.GetRelationTypesHandler(appContext))
-	router.Methods(http.MethodGet).Path("/v1/relation/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.GroupRelation](basicRelationTypeWriter, "relation"))
-	router.Methods(http.MethodGet).Path("/v1/relation/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.GroupRelation](basicRelationTypeWriter, "relation"))
+	router.Methods(http.MethodPost).Path("/v1/relation/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.GroupRelation](basicRelationWriter, "relation"))
+	router.Methods(http.MethodPost).Path("/v1/relation/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.GroupRelation](basicRelationWriter, "relation"))
 
 	router.Methods(http.MethodGet).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/resources").HandlerFunc(api_handlers.GetResourcesHandler(appContext))

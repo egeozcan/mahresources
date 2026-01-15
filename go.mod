@@ -21,6 +21,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.9
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
 	github.com/spf13/afero v1.11.0
+	github.com/stretchr/testify v1.8.1
 	github.com/yuin/goldmark v1.4.13
 	golang.org/x/image v0.18.0
 	gorm.io/driver/postgres v1.2.3
@@ -29,6 +30,7 @@ require (
 )
 
 require (
+	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/extemporalgenome/slug v0.0.0-20150414033109-0320c85e32e0 // indirect
 	github.com/flosch/go-humanize v0.0.0-20140728123800-3ba51eabe506 // indirect
 	github.com/iancoleman/orderedmap v0.0.0-20190318233801-ac98e3ecb4b0 // indirect
@@ -43,8 +45,10 @@ require (
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.3 // indirect
 	github.com/kr/text v0.2.0 // indirect
+	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	golang.org/x/crypto v0.23.0 // indirect
 	golang.org/x/net v0.25.0 // indirect
 	golang.org/x/text v0.16.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
