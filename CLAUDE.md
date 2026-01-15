@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Development Commands
 
 ```bash
-# Build the application (compiles CSS + Go binary)
+# Build the application (compiles CSS + JS bundle + Go binary)
 npm run build
 
 # Development mode with hot reload
@@ -13,6 +13,12 @@ npm run watch
 
 # Build CSS only
 npm run build-css
+
+# Build JS bundle only (Vite)
+npm run build-js
+
+# Watch mode for JS development
+npm run dev
 
 # Run tests
 go test ./...
@@ -22,6 +28,9 @@ go test ./server/api_tests/...
 
 # Build Go binary directly (requires json1 tag for SQLite JSON support)
 go build --tags json1
+
+# Run the server (default port 8181)
+./mahresources
 ```
 
 ## Architecture Overview
@@ -40,6 +49,19 @@ Mahresources is a CRUD application for personal information management written i
 - `interfaces/` - Interface definitions for dependency injection (Reader, Writer, Deleter patterns)
 
 **templates/** - Pongo2 templates (Django-like syntax). Each entity has create, display, and list templates.
+
+**src/** - Frontend JavaScript source files, bundled with Vite.
+- `main.js` - Entry point that imports all modules and initializes Alpine.js
+- `index.js` - Utility functions (abortableFetch, clipboard, etc.)
+- `components/` - Alpine.js data components (dropdown, globalSearch, bulkSelection, etc.)
+- `webcomponents/` - Custom elements (expandable-text, inline-edit)
+- `tableMaker.js` - JSON table rendering
+
+**public/** - Static assets served by the Go server.
+- `dist/` - Vite build output (main.js, main.css) - gitignored
+- `tailwind.css` - Generated Tailwind CSS
+- `index.css`, `jsonTable.css` - Custom styles
+- `favicon/` - Favicon files
 
 ### Key Design Patterns
 
@@ -74,9 +96,20 @@ Endpoints follow pattern: `GET/POST/DELETE /v1/{entities}` for lists, `/v1/{enti
 
 Bulk operations available: `addTags`, `removeTags`, `addMeta`, `delete`, `merge`.
 
+### Frontend Stack
+
+- **Vite** - Bundler for JavaScript modules
+- **Alpine.js** - Lightweight reactive framework for UI components
+- **Tailwind CSS** - Utility-first CSS framework
+- **baguetteBox.js** - Image gallery lightbox
+- **Web Components** - Custom elements for expandable text and inline editing
+
+Global search is accessible via `Cmd/Ctrl+K` shortcut.
+
 ## Important Notes
 
 - No authentication/authorization - designed for private networks only
 - SQLite requires `--tags json1` build flag for JSON query support
 - Image processing uses bild and nfnt/resize libraries
 - File system abstraction via Afero supports multiple storage locations
+- Run `npm run build-js` after modifying files in `src/` to rebuild the bundle
