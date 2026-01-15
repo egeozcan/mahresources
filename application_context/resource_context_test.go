@@ -2,15 +2,17 @@ package application_context
 
 import (
 	"bytes"
-	"github.com/joho/godotenv"
+	"context"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/joho/godotenv"
 )
 
-var context *MahresourcesContext
+var appCtx *MahresourcesContext
 
 func init() {
 	curPath, err := os.Getwd()
@@ -51,7 +53,7 @@ func init() {
 		break
 	}
 
-	context, _, _ = CreateContext()
+	appCtx, _, _ = CreateContext()
 }
 
 func getMeTheFileOrPanic(path string) io.ReadSeeker {
@@ -67,7 +69,7 @@ func getMeTheFileOrPanic(path string) io.ReadSeeker {
 }
 
 func TestMahresourcesContext_createThumbFromVideo(t *testing.T) {
-	if err := context.createThumbFromVideo(getMeTheFileOrPanic("../test_data/pexels-thirdman-5862328.mp4"), bytes.NewBuffer(make([]byte, 0))); err != nil {
+	if err := appCtx.createThumbFromVideo(context.TODO(), getMeTheFileOrPanic("../test_data/pexels-thirdman-5862328.mp4"), bytes.NewBuffer(make([]byte, 0))); err != nil {
 		t.Errorf("createThumbFromVideo() error = %v", err)
 		return
 	}

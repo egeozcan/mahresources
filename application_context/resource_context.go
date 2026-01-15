@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/anthonynsimon/bild/imgio"
-	"github.com/anthonynsimon/bild/transform"
 	"image"
 	"image/jpeg"
 	"io"
@@ -26,6 +24,9 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/anthonynsimon/bild/imgio"
+	"github.com/anthonynsimon/bild/transform"
 
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/nfnt/resize"
@@ -382,14 +383,12 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 	_, err = io.Copy(h, tempFile)
 
 	_, err = tempFile.Seek(0, io.SeekStart)
-	if err != nil {
-		return nil, err
-	}
 
 	if err != nil {
 		tx.Rollback()
 		return nil, err
 	}
+
 	hash := hex.EncodeToString(h.Sum(nil))
 
 	var existingResource models.Resource
