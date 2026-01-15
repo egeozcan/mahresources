@@ -1,3 +1,5 @@
+import { updateClipboard } from '../index.js';
+
 class ExpandableText extends HTMLElement {
     constructor() {
         super();

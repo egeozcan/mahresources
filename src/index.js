@@ -1,10 +1,10 @@
-/***
+/**
  * abortableFetch - fetch with abortable promise
  * @param request
  * @param opts
  * @returns {{abort: (function(): void), ready: Promise<Response>}}
  */
-function abortableFetch(request, opts) {
+export function abortableFetch(request, opts) {
   const controller = new AbortController();
   const signal = controller.signal;
 
@@ -19,7 +19,7 @@ function abortableFetch(request, opts) {
  * @param x
  * @returns {boolean}
  */
-function isUndef(x) {
+export function isUndef(x) {
   return typeof x === "undefined";
 }
 
@@ -30,7 +30,7 @@ const numberCheck = /^\d+?(\.\d+?)?$/;
  * @param x
  * @returns {boolean}
  */
-function isNumeric(x) {
+export function isNumeric(x) {
   return numberCheck.test(x) && !isNaN(parseFloat(x));
 }
 
@@ -40,37 +40,18 @@ function isNumeric(x) {
  * @param keys
  * @returns {{[p: string]: unknown}}
  */
-function pick(obj, ...keys) {
+export function pick(obj, ...keys) {
   return Object.fromEntries(
     Object.entries(obj).filter((x) => keys.includes(x[0]))
   );
 }
-
-document.addEventListener("DOMContentLoaded", () => {
-  const filter = /#image\//;
-  const fullScreen = false;
-  const animation = false;
-
-  const options = { filter, fullScreen, animation }
-
-  baguetteBox.run(".list-container", options);
-  baguetteBox.run(".gallery", options);
-});
-
-window.addEventListener('paste', e => {
-  const fileInput = document.querySelector("input[type='file']");
-  if (!fileInput || !e.clipboardData.files || !e.clipboardData.files.length) {
-    return;
-  }
-  fileInput.files = e.clipboardData.files;
-});
 
 /**
  * setCheckBox - set checkbox value
  * @param {HTMLInputElement} checkBox
  * @param checked
  */
-function setCheckBox(checkBox, checked) {
+export function setCheckBox(checkBox, checked) {
   if (checked) {
     checkBox.setAttribute("checked", "checked");
   } else {
@@ -84,7 +65,7 @@ function setCheckBox(checkBox, checked) {
  * updateClipboard - update clipboard with text
  * @param newClip
  */
-function updateClipboard(newClip) {
+export function updateClipboard(newClip) {
   navigator.clipboard.writeText(newClip).catch(function () {
     const copyText = document.createElement("input");
     setTimeout(() => copyText.remove(), 100);
@@ -104,7 +85,7 @@ function updateClipboard(newClip) {
  * @param queryString
  * @returns {{}}
  */
-function parseQueryParams(queryString) {
+export function parseQueryParams(queryString) {
   const res = {};
   // match a colon that is not preceded or followed by another colon
   const params = (queryString.match(/(?<!:):\w+(?!:)/g) || []).map(x => x.substring(1));
@@ -116,14 +97,13 @@ function parseQueryParams(queryString) {
   return res;
 }
 
-
 /**
  * addMeta - add meta to a group
  * @param {number} id
  * @param {object} val
  * @returns {Promise<Response>}
  */
-function addMetaToGroup(id, val) {
+export function addMetaToGroup(id, val) {
   return fetch("/v1/groups/addMeta", {
     method: 'POST',
     body: JSON.stringify({ id: [id], Meta: JSON.stringify(val) }),
@@ -140,7 +120,7 @@ function addMetaToGroup(id, val) {
  * @param {object} val
  * @returns {Promise<Response>}
  */
-function addMetaToResource(id, val) {
+export function addMetaToResource(id, val) {
   return fetch("/v1/resources/addMeta", {
     method: 'POST',
     body: JSON.stringify({ id: [id], Meta: JSON.stringify(val) }),

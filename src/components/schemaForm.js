@@ -1,43 +1,41 @@
-document.addEventListener("alpine:init", () => {
-    window.Alpine.data("schemaForm", ({ schema, value, name }) => {
-        return {
-            schema: typeof schema === 'string' ? JSON.parse(schema || '{}') : schema,
-            value: typeof value === 'string' ? JSON.parse(value || '{}') : value,
-            name,
-            jsonText: '',
+export function schemaForm({ schema, value, name }) {
+    return {
+        schema: typeof schema === 'string' ? JSON.parse(schema || '{}') : schema,
+        value: typeof value === 'string' ? JSON.parse(value || '{}') : value,
+        name,
+        jsonText: '',
 
-            init() {
-                this.value = this.value || {};
-                this.updateJson();
-                this.renderForm();
-            },
+        init() {
+            this.value = this.value || {};
+            this.updateJson();
+            this.renderForm();
+        },
 
-            updateJson() {
-                this.jsonText = JSON.stringify(this.value);
-            },
+        updateJson() {
+            this.jsonText = JSON.stringify(this.value);
+        },
 
-            renderForm() {
+        renderForm() {
+            this.$refs.container.innerHTML = '';
+            if (!this.schema || Object.keys(this.schema).length === 0) return;
+
+            const renderRoot = () => {
                 this.$refs.container.innerHTML = '';
-                if (!this.schema || Object.keys(this.schema).length === 0) return;
+                const element = generateFormElement(this.schema, this.value, (newVal) => {
+                    const oldVal = this.value;
+                    this.value = newVal;
+                    this.updateJson();
+                    if ((oldVal === null && newVal !== null) || (oldVal !== null && newVal === null)) {
+                        renderRoot();
+                    }
+                }, this.schema);
+                this.$refs.container.appendChild(element);
+            };
 
-                const renderRoot = () => {
-                    this.$refs.container.innerHTML = '';
-                    const element = generateFormElement(this.schema, this.value, (newVal) => {
-                        const oldVal = this.value;
-                        this.value = newVal;
-                        this.updateJson();
-                        if ((oldVal === null && newVal !== null) || (oldVal !== null && newVal === null)) {
-                            renderRoot();
-                        }
-                    }, this.schema);
-                    this.$refs.container.appendChild(element);
-                };
-
-                renderRoot();
-            }
+            renderRoot();
         }
-    });
-});
+    }
+}
 
 function inferType(val) {
     if (Array.isArray(val)) return 'array';

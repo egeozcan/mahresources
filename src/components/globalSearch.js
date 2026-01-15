@@ -1,5 +1,7 @@
-document.addEventListener('alpine:init', () => {
-    window.Alpine.data('globalSearch', () => ({
+import { abortableFetch } from '../index.js';
+
+export function globalSearch() {
+    return {
         isOpen: false,
         query: '',
         results: [],
@@ -158,5 +160,5 @@ document.addEventListener('alpine:init', () => {
         escapeRegex(string) {
             return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         }
-    }));
-});
+    }
+}

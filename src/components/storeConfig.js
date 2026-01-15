@@ -1,5 +1,7 @@
-document.addEventListener('alpine:init', () => {
-    window.Alpine.store('savedSetting', {
+import { setCheckBox } from '../index.js';
+
+export function registerSavedSettingStore(Alpine) {
+    Alpine.store('savedSetting', {
         sessionSettings: JSON.parse(sessionStorage.getItem("settings") || '{}'),
         localSettings: JSON.parse(localStorage.getItem("settings") || '{}'),
         /** @param {HTMLInputElement} el
@@ -22,4 +24,4 @@ document.addEventListener('alpine:init', () => {
             });
         }
     });
-});
+}

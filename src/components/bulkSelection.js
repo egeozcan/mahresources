@@ -1,16 +1,18 @@
-document.addEventListener("alpine:init", () => {
-  const btnDefaultClass = "bg-gray-500";
-  const btnActiveClass = "bg-indigo-600";
-  const btnClasses = `inline-flex justify-center
-        py-2 px-4 mt-3
-        border border-transparent
-        items-center
-        shadow-sm text-sm font-medium rounded-md text-white 
-        ${btnDefaultClass} focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500`;
+import { setCheckBox } from '../index.js';
 
-  let currentIndex = 0;
+const btnDefaultClass = "bg-gray-500";
+const btnActiveClass = "bg-indigo-600";
+const btnClasses = `inline-flex justify-center
+      py-2 px-4 mt-3
+      border border-transparent
+      items-center
+      shadow-sm text-sm font-medium rounded-md text-white
+      ${btnDefaultClass} focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500`;
 
-  window.Alpine.store("bulkSelection", {
+let currentIndex = 0;
+
+export function registerBulkSelectionStore(Alpine) {
+  Alpine.store("bulkSelection", {
     selectedIds: new Set(),
     elements: [],
     editors: [],
@@ -166,51 +168,53 @@ document.addEventListener("alpine:init", () => {
       })
     },
   });
+}
 
-  window.Alpine.data("bulkSelectionForms", () => {
-    return {
-      init() {
-        this.$root.querySelectorAll("form").forEach(form => this.$store.bulkSelection.registerForm(form));
-      }
+export function bulkSelectionForms() {
+  return {
+    init() {
+      this.$root.querySelectorAll("form").forEach(form => this.$store.bulkSelection.registerForm(form));
     }
-  })
+  }
+}
 
-  window.Alpine.data("selectableItem", ({ itemNo, itemId } = {}) => {
-    return {
-      init() {
-        const el = this.$root.querySelector("input[type='checkbox']");
+export function selectableItem({ itemNo, itemId } = {}) {
+  return {
+    init() {
+      const el = this.$root.querySelector("input[type='checkbox']");
 
-        this.$store.bulkSelection.registerOption({
-          itemNo,
-          itemId,
-          el,
-        });
-      },
+      this.$store.bulkSelection.registerOption({
+        itemNo,
+        itemId,
+        el,
+      });
+    },
 
-      selected() {
-        return this.$store.bulkSelection.isSelected(itemId);
-      },
+    selected() {
+      return this.$store.bulkSelection.isSelected(itemId);
+    },
 
-      events: {
-        /**
-         * @param {MouseEvent} e
-         */
-        ["@click"](e) {
-          if (e.shiftKey) {
-            this.$store.bulkSelection.selectUntil(itemId);
-            return;
-          }
-
-          this.$store.bulkSelection.toggle(itemId);
-        },
-        ["@contextmenu"](e) {
-          e.preventDefault();
+    events: {
+      /**
+       * @param {MouseEvent} e
+       */
+      ["@click"](e) {
+        if (e.shiftKey) {
           this.$store.bulkSelection.selectUntil(itemId);
-        },
-      },
-    };
-  });
+          return;
+        }
 
+        this.$store.bulkSelection.toggle(itemId);
+      },
+      ["@contextmenu"](e) {
+        e.preventDefault();
+        this.$store.bulkSelection.selectUntil(itemId);
+      },
+    },
+  };
+}
+
+export function setupBulkSelectionListeners() {
   document.addEventListener("keypress", function (e) {
     if (e.key !== " ") {
       return;
@@ -296,4 +300,4 @@ document.addEventListener("alpine:init", () => {
       setTimeout(() => form.querySelector("[x-ref='autocompleter']")?.focus(), 10);
     })
   });
-});
+}

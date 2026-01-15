@@ -7,21 +7,8 @@
     <link rel="stylesheet" href="/public/index.css">
     <link rel="stylesheet" href="/public/tailwind.css">
     <link rel="stylesheet" href="/public/jsonTable.css">
-    <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/morph@3.13.0/dist/cdn.min.js" integrity="sha256-cZNlSCwrYgDRHHGVoiGiuvJq8Q8IYcQTRuCL5ROqKZQ=" crossorigin="anonymous"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.13.0/dist/cdn.min.js" integrity="sha256-K9XZcZtTfN2DuA4XH9cl2pzdr5lD1RD8tKwBQNs5pHo=" crossorigin="anonymous"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.0/dist/cdn.min.js" integrity="sha256-OacPpuWbZSdnghMTo3qHPBlyIrpjY5ftBk1MmjrFOe0=" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/baguettebox.js@1.11.1/dist/baguetteBox.min.js" integrity="sha256-ULQV01VS9LCI2ePpLsmka+W0mawFpEA0rtxnezUj4A4=" crossorigin="anonymous"></script>
-    <script src="/public/index.js"></script>
-    <script src="/public/component.dropdown.js"></script>
-    <script src="/public/component.confirmAction.js"></script>
-    <script src="/public/component.freeFields.js"></script>
-    <script src="/public/component.bulkSelection.js"></script>
-    <script src="/public/component.storeConfig.js"></script>
-    <script src="/public/component.globalSearch.js"></script>
-    <script src="/public/component.schemaForm.js"></script>
-    <script type="module" src="/public/webcomponent.expandabletext.js"></script>
-    <script type="module" src="/public/webcomponent.inlineedit.js"></script>
-    <script src="/public/tableMaker.js"></script>
+    <link rel="stylesheet" href="/public/dist/main.css">
+    <script type="module" src="/public/dist/main.js"></script>
     <link rel="apple-touch-icon" sizes="57x57" href="/public/favicon/apple-icon-57x57.png">
     <link rel="apple-touch-icon" sizes="60x60" href="/public/favicon/apple-icon-60x60.png">
     <link rel="apple-touch-icon" sizes="72x72" href="/public/favicon/apple-icon-72x72.png">
@@ -35,7 +22,6 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/public/favicon/favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="96x96" href="/public/favicon/favicon-96x96.png">
     <link rel="icon" type="image/png" sizes="16x16" href="/public/favicon/favicon-16x16.png">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/baguettebox.js@1.11.1/dist/baguetteBox.min.css" integrity="sha256-cLMYWYYutHkt+KpNqjg7NVkYSQ+E2VbrXsEvOqU7mL0=" crossorigin="anonymous">
     <meta name="msapplication-TileColor" content="#ffffff">
     <meta name="msapplication-TileImage" content="/public/favicon/ms-icon-144x144.png">
     <meta name="theme-color" content="#ffffff">

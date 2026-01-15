@@ -1,7 +1,9 @@
+import { updateClipboard } from './index.js';
+
 const plusEmoji = "➕";
 const minusEmoji = "➖";
 
-function renderJsonTable(data, path = ["$"]) {
+export function renderJsonTable(data, path = ["$"]) {
     if (Array.isArray(data)) {
         return generateArrayTable(data, path);
     }
