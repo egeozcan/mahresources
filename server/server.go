@@ -44,25 +44,49 @@ func createCachedStorage(path string) afero.Fs {
 // mimeTypeHandler wraps a handler to set correct Content-Type headers
 func mimeTypeHandler(next http.Handler) http.Handler {
 	mimeTypes := map[string]string{
-		".css":  "text/css; charset=utf-8",
-		".js":   "application/javascript; charset=utf-8",
-		".json": "application/json; charset=utf-8",
-		".svg":  "image/svg+xml",
-		".png":  "image/png",
-		".jpg":  "image/jpeg",
-		".jpeg": "image/jpeg",
-		".gif":  "image/gif",
-		".ico":  "image/x-icon",
-		".woff": "font/woff",
+		".css":   "text/css; charset=utf-8",
+		".js":    "application/javascript; charset=utf-8",
+		".mjs":   "application/javascript; charset=utf-8",
+		".json":  "application/json; charset=utf-8",
+		".svg":   "image/svg+xml",
+		".png":   "image/png",
+		".jpg":   "image/jpeg",
+		".jpeg":  "image/jpeg",
+		".gif":   "image/gif",
+		".ico":   "image/x-icon",
+		".woff":  "font/woff",
 		".woff2": "font/woff2",
-		".ttf":  "font/ttf",
+		".ttf":   "font/ttf",
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ext := strings.ToLower(filepath.Ext(r.URL.Path))
 		if mimeType, ok := mimeTypes[ext]; ok {
-			w.Header().Set("Content-Type", mimeType)
+			next.ServeHTTP(&mimeTypeResponseWriter{ResponseWriter: w, mimeType: mimeType}, r)
+		} else {
+			next.ServeHTTP(w, r)
 		}
-		next.ServeHTTP(w, r)
 	})
+}
+
+// mimeTypeResponseWriter wraps ResponseWriter to force a specific Content-Type
+type mimeTypeResponseWriter struct {
+	http.ResponseWriter
+	mimeType    string
+	wroteHeader bool
+}
+
+func (w *mimeTypeResponseWriter) WriteHeader(code int) {
+	if !w.wroteHeader {
+		w.ResponseWriter.Header().Set("Content-Type", w.mimeType)
+		w.wroteHeader = true
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *mimeTypeResponseWriter) Write(b []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(b)
 }
