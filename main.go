@@ -64,5 +64,10 @@ func main() {
 		}
 	}
 
+	// Initialize Full-Text Search
+	if err := context.InitFTS(); err != nil {
+		log.Printf("Warning: FTS setup failed, falling back to LIKE-based search: %v", err)
+	}
+
 	log.Fatal(server.CreateServer(context, mainFs, context.Config.AltFileSystems).ListenAndServe())
 }

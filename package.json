@@ -8,8 +8,8 @@
     "build-js": "vite build",
     "dev": "vite build --watch",
     "css-gen": "tailwindcss -i ./index.css -o ./public/tailwind.css --watch",
-    "watch": "CompileDaemon -exclude-dir=\".git\" -exclude-dir=\"node_modules\" -command=\"npm run build-css && npm run build-js && mahresources\" -build=\"go build --tags json1\"",
-    "build": "npm run build-css && npm run build-js && go build --tags json1",
+    "watch": "CompileDaemon -exclude-dir=\".git\" -exclude-dir=\"node_modules\" -command=\"npm run build-css && npm run build-js && mahresources\" -build=\"go build --tags 'json1 fts5'\"",
+    "build": "npm run build-css && npm run build-js && go build --tags 'json1 fts5'",
     "prepare": "husky"
   },
   "repository": {

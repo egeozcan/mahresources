@@ -26,8 +26,8 @@ go test ./...
 # Run specific test file
 go test ./server/api_tests/...
 
-# Build Go binary directly (requires json1 tag for SQLite JSON support)
-go build --tags json1
+# Build Go binary directly (requires json1 for SQLite JSON, fts5 for full-text search)
+go build --tags 'json1 fts5'
 
 # Run the server (default port 8181)
 ./mahresources

@@ -3,12 +3,19 @@ package application_context
 import (
 	"fmt"
 	"mahresources/constants"
+	"mahresources/fts"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"sort"
 	"strings"
 	"sync"
 )
+
+// ftsProvider is the active FTS provider (nil if FTS is not initialized)
+var ftsProvider fts.FTSProvider
+
+// ftsEnabled indicates whether FTS is available
+var ftsEnabled bool
 
 // Entity type constants
 const (
@@ -28,6 +35,24 @@ var allEntityTypes = []string{
 	EntityTypeRelationType, EntityTypeNoteType,
 }
 
+// InitFTS initializes the FTS provider based on the database type
+func (ctx *MahresourcesContext) InitFTS() error {
+	if ctx.Config.DbType == constants.DbTypePosgres {
+		ftsProvider = fts.NewPostgresFTS()
+	} else {
+		ftsProvider = fts.NewSQLiteFTS()
+	}
+
+	if err := ftsProvider.Setup(ctx.db); err != nil {
+		ftsProvider = nil
+		ftsEnabled = false
+		return err
+	}
+
+	ftsEnabled = true
+	return nil
+}
+
 // GlobalSearch performs a unified search across all entity types
 func (ctx *MahresourcesContext) GlobalSearch(query *query_models.GlobalSearchQuery) (*query_models.GlobalSearchResponse, error) {
 	if query.Limit <= 0 || query.Limit > 50 {
@@ -43,6 +68,8 @@ func (ctx *MahresourcesContext) GlobalSearch(query *query_models.GlobalSearchQue
 		}, nil
 	}
 
+	// Parse the search query to detect prefix/fuzzy modes
+	parsedQuery := fts.ParseSearchQuery(searchTerm)
 	typesToSearch := getTypesToSearch(query.Types)
 
 	var wg sync.WaitGroup
@@ -52,7 +79,13 @@ func (ctx *MahresourcesContext) GlobalSearch(query *query_models.GlobalSearchQue
 		wg.Add(1)
 		go func(et string) {
 			defer wg.Done()
-			results := ctx.searchEntityType(et, searchTerm, query.Limit)
+			var results []query_models.SearchResultItem
+			if ftsEnabled {
+				results = ctx.searchEntityTypeFTS(et, parsedQuery, query.Limit)
+			} else {
+				// Fallback to LIKE-based search if FTS is not available
+				results = ctx.searchEntityType(et, searchTerm, query.Limit)
+			}
 			resultsChan <- results
 		}(entityType)
 	}
@@ -362,6 +395,298 @@ func (ctx *MahresourcesContext) searchNoteTypes(searchTerm string, limit int) []
 			Name:        nt.Name,
 			Description: truncateDescription(nt.Description, 100),
 			Score:       calculateRelevanceScore(nt.Name, nt.Description, searchTerm),
+			URL:         fmt.Sprintf("/noteType?id=%d", nt.ID),
+		})
+	}
+	return results
+}
+
+// =============================================================================
+// FTS-based search functions
+// =============================================================================
+
+func (ctx *MahresourcesContext) searchEntityTypeFTS(entityType string, query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
+	switch entityType {
+	case EntityTypeResource:
+		return ctx.searchResourcesFTS(query, limit)
+	case EntityTypeNote:
+		return ctx.searchNotesFTS(query, limit)
+	case EntityTypeGroup:
+		return ctx.searchGroupsFTS(query, limit)
+	case EntityTypeTag:
+		return ctx.searchTagsFTS(query, limit)
+	case EntityTypeCategory:
+		return ctx.searchCategoriesFTS(query, limit)
+	case EntityTypeQuery:
+		return ctx.searchQueriesFTS(query, limit)
+	case EntityTypeRelationType:
+		return ctx.searchRelationTypesFTS(query, limit)
+	case EntityTypeNoteType:
+		return ctx.searchNoteTypesFTS(query, limit)
+	}
+	return nil
+}
+
+func (ctx *MahresourcesContext) searchResourcesFTS(query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
+	config := fts.GetEntityConfig(EntityTypeResource)
+	if config == nil {
+		return nil
+	}
+
+	var resources []models.Resource
+	db := ctx.db.Model(&models.Resource{}).
+		Scopes(ftsProvider.BuildSearchScope(config.TableName, config.Columns, query)).
+		Limit(limit)
+
+	db.Find(&resources)
+
+	results := make([]query_models.SearchResultItem, 0, len(resources))
+	for i, r := range resources {
+		extra := make(map[string]string)
+		if r.ContentType != "" {
+			extra["contentType"] = r.ContentType
+		}
+		// Use position-based scoring since results are ordered by relevance
+		score := 100 - i
+		if score < 1 {
+			score = 1
+		}
+		results = append(results, query_models.SearchResultItem{
+			ID:          r.ID,
+			Type:        EntityTypeResource,
+			Name:        r.Name,
+			Description: truncateDescription(r.Description, 100),
+			Score:       score,
+			URL:         fmt.Sprintf("/resource?id=%d", r.ID),
+			Extra:       extra,
+		})
+	}
+	return results
+}
+
+func (ctx *MahresourcesContext) searchNotesFTS(query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
+	config := fts.GetEntityConfig(EntityTypeNote)
+	if config == nil {
+		return nil
+	}
+
+	var notes []models.Note
+	db := ctx.db.Model(&models.Note{}).
+		Preload("NoteType").
+		Scopes(ftsProvider.BuildSearchScope(config.TableName, config.Columns, query)).
+		Limit(limit)
+
+	db.Find(&notes)
+
+	results := make([]query_models.SearchResultItem, 0, len(notes))
+	for i, n := range notes {
+		extra := make(map[string]string)
+		if n.NoteType != nil {
+			extra["noteType"] = n.NoteType.Name
+		}
+		score := 100 - i
+		if score < 1 {
+			score = 1
+		}
+		results = append(results, query_models.SearchResultItem{
+			ID:          n.ID,
+			Type:        EntityTypeNote,
+			Name:        n.Name,
+			Description: truncateDescription(n.Description, 100),
+			Score:       score,
+			URL:         fmt.Sprintf("/note?id=%d", n.ID),
+			Extra:       extra,
+		})
+	}
+	return results
+}
+
+func (ctx *MahresourcesContext) searchGroupsFTS(query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
+	config := fts.GetEntityConfig(EntityTypeGroup)
+	if config == nil {
+		return nil
+	}
+
+	var groups []models.Group
+	db := ctx.db.Model(&models.Group{}).
+		Preload("Category").
+		Scopes(ftsProvider.BuildSearchScope(config.TableName, config.Columns, query)).
+		Limit(limit)
+
+	db.Find(&groups)
+
+	results := make([]query_models.SearchResultItem, 0, len(groups))
+	for i, g := range groups {
+		extra := make(map[string]string)
+		if g.Category != nil {
+			extra["category"] = g.Category.Name
+		}
+		score := 100 - i
+		if score < 1 {
+			score = 1
+		}
+		results = append(results, query_models.SearchResultItem{
+			ID:          g.ID,
+			Type:        EntityTypeGroup,
+			Name:        g.Name,
+			Description: truncateDescription(g.Description, 100),
+			Score:       score,
+			URL:         fmt.Sprintf("/group?id=%d", g.ID),
+			Extra:       extra,
+		})
+	}
+	return results
+}
+
+func (ctx *MahresourcesContext) searchTagsFTS(query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
+	config := fts.GetEntityConfig(EntityTypeTag)
+	if config == nil {
+		return nil
+	}
+
+	var tags []models.Tag
+	db := ctx.db.Model(&models.Tag{}).
+		Scopes(ftsProvider.BuildSearchScope(config.TableName, config.Columns, query)).
+		Limit(limit)
+
+	db.Find(&tags)
+
+	results := make([]query_models.SearchResultItem, 0, len(tags))
+	for i, t := range tags {
+		score := 100 - i
+		if score < 1 {
+			score = 1
+		}
+		results = append(results, query_models.SearchResultItem{
+			ID:          t.ID,
+			Type:        EntityTypeTag,
+			Name:        t.Name,
+			Description: truncateDescription(t.Description, 100),
+			Score:       score,
+			URL:         fmt.Sprintf("/tag?id=%d", t.ID),
+		})
+	}
+	return results
+}
+
+func (ctx *MahresourcesContext) searchCategoriesFTS(query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
+	config := fts.GetEntityConfig(EntityTypeCategory)
+	if config == nil {
+		return nil
+	}
+
+	var categories []models.Category
+	db := ctx.db.Model(&models.Category{}).
+		Scopes(ftsProvider.BuildSearchScope(config.TableName, config.Columns, query)).
+		Limit(limit)
+
+	db.Find(&categories)
+
+	results := make([]query_models.SearchResultItem, 0, len(categories))
+	for i, c := range categories {
+		score := 100 - i
+		if score < 1 {
+			score = 1
+		}
+		results = append(results, query_models.SearchResultItem{
+			ID:          c.ID,
+			Type:        EntityTypeCategory,
+			Name:        c.Name,
+			Description: truncateDescription(c.Description, 100),
+			Score:       score,
+			URL:         fmt.Sprintf("/category?id=%d", c.ID),
+		})
+	}
+	return results
+}
+
+func (ctx *MahresourcesContext) searchQueriesFTS(query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
+	config := fts.GetEntityConfig(EntityTypeQuery)
+	if config == nil {
+		return nil
+	}
+
+	var queries []models.Query
+	db := ctx.db.Model(&models.Query{}).
+		Scopes(ftsProvider.BuildSearchScope(config.TableName, config.Columns, query)).
+		Limit(limit)
+
+	db.Find(&queries)
+
+	results := make([]query_models.SearchResultItem, 0, len(queries))
+	for i, q := range queries {
+		score := 100 - i
+		if score < 1 {
+			score = 1
+		}
+		results = append(results, query_models.SearchResultItem{
+			ID:          q.ID,
+			Type:        EntityTypeQuery,
+			Name:        q.Name,
+			Description: truncateDescription(q.Description, 100),
+			Score:       score,
+			URL:         fmt.Sprintf("/query?id=%d", q.ID),
+		})
+	}
+	return results
+}
+
+func (ctx *MahresourcesContext) searchRelationTypesFTS(query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
+	config := fts.GetEntityConfig(EntityTypeRelationType)
+	if config == nil {
+		return nil
+	}
+
+	var relationTypes []models.GroupRelationType
+	db := ctx.db.Model(&models.GroupRelationType{}).
+		Scopes(ftsProvider.BuildSearchScope(config.TableName, config.Columns, query)).
+		Limit(limit)
+
+	db.Find(&relationTypes)
+
+	results := make([]query_models.SearchResultItem, 0, len(relationTypes))
+	for i, rt := range relationTypes {
+		score := 100 - i
+		if score < 1 {
+			score = 1
+		}
+		results = append(results, query_models.SearchResultItem{
+			ID:          rt.ID,
+			Type:        EntityTypeRelationType,
+			Name:        rt.Name,
+			Description: truncateDescription(rt.Description, 100),
+			Score:       score,
+			URL:         fmt.Sprintf("/relationType?id=%d", rt.ID),
+		})
+	}
+	return results
+}
+
+func (ctx *MahresourcesContext) searchNoteTypesFTS(query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
+	config := fts.GetEntityConfig(EntityTypeNoteType)
+	if config == nil {
+		return nil
+	}
+
+	var noteTypes []models.NoteType
+	db := ctx.db.Model(&models.NoteType{}).
+		Scopes(ftsProvider.BuildSearchScope(config.TableName, config.Columns, query)).
+		Limit(limit)
+
+	db.Find(&noteTypes)
+
+	results := make([]query_models.SearchResultItem, 0, len(noteTypes))
+	for i, nt := range noteTypes {
+		score := 100 - i
+		if score < 1 {
+			score = 1
+		}
+		results = append(results, query_models.SearchResultItem{
+			ID:          nt.ID,
+			Type:        EntityTypeNoteType,
+			Name:        nt.Name,
+			Description: truncateDescription(nt.Description, 100),
+			Score:       score,
 			URL:         fmt.Sprintf("/noteType?id=%d", nt.ID),
 		})
 	}
