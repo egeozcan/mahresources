@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+
 	"github.com/joho/godotenv"
 	"log"
 	"mahresources/application_context"
@@ -64,9 +66,13 @@ func main() {
 		}
 	}
 
-	// Initialize Full-Text Search
-	if err := context.InitFTS(); err != nil {
-		log.Printf("Warning: FTS setup failed, falling back to LIKE-based search: %v", err)
+	// Initialize Full-Text Search (skip with SKIP_FTS=1 env var)
+	if os.Getenv("SKIP_FTS") != "1" {
+		if err := context.InitFTS(); err != nil {
+			log.Printf("Warning: FTS setup failed, falling back to LIKE-based search: %v", err)
+		}
+	} else {
+		log.Println("FTS setup skipped (SKIP_FTS=1)")
 	}
 
 	log.Fatal(server.CreateServer(context, mainFs, context.Config.AltFileSystems).ListenAndServe())
