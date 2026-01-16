@@ -25,7 +25,7 @@
                 @click="close()"
             ></div>
 
-            <div class="relative min-h-screen flex items-start justify-center pt-[12vh] px-4">
+            <div class="relative min-h-screen flex items-start justify-center pt-[12vh] px-4" @click="close()">
                 <div
                     class="relative bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden ring-1 ring-black/5"
                     @click.stop
