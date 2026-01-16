@@ -9,6 +9,8 @@ export function globalSearch() {
         loading: false,
         requestAborter: null,
         debounceTimer: null,
+        liveRegion: null,
+        announceTimeout: null,
 
         typeIcons: {
             resource: '\u{1F4C4}',
@@ -33,6 +35,24 @@ export function globalSearch() {
         },
 
         init() {
+            // Create ARIA live region for screen reader announcements
+            this.liveRegion = document.createElement('div');
+            this.liveRegion.setAttribute('role', 'status');
+            this.liveRegion.setAttribute('aria-live', 'polite');
+            this.liveRegion.setAttribute('aria-atomic', 'true');
+            Object.assign(this.liveRegion.style, {
+                position: 'absolute',
+                width: '1px',
+                height: '1px',
+                padding: '0',
+                margin: '-1px',
+                overflow: 'hidden',
+                clip: 'rect(0, 0, 0, 0)',
+                whiteSpace: 'nowrap',
+                border: '0'
+            });
+            document.body.appendChild(this.liveRegion);
+
             document.addEventListener('keydown', (e) => {
                 if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
                     e.preventDefault();
@@ -45,8 +65,33 @@ export function globalSearch() {
                     this.$nextTick(() => {
                         this.$refs.searchInput?.focus();
                     });
+                    this.announce('Search dialog opened. Type to search resources, notes, groups, and tags.');
                 }
             });
+        },
+
+        announce(message) {
+            if (this.liveRegion) {
+                // Cancel any pending announcement to avoid race conditions
+                if (this.announceTimeout) {
+                    clearTimeout(this.announceTimeout);
+                }
+                this.liveRegion.textContent = '';
+                // Small delay to ensure screen readers pick up the change
+                this.announceTimeout = setTimeout(() => {
+                    this.liveRegion.textContent = message;
+                }, 50);
+            }
+        },
+
+        destroy() {
+            // Clean up live region when component is destroyed
+            if (this.liveRegion && this.liveRegion.parentNode) {
+                this.liveRegion.parentNode.removeChild(this.liveRegion);
+            }
+            if (this.announceTimeout) {
+                clearTimeout(this.announceTimeout);
+            }
         },
 
         toggle() {
@@ -94,6 +139,12 @@ export function globalSearch() {
                         if (this.query.trim() === searchTerm) {
                             this.results = data.results || [];
                             this.selectedIndex = 0;
+                            // Announce results for screen readers
+                            if (this.results.length > 0) {
+                                this.announce(`${this.results.length} result${this.results.length === 1 ? '' : 's'} found. Use arrow keys to navigate.`);
+                            } else {
+                                this.announce('No results found.');
+                            }
                         }
                     })
                     .catch(err => {
@@ -113,12 +164,22 @@ export function globalSearch() {
                 ? this.results.length - 1
                 : this.selectedIndex - 1;
             this.scrollToSelected();
+            this.announceSelectedResult();
         },
 
         navigateDown() {
             if (this.results.length === 0) return;
             this.selectedIndex = (this.selectedIndex + 1) % this.results.length;
             this.scrollToSelected();
+            this.announceSelectedResult();
+        },
+
+        announceSelectedResult() {
+            const result = this.results[this.selectedIndex];
+            if (result) {
+                const typeLabel = this.getLabel(result.type);
+                this.announce(`${result.name}, ${typeLabel}, ${this.selectedIndex + 1} of ${this.results.length}`);
+            }
         },
 
         scrollToSelected() {

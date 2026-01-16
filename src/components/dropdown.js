@@ -52,7 +52,7 @@ export function autocompleter({
             this.$el.appendChild(liveRegion);
             this.liveRegion = liveRegion;
 
-            this.$watch('selectedResults', values => {
+            this.$watch('selectedResults', (values, oldValues) => {
                 this.selectedIds.clear();
                 values.forEach(val => {
                     this.selectedIds.add(val.ID);
@@ -60,9 +60,9 @@ export function autocompleter({
                 this.$dispatch('multiple-input', { value: selectedResults, name: elName });
 
                 // Announce selection changes
-                if(values.length > this.selectedResults.length) {
+                if (values.length > oldValues.length) {
                     this.liveRegion.textContent = `Added ${values[values.length-1].Name}`;
-                } else {
+                } else if (values.length < oldValues.length) {
                     this.liveRegion.textContent = `Removed item, ${values.length} items remaining`;
                 }
             });
@@ -170,6 +170,14 @@ export function autocompleter({
             return `${item.Name} (${item[this.extraInfo].Name})`
         },
 
+        // Announce selected item for screen readers
+        announceSelectedItem() {
+            if (this.liveRegion && this.results[this.selectedIndex]) {
+                const name = this.getItemDisplayName(this.results[this.selectedIndex]);
+                this.liveRegion.textContent = `${name}, ${this.selectedIndex + 1} of ${this.results.length}`;
+            }
+        },
+
         // scrolls the container to the selected item
         async showSelected() {
             await this.$nextTick();
@@ -180,7 +188,7 @@ export function autocompleter({
                 return;
             }
 
-            const selected = list.querySelector('.bg-blue-500');
+            const selected = list.querySelector('[aria-selected="true"]');
 
             if (!selected) {
                 return;
@@ -205,14 +213,16 @@ export function autocompleter({
             },
 
             ['@keydown.arrow-up.prevent']() {
+                if (this.results.length === 0) return;
                 this.selectedIndex = this.selectedIndex === 0 ? this.results.length - 1 : this.selectedIndex - 1;
-
+                this.announceSelectedItem();
                 this.showSelected();
             },
 
             ['@keydown.arrow-down.prevent']() {
+                if (this.results.length === 0) return;
                 this.selectedIndex = (this.selectedIndex + 1) % this.results.length;
-
+                this.announceSelectedItem();
                 this.showSelected();
             },
 
@@ -272,6 +282,12 @@ export function autocompleter({
                     if (this.results.length && document.activeElement === target) {
                         this.dropdownActive = true;
                         this.selectedIndex = 0;
+                        // Announce results for screen readers
+                        if (this.liveRegion) {
+                            this.liveRegion.textContent = `${this.results.length} result${this.results.length === 1 ? '' : 's'} available. Use arrow keys to navigate.`;
+                        }
+                    } else if (this.results.length === 0 && this.liveRegion) {
+                        this.liveRegion.textContent = 'No results found.';
                     }
                 }).catch(err => {
                     this.errorMessage = err.toString();

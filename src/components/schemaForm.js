@@ -105,6 +105,11 @@ function scoreSchemaMatch(schema, data, rootSchema) {
     return 10;
 }
 
+let uniqueIdCounter = 0;
+function generateUniqueId(prefix = 'schema-field') {
+    return `${prefix}-${++uniqueIdCounter}`;
+}
+
 function generateFormElement(schema, data, onChange, rootSchema) {
     rootSchema = rootSchema || schema;
 
@@ -334,15 +339,18 @@ function generateFormElement(schema, data, onChange, rootSchema) {
             for (const key in schema.properties) {
                 const propSchema = schema.properties[key];
                 const wrapper = document.createElement('div');
+                const fieldId = generateUniqueId(`field-${key}`);
 
                 const label = document.createElement('label');
                 label.className = "block text-sm font-medium text-gray-700";
                 label.innerText = propSchema.title || key;
+                label.setAttribute('for', fieldId);
                 wrapper.appendChild(label);
 
                 if (propSchema.description && propSchema.type !== 'object') {
                     const desc = document.createElement('p');
                     desc.className = "text-xs text-gray-500";
+                    desc.id = `${fieldId}-desc`;
                     desc.innerText = propSchema.description;
                     wrapper.appendChild(desc);
                 }
@@ -362,6 +370,15 @@ function generateFormElement(schema, data, onChange, rootSchema) {
                             renderProp();
                         }
                     }, rootSchema);
+
+                    // Set ID and aria-describedby on the generated input
+                    if (inputEl.tagName && ['INPUT', 'SELECT', 'TEXTAREA'].includes(inputEl.tagName)) {
+                        inputEl.id = fieldId;
+                        if (propSchema.description) {
+                            inputEl.setAttribute('aria-describedby', `${fieldId}-desc`);
+                        }
+                    }
+
                     inputContainer.appendChild(inputEl);
                 };
 
@@ -399,6 +416,7 @@ function generateFormElement(schema, data, onChange, rootSchema) {
                     keyInput.value = key;
                     keyInput.className = "shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md";
                     keyInput.placeholder = "Key";
+                    keyInput.setAttribute('aria-label', 'Property name');
                     keyInput.onchange = (e) => {
                         const newKey = e.target.value;
                         if (newKey && newKey !== key) {
@@ -432,6 +450,7 @@ function generateFormElement(schema, data, onChange, rootSchema) {
                         const inputEl = document.createElement('input');
                         inputEl.type = "text";
                         inputEl.className = "shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md";
+                        inputEl.setAttribute('aria-label', `Value for ${key}`);
 
                         let displayVal = propData;
                         if (typeof propData === 'string') {
@@ -464,6 +483,7 @@ function generateFormElement(schema, data, onChange, rootSchema) {
                     removeBtn.innerText = "×";
                     removeBtn.className = "text-red-600 font-bold px-2 py-1 border rounded hover:bg-red-50 self-start mt-0.5";
                     removeBtn.title = "Remove field";
+                    removeBtn.setAttribute('aria-label', `Remove field ${key}`);
                     removeBtn.onclick = () => {
                         delete data[key];
                         onChange(data);
@@ -479,6 +499,7 @@ function generateFormElement(schema, data, onChange, rootSchema) {
                 const addBtn = document.createElement('button');
                 addBtn.type = "button";
                 addBtn.innerText = "Add Field";
+                addBtn.setAttribute('aria-label', 'Add new custom field');
                 addBtn.className = "mt-2 inline-flex items-center px-2.5 py-1.5 border border-gray-300 shadow-sm text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500";
                 addBtn.onclick = () => {
                     let newKey = "newField";
@@ -548,6 +569,7 @@ function generateFormElement(schema, data, onChange, rootSchema) {
                 removeBtn.innerText = "×";
                 removeBtn.className = "text-red-600 font-bold px-2 py-1 border rounded hover:bg-red-50";
                 removeBtn.title = "Remove item";
+                removeBtn.setAttribute('aria-label', `Remove item ${index + 1}`);
                 removeBtn.onclick = () => {
                     data.splice(index, 1);
                     onChange(data);
@@ -565,6 +587,7 @@ function generateFormElement(schema, data, onChange, rootSchema) {
         const addBtn = document.createElement('button');
         addBtn.type = "button";
         addBtn.innerText = "Add Item";
+        addBtn.setAttribute('aria-label', `Add item to ${schema.title || 'list'}`);
         addBtn.className = "mt-2 inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-indigo-700 bg-indigo-100 hover:bg-indigo-200";
         addBtn.onclick = () => {
             data.push(getDefaultValue(schema.items || {type:'string'}, rootSchema));

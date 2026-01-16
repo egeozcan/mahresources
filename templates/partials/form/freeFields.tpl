@@ -9,8 +9,10 @@
             title: '{{ fieldsTitle }}' || 'Meta',
             fromJSON: {{ fromJSON|json }} || '',
         })"
+        role="group"
+        :aria-label="title"
 >
-    <p x-text="title" class="block text-sm font-medium text-gray-700 mt-3"></p>
+    <p x-text="title" id="{{ id }}-title" class="block text-sm font-medium text-gray-700 mt-3"></p>
     <template x-if="jsonOutput">
         <input type="hidden" :name="name" :value="jsonText">
     </template>
@@ -22,7 +24,7 @@
         </datalist>
     </template>
     <template x-for="(field, index) in fields" :key="index">
-        <div class="w-full">
+        <div class="w-full" role="group" :aria-label="'Field ' + (index + 1)">
             <template x-if="field.name && field.value && !jsonOutput">
                 <input type="hidden" :name="name + '.' + index" :value="generateParamNameForMeta(field)">
             </template>
@@ -31,26 +33,32 @@
                     x-model="field.name"
                     list="listData_{{ id }}"
                     type="text"
+                    :aria-label="'Field ' + (index + 1) + ' name'"
+                    :id="'{{ id }}-field-' + index + '-name'"
                     class="flex-shrink w-full shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm border-gray-300 rounded-md mt-2"
                 >
                 <template x-if="!jsonOutput">
                     <select
                             x-model="field.operation"
+                            :aria-label="'Field ' + (index + 1) + ' comparison operator'"
+                            :id="'{{ id }}-field-' + index + '-op'"
                             class="flex-shrink w-full shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm border-gray-300 rounded-md mt-2"
                     >
-                        <option value="EQ">=</option>
-                        <option value="LI">LIKE</option>
-                        <option value="NE">&lt;&gt;</option>
-                        <option value="NL">NOT LIKE</option>
-                        <option value="GT">&gt;</option>
-                        <option value="GE">&gt;=</option>
-                        <option value="LT">&lt;</option>
-                        <option value="LE">&lt;=</option>
+                        <option value="EQ" aria-label="equals">=</option>
+                        <option value="LI" aria-label="like, contains">LIKE</option>
+                        <option value="NE" aria-label="not equals">&lt;&gt;</option>
+                        <option value="NL" aria-label="not like, does not contain">NOT LIKE</option>
+                        <option value="GT" aria-label="greater than">&gt;</option>
+                        <option value="GE" aria-label="greater than or equal">&gt;=</option>
+                        <option value="LT" aria-label="less than">&lt;</option>
+                        <option value="LE" aria-label="less than or equal">&lt;=</option>
                     </select>
                 </template>
                 <input
                     type="text"
                     x-model="field.value"
+                    :aria-label="'Field ' + (index + 1) + ' value'"
+                    :id="'{{ id }}-field-' + index + '-value'"
                     class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block sm:text-sm border-gray-300 rounded-md mt-2"
                     :class="jsonOutput && 'w-full'"
                 >
@@ -60,6 +68,7 @@
     <button
         type="button"
         @click.prevent="fields.push({name:'',operation:'', value:''})"
+        aria-label="Add new field"
         class="
             mt-2 inline-flex items-center
             px-2 py-1
