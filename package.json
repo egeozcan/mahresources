@@ -9,7 +9,8 @@
     "dev": "vite build --watch",
     "css-gen": "tailwindcss -i ./index.css -o ./public/tailwind.css --watch",
     "watch": "CompileDaemon -exclude-dir=\".git\" -exclude-dir=\"node_modules\" -command=\"npm run build-css && npm run build-js && mahresources\" -build=\"go build --tags json1\"",
-    "build": "npm run build-css && npm run build-js && go build --tags json1"
+    "build": "npm run build-css && npm run build-js && go build --tags json1",
+    "prepare": "husky"
   },
   "repository": {
     "type": "git",
@@ -27,6 +28,7 @@
     "@tailwindcss/postcss": "^4.1.18",
     "@tailwindcss/typography": "^0.5.19",
     "autoprefixer": "^10.4.17",
+    "husky": "^9.1.7",
     "postcss": "^8.4.35",
     "postcss-cli": "^11.0.0",
     "tailwindcss": "^4.1.18",

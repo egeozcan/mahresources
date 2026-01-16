@@ -1,0 +1,15 @@
+# Auto-build frontend assets before commit
+
+# Check if any frontend source files are staged
+if git diff --cached --name-only | grep -qE '\.(js|css|tpl)$|src/|vite\.config'; then
+    echo "Frontend files changed, rebuilding assets..."
+    npm run build-css && npm run build-js
+
+    if [ $? -ne 0 ]; then
+        echo "Build failed, aborting commit"
+        exit 1
+    fi
+
+    # Stage the rebuilt files
+    git add public/dist/main.js public/dist/main.css public/tailwind.css
+fi
