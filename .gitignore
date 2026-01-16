@@ -1,4 +1,5 @@
 /.env
+/.test.env
 /mahresources
 /*.exe
 /test2.db
