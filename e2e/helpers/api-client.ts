@@ -1,0 +1,379 @@
+import { APIRequestContext, APIResponse } from '@playwright/test';
+
+export interface Entity {
+  ID: number;
+  Name: string;
+  Description?: string;
+}
+
+export type Tag = Entity;
+
+export interface Category extends Entity {
+  CustomHeader?: string;
+  CustomSidebar?: string;
+  CustomSummary?: string;
+  CustomAvatar?: string;
+  MetaSchema?: string;
+}
+
+export interface NoteType extends Entity {
+  CustomHeader?: string;
+  CustomSidebar?: string;
+  CustomSummary?: string;
+  CustomAvatar?: string;
+}
+
+export interface Group extends Entity {
+  URL?: string;
+  CategoryId?: number;
+  OwnerId?: number;
+}
+
+export interface Note extends Entity {
+  StartDate?: string;
+  EndDate?: string;
+  OwnerId?: number;
+  NoteTypeId?: number;
+}
+
+export interface Query extends Entity {
+  Text: string;
+  Template?: string;
+}
+
+export interface RelationType extends Entity {
+  FromCategoryId?: number;
+  ToCategoryId?: number;
+}
+
+export interface Relation extends Entity {
+  FromGroupId: number;
+  ToGroupId: number;
+  RelationTypeId: number;
+}
+
+export interface SearchResult {
+  ID: number;
+  Name: string;
+  Type: string;
+  Description?: string;
+  URL?: string;
+}
+
+export class ApiClient {
+  constructor(
+    private request: APIRequestContext,
+    private baseUrl: string
+  ) {}
+
+  private async handleResponse<T>(response: APIResponse): Promise<T> {
+    if (!response.ok()) {
+      const text = await response.text();
+      throw new Error(`API error ${response.status()}: ${text}`);
+    }
+    return response.json();
+  }
+
+  private async handleVoidResponse(response: APIResponse): Promise<void> {
+    if (!response.ok()) {
+      const text = await response.text();
+      throw new Error(`API error ${response.status()}: ${text}`);
+    }
+  }
+
+  // Tag operations
+  async createTag(name: string, description?: string): Promise<Tag> {
+    const formData = new URLSearchParams();
+    formData.append('name', name);
+    if (description) formData.append('Description', description);
+
+    const response = await this.request.post(`${this.baseUrl}/v1/tag`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+    return this.handleResponse<Tag>(response);
+  }
+
+  async deleteTag(id: number): Promise<void> {
+    const response = await this.request.post(`${this.baseUrl}/v1/tag/delete?Id=${id}`);
+    await this.handleVoidResponse(response);
+  }
+
+  async getTags(): Promise<Tag[]> {
+    const response = await this.request.get(`${this.baseUrl}/v1/tags`);
+    return this.handleResponse<Tag[]>(response);
+  }
+
+  // Category operations
+  async createCategory(
+    name: string,
+    description?: string,
+    options?: Partial<Category>
+  ): Promise<Category> {
+    const formData = new URLSearchParams();
+    formData.append('name', name);
+    if (description) formData.append('Description', description);
+    if (options?.CustomHeader) formData.append('CustomHeader', options.CustomHeader);
+    if (options?.CustomSidebar) formData.append('CustomSidebar', options.CustomSidebar);
+    if (options?.CustomSummary) formData.append('CustomSummary', options.CustomSummary);
+    if (options?.CustomAvatar) formData.append('CustomAvatar', options.CustomAvatar);
+    if (options?.MetaSchema) formData.append('MetaSchema', options.MetaSchema);
+
+    const response = await this.request.post(`${this.baseUrl}/v1/category`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+    return this.handleResponse<Category>(response);
+  }
+
+  async deleteCategory(id: number): Promise<void> {
+    const response = await this.request.post(`${this.baseUrl}/v1/category/delete?Id=${id}`);
+    await this.handleVoidResponse(response);
+  }
+
+  async getCategories(): Promise<Category[]> {
+    const response = await this.request.get(`${this.baseUrl}/v1/categories`);
+    return this.handleResponse<Category[]>(response);
+  }
+
+  // NoteType operations
+  async createNoteType(name: string, description?: string): Promise<NoteType> {
+    const formData = new URLSearchParams();
+    formData.append('name', name);
+    if (description) formData.append('Description', description);
+
+    const response = await this.request.post(`${this.baseUrl}/v1/note/noteType`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+    return this.handleResponse<NoteType>(response);
+  }
+
+  async deleteNoteType(id: number): Promise<void> {
+    const response = await this.request.post(`${this.baseUrl}/v1/note/noteType/delete?Id=${id}`);
+    await this.handleVoidResponse(response);
+  }
+
+  async getNoteTypes(): Promise<NoteType[]> {
+    const response = await this.request.get(`${this.baseUrl}/v1/note/noteTypes`);
+    return this.handleResponse<NoteType[]>(response);
+  }
+
+  // Group operations
+  async createGroup(data: {
+    name: string;
+    description?: string;
+    categoryId: number;
+    ownerId?: number;
+    tags?: number[];
+    groups?: number[];
+    url?: string;
+  }): Promise<Group> {
+    const formData = new URLSearchParams();
+    formData.append('name', data.name);
+    if (data.description) formData.append('Description', data.description);
+    formData.append('categoryId', data.categoryId.toString());
+    if (data.ownerId) formData.append('ownerId', data.ownerId.toString());
+    if (data.url) formData.append('URL', data.url);
+    if (data.tags) {
+      data.tags.forEach(tagId => formData.append('tags', tagId.toString()));
+    }
+    if (data.groups) {
+      data.groups.forEach(groupId => formData.append('groups', groupId.toString()));
+    }
+
+    const response = await this.request.post(`${this.baseUrl}/v1/group`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+    return this.handleResponse<Group>(response);
+  }
+
+  async deleteGroup(id: number): Promise<void> {
+    const response = await this.request.post(`${this.baseUrl}/v1/group/delete?Id=${id}`);
+    await this.handleVoidResponse(response);
+  }
+
+  async getGroups(): Promise<Group[]> {
+    const response = await this.request.get(`${this.baseUrl}/v1/groups`);
+    return this.handleResponse<Group[]>(response);
+  }
+
+  async getGroup(id: number): Promise<Group> {
+    const response = await this.request.get(`${this.baseUrl}/v1/group?id=${id}`);
+    return this.handleResponse<Group>(response);
+  }
+
+  // Note operations
+  async createNote(data: {
+    name: string;
+    description?: string;
+    ownerId?: number;
+    noteTypeId?: number;
+    tags?: number[];
+    groups?: number[];
+    startDate?: string;
+    endDate?: string;
+  }): Promise<Note> {
+    const formData = new URLSearchParams();
+    formData.append('Name', data.name);
+    if (data.description) formData.append('Description', data.description);
+    if (data.ownerId) formData.append('ownerId', data.ownerId.toString());
+    if (data.noteTypeId) formData.append('NoteTypeId', data.noteTypeId.toString());
+    if (data.startDate) formData.append('startDate', data.startDate);
+    if (data.endDate) formData.append('endDate', data.endDate);
+    if (data.tags) {
+      data.tags.forEach(tagId => formData.append('tags', tagId.toString()));
+    }
+    if (data.groups) {
+      data.groups.forEach(groupId => formData.append('groups', groupId.toString()));
+    }
+
+    const response = await this.request.post(`${this.baseUrl}/v1/note`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+    return this.handleResponse<Note>(response);
+  }
+
+  async deleteNote(id: number): Promise<void> {
+    const response = await this.request.post(`${this.baseUrl}/v1/note/delete?Id=${id}`);
+    await this.handleVoidResponse(response);
+  }
+
+  async getNotes(): Promise<Note[]> {
+    const response = await this.request.get(`${this.baseUrl}/v1/notes`);
+    return this.handleResponse<Note[]>(response);
+  }
+
+  // Query operations
+  async createQuery(data: {
+    name: string;
+    text: string;
+    description?: string;
+    template?: string;
+  }): Promise<Query> {
+    const formData = new URLSearchParams();
+    formData.append('name', data.name);
+    formData.append('Text', data.text);
+    if (data.description) formData.append('Description', data.description);
+    if (data.template) formData.append('Template', data.template);
+
+    const response = await this.request.post(`${this.baseUrl}/v1/query`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+    return this.handleResponse<Query>(response);
+  }
+
+  async deleteQuery(id: number): Promise<void> {
+    const response = await this.request.post(`${this.baseUrl}/v1/query/delete?Id=${id}`);
+    await this.handleVoidResponse(response);
+  }
+
+  async getQueries(): Promise<Query[]> {
+    const response = await this.request.get(`${this.baseUrl}/v1/queries`);
+    return this.handleResponse<Query[]>(response);
+  }
+
+  // RelationType operations
+  async createRelationType(data: {
+    name: string;
+    description?: string;
+    fromCategoryId?: number;
+    toCategoryId?: number;
+  }): Promise<RelationType> {
+    const formData = new URLSearchParams();
+    formData.append('name', data.name);
+    if (data.description) formData.append('Description', data.description);
+    if (data.fromCategoryId) formData.append('fromCategoryId', data.fromCategoryId.toString());
+    if (data.toCategoryId) formData.append('toCategoryId', data.toCategoryId.toString());
+
+    const response = await this.request.post(`${this.baseUrl}/v1/relationType`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+    return this.handleResponse<RelationType>(response);
+  }
+
+  async deleteRelationType(id: number): Promise<void> {
+    const response = await this.request.post(`${this.baseUrl}/v1/relationType/delete?Id=${id}`);
+    await this.handleVoidResponse(response);
+  }
+
+  async getRelationTypes(): Promise<RelationType[]> {
+    const response = await this.request.get(`${this.baseUrl}/v1/relationTypes`);
+    return this.handleResponse<RelationType[]>(response);
+  }
+
+  // Relation operations
+  async createRelation(data: {
+    name: string;
+    description?: string;
+    fromGroupId: number;
+    toGroupId: number;
+    relationTypeId: number;
+  }): Promise<Relation> {
+    const formData = new URLSearchParams();
+    formData.append('name', data.name);
+    if (data.description) formData.append('Description', data.description);
+    formData.append('fromGroupId', data.fromGroupId.toString());
+    formData.append('toGroupId', data.toGroupId.toString());
+    formData.append('relationTypeId', data.relationTypeId.toString());
+
+    const response = await this.request.post(`${this.baseUrl}/v1/relation`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+    return this.handleResponse<Relation>(response);
+  }
+
+  async deleteRelation(id: number): Promise<void> {
+    const response = await this.request.post(`${this.baseUrl}/v1/relation/delete?Id=${id}`);
+    await this.handleVoidResponse(response);
+  }
+
+  // Search
+  async search(query: string, limit = 15): Promise<SearchResult[]> {
+    const response = await this.request.get(
+      `${this.baseUrl}/v1/search?q=${encodeURIComponent(query)}&limit=${limit}`
+    );
+    return this.handleResponse<SearchResult[]>(response);
+  }
+
+  // Bulk operations
+  async addTagsToGroups(groupIds: number[], tagIds: number[]): Promise<void> {
+    const formData = new URLSearchParams();
+    groupIds.forEach(id => formData.append('selectedIds', id.toString()));
+    tagIds.forEach(id => formData.append('tags', id.toString()));
+
+    const response = await this.request.post(`${this.baseUrl}/v1/groups/addTags`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+    await this.handleVoidResponse(response);
+  }
+
+  async removeTagsFromGroups(groupIds: number[], tagIds: number[]): Promise<void> {
+    const formData = new URLSearchParams();
+    groupIds.forEach(id => formData.append('selectedIds', id.toString()));
+    tagIds.forEach(id => formData.append('tags', id.toString()));
+
+    const response = await this.request.post(`${this.baseUrl}/v1/groups/removeTags`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+    await this.handleVoidResponse(response);
+  }
+
+  async bulkDeleteGroups(groupIds: number[]): Promise<void> {
+    const formData = new URLSearchParams();
+    groupIds.forEach(id => formData.append('selectedIds', id.toString()));
+
+    const response = await this.request.post(`${this.baseUrl}/v1/groups/delete`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+    await this.handleVoidResponse(response);
+  }
+}
