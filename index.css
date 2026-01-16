@@ -3,3 +3,45 @@
 @plugin "@tailwindcss/typography";
 @source "./templates/**/*.tpl";
 @source "./src/**/*.js";
+
+/* Fix forms plugin styles overridden by preflight reset */
+@layer base {
+  input[type='text'],
+  input[type='email'],
+  input[type='url'],
+  input[type='password'],
+  input[type='number'],
+  input[type='date'],
+  input[type='datetime-local'],
+  input[type='month'],
+  input[type='search'],
+  input[type='tel'],
+  input[type='time'],
+  input[type='week'],
+  input:not([type]),
+  textarea,
+  select {
+    border-width: 1px;
+    border-style: solid;
+    border-color: #6b7280;
+    border-radius: 0.375rem;
+    background-color: #fff;
+    padding: 0.5rem 0.75rem;
+  }
+
+  input[type='checkbox'],
+  input[type='radio'] {
+    border-width: 1px;
+    border-style: solid;
+    border-color: #6b7280;
+  }
+
+  select:not([multiple]) {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+    background-position: right 0.5rem center;
+    background-repeat: no-repeat;
+    background-size: 1.5em 1.5em;
+    padding-right: 2.5rem;
+  }
+
+}

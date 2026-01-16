@@ -28,19 +28,19 @@
     {% block head %}{% endblock %}
 </head>
 <body class="site">
-    <header class="header flex justify-between align-middle items-center">
+    <header class="header flex items-center justify-between gap-2 px-2">
         {% include "/partials/menu.tpl" %}
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-1 flex-shrink-0">
             {% include "/partials/globalSearch.tpl" %}
-            <div x-cloak x-data="{ active: false }" class="settings relative inline-flex align-middle">
-            <button class="text-lg" @click="active = !active" @click.outside="setTimeout(() => active = false, 100)">⚙</button>
-            <div x-show="active" class="absolute p-4 mt-6 top-0 right-0 bg-white" style="max-width: 50vw; min-width: 170px;">
-                <label class="flex justify-between items-center content-center">
-                    Show Descriptions
-                    <input type="checkbox" name="showDescriptions" x-data x-init="$store.savedSetting.registerEl($root)" />
-                </label>
-                {% block settings %}{% endblock %}
-            </div>
+            <div x-cloak x-data="{ active: false }" class="settings relative">
+                <button class="p-1 text-lg" @click="active = !active" @click.outside="setTimeout(() => active = false, 100)" title="Settings">⚙</button>
+                <div x-show="active" x-cloak class="absolute right-0 top-full mt-1 w-48 bg-white shadow-lg ring-1 ring-black/5 z-50 p-3 rounded">
+                    <label class="flex justify-between items-center text-sm">
+                        Show Descriptions
+                        <input type="checkbox" name="showDescriptions" x-data x-init="$store.savedSetting.registerEl($root)" />
+                    </label>
+                    {% block settings %}{% endblock %}
+                </div>
             </div>
         </div>
         {% block header %}{% endblock %}
