@@ -1,6 +1,6 @@
 class InlineEdit extends HTMLElement {
     static get observedAttributes() {
-        return ['multiline', 'post', 'name'];
+        return ['multiline', 'post', 'name', 'label'];
     }
 
     constructor() {
@@ -8,10 +8,28 @@ class InlineEdit extends HTMLElement {
         this.attachShadow({ mode: 'open' });
         this.isEditing = false;
 
+        // Add styles for focus indicator
+        const style = document.createElement('style');
+        style.textContent = `
+            .edit-button:focus {
+                outline: 2px solid #4f46e5;
+                outline-offset: 2px;
+                border-radius: 2px;
+            }
+            .edit-button:focus:not(:focus-visible) {
+                outline: none;
+            }
+            .edit-button:focus-visible {
+                outline: 2px solid #4f46e5;
+                outline-offset: 2px;
+                border-radius: 2px;
+            }
+        `;
+        this.shadowRoot.appendChild(style);
+
         // Create container for display mode
         this.displayContainer = document.createElement('span');
         Object.assign(this.displayContainer.style, {
-            cursor: 'pointer',
             display: 'inline-flex',
             alignItems: 'center',
         });
@@ -19,6 +37,21 @@ class InlineEdit extends HTMLElement {
         // Create text span
         this.displayText = document.createElement('span');
         this.displayContainer.appendChild(this.displayText);
+
+        // Create edit button wrapper for keyboard accessibility
+        this.editButton = document.createElement('button');
+        this.editButton.type = 'button';
+        this.editButton.className = 'edit-button';
+        this.editButton.setAttribute('aria-label', 'Edit');
+        Object.assign(this.editButton.style, {
+            background: 'none',
+            border: 'none',
+            padding: '2px',
+            cursor: 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            marginLeft: '4px',
+        });
 
         // Create SVG pencil icon
         const svgNS = 'http://www.w3.org/2000/svg';
@@ -31,7 +64,7 @@ class InlineEdit extends HTMLElement {
         this.pencilIcon.setAttribute('stroke-width', '2');
         this.pencilIcon.setAttribute('stroke-linecap', 'round');
         this.pencilIcon.setAttribute('stroke-linejoin', 'round');
-        this.pencilIcon.style.marginLeft = '4px';
+        this.pencilIcon.setAttribute('aria-hidden', 'true');
 
         const path1 = document.createElementNS(svgNS, 'path');
         path1.setAttribute('d', 'M12 20h9');
@@ -41,12 +74,14 @@ class InlineEdit extends HTMLElement {
         this.pencilIcon.appendChild(path1);
         this.pencilIcon.appendChild(path2);
 
-        this.displayContainer.appendChild(this.pencilIcon);
+        this.editButton.appendChild(this.pencilIcon);
+        this.displayContainer.appendChild(this.editButton);
 
-        this.pencilIcon.addEventListener('click', (e) => {
+        this.editButton.addEventListener('click', (e) => {
             e.preventDefault();
             this.enterEditMode();
         });
+
         this.shadowRoot.appendChild(this.displayContainer);
         this.updateProperties();
     }
@@ -63,6 +98,12 @@ class InlineEdit extends HTMLElement {
         this.multiline = this.hasAttribute('multiline');
         this.postUrl = this.getAttribute('post');
         this.name = this.getAttribute('name') || 'value';
+        this.label = this.getAttribute('label') || 'Edit value';
+
+        // Update edit button aria-label
+        if (this.editButton) {
+            this.editButton.setAttribute('aria-label', `Edit ${this.label}`);
+        }
 
         if (
             !this.inputElement ||
@@ -72,6 +113,10 @@ class InlineEdit extends HTMLElement {
             this.inputElement = this.multiline
                 ? document.createElement('textarea')
                 : document.createElement('input');
+
+            // Set accessibility attributes
+            this.inputElement.setAttribute('aria-label', this.label);
+
             Object.assign(this.inputElement.style, {
                 border: '1px solid #ccc',
                 borderRadius: '4px',
@@ -91,6 +136,9 @@ class InlineEdit extends HTMLElement {
                     this.exitEditMode();
                 }
             });
+        } else {
+            // Update aria-label on existing input
+            this.inputElement.setAttribute('aria-label', this.label);
         }
     }
 

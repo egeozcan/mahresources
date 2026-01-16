@@ -8,12 +8,14 @@
         @click="toggle()"
         class="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-500 bg-gray-100 rounded-lg hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 transition-colors"
         title="Search (Ctrl+K / Cmd+K)"
+        aria-label="Open search dialog"
+        aria-haspopup="dialog"
     >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
         </svg>
         <span class="hidden sm:inline">Search</span>
-        <kbd class="hidden sm:inline px-1.5 py-0.5 text-xs bg-white rounded border border-gray-300 font-sans">
+        <kbd class="hidden sm:inline px-1.5 py-0.5 text-xs bg-white rounded border border-gray-300 font-sans" aria-hidden="true">
             <span x-text="navigator.platform.indexOf('Mac') > -1 ? '\u2318' : 'Ctrl'"></span>K
         </kbd>
     </button>
@@ -49,7 +51,9 @@
                             role="combobox"
                             aria-autocomplete="list"
                             aria-controls="search-results"
+                            aria-label="Search"
                             :aria-expanded="results.length > 0"
+                            :aria-activedescendant="results.length > 0 ? 'search-result-' + selectedIndex : null"
                         >
                         <template x-if="loading">
                             <svg class="w-5 h-5 text-gray-400 animate-spin flex-shrink-0" fill="none" viewBox="0 0 24 24">
@@ -58,8 +62,13 @@
                             </svg>
                         </template>
                         <template x-if="query.length > 0 && !loading">
-                            <button @click="query = ''; results = [];" class="p-1 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-100 transition-colors">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <button
+                                @click="query = ''; results = [];"
+                                class="p-1 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-100 transition-colors"
+                                aria-label="Clear search"
+                                type="button"
+                            >
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                                 </svg>
                             </button>
@@ -75,6 +84,7 @@
                     >
                         <template x-for="(result, index) in results" :key="result.type + '-' + result.id">
                             <li
+                                :id="'search-result-' + index"
                                 @click="navigateTo(result.url)"
                                 @mouseenter="selectedIndex = index"
                                 :data-selected="selectedIndex === index"

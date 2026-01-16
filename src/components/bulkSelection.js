@@ -130,14 +130,19 @@ export function registerBulkSelectionStore(Alpine) {
 
     registerForm(form) {
       const btn = document.createElement("button");
+      const buttonText = form.querySelector("label, button").innerText;
 
-      btn.innerText = form.querySelector("label, button").innerText;
+      btn.innerText = buttonText;
       btn.className = btnClasses;
+      btn.type = "button";
+      btn.setAttribute("aria-expanded", "false");
+      btn.setAttribute("aria-label", `Toggle ${buttonText} editor`);
       btn.addEventListener("click", () => this.toggleEditor(form));
       btn.setAttribute("x-effect", `() => {
         const isActive = $store.bulkSelection.isActiveEditor($el.nextElementSibling);
         $el.classList.toggle("${btnActiveClass}", isActive);
         $el.classList.toggle("${btnDefaultClass}", !isActive);
+        $el.setAttribute("aria-expanded", isActive);
       }`);
 
       form.setAttribute("x-show", "$store.bulkSelection.isActiveEditor($el)");
@@ -209,6 +214,12 @@ export function selectableItem({ itemNo, itemId } = {}) {
       ["@contextmenu"](e) {
         e.preventDefault();
         this.$store.bulkSelection.selectUntil(itemId);
+      },
+      ["@keydown.space.prevent"]() {
+        this.$store.bulkSelection.toggle(itemId);
+      },
+      ["@keydown.enter.prevent"]() {
+        this.$store.bulkSelection.toggle(itemId);
       },
     },
   };
