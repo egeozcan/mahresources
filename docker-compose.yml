@@ -1,0 +1,48 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8181:8181"
+    volumes:
+      - app-data:/app/data
+      - app-files:/app/files
+    environment:
+      - DB_TYPE=SQLITE
+      - DB_DSN=/app/data/test.db
+      - FILE_SAVE_PATH=/app/files
+      - BIND_ADDRESS=0.0.0.0:8181
+      - SKIP_FTS=1
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8181/notes"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 10s
+
+  playwright:
+    build:
+      context: ./e2e
+      dockerfile: Dockerfile
+    depends_on:
+      app:
+        condition: service_healthy
+    working_dir: /app/e2e
+    volumes:
+      # Mount test files for development, but node_modules are baked into image.
+      # Files are mounted read-only (:ro) to ensure CI reproducibility.
+      # For local development with --headed mode, run tests directly via npm
+      # in the e2e/ directory instead of using docker-compose.
+      - ./e2e/tests:/app/e2e/tests:ro
+      - ./e2e/pages:/app/e2e/pages:ro
+      - ./e2e/fixtures:/app/e2e/fixtures:ro
+      - ./e2e/helpers:/app/e2e/helpers:ro
+      - ./e2e/test-assets:/app/e2e/test-assets:ro
+    environment:
+      - BASE_URL=http://app:8181
+      - CI=true
+
+volumes:
+  app-data:
+  app-files:

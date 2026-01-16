@@ -1,0 +1,17 @@
+{
+  "name": "mahresources-e2e",
+  "version": "1.0.0",
+  "description": "Playwright E2E tests for Mahresources",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:ui": "playwright test --ui",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.57.0",
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.0"
+  }
+}
