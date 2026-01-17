@@ -51,6 +51,7 @@ type MahresourcesInputConfig struct {
 type MahresourcesLocks struct {
 	ThumbnailGenerationLock      *lib.IDLock[uint]
 	VideoThumbnailGenerationLock *lib.IDLock[uint]
+	ResourceHashLock             *lib.IDLock[string]
 }
 
 type MahresourcesContext struct {
@@ -75,6 +76,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 
 	thumbnailGenerationLock := lib.NewIDLock[uint](uint(0), nil)
 	videoThumbnailGenerationLock := lib.NewIDLock[uint](uint(1), nil)
+	resourceHashLock := lib.NewIDLock[string](uint(0), nil)
 
 	return &MahresourcesContext{
 		fs:             filesystem,
@@ -85,6 +87,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		locks: MahresourcesLocks{
 			ThumbnailGenerationLock:      thumbnailGenerationLock,
 			VideoThumbnailGenerationLock: videoThumbnailGenerationLock,
+			ResourceHashLock:             resourceHashLock,
 		},
 	}
 }

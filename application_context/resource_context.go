@@ -391,6 +391,11 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 
 	hash := hex.EncodeToString(h.Sum(nil))
 
+	// Acquire per-hash lock to prevent race condition where two simultaneous uploads
+	// with the same hash both pass the "existing resource" check before either commits
+	ctx.locks.ResourceHashLock.Acquire(hash)
+	defer ctx.locks.ResourceHashLock.Release(hash)
+
 	var existingResource models.Resource
 
 	if existingNotFoundErr := tx.Where("hash = ?", hash).Preload("Groups").First(&existingResource).Error; existingNotFoundErr == nil {
