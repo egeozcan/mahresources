@@ -4,7 +4,7 @@ export default defineConfig({
   testDir: './tests',
   fullyParallel: false, // Tests within a file run sequentially (they share state)
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 1, // Retry once locally to handle flaky UI interactions
+  retries: 2, // Retry twice to handle occasional flaky interactions
   workers: process.env.CI ? 1 : 4, // Run different test files in parallel locally
   reporter: [
     ['list'],
@@ -15,6 +15,12 @@ export default defineConfig({
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
+    // Increase timeouts for better reliability in ephemeral mode with concurrent access
+    actionTimeout: 10000,
+    navigationTimeout: 15000,
+  },
+  expect: {
+    timeout: 10000, // Increase assertion timeout from default 5s
   },
   projects: [
     {

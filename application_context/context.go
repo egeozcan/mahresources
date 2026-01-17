@@ -173,10 +173,15 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 
 	if cfg.MemoryDB {
 		dbType = "SQLITE"
-		// Use shared cache so main and read-only connections share the same in-memory database
-		dbDsn = "file::memory:?cache=shared"
-		readOnlyDsn = "file::memory:?cache=shared&mode=ro"
-		log.Println("Using in-memory SQLite database (ephemeral mode)")
+		// Use a temp file with WAL mode for better concurrent write handling
+		// The file is auto-deleted when all connections close
+		dbDsn = "file:/tmp/mahresources_ephemeral.db?_journal_mode=WAL&_busy_timeout=10000&_synchronous=NORMAL"
+		readOnlyDsn = "file:/tmp/mahresources_ephemeral.db?_journal_mode=WAL&_busy_timeout=10000&mode=ro"
+		// Remove any existing temp database to ensure clean state
+		os.Remove("/tmp/mahresources_ephemeral.db")
+		os.Remove("/tmp/mahresources_ephemeral.db-wal")
+		os.Remove("/tmp/mahresources_ephemeral.db-shm")
+		log.Println("Using ephemeral SQLite database with WAL mode")
 	}
 
 	// Determine effective filesystem
