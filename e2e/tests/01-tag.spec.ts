@@ -55,13 +55,15 @@ test.describe('Tag Validation', () => {
       await tagPage.save();
 
       // Should show error or stay on form - the app handles unique constraint violation
-      // Either we see an error message or we stay on the new tag form
-      const hasError = await page.locator('.error, [class*="error"], [class*="Error"]').isVisible();
+      // Check for error heading/message (the app shows "An error has occured:" heading)
+      const hasErrorHeading = await page.locator('h1:has-text("error")').isVisible();
+      const hasErrorClass = await page.locator('.error, [class*="error"], [class*="Error"]').isVisible();
+      const hasConstraintError = await page.locator('text=UNIQUE constraint').isVisible();
       const stayedOnForm = page.url().includes('/tag/new');
       const redirectedToExisting = page.url().includes('/tag?id=');
 
       // At least one of these conditions should be true
-      expect(hasError || stayedOnForm || redirectedToExisting).toBeTruthy();
+      expect(hasErrorHeading || hasErrorClass || hasConstraintError || stayedOnForm || redirectedToExisting).toBeTruthy();
     } finally {
       // Cleanup
       await apiClient.deleteTag(tag.ID);

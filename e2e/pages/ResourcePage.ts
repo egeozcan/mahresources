@@ -71,7 +71,7 @@ export class ResourcePage extends BasePage {
 
     await this.save();
 
-    // May redirect to resources list or resource page
+    // Wait for redirect to complete
     await this.page.waitForLoadState('load');
 
     // Try to extract ID from URL if redirected to display page
@@ -80,15 +80,35 @@ export class ResourcePage extends BasePage {
       return this.extractIdFromUrl();
     }
 
-    // If redirected to list, find the resource by name and extract ID
-    if (data.name) {
-      const resourceLink = this.page.locator(`a:has-text("${data.name}")`).first();
-      await resourceLink.click();
-      await this.page.waitForLoadState('load');
-      return this.extractIdFromUrl();
+    // If redirected to list, wait for the list to load and find the resource
+    if (url.includes('/resources')) {
+      // Wait a bit for the list to render
+      await this.page.waitForTimeout(500);
+
+      // Try to find the resource by name first, then by any recent resource
+      if (data.name) {
+        const resourceLink = this.page.locator(`a:has-text("${data.name}")`).first();
+        const isVisible = await resourceLink.isVisible().catch(() => false);
+
+        if (isVisible) {
+          await resourceLink.click();
+          await this.page.waitForLoadState('load');
+          return this.extractIdFromUrl();
+        }
+      }
+
+      // If we can't find by name, try to get the first resource link
+      const anyResourceLink = this.page.locator('a[href*="/resource?id="]').first();
+      const isAnyVisible = await anyResourceLink.isVisible().catch(() => false);
+
+      if (isAnyVisible) {
+        await anyResourceLink.click();
+        await this.page.waitForLoadState('load');
+        return this.extractIdFromUrl();
+      }
     }
 
-    throw new Error('Could not determine resource ID after creation');
+    throw new Error(`Could not determine resource ID after creation. Current URL: ${this.page.url()}`);
   }
 
   async createFromUrl(data: {

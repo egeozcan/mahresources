@@ -394,7 +394,7 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 	var existingResource models.Resource
 
 	if existingNotFoundErr := tx.Where("hash = ?", hash).Preload("Groups").First(&existingResource).Error; existingNotFoundErr == nil {
-		if resourceQuery.OwnerId == *existingResource.OwnerId {
+		if existingResource.OwnerId != nil && resourceQuery.OwnerId == *existingResource.OwnerId {
 			if len(resourceQuery.Groups) > 0 {
 				go func() {
 					groups, _ := ctx.GetGroupsWithIds(&resourceQuery.Groups)
@@ -1021,7 +1021,11 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 		return err
 	}
 
-	filePath := path.Join(folder, fmt.Sprintf("%v__%v__%v___%v", resource.Hash, resource.ID, *resource.OwnerId, strings.ReplaceAll(path.Clean(path.Base(resource.GetCleanLocation())), "\\", "_")))
+	ownerIdStr := "nil"
+	if resource.OwnerId != nil {
+		ownerIdStr = fmt.Sprintf("%v", *resource.OwnerId)
+	}
+	filePath := path.Join(folder, fmt.Sprintf("%v__%v__%v___%v", resource.Hash, resource.ID, ownerIdStr, strings.ReplaceAll(path.Clean(path.Base(resource.GetCleanLocation())), "\\", "_")))
 
 	file, openErr := fs.Open(resource.GetCleanLocation())
 

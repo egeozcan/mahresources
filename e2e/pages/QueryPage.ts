@@ -34,7 +34,6 @@ export class QueryPage extends BasePage {
   async create(data: {
     name: string;
     text: string;
-    description?: string;
     template?: string;
   }): Promise<number> {
     await this.gotoNew();
@@ -42,9 +41,7 @@ export class QueryPage extends BasePage {
     await this.fillName(data.name);
     await this.page.locator('textarea[name="Text"]').fill(data.text);
 
-    if (data.description) {
-      await this.fillDescription(data.description);
-    }
+    // Note: Query form does not have a description field
 
     if (data.template) {
       await this.page.locator('textarea[name="Template"]').fill(data.template);
@@ -56,7 +53,7 @@ export class QueryPage extends BasePage {
     return this.extractIdFromUrl();
   }
 
-  async update(id: number, updates: { name?: string; text?: string; description?: string }) {
+  async update(id: number, updates: { name?: string; text?: string }) {
     await this.gotoEdit(id);
     if (updates.name !== undefined) {
       await this.nameInput.clear();
@@ -66,10 +63,7 @@ export class QueryPage extends BasePage {
       await this.page.locator('textarea[name="Text"]').clear();
       await this.page.locator('textarea[name="Text"]').fill(updates.text);
     }
-    if (updates.description !== undefined) {
-      await this.descriptionInput.clear();
-      await this.fillDescription(updates.description);
-    }
+    // Note: Query form does not have a description field
     await this.save();
   }
 

@@ -2,10 +2,10 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './tests',
-  fullyParallel: false,
+  fullyParallel: false, // Tests within a file run sequentially (they share state)
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 1, // Retry once locally to handle flaky UI interactions
-  workers: 1,
+  workers: process.env.CI ? 1 : 4, // Run different test files in parallel locally
   reporter: [
     ['list'],
     ['html', { outputFolder: 'playwright-report' }]

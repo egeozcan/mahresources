@@ -10,6 +10,7 @@ import (
 	"mahresources/server/http_utils"
 	"mahresources/server/interfaces"
 	"net/http"
+	"strconv"
 )
 
 func GetNotesHandler(ctx interfaces.NoteReader) func(writer http.ResponseWriter, request *http.Request) {
@@ -144,7 +145,7 @@ func GetAddNoteTypeHandler(ctx interfaces.NoteTypeWriter) func(writer http.Respo
 			return
 		}
 
-		if http_utils.RedirectIfHTMLAccepted(writer, request, "/noteTypes") {
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/noteType?id="+strconv.Itoa(int(noteType.ID))) {
 			return
 		}
 

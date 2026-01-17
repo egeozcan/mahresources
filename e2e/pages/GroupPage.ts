@@ -105,12 +105,14 @@ export class GroupPage extends BasePage {
 
   async verifyGroupInList(name: string) {
     await this.gotoList();
-    await expect(this.page.locator(`a:has-text("${name}")`)).toBeVisible();
+    // Use .first() to avoid strict mode violations when multiple elements match
+    await expect(this.page.locator(`a:has-text("${name}")`).first()).toBeVisible();
   }
 
   async verifyGroupNotInList(name: string) {
     await this.gotoList();
-    await expect(this.page.locator(`a:has-text("${name}")`)).not.toBeVisible();
+    // Use toHaveCount(0) to check that no matching elements exist
+    await expect(this.page.locator(`a:has-text("${name}")`)).toHaveCount(0);
   }
 
   async verifyHasTag(tagName: string) {
@@ -123,7 +125,8 @@ export class GroupPage extends BasePage {
 
   // For selecting groups in bulk operations
   async selectGroupCheckbox(groupId: number) {
-    await this.page.locator(`input[type="checkbox"][value="${groupId}"]`).check();
+    // The checkbox is inside a div with x-data="selectableItem({ itemId: <id> })"
+    await this.page.locator(`[x-data*="itemId: ${groupId}"] input[type="checkbox"]`).check();
   }
 
   async clickSelectAll() {

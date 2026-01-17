@@ -113,13 +113,14 @@ test.describe('Group Hierarchy', () => {
   let categoryId: number;
   let parentGroupId: number;
   let childGroupId: number;
+  const testRunId = Date.now();
 
   test.beforeAll(async ({ apiClient }) => {
-    const category = await apiClient.createCategory('Hierarchy Test Category', 'For hierarchy tests');
+    const category = await apiClient.createCategory(`Hierarchy Test Category ${testRunId}`, 'For hierarchy tests');
     categoryId = category.ID;
 
     const parentGroup = await apiClient.createGroup({
-      name: 'Parent Group',
+      name: `Parent Group ${testRunId}`,
       description: 'Parent in hierarchy',
       categoryId: categoryId,
     });
@@ -128,17 +129,18 @@ test.describe('Group Hierarchy', () => {
 
   test('should create child group with owner', async ({ groupPage }) => {
     childGroupId = await groupPage.create({
-      name: 'Child Group',
+      name: `Child Group ${testRunId}`,
       description: 'Child in hierarchy',
-      categoryName: 'Hierarchy Test Category',
-      ownerGroupName: 'Parent Group',
+      categoryName: `Hierarchy Test Category ${testRunId}`,
+      ownerGroupName: `Parent Group ${testRunId}`,
     });
     expect(childGroupId).toBeGreaterThan(0);
   });
 
   test('should display parent on child group page', async ({ groupPage, page }) => {
     await groupPage.gotoDisplay(childGroupId);
-    await expect(page.locator('text=Parent Group')).toBeVisible();
+    // Use .first() to avoid strict mode violations
+    await expect(page.locator(`text=Parent Group ${testRunId}`).first()).toBeVisible();
   });
 
   test.afterAll(async ({ apiClient }) => {

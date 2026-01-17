@@ -9,6 +9,8 @@ import (
 	"mahresources/server/http_utils"
 	"mahresources/server/interfaces"
 	"net/http"
+	"strconv"
+	"strings"
 )
 
 func GetAddGroupRelationTypeHandler(ctx interfaces.RelationshipWriter) func(writer http.ResponseWriter, request *http.Request) {
@@ -27,7 +29,7 @@ func GetAddGroupRelationTypeHandler(ctx interfaces.RelationshipWriter) func(writ
 			return
 		}
 
-		if http_utils.RedirectIfHTMLAccepted(writer, request, "/relationTypes") {
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/relationType?id="+strconv.Itoa(int(relationType.ID))) {
 			return
 		}
 
@@ -52,7 +54,7 @@ func GetEditGroupRelationTypeHandler(ctx interfaces.RelationshipWriter) func(wri
 			return
 		}
 
-		if http_utils.RedirectIfHTMLAccepted(writer, request, "/relationTypes") {
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/relationType?id="+strconv.Itoa(int(relationType.ID))) {
 			return
 		}
 
@@ -80,12 +82,19 @@ func GetAddRelationHandler(ctx interfaces.RelationshipWriter) func(writer http.R
 		}
 
 		if err != nil {
-			backUrl := fmt.Sprintf(
-				"/relation/new?FromGroupId=%v&ToGroupId=%v&GroupRelationTypeId=%v&Error=%v",
-				editor.FromGroupId, editor.ToGroupId, editor.GroupRelationTypeId,
-				err.Error(),
-			)
-			http.Redirect(writer, request, backUrl, http.StatusSeeOther)
+			// For HTML requests, redirect back to the form with error
+			// For API requests (Accept: application/json), return error as JSON
+			accepts := request.Header.Get("Accept")
+			if accepts == "" || (accepts != "application/json" && !strings.Contains(accepts, "application/json")) {
+				backUrl := fmt.Sprintf(
+					"/relation/new?FromGroupId=%v&ToGroupId=%v&GroupRelationTypeId=%v&Error=%v",
+					editor.FromGroupId, editor.ToGroupId, editor.GroupRelationTypeId,
+					err.Error(),
+				)
+				http.Redirect(writer, request, backUrl, http.StatusSeeOther)
+				return
+			}
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 

@@ -2,6 +2,12 @@
 
 End-to-end tests for the Mahresources application using Playwright.
 
+## Test Coverage
+
+- **90 tests total** (89 passing, 1 intentionally skipped)
+- Tests cover: Tags, Categories, NoteTypes, Queries, RelationTypes, Groups, Notes, Resources, Relations, Bulk Operations, Global Search, and Edge Cases
+- **Skipped test**: "Resource from URL" - depends on external service (via.placeholder.com)
+
 ## Prerequisites
 
 - Node.js 20+
@@ -111,7 +117,8 @@ e2e/
 
 Key settings in `playwright.config.ts`:
 
-- **Sequential execution**: Tests run one at a time (`workers: 1`, `fullyParallel: false`)
+- **Workers**: 4 locally, 1 in CI (configurable via `--workers` flag)
+- **Sequential within file**: `fullyParallel: false` ensures tests in a file run sequentially
 - **Retries**: 2 in CI, 1 locally for flaky UI interactions
 - **Artifacts**: Screenshots on failure, traces on first retry, videos retained on failure
 
@@ -134,6 +141,12 @@ The API client is useful for test setup/teardown:
 
 ```typescript
 test.beforeAll(async ({ apiClient }) => {
+  // Clean up existing resources first (for test retries)
+  const existingResources = await apiClient.getResources();
+  for (const resource of existingResources) {
+    await apiClient.deleteResource(resource.ID);
+  }
+
   // Create prerequisite data via API
   const category = await apiClient.createCategory('Test Category');
   categoryId = category.ID;
@@ -144,6 +157,19 @@ test.afterAll(async ({ apiClient }) => {
   await apiClient.deleteCategory(categoryId);
 });
 ```
+
+Available API client methods:
+- **Tags**: `createTag`, `deleteTag`, `getTags`
+- **Categories**: `createCategory`, `deleteCategory`, `getCategories`
+- **NoteTypes**: `createNoteType`, `deleteNoteType`, `getNoteTypes`
+- **Groups**: `createGroup`, `deleteGroup`, `getGroups`, `getGroup`
+- **Notes**: `createNote`, `deleteNote`, `getNotes`
+- **Queries**: `createQuery`, `deleteQuery`, `getQueries`
+- **RelationTypes**: `createRelationType`, `deleteRelationType`, `getRelationTypes`
+- **Relations**: `createRelation`, `deleteRelation`
+- **Resources**: `getResources`, `deleteResource`
+- **Search**: `search`
+- **Bulk**: `addTagsToGroups`, `removeTagsFromGroups`, `bulkDeleteGroups`
 
 ### Serial vs Parallel Tests
 
@@ -176,6 +202,27 @@ npm run report
 npx playwright show-report playwright-report
 ```
 
+## Resource Upload Tests
+
+The resource tests (`08-resource.spec.ts`) test file upload functionality:
+
+```typescript
+test('should upload a file resource', async ({ resourcePage, page }) => {
+  const testFilePath = path.join(__dirname, '../test-assets/sample-image.png');
+  await resourcePage.gotoNew();
+
+  // Set file via Playwright's setInputFiles
+  const fileInput = page.locator('input[type="file"]');
+  await fileInput.setInputFiles(testFilePath);
+
+  // Fill other fields and submit
+  await page.locator('input[name="Name"]').fill('My Image');
+  await page.locator('button[type="submit"]').click();
+});
+```
+
+**Note**: Resource tests clean up existing resources in `beforeAll` to handle test retries gracefully.
+
 ## Troubleshooting
 
 ### Tests fail with timeout errors
@@ -193,6 +240,13 @@ npx playwright show-report playwright-report
 - Tests have automatic retries configured
 - Use `await expect(...).toBeVisible({ timeout: 5000 })` instead of hardcoded waits
 - Check for race conditions in UI interactions
+
+### Resource upload tests fail with "chrome-error://chromewebdata/"
+
+This indicates a server-side crash during file upload. Check:
+- Server logs for nil pointer dereference errors
+- That the `FILE_SAVE_PATH` directory exists and is writable
+- Database for existing resources with the same file hash
 
 ## CI Integration
 

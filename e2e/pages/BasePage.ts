@@ -31,17 +31,54 @@ export class BasePage {
     searchText: string,
     optionText?: string
   ) {
-    // Find the autocomplete container by looking for the label
-    const label = this.page.locator(`label:has-text("${labelText}")`);
-    const container = label.locator('xpath=..');
-    const input = container.locator('input[type="text"]').first();
+    // Strategy 1: Use getByRole('combobox') with name to find the input
+    let input = this.page.getByRole('combobox', { name: labelText });
+    let inputCount = await input.count();
+
+    if (inputCount === 0) {
+      // Strategy 2: Find the grid row containing the label and look for combobox within
+      // This handles cases where the label is in a span/label and the input is in a sibling div
+      const gridRow = this.page.locator(`div.sm\\:grid:has(span:has-text("${labelText}"), label:has-text("${labelText}"))`).first();
+      if (await gridRow.count() > 0) {
+        input = gridRow.locator('input[role="combobox"]').first();
+        inputCount = await input.count();
+      }
+    }
+
+    if (inputCount === 0) {
+      // Strategy 3: Look for container with the label text and find combobox inside
+      const container = this.page.locator(`div:has(> span:has-text("${labelText}"), > label:has-text("${labelText}"))`).first();
+      if (await container.count() > 0) {
+        // Look deeper for the combobox
+        input = container.locator('input[role="combobox"]').first();
+        inputCount = await input.count();
+      }
+    }
+
+    if (inputCount === 0) {
+      // Strategy 4: Find any combobox in a div that contains the label text
+      input = this.page.locator(`div:has-text("${labelText}"):has(input[role="combobox"]) input[role="combobox"]`).first();
+      inputCount = await input.count();
+    }
+
+    if (inputCount === 0) {
+      throw new Error(`Could not find autocomplete input for label: ${labelText}`);
+    }
+
+    if (inputCount > 1) {
+      input = input.first();
+    }
 
     await input.click();
+    // Clear any existing text first
+    await input.fill('');
+    // Small delay to let any filters apply
+    await this.page.waitForTimeout(100);
     await input.fill(searchText);
 
     // Wait for dropdown to appear and click the matching option
     const option = this.page.locator(`div[role="option"]:has-text("${optionText || searchText}")`).first();
-    await option.waitFor({ state: 'visible', timeout: 5000 });
+    await option.waitFor({ state: 'visible', timeout: 10000 });
     await option.click();
 
     // Wait for dropdown to close (indicates selection was registered)
@@ -79,6 +116,10 @@ export class BasePage {
   }
 
   async submitDelete() {
+    // Set up dialog handler for the confirm() prompt
+    this.page.once('dialog', async (dialog) => {
+      await dialog.accept();
+    });
     const deleteButton = this.page.locator('input[type="submit"][value="Delete"], button:has-text("Delete")').first();
     await deleteButton.click();
     await this.page.waitForLoadState('load');

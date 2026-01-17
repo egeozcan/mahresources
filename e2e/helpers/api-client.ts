@@ -286,8 +286,9 @@ export class ApiClient {
     const formData = new URLSearchParams();
     formData.append('name', data.name);
     if (data.description) formData.append('Description', data.description);
-    if (data.fromCategoryId) formData.append('fromCategoryId', data.fromCategoryId.toString());
-    if (data.toCategoryId) formData.append('toCategoryId', data.toCategoryId.toString());
+    // The Go backend uses FromCategory/ToCategory (not FromCategoryId/ToCategoryId)
+    if (data.fromCategoryId) formData.append('FromCategory', data.fromCategoryId.toString());
+    if (data.toCategoryId) formData.append('ToCategory', data.toCategoryId.toString());
 
     const response = await this.request.post(`${this.baseUrl}/v1/relationType`, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -308,23 +309,28 @@ export class ApiClient {
 
   // Relation operations
   async createRelation(data: {
-    name: string;
+    name?: string;
     description?: string;
     fromGroupId: number;
     toGroupId: number;
     relationTypeId: number;
   }): Promise<Relation> {
-    const formData = new URLSearchParams();
-    formData.append('name', data.name);
-    if (data.description) formData.append('Description', data.description);
-    formData.append('fromGroupId', data.fromGroupId.toString());
-    formData.append('toGroupId', data.toGroupId.toString());
-    formData.append('relationTypeId', data.relationTypeId.toString());
+    // Send as JSON (like Go API tests do) to get JSON response
+    const jsonBody = {
+      Name: data.name || '',
+      Description: data.description || '',
+      FromGroupId: data.fromGroupId,
+      ToGroupId: data.toGroupId,
+      GroupRelationTypeId: data.relationTypeId,
+    };
 
     const response = await this.request.post(`${this.baseUrl}/v1/relation`, {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      data: formData.toString(),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      data: JSON.stringify(jsonBody),
     });
+
     return this.handleResponse<Relation>(response);
   }
 
@@ -344,8 +350,9 @@ export class ApiClient {
   // Bulk operations
   async addTagsToGroups(groupIds: number[], tagIds: number[]): Promise<void> {
     const formData = new URLSearchParams();
-    groupIds.forEach(id => formData.append('selectedIds', id.toString()));
-    tagIds.forEach(id => formData.append('tags', id.toString()));
+    // BulkEditQuery expects ID[] for group IDs and EditedId[] for tag IDs
+    groupIds.forEach(id => formData.append('ID', id.toString()));
+    tagIds.forEach(id => formData.append('EditedId', id.toString()));
 
     const response = await this.request.post(`${this.baseUrl}/v1/groups/addTags`, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -356,8 +363,9 @@ export class ApiClient {
 
   async removeTagsFromGroups(groupIds: number[], tagIds: number[]): Promise<void> {
     const formData = new URLSearchParams();
-    groupIds.forEach(id => formData.append('selectedIds', id.toString()));
-    tagIds.forEach(id => formData.append('tags', id.toString()));
+    // BulkEditQuery expects ID[] for group IDs and EditedId[] for tag IDs
+    groupIds.forEach(id => formData.append('ID', id.toString()));
+    tagIds.forEach(id => formData.append('EditedId', id.toString()));
 
     const response = await this.request.post(`${this.baseUrl}/v1/groups/removeTags`, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -368,12 +376,24 @@ export class ApiClient {
 
   async bulkDeleteGroups(groupIds: number[]): Promise<void> {
     const formData = new URLSearchParams();
-    groupIds.forEach(id => formData.append('selectedIds', id.toString()));
+    // BulkQuery expects ID[] for group IDs
+    groupIds.forEach(id => formData.append('ID', id.toString()));
 
     const response = await this.request.post(`${this.baseUrl}/v1/groups/delete`, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       data: formData.toString(),
     });
+    await this.handleVoidResponse(response);
+  }
+
+  // Resource operations
+  async getResources(): Promise<{ ID: number; Name: string; Hash: string }[]> {
+    const response = await this.request.get(`${this.baseUrl}/v1/resources`);
+    return this.handleResponse(response);
+  }
+
+  async deleteResource(id: number): Promise<void> {
+    const response = await this.request.post(`${this.baseUrl}/v1/resource/delete?Id=${id}`);
     await this.handleVoidResponse(response);
   }
 }

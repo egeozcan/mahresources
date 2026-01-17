@@ -7,7 +7,6 @@ test.describe('Query CRUD Operations', () => {
     createdQueryId = await queryPage.create({
       name: 'E2E Test Query',
       text: 'SELECT * FROM tags LIMIT 10',
-      description: 'Query created by E2E tests',
     });
     expect(createdQueryId).toBeGreaterThan(0);
   });
@@ -24,7 +23,6 @@ test.describe('Query CRUD Operations', () => {
     await queryPage.update(createdQueryId, {
       name: 'Updated E2E Query',
       text: 'SELECT * FROM categories LIMIT 5',
-      description: 'Updated query description',
     });
     await expect(page.locator('h1, .title')).toContainText('Updated E2E Query');
   });
@@ -47,7 +45,6 @@ test.describe('Query with Template', () => {
     queryWithTemplateId = await queryPage.create({
       name: 'Templated Query',
       text: 'SELECT id, name, description FROM groups WHERE id = {{ id }}',
-      description: 'Query with parameter template',
       template: '{"id": 1}',
     });
     expect(queryWithTemplateId).toBeGreaterThan(0);

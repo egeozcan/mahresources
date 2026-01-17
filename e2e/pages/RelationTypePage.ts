@@ -82,11 +82,13 @@ export class RelationTypePage extends BasePage {
 
   async verifyRelationTypeInList(name: string) {
     await this.gotoList();
-    await expect(this.page.locator(`a:has-text("${name}")`)).toBeVisible();
+    // Use .first() to avoid strict mode violations when multiple elements match
+    await expect(this.page.locator(`a:has-text("${name}")`).first()).toBeVisible();
   }
 
   async verifyRelationTypeNotInList(name: string) {
     await this.gotoList();
-    await expect(this.page.locator(`a:has-text("${name}")`)).not.toBeVisible();
+    // Check that no matching elements exist
+    await expect(this.page.locator(`a:has-text("${name}")`)).toHaveCount(0);
   }
 }

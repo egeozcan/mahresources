@@ -2,10 +2,18 @@ import { test, expect } from '../fixtures/base.fixture';
 
 test.describe('Edge Cases - Special Characters in Names', () => {
   let categoryId: number;
+  let ownerGroupId: number;
 
   test.beforeAll(async ({ apiClient }) => {
     const category = await apiClient.createCategory('Edge Case Category', 'For edge case tests');
     categoryId = category.ID;
+
+    // Create an owner group for note tests (Note form requires an owner)
+    const ownerGroup = await apiClient.createGroup({
+      name: 'Edge Case Owner',
+      categoryId: categoryId,
+    });
+    ownerGroupId = ownerGroup.ID;
   });
 
   test('should handle tag with special characters', async ({ tagPage, apiClient }) => {
@@ -44,9 +52,10 @@ test.describe('Edge Cases - Special Characters in Names', () => {
   });
 
   test('should handle note with empty description', async ({ notePage, apiClient }) => {
-    // Create note with only required fields
+    // Create note with only required fields (name and owner)
     const noteId = await notePage.create({
       name: 'Note with no description',
+      ownerGroupName: 'Edge Case Owner',
     });
     expect(noteId).toBeGreaterThan(0);
 
@@ -55,6 +64,9 @@ test.describe('Edge Cases - Special Characters in Names', () => {
   });
 
   test.afterAll(async ({ apiClient }) => {
+    if (ownerGroupId) {
+      await apiClient.deleteGroup(ownerGroupId);
+    }
     if (categoryId) {
       await apiClient.deleteCategory(categoryId);
     }
@@ -129,12 +141,13 @@ test.describe('Error Handling - Invalid Operations', () => {
     await page.waitForLoadState('load');
 
     // Should show error or redirect - not crash
-    const hasError = await page.locator('.error, [class*="error"], text=not found, text=Not Found').isVisible();
+    const hasError = await page.locator('.error, [class*="error"]').isVisible() ||
+                     await page.getByText(/not found/i).isVisible() ||
+                     await page.getByText(/record not found/i).isVisible();
     const redirectedToList = page.url().includes('/tags');
-    const showsEmptyState = await page.locator('text=No').isVisible();
 
     // At least one graceful handling should occur
-    expect(hasError || redirectedToList || showsEmptyState).toBeTruthy();
+    expect(hasError || redirectedToList).toBeTruthy();
   });
 
   test('should handle invalid ID in URL', async ({ page }) => {

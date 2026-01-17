@@ -46,11 +46,21 @@ export class RelationPage extends BasePage {
       await this.fillDescription(data.description);
     }
 
-    // Select relation type
-    await this.selectFromAutocomplete('Relation Type', data.relationTypeName);
+    // Select relation type (form label is just "Type")
+    await this.selectFromAutocomplete('Type', data.relationTypeName);
+
+    // Wait for the hidden input to be created by Alpine.js after selection
+    // The autocomplete adds a hidden input with name="GroupRelationTypeId" when a type is selected
+    await this.page.waitForSelector('input[name="GroupRelationTypeId"]', { state: 'attached', timeout: 5000 });
+    // Give Alpine.js a moment to update the DOM
+    await this.page.waitForTimeout(200);
 
     // Select From Group
     await this.selectFromAutocomplete('From Group', data.fromGroupName);
+
+    // Wait for the hidden input for From Group
+    await this.page.waitForSelector('input[name="FromGroupId"]', { state: 'attached', timeout: 5000 });
+    await this.page.waitForTimeout(100);
 
     // Select To Group
     await this.selectFromAutocomplete('To Group', data.toGroupName);
@@ -77,16 +87,17 @@ export class RelationPage extends BasePage {
   async delete(id: number) {
     await this.gotoDisplay(id);
     await this.submitDelete();
-    await this.verifyRedirectContains(this.listUrl);
+    // The server redirects to /groups after deleting a relation
+    await this.verifyRedirectContains('/groups');
   }
 
   async verifyRelationInList(name: string) {
     await this.gotoList();
-    await expect(this.page.locator(`a:has-text("${name}")`)).toBeVisible();
+    await expect(this.page.locator(`a:has-text("${name}")`).first()).toBeVisible();
   }
 
   async verifyRelationNotInList(name: string) {
     await this.gotoList();
-    await expect(this.page.locator(`a:has-text("${name}")`)).not.toBeVisible();
+    await expect(this.page.locator(`a:has-text("${name}")`)).toHaveCount(0);
   }
 }

@@ -49,10 +49,30 @@ test.describe('Global Search', () => {
     await searchInput.fill('UniqueSearchGroup789');
 
     // Wait for search results to appear (condition-based instead of hardcoded timeout)
-    await expect(page.locator('text=UniqueSearchGroup789')).toBeVisible({ timeout: 5000 });
+    // Use .first() to avoid strict mode violations when multiple elements match
+    await expect(page.locator('text=UniqueSearchGroup789').first()).toBeVisible({ timeout: 5000 });
   });
 
-  test('should search and find notes', async ({ page }) => {
+  test('should search and find notes', async ({ page, apiClient }) => {
+    // Ensure test data exists by creating it fresh if needed
+    let noteExists = false;
+    try {
+      const searchResults = await apiClient.search('UniqueSearchNote012', 5);
+      noteExists = searchResults && searchResults.length > 0;
+    } catch {
+      noteExists = false;
+    }
+
+    if (!noteExists && groupId) {
+      // Recreate note if it was deleted
+      const note = await apiClient.createNote({
+        name: 'UniqueSearchNote012',
+        description: 'Another unique note for searching',
+        ownerId: groupId,
+      });
+      noteId = note.ID;
+    }
+
     await page.goto('/notes');
     await page.keyboard.press('ControlOrMeta+k');
 
@@ -61,7 +81,8 @@ test.describe('Global Search', () => {
     await searchInput.fill('UniqueSearchNote012');
 
     // Wait for search results to appear (condition-based instead of hardcoded timeout)
-    await expect(page.locator('text=UniqueSearchNote012')).toBeVisible({ timeout: 5000 });
+    // Use .first() to avoid strict mode violations when multiple elements match
+    await expect(page.locator('text=UniqueSearchNote012').first()).toBeVisible({ timeout: 5000 });
   });
 
   test('should search and find tags', async ({ page }) => {
@@ -73,7 +94,8 @@ test.describe('Global Search', () => {
     await searchInput.fill('UniqueSearchTag456');
 
     // Wait for search results to appear (condition-based instead of hardcoded timeout)
-    await expect(page.locator('text=UniqueSearchTag456')).toBeVisible({ timeout: 5000 });
+    // Use .first() to avoid strict mode violations when multiple elements match
+    await expect(page.locator('text=UniqueSearchTag456').first()).toBeVisible({ timeout: 5000 });
   });
 
   test('should navigate to result with Enter', async ({ page }) => {
@@ -84,14 +106,18 @@ test.describe('Global Search', () => {
     await searchInput.waitFor({ state: 'visible' });
     await searchInput.fill('UniqueSearchGroup789');
 
-    // Wait for search results to appear before pressing Enter
-    await expect(page.locator('text=UniqueSearchGroup789')).toBeVisible({ timeout: 5000 });
+    // Wait for search results to appear in the listbox (not just anywhere on page)
+    const resultOption = page.locator('li[role="option"]').first();
+    await expect(resultOption).toBeVisible({ timeout: 5000 });
+
+    // Wait a bit for Alpine.js to finish updating
+    await page.waitForTimeout(200);
 
     // Press Enter to navigate to first result
     await page.keyboard.press('Enter');
 
     // Should navigate to the group page
-    await expect(page).toHaveURL(/\/group\?id=\d+/);
+    await expect(page).toHaveURL(/\/group\?id=\d+/, { timeout: 5000 });
   });
 
   test('should navigate results with arrow keys', async ({ page }) => {
@@ -100,16 +126,23 @@ test.describe('Global Search', () => {
 
     const searchInput = page.locator('.global-search input[type="text"], input[placeholder*="Search"]').first();
     await searchInput.waitFor({ state: 'visible' });
-    await searchInput.fill('UniqueSearch');
+
+    // Search for something that should exist (groups were created in beforeAll)
+    await searchInput.fill('UniqueSearchGroup789');
 
     // Wait for search results to appear before navigating
-    await expect(page.locator('text=UniqueSearch').first()).toBeVisible({ timeout: 5000 });
+    const resultItem = page.locator('li[role="option"]').first();
+    await expect(resultItem).toBeVisible({ timeout: 5000 });
 
-    // Navigate down with arrow key
+    // Navigate down with arrow key - this should change the selected index
     await page.keyboard.press('ArrowDown');
 
-    // Check for selection indicator (with timeout instead of hardcoded wait)
-    const selectedItem = page.locator('[data-selected="true"], [aria-selected="true"], .selected');
+    // Wait for Alpine.js to update the DOM
+    await page.waitForTimeout(100);
+
+    // Check that the second item now has bg-indigo-50 class (indicating selection)
+    // Or check that any list item has the selected styling
+    const selectedItem = page.locator('li[role="option"].bg-indigo-50, li[role="option"][data-selected="true"]');
     await expect(selectedItem).toBeVisible({ timeout: 2000 });
   });
 

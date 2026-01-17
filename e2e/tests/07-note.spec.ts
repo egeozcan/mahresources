@@ -97,17 +97,26 @@ test.describe('Note Validation', () => {
 
 test.describe('Note without Optional Fields', () => {
   let categoryId: number;
+  let ownerGroupId: number;
   let simpleNoteId: number;
 
   test.beforeAll(async ({ apiClient }) => {
     const category = await apiClient.createCategory('Simple Note Category', 'Category for simple notes');
     categoryId = category.ID;
+
+    // Note form requires an owner
+    const ownerGroup = await apiClient.createGroup({
+      name: 'Simple Note Owner',
+      categoryId: categoryId,
+    });
+    ownerGroupId = ownerGroup.ID;
   });
 
   test('should create note with minimal fields', async ({ notePage }) => {
+    // Note form requires name and owner at minimum
     simpleNoteId = await notePage.create({
       name: 'Simple Note',
-      description: 'A note with minimal fields',
+      ownerGroupName: 'Simple Note Owner',
     });
     expect(simpleNoteId).toBeGreaterThan(0);
   });
@@ -115,6 +124,9 @@ test.describe('Note without Optional Fields', () => {
   test.afterAll(async ({ apiClient }) => {
     if (simpleNoteId) {
       await apiClient.deleteNote(simpleNoteId);
+    }
+    if (ownerGroupId) {
+      await apiClient.deleteGroup(ownerGroupId);
     }
     if (categoryId) {
       await apiClient.deleteCategory(categoryId);
