@@ -47,6 +47,7 @@ func main() {
 	memoryFS := flag.Bool("memory-fs", os.Getenv("MEMORY_FS") == "1", "Use in-memory filesystem (env: MEMORY_FS=1)")
 	ephemeral := flag.Bool("ephemeral", os.Getenv("EPHEMERAL") == "1", "Run in fully ephemeral mode (memory DB + memory FS) (env: EPHEMERAL=1)")
 	seedDB := flag.String("seed-db", os.Getenv("SEED_DB"), "Path to SQLite file to use as basis for memory-db (env: SEED_DB)")
+	seedFS := flag.String("seed-fs", os.Getenv("SEED_FS"), "Path to directory to use as read-only base for memory-fs (env: SEED_FS)")
 
 	// Alternative file systems: can be specified multiple times as -alt-fs=key:path
 	var altFSFlags altFS
@@ -100,6 +101,7 @@ func main() {
 		MemoryDB:       useMemoryDB,
 		MemoryFS:       useMemoryFS,
 		SeedDB:         *seedDB,
+		SeedFS:         *seedFS,
 	}
 
 	context, db, mainFs := application_context.CreateContextWithConfig(cfg)

@@ -59,6 +59,7 @@ Key flags:
 | `-ephemeral` | Run fully in-memory (no persistence) |
 | `-memory-db` | Use in-memory SQLite database |
 | `-seed-db` | SQLite file to seed memory-db (for testing/demos) |
+| `-seed-fs` | Directory as read-only base for copy-on-write |
 
 ### Ephemeral Mode
 
@@ -71,6 +72,17 @@ Test against a copy of your data without modifying the original:
 ```bash
 ./mahresources -memory-db -seed-db=./production.db -file-save-path=./files
 ```
+
+Fully seeded ephemeral mode (both database and files):
+```bash
+./mahresources -ephemeral -seed-db=./production.db -seed-fs=./files
+```
+
+Copy-on-write with persistent overlay (writes saved to disk):
+```bash
+./mahresources -db-type=SQLITE -db-dsn=./mydb.db -seed-fs=./original-files -file-save-path=./changes
+```
+The `-seed-fs` option uses copy-on-write: reads come from the seed directory, writes go to the overlay (memory with `-memory-fs`, or disk with `-file-save-path`).
 
 ### Frontend Assets
 

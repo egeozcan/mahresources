@@ -99,6 +99,7 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-memory-fs` | `MEMORY_FS=1` | Use in-memory filesystem |
 | `-ephemeral` | `EPHEMERAL=1` | Fully ephemeral mode (memory DB + FS) |
 | `-seed-db` | `SEED_DB` | SQLite file to seed memory-db (requires -memory-db) |
+| `-seed-fs` | `SEED_FS` | Directory to use as read-only base (copy-on-write with -memory-fs or -file-save-path as overlay) |
 
 Alternative file systems via flags use format `-alt-fs=key:path` (can be repeated).
 Via env vars, use `FILE_ALT_COUNT=N` with `FILE_ALT_NAME_1`, `FILE_ALT_PATH_1`, etc.
@@ -116,6 +117,16 @@ Ephemeral mode (no persistence, data lost on exit):
 Ephemeral mode seeded from existing database (useful for testing/demos):
 ```bash
 ./mahresources -memory-db -seed-db=./production.db -file-save-path=./files -bind-address=:8080
+```
+
+Fully seeded ephemeral mode (both DB and files, copy-on-write for files):
+```bash
+./mahresources -ephemeral -seed-db=./production.db -seed-fs=./files -bind-address=:8080
+```
+
+Copy-on-write with persistent overlay (reads from seed, writes to disk):
+```bash
+./mahresources -db-type=SQLITE -db-dsn=./mydb.db -seed-fs=./original-files -file-save-path=./changes
 ```
 
 ### API Structure

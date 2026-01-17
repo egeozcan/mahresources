@@ -44,6 +44,8 @@ type MahresourcesInputConfig struct {
 	MemoryFS bool
 	// SeedDB is a path to an existing SQLite file to use as the basis for memory-db
 	SeedDB string
+	// SeedFS is a path to a directory to use as the read-only base for memory-fs (copy-on-write)
+	SeedFS string
 }
 
 type MahresourcesLocks struct {
@@ -204,6 +206,15 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		if strings.ToUpper(cfg.DbType) == "POSTGRES" {
 			log.Fatal("-seed-db is only supported with SQLite, not Postgres")
 		}
+		// Check seed-db file exists
+		if info, err := os.Stat(cfg.SeedDB); err != nil {
+			if os.IsNotExist(err) {
+				log.Fatalf("-seed-db file does not exist: %s", cfg.SeedDB)
+			}
+			log.Fatalf("-seed-db file error: %v", err)
+		} else if info.IsDir() {
+			log.Fatalf("-seed-db path is a directory, not a file: %s", cfg.SeedDB)
+		}
 	}
 
 	if cfg.MemoryDB {
@@ -229,8 +240,36 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		}
 	}
 
+	// Validate seed-fs usage: needs either memory-fs or file-save-path for the overlay
+	if cfg.SeedFS != "" && !cfg.MemoryFS && cfg.FileSavePath == "" {
+		log.Fatal("-seed-fs requires either -memory-fs or -file-save-path for the writable overlay")
+	}
+
+	// Validate seed-fs directory exists
+	if cfg.SeedFS != "" {
+		if info, err := os.Stat(cfg.SeedFS); err != nil {
+			if os.IsNotExist(err) {
+				log.Fatalf("-seed-fs directory does not exist: %s", cfg.SeedFS)
+			}
+			log.Fatalf("-seed-fs directory error: %v", err)
+		} else if !info.IsDir() {
+			log.Fatalf("-seed-fs path is not a directory: %s", cfg.SeedFS)
+		}
+	}
+
 	// Determine effective filesystem
-	if cfg.MemoryFS {
+	if cfg.SeedFS != "" {
+		// Copy-on-write mode: seed directory is read-only base, overlay handles writes
+		var overlay afero.Fs
+		if cfg.MemoryFS {
+			overlay = storage.CreateMemoryStorage()
+			log.Printf("Using copy-on-write filesystem seeded from %s (memory overlay)", cfg.SeedFS)
+		} else {
+			overlay = storage.CreateStorage(cfg.FileSavePath)
+			log.Printf("Using copy-on-write filesystem seeded from %s (disk overlay: %s)", cfg.SeedFS, cfg.FileSavePath)
+		}
+		mainFs = storage.CreateCopyOnWriteStorage(cfg.SeedFS, overlay)
+	} else if cfg.MemoryFS {
 		mainFs = storage.CreateMemoryStorage()
 		log.Println("Using in-memory filesystem (ephemeral mode)")
 	} else {
