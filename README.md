@@ -16,27 +16,66 @@ accepts header is json, or you type ".json" at the end of the path (like /groups
 
 Supports postgres and sqlite only. Mysql support should be fairly easy to add, I just personally don't need it.
 
-It has some minimal javascript. 90% of the things work without js too. Usually. HTML doesn't have automatic 
-auto-completers, so they become useless without JS, rendering some forms broken. All included js has integrity checks so
-there's at least that. npm is not in play other than generating css, which is committed, so you don't need it unless you
-want new utility classes.
+Frontend uses Vite for bundling, Alpine.js for reactivity, and Tailwind CSS. Most things work without JS,
+but auto-completers and some forms need it. Global search is accessible via `Cmd/Ctrl+K`.
 
 ## Build
 
-First, set the necessary env variables that are catalogued in the `.env.template` file. You can also create a 
-copy of the file, rename it to `.env` and customize the values.
+```bash
+# Full build (CSS + JS bundle + Go binary)
+npm run build
 
-I use compiledaemon for continuous builds as I develop:
+# Or just the Go binary (requires json1 for SQLite JSON, fts5 for full-text search)
+go build --tags 'json1 fts5'
+```
 
-`CompileDaemon -exclude-dir=".git" -exclude-dir="node_modules" -command="./mahresources" -build="go build --tags json1"`
+For development with hot reload:
+```bash
+npm run watch
+```
 
-Just do `go build --tags json1` if you want to have a single build.
+## Configuration
 
-### Optional
+All settings can be configured via environment variables (in `.env`) or command-line flags. Flags take precedence.
 
-To build css, install node, run `npm ci` first and do `npm run build-css` to get an optimized Tailwind css file. 
-You can also start a watcher for that via `npm run css-gen`. The generated css, as mentioned before, is committed. You
-don't need to do this if you don't need additional utility classes.
+```bash
+# Using environment variables
+cp .env.template .env
+# Edit .env with your values
+./mahresources
+
+# Using command-line flags
+./mahresources -db-type=SQLITE -db-dsn=mydb.db -file-save-path=./files -bind-address=:8080
+```
+
+Key flags:
+| Flag | Description |
+|------|-------------|
+| `-file-save-path` | Main file storage directory |
+| `-db-type` | Database type: SQLITE or POSTGRES |
+| `-db-dsn` | Database connection string |
+| `-bind-address` | Server address:port (default :8181) |
+| `-ffmpeg-path` | Path to ffmpeg for video thumbnails |
+| `-ephemeral` | Run fully in-memory (no persistence) |
+| `-memory-db` | Use in-memory SQLite database |
+| `-seed-db` | SQLite file to seed memory-db (for testing/demos) |
+
+### Ephemeral Mode
+
+Run without any persistence (useful for demos or testing):
+```bash
+./mahresources -ephemeral -bind-address=:8080
+```
+
+Test against a copy of your data without modifying the original:
+```bash
+./mahresources -memory-db -seed-db=./production.db -file-save-path=./files
+```
+
+### Frontend Assets
+
+To build CSS/JS, install node and run `npm ci` first. The generated assets are committed, so you only need this if
+you're modifying frontend code.
 
 ### Scripting
 
