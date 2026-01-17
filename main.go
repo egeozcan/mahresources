@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 	"log"
@@ -25,6 +26,20 @@ func (a *altFS) String() string {
 func (a *altFS) Set(value string) error {
 	*a = append(*a, value)
 	return nil
+}
+
+// parseDurationEnv parses a duration from an environment variable, returning the default if not set or invalid
+func parseDurationEnv(envVar string, defaultVal time.Duration) time.Duration {
+	val := os.Getenv(envVar)
+	if val == "" {
+		return defaultVal
+	}
+	d, err := time.ParseDuration(val)
+	if err != nil {
+		log.Printf("Warning: invalid duration for %s=%q, using default %v", envVar, val, defaultVal)
+		return defaultVal
+	}
+	return d
 }
 
 func main() {
@@ -52,6 +67,11 @@ func main() {
 	// Alternative file systems: can be specified multiple times as -alt-fs=key:path
 	var altFSFlags altFS
 	flag.Var(&altFSFlags, "alt-fs", "Alternative file system in format key:path (can be specified multiple times)")
+
+	// Remote resource timeout options
+	remoteConnectTimeout := flag.Duration("remote-connect-timeout", parseDurationEnv("REMOTE_CONNECT_TIMEOUT", 30*time.Second), "Timeout for connecting to remote URLs (env: REMOTE_CONNECT_TIMEOUT)")
+	remoteIdleTimeout := flag.Duration("remote-idle-timeout", parseDurationEnv("REMOTE_IDLE_TIMEOUT", 60*time.Second), "Timeout for idle remote transfers (env: REMOTE_IDLE_TIMEOUT)")
+	remoteOverallTimeout := flag.Duration("remote-overall-timeout", parseDurationEnv("REMOTE_OVERALL_TIMEOUT", 30*time.Minute), "Maximum total time for remote downloads (env: REMOTE_OVERALL_TIMEOUT)")
 
 	flag.Parse()
 
@@ -90,18 +110,21 @@ func main() {
 
 	// Create configuration
 	cfg := &application_context.MahresourcesInputConfig{
-		FileSavePath:   *fileSavePath,
-		DbType:         *dbType,
-		DbDsn:          *dbDsn,
-		DbReadOnlyDsn:  *dbReadOnlyDsn,
-		DbLogFile:      *dbLogFile,
-		BindAddress:    *bindAddress,
-		FfmpegPath:     *ffmpegPath,
-		AltFileSystems: altFileSystems,
-		MemoryDB:       useMemoryDB,
-		MemoryFS:       useMemoryFS,
-		SeedDB:         *seedDB,
-		SeedFS:         *seedFS,
+		FileSavePath:                 *fileSavePath,
+		DbType:                       *dbType,
+		DbDsn:                        *dbDsn,
+		DbReadOnlyDsn:                *dbReadOnlyDsn,
+		DbLogFile:                    *dbLogFile,
+		BindAddress:                  *bindAddress,
+		FfmpegPath:                   *ffmpegPath,
+		AltFileSystems:               altFileSystems,
+		MemoryDB:                     useMemoryDB,
+		MemoryFS:                     useMemoryFS,
+		SeedDB:                       *seedDB,
+		SeedFS:                       *seedFS,
+		RemoteResourceConnectTimeout: *remoteConnectTimeout,
+		RemoteResourceIdleTimeout:    *remoteIdleTimeout,
+		RemoteResourceOverallTimeout: *remoteOverallTimeout,
 	}
 
 	context, db, mainFs := application_context.CreateContextWithConfig(cfg)

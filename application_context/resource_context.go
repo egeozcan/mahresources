@@ -18,11 +18,13 @@ import (
 	"mahresources/models/types"
 	"mahresources/server/interfaces"
 	"math"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/anthonynsimon/bild/imgio"
@@ -188,10 +190,133 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 	return &resource, tx.Commit().Error
 }
 
+// timeoutReader wraps an io.Reader and returns an error if no data is read within the timeout period
+type timeoutReader struct {
+	reader      io.Reader
+	idleTimeout time.Duration
+	done        chan struct{}
+	mu          sync.Mutex
+	lastRead    time.Time
+	err         error
+}
+
+func newTimeoutReader(r io.Reader, idleTimeout time.Duration) *timeoutReader {
+	tr := &timeoutReader{
+		reader:      r,
+		idleTimeout: idleTimeout,
+		lastRead:    time.Now(),
+		done:        make(chan struct{}),
+	}
+	go tr.watchTimeout()
+	return tr
+}
+
+func (tr *timeoutReader) watchTimeout() {
+	// Check frequently enough to detect timeouts promptly, but not so frequently as to waste CPU
+	checkInterval := tr.idleTimeout / 10
+	if checkInterval < 100*time.Millisecond {
+		checkInterval = 100 * time.Millisecond
+	}
+	if checkInterval > time.Second {
+		checkInterval = time.Second
+	}
+
+	ticker := time.NewTicker(checkInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-tr.done:
+			return
+		case <-ticker.C:
+			tr.mu.Lock()
+			elapsed := time.Since(tr.lastRead)
+			if elapsed > tr.idleTimeout {
+				tr.err = fmt.Errorf("remote server stopped sending data (idle timeout after %v)", tr.idleTimeout)
+				tr.mu.Unlock()
+				return
+			}
+			tr.mu.Unlock()
+		}
+	}
+}
+
+type readResult struct {
+	n   int
+	err error
+}
+
+func (tr *timeoutReader) Read(p []byte) (n int, err error) {
+	// Check for existing error
+	tr.mu.Lock()
+	if tr.err != nil {
+		err := tr.err
+		tr.mu.Unlock()
+		return 0, err
+	}
+	tr.mu.Unlock()
+
+	// Run read in goroutine so we can interrupt it on timeout.
+	// Note: On timeout, this goroutine may outlive the Read call. It will exit
+	// when the underlying reader returns (e.g., when the HTTP connection closes).
+	resultCh := make(chan readResult, 1)
+	go func() {
+		n, err := tr.reader.Read(p)
+		resultCh <- readResult{n, err}
+	}()
+
+	// Wait for read to complete or timeout
+	for {
+		select {
+		case result := <-resultCh:
+			if result.n > 0 {
+				tr.mu.Lock()
+				tr.lastRead = time.Now()
+				tr.mu.Unlock()
+			}
+			return result.n, result.err
+		case <-tr.done:
+			return 0, fmt.Errorf("remote server stopped sending data (idle timeout after %v)", tr.idleTimeout)
+		default:
+			tr.mu.Lock()
+			err := tr.err
+			tr.mu.Unlock()
+			if err != nil {
+				return 0, err
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+func (tr *timeoutReader) Close() error {
+	close(tr.done)
+	return nil
+}
+
+// createRemoteResourceHTTPClient creates an HTTP client with the given timeouts
+func createRemoteResourceHTTPClient(connectTimeout, overallTimeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: overallTimeout,
+		Transport: &http.Transport{
+			DialContext:           (&net.Dialer{Timeout: connectTimeout}).DialContext,
+			TLSHandshakeTimeout:   connectTimeout / 2, // TLS handshake gets half the connect timeout
+			ResponseHeaderTimeout: connectTimeout,
+			IdleConnTimeout:       90 * time.Second,
+		},
+	}
+}
+
 func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.ResourceFromRemoteCreator) (*models.Resource, error) {
 	urls := strings.Split(resourceQuery.URL, "\n")
 	var firstResource *models.Resource
 	var firstError error
+
+	// Get timeout values from config
+	connectTimeout := ctx.Config.RemoteResourceConnectTimeout
+	idleTimeout := ctx.Config.RemoteResourceIdleTimeout
+	overallTimeout := ctx.Config.RemoteResourceOverallTimeout
+
+	httpClient := createRemoteResourceHTTPClient(connectTimeout, overallTimeout)
 
 	setError := func(err error) {
 		if firstError == nil {
@@ -202,7 +327,7 @@ func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.Re
 
 	for _, url := range urls {
 		(func(url string) {
-			resp, err := http.Get(url)
+			resp, err := httpClient.Get(url)
 
 			if err != nil {
 				setError(err)
@@ -210,6 +335,10 @@ func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.Re
 			}
 
 			defer resp.Body.Close()
+
+			// Wrap response body with timeout reader to detect stalled transfers
+			timeoutBody := newTimeoutReader(resp.Body, idleTimeout)
+			defer timeoutBody.Close()
 
 			if resourceQuery.GroupName != "" {
 				category := models.Category{Name: resourceQuery.GroupCategoryName}
@@ -243,7 +372,7 @@ func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.Re
 				name = path.Base(url)
 			}
 
-			res, err := ctx.AddResource(resp.Body, resourceQuery.FileName, &query_models.ResourceCreator{
+			res, err := ctx.AddResource(timeoutBody, resourceQuery.FileName, &query_models.ResourceCreator{
 				ResourceQueryBase: query_models.ResourceQueryBase{
 					Name:             name,
 					Description:      resourceQuery.Description,

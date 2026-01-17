@@ -100,6 +100,9 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-ephemeral` | `EPHEMERAL=1` | Fully ephemeral mode (memory DB + FS) |
 | `-seed-db` | `SEED_DB` | SQLite file to seed memory-db (requires -memory-db) |
 | `-seed-fs` | `SEED_FS` | Directory to use as read-only base (copy-on-write with -memory-fs or -file-save-path as overlay) |
+| `-remote-connect-timeout` | `REMOTE_CONNECT_TIMEOUT` | Timeout for connecting to remote URLs (default: 30s) |
+| `-remote-idle-timeout` | `REMOTE_IDLE_TIMEOUT` | Timeout for idle remote transfers (default: 60s) |
+| `-remote-overall-timeout` | `REMOTE_OVERALL_TIMEOUT` | Maximum total time for remote downloads (default: 30m) |
 
 Alternative file systems via flags use format `-alt-fs=key:path` (can be repeated).
 Via env vars, use `FILE_ALT_COUNT=N` with `FILE_ALT_NAME_1`, `FILE_ALT_PATH_1`, etc.

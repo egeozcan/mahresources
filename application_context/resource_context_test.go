@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/joho/godotenv"
@@ -203,3 +204,86 @@ func TestAddResource_ConcurrentSameHash(t *testing.T) {
 		t.Errorf("Expected exactly 1 resource in database, got %d", resourceCount)
 	}
 }
+
+// slowReader is a test helper that delays between reads
+type slowReader struct {
+	data    []byte
+	pos     int
+	delay   time.Duration
+	readLen int
+}
+
+func (s *slowReader) Read(p []byte) (n int, err error) {
+	if s.pos >= len(s.data) {
+		return 0, io.EOF
+	}
+	time.Sleep(s.delay)
+	n = copy(p, s.data[s.pos:min(s.pos+s.readLen, len(s.data))])
+	s.pos += n
+	return n, nil
+}
+
+func TestTimeoutReader_NormalRead(t *testing.T) {
+	data := []byte("hello world")
+	reader := bytes.NewReader(data)
+
+	tr := newTimeoutReader(reader, 5*time.Second)
+	defer tr.Close()
+
+	result, err := io.ReadAll(tr)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(result) != string(data) {
+		t.Errorf("expected %q, got %q", data, result)
+	}
+}
+
+func TestTimeoutReader_IdleTimeout(t *testing.T) {
+	// Reader that blocks forever
+	r, _ := io.Pipe()
+	tr := newTimeoutReader(r, 200*time.Millisecond)
+	defer tr.Close()
+
+	buf := make([]byte, 10)
+	_, err := tr.Read(buf)
+	if err == nil || !strings.Contains(err.Error(), "idle timeout") {
+		t.Errorf("expected idle timeout error, got: %v", err)
+	}
+}
+
+func TestTimeoutReader_SlowButActiveRead(t *testing.T) {
+	// Reader that sends data slowly but consistently (faster than timeout)
+	data := []byte("abcdefghij")
+	slow := &slowReader{
+		data:    data,
+		delay:   20 * time.Millisecond,
+		readLen: 2,
+	}
+
+	tr := newTimeoutReader(slow, 100*time.Millisecond)
+	defer tr.Close()
+
+	result, err := io.ReadAll(tr)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(result) != string(data) {
+		t.Errorf("expected %q, got %q", data, result)
+	}
+}
+
+func TestTimeoutReader_CloseStopsWatcher(t *testing.T) {
+	reader := bytes.NewReader([]byte("test"))
+	tr := newTimeoutReader(reader, time.Hour)
+
+	// Close should not panic and should stop the goroutine
+	err := tr.Close()
+	if err != nil {
+		t.Errorf("Close() returned error: %v", err)
+	}
+
+	// Give goroutine time to exit
+	time.Sleep(10 * time.Millisecond)
+}
+

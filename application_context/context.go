@@ -25,6 +25,12 @@ type MahresourcesConfig struct {
 	AltFileSystems map[string]string
 	FfmpegPath     string
 	BindAddress    string
+	// RemoteResourceConnectTimeout is the timeout for connecting to remote URLs (dial, TLS, response headers)
+	RemoteResourceConnectTimeout time.Duration
+	// RemoteResourceIdleTimeout is how long to wait before erroring if a remote server stops sending data
+	RemoteResourceIdleTimeout time.Duration
+	// RemoteResourceOverallTimeout is the maximum total time for a remote resource download (default: 30m)
+	RemoteResourceOverallTimeout time.Duration
 }
 
 // MahresourcesInputConfig holds all configuration options that can be passed
@@ -46,6 +52,12 @@ type MahresourcesInputConfig struct {
 	SeedDB string
 	// SeedFS is a path to a directory to use as the read-only base for memory-fs (copy-on-write)
 	SeedFS string
+	// RemoteResourceConnectTimeout is the timeout for connecting to remote URLs (dial, TLS, response headers)
+	RemoteResourceConnectTimeout time.Duration
+	// RemoteResourceIdleTimeout is how long to wait before erroring if a remote server stops sending data
+	RemoteResourceIdleTimeout time.Duration
+	// RemoteResourceOverallTimeout is the maximum total time for a remote resource download (default: 30m)
+	RemoteResourceOverallTimeout time.Duration
 }
 
 type MahresourcesLocks struct {
@@ -296,11 +308,28 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		log.Fatal(err.Error())
 	}
 
+	// Apply default timeouts if not specified
+	connectTimeout := cfg.RemoteResourceConnectTimeout
+	if connectTimeout == 0 {
+		connectTimeout = 30 * time.Second
+	}
+	idleTimeout := cfg.RemoteResourceIdleTimeout
+	if idleTimeout == 0 {
+		idleTimeout = 60 * time.Second
+	}
+	overallTimeout := cfg.RemoteResourceOverallTimeout
+	if overallTimeout == 0 {
+		overallTimeout = 30 * time.Minute
+	}
+
 	return NewMahresourcesContext(mainFs, db, readOnlyDb, &MahresourcesConfig{
-		DbType:         dbType,
-		AltFileSystems: cfg.AltFileSystems,
-		FfmpegPath:     cfg.FfmpegPath,
-		BindAddress:    cfg.BindAddress,
+		DbType:                       dbType,
+		AltFileSystems:               cfg.AltFileSystems,
+		FfmpegPath:                   cfg.FfmpegPath,
+		BindAddress:                  cfg.BindAddress,
+		RemoteResourceConnectTimeout: connectTimeout,
+		RemoteResourceIdleTimeout:    idleTimeout,
+		RemoteResourceOverallTimeout: overallTimeout,
 	}), db, mainFs
 }
 
