@@ -25,6 +25,23 @@ type MahresourcesConfig struct {
 	BindAddress    string
 }
 
+// MahresourcesInputConfig holds all configuration options that can be passed
+// via command-line flags or environment variables
+type MahresourcesInputConfig struct {
+	FileSavePath   string
+	DbType         string
+	DbDsn          string
+	DbReadOnlyDsn  string
+	DbLogFile      string
+	BindAddress    string
+	FfmpegPath     string
+	AltFileSystems map[string]string
+	// MemoryDB uses an in-memory SQLite database (ephemeral, no persistence)
+	MemoryDB bool
+	// MemoryFS uses an in-memory filesystem (ephemeral, no persistence)
+	MemoryFS bool
+}
+
 type MahresourcesLocks struct {
 	ThumbnailGenerationLock      *lib.IDLock[uint]
 	VideoThumbnailGenerationLock *lib.IDLock[uint]
@@ -143,28 +160,39 @@ func metaKeys(ctx *MahresourcesContext, table string) (*[]fieldResult, error) {
 	return &results, nil
 }
 
-func CreateContext() (*MahresourcesContext, *gorm.DB, afero.Fs) {
-	var numAlt int64 = 0
+// CreateContextWithConfig creates a context using the provided configuration.
+// This is the preferred way to create a context when using command-line flags.
+func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext, *gorm.DB, afero.Fs) {
 	var db *gorm.DB
+	var mainFs afero.Fs
 
-	ffMpegPath := os.Getenv("FFMPEG_PATH")
-	dbType := os.Getenv("DB_TYPE")
-	dsn := os.Getenv("DB_DSN")
-	readOnlyDsn := os.Getenv("DB_READONLY_DSN")
-	logType := os.Getenv("DB_LOG_FILE")
-	fileSavePath := os.Getenv("FILE_SAVE_PATH")
-	bindAddress := os.Getenv("BIND_ADDRESS")
-	if fileAltCount, err := strconv.ParseInt(os.Getenv("FILE_ALT_COUNT"), 10, 8); err == nil {
-		numAlt = fileAltCount
+	// Determine effective database settings
+	dbType := cfg.DbType
+	dbDsn := cfg.DbDsn
+	readOnlyDsn := cfg.DbReadOnlyDsn
+
+	if cfg.MemoryDB {
+		dbType = "SQLITE"
+		// Use shared cache so main and read-only connections share the same in-memory database
+		dbDsn = "file::memory:?cache=shared"
+		readOnlyDsn = "file::memory:?cache=shared&mode=ro"
+		log.Println("Using in-memory SQLite database (ephemeral mode)")
 	}
 
-	fmt.Printf("DB_TYPE %v DB_DSN %v FILE_SAVE_PATH %v", dbType, dsn, fileSavePath)
-
-	if fileSavePath == "" {
-		log.Fatal("File save path is empty")
+	// Determine effective filesystem
+	if cfg.MemoryFS {
+		mainFs = storage.CreateMemoryStorage()
+		log.Println("Using in-memory filesystem (ephemeral mode)")
+	} else {
+		if cfg.FileSavePath == "" {
+			log.Fatal("File save path is empty (use -memory-fs for ephemeral mode)")
+		}
+		mainFs = storage.CreateStorage(cfg.FileSavePath)
 	}
 
-	if connectedDB, err := models.CreateDatabaseConnection(dbType, dsn, logType); err != nil {
+	fmt.Printf("DB_TYPE %v DB_DSN %v FILE_SAVE_PATH %v\n", dbType, dbDsn, cfg.FileSavePath)
+
+	if connectedDB, err := models.CreateDatabaseConnection(dbType, dbDsn, cfg.DbLogFile); err != nil {
 		log.Fatal(err)
 	} else {
 		db = connectedDB
@@ -176,17 +204,36 @@ func CreateContext() (*MahresourcesContext, *gorm.DB, afero.Fs) {
 		log.Fatal(err.Error())
 	}
 
-	mainFs := storage.CreateStorage(fileSavePath)
-	altFSystems := make(map[string]string, numAlt)
+	return NewMahresourcesContext(mainFs, db, readOnlyDb, &MahresourcesConfig{
+		DbType:         dbType,
+		AltFileSystems: cfg.AltFileSystems,
+		FfmpegPath:     cfg.FfmpegPath,
+		BindAddress:    cfg.BindAddress,
+	}), db, mainFs
+}
 
+// CreateContext creates a context using environment variables.
+// Deprecated: Use CreateContextWithConfig for new code.
+func CreateContext() (*MahresourcesContext, *gorm.DB, afero.Fs) {
+	var numAlt int64 = 0
+
+	if fileAltCount, err := strconv.ParseInt(os.Getenv("FILE_ALT_COUNT"), 10, 8); err == nil {
+		numAlt = fileAltCount
+	}
+
+	altFSystems := make(map[string]string, numAlt)
 	for i := int64(0); i < numAlt; i++ {
 		altFSystems[os.Getenv(fmt.Sprintf("FILE_ALT_NAME_%v", i+1))] = os.Getenv(fmt.Sprintf("FILE_ALT_PATH_%v", i+1))
 	}
 
-	return NewMahresourcesContext(mainFs, db, readOnlyDb, &MahresourcesConfig{
-		DbType:         dbType,
+	return CreateContextWithConfig(&MahresourcesInputConfig{
+		FileSavePath:   os.Getenv("FILE_SAVE_PATH"),
+		DbType:         os.Getenv("DB_TYPE"),
+		DbDsn:          os.Getenv("DB_DSN"),
+		DbReadOnlyDsn:  os.Getenv("DB_READONLY_DSN"),
+		DbLogFile:      os.Getenv("DB_LOG_FILE"),
+		BindAddress:    os.Getenv("BIND_ADDRESS"),
+		FfmpegPath:     os.Getenv("FFMPEG_PATH"),
 		AltFileSystems: altFSystems,
-		FfmpegPath:     ffMpegPath,
-		BindAddress:    bindAddress,
-	}), db, mainFs
+	})
 }

@@ -82,11 +82,35 @@ Mahresources is a CRUD application for personal information management written i
 
 ### Configuration
 
-Environment variables in `.env` (see `.env.template`):
-- `DB_TYPE`: SQLITE or POSTGRES
-- `DB_DSN`: Database connection string
-- `FILE_SAVE_PATH`: Resource storage directory
-- `FFMPEG_PATH`: Required for video thumbnails
+All settings can be configured via environment variables (in `.env`) or command-line flags. Command-line flags take precedence over environment variables.
+
+| Flag | Env Variable | Description |
+|------|--------------|-------------|
+| `-file-save-path` | `FILE_SAVE_PATH` | Main file storage directory (required unless using memory-fs) |
+| `-db-type` | `DB_TYPE` | Database type: SQLITE or POSTGRES |
+| `-db-dsn` | `DB_DSN` | Database connection string |
+| `-db-readonly-dsn` | `DB_READONLY_DSN` | Read-only database connection (optional) |
+| `-db-log-file` | `DB_LOG_FILE` | DB log: STDOUT, empty, or file path |
+| `-bind-address` | `BIND_ADDRESS` | Server address:port |
+| `-ffmpeg-path` | `FFMPEG_PATH` | Path to ffmpeg for video thumbnails |
+| `-skip-fts` | `SKIP_FTS=1` | Skip Full-Text Search initialization |
+| `-alt-fs` | `FILE_ALT_*` | Alternative file systems |
+| `-memory-db` | `MEMORY_DB=1` | Use in-memory SQLite database |
+| `-memory-fs` | `MEMORY_FS=1` | Use in-memory filesystem |
+| `-ephemeral` | `EPHEMERAL=1` | Fully ephemeral mode (memory DB + FS) |
+
+Alternative file systems via flags use format `-alt-fs=key:path` (can be repeated).
+Via env vars, use `FILE_ALT_COUNT=N` with `FILE_ALT_NAME_1`, `FILE_ALT_PATH_1`, etc.
+
+Example with flags:
+```bash
+./mahresources -db-type=SQLITE -db-dsn=mydb.db -file-save-path=./files -bind-address=:8080
+```
+
+Ephemeral mode (no persistence, data lost on exit):
+```bash
+./mahresources -ephemeral -bind-address=:8080
+```
 
 ### API Structure
 
