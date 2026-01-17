@@ -98,6 +98,7 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-memory-db` | `MEMORY_DB=1` | Use in-memory SQLite database |
 | `-memory-fs` | `MEMORY_FS=1` | Use in-memory filesystem |
 | `-ephemeral` | `EPHEMERAL=1` | Fully ephemeral mode (memory DB + FS) |
+| `-seed-db` | `SEED_DB` | SQLite file to seed memory-db (requires -memory-db) |
 
 Alternative file systems via flags use format `-alt-fs=key:path` (can be repeated).
 Via env vars, use `FILE_ALT_COUNT=N` with `FILE_ALT_NAME_1`, `FILE_ALT_PATH_1`, etc.
@@ -110,6 +111,11 @@ Example with flags:
 Ephemeral mode (no persistence, data lost on exit):
 ```bash
 ./mahresources -ephemeral -bind-address=:8080
+```
+
+Ephemeral mode seeded from existing database (useful for testing/demos):
+```bash
+./mahresources -memory-db -seed-db=./production.db -file-save-path=./files -bind-address=:8080
 ```
 
 ### API Structure

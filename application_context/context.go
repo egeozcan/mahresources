@@ -2,20 +2,22 @@ package application_context
 
 import (
 	"fmt"
+	"io"
+	"log"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/spf13/afero"
 	"gorm.io/gorm"
-	"log"
 	"mahresources/constants"
 	"mahresources/lib"
 	"mahresources/models"
 	"mahresources/storage"
-	"os"
-	"strconv"
-	"strings"
-	"time"
 )
 
 type MahresourcesConfig struct {
@@ -40,6 +42,8 @@ type MahresourcesInputConfig struct {
 	MemoryDB bool
 	// MemoryFS uses an in-memory filesystem (ephemeral, no persistence)
 	MemoryFS bool
+	// SeedDB is a path to an existing SQLite file to use as the basis for memory-db
+	SeedDB string
 }
 
 type MahresourcesLocks struct {
@@ -160,6 +164,27 @@ func metaKeys(ctx *MahresourcesContext, table string) (*[]fieldResult, error) {
 	return &results, nil
 }
 
+// copySeedDatabase copies a SQLite database file to the destination path
+func copySeedDatabase(src, dst string) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("failed to open seed database %s: %w", src, err)
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return fmt.Errorf("failed to create destination database %s: %w", dst, err)
+	}
+	defer dstFile.Close()
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		return fmt.Errorf("failed to copy database: %w", err)
+	}
+
+	return dstFile.Sync()
+}
+
 // CreateContextWithConfig creates a context using the provided configuration.
 // This is the preferred way to create a context when using command-line flags.
 func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext, *gorm.DB, afero.Fs) {
@@ -171,17 +196,37 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 	dbDsn := cfg.DbDsn
 	readOnlyDsn := cfg.DbReadOnlyDsn
 
+	// Validate seed-db usage
+	if cfg.SeedDB != "" {
+		if !cfg.MemoryDB {
+			log.Fatal("-seed-db requires -memory-db or -ephemeral flag")
+		}
+		if strings.ToUpper(cfg.DbType) == "POSTGRES" {
+			log.Fatal("-seed-db is only supported with SQLite, not Postgres")
+		}
+	}
+
 	if cfg.MemoryDB {
 		dbType = "SQLITE"
 		// Use a temp file with WAL mode for better concurrent write handling
 		// The file is auto-deleted when all connections close
 		dbDsn = "file:/tmp/mahresources_ephemeral.db?_journal_mode=WAL&_busy_timeout=10000&_synchronous=NORMAL"
 		readOnlyDsn = "file:/tmp/mahresources_ephemeral.db?_journal_mode=WAL&_busy_timeout=10000&mode=ro"
-		// Remove any existing temp database to ensure clean state
+
+		// Remove any existing temp database files
 		os.Remove("/tmp/mahresources_ephemeral.db")
 		os.Remove("/tmp/mahresources_ephemeral.db-wal")
 		os.Remove("/tmp/mahresources_ephemeral.db-shm")
-		log.Println("Using ephemeral SQLite database with WAL mode")
+
+		if cfg.SeedDB != "" {
+			// Copy seed database to temp location
+			if err := copySeedDatabase(cfg.SeedDB, "/tmp/mahresources_ephemeral.db"); err != nil {
+				log.Fatalf("Failed to copy seed database: %v", err)
+			}
+			log.Printf("Using ephemeral SQLite database seeded from %s", cfg.SeedDB)
+		} else {
+			log.Println("Using ephemeral SQLite database with WAL mode")
+		}
 	}
 
 	// Determine effective filesystem
