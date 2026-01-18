@@ -28,14 +28,14 @@ func TestParseSearchQuery(t *testing.T) {
 			name:     "simple word",
 			input:    "hello",
 			wantTerm: "hello",
-			wantMode: ModeExact,
+			wantMode: ModePrefix,
 			wantDist: 0,
 		},
 		{
 			name:     "word with leading/trailing spaces",
 			input:    "  hello  ",
 			wantTerm: "hello",
-			wantMode: ModeExact,
+			wantMode: ModePrefix,
 			wantDist: 0,
 		},
 		{
@@ -98,14 +98,14 @@ func TestParseSearchQuery(t *testing.T) {
 			name:     "special characters removed",
 			input:    "hello@#$world",
 			wantTerm: "helloworld",
-			wantMode: ModeExact,
+			wantMode: ModePrefix,
 			wantDist: 0,
 		},
 		{
 			name:     "allowed special chars preserved",
 			input:    "hello-world_test.go",
 			wantTerm: "hello-world_test.go",
-			wantMode: ModeExact,
+			wantMode: ModePrefix,
 			wantDist: 0,
 		},
 	}

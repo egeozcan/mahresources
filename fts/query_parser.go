@@ -7,8 +7,8 @@ import (
 
 // ParseSearchQuery parses user input into a structured query
 // Supported syntax:
-//   - "hello" -> standard word matching
-//   - "typ*" -> prefix matching (matches type, typing, etc.)
+//   - "hello" -> prefix matching (default behavior)
+//   - "typ*" -> explicit prefix matching
 //   - "~test" -> fuzzy matching with edit distance 1
 //   - "~2test" -> fuzzy matching with edit distance 2
 func ParseSearchQuery(input string) ParsedQuery {
@@ -51,10 +51,10 @@ func ParseSearchQuery(input string) ParsedQuery {
 		}
 	}
 
-	// Default: exact/standard match
+	// Default: prefix match (partial match)
 	return ParsedQuery{
 		Term: sanitizeSearchTerm(input),
-		Mode: ModeExact,
+		Mode: ModePrefix,
 	}
 }
 
