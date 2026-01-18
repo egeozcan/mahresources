@@ -3,7 +3,6 @@ package api_handlers
 import (
 	"encoding/json"
 	"fmt"
-	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -200,7 +199,7 @@ func GetAddMetaToGroupsHandler(ctx interfaces.GroupWriter) func(writer http.Resp
 	}
 }
 
-func GetGroupMetaKeysHandler(ctx *application_context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
+func GetGroupMetaKeysHandler(ctx interfaces.GroupMetaReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		keys, err := ctx.GroupMetaKeys()
 

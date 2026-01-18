@@ -9,6 +9,7 @@ import (
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
+	"mahresources/server/interfaces"
 	"path"
 	"strings"
 
@@ -78,7 +79,7 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 	return nil
 }
 
-func (ctx *MahresourcesContext) ResourceMetaKeys() (*[]fieldResult, error) {
+func (ctx *MahresourcesContext) ResourceMetaKeys() (*[]interfaces.MetaKey, error) {
 	return metaKeys(ctx, "resources")
 }
 

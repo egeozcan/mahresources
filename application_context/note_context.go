@@ -2,11 +2,13 @@ package application_context
 
 import (
 	"errors"
+	"strings"
+
 	"gorm.io/gorm/clause"
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
-	"strings"
+	"mahresources/server/interfaces"
 )
 
 func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteEditor) (*models.Note, error) {
@@ -145,7 +147,7 @@ func (ctx *MahresourcesContext) DeleteNote(noteId uint) error {
 	return ctx.db.Select(clause.Associations).Delete(&note).Error
 }
 
-func (ctx *MahresourcesContext) NoteMetaKeys() (*[]fieldResult, error) {
+func (ctx *MahresourcesContext) NoteMetaKeys() (*[]interfaces.MetaKey, error) {
 	return metaKeys(ctx, "notes")
 }
 

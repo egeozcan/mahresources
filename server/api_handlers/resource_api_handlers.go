@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -262,7 +261,7 @@ func GetResourceEditHandler(ctx interfaces.ResourceWriter) func(writer http.Resp
 	}
 }
 
-func GetResourceThumbnailHandler(ctx *application_context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
+func GetResourceThumbnailHandler(ctx interfaces.ResourceThumbnailLoader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var query = query_models.ResourceThumbnailQuery{}
 		err := tryFillStructValuesFromRequest(&query, request)
@@ -332,7 +331,7 @@ func GetRemoveResourceHandler(ctx interfaces.ResourceDeleter) func(writer http.R
 	}
 }
 
-func GetResourceMetaKeysHandler(ctx *application_context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
+func GetResourceMetaKeysHandler(ctx interfaces.ResourceMetaReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		keys, err := ctx.ResourceMetaKeys()
 

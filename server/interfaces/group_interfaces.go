@@ -25,3 +25,8 @@ type GroupDeleter interface {
 	DeleteGroup(groupId uint) error
 	BulkDeleteGroups(query *query_models.BulkQuery) error
 }
+
+// GroupMetaReader provides access to group metadata keys
+type GroupMetaReader interface {
+	GroupMetaKeys() (*[]MetaKey, error)
+}

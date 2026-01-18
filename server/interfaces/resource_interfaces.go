@@ -1,6 +1,7 @@
 package interfaces
 
 import (
+	"context"
 	"io"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -35,4 +36,15 @@ type ResourceReader interface {
 
 type ResourceDeleter interface {
 	DeleteResource(resourceId uint) error
+}
+
+// ResourceMetaReader provides access to resource metadata keys
+type ResourceMetaReader interface {
+	ResourceMetaKeys() (*[]MetaKey, error)
+}
+
+// ResourceThumbnailLoader handles thumbnail retrieval for resources
+type ResourceThumbnailLoader interface {
+	ResourceReader
+	LoadOrCreateThumbnailForResource(resourceId, width, height uint, ctx context.Context) (*models.Preview, error)
 }

@@ -13,6 +13,7 @@ import (
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
+	"mahresources/server/interfaces"
 )
 
 func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) error {
@@ -161,7 +162,7 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 	})
 }
 
-func (ctx *MahresourcesContext) GroupMetaKeys() (*[]fieldResult, error) {
+func (ctx *MahresourcesContext) GroupMetaKeys() (*[]interfaces.MetaKey, error) {
 	return metaKeys(ctx, "groups")
 }
 

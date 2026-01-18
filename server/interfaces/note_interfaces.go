@@ -25,3 +25,13 @@ type NoteTypeWriter interface {
 type NoteTypeDeleter interface {
 	DeleteNoteType(noteTypeId uint) error
 }
+
+// NoteMetaReader provides access to note metadata keys
+type NoteMetaReader interface {
+	NoteMetaKeys() (*[]MetaKey, error)
+}
+
+// NoteTypeReader provides read access to note types
+type NoteTypeReader interface {
+	GetNoteTypes(query *query_models.NoteTypeQuery, offset, maxResults int) (*[]models.NoteType, error)
+}

@@ -17,6 +17,7 @@ import (
 	"mahresources/constants"
 	"mahresources/lib"
 	"mahresources/models"
+	"mahresources/server/interfaces"
 	"mahresources/storage"
 )
 
@@ -151,12 +152,8 @@ func pageLimitCustom(maxResults int) func(db *gorm.DB) *gorm.DB {
 	}
 }
 
-type fieldResult struct {
-	Key string
-}
-
-func metaKeys(ctx *MahresourcesContext, table string) (*[]fieldResult, error) {
-	var results []fieldResult
+func metaKeys(ctx *MahresourcesContext, table string) (*[]interfaces.MetaKey, error) {
+	var results []interfaces.MetaKey
 
 	if ctx.Config.DbType == constants.DbTypePosgres {
 		if err := ctx.db.
@@ -175,7 +172,7 @@ func metaKeys(ctx *MahresourcesContext, table string) (*[]fieldResult, error) {
 			return nil, err
 		}
 	} else {
-		results = make([]fieldResult, 0)
+		results = make([]interfaces.MetaKey, 0)
 	}
 
 	return &results, nil

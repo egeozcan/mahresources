@@ -3,7 +3,6 @@ package api_handlers
 import (
 	"encoding/json"
 	"fmt"
-	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -93,7 +92,7 @@ func GetRemoveNoteHandler(ctx interfaces.NoteDeleter) func(writer http.ResponseW
 	}
 }
 
-func GetNoteMetaKeysHandler(ctx *application_context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
+func GetNoteMetaKeysHandler(ctx interfaces.NoteMetaReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		keys, err := ctx.NoteMetaKeys()
 
@@ -107,7 +106,7 @@ func GetNoteMetaKeysHandler(ctx *application_context.MahresourcesContext) func(w
 	}
 }
 
-func GetNoteTypesHandler(context *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetNoteTypesHandler(ctx interfaces.NoteTypeReader) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		offset := (http_utils.GetIntQueryParameter(request, "page", 1) - 1) * constants.MaxResultsPerPage
 		var query query_models.NoteTypeQuery
@@ -117,7 +116,7 @@ func GetNoteTypesHandler(context *application_context.MahresourcesContext) func(
 			return
 		}
 
-		noteTypes, err := context.GetNoteTypes(&query, int(offset), constants.MaxResultsPerPage)
+		noteTypes, err := ctx.GetNoteTypes(&query, int(offset), constants.MaxResultsPerPage)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
