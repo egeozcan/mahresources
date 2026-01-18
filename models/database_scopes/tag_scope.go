@@ -2,25 +2,18 @@ package database_scopes
 
 import (
 	"fmt"
+	"strings"
+
 	"gorm.io/gorm"
 	"mahresources/models/query_models"
-	"regexp"
-	"strings"
 )
 
 func TagQuery(query *query_models.TagQuery, ignoreSort bool) func(db *gorm.DB) *gorm.DB {
-	sortColumnMatcher := regexp.MustCompile("^(meta->>?'[a-z_]+'|[a-z_]+)(\\s(desc|asc))?$")
-
 	return func(db *gorm.DB) *gorm.DB {
-		likeOperator := "LIKE"
-
-		if db.Config.Dialector.Name() == "postgres" {
-			likeOperator = "ILIKE"
-		}
-
+		likeOperator := GetLikeOperator(db)
 		dbQuery := db
 
-		if !ignoreSort && query.SortBy != "" && sortColumnMatcher.MatchString(query.SortBy) {
+		if !ignoreSort && ValidateSortColumn(query.SortBy) {
 			prefix := "most_used_"
 			if strings.HasPrefix(query.SortBy, prefix) {
 				tableName := fmt.Sprintf("%v_tags", strings.TrimPrefix(query.SortBy, prefix))
@@ -40,13 +33,7 @@ func TagQuery(query *query_models.TagQuery, ignoreSort bool) func(db *gorm.DB) *
 			dbQuery = dbQuery.Where("description "+likeOperator+" ?", "%"+query.Description+"%")
 		}
 
-		if query.CreatedBefore != "" {
-			dbQuery = dbQuery.Where("created_at <= ?", query.CreatedBefore)
-		}
-
-		if query.CreatedAfter != "" {
-			dbQuery = dbQuery.Where("created_at >= ?", query.CreatedAfter)
-		}
+		dbQuery = ApplyDateRange(dbQuery, "", query.CreatedBefore, query.CreatedAfter)
 
 		return dbQuery
 	}

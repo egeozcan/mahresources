@@ -8,12 +8,7 @@ import (
 func CategoryQuery(query *query_models.CategoryQuery) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
 		dbQuery := db
-
-		likeOperator := "LIKE"
-
-		if db.Config.Dialector.Name() == "postgres" {
-			likeOperator = "ILIKE"
-		}
+		likeOperator := GetLikeOperator(db)
 
 		if query.Name != "" {
 			dbQuery = dbQuery.Where("name "+likeOperator+" ?", "%"+query.Name+"%")

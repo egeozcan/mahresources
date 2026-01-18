@@ -80,47 +80,25 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 	}
 
 	if len(noteQuery.Groups) > 0 {
-		groups := make([]models.Group, len(noteQuery.Groups))
+		groups := BuildAssociationSlice(noteQuery.Groups, GroupFromID)
 
-		for i, v := range noteQuery.Groups {
-			groups[i] = models.Group{
-				ID: v,
-			}
-		}
-
-		createGroupsErr := tx.Model(&note).Association("Groups").Append(&groups)
-
-		if createGroupsErr != nil {
+		if createGroupsErr := tx.Model(&note).Association("Groups").Append(&groups); createGroupsErr != nil {
 			tx.Rollback()
 			return nil, createGroupsErr
 		}
 	}
 
 	if len(noteQuery.Resources) > 0 {
-		resources := make([]models.Resource, len(noteQuery.Groups))
+		resources := BuildAssociationSlice(noteQuery.Resources, ResourceFromID)
 
-		for i, v := range noteQuery.Resources {
-			resources[i] = models.Resource{
-				ID: v,
-			}
-		}
-
-		createGroupsErr := tx.Model(&note).Association("Resources").Append(&resources)
-
-		if createGroupsErr != nil {
+		if createResourcesErr := tx.Model(&note).Association("Resources").Append(&resources); createResourcesErr != nil {
 			tx.Rollback()
-			return nil, createGroupsErr
+			return nil, createResourcesErr
 		}
 	}
 
 	if len(noteQuery.Tags) > 0 {
-		tags := make([]models.Tag, len(noteQuery.Tags))
-
-		for i, v := range noteQuery.Tags {
-			tags[i] = models.Tag{
-				ID: v,
-			}
-		}
+		tags := BuildAssociationSlice(noteQuery.Tags, TagFromID)
 
 		if createTagsErr := tx.Model(&note).Association("Tags").Append(&tags); createTagsErr != nil {
 			tx.Rollback()

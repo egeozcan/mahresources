@@ -4,22 +4,14 @@ import (
 	"gorm.io/gorm"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
-	"regexp"
 )
 
 func NoteQuery(query *query_models.NoteQuery, ignoreSort bool) func(db *gorm.DB) *gorm.DB {
-	sortColumnMatcher := regexp.MustCompile("^(meta->>?'[a-z_]+'|[a-z_]+)(\\s(desc|asc))?$")
-
 	return func(db *gorm.DB) *gorm.DB {
-		likeOperator := "LIKE"
-
-		if db.Config.Dialector.Name() == "postgres" {
-			likeOperator = "ILIKE"
-		}
-
+		likeOperator := GetLikeOperator(db)
 		dbQuery := db
 
-		if !ignoreSort && query.SortBy != "" && sortColumnMatcher.MatchString(query.SortBy) {
+		if !ignoreSort && ValidateSortColumn(query.SortBy) {
 			dbQuery = dbQuery.Order(query.SortBy).Order("created_at desc")
 		} else if !ignoreSort {
 			dbQuery = dbQuery.Order("created_at desc")
@@ -76,13 +68,7 @@ func NoteQuery(query *query_models.NoteQuery, ignoreSort bool) func(db *gorm.DB)
 			dbQuery = dbQuery.Where("owner_id = ?", query.OwnerId)
 		}
 
-		if query.CreatedBefore != "" {
-			dbQuery = dbQuery.Where("created_at <= ?", query.CreatedBefore)
-		}
-
-		if query.CreatedAfter != "" {
-			dbQuery = dbQuery.Where("created_at >= ?", query.CreatedAfter)
-		}
+		dbQuery = ApplyDateRange(dbQuery, "", query.CreatedBefore, query.CreatedAfter)
 
 		if query.StartDateBefore != "" {
 			dbQuery = dbQuery.Where("start_date <= ?", query.StartDateBefore)
@@ -121,10 +107,7 @@ func NoteQuery(query *query_models.NoteQuery, ignoreSort bool) func(db *gorm.DB)
 func NoteTypeQuery(query *query_models.NoteTypeQuery) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
 		dbQuery := db
-		likeOperator := "LIKE"
-		if db.Config.Dialector.Name() == "postgres" {
-			likeOperator = "ILIKE"
-		}
+		likeOperator := GetLikeOperator(db)
 		if query.Name != "" {
 			dbQuery = dbQuery.Where("name "+likeOperator+" ?", "%"+query.Name+"%")
 		}

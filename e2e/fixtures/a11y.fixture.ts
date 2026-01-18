@@ -57,10 +57,12 @@ async function createTestData(baseURL: string): Promise<A11yTestData & { cleanup
   );
   createdIds.noteTypeId = noteType.ID;
 
-  // 4. Relation Type
+  // 4. Relation Type (needs from/to categories for proper display)
   const relationType = await client.createRelationType({
     name: `A11y Test Relation ${uniqueSuffix}`,
     description: 'Relation type for accessibility tests',
+    fromCategoryId: category.ID,
+    toCategoryId: category.ID,
   });
   createdIds.relationTypeId = relationType.ID;
 

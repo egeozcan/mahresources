@@ -7,12 +7,7 @@ import (
 
 func RelationTypeQuery(query *query_models.RelationshipTypeQuery) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
-		likeOperator := "LIKE"
-
-		if db.Config.Dialector.Name() == "postgres" {
-			likeOperator = "ILIKE"
-		}
-
+		likeOperator := GetLikeOperator(db)
 		dbQuery := db
 
 		if query.Name != "" {
@@ -68,12 +63,7 @@ func RelationTypeQuery(query *query_models.RelationshipTypeQuery) func(db *gorm.
 func RelationQuery(query *query_models.GroupRelationshipQuery) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
 		dbQuery := db
-
-		likeOperator := "LIKE"
-
-		if db.Config.Dialector.Name() == "postgres" {
-			likeOperator = "ILIKE"
-		}
+		likeOperator := GetLikeOperator(db)
 
 		if query.FromGroupId != 0 {
 			dbQuery = dbQuery.Where("from_group_id = ?", query.FromGroupId)

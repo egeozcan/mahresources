@@ -4,22 +4,14 @@ import (
 	"gorm.io/gorm"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
-	"regexp"
 )
 
 func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, originalDb *gorm.DB) func(db *gorm.DB) *gorm.DB {
-	sortColumnMatcher := regexp.MustCompile("^(meta->>?'[a-z_]+'|[a-z_]+)(\\s(desc|asc))?$")
-
 	return func(db *gorm.DB) *gorm.DB {
-		likeOperator := "LIKE"
-
-		if db.Config.Dialector.Name() == "postgres" {
-			likeOperator = "ILIKE"
-		}
-
+		likeOperator := GetLikeOperator(db)
 		dbQuery := db
 
-		if !ignoreSort && query.SortBy != "" && sortColumnMatcher.MatchString(query.SortBy) {
+		if !ignoreSort && ValidateSortColumn(query.SortBy) {
 			dbQuery = dbQuery.Order(query.SortBy).Order("created_at desc")
 		} else if !ignoreSort {
 			dbQuery = dbQuery.Order("created_at desc")
@@ -115,13 +107,7 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 			dbQuery = dbQuery.Where("resources.hash = ?", query.Hash)
 		}
 
-		if query.CreatedBefore != "" {
-			dbQuery = dbQuery.Where("resources.created_at <= ?", query.CreatedBefore)
-		}
-
-		if query.CreatedAfter != "" {
-			dbQuery = dbQuery.Where("resources.created_at >= ?", query.CreatedAfter)
-		}
+		dbQuery = ApplyDateRange(dbQuery, "resources.", query.CreatedBefore, query.CreatedAfter)
 
 		if query.ShowWithoutOwner {
 			dbQuery = dbQuery.Where("resources.owner_id IS NULL")

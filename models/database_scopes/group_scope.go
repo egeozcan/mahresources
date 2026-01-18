@@ -1,26 +1,19 @@
 package database_scopes
 
 import (
+	"strings"
+
 	"gorm.io/gorm"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
-	"regexp"
-	"strings"
 )
 
 func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gorm.DB) func(db *gorm.DB) *gorm.DB {
-	sortColumnMatcher := regexp.MustCompile("^(meta->>?'[a-z_]+'|[a-z_]+)(\\s(desc|asc))?$")
-
 	return func(db *gorm.DB) *gorm.DB {
-		likeOperator := "LIKE"
-
-		if db.Config.Dialector.Name() == "postgres" {
-			likeOperator = "ILIKE"
-		}
-
+		likeOperator := GetLikeOperator(db)
 		dbQuery := db
 
-		if !ignoreSort && query.SortBy != "" && sortColumnMatcher.MatchString(query.SortBy) {
+		if !ignoreSort && ValidateSortColumn(query.SortBy) {
 			dbQuery = dbQuery.Order("groups." + query.SortBy).Order("groups.created_at desc")
 		} else if !ignoreSort {
 			dbQuery = dbQuery.Order("groups.created_at desc")
@@ -182,13 +175,7 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 			dbQuery = dbQuery.Where("groups.url "+likeOperator+" ?", "%"+query.URL+"%")
 		}
 
-		if query.CreatedBefore != "" {
-			dbQuery = dbQuery.Where("groups.created_at <= ?", query.CreatedBefore)
-		}
-
-		if query.CreatedAfter != "" {
-			dbQuery = dbQuery.Where("groups.created_at >= ?", query.CreatedAfter)
-		}
+		dbQuery = ApplyDateRange(dbQuery, "groups.", query.CreatedBefore, query.CreatedAfter)
 
 		if query.CategoryId != 0 {
 			dbQuery = dbQuery.Where("groups.category_id >= ?", query.CategoryId)
