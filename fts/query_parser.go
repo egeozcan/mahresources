@@ -11,7 +11,8 @@ import (
 //   - "hello" -> prefix matching (if length >= 3)
 //   - "hi" -> exact matching (if length < 3)
 //   - "typ*" -> explicit prefix matching
-//   - "=test" or "test" -> explicit exact matching
+//   - "=test" -> explicit exact matching (equals prefix)
+//   - "\"test\"" -> explicit exact matching (quotes)
 //   - "~test" -> fuzzy matching with edit distance 1
 //   - "~2test" -> fuzzy matching with edit distance 2
 func ParseSearchQuery(input string) ParsedQuery {
