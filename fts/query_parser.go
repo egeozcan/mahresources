@@ -3,12 +3,16 @@ package fts
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // ParseSearchQuery parses user input into a structured query
 // Supported syntax:
-//   - "hello" -> standard word matching
-//   - "typ*" -> prefix matching (matches type, typing, etc.)
+//   - "hello" -> prefix matching (if length >= 3)
+//   - "hi" -> exact matching (if length < 3)
+//   - "typ*" -> explicit prefix matching
+//   - "=test" -> explicit exact matching (equals prefix)
+//   - "\"test\"" -> explicit exact matching (quotes)
 //   - "~test" -> fuzzy matching with edit distance 1
 //   - "~2test" -> fuzzy matching with edit distance 2
 func ParseSearchQuery(input string) ParsedQuery {
@@ -16,6 +20,24 @@ func ParseSearchQuery(input string) ParsedQuery {
 
 	if input == "" {
 		return ParsedQuery{Term: "", Mode: ModeExact}
+	}
+
+	// Check for explicit exact match with quotes
+	if len(input) >= 2 && strings.HasPrefix(input, "\"") && strings.HasSuffix(input, "\"") {
+		term := input[1 : len(input)-1]
+		return ParsedQuery{
+			Term: sanitizeSearchTerm(term),
+			Mode: ModeExact,
+		}
+	}
+
+	// Check for explicit exact match with =
+	if strings.HasPrefix(input, "=") {
+		term := strings.TrimPrefix(input, "=")
+		return ParsedQuery{
+			Term: sanitizeSearchTerm(term),
+			Mode: ModeExact,
+		}
 	}
 
 	// Check for prefix search: ends with *
@@ -51,10 +73,20 @@ func ParseSearchQuery(input string) ParsedQuery {
 		}
 	}
 
-	// Default: exact/standard match
+	term := sanitizeSearchTerm(input)
+
+	// Short terms default to exact match to avoid performance issues and noise
+	if utf8.RuneCountInString(term) < 3 {
+		return ParsedQuery{
+			Term: term,
+			Mode: ModeExact,
+		}
+	}
+
+	// Default: prefix match (partial match)
 	return ParsedQuery{
-		Term: sanitizeSearchTerm(input),
-		Mode: ModeExact,
+		Term: term,
+		Mode: ModePrefix,
 	}
 }
 
