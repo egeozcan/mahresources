@@ -20,11 +20,20 @@ npm run build-js
 # Watch mode for JS development
 npm run dev
 
-# Run tests
+# Run Go unit tests
 go test ./...
 
 # Run specific test file
 go test ./server/api_tests/...
+
+# Run E2E tests (requires server running in ephemeral mode)
+# Terminal 1: Start ephemeral server
+./mahresources -ephemeral -bind-address=:8181
+# Terminal 2: Run tests
+cd e2e && npm test
+
+# Run accessibility tests only
+cd e2e && npm run test:a11y
 
 # Build Go binary directly (requires json1 for SQLite JSON, fts5 for full-text search)
 go build --tags 'json1 fts5'
@@ -149,6 +158,50 @@ Bulk operations available: `addTags`, `removeTags`, `addMeta`, `delete`, `merge`
 - **Web Components** - Custom elements for expandable text and inline editing
 
 Global search is accessible via `Cmd/Ctrl+K` shortcut.
+
+## Testing
+
+### Go Unit Tests
+```bash
+go test ./...
+```
+
+### E2E Tests (Playwright)
+
+**IMPORTANT: Always run E2E tests against an ephemeral instance** to ensure test isolation and avoid polluting real data.
+
+```bash
+# 1. Build the application first
+npm run build
+
+# 2. Start server in ephemeral mode (separate terminal)
+./mahresources -ephemeral -bind-address=:8181
+
+# 3. Run all E2E tests
+cd e2e && npm test
+
+# Other test commands:
+npm run test:headed    # Run with browser visible
+npm run test:debug     # Run in debug mode
+npm run test:ui        # Run with Playwright UI
+npm run test:a11y      # Run accessibility tests only
+npm run report         # View HTML test report
+```
+
+### E2E Test Structure
+
+**e2e/** - Playwright test suite
+- `fixtures/` - Test fixtures (base.fixture.ts, a11y.fixture.ts)
+- `helpers/` - API client and accessibility helpers
+- `pages/` - Page Object Models for each entity type
+- `tests/` - Test specs organized by feature
+- `tests/accessibility/` - axe-core accessibility tests (WCAG compliance)
+
+The test suite covers:
+- CRUD operations for all entities (Tags, Categories, NoteTypes, Queries, Groups, Notes, Resources, Relations)
+- Bulk operations and global search
+- Edge cases and error handling
+- Accessibility (a11y) testing with axe-core for WCAG compliance
 
 ## Important Notes
 
