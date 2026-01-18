@@ -92,11 +92,44 @@ you're modifying frontend code.
 ### Scripting
 
 You probably need to import your own data, and you can do it via the HTTP API, or you can directly use the library
-functions. For an example, see /cmd/importExisting/main.go, which can be run like 
+functions. For an example, see /cmd/importExisting/main.go, which can be run like
 `go run ./cmd/importExisting/main.go -target "/some/folder" -ownerId 1234`.
 
 The structure is very modular. I'll make it even more so
-as I continue to develop. 
+as I continue to develop.
+
+## Testing
+
+### Go Unit Tests
+```bash
+go test ./...
+```
+
+### E2E Tests (Playwright)
+
+The project includes a comprehensive Playwright test suite covering CRUD operations, bulk operations, global search, edge cases, and accessibility (WCAG compliance via axe-core).
+
+**Always run E2E tests against an ephemeral instance** to ensure test isolation:
+
+```bash
+# 1. Build the application
+npm run build
+
+# 2. Start server in ephemeral mode (separate terminal)
+./mahresources -ephemeral -bind-address=:8181
+
+# 3. Run tests
+cd e2e && npm test
+```
+
+Other test commands:
+```bash
+cd e2e
+npm run test:headed    # Run with browser visible
+npm run test:ui        # Playwright UI mode
+npm run test:a11y      # Accessibility tests only
+npm run report         # View HTML test report
+```
 
 ## Security
 
@@ -119,6 +152,6 @@ and bulk edit the results. I'd rather keep developing than adding up-to-date scr
 
 - [ ] Make note categories work
 - [ ] faster image previews with libvips?
-- [ ] some integration tests, perhaps behavioral test
+- [x] some integration tests, perhaps behavioral test
 - [ ] importers like perkeep? maybe.
 - [ ] sync could be interesting
