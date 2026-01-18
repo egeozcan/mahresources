@@ -73,7 +73,7 @@
             mt-2 inline-flex items-center
             px-2 py-1
             border border-gray-300 rounded-md
-            shadow-sm text-xs font-medium text-white bg-green-800 hover:bg-green-500
+            shadow-sm text-xs font-medium text-white bg-green-700 hover:bg-green-800
             focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-700">
         Add Field
     </button>

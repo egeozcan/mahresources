@@ -8,7 +8,8 @@ export default defineConfig({
   workers: process.env.CI ? 1 : 4, // Run different test files in parallel locally
   reporter: [
     ['list'],
-    ['html', { outputFolder: 'playwright-report' }]
+    ['html', { outputFolder: 'playwright-report' }],
+    ['json', { outputFile: 'test-results/results.json' }],
   ],
   use: {
     baseURL: process.env.BASE_URL || 'http://localhost:8181',

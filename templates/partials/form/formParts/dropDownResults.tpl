@@ -1,5 +1,5 @@
 <template x-if="{{ condition }}">
-    <div class="absolute mt-1 w-full border bg-white shadow-xl rounded z-50 max-h-80 overflow-x-auto z-50">
+    <div class="absolute mt-1 w-full border bg-white shadow-xl rounded z-50 max-h-80 overflow-y-auto" tabindex="0" role="region" aria-label="{{ title|default:'Dropdown options' }}">
         <div class="p-3">
             <div
                 x-ref="list"

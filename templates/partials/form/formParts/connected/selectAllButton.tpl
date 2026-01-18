@@ -6,7 +6,7 @@
             py-2 px-4 mt-3
             border border-transparent
             items-center
-            shadow-sm text-xs rounded-md text-white bg-green-500 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+            shadow-sm text-xs rounded-md text-white bg-green-700 hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
     >
         {% if text %}{{ text }}{% else %}Select All{% endif %}
     </button>

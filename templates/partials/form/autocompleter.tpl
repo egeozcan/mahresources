@@ -45,8 +45,8 @@
             <button
                     type="button"
                     class="
-                    border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600
-                    hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500
+                    border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-700
+                    hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500
                     inline-flex justify-center items-center py-1 px-2"
                     x-text="'Add ' + addModeForTag + '?'"
                     x-init="setTimeout(() => $el.focus(), 1)"

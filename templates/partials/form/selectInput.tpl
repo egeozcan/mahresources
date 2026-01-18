@@ -6,7 +6,7 @@
 <select x-data type="search"
        name="{{ name }}"
        id="{{ name }}"
-       autocomplete="{{ name }}"
+       autocomplete="off"
        :value="new URL(window.location).searchParams.getAll('{{ name }}')"
        class="mt-1 focus:ring-indigo-500 focus:border-indigo-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md">
     {% for value in values %}

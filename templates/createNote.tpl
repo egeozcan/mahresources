@@ -17,7 +17,7 @@
                         </label>
                         <div class="mt-1 sm:mt-0 sm:col-span-2">
                             <div class="max-w-lg flex rounded-md shadow-sm">
-                                <input type="datetime-local" name="startDate" id="StartDate" value='{{ note.StartDate|datetime }}' class="flex-1 block w-full focus:ring-indigo-500 focus:border-indigo-500 min-w-0 rounded-md sm:text-sm border-gray-300">
+                                <input type="datetime-local" name="startDate" id="startDate" value='{{ note.StartDate|datetime }}' class="flex-1 block w-full focus:ring-indigo-500 focus:border-indigo-500 min-w-0 rounded-md sm:text-sm border-gray-300">
                             </div>
                         </div>
                     </div>
@@ -29,7 +29,7 @@
                             </label>
                             <div class="mt-1 sm:mt-0 sm:col-span-2">
                                 <div class="max-w-lg flex rounded-md shadow-sm">
-                                    <input type="datetime-local" name="endDate" id="EndDate" value="{{ note.EndDate|datetime }}" class="flex-1 block w-full focus:ring-indigo-500 focus:border-indigo-500 min-w-0 rounded-md sm:text-sm border-gray-300">
+                                    <input type="datetime-local" name="endDate" id="endDate" value="{{ note.EndDate|datetime }}" class="flex-1 block w-full focus:ring-indigo-500 focus:border-indigo-500 min-w-0 rounded-md sm:text-sm border-gray-300">
                                 </div>
                             </div>
                         </div>
@@ -59,7 +59,7 @@
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="flex gap-2">
                             <div class="flex-1">
-                                {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='ownerId' title='' selectedItems=owner min=1 max=1 id=getNextId("autocompleter") extraInfo="Category" %}
+                                {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='ownerId' title='Owner' selectedItems=owner min=1 max=1 id=getNextId("autocompleter") extraInfo="Category" %}
                             </div>
                         </div>
                     </div>
@@ -72,7 +72,7 @@
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="flex gap-2">
                             <div class="flex-1">
-                                {% include "/partials/form/autocompleter.tpl" with url='/v1/note/noteTypes' elName='NoteTypeId' title='' selectedItems=noteType min=0 max=1 id=getNextId("autocompleter") %}
+                                {% include "/partials/form/autocompleter.tpl" with url='/v1/note/noteTypes' elName='NoteTypeId' title='Note Type' selectedItems=noteType min=0 max=1 id=getNextId("autocompleter") %}
                             </div>
                         </div>
                     </div>

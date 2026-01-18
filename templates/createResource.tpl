@@ -53,13 +53,14 @@
                             >
                         </div>
                     </div>
-                    <label for="resource" class="block text-sm font-medium text-gray-700">
+                    <label for="URL" class="block text-sm font-medium text-gray-700">
                         URL
                         <p class="mt-2 text-sm text-gray-500">If you fill this, the contents of the file picker will be ignored and remote data will be downloaded.</p>
                     </label>
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="max-w-lg flex rounded-md shadow-sm">
                             <textarea
+                                id="URL"
                                 name="URL"
                                 placeholder="If you fill this, the contents of the file picker will be ignored and remote data will be downloaded"
                                 class="flex-1 block w-full focus:ring-indigo-500 focus:border-indigo-500 min-w-0 rounded-md sm:text-sm border-gray-300"
@@ -95,7 +96,7 @@
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="flex gap-2">
                             <div class="flex-1">
-                                {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='ownerId' title='' selectedItems=owner min=1 max=1 id=getNextId("autocompleter") extraInfo="Category" %}
+                                {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='ownerId' title='Owner' selectedItems=owner min=1 max=1 id=getNextId("autocompleter") extraInfo="Category" %}
                             </div>
                         </div>
                     </div>

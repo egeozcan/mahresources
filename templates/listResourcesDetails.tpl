@@ -25,7 +25,7 @@
                             {% for entity in resources %}
                                 <tr class="bg-white" x-data="selectableItem({ itemId: {{ entity.ID }} })">
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" class="focus:ring-indigo-500 h-8 w-8 text-indigo-600 border-gray-300 rounded">
+                                        <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" aria-label="Select {{ entity.Name }}" class="focus:ring-indigo-500 h-8 w-8 text-indigo-600 border-gray-300 rounded">
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                         <a class="max-w-lg overflow-ellipsis overflow-hidden block" href="/resource?id={{ entity.ID }}">{{ entity.ID }}</a>
@@ -42,10 +42,10 @@
                                         {{ entity.FileSize | humanReadableSize }}
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-400">Created: </span>{{ entity.CreatedAt|date:"2006-01-02 15:04" }}</small>
+                                        <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-600">Created: </span>{{ entity.CreatedAt|date:"2006-01-02 15:04" }}</small>
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-400">Updated: </span>{{ entity.UpdatedAt|date:"2006-01-02 15:04" }}</small>
+                                        <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-600">Updated: </span>{{ entity.UpdatedAt|date:"2006-01-02 15:04" }}</small>
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><span class="max-w-lg overflow-ellipsis overflow-hidden block">{{ entity.OriginalName }}</span></td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><span class="max-w-lg overflow-ellipsis overflow-hidden block">{{ entity.OriginalLocation }}</span></td>

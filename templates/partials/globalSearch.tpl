@@ -6,7 +6,7 @@
 >
     <button
         @click="toggle()"
-        class="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-500 bg-gray-100 rounded-lg hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 transition-colors"
+        class="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 transition-colors"
         title="Search (Ctrl+K / Cmd+K)"
         aria-label="Open search dialog"
         aria-haspopup="dialog"
@@ -107,13 +107,13 @@
                                                 x-html="highlightMatch(result.name, query)"
                                             ></span>
                                             <span
-                                                class="flex-shrink-0 text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium"
+                                                class="flex-shrink-0 text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-medium"
                                                 x-text="getLabel(result.type)"
                                             ></span>
                                         </div>
                                         <p
                                             x-show="result.description"
-                                            class="text-sm text-gray-500 truncate mt-0.5"
+                                            class="text-sm text-gray-600 truncate mt-0.5"
                                             x-html="highlightMatch(result.description, query)"
                                         ></p>
                                         <div
@@ -121,7 +121,7 @@
                                             class="flex gap-2 mt-1"
                                         >
                                             <template x-for="(value, key) in (result.extra || {})" :key="key">
-                                                <span class="text-xs text-gray-400" x-text="value"></span>
+                                                <span class="text-xs text-gray-600" x-text="value"></span>
                                             </template>
                                         </div>
                                     </div>
@@ -142,7 +142,7 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
                         <p class="text-gray-500">No results found for "<span class="font-medium" x-text="query"></span>"</p>
-                        <p class="text-sm text-gray-400 mt-1">Try a different search term</p>
+                        <p class="text-sm text-gray-600 mt-1">Try a different search term</p>
                     </div>
 
                     <div
@@ -153,10 +153,10 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                         </svg>
                         <p class="text-gray-500">Start typing to search</p>
-                        <p class="text-sm text-gray-400 mt-1">Search across all your resources, notes, groups, and more</p>
+                        <p class="text-sm text-gray-600 mt-1">Search across all your resources, notes, groups, and more</p>
                     </div>
 
-                    <div class="flex items-center justify-center gap-6 px-4 py-2.5 bg-gray-50/80 border-t border-gray-100 text-xs text-gray-400">
+                    <div class="flex items-center justify-center gap-6 px-4 py-2.5 bg-gray-50/80 border-t border-gray-100 text-xs text-gray-600">
                         <span class="flex items-center gap-1.5">
                             <kbd class="px-1.5 py-0.5 bg-white rounded border border-gray-200 font-sans text-gray-500 shadow-sm">&uarr;</kbd>
                             <kbd class="px-1.5 py-0.5 bg-white rounded border border-gray-200 font-sans text-gray-500 shadow-sm">&darr;</kbd>

@@ -2,7 +2,7 @@
   <ol role="list" class="bg-white rounded-md shadow px-6 flex flex-wrap flex-shrink space-x-4">
     <li class="flex">
       <div class="flex items-center">
-        <a href="{{ HomeUrl }}" class="text-gray-400 hover:text-gray-500">
+        <a href="{{ HomeUrl }}" class="text-gray-600 hover:text-gray-700">
           <!-- Heroicon name: solid/home -->
           {% include "/partials/svg/home.tpl" %}
           <span class="sr-only">{{ HomeName }}</span>

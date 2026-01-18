@@ -21,10 +21,10 @@
         {% endautoescape %}
     </div>
     {% if note.StartDate %}
-        <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-400">Started: </span>{{ dereference(note.StartDate)|date:"2006-01-02 15:04" }}</small>
+        <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-600">Started: </span>{{ dereference(note.StartDate)|date:"2006-01-02 15:04" }}</small>
     {% endif %}
     {% if note.EndDate %}
-        <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-400">Ended: </span>{{ dereference(note.EndDate)|date:"2006-01-02 15:04" }}</small>
+        <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-600">Ended: </span>{{ dereference(note.EndDate)|date:"2006-01-02 15:04" }}</small>
     {% endif %}
     {% include "/partials/ownerDisplay.tpl" with owner=note.Owner %}
 

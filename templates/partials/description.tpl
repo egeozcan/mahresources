@@ -16,7 +16,7 @@
     <template x-if="editing">
         <div class="contents">
             <form x-ref="form" method="post" action="{{ descriptionEditUrl }}">
-                <textarea @click.away="editing = false" autofocus name="description" class="w-full">{{ description }}</textarea>
+                <textarea @click.away="editing = false" autofocus name="description" aria-label="Edit description" class="w-full">{{ description }}</textarea>
             </form>
         </div>
     </template>
