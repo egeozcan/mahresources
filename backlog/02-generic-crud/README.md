@@ -1,5 +1,9 @@
 # Strategy 2: Expand Generic CRUD Operations
 
+**Status:** 🔶 PARTIAL (Commit: 9438ff9)
+- ✅ Tag, Category, Query entities use generic CRUD
+- ⬜ Group, Note, Resource retain entity-specific code (complex relationships)
+
 **Complexity:** Medium
 **Impact:** High
 **Risk:** Medium
@@ -335,9 +339,24 @@ err := tagWriter.Delete(id)
 
 ## Success Metrics
 
-- [ ] BaseQuery interface defined and implemented by all query DTOs
-- [ ] CRUDReader working for all 6 entities
-- [ ] CRUDWriter working for Tag, Category, Query
-- [ ] ~600 lines of duplicated code removed
-- [ ] All tests passing
-- [ ] No regression in API behavior
+- [x] BaseQuery interface defined (`models/query_models/base_query.go`)
+- [x] CRUDReader implemented with scope adapters (`application_context/generic_crud.go`)
+- [x] CRUDWriter implemented for Tag, Category, Query
+- [x] Entity factories added (`application_context/crud_factories.go`)
+- [x] All tests passing
+- [x] No regression in API behavior
+
+### Entities Using Generic CRUD
+| Entity | Generic Read | Generic Write | Notes |
+|--------|--------------|---------------|-------|
+| Tag | ✅ Yes | ✅ Yes | Simplest entity |
+| Category | ✅ Yes | ✅ Yes | Simple with custom fields |
+| Query | ✅ Yes | ✅ Yes | Simple |
+| Group | ⬜ No | ⬜ No | Complex relationships need custom code |
+| Note | ⬜ No | ⬜ No | NoteType relationship needs custom code |
+| Resource | ⬜ No | ⬜ No | Upload/media operations are too specialized |
+
+### Files Created
+- `application_context/generic_crud.go` - CRUDReader and CRUDWriter generics
+- `application_context/crud_factories.go` - Entity factory methods
+- `models/query_models/base_query.go` - Base query interface and fields

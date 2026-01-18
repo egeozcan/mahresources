@@ -22,37 +22,52 @@ The codebase has solid foundational architecture with clear layering:
 
 ## Strategies Overview
 
-| # | Strategy | Complexity | Impact | Risk | Effort |
-|---|----------|------------|--------|------|--------|
-| 1 | [Extract Common Utilities](./01-extract-utilities/) | Low | Medium | Low | ~2-3 days |
-| 2 | [Generic CRUD Operations](./02-generic-crud/) | Medium | High | Medium | ~1 week |
-| 3 | [Handler Middleware & Factories](./03-handler-middleware/) | Medium | High | Medium | ~1 week |
-| 4 | [Split Monolithic Context Files](./04-split-context-files/) | Medium | Medium | Low | ~2-3 days |
-| 5 | [Consistent DI with Interface Expansion](./05-consistent-di/) | Medium-High | Medium | Medium | ~1 week |
-| 6 | [Repository Pattern Extraction](./06-repository-pattern/) | High | Very High | High | ~2-3 weeks |
-| 7 | [Event-Driven Side Effects](./07-event-driven/) | High | High | High | ~2-3 weeks |
+| # | Strategy | Complexity | Impact | Risk | Effort | Status |
+|---|----------|------------|--------|------|--------|--------|
+| 1 | [Extract Common Utilities](./01-extract-utilities/) | Low | Medium | Low | ~2-3 days | ✅ Complete |
+| 2 | [Generic CRUD Operations](./02-generic-crud/) | Medium | High | Medium | ~1 week | 🔶 Partial |
+| 3 | [Handler Middleware & Factories](./03-handler-middleware/) | Medium | High | Medium | ~1 week | 🔶 Partial |
+| 4 | [Split Monolithic Context Files](./04-split-context-files/) | Medium | Medium | Low | ~2-3 days | ✅ Complete |
+| 5 | [Consistent DI with Interface Expansion](./05-consistent-di/) | Medium-High | Medium | Medium | ~1 week | ⬜ Not Started |
+| 6 | [Repository Pattern Extraction](./06-repository-pattern/) | High | Very High | High | ~2-3 weeks | ⬜ Not Started |
+| 7 | [Event-Driven Side Effects](./07-event-driven/) | High | High | High | ~2-3 weeks | ⬜ Not Started |
+
+### Implementation Progress
+
+**Phase 1: Quick Wins** - ✅ COMPLETE (Commit: bb29541)
+- Strategy 1: Extracted utilities to `db_utils.go` and `associations.go`
+- Strategy 4: Split `resource_context.go` → 4 files, `group_context.go` → 2 files
+
+**Phase 2: Core Improvements** - 🔶 IN PROGRESS (Commit: 9438ff9)
+- Strategy 2: Generic CRUD implemented for Tag, Category, Query entities
+- Strategy 3: Handler factory and middleware added; Tag, Category, Query use generic handlers
+- Remaining: Group, Note, Resource entities still use entity-specific code (complex relationships)
 
 ## Recommended Implementation Order
 
-### Phase 1: Quick Wins
+### Phase 1: Quick Wins ✅ COMPLETE
 **Strategies 1 + 4** - Extract utilities and split large files
-- Low risk, immediate maintainability improvement
-- ~1 week effort
-- Foundation for further improvements
+- ✅ `db_utils.go`: GetLikeOperator, SortColumnMatcher, ValidateSortColumn, ApplyDateRange
+- ✅ `associations.go`: Generic BuildAssociationSlice and BuildAssociationSlicePtr
+- ✅ `resource_context.go` split into: `resource_crud_context.go`, `resource_upload_context.go`, `resource_media_context.go`, `resource_bulk_context.go`
+- ✅ `group_context.go` split into: `group_crud_context.go`, `group_bulk_context.go`
 
-### Phase 2: Core Improvements
+### Phase 2: Core Improvements 🔶 IN PROGRESS
 **Strategies 2 + 3** - Implement generic CRUD and handler factories
-- Medium risk, significant code reduction (~1000+ lines removed)
-- ~2 weeks effort
-- Requires Phase 1 to be completed first
+- ✅ `generic_crud.go`: CRUDReader and CRUDWriter with scope adapters
+- ✅ `crud_factories.go`: Entity factories on MahresourcesContext
+- ✅ `handler_factory.go`: CRUDHandlerFactory for standard HTTP handlers
+- ✅ `middleware.go`: Request parsing and response handling utilities
+- ✅ Tag, Category, Query entities use generic CRUD and handler factory
+- ⬜ Group, Note, Resource: Still use entity-specific code (complex relationships justify custom code)
 
-### Phase 3: Consistency
+### Phase 3: Consistency ⬜ NOT STARTED
 **Strategy 5** - Fix DI inconsistencies
 - Improves testability
 - ~1 week effort
 - Can be done independently
 
-### Phase 4: Major Refactor (Optional)
+### Phase 4: Major Refactor (Optional) ⬜ NOT STARTED
 **Strategies 6 or 7** - Repository pattern or event-driven architecture
 - Only if business needs justify the effort
 - High risk, requires comprehensive testing

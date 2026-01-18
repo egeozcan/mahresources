@@ -1,5 +1,7 @@
 # Strategy 4: Split Monolithic Context Files
 
+**Status:** ✅ COMPLETE (Commit: bb29541)
+
 **Complexity:** Medium
 **Impact:** Medium
 **Risk:** Low
@@ -232,9 +234,15 @@ Since this is pure refactoring with no behavior change:
 
 ## Success Metrics
 
-- [ ] `resource_context.go` split into 4 files (~400 LOC each)
-- [ ] `group_context.go` split into 2 files (~250 LOC each)
-- [ ] All files under 500 LOC
-- [ ] All tests passing
-- [ ] Build succeeds
-- [ ] No behavior change
+- [x] `resource_context.go` split into 4 files:
+  - `resource_crud_context.go` - GetResource, GetResources, EditResource
+  - `resource_upload_context.go` - AddResource, AddRemoteResource, AddLocalResource
+  - `resource_media_context.go` - LoadOrCreateThumbnailForResource, RotateResource
+  - `resource_bulk_context.go` - BulkAddTags, MergeResources, DeleteResource
+- [x] `group_context.go` split into 2 files:
+  - `group_crud_context.go` - CreateGroup, UpdateGroup, GetGroup, DeleteGroup
+  - `group_bulk_context.go` - MergeGroups, BulkAddTags, FindParentsOfGroup
+- [x] All tests passing
+- [x] Build succeeds
+- [x] No behavior change
+- ⬜ `search_context.go` not split (optional per plan, still under 700 LOC)
