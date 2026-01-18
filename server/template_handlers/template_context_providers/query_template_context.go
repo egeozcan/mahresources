@@ -113,7 +113,8 @@ func QueryContextProvider(context *application_context.MahresourcesContext) func
 			},
 			"deleteAction": template_entities.Entry{
 				Name: "Delete",
-				Url:  fmt.Sprintf("/v1/query/delete?Id=%v", query.ID),
+				Url:  "/v1/query/delete",
+				ID:   query.ID,
 			},
 			"mainEntity":     query,
 			"mainEntityType": "query",

@@ -113,7 +113,8 @@ func CategoryContextProvider(context *application_context.MahresourcesContext) f
 			},
 			"deleteAction": template_entities.Entry{
 				Name: "Delete",
-				Url:  fmt.Sprintf("/v1/category/delete?Id=%v", category.ID),
+				Url:  "/v1/category/delete",
+				ID:   category.ID,
 			},
 			"mainEntity":     category,
 			"mainEntityType": "category",
