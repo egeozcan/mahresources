@@ -354,8 +354,14 @@ Existing E2E tests should pass without modification since behavior doesn't chang
 ## Success Metrics
 
 - [ ] All 40+ handlers using full context updated to use interfaces
-- [ ] All new interfaces defined with clear documentation
-- [ ] Compile-time interface checks added to context
+  - [x] 5 handlers updated (MetaKeys handlers, Thumbnail, NoteTypes) - Commit 956d5c4
+  - [ ] ~35 remaining (bulk ops, merge, duplicate, rotate, etc.)
+- [x] New interfaces defined with clear documentation
+  - [x] `MetaKey` type in `generic_interfaces.go`
+  - [x] `ResourceMetaReader`, `ResourceThumbnailLoader` in `resource_interfaces.go`
+  - [x] `GroupMetaReader` in `group_interfaces.go`
+  - [x] `NoteMetaReader`, `NoteTypeReader` in `note_interfaces.go`
+- [x] Compile-time interface checks added to context (`interface_checks.go`)
 - [ ] Handler unit tests using mock interfaces
-- [ ] All E2E tests passing
-- [ ] No behavior change
+- [x] All E2E tests passing
+- [x] No behavior change
