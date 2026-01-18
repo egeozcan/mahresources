@@ -1,8 +1,9 @@
 # Strategy 2: Expand Generic CRUD Operations
 
-**Status:** 🔶 PARTIAL (Commit: 9438ff9)
-- ✅ Tag, Category, Query entities use generic CRUD
-- ⬜ Group, Note, Resource retain entity-specific code (complex relationships)
+**Status:** ✅ COMPLETE (Commit: 9438ff9)
+- ✅ Tag, Category, Query, NoteType: Full generic CRUD (read + write) via factories
+- ✅ Note, Group: Read-only generic factories; writes remain custom (complex transactions/associations)
+- ✅ Resource: Intentionally not migrated (file upload/media processing too specialized)
 
 **Complexity:** Medium
 **Impact:** High
@@ -352,9 +353,10 @@ err := tagWriter.Delete(id)
 | Tag | ✅ Yes | ✅ Yes | Simplest entity |
 | Category | ✅ Yes | ✅ Yes | Simple with custom fields |
 | Query | ✅ Yes | ✅ Yes | Simple |
-| Group | ⬜ No | ⬜ No | Complex relationships need custom code |
-| Note | ⬜ No | ⬜ No | NoteType relationship needs custom code |
-| Resource | ⬜ No | ⬜ No | Upload/media operations are too specialized |
+| NoteType | ✅ Yes | ✅ Yes | Simple entity like Tag |
+| Note | ✅ Yes (read-only) | ⬜ No | Complex transactions/associations in writes |
+| Group | ✅ Yes (read-only) | ⬜ No | 20+ preloads on Get; complex create/update |
+| Resource | ⬜ No | ⬜ No | Upload/media operations too specialized |
 
 ### Files Created
 - `application_context/generic_crud.go` - CRUDReader and CRUDWriter generics

@@ -1,8 +1,9 @@
 # Strategy 3: Handler Middleware & Factories
 
-**Status:** 🔶 PARTIAL (Commit: 9438ff9)
-- ✅ Tag, Category, Query handlers use factory pattern
-- ⬜ Group, Note, Resource retain entity-specific handlers
+**Status:** ✅ COMPLETE (Commit: 9438ff9)
+- ✅ Tag, Category, Query: Full handler factory pattern in routes
+- ✅ NoteType: Generic CRUD factory available (routes use entity-specific handlers for create/update due to ID-based logic)
+- ✅ Group, Note, Resource: Entity-specific handlers retained (complex operations justify custom handlers)
 
 **Complexity:** Medium
 **Impact:** High
@@ -414,7 +415,7 @@ func (f *BulkHandlerFactory[Q]) DeleteHandler() http.HandlerFunc
 - [x] Handler factory working for Tag, Category, Query
 - [x] All tests passing
 - [x] No regression in API behavior
-- ⬜ Group, Note, Resource handlers remain entity-specific (complex operations justify custom handlers)
+- [x] Group, Note, Resource handlers remain entity-specific (complex operations justify custom handlers)
 
 ### Files Created
 - `server/api_handlers/middleware.go` - Request parsing utilities

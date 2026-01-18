@@ -25,8 +25,8 @@ The codebase has solid foundational architecture with clear layering:
 | # | Strategy | Complexity | Impact | Risk | Effort | Status |
 |---|----------|------------|--------|------|--------|--------|
 | 1 | [Extract Common Utilities](./01-extract-utilities/) | Low | Medium | Low | ~2-3 days | ✅ Complete |
-| 2 | [Generic CRUD Operations](./02-generic-crud/) | Medium | High | Medium | ~1 week | 🔶 Partial |
-| 3 | [Handler Middleware & Factories](./03-handler-middleware/) | Medium | High | Medium | ~1 week | 🔶 Partial |
+| 2 | [Generic CRUD Operations](./02-generic-crud/) | Medium | High | Medium | ~1 week | ✅ Complete |
+| 3 | [Handler Middleware & Factories](./03-handler-middleware/) | Medium | High | Medium | ~1 week | ✅ Complete |
 | 4 | [Split Monolithic Context Files](./04-split-context-files/) | Medium | Medium | Low | ~2-3 days | ✅ Complete |
 | 5 | [Consistent DI with Interface Expansion](./05-consistent-di/) | Medium-High | Medium | Medium | ~1 week | ⬜ Not Started |
 | 6 | [Repository Pattern Extraction](./06-repository-pattern/) | High | Very High | High | ~2-3 weeks | ⬜ Not Started |
@@ -38,10 +38,10 @@ The codebase has solid foundational architecture with clear layering:
 - Strategy 1: Extracted utilities to `db_utils.go` and `associations.go`
 - Strategy 4: Split `resource_context.go` → 4 files, `group_context.go` → 2 files
 
-**Phase 2: Core Improvements** - 🔶 IN PROGRESS (Commit: 9438ff9)
-- Strategy 2: Generic CRUD implemented for Tag, Category, Query entities
+**Phase 2: Core Improvements** - ✅ COMPLETE (Commit: 9438ff9)
+- Strategy 2: Generic CRUD implemented for Tag, Category, Query, NoteType entities
 - Strategy 3: Handler factory and middleware added; Tag, Category, Query use generic handlers
-- Remaining: Group, Note, Resource entities still use entity-specific code (complex relationships)
+- Note: Group, Note, Resource entities intentionally use entity-specific code (complex relationships and specialized operations justify custom handlers)
 
 ## Recommended Implementation Order
 
@@ -52,14 +52,16 @@ The codebase has solid foundational architecture with clear layering:
 - ✅ `resource_context.go` split into: `resource_crud_context.go`, `resource_upload_context.go`, `resource_media_context.go`, `resource_bulk_context.go`
 - ✅ `group_context.go` split into: `group_crud_context.go`, `group_bulk_context.go`
 
-### Phase 2: Core Improvements 🔶 IN PROGRESS
+### Phase 2: Core Improvements ✅ COMPLETE
 **Strategies 2 + 3** - Implement generic CRUD and handler factories
 - ✅ `generic_crud.go`: CRUDReader and CRUDWriter with scope adapters
-- ✅ `crud_factories.go`: Entity factories on MahresourcesContext
+- ✅ `crud_factories.go`: Entity factories for Tag, Category, Query, NoteType + read-only factories for Note, Group
 - ✅ `handler_factory.go`: CRUDHandlerFactory for standard HTTP handlers
 - ✅ `middleware.go`: Request parsing and response handling utilities
-- ✅ Tag, Category, Query entities use generic CRUD and handler factory
-- ⬜ Group, Note, Resource: Still use entity-specific code (complex relationships justify custom code)
+- ✅ Tag, Category, Query: Full generic CRUD and handler factory in routes
+- ✅ NoteType: Generic CRUD factory available
+- ✅ Note, Group: Read-only generic factories available; writes remain custom (complex transactions/associations)
+- ✅ Resource: Intentionally not migrated (file upload/media processing too specialized)
 
 ### Phase 3: Consistency ⬜ NOT STARTED
 **Strategy 5** - Fix DI inconsistencies
