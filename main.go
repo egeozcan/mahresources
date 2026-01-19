@@ -42,6 +42,20 @@ func parseDurationEnv(envVar string, defaultVal time.Duration) time.Duration {
 	return d
 }
 
+// parseIntEnv parses an int from an environment variable, returning the default if not set or invalid
+func parseIntEnv(envVar string, defaultVal int) int {
+	val := os.Getenv(envVar)
+	if val == "" {
+		return defaultVal
+	}
+	var i int
+	if _, err := fmt.Sscanf(val, "%d", &i); err != nil {
+		log.Printf("Warning: invalid integer for %s=%q, using default %d", envVar, val, defaultVal)
+		return defaultVal
+	}
+	return i
+}
+
 func main() {
 	// Load .env first so environment variables are available as defaults
 	// you may have no .env, it's okay
@@ -63,6 +77,7 @@ func main() {
 	ephemeral := flag.Bool("ephemeral", os.Getenv("EPHEMERAL") == "1", "Run in fully ephemeral mode (memory DB + memory FS) (env: EPHEMERAL=1)")
 	seedDB := flag.String("seed-db", os.Getenv("SEED_DB"), "Path to SQLite file to use as basis for memory-db (env: SEED_DB)")
 	seedFS := flag.String("seed-fs", os.Getenv("SEED_FS"), "Path to directory to use as read-only base for memory-fs (env: SEED_FS)")
+	maxDBConnections := flag.Int("max-db-connections", parseIntEnv("MAX_DB_CONNECTIONS", 0), "Limit database connection pool size, useful for SQLite under test load (env: MAX_DB_CONNECTIONS)")
 
 	// Alternative file systems: can be specified multiple times as -alt-fs=key:path
 	var altFSFlags altFS
@@ -125,6 +140,7 @@ func main() {
 		RemoteResourceConnectTimeout: *remoteConnectTimeout,
 		RemoteResourceIdleTimeout:    *remoteIdleTimeout,
 		RemoteResourceOverallTimeout: *remoteOverallTimeout,
+		MaxDBConnections:             *maxDBConnections,
 	}
 
 	context, db, mainFs := application_context.CreateContextWithConfig(cfg)

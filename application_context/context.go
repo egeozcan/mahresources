@@ -59,6 +59,9 @@ type MahresourcesInputConfig struct {
 	RemoteResourceIdleTimeout time.Duration
 	// RemoteResourceOverallTimeout is the maximum total time for a remote resource download (default: 30m)
 	RemoteResourceOverallTimeout time.Duration
+	// MaxDBConnections limits the database connection pool size (useful for SQLite in test environments)
+	// When set to 0 (default), no limit is applied
+	MaxDBConnections int
 }
 
 type MahresourcesLocks struct {
@@ -299,10 +302,28 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		db = connectedDB
 	}
 
+	// Apply connection pool limits if configured (useful for SQLite under test load)
+	if cfg.MaxDBConnections > 0 {
+		sqlDB, err := db.DB()
+		if err != nil {
+			log.Printf("Warning: failed to get underlying DB for connection pool config: %v", err)
+		} else {
+			sqlDB.SetMaxOpenConns(cfg.MaxDBConnections)
+			sqlDB.SetMaxIdleConns(cfg.MaxDBConnections)
+			log.Printf("Database connection pool limited to %d connections", cfg.MaxDBConnections)
+		}
+	}
+
 	readOnlyDb, err := models.CreateReadOnlyDatabaseConnection(strings.ToLower(dbType), readOnlyDsn)
 
 	if err != nil {
 		log.Fatal(err.Error())
+	}
+
+	// Apply connection pool limits to read-only connection as well
+	if cfg.MaxDBConnections > 0 {
+		readOnlyDb.SetMaxOpenConns(cfg.MaxDBConnections)
+		readOnlyDb.SetMaxIdleConns(cfg.MaxDBConnections)
 	}
 
 	// Apply default timeouts if not specified

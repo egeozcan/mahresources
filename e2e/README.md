@@ -34,9 +34,40 @@ This will:
 3. Run all Playwright tests
 4. Output results to the console
 
-### Running Locally
+### Running Locally (Automatic Server)
 
-For faster iteration during development:
+The easiest way to run tests locally - the script handles starting/stopping the server automatically:
+
+```bash
+# Install dependencies (first time only)
+cd e2e
+npm install
+npx playwright install chromium
+
+# Run all tests (starts server automatically on an available port)
+npm run test:with-server
+
+# Run tests with browser visible
+npm run test:with-server:headed
+
+# Run tests in debug mode
+npm run test:with-server:debug
+
+# Run accessibility tests only
+npm run test:with-server:a11y
+```
+
+The `test:with-server` scripts will:
+1. Build the server binary if needed
+2. Find an available port (starting from 8181)
+3. Start the server in ephemeral mode with `-max-db-connections=2` to reduce SQLite lock contention
+4. Wait for the server to be ready
+5. Run the tests with 2 workers (to further reduce database contention)
+6. Clean up the server process
+
+### Running Locally (Manual Server)
+
+For more control, you can start the server manually:
 
 ```bash
 # Install dependencies (first time only)
@@ -45,10 +76,10 @@ npm install
 npx playwright install chromium
 
 # Start the app (from project root, in another terminal)
-./mahresources
+./mahresources -ephemeral -bind-address=:8181 -max-db-connections=2
 
-# Run all tests
-npm test
+# Run all tests (use --workers=2 to reduce SQLite lock contention)
+npm test -- --workers=2
 
 # Run tests with browser visible
 npm run test:headed

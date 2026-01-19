@@ -27,8 +27,8 @@ go test ./...
 go test ./server/api_tests/...
 
 # Run E2E tests (requires server running in ephemeral mode)
-# Terminal 1: Start ephemeral server
-./mahresources -ephemeral -bind-address=:8181
+# Terminal 1: Start ephemeral server (use -max-db-connections=2 to reduce SQLite lock contention)
+./mahresources -ephemeral -bind-address=:8181 -max-db-connections=2
 # Terminal 2: Run tests
 cd e2e && npm test
 
@@ -124,6 +124,7 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-remote-connect-timeout` | `REMOTE_CONNECT_TIMEOUT` | Timeout for connecting to remote URLs (default: 30s) |
 | `-remote-idle-timeout` | `REMOTE_IDLE_TIMEOUT` | Timeout for idle remote transfers (default: 60s) |
 | `-remote-overall-timeout` | `REMOTE_OVERALL_TIMEOUT` | Maximum total time for remote downloads (default: 30m) |
+| `-max-db-connections` | `MAX_DB_CONNECTIONS` | Limit database connection pool size (useful for SQLite under test load) |
 
 Alternative file systems via flags use format `-alt-fs=key:path` (can be repeated).
 Via env vars, use `FILE_ALT_COUNT=N` with `FILE_ALT_NAME_1`, `FILE_ALT_PATH_1`, etc.
@@ -183,11 +184,26 @@ go test ./...
 **IMPORTANT: Always run E2E tests against an ephemeral instance** to ensure test isolation and avoid polluting real data.
 
 ```bash
+# Easiest way: automatic server management (recommended)
+cd e2e && npm run test:with-server
+
+# Other automatic server commands:
+npm run test:with-server:headed  # Run with browser visible
+npm run test:with-server:debug   # Run in debug mode
+npm run test:with-server:a11y    # Run accessibility tests only
+```
+
+The `test:with-server` scripts automatically find an available port, start an ephemeral server with `-max-db-connections=1`, run tests, and clean up.
+
+**Manual server management** (if you need more control):
+
+```bash
 # 1. Build the application first
 npm run build
 
 # 2. Start server in ephemeral mode (separate terminal)
-./mahresources -ephemeral -bind-address=:8181
+# Use -max-db-connections=2 to reduce SQLite lock contention with parallel tests
+./mahresources -ephemeral -bind-address=:8181 -max-db-connections=2
 
 # 3. Run all E2E tests
 cd e2e && npm test
