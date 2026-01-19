@@ -116,9 +116,10 @@ func (p *PostgresFTS) BuildSearchScope(tableName string, columns []string, query
 			)
 
 		case ModeFuzzy:
-			// Use trigram similarity on name column
+			// Use trigram % operator which can use the GIN index
+			// The % operator uses pg_trgm.similarity_threshold (default 0.3)
 			return db.Where(
-				fmt.Sprintf("similarity(%s.name, ?) > 0.3", tableName),
+				fmt.Sprintf("%s.name %% ?", tableName),
 				escapedTerm,
 			)
 
