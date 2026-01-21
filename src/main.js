@@ -2,10 +2,7 @@
 import Alpine from 'alpinejs';
 import morph from '@alpinejs/morph';
 import collapse from '@alpinejs/collapse';
-
-// Import baguettebox
-import baguetteBox from 'baguettebox.js';
-import 'baguettebox.js/dist/baguetteBox.min.css';
+import focus from '@alpinejs/focus';
 
 // Import utility functions and expose them globally
 import {
@@ -31,6 +28,7 @@ import { registerBulkSelectionStore, bulkSelectionForms, selectableItem, setupBu
 import { registerSavedSettingStore } from './components/storeConfig.js';
 import { globalSearch } from './components/globalSearch.js';
 import { schemaForm } from './components/schemaForm.js';
+import { registerLightboxStore } from './components/lightbox.js';
 
 // Import web components
 import './webcomponents/expandabletext.js';
@@ -54,10 +52,12 @@ window.getJSONOrObjValue = getJSONOrObjValue;
 // Register Alpine plugins (must be done before Alpine.start())
 Alpine.plugin(morph);
 Alpine.plugin(collapse);
+Alpine.plugin(focus);
 
 // Register Alpine stores
 registerBulkSelectionStore(Alpine);
 registerSavedSettingStore(Alpine);
+registerLightboxStore(Alpine);
 
 // Register Alpine data components
 Alpine.data('autocompleter', autocompleter);
@@ -74,16 +74,10 @@ window.Alpine = Alpine;
 // Start Alpine
 Alpine.start();
 
-// Initialize baguetteBox on DOM ready
+// Initialize lightbox on DOM ready
 document.addEventListener('DOMContentLoaded', () => {
-  const filter = /#image\//;
-  const fullScreen = false;
-  const animation = false;
-
-  const options = { filter, fullScreen, animation };
-
-  baguetteBox.run('.list-container', options);
-  baguetteBox.run('.gallery', options);
+  Alpine.store('lightbox').init();
+  Alpine.store('lightbox').initFromDOM();
 });
 
 // Setup paste handler for file inputs

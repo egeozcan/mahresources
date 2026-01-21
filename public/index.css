@@ -117,3 +117,8 @@
 [x-cloak] {
     display: none !important;
 }
+
+/* Lightbox cursor styles */
+[data-lightbox-item] {
+    cursor: zoom-in;
+}

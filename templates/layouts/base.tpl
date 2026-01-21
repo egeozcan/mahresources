@@ -7,7 +7,6 @@
     <link rel="stylesheet" href="/public/index.css">
     <link rel="stylesheet" href="/public/tailwind.css">
     <link rel="stylesheet" href="/public/jsonTable.css">
-    <link rel="stylesheet" href="/public/dist/main.css">
     <script type="module" src="/public/dist/main.js"></script>
     <link rel="apple-touch-icon" sizes="57x57" href="/public/favicon/apple-icon-57x57.png">
     <link rel="apple-touch-icon" sizes="60x60" href="/public/favicon/apple-icon-60x60.png">
@@ -63,5 +62,6 @@
         {% include "/partials/pagination.tpl" %}
         {% block footer %}{% endblock %}
     </footer>
+    {% include "/partials/lightbox.tpl" %}
 </body>
 </html>
