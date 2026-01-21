@@ -64,7 +64,7 @@ func GetGroupsParentsHandler(ctx interfaces.GroupReader) func(writer http.Respon
 	}
 }
 
-func GetAddGroupHandler(ctx interfaces.GroupWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddGroupHandler(ctx interfaces.GroupCRUD) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.GroupEditor{}
 		var group *models.Group
@@ -115,7 +115,7 @@ func GetRemoveGroupHandler(ctx interfaces.GroupDeleter) func(writer http.Respons
 	}
 }
 
-func GetAddTagsToGroupsHandler(ctx interfaces.GroupWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddTagsToGroupsHandler(ctx interfaces.BulkGroupTagEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BulkEditQuery{}
 		var err error
@@ -136,7 +136,7 @@ func GetAddTagsToGroupsHandler(ctx interfaces.GroupWriter) func(writer http.Resp
 	}
 }
 
-func GetRemoveTagsFromGroupsHandler(ctx interfaces.GroupWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetRemoveTagsFromGroupsHandler(ctx interfaces.BulkGroupTagEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BulkEditQuery{}
 		var err error
@@ -178,7 +178,7 @@ func GetBulkDeleteGroupsHandler(ctx interfaces.GroupDeleter) func(writer http.Re
 	}
 }
 
-func GetAddMetaToGroupsHandler(ctx interfaces.GroupWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddMetaToGroupsHandler(ctx interfaces.BulkGroupMetaEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BulkEditMetaQuery{}
 		var err error
@@ -213,7 +213,7 @@ func GetGroupMetaKeysHandler(ctx interfaces.GroupMetaReader) func(writer http.Re
 	}
 }
 
-func GetMergeGroupsHandler(ctx interfaces.GroupWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetMergeGroupsHandler(ctx interfaces.GroupMerger) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.MergeQuery{}
 		var err error
@@ -234,7 +234,7 @@ func GetMergeGroupsHandler(ctx interfaces.GroupWriter) func(writer http.Response
 	}
 }
 
-func GetDuplicateGroupHandler(ctx interfaces.GroupWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetDuplicateGroupHandler(ctx interfaces.GroupDuplicator) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor query_models.EntityIdQuery
 

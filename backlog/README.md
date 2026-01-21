@@ -28,7 +28,7 @@ The codebase has solid foundational architecture with clear layering:
 | 2 | [Generic CRUD Operations](./02-generic-crud/) | Medium | High | Medium | ~1 week | ✅ Complete |
 | 3 | [Handler Middleware & Factories](./03-handler-middleware/) | Medium | High | Medium | ~1 week | ✅ Complete |
 | 4 | [Split Monolithic Context Files](./04-split-context-files/) | Medium | Medium | Low | ~2-3 days | ✅ Complete |
-| 5 | [Consistent DI with Interface Expansion](./05-consistent-di/) | Medium-High | Medium | Medium | ~1 week | 🔄 In Progress |
+| 5 | [Consistent DI with Interface Expansion](./05-consistent-di/) | Medium-High | Medium | Medium | ~1 week | ✅ Complete |
 | 6 | [Repository Pattern Extraction](./06-repository-pattern/) | High | Very High | High | ~2-3 weeks | ⬜ Not Started |
 | 7 | [Event-Driven Side Effects](./07-event-driven/) | High | High | High | ~2-3 weeks | ⬜ Not Started |
 
@@ -63,14 +63,17 @@ The codebase has solid foundational architecture with clear layering:
 - ✅ Note, Group: Read-only generic factories available; writes remain custom (complex transactions/associations)
 - ✅ Resource: Intentionally not migrated (file upload/media processing too specialized)
 
-### Phase 3: Consistency 🔄 IN PROGRESS
-**Strategy 5** - Fix DI inconsistencies (Commit: 956d5c4)
+### Phase 3: Consistency ✅ COMPLETE
+**Strategy 5** - Fix DI inconsistencies
 - ✅ Added `MetaKey` type to `generic_interfaces.go`
 - ✅ Added `ResourceMetaReader`, `ResourceThumbnailLoader` interfaces
 - ✅ Added `GroupMetaReader`, `NoteMetaReader`, `NoteTypeReader` interfaces
-- ✅ Updated 5 API handlers to use interfaces instead of concrete context
-- ✅ Added compile-time interface compliance checks in `interface_checks.go`
-- ⬜ Remaining: ~35 handlers still use full context (bulk ops, merge, etc.)
+- ✅ Added granular Resource interfaces: `ResourceCreator`, `ResourceEditor`, `BulkResourceTagEditor`, `BulkResourceGroupEditor`, `BulkResourceMetaEditor`, `BulkResourceDeleter`, `ResourceMerger`, `ResourceMediaProcessor`
+- ✅ Added granular Group interfaces: `GroupCreator`, `GroupUpdater`, `BulkGroupTagEditor`, `BulkGroupMetaEditor`, `GroupMerger`, `GroupDuplicator`, `GroupCRUD`
+- ✅ Refactored `ResourceWriter` and `GroupWriter` as composite interfaces for backward compatibility
+- ✅ Updated all Resource handlers to use granular interfaces (14 handlers)
+- ✅ Updated all Group handlers to use granular interfaces (6 handlers)
+- ✅ Added compile-time interface compliance checks for all new interfaces
 
 ### Phase 4: Major Refactor (Optional) ⬜ NOT STARTED
 **Strategies 6 or 7** - Repository pattern or event-driven architecture

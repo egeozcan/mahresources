@@ -97,7 +97,7 @@ func GetResourceContentHandler(ctx interfaces.ResourceReader) func(writer http.R
 	}
 }
 
-func GetResourceUploadHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetResourceUploadHandler(ctx interfaces.ResourceCreator) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 
 		var remoteCreator = query_models.ResourceFromRemoteCreator{}
@@ -184,7 +184,7 @@ func GetResourceUploadHandler(ctx interfaces.ResourceWriter) func(writer http.Re
 	}
 }
 
-func GetResourceAddLocalHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetResourceAddLocalHandler(ctx interfaces.ResourceCreator) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 
 		var creator = query_models.ResourceFromLocalCreator{}
@@ -210,7 +210,7 @@ func GetResourceAddLocalHandler(ctx interfaces.ResourceWriter) func(writer http.
 	}
 }
 
-func GetResourceAddRemoteHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetResourceAddRemoteHandler(ctx interfaces.ResourceCreator) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 
 		var creator = query_models.ResourceFromRemoteCreator{}
@@ -236,7 +236,7 @@ func GetResourceAddRemoteHandler(ctx interfaces.ResourceWriter) func(writer http
 	}
 }
 
-func GetResourceEditHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetResourceEditHandler(ctx interfaces.ResourceEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.ResourceEditor{}
 		err := tryFillStructValuesFromRequest(&editor, request)
@@ -346,7 +346,7 @@ func GetResourceMetaKeysHandler(ctx interfaces.ResourceMetaReader) func(writer h
 	}
 }
 
-func GetAddTagsToResourcesHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddTagsToResourcesHandler(ctx interfaces.BulkResourceTagEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BulkEditQuery{}
 		var err error
@@ -367,7 +367,7 @@ func GetAddTagsToResourcesHandler(ctx interfaces.ResourceWriter) func(writer htt
 	}
 }
 
-func GetAddGroupsToResourcesHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddGroupsToResourcesHandler(ctx interfaces.BulkResourceGroupEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BulkEditQuery{}
 		var err error
@@ -388,7 +388,7 @@ func GetAddGroupsToResourcesHandler(ctx interfaces.ResourceWriter) func(writer h
 	}
 }
 
-func GetRemoveTagsFromResourcesHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetRemoveTagsFromResourcesHandler(ctx interfaces.BulkResourceTagEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BulkEditQuery{}
 		var err error
@@ -409,7 +409,7 @@ func GetRemoveTagsFromResourcesHandler(ctx interfaces.ResourceWriter) func(write
 	}
 }
 
-func GetReplaceTagsOfResourcesHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetReplaceTagsOfResourcesHandler(ctx interfaces.BulkResourceTagEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BulkEditQuery{}
 		var err error
@@ -430,7 +430,7 @@ func GetReplaceTagsOfResourcesHandler(ctx interfaces.ResourceWriter) func(writer
 	}
 }
 
-func GetAddMetaToResourcesHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddMetaToResourcesHandler(ctx interfaces.BulkResourceMetaEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BulkEditMetaQuery{}
 		var err error
@@ -451,7 +451,7 @@ func GetAddMetaToResourcesHandler(ctx interfaces.ResourceWriter) func(writer htt
 	}
 }
 
-func GetBulkDeleteResourcesHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetBulkDeleteResourcesHandler(ctx interfaces.BulkResourceDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BulkQuery{}
 		var err error
@@ -472,7 +472,7 @@ func GetBulkDeleteResourcesHandler(ctx interfaces.ResourceWriter) func(writer ht
 	}
 }
 
-func GetMergeResourcesHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetMergeResourcesHandler(ctx interfaces.ResourceMerger) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.MergeQuery{}
 		var err error
@@ -493,7 +493,7 @@ func GetMergeResourcesHandler(ctx interfaces.ResourceWriter) func(writer http.Re
 	}
 }
 
-func GetRotateResourceHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetRotateResourceHandler(ctx interfaces.ResourceMediaProcessor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.RotateResourceQuery{}
 		var err error
@@ -514,7 +514,7 @@ func GetRotateResourceHandler(ctx interfaces.ResourceWriter) func(writer http.Re
 	}
 }
 
-func GetBulkCalculateDimensionsHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetBulkCalculateDimensionsHandler(ctx interfaces.ResourceMediaProcessor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BulkQuery{}
 		var err error
@@ -543,7 +543,7 @@ func GetBulkCalculateDimensionsHandler(ctx interfaces.ResourceWriter) func(write
 	}
 }
 
-func GetResourceSetDimensionsHandler(ctx interfaces.ResourceWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetResourceSetDimensionsHandler(ctx interfaces.ResourceMediaProcessor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.ResourceEditor{}
 		var err error

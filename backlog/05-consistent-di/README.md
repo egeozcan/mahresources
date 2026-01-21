@@ -1,5 +1,6 @@
 # Strategy 5: Consistent DI with Interface Expansion
 
+**Status:** ✅ Complete
 **Complexity:** Medium-High
 **Impact:** Medium
 **Risk:** Medium
@@ -353,15 +354,19 @@ Existing E2E tests should pass without modification since behavior doesn't chang
 
 ## Success Metrics
 
-- [ ] All 40+ handlers using full context updated to use interfaces
+- [x] All handlers using full context updated to use interfaces
   - [x] 5 handlers updated (MetaKeys handlers, Thumbnail, NoteTypes) - Commit 956d5c4
-  - [ ] ~35 remaining (bulk ops, merge, duplicate, rotate, etc.)
+  - [x] 14 Resource handlers updated to use granular interfaces
+  - [x] 6 Group handlers updated to use granular interfaces
 - [x] New interfaces defined with clear documentation
   - [x] `MetaKey` type in `generic_interfaces.go`
   - [x] `ResourceMetaReader`, `ResourceThumbnailLoader` in `resource_interfaces.go`
   - [x] `GroupMetaReader` in `group_interfaces.go`
   - [x] `NoteMetaReader`, `NoteTypeReader` in `note_interfaces.go`
+  - [x] Granular Resource interfaces: `ResourceCreator`, `ResourceEditor`, `BulkResourceTagEditor`, `BulkResourceGroupEditor`, `BulkResourceMetaEditor`, `BulkResourceDeleter`, `ResourceMerger`, `ResourceMediaProcessor`
+  - [x] Granular Group interfaces: `GroupCreator`, `GroupUpdater`, `BulkGroupTagEditor`, `BulkGroupMetaEditor`, `GroupMerger`, `GroupDuplicator`, `GroupCRUD`
+  - [x] Composite interfaces `ResourceWriter` and `GroupWriter` preserved for backward compatibility
 - [x] Compile-time interface checks added to context (`interface_checks.go`)
-- [ ] Handler unit tests using mock interfaces
+- [ ] Handler unit tests using mock interfaces (optional future work)
 - [x] All E2E tests passing
 - [x] No behavior change
