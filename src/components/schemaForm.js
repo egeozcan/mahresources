@@ -68,6 +68,49 @@ function resolveRef(ref, root) {
     return current;
 }
 
+// Merge two schemas (for allOf)
+function mergeSchemas(base, extension) {
+    const merged = { ...base };
+    for (const key in extension) {
+        if (key === 'properties') {
+            merged.properties = { ...(base.properties || {}), ...extension.properties };
+        } else if (key === 'required') {
+            merged.required = [...new Set([...(base.required || []), ...(extension.required || [])])];
+        } else if (!['allOf', 'anyOf', 'oneOf', '$ref'].includes(key)) {
+            merged[key] = extension[key];
+        }
+    }
+    return merged;
+}
+
+// Evaluate if/then/else condition
+function evaluateCondition(conditionSchema, data) {
+    if (!conditionSchema || !conditionSchema.properties) return true;
+    for (const key in conditionSchema.properties) {
+        const propSchema = conditionSchema.properties[key];
+        if (propSchema.const !== undefined && data?.[key] !== propSchema.const) return false;
+        if (propSchema.enum && !propSchema.enum.includes(data?.[key])) return false;
+    }
+    return true;
+}
+
+// Create error message span
+function createErrorSpan(message) {
+    const span = document.createElement('span');
+    span.className = "block text-sm text-red-500 mt-1";
+    span.setAttribute('role', 'alert');
+    span.innerText = message;
+    return span;
+}
+
+// Create constraint hint span
+function createConstraintHint(text) {
+    const hint = document.createElement('span');
+    hint.className = "text-xs text-gray-400 block mt-1";
+    hint.innerText = text;
+    return hint;
+}
+
 function scoreSchemaMatch(schema, data, rootSchema) {
     // Resolve ref if present for scoring
     if (schema.$ref) {
@@ -212,6 +255,133 @@ function generateFormElement(schema, data, onChange, rootSchema) {
         return container;
     }
 
+    // Handle allOf - merge all schemas
+    if (schema.allOf && Array.isArray(schema.allOf)) {
+        let merged = { ...schema };
+        delete merged.allOf;
+        for (const sub of schema.allOf) {
+            const resolved = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
+            if (resolved) merged = mergeSchemas(merged, resolved);
+        }
+        return generateFormElement(merged, data, onChange, rootSchema);
+    }
+
+    // Handle anyOf - similar to oneOf with different styling
+    if (schema.anyOf && Array.isArray(schema.anyOf)) {
+        const container = document.createElement('div');
+        container.className = "space-y-2 border-l-4 border-green-100 pl-4 py-2 my-2";
+
+        if (schema.title) {
+            const title = document.createElement('h4');
+            title.className = "font-bold text-gray-900 text-sm";
+            title.innerText = schema.title;
+            container.appendChild(title);
+        }
+
+        if (schema.description) {
+            const desc = document.createElement('p');
+            desc.className = "text-xs text-gray-500 mb-2";
+            desc.innerText = schema.description;
+            container.appendChild(desc);
+        }
+
+        let activeIndex = 0;
+        if (data !== undefined) {
+            let maxScore = -1;
+            schema.anyOf.forEach((s, idx) => {
+                const score = scoreSchemaMatch(s, data, rootSchema);
+                if (score > maxScore) {
+                    maxScore = score;
+                    activeIndex = idx;
+                }
+            });
+        }
+
+        const select = document.createElement('select');
+        select.className = "block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-green-500 focus:border-green-500 sm:text-sm rounded-md mb-2";
+
+        schema.anyOf.forEach((opt, idx) => {
+            const option = document.createElement('option');
+            option.value = idx;
+
+            let typeLabel = opt.type;
+            if(Array.isArray(opt.type)) typeLabel = opt.type.join('/');
+            if(opt.$ref) typeLabel = "ref";
+
+            option.text = opt.title || opt.description || `Option ${idx + 1} (${typeLabel || 'mixed'})`;
+            if (idx === activeIndex) option.selected = true;
+            select.appendChild(option);
+        });
+
+        const formWrapper = document.createElement('div');
+
+        const renderOption = (idx) => {
+            formWrapper.innerHTML = '';
+            const optSchema = schema.anyOf[idx];
+
+            const el = generateFormElement(optSchema, data, (val) => {
+                const oldVal = data;
+                data = val;
+                onChange(val);
+                if ((oldVal === null && val !== null) || (oldVal !== null && val === null)) {
+                    renderOption(idx);
+                }
+            }, rootSchema);
+            formWrapper.appendChild(el);
+        };
+
+        select.onchange = (e) => {
+            const idx = parseInt(e.target.value);
+            const optSchema = schema.anyOf[idx];
+            data = getDefaultValue(optSchema, rootSchema);
+            onChange(data);
+            renderOption(idx);
+        };
+
+        container.appendChild(select);
+        container.appendChild(formWrapper);
+
+        if (data === undefined) {
+            data = getDefaultValue(schema.anyOf[activeIndex], rootSchema);
+            onChange(data);
+        }
+
+        renderOption(activeIndex);
+        return container;
+    }
+
+    // Handle if/then/else - conditional schema application
+    if (schema.if) {
+        const baseSchema = { ...schema };
+        delete baseSchema.if;
+        delete baseSchema.then;
+        delete baseSchema.else;
+
+        const container = document.createElement('div');
+        let lastConditionMet = null;
+
+        const renderConditional = () => {
+            const conditionMet = evaluateCondition(schema.if, data);
+            if (conditionMet === lastConditionMet && container.firstChild) return;
+            lastConditionMet = conditionMet;
+
+            container.innerHTML = '';
+            const applicable = conditionMet
+                ? mergeSchemas(baseSchema, schema.then || {})
+                : mergeSchemas(baseSchema, schema.else || {});
+
+            const el = generateFormElement(applicable, data, (val) => {
+                data = val;
+                onChange(val);
+                renderConditional();
+            }, rootSchema);
+            container.appendChild(el);
+        };
+
+        renderConditional();
+        return container;
+    }
+
     // Handle enum
     if (schema.enum) {
         const select = document.createElement('select');
@@ -335,16 +505,29 @@ function generateFormElement(schema, data, onChange, rootSchema) {
         }
 
         // 1. Render Schema-Defined Properties
+        const requiredFields = new Set(schema.required || []);
+
         if (schema.properties) {
             for (const key in schema.properties) {
                 const propSchema = schema.properties[key];
                 const wrapper = document.createElement('div');
                 const fieldId = generateUniqueId(`field-${key}`);
+                const isRequired = requiredFields.has(key);
 
                 const label = document.createElement('label');
                 label.className = "block text-sm font-medium text-gray-700";
-                label.innerText = propSchema.title || key;
                 label.setAttribute('for', fieldId);
+
+                const labelText = document.createTextNode(propSchema.title || key);
+                label.appendChild(labelText);
+
+                if (isRequired) {
+                    const asterisk = document.createElement('span');
+                    asterisk.className = "text-red-500 ml-1";
+                    asterisk.innerText = "*";
+                    asterisk.setAttribute('aria-hidden', 'true');
+                    label.appendChild(asterisk);
+                }
                 wrapper.appendChild(label);
 
                 if (propSchema.description && propSchema.type !== 'object') {
@@ -371,11 +554,15 @@ function generateFormElement(schema, data, onChange, rootSchema) {
                         }
                     }, rootSchema);
 
-                    // Set ID and aria-describedby on the generated input
+                    // Set ID, aria-describedby, and required on the generated input
                     if (inputEl.tagName && ['INPUT', 'SELECT', 'TEXTAREA'].includes(inputEl.tagName)) {
                         inputEl.id = fieldId;
                         if (propSchema.description) {
                             inputEl.setAttribute('aria-describedby', `${fieldId}-desc`);
+                        }
+                        if (isRequired) {
+                            inputEl.required = true;
+                            inputEl.setAttribute('aria-required', 'true');
                         }
                     }
 
@@ -536,8 +723,36 @@ function generateFormElement(schema, data, onChange, rootSchema) {
             setTimeout(() => onChange(data), 0);
         }
 
+        // Check constraints
+        const hasMinItems = schema.minItems !== undefined;
+        const hasMaxItems = schema.maxItems !== undefined;
+        const canRemove = () => !hasMinItems || data.length > schema.minItems;
+        const canAdd = () => !hasMaxItems || data.length < schema.maxItems;
+
+        // Item count display
+        const countDisplay = document.createElement('span');
+        countDisplay.className = "text-xs text-gray-500";
+        const updateCount = () => {
+            let text = `${data.length} item${data.length !== 1 ? 's' : ''}`;
+            if (hasMinItems || hasMaxItems) {
+                const min = schema.minItems || 0;
+                const max = schema.maxItems !== undefined ? schema.maxItems : '∞';
+                text += ` (${min}-${max})`;
+            }
+            countDisplay.innerText = text;
+
+            // Show error state if out of bounds
+            if ((hasMinItems && data.length < schema.minItems) || (hasMaxItems && data.length > schema.maxItems)) {
+                countDisplay.className = "text-xs text-red-500";
+            } else {
+                countDisplay.className = "text-xs text-gray-500";
+            }
+        };
+
         const list = document.createElement('div');
         list.className = "space-y-2";
+
+        let addBtn; // Declare early so renderList can reference it
 
         const renderList = () => {
             list.innerHTML = '';
@@ -567,14 +782,24 @@ function generateFormElement(schema, data, onChange, rootSchema) {
                 const removeBtn = document.createElement('button');
                 removeBtn.type = "button";
                 removeBtn.innerText = "×";
-                removeBtn.className = "text-red-600 font-bold px-2 py-1 border rounded hover:bg-red-50";
                 removeBtn.title = "Remove item";
                 removeBtn.setAttribute('aria-label', `Remove item ${index + 1}`);
-                removeBtn.onclick = () => {
-                    data.splice(index, 1);
-                    onChange(data);
-                    renderList();
-                };
+
+                // Update remove button state based on minItems
+                if (canRemove()) {
+                    removeBtn.className = "text-red-600 font-bold px-2 py-1 border rounded hover:bg-red-50";
+                    removeBtn.disabled = false;
+                    removeBtn.onclick = () => {
+                        data.splice(index, 1);
+                        onChange(data);
+                        renderList();
+                        updateCount();
+                        updateAddButton();
+                    };
+                } else {
+                    removeBtn.className = "text-gray-400 font-bold px-2 py-1 border rounded cursor-not-allowed opacity-50";
+                    removeBtn.disabled = true;
+                }
 
                 row.appendChild(inputWrapper);
                 row.appendChild(removeBtn);
@@ -582,32 +807,77 @@ function generateFormElement(schema, data, onChange, rootSchema) {
             });
         };
 
+        const updateAddButton = () => {
+            if (canAdd()) {
+                addBtn.disabled = false;
+                addBtn.className = "mt-2 inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-indigo-700 bg-indigo-100 hover:bg-indigo-200";
+            } else {
+                addBtn.disabled = true;
+                addBtn.className = "mt-2 inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-gray-400 bg-gray-100 cursor-not-allowed opacity-50";
+            }
+        };
+
         renderList();
 
-        const addBtn = document.createElement('button');
+        addBtn = document.createElement('button');
         addBtn.type = "button";
         addBtn.innerText = "Add Item";
         addBtn.setAttribute('aria-label', `Add item to ${schema.title || 'list'}`);
-        addBtn.className = "mt-2 inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-indigo-700 bg-indigo-100 hover:bg-indigo-200";
         addBtn.onclick = () => {
+            if (!canAdd()) return;
             data.push(getDefaultValue(schema.items || {type:'string'}, rootSchema));
             onChange(data);
             renderList();
+            updateCount();
+            updateAddButton();
         };
 
+        // Initial button state
+        updateAddButton();
+        updateCount();
+
         container.appendChild(list);
-        container.appendChild(addBtn);
+
+        // Footer with add button and count
+        const footer = document.createElement('div');
+        footer.className = "flex items-center gap-3";
+        footer.appendChild(addBtn);
+        if (hasMinItems || hasMaxItems) {
+            footer.appendChild(countDisplay);
+        }
+        container.appendChild(footer);
+
         return container;
     }
 
     // Primitives
     const input = document.createElement('input');
+    const wrapper = document.createElement('div');
+    let errorContainer = null;
+
+    // Helper to show/hide validation errors
+    const showError = (message) => {
+        if (!errorContainer) {
+            errorContainer = document.createElement('div');
+            wrapper.appendChild(errorContainer);
+        }
+        errorContainer.innerHTML = '';
+        if (message) {
+            errorContainer.appendChild(createErrorSpan(message));
+            input.classList.add('border-red-500');
+            input.classList.remove('border-gray-300');
+        } else {
+            input.classList.remove('border-red-500');
+            input.classList.add('border-gray-300');
+        }
+    };
 
     if (type === 'boolean') {
         input.type = 'checkbox';
         input.className = "focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded mt-1";
         input.checked = !!data;
         input.onchange = (e) => onChange(e.target.checked);
+        return input; // Boolean doesn't need wrapper
     } else {
         input.className = "shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md mt-1";
 
@@ -623,7 +893,33 @@ function generateFormElement(schema, data, onChange, rootSchema) {
             input.type = 'number';
             if (type === 'integer') input.step = "1";
             else input.step = "any";
+
+            // Add min/max HTML5 attributes
+            if (schema.minimum !== undefined) input.min = schema.minimum;
+            if (schema.maximum !== undefined) input.max = schema.maximum;
+
             input.value = data !== undefined && data !== null ? data : '';
+
+            // Validation function for exclusive bounds
+            const validateNumber = (val) => {
+                if (val === '' || val === undefined || val === null) return null;
+                const num = parseFloat(val);
+                if (isNaN(num)) return null;
+                if (schema.exclusiveMinimum !== undefined && num <= schema.exclusiveMinimum) {
+                    return `Must be greater than ${schema.exclusiveMinimum}`;
+                }
+                if (schema.exclusiveMaximum !== undefined && num >= schema.exclusiveMaximum) {
+                    return `Must be less than ${schema.exclusiveMaximum}`;
+                }
+                if (schema.minimum !== undefined && num < schema.minimum) {
+                    return `Must be at least ${schema.minimum}`;
+                }
+                if (schema.maximum !== undefined && num > schema.maximum) {
+                    return `Must be at most ${schema.maximum}`;
+                }
+                return null;
+            };
+
             input.oninput = (e) => {
                 const val = e.target.value;
                 if (val === '') {
@@ -632,10 +928,66 @@ function generateFormElement(schema, data, onChange, rootSchema) {
                 } else {
                     onChange(type === 'integer' ? parseInt(val) : parseFloat(val));
                 }
+            };
+
+            input.onblur = (e) => {
+                showError(validateNumber(e.target.value));
+            };
+
+            // Add constraint hint
+            const constraints = [];
+            if (schema.minimum !== undefined || schema.exclusiveMinimum !== undefined) {
+                const min = schema.exclusiveMinimum !== undefined ? `>${schema.exclusiveMinimum}` : `≥${schema.minimum}`;
+                constraints.push(min);
+            }
+            if (schema.maximum !== undefined || schema.exclusiveMaximum !== undefined) {
+                const max = schema.exclusiveMaximum !== undefined ? `<${schema.exclusiveMaximum}` : `≤${schema.maximum}`;
+                constraints.push(max);
+            }
+            if (constraints.length > 0) {
+                wrapper.appendChild(input);
+                wrapper.appendChild(createConstraintHint(constraints.join(', ')));
+                return wrapper;
             }
         } else {
+            // String type
+            if (schema.minLength !== undefined) input.minLength = schema.minLength;
+            if (schema.maxLength !== undefined) input.maxLength = schema.maxLength;
+
             input.value = data || '';
+
+            // Validation function for length constraints
+            const validateString = (val) => {
+                if (val === undefined || val === null) val = '';
+                if (schema.minLength !== undefined && val.length < schema.minLength) {
+                    return `Must be at least ${schema.minLength} characters`;
+                }
+                if (schema.maxLength !== undefined && val.length > schema.maxLength) {
+                    return `Must be at most ${schema.maxLength} characters`;
+                }
+                return null;
+            };
+
             input.oninput = (e) => onChange(e.target.value);
+
+            input.onblur = (e) => {
+                showError(validateString(e.target.value));
+            };
+
+            // Add constraint hint
+            if (schema.minLength !== undefined || schema.maxLength !== undefined) {
+                let hintText;
+                if (schema.minLength !== undefined && schema.maxLength !== undefined) {
+                    hintText = `${schema.minLength}-${schema.maxLength} characters`;
+                } else if (schema.minLength !== undefined) {
+                    hintText = `Min ${schema.minLength} characters`;
+                } else {
+                    hintText = `Max ${schema.maxLength} characters`;
+                }
+                wrapper.appendChild(input);
+                wrapper.appendChild(createConstraintHint(hintText));
+                return wrapper;
+            }
         }
     }
 
@@ -649,6 +1001,28 @@ function getDefaultValue(schema, rootSchema) {
             return getDefaultValue({...resolved, ...schema, $ref: undefined}, rootSchema);
         }
     }
+
+    // Handle allOf - merge schemas and get default
+    if (schema.allOf && Array.isArray(schema.allOf)) {
+        let merged = { ...schema };
+        delete merged.allOf;
+        for (const sub of schema.allOf) {
+            const resolved = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
+            if (resolved) merged = mergeSchemas(merged, resolved);
+        }
+        return getDefaultValue(merged, rootSchema);
+    }
+
+    // Handle if/then/else - use 'then' branch for default since condition is usually met initially
+    if (schema.if) {
+        const baseSchema = { ...schema };
+        delete baseSchema.if;
+        delete baseSchema.then;
+        delete baseSchema.else;
+        const merged = mergeSchemas(baseSchema, schema.then || {});
+        return getDefaultValue(merged, rootSchema);
+    }
+
     if (schema.default !== undefined) return schema.default;
     if (schema.const !== undefined) return schema.const;
     if (schema.type === 'object') return {};
@@ -666,6 +1040,7 @@ function getDefaultValue(schema, rootSchema) {
     }
 
     if (schema.oneOf && schema.oneOf.length > 0) return getDefaultValue(schema.oneOf[0], rootSchema);
+    if (schema.anyOf && schema.anyOf.length > 0) return getDefaultValue(schema.anyOf[0], rootSchema);
 
     return "";
 }
