@@ -35,7 +35,7 @@ type GroupQuery struct {
 	RelationTypeId        uint
 	RelationSide          uint
 	MetaQuery             []ColumnMeta
-	SortBy                string
+	SortBy                []string
 	URL                   string
 	Ids                   []uint
 }

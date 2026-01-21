@@ -3,7 +3,7 @@ package query_models
 // BaseQuery defines the common interface for query parameters across entities.
 // Entities that support filtering by these fields should implement this interface.
 type BaseQuery interface {
-	GetSortBy() string
+	GetSortBy() []string
 	GetCreatedBefore() string
 	GetCreatedAfter() string
 	GetName() string
@@ -18,10 +18,10 @@ type BaseQueryFields struct {
 	Description   string
 	CreatedBefore string
 	CreatedAfter  string
-	SortBy        string
+	SortBy        []string
 }
 
-func (b *BaseQueryFields) GetSortBy() string        { return b.SortBy }
+func (b *BaseQueryFields) GetSortBy() []string      { return b.SortBy }
 func (b *BaseQueryFields) GetCreatedBefore() string { return b.CreatedBefore }
 func (b *BaseQueryFields) GetCreatedAfter() string  { return b.CreatedAfter }
 func (b *BaseQueryFields) GetName() string          { return b.Name }

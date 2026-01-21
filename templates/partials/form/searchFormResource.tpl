@@ -7,7 +7,7 @@
         {% endfor %}
     </div>
     {% include "/partials/sideTitle.tpl" with title="Sort" %}
-    {% include "/partials/form/selectInput.tpl" with name='SortBy' label='Sort' values=sortValues %}
+    {% include "/partials/form/multiSortInput.tpl" with name='SortBy' values=sortValues %}
     {% include "/partials/sideTitle.tpl" with title="Filter" %}
     {% include "/partials/form/textInput.tpl" with name='Name' label='Name' value=queryValues.Name.0 %}
     {% include "/partials/form/textInput.tpl" with name='Description' label='Description' value=queryValues.Description.0 %}

@@ -104,27 +104,42 @@ func getHasQuery(request *http.Request) func(name string, value string) bool {
 	}
 }
 
-func createSortCols(standardCols []SortColumn, currentSortVal string) []SortColumn {
-	if strings.TrimSpace(currentSortVal) == "" {
+func createSortCols(standardCols []SortColumn, currentSortVals []string) []SortColumn {
+	if len(currentSortVals) == 0 {
 		return standardCols
 	}
 
-	currentSort := strings.Split(currentSortVal, " ")[0]
+	result := make([]SortColumn, len(standardCols))
+	copy(result, standardCols)
 
-	for _, col := range standardCols {
-		if col.Value == currentSort {
-			return standardCols
+	// Add any custom sort columns from the current values
+	for _, sortVal := range currentSortVals {
+		if strings.TrimSpace(sortVal) == "" {
+			continue
+		}
+
+		currentSort := strings.Split(sortVal, " ")[0]
+		found := false
+
+		for _, col := range result {
+			if col.Value == currentSort {
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			// Prepend custom column
+			result = append([]SortColumn{
+				{
+					Name:  fmt.Sprintf("Custom (%v)", currentSort),
+					Value: currentSort,
+				},
+			}, result...)
 		}
 	}
 
-	res := []SortColumn{
-		{
-			Name:  fmt.Sprintf("Custom (%v)", currentSort),
-			Value: currentSort,
-		},
-	}
-
-	return append(res, standardCols...)
+	return result
 }
 
 func stringId(id any) string {
