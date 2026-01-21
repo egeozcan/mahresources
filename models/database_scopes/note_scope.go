@@ -11,10 +11,8 @@ func NoteQuery(query *query_models.NoteQuery, ignoreSort bool) func(db *gorm.DB)
 		likeOperator := GetLikeOperator(db)
 		dbQuery := db
 
-		if !ignoreSort && ValidateSortColumn(query.SortBy) {
-			dbQuery = dbQuery.Order(query.SortBy).Order("created_at desc")
-		} else if !ignoreSort {
-			dbQuery = dbQuery.Order("created_at desc")
+		if !ignoreSort {
+			dbQuery = ApplySortColumns(dbQuery, query.SortBy, "", "created_at desc")
 		}
 
 		if query.Tags != nil && len(query.Tags) > 0 {

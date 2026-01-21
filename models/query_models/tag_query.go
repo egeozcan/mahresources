@@ -11,5 +11,5 @@ type TagQuery struct {
 	Description   string
 	CreatedBefore string
 	CreatedAfter  string
-	SortBy        string
+	SortBy        []string
 }

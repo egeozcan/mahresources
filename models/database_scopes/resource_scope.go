@@ -11,10 +11,8 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 		likeOperator := GetLikeOperator(db)
 		dbQuery := db
 
-		if !ignoreSort && ValidateSortColumn(query.SortBy) {
-			dbQuery = dbQuery.Order(query.SortBy).Order("created_at desc")
-		} else if !ignoreSort {
-			dbQuery = dbQuery.Order("created_at desc")
+		if !ignoreSort {
+			dbQuery = ApplySortColumns(dbQuery, query.SortBy, "", "created_at desc")
 		}
 
 		if query.Ids != nil && len(query.Ids) > 0 {

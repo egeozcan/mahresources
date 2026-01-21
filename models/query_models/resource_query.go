@@ -52,7 +52,7 @@ type ResourceSearchQuery struct {
 	CreatedBefore    string
 	CreatedAfter     string
 	MetaQuery        []ColumnMeta
-	SortBy           string
+	SortBy           []string
 	MaxResults       uint
 	OriginalName     string
 	OriginalLocation string

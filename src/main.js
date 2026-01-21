@@ -29,6 +29,7 @@ import { registerSavedSettingStore } from './components/storeConfig.js';
 import { globalSearch } from './components/globalSearch.js';
 import { schemaForm } from './components/schemaForm.js';
 import { registerLightboxStore } from './components/lightbox.js';
+import { multiSort } from './components/multiSort.js';
 
 // Import web components
 import './webcomponents/expandabletext.js';
@@ -67,6 +68,7 @@ Alpine.data('bulkSelectionForms', bulkSelectionForms);
 Alpine.data('selectableItem', selectableItem);
 Alpine.data('globalSearch', globalSearch);
 Alpine.data('schemaForm', schemaForm);
+Alpine.data('multiSort', multiSort);
 
 // Expose Alpine globally for debugging and morph usage
 window.Alpine = Alpine;

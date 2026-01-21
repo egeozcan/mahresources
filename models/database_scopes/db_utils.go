@@ -2,6 +2,7 @@ package database_scopes
 
 import (
 	"regexp"
+	"strings"
 
 	"gorm.io/gorm"
 )
@@ -32,5 +33,36 @@ func ApplyDateRange(db *gorm.DB, prefix, before, after string) *gorm.DB {
 	if after != "" {
 		db = db.Where(prefix+"created_at >= ?", after)
 	}
+	return db
+}
+
+// ApplySortColumns validates and applies multiple ORDER BY clauses.
+// tablePrefix should be "tablename." for joined queries, or empty string for simple queries.
+// defaultSort is applied as the final tiebreaker sort (e.g., "created_at desc").
+func ApplySortColumns(db *gorm.DB, sortBy []string, tablePrefix, defaultSort string) *gorm.DB {
+	for _, sort := range sortBy {
+		sort = strings.TrimSpace(sort)
+		if !ValidateSortColumn(sort) {
+			continue
+		}
+
+		// Add table prefix for non-meta columns
+		if tablePrefix != "" && !strings.HasPrefix(sort, "meta") {
+			parts := strings.SplitN(sort, " ", 2)
+			prefixedSort := tablePrefix + parts[0]
+			if len(parts) > 1 {
+				prefixedSort += " " + parts[1]
+			}
+			db = db.Order(prefixedSort)
+		} else {
+			db = db.Order(sort)
+		}
+	}
+
+	// Apply default sort as final tiebreaker
+	if defaultSort != "" {
+		db = db.Order(defaultSort)
+	}
+
 	return db
 }

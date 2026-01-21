@@ -13,10 +13,8 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 		likeOperator := GetLikeOperator(db)
 		dbQuery := db
 
-		if !ignoreSort && ValidateSortColumn(query.SortBy) {
-			dbQuery = dbQuery.Order("groups." + query.SortBy).Order("groups.created_at desc")
-		} else if !ignoreSort {
-			dbQuery = dbQuery.Order("groups.created_at desc")
+		if !ignoreSort {
+			dbQuery = ApplySortColumns(dbQuery, query.SortBy, "groups.", "groups.created_at desc")
 		}
 
 		var parentAdded = false
