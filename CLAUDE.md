@@ -40,6 +40,16 @@ go build --tags 'json1 fts5'
 
 # Run the server (default port 8181)
 ./mahresources
+
+# Generate OpenAPI spec from code
+go run ./cmd/openapi-gen
+
+# Generate OpenAPI spec with custom output
+go run ./cmd/openapi-gen -output api-spec.yaml
+go run ./cmd/openapi-gen -output api-spec.json -format json
+
+# Validate a generated OpenAPI spec
+go run ./cmd/openapi-gen/validate.go openapi.yaml
 ```
 
 ## Architecture Overview
@@ -56,6 +66,8 @@ Mahresources is a CRUD application for personal information management written i
 - `api_handlers/` - JSON API endpoints
 - `template_handlers/` - HTML template rendering
 - `interfaces/` - Interface definitions for dependency injection (Reader, Writer, Deleter patterns)
+- `openapi/` - OpenAPI 3.0 spec generation from code
+- `routes_openapi.go` - API route definitions with OpenAPI metadata
 
 **templates/** - Pongo2 templates (Django-like syntax). Each entity has create, display, and list templates.
 
