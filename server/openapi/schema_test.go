@@ -267,18 +267,18 @@ func TestGeneratePartialSchema(t *testing.T) {
 
 	props := partialSchema.Value.Properties
 
-	// Partial should only include default fields: ID, Name, Description
+	// Partial should only include default fields: ID, Name (minimal for avoiding deep nesting)
 	if props["id"] == nil {
 		t.Error("expected 'id' in partial schema")
 	}
 	if props["name"] == nil {
 		t.Error("expected 'name' in partial schema")
 	}
-	if props["description"] == nil {
-		t.Error("expected 'description' in partial schema")
-	}
 
-	// Partial should NOT include other fields (Names, Items)
+	// Partial should NOT include other fields (Description, Names, Items)
+	if props["description"] != nil {
+		t.Error("expected 'description' to be excluded from partial schema (minimal defaults)")
+	}
 	if props["names"] != nil {
 		t.Error("expected 'names' to be excluded from partial schema")
 	}

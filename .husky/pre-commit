@@ -13,3 +13,17 @@ if git diff --cached --name-only | grep -qE '\.(js|css|tpl)$|src/|vite\.config';
     # Stage the rebuilt files
     git add public/dist/main.js public/tailwind.css
 fi
+
+# Auto-generate OpenAPI spec when API-related files change
+if git diff --cached --name-only | grep -qE 'server/routes_openapi\.go|server/openapi/|models/.*_model\.go|models/query_models/'; then
+    echo "API files changed, regenerating OpenAPI spec..."
+    go run ./cmd/openapi-gen -output openapi.yaml
+
+    if [ $? -ne 0 ]; then
+        echo "OpenAPI generation failed, aborting commit"
+        exit 1
+    fi
+
+    # Stage the regenerated spec
+    git add openapi.yaml
+fi

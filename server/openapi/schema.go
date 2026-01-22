@@ -33,10 +33,19 @@ func NewSchemaGenerator() *SchemaGenerator {
 		Schemas:              make(map[string]*openapi3.SchemaRef),
 		processing:           make(map[reflect.Type]bool),
 		partialSchemas:       make(map[string]string),
-		DefaultPartialFields: []string{"ID", "Name", "Description"},
+		DefaultPartialFields: []string{"ID", "Name"},
 		PartialFields: map[string][]string{
 			// Group partial includes Category to show the group's category
-			"Group": {"ID", "Name", "Description", "Category"},
+			"Group": {"ID", "Name", "Category"},
+			// Category partial is minimal
+			"Category": {"ID", "Name"},
+			// Note partial is minimal
+			"Note": {"ID", "Name"},
+			// Resource partial is minimal
+			"Resource": {"ID", "Name"},
+			// Tag doesn't need special handling, uses defaults
+			// GroupRelationType partial is minimal
+			"GroupRelationType": {"ID", "Name"},
 		},
 	}
 }
@@ -119,6 +128,30 @@ func (g *SchemaGenerator) generateSchemaInternal(t reflect.Type, asPartial bool,
 		return inner
 	}
 
+	// Handle custom types from models/types package BEFORE basic types
+	// This must come before slice check because types.JSON has underlying type []byte
+	typePath := t.PkgPath()
+	if strings.HasSuffix(typePath, "models/types") {
+		switch t.Name() {
+		case "JSON":
+			schema := openapi3.NewObjectSchema()
+			schema.AdditionalProperties = openapi3.AdditionalProperties{Has: boolPtr(true)}
+			schema.Description = "Arbitrary JSON data"
+			return openapi3.NewSchemaRef("", schema)
+		case "URL":
+			schema := openapi3.NewStringSchema()
+			schema.Format = "uri"
+			return openapi3.NewSchemaRef("", schema)
+		}
+	}
+
+	// Handle time.Time before basic types check
+	if t == reflect.TypeOf(time.Time{}) {
+		schema := openapi3.NewStringSchema()
+		schema.Format = "date-time"
+		return openapi3.NewSchemaRef("", schema)
+	}
+
 	// Handle basic types
 	switch t.Kind() {
 	case reflect.String:
@@ -151,29 +184,6 @@ func (g *SchemaGenerator) generateSchemaInternal(t reflect.Type, asPartial bool,
 		return openapi3.NewSchemaRef("", schema)
 	}
 
-	// Handle time.Time
-	if t == reflect.TypeOf(time.Time{}) {
-		schema := openapi3.NewStringSchema()
-		schema.Format = "date-time"
-		return openapi3.NewSchemaRef("", schema)
-	}
-
-	// Handle custom types from models/types package
-	typePath := t.PkgPath()
-	if strings.HasSuffix(typePath, "models/types") {
-		switch t.Name() {
-		case "JSON":
-			schema := openapi3.NewObjectSchema()
-			schema.AdditionalProperties = openapi3.AdditionalProperties{Has: boolPtr(true)}
-			schema.Description = "Arbitrary JSON data"
-			return openapi3.NewSchemaRef("", schema)
-		case "URL":
-			schema := openapi3.NewStringSchema()
-			schema.Format = "uri"
-			return openapi3.NewSchemaRef("", schema)
-		}
-	}
-
 	// Handle struct types
 	if t.Kind() == reflect.Struct {
 		return g.generateStructSchema(t, asPartial, depth)
@@ -190,8 +200,9 @@ func (g *SchemaGenerator) generateStructSchema(t reflect.Type, asPartial bool, d
 		return g.generateInlineStructSchema(t, depth)
 	}
 
-	// For partial schemas (used in arrays to avoid deep nesting)
-	if asPartial && depth > 1 {
+	// For partial schemas (used in arrays to avoid deep nesting and circular refs)
+	// depth > 0 means this is a nested type (e.g., array item or nested struct field)
+	if asPartial && depth > 0 {
 		partialName := schemaName + "Partial"
 		if _, exists := g.Schemas[partialName]; !exists {
 			g.generatePartialSchema(t, partialName)
