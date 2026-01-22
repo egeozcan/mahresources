@@ -73,6 +73,9 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 	if err := tx.Commit().Error; err != nil {
 		return nil, err
 	}
+
+	ctx.Logger().Info(models.LogActionCreate, "group", &group.ID, group.Name, "Created group", nil)
+
 	ctx.InvalidateSearchCacheByType(EntityTypeGroup)
 	return &group, nil
 }
@@ -148,6 +151,9 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 	if err := tx.Commit().Error; err != nil {
 		return nil, err
 	}
+
+	ctx.Logger().Info(models.LogActionUpdate, "group", &group.ID, group.Name, "Updated group", nil)
+
 	ctx.InvalidateSearchCacheByType(EntityTypeGroup)
 	return group, nil
 }
@@ -223,6 +229,7 @@ func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {
 			Delete(&group).Error
 	})
 	if err == nil {
+		ctx.Logger().Info(models.LogActionDelete, "group", &groupId, "", "Deleted group", nil)
 		ctx.InvalidateSearchCacheByType(EntityTypeGroup)
 	}
 	return err

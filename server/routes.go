@@ -64,6 +64,9 @@ var templates = map[string]templateInformation{
 	"/queries":    {template_context_providers.QueryListContextProvider, "listQueries.tpl", http.MethodGet},
 	"/query":      {template_context_providers.QueryContextProvider, "displayQuery.tpl", http.MethodGet},
 	"/query/edit": {template_context_providers.QueryCreateContextProvider, "createQuery.tpl", http.MethodGet},
+
+	"/logs": {template_context_providers.LogListContextProvider, "listLogs.tpl", http.MethodGet},
+	"/log":  {template_context_providers.LogContextProvider, "displayLog.tpl", http.MethodGet},
 }
 
 func registerRoutes(router *mux.Router, appContext *application_context.MahresourcesContext) {
@@ -198,4 +201,9 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/download/queue").HandlerFunc(api_handlers.GetDownloadQueueHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/download/cancel").HandlerFunc(api_handlers.GetDownloadCancelHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/download/events").HandlerFunc(api_handlers.GetDownloadEventsHandler(appContext))
+
+	// Logs (read-only)
+	router.Methods(http.MethodGet).Path("/v1/logs").HandlerFunc(api_handlers.GetLogEntriesHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/log").HandlerFunc(api_handlers.GetLogEntryHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/logs/entity").HandlerFunc(api_handlers.GetEntityHistoryHandler(appContext))
 }

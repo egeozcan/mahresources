@@ -19,7 +19,13 @@ func (ctx *MahresourcesContext) EditRelation(query query_models.GroupRelationshi
 	relation.Name = query.Name
 	relation.Description = query.Description
 
-	return relation, ctx.db.Save(relation).Error
+	if err := ctx.db.Save(relation).Error; err != nil {
+		return nil, err
+	}
+
+	ctx.Logger().Info(models.LogActionUpdate, "relation", &relation.ID, relation.Name, "Updated relation", nil)
+
+	return relation, nil
 }
 
 func (ctx *MahresourcesContext) AddRelation(fromGroupId, toGroupId, relationTypeId uint) (*models.GroupRelation, error) {
@@ -71,6 +77,10 @@ func (ctx *MahresourcesContext) AddRelation(fromGroupId, toGroupId, relationType
 
 		return nil
 	})
+
+	if err == nil {
+		ctx.Logger().Info(models.LogActionCreate, "relation", &relation.ID, relation.Name, "Created relation", nil)
+	}
 
 	return &relation, err
 }
@@ -135,6 +145,7 @@ func (ctx *MahresourcesContext) AddRelationType(query *query_models.Relationship
 	})
 
 	if err == nil {
+		ctx.Logger().Info(models.LogActionCreate, "relationType", &relationType.ID, relationType.Name, "Created relation type", nil)
 		ctx.InvalidateSearchCacheByType(EntityTypeRelationType)
 	}
 	return &relationType, err
@@ -155,6 +166,7 @@ func (ctx *MahresourcesContext) EditRelationType(query *query_models.Relationshi
 	})
 
 	if err == nil {
+		ctx.Logger().Info(models.LogActionUpdate, "relationType", &relationType.ID, relationType.Name, "Updated relation type", nil)
 		ctx.InvalidateSearchCacheByType(EntityTypeRelationType)
 	}
 	return &relationType, err
@@ -200,7 +212,11 @@ func (ctx *MahresourcesContext) GetRelationTypesWithIds(ids *[]uint) (*[]*models
 func (ctx *MahresourcesContext) DeleteRelationship(relationshipId uint) error {
 	relation := models.GroupRelation{ID: relationshipId}
 
-	return ctx.db.Select(clause.Associations).Delete(&relation).Error
+	err := ctx.db.Select(clause.Associations).Delete(&relation).Error
+	if err == nil {
+		ctx.Logger().Info(models.LogActionDelete, "relation", &relationshipId, "", "Deleted relation", nil)
+	}
+	return err
 }
 
 func (ctx *MahresourcesContext) DeleteRelationshipType(relationshipTypeId uint) error {
@@ -208,6 +224,7 @@ func (ctx *MahresourcesContext) DeleteRelationshipType(relationshipTypeId uint) 
 
 	err := ctx.db.Select(clause.Associations).Delete(&relationType).Error
 	if err == nil {
+		ctx.Logger().Info(models.LogActionDelete, "relationType", &relationshipTypeId, "", "Deleted relation type", nil)
 		ctx.InvalidateSearchCacheByType(EntityTypeRelationType)
 	}
 	return err

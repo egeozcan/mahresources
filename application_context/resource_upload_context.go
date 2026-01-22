@@ -304,6 +304,8 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		return nil, err
 	}
 
+	ctx.Logger().Info(models.LogActionCreate, "resource", &res.ID, res.Name, "Created resource from local path", nil)
+
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)
 	return res, nil
 }
@@ -520,6 +522,9 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 	if err := tx.Commit().Error; err != nil {
 		return nil, err
 	}
+
+	ctx.Logger().Info(models.LogActionCreate, "resource", &res.ID, res.Name, "Created resource", nil)
+
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)
 	return res, nil
 }

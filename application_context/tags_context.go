@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"errors"
+
 	"gorm.io/gorm/clause"
 	"mahresources/models"
 	"mahresources/models/database_scopes"
@@ -57,6 +58,9 @@ func (ctx *MahresourcesContext) CreateTag(tagQuery *query_models.TagCreator) (*m
 	if err := ctx.db.Create(&tag).Error; err != nil {
 		return nil, err
 	}
+
+	ctx.Logger().Info(models.LogActionCreate, "tag", &tag.ID, tag.Name, "Created tag", nil)
+
 	ctx.InvalidateSearchCacheByType(EntityTypeTag)
 	return &tag, nil
 }
@@ -75,6 +79,9 @@ func (ctx *MahresourcesContext) UpdateTag(tagQuery *query_models.TagCreator) (*m
 	if err := ctx.db.Save(&tag).Error; err != nil {
 		return nil, err
 	}
+
+	ctx.Logger().Info(models.LogActionUpdate, "tag", &tag.ID, tag.Name, "Updated tag", nil)
+
 	ctx.InvalidateSearchCacheByType(EntityTypeTag)
 	return &tag, nil
 }
@@ -84,6 +91,7 @@ func (ctx *MahresourcesContext) DeleteTag(tagId uint) error {
 
 	err := ctx.db.Select(clause.Associations).Delete(&tag).Error
 	if err == nil {
+		ctx.Logger().Info(models.LogActionDelete, "tag", &tagId, "", "Deleted tag", nil)
 		ctx.InvalidateSearchCacheByType(EntityTypeTag)
 	}
 	return err

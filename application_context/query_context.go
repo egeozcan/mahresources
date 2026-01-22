@@ -70,6 +70,9 @@ func (ctx *MahresourcesContext) CreateQuery(queryQuery *query_models.QueryCreato
 	if err := ctx.db.Create(&query).Error; err != nil {
 		return nil, err
 	}
+
+	ctx.Logger().Info(models.LogActionCreate, "query", &query.ID, query.Name, "Created query", nil)
+
 	ctx.InvalidateSearchCacheByType(EntityTypeQuery)
 	return &query, nil
 }
@@ -89,6 +92,9 @@ func (ctx *MahresourcesContext) UpdateQuery(queryQuery *query_models.QueryEditor
 	if err := ctx.db.Save(&query).Error; err != nil {
 		return nil, err
 	}
+
+	ctx.Logger().Info(models.LogActionUpdate, "query", &query.ID, query.Name, "Updated query", nil)
+
 	ctx.InvalidateSearchCacheByType(EntityTypeQuery)
 	return &query, nil
 }
@@ -98,6 +104,7 @@ func (ctx *MahresourcesContext) DeleteQuery(queryId uint) error {
 
 	err := ctx.db.Select(clause.Associations).Delete(&query).Error
 	if err == nil {
+		ctx.Logger().Info(models.LogActionDelete, "query", &queryId, "", "Deleted query", nil)
 		ctx.InvalidateSearchCacheByType(EntityTypeQuery)
 	}
 	return err

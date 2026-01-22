@@ -111,6 +111,13 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 	if err := tx.Commit().Error; err != nil {
 		return nil, err
 	}
+
+	if noteQuery.ID == 0 {
+		ctx.Logger().Info(models.LogActionCreate, "note", &note.ID, note.Name, "Created note", nil)
+	} else {
+		ctx.Logger().Info(models.LogActionUpdate, "note", &note.ID, note.Name, "Updated note", nil)
+	}
+
 	ctx.InvalidateSearchCacheByType(EntityTypeNote)
 	return &note, nil
 }
@@ -150,6 +157,7 @@ func (ctx *MahresourcesContext) DeleteNote(noteId uint) error {
 
 	err := ctx.db.Select(clause.Associations).Delete(&note).Error
 	if err == nil {
+		ctx.Logger().Info(models.LogActionDelete, "note", &noteId, "", "Deleted note", nil)
 		ctx.InvalidateSearchCacheByType(EntityTypeNote)
 	}
 	return err
@@ -188,6 +196,7 @@ func (ctx *MahresourcesContext) CreateOrUpdateNoteType(query *query_models.NoteT
 	if strings.TrimSpace(query.Name) == "" {
 		return nil, errors.New("note type name must be non-empty")
 	}
+	isNew := query.ID == 0
 	var noteType models.NoteType
 	if query.ID != 0 {
 		if err := ctx.db.First(&noteType, query.ID).Error; err != nil {
@@ -203,6 +212,13 @@ func (ctx *MahresourcesContext) CreateOrUpdateNoteType(query *query_models.NoteT
 	if err := ctx.db.Save(&noteType).Error; err != nil {
 		return nil, err
 	}
+
+	if isNew {
+		ctx.Logger().Info(models.LogActionCreate, "noteType", &noteType.ID, noteType.Name, "Created note type", nil)
+	} else {
+		ctx.Logger().Info(models.LogActionUpdate, "noteType", &noteType.ID, noteType.Name, "Updated note type", nil)
+	}
+
 	ctx.InvalidateSearchCacheByType(EntityTypeNoteType)
 	return &noteType, nil
 }
@@ -211,6 +227,7 @@ func (ctx *MahresourcesContext) DeleteNoteType(noteTypeId uint) error {
 	noteType := models.NoteType{ID: noteTypeId}
 	err := ctx.db.Select(clause.Associations).Delete(&noteType).Error
 	if err == nil {
+		ctx.Logger().Info(models.LogActionDelete, "noteType", &noteTypeId, "", "Deleted note type", nil)
 		ctx.InvalidateSearchCacheByType(EntityTypeNoteType)
 	}
 	return err

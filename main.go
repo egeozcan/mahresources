@@ -78,6 +78,7 @@ func main() {
 	seedDB := flag.String("seed-db", os.Getenv("SEED_DB"), "Path to SQLite file to use as basis for memory-db (env: SEED_DB)")
 	seedFS := flag.String("seed-fs", os.Getenv("SEED_FS"), "Path to directory to use as read-only base for memory-fs (env: SEED_FS)")
 	maxDBConnections := flag.Int("max-db-connections", parseIntEnv("MAX_DB_CONNECTIONS", 0), "Limit database connection pool size, useful for SQLite under test load (env: MAX_DB_CONNECTIONS)")
+	cleanupLogsDays := flag.Int("cleanup-logs-days", parseIntEnv("CLEANUP_LOGS_DAYS", 0), "Delete log entries older than N days on startup (0=disabled) (env: CLEANUP_LOGS_DAYS)")
 
 	// Alternative file systems: can be specified multiple times as -alt-fs=key:path
 	var altFSFlags altFS
@@ -157,6 +158,7 @@ func main() {
 		&models.GroupRelation{},
 		&models.GroupRelationType{},
 		&models.ImageHash{},
+		&models.LogEntry{},
 	); err != nil {
 		log.Fatalf("failed to migrate: %v", err)
 	}
@@ -169,6 +171,7 @@ func main() {
 		"CREATE INDEX IF NOT EXISTS idx__groups_related_resources__resource_id ON groups_related_resources(resource_id)",
 		"CREATE INDEX IF NOT EXISTS idx__groups_related_resources__resource_id___hash ON groups_related_resources USING HASH (resource_id);",
 		"CREATE INDEX IF NOT EXISTS idx__groups_related_resources__group_id ON groups_related_resources(group_id)",
+		"CREATE INDEX IF NOT EXISTS idx__log_entries__entity_type_entity_id ON log_entries(entity_type, entity_id)",
 	}
 
 	indexQueriesSqlite := [...]string{
@@ -177,6 +180,7 @@ func main() {
 		"CREATE INDEX IF NOT EXISTS idx__groups_related_resources__resource_id ON groups_related_resources(resource_id)",
 		"CREATE INDEX IF NOT EXISTS idx__groups_related_resources__resource_id___hash ON groups_related_resources(resource_id);",
 		"CREATE INDEX IF NOT EXISTS idx__groups_related_resources__group_id ON groups_related_resources(group_id)",
+		"CREATE INDEX IF NOT EXISTS idx__log_entries__entity_type_entity_id ON log_entries(entity_type, entity_id)",
 	}
 
 	if context.Config.DbType == constants.DbTypePosgres {
@@ -200,6 +204,16 @@ func main() {
 		}
 	} else {
 		log.Println("FTS setup skipped (-skip-fts flag or SKIP_FTS=1)")
+	}
+
+	// Cleanup old logs if configured
+	if *cleanupLogsDays > 0 {
+		deleted, err := context.CleanupOldLogs(*cleanupLogsDays)
+		if err != nil {
+			log.Printf("Warning: failed to cleanup old logs: %v", err)
+		} else if deleted > 0 {
+			log.Printf("Cleaned up %d log entries older than %d days", deleted, *cleanupLogsDays)
+		}
 	}
 
 	log.Fatal(server.CreateServer(context, mainFs, context.Config.AltFileSystems).ListenAndServe())

@@ -63,6 +63,9 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 	if err := ctx.db.Create(&category).Error; err != nil {
 		return nil, err
 	}
+
+	ctx.Logger().Info(models.LogActionCreate, "category", &category.ID, category.Name, "Created category", nil)
+
 	ctx.InvalidateSearchCacheByType(EntityTypeCategory)
 	return &category, nil
 }
@@ -86,6 +89,9 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 	if err := ctx.db.Save(&category).Error; err != nil {
 		return nil, err
 	}
+
+	ctx.Logger().Info(models.LogActionUpdate, "category", &category.ID, category.Name, "Updated category", nil)
+
 	ctx.InvalidateSearchCacheByType(EntityTypeCategory)
 	return &category, nil
 }
@@ -95,6 +101,7 @@ func (ctx *MahresourcesContext) DeleteCategory(categoryId uint) error {
 
 	err := ctx.db.Select(clause.Associations).Delete(&category).Error
 	if err == nil {
+		ctx.Logger().Info(models.LogActionDelete, "category", &categoryId, "", "Deleted category", nil)
 		ctx.InvalidateSearchCacheByType(EntityTypeCategory)
 	}
 	return err

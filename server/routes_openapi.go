@@ -38,6 +38,9 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 
 	// Search
 	registerSearchRoutes(registry)
+
+	// Logs
+	registerLogRoutes(registry)
 }
 
 func registerNoteRoutes(r *openapi.Registry) {
@@ -807,5 +810,51 @@ func registerSearchRoutes(r *openapi.Registry) {
 		ResponseType:         searchResponseType,
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 		Paginated:            true,
+	})
+}
+
+func registerLogRoutes(r *openapi.Registry) {
+	logEntryType := reflect.TypeOf(models.LogEntry{})
+	logQueryType := reflect.TypeOf(query_models.LogEntryQuery{})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/logs",
+		OperationID:          "listLogs",
+		Summary:              "List log entries",
+		Description:          "Get all log entries, paginated, with optional filters.",
+		Tags:                 []string{"logs"},
+		QueryType:            logQueryType,
+		ResponseType:         reflect.SliceOf(logEntryType),
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		Paginated:            true,
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/log",
+		OperationID:          "getLog",
+		Summary:              "Get a specific log entry",
+		Tags:                 []string{"logs"},
+		IDQueryParam:         "id",
+		IDRequired:           true,
+		ResponseType:         logEntryType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/logs/entity",
+		OperationID:          "getEntityHistory",
+		Summary:              "Get history of a specific entity",
+		Description:          "Get all log entries for a specific entity type and ID.",
+		Tags:                 []string{"logs"},
+		ResponseType:         reflect.SliceOf(logEntryType),
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		Paginated:            true,
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "entityType", Type: "string", Required: true, Description: "Type of entity (e.g., tag, note, resource)"},
+			{Name: "entityId", Type: "integer", Required: true, Description: "ID of the entity"},
+		},
 	})
 }

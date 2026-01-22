@@ -76,6 +76,8 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 
 	_ = fs.Remove(resource.GetCleanLocation())
 
+	ctx.Logger().Info(models.LogActionDelete, "resource", &resourceId, resource.Name, "Deleted resource", nil)
+
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)
 	return nil
 }
@@ -85,7 +87,7 @@ func (ctx *MahresourcesContext) ResourceMetaKeys() (*[]interfaces.MetaKey, error
 }
 
 func (ctx *MahresourcesContext) BulkRemoveTagsFromResources(query *query_models.BulkEditQuery) error {
-	return ctx.db.Transaction(func(tx *gorm.DB) error {
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		for _, editedId := range query.EditedId {
 			tag, err := ctx.GetTag(editedId)
 
@@ -104,10 +106,19 @@ func (ctx *MahresourcesContext) BulkRemoveTagsFromResources(query *query_models.
 
 		return nil
 	})
+
+	if err == nil {
+		ctx.Logger().Info(models.LogActionUpdate, "resource", nil, "", "Bulk removed tags from resources", map[string]interface{}{
+			"resourceIds": query.ID,
+			"tagIds":      query.EditedId,
+		})
+	}
+
+	return err
 }
 
 func (ctx *MahresourcesContext) BulkReplaceTagsFromResources(query *query_models.BulkEditQuery) error {
-	return ctx.db.Transaction(func(tx *gorm.DB) error {
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		tags := make([]*models.Tag, len(query.EditedId))
 
 		for i, editedId := range query.EditedId {
@@ -130,6 +141,15 @@ func (ctx *MahresourcesContext) BulkReplaceTagsFromResources(query *query_models
 
 		return nil
 	})
+
+	if err == nil {
+		ctx.Logger().Info(models.LogActionUpdate, "resource", nil, "", "Bulk replaced tags on resources", map[string]interface{}{
+			"resourceIds": query.ID,
+			"tagIds":      query.EditedId,
+		})
+	}
+
+	return err
 }
 
 func (ctx *MahresourcesContext) BulkAddMetaToResources(query *query_models.BulkEditMetaQuery) error {
@@ -143,14 +163,22 @@ func (ctx *MahresourcesContext) BulkAddMetaToResources(query *query_models.BulkE
 		expr = gorm.Expr("json_patch(meta, ?)", query.Meta)
 	}
 
-	return ctx.db.
+	err := ctx.db.
 		Model(&resource).
 		Where("id in ?", query.ID).
 		Update("Meta", expr).Error
+
+	if err == nil {
+		ctx.Logger().Info(models.LogActionUpdate, "resource", nil, "", "Bulk added meta to resources", map[string]interface{}{
+			"resourceIds": query.ID,
+		})
+	}
+
+	return err
 }
 
 func (ctx *MahresourcesContext) BulkAddTagsToResources(query *query_models.BulkEditQuery) error {
-	return ctx.db.Transaction(func(tx *gorm.DB) error {
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		for _, editedId := range query.EditedId {
 			tag, err := ctx.GetTag(editedId)
 
@@ -169,10 +197,19 @@ func (ctx *MahresourcesContext) BulkAddTagsToResources(query *query_models.BulkE
 
 		return nil
 	})
+
+	if err == nil {
+		ctx.Logger().Info(models.LogActionUpdate, "resource", nil, "", "Bulk added tags to resources", map[string]interface{}{
+			"resourceIds": query.ID,
+			"tagIds":      query.EditedId,
+		})
+	}
+
+	return err
 }
 
 func (ctx *MahresourcesContext) BulkAddGroupsToResources(query *query_models.BulkEditQuery) error {
-	return ctx.db.Transaction(func(tx *gorm.DB) error {
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		for _, editedId := range query.EditedId {
 			group, err := ctx.GetGroup(editedId)
 
@@ -191,6 +228,15 @@ func (ctx *MahresourcesContext) BulkAddGroupsToResources(query *query_models.Bul
 
 		return nil
 	})
+
+	if err == nil {
+		ctx.Logger().Info(models.LogActionUpdate, "resource", nil, "", "Bulk added groups to resources", map[string]interface{}{
+			"resourceIds": query.ID,
+			"groupIds":    query.EditedId,
+		})
+	}
+
+	return err
 }
 
 func (ctx *MahresourcesContext) BulkDeleteResources(query *query_models.BulkQuery) error {
@@ -199,6 +245,11 @@ func (ctx *MahresourcesContext) BulkDeleteResources(query *query_models.BulkQuer
 			return err
 		}
 	}
+
+	ctx.Logger().Info(models.LogActionDelete, "resource", nil, "", "Bulk deleted resources", map[string]interface{}{
+		"resourceIds": query.ID,
+		"count":       len(query.ID),
+	})
 
 	return nil
 }
@@ -341,6 +392,11 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 				return err
 			}
 		}
+
+		transactionCtx.Logger().Info(models.LogActionUpdate, "resource", &winnerId, winner.Name, "Merged resources", map[string]interface{}{
+			"winnerId": winnerId,
+			"loserIds": loserIds,
+		})
 
 		return nil
 	})

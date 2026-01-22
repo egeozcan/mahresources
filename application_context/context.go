@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -86,6 +87,9 @@ type MahresourcesContext struct {
 	downloadManager *download_queue.DownloadManager
 	// searchCache provides caching for global search results
 	searchCache *SearchCache
+	// currentRequest holds the current HTTP request for logging purposes.
+	// This is set per-request via WithRequest() to capture request metadata in logs.
+	currentRequest *http.Request
 }
 
 func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.DB, config *MahresourcesConfig) *MahresourcesContext {
@@ -129,6 +133,21 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 // DownloadManager returns the download queue manager for background remote downloads
 func (ctx *MahresourcesContext) DownloadManager() *download_queue.DownloadManager {
 	return ctx.downloadManager
+}
+
+// WithRequest returns a shallow copy of the context with the HTTP request set.
+// This enables log entries to capture request metadata (path, IP, user agent).
+// Use this in HTTP handlers to enable request-aware logging:
+//
+//	ctx.WithRequest(r).CreateTag(&creator)
+//
+// The returned value implements all the same interfaces as the original context.
+// Implements interfaces.RequestContextSetter.
+func (ctx *MahresourcesContext) WithRequest(r *http.Request) any {
+	// Create a shallow copy to avoid modifying the original
+	ctxCopy := *ctx
+	ctxCopy.currentRequest = r
+	return &ctxCopy
 }
 
 // EnsureForeignKeysActive ensures that sqlite connection somehow didn't manage to deactivate foreign keys

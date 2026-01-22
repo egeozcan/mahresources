@@ -137,6 +137,9 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 	if err := tx.Commit().Error; err != nil {
 		return nil, err
 	}
+
+	ctx.Logger().Info(models.LogActionUpdate, "resource", &resource.ID, resource.Name, "Updated resource", nil)
+
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)
 	return &resource, nil
 }
