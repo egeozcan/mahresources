@@ -63,5 +63,6 @@
         {% block footer %}{% endblock %}
     </footer>
     {% include "/partials/lightbox.tpl" %}
+    {% include "/partials/downloadCockpit.tpl" %}
 </body>
 </html>
