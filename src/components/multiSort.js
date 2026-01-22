@@ -13,25 +13,43 @@ export function multiSort({ availableColumns, name }) {
         this.sortColumns = sortByValues.map((val) => this.parseSort(val));
       } else {
         // Start with one empty row
-        this.sortColumns = [{ column: "", direction: "desc" }];
+        this.sortColumns = [{ column: "", direction: "desc", metaKey: "" }];
       }
     },
 
     parseSort(sortStr) {
       const parts = sortStr.trim().split(/\s+/);
+      const column = parts[0] || "";
+      const direction = parts[1] || "desc";
+
+      // Check if this is a meta sort (e.g., meta->>'key_name')
+      const metaMatch = column.match(/^meta->>'([a-z_]+)'$/);
+      if (metaMatch) {
+        return {
+          column: "__meta__",
+          direction,
+          metaKey: metaMatch[1],
+        };
+      }
+
       return {
-        column: parts[0] || "",
-        direction: parts[1] || "desc",
+        column,
+        direction,
+        metaKey: "",
       };
     },
 
     formatSort(sort) {
       if (!sort.column) return "";
+      if (sort.column === "__meta__") {
+        if (!sort.metaKey) return "";
+        return `meta->>'${sort.metaKey}' ${sort.direction}`;
+      }
       return `${sort.column} ${sort.direction}`;
     },
 
     addSort() {
-      this.sortColumns.push({ column: "", direction: "desc" });
+      this.sortColumns.push({ column: "", direction: "desc", metaKey: "" });
     },
 
     removeSort(index) {
@@ -39,8 +57,13 @@ export function multiSort({ availableColumns, name }) {
         this.sortColumns.splice(index, 1);
       } else {
         // Keep at least one row, but clear it
-        this.sortColumns[0] = { column: "", direction: "desc" };
+        this.sortColumns[0] = { column: "", direction: "desc", metaKey: "" };
       }
+    },
+
+    isValidMetaKey(key) {
+      // Only allow lowercase letters and underscores (matches backend regex)
+      return /^[a-z_]+$/.test(key);
     },
 
     moveUp(index) {

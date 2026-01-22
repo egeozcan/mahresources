@@ -8,21 +8,35 @@
     aria-label="Sort options"
 >
     <template x-for="(sort, index) in sortColumns" :key="index">
-        <div class="flex gap-2 items-center mt-2">
-            <template x-if="sort.column">
+        <div class="flex gap-2 items-center mt-2 flex-wrap">
+            <template x-if="sort.column && (sort.column !== '__meta__' || (sort.metaKey && isValidMetaKey(sort.metaKey)))">
                 <input type="hidden" :name="name" :value="formatSort(sort)">
             </template>
 
             <select
                 x-model="sort.column"
-                class="flex-1 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm border-gray-300 rounded-md"
+                @change="if (sort.column !== '__meta__') sort.metaKey = ''"
+                class="flex-1 min-w-[150px] shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm border-gray-300 rounded-md"
                 :aria-label="'Sort column ' + (index + 1)"
             >
                 <option value="">-- Select column --</option>
                 <template x-for="col in getAvailableColumnsForRow(index)" :key="col.Value">
                     <option :value="col.Value" x-text="col.Name"></option>
                 </template>
+                <option value="__meta__">Custom Property</option>
             </select>
+
+            <template x-if="sort.column === '__meta__'">
+                <input
+                    type="text"
+                    x-model="sort.metaKey"
+                    placeholder="property_name"
+                    class="w-32 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm border-gray-300 rounded-md"
+                    :class="sort.metaKey && !isValidMetaKey(sort.metaKey) ? 'border-red-500' : ''"
+                    :aria-label="'Custom property name for sort ' + (index + 1)"
+                    title="Property name (lowercase letters and underscores only)"
+                >
+            </template>
 
             <button
                 type="button"
@@ -71,7 +85,7 @@
     <button
         type="button"
         @click="addSort()"
-        :disabled="sortColumns.length >= availableColumns.length"
+        :disabled="sortColumns.length >= availableColumns.length + 5"
         class="mt-2 inline-flex items-center px-2 py-1 border border-gray-300 rounded-md shadow-sm text-xs font-medium text-white bg-green-700 hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
         aria-label="Add another sort criteria"
     >
