@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/afero"
 	"gorm.io/gorm"
 	"mahresources/constants"
+	"mahresources/download_queue"
 	"mahresources/lib"
 	"mahresources/models"
 	"mahresources/server/interfaces"
@@ -81,6 +82,8 @@ type MahresourcesContext struct {
 	// these are the alternative locations to look at files or import them from
 	altFileSystems map[string]afero.Fs
 	locks          MahresourcesLocks
+	// downloadManager handles background remote URL downloads
+	downloadManager *download_queue.DownloadManager
 }
 
 func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.DB, config *MahresourcesConfig) *MahresourcesContext {
@@ -94,7 +97,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 	videoThumbnailGenerationLock := lib.NewIDLock[uint](uint(1), nil)
 	resourceHashLock := lib.NewIDLock[string](uint(0), nil)
 
-	return &MahresourcesContext{
+	ctx := &MahresourcesContext{
 		fs:             filesystem,
 		db:             db,
 		readOnlyDB:     readOnlyDB,
@@ -106,6 +109,20 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 			ResourceHashLock:             resourceHashLock,
 		},
 	}
+
+	// Initialize download manager with timeout config
+	ctx.downloadManager = download_queue.NewDownloadManager(ctx, download_queue.TimeoutConfig{
+		ConnectTimeout: config.RemoteResourceConnectTimeout,
+		IdleTimeout:    config.RemoteResourceIdleTimeout,
+		OverallTimeout: config.RemoteResourceOverallTimeout,
+	})
+
+	return ctx
+}
+
+// DownloadManager returns the download queue manager for background remote downloads
+func (ctx *MahresourcesContext) DownloadManager() *download_queue.DownloadManager {
+	return ctx.downloadManager
 }
 
 // EnsureForeignKeysActive ensures that sqlite connection somehow didn't manage to deactivate foreign keys

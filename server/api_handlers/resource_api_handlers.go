@@ -220,6 +220,27 @@ func GetResourceAddRemoteHandler(ctx interfaces.ResourceCreator) func(writer htt
 			return
 		}
 
+		// Check for background parameter - if true, queue for background download
+		background := request.FormValue("background") == "true" || request.URL.Query().Get("background") == "true"
+
+		if background {
+			if queueCtx, ok := ctx.(DownloadQueueReader); ok {
+				jobs, err := queueCtx.DownloadManager().SubmitMultiple(&creator)
+				if err != nil {
+					http_utils.HandleError(err, writer, request, http.StatusServiceUnavailable)
+					return
+				}
+
+				writer.Header().Set("Content-Type", constants.JSON)
+				writer.WriteHeader(http.StatusAccepted)
+				_ = json.NewEncoder(writer).Encode(map[string]interface{}{
+					"queued": true,
+					"jobs":   jobs,
+				})
+				return
+			}
+		}
+
 		res, err := ctx.AddRemoteResource(&creator)
 
 		if err != nil {

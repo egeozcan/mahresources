@@ -30,6 +30,7 @@ import { globalSearch } from './components/globalSearch.js';
 import { schemaForm } from './components/schemaForm.js';
 import { registerLightboxStore } from './components/lightbox.js';
 import { multiSort } from './components/multiSort.js';
+import { downloadCockpit } from './components/downloadCockpit.js';
 
 // Import web components
 import './webcomponents/expandabletext.js';
@@ -69,6 +70,7 @@ Alpine.data('selectableItem', selectableItem);
 Alpine.data('globalSearch', globalSearch);
 Alpine.data('schemaForm', schemaForm);
 Alpine.data('multiSort', multiSort);
+Alpine.data('downloadCockpit', downloadCockpit);
 
 // Expose Alpine globally for debugging and morph usage
 window.Alpine = Alpine;
