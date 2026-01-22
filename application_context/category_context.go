@@ -60,7 +60,11 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 		MetaSchema:    categoryQuery.MetaSchema,
 	}
 
-	return &category, ctx.db.Create(&category).Error
+	if err := ctx.db.Create(&category).Error; err != nil {
+		return nil, err
+	}
+	ctx.InvalidateSearchCacheByType(EntityTypeCategory)
+	return &category, nil
 }
 
 func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.CategoryEditor) (*models.Category, error) {
@@ -79,11 +83,19 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 		MetaSchema:    categoryQuery.MetaSchema,
 	}
 
-	return &category, ctx.db.Save(&category).Error
+	if err := ctx.db.Save(&category).Error; err != nil {
+		return nil, err
+	}
+	ctx.InvalidateSearchCacheByType(EntityTypeCategory)
+	return &category, nil
 }
 
 func (ctx *MahresourcesContext) DeleteCategory(categoryId uint) error {
 	category := models.Category{ID: categoryId}
 
-	return ctx.db.Select(clause.Associations).Delete(&category).Error
+	err := ctx.db.Select(clause.Associations).Delete(&category).Error
+	if err == nil {
+		ctx.InvalidateSearchCacheByType(EntityTypeCategory)
+	}
+	return err
 }

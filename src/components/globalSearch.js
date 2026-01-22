@@ -1,5 +1,36 @@
 import { abortableFetch } from '../index.js';
 
+// Client-side search cache with TTL
+const searchCache = new Map();
+const CACHE_TTL = 30000;  // 30 seconds
+const MAX_CACHE_SIZE = 50;
+
+function getCachedResults(query) {
+    const key = query.toLowerCase();
+    const entry = searchCache.get(key);
+    if (entry && Date.now() - entry.timestamp < CACHE_TTL) {
+        // Move to end (most recently used) by re-inserting
+        searchCache.delete(key);
+        searchCache.set(key, entry);
+        return entry.results;
+    }
+    // Clean up expired entry
+    if (entry) {
+        searchCache.delete(key);
+    }
+    return null;
+}
+
+function setCachedResults(query, results) {
+    const key = query.toLowerCase();
+    // Evict oldest entries if at capacity
+    if (searchCache.size >= MAX_CACHE_SIZE) {
+        const oldestKey = searchCache.keys().next().value;
+        searchCache.delete(oldestKey);
+    }
+    searchCache.set(key, { results, timestamp: Date.now() });
+}
+
 export function globalSearch() {
     return {
         isOpen: false,
@@ -121,10 +152,27 @@ export function globalSearch() {
 
             const searchTerm = this.query.trim();
 
-            if (searchTerm.length < 1) {
+            // Require at least 2 characters to search
+            if (searchTerm.length < 2) {
                 this.results = [];
                 return;
             }
+
+            // Check client-side cache first
+            const cached = getCachedResults(searchTerm);
+            if (cached) {
+                this.results = cached;
+                this.selectedIndex = 0;
+                if (this.results.length > 0) {
+                    this.announce(`${this.results.length} result${this.results.length === 1 ? '' : 's'} found. Use arrow keys to navigate.`);
+                } else {
+                    this.announce('No results found.');
+                }
+                return;
+            }
+
+            // Adaptive debounce: longer delay for short queries
+            const debounceTime = searchTerm.length < 3 ? 300 : 150;
 
             this.debounceTimer = setTimeout(() => {
                 this.loading = true;
@@ -139,6 +187,8 @@ export function globalSearch() {
                         if (this.query.trim() === searchTerm) {
                             this.results = data.results || [];
                             this.selectedIndex = 0;
+                            // Cache the results
+                            setCachedResults(searchTerm, this.results);
                             // Announce results for screen readers
                             if (this.results.length > 0) {
                                 this.announce(`${this.results.length} result${this.results.length === 1 ? '' : 's'} found. Use arrow keys to navigate.`);
@@ -155,7 +205,7 @@ export function globalSearch() {
                     .finally(() => {
                         this.loading = false;
                     });
-            }, 150);
+            }, debounceTime);
         },
 
         navigateUp() {

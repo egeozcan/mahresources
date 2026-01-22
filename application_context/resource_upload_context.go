@@ -304,6 +304,7 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		return nil, err
 	}
 
+	ctx.InvalidateSearchCacheByType(EntityTypeResource)
 	return res, nil
 }
 
@@ -516,5 +517,9 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 		}
 	}
 
-	return res, tx.Commit().Error
+	if err := tx.Commit().Error; err != nil {
+		return nil, err
+	}
+	ctx.InvalidateSearchCacheByType(EntityTypeResource)
+	return res, nil
 }

@@ -84,6 +84,8 @@ type MahresourcesContext struct {
 	locks          MahresourcesLocks
 	// downloadManager handles background remote URL downloads
 	downloadManager *download_queue.DownloadManager
+	// searchCache provides caching for global search results
+	searchCache *SearchCache
 }
 
 func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.DB, config *MahresourcesConfig) *MahresourcesContext {
@@ -97,6 +99,9 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 	videoThumbnailGenerationLock := lib.NewIDLock[uint](uint(1), nil)
 	resourceHashLock := lib.NewIDLock[string](uint(0), nil)
 
+	// Initialize search cache with 60 second TTL and 1000 max entries
+	searchCache := NewSearchCache(60*time.Second, 1000)
+
 	ctx := &MahresourcesContext{
 		fs:             filesystem,
 		db:             db,
@@ -108,6 +113,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 			VideoThumbnailGenerationLock: videoThumbnailGenerationLock,
 			ResourceHashLock:             resourceHashLock,
 		},
+		searchCache: searchCache,
 	}
 
 	// Initialize download manager with timeout config

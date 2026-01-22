@@ -29,6 +29,22 @@ const (
 	EntityTypeNoteType     = "noteType"
 )
 
+// InvalidateSearchCacheByType removes cached search results that contain the specified entity type.
+// This should be called after creating, updating, or deleting entities to ensure search results are fresh.
+// Note: Even without explicit invalidation, the cache has a 60-second TTL for eventual consistency.
+func (ctx *MahresourcesContext) InvalidateSearchCacheByType(entityType string) {
+	if ctx.searchCache != nil {
+		ctx.searchCache.InvalidateByType(entityType)
+	}
+}
+
+// ClearSearchCache removes all cached search results
+func (ctx *MahresourcesContext) ClearSearchCache() {
+	if ctx.searchCache != nil {
+		ctx.searchCache.Clear()
+	}
+}
+
 var allEntityTypes = []string{
 	EntityTypeResource, EntityTypeNote, EntityTypeGroup,
 	EntityTypeTag, EntityTypeCategory, EntityTypeQuery,
@@ -68,6 +84,31 @@ func (ctx *MahresourcesContext) GlobalSearch(query *query_models.GlobalSearchQue
 		}, nil
 	}
 
+	// Check server-side cache first (only for default type searches to keep cache key simple)
+	if ctx.searchCache != nil && len(query.Types) == 0 {
+		cacheKey := strings.ToLower(searchTerm)
+		if cached, ok := ctx.searchCache.Get(cacheKey); ok {
+			// Apply limit to cached results
+			results := cached
+			if len(results) > query.Limit {
+				results = results[:query.Limit]
+			}
+			return &query_models.GlobalSearchResponse{
+				Query:   searchTerm,
+				Total:   len(results),
+				Results: results,
+			}, nil
+		}
+	}
+
+	// Use a higher limit for caching to support subsequent queries with different limits
+	// Only use cacheLimit when we're going to cache (default type searches)
+	searchLimit := query.Limit
+	shouldCache := ctx.searchCache != nil && len(query.Types) == 0
+	if shouldCache {
+		searchLimit = 50 // Cache up to 50 results
+	}
+
 	// Parse the search query to detect prefix/fuzzy modes
 	parsedQuery := fts.ParseSearchQuery(searchTerm)
 	typesToSearch := getTypesToSearch(query.Types)
@@ -81,10 +122,10 @@ func (ctx *MahresourcesContext) GlobalSearch(query *query_models.GlobalSearchQue
 			defer wg.Done()
 			var results []query_models.SearchResultItem
 			if ftsEnabled {
-				results = ctx.searchEntityTypeFTS(et, parsedQuery, query.Limit)
+				results = ctx.searchEntityTypeFTS(et, parsedQuery, searchLimit)
 			} else {
 				// Fallback to LIKE-based search if FTS is not available
-				results = ctx.searchEntityType(et, searchTerm, query.Limit)
+				results = ctx.searchEntityType(et, searchTerm, searchLimit)
 			}
 			resultsChan <- results
 		}(entityType)
@@ -104,6 +145,17 @@ func (ctx *MahresourcesContext) GlobalSearch(query *query_models.GlobalSearchQue
 		return allResults[i].Score > allResults[j].Score
 	})
 
+	// Trim to cache limit for caching
+	if len(allResults) > searchLimit {
+		allResults = allResults[:searchLimit]
+	}
+
+	// Cache results before applying user's limit
+	if shouldCache {
+		ctx.searchCache.Set(searchTerm, allResults)
+	}
+
+	// Apply user's requested limit for response
 	if len(allResults) > query.Limit {
 		allResults = allResults[:query.Limit]
 	}
@@ -198,17 +250,13 @@ func (ctx *MahresourcesContext) searchGroups(searchTerm string, limit int) []que
 	likeOp := ctx.getLikeOperator()
 	pattern := "%" + searchTerm + "%"
 
-	ctx.db.Preload("Category").
+	ctx.db.
 		Where("name "+likeOp+" ? OR description "+likeOp+" ?", pattern, pattern).
 		Limit(limit).
 		Find(&groups)
 
 	results := make([]query_models.SearchResultItem, 0, len(groups))
 	for _, g := range groups {
-		extra := make(map[string]string)
-		if g.Category != nil {
-			extra["category"] = g.Category.Name
-		}
 		results = append(results, query_models.SearchResultItem{
 			ID:          g.ID,
 			Type:        EntityTypeGroup,
@@ -216,7 +264,6 @@ func (ctx *MahresourcesContext) searchGroups(searchTerm string, limit int) []que
 			Description: truncateDescription(g.Description, 100),
 			Score:       calculateRelevanceScore(g.Name, g.Description, searchTerm),
 			URL:         fmt.Sprintf("/group?id=%d", g.ID),
-			Extra:       extra,
 		})
 	}
 	return results
@@ -227,17 +274,13 @@ func (ctx *MahresourcesContext) searchNotes(searchTerm string, limit int) []quer
 	likeOp := ctx.getLikeOperator()
 	pattern := "%" + searchTerm + "%"
 
-	ctx.db.Preload("NoteType").
+	ctx.db.
 		Where("name "+likeOp+" ? OR description "+likeOp+" ?", pattern, pattern).
 		Limit(limit).
 		Find(&notes)
 
 	results := make([]query_models.SearchResultItem, 0, len(notes))
 	for _, n := range notes {
-		extra := make(map[string]string)
-		if n.NoteType != nil {
-			extra["noteType"] = n.NoteType.Name
-		}
 		results = append(results, query_models.SearchResultItem{
 			ID:          n.ID,
 			Type:        EntityTypeNote,
@@ -245,7 +288,6 @@ func (ctx *MahresourcesContext) searchNotes(searchTerm string, limit int) []quer
 			Description: truncateDescription(n.Description, 100),
 			Score:       calculateRelevanceScore(n.Name, n.Description, searchTerm),
 			URL:         fmt.Sprintf("/note?id=%d", n.ID),
-			Extra:       extra,
 		})
 	}
 	return results
@@ -472,7 +514,6 @@ func (ctx *MahresourcesContext) searchNotesFTS(query fts.ParsedQuery, limit int)
 
 	var notes []models.Note
 	db := ctx.db.Model(&models.Note{}).
-		Preload("NoteType").
 		Scopes(ftsProvider.BuildSearchScope(config.TableName, config.Columns, query)).
 		Limit(limit)
 
@@ -480,10 +521,6 @@ func (ctx *MahresourcesContext) searchNotesFTS(query fts.ParsedQuery, limit int)
 
 	results := make([]query_models.SearchResultItem, 0, len(notes))
 	for i, n := range notes {
-		extra := make(map[string]string)
-		if n.NoteType != nil {
-			extra["noteType"] = n.NoteType.Name
-		}
 		score := 100 - i
 		if score < 1 {
 			score = 1
@@ -495,7 +532,6 @@ func (ctx *MahresourcesContext) searchNotesFTS(query fts.ParsedQuery, limit int)
 			Description: truncateDescription(n.Description, 100),
 			Score:       score,
 			URL:         fmt.Sprintf("/note?id=%d", n.ID),
-			Extra:       extra,
 		})
 	}
 	return results
@@ -509,7 +545,6 @@ func (ctx *MahresourcesContext) searchGroupsFTS(query fts.ParsedQuery, limit int
 
 	var groups []models.Group
 	db := ctx.db.Model(&models.Group{}).
-		Preload("Category").
 		Scopes(ftsProvider.BuildSearchScope(config.TableName, config.Columns, query)).
 		Limit(limit)
 
@@ -517,10 +552,6 @@ func (ctx *MahresourcesContext) searchGroupsFTS(query fts.ParsedQuery, limit int
 
 	results := make([]query_models.SearchResultItem, 0, len(groups))
 	for i, g := range groups {
-		extra := make(map[string]string)
-		if g.Category != nil {
-			extra["category"] = g.Category.Name
-		}
 		score := 100 - i
 		if score < 1 {
 			score = 1
@@ -532,7 +563,6 @@ func (ctx *MahresourcesContext) searchGroupsFTS(query fts.ParsedQuery, limit int
 			Description: truncateDescription(g.Description, 100),
 			Score:       score,
 			URL:         fmt.Sprintf("/group?id=%d", g.ID),
-			Extra:       extra,
 		})
 	}
 	return results

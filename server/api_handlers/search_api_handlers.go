@@ -29,6 +29,7 @@ func GetGlobalSearchHandler(ctx interfaces.GlobalSearcher) func(writer http.Resp
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
+		writer.Header().Set("Cache-Control", "private, max-age=10")
 		_ = json.NewEncoder(writer).Encode(results)
 	}
 }

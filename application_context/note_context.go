@@ -108,7 +108,11 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 		}
 	}
 
-	return &note, tx.Commit().Error
+	if err := tx.Commit().Error; err != nil {
+		return nil, err
+	}
+	ctx.InvalidateSearchCacheByType(EntityTypeNote)
+	return &note, nil
 }
 
 func (ctx *MahresourcesContext) GetNote(id uint) (*models.Note, error) {
@@ -144,7 +148,11 @@ func (ctx *MahresourcesContext) GetNoteCount(query *query_models.NoteQuery) (int
 func (ctx *MahresourcesContext) DeleteNote(noteId uint) error {
 	note := models.Note{ID: noteId}
 
-	return ctx.db.Select(clause.Associations).Delete(&note).Error
+	err := ctx.db.Select(clause.Associations).Delete(&note).Error
+	if err == nil {
+		ctx.InvalidateSearchCacheByType(EntityTypeNote)
+	}
+	return err
 }
 
 func (ctx *MahresourcesContext) NoteMetaKeys() (*[]interfaces.MetaKey, error) {
@@ -192,10 +200,18 @@ func (ctx *MahresourcesContext) CreateOrUpdateNoteType(query *query_models.NoteT
 	noteType.CustomSidebar = query.CustomSidebar
 	noteType.CustomSummary = query.CustomSummary
 	noteType.CustomAvatar = query.CustomAvatar
-	return &noteType, ctx.db.Save(&noteType).Error
+	if err := ctx.db.Save(&noteType).Error; err != nil {
+		return nil, err
+	}
+	ctx.InvalidateSearchCacheByType(EntityTypeNoteType)
+	return &noteType, nil
 }
 
 func (ctx *MahresourcesContext) DeleteNoteType(noteTypeId uint) error {
 	noteType := models.NoteType{ID: noteTypeId}
-	return ctx.db.Select(clause.Associations).Delete(&noteType).Error
+	err := ctx.db.Select(clause.Associations).Delete(&noteType).Error
+	if err == nil {
+		ctx.InvalidateSearchCacheByType(EntityTypeNoteType)
+	}
+	return err
 }
