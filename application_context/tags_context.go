@@ -54,7 +54,11 @@ func (ctx *MahresourcesContext) CreateTag(tagQuery *query_models.TagCreator) (*m
 		Description: tagQuery.Description,
 	}
 
-	return &tag, ctx.db.Create(&tag).Error
+	if err := ctx.db.Create(&tag).Error; err != nil {
+		return nil, err
+	}
+	ctx.InvalidateSearchCacheByType(EntityTypeTag)
+	return &tag, nil
 }
 
 func (ctx *MahresourcesContext) UpdateTag(tagQuery *query_models.TagCreator) (*models.Tag, error) {
@@ -68,11 +72,19 @@ func (ctx *MahresourcesContext) UpdateTag(tagQuery *query_models.TagCreator) (*m
 		Description: tagQuery.Description,
 	}
 
-	return &tag, ctx.db.Save(&tag).Error
+	if err := ctx.db.Save(&tag).Error; err != nil {
+		return nil, err
+	}
+	ctx.InvalidateSearchCacheByType(EntityTypeTag)
+	return &tag, nil
 }
 
 func (ctx *MahresourcesContext) DeleteTag(tagId uint) error {
 	tag := models.Tag{ID: tagId}
 
-	return ctx.db.Select(clause.Associations).Delete(&tag).Error
+	err := ctx.db.Select(clause.Associations).Delete(&tag).Error
+	if err == nil {
+		ctx.InvalidateSearchCacheByType(EntityTypeTag)
+	}
+	return err
 }

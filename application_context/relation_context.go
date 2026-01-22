@@ -134,6 +134,9 @@ func (ctx *MahresourcesContext) AddRelationType(query *query_models.Relationship
 		return nil
 	})
 
+	if err == nil {
+		ctx.InvalidateSearchCacheByType(EntityTypeRelationType)
+	}
 	return &relationType, err
 }
 
@@ -151,6 +154,9 @@ func (ctx *MahresourcesContext) EditRelationType(query *query_models.Relationshi
 		return ctx.db.Save(&relationType).Error
 	})
 
+	if err == nil {
+		ctx.InvalidateSearchCacheByType(EntityTypeRelationType)
+	}
 	return &relationType, err
 }
 
@@ -200,5 +206,9 @@ func (ctx *MahresourcesContext) DeleteRelationship(relationshipId uint) error {
 func (ctx *MahresourcesContext) DeleteRelationshipType(relationshipTypeId uint) error {
 	relationType := models.GroupRelationType{ID: relationshipTypeId}
 
-	return ctx.db.Select(clause.Associations).Delete(&relationType).Error
+	err := ctx.db.Select(clause.Associations).Delete(&relationType).Error
+	if err == nil {
+		ctx.InvalidateSearchCacheByType(EntityTypeRelationType)
+	}
+	return err
 }

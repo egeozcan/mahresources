@@ -76,6 +76,7 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 
 	_ = fs.Remove(resource.GetCleanLocation())
 
+	ctx.InvalidateSearchCacheByType(EntityTypeResource)
 	return nil
 }
 

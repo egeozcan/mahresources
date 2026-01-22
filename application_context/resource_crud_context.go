@@ -134,5 +134,9 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 		return nil, err
 	}
 
-	return &resource, tx.Commit().Error
+	if err := tx.Commit().Error; err != nil {
+		return nil, err
+	}
+	ctx.InvalidateSearchCacheByType(EntityTypeResource)
+	return &resource, nil
 }

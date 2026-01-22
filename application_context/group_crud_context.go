@@ -70,7 +70,11 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 		}
 	}
 
-	return &group, tx.Commit().Error
+	if err := tx.Commit().Error; err != nil {
+		return nil, err
+	}
+	ctx.InvalidateSearchCacheByType(EntityTypeGroup)
+	return &group, nil
 }
 
 func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor) (*models.Group, error) {
@@ -141,7 +145,11 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 		return nil, err
 	}
 
-	return group, tx.Commit().Error
+	if err := tx.Commit().Error; err != nil {
+		return nil, err
+	}
+	ctx.InvalidateSearchCacheByType(EntityTypeGroup)
+	return group, nil
 }
 
 func (ctx *MahresourcesContext) GetGroup(id uint) (*models.Group, error) {
@@ -200,7 +208,7 @@ func (ctx *MahresourcesContext) GetGroupsCount(query *query_models.GroupQuery) (
 func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {
 	group := models.Group{ID: groupId}
 
-	return ctx.db.Transaction(func(tx *gorm.DB) error {
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		ctx.EnsureForeignKeysActive(tx)
 
 		return tx.
@@ -214,4 +222,8 @@ func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {
 			Select("Tags").
 			Delete(&group).Error
 	})
+	if err == nil {
+		ctx.InvalidateSearchCacheByType(EntityTypeGroup)
+	}
+	return err
 }

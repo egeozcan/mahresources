@@ -67,7 +67,11 @@ func (ctx *MahresourcesContext) CreateQuery(queryQuery *query_models.QueryCreato
 		Template: queryQuery.Template,
 	}
 
-	return &query, ctx.db.Create(&query).Error
+	if err := ctx.db.Create(&query).Error; err != nil {
+		return nil, err
+	}
+	ctx.InvalidateSearchCacheByType(EntityTypeQuery)
+	return &query, nil
 }
 
 func (ctx *MahresourcesContext) UpdateQuery(queryQuery *query_models.QueryEditor) (*models.Query, error) {
@@ -82,11 +86,19 @@ func (ctx *MahresourcesContext) UpdateQuery(queryQuery *query_models.QueryEditor
 		Template: queryQuery.Template,
 	}
 
-	return &query, ctx.db.Save(&query).Error
+	if err := ctx.db.Save(&query).Error; err != nil {
+		return nil, err
+	}
+	ctx.InvalidateSearchCacheByType(EntityTypeQuery)
+	return &query, nil
 }
 
 func (ctx *MahresourcesContext) DeleteQuery(queryId uint) error {
 	query := models.Query{ID: queryId}
 
-	return ctx.db.Select(clause.Associations).Delete(&query).Error
+	err := ctx.db.Select(clause.Associations).Delete(&query).Error
+	if err == nil {
+		ctx.InvalidateSearchCacheByType(EntityTypeQuery)
+	}
+	return err
 }
