@@ -100,11 +100,16 @@ func (ctx *MahresourcesContext) UpdateQuery(queryQuery *query_models.QueryEditor
 }
 
 func (ctx *MahresourcesContext) DeleteQuery(queryId uint) error {
-	query := models.Query{ID: queryId}
+	// Load query name before deletion for audit log
+	var query models.Query
+	if err := ctx.db.First(&query, queryId).Error; err != nil {
+		return err
+	}
+	queryName := query.Name
 
 	err := ctx.db.Select(clause.Associations).Delete(&query).Error
 	if err == nil {
-		ctx.Logger().Info(models.LogActionDelete, "query", &queryId, "", "Deleted query", nil)
+		ctx.Logger().Info(models.LogActionDelete, "query", &queryId, queryName, "Deleted query", nil)
 		ctx.InvalidateSearchCacheByType(EntityTypeQuery)
 	}
 	return err

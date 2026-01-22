@@ -240,16 +240,12 @@ func (ctx *MahresourcesContext) BulkAddGroupsToResources(query *query_models.Bul
 }
 
 func (ctx *MahresourcesContext) BulkDeleteResources(query *query_models.BulkQuery) error {
+	// Each DeleteResource call logs individually, so no bulk log needed
 	for _, id := range query.ID {
 		if err := ctx.DeleteResource(id); err != nil {
 			return err
 		}
 	}
-
-	ctx.Logger().Info(models.LogActionDelete, "resource", nil, "", "Bulk deleted resources", map[string]interface{}{
-		"resourceIds": query.ID,
-		"count":       len(query.ID),
-	})
 
 	return nil
 }

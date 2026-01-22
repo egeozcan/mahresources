@@ -136,6 +136,9 @@ func GetQueriesHandler(ctx interfaces.QueryReader) func(writer http.ResponseWrit
 
 func GetAddQueryHandler(ctx interfaces.QueryWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.QueryWriter)
+
 		var queryEditor = query_models.QueryEditor{}
 
 		if err := tryFillStructValuesFromRequest(&queryEditor, request); err != nil {
@@ -147,9 +150,9 @@ func GetAddQueryHandler(ctx interfaces.QueryWriter) func(writer http.ResponseWri
 		var err error
 
 		if queryEditor.ID != 0 {
-			query, err = ctx.UpdateQuery(&queryEditor)
+			query, err = effectiveCtx.UpdateQuery(&queryEditor)
 		} else {
-			query, err = ctx.CreateQuery(&queryEditor.QueryCreator)
+			query, err = effectiveCtx.CreateQuery(&queryEditor.QueryCreator)
 		}
 
 		if err != nil {
@@ -168,6 +171,8 @@ func GetAddQueryHandler(ctx interfaces.QueryWriter) func(writer http.ResponseWri
 
 func GetRemoveQueryHandler(ctx interfaces.QueryDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.QueryDeleter)
 
 		id := http_utils.GetUIntQueryParameter(request, "Id", 0)
 
@@ -176,7 +181,7 @@ func GetRemoveQueryHandler(ctx interfaces.QueryDeleter) func(writer http.Respons
 			return
 		}
 
-		err := ctx.DeleteQuery(id)
+		err := effectiveCtx.DeleteQuery(id)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return

@@ -153,11 +153,16 @@ func (ctx *MahresourcesContext) GetNoteCount(query *query_models.NoteQuery) (int
 }
 
 func (ctx *MahresourcesContext) DeleteNote(noteId uint) error {
-	note := models.Note{ID: noteId}
+	// Load note name before deletion for audit log
+	var note models.Note
+	if err := ctx.db.First(&note, noteId).Error; err != nil {
+		return err
+	}
+	noteName := note.Name
 
 	err := ctx.db.Select(clause.Associations).Delete(&note).Error
 	if err == nil {
-		ctx.Logger().Info(models.LogActionDelete, "note", &noteId, "", "Deleted note", nil)
+		ctx.Logger().Info(models.LogActionDelete, "note", &noteId, noteName, "Deleted note", nil)
 		ctx.InvalidateSearchCacheByType(EntityTypeNote)
 	}
 	return err
@@ -224,10 +229,16 @@ func (ctx *MahresourcesContext) CreateOrUpdateNoteType(query *query_models.NoteT
 }
 
 func (ctx *MahresourcesContext) DeleteNoteType(noteTypeId uint) error {
-	noteType := models.NoteType{ID: noteTypeId}
+	// Load note type name before deletion for audit log
+	var noteType models.NoteType
+	if err := ctx.db.First(&noteType, noteTypeId).Error; err != nil {
+		return err
+	}
+	noteTypeName := noteType.Name
+
 	err := ctx.db.Select(clause.Associations).Delete(&noteType).Error
 	if err == nil {
-		ctx.Logger().Info(models.LogActionDelete, "noteType", &noteTypeId, "", "Deleted note type", nil)
+		ctx.Logger().Info(models.LogActionDelete, "noteType", &noteTypeId, noteTypeName, "Deleted note type", nil)
 		ctx.InvalidateSearchCacheByType(EntityTypeNoteType)
 	}
 	return err

@@ -99,6 +99,8 @@ func GetResourceContentHandler(ctx interfaces.ResourceReader) func(writer http.R
 
 func GetResourceUploadHandler(ctx interfaces.ResourceCreator) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.ResourceCreator)
 
 		var remoteCreator = query_models.ResourceFromRemoteCreator{}
 
@@ -108,7 +110,7 @@ func GetResourceUploadHandler(ctx interfaces.ResourceCreator) func(writer http.R
 		}
 
 		if remoteCreator.URL != "" {
-			res, err := ctx.AddRemoteResource(&remoteCreator)
+			res, err := effectiveCtx.AddRemoteResource(&remoteCreator)
 
 			if err != nil {
 				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
@@ -151,7 +153,7 @@ func GetResourceUploadHandler(ctx interfaces.ResourceCreator) func(writer http.R
 
 				name := files[i].Filename
 
-				res, err = ctx.AddResource(file, name, &creator)
+				res, err = effectiveCtx.AddResource(file, name, &creator)
 				resources[i] = res
 
 				if err != nil {
@@ -186,6 +188,8 @@ func GetResourceUploadHandler(ctx interfaces.ResourceCreator) func(writer http.R
 
 func GetResourceAddLocalHandler(ctx interfaces.ResourceCreator) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.ResourceCreator)
 
 		var creator = query_models.ResourceFromLocalCreator{}
 
@@ -194,7 +198,7 @@ func GetResourceAddLocalHandler(ctx interfaces.ResourceCreator) func(writer http
 			return
 		}
 
-		res, err := ctx.AddLocalResource(creator.Name, &creator)
+		res, err := effectiveCtx.AddLocalResource(creator.Name, &creator)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
@@ -212,6 +216,8 @@ func GetResourceAddLocalHandler(ctx interfaces.ResourceCreator) func(writer http
 
 func GetResourceAddRemoteHandler(ctx interfaces.ResourceCreator) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.ResourceCreator)
 
 		var creator = query_models.ResourceFromRemoteCreator{}
 
@@ -224,7 +230,7 @@ func GetResourceAddRemoteHandler(ctx interfaces.ResourceCreator) func(writer htt
 		background := request.FormValue("background") == "true" || request.URL.Query().Get("background") == "true"
 
 		if background {
-			if queueCtx, ok := ctx.(DownloadQueueReader); ok {
+			if queueCtx, ok := effectiveCtx.(DownloadQueueReader); ok {
 				jobs, err := queueCtx.DownloadManager().SubmitMultiple(&creator)
 				if err != nil {
 					http_utils.HandleError(err, writer, request, http.StatusServiceUnavailable)
@@ -241,7 +247,7 @@ func GetResourceAddRemoteHandler(ctx interfaces.ResourceCreator) func(writer htt
 			}
 		}
 
-		res, err := ctx.AddRemoteResource(&creator)
+		res, err := effectiveCtx.AddRemoteResource(&creator)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
@@ -259,6 +265,9 @@ func GetResourceAddRemoteHandler(ctx interfaces.ResourceCreator) func(writer htt
 
 func GetResourceEditHandler(ctx interfaces.ResourceEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.ResourceEditor)
+
 		var editor = query_models.ResourceEditor{}
 		err := tryFillStructValuesFromRequest(&editor, request)
 		if err != nil {
@@ -266,7 +275,7 @@ func GetResourceEditHandler(ctx interfaces.ResourceEditor) func(writer http.Resp
 			return
 		}
 
-		res, err := ctx.EditResource(&editor)
+		res, err := effectiveCtx.EditResource(&editor)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
@@ -331,6 +340,9 @@ func GetResourceThumbnailHandler(ctx interfaces.ResourceThumbnailLoader) func(wr
 
 func GetRemoveResourceHandler(ctx interfaces.ResourceDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.ResourceDeleter)
+
 		var query = query_models.EntityIdQuery{}
 
 		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
@@ -338,7 +350,7 @@ func GetRemoveResourceHandler(ctx interfaces.ResourceDeleter) func(writer http.R
 			return
 		}
 
-		if err := ctx.DeleteResource(query.ID); err != nil {
+		if err := effectiveCtx.DeleteResource(query.ID); err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
@@ -369,6 +381,8 @@ func GetResourceMetaKeysHandler(ctx interfaces.ResourceMetaReader) func(writer h
 
 func GetAddTagsToResourcesHandler(ctx interfaces.BulkResourceTagEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.BulkResourceTagEditor)
+
 		var editor = query_models.BulkEditQuery{}
 		var err error
 
@@ -377,7 +391,7 @@ func GetAddTagsToResourcesHandler(ctx interfaces.BulkResourceTagEditor) func(wri
 			return
 		}
 
-		err = ctx.BulkAddTagsToResources(&editor)
+		err = effectiveCtx.BulkAddTagsToResources(&editor)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
@@ -390,6 +404,8 @@ func GetAddTagsToResourcesHandler(ctx interfaces.BulkResourceTagEditor) func(wri
 
 func GetAddGroupsToResourcesHandler(ctx interfaces.BulkResourceGroupEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.BulkResourceGroupEditor)
+
 		var editor = query_models.BulkEditQuery{}
 		var err error
 
@@ -398,7 +414,7 @@ func GetAddGroupsToResourcesHandler(ctx interfaces.BulkResourceGroupEditor) func
 			return
 		}
 
-		err = ctx.BulkAddGroupsToResources(&editor)
+		err = effectiveCtx.BulkAddGroupsToResources(&editor)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
@@ -411,6 +427,8 @@ func GetAddGroupsToResourcesHandler(ctx interfaces.BulkResourceGroupEditor) func
 
 func GetRemoveTagsFromResourcesHandler(ctx interfaces.BulkResourceTagEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.BulkResourceTagEditor)
+
 		var editor = query_models.BulkEditQuery{}
 		var err error
 
@@ -419,7 +437,7 @@ func GetRemoveTagsFromResourcesHandler(ctx interfaces.BulkResourceTagEditor) fun
 			return
 		}
 
-		err = ctx.BulkRemoveTagsFromResources(&editor)
+		err = effectiveCtx.BulkRemoveTagsFromResources(&editor)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
@@ -432,6 +450,8 @@ func GetRemoveTagsFromResourcesHandler(ctx interfaces.BulkResourceTagEditor) fun
 
 func GetReplaceTagsOfResourcesHandler(ctx interfaces.BulkResourceTagEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.BulkResourceTagEditor)
+
 		var editor = query_models.BulkEditQuery{}
 		var err error
 
@@ -440,7 +460,7 @@ func GetReplaceTagsOfResourcesHandler(ctx interfaces.BulkResourceTagEditor) func
 			return
 		}
 
-		err = ctx.BulkReplaceTagsFromResources(&editor)
+		err = effectiveCtx.BulkReplaceTagsFromResources(&editor)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
@@ -453,6 +473,8 @@ func GetReplaceTagsOfResourcesHandler(ctx interfaces.BulkResourceTagEditor) func
 
 func GetAddMetaToResourcesHandler(ctx interfaces.BulkResourceMetaEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.BulkResourceMetaEditor)
+
 		var editor = query_models.BulkEditMetaQuery{}
 		var err error
 
@@ -461,7 +483,7 @@ func GetAddMetaToResourcesHandler(ctx interfaces.BulkResourceMetaEditor) func(wr
 			return
 		}
 
-		err = ctx.BulkAddMetaToResources(&editor)
+		err = effectiveCtx.BulkAddMetaToResources(&editor)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
@@ -474,6 +496,9 @@ func GetAddMetaToResourcesHandler(ctx interfaces.BulkResourceMetaEditor) func(wr
 
 func GetBulkDeleteResourcesHandler(ctx interfaces.BulkResourceDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.BulkResourceDeleter)
+
 		var editor = query_models.BulkQuery{}
 		var err error
 
@@ -482,7 +507,7 @@ func GetBulkDeleteResourcesHandler(ctx interfaces.BulkResourceDeleter) func(writ
 			return
 		}
 
-		err = ctx.BulkDeleteResources(&editor)
+		err = effectiveCtx.BulkDeleteResources(&editor)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
@@ -495,6 +520,9 @@ func GetBulkDeleteResourcesHandler(ctx interfaces.BulkResourceDeleter) func(writ
 
 func GetMergeResourcesHandler(ctx interfaces.ResourceMerger) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.ResourceMerger)
+
 		var editor = query_models.MergeQuery{}
 		var err error
 
@@ -503,7 +531,7 @@ func GetMergeResourcesHandler(ctx interfaces.ResourceMerger) func(writer http.Re
 			return
 		}
 
-		err = ctx.MergeResources(editor.Winner, editor.Losers)
+		err = effectiveCtx.MergeResources(editor.Winner, editor.Losers)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)

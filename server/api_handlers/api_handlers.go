@@ -2,15 +2,31 @@ package api_handlers
 
 import (
 	"encoding/json"
-	"github.com/gorilla/schema"
-	"mahresources/constants"
-	"mahresources/models/query_models"
 	"net/http"
 	"reflect"
 	"strings"
+
+	"github.com/gorilla/schema"
+	"mahresources/constants"
+	"mahresources/models/query_models"
+	"mahresources/server/interfaces"
 )
 
 var decoder = schema.NewDecoder()
+
+// withRequestContext enables request-aware logging if the context supports it.
+// It checks if the context implements RequestContextSetter and returns a
+// request-scoped context copy. If not supported, returns the original context.
+//
+// Usage in handlers:
+//
+//	effectiveCtx := withRequestContext(ctx, request).(interfaces.TagsWriter)
+func withRequestContext(ctx any, r *http.Request) any {
+	if setter, ok := ctx.(interfaces.RequestContextSetter); ok {
+		return setter.WithRequest(r)
+	}
+	return ctx
+}
 
 func init() {
 	decoder.IgnoreUnknownKeys(true)

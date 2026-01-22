@@ -48,6 +48,7 @@ func SetupTestEnv(t *testing.T) *TestContext {
 		&models.GroupRelation{},
 		&models.GroupRelationType{},
 		&models.ImageHash{},
+		&models.LogEntry{},
 	)
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)

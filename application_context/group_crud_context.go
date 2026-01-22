@@ -212,7 +212,12 @@ func (ctx *MahresourcesContext) GetGroupsCount(query *query_models.GroupQuery) (
 }
 
 func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {
-	group := models.Group{ID: groupId}
+	// Load group name before deletion for audit log
+	var group models.Group
+	if err := ctx.db.First(&group, groupId).Error; err != nil {
+		return err
+	}
+	groupName := group.Name
 
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		ctx.EnsureForeignKeysActive(tx)
@@ -229,7 +234,7 @@ func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {
 			Delete(&group).Error
 	})
 	if err == nil {
-		ctx.Logger().Info(models.LogActionDelete, "group", &groupId, "", "Deleted group", nil)
+		ctx.Logger().Info(models.LogActionDelete, "group", &groupId, groupName, "Deleted group", nil)
 		ctx.InvalidateSearchCacheByType(EntityTypeGroup)
 	}
 	return err

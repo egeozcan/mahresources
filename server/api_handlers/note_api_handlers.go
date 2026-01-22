@@ -49,6 +49,9 @@ func GetNoteHandler(ctx interfaces.NoteReader) func(writer http.ResponseWriter, 
 
 func GetAddNoteHandler(ctx interfaces.NoteWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.NoteWriter)
+
 		var queryVars = query_models.NoteEditor{}
 
 		if err := tryFillStructValuesFromRequest(&queryVars, request); err != nil {
@@ -56,7 +59,7 @@ func GetAddNoteHandler(ctx interfaces.NoteWriter) func(writer http.ResponseWrite
 			return
 		}
 
-		note, err := ctx.CreateOrUpdateNote(&queryVars)
+		note, err := effectiveCtx.CreateOrUpdateNote(&queryVars)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
@@ -74,10 +77,12 @@ func GetAddNoteHandler(ctx interfaces.NoteWriter) func(writer http.ResponseWrite
 
 func GetRemoveNoteHandler(ctx interfaces.NoteDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.NoteDeleter)
 
 		id := http_utils.GetUIntQueryParameter(request, "Id", 0)
 
-		err := ctx.DeleteNote(id)
+		err := effectiveCtx.DeleteNote(id)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
@@ -130,6 +135,9 @@ func GetNoteTypesHandler(ctx interfaces.NoteTypeReader) func(http.ResponseWriter
 
 func GetAddNoteTypeHandler(ctx interfaces.NoteTypeWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.NoteTypeWriter)
+
 		var editor = query_models.NoteTypeEditor{}
 
 		if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
@@ -137,7 +145,7 @@ func GetAddNoteTypeHandler(ctx interfaces.NoteTypeWriter) func(writer http.Respo
 			return
 		}
 
-		noteType, err := ctx.CreateOrUpdateNoteType(&editor)
+		noteType, err := effectiveCtx.CreateOrUpdateNoteType(&editor)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
@@ -155,9 +163,12 @@ func GetAddNoteTypeHandler(ctx interfaces.NoteTypeWriter) func(writer http.Respo
 
 func GetRemoveNoteTypeHandler(ctx interfaces.NoteTypeDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.NoteTypeDeleter)
+
 		id := http_utils.GetUIntQueryParameter(request, "Id", 0)
 
-		err := ctx.DeleteNoteType(id)
+		err := effectiveCtx.DeleteNoteType(id)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return

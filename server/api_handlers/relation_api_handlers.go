@@ -15,6 +15,9 @@ import (
 
 func GetAddGroupRelationTypeHandler(ctx interfaces.RelationshipWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.RelationshipWriter)
+
 		var editor = query_models.RelationshipTypeEditorQuery{}
 
 		if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
@@ -22,7 +25,7 @@ func GetAddGroupRelationTypeHandler(ctx interfaces.RelationshipWriter) func(writ
 			return
 		}
 
-		relationType, err := ctx.AddRelationType(&editor)
+		relationType, err := effectiveCtx.AddRelationType(&editor)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
@@ -40,6 +43,9 @@ func GetAddGroupRelationTypeHandler(ctx interfaces.RelationshipWriter) func(writ
 
 func GetEditGroupRelationTypeHandler(ctx interfaces.RelationshipWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.RelationshipWriter)
+
 		var editor = query_models.RelationshipTypeEditorQuery{}
 
 		if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
@@ -47,7 +53,7 @@ func GetEditGroupRelationTypeHandler(ctx interfaces.RelationshipWriter) func(wri
 			return
 		}
 
-		relationType, err := ctx.EditRelationType(&editor)
+		relationType, err := effectiveCtx.EditRelationType(&editor)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
@@ -65,6 +71,9 @@ func GetEditGroupRelationTypeHandler(ctx interfaces.RelationshipWriter) func(wri
 
 func GetAddRelationHandler(ctx interfaces.RelationshipWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.RelationshipWriter)
+
 		var editor = query_models.GroupRelationshipQuery{}
 
 		if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
@@ -76,9 +85,9 @@ func GetAddRelationHandler(ctx interfaces.RelationshipWriter) func(writer http.R
 		var err error
 
 		if editor.Id != 0 {
-			relation, err = ctx.EditRelation(editor)
+			relation, err = effectiveCtx.EditRelation(editor)
 		} else {
-			relation, err = ctx.AddRelation(editor.FromGroupId, editor.ToGroupId, editor.GroupRelationTypeId)
+			relation, err = effectiveCtx.AddRelation(editor.FromGroupId, editor.ToGroupId, editor.GroupRelationTypeId)
 		}
 
 		if err != nil {
@@ -131,10 +140,12 @@ func GetRelationTypesHandler(ctx interfaces.RelationshipReader) func(writer http
 
 func GetRemoveRelationHandler(ctx interfaces.RelationshipDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.RelationshipDeleter)
 
 		id := http_utils.GetUIntQueryParameter(request, "Id", 0)
 
-		err := ctx.DeleteRelationship(id)
+		err := effectiveCtx.DeleteRelationship(id)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
@@ -151,10 +162,12 @@ func GetRemoveRelationHandler(ctx interfaces.RelationshipDeleter) func(writer ht
 
 func GetRemoveRelationTypeHandler(ctx interfaces.RelationshipDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.RelationshipDeleter)
 
 		id := http_utils.GetUIntQueryParameter(request, "Id", 0)
 
-		err := ctx.DeleteRelationshipType(id)
+		err := effectiveCtx.DeleteRelationshipType(id)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return

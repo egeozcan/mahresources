@@ -43,6 +43,7 @@ func createTestContext(t *testing.T) *MahresourcesContext {
 		&models.GroupRelation{},
 		&models.GroupRelationType{},
 		&models.ImageHash{},
+		&models.LogEntry{},
 	)
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)
@@ -120,6 +121,7 @@ func TestAddResource_ConcurrentSameHash(t *testing.T) {
 		&models.GroupRelation{},
 		&models.GroupRelationType{},
 		&models.ImageHash{},
+		&models.LogEntry{},
 	)
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)

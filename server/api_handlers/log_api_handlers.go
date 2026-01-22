@@ -6,15 +6,25 @@ import (
 	"net/http"
 
 	"mahresources/constants"
+	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
 	"mahresources/server/interfaces"
 )
 
+// LogEntriesResponse wraps log entries with pagination info for API responses.
+type LogEntriesResponse struct {
+	Logs       *[]models.LogEntry `json:"logs"`
+	TotalCount int64              `json:"totalCount"`
+	Page       int                `json:"page"`
+	PerPage    int                `json:"perPage"`
+}
+
 // GetLogEntriesHandler returns a handler for listing log entries with filtering and pagination.
 func GetLogEntriesHandler(ctx interfaces.LogEntryReader) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		offset := (http_utils.GetIntQueryParameter(request, "page", 1) - 1) * constants.MaxResultsPerPage
+		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.LogEntryQuery
 
 		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
@@ -28,8 +38,21 @@ func GetLogEntriesHandler(ctx interfaces.LogEntryReader) http.HandlerFunc {
 			return
 		}
 
+		count, err := ctx.GetLogEntriesCount(&query)
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		response := LogEntriesResponse{
+			Logs:       logs,
+			TotalCount: count,
+			Page:       int(page),
+			PerPage:    constants.MaxResultsPerPage,
+		}
+
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(logs)
+		_ = json.NewEncoder(writer).Encode(response)
 	}
 }
 
@@ -76,7 +99,20 @@ func GetEntityHistoryHandler(ctx interfaces.LogEntryReader) http.HandlerFunc {
 			return
 		}
 
+		count, err := ctx.GetEntityHistoryCount(entityType, entityID)
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		response := LogEntriesResponse{
+			Logs:       logs,
+			TotalCount: count,
+			Page:       int(page),
+			PerPage:    constants.MaxResultsPerPage,
+		}
+
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(logs)
+		_ = json.NewEncoder(writer).Encode(response)
 	}
 }

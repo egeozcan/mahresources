@@ -37,6 +37,9 @@ func GetCategoriesHandler(ctx interfaces.CategoryReader) func(writer http.Respon
 
 func GetAddCategoryHandler(ctx interfaces.CategoryWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.CategoryWriter)
+
 		err := request.ParseForm()
 
 		if err != nil {
@@ -54,9 +57,9 @@ func GetAddCategoryHandler(ctx interfaces.CategoryWriter) func(writer http.Respo
 		var category *models.Category
 
 		if categoryEditor.ID != 0 {
-			category, err = ctx.UpdateCategory(&categoryEditor)
+			category, err = effectiveCtx.UpdateCategory(&categoryEditor)
 		} else {
-			category, err = ctx.CreateCategory(&categoryEditor.CategoryCreator)
+			category, err = effectiveCtx.CreateCategory(&categoryEditor.CategoryCreator)
 		}
 
 		if err != nil {
@@ -75,6 +78,8 @@ func GetAddCategoryHandler(ctx interfaces.CategoryWriter) func(writer http.Respo
 
 func GetRemoveCategoryHandler(ctx interfaces.CategoryDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.CategoryDeleter)
 
 		id := http_utils.GetUIntQueryParameter(request, "Id", 0)
 
@@ -83,7 +88,7 @@ func GetRemoveCategoryHandler(ctx interfaces.CategoryDeleter) func(writer http.R
 			return
 		}
 
-		err := ctx.DeleteCategory(id)
+		err := effectiveCtx.DeleteCategory(id)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return

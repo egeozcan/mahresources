@@ -97,11 +97,16 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 }
 
 func (ctx *MahresourcesContext) DeleteCategory(categoryId uint) error {
-	category := models.Category{ID: categoryId}
+	// Load category name before deletion for audit log
+	var category models.Category
+	if err := ctx.db.First(&category, categoryId).Error; err != nil {
+		return err
+	}
+	categoryName := category.Name
 
 	err := ctx.db.Select(clause.Associations).Delete(&category).Error
 	if err == nil {
-		ctx.Logger().Info(models.LogActionDelete, "category", &categoryId, "", "Deleted category", nil)
+		ctx.Logger().Info(models.LogActionDelete, "category", &categoryId, categoryName, "Deleted category", nil)
 		ctx.InvalidateSearchCacheByType(EntityTypeCategory)
 	}
 	return err

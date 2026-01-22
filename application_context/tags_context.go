@@ -87,11 +87,16 @@ func (ctx *MahresourcesContext) UpdateTag(tagQuery *query_models.TagCreator) (*m
 }
 
 func (ctx *MahresourcesContext) DeleteTag(tagId uint) error {
-	tag := models.Tag{ID: tagId}
+	// Load tag name before deletion for audit log
+	var tag models.Tag
+	if err := ctx.db.First(&tag, tagId).Error; err != nil {
+		return err
+	}
+	tagName := tag.Name
 
 	err := ctx.db.Select(clause.Associations).Delete(&tag).Error
 	if err == nil {
-		ctx.Logger().Info(models.LogActionDelete, "tag", &tagId, "", "Deleted tag", nil)
+		ctx.Logger().Info(models.LogActionDelete, "tag", &tagId, tagName, "Deleted tag", nil)
 		ctx.InvalidateSearchCacheByType(EntityTypeTag)
 	}
 	return err

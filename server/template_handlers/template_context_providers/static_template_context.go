@@ -51,6 +51,10 @@ var baseTemplateContext = pongo2.Context{
 			Name: "Note Types",
 			Url:  "/noteTypes",
 		},
+		{
+			Name: "Logs",
+			Url:  "/logs",
+		},
 	},
 	"partial": func(name string) string { return "/partials/" + name + ".tpl" },
 }

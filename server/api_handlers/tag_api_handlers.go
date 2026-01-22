@@ -35,6 +35,9 @@ func GetTagsHandler(ctx interfaces.TagsReader) func(writer http.ResponseWriter, 
 
 func GetAddTagHandler(ctx interfaces.TagsWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.TagsWriter)
+
 		var creator = query_models.TagCreator{}
 
 		if err := tryFillStructValuesFromRequest(&creator, request); err != nil {
@@ -46,9 +49,9 @@ func GetAddTagHandler(ctx interfaces.TagsWriter) func(writer http.ResponseWriter
 		var err error
 
 		if creator.ID != 0 {
-			tag, err = ctx.UpdateTag(&creator)
+			tag, err = effectiveCtx.UpdateTag(&creator)
 		} else {
-			tag, err = ctx.CreateTag(&creator)
+			tag, err = effectiveCtx.CreateTag(&creator)
 		}
 
 		if err != nil {
@@ -67,6 +70,9 @@ func GetAddTagHandler(ctx interfaces.TagsWriter) func(writer http.ResponseWriter
 
 func GetRemoveTagHandler(ctx interfaces.TagDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.TagDeleter)
+
 		var query query_models.EntityIdQuery
 
 		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
@@ -74,7 +80,7 @@ func GetRemoveTagHandler(ctx interfaces.TagDeleter) func(writer http.ResponseWri
 			return
 		}
 
-		err := ctx.DeleteTag(query.ID)
+		err := effectiveCtx.DeleteTag(query.ID)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return

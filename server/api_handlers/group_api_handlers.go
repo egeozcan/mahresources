@@ -66,6 +66,9 @@ func GetGroupsParentsHandler(ctx interfaces.GroupReader) func(writer http.Respon
 
 func GetAddGroupHandler(ctx interfaces.GroupCRUD) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.GroupCRUD)
+
 		var editor = query_models.GroupEditor{}
 		var group *models.Group
 		var err error
@@ -76,9 +79,9 @@ func GetAddGroupHandler(ctx interfaces.GroupCRUD) func(writer http.ResponseWrite
 				return
 			}
 
-			group, err = ctx.CreateGroup(&editor.GroupCreator)
+			group, err = effectiveCtx.CreateGroup(&editor.GroupCreator)
 		} else if err == nil {
-			group, err = ctx.UpdateGroup(&editor)
+			group, err = effectiveCtx.UpdateGroup(&editor)
 		}
 
 		if err != nil {
@@ -97,10 +100,12 @@ func GetAddGroupHandler(ctx interfaces.GroupCRUD) func(writer http.ResponseWrite
 
 func GetRemoveGroupHandler(ctx interfaces.GroupDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.GroupDeleter)
 
 		id := http_utils.GetUIntQueryParameter(request, "Id", 0)
 
-		err := ctx.DeleteGroup(id)
+		err := effectiveCtx.DeleteGroup(id)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
@@ -159,6 +164,9 @@ func GetRemoveTagsFromGroupsHandler(ctx interfaces.BulkGroupTagEditor) func(writ
 
 func GetBulkDeleteGroupsHandler(ctx interfaces.GroupDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.GroupDeleter)
+
 		var editor = query_models.BulkQuery{}
 		var err error
 
@@ -167,7 +175,7 @@ func GetBulkDeleteGroupsHandler(ctx interfaces.GroupDeleter) func(writer http.Re
 			return
 		}
 
-		err = ctx.BulkDeleteGroups(&editor)
+		err = effectiveCtx.BulkDeleteGroups(&editor)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
@@ -215,6 +223,9 @@ func GetGroupMetaKeysHandler(ctx interfaces.GroupMetaReader) func(writer http.Re
 
 func GetMergeGroupsHandler(ctx interfaces.GroupMerger) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.GroupMerger)
+
 		var editor = query_models.MergeQuery{}
 		var err error
 
@@ -223,7 +234,7 @@ func GetMergeGroupsHandler(ctx interfaces.GroupMerger) func(writer http.Response
 			return
 		}
 
-		err = ctx.MergeGroups(editor.Winner, editor.Losers)
+		err = effectiveCtx.MergeGroups(editor.Winner, editor.Losers)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
@@ -236,6 +247,9 @@ func GetMergeGroupsHandler(ctx interfaces.GroupMerger) func(writer http.Response
 
 func GetDuplicateGroupHandler(ctx interfaces.GroupDuplicator) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.GroupDuplicator)
+
 		var editor query_models.EntityIdQuery
 
 		if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
@@ -243,7 +257,7 @@ func GetDuplicateGroupHandler(ctx interfaces.GroupDuplicator) func(writer http.R
 			return
 		}
 
-		group, err := ctx.DuplicateGroup(editor.ID)
+		group, err := effectiveCtx.DuplicateGroup(editor.ID)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
