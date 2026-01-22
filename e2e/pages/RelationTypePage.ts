@@ -64,14 +64,15 @@ export class RelationTypePage extends BasePage {
   async update(id: number, updates: { name?: string; description?: string }) {
     await this.gotoEdit(id);
     if (updates.name !== undefined) {
-      await this.nameInput.clear();
-      await this.fillName(updates.name);
+      // Use fill() which clears and types in one action, more reliable than clear() + fill()
+      await this.nameInput.fill(updates.name);
     }
     if (updates.description !== undefined) {
-      await this.descriptionInput.clear();
-      await this.fillDescription(updates.description);
+      await this.descriptionInput.fill(updates.description);
     }
     await this.save();
+    // Wait for redirect to display page after save
+    await this.verifyRedirectContains(/\/relationType\?id=\d+/);
   }
 
   async delete(id: number) {

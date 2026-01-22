@@ -4,9 +4,11 @@ test.describe('RelationType CRUD Operations', () => {
   let personCategoryId: number;
   let companyCategoryId: number;
   let createdRelationTypeId: number;
-  const testRunId = Date.now();
+  let testRunId: string;
 
   test.beforeAll(async ({ apiClient }) => {
+    // Generate unique ID at beforeAll time to handle retries
+    testRunId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     // Create categories needed for relation types
     const personCategory = await apiClient.createCategory(`Person RT Test ${testRunId}`, 'Person category for relation type tests');
     personCategoryId = personCategory.ID;
@@ -64,9 +66,11 @@ test.describe('RelationType CRUD Operations', () => {
 test.describe('RelationType with same category', () => {
   let genericRelationTypeId: number;
   let genericCategoryId: number;
-  const testRunId = Date.now();
+  let testRunId: string;
 
   test.beforeAll(async ({ apiClient }) => {
+    // Generate unique ID at beforeAll time to handle retries
+    testRunId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     // Create a generic category for self-referential relations
     const category = await apiClient.createCategory(`Generic RT Cat ${testRunId}`, 'Generic category for relation type');
     genericCategoryId = category.ID;

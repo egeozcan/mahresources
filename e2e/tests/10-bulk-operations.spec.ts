@@ -5,9 +5,12 @@ test.describe('Bulk Operations on Groups', () => {
   let groupIds: number[] = [];
   let tagId: number;
   let secondTagId: number;
-  const testRunId = Date.now();
+  let testRunId: string;
 
   test.beforeAll(async ({ apiClient }) => {
+    // Generate unique ID at beforeAll time to handle retries
+    testRunId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
     // Create category with unique name
     const category = await apiClient.createCategory(`Bulk Ops Category ${testRunId}`, 'Category for bulk operation tests');
     categoryId = category.ID;
@@ -20,6 +23,7 @@ test.describe('Bulk Operations on Groups', () => {
     secondTagId = secondTag.ID;
 
     // Create multiple groups with unique names
+    groupIds = []; // Reset in case of retry
     for (let i = 1; i <= 5; i++) {
       const group = await apiClient.createGroup({
         name: `Bulk Test Group ${i} ${testRunId}`,
@@ -122,9 +126,12 @@ test.describe('Bulk Operations on Groups', () => {
 test.describe('Bulk Operations UI Elements', () => {
   let categoryId: number;
   let groupId: number;
-  const testRunId = Date.now();
+  let testRunId: string;
 
   test.beforeAll(async ({ apiClient }) => {
+    // Generate unique ID at beforeAll time to handle retries
+    testRunId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
     const category = await apiClient.createCategory(`Bulk UI Category ${testRunId}`, 'For UI tests');
     categoryId = category.ID;
 

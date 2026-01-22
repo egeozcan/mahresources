@@ -97,13 +97,18 @@ export class NotePage extends BasePage {
     updates: { name?: string; description?: string; startDate?: string; endDate?: string }
   ) {
     await this.gotoEdit(id);
+
+    // Scroll to top to ensure form fields are visible
+    await this.page.evaluate(() => window.scrollTo(0, 0));
+
     if (updates.name !== undefined) {
-      await this.page.locator('input[name="Name"]').clear();
-      await this.fillName(updates.name);
+      const nameInput = this.page.locator('input[name="Name"]');
+      await nameInput.scrollIntoViewIfNeeded();
+      await nameInput.fill(updates.name);
     }
     if (updates.description !== undefined) {
-      await this.descriptionInput.clear();
-      await this.fillDescription(updates.description);
+      await this.descriptionInput.scrollIntoViewIfNeeded();
+      await this.descriptionInput.fill(updates.description);
     }
     if (updates.startDate !== undefined) {
       await this.page.locator('input[name="startDate"]').fill(updates.startDate);
