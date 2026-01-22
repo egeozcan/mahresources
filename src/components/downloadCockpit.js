@@ -2,6 +2,7 @@ export function downloadCockpit() {
     return {
         isOpen: false,
         jobs: [],
+        retainedCompletedJobs: [],  // Completed jobs retained for display after backend removal
         eventSource: null,
         connectionStatus: 'disconnected', // 'connected', 'disconnected', 'connecting'
         liveRegion: null,
@@ -102,6 +103,7 @@ export function downloadCockpit() {
             this.eventSource.addEventListener('init', (e) => {
                 const data = JSON.parse(e.data);
                 this.jobs = data.jobs || [];
+                this.retainedCompletedJobs = [];  // Clear retained on reconnect
                 this.connectionStatus = 'connected';
             });
 
@@ -126,6 +128,21 @@ export function downloadCockpit() {
 
             this.eventSource.addEventListener('removed', (e) => {
                 const { job } = JSON.parse(e.data);
+                const existingJob = this.jobs.find(j => j.id === job.id);
+
+                // Retain completed/failed/cancelled jobs (non-active)
+                if (existingJob && !this.isActive(existingJob)) {
+                    // Avoid duplicates
+                    if (!this.retainedCompletedJobs.some(j => j.id === existingJob.id)) {
+                        this.retainedCompletedJobs.unshift(existingJob);
+                        // Keep only the last 5
+                        if (this.retainedCompletedJobs.length > 5) {
+                            this.retainedCompletedJobs = this.retainedCompletedJobs.slice(0, 5);
+                        }
+                    }
+                }
+
+                // Remove from main jobs array
                 this.jobs = this.jobs.filter(j => j.id !== job.id);
             });
 
@@ -192,6 +209,10 @@ export function downloadCockpit() {
 
         get hasActiveJobs() {
             return this.activeCount > 0;
+        },
+
+        get displayJobs() {
+            return [...this.jobs, ...this.retainedCompletedJobs];
         },
 
         truncateUrl(url, maxLength = 40) {
