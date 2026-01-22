@@ -11,5 +11,5 @@ if git diff --cached --name-only | grep -qE '\.(js|css|tpl)$|src/|vite\.config';
     fi
 
     # Stage the rebuilt files
-    git add public/dist/main.js public/dist/main.css public/tailwind.css
+    git add public/dist/main.js public/tailwind.css
 fi

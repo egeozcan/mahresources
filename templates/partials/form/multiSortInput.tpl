@@ -42,7 +42,7 @@
                 :aria-label="'Move sort ' + (index + 1) + ' up'"
                 title="Move up"
             >
-                <span class="text-xs">\u25B2</span>
+                <span class="text-xs">▲</span>
             </button>
 
             <button
@@ -53,7 +53,7 @@
                 :aria-label="'Move sort ' + (index + 1) + ' down'"
                 title="Move down"
             >
-                <span class="text-xs">\u25BC</span>
+                <span class="text-xs">▼</span>
             </button>
 
             <button
@@ -63,7 +63,7 @@
                 :aria-label="'Remove sort ' + (index + 1)"
                 title="Remove"
             >
-                <span class="text-xs">\u2715</span>
+                <span class="text-xs">✕</span>
             </button>
         </div>
     </template>
