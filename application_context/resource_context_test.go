@@ -4,16 +4,14 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"log"
 	"os"
-	"path/filepath"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -22,48 +20,47 @@ import (
 	"mahresources/models/query_models"
 )
 
-var appCtx *MahresourcesContext
+// createTestContext creates a self-sufficient test context with in-memory database
+// and filesystem, without requiring any .env files
+func createTestContext(t *testing.T) *MahresourcesContext {
+	t.Helper()
 
-func init() {
-	curPath, err := os.Getwd()
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	if err != nil {
-		log.Fatalln(err)
+		t.Fatalf("Failed to open test database: %v", err)
 	}
 
-	log.Println(curPath)
-
-	filesToTry := []string{".test.env", ".env"}
-	curPathHasEnvFile := func(curPath string) *string {
-		for _, file := range filesToTry {
-			if _, err := os.Stat(filepath.Join(curPath, file)); err == nil {
-				return &file
-			}
-		}
-		return nil
+	// Run migrations
+	err = db.AutoMigrate(
+		&models.Query{},
+		&models.Resource{},
+		&models.Note{},
+		&models.Tag{},
+		&models.Group{},
+		&models.Category{},
+		&models.NoteType{},
+		&models.Preview{},
+		&models.GroupRelation{},
+		&models.GroupRelationType{},
+		&models.ImageHash{},
+	)
+	if err != nil {
+		t.Fatalf("Failed to migrate database: %v", err)
 	}
 
-	for {
-		log.Println("trying", curPath)
+	// Try to find ffmpeg in PATH
+	ffmpegPath, _ := exec.LookPath("ffmpeg")
 
-		if len(curPath) <= 3 {
-			log.Fatal("no env file found!")
-		}
-
-		file := curPathHasEnvFile(curPath)
-
-		if file == nil {
-			log.Println("going up", curPath)
-			curPath = filepath.Dir(curPath)
-			log.Println("new path", curPath)
-			log.Println(curPath)
-			continue
-		}
-
-		_ = godotenv.Load(filepath.Join(curPath, *file))
-		break
+	config := &MahresourcesConfig{
+		DbType:     constants.DbTypeSqlite,
+		FfmpegPath: ffmpegPath,
 	}
 
-	appCtx, _, _ = CreateContext()
+	fs := afero.NewMemMapFs()
+	sqlDB, _ := db.DB()
+	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
+
+	return NewMahresourcesContext(fs, db, readOnlyDB, config)
 }
 
 func getMeTheFileOrPanic(path string) io.ReadSeeker {
@@ -79,9 +76,14 @@ func getMeTheFileOrPanic(path string) io.ReadSeeker {
 }
 
 func TestMahresourcesContext_createThumbFromVideo(t *testing.T) {
-	if err := appCtx.createThumbFromVideo(context.TODO(), getMeTheFileOrPanic("../test_data/pexels-thirdman-5862328.mp4"), bytes.NewBuffer(make([]byte, 0))); err != nil {
+	ctx := createTestContext(t)
+
+	if ctx.Config.FfmpegPath == "" {
+		t.Skip("ffmpeg not found in PATH, skipping video thumbnail test")
+	}
+
+	if err := ctx.createThumbFromVideo(context.TODO(), getMeTheFileOrPanic("../test_data/pexels-thirdman-5862328.mp4"), bytes.NewBuffer(make([]byte, 0))); err != nil {
 		t.Errorf("createThumbFromVideo() error = %v", err)
-		return
 	}
 }
 
