@@ -2312,11 +2312,6 @@
       right: 400px;
     }
   }
-  .md\:right-\[416px\] {
-    @media (width >= 48rem) {
-      right: 416px;
-    }
-  }
   .md\:bottom-0 {
     @media (width >= 48rem) {
       bottom: calc(var(--spacing) * 0);

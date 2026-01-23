@@ -102,7 +102,6 @@
         <button
             @click.stop="$store.lightbox.close()"
             class="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 z-20"
-            :class="$store.lightbox.editPanelOpen ? 'md:right-[416px]' : ''"
             aria-label="Close"
         >
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
