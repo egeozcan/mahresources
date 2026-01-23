@@ -36,6 +36,16 @@ export function registerLightboxStore(Alpine) {
     // Live region for screen reader announcements
     liveRegion: null,
 
+    // Edit panel state
+    editPanelOpen: false,
+    resourceDetails: null,
+    detailsLoading: false,
+    detailsCache: new Map(),
+    detailsAborter: null,
+
+    // Tag editing - API methods only, UI state handled by autocompleter component
+    savingTag: false,
+
     init() {
       // Guard against multiple initializations (prevents memory leak)
       if (this.liveRegion) return;
@@ -166,6 +176,11 @@ export function registerLightboxStore(Alpine) {
       // Pause any playing video before closing
       this.pauseCurrentVideo();
 
+      // Close edit panel if open
+      if (this.editPanelOpen) {
+        this.closeEditPanel();
+      }
+
       this.isOpen = false;
       this.loading = false;
       document.body.style.overflow = '';
@@ -199,6 +214,7 @@ export function registerLightboxStore(Alpine) {
         this.loading = true;
         this.announcePosition();
         this.scheduleMediaCheck();
+        this.onResourceChange();
       } else if (this.hasNextPage) {
         await this.loadNextPage();
         if (this.currentIndex < this.items.length - 1) {
@@ -206,6 +222,7 @@ export function registerLightboxStore(Alpine) {
           this.loading = true;
           this.announcePosition();
           this.scheduleMediaCheck();
+          this.onResourceChange();
         }
       }
     },
@@ -224,6 +241,7 @@ export function registerLightboxStore(Alpine) {
         this.loading = true;
         this.announcePosition();
         this.scheduleMediaCheck();
+        this.onResourceChange();
       } else if (this.hasPrevPage) {
         const prevItemCount = await this.loadPrevPage();
         if (prevItemCount > 0) {
@@ -232,6 +250,7 @@ export function registerLightboxStore(Alpine) {
           this.loading = true;
           this.announcePosition();
           this.scheduleMediaCheck();
+          this.onResourceChange();
         }
       }
     },
@@ -462,6 +481,11 @@ export function registerLightboxStore(Alpine) {
      * @param {TouchEvent} event
      */
     handleTouchStart(event) {
+      // Ignore touches that start within the edit panel
+      if (event.target.closest('[data-edit-panel]')) {
+        this.touchStartX = null;
+        return;
+      }
       this.touchStartX = event.touches[0].clientX;
       this.touchStartY = event.touches[0].clientY;
     },
@@ -489,6 +513,312 @@ export function registerLightboxStore(Alpine) {
 
       this.touchStartX = null;
       this.touchStartY = null;
+    },
+
+    // ==================== Edit Panel Methods ====================
+
+    /**
+     * Handle escape key - close edit panel first, then lightbox
+     * @returns {boolean} true if escape was handled
+     */
+    handleEscape() {
+      if (this.editPanelOpen) {
+        this.closeEditPanel();
+        return true;
+      }
+      this.close();
+      return true;
+    },
+
+    /**
+     * Open the edit panel and fetch resource details
+     */
+    async openEditPanel() {
+      this.editPanelOpen = true;
+      this.announce('Edit panel opened');
+      await this.fetchResourceDetails();
+
+      // Focus the panel after opening
+      requestAnimationFrame(() => {
+        const panel = document.querySelector('[data-edit-panel]');
+        if (panel) {
+          const firstInput = panel.querySelector('input, textarea');
+          if (firstInput) {
+            firstInput.focus();
+          }
+        }
+      });
+    },
+
+    /**
+     * Close the edit panel
+     */
+    closeEditPanel() {
+      this.editPanelOpen = false;
+
+      // Cancel any pending detail request
+      if (this.detailsAborter) {
+        this.detailsAborter();
+        this.detailsAborter = null;
+      }
+
+      this.announce('Edit panel closed');
+    },
+
+    /**
+     * Fetch full resource details including tags
+     * @param {number} [id] - Resource ID (defaults to current item)
+     */
+    async fetchResourceDetails(id) {
+      const resourceId = id ?? this.getCurrentItem()?.id;
+      if (!resourceId) return;
+
+      // Check cache first
+      const cached = this.detailsCache.get(resourceId);
+      if (cached) {
+        this.resourceDetails = cached;
+        return;
+      }
+
+      this.detailsLoading = true;
+
+      // Cancel any existing request
+      if (this.detailsAborter) {
+        this.detailsAborter();
+      }
+
+      try {
+        const { abort, ready } = abortableFetch(`/resource.json?id=${resourceId}`);
+        this.detailsAborter = abort;
+
+        const response = await ready;
+        if (!response.ok) {
+          throw new Error(`Failed to fetch resource: ${response.status}`);
+        }
+
+        const data = await response.json();
+        this.resourceDetails = data.resource || data;
+        this.detailsCache.set(resourceId, this.resourceDetails);
+        this.detailsAborter = null;
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.error('Failed to fetch resource details:', err);
+          this.announce('Failed to load resource details');
+        }
+      } finally {
+        this.detailsLoading = false;
+      }
+    },
+
+    /**
+     * Called when navigating to a new resource while edit panel is open
+     */
+    async onResourceChange() {
+      if (!this.editPanelOpen) return;
+      await this.fetchResourceDetails();
+    },
+
+    /**
+     * Update resource name
+     * @param {string} newName
+     */
+    async updateName(newName) {
+      const resourceId = this.getCurrentItem()?.id;
+      if (!resourceId || !this.resourceDetails) return;
+
+      const oldName = this.resourceDetails.Name;
+      if (newName === oldName) return;
+
+      // Optimistically update UI
+      this.resourceDetails.Name = newName;
+
+      // Also update the items array for the bottom bar
+      const item = this.items[this.currentIndex];
+      if (item) {
+        item.name = newName;
+      }
+
+      try {
+        const formData = new FormData();
+        formData.append('Name', newName);
+
+        const response = await fetch(`/v1/resource/editName?id=${resourceId}`, {
+          method: 'POST',
+          body: formData,
+          headers: { 'Accept': 'application/json' }
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to update name: ${response.status}`);
+        }
+
+        // Update cache
+        this.detailsCache.set(resourceId, { ...this.resourceDetails });
+        this.announce('Name updated');
+      } catch (err) {
+        console.error('Failed to update name:', err);
+        // Revert on error
+        this.resourceDetails.Name = oldName;
+        if (item) {
+          item.name = oldName;
+        }
+        this.announce('Failed to update name');
+      }
+    },
+
+    /**
+     * Update resource description
+     * @param {string} newDescription
+     */
+    async updateDescription(newDescription) {
+      const resourceId = this.getCurrentItem()?.id;
+      if (!resourceId || !this.resourceDetails) return;
+
+      const oldDescription = this.resourceDetails.Description;
+      if (newDescription === oldDescription) return;
+
+      // Optimistically update UI
+      this.resourceDetails.Description = newDescription;
+
+      try {
+        const formData = new FormData();
+        formData.append('Description', newDescription);
+
+        const response = await fetch(`/v1/resource/editDescription?id=${resourceId}`, {
+          method: 'POST',
+          body: formData,
+          headers: { 'Accept': 'application/json' }
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to update description: ${response.status}`);
+        }
+
+        // Update cache
+        this.detailsCache.set(resourceId, { ...this.resourceDetails });
+        this.announce('Description updated');
+      } catch (err) {
+        console.error('Failed to update description:', err);
+        // Revert on error
+        this.resourceDetails.Description = oldDescription;
+        this.announce('Failed to update description');
+      }
+    },
+
+    // ==================== Tag API Methods (for autocompleter callbacks) ====================
+
+    /**
+     * Save a tag addition to the server
+     * Called by autocompleter onSelect callback
+     * @param {Object} tag - Tag object with ID and Name
+     */
+    async saveTagAddition(tag) {
+      const resourceId = this.getCurrentItem()?.id;
+      if (!resourceId || this.savingTag) return;
+
+      this.savingTag = true;
+
+      // The autocompleter has its own array copy, so also update our resourceDetails.Tags
+      if (this.resourceDetails) {
+        if (!this.resourceDetails.Tags) {
+          this.resourceDetails.Tags = [];
+        }
+        // Only add if not already present
+        if (!this.resourceDetails.Tags.some(t => t.ID === tag.ID)) {
+          this.resourceDetails.Tags.push(tag);
+        }
+      }
+
+      try {
+        const formData = new FormData();
+        formData.append('ID', resourceId);
+        formData.append('EditedId', tag.ID);
+
+        const response = await fetch('/v1/resources/addTags', {
+          method: 'POST',
+          body: formData,
+          headers: { 'Accept': 'application/json' }
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to add tag: ${response.status}`);
+        }
+
+        // Update cache
+        if (this.resourceDetails) {
+          this.detailsCache.set(resourceId, { ...this.resourceDetails });
+        }
+        this.announce(`Added tag: ${tag.Name}`);
+      } catch (err) {
+        console.error('Failed to add tag:', err);
+        // Revert: remove the tag from our resourceDetails.Tags
+        if (this.resourceDetails?.Tags) {
+          const idx = this.resourceDetails.Tags.findIndex(t => t.ID === tag.ID);
+          if (idx !== -1) {
+            this.resourceDetails.Tags.splice(idx, 1);
+          }
+        }
+        this.announce('Failed to add tag');
+        throw err; // Re-throw so autocompleter can handle rollback
+      } finally {
+        this.savingTag = false;
+      }
+    },
+
+    /**
+     * Save a tag removal to the server
+     * Called by autocompleter onRemove callback
+     * @param {Object} tag - Tag object with ID and Name
+     */
+    async saveTagRemoval(tag) {
+      const resourceId = this.getCurrentItem()?.id;
+      if (!resourceId) return;
+
+      // The autocompleter has its own array copy, so also update our resourceDetails.Tags
+      if (this.resourceDetails?.Tags) {
+        const idx = this.resourceDetails.Tags.findIndex(t => t.ID === tag.ID);
+        if (idx !== -1) {
+          this.resourceDetails.Tags.splice(idx, 1);
+        }
+      }
+
+      try {
+        const formData = new FormData();
+        formData.append('ID', resourceId);
+        formData.append('EditedId', tag.ID);
+
+        const response = await fetch('/v1/resources/removeTags', {
+          method: 'POST',
+          body: formData,
+          headers: { 'Accept': 'application/json' }
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to remove tag: ${response.status}`);
+        }
+
+        // Update cache
+        if (this.resourceDetails) {
+          this.detailsCache.set(resourceId, { ...this.resourceDetails });
+        }
+        this.announce(`Removed tag: ${tag.Name}`);
+      } catch (err) {
+        console.error('Failed to remove tag:', err);
+        // Revert: add the tag back to our resourceDetails.Tags
+        if (this.resourceDetails?.Tags) {
+          this.resourceDetails.Tags.push(tag);
+        }
+        this.announce('Failed to remove tag');
+        throw err; // Re-throw so autocompleter can handle rollback
+      }
+    },
+
+    /**
+     * Get current resource tags (for autocompleter selectedResults)
+     * @returns {Array}
+     */
+    getCurrentTags() {
+      return this.resourceDetails?.Tags || [];
     }
   });
 }

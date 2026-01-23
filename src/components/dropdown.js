@@ -11,6 +11,10 @@ export function autocompleter({
     filterEls = [],
     addUrl = "",
     extraInfo = "",
+    // Callbacks for standalone/lightbox mode
+    onSelect = null,
+    onRemove = null,
+    standalone = false,
 }) {
     if (typeof filterEls === "string") {
         try {
@@ -57,7 +61,9 @@ export function autocompleter({
                 values.forEach(val => {
                     this.selectedIds.add(val.ID);
                 });
-                this.$dispatch('multiple-input', { value: selectedResults, name: elName });
+                if (!standalone) {
+                    this.$dispatch('multiple-input', { value: selectedResults, name: elName });
+                }
 
                 // Announce selection changes
                 if (values.length > oldValues.length) {
@@ -67,16 +73,20 @@ export function autocompleter({
                 }
             });
 
-            this.$el.closest('form').addEventListener('submit', (e) => {
-                if (selectedResults.length < min) {
-                    e.preventDefault();
-                    this.errorMessage = 'Please select at least ' + min + ' ' + (min === 1 ? 'value' : 'values');
-                }
-            });
+            // Form handling only when not in standalone mode
+            const form = this.$el.closest('form');
+            if (form && !standalone) {
+                form.addEventListener('submit', (e) => {
+                    if (selectedResults.length < min) {
+                        e.preventDefault();
+                        this.errorMessage = 'Please select at least ' + min + ' ' + (min === 1 ? 'value' : 'values');
+                    }
+                });
 
-            this.$el.closest('form').addEventListener('reset', (e) => {
-                this.selectedResults = [];
-            });
+                form.addEventListener('reset', (e) => {
+                    this.selectedResults = [];
+                });
+            }
         },
 
         async addVal() {
@@ -96,6 +106,11 @@ export function autocompleter({
                 }).then(x => x.json());
                 this.selectedResults.push(newVal);
                 this.ensureMaxItems();
+
+                // Call onSelect callback if provided
+                if (onSelect) {
+                    onSelect(newVal);
+                }
             } catch (e) {
                 this.errorMessage = `Could not add ${this.addModeForTag}`
             } finally {
@@ -146,19 +161,38 @@ export function autocompleter({
                 return;
             }
 
-            this.selectedResults.push(this.results[this.selectedIndex]);
+            const selectedItem = this.results[this.selectedIndex];
+            this.selectedResults.push(selectedItem);
             this.ensureMaxItems();
 
-            $event.target.value = '';
-            if (this.$refs?.autocompleter) {
-                this.$refs.autocompleter.value = '';
+            // Call onSelect callback if provided
+            if (onSelect) {
+                onSelect(selectedItem);
             }
-            $event.target.dispatchEvent(new Event('input'));
+
+            // Clear the input and trigger a refresh of results
+            // Always use the autocompleter ref since $event.target might be a dropdown item (mousedown)
+            const inputEl = this.$refs?.autocompleter;
+            if (inputEl) {
+                inputEl.value = '';
+                inputEl.dispatchEvent(new Event('input'));
+            }
         },
 
         ensureMaxItems() {
             while (this.max !== 0 && this.selectedResults.length > Math.max(this.max, 0)) {
                 this.selectedResults.splice(0, 1);
+            }
+        },
+
+        removeItem(item) {
+            const index = this.selectedResults.findIndex(r => r.ID === item.ID);
+            if (index !== -1) {
+                this.selectedResults.splice(index, 1);
+                // Call onRemove callback if provided
+                if (onRemove) {
+                    onRemove(item);
+                }
             }
         },
 
@@ -228,7 +262,10 @@ export function autocompleter({
 
             ['@keydown.enter.prevent'](e) {
                 if (e.target.value === '' && !this.dropdownActive) {
-                    e.target.closest('form').dispatchEvent(new Event('submit'));
+                    const form = e.target.closest('form');
+                    if (form && !standalone) {
+                        form.dispatchEvent(new Event('submit'));
+                    }
                     return;
                 }
 
