@@ -1147,6 +1147,109 @@ paths:
             summary: Edit a category's name
             tags:
                 - categories
+    /v1/download/cancel:
+        post:
+            description: Cancels a pending or in-progress download job.
+            operationId: cancelDownload
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Cancel an active download
+            tags:
+                - downloads
+    /v1/download/events:
+        get:
+            description: Returns a Server-Sent Events stream with real-time updates about download job status changes.
+            operationId: downloadEvents
+            responses:
+                "200":
+                    description: Successful response
+            summary: Server-Sent Events stream for download updates
+            tags:
+                - downloads
+    /v1/download/pause:
+        post:
+            description: Pauses a pending or downloading job. The job can be resumed later.
+            operationId: pauseDownload
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Pause a download
+            tags:
+                - downloads
+    /v1/download/queue:
+        get:
+            description: Returns all download jobs in the queue, including pending, active, and completed jobs.
+            operationId: getDownloadQueue
+            responses:
+                "200":
+                    description: Successful response
+            summary: Get all download jobs
+            tags:
+                - downloads
+    /v1/download/resume:
+        post:
+            description: Resumes a paused download job. The download will restart from the beginning.
+            operationId: resumeDownload
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Resume a paused download
+            tags:
+                - downloads
+    /v1/download/retry:
+        post:
+            description: Retries a download that previously failed or was cancelled.
+            operationId: retryDownload
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Retry a failed or cancelled download
+            tags:
+                - downloads
+    /v1/download/submit:
+        post:
+            description: Adds one or more URLs to the download queue. Multiple URLs can be submitted by separating them with newlines.
+            operationId: submitDownload
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/ResourceFromRemoteCreator'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/ResourceFromRemoteCreator'
+                required: true
+            responses:
+                "200":
+                    description: Successful response
+            summary: Submit a URL for background download
+            tags:
+                - downloads
     /v1/group:
         get:
             operationId: getGroup
@@ -3004,6 +3107,8 @@ servers:
 tags:
     - description: Operations related to categories
       name: categories
+    - description: Operations related to downloads
+      name: downloads
     - description: Operations related to groups
       name: groups
     - description: Operations related to logs

@@ -15,7 +15,8 @@ export function downloadCockpit() {
             processing: '\u2699',   // Gear
             completed: '\u2705',    // Check mark
             failed: '\u274C',       // X mark
-            cancelled: '\u26D4'     // No entry
+            cancelled: '\u26D4',    // No entry
+            paused: '\u23F8'        // Pause symbol
         },
 
         statusLabels: {
@@ -24,7 +25,8 @@ export function downloadCockpit() {
             processing: 'Processing',
             completed: 'Completed',
             failed: 'Failed',
-            cancelled: 'Cancelled'
+            cancelled: 'Cancelled',
+            paused: 'Paused'
         },
 
         init() {
@@ -149,6 +151,9 @@ export function downloadCockpit() {
                 } else if (job.status === 'failed') {
                     delete this.speedTracking[job.id];
                     this.announce(`Download failed: ${this.truncateUrl(job.url, 30)}`);
+                } else if (job.status === 'paused') {
+                    delete this.speedTracking[job.id];
+                    this.announce(`Download paused: ${this.truncateUrl(job.url, 30)}`);
                 }
             });
 
@@ -198,6 +203,30 @@ export function downloadCockpit() {
             }).catch(err => console.error('Cancel failed:', err));
         },
 
+        pauseJob(jobId) {
+            fetch('/v1/download/pause', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `id=${encodeURIComponent(jobId)}`
+            }).catch(err => console.error('Pause failed:', err));
+        },
+
+        resumeJob(jobId) {
+            fetch('/v1/download/resume', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `id=${encodeURIComponent(jobId)}`
+            }).catch(err => console.error('Resume failed:', err));
+        },
+
+        retryJob(jobId) {
+            fetch('/v1/download/retry', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `id=${encodeURIComponent(jobId)}`
+            }).catch(err => console.error('Retry failed:', err));
+        },
+
         formatProgress(job) {
             if (job.totalSize > 0) {
                 const downloaded = this.formatBytes(job.progress);
@@ -238,6 +267,18 @@ export function downloadCockpit() {
 
         isActive(job) {
             return ['pending', 'downloading', 'processing'].includes(job.status);
+        },
+
+        canPause(job) {
+            return ['pending', 'downloading'].includes(job.status);
+        },
+
+        canResume(job) {
+            return job.status === 'paused';
+        },
+
+        canRetry(job) {
+            return ['failed', 'cancelled'].includes(job.status);
         },
 
         get activeCount() {

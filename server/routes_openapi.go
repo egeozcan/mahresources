@@ -41,6 +41,9 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 
 	// Logs
 	registerLogRoutes(registry)
+
+	// Downloads
+	registerDownloadRoutes(registry)
 }
 
 func registerNoteRoutes(r *openapi.Registry) {
@@ -856,5 +859,88 @@ func registerLogRoutes(r *openapi.Registry) {
 			{Name: "entityType", Type: "string", Required: true, Description: "Type of entity (e.g., tag, note, resource)"},
 			{Name: "entityId", Type: "integer", Required: true, Description: "ID of the entity"},
 		},
+	})
+}
+
+func registerDownloadRoutes(r *openapi.Registry) {
+	remoteCreatorType := reflect.TypeOf(query_models.ResourceFromRemoteCreator{})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/download/submit",
+		OperationID:          "submitDownload",
+		Summary:              "Submit a URL for background download",
+		Description:          "Adds one or more URLs to the download queue. Multiple URLs can be submitted by separating them with newlines.",
+		Tags:                 []string{"downloads"},
+		RequestType:          remoteCreatorType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/download/queue",
+		OperationID:          "getDownloadQueue",
+		Summary:              "Get all download jobs",
+		Description:          "Returns all download jobs in the queue, including pending, active, and completed jobs.",
+		Tags:                 []string{"downloads"},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:              http.MethodPost,
+		Path:                "/v1/download/cancel",
+		OperationID:         "cancelDownload",
+		Summary:             "Cancel an active download",
+		Description:         "Cancels a pending or in-progress download job.",
+		Tags:                []string{"downloads"},
+		IDQueryParam:        "id",
+		IDRequired:          true,
+		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:              http.MethodPost,
+		Path:                "/v1/download/pause",
+		OperationID:         "pauseDownload",
+		Summary:             "Pause a download",
+		Description:         "Pauses a pending or downloading job. The job can be resumed later.",
+		Tags:                []string{"downloads"},
+		IDQueryParam:        "id",
+		IDRequired:          true,
+		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:              http.MethodPost,
+		Path:                "/v1/download/resume",
+		OperationID:         "resumeDownload",
+		Summary:             "Resume a paused download",
+		Description:         "Resumes a paused download job. The download will restart from the beginning.",
+		Tags:                []string{"downloads"},
+		IDQueryParam:        "id",
+		IDRequired:          true,
+		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:              http.MethodPost,
+		Path:                "/v1/download/retry",
+		OperationID:         "retryDownload",
+		Summary:             "Retry a failed or cancelled download",
+		Description:         "Retries a download that previously failed or was cancelled.",
+		Tags:                []string{"downloads"},
+		IDQueryParam:        "id",
+		IDRequired:          true,
+		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodGet,
+		Path:        "/v1/download/events",
+		OperationID: "downloadEvents",
+		Summary:     "Server-Sent Events stream for download updates",
+		Description: "Returns a Server-Sent Events stream with real-time updates about download job status changes.",
+		Tags:        []string{"downloads"},
 	})
 }

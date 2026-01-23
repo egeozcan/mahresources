@@ -74,7 +74,8 @@
                                               'bg-gray-100': job.status === 'pending',
                                               'bg-blue-100': job.status === 'downloading' || job.status === 'processing',
                                               'bg-green-100': job.status === 'completed',
-                                              'bg-red-100': job.status === 'failed' || job.status === 'cancelled'
+                                              'bg-red-100': job.status === 'failed' || job.status === 'cancelled',
+                                              'bg-yellow-100': job.status === 'paused'
                                           }"
                                           x-text="statusIcons[job.status]"
                                           :aria-label="statusLabels[job.status]"></span>
@@ -90,7 +91,8 @@
                                                       'bg-gray-100 text-gray-600': job.status === 'pending',
                                                       'bg-blue-100 text-blue-700': job.status === 'downloading' || job.status === 'processing',
                                                       'bg-green-100 text-green-700': job.status === 'completed',
-                                                      'bg-red-100 text-red-700': job.status === 'failed' || job.status === 'cancelled'
+                                                      'bg-red-100 text-red-700': job.status === 'failed' || job.status === 'cancelled',
+                                                      'bg-yellow-100 text-yellow-700': job.status === 'paused'
                                                   }"
                                                   x-text="statusLabels[job.status]"></span>
                                         </div>
@@ -138,13 +140,40 @@
                                             </a>
                                         </template>
 
-                                        <!-- Cancel button -->
-                                        <template x-if="isActive(job)">
-                                            <button @click="cancelJob(job.id)"
-                                                    class="mt-2 text-xs text-red-600 hover:text-red-800 focus:outline-none focus:underline">
-                                                Cancel
-                                            </button>
-                                        </template>
+                                        <!-- Action buttons -->
+                                        <div class="mt-2 flex gap-3">
+                                            <!-- Pause button (for pending/downloading) -->
+                                            <template x-if="canPause(job)">
+                                                <button @click="pauseJob(job.id)"
+                                                        class="text-xs text-yellow-600 hover:text-yellow-800 focus:outline-none focus:underline">
+                                                    Pause
+                                                </button>
+                                            </template>
+
+                                            <!-- Resume button (for paused) -->
+                                            <template x-if="canResume(job)">
+                                                <button @click="resumeJob(job.id)"
+                                                        class="text-xs text-green-600 hover:text-green-800 focus:outline-none focus:underline">
+                                                    Resume
+                                                </button>
+                                            </template>
+
+                                            <!-- Retry button (for failed/cancelled) -->
+                                            <template x-if="canRetry(job)">
+                                                <button @click="retryJob(job.id)"
+                                                        class="text-xs text-blue-600 hover:text-blue-800 focus:outline-none focus:underline">
+                                                    Retry
+                                                </button>
+                                            </template>
+
+                                            <!-- Cancel button (for active jobs, not paused) -->
+                                            <template x-if="isActive(job)">
+                                                <button @click="cancelJob(job.id)"
+                                                        class="text-xs text-red-600 hover:text-red-800 focus:outline-none focus:underline">
+                                                    Cancel
+                                                </button>
+                                            </template>
+                                        </div>
                                     </div>
                                 </div>
                             </li>

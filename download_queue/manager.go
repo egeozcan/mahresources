@@ -17,9 +17,10 @@ import (
 )
 
 const (
-	MaxConcurrentDownloads = 3
-	MaxQueueSize           = 100
-	JobRetentionDuration   = 1 * time.Hour
+	MaxConcurrentDownloads     = 3
+	MaxQueueSize               = 100
+	JobRetentionDuration       = 1 * time.Hour
+	PausedJobRetentionDuration = 24 * time.Hour
 )
 
 // ResourceCreator is the interface needed to create resources
@@ -150,9 +151,12 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 	case dm.semaphore <- struct{}{}:
 		defer func() { <-dm.semaphore }()
 	case <-job.ctx.Done():
-		job.SetStatus(JobStatusCancelled)
-		job.SetError("Cancelled before starting")
-		dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
+		// Check if job was paused (don't override paused status)
+		if job.GetStatus() != JobStatusPaused {
+			job.SetStatus(JobStatusCancelled)
+			job.SetError("Cancelled before starting")
+			dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
+		}
 		return
 	}
 
@@ -163,6 +167,11 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 
 	// Perform the download with progress tracking
 	resource, err := dm.downloadWithProgress(job)
+
+	// Check if job was paused during download (don't set completion status)
+	if job.GetStatus() == JobStatusPaused {
+		return
+	}
 
 	now = time.Now()
 	job.SetCompletedAt(now)
@@ -290,6 +299,104 @@ func (dm *DownloadManager) Cancel(jobID string) error {
 	return nil
 }
 
+// Pause pauses a download job by ID
+func (dm *DownloadManager) Pause(jobID string) error {
+	dm.mu.RLock()
+	job, exists := dm.jobs[jobID]
+	dm.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("job %s not found", jobID)
+	}
+
+	if !job.CanPause() {
+		return fmt.Errorf("job %s cannot be paused (status: %s)", jobID, job.GetStatus())
+	}
+
+	// Mark as paused BEFORE cancelling context to avoid race condition
+	// where goroutine sees cancellation before status change
+	job.SetStatus(JobStatusPaused)
+	job.SetError("") // Clear any previous error
+
+	// Now cancel the download context
+	job.cancel()
+
+	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
+
+	return nil
+}
+
+// Resume resumes a paused download job by ID
+func (dm *DownloadManager) Resume(jobID string) error {
+	dm.mu.Lock()
+	job, exists := dm.jobs[jobID]
+	if !exists {
+		dm.mu.Unlock()
+		return fmt.Errorf("job %s not found", jobID)
+	}
+
+	if !job.CanResume() {
+		dm.mu.Unlock()
+		return fmt.Errorf("job %s cannot be resumed (status: %s)", jobID, job.GetStatus())
+	}
+
+	// Create a new context for the resumed download
+	ctx, cancel := context.WithCancel(context.Background())
+	job.ctx = ctx
+	job.cancel = cancel
+
+	// Reset progress and mark as pending
+	job.SetStatus(JobStatusPending)
+	job.UpdateProgress(0, -1)
+	job.StartedAt = nil
+
+	dm.mu.Unlock()
+
+	// Start download in background
+	go dm.processJob(job)
+
+	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
+
+	return nil
+}
+
+// Retry retries a failed or cancelled download job by ID
+func (dm *DownloadManager) Retry(jobID string) error {
+	dm.mu.Lock()
+	job, exists := dm.jobs[jobID]
+	if !exists {
+		dm.mu.Unlock()
+		return fmt.Errorf("job %s not found", jobID)
+	}
+
+	if !job.CanRetry() {
+		dm.mu.Unlock()
+		return fmt.Errorf("job %s cannot be retried (status: %s)", jobID, job.GetStatus())
+	}
+
+	// Create a new context for the retried download
+	ctx, cancel := context.WithCancel(context.Background())
+	job.ctx = ctx
+	job.cancel = cancel
+
+	// Reset progress and error, mark as pending
+	job.SetStatus(JobStatusPending)
+	job.SetError("")
+	job.UpdateProgress(0, -1)
+	job.StartedAt = nil
+	job.CompletedAt = nil
+	job.ResourceID = nil
+
+	dm.mu.Unlock()
+
+	// Start download in background
+	go dm.processJob(job)
+
+	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
+
+	return nil
+}
+
 // GetJobs returns all jobs in order
 func (dm *DownloadManager) GetJobs() []*DownloadJob {
 	dm.mu.RLock()
@@ -357,16 +464,30 @@ func (dm *DownloadManager) cleanupLoop() {
 }
 
 // cleanupOldJobs removes jobs that completed more than JobRetentionDuration ago
+// and paused jobs older than PausedJobRetentionDuration
 func (dm *DownloadManager) cleanupOldJobs() {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
-	cutoff := time.Now().Add(-JobRetentionDuration)
+	completedCutoff := time.Now().Add(-JobRetentionDuration)
+	pausedCutoff := time.Now().Add(-PausedJobRetentionDuration)
 	newOrder := make([]string, 0, len(dm.jobOrder))
 
 	for _, id := range dm.jobOrder {
 		job := dm.jobs[id]
-		if job.CompletedAt != nil && job.CompletedAt.Before(cutoff) {
+		shouldRemove := false
+
+		// Remove completed/failed/cancelled jobs after retention period
+		if job.CompletedAt != nil && job.CompletedAt.Before(completedCutoff) {
+			shouldRemove = true
+		}
+
+		// Remove paused jobs after longer retention period (based on creation time)
+		if job.GetStatus() == JobStatusPaused && job.CreatedAt.Before(pausedCutoff) {
+			shouldRemove = true
+		}
+
+		if shouldRemove {
 			delete(dm.jobs, id)
 			dm.notifySubscribers(JobEvent{Type: "removed", Job: job})
 		} else {

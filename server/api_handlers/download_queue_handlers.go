@@ -83,6 +83,78 @@ func GetDownloadCancelHandler(ctx DownloadQueueReader) func(writer http.Response
 	}
 }
 
+// GetDownloadPauseHandler handles POST /v1/download/pause
+// Pauses a download job by ID
+func GetDownloadPauseHandler(ctx DownloadQueueReader) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		jobID := request.FormValue("id")
+		if jobID == "" {
+			jobID = request.URL.Query().Get("id")
+		}
+
+		if jobID == "" {
+			http_utils.HandleError(fmt.Errorf("job id is required"), writer, request, http.StatusBadRequest)
+			return
+		}
+
+		if err := ctx.DownloadManager().Pause(jobID); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(map[string]string{"status": "paused"})
+	}
+}
+
+// GetDownloadResumeHandler handles POST /v1/download/resume
+// Resumes a paused download job by ID
+func GetDownloadResumeHandler(ctx DownloadQueueReader) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		jobID := request.FormValue("id")
+		if jobID == "" {
+			jobID = request.URL.Query().Get("id")
+		}
+
+		if jobID == "" {
+			http_utils.HandleError(fmt.Errorf("job id is required"), writer, request, http.StatusBadRequest)
+			return
+		}
+
+		if err := ctx.DownloadManager().Resume(jobID); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(map[string]string{"status": "resumed"})
+	}
+}
+
+// GetDownloadRetryHandler handles POST /v1/download/retry
+// Retries a failed or cancelled download job by ID
+func GetDownloadRetryHandler(ctx DownloadQueueReader) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		jobID := request.FormValue("id")
+		if jobID == "" {
+			jobID = request.URL.Query().Get("id")
+		}
+
+		if jobID == "" {
+			http_utils.HandleError(fmt.Errorf("job id is required"), writer, request, http.StatusBadRequest)
+			return
+		}
+
+		if err := ctx.DownloadManager().Retry(jobID); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(map[string]string{"status": "retrying"})
+	}
+}
+
 // GetDownloadEventsHandler handles GET /v1/download/events
 // Server-Sent Events stream for real-time updates
 func GetDownloadEventsHandler(ctx DownloadQueueReader) func(writer http.ResponseWriter, request *http.Request) {

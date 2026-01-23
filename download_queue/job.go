@@ -17,6 +17,7 @@ const (
 	JobStatusCompleted   JobStatus = "completed"
 	JobStatusFailed      JobStatus = "failed"
 	JobStatusCancelled   JobStatus = "cancelled"
+	JobStatusPaused      JobStatus = "paused"
 )
 
 // DownloadJob represents a single remote URL download task
@@ -99,6 +100,23 @@ func (j *DownloadJob) GetStatus() JobStatus {
 func (j *DownloadJob) IsActive() bool {
 	status := j.GetStatus()
 	return status == JobStatusPending || status == JobStatusDownloading || status == JobStatusProcessing
+}
+
+// CanPause returns true if the job can be paused
+func (j *DownloadJob) CanPause() bool {
+	status := j.GetStatus()
+	return status == JobStatusPending || status == JobStatusDownloading
+}
+
+// CanResume returns true if the job can be resumed
+func (j *DownloadJob) CanResume() bool {
+	return j.GetStatus() == JobStatusPaused
+}
+
+// CanRetry returns true if the job can be retried
+func (j *DownloadJob) CanRetry() bool {
+	status := j.GetStatus()
+	return status == JobStatusFailed || status == JobStatusCancelled
 }
 
 // JobEvent represents a change in job state for SSE broadcasting
