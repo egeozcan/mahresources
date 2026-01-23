@@ -98,27 +98,31 @@
                                         <!-- URL preview -->
                                         <p class="text-xs text-gray-400 truncate mt-0.5" x-text="truncateUrl(job.url, 50)"></p>
 
-                                        <!-- Progress bar (for active downloads) -->
-                                        <template x-if="job.status === 'downloading' && job.totalSize > 0">
+                                        <!-- Progress bar (for downloading) -->
+                                        <template x-if="job.status === 'downloading'">
                                             <div class="mt-2">
                                                 <div class="flex justify-between text-xs text-gray-500 mb-1">
                                                     <span x-text="formatProgress(job)"></span>
+                                                    <span x-text="formatSpeed(job)" class="text-blue-600 font-medium"></span>
                                                 </div>
-                                                <div class="w-full bg-gray-200 rounded-full h-1.5">
-                                                    <div class="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
-                                                         :style="'width: ' + getProgressPercent(job) + '%'"></div>
+                                                <div class="w-full bg-gray-200 rounded-full h-2">
+                                                    <div class="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                                                         :class="{ 'animate-pulse': job.totalSize <= 0 }"
+                                                         :style="'width: ' + (job.totalSize > 0 ? getProgressPercent(job) : 100) + '%'"></div>
                                                 </div>
                                             </div>
                                         </template>
 
-                                        <!-- Indeterminate progress for unknown size -->
-                                        <template x-if="job.status === 'downloading' && job.totalSize <= 0 && job.progress > 0">
-                                            <p class="mt-1 text-xs text-gray-500" x-text="formatProgress(job)"></p>
-                                        </template>
-
-                                        <!-- Processing indicator -->
+                                        <!-- Processing indicator with progress bar -->
                                         <template x-if="job.status === 'processing'">
-                                            <p class="mt-1 text-xs text-blue-600">Creating resource...</p>
+                                            <div class="mt-2">
+                                                <div class="flex justify-between text-xs text-gray-500 mb-1">
+                                                    <span>Creating resource...</span>
+                                                </div>
+                                                <div class="w-full bg-gray-200 rounded-full h-2">
+                                                    <div class="bg-indigo-500 h-2 rounded-full w-full animate-pulse"></div>
+                                                </div>
+                                            </div>
                                         </template>
 
                                         <!-- Error message -->

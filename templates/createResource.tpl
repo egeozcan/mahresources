@@ -1,7 +1,13 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
-<form class="space-y-8" method="post" action="/v1/resource{% if resource.ID %}/edit{% endif %}" enctype="{% if !resource.ID %}multipart/form-data{% endif %}">
+<form
+    class="space-y-8"
+    method="post"
+    x-data="{ url: '', background: false }"
+    :action="url.trim() && background ? '/v1/resource/remote?background=true' : '/v1/resource{% if resource.ID %}/edit{% endif %}'"
+    :enctype="url.trim() && background ? 'application/x-www-form-urlencoded' : '{% if !resource.ID %}multipart/form-data{% endif %}'"
+>
     {% if resource.ID %}
     <input type="hidden" value="{{ resource.ID }}" name="ID">
     {% endif %}
@@ -49,7 +55,6 @@
                                 name="resource"
                                 multiple
                                 type="file"
-                                x-data
                             >
                         </div>
                     </div>
@@ -58,13 +63,26 @@
                         <p class="mt-2 text-sm text-gray-500">If you fill this, the contents of the file picker will be ignored and remote data will be downloaded.</p>
                     </label>
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
-                        <div class="max-w-lg flex rounded-md shadow-sm">
+                        <div class="max-w-lg flex flex-col gap-2">
                             <textarea
                                 id="URL"
                                 name="URL"
+                                x-model="url"
                                 placeholder="If you fill this, the contents of the file picker will be ignored and remote data will be downloaded"
                                 class="flex-1 block w-full focus:ring-indigo-500 focus:border-indigo-500 min-w-0 rounded-md sm:text-sm border-gray-300"
                             ></textarea>
+                            <div x-show="url.trim()" x-cloak class="flex items-center gap-2">
+                                <input
+                                    type="checkbox"
+                                    id="background"
+                                    x-model="background"
+                                    class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                                >
+                                <label for="background" class="text-sm text-gray-700">
+                                    Download in background
+                                    <span class="text-gray-500">(track progress in download cockpit)</span>
+                                </label>
+                            </div>
                         </div>
                     </div>
                 </div>

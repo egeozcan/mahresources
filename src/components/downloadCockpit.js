@@ -7,6 +7,7 @@ export function downloadCockpit() {
         connectionStatus: 'disconnected', // 'connected', 'disconnected', 'connecting'
         liveRegion: null,
         announceTimeout: null,
+        speedTracking: {},  // Track progress for speed calculation: { jobId: { lastProgress, lastTime, speed } }
 
         statusIcons: {
             pending: '\u23F3',      // Hourglass
@@ -53,13 +54,12 @@ export function downloadCockpit() {
                 }
             });
 
-            // Connect to SSE when panel opens
+            // Always connect to SSE to track download completions
+            this.connect();
+
             this.$watch('isOpen', (value) => {
                 if (value) {
-                    this.connect();
                     this.announce('Download cockpit opened. Shows background download progress.');
-                } else {
-                    this.disconnect();
                 }
             });
         },
@@ -119,9 +119,35 @@ export function downloadCockpit() {
                 if (index !== -1) {
                     this.jobs[index] = job;
                 }
+
+                // Calculate download speed
+                if (job.status === 'downloading' && job.progress > 0) {
+                    const now = Date.now();
+                    const tracking = this.speedTracking[job.id];
+                    if (tracking && tracking.lastProgress < job.progress) {
+                        const timeDelta = (now - tracking.lastTime) / 1000; // seconds
+                        const bytesDelta = job.progress - tracking.lastProgress;
+                        if (timeDelta > 0) {
+                            tracking.speed = bytesDelta / timeDelta;
+                        }
+                        tracking.lastProgress = job.progress;
+                        tracking.lastTime = now;
+                    } else if (!tracking) {
+                        this.speedTracking[job.id] = {
+                            lastProgress: job.progress,
+                            lastTime: now,
+                            speed: 0
+                        };
+                    }
+                }
+
                 if (job.status === 'completed') {
+                    delete this.speedTracking[job.id];
                     this.announce(`Download completed: ${this.truncateUrl(job.url, 30)}`);
+                    // Dispatch global event for resource lists to reload
+                    window.dispatchEvent(new CustomEvent('download-completed', { detail: job }));
                 } else if (job.status === 'failed') {
+                    delete this.speedTracking[job.id];
                     this.announce(`Download failed: ${this.truncateUrl(job.url, 30)}`);
                 }
             });
@@ -190,6 +216,17 @@ export function downloadCockpit() {
             const sizes = ['B', 'KB', 'MB', 'GB'];
             const i = Math.floor(Math.log(bytes) / Math.log(k));
             return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        },
+
+        getSpeed(job) {
+            const tracking = this.speedTracking[job.id];
+            return tracking ? tracking.speed : 0;
+        },
+
+        formatSpeed(job) {
+            const speed = this.getSpeed(job);
+            if (speed <= 0) return '';
+            return this.formatBytes(speed) + '/s';
         },
 
         getProgressPercent(job) {

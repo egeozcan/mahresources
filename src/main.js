@@ -95,3 +95,41 @@ window.addEventListener('paste', e => {
 
 // Setup bulk selection listeners
 setupBulkSelectionListeners();
+
+// Refresh resource lists when background downloads complete
+window.addEventListener('download-completed', async (e) => {
+  const job = e.detail;
+  const listContainer = document.querySelector('.list-container');
+
+  if (!listContainer || !job.resourceId) return;
+
+  try {
+    // Fetch the current page
+    const response = await fetch(window.location.href, {
+      headers: { 'Accept': 'text/html' }
+    });
+    const html = await response.text();
+
+    // Parse and extract the new list container
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const newListContainer = doc.querySelector('.list-container');
+
+    if (newListContainer) {
+      // Use Alpine morph to smoothly update the content
+      Alpine.morph(listContainer, newListContainer, {
+        updating(el, toEl, childrenOnly, skip) {
+          // Preserve Alpine state where possible
+          if (el._x_dataStack) {
+            toEl._x_dataStack = el._x_dataStack;
+          }
+        }
+      });
+
+      // Re-initialize lightbox for new images
+      Alpine.store('lightbox').initFromDOM();
+    }
+  } catch (err) {
+    console.error('Failed to refresh resource list:', err);
+  }
+});

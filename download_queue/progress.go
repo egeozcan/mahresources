@@ -12,16 +12,20 @@ import (
 // ProgressReader wraps an io.Reader and tracks bytes read
 // Implements interfaces.File (io.Reader + io.Closer)
 type ProgressReader struct {
-	reader     io.Reader
-	downloaded int64
-	onProgress func(downloaded int64)
+	reader      io.Reader
+	downloaded  int64
+	onProgress  func(downloaded int64)
+	onComplete  func()
+	completed   bool
+	completeMu  sync.Mutex
 }
 
 // NewProgressReader creates a new progress-tracking reader
-func NewProgressReader(r io.Reader, onProgress func(downloaded int64)) *ProgressReader {
+func NewProgressReader(r io.Reader, onProgress func(downloaded int64), onComplete func()) *ProgressReader {
 	return &ProgressReader{
 		reader:     r,
 		onProgress: onProgress,
+		onComplete: onComplete,
 	}
 }
 
@@ -33,6 +37,15 @@ func (pr *ProgressReader) Read(p []byte) (n int, err error) {
 		if pr.onProgress != nil {
 			pr.onProgress(downloaded)
 		}
+	}
+	// Call onComplete when EOF is reached (download finished)
+	if err == io.EOF {
+		pr.completeMu.Lock()
+		if !pr.completed && pr.onComplete != nil {
+			pr.completed = true
+			pr.onComplete()
+		}
+		pr.completeMu.Unlock()
 	}
 	return n, err
 }

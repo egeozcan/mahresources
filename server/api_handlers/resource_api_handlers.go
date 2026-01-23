@@ -227,13 +227,30 @@ func GetResourceAddRemoteHandler(ctx interfaces.ResourceCreator) func(writer htt
 		}
 
 		// Check for background parameter - if true, queue for background download
-		background := request.FormValue("background") == "true" || request.URL.Query().Get("background") == "true"
+		// Support both "background" and "Background" keys, and values "true", "1", or any truthy string
+		bgVal := request.FormValue("background")
+		if bgVal == "" {
+			bgVal = request.FormValue("Background")
+		}
+		if bgVal == "" {
+			bgVal = request.URL.Query().Get("background")
+		}
+		background := bgVal == "true" || bgVal == "1" || bgVal == "True" || bgVal == "TRUE"
 
 		if background {
 			if queueCtx, ok := effectiveCtx.(DownloadQueueReader); ok {
 				jobs, err := queueCtx.DownloadManager().SubmitMultiple(&creator)
 				if err != nil {
 					http_utils.HandleError(err, writer, request, http.StatusServiceUnavailable)
+					return
+				}
+
+				// Redirect HTML clients to appropriate page
+				redirectURL := "/resources"
+				if creator.OwnerId != 0 {
+					redirectURL = fmt.Sprintf("/group?id=%d", creator.OwnerId)
+				}
+				if http_utils.RedirectIfHTMLAccepted(writer, request, redirectURL) {
 					return
 				}
 

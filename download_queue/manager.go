@@ -224,15 +224,29 @@ func (dm *DownloadManager) downloadWithProgress(job *DownloadJob) (*models.Resou
 	timeoutBody := NewTimeoutReaderWithContext(resp.Body, dm.timeoutConfig.IdleTimeout, job.ctx)
 	defer timeoutBody.Close()
 
-	// Wrap with progress reader
-	progressBody := NewProgressReader(timeoutBody, func(downloaded int64) {
-		job.UpdateProgress(downloaded, contentLength)
-		dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
-	})
+	// Throttle progress updates to avoid flooding SSE clients
+	var lastNotify time.Time
+	const notifyInterval = 500 * time.Millisecond
 
-	// Update status to processing
-	job.SetStatus(JobStatusProcessing)
-	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
+	// Wrap with progress reader
+	progressBody := NewProgressReader(timeoutBody,
+		// onProgress - called on each chunk read
+		func(downloaded int64) {
+			job.UpdateProgress(downloaded, contentLength)
+			// Only notify if enough time has passed
+			if time.Since(lastNotify) >= notifyInterval {
+				lastNotify = time.Now()
+				dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
+			}
+		},
+		// onComplete - called when download finishes (EOF)
+		func() {
+			// Send final progress update, then switch to processing
+			dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
+			job.SetStatus(JobStatusProcessing)
+			dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
+		},
+	)
 
 	// Determine filename
 	name := job.creator.FileName
