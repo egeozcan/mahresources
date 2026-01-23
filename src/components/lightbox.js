@@ -46,6 +46,9 @@ export function registerLightboxStore(Alpine) {
     // Tag editing - API methods only, UI state handled by autocompleter component
     savingTag: false,
 
+    // Track if changes were made that require refreshing the page content
+    needsRefreshOnClose: false,
+
     init() {
       // Guard against multiple initializations (prevents memory leak)
       if (this.liveRegion) return;
@@ -535,6 +538,7 @@ export function registerLightboxStore(Alpine) {
      */
     async openEditPanel() {
       this.editPanelOpen = true;
+      this.needsRefreshOnClose = false; // Reset on open
       this.announce('Edit panel opened');
       await this.fetchResourceDetails();
 
@@ -562,7 +566,52 @@ export function registerLightboxStore(Alpine) {
         this.detailsAborter = null;
       }
 
+      // Trigger background refresh if changes were made
+      if (this.needsRefreshOnClose) {
+        this.needsRefreshOnClose = false;
+        this.refreshPageContent();
+      }
+
       this.announce('Edit panel closed');
+    },
+
+    /**
+     * Refresh the page content using Alpine morph
+     * Called when edit panel closes after changes were made
+     */
+    async refreshPageContent() {
+      const listContainer = document.querySelector('.list-container, .items-container');
+      if (!listContainer) return;
+
+      try {
+        // Fetch the current page with .body suffix to get just the body content
+        const url = new URL(window.location);
+        url.pathname = url.pathname + '.body';
+
+        const response = await fetch(url.toString());
+        if (!response.ok) return;
+
+        const html = await response.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        const newListContainer = doc.querySelector('.list-container, .items-container');
+
+        if (newListContainer && window.Alpine) {
+          window.Alpine.morph(listContainer, newListContainer, {
+            updating(el, toEl, childrenOnly, skip) {
+              // Preserve Alpine state where possible
+              if (el._x_dataStack) {
+                toEl._x_dataStack = el._x_dataStack;
+              }
+            }
+          });
+
+          // Re-initialize lightbox items from the updated DOM
+          this.initFromDOM();
+        }
+      } catch (err) {
+        console.error('Failed to refresh page content:', err);
+      }
     },
 
     /**
@@ -652,8 +701,9 @@ export function registerLightboxStore(Alpine) {
           throw new Error(`Failed to update name: ${response.status}`);
         }
 
-        // Update cache
+        // Update cache and mark for refresh
         this.detailsCache.set(resourceId, { ...this.resourceDetails });
+        this.needsRefreshOnClose = true;
         this.announce('Name updated');
       } catch (err) {
         console.error('Failed to update name:', err);
@@ -694,8 +744,9 @@ export function registerLightboxStore(Alpine) {
           throw new Error(`Failed to update description: ${response.status}`);
         }
 
-        // Update cache
+        // Update cache and mark for refresh
         this.detailsCache.set(resourceId, { ...this.resourceDetails });
+        this.needsRefreshOnClose = true;
         this.announce('Description updated');
       } catch (err) {
         console.error('Failed to update description:', err);
@@ -744,10 +795,11 @@ export function registerLightboxStore(Alpine) {
           throw new Error(`Failed to add tag: ${response.status}`);
         }
 
-        // Update cache
+        // Update cache and mark for refresh
         if (this.resourceDetails) {
           this.detailsCache.set(resourceId, { ...this.resourceDetails });
         }
+        this.needsRefreshOnClose = true;
         this.announce(`Added tag: ${tag.Name}`);
       } catch (err) {
         console.error('Failed to add tag:', err);
@@ -797,10 +849,11 @@ export function registerLightboxStore(Alpine) {
           throw new Error(`Failed to remove tag: ${response.status}`);
         }
 
-        // Update cache
+        // Update cache and mark for refresh
         if (this.resourceDetails) {
           this.detailsCache.set(resourceId, { ...this.resourceDetails });
         }
+        this.needsRefreshOnClose = true;
         this.announce(`Removed tag: ${tag.Name}`);
       } catch (err) {
         console.error('Failed to remove tag:', err);
