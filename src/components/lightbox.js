@@ -257,7 +257,7 @@ export function registerLightboxStore(Alpine) {
       this.announce('Loading more items...');
 
       try {
-        const newItems = await this.fetchPage(nextPage);
+        const { items: newItems, hasNextPage } = await this.fetchPage(nextPage);
 
         // Handle empty page (end of results)
         if (newItems.length === 0) {
@@ -270,10 +270,8 @@ export function registerLightboxStore(Alpine) {
         this.loadedPages.add(nextPage);
         this.currentPage = nextPage;
 
-        // Only assume more pages if we got a full page of items
-        // This may still cause one extra fetch when total is exactly divisible,
-        // but the empty page check above handles that gracefully
-        this.hasNextPage = newItems.length >= this.pageSize;
+        // Use the server's pagination info to determine if there are more pages
+        this.hasNextPage = hasNextPage;
 
         this.announce(`Loaded ${newItems.length} more items`);
       } catch (err) {
@@ -309,7 +307,7 @@ export function registerLightboxStore(Alpine) {
       this.announce('Loading previous items...');
 
       try {
-        const newItems = await this.fetchPage(prevPage);
+        const { items: newItems } = await this.fetchPage(prevPage);
         const prevItemCount = newItems.length;
 
         // Prepend items and adjust current index
@@ -336,7 +334,7 @@ export function registerLightboxStore(Alpine) {
     /**
      * Fetch a specific page of resources
      * @param {number} pageNum
-     * @returns {Promise<Array>}
+     * @returns {Promise<{items: Array, hasNextPage: boolean}>}
      */
     async fetchPage(pageNum) {
       // Cancel any existing request
@@ -361,11 +359,16 @@ export function registerLightboxStore(Alpine) {
       const data = await response.json();
       this.requestAborter = null;
 
-      // The JSON response is the full template context with a 'resources' key
+      // The JSON response is the full template context with 'resources' and 'pagination' keys
       const resources = data.resources || [];
+      const pagination = data.pagination || {};
+
+      // Determine if there's a next page from the server's pagination info
+      // NextLink.Selected is true when there's a next page available
+      const hasNextPage = pagination.NextLink?.Selected === true;
 
       // Map to lightbox item format, filtering to only images/videos
-      return resources
+      const items = resources
         .filter(r => r.ContentType?.startsWith('image/') || r.ContentType?.startsWith('video/'))
         .map(r => ({
           id: r.ID,
@@ -373,6 +376,8 @@ export function registerLightboxStore(Alpine) {
           contentType: r.ContentType,
           name: r.Name || ''
         }));
+
+      return { items, hasNextPage };
     },
 
     /**
