@@ -188,9 +188,10 @@ test.describe('Lightbox Functionality', () => {
     const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
     await expect(lightbox).toBeVisible();
 
-    // Click backdrop (the dark overlay)
-    const backdrop = lightbox.locator('div.bg-black\\/90');
-    await backdrop.click({ position: { x: 10, y: 10 } });
+    // Click on empty space in the main content area (not on the image)
+    // The main content area has @click.self to close the lightbox
+    const mainContent = lightbox.locator('div.flex-1.flex.items-center');
+    await mainContent.click({ position: { x: 10, y: 10 } });
 
     // Verify lightbox closed
     await expect(lightbox).toBeHidden();
@@ -207,8 +208,13 @@ test.describe('Lightbox Functionality', () => {
     const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
     await expect(lightbox).toBeVisible();
 
-    // Find and click Details link
-    const detailsLink = lightbox.locator('a:has-text("Details")');
+    // Open the edit panel first
+    const editButton = lightbox.locator('button:has-text("Edit")');
+    await expect(editButton).toBeVisible();
+    await editButton.click();
+
+    // Find and click the "View full resource details" link in the edit panel
+    const detailsLink = lightbox.locator('a:has-text("View full resource details")');
     await expect(detailsLink).toBeVisible();
 
     // Click and verify navigation
