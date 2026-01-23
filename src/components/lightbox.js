@@ -358,8 +358,11 @@ export function registerLightboxStore(Alpine) {
       if (!response.ok) {
         throw new Error(`Failed to fetch page: ${response.status}`);
       }
-      const resources = await response.json();
+      const data = await response.json();
       this.requestAborter = null;
+
+      // The JSON response is the full template context with a 'resources' key
+      const resources = data.resources || [];
 
       // Map to lightbox item format, filtering to only images/videos
       return resources
