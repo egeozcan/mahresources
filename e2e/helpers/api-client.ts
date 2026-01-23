@@ -387,8 +387,49 @@ export class ApiClient {
   }
 
   // Resource operations
-  async getResources(): Promise<{ ID: number; Name: string; Hash: string }[]> {
+  async getResources(): Promise<{ ID: number; Name: string; Hash: string; ContentType: string }[]> {
     const response = await this.request.get(`${this.baseUrl}/v1/resources`);
+    return this.handleResponse(response);
+  }
+
+  async getResourcesPaginated(page: number, pageSize = 50): Promise<{ ID: number; Name: string; Hash: string; ContentType: string }[]> {
+    const response = await this.request.get(`${this.baseUrl}/v1/resources?page=${page}&pageSize=${pageSize}`);
+    return this.handleResponse(response);
+  }
+
+  async createResource(data: {
+    filePath: string;
+    name: string;
+    description?: string;
+    ownerId?: number;
+    tags?: number[];
+  }): Promise<{ ID: number; Name: string; ContentType: string }> {
+    const fs = await import('fs');
+    const pathModule = await import('path');
+
+    const fileBuffer = fs.readFileSync(data.filePath);
+    const fileName = pathModule.basename(data.filePath);
+
+    // Build multipart object - the field name must be "resource" to match server
+    const multipartData: Record<string, unknown> = {
+      resource: {
+        name: fileName,
+        mimeType: 'image/png',
+        buffer: fileBuffer,
+      },
+      Name: data.name,
+    };
+
+    if (data.description) {
+      multipartData.Description = data.description;
+    }
+    if (data.ownerId) {
+      multipartData.OwnerId = data.ownerId.toString();
+    }
+
+    const response = await this.request.post(`${this.baseUrl}/v1/resource`, {
+      multipart: multipartData,
+    });
     return this.handleResponse(response);
   }
 

@@ -92,16 +92,19 @@ export function registerLightboxStore(Alpine) {
       // Parse pagination state from URL
       const urlParams = new URLSearchParams(window.location.search);
       this.currentPage = parseInt(urlParams.get('page'), 10) || 1;
-      this.hasPrevPage = this.currentPage > 1;
 
       // Store base URL for fetching pages
       this.baseUrl = window.location.pathname + window.location.search;
 
-      // Check for next page from pagination element
-      const nextLink = document.querySelector('nav[aria-label="Pagination"] a[href*="page="]:last-of-type');
-      if (nextLink) {
-        const nextMatch = nextLink.href.match(/page=(\d+)/);
-        this.hasNextPage = nextMatch && parseInt(nextMatch[1], 10) > this.currentPage;
+      // Check pagination state from data attributes (reliable method)
+      const paginationNav = document.querySelector('nav[aria-label="Pagination"]');
+      if (paginationNav) {
+        this.hasNextPage = paginationNav.dataset.hasNext === 'true';
+        this.hasPrevPage = paginationNav.dataset.hasPrev === 'true';
+      } else {
+        // Fallback: infer from current page
+        this.hasPrevPage = this.currentPage > 1;
+        this.hasNextPage = false;
       }
 
       // Mark current page as loaded
@@ -151,6 +154,9 @@ export function registerLightboxStore(Alpine) {
 
       const item = this.getCurrentItem();
       this.announce(`Opened ${this.isVideo(item?.contentType) ? 'video' : 'image'}: ${item?.name || 'media'}. ${this.currentIndex + 1} of ${this.items.length}`);
+
+      // Schedule a check for cached media after Alpine renders the new element
+      this.scheduleMediaCheck();
     },
 
     /**
@@ -192,12 +198,14 @@ export function registerLightboxStore(Alpine) {
         this.currentIndex++;
         this.loading = true;
         this.announcePosition();
+        this.scheduleMediaCheck();
       } else if (this.hasNextPage) {
         await this.loadNextPage();
         if (this.currentIndex < this.items.length - 1) {
           this.currentIndex++;
           this.loading = true;
           this.announcePosition();
+          this.scheduleMediaCheck();
         }
       }
     },
@@ -215,6 +223,7 @@ export function registerLightboxStore(Alpine) {
         this.currentIndex--;
         this.loading = true;
         this.announcePosition();
+        this.scheduleMediaCheck();
       } else if (this.hasPrevPage) {
         const prevItemCount = await this.loadPrevPage();
         if (prevItemCount > 0) {
@@ -222,6 +231,7 @@ export function registerLightboxStore(Alpine) {
           this.currentIndex = prevItemCount - 1;
           this.loading = true;
           this.announcePosition();
+          this.scheduleMediaCheck();
         }
       }
     },
@@ -393,6 +403,39 @@ export function registerLightboxStore(Alpine) {
      */
     onMediaLoaded() {
       this.loading = false;
+    },
+
+    /**
+     * Check if media element is already loaded (handles cached media)
+     * Called via x-init to detect if image/video loaded before Alpine wired up @load handler
+     * @param {HTMLElement} el - The img or video element
+     */
+    checkIfMediaLoaded(el) {
+      if (!el) return;
+      // Images: check 'complete' property and naturalWidth > 0
+      if (el.tagName === 'IMG' && el.complete && el.naturalWidth > 0) {
+        this.loading = false;
+        return;
+      }
+      // Videos: check readyState >= 3 (HAVE_FUTURE_DATA)
+      if (el.tagName === 'VIDEO' && el.readyState >= 3) {
+        this.loading = false;
+      }
+    },
+
+    /**
+     * Schedule a check for cached media after Alpine renders
+     * Uses double requestAnimationFrame to ensure DOM is fully updated
+     */
+    scheduleMediaCheck() {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const el = document.querySelector('[role="dialog"] img, [role="dialog"] video');
+          if (el) {
+            this.checkIfMediaLoaded(el);
+          }
+        });
+      });
     },
 
     /**

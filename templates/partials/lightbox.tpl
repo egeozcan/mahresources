@@ -38,6 +38,7 @@
                 :src="$store.lightbox.getCurrentItem()?.viewUrl"
                 :alt="$store.lightbox.getCurrentItem()?.name || 'Image'"
                 class="max-h-[90vh] max-w-[90vw] object-contain"
+                x-init="$nextTick(() => $store.lightbox.checkIfMediaLoaded($el))"
                 @load="$store.lightbox.onMediaLoaded()"
                 @error="$store.lightbox.onMediaLoaded()"
             >
@@ -50,6 +51,7 @@
                 :key="$store.lightbox.getCurrentItem()?.id"
                 controls
                 class="max-h-[90vh] max-w-[90vw]"
+                x-init="$nextTick(() => $store.lightbox.checkIfMediaLoaded($el))"
                 @loadeddata="$store.lightbox.onMediaLoaded()"
                 @error="$store.lightbox.onMediaLoaded()"
             >
