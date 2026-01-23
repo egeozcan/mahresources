@@ -14,14 +14,14 @@
     @keydown.arrow-right.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.next()"
     @touchstart="$store.lightbox.handleTouchStart($event)"
     @touchend="$store.lightbox.handleTouchEnd($event)"
-    class="fixed inset-0 z-50 flex"
+    class="fixed inset-0 z-50 flex h-screen w-screen"
     role="dialog"
     aria-modal="true"
     :aria-label="$store.lightbox.getCurrentItem()?.name || 'Media viewer'"
 >
     <!-- Backdrop -->
     <div
-        class="absolute inset-0 bg-black/90"
+        class="absolute inset-0 h-full w-full bg-black/90"
         @click="$store.lightbox.close()"
     ></div>
 
