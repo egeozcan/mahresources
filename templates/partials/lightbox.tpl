@@ -29,6 +29,7 @@
     <div
         class="relative flex-1 flex items-center justify-center transition-all duration-300 ease-in-out"
         :class="$store.lightbox.editPanelOpen ? 'md:mr-[400px]' : ''"
+        @click.self="$store.lightbox.close()"
     >
         <!-- Loading spinner (shown while media is loading) -->
         <div
@@ -42,7 +43,7 @@
         </div>
 
         <!-- Media content -->
-        <div class="relative max-h-[90vh] max-w-[90vw] flex items-center justify-center">
+        <div class="relative max-h-[90vh] max-w-[90vw] flex items-center justify-center" @click.self="$store.lightbox.close()">
             <!-- Image display -->
             <template x-if="$store.lightbox.isImage($store.lightbox.getCurrentItem()?.contentType)">
                 <img
