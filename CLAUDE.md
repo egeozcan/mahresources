@@ -26,14 +26,14 @@ go test ./...
 # Run specific test file
 go test ./server/api_tests/...
 
-# Run E2E tests (requires server running in ephemeral mode)
-# Terminal 1: Start ephemeral server (use -max-db-connections=2 to reduce SQLite lock contention)
-./mahresources -ephemeral -bind-address=:8181 -max-db-connections=2
-# Terminal 2: Run tests
-cd e2e && npm test
+# Run E2E tests (recommended: automatic server management)
+cd e2e && npm run test:with-server
 
 # Run accessibility tests only
-cd e2e && npm run test:a11y
+cd e2e && npm run test:with-server:a11y
+
+# Run E2E tests with browser visible
+cd e2e && npm run test:with-server:headed
 
 # Build Go binary directly (requires json1 for SQLite JSON, fts5 for full-text search)
 go build --tags 'json1 fts5'
@@ -193,7 +193,7 @@ npm run test:with-server:debug   # Run in debug mode
 npm run test:with-server:a11y    # Run accessibility tests only
 ```
 
-The `test:with-server` scripts automatically find an available port, start an ephemeral server with `-max-db-connections=1`, run tests, and clean up.
+The `test:with-server` scripts automatically find an available port, start an ephemeral server with `-max-db-connections=2`, run tests in parallel, and clean up.
 
 **Manual server management** (if you need more control):
 

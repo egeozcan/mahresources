@@ -109,14 +109,26 @@ go test ./...
 
 The project includes a comprehensive Playwright test suite covering CRUD operations, bulk operations, global search, edge cases, and accessibility (WCAG compliance via axe-core).
 
-**Always run E2E tests against an ephemeral instance** to ensure test isolation:
+**Recommended: Use the automatic server management scripts** which handle starting an ephemeral server, running tests, and cleanup:
+
+```bash
+cd e2e
+npm run test:with-server         # Run all tests
+npm run test:with-server:headed  # Run with browser visible
+npm run test:with-server:debug   # Run in debug mode
+npm run test:with-server:a11y    # Run accessibility tests only
+```
+
+These scripts automatically find an available port, start an ephemeral server, run tests in parallel, and clean up.
+
+**Manual server management** (if you need more control):
 
 ```bash
 # 1. Build the application
 npm run build
 
 # 2. Start server in ephemeral mode (separate terminal)
-./mahresources -ephemeral -bind-address=:8181
+./mahresources -ephemeral -bind-address=:8181 -max-db-connections=2
 
 # 3. Run tests
 cd e2e && npm test
