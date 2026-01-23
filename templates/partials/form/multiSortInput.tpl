@@ -15,6 +15,7 @@
 
             <select
                 x-model="sort.column"
+                x-init="$nextTick(() => $el.value = sort.column)"
                 @change="if (sort.column !== '__meta__') sort.metaKey = ''"
                 class="flex-1 min-w-[150px] shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm border-gray-300 rounded-md"
                 :aria-label="'Sort column ' + (index + 1)"
