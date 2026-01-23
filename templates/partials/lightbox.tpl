@@ -199,20 +199,22 @@
                     </div>
 
                     <!-- Tags section - uses autocompleter component -->
-                    <!-- :key forces recreation when resource changes to get fresh tags -->
+                    <!-- :key uses resourceDetails.ID so component recreates AFTER new data is fetched, not before -->
+                    <!-- 'loading' fallback ensures component is destroyed while loading new data -->
                     <!-- Use spread to create a fresh array copy, avoiding shared reference issues with Alpine reactivity -->
-                    <div
-                        x-data="autocompleter({
-                            selectedResults: [...($store.lightbox.resourceDetails?.Tags || [])],
-                            url: '/v1/tags',
-                            addUrl: '/v1/tag',
-                            standalone: true,
-                            onSelect: (tag) => $store.lightbox.saveTagAddition(tag),
-                            onRemove: (tag) => $store.lightbox.saveTagRemoval(tag)
-                        })"
-                        :key="$store.lightbox.getCurrentItem()?.id"
-                        class="relative"
-                    >
+                    <template x-if="$store.lightbox.resourceDetails">
+                        <div
+                            x-data="autocompleter({
+                                selectedResults: [...($store.lightbox.resourceDetails?.Tags || [])],
+                                url: '/v1/tags',
+                                addUrl: '/v1/tag',
+                                standalone: true,
+                                onSelect: (tag) => $store.lightbox.saveTagAddition(tag),
+                                onRemove: (tag) => $store.lightbox.saveTagRemoval(tag)
+                            })"
+                            :key="$store.lightbox.resourceDetails?.ID"
+                            class="relative"
+                        >
                         <label class="block text-sm font-medium text-gray-300 mb-1.5">Tags</label>
 
                         <!-- Add tag input -->
@@ -309,7 +311,15 @@
                             <!-- Use x-show instead of x-if to avoid interfering with x-for's DOM markers -->
                             <span x-show="!selectedResults?.length" x-cloak class="text-gray-500 text-sm italic">No tags yet</span>
                         </div>
-                    </div>
+                        </div>
+                    </template>
+                    <!-- Tags loading state -->
+                    <template x-if="!$store.lightbox.resourceDetails">
+                        <div class="relative">
+                            <label class="block text-sm font-medium text-gray-300 mb-1.5">Tags</label>
+                            <div class="text-gray-500 text-sm italic">Loading tags...</div>
+                        </div>
+                    </template>
 
                     <!-- Link to full details page -->
                     <div class="pt-4 border-t border-gray-700">

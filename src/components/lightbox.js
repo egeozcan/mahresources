@@ -646,8 +646,13 @@ export function registerLightboxStore(Alpine) {
         }
 
         const data = await response.json();
-        this.resourceDetails = data.resource || data;
-        this.detailsCache.set(resourceId, this.resourceDetails);
+        const fetchedDetails = data.resource || data;
+
+        // Only update if we're still on the same resource (prevents race conditions)
+        if (this.getCurrentItem()?.id === resourceId) {
+          this.resourceDetails = fetchedDetails;
+          this.detailsCache.set(resourceId, fetchedDetails);
+        }
         this.detailsAborter = null;
       } catch (err) {
         if (err.name !== 'AbortError') {
@@ -664,6 +669,14 @@ export function registerLightboxStore(Alpine) {
      */
     async onResourceChange() {
       if (!this.editPanelOpen) return;
+      // Clear current details to show loading state and ensure autocompleter
+      // recreates with fresh data when fetch completes
+      this.resourceDetails = null;
+      // Force fresh fetch by clearing cache for this resource
+      const resourceId = this.getCurrentItem()?.id;
+      if (resourceId) {
+        this.detailsCache.delete(resourceId);
+      }
       await this.fetchResourceDetails();
     },
 
