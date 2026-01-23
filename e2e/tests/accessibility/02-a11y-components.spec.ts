@@ -9,7 +9,7 @@ import { test, expect } from '../../fixtures/a11y.fixture';
 test.describe('Component Accessibility - Global Search', () => {
   test('Global Search button should be accessible', async ({ page, checkA11y }) => {
     await page.goto('/notes');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // Check the search trigger button is accessible
     const searchButton = page.locator('[aria-label="Open search dialog"]');
@@ -21,7 +21,7 @@ test.describe('Component Accessibility - Global Search', () => {
 
   test('Global Search dialog (open) should be accessible', async ({ page, checkA11y }) => {
     await page.goto('/notes');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // Open search with keyboard shortcut
     await page.keyboard.press('Meta+k');
@@ -35,7 +35,7 @@ test.describe('Component Accessibility - Global Search', () => {
 
   test('Global Search with results should be accessible', async ({ page, checkA11y, a11yTestData }) => {
     await page.goto('/notes');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // Open search
     await page.keyboard.press('Meta+k');
@@ -55,7 +55,7 @@ test.describe('Component Accessibility - Global Search', () => {
 
   test('Global Search with no results should be accessible', async ({ page, checkA11y }) => {
     await page.goto('/notes');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // Open search
     await page.keyboard.press('Meta+k');
@@ -76,7 +76,7 @@ test.describe('Component Accessibility - Global Search', () => {
 test.describe('Component Accessibility - Autocompleter/Dropdown', () => {
   test('Tag autocompleter on create note form should be accessible', async ({ page, checkA11y }) => {
     await page.goto('/note/new');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // The form with autocompleter should be accessible
     await checkA11y();
@@ -84,7 +84,7 @@ test.describe('Component Accessibility - Autocompleter/Dropdown', () => {
 
   test('Group autocompleter on create note form should be accessible', async ({ page, checkA11y }) => {
     await page.goto('/note/new');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // Click on a tag/group autocompleter to expand it
     const autocompleterInput = page.locator('input[placeholder*="tag"], input[placeholder*="group"]').first();
@@ -101,7 +101,7 @@ test.describe('Component Accessibility - Autocompleter/Dropdown', () => {
 test.describe('Component Accessibility - Bulk Selection', () => {
   test('Bulk selection toolbar (no items selected) should be accessible', async ({ page, checkA11y }) => {
     await page.goto('/notes');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // Bulk selection is present on list pages
     await checkA11y();
@@ -109,14 +109,14 @@ test.describe('Component Accessibility - Bulk Selection', () => {
 
   test('Group list with bulk selection should be accessible', async ({ page, checkA11y }) => {
     await page.goto('/groups');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     await checkA11y();
   });
 
   test('Resource list with bulk selection should be accessible', async ({ page, checkA11y }) => {
     await page.goto('/resources');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     await checkA11y();
   });
@@ -125,7 +125,7 @@ test.describe('Component Accessibility - Bulk Selection', () => {
 test.describe('Component Accessibility - Web Components', () => {
   test('Expandable text on note detail should be accessible', async ({ page, checkA11y, a11yTestData }) => {
     await page.goto(`/note?id=${a11yTestData.noteId}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // Check if expandable-text exists on the page
     const expandableText = page.locator('expandable-text');
@@ -140,7 +140,7 @@ test.describe('Component Accessibility - Web Components', () => {
 
   test('Inline edit on note detail should be accessible', async ({ page, checkA11y, a11yTestData }) => {
     await page.goto(`/note?id=${a11yTestData.noteId}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // Check if inline-edit exists
     const inlineEdit = page.locator('inline-edit');
@@ -155,7 +155,7 @@ test.describe('Component Accessibility - Web Components', () => {
 
   test('Inline edit on group detail should be accessible', async ({ page, checkA11y, a11yTestData }) => {
     await page.goto(`/group?id=${a11yTestData.groupId}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     await checkA11y();
   });
@@ -165,7 +165,7 @@ test.describe('Component Accessibility - Confirm Action', () => {
   test('Delete button with confirm action should be accessible', async ({ page, checkA11y, a11yTestData }) => {
     // Visit a detail page that has delete functionality
     await page.goto(`/note?id=${a11yTestData.noteId}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // Check if there's a delete/confirm action button
     const confirmActionButton = page.locator('[x-data*="confirmAction"], button:has-text("Delete")');
@@ -184,7 +184,7 @@ test.describe('Component Accessibility - Confirm Action', () => {
 test.describe('Component Accessibility - Forms', () => {
   test('Note creation form should have proper labels', async ({ page, checkA11y }) => {
     await page.goto('/note/new');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // Verify form elements have labels
     const formInputs = page.locator('input:not([type="hidden"]), textarea, select');
@@ -198,35 +198,35 @@ test.describe('Component Accessibility - Forms', () => {
 
   test('Group creation form should have proper labels', async ({ page, checkA11y }) => {
     await page.goto('/group/new');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     await checkA11y();
   });
 
   test('Resource creation form should have proper labels', async ({ page, checkA11y }) => {
     await page.goto('/resource/new');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     await checkA11y();
   });
 
   test('Category creation form should have proper labels', async ({ page, checkA11y }) => {
     await page.goto('/category/new');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     await checkA11y();
   });
 
   test('Query creation form should have proper labels', async ({ page, checkA11y }) => {
     await page.goto('/query/new');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     await checkA11y();
   });
 
   test('Tag creation form should have proper labels', async ({ page, checkA11y }) => {
     await page.goto('/tag/new');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     await checkA11y();
   });
@@ -235,7 +235,7 @@ test.describe('Component Accessibility - Forms', () => {
 test.describe('Component Accessibility - Navigation', () => {
   test('Main navigation should be accessible', async ({ page, checkA11y }) => {
     await page.goto('/notes');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // Check the nav element exists
     const nav = page.locator('nav');
@@ -251,7 +251,7 @@ test.describe('Component Accessibility - Navigation', () => {
   test('Page with sidebar/navigation should be accessible', async ({ page, checkA11y, a11yTestData }) => {
     // Group detail often has navigation elements
     await page.goto(`/group?id=${a11yTestData.groupId}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     await checkA11y();
   });
@@ -260,28 +260,28 @@ test.describe('Component Accessibility - Navigation', () => {
 test.describe('Component Accessibility - Tables and Lists', () => {
   test('Notes list table should be accessible', async ({ page, checkA11y }) => {
     await page.goto('/notes');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     await checkA11y();
   });
 
   test('Groups list table should be accessible', async ({ page, checkA11y }) => {
     await page.goto('/groups');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     await checkA11y();
   });
 
   test('Resources list (detailed view) should be accessible', async ({ page, checkA11y }) => {
     await page.goto('/resources/details');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     await checkA11y();
   });
 
   test('Tags list should be accessible', async ({ page, checkA11y }) => {
     await page.goto('/tags');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     await checkA11y();
   });

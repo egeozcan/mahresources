@@ -13,7 +13,7 @@ test.describe('Page Accessibility - Static Pages', () => {
       await page.goto(pageConfig.path);
 
       // Wait for page to be fully loaded
-      await page.waitForLoadState('networkidle');
+      await page.waitForLoadState('load');
 
       // Run accessibility check
       await checkA11y();
@@ -29,7 +29,7 @@ test.describe('Page Accessibility - Dynamic Pages', () => {
       await page.goto(path);
 
       // Wait for page to be fully loaded
-      await page.waitForLoadState('networkidle');
+      await page.waitForLoadState('load');
 
       // Verify we're on a valid page (not a 404 or error)
       const title = await page.title();
@@ -46,19 +46,19 @@ test.describe('Page Accessibility - Filtered List Views', () => {
   test('Notes list with filters should have no accessibility violations', async ({ page, checkA11y, a11yTestData }) => {
     // Visit notes page with tag filter
     await page.goto(`/notes?tags=${a11yTestData.tagId}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await checkA11y();
   });
 
   test('Groups list with category filter should have no accessibility violations', async ({ page, checkA11y, a11yTestData }) => {
     await page.goto(`/groups?category=${a11yTestData.categoryId}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await checkA11y();
   });
 
   test('Resources list with tag filter should have no accessibility violations', async ({ page, checkA11y, a11yTestData }) => {
     await page.goto(`/resources?tags=${a11yTestData.tagId}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await checkA11y();
   });
 });
@@ -66,7 +66,7 @@ test.describe('Page Accessibility - Filtered List Views', () => {
 test.describe('Page Accessibility - Alternative Formats', () => {
   test('Note text view should have no accessibility violations', async ({ page, checkA11y, a11yTestData }) => {
     await page.goto(`/note/text?id=${a11yTestData.noteId}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await checkA11y();
   });
 });

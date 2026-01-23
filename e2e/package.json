@@ -7,13 +7,13 @@
     "test:headed": "playwright test --headed",
     "test:debug": "playwright test --debug",
     "test:ui": "playwright test --ui",
-    "test:a11y": "playwright test tests/accessibility/ --workers=1",
-    "test:a11y:headed": "playwright test tests/accessibility/ --headed --workers=1",
+    "test:a11y": "playwright test tests/accessibility/",
+    "test:a11y:headed": "playwright test tests/accessibility/ --headed",
     "report": "playwright show-report",
     "test:with-server": "node scripts/run-tests.js test",
     "test:with-server:headed": "node scripts/run-tests.js test --headed --workers=1",
     "test:with-server:debug": "node scripts/run-tests.js test --debug",
-    "test:with-server:a11y": "node scripts/run-tests.js test tests/accessibility/ --workers=1"
+    "test:with-server:a11y": "node scripts/run-tests.js test tests/accessibility/"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.0",

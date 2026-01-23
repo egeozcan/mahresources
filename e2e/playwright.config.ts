@@ -4,7 +4,7 @@ export default defineConfig({
   testDir: './tests',
   fullyParallel: false, // Tests within a file run sequentially (they share state)
   forbidOnly: !!process.env.CI,
-  retries: 2, // Retry twice to handle occasional flaky interactions
+  retries: process.env.CI ? 4 : 1,
   workers: process.env.CI ? 1 : 4, // Run different test files in parallel locally
   reporter: [
     ['list'],
