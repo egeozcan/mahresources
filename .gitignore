@@ -22,3 +22,6 @@
 /e2e/.playwright/
 /e2e/mahresources
 /test-results/
+
+# Git worktrees
+.worktrees/
