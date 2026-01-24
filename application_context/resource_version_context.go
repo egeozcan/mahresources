@@ -404,6 +404,44 @@ func (ctx *MahresourcesContext) BulkCleanupVersions(query *query_models.BulkVers
 	return result, nil
 }
 
+// VersionComparison holds comparison data between two versions
+type VersionComparison struct {
+	Version1       *models.ResourceVersion `json:"version1"`
+	Version2       *models.ResourceVersion `json:"version2"`
+	SizeDelta      int64                   `json:"sizeDelta"`
+	SameHash       bool                    `json:"sameHash"`
+	SameType       bool                    `json:"sameType"`
+	DimensionsDiff bool                    `json:"dimensionsDiff"`
+}
+
+// CompareVersions compares two versions and returns comparison data
+func (ctx *MahresourcesContext) CompareVersions(resourceID, v1ID, v2ID uint) (*VersionComparison, error) {
+	version1, err := ctx.GetVersion(v1ID)
+	if err != nil {
+		return nil, fmt.Errorf("version 1 not found: %w", err)
+	}
+
+	version2, err := ctx.GetVersion(v2ID)
+	if err != nil {
+		return nil, fmt.Errorf("version 2 not found: %w", err)
+	}
+
+	if version1.ResourceID != resourceID || version2.ResourceID != resourceID {
+		return nil, errors.New("versions do not belong to this resource")
+	}
+
+	comparison := &VersionComparison{
+		Version1:       version1,
+		Version2:       version2,
+		SizeDelta:      version2.FileSize - version1.FileSize,
+		SameHash:       version1.Hash == version2.Hash,
+		SameType:       version1.ContentType == version2.ContentType,
+		DimensionsDiff: version1.Width != version2.Width || version1.Height != version2.Height,
+	}
+
+	return comparison, nil
+}
+
 // MigrateResourceVersions creates initial version records for existing resources
 func (ctx *MahresourcesContext) MigrateResourceVersions() error {
 	var versionCount int64
