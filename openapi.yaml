@@ -770,6 +770,15 @@ components:
                     type: string
                 Width:
                     type: integer
+                currentVersion:
+                    $ref: '#/components/schemas/ResourceVersion'
+                currentVersionId:
+                    nullable: true
+                    type: integer
+                versions:
+                    items:
+                        $ref: '#/components/schemas/ResourceVersionPartial'
+                    type: array
             type: object
         ResourceEditor:
             properties:
@@ -957,6 +966,44 @@ components:
                     items:
                         type: integer
                     type: array
+            type: object
+        ResourceVersion:
+            properties:
+                comment:
+                    type: string
+                contentType:
+                    type: string
+                createdAt:
+                    format: date-time
+                    readOnly: true
+                    type: string
+                fileSize:
+                    type: integer
+                hash:
+                    type: string
+                hashType:
+                    type: string
+                height:
+                    type: integer
+                id:
+                    readOnly: true
+                    type: integer
+                location:
+                    type: string
+                resourceId:
+                    type: integer
+                storageLocation:
+                    nullable: true
+                    type: string
+                versionNumber:
+                    type: integer
+                width:
+                    type: integer
+            type: object
+        ResourceVersionPartial:
+            properties:
+                id:
+                    type: integer
             type: object
         RotateResourceQuery:
             properties:
