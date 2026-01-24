@@ -209,6 +209,7 @@
                                 url: '/v1/tags',
                                 addUrl: '/v1/tag',
                                 standalone: true,
+                                sortBy: 'most_used_resource',
                                 onSelect: (tag) => $store.lightbox.saveTagAddition(tag),
                                 onRemove: (tag) => $store.lightbox.saveTagRemoval(tag)
                             })"
