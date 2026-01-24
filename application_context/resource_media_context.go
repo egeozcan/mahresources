@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/draw"
 	"io"
 	"log"
 	"mahresources/constants"
@@ -22,6 +23,8 @@ import (
 	"github.com/anthonynsimon/bild/transform"
 	"github.com/disintegration/imaging"
 	"github.com/spf13/afero"
+	"github.com/srwiley/oksvg"
+	"github.com/srwiley/rasterx"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -82,6 +85,12 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(
 		fileBytes, err = ctx.generateImageThumbnail(nullThumbnail.Data, width, height)
 		if err != nil {
 			return nil, fmt.Errorf("error generating image thumbnail from null thumbnail: %w", err)
+		}
+	} else if resource.ContentType == "image/svg+xml" {
+		// Handle SVG resources with dedicated SVG renderer
+		fileBytes, err = ctx.generateSVGThumbnailFromFile(fs, resource.GetCleanLocation(), width, height, httpContext)
+		if err != nil {
+			return nil, fmt.Errorf("error generating SVG thumbnail from file: %w", err)
 		}
 	} else if strings.HasPrefix(resource.ContentType, "image/") {
 		// Handle image resources by generating a thumbnail directly from the image file
@@ -356,6 +365,137 @@ func (ctx *MahresourcesContext) decodeWithImageMagick(
 	}
 
 	return img, nil
+}
+
+// preprocessSVG cleans up SVG content to work around oksvg limitations.
+// Specifically, it removes percentage-based width/height attributes which
+// cause oksvg to fail reading the viewBox.
+func preprocessSVG(data []byte) []byte {
+	content := string(data)
+
+	// Remove width="100%" or width='100%' (and similar percentages)
+	// This allows oksvg to fall back to viewBox dimensions
+	for _, attr := range []string{"width", "height"} {
+		for _, quote := range []string{`"`, `'`} {
+			// Match patterns like width="100%" or height="50%"
+			start := 0
+			for {
+				attrStart := strings.Index(content[start:], attr+"="+quote)
+				if attrStart == -1 {
+					break
+				}
+				attrStart += start
+				valueStart := attrStart + len(attr) + 2 // skip attr="
+				valueEnd := strings.Index(content[valueStart:], quote)
+				if valueEnd == -1 {
+					break
+				}
+				valueEnd += valueStart
+				value := content[valueStart:valueEnd]
+
+				// If value contains %, remove the entire attribute
+				if strings.Contains(value, "%") {
+					// Remove from attr= to closing quote (inclusive)
+					content = content[:attrStart] + content[valueEnd+1:]
+					// Don't advance start since we removed content
+				} else {
+					start = valueEnd + 1
+				}
+			}
+		}
+	}
+
+	return []byte(content)
+}
+
+// decodeSVG renders an SVG file to a raster image using the oksvg/rasterx libraries.
+// It reads the SVG, determines its dimensions, and rasterizes it to an RGBA image.
+func (ctx *MahresourcesContext) decodeSVG(file io.Reader) (image.Image, error) {
+	// Read all SVG data for preprocessing
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read SVG data: %w", err)
+	}
+
+	// Preprocess to fix oksvg limitations with percentage dimensions
+	data = preprocessSVG(data)
+
+	icon, err := oksvg.ReadIconStream(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse SVG: %w", err)
+	}
+
+	// Get the SVG's viewbox dimensions
+	w := int(icon.ViewBox.W)
+	h := int(icon.ViewBox.H)
+
+	// Track if we have a valid viewbox for scaling
+	hasViewBox := w > 0 && h > 0
+
+	// Use default dimensions if viewbox is missing
+	if !hasViewBox {
+		w = 800
+		h = 600
+	}
+
+	// Cap dimensions to prevent excessive memory usage
+	maxDim := 2000
+	if w > maxDim || h > maxDim {
+		scale := float64(maxDim) / math.Max(float64(w), float64(h))
+		w = int(float64(w) * scale)
+		h = int(float64(h) * scale)
+	}
+
+	// Only set target if we have a valid viewbox to scale from.
+	// When viewbox is 0x0, SetTarget breaks scaling math - let content render at natural coords.
+	if hasViewBox {
+		icon.SetTarget(0, 0, float64(w), float64(h))
+	}
+
+	// Create an RGBA image to draw onto
+	rgba := image.NewRGBA(image.Rect(0, 0, w, h))
+
+	// Fill with white background (SVGs often have transparent backgrounds)
+	draw.Draw(rgba, rgba.Bounds(), image.White, image.Point{}, draw.Src)
+
+	// Create a scanner/rasterizer and draw the SVG
+	scanner := rasterx.NewScannerGV(w, h, rgba, rgba.Bounds())
+	raster := rasterx.NewDasher(w, h, scanner)
+	icon.Draw(raster, 1.0)
+
+	return rgba, nil
+}
+
+// generateSVGThumbnailFromFile generates a thumbnail from an SVG file.
+func (ctx *MahresourcesContext) generateSVGThumbnailFromFile(
+	fs afero.Fs,
+	location string,
+	width, height uint,
+	httpContext context.Context,
+) ([]byte, error) {
+	file, err := fs.Open(location)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open SVG file: %w", err)
+	}
+	defer file.Close()
+
+	// Decode SVG to raster image
+	originalImage, err := ctx.decodeSVG(file)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode SVG file: %w", err)
+	}
+
+	// Resize using imaging library with Lanczos filter
+	newImage := imaging.Resize(originalImage, int(width), int(height), imaging.Lanczos)
+
+	// Encode as JPEG with adaptive quality
+	quality := getJPEGQuality(width, height)
+	var buf bytes.Buffer
+	if err := imaging.Encode(&buf, newImage, imaging.JPEG, imaging.JPEGQuality(quality)); err != nil {
+		return nil, fmt.Errorf("failed to encode resized SVG image: %w", err)
+	}
+
+	return buf.Bytes(), nil
 }
 
 // generateImageThumbnailFromFile generates a thumbnail from the image file at the given location.
