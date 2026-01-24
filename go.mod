@@ -8,6 +8,7 @@ require (
 	github.com/Nr90/imgsim v0.0.0-20180202144352-5caa057144b0
 	github.com/anthonynsimon/bild v0.14.0
 	github.com/c2h5oh/datasize v0.0.0-20200825124411-48ed595a09d2
+	github.com/disintegration/imaging v1.6.2
 	github.com/flosch/pongo2-addons v0.0.0-20210526150811-f969446c5b72
 	github.com/flosch/pongo2/v4 v4.0.2
 	github.com/gabriel-vasile/mimetype v1.4.0
@@ -20,7 +21,6 @@ require (
 	github.com/lib/pq v1.10.2
 	github.com/matoous/go-nanoid/v2 v2.0.0
 	github.com/mattn/go-sqlite3 v1.14.9
-	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
 	github.com/spf13/afero v1.11.0
 	github.com/stretchr/testify v1.9.0
 	github.com/yuin/goldmark v1.4.13
@@ -51,6 +51,7 @@ require (
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826 // indirect
+	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
 	github.com/oasdiff/yaml v0.0.0-20250309154309-f31be36b4037 // indirect
 	github.com/oasdiff/yaml3 v0.0.0-20250309153720-d2182401db90 // indirect
 	github.com/perimeterx/marshmallow v1.1.5 // indirect

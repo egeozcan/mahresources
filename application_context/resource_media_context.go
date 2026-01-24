@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"image/jpeg"
 	"io"
 	"mahresources/constants"
 	"mahresources/models"
@@ -18,7 +17,7 @@ import (
 
 	"github.com/anthonynsimon/bild/imgio"
 	"github.com/anthonynsimon/bild/transform"
-	"github.com/nfnt/resize"
+	"github.com/disintegration/imaging"
 	"github.com/spf13/afero"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -27,6 +26,7 @@ import (
 	_ "image/png"
 
 	_ "golang.org/x/image/bmp"
+	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/webp"
 )
 
@@ -203,6 +203,26 @@ func (ctx *MahresourcesContext) getOrCreateNullThumbnail(
 	return nullThumbnail, fileBytes, nil
 }
 
+// getJPEGQuality returns an appropriate JPEG quality based on thumbnail dimensions.
+// Smaller thumbnails can use lower quality without noticeable artifacts.
+func getJPEGQuality(width, height uint) int {
+	maxDim := width
+	if height > width {
+		maxDim = height
+	}
+
+	switch {
+	case maxDim <= 100:
+		return 70
+	case maxDim <= 200:
+		return 75
+	case maxDim <= 400:
+		return 80
+	default:
+		return 85
+	}
+}
+
 // generateImageThumbnail resizes the provided image data to the desired dimensions.
 func (ctx *MahresourcesContext) generateImageThumbnail(
 	imageData []byte,
@@ -213,21 +233,87 @@ func (ctx *MahresourcesContext) generateImageThumbnail(
 		return nil, fmt.Errorf("failed to decode image data: %w", err)
 	}
 
-	// Resize the image to desired dimensions
-	newImage := resize.Resize(width, height, originalImage, resize.Lanczos3)
+	// Use imaging library for faster, high-quality resize with Lanczos filter
+	newImage := imaging.Resize(originalImage, int(width), int(height), imaging.Lanczos)
 
+	// Use adaptive JPEG quality based on dimensions
+	quality := getJPEGQuality(width, height)
 	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, newImage, nil); err != nil {
+	if err := imaging.Encode(&buf, newImage, imaging.JPEG, imaging.JPEGQuality(quality)); err != nil {
 		return nil, fmt.Errorf("failed to encode resized image: %w", err)
 	}
 
-	// Read the resized image bytes
-	fileBytes, err := io.ReadAll(&buf)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read resized image bytes: %w", err)
+	return buf.Bytes(), nil
+}
+
+// decodeImageWithFallback attempts to decode an image using Go's standard decoders,
+// falling back to ImageMagick for unsupported formats like HEIC/AVIF.
+func (ctx *MahresourcesContext) decodeImageWithFallback(
+	httpContext context.Context,
+	file io.ReadSeeker,
+) (image.Image, error) {
+	// First, try standard Go decoders (PNG, JPEG, GIF, WebP, BMP, TIFF)
+	img, _, err := image.Decode(file)
+	if err == nil {
+		return img, nil
 	}
 
-	return fileBytes, nil
+	// Reset file position for fallback attempt
+	if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
+		return nil, fmt.Errorf("failed to seek file: %w", seekErr)
+	}
+
+	// Try ImageMagick as fallback for HEIC, AVIF, and other formats
+	img, fallbackErr := ctx.decodeWithImageMagick(httpContext, file)
+	if fallbackErr == nil {
+		return img, nil
+	}
+
+	// Return original error if all decoders fail
+	return nil, fmt.Errorf("failed to decode image (tried standard decoders and ImageMagick): %w", err)
+}
+
+// decodeWithImageMagick uses ImageMagick's convert command to decode unsupported formats.
+func (ctx *MahresourcesContext) decodeWithImageMagick(
+	httpContext context.Context,
+	file io.Reader,
+) (image.Image, error) {
+	// Check if ImageMagick is available by looking for 'convert' or 'magick' command
+	convertPath := "convert"
+	if _, err := exec.LookPath("magick"); err == nil {
+		convertPath = "magick"
+	} else if _, err := exec.LookPath("convert"); err == nil {
+		convertPath = "convert"
+	} else {
+		return nil, errors.New("ImageMagick not available")
+	}
+
+	// Use ImageMagick to convert to PNG (lossless, supports transparency)
+	cmd := exec.CommandContext(httpContext, convertPath,
+		"-",      // read from stdin
+		"-strip", // remove metadata for smaller output
+		"png:-",  // output PNG to stdout
+	)
+
+	cmd.Stdin = file
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if httpContext.Err() != nil {
+			return nil, httpContext.Err()
+		}
+		return nil, fmt.Errorf("ImageMagick conversion failed: %w (stderr: %s)", err, stderr.String())
+	}
+
+	// Decode the PNG output
+	img, _, err := image.Decode(&stdout)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode ImageMagick output: %w", err)
+	}
+
+	return img, nil
 }
 
 // generateImageThumbnailFromFile generates a thumbnail from the image file at the given location.
@@ -243,26 +329,23 @@ func (ctx *MahresourcesContext) generateImageThumbnailFromFile(
 	}
 	defer file.Close()
 
-	originalImage, _, err := image.Decode(file)
+	// Use fallback decoder for better format support (HEIC, AVIF, etc.)
+	originalImage, err := ctx.decodeImageWithFallback(httpContext, file)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode image file: %w", err)
 	}
 
-	// Resize the image to desired dimensions
-	newImage := resize.Resize(width, height, originalImage, resize.Lanczos3)
+	// Use imaging library for faster, high-quality resize with Lanczos filter
+	newImage := imaging.Resize(originalImage, int(width), int(height), imaging.Lanczos)
 
+	// Use adaptive JPEG quality based on dimensions
+	quality := getJPEGQuality(width, height)
 	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, newImage, nil); err != nil {
+	if err := imaging.Encode(&buf, newImage, imaging.JPEG, imaging.JPEGQuality(quality)); err != nil {
 		return nil, fmt.Errorf("failed to encode resized image: %w", err)
 	}
 
-	// Read the resized image bytes
-	fileBytes, err := io.ReadAll(&buf)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read resized image bytes: %w", err)
-	}
-
-	return fileBytes, nil
+	return buf.Bytes(), nil
 }
 
 // generateVideoThumbnail generates a thumbnail from the video resource.
@@ -322,19 +405,17 @@ func (ctx *MahresourcesContext) generateVideoThumbnail(
 				return fmt.Errorf("failed to decode thumbnail image: %w", err)
 			}
 
-			// Resize the image to desired dimensions
-			newImage := resize.Resize(width, height, originalImage, resize.Lanczos3)
+			// Use imaging library for faster, high-quality resize with Lanczos filter
+			newImage := imaging.Resize(originalImage, int(width), int(height), imaging.Lanczos)
 
+			// Use adaptive JPEG quality based on dimensions
+			quality := getJPEGQuality(width, height)
 			var buf bytes.Buffer
-			if err := jpeg.Encode(&buf, newImage, nil); err != nil {
+			if err := imaging.Encode(&buf, newImage, imaging.JPEG, imaging.JPEGQuality(quality)); err != nil {
 				return fmt.Errorf("failed to encode resized image: %w", err)
 			}
 
-			// Read the resized image bytes
-			fileBytes, err = io.ReadAll(&buf)
-			if err != nil {
-				return fmt.Errorf("failed to read resized image bytes: %w", err)
-			}
+			fileBytes = buf.Bytes()
 
 			// Indicate success
 			return nil
