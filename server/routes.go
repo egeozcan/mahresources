@@ -164,6 +164,26 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/resource/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Resource](basicResourceWriter, "resource"))
 	router.Methods(http.MethodPost).Path("/v1/resource/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.Resource](basicResourceWriter, "resource"))
 
+	// Version routes
+	router.Methods(http.MethodGet).Path("/v1/resource/versions").
+		HandlerFunc(api_handlers.GetListVersionsHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/resource/version").
+		HandlerFunc(api_handlers.GetVersionHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/resource/versions").
+		HandlerFunc(api_handlers.GetUploadVersionHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/resource/version/restore").
+		HandlerFunc(api_handlers.GetRestoreVersionHandler(appContext))
+	router.Methods(http.MethodDelete).Path("/v1/resource/version").
+		HandlerFunc(api_handlers.GetDeleteVersionHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/resource/version/file").
+		HandlerFunc(api_handlers.GetVersionFileHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/resource/versions/cleanup").
+		HandlerFunc(api_handlers.GetCleanupVersionsHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/resources/versions/cleanup").
+		HandlerFunc(api_handlers.GetBulkCleanupVersionsHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/resource/versions/compare").
+		HandlerFunc(api_handlers.GetCompareVersionsHandler(appContext))
+
 	// Tag routes using factory
 	tagReader, tagWriter := appContext.TagCRUD()
 	tagFactory := api_handlers.NewCRUDHandlerFactory("tag", "tags", tagReader, tagWriter)
