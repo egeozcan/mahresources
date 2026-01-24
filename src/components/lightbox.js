@@ -628,6 +628,10 @@ export function registerLightboxStore(Alpine) {
         const newListContainer = doc.querySelector('.list-container, .items-container');
 
         if (newListContainer && window.Alpine) {
+          // Save scroll position before morph
+          const scrollX = window.scrollX;
+          const scrollY = window.scrollY;
+
           window.Alpine.morph(listContainer, newListContainer, {
             updating(el, toEl, childrenOnly, skip) {
               // Preserve Alpine state where possible
@@ -636,6 +640,9 @@ export function registerLightboxStore(Alpine) {
               }
             }
           });
+
+          // Restore scroll position after morph
+          window.scrollTo(scrollX, scrollY);
 
           // Re-initialize lightbox items from the updated DOM
           this.initFromDOM();
