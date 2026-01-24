@@ -188,6 +188,9 @@ export function registerLightboxStore(Alpine) {
       this.loading = false;
       document.body.style.overflow = '';
 
+      // Clear resource details to prevent stale data when reopening
+      this.resourceDetails = null;
+
       // Cancel any pending requests
       if (this.requestAborter) {
         this.requestAborter();
