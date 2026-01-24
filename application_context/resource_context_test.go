@@ -83,7 +83,12 @@ func TestMahresourcesContext_createThumbFromVideo(t *testing.T) {
 		t.Skip("ffmpeg not found in PATH, skipping video thumbnail test")
 	}
 
-	if err := ctx.createThumbFromVideo(context.TODO(), getMeTheFileOrPanic("../test_data/pexels-thirdman-5862328.mp4"), bytes.NewBuffer(make([]byte, 0))); err != nil {
+	// Create a mock resource with the file location for temp file fallback
+	mockResource := &models.Resource{
+		ID:       1,
+		Location: "../test_data/pexels-thirdman-5862328.mp4",
+	}
+	if err := ctx.createThumbFromVideo(context.TODO(), getMeTheFileOrPanic("../test_data/pexels-thirdman-5862328.mp4"), bytes.NewBuffer(make([]byte, 0)), mockResource); err != nil {
 		t.Errorf("createThumbFromVideo() error = %v", err)
 	}
 }

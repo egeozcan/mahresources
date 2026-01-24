@@ -114,3 +114,79 @@ func TestTruncateStderr(t *testing.T) {
 		})
 	}
 }
+
+func TestParseFFmpegError(t *testing.T) {
+	tests := []struct {
+		name              string
+		stderr            string
+		wantNeedsTempFile bool
+		wantCategory      string
+	}{
+		{
+			name:              "moov atom not found",
+			stderr:            "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7f8b8c004000] moov atom not found\npipe:: Invalid data found when processing input",
+			wantNeedsTempFile: true,
+			wantCategory:      "moov atom not found",
+		},
+		{
+			name:              "invalid data found",
+			stderr:            "Invalid data found when processing input",
+			wantNeedsTempFile: true,
+			wantCategory:      "invalid input data",
+		},
+		{
+			name:              "codec parameters not found",
+			stderr:            "Could not find codec parameters for stream 0 (Video: none)",
+			wantNeedsTempFile: true,
+			wantCategory:      "codec parameters not found",
+		},
+		{
+			name:              "pipe EOF",
+			stderr:            "pipe:: End of file",
+			wantNeedsTempFile: true,
+			wantCategory:      "pipe EOF",
+		},
+		{
+			name:              "pipe invalid data",
+			stderr:            "pipe:: Invalid data found",
+			wantNeedsTempFile: true,
+			wantCategory:      "pipe invalid data",
+		},
+		{
+			name:              "normal codec error - no temp file needed",
+			stderr:            "Decoder (codec h264) not found for input stream",
+			wantNeedsTempFile: false,
+			wantCategory:      "",
+		},
+		{
+			name:              "empty stderr",
+			stderr:            "",
+			wantNeedsTempFile: false,
+			wantCategory:      "",
+		},
+		{
+			name:              "case insensitive matching",
+			stderr:            "MOOV ATOM NOT FOUND",
+			wantNeedsTempFile: true,
+			wantCategory:      "moov atom not found",
+		},
+		{
+			name:              "immediate exit requested",
+			stderr:            "Immediate exit requested",
+			wantNeedsTempFile: true,
+			wantCategory:      "immediate exit",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotNeedsTempFile, gotCategory := parseFFmpegError(tt.stderr)
+			if gotNeedsTempFile != tt.wantNeedsTempFile {
+				t.Errorf("parseFFmpegError() needsTempFile = %v, want %v", gotNeedsTempFile, tt.wantNeedsTempFile)
+			}
+			if gotCategory != tt.wantCategory {
+				t.Errorf("parseFFmpegError() category = %q, want %q", gotCategory, tt.wantCategory)
+			}
+		})
+	}
+}

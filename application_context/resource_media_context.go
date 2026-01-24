@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"log"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"math"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -281,6 +284,36 @@ func truncateStderr(stderr string, maxLen int) string {
 	return stderr[:maxLen] + "... (truncated)"
 }
 
+// parseFFmpegError analyzes ffmpeg stderr to determine if the error indicates
+// that the video format requires seeking (and thus needs temp file fallback).
+// Returns true if temp file fallback should be attempted, along with an error category.
+func parseFFmpegError(stderr string) (needsTempFile bool, errorCategory string) {
+	stderrLower := strings.ToLower(stderr)
+
+	// Patterns indicating the format requires seeking (temp file needed)
+	seekPatterns := []struct {
+		pattern  string
+		category string
+	}{
+		{"moov atom not found", "moov atom not found"},
+		{"invalid data found when processing input", "invalid input data"},
+		{"could not find codec parameters", "codec parameters not found"},
+		{"error while opening encoder", "encoder error"},
+		{"pipe:: end of file", "pipe EOF"},
+		{"pipe:: invalid data", "pipe invalid data"},
+		{"immediate exit requested", "immediate exit"},
+		{"invalid argument", "invalid argument"},
+	}
+
+	for _, p := range seekPatterns {
+		if strings.Contains(stderrLower, p.pattern) {
+			return true, p.category
+		}
+	}
+
+	return false, ""
+}
+
 // decodeWithImageMagick uses ImageMagick's convert command to decode unsupported formats.
 func (ctx *MahresourcesContext) decodeWithImageMagick(
 	httpContext context.Context,
@@ -398,7 +431,7 @@ func (ctx *MahresourcesContext) generateVideoThumbnail(
 
 			// Create thumbnail from video
 			resultBuffer := bytes.NewBuffer([]byte{})
-			if err := ctx.createThumbFromVideo(httpContext, file, resultBuffer); err != nil {
+			if err := ctx.createThumbFromVideo(httpContext, file, resultBuffer, &resource); err != nil {
 				return fmt.Errorf("failed to create thumbnail from video: %w", err)
 			}
 
@@ -448,33 +481,66 @@ func (ctx *MahresourcesContext) generateVideoThumbnail(
 }
 
 // createThumbFromVideo generates a thumbnail from a video file.
-// It attempts to create a thumbnail at 1 second, and if that fails or returns no data,
-// it retries at 0 seconds.
+// It attempts to create a thumbnail at 1 second using stdin piping, and if that fails
+// or returns no data, it retries at 0 seconds. If stdin piping fails due to format
+// limitations (e.g., MOV with moov atom at end), it falls back to using a temp file.
 func (ctx *MahresourcesContext) createThumbFromVideo(
-	context context.Context,
+	httpContext context.Context,
 	file io.ReadSeeker,
 	resultBuffer *bytes.Buffer,
+	resource *models.Resource,
 ) error {
-	// First attempt to create thumbnail at 1 second
-	err := ctx.createThumbFromVideoAtGivenTime(context, file, resultBuffer, 1)
+	// First attempt: stdin-based extraction at 1 second
+	var stdinErr error
+	var stderrContent string
 
-	// If the first attempt fails or returns no data, try again at 0 seconds
-	if err != nil || resultBuffer.Len() == 0 {
+	stdinErr = ctx.createThumbFromVideoAtGivenTime(httpContext, file, resultBuffer, 1)
+
+	// Check if we got a result
+	if stdinErr == nil && resultBuffer.Len() > 0 {
+		return nil
+	}
+
+	// Capture error details for analysis
+	if stdinErr != nil {
+		stderrContent = stdinErr.Error()
+	}
+
+	// Check if the error indicates we need temp file fallback
+	needsTempFile, errorCategory := parseFFmpegError(stderrContent)
+
+	// If not a seek-related error, try at 0 seconds with stdin
+	if !needsTempFile {
 		resultBuffer.Reset()
-
-		// Reset the reader back to the beginning
-		_, err := file.Seek(0, io.SeekStart)
-		if err != nil {
-			return fmt.Errorf("failed to seek video file: %w", err)
+		if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
+			return fmt.Errorf("failed to seek video file: %w", seekErr)
 		}
 
-		err = ctx.createThumbFromVideoAtGivenTime(context, file, resultBuffer, 0)
-		if err != nil {
-			return fmt.Errorf("failed to create thumbnail at 0 seconds: %w", err)
+		stdinErr = ctx.createThumbFromVideoAtGivenTime(httpContext, file, resultBuffer, 0)
+		if stdinErr == nil && resultBuffer.Len() > 0 {
+			return nil
+		}
+
+		// Re-check error after second attempt
+		if stdinErr != nil {
+			stderrContent = stdinErr.Error()
+			needsTempFile, errorCategory = parseFFmpegError(stderrContent)
 		}
 	}
 
-	return nil
+	// Fallback: use temp file for formats that require seeking
+	if needsTempFile || resultBuffer.Len() == 0 {
+		if errorCategory != "" {
+			log.Printf("Video thumbnail stdin failed (reason: %s), trying temp file fallback for resource %d", errorCategory, resource.ID)
+		} else {
+			log.Printf("Video thumbnail stdin produced no output, trying temp file fallback for resource %d", resource.ID)
+		}
+
+		resultBuffer.Reset()
+		return ctx.createThumbFromVideoWithTempFile(httpContext, file, resultBuffer, resource)
+	}
+
+	return fmt.Errorf("failed to create thumbnail: %w", stdinErr)
 }
 
 // createThumbFromVideoAtGivenTime generates a thumbnail from a specific time in the video.
@@ -513,6 +579,105 @@ func (ctx *MahresourcesContext) createThumbFromVideoAtGivenTime(
 			return context.Err()
 		}
 		return fmt.Errorf("ffmpeg error: %w, stderr: %s", err, stderr.String())
+	}
+
+	return nil
+}
+
+// createThumbFromVideoWithTempFile copies the video to a temp file and generates
+// a thumbnail using file-based ffmpeg input. This handles video formats that require
+// seeking (like MOV with moov atom at end) which don't work with stdin piping.
+func (ctx *MahresourcesContext) createThumbFromVideoWithTempFile(
+	httpContext context.Context,
+	file io.ReadSeeker,
+	resultBuffer *bytes.Buffer,
+	resource *models.Resource,
+) error {
+	// Determine file extension for ffmpeg format detection
+	ext := filepath.Ext(resource.GetCleanLocation())
+	if ext == "" {
+		ext = ".mp4" // Default extension
+	}
+
+	// Create temp file with appropriate extension
+	tempFile, err := os.CreateTemp("", "video-thumb-*"+ext)
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tempPath := tempFile.Name()
+	defer os.Remove(tempPath)
+
+	// Reset source file position
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		tempFile.Close()
+		return fmt.Errorf("failed to seek source file: %w", err)
+	}
+
+	// Check context before copying
+	select {
+	case <-httpContext.Done():
+		tempFile.Close()
+		return httpContext.Err()
+	default:
+	}
+
+	// Copy video data from Afero file to temp file
+	if _, err := io.Copy(tempFile, file); err != nil {
+		tempFile.Close()
+		return fmt.Errorf("failed to copy to temp file: %w", err)
+	}
+
+	// Close temp file before ffmpeg reads it
+	if err := tempFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+
+	// Try at 1 second first
+	err = ctx.createThumbFromVideoFileAtTime(httpContext, tempPath, resultBuffer, 1)
+	if err == nil && resultBuffer.Len() > 0 {
+		return nil
+	}
+
+	// If first attempt failed, try at 0 seconds
+	resultBuffer.Reset()
+	err = ctx.createThumbFromVideoFileAtTime(httpContext, tempPath, resultBuffer, 0)
+	if err != nil {
+		return fmt.Errorf("failed to create thumbnail from temp file: %w", err)
+	}
+
+	return nil
+}
+
+// createThumbFromVideoFileAtTime generates a thumbnail from a video file path at a specific time.
+// Uses -ss before -i for fast seeking (only works reliably with file input, not stdin).
+func (ctx *MahresourcesContext) createThumbFromVideoFileAtTime(
+	httpContext context.Context,
+	filePath string,
+	resultBuffer *bytes.Buffer,
+	secondsIn int,
+) error {
+	// Construct ffmpeg command with -ss BEFORE -i for fast seeking
+	cmd := exec.CommandContext(httpContext, ctx.Config.FfmpegPath,
+		"-ss", fmt.Sprintf("%d", secondsIn), // Seek BEFORE input (fast input seeking)
+		"-i", filePath,                      // File input (enables seeking)
+		"-vframes", "1",                     // Grab one frame
+		"-vf", "scale=640:-1",               // Scale the image
+		"-c:v", "png",                       // Encode to PNG
+		"-f", "image2pipe",                  // Output format
+		"pipe:1",                            // Output to stdout
+	)
+
+	cmd.Stdout = resultBuffer
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		if httpContext.Err() != nil {
+			return httpContext.Err()
+		}
+		return fmt.Errorf("ffmpeg error: %w, stderr: %s", err, truncateStderr(stderr.String(), 500))
 	}
 
 	return nil
