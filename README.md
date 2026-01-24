@@ -162,8 +162,6 @@ and bulk edit the results. I'd rather keep developing than adding up-to-date scr
 
 ## maybe do
 
-- [ ] Make note categories work
 - [ ] faster image previews with libvips?
-- [x] some integration tests, perhaps behavioral test
 - [ ] importers like perkeep? maybe.
 - [ ] sync could be interesting
