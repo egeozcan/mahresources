@@ -198,6 +198,11 @@ func main() {
 		}
 	}
 
+	// Migrate existing resources to versioning system
+	if err := context.MigrateResourceVersions(); err != nil {
+		log.Printf("Warning: failed to migrate resource versions: %v", err)
+	}
+
 	// Initialize Full-Text Search (skip with -skip-fts flag or SKIP_FTS=1 env var)
 	if !*skipFTS {
 		if err := context.InitFTS(); err != nil {

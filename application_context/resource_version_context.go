@@ -14,10 +14,12 @@ import (
 	"mime/multipart"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/spf13/afero"
 	"mahresources/models"
+	"mahresources/models/query_models"
 )
 
 // CountHashReferences counts how many resources and versions reference a given hash
@@ -307,6 +309,144 @@ func (ctx *MahresourcesContext) DeleteVersion(resourceID, versionID uint) error 
 	}
 
 	ctx.Logger().Info(models.LogActionDelete, "resource_version", &versionID, fmt.Sprintf("v%d of resource %d", version.VersionNumber, resourceID), "", nil)
+
+	return nil
+}
+
+// CleanupVersions removes old versions based on criteria, returns deleted version IDs
+func (ctx *MahresourcesContext) CleanupVersions(query *query_models.VersionCleanupQuery) ([]uint, error) {
+	var deletedIDs []uint
+
+	var resource models.Resource
+	if err := ctx.db.First(&resource, query.ResourceID).Error; err != nil {
+		return nil, fmt.Errorf("resource not found: %w", err)
+	}
+
+	q := ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", query.ResourceID)
+
+	if resource.CurrentVersionID != nil {
+		q = q.Where("id != ?", *resource.CurrentVersionID)
+	}
+
+	if query.KeepLast > 0 {
+		var keepIDs []uint
+		ctx.db.Model(&models.ResourceVersion{}).
+			Where("resource_id = ?", query.ResourceID).
+			Order("version_number DESC").
+			Limit(query.KeepLast).
+			Pluck("id", &keepIDs)
+		if len(keepIDs) > 0 {
+			q = q.Where("id NOT IN ?", keepIDs)
+		}
+	}
+
+	if query.OlderThanDays > 0 {
+		cutoff := time.Now().AddDate(0, 0, -query.OlderThanDays)
+		q = q.Where("created_at < ?", cutoff)
+	}
+
+	var versions []models.ResourceVersion
+	if err := q.Find(&versions).Error; err != nil {
+		return nil, err
+	}
+
+	if query.DryRun {
+		for _, v := range versions {
+			deletedIDs = append(deletedIDs, v.ID)
+		}
+		return deletedIDs, nil
+	}
+
+	for _, v := range versions {
+		if err := ctx.DeleteVersion(query.ResourceID, v.ID); err != nil {
+			ctx.Logger().Warning(models.LogActionDelete, "version_cleanup", &v.ID, "Failed to delete version", err.Error(), nil)
+			continue
+		}
+		deletedIDs = append(deletedIDs, v.ID)
+	}
+
+	return deletedIDs, nil
+}
+
+// BulkCleanupVersions cleans up versions across multiple resources
+func (ctx *MahresourcesContext) BulkCleanupVersions(query *query_models.BulkVersionCleanupQuery) (map[uint][]uint, error) {
+	result := make(map[uint][]uint)
+
+	q := ctx.db.Model(&models.Resource{})
+	if query.OwnerID > 0 {
+		q = q.Where("owner_id = ?", query.OwnerID)
+	}
+
+	var resourceIDs []uint
+	if err := q.Pluck("id", &resourceIDs).Error; err != nil {
+		return nil, err
+	}
+
+	for _, resourceID := range resourceIDs {
+		cleanupQuery := &query_models.VersionCleanupQuery{
+			ResourceID:    resourceID,
+			KeepLast:      query.KeepLast,
+			OlderThanDays: query.OlderThanDays,
+			DryRun:        query.DryRun,
+		}
+
+		deletedIDs, err := ctx.CleanupVersions(cleanupQuery)
+		if err != nil {
+			ctx.Logger().Warning(models.LogActionDelete, "bulk_version_cleanup", &resourceID, "Failed to cleanup versions", err.Error(), nil)
+			continue
+		}
+
+		if len(deletedIDs) > 0 {
+			result[resourceID] = deletedIDs
+		}
+	}
+
+	return result, nil
+}
+
+// MigrateResourceVersions creates initial version records for existing resources
+func (ctx *MahresourcesContext) MigrateResourceVersions() error {
+	var versionCount int64
+	ctx.db.Model(&models.ResourceVersion{}).Count(&versionCount)
+	if versionCount > 0 {
+		return nil
+	}
+
+	var resources []models.Resource
+	if err := ctx.db.Where("current_version_id IS NULL").Find(&resources).Error; err != nil {
+		return err
+	}
+
+	if len(resources) == 0 {
+		return nil
+	}
+
+	ctx.Logger().Info(models.LogActionCreate, "system", nil, fmt.Sprintf("Migrating %d resources to versioning system", len(resources)), "", nil)
+
+	for _, resource := range resources {
+		version := models.ResourceVersion{
+			ResourceID:      resource.ID,
+			VersionNumber:   1,
+			Hash:            resource.Hash,
+			HashType:        resource.HashType,
+			FileSize:        resource.FileSize,
+			ContentType:     resource.ContentType,
+			Width:           resource.Width,
+			Height:          resource.Height,
+			Location:        resource.Location,
+			StorageLocation: resource.StorageLocation,
+			Comment:         "Initial version (migrated)",
+		}
+
+		if err := ctx.db.Create(&version).Error; err != nil {
+			ctx.Logger().Warning(models.LogActionCreate, "migration", &resource.ID, "Failed to create version for resource", err.Error(), nil)
+			continue
+		}
+
+		if err := ctx.db.Model(&resource).Update("current_version_id", version.ID).Error; err != nil {
+			ctx.Logger().Warning(models.LogActionCreate, "migration", &resource.ID, "Failed to update current version", err.Error(), nil)
+		}
+	}
 
 	return nil
 }
