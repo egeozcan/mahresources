@@ -518,6 +518,34 @@ export function registerLightboxStore(Alpine) {
       this.touchStartY = null;
     },
 
+    /**
+     * Handle wheel events for trackpad horizontal swipe gestures
+     * @param {WheelEvent} event
+     */
+    handleWheel(event) {
+      // Ignore wheel events within the edit panel (allow normal scrolling)
+      if (event.target.closest('[data-edit-panel]')) {
+        return;
+      }
+
+      // Only handle horizontal scrolling (trackpad swipe)
+      // deltaX is negative for swipe right, positive for swipe left
+      if (Math.abs(event.deltaX) > Math.abs(event.deltaY) && Math.abs(event.deltaX) > 30) {
+        event.preventDefault();
+
+        // Debounce to prevent multiple navigations from a single swipe
+        if (this._wheelDebounce) return;
+        this._wheelDebounce = true;
+        setTimeout(() => { this._wheelDebounce = false; }, 300);
+
+        if (event.deltaX > 0) {
+          this.next();
+        } else {
+          this.prev();
+        }
+      }
+    },
+
     // ==================== Edit Panel Methods ====================
 
     /**
