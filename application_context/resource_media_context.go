@@ -273,6 +273,14 @@ func (ctx *MahresourcesContext) decodeImageWithFallback(
 	return nil, fmt.Errorf("failed to decode image (tried standard decoders and ImageMagick): %w", err)
 }
 
+// truncateStderr limits stderr output to a reasonable length for error messages.
+func truncateStderr(stderr string, maxLen int) string {
+	if len(stderr) <= maxLen {
+		return stderr
+	}
+	return stderr[:maxLen] + "... (truncated)"
+}
+
 // decodeWithImageMagick uses ImageMagick's convert command to decode unsupported formats.
 func (ctx *MahresourcesContext) decodeWithImageMagick(
 	httpContext context.Context,
@@ -285,7 +293,8 @@ func (ctx *MahresourcesContext) decodeWithImageMagick(
 	} else if _, err := exec.LookPath("convert"); err == nil {
 		convertPath = "convert"
 	} else {
-		return nil, errors.New("ImageMagick not available")
+		fmt.Println("Warning: ImageMagick not found. Install ImageMagick to enable HEIC/AVIF thumbnail support.")
+		return nil, errors.New("ImageMagick not available (install ImageMagick for HEIC/AVIF support)")
 	}
 
 	// Use ImageMagick to convert to PNG (lossless, supports transparency)
@@ -304,7 +313,7 @@ func (ctx *MahresourcesContext) decodeWithImageMagick(
 		if httpContext.Err() != nil {
 			return nil, httpContext.Err()
 		}
-		return nil, fmt.Errorf("ImageMagick conversion failed: %w (stderr: %s)", err, stderr.String())
+		return nil, fmt.Errorf("ImageMagick conversion failed: %w (stderr: %s)", err, truncateStderr(stderr.String(), 200))
 	}
 
 	// Decode the PNG output
