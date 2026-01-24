@@ -437,4 +437,28 @@ export class ApiClient {
     const response = await this.request.post(`${this.baseUrl}/v1/resource/delete?Id=${id}`);
     await this.handleVoidResponse(response);
   }
+
+  async addTagsToResources(resourceIds: number[], tagIds: number[]): Promise<void> {
+    const formData = new URLSearchParams();
+    resourceIds.forEach(id => formData.append('ID', id.toString()));
+    tagIds.forEach(id => formData.append('EditedId', id.toString()));
+
+    const response = await this.request.post(`${this.baseUrl}/v1/resources/addTags`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+    await this.handleVoidResponse(response);
+  }
+
+  async removeTagsFromResources(resourceIds: number[], tagIds: number[]): Promise<void> {
+    const formData = new URLSearchParams();
+    resourceIds.forEach(id => formData.append('ID', id.toString()));
+    tagIds.forEach(id => formData.append('EditedId', id.toString()));
+
+    const response = await this.request.post(`${this.baseUrl}/v1/resources/removeTags`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+    await this.handleVoidResponse(response);
+  }
 }
