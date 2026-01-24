@@ -25,6 +25,8 @@
             <div class="mt-2">{% include "/partials/form/searchButton.tpl" with text="Merge Others To This" %}</div>
         </form>
     {% endif %}
+
+    {% include "/partials/versionPanel.tpl" with versions=versions currentVersionId=resource.CurrentVersionID resourceId=resource.ID %}
 {% endblock %}
 
 {% block sidebar %}

@@ -206,9 +206,12 @@ func ResourceContextProvider(context *application_context.MahresourcesContext) f
 			return addErrContext(err, baseContext)
 		}
 
+		versions, _ := context.GetVersions(resource.ID)
+
 		result := pongo2.Context{
 			"pageTitle":        "Resource " + resource.Name,
 			"resource":         resource,
+			"versions":         versions,
 			"similarResources": similarResources,
 			"action": template_entities.Entry{
 				Name: "Edit",
