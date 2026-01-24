@@ -149,6 +149,7 @@ func main() {
 	if err := db.AutoMigrate(
 		&models.Query{},
 		&models.Resource{},
+		&models.ResourceVersion{},
 		&models.Note{},
 		&models.Tag{},
 		&models.Group{},
