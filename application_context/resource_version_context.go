@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/gif"
@@ -200,4 +201,112 @@ func getExtensionFromFilename(filename, contentType string) string {
 
 func buildVersionResourcePath(hash, ext string) string {
 	return fmt.Sprintf("/resources/%s/%s/%s/%s%s", hash[0:2], hash[2:4], hash[4:6], hash, ext)
+}
+
+// RestoreVersion creates a new version by copying metadata from an old version
+func (ctx *MahresourcesContext) RestoreVersion(resourceID, versionID uint, comment string) (*models.ResourceVersion, error) {
+	sourceVersion, err := ctx.GetVersion(versionID)
+	if err != nil {
+		return nil, fmt.Errorf("version not found: %w", err)
+	}
+
+	if sourceVersion.ResourceID != resourceID {
+		return nil, errors.New("version does not belong to this resource")
+	}
+
+	var maxVersion int
+	ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceID).Select("COALESCE(MAX(version_number), 0)").Scan(&maxVersion)
+	nextVersion := maxVersion + 1
+
+	if comment == "" {
+		comment = fmt.Sprintf("Restored from version %d", sourceVersion.VersionNumber)
+	}
+
+	version := models.ResourceVersion{
+		ResourceID:      resourceID,
+		VersionNumber:   nextVersion,
+		Hash:            sourceVersion.Hash,
+		HashType:        sourceVersion.HashType,
+		FileSize:        sourceVersion.FileSize,
+		ContentType:     sourceVersion.ContentType,
+		Width:           sourceVersion.Width,
+		Height:          sourceVersion.Height,
+		Location:        sourceVersion.Location,
+		StorageLocation: sourceVersion.StorageLocation,
+		Comment:         comment,
+	}
+
+	tx := ctx.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	if err := tx.Create(&version).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to create version record: %w", err)
+	}
+
+	if err := tx.Model(&models.Resource{}).Where("id = ?", resourceID).Update("current_version_id", version.ID).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to update current version: %w", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	ctx.Logger().Info(models.LogActionCreate, "resource_version", &version.ID, fmt.Sprintf("Restored v%d from v%d", nextVersion, sourceVersion.VersionNumber), comment, nil)
+
+	return &version, nil
+}
+
+// DeleteVersion deletes a version, checking reference count before removing file
+func (ctx *MahresourcesContext) DeleteVersion(resourceID, versionID uint) error {
+	version, err := ctx.GetVersion(versionID)
+	if err != nil {
+		return fmt.Errorf("version not found: %w", err)
+	}
+
+	if version.ResourceID != resourceID {
+		return errors.New("version does not belong to this resource")
+	}
+
+	var resource models.Resource
+	if err := ctx.db.First(&resource, resourceID).Error; err != nil {
+		return fmt.Errorf("resource not found: %w", err)
+	}
+
+	if resource.CurrentVersionID != nil && *resource.CurrentVersionID == versionID {
+		return errors.New("cannot delete current version")
+	}
+
+	var versionCount int64
+	ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceID).Count(&versionCount)
+	if versionCount <= 1 {
+		return errors.New("cannot delete last version - delete the resource instead")
+	}
+
+	hash := version.Hash
+	location := version.Location
+	storageLocation := version.StorageLocation
+
+	if err := ctx.db.Delete(version).Error; err != nil {
+		return fmt.Errorf("failed to delete version: %w", err)
+	}
+
+	refCount, err := ctx.CountHashReferences(hash)
+	if err != nil {
+		ctx.Logger().Warning(models.LogActionDelete, "resource_version", &versionID, "Failed to count hash references", err.Error(), nil)
+	} else if refCount == 0 {
+		fs, _ := ctx.GetFsForStorageLocation(storageLocation)
+		if fs != nil {
+			_ = fs.Remove(location)
+		}
+	}
+
+	ctx.Logger().Info(models.LogActionDelete, "resource_version", &versionID, fmt.Sprintf("v%d of resource %d", version.VersionNumber, resourceID), "", nil)
+
+	return nil
 }
