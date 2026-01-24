@@ -21,6 +21,9 @@ import (
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/spf13/afero"
 	"gorm.io/gorm"
+
+	// Register additional image formats for dimension detection
+	_ "golang.org/x/image/tiff"
 )
 
 // timeoutReader wraps an io.Reader and returns an error if no data is read within the timeout period
