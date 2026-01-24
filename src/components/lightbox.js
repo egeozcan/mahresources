@@ -530,7 +530,7 @@ export function registerLightboxStore(Alpine) {
 
       // Only handle horizontal scrolling (trackpad swipe)
       // deltaX is negative for swipe right, positive for swipe left
-      if (Math.abs(event.deltaX) > Math.abs(event.deltaY) && Math.abs(event.deltaX) > 30) {
+      if (Math.abs(event.deltaX) > Math.abs(event.deltaY) && Math.abs(event.deltaX) > 10) {
         event.preventDefault();
 
         // Debounce to prevent multiple navigations from a single swipe
