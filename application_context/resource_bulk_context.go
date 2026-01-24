@@ -74,7 +74,17 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 		return err
 	}
 
-	_ = fs.Remove(resource.GetCleanLocation())
+	// Check if any other resources or versions reference this hash
+	refCount, countErr := ctx.CountHashReferences(resource.Hash)
+	if countErr != nil {
+		ctx.Logger().Warning(models.LogActionDelete, "resource", &resourceId, "Failed to count hash references", countErr.Error(), nil)
+		refCount = 1 // Assume referenced to be safe
+	}
+
+	// Only delete file if no other references exist
+	if refCount == 0 {
+		_ = fs.Remove(resource.GetCleanLocation())
+	}
 
 	ctx.Logger().Info(models.LogActionDelete, "resource", &resourceId, resource.Name, "Deleted resource", nil)
 
