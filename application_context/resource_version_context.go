@@ -576,10 +576,13 @@ func (ctx *MahresourcesContext) SyncResourcesFromCurrentVersion() error {
 	}
 
 	log.Printf("Syncing %d resources to their current versions...", len(outOfSync))
+	ctx.Logger().Info(models.LogActionUpdate, "system", nil, "Version Sync Started", fmt.Sprintf("Syncing %d resources", len(outOfSync)), nil)
 
 	for i, item := range outOfSync {
 		if (i+1)%10000 == 0 {
-			log.Printf("  Version sync progress: %d/%d (%.1f%%)", i+1, len(outOfSync), float64(i+1)/float64(len(outOfSync))*100)
+			progress := fmt.Sprintf("%d/%d (%.1f%%)", i+1, len(outOfSync), float64(i+1)/float64(len(outOfSync))*100)
+			log.Printf("  Version sync progress: %s", progress)
+			ctx.Logger().Info(models.LogActionUpdate, "system", nil, "Version Sync Progress", progress, nil)
 		}
 
 		updates := map[string]interface{}{
@@ -606,6 +609,7 @@ func (ctx *MahresourcesContext) SyncResourcesFromCurrentVersion() error {
 	}
 
 	log.Printf("Version sync complete: %d resources synced", len(outOfSync))
+	ctx.Logger().Info(models.LogActionUpdate, "system", nil, "Version Sync Complete", fmt.Sprintf("%d resources synced", len(outOfSync)), nil)
 
 	return nil
 }
@@ -626,6 +630,7 @@ func (ctx *MahresourcesContext) MigrateResourceVersions() error {
 	}
 
 	log.Printf("Migrating %d resources to versioning system (background)...", count)
+	ctx.Logger().Info(models.LogActionCreate, "system", nil, "Version Migration Started", fmt.Sprintf("Migrating %d resources", count), nil)
 
 	// Process in batches to avoid loading all resources into memory
 	batchSize := 500
@@ -684,7 +689,9 @@ func (ctx *MahresourcesContext) MigrateResourceVersions() error {
 
 			// Log progress every 10,000 resources
 			if migrated%10000 == 0 {
-				log.Printf("  Version migration progress: %d/%d resources (%.1f%%)", migrated, count, float64(migrated)/float64(count)*100)
+				progress := fmt.Sprintf("%d/%d resources (%.1f%%)", migrated, count, float64(migrated)/float64(count)*100)
+				log.Printf("  Version migration progress: %s", progress)
+				ctx.Logger().Info(models.LogActionCreate, "system", nil, "Version Migration Progress", progress, nil)
 			}
 		}
 
@@ -699,5 +706,6 @@ func (ctx *MahresourcesContext) MigrateResourceVersions() error {
 	}
 
 	log.Printf("Version migration complete: %d resources migrated", migrated)
+	ctx.Logger().Info(models.LogActionCreate, "system", nil, "Version Migration Complete", fmt.Sprintf("%d resources migrated", migrated), nil)
 	return nil
 }
