@@ -44,9 +44,8 @@
                             Restore
                         </button>
                     </form>
-                    <form action="/v1/resource/version?resourceId={{ resourceId }}&versionId={{ version.ID }}" method="post" class="inline"
+                    <form action="/v1/resource/version/delete?resourceId={{ resourceId }}&versionId={{ version.ID }}" method="post" class="inline"
                           x-data="confirmAction({ message: 'Delete this version?' })" x-bind="events">
-                        <input type="hidden" name="_method" value="DELETE">
                         <button type="submit" class="px-3 py-1 text-sm text-red-600 hover:text-red-800">
                             Delete
                         </button>

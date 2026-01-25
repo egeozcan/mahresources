@@ -1033,8 +1033,8 @@ func TestRestoreVersion_WrongResource(t *testing.T) {
 	}
 }
 
-// TestMigrateResourceVersions_SkipsIfVersionsExist tests that migration skips if versions already exist
-func TestMigrateResourceVersions_SkipsIfVersionsExist(t *testing.T) {
+// TestMigrateResourceVersions_MigratesResourcesWithoutVersions tests that migration creates versions for resources without them
+func TestMigrateResourceVersions_MigratesResourcesWithoutVersions(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
@@ -1060,45 +1060,73 @@ func TestMigrateResourceVersions_SkipsIfVersionsExist(t *testing.T) {
 		t.Fatalf("Failed to migrate ResourceVersion: %v", err)
 	}
 
-	// Create a version (simulates already migrated)
-	version := &models.ResourceVersion{
-		ResourceID:    1,
-		VersionNumber: 1,
-		Hash:          "existing-hash",
-		HashType:      "SHA1",
-		Location:      "/existing",
-	}
-	if err := db.Create(version).Error; err != nil {
-		t.Fatalf("Failed to create existing version: %v", err)
-	}
-
-	// Create a resource without version (would normally be migrated)
+	// Create an owner group
 	ownerGroup := &models.Group{Name: "test-owner"}
 	if err := db.Create(ownerGroup).Error; err != nil {
 		t.Fatalf("Failed to create owner group: %v", err)
 	}
 
-	resource := &models.Resource{
+	// Create a resource with a version (simulates already migrated)
+	resource1 := &models.Resource{
+		Name:     "migrated-resource",
+		Hash:     "migrated-hash",
+		HashType: "SHA1",
+		OwnerId:  ptrUint(ownerGroup.ID),
+		Location: "/migrated",
+	}
+	if err := db.Create(resource1).Error; err != nil {
+		t.Fatalf("Failed to create resource1: %v", err)
+	}
+
+	version := &models.ResourceVersion{
+		ResourceID:    resource1.ID,
+		VersionNumber: 1,
+		Hash:          "migrated-hash",
+		HashType:      "SHA1",
+		Location:      "/migrated",
+	}
+	if err := db.Create(version).Error; err != nil {
+		t.Fatalf("Failed to create existing version: %v", err)
+	}
+
+	// Update resource1 to have CurrentVersionID set
+	db.Model(resource1).Update("current_version_id", version.ID)
+
+	// Create a resource without version (should be migrated)
+	resource2 := &models.Resource{
 		Name:     "unmigrated-resource",
 		Hash:     "unmigrated-hash",
 		HashType: "SHA1",
 		OwnerId:  ptrUint(ownerGroup.ID),
 		Location: "/unmigrated",
 	}
-	if err := db.Create(resource).Error; err != nil {
-		t.Fatalf("Failed to create resource: %v", err)
+	if err := db.Create(resource2).Error; err != nil {
+		t.Fatalf("Failed to create resource2: %v", err)
 	}
 
-	// Run migration - should skip because versions already exist
+	// Run migration - should migrate resource2 even though resource1 has versions
 	err = ctx.MigrateResourceVersions()
 	if err != nil {
 		t.Fatalf("MigrateResourceVersions() error = %v", err)
 	}
 
-	// Verify the resource was NOT migrated (because migration was skipped)
+	// Verify resource2 WAS migrated
 	var count int64
-	db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resource.ID).Count(&count)
-	if count != 0 {
-		t.Errorf("Expected 0 new versions (migration should skip), got %d", count)
+	db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resource2.ID).Count(&count)
+	if count != 1 {
+		t.Errorf("Expected 1 version for unmigrated resource, got %d", count)
+	}
+
+	// Verify resource1 still has only 1 version (not duplicated)
+	db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resource1.ID).Count(&count)
+	if count != 1 {
+		t.Errorf("Expected 1 version for already migrated resource, got %d", count)
+	}
+
+	// Verify resource2 now has CurrentVersionID set
+	var updatedResource models.Resource
+	db.First(&updatedResource, resource2.ID)
+	if updatedResource.CurrentVersionID == nil {
+		t.Error("Expected CurrentVersionID to be set after migration")
 	}
 }

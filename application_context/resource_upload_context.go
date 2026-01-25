@@ -522,6 +522,32 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 		}
 	}
 
+	// Create version 1 for the new resource
+	version := &models.ResourceVersion{
+		ResourceID:      res.ID,
+		VersionNumber:   1,
+		Hash:            res.Hash,
+		HashType:        res.HashType,
+		FileSize:        res.FileSize,
+		ContentType:     res.ContentType,
+		Width:           res.Width,
+		Height:          res.Height,
+		Location:        res.Location,
+		StorageLocation: res.StorageLocation,
+		Comment:         "Initial version",
+	}
+
+	if err := tx.Create(version).Error; err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	// Update resource's current version
+	if err := tx.Model(&models.Resource{}).Where("id = ?", res.ID).Updates(map[string]interface{}{"current_version_id": version.ID}).Error; err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
 	if err := tx.Commit().Error; err != nil {
 		return nil, err
 	}

@@ -67,9 +67,8 @@ func (ctx *MahresourcesContext) GetVersionByNumber(resourceID uint, versionNumbe
 
 // UploadNewVersion uploads a new version of an existing resource
 func (ctx *MahresourcesContext) UploadNewVersion(resourceID uint, file multipart.File, header *multipart.FileHeader, comment string) (*models.ResourceVersion, error) {
-	// Get the resource
-	resource, err := ctx.GetResource(resourceID)
-	if err != nil {
+	// Verify resource exists
+	if _, err := ctx.GetResource(resourceID); err != nil {
 		return nil, fmt.Errorf("resource not found: %w", err)
 	}
 
@@ -112,7 +111,7 @@ func (ctx *MahresourcesContext) UploadNewVersion(resourceID uint, file multipart
 	}
 
 	// Update resource's current version
-	if err := tx.Model(resource).Update("current_version_id", version.ID).Error; err != nil {
+	if err := tx.Model(&models.Resource{}).Where("id = ?", resourceID).Updates(map[string]interface{}{"current_version_id": version.ID}).Error; err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("failed to update current version: %w", err)
 	}
@@ -442,14 +441,9 @@ func (ctx *MahresourcesContext) CompareVersions(resourceID, v1ID, v2ID uint) (*V
 	return comparison, nil
 }
 
-// MigrateResourceVersions creates initial version records for existing resources
+// MigrateResourceVersions creates initial version records for existing resources that don't have versions
 func (ctx *MahresourcesContext) MigrateResourceVersions() error {
-	var versionCount int64
-	ctx.db.Model(&models.ResourceVersion{}).Count(&versionCount)
-	if versionCount > 0 {
-		return nil
-	}
-
+	// Find resources that don't have a current version set
 	var resources []models.Resource
 	if err := ctx.db.Where("current_version_id IS NULL").Find(&resources).Error; err != nil {
 		return err
@@ -462,6 +456,18 @@ func (ctx *MahresourcesContext) MigrateResourceVersions() error {
 	ctx.Logger().Info(models.LogActionCreate, "system", nil, fmt.Sprintf("Migrating %d resources to versioning system", len(resources)), "", nil)
 
 	for _, resource := range resources {
+		// Check if this resource already has versions (shouldn't happen, but be safe)
+		var existingVersionCount int64
+		ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resource.ID).Count(&existingVersionCount)
+		if existingVersionCount > 0 {
+			// Resource has versions but no current_version_id set - fix it
+			var latestVersion models.ResourceVersion
+			if err := ctx.db.Where("resource_id = ?", resource.ID).Order("version_number DESC").First(&latestVersion).Error; err == nil {
+				ctx.db.Model(&resource).Update("current_version_id", latestVersion.ID)
+			}
+			continue
+		}
+
 		version := models.ResourceVersion{
 			ResourceID:      resource.ID,
 			VersionNumber:   1,

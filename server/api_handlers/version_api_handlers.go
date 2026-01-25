@@ -81,6 +81,10 @@ func GetUploadVersionHandler(ctx *application_context.MahresourcesContext) func(
 			return
 		}
 
+		if http_utils.RedirectIfHTMLAccepted(w, r, fmt.Sprintf("/resource?id=%v", resourceID)) {
+			return
+		}
+
 		w.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(w).Encode(version)
 	}
@@ -98,6 +102,10 @@ func GetRestoreVersionHandler(ctx *application_context.MahresourcesContext) func
 		version, err := ctx.RestoreVersion(query.ResourceID, query.VersionID, query.Comment)
 		if err != nil {
 			http_utils.HandleError(err, w, r, http.StatusInternalServerError)
+			return
+		}
+
+		if http_utils.RedirectIfHTMLAccepted(w, r, fmt.Sprintf("/resource?id=%v", query.ResourceID)) {
 			return
 		}
 
@@ -123,6 +131,10 @@ func GetDeleteVersionHandler(ctx *application_context.MahresourcesContext) func(
 
 		if err := ctx.DeleteVersion(uint(resourceID), uint(versionID)); err != nil {
 			http_utils.HandleError(err, w, r, http.StatusInternalServerError)
+			return
+		}
+
+		if http_utils.RedirectIfHTMLAccepted(w, r, fmt.Sprintf("/resource?id=%v", resourceID)) {
 			return
 		}
 
