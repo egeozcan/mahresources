@@ -430,7 +430,12 @@ export class ApiClient {
     const response = await this.request.post(`${this.baseUrl}/v1/resource`, {
       multipart: multipartData,
     });
-    return this.handleResponse(response);
+    // The API returns an array of resources, extract the first one
+    const resources = await this.handleResponse<{ ID: number; Name: string; ContentType: string }[]>(response);
+    if (!resources || resources.length === 0) {
+      throw new Error('No resource returned from API');
+    }
+    return resources[0];
   }
 
   async deleteResource(id: number): Promise<void> {

@@ -1,0 +1,4 @@
+This is a sample document for API version testing.
+It has unique content to avoid hash deduplication with other test files.
+Created for the resource versioning E2E tests.
+Test run timestamp placeholder: unique_content_marker
