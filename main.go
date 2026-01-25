@@ -69,6 +69,7 @@ func main() {
 	dbLogFile := flag.String("db-log-file", os.Getenv("DB_LOG_FILE"), "DB log destination: STDOUT, empty, or file path (env: DB_LOG_FILE)")
 	bindAddress := flag.String("bind-address", os.Getenv("BIND_ADDRESS"), "Server bind address:port (env: BIND_ADDRESS)")
 	ffmpegPath := flag.String("ffmpeg-path", os.Getenv("FFMPEG_PATH"), "Path to ffmpeg binary for video thumbnails (env: FFMPEG_PATH)")
+	libreOfficePath := flag.String("libreoffice-path", os.Getenv("LIBREOFFICE_PATH"), "Path to LibreOffice binary for office document thumbnails (env: LIBREOFFICE_PATH)")
 	skipFTS := flag.Bool("skip-fts", os.Getenv("SKIP_FTS") == "1", "Skip Full-Text Search initialization (env: SKIP_FTS=1)")
 
 	// Ephemeral/in-memory options
@@ -133,6 +134,7 @@ func main() {
 		DbLogFile:                    *dbLogFile,
 		BindAddress:                  *bindAddress,
 		FfmpegPath:                   *ffmpegPath,
+		LibreOfficePath:              *libreOfficePath,
 		AltFileSystems:               altFileSystems,
 		MemoryDB:                     useMemoryDB,
 		MemoryFS:                     useMemoryFS,

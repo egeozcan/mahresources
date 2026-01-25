@@ -114,6 +114,7 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-db-log-file` | `DB_LOG_FILE` | DB log: STDOUT, empty, or file path |
 | `-bind-address` | `BIND_ADDRESS` | Server address:port |
 | `-ffmpeg-path` | `FFMPEG_PATH` | Path to ffmpeg for video thumbnails |
+| `-libreoffice-path` | `LIBREOFFICE_PATH` | Path to LibreOffice for office document thumbnails (auto-detects soffice/libreoffice in PATH) |
 | `-skip-fts` | `SKIP_FTS=1` | Skip Full-Text Search initialization |
 | `-alt-fs` | `FILE_ALT_*` | Alternative file systems |
 | `-memory-db` | `MEMORY_DB=1` | Use in-memory SQLite database |
@@ -238,3 +239,6 @@ The test suite covers:
 - Image processing uses bild and nfnt/resize libraries
 - File system abstraction via Afero supports multiple storage locations
 - Run `npm run build-js` after modifying files in `src/` to rebuild the bundle
+- Keep in mind that some deployments of this software deal with millions of resources
+- Tests need to be fixed, regardless of what broke it. 
+  - It may be a good idea to run tests before you start to see if there are any failing and fix them beforehand.

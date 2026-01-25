@@ -27,6 +27,7 @@ type MahresourcesConfig struct {
 	DbType         string
 	AltFileSystems map[string]string
 	FfmpegPath     string
+	LibreOfficePath string
 	BindAddress    string
 	// RemoteResourceConnectTimeout is the timeout for connecting to remote URLs (dial, TLS, response headers)
 	RemoteResourceConnectTimeout time.Duration
@@ -45,8 +46,9 @@ type MahresourcesInputConfig struct {
 	DbReadOnlyDsn  string
 	DbLogFile      string
 	BindAddress    string
-	FfmpegPath     string
-	AltFileSystems map[string]string
+	FfmpegPath      string
+	LibreOfficePath string
+	AltFileSystems  map[string]string
 	// MemoryDB uses an in-memory SQLite database (ephemeral, no persistence)
 	MemoryDB bool
 	// MemoryFS uses an in-memory filesystem (ephemeral, no persistence)
@@ -67,9 +69,10 @@ type MahresourcesInputConfig struct {
 }
 
 type MahresourcesLocks struct {
-	ThumbnailGenerationLock      *lib.IDLock[uint]
-	VideoThumbnailGenerationLock *lib.IDLock[uint]
-	ResourceHashLock             *lib.IDLock[string]
+	ThumbnailGenerationLock           *lib.IDLock[uint]
+	VideoThumbnailGenerationLock      *lib.IDLock[uint]
+	OfficeDocumentGenerationLock      *lib.IDLock[uint]
+	ResourceHashLock                  *lib.IDLock[string]
 }
 
 type MahresourcesContext struct {
@@ -101,6 +104,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 
 	thumbnailGenerationLock := lib.NewIDLock[uint](uint(0), nil)
 	videoThumbnailGenerationLock := lib.NewIDLock[uint](uint(1), nil)
+	officeDocumentGenerationLock := lib.NewIDLock[uint](uint(2), nil)
 	resourceHashLock := lib.NewIDLock[string](uint(0), nil)
 
 	// Initialize search cache with 60 second TTL and 1000 max entries
@@ -115,6 +119,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		locks: MahresourcesLocks{
 			ThumbnailGenerationLock:      thumbnailGenerationLock,
 			VideoThumbnailGenerationLock: videoThumbnailGenerationLock,
+			OfficeDocumentGenerationLock: officeDocumentGenerationLock,
 			ResourceHashLock:             resourceHashLock,
 		},
 		searchCache: searchCache,
@@ -386,6 +391,7 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		DbType:                       dbType,
 		AltFileSystems:               cfg.AltFileSystems,
 		FfmpegPath:                   cfg.FfmpegPath,
+		LibreOfficePath:              cfg.LibreOfficePath,
 		BindAddress:                  cfg.BindAddress,
 		RemoteResourceConnectTimeout: connectTimeout,
 		RemoteResourceIdleTimeout:    idleTimeout,

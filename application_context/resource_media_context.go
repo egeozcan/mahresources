@@ -104,6 +104,16 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(
 		if err != nil {
 			return nil, fmt.Errorf("error generating video thumbnail: %w", err)
 		}
+	} else if isOfficeDocument(resource.ContentType) {
+		// Handle office documents (docx, xlsx, pptx, etc.) using LibreOffice
+		fileBytes, err = ctx.generateOfficeDocumentThumbnail(resource, fs, width, height, httpContext)
+		if err != nil {
+			return nil, fmt.Errorf("error generating office document thumbnail: %w", err)
+		}
+		if fileBytes == nil {
+			// LibreOffice not available, skip thumbnail generation
+			return nil, nil
+		}
 	} else {
 		// Unsupported content type; no thumbnail to generate
 		return nil, nil
@@ -821,6 +831,215 @@ func (ctx *MahresourcesContext) createThumbFromVideoFileAtTime(
 	}
 
 	return nil
+}
+
+// isOfficeDocument checks if the content type is a supported office document format.
+func isOfficeDocument(contentType string) bool {
+	officeTypes := []string{
+		// Microsoft Office (OpenXML)
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document",       // docx
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",             // xlsx
+		"application/vnd.openxmlformats-officedocument.presentationml.presentation",     // pptx
+		// OpenDocument
+		"application/vnd.oasis.opendocument.text",         // odt
+		"application/vnd.oasis.opendocument.spreadsheet",  // ods
+		"application/vnd.oasis.opendocument.presentation", // odp
+		// Legacy Microsoft Office
+		"application/msword",                                                      // doc
+		"application/vnd.ms-excel",                                                // xls
+		"application/vnd.ms-powerpoint",                                           // ppt
+	}
+
+	for _, t := range officeTypes {
+		if contentType == t {
+			return true
+		}
+	}
+	return false
+}
+
+// findLibreOfficePath returns the path to the LibreOffice executable.
+// It first checks the configured path, then looks for 'soffice' or 'libreoffice' in PATH.
+func (ctx *MahresourcesContext) findLibreOfficePath() string {
+	// Use configured path if provided
+	if ctx.Config.LibreOfficePath != "" {
+		return ctx.Config.LibreOfficePath
+	}
+
+	// Try to find in PATH
+	if path, err := exec.LookPath("soffice"); err == nil {
+		return path
+	}
+	if path, err := exec.LookPath("libreoffice"); err == nil {
+		return path
+	}
+
+	return ""
+}
+
+// generateOfficeDocumentThumbnail generates a thumbnail from an office document using LibreOffice.
+// Returns nil, nil if LibreOffice is not available.
+func (ctx *MahresourcesContext) generateOfficeDocumentThumbnail(
+	resource models.Resource,
+	fs afero.Fs,
+	width, height uint,
+	httpContext context.Context,
+) ([]byte, error) {
+	libreOfficePath := ctx.findLibreOfficePath()
+	if libreOfficePath == "" {
+		// LibreOffice not available, skip silently
+		return nil, nil
+	}
+
+	// Determine runTimeout based on context's deadline
+	runTimeout := 30 * time.Second // default timeout for office documents
+
+	if deadline, ok := httpContext.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining < runTimeout {
+			runTimeout = remaining
+		}
+	}
+
+	var fileBytes []byte
+
+	// Execute thumbnail generation with lock and timeout
+	lockAcquired, err := ctx.locks.OfficeDocumentGenerationLock.RunWithLockTimeout(
+		resource.ID,
+		30*time.Second, // lockTimeout
+		runTimeout,     // runTimeout
+		func() error {
+			// Open the source file from the filesystem
+			file, openErr := fs.Open(resource.GetCleanLocation())
+			if openErr != nil {
+				return fmt.Errorf("failed to open office document: %w", openErr)
+			}
+			defer file.Close()
+
+			select {
+			case <-httpContext.Done():
+				return httpContext.Err()
+			default:
+			}
+
+			// Create temp directory for input and output
+			tempDir, err := os.MkdirTemp("", "office-thumb-*")
+			if err != nil {
+				return fmt.Errorf("failed to create temp directory: %w", err)
+			}
+			defer os.RemoveAll(tempDir)
+
+			// Determine file extension from original filename or content type
+			ext := filepath.Ext(resource.GetCleanLocation())
+			if ext == "" {
+				ext = getOfficeExtension(resource.ContentType)
+			}
+
+			// Copy file to temp location (LibreOffice needs file path)
+			tempFile := filepath.Join(tempDir, "input"+ext)
+			dst, err := os.Create(tempFile)
+			if err != nil {
+				return fmt.Errorf("failed to create temp file: %w", err)
+			}
+
+			if _, err := io.Copy(dst, file); err != nil {
+				dst.Close()
+				return fmt.Errorf("failed to copy to temp file: %w", err)
+			}
+			dst.Close()
+
+			select {
+			case <-httpContext.Done():
+				return httpContext.Err()
+			default:
+			}
+
+			// Run LibreOffice to convert to PNG
+			outputDir := filepath.Join(tempDir, "output")
+			if err := os.MkdirAll(outputDir, 0755); err != nil {
+				return fmt.Errorf("failed to create output directory: %w", err)
+			}
+
+			cmd := exec.CommandContext(httpContext, libreOfficePath,
+				"--headless",
+				"--convert-to", "png",
+				"--outdir", outputDir,
+				tempFile,
+			)
+
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+
+			if err := cmd.Run(); err != nil {
+				if httpContext.Err() != nil {
+					return httpContext.Err()
+				}
+				return fmt.Errorf("LibreOffice conversion failed: %w (stderr: %s)", err, truncateStderr(stderr.String(), 200))
+			}
+
+			// Find the generated PNG file
+			pngFiles, err := filepath.Glob(filepath.Join(outputDir, "*.png"))
+			if err != nil || len(pngFiles) == 0 {
+				return errors.New("LibreOffice did not generate a PNG file")
+			}
+
+			// Read the generated PNG
+			pngData, err := os.ReadFile(pngFiles[0])
+			if err != nil {
+				return fmt.Errorf("failed to read generated PNG: %w", err)
+			}
+
+			// Decode and resize to requested dimensions
+			img, _, err := image.Decode(bytes.NewReader(pngData))
+			if err != nil {
+				return fmt.Errorf("failed to decode generated PNG: %w", err)
+			}
+
+			newImage := imaging.Resize(img, int(width), int(height), imaging.Lanczos)
+
+			quality := getJPEGQuality(width, height)
+			var buf bytes.Buffer
+			if err := imaging.Encode(&buf, newImage, imaging.JPEG, imaging.JPEGQuality(quality)); err != nil {
+				return fmt.Errorf("failed to encode resized image: %w", err)
+			}
+
+			fileBytes = buf.Bytes()
+			return nil
+		},
+	)
+
+	if !lockAcquired {
+		return nil, errors.New("failed to acquire office document generation lock")
+	}
+
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, errors.New("office document thumbnail generation timed out")
+		}
+		return nil, fmt.Errorf("office document thumbnail generation error: %w", err)
+	}
+
+	return fileBytes, nil
+}
+
+// getOfficeExtension returns the file extension for a given office document content type.
+func getOfficeExtension(contentType string) string {
+	extensions := map[string]string{
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document":   ".docx",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":         ".xlsx",
+		"application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+		"application/vnd.oasis.opendocument.text":                                   ".odt",
+		"application/vnd.oasis.opendocument.spreadsheet":                            ".ods",
+		"application/vnd.oasis.opendocument.presentation":                           ".odp",
+		"application/msword":                                                        ".doc",
+		"application/vnd.ms-excel":                                                  ".xls",
+		"application/vnd.ms-powerpoint":                                             ".ppt",
+	}
+
+	if ext, ok := extensions[contentType]; ok {
+		return ext
+	}
+	return ".tmp"
 }
 
 func (ctx *MahresourcesContext) GetFsForStorageLocation(storageLocation *string) (afero.Fs, error) {
