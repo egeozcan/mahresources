@@ -42,7 +42,8 @@ test.describe.serial('Resource Versioning', () => {
   });
 
   test('should create a resource with initial version', async ({ resourcePage, page }) => {
-    const testFilePath = path.join(__dirname, '../test-assets/sample-image.png');
+    // Use sample-image-10.png to avoid hash deduplication with lightbox tests
+    const testFilePath = path.join(__dirname, '../test-assets/sample-image-10.png');
 
     await resourcePage.gotoNew();
 
@@ -129,8 +130,8 @@ test.describe.serial('Resource Versioning', () => {
     const uploadButton = page.locator('button:has-text("Upload New Version")');
     await expect(uploadButton).toBeVisible({ timeout: 5000 });
 
-    // Upload new version
-    const testFile2Path = path.join(__dirname, '../test-assets/sample-image.png');
+    // Upload new version - use a different image for new version hash
+    const testFile2Path = path.join(__dirname, '../test-assets/sample-image-11.png');
     const fileInput = page.locator('input[type="file"][name="file"]');
     await fileInput.setInputFiles(testFile2Path);
 
@@ -381,13 +382,14 @@ test.describe.serial('Version API Operations', () => {
   test('should upload new version via API', async ({ request, baseURL }) => {
     expect(resourceId, 'Resource must be created in beforeAll').toBeGreaterThan(0);
     const fs = await import('fs');
-    const testFilePath = path.join(__dirname, '../test-assets/sample-image.png');
+    // Use a unique image to avoid hash conflicts
+    const testFilePath = path.join(__dirname, '../test-assets/sample-image-12.png');
     const fileBuffer = fs.readFileSync(testFilePath);
 
     const response = await request.post(`${baseURL}/v1/resource/versions?resourceId=${resourceId}`, {
       multipart: {
         file: {
-          name: 'sample-image.png',
+          name: 'sample-image-12.png',
           mimeType: 'image/png',
           buffer: fileBuffer,
         },

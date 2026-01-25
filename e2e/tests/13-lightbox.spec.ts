@@ -23,8 +23,9 @@ test.describe('Lightbox Functionality', () => {
     ownerGroupId = ownerGroup.ID;
 
     // Create multiple image resources for testing - use unique images to avoid duplicate detection
+    // Note: sample-image.png is avoided to prevent hash conflicts with other tests
     const testImageFiles = [
-      path.join(__dirname, '../test-assets/sample-image.png'),
+      path.join(__dirname, '../test-assets/sample-image-13.png'),
       path.join(__dirname, '../test-assets/sample-image-2.png'),
       path.join(__dirname, '../test-assets/sample-image-3.png'),
       path.join(__dirname, '../test-assets/sample-image-4.png'),
@@ -227,8 +228,58 @@ test.describe('Lightbox Functionality', () => {
 });
 
 test.describe('Lightbox Pagination Data Attributes', () => {
+  let categoryId: number;
+  let ownerGroupId: number;
+  const createdResourceIds: number[] = [];
+  const testRunId = Date.now();
+
+  test.beforeAll(async ({ apiClient }) => {
+    // Create prerequisite data for pagination tests
+    const category = await apiClient.createCategory(
+      `Pagination Test Category ${testRunId}`,
+      'Category for pagination tests'
+    );
+    categoryId = category.ID;
+
+    const ownerGroup = await apiClient.createGroup({
+      name: `Pagination Test Owner ${testRunId}`,
+      description: 'Owner for pagination test resources',
+      categoryId: categoryId,
+    });
+    ownerGroupId = ownerGroup.ID;
+
+    // Create 5 resources to ensure pagination works
+    // Use images 14-18 which aren't used by other tests
+    const testImageFiles = [
+      path.join(__dirname, '../test-assets/sample-image-14.png'),
+      path.join(__dirname, '../test-assets/sample-image-15.png'),
+      path.join(__dirname, '../test-assets/sample-image-16.png'),
+      path.join(__dirname, '../test-assets/sample-image-17.png'),
+      path.join(__dirname, '../test-assets/sample-image-18.png'),
+    ];
+    for (let i = 0; i < testImageFiles.length; i++) {
+      const resource = await apiClient.createResource({
+        filePath: testImageFiles[i],
+        name: `Pagination Test Image ${i + 1} - ${testRunId}`,
+        ownerId: ownerGroupId,
+      });
+      createdResourceIds.push(resource.ID);
+    }
+  });
+
+  test.afterAll(async ({ apiClient }) => {
+    for (const resourceId of createdResourceIds) {
+      try {
+        await apiClient.deleteResource(resourceId);
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+    if (ownerGroupId) await apiClient.deleteGroup(ownerGroupId);
+    if (categoryId) await apiClient.deleteCategory(categoryId);
+  });
+
   test('pagination nav should have data-has-next and data-has-prev attributes', async ({ page }) => {
-    // This test relies on resources created by earlier tests (Lightbox Functionality's beforeAll creates 5 resources)
     // With 5+ resources and pageSize=2, we should have pagination
     await page.goto('/resources?pageSize=2');
     await page.waitForLoadState('load');
@@ -273,17 +324,66 @@ test.describe('Lightbox Pagination Data Attributes', () => {
 });
 
 test.describe('Lightbox Loading State', () => {
+  let categoryId: number;
+  let ownerGroupId: number;
+  const createdResourceIds: number[] = [];
+  const testRunId = Date.now();
+
+  test.beforeAll(async ({ apiClient }) => {
+    // Create prerequisite data for loading state tests
+    const category = await apiClient.createCategory(
+      `Loading State Category ${testRunId}`,
+      'Category for loading state tests'
+    );
+    categoryId = category.ID;
+
+    const ownerGroup = await apiClient.createGroup({
+      name: `Loading State Owner ${testRunId}`,
+      description: 'Owner for loading state test resources',
+      categoryId: categoryId,
+    });
+    ownerGroupId = ownerGroup.ID;
+
+    // Create 2 image resources for navigation testing
+    // Use images 19-20 which aren't used by other tests
+    const testImageFiles = [
+      path.join(__dirname, '../test-assets/sample-image-19.png'),
+      path.join(__dirname, '../test-assets/sample-image-20.png'),
+    ];
+    for (let i = 0; i < testImageFiles.length; i++) {
+      const resource = await apiClient.createResource({
+        filePath: testImageFiles[i],
+        name: `Loading State Image ${i + 1} - ${testRunId}`,
+        ownerId: ownerGroupId,
+      });
+      createdResourceIds.push(resource.ID);
+    }
+  });
+
+  test.afterAll(async ({ apiClient }) => {
+    for (const resourceId of createdResourceIds) {
+      try {
+        await apiClient.deleteResource(resourceId);
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+    if (ownerGroupId) await apiClient.deleteGroup(ownerGroupId);
+    if (categoryId) await apiClient.deleteCategory(categoryId);
+  });
+
   test('loading spinner should disappear when navigating between cached images', async ({ page }) => {
-    // This test relies on resources created by earlier tests (Lightbox Functionality's beforeAll creates 5 resources)
-    await page.goto('/resources');
+    // Navigate to resources and open lightbox on an image we created
+    await page.goto('/resources?sort=ID&order=desc');
     await page.waitForLoadState('load');
 
-    // Open lightbox
-    const imageLink = page.locator('[data-lightbox-item]').first();
+    // Open lightbox on an actual image (look for preview images in lightbox links)
+    const imageLink = page.locator('[data-lightbox-item] img').first();
+    await expect(imageLink).toBeVisible({ timeout: 10000 });
     await imageLink.click();
 
     const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
-    await expect(lightbox).toBeVisible();
+    await expect(lightbox).toBeVisible({ timeout: 10000 });
 
     // Wait for first image to load
     await page.waitForTimeout(500);

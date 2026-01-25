@@ -70,6 +70,14 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 		_ = file.Close()
 	}
 
+	// Clear CurrentVersionID to break circular reference before deletion
+	// This prevents foreign key constraint errors when deleting resources with versions
+	if resource.CurrentVersionID != nil {
+		if err := ctx.db.Model(&resource).Update("current_version_id", nil).Error; err != nil {
+			return err
+		}
+	}
+
 	if err := ctx.db.Select(clause.Associations).Delete(&resource).Error; err != nil {
 		return err
 	}
