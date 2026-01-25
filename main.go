@@ -71,6 +71,7 @@ func main() {
 	ffmpegPath := flag.String("ffmpeg-path", os.Getenv("FFMPEG_PATH"), "Path to ffmpeg binary for video thumbnails (env: FFMPEG_PATH)")
 	libreOfficePath := flag.String("libreoffice-path", os.Getenv("LIBREOFFICE_PATH"), "Path to LibreOffice binary for office document thumbnails (env: LIBREOFFICE_PATH)")
 	skipFTS := flag.Bool("skip-fts", os.Getenv("SKIP_FTS") == "1", "Skip Full-Text Search initialization (env: SKIP_FTS=1)")
+	skipVersionMigration := flag.Bool("skip-version-migration", os.Getenv("SKIP_VERSION_MIGRATION") == "1", "Skip resource version migration at startup (env: SKIP_VERSION_MIGRATION=1)")
 
 	// Ephemeral/in-memory options
 	memoryDB := flag.Bool("memory-db", os.Getenv("MEMORY_DB") == "1", "Use in-memory SQLite database (env: MEMORY_DB=1)")
@@ -200,15 +201,19 @@ func main() {
 		}
 	}
 
-	// Migrate existing resources to versioning system
-	if err := context.MigrateResourceVersions(); err != nil {
-		log.Printf("Warning: failed to migrate resource versions: %v", err)
-	}
+	// Migrate existing resources to versioning system (skip with -skip-version-migration flag)
+	if !*skipVersionMigration {
+		if err := context.MigrateResourceVersions(); err != nil {
+			log.Printf("Warning: failed to migrate resource versions: %v", err)
+		}
 
-	// Sync resource fields from their current versions (fixes resources
-	// where versions were uploaded before the sync fix was deployed)
-	if err := context.SyncResourcesFromCurrentVersion(); err != nil {
-		log.Printf("Warning: failed to sync resources from versions: %v", err)
+		// Sync resource fields from their current versions (fixes resources
+		// where versions were uploaded before the sync fix was deployed)
+		if err := context.SyncResourcesFromCurrentVersion(); err != nil {
+			log.Printf("Warning: failed to sync resources from versions: %v", err)
+		}
+	} else {
+		log.Println("Version migration skipped (-skip-version-migration flag or SKIP_VERSION_MIGRATION=1)")
 	}
 
 	// Initialize Full-Text Search (skip with -skip-fts flag or SKIP_FTS=1 env var)

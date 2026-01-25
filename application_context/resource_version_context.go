@@ -40,10 +40,39 @@ func (ctx *MahresourcesContext) CountHashReferences(hash string) (int64, error) 
 }
 
 // GetVersions returns all versions for a resource, ordered by version number descending
+// If no versions exist (resource not yet migrated), returns a virtual v1 based on current resource state
 func (ctx *MahresourcesContext) GetVersions(resourceID uint) ([]models.ResourceVersion, error) {
 	var versions []models.ResourceVersion
 	err := ctx.db.Where("resource_id = ?", resourceID).Order("version_number DESC").Find(&versions).Error
-	return versions, err
+	if err != nil {
+		return nil, err
+	}
+
+	// If no versions exist, create a virtual v1 from resource's current state
+	if len(versions) == 0 {
+		resource, err := ctx.GetResource(resourceID)
+		if err != nil {
+			return nil, err
+		}
+		virtualV1 := models.ResourceVersion{
+			ResourceID:      resourceID,
+			VersionNumber:   1,
+			Hash:            resource.Hash,
+			HashType:        resource.HashType,
+			FileSize:        resource.FileSize,
+			ContentType:     resource.ContentType,
+			Width:           resource.Width,
+			Height:          resource.Height,
+			Location:        resource.Location,
+			StorageLocation: resource.StorageLocation,
+			Comment:         "Current version",
+			CreatedAt:       resource.CreatedAt,
+		}
+		// Note: ID is 0 (not persisted) - UI should handle this
+		versions = []models.ResourceVersion{virtualV1}
+	}
+
+	return versions, nil
 }
 
 // GetVersion returns a specific version by ID
@@ -69,8 +98,31 @@ func (ctx *MahresourcesContext) GetVersionByNumber(resourceID uint, versionNumbe
 // UploadNewVersion uploads a new version of an existing resource
 func (ctx *MahresourcesContext) UploadNewVersion(resourceID uint, file multipart.File, header *multipart.FileHeader, comment string) (*models.ResourceVersion, error) {
 	// Verify resource exists
-	if _, err := ctx.GetResource(resourceID); err != nil {
+	resource, err := ctx.GetResource(resourceID)
+	if err != nil {
 		return nil, fmt.Errorf("resource not found: %w", err)
+	}
+
+	// Check if resource has any versions - if not, create v1 from current state first (lazy migration)
+	var versionCount int64
+	ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceID).Count(&versionCount)
+	if versionCount == 0 {
+		v1 := models.ResourceVersion{
+			ResourceID:      resourceID,
+			VersionNumber:   1,
+			Hash:            resource.Hash,
+			HashType:        resource.HashType,
+			FileSize:        resource.FileSize,
+			ContentType:     resource.ContentType,
+			Width:           resource.Width,
+			Height:          resource.Height,
+			Location:        resource.Location,
+			StorageLocation: resource.StorageLocation,
+			Comment:         "Initial version",
+		}
+		if err := ctx.db.Create(&v1).Error; err != nil {
+			return nil, fmt.Errorf("failed to create initial version: %w", err)
+		}
 	}
 
 	// Get the next version number
