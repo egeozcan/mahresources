@@ -91,13 +91,18 @@ export function registerLightboxStore(Alpine) {
 
       // Parse lightbox items from DOM
       const links = container.querySelectorAll('[data-lightbox-item]');
-      this.items = Array.from(links).map((link, index) => ({
-        id: parseInt(link.dataset.resourceId, 10),
-        viewUrl: `/v1/resource/view?id=${link.dataset.resourceId}`,
-        contentType: link.dataset.contentType || '',
-        name: link.dataset.resourceName || link.querySelector('img')?.alt || '',
-        domIndex: index
-      })).filter(item =>
+      this.items = Array.from(links).map((link, index) => {
+        const hash = link.dataset.resourceHash || '';
+        const versionParam = hash ? `&v=${hash}` : '';
+        return {
+          id: parseInt(link.dataset.resourceId, 10),
+          viewUrl: `/v1/resource/view?id=${link.dataset.resourceId}${versionParam}`,
+          contentType: link.dataset.contentType || '',
+          name: link.dataset.resourceName || link.querySelector('img')?.alt || '',
+          hash: hash,
+          domIndex: index
+        };
+      }).filter(item =>
         item.contentType?.startsWith('image/') ||
         item.contentType?.startsWith('video/')
       );
@@ -395,12 +400,16 @@ export function registerLightboxStore(Alpine) {
       // Map to lightbox item format, filtering to only images/videos
       const items = resources
         .filter(r => r.ContentType?.startsWith('image/') || r.ContentType?.startsWith('video/'))
-        .map(r => ({
-          id: r.ID,
-          viewUrl: `/v1/resource/view?id=${r.ID}`,
-          contentType: r.ContentType,
-          name: r.Name || ''
-        }));
+        .map(r => {
+          const versionParam = r.Hash ? `&v=${r.Hash}` : '';
+          return {
+            id: r.ID,
+            viewUrl: `/v1/resource/view?id=${r.ID}${versionParam}`,
+            contentType: r.ContentType,
+            name: r.Name || '',
+            hash: r.Hash || ''
+          };
+        });
 
       return { items, hasNextPage };
     },

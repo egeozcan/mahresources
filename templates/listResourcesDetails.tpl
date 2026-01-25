@@ -34,13 +34,14 @@
                                         <a class="max-w-lg overflow-ellipsis overflow-hidden block" href="/resource?id={{ entity.ID }}">{{ entity.Name }}</a>
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        <a class="max-w-lg overflow-ellipsis overflow-hidden block" href="/v1/resource/view?id={{ entity.ID }}#{{ entity.ContentType }}"
+                                        <a class="max-w-lg overflow-ellipsis overflow-hidden block" href="/v1/resource/view?id={{ entity.ID }}&v={{ entity.Hash }}#{{ entity.ContentType }}"
                                            @click.prevent="$store.lightbox.openFromClick($event, {{ entity.ID }}, '{{ entity.ContentType }}')"
                                            data-lightbox-item
                                            data-resource-id="{{ entity.ID }}"
                                            data-content-type="{{ entity.ContentType }}"
-                                           data-resource-name="{{ entity.Name }}">
-                                            <img height="50" src="/v1/resource/preview?id={{ entity.ID }}&height=50" alt="Preview">
+                                           data-resource-name="{{ entity.Name }}"
+                                           data-resource-hash="{{ entity.Hash }}">
+                                            <img height="50" src="/v1/resource/preview?id={{ entity.ID }}&height=50&v={{ entity.Hash }}" alt="Preview">
                                         </a>
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">

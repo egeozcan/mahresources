@@ -32,8 +32,8 @@
 {% block sidebar %}
     {% include "/partials/ownerDisplay.tpl" with owner=resource.Owner %}
     <p>{{ resource.FileSize | humanReadableSize }}</p>
-    <a href="/v1/resource/view?id={{ resource.ID }}#{{ entity.ContentType }}">
-        <img height="300" src="/v1/resource/preview?id={{ resource.ID }}&height=300" alt="Preview">
+    <a href="/v1/resource/view?id={{ resource.ID }}&v={{ resource.Hash }}#{{ resource.ContentType }}">
+        <img height="300" src="/v1/resource/preview?id={{ resource.ID }}&height=300&v={{ resource.Hash }}" alt="Preview">
     </a>
     {% include "/partials/tagList.tpl" with tags=resource.Tags addTagUrl='/v1/resources/addTags' id=resource.ID %}
 

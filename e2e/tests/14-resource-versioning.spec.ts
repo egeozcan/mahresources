@@ -160,6 +160,39 @@ test.describe.serial('Resource Versioning', () => {
     await expect(v1Row.locator('span.bg-blue-100:has-text("current")')).not.toBeVisible();
   });
 
+  test('should update preview URL hash when version changes', async ({ resourcePage, page }) => {
+    expect(resourceId, 'Resource must be created first').toBeGreaterThan(0);
+    await resourcePage.gotoDisplay(resourceId);
+
+    // Get the preview image URL and extract the hash parameter
+    const previewImg = page.locator('img[alt="Preview"]').first();
+    await expect(previewImg).toBeVisible();
+    const initialSrc = await previewImg.getAttribute('src');
+    const initialHash = new URLSearchParams(initialSrc?.split('?')[1] || '').get('v');
+    expect(initialHash).toBeTruthy();
+
+    // Upload a new version with different content (use sample-image-12 which has unique content)
+    await ensureVersionPanelExpanded(page);
+    const uploadButton = page.locator('button:has-text("Upload New Version")');
+    await expect(uploadButton).toBeVisible({ timeout: 5000 });
+
+    // Use sample-image-12.png for this test (different content = different hash)
+    const testFilePath = path.join(__dirname, '../test-assets/sample-image-12.png');
+    await page.locator('input[type="file"][name="file"]').setInputFiles(testFilePath);
+    await uploadButton.click();
+    await page.waitForLoadState('load');
+
+    // Check that the preview URL now has a different hash
+    const newPreviewImg = page.locator('img[alt="Preview"]').first();
+    await expect(newPreviewImg).toBeVisible();
+    const newSrc = await newPreviewImg.getAttribute('src');
+    const newHash = new URLSearchParams(newSrc?.split('?')[1] || '').get('v');
+    expect(newHash).toBeTruthy();
+
+    // The hash should be different because we uploaded new content
+    expect(newHash).not.toEqual(initialHash);
+  });
+
   test('should restore a previous version', async ({ resourcePage, page }) => {
     expect(resourceId, 'Resource must be created first').toBeGreaterThan(0);
     await resourcePage.gotoDisplay(resourceId);

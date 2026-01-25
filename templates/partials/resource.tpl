@@ -10,13 +10,14 @@
             </a>
         </div>
         {% include "partials/description.tpl" with description=entity.Description preview=true %}
-        <a href="/v1/resource/view?id={{ entity.ID }}#{{ entity.ContentType }}"
+        <a href="/v1/resource/view?id={{ entity.ID }}&v={{ entity.Hash }}#{{ entity.ContentType }}"
            @click.prevent="$store.lightbox.openFromClick($event, {{ entity.ID }}, '{{ entity.ContentType }}')"
            data-lightbox-item
            data-resource-id="{{ entity.ID }}"
            data-content-type="{{ entity.ContentType }}"
-           data-resource-name="{{ entity.Name }}">
-            <img height="300" src="/v1/resource/preview?id={{ entity.ID }}&height=300" alt="Preview">
+           data-resource-name="{{ entity.Name }}"
+           data-resource-hash="{{ entity.Hash }}">
+            <img height="300" src="/v1/resource/preview?id={{ entity.ID }}&height=300&v={{ entity.Hash }}" alt="Preview">
         </a>
         <div class="tags mt-3 mb-2" style="margin-left: -0.5rem">
             {% for tag in entity.Tags %}

@@ -110,10 +110,27 @@ func (ctx *MahresourcesContext) UploadNewVersion(resourceID uint, file multipart
 		return nil, fmt.Errorf("failed to create version record: %w", err)
 	}
 
-	// Update resource's current version
-	if err := tx.Model(&models.Resource{}).Where("id = ?", resourceID).Updates(map[string]interface{}{"current_version_id": version.ID}).Error; err != nil {
+	// Update resource's current version AND sync main fields from the new version
+	// This ensures thumbnails, previews, and file serving use the current version's content
+	resourceUpdates := map[string]interface{}{
+		"current_version_id": version.ID,
+		"hash":               version.Hash,
+		"location":           version.Location,
+		"storage_location":   version.StorageLocation,
+		"content_type":       version.ContentType,
+		"width":              version.Width,
+		"height":             version.Height,
+		"file_size":          version.FileSize,
+	}
+	if err := tx.Model(&models.Resource{}).Where("id = ?", resourceID).Updates(resourceUpdates).Error; err != nil {
 		tx.Rollback()
-		return nil, fmt.Errorf("failed to update current version: %w", err)
+		return nil, fmt.Errorf("failed to update resource fields: %w", err)
+	}
+
+	// Clear cached previews/thumbnails so they regenerate with new content
+	if err := tx.Where("resource_id = ?", resourceID).Delete(&models.Preview{}).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to clear cached previews: %w", err)
 	}
 
 	if err := tx.Commit().Error; err != nil {
@@ -249,9 +266,27 @@ func (ctx *MahresourcesContext) RestoreVersion(resourceID, versionID uint, comme
 		return nil, fmt.Errorf("failed to create version record: %w", err)
 	}
 
-	if err := tx.Model(&models.Resource{}).Where("id = ?", resourceID).Update("current_version_id", version.ID).Error; err != nil {
+	// Update resource's current version AND sync main fields from the restored version
+	// This ensures thumbnails, previews, and file serving use the current version's content
+	resourceUpdates := map[string]interface{}{
+		"current_version_id": version.ID,
+		"hash":               version.Hash,
+		"location":           version.Location,
+		"storage_location":   version.StorageLocation,
+		"content_type":       version.ContentType,
+		"width":              version.Width,
+		"height":             version.Height,
+		"file_size":          version.FileSize,
+	}
+	if err := tx.Model(&models.Resource{}).Where("id = ?", resourceID).Updates(resourceUpdates).Error; err != nil {
 		tx.Rollback()
-		return nil, fmt.Errorf("failed to update current version: %w", err)
+		return nil, fmt.Errorf("failed to update resource fields: %w", err)
+	}
+
+	// Clear cached previews/thumbnails so they regenerate with new content
+	if err := tx.Where("resource_id = ?", resourceID).Delete(&models.Preview{}).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to clear cached previews: %w", err)
 	}
 
 	if err := tx.Commit().Error; err != nil {
