@@ -203,6 +203,12 @@ func main() {
 		log.Printf("Warning: failed to migrate resource versions: %v", err)
 	}
 
+	// Sync resource fields from their current versions (fixes resources
+	// where versions were uploaded before the sync fix was deployed)
+	if err := context.SyncResourcesFromCurrentVersion(); err != nil {
+		log.Printf("Warning: failed to sync resources from versions: %v", err)
+	}
+
 	// Initialize Full-Text Search (skip with -skip-fts flag or SKIP_FTS=1 env var)
 	if !*skipFTS {
 		if err := context.InitFTS(); err != nil {

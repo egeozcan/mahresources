@@ -476,6 +476,62 @@ func (ctx *MahresourcesContext) CompareVersions(resourceID, v1ID, v2ID uint) (*V
 	return comparison, nil
 }
 
+// SyncResourcesFromCurrentVersion updates resource fields to match their current version
+// This fixes resources where version uploads occurred before the sync fix was deployed
+func (ctx *MahresourcesContext) SyncResourcesFromCurrentVersion() error {
+	// Find resources that have a current version set
+	var resources []models.Resource
+	if err := ctx.db.Where("current_version_id IS NOT NULL").Find(&resources).Error; err != nil {
+		return err
+	}
+
+	if len(resources) == 0 {
+		return nil
+	}
+
+	syncCount := 0
+	for _, resource := range resources {
+		var version models.ResourceVersion
+		if err := ctx.db.First(&version, *resource.CurrentVersionID).Error; err != nil {
+			continue
+		}
+
+		// Check if resource fields differ from current version
+		if resource.Hash == version.Hash &&
+			resource.Location == version.Location &&
+			resource.ContentType == version.ContentType &&
+			resource.FileSize == version.FileSize {
+			continue // Already in sync
+		}
+
+		// Update resource fields to match current version
+		updates := map[string]interface{}{
+			"hash":             version.Hash,
+			"location":         version.Location,
+			"storage_location": version.StorageLocation,
+			"content_type":     version.ContentType,
+			"width":            version.Width,
+			"height":           version.Height,
+			"file_size":        version.FileSize,
+		}
+		if err := ctx.db.Model(&resource).Updates(updates).Error; err != nil {
+			ctx.Logger().Warning(models.LogActionCreate, "sync_version", &resource.ID, "Failed to sync resource from version", err.Error(), nil)
+			continue
+		}
+
+		// Clear cached previews
+		ctx.db.Where("resource_id = ?", resource.ID).Delete(&models.Preview{})
+
+		syncCount++
+	}
+
+	if syncCount > 0 {
+		ctx.Logger().Info(models.LogActionCreate, "system", nil, fmt.Sprintf("Synced %d resources to their current versions", syncCount), "", nil)
+	}
+
+	return nil
+}
+
 // MigrateResourceVersions creates initial version records for existing resources that don't have versions
 func (ctx *MahresourcesContext) MigrateResourceVersions() error {
 	// Find resources that don't have a current version set
