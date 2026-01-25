@@ -116,6 +116,7 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-ffmpeg-path` | `FFMPEG_PATH` | Path to ffmpeg for video thumbnails |
 | `-libreoffice-path` | `LIBREOFFICE_PATH` | Path to LibreOffice for office document thumbnails (auto-detects soffice/libreoffice in PATH) |
 | `-skip-fts` | `SKIP_FTS=1` | Skip Full-Text Search initialization |
+| `-skip-version-migration` | `SKIP_VERSION_MIGRATION=1` | Skip resource version migration at startup (for large DBs) |
 | `-alt-fs` | `FILE_ALT_*` | Alternative file systems |
 | `-memory-db` | `MEMORY_DB=1` | Use in-memory SQLite database |
 | `-memory-fs` | `MEMORY_FS=1` | Use in-memory filesystem |
