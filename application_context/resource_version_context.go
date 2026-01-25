@@ -593,6 +593,11 @@ func (ctx *MahresourcesContext) SyncResourcesFromCurrentVersion() error {
 
 		// Clear cached previews
 		ctx.db.Where("resource_id = ?", item.ResourceID).Delete(&models.Preview{})
+
+		// Yield CPU time every 100 items (lower priority background task)
+		if (i+1)%100 == 0 {
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
 
 	ctx.Logger().Info(models.LogActionCreate, "system", nil, fmt.Sprintf("Synced %d resources to their current versions", len(outOfSync)), "", nil)
@@ -683,6 +688,9 @@ func (ctx *MahresourcesContext) MigrateResourceVersions() error {
 		if len(resources) < batchSize {
 			break
 		}
+
+		// Yield CPU time to other goroutines (lower priority background task)
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	log.Printf("Version migration complete: %d resources migrated", migrated)
