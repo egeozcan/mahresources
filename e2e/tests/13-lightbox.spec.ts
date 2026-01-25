@@ -227,6 +227,91 @@ test.describe('Lightbox Functionality', () => {
   });
 });
 
+test.describe('Lightbox SVG Support', () => {
+  let categoryId: number;
+  let ownerGroupId: number;
+  let svgResourceId: number;
+  const testRunId = Date.now();
+
+  test.beforeAll(async ({ apiClient }) => {
+    // Create prerequisite data for SVG tests
+    const category = await apiClient.createCategory(
+      `SVG Test Category ${testRunId}`,
+      'Category for SVG lightbox tests'
+    );
+    categoryId = category.ID;
+
+    const ownerGroup = await apiClient.createGroup({
+      name: `SVG Test Owner ${testRunId}`,
+      description: 'Owner for SVG test resources',
+      categoryId: categoryId,
+    });
+    ownerGroupId = ownerGroup.ID;
+
+    // Create an SVG resource
+    const svgResource = await apiClient.createResource({
+      filePath: path.join(__dirname, '../test-assets/sample-image.svg'),
+      name: `SVG Test Image ${testRunId}`,
+      description: 'Test SVG for lightbox',
+      ownerId: ownerGroupId,
+    });
+    svgResourceId = svgResource.ID;
+  });
+
+  test.afterAll(async ({ apiClient }) => {
+    if (svgResourceId) {
+      try {
+        await apiClient.deleteResource(svgResourceId);
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+    if (ownerGroupId) await apiClient.deleteGroup(ownerGroupId);
+    if (categoryId) await apiClient.deleteCategory(categoryId);
+  });
+
+  test('should open lightbox for SVG images', async ({ page }) => {
+    // Navigate to resources and filter by content type
+    await page.goto(`/resources?contentType=svg`);
+    await page.waitForLoadState('load');
+
+    // Find the SVG resource's lightbox link
+    const svgLink = page.locator('[data-lightbox-item]').first();
+    await expect(svgLink).toBeVisible({ timeout: 5000 });
+
+    // Click to open lightbox
+    await svgLink.click();
+
+    // Verify lightbox opened
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    await expect(lightbox).toBeVisible();
+
+    // Verify SVG is displayed (using object element for better SVG rendering)
+    const lightboxSvg = lightbox.locator('object[type="image/svg+xml"]');
+    await expect(lightboxSvg).toBeVisible();
+
+    // Wait for SVG to load
+    await page.waitForTimeout(500);
+
+    // Verify loading spinner disappears
+    const loadingSpinner = lightbox.locator('svg.animate-spin');
+    await expect(loadingSpinner).toBeHidden({ timeout: 5000 });
+  });
+
+  test('SVG can be viewed directly', async ({ page }) => {
+    // Navigate to the SVG resource view endpoint
+    const response = await page.goto(`/v1/resource/view?id=${svgResourceId}`);
+
+    // The view endpoint redirects to the actual file - verify it succeeds
+    expect(response?.ok()).toBe(true);
+
+    // Verify we can see the SVG content (the redirect lands on the actual SVG file)
+    // For SVG files, the page should contain SVG content
+    const pageContent = await page.content();
+    expect(pageContent).toContain('svg');
+  });
+});
+
 test.describe('Lightbox Pagination Data Attributes', () => {
   let categoryId: number;
   let ownerGroupId: number;

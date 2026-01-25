@@ -171,7 +171,8 @@ export function registerLightboxStore(Alpine) {
       document.body.style.overflow = 'hidden';
 
       const item = this.getCurrentItem();
-      this.announce(`Opened ${this.isVideo(item?.contentType) ? 'video' : 'image'}: ${item?.name || 'media'}. ${this.currentIndex + 1} of ${this.items.length}`);
+      const mediaType = this.isVideo(item?.contentType) ? 'video' : this.isSvg(item?.contentType) ? 'SVG' : 'image';
+      this.announce(`Opened ${mediaType}: ${item?.name || 'media'}. ${this.currentIndex + 1} of ${this.items.length}`);
 
       // Schedule a check for cached media after Alpine renders the new element
       this.scheduleMediaCheck();
@@ -415,12 +416,21 @@ export function registerLightboxStore(Alpine) {
     },
 
     /**
-     * Check if content type is an image
+     * Check if content type is an image (excluding SVG which gets special handling)
      * @param {string} contentType
      * @returns {boolean}
      */
     isImage(contentType) {
-      return contentType?.startsWith('image/');
+      return contentType?.startsWith('image/') && !this.isSvg(contentType);
+    },
+
+    /**
+     * Check if content type is an SVG
+     * @param {string} contentType
+     * @returns {boolean}
+     */
+    isSvg(contentType) {
+      return contentType === 'image/svg+xml';
     },
 
     /**
@@ -455,7 +465,16 @@ export function registerLightboxStore(Alpine) {
     checkIfMediaLoaded(el) {
       if (!el) return;
       // Images: check 'complete' property and naturalWidth > 0
-      if (el.tagName === 'IMG' && el.complete && el.naturalWidth > 0) {
+      // For SVGs, naturalWidth may be 0 if no explicit dimensions, so just check complete
+      if (el.tagName === 'IMG' && el.complete) {
+        const isSvg = this.isSvg(this.getCurrentItem()?.contentType);
+        if (isSvg || el.naturalWidth > 0) {
+          this.loading = false;
+          return;
+        }
+      }
+      // Object elements (used for SVG): check if contentDocument is accessible
+      if (el.tagName === 'OBJECT' && el.contentDocument) {
         this.loading = false;
         return;
       }
@@ -472,7 +491,7 @@ export function registerLightboxStore(Alpine) {
     scheduleMediaCheck() {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          const el = document.querySelector('[role="dialog"] img, [role="dialog"] video');
+          const el = document.querySelector('[role="dialog"] img, [role="dialog"] video, [role="dialog"] object');
           if (el) {
             this.checkIfMediaLoaded(el);
           }

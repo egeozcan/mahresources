@@ -60,6 +60,27 @@
                 >
             </template>
 
+            <!-- SVG display - use object tag for better SVG rendering with proper sizing -->
+            <template x-if="$store.lightbox.isSvg($store.lightbox.getCurrentItem()?.contentType)">
+                <object
+                    :data="$store.lightbox.getCurrentItem()?.viewUrl"
+                    type="image/svg+xml"
+                    :aria-label="$store.lightbox.getCurrentItem()?.name || 'SVG Image'"
+                    class="max-h-[90vh] max-w-[90vw] min-h-[50vh] min-w-[50vw] transition-all duration-300"
+                    :class="$store.lightbox.editPanelOpen ? 'md:max-w-[calc(100vw-450px)]' : ''"
+                    x-init="$nextTick(() => $store.lightbox.checkIfMediaLoaded($el))"
+                    @load="$store.lightbox.onMediaLoaded()"
+                    @error="$store.lightbox.onMediaLoaded()"
+                >
+                    <!-- Fallback to img if object fails -->
+                    <img
+                        :src="$store.lightbox.getCurrentItem()?.viewUrl"
+                        :alt="$store.lightbox.getCurrentItem()?.name || 'SVG Image'"
+                        class="max-h-[90vh] max-w-[90vw]"
+                    >
+                </object>
+            </template>
+
             <!-- Video display -->
             <template x-if="$store.lightbox.isVideo($store.lightbox.getCurrentItem()?.contentType)">
                 <video

@@ -928,6 +928,9 @@
   .max-h-\[90vh\] {
     max-height: 90vh;
   }
+  .min-h-\[50vh\] {
+    min-height: 50vh;
+  }
   .min-h-screen {
     min-height: 100vh;
   }
@@ -1005,6 +1008,9 @@
   }
   .min-w-40 {
     min-width: calc(var(--spacing) * 40);
+  }
+  .min-w-\[50vw\] {
+    min-width: 50vw;
   }
   .min-w-\[150px\] {
     min-width: 150px;
