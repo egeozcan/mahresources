@@ -11,6 +11,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"log"
 	"mime/multipart"
 	"path"
 	"strings"
@@ -479,109 +480,156 @@ func (ctx *MahresourcesContext) CompareVersions(resourceID, v1ID, v2ID uint) (*V
 // SyncResourcesFromCurrentVersion updates resource fields to match their current version
 // This fixes resources where version uploads occurred before the sync fix was deployed
 func (ctx *MahresourcesContext) SyncResourcesFromCurrentVersion() error {
-	// Find resources that have a current version set
-	var resources []models.Resource
-	if err := ctx.db.Where("current_version_id IS NOT NULL").Find(&resources).Error; err != nil {
+	// Use a single query to find resources that are out of sync with their current version
+	// This is much faster than loading all resources and checking each one
+	type outOfSyncResource struct {
+		ResourceID       uint
+		VersionHash      string
+		VersionLocation  string
+		StorageLocation  *string
+		VersionType      string
+		VersionWidth     uint
+		VersionHeight    uint
+		VersionFileSize  int64
+	}
+
+	var outOfSync []outOfSyncResource
+	err := ctx.db.Raw(`
+		SELECT r.id as resource_id,
+		       v.hash as version_hash,
+		       v.location as version_location,
+		       v.storage_location as storage_location,
+		       v.content_type as version_type,
+		       v.width as version_width,
+		       v.height as version_height,
+		       v.file_size as version_file_size
+		FROM resources r
+		JOIN resource_versions v ON r.current_version_id = v.id
+		WHERE r.hash != v.hash
+		   OR r.location != v.location
+		   OR r.content_type != v.content_type
+		   OR r.file_size != v.file_size
+	`).Scan(&outOfSync).Error
+	if err != nil {
 		return err
 	}
 
-	if len(resources) == 0 {
+	if len(outOfSync) == 0 {
 		return nil
 	}
 
-	syncCount := 0
-	for _, resource := range resources {
-		var version models.ResourceVersion
-		if err := ctx.db.First(&version, *resource.CurrentVersionID).Error; err != nil {
-			continue
+	log.Printf("Syncing %d resources to their current versions...", len(outOfSync))
+
+	for i, item := range outOfSync {
+		if (i+1)%100 == 0 || i == len(outOfSync)-1 {
+			log.Printf("  Version sync progress: %d/%d", i+1, len(outOfSync))
 		}
 
-		// Check if resource fields differ from current version
-		if resource.Hash == version.Hash &&
-			resource.Location == version.Location &&
-			resource.ContentType == version.ContentType &&
-			resource.FileSize == version.FileSize {
-			continue // Already in sync
-		}
-
-		// Update resource fields to match current version
 		updates := map[string]interface{}{
-			"hash":             version.Hash,
-			"location":         version.Location,
-			"storage_location": version.StorageLocation,
-			"content_type":     version.ContentType,
-			"width":            version.Width,
-			"height":           version.Height,
-			"file_size":        version.FileSize,
+			"hash":             item.VersionHash,
+			"location":         item.VersionLocation,
+			"storage_location": item.StorageLocation,
+			"content_type":     item.VersionType,
+			"width":            item.VersionWidth,
+			"height":           item.VersionHeight,
+			"file_size":        item.VersionFileSize,
 		}
-		if err := ctx.db.Model(&resource).Updates(updates).Error; err != nil {
-			ctx.Logger().Warning(models.LogActionCreate, "sync_version", &resource.ID, "Failed to sync resource from version", err.Error(), nil)
+		if err := ctx.db.Model(&models.Resource{}).Where("id = ?", item.ResourceID).Updates(updates).Error; err != nil {
+			ctx.Logger().Warning(models.LogActionCreate, "sync_version", &item.ResourceID, "Failed to sync resource from version", err.Error(), nil)
 			continue
 		}
 
 		// Clear cached previews
-		ctx.db.Where("resource_id = ?", resource.ID).Delete(&models.Preview{})
-
-		syncCount++
+		ctx.db.Where("resource_id = ?", item.ResourceID).Delete(&models.Preview{})
 	}
 
-	if syncCount > 0 {
-		ctx.Logger().Info(models.LogActionCreate, "system", nil, fmt.Sprintf("Synced %d resources to their current versions", syncCount), "", nil)
-	}
+	ctx.Logger().Info(models.LogActionCreate, "system", nil, fmt.Sprintf("Synced %d resources to their current versions", len(outOfSync)), "", nil)
 
 	return nil
 }
 
 // MigrateResourceVersions creates initial version records for existing resources that don't have versions
 func (ctx *MahresourcesContext) MigrateResourceVersions() error {
-	// Find resources that don't have a current version set
-	var resources []models.Resource
-	if err := ctx.db.Where("current_version_id IS NULL").Find(&resources).Error; err != nil {
+	// Count resources that need migration
+	var count int64
+	if err := ctx.db.Model(&models.Resource{}).Where("current_version_id IS NULL").Count(&count).Error; err != nil {
 		return err
 	}
 
-	if len(resources) == 0 {
+	if count == 0 {
 		return nil
 	}
 
-	ctx.Logger().Info(models.LogActionCreate, "system", nil, fmt.Sprintf("Migrating %d resources to versioning system", len(resources)), "", nil)
+	log.Printf("Migrating %d resources to versioning system...", count)
+	ctx.Logger().Info(models.LogActionCreate, "system", nil, fmt.Sprintf("Migrating %d resources to versioning system", count), "", nil)
 
-	for _, resource := range resources {
-		// Check if this resource already has versions (shouldn't happen, but be safe)
-		var existingVersionCount int64
-		ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resource.ID).Count(&existingVersionCount)
-		if existingVersionCount > 0 {
-			// Resource has versions but no current_version_id set - fix it
-			var latestVersion models.ResourceVersion
-			if err := ctx.db.Where("resource_id = ?", resource.ID).Order("version_number DESC").First(&latestVersion).Error; err == nil {
-				ctx.db.Model(&resource).Update("current_version_id", latestVersion.ID)
+	// Process in batches to avoid loading all resources into memory
+	batchSize := 500
+	offset := 0
+	migrated := 0
+
+	for {
+		var resources []models.Resource
+		if err := ctx.db.Where("current_version_id IS NULL").
+			Order("id").
+			Offset(offset).
+			Limit(batchSize).
+			Find(&resources).Error; err != nil {
+			return err
+		}
+
+		if len(resources) == 0 {
+			break
+		}
+
+		for _, resource := range resources {
+			// Check if this resource already has versions (shouldn't happen, but be safe)
+			var existingVersionCount int64
+			ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resource.ID).Count(&existingVersionCount)
+			if existingVersionCount > 0 {
+				// Resource has versions but no current_version_id set - fix it
+				var latestVersion models.ResourceVersion
+				if err := ctx.db.Where("resource_id = ?", resource.ID).Order("version_number DESC").First(&latestVersion).Error; err == nil {
+					ctx.db.Model(&resource).Update("current_version_id", latestVersion.ID)
+				}
+				migrated++
+				continue
 			}
-			continue
+
+			version := models.ResourceVersion{
+				ResourceID:      resource.ID,
+				VersionNumber:   1,
+				Hash:            resource.Hash,
+				HashType:        resource.HashType,
+				FileSize:        resource.FileSize,
+				ContentType:     resource.ContentType,
+				Width:           resource.Width,
+				Height:          resource.Height,
+				Location:        resource.Location,
+				StorageLocation: resource.StorageLocation,
+				Comment:         "Initial version (migrated)",
+			}
+
+			if err := ctx.db.Create(&version).Error; err != nil {
+				ctx.Logger().Warning(models.LogActionCreate, "migration", &resource.ID, "Failed to create version for resource", err.Error(), nil)
+				continue
+			}
+
+			if err := ctx.db.Model(&resource).Update("current_version_id", version.ID).Error; err != nil {
+				ctx.Logger().Warning(models.LogActionCreate, "migration", &resource.ID, "Failed to update current version", err.Error(), nil)
+			}
+			migrated++
 		}
 
-		version := models.ResourceVersion{
-			ResourceID:      resource.ID,
-			VersionNumber:   1,
-			Hash:            resource.Hash,
-			HashType:        resource.HashType,
-			FileSize:        resource.FileSize,
-			ContentType:     resource.ContentType,
-			Width:           resource.Width,
-			Height:          resource.Height,
-			Location:        resource.Location,
-			StorageLocation: resource.StorageLocation,
-			Comment:         "Initial version (migrated)",
-		}
+		log.Printf("  Migration progress: %d/%d resources", migrated, count)
 
-		if err := ctx.db.Create(&version).Error; err != nil {
-			ctx.Logger().Warning(models.LogActionCreate, "migration", &resource.ID, "Failed to create version for resource", err.Error(), nil)
-			continue
-		}
-
-		if err := ctx.db.Model(&resource).Update("current_version_id", version.ID).Error; err != nil {
-			ctx.Logger().Warning(models.LogActionCreate, "migration", &resource.ID, "Failed to update current version", err.Error(), nil)
+		// Don't increment offset - we're filtering by current_version_id IS NULL,
+		// and we just updated those records, so next query gets fresh batch
+		if len(resources) < batchSize {
+			break
 		}
 	}
 
+	log.Printf("Migration complete: %d resources migrated", migrated)
 	return nil
 }
