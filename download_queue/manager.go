@@ -76,13 +76,61 @@ func generateShortID() string {
 	return hex.EncodeToString(b)
 }
 
+// makeRoomForNewJob evicts old jobs to make space for a new one.
+// Priority: completed (oldest first), then failed/cancelled (oldest first).
+// Never evicts active (pending/downloading/processing) or paused jobs.
+// Must be called with dm.mu held.
+func (dm *DownloadManager) makeRoomForNewJob() bool {
+	if len(dm.jobs) < MaxQueueSize {
+		return true // Already have room
+	}
+
+	// First pass: find oldest completed job
+	for _, id := range dm.jobOrder {
+		job := dm.jobs[id]
+		if job.GetStatus() == JobStatusCompleted {
+			dm.evictJob(id, job)
+			return true
+		}
+	}
+
+	// Second pass: find oldest failed/cancelled job
+	for _, id := range dm.jobOrder {
+		job := dm.jobs[id]
+		status := job.GetStatus()
+		if status == JobStatusFailed || status == JobStatusCancelled {
+			dm.evictJob(id, job)
+			return true
+		}
+	}
+
+	// No evictable jobs found (all are active or paused)
+	return false
+}
+
+// evictJob removes a job from the queue. Must be called with dm.mu held.
+func (dm *DownloadManager) evictJob(id string, job *DownloadJob) {
+	delete(dm.jobs, id)
+
+	// Remove from jobOrder
+	newOrder := make([]string, 0, len(dm.jobOrder)-1)
+	for _, oid := range dm.jobOrder {
+		if oid != id {
+			newOrder = append(newOrder, oid)
+		}
+	}
+	dm.jobOrder = newOrder
+
+	dm.notifySubscribers(JobEvent{Type: "removed", Job: job})
+}
+
 // Submit adds a new download job to the queue
 func (dm *DownloadManager) Submit(creator *query_models.ResourceFromRemoteCreator) (*DownloadJob, error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
-	if len(dm.jobs) >= MaxQueueSize {
-		return nil, fmt.Errorf("download queue is full (max %d jobs)", MaxQueueSize)
+	if !dm.makeRoomForNewJob() {
+		return nil, fmt.Errorf("download queue is full (max %d jobs) - all jobs are active or paused", MaxQueueSize)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
