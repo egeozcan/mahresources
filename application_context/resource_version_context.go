@@ -19,6 +19,8 @@ import (
 
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/spf13/afero"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 	"mahresources/models"
 	"mahresources/models/query_models"
 )
@@ -545,8 +547,11 @@ func (ctx *MahresourcesContext) SyncResourcesFromCurrentVersion() error {
 		VersionFileSize  int64
 	}
 
+	// Use silent DB session to suppress GORM logging during migration
+	silentDB := ctx.db.Session(&gorm.Session{Logger: logger.Discard})
+
 	var outOfSync []outOfSyncResource
-	err := ctx.db.Raw(`
+	err := silentDB.Raw(`
 		SELECT r.id as resource_id,
 		       v.hash as version_hash,
 		       v.location as version_location,
@@ -586,13 +591,13 @@ func (ctx *MahresourcesContext) SyncResourcesFromCurrentVersion() error {
 			"height":           item.VersionHeight,
 			"file_size":        item.VersionFileSize,
 		}
-		if err := ctx.db.Model(&models.Resource{}).Where("id = ?", item.ResourceID).Updates(updates).Error; err != nil {
+		if err := silentDB.Model(&models.Resource{}).Where("id = ?", item.ResourceID).Updates(updates).Error; err != nil {
 			ctx.Logger().Warning(models.LogActionCreate, "sync_version", &item.ResourceID, "Failed to sync resource from version", err.Error(), nil)
 			continue
 		}
 
 		// Clear cached previews
-		ctx.db.Where("resource_id = ?", item.ResourceID).Delete(&models.Preview{})
+		silentDB.Where("resource_id = ?", item.ResourceID).Delete(&models.Preview{})
 
 		// Yield CPU time every 100 items (lower priority background task)
 		if (i+1)%100 == 0 {
@@ -600,16 +605,19 @@ func (ctx *MahresourcesContext) SyncResourcesFromCurrentVersion() error {
 		}
 	}
 
-	ctx.Logger().Info(models.LogActionCreate, "system", nil, fmt.Sprintf("Synced %d resources to their current versions", len(outOfSync)), "", nil)
+	log.Printf("Version sync complete: %d resources synced", len(outOfSync))
 
 	return nil
 }
 
 // MigrateResourceVersions creates initial version records for existing resources that don't have versions
 func (ctx *MahresourcesContext) MigrateResourceVersions() error {
+	// Use silent DB session to suppress GORM logging during migration
+	silentDB := ctx.db.Session(&gorm.Session{Logger: logger.Discard})
+
 	// Count resources that need migration
 	var count int64
-	if err := ctx.db.Model(&models.Resource{}).Where("current_version_id IS NULL").Count(&count).Error; err != nil {
+	if err := silentDB.Model(&models.Resource{}).Where("current_version_id IS NULL").Count(&count).Error; err != nil {
 		return err
 	}
 
@@ -617,19 +625,16 @@ func (ctx *MahresourcesContext) MigrateResourceVersions() error {
 		return nil
 	}
 
-	log.Printf("Migrating %d resources to versioning system...", count)
-	ctx.Logger().Info(models.LogActionCreate, "system", nil, fmt.Sprintf("Migrating %d resources to versioning system", count), "", nil)
+	log.Printf("Migrating %d resources to versioning system (background)...", count)
 
 	// Process in batches to avoid loading all resources into memory
 	batchSize := 500
-	offset := 0
 	migrated := 0
 
 	for {
 		var resources []models.Resource
-		if err := ctx.db.Where("current_version_id IS NULL").
+		if err := silentDB.Where("current_version_id IS NULL").
 			Order("id").
-			Offset(offset).
 			Limit(batchSize).
 			Find(&resources).Error; err != nil {
 			return err
@@ -642,12 +647,12 @@ func (ctx *MahresourcesContext) MigrateResourceVersions() error {
 		for _, resource := range resources {
 			// Check if this resource already has versions (shouldn't happen, but be safe)
 			var existingVersionCount int64
-			ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resource.ID).Count(&existingVersionCount)
+			silentDB.Model(&models.ResourceVersion{}).Where("resource_id = ?", resource.ID).Count(&existingVersionCount)
 			if existingVersionCount > 0 {
 				// Resource has versions but no current_version_id set - fix it
 				var latestVersion models.ResourceVersion
-				if err := ctx.db.Where("resource_id = ?", resource.ID).Order("version_number DESC").First(&latestVersion).Error; err == nil {
-					ctx.db.Model(&resource).Update("current_version_id", latestVersion.ID)
+				if err := silentDB.Where("resource_id = ?", resource.ID).Order("version_number DESC").First(&latestVersion).Error; err == nil {
+					silentDB.Model(&resource).Update("current_version_id", latestVersion.ID)
 				}
 				migrated++
 				continue
@@ -667,13 +672,13 @@ func (ctx *MahresourcesContext) MigrateResourceVersions() error {
 				Comment:         "Initial version (migrated)",
 			}
 
-			if err := ctx.db.Create(&version).Error; err != nil {
-				ctx.Logger().Warning(models.LogActionCreate, "migration", &resource.ID, "Failed to create version for resource", err.Error(), nil)
+			if err := silentDB.Create(&version).Error; err != nil {
+				log.Printf("Warning: failed to create version for resource %d: %v", resource.ID, err)
 				continue
 			}
 
-			if err := ctx.db.Model(&resource).Update("current_version_id", version.ID).Error; err != nil {
-				ctx.Logger().Warning(models.LogActionCreate, "migration", &resource.ID, "Failed to update current version", err.Error(), nil)
+			if err := silentDB.Model(&resource).Update("current_version_id", version.ID).Error; err != nil {
+				log.Printf("Warning: failed to update current version for resource %d: %v", resource.ID, err)
 			}
 			migrated++
 
