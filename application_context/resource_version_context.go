@@ -573,8 +573,8 @@ func (ctx *MahresourcesContext) SyncResourcesFromCurrentVersion() error {
 	log.Printf("Syncing %d resources to their current versions...", len(outOfSync))
 
 	for i, item := range outOfSync {
-		if (i+1)%100 == 0 || i == len(outOfSync)-1 {
-			log.Printf("  Version sync progress: %d/%d", i+1, len(outOfSync))
+		if (i+1)%10000 == 0 {
+			log.Printf("  Version sync progress: %d/%d (%.1f%%)", i+1, len(outOfSync), float64(i+1)/float64(len(outOfSync))*100)
 		}
 
 		updates := map[string]interface{}{
@@ -671,9 +671,12 @@ func (ctx *MahresourcesContext) MigrateResourceVersions() error {
 				ctx.Logger().Warning(models.LogActionCreate, "migration", &resource.ID, "Failed to update current version", err.Error(), nil)
 			}
 			migrated++
-		}
 
-		log.Printf("  Migration progress: %d/%d resources", migrated, count)
+			// Log progress every 10,000 resources
+			if migrated%10000 == 0 {
+				log.Printf("  Version migration progress: %d/%d resources (%.1f%%)", migrated, count, float64(migrated)/float64(count)*100)
+			}
+		}
 
 		// Don't increment offset - we're filtering by current_version_id IS NULL,
 		// and we just updated those records, so next query gets fresh batch
@@ -682,6 +685,6 @@ func (ctx *MahresourcesContext) MigrateResourceVersions() error {
 		}
 	}
 
-	log.Printf("Migration complete: %d resources migrated", migrated)
+	log.Printf("Version migration complete: %d resources migrated", migrated)
 	return nil
 }

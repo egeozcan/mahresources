@@ -201,17 +201,19 @@ func main() {
 		}
 	}
 
-	// Migrate existing resources to versioning system (skip with -skip-version-migration flag)
+	// Migrate existing resources to versioning system in background (skip with -skip-version-migration flag)
 	if !*skipVersionMigration {
-		if err := context.MigrateResourceVersions(); err != nil {
-			log.Printf("Warning: failed to migrate resource versions: %v", err)
-		}
+		go func() {
+			if err := context.MigrateResourceVersions(); err != nil {
+				log.Printf("Warning: failed to migrate resource versions: %v", err)
+			}
 
-		// Sync resource fields from their current versions (fixes resources
-		// where versions were uploaded before the sync fix was deployed)
-		if err := context.SyncResourcesFromCurrentVersion(); err != nil {
-			log.Printf("Warning: failed to sync resources from versions: %v", err)
-		}
+			// Sync resource fields from their current versions (fixes resources
+			// where versions were uploaded before the sync fix was deployed)
+			if err := context.SyncResourcesFromCurrentVersion(); err != nil {
+				log.Printf("Warning: failed to sync resources from versions: %v", err)
+			}
+		}()
 	} else {
 		log.Println("Version migration skipped (-skip-version-migration flag or SKIP_VERSION_MIGRATION=1)")
 	}
