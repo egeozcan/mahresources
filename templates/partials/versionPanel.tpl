@@ -8,9 +8,9 @@
                 <div class="flex items-center space-x-3">
                     <template x-if="compareMode">
                         <input type="checkbox"
-                            :value="{{ version.ID }}"
-                            @change="selected.includes({{ version.ID }}) ? selected = selected.filter(x => x !== {{ version.ID }}) : selected.push({{ version.ID }})"
-                            :disabled="selected.length >= 2 && !selected.includes({{ version.ID }})"
+                            :value="{{ version.VersionNumber }}"
+                            @change="selected.includes({{ version.VersionNumber }}) ? selected = selected.filter(x => x !== {{ version.VersionNumber }}) : selected.push({{ version.VersionNumber }})"
+                            :disabled="selected.length >= 2 && !selected.includes({{ version.VersionNumber }})"
                             class="rounded">
                     </template>
                     <span class="font-medium">
@@ -59,7 +59,7 @@
                 </button>
 
                 <template x-if="compareMode && selected.length === 2">
-                    <a :href="'/v1/resource/versions/compare?resourceId={{ resourceId }}&v1=' + selected[0] + '&v2=' + selected[1]"
+                    <a :href="'/resource/compare?r1={{ resourceId }}&v1=' + selected[0] + '&v2=' + selected[1]"
                        class="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700">
                         Compare Selected
                     </a>
