@@ -19,18 +19,26 @@ export function imageCompare({ leftUrl, rightUrl }) {
     },
 
     startSliderDrag(e) {
+      e.preventDefault();
       this.isDragging = true;
       const container = e.target.closest('.relative');
 
+      // Prevent text selection during drag
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'ew-resize';
+
       const moveHandler = (moveE) => {
         if (!this.isDragging) return;
+        moveE.preventDefault();
         const rect = container.getBoundingClientRect();
         const x = (moveE.clientX || moveE.touches?.[0]?.clientX) - rect.left;
-        this.sliderPos = Math.max(0, Math.min(100, (x / rect.width) * 100));
+        this.sliderPos = Math.max(1, Math.min(99, (x / rect.width) * 100));
       };
 
       const upHandler = () => {
         this.isDragging = false;
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
         document.removeEventListener('mousemove', moveHandler);
         document.removeEventListener('mouseup', upHandler);
         document.removeEventListener('touchmove', moveHandler);
@@ -39,7 +47,7 @@ export function imageCompare({ leftUrl, rightUrl }) {
 
       document.addEventListener('mousemove', moveHandler);
       document.addEventListener('mouseup', upHandler);
-      document.addEventListener('touchmove', moveHandler);
+      document.addEventListener('touchmove', moveHandler, { passive: false });
       document.addEventListener('touchend', upHandler);
     }
   };

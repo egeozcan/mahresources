@@ -33,16 +33,16 @@
     </div>
 
     <!-- Slider mode -->
-    <div x-show="mode === 'slider'" class="relative border rounded overflow-hidden" style="max-height: 600px;">
-        <img :src="rightUrl" class="w-full h-auto" alt="Version {{ comparison.Version2.VersionNumber }}">
-        <div class="absolute inset-0 overflow-hidden" :style="'width: ' + sliderPos + '%'">
-            <img :src="leftUrl" class="h-full object-cover object-left"
-                 :style="'width: ' + (100 / sliderPos * 100) + '%'"
+    <div x-show="mode === 'slider'" class="relative border rounded overflow-hidden select-none" style="max-height: 600px;" x-ref="sliderContainer">
+        <img :src="rightUrl" class="w-full h-auto pointer-events-none" alt="Version {{ comparison.Version2.VersionNumber }}">
+        <div class="absolute inset-0 overflow-hidden pointer-events-none" :style="'clip-path: inset(0 ' + (100 - sliderPos) + '% 0 0)'">
+            <img :src="leftUrl" class="w-full h-auto"
                  alt="Version {{ comparison.Version1.VersionNumber }}">
         </div>
-        <div class="absolute inset-y-0 bg-white w-1 cursor-ew-resize"
+        <div class="absolute inset-y-0 bg-white w-1 cursor-ew-resize z-10"
              :style="'left: ' + sliderPos + '%'"
-             @mousedown="startSliderDrag">
+             @mousedown="startSliderDrag"
+             @touchstart.prevent="startSliderDrag">
             <div class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-6 h-12 bg-white rounded shadow flex items-center justify-center">
                 <span class="text-gray-400">&#x22EE;</span>
             </div>
