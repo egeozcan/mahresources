@@ -30,3 +30,11 @@ type VersionCompareQuery struct {
 	V1         uint `json:"v1"`
 	V2         uint `json:"v2"`
 }
+
+// CrossVersionCompareQuery for comparing versions across different resources
+type CrossVersionCompareQuery struct {
+	Resource1ID uint `schema:"r1"`
+	Version1    int  `schema:"v1"`
+	Resource2ID uint `schema:"r2"`
+	Version2    int  `schema:"v2"`
+}

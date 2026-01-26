@@ -1040,6 +1040,391 @@ func TestRestoreVersion_WrongResource(t *testing.T) {
 	}
 }
 
+// TestCompareVersionsCross tests cross-resource version comparison
+func TestCompareVersionsCross(t *testing.T) {
+	ctx := createVersionTestContext(t)
+	db := ctx.db
+	if err := db.AutoMigrate(&models.ResourceVersion{}); err != nil {
+		t.Fatalf("Failed to migrate ResourceVersion: %v", err)
+	}
+
+	// Create a test group as owner
+	ownerGroup := &models.Group{Name: "test-owner", Description: "test owner group"}
+	if err := db.Create(ownerGroup).Error; err != nil {
+		t.Fatalf("Failed to create owner group: %v", err)
+	}
+
+	// Create two resources
+	resource1 := &models.Resource{
+		Name:     "resource1",
+		Hash:     "r1-hash",
+		HashType: "SHA1",
+		OwnerId:  ptrUint(ownerGroup.ID),
+		Location: "/r1/location",
+	}
+	if err := db.Create(resource1).Error; err != nil {
+		t.Fatalf("Failed to create resource1: %v", err)
+	}
+
+	resource2 := &models.Resource{
+		Name:     "resource2",
+		Hash:     "r2-hash",
+		HashType: "SHA1",
+		OwnerId:  ptrUint(ownerGroup.ID),
+		Location: "/r2/location",
+	}
+	if err := db.Create(resource2).Error; err != nil {
+		t.Fatalf("Failed to create resource2: %v", err)
+	}
+
+	// Create versions for each resource
+	v1r1 := &models.ResourceVersion{
+		ResourceID:    resource1.ID,
+		VersionNumber: 1,
+		Hash:          "v1r1-hash",
+		HashType:      "SHA1",
+		Location:      "/r1/v1",
+		FileSize:      1000,
+		ContentType:   "image/png",
+		Width:         100,
+		Height:        100,
+	}
+	if err := db.Create(v1r1).Error; err != nil {
+		t.Fatalf("Failed to create v1r1: %v", err)
+	}
+
+	v1r2 := &models.ResourceVersion{
+		ResourceID:    resource2.ID,
+		VersionNumber: 1,
+		Hash:          "v1r2-hash",
+		HashType:      "SHA1",
+		Location:      "/r2/v1",
+		FileSize:      2000,
+		ContentType:   "image/jpeg",
+		Width:         200,
+		Height:        150,
+	}
+	if err := db.Create(v1r2).Error; err != nil {
+		t.Fatalf("Failed to create v1r2: %v", err)
+	}
+
+	// Test cross-resource comparison
+	comparison, err := ctx.CompareVersionsCross(resource1.ID, 1, resource2.ID, 1)
+	if err != nil {
+		t.Fatalf("CompareVersionsCross() error = %v", err)
+	}
+
+	// Verify comparison fields
+	if !comparison.CrossResource {
+		t.Error("CrossResource = false, want true")
+	}
+	if comparison.SizeDelta != 1000 {
+		t.Errorf("SizeDelta = %d, want 1000", comparison.SizeDelta)
+	}
+	if comparison.SameHash {
+		t.Error("SameHash = true, want false")
+	}
+	if comparison.SameType {
+		t.Error("SameType = true, want false (png vs jpeg)")
+	}
+	if !comparison.DimensionsDiff {
+		t.Error("DimensionsDiff = false, want true")
+	}
+
+	// Verify resources are included in cross-resource comparison
+	if comparison.Resource1 == nil {
+		t.Error("Resource1 is nil, want non-nil for cross-resource comparison")
+	} else if comparison.Resource1.ID != resource1.ID {
+		t.Errorf("Resource1.ID = %d, want %d", comparison.Resource1.ID, resource1.ID)
+	}
+	if comparison.Resource2 == nil {
+		t.Error("Resource2 is nil, want non-nil for cross-resource comparison")
+	} else if comparison.Resource2.ID != resource2.ID {
+		t.Errorf("Resource2.ID = %d, want %d", comparison.Resource2.ID, resource2.ID)
+	}
+}
+
+// TestCompareVersionsCross_SameResource tests that same-resource comparison works
+func TestCompareVersionsCross_SameResource(t *testing.T) {
+	ctx := createVersionTestContext(t)
+	db := ctx.db
+	if err := db.AutoMigrate(&models.ResourceVersion{}); err != nil {
+		t.Fatalf("Failed to migrate ResourceVersion: %v", err)
+	}
+
+	// Create a test group as owner
+	ownerGroup := &models.Group{Name: "test-owner", Description: "test owner group"}
+	if err := db.Create(ownerGroup).Error; err != nil {
+		t.Fatalf("Failed to create owner group: %v", err)
+	}
+
+	// Create a resource
+	resource := &models.Resource{
+		Name:     "test-resource",
+		Hash:     "test-hash",
+		HashType: "SHA1",
+		OwnerId:  ptrUint(ownerGroup.ID),
+		Location: "/test/location",
+	}
+	if err := db.Create(resource).Error; err != nil {
+		t.Fatalf("Failed to create resource: %v", err)
+	}
+
+	// Create two versions
+	v1 := &models.ResourceVersion{
+		ResourceID:    resource.ID,
+		VersionNumber: 1,
+		Hash:          "v1-hash",
+		HashType:      "SHA1",
+		Location:      "/v1",
+		FileSize:      1000,
+		ContentType:   "text/plain",
+	}
+	if err := db.Create(v1).Error; err != nil {
+		t.Fatalf("Failed to create v1: %v", err)
+	}
+
+	v2 := &models.ResourceVersion{
+		ResourceID:    resource.ID,
+		VersionNumber: 2,
+		Hash:          "v2-hash",
+		HashType:      "SHA1",
+		Location:      "/v2",
+		FileSize:      1500,
+		ContentType:   "text/plain",
+	}
+	if err := db.Create(v2).Error; err != nil {
+		t.Fatalf("Failed to create v2: %v", err)
+	}
+
+	// Test same-resource comparison (using same resource ID)
+	comparison, err := ctx.CompareVersionsCross(resource.ID, 1, resource.ID, 2)
+	if err != nil {
+		t.Fatalf("CompareVersionsCross() error = %v", err)
+	}
+
+	if comparison.CrossResource {
+		t.Error("CrossResource = true, want false for same resource")
+	}
+	if comparison.Resource1 != nil {
+		t.Error("Resource1 should be nil for same-resource comparison")
+	}
+	if comparison.Resource2 != nil {
+		t.Error("Resource2 should be nil for same-resource comparison")
+	}
+	if comparison.SizeDelta != 500 {
+		t.Errorf("SizeDelta = %d, want 500", comparison.SizeDelta)
+	}
+}
+
+// TestCompareVersionsCross_ZeroR2ID tests fallback when r2ID is 0
+func TestCompareVersionsCross_ZeroR2ID(t *testing.T) {
+	ctx := createVersionTestContext(t)
+	db := ctx.db
+	if err := db.AutoMigrate(&models.ResourceVersion{}); err != nil {
+		t.Fatalf("Failed to migrate ResourceVersion: %v", err)
+	}
+
+	// Create a test group as owner
+	ownerGroup := &models.Group{Name: "test-owner", Description: "test owner group"}
+	if err := db.Create(ownerGroup).Error; err != nil {
+		t.Fatalf("Failed to create owner group: %v", err)
+	}
+
+	// Create a resource
+	resource := &models.Resource{
+		Name:     "test-resource",
+		Hash:     "test-hash",
+		HashType: "SHA1",
+		OwnerId:  ptrUint(ownerGroup.ID),
+		Location: "/test/location",
+	}
+	if err := db.Create(resource).Error; err != nil {
+		t.Fatalf("Failed to create resource: %v", err)
+	}
+
+	// Create two versions
+	v1 := &models.ResourceVersion{
+		ResourceID:    resource.ID,
+		VersionNumber: 1,
+		Hash:          "v1-hash",
+		HashType:      "SHA1",
+		Location:      "/v1",
+	}
+	if err := db.Create(v1).Error; err != nil {
+		t.Fatalf("Failed to create v1: %v", err)
+	}
+
+	v2 := &models.ResourceVersion{
+		ResourceID:    resource.ID,
+		VersionNumber: 2,
+		Hash:          "v2-hash",
+		HashType:      "SHA1",
+		Location:      "/v2",
+	}
+	if err := db.Create(v2).Error; err != nil {
+		t.Fatalf("Failed to create v2: %v", err)
+	}
+
+	// Test with r2ID = 0 (should use r1ID as fallback)
+	comparison, err := ctx.CompareVersionsCross(resource.ID, 1, 0, 2)
+	if err != nil {
+		t.Fatalf("CompareVersionsCross() error = %v", err)
+	}
+
+	if comparison.CrossResource {
+		t.Error("CrossResource = true, want false when r2ID is 0 (fallback to r1ID)")
+	}
+	if comparison.Version1.VersionNumber != 1 {
+		t.Errorf("Version1.VersionNumber = %d, want 1", comparison.Version1.VersionNumber)
+	}
+	if comparison.Version2.VersionNumber != 2 {
+		t.Errorf("Version2.VersionNumber = %d, want 2", comparison.Version2.VersionNumber)
+	}
+}
+
+// TestCompareVersionsCross_NotFound tests error handling for missing versions
+func TestCompareVersionsCross_NotFound(t *testing.T) {
+	ctx := createVersionTestContext(t)
+	db := ctx.db
+	if err := db.AutoMigrate(&models.ResourceVersion{}); err != nil {
+		t.Fatalf("Failed to migrate ResourceVersion: %v", err)
+	}
+
+	// Create a test group as owner
+	ownerGroup := &models.Group{Name: "test-owner", Description: "test owner group"}
+	if err := db.Create(ownerGroup).Error; err != nil {
+		t.Fatalf("Failed to create owner group: %v", err)
+	}
+
+	// Create a resource with one version
+	resource := &models.Resource{
+		Name:     "test-resource",
+		Hash:     "test-hash",
+		HashType: "SHA1",
+		OwnerId:  ptrUint(ownerGroup.ID),
+		Location: "/test/location",
+	}
+	if err := db.Create(resource).Error; err != nil {
+		t.Fatalf("Failed to create resource: %v", err)
+	}
+
+	v1 := &models.ResourceVersion{
+		ResourceID:    resource.ID,
+		VersionNumber: 1,
+		Hash:          "v1-hash",
+		HashType:      "SHA1",
+		Location:      "/v1",
+	}
+	if err := db.Create(v1).Error; err != nil {
+		t.Fatalf("Failed to create v1: %v", err)
+	}
+
+	// Test with non-existent version 1
+	_, err := ctx.CompareVersionsCross(99999, 1, resource.ID, 1)
+	if err == nil {
+		t.Error("Expected error when version 1 not found, got nil")
+	}
+
+	// Test with non-existent version 2
+	_, err = ctx.CompareVersionsCross(resource.ID, 1, resource.ID, 99)
+	if err == nil {
+		t.Error("Expected error when version 2 not found, got nil")
+	}
+}
+
+// TestCompareVersionsCross_SameHash tests cross-resource comparison with identical content
+func TestCompareVersionsCross_SameHash(t *testing.T) {
+	ctx := createVersionTestContext(t)
+	db := ctx.db
+	if err := db.AutoMigrate(&models.ResourceVersion{}); err != nil {
+		t.Fatalf("Failed to migrate ResourceVersion: %v", err)
+	}
+
+	// Create a test group as owner
+	ownerGroup := &models.Group{Name: "test-owner", Description: "test owner group"}
+	if err := db.Create(ownerGroup).Error; err != nil {
+		t.Fatalf("Failed to create owner group: %v", err)
+	}
+
+	// Create two resources
+	resource1 := &models.Resource{
+		Name:     "resource1",
+		Hash:     "shared-hash",
+		HashType: "SHA1",
+		OwnerId:  ptrUint(ownerGroup.ID),
+		Location: "/shared",
+	}
+	if err := db.Create(resource1).Error; err != nil {
+		t.Fatalf("Failed to create resource1: %v", err)
+	}
+
+	resource2 := &models.Resource{
+		Name:     "resource2",
+		Hash:     "shared-hash",
+		HashType: "SHA1",
+		OwnerId:  ptrUint(ownerGroup.ID),
+		Location: "/shared",
+	}
+	if err := db.Create(resource2).Error; err != nil {
+		t.Fatalf("Failed to create resource2: %v", err)
+	}
+
+	// Create versions with identical content (shared hash)
+	sharedHash := "identical-content-hash"
+	v1r1 := &models.ResourceVersion{
+		ResourceID:    resource1.ID,
+		VersionNumber: 1,
+		Hash:          sharedHash,
+		HashType:      "SHA1",
+		Location:      "/shared",
+		FileSize:      1000,
+		ContentType:   "text/plain",
+		Width:         0,
+		Height:        0,
+	}
+	if err := db.Create(v1r1).Error; err != nil {
+		t.Fatalf("Failed to create v1r1: %v", err)
+	}
+
+	v1r2 := &models.ResourceVersion{
+		ResourceID:    resource2.ID,
+		VersionNumber: 1,
+		Hash:          sharedHash,
+		HashType:      "SHA1",
+		Location:      "/shared",
+		FileSize:      1000,
+		ContentType:   "text/plain",
+		Width:         0,
+		Height:        0,
+	}
+	if err := db.Create(v1r2).Error; err != nil {
+		t.Fatalf("Failed to create v1r2: %v", err)
+	}
+
+	// Test comparison - different resources but same content
+	comparison, err := ctx.CompareVersionsCross(resource1.ID, 1, resource2.ID, 1)
+	if err != nil {
+		t.Fatalf("CompareVersionsCross() error = %v", err)
+	}
+
+	if !comparison.CrossResource {
+		t.Error("CrossResource = false, want true (different resources)")
+	}
+	if !comparison.SameHash {
+		t.Error("SameHash = false, want true (identical content)")
+	}
+	if comparison.SizeDelta != 0 {
+		t.Errorf("SizeDelta = %d, want 0", comparison.SizeDelta)
+	}
+	if !comparison.SameType {
+		t.Error("SameType = false, want true")
+	}
+	if comparison.DimensionsDiff {
+		t.Error("DimensionsDiff = true, want false")
+	}
+}
+
 // TestMigrateResourceVersions_MigratesResourcesWithoutVersions tests that migration creates versions for resources without them
 func TestMigrateResourceVersions_MigratesResourcesWithoutVersions(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})

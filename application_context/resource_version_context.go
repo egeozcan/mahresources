@@ -497,10 +497,13 @@ func (ctx *MahresourcesContext) BulkCleanupVersions(query *query_models.BulkVers
 type VersionComparison struct {
 	Version1       *models.ResourceVersion `json:"version1"`
 	Version2       *models.ResourceVersion `json:"version2"`
+	Resource1      *models.Resource        `json:"resource1,omitempty"`
+	Resource2      *models.Resource        `json:"resource2,omitempty"`
 	SizeDelta      int64                   `json:"sizeDelta"`
 	SameHash       bool                    `json:"sameHash"`
 	SameType       bool                    `json:"sameType"`
 	DimensionsDiff bool                    `json:"dimensionsDiff"`
+	CrossResource  bool                    `json:"crossResource"`
 }
 
 // CompareVersions compares two versions and returns comparison data
@@ -526,6 +529,50 @@ func (ctx *MahresourcesContext) CompareVersions(resourceID, v1ID, v2ID uint) (*V
 		SameHash:       version1.Hash == version2.Hash,
 		SameType:       version1.ContentType == version2.ContentType,
 		DimensionsDiff: version1.Width != version2.Width || version1.Height != version2.Height,
+	}
+
+	return comparison, nil
+}
+
+// CompareVersionsCross compares versions that may belong to different resources
+func (ctx *MahresourcesContext) CompareVersionsCross(r1ID uint, v1Num int, r2ID uint, v2Num int) (*VersionComparison, error) {
+	// If r2ID is 0, use r1ID (same-resource comparison)
+	if r2ID == 0 {
+		r2ID = r1ID
+	}
+
+	version1, err := ctx.GetVersionByNumber(r1ID, v1Num)
+	if err != nil {
+		return nil, fmt.Errorf("version 1 not found: %w", err)
+	}
+
+	version2, err := ctx.GetVersionByNumber(r2ID, v2Num)
+	if err != nil {
+		return nil, fmt.Errorf("version 2 not found: %w", err)
+	}
+
+	comparison := &VersionComparison{
+		Version1:       version1,
+		Version2:       version2,
+		SizeDelta:      version2.FileSize - version1.FileSize,
+		SameHash:       version1.Hash == version2.Hash,
+		SameType:       version1.ContentType == version2.ContentType,
+		DimensionsDiff: version1.Width != version2.Width || version1.Height != version2.Height,
+		CrossResource:  r1ID != r2ID,
+	}
+
+	// For cross-resource comparison, include resource details
+	if r1ID != r2ID {
+		res1, err := ctx.GetResource(r1ID)
+		if err != nil {
+			return nil, fmt.Errorf("resource 1 not found: %w", err)
+		}
+		res2, err := ctx.GetResource(r2ID)
+		if err != nil {
+			return nil, fmt.Errorf("resource 2 not found: %w", err)
+		}
+		comparison.Resource1 = res1
+		comparison.Resource2 = res2
 	}
 
 	return comparison, nil
