@@ -1,16 +1,7 @@
 {% if versions %}
-<div class="mt-6" x-data="{ expanded: {{ versions|length }} > 1, compareMode: false, selected: [] }">
-    <button
-        @click="expanded = !expanded"
-        class="flex items-center justify-between w-full px-4 py-2 text-left bg-gray-100 hover:bg-gray-200 rounded-lg"
-    >
-        <span class="font-medium">Versions ({{ versions|length }})</span>
-        <svg class="w-5 h-5 transition-transform" :class="{ 'rotate-180': expanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-        </svg>
-    </button>
-
-    <div x-show="expanded" x-collapse class="mt-2 border rounded-lg divide-y">
+<details class="mb-6" x-data="{ compareMode: false, selected: [] }" {% if versions|length > 1 %}open{% endif %}>
+    <summary class="bg-gray-100 shadow rounded-lg block w-full p-4 text-left cursor-pointer select-none">Versions ({{ versions|length }})</summary>
+    <div class="p-4 border-dashed border-4 border-gray-100 border-t-0">
         {% for version in versions %}
         <div class="p-4 {% if version.ID == currentVersionId %}bg-blue-50{% endif %}">
             <div class="flex items-center justify-between">
@@ -86,5 +77,5 @@
             </div>
         </div>
     </div>
-</div>
+</details>
 {% endif %}
