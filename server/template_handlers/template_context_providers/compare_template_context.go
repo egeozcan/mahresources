@@ -1,11 +1,14 @@
 package template_context_providers
 
 import (
+	"fmt"
+	"net/url"
+	"strings"
+
 	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
 	"mahresources/models/query_models"
 	"net/http"
-	"strings"
 )
 
 func CompareContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
@@ -43,6 +46,32 @@ func CompareContextProvider(context *application_context.MahresourcesContext) fu
 			return addErrContext(err, baseContext)
 		}
 		versions2, _ := context.GetVersions(query.Resource2ID)
+
+		// Redirect to latest versions if versions are missing and comparing different resources
+		if query.Resource1ID != query.Resource2ID && (query.Version1 == 0 || query.Version2 == 0) {
+			v1 := query.Version1
+			v2 := query.Version2
+
+			if v1 == 0 && len(versions1) > 0 {
+				v1 = versions1[0].VersionNumber
+			}
+			if v2 == 0 && len(versions2) > 0 {
+				v2 = versions2[0].VersionNumber
+			}
+
+			// Only redirect if we found both versions
+			if v1 > 0 && v2 > 0 {
+				redirectURL := fmt.Sprintf("/resource/compare?%s", url.Values{
+					"r1": {fmt.Sprintf("%d", query.Resource1ID)},
+					"v1": {fmt.Sprintf("%d", v1)},
+					"r2": {fmt.Sprintf("%d", query.Resource2ID)},
+					"v2": {fmt.Sprintf("%d", v2)},
+				}.Encode())
+				return baseContext.Update(pongo2.Context{
+					"_redirect": redirectURL,
+				})
+			}
+		}
 
 		// Perform comparison if both versions specified
 		var comparison *application_context.VersionComparison

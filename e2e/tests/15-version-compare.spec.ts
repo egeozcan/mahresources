@@ -472,6 +472,26 @@ test.describe.serial('Version Compare API', () => {
     expect(comparison.sameHash).toBe(false); // Different files should have different hashes
   });
 
+  test('should redirect to latest versions when versions not specified for cross-resource compare', async ({ page }) => {
+    expect(resource1Id, 'Resources must be created in setup').toBeGreaterThan(0);
+    expect(resource2Id).toBeGreaterThan(0);
+
+    // Navigate to cross-resource compare without version params
+    await page.goto(`/resource/compare?r1=${resource1Id}&r2=${resource2Id}`);
+    await page.waitForLoadState('load');
+
+    // Should redirect to URL with versions (v1 and v2 should be set to their latest)
+    // resource1 has versions 1 and 2 (created in setup), resource2 only has version 1
+    const url = new URL(page.url());
+    expect(url.searchParams.get('v1')).toBe('2'); // resource1 latest version is 2
+    expect(url.searchParams.get('v2')).toBe('1'); // resource2 only has version 1
+    expect(url.searchParams.get('r1')).toBe(resource1Id.toString());
+    expect(url.searchParams.get('r2')).toBe(resource2Id.toString());
+
+    // Page should load with metadata comparison
+    await expect(page.locator('text=Metadata Comparison')).toBeVisible({ timeout: 10000 });
+  });
+
   test('should load cross-resource compare page', async ({ page }) => {
     expect(resource1Id, 'Resources must be created in setup').toBeGreaterThan(0);
     expect(resource2Id).toBeGreaterThan(0);

@@ -3,6 +3,7 @@ package template_handlers
 import (
 	"encoding/json"
 	"fmt"
+
 	_ "github.com/flosch/pongo2-addons"
 	"github.com/flosch/pongo2/v4"
 	"mahresources/constants"
@@ -38,6 +39,12 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 		template := pongo2.Must(renderer.FromFile(templateName))
 		errorTemplate := pongo2.Must(renderer.FromFile("error.tpl"))
 		context := templateContextGenerator(request)
+
+		// Check for redirect signal from context provider
+		if redirectURL, ok := context["_redirect"].(string); ok && redirectURL != "" {
+			http.Redirect(writer, request, redirectURL, http.StatusFound)
+			return
+		}
 
 		if contentType := request.Header.Get("Content-type"); contentType == constants.JSON || strings.HasSuffix(request.URL.Path, ".json") {
 			writer.Header().Set("Content-Type", constants.JSON)
