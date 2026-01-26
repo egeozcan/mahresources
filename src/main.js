@@ -31,6 +31,9 @@ import { schemaForm } from './components/schemaForm.js';
 import { registerLightboxStore } from './components/lightbox.js';
 import { multiSort } from './components/multiSort.js';
 import { downloadCockpit } from './components/downloadCockpit.js';
+import { compareView } from './components/compareView.js';
+import { imageCompare } from './components/imageCompare.js';
+import { textDiff } from './components/textDiff.js';
 
 // Import web components
 import './webcomponents/expandabletext.js';
@@ -71,6 +74,9 @@ Alpine.data('globalSearch', globalSearch);
 Alpine.data('schemaForm', schemaForm);
 Alpine.data('multiSort', multiSort);
 Alpine.data('downloadCockpit', downloadCockpit);
+Alpine.data('compareView', compareView);
+Alpine.data('imageCompare', imageCompare);
+Alpine.data('textDiff', textDiff);
 
 // Expose Alpine globally for debugging and morph usage
 window.Alpine = Alpine;
