@@ -6,7 +6,7 @@
     v1: {{ query.Version1|default:0 }},
     r2: {{ query.Resource2ID }},
     v2: {{ query.Version2|default:0 }}
-})">
+})" @resource1-selected.window="onResource1Change($event.detail.item.ID)" @resource2-selected.window="onResource2Change($event.detail.item.ID)">
     <!-- Resource/Version Pickers -->
     <div class="grid grid-cols-2 gap-6 mb-6">
         <!-- Left Side Picker -->
@@ -14,16 +14,21 @@
             <label class="block text-sm font-medium text-gray-700 mb-2">Resource</label>
             <div x-data="autocompleter({
                 url: '/v1/resources',
-                selectedItems: [{{ resource1|json }}],
+                selectedResults: [{{ resource1|json }}],
                 elName: 'r1',
-                multiple: false
-            })" x-bind="events" class="mb-3">
+                max: 1,
+                standalone: true,
+                dispatchOnSelect: 'resource1-selected'
+            })" class="mb-3 relative">
                 <input type="text" x-ref="autocompleter" x-bind="inputEvents"
                        class="w-full border rounded px-3 py-2"
                        placeholder="Search resources...">
-                <div x-show="open" x-bind="dropdownEvents" class="absolute z-10 bg-white border rounded shadow-lg mt-1 max-h-60 overflow-auto">
-                    <template x-for="item in results" :key="item.ID">
-                        <div @click="selectItem(item)" class="px-3 py-2 hover:bg-gray-100 cursor-pointer" x-text="item.Name"></div>
+                <div x-show="dropdownActive" x-ref="list" class="absolute z-10 bg-white border rounded shadow-lg mt-1 max-h-60 overflow-auto w-full">
+                    <template x-for="(item, index) in results" :key="item.ID">
+                        <div @mousedown.prevent="selectedIndex = index; pushVal($event)"
+                             class="px-3 py-2 hover:bg-gray-100 cursor-pointer"
+                             :class="{ 'bg-indigo-100': selectedIndex === index }"
+                             x-text="item.Name"></div>
                     </template>
                 </div>
             </div>
@@ -42,16 +47,21 @@
             <label class="block text-sm font-medium text-gray-700 mb-2">Resource</label>
             <div x-data="autocompleter({
                 url: '/v1/resources',
-                selectedItems: [{{ resource2|json }}],
+                selectedResults: [{{ resource2|json }}],
                 elName: 'r2',
-                multiple: false
-            })" x-bind="events" class="mb-3">
+                max: 1,
+                standalone: true,
+                dispatchOnSelect: 'resource2-selected'
+            })" class="mb-3 relative">
                 <input type="text" x-ref="autocompleter" x-bind="inputEvents"
                        class="w-full border rounded px-3 py-2"
                        placeholder="Search resources...">
-                <div x-show="open" x-bind="dropdownEvents" class="absolute z-10 bg-white border rounded shadow-lg mt-1 max-h-60 overflow-auto">
-                    <template x-for="item in results" :key="item.ID">
-                        <div @click="selectItem(item)" class="px-3 py-2 hover:bg-gray-100 cursor-pointer" x-text="item.Name"></div>
+                <div x-show="dropdownActive" x-ref="list" class="absolute z-10 bg-white border rounded shadow-lg mt-1 max-h-60 overflow-auto w-full">
+                    <template x-for="(item, index) in results" :key="item.ID">
+                        <div @mousedown.prevent="selectedIndex = index; pushVal($event)"
+                             class="px-3 py-2 hover:bg-gray-100 cursor-pointer"
+                             :class="{ 'bg-indigo-100': selectedIndex === index }"
+                             x-text="item.Name"></div>
                     </template>
                 </div>
             </div>

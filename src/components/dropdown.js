@@ -15,6 +15,8 @@ export function autocompleter({
     onSelect = null,
     onRemove = null,
     standalone = false,
+    // Custom event to dispatch on selection (for compare view integration)
+    dispatchOnSelect = null,
 }) {
     if (typeof filterEls === "string") {
         try {
@@ -168,6 +170,15 @@ export function autocompleter({
             // Call onSelect callback if provided
             if (onSelect) {
                 onSelect(selectedItem);
+            }
+
+            // Dispatch custom event if specified (for compare view integration)
+            // Use window.dispatchEvent so it can be caught with .window modifier
+            if (dispatchOnSelect) {
+                window.dispatchEvent(new CustomEvent(dispatchOnSelect, {
+                    detail: { item: selectedItem },
+                    bubbles: true
+                }));
             }
 
             // Clear the input and trigger a refresh of results

@@ -276,6 +276,85 @@ test.describe.serial('Version Compare UI', () => {
     await expect(diffResourceIndicator).toBeVisible();
   });
 
+  test('should show autocompleter dropdown with search results', async ({ page }) => {
+    // Start comparing resource1 v1 with itself
+    await page.goto(`/resource/compare?r1=${resource1Id}&v1=1&r2=${resource1Id}&v2=1`);
+    await page.waitForLoadState('load');
+
+    await expect(page.locator('text=Metadata Comparison')).toBeVisible({ timeout: 10000 });
+
+    // Find the right side autocompleter input (second picker card in the grid)
+    const pickerGrid = page.locator('.grid.grid-cols-2');
+    const rightPickerCard = pickerGrid.locator('> div').nth(1);
+    const rightAutocompleter = rightPickerCard.locator('input[placeholder*="Search"]');
+    await expect(rightAutocompleter).toBeVisible({ timeout: 5000 });
+
+    // Click to focus - this should trigger the autocompleter to fetch and display results
+    await rightAutocompleter.click();
+
+    // Wait for dropdown to appear
+    const dropdown = rightPickerCard.locator('div.absolute.z-10.bg-white');
+    await expect(dropdown).toBeVisible({ timeout: 10000 });
+
+    // Dropdown should contain at least one item with cursor-pointer class
+    const items = dropdown.locator('div.cursor-pointer');
+    await expect(items.first()).toBeVisible({ timeout: 5000 });
+
+    // Count items - there should be at least one resource available
+    const count = await items.count();
+    expect(count).toBeGreaterThan(0);
+  });
+
+  test('should filter autocompleter results when typing', async ({ page }) => {
+    // Start comparing resource1 v1 with resource2 v1
+    await page.goto(`/resource/compare?r1=${resource1Id}&v1=1&r2=${resource2Id}&v2=1`);
+    await page.waitForLoadState('load');
+
+    await expect(page.locator('text=Metadata Comparison')).toBeVisible({ timeout: 10000 });
+
+    // Find the left side autocompleter input
+    const pickerGrid = page.locator('.grid.grid-cols-2');
+    const leftPickerCard = pickerGrid.locator('> div').first();
+    const leftAutocompleter = leftPickerCard.locator('input[placeholder*="Search"]');
+    await expect(leftAutocompleter).toBeVisible({ timeout: 5000 });
+
+    // Click and type to search for resource2
+    await leftAutocompleter.click();
+    await leftAutocompleter.pressSequentially(`Compare Resource 2`, { delay: 30 });
+
+    // Wait for dropdown to appear with filtered results
+    const dropdown = leftPickerCard.locator('div.absolute.z-10.bg-white');
+    await expect(dropdown).toBeVisible({ timeout: 10000 });
+
+    // Verify the specific suggestion is visible
+    const suggestionText = `Compare Resource 2 ${testRunId}`;
+    await expect(dropdown.locator(`text=${suggestionText}`)).toBeVisible({ timeout: 5000 });
+  });
+
+  test('should update URL when changing left version via dropdown', async ({ page }) => {
+    // Start on compare page with v1 vs v2 of same resource
+    await page.goto(`/resource/compare?r1=${resource1Id}&v1=2&r2=${resource1Id}&v2=1`);
+    await page.waitForLoadState('load');
+
+    // Find version dropdowns
+    const versionSelects = page.locator('select');
+    const count = await versionSelects.count();
+    expect(count).toBeGreaterThanOrEqual(2);
+
+    // Change the first version dropdown to v1
+    const leftVersionSelect = versionSelects.first();
+
+    // Use Promise.all to wait for navigation and select option together
+    await Promise.all([
+      page.waitForURL(/v1=1/, { timeout: 10000 }),
+      leftVersionSelect.selectOption('1'),
+    ]);
+
+    // Verify URL was updated
+    const url = page.url();
+    expect(url).toContain('v1=1');
+  });
+
   test.afterAll(async ({ apiClient }) => {
     // Cleanup in reverse order
     if (resource1Id) {
