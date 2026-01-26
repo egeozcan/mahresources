@@ -39,6 +39,12 @@
             {% include "/partials/form/searchButton.tpl" with text="Update Dimensions" %}
         </div>
     </form>
+    <div class="px-4" x-show="[...$store.bulkSelection.selectedIds].length === 2">
+        <a :href="'/resource/compare?r1=' + [...$store.bulkSelection.selectedIds][0] + '&r2=' + [...$store.bulkSelection.selectedIds][1]"
+           class="inline-flex justify-center py-2 px-4 mt-3 border border-transparent items-center shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+            Compare
+        </a>
+    </div>
     <form
             class="px-4 no-ajax"
             method="post"
