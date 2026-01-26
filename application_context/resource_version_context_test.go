@@ -336,16 +336,23 @@ func TestGetVersions(t *testing.T) {
 		t.Fatalf("Failed to create resource: %v", err)
 	}
 
-	// Initially no versions
+	// Initially GetVersions returns a virtual v1 (lazy migration)
 	versions, err := ctx.GetVersions(resource.ID)
 	if err != nil {
 		t.Fatalf("GetVersions() error = %v", err)
 	}
-	if len(versions) != 0 {
-		t.Errorf("Expected 0 versions initially, got %d", len(versions))
+	if len(versions) != 1 {
+		t.Errorf("Expected 1 virtual version initially (lazy migration), got %d", len(versions))
+	}
+	// Virtual v1 should have ID 0 (not persisted)
+	if versions[0].ID != 0 {
+		t.Errorf("Expected virtual version ID to be 0, got %d", versions[0].ID)
+	}
+	if versions[0].VersionNumber != 1 {
+		t.Errorf("Expected virtual version number to be 1, got %d", versions[0].VersionNumber)
 	}
 
-	// Create some versions
+	// Create some persisted versions
 	for i := 1; i <= 3; i++ {
 		version := &models.ResourceVersion{
 			ResourceID:    resource.ID,
@@ -360,7 +367,7 @@ func TestGetVersions(t *testing.T) {
 		}
 	}
 
-	// Should return versions in descending order
+	// Should return persisted versions in descending order
 	versions, err = ctx.GetVersions(resource.ID)
 	if err != nil {
 		t.Fatalf("GetVersions() error = %v", err)
