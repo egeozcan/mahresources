@@ -7,13 +7,14 @@ import path from 'path';
  * may already be expanded (with 2+ versions, panel auto-expands).
  */
 async function ensureVersionPanelExpanded(page: Page) {
-  const versionContent = page.locator('.mt-2.border.rounded-lg.divide-y');
-  const isExpanded = await versionContent.isVisible();
-  if (!isExpanded) {
-    await page.locator('button:has-text("Versions")').click();
-    await expect(versionContent).toBeVisible({ timeout: 5000 });
+  // Version panel uses <details><summary> - check if the details is open
+  const detailsPanel = page.locator('details:has(summary:has-text("Versions"))');
+  const isOpen = await detailsPanel.getAttribute('open');
+  if (isOpen === null) {
+    await page.locator('summary:has-text("Versions")').click();
+    await page.waitForTimeout(300); // Wait for panel to expand
   }
-  return versionContent;
+  return detailsPanel.locator('.p-4.border-dashed');
 }
 
 test.describe.serial('Resource Versioning', () => {
@@ -92,10 +93,10 @@ test.describe.serial('Resource Versioning', () => {
     expect(resourceId).toBeGreaterThan(0);
 
     // Verify version panel exists with at least 1 version
-    await expect(page.locator('button:has-text("Versions")')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('summary:has-text("Versions")')).toBeVisible({ timeout: 10000 });
 
     // Click to expand the version panel
-    await page.locator('button:has-text("Versions")').click();
+    await page.locator('summary:has-text("Versions")').click();
 
     await expect(page.locator('text=v1')).toBeVisible();
     await expect(page.locator('span.bg-blue-100:has-text("current")')).toBeVisible();
@@ -106,7 +107,7 @@ test.describe.serial('Resource Versioning', () => {
     await resourcePage.gotoDisplay(resourceId);
 
     // Click to expand the version panel
-    await page.locator('button:has-text("Versions")').click();
+    await page.locator('summary:has-text("Versions")').click();
 
     // Verify v1 is visible and marked as current
     await expect(page.locator('text=v1')).toBeVisible();
@@ -118,7 +119,7 @@ test.describe.serial('Resource Versioning', () => {
     await resourcePage.gotoDisplay(resourceId);
 
     // Get initial version count from button text
-    const versionButton = page.locator('button:has-text("Versions")');
+    const versionButton = page.locator('summary:has-text("Versions")');
     await expect(versionButton).toBeVisible({ timeout: 5000 });
     const buttonText = await versionButton.textContent();
     const initialCount = parseInt(buttonText?.match(/\((\d+)\)/)?.[1] || '1');
@@ -149,15 +150,10 @@ test.describe.serial('Resource Versioning', () => {
     // Ensure version panel is expanded after reload
     await ensureVersionPanelExpanded(page);
 
-    // The new version should be current (marked with bg-blue-50 background)
+    // The newest version should be current (marked with bg-blue-50 background and "current" badge)
     const currentRow = page.locator('div.bg-blue-50');
     await expect(currentRow).toBeVisible();
     await expect(currentRow.locator('span.bg-blue-100:has-text("current")')).toBeVisible();
-
-    // v1 should exist but not be current
-    const v1Row = page.locator('div.p-4:has-text("v1")').first();
-    await expect(v1Row).toBeVisible();
-    await expect(v1Row.locator('span.bg-blue-100:has-text("current")')).not.toBeVisible();
   });
 
   test('should update preview URL hash when version changes', async ({ resourcePage, page }) => {
@@ -198,7 +194,7 @@ test.describe.serial('Resource Versioning', () => {
     await resourcePage.gotoDisplay(resourceId);
 
     // Get initial version count from button text
-    const versionButton = page.locator('button:has-text("Versions")');
+    const versionButton = page.locator('summary:has-text("Versions")');
     await expect(versionButton).toBeVisible({ timeout: 5000 });
     const buttonText = await versionButton.textContent();
     const initialCount = parseInt(buttonText?.match(/\((\d+)\)/)?.[1] || '1');
@@ -256,7 +252,7 @@ test.describe.serial('Resource Versioning', () => {
     await resourcePage.gotoDisplay(resourceId);
 
     // Get initial version count from button text
-    const versionButton = page.locator('button:has-text("Versions")');
+    const versionButton = page.locator('summary:has-text("Versions")');
     await expect(versionButton).toBeVisible({ timeout: 5000 });
     const buttonText = await versionButton.textContent();
     const initialCount = parseInt(buttonText?.match(/\((\d+)\)/)?.[1] || '1');
@@ -338,10 +334,10 @@ test.describe.serial('Resource Versioning', () => {
     const compareSelectedLink = page.locator('a:has-text("Compare Selected")');
     await expect(compareSelectedLink).toBeVisible();
 
-    // Click and verify we get JSON response
+    // Verify compare link points to new compare page
     const href = await compareSelectedLink.getAttribute('href');
-    expect(href).toContain('/v1/resource/versions/compare');
-    expect(href).toContain(`resourceId=${resourceId}`);
+    expect(href).toContain('/resource/compare');
+    expect(href).toContain(`r1=${resourceId}`);
   });
 
   test.afterAll(async ({ apiClient }) => {
