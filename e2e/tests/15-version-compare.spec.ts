@@ -170,7 +170,8 @@ test.describe.serial('Version Compare UI', () => {
   });
 
   test('should show image comparison modes for image resources', async ({ page }) => {
-    await page.goto(`/resource/compare?r1=${resource1Id}&v1=1&r2=${resource2Id}&v2=1`);
+    // Compare v1 vs v2 of the same resource so version labels are different
+    await page.goto(`/resource/compare?r1=${resource1Id}&v1=1&r2=${resource1Id}&v2=2`);
     await page.waitForLoadState('load');
 
     // Mode buttons should be visible
@@ -195,6 +196,17 @@ test.describe.serial('Version Compare UI', () => {
 
     // Toggle mode should show click instruction
     await expect(page.locator('text=Click or press Space to toggle')).toBeVisible();
+
+    // Toggle mode container should be focusable and respond to space key
+    const toggleContainer = page.locator('[role="button"]:has-text("Click or press Space to toggle")');
+    await expect(toggleContainer).toHaveAttribute('tabindex', '0');
+
+    // Focus the toggle container and verify space key works
+    await toggleContainer.focus();
+    const versionLabel = toggleContainer.locator('.absolute.top-2.right-2');
+    const initialVersion = await versionLabel.textContent();
+    await page.keyboard.press('Space');
+    await expect(versionLabel).not.toHaveText(initialVersion!);
 
     await page.locator('button:has-text("Side-by-side")').click();
     await expect(page.locator('button:has-text("Side-by-side")')).toHaveClass(/bg-indigo-600/);

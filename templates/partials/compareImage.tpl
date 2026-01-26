@@ -63,7 +63,7 @@
     </div>
 
     <!-- Toggle mode -->
-    <div x-show="mode === 'toggle'" class="relative border rounded overflow-hidden cursor-pointer" @click="toggleSide()" @keydown.space.prevent="toggleSide()">
+    <div x-show="mode === 'toggle'" class="relative border rounded overflow-hidden cursor-pointer" tabindex="0" role="button" @click="toggleSide()" @keydown.space.prevent="toggleSide()">
         <div class="absolute top-2 right-2 bg-white/80 rounded px-2 py-1 text-sm font-medium" x-text="showLeft ? 'v{{ comparison.Version1.VersionNumber }}' : 'v{{ comparison.Version2.VersionNumber }}'"></div>
         <img x-show="showLeft" :src="leftUrl" class="w-full h-auto" alt="Version {{ comparison.Version1.VersionNumber }}">
         <img x-show="!showLeft" :src="rightUrl" class="w-full h-auto" alt="Version {{ comparison.Version2.VersionNumber }}">
