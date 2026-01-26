@@ -34,6 +34,7 @@ var templates = map[string]templateInformation{
 	"/resources/simple":  {template_context_providers.ResourceListContextProvider, "listResourcesSimple.tpl", http.MethodGet},
 	"/resource":          {template_context_providers.ResourceContextProvider, "displayResource.tpl", http.MethodGet},
 	"/resource/edit":     {template_context_providers.ResourceCreateContextProvider, "createResource.tpl", http.MethodGet},
+	"/resource/compare":  {template_context_providers.CompareContextProvider, "compare.tpl", http.MethodGet},
 
 	"/group/new":   {template_context_providers.GroupCreateContextProvider, "createGroup.tpl", http.MethodGet},
 	"/groups":      {template_context_providers.GroupsListContextProvider, "listGroups.tpl", http.MethodGet},
