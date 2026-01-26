@@ -14,7 +14,7 @@
             <label class="block text-sm font-medium text-gray-700 mb-2">Resource</label>
             <div x-data="autocompleter({
                 url: '/v1/resources',
-                selectedItems: [{{ resource1|json_encode }}],
+                selectedItems: [{{ resource1|json }}],
                 elName: 'r1',
                 multiple: false
             })" x-bind="events" class="mb-3">
@@ -42,7 +42,7 @@
             <label class="block text-sm font-medium text-gray-700 mb-2">Resource</label>
             <div x-data="autocompleter({
                 url: '/v1/resources',
-                selectedItems: [{{ resource2|json_encode }}],
+                selectedItems: [{{ resource2|json }}],
                 elName: 'r2',
                 multiple: false
             })" x-bind="events" class="mb-3">
