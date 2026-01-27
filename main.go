@@ -265,6 +265,7 @@ func main() {
 
 	hw := hash_worker.New(db, mainFs, altFsMap, hashWorkerConfig)
 	hw.Start()
+	context.SetHashQueue(hw.GetQueue())
 	defer hw.Stop()
 
 	log.Fatal(server.CreateServer(context, mainFs, context.Config.AltFileSystems).ListenAndServe())

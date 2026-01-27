@@ -26,6 +26,19 @@ import (
 	_ "golang.org/x/image/tiff"
 )
 
+// hashableContentTypes is the set of content types that can be perceptually hashed.
+var hashableContentTypes = map[string]bool{
+	"image/jpeg": true,
+	"image/png":  true,
+	"image/gif":  true,
+	"image/webp": true,
+}
+
+// IsHashableContentType returns true if the content type can be perceptually hashed.
+func IsHashableContentType(contentType string) bool {
+	return hashableContentTypes[contentType]
+}
+
 // timeoutReader wraps an io.Reader and returns an error if no data is read within the timeout period
 type timeoutReader struct {
 	reader      io.Reader
@@ -555,5 +568,11 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 	ctx.Logger().Info(models.LogActionCreate, "resource", &res.ID, res.Name, "Created resource", nil)
 
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)
+
+	// Queue for async hash processing if it's a hashable image type
+	if IsHashableContentType(res.ContentType) {
+		ctx.QueueForHashing(res.ID)
+	}
+
 	return res, nil
 }
