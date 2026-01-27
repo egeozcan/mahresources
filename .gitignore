@@ -25,3 +25,8 @@
 
 # Git worktrees
 .worktrees/
+
+# Documentation site
+docs-site/node_modules/
+docs-site/build/
+docs-site/.docusaurus/
