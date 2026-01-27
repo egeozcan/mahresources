@@ -93,6 +93,8 @@ type MahresourcesContext struct {
 	// currentRequest holds the current HTTP request for logging purposes.
 	// This is set per-request via WithRequest() to capture request metadata in logs.
 	currentRequest *http.Request
+	// hashQueue is a channel to queue resources for async hash processing
+	hashQueue chan<- uint
 }
 
 func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.DB, config *MahresourcesConfig) *MahresourcesContext {
@@ -153,6 +155,34 @@ func (ctx *MahresourcesContext) WithRequest(r *http.Request) any {
 	ctxCopy := *ctx
 	ctxCopy.currentRequest = r
 	return &ctxCopy
+}
+
+// SetHashQueue sets the channel for queueing resources for hash processing.
+func (ctx *MahresourcesContext) SetHashQueue(queue chan<- uint) {
+	ctx.hashQueue = queue
+}
+
+// QueueForHashing queues a resource ID for async hash processing.
+// Returns true if queued, false if queue is nil or full.
+func (ctx *MahresourcesContext) QueueForHashing(resourceID uint) bool {
+	if ctx.hashQueue == nil {
+		return false
+	}
+	select {
+	case ctx.hashQueue <- resourceID:
+		return true
+	default:
+		return false
+	}
+}
+
+// OnResourceFileChanged handles cleanup when a resource's file content changes.
+// This deletes the old hash (cascade removes similarity pairs) and re-queues for hashing.
+func (ctx *MahresourcesContext) OnResourceFileChanged(resourceID uint) {
+	// Delete old hash - cascade will remove associated similarity pairs
+	ctx.db.Where("resource_id = ?", resourceID).Delete(&models.ImageHash{})
+	// Re-queue for hashing
+	ctx.QueueForHashing(resourceID)
 }
 
 // EnsureForeignKeysActive ensures that sqlite connection somehow didn't manage to deactivate foreign keys

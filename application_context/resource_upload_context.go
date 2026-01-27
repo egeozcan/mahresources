@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"mahresources/hash_worker"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/interfaces"
@@ -555,5 +556,11 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 	ctx.Logger().Info(models.LogActionCreate, "resource", &res.ID, res.Name, "Created resource", nil)
 
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)
+
+	// Queue for async hash processing if it's a hashable image type
+	if hash_worker.IsHashable(res.ContentType) {
+		ctx.QueueForHashing(res.ID)
+	}
+
 	return res, nil
 }

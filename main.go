@@ -3,17 +3,20 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
-	"log"
+	"github.com/spf13/afero"
 	"mahresources/application_context"
 	"mahresources/constants"
+	"mahresources/hash_worker"
 	"mahresources/models"
 	"mahresources/models/util"
 	"mahresources/server"
+	"mahresources/storage"
 )
 
 // altFS is a custom flag type that collects multiple -alt-fs flags
@@ -81,6 +84,13 @@ func main() {
 	seedFS := flag.String("seed-fs", os.Getenv("SEED_FS"), "Path to directory to use as read-only base for memory-fs (env: SEED_FS)")
 	maxDBConnections := flag.Int("max-db-connections", parseIntEnv("MAX_DB_CONNECTIONS", 0), "Limit database connection pool size, useful for SQLite under test load (env: MAX_DB_CONNECTIONS)")
 	cleanupLogsDays := flag.Int("cleanup-logs-days", parseIntEnv("CLEANUP_LOGS_DAYS", 0), "Delete log entries older than N days on startup (0=disabled) (env: CLEANUP_LOGS_DAYS)")
+
+	// Hash worker options
+	hashWorkerCount := flag.Int("hash-worker-count", parseIntEnv("HASH_WORKER_COUNT", 4), "Number of concurrent hash calculation workers (env: HASH_WORKER_COUNT)")
+	hashBatchSize := flag.Int("hash-batch-size", parseIntEnv("HASH_BATCH_SIZE", 500), "Resources to process per batch cycle (env: HASH_BATCH_SIZE)")
+	hashPollInterval := flag.Duration("hash-poll-interval", parseDurationEnv("HASH_POLL_INTERVAL", time.Minute), "Time between batch processing cycles (env: HASH_POLL_INTERVAL)")
+	hashSimilarityThreshold := flag.Int("hash-similarity-threshold", parseIntEnv("HASH_SIMILARITY_THRESHOLD", 10), "Maximum Hamming distance for similarity (env: HASH_SIMILARITY_THRESHOLD)")
+	hashWorkerDisabled := flag.Bool("hash-worker-disabled", os.Getenv("HASH_WORKER_DISABLED") == "1", "Disable hash worker (env: HASH_WORKER_DISABLED=1)")
 
 	// Alternative file systems: can be specified multiple times as -alt-fs=key:path
 	var altFSFlags altFS
@@ -162,6 +172,7 @@ func main() {
 		&models.GroupRelation{},
 		&models.GroupRelationType{},
 		&models.ImageHash{},
+		&models.ResourceSimilarity{},
 		&models.LogEntry{},
 	); err != nil {
 		log.Fatalf("failed to migrate: %v", err)
@@ -236,6 +247,26 @@ func main() {
 			log.Printf("Cleaned up %d log entries older than %d days", deleted, *cleanupLogsDays)
 		}
 	}
+
+	// Start hash worker for background perceptual hash calculation
+	hashWorkerConfig := hash_worker.Config{
+		WorkerCount:         *hashWorkerCount,
+		BatchSize:           *hashBatchSize,
+		PollInterval:        *hashPollInterval,
+		SimilarityThreshold: *hashSimilarityThreshold,
+		Disabled:            *hashWorkerDisabled,
+	}
+
+	// Build alt filesystems map for hash worker
+	altFsMap := make(map[string]afero.Fs)
+	for name, path := range context.Config.AltFileSystems {
+		altFsMap[name] = storage.CreateStorage(path)
+	}
+
+	hw := hash_worker.New(db, mainFs, altFsMap, hashWorkerConfig)
+	hw.Start()
+	context.SetHashQueue(hw.GetQueue())
+	defer hw.Stop()
 
 	log.Fatal(server.CreateServer(context, mainFs, context.Config.AltFileSystems).ListenAndServe())
 }

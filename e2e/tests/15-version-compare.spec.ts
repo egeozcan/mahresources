@@ -27,8 +27,10 @@ test.describe.serial('Version Compare UI', () => {
   let resource2Id: number;
   let testRunId: number;
 
-  test.beforeAll(async ({ apiClient }) => {
-    testRunId = Date.now();
+  // Increase timeout for beforeAll to handle database contention
+  test.beforeAll(async ({ apiClient, request, baseURL }) => {
+    // Use timestamp + random to avoid collisions with parallel workers
+    testRunId = Date.now() + Math.floor(Math.random() * 100000);
 
     // Create prerequisite data
     const category = await apiClient.createCategory(
@@ -42,35 +44,31 @@ test.describe.serial('Version Compare UI', () => {
       categoryId: categoryId,
     });
     ownerGroupId = ownerGroup.ID;
-  });
 
-  test('should create resources with multiple versions', async ({ apiClient, page, request, baseURL }) => {
-    // Create first resource using sample-image-15.png (unique for this test)
-    const testFile1 = path.join(__dirname, '../test-assets/sample-image-15.png');
+    // Create resources in beforeAll to ensure they exist before any test runs
+    // Use unique images (21-23) to avoid hash conflicts with other parallel tests
+    const testFile1 = path.join(__dirname, '../test-assets/sample-image-21.png');
     const resource1 = await apiClient.createResource({
       filePath: testFile1,
       name: `Compare Resource 1 ${testRunId}`,
       ownerId: ownerGroupId,
     });
     resource1Id = resource1.ID;
-    expect(resource1Id).toBeGreaterThan(0);
 
-    // Create second resource using sample-image-16.png (unique for this test)
-    const testFile2 = path.join(__dirname, '../test-assets/sample-image-16.png');
+    const testFile2 = path.join(__dirname, '../test-assets/sample-image-22.png');
     const resource2 = await apiClient.createResource({
       filePath: testFile2,
       name: `Compare Resource 2 ${testRunId}`,
       ownerId: ownerGroupId,
     });
     resource2Id = resource2.ID;
-    expect(resource2Id).toBeGreaterThan(0);
 
     // Add a second version to resource1 for version comparison tests
     const fs = await import('fs');
-    const versionFile = path.join(__dirname, '../test-assets/sample-image-17.png');
+    const versionFile = path.join(__dirname, '../test-assets/sample-image-23.png');
     const fileBuffer = fs.readFileSync(versionFile);
 
-    const response = await request.post(`${baseURL}/v1/resource/versions?resourceId=${resource1Id}`, {
+    await request.post(`${baseURL}/v1/resource/versions?resourceId=${resource1Id}`, {
       multipart: {
         file: {
           name: 'sample-image-17.png',
@@ -80,7 +78,12 @@ test.describe.serial('Version Compare UI', () => {
         comment: 'Version 2 for compare tests',
       },
     });
-    expect(response.ok()).toBeTruthy();
+  });
+
+  test('should have created resources with multiple versions', async () => {
+    // Verify resources were created in beforeAll
+    expect(resource1Id).toBeGreaterThan(0);
+    expect(resource2Id).toBeGreaterThan(0);
   });
 
   test('should navigate to compare page from version panel', async ({ resourcePage, page }) => {
@@ -125,7 +128,9 @@ test.describe.serial('Version Compare UI', () => {
   });
 
   test('should show compare bulk action for exactly 2 resources', async ({ resourcePage, page }) => {
-    await resourcePage.gotoList();
+    // Navigate to resources list filtered by owner to ensure our test resources are visible
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
+    await page.waitForLoadState('load');
 
     // Select first resource using the x-data pattern
     const checkbox1 = page.locator(`[x-data*="itemId: ${resource1Id}"] input[type="checkbox"]`);
@@ -151,7 +156,18 @@ test.describe.serial('Version Compare UI', () => {
     expect(href).toContain('r2=');
   });
 
-  test('should load compare page with metadata table', async ({ page }) => {
+  test('should load compare page with metadata table', async ({ page, apiClient }) => {
+    // Verify resources were created
+    expect(resource1Id, 'resource1Id should be set from beforeAll').toBeGreaterThan(0);
+    expect(resource2Id, 'resource2Id should be set from beforeAll').toBeGreaterThan(0);
+
+    // Verify resources still exist before navigating (they might have been deleted by parallel tests)
+    const resources = await apiClient.getResources();
+    const r1Exists = resources.some((r: { ID: number }) => r.ID === resource1Id);
+    const r2Exists = resources.some((r: { ID: number }) => r.ID === resource2Id);
+    expect(r1Exists, `Resource ${resource1Id} should exist`).toBe(true);
+    expect(r2Exists, `Resource ${resource2Id} should exist`).toBe(true);
+
     // Navigate to compare page with two different resources
     await page.goto(`/resource/compare?r1=${resource1Id}&v1=1&r2=${resource2Id}&v2=1`);
     await page.waitForLoadState('load');

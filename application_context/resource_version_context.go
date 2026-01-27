@@ -194,6 +194,9 @@ func (ctx *MahresourcesContext) UploadNewVersion(resourceID uint, file multipart
 
 	ctx.Logger().Info(models.LogActionCreate, "resource_version", &version.ID, fmt.Sprintf("v%d for resource %d", nextVersion, resourceID), comment, nil)
 
+	// Handle hash invalidation and re-queue for similarity detection
+	ctx.OnResourceFileChanged(resourceID)
+
 	return &version, nil
 }
 
@@ -349,6 +352,9 @@ func (ctx *MahresourcesContext) RestoreVersion(resourceID, versionID uint, comme
 	}
 
 	ctx.Logger().Info(models.LogActionCreate, "resource_version", &version.ID, fmt.Sprintf("Restored v%d from v%d", nextVersion, sourceVersion.VersionNumber), comment, nil)
+
+	// Handle hash invalidation and re-queue for similarity detection
+	ctx.OnResourceFileChanged(resourceID)
 
 	return &version, nil
 }

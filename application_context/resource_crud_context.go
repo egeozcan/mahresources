@@ -17,22 +17,84 @@ func (ctx *MahresourcesContext) GetResource(id uint) (*models.Resource, error) {
 func (ctx *MahresourcesContext) GetSimilarResources(id uint) (*[]*models.Resource, error) {
 	var resources []*models.Resource
 
-	hashQuery := ctx.db.Table("image_hashes rootHash").
-		Select("d_hash").
-		Where("rootHash.resource_id = ?", id).
-		Limit(1)
+	// Find all resource IDs similar to this one from pre-computed similarities
+	var similarIDs []uint
 
-	sameHashIdsQuery := ctx.db.Table("image_hashes").
-		Select("resource_id").
-		Group("resource_id").
-		Where("d_hash = (?)", hashQuery)
+	// Query both directions using UNION ALL for better index utilization.
+	// We store with ResourceID1 < ResourceID2, so we need to check both columns.
+	rows, err := ctx.db.Raw(`
+		SELECT resource_id2 as similar_id, hamming_distance FROM resource_similarities WHERE resource_id1 = ?
+		UNION ALL
+		SELECT resource_id1 as similar_id, hamming_distance FROM resource_similarities WHERE resource_id2 = ?
+		ORDER BY hamming_distance ASC
+	`, id, id).Rows()
 
-	return &resources, ctx.db.
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var similarID uint
+		var hammingDistance int
+		if err := rows.Scan(&similarID, &hammingDistance); err != nil {
+			return nil, err
+		}
+		similarIDs = append(similarIDs, similarID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(similarIDs) == 0 {
+		// Fall back to exact hash match for resources not yet processed by worker
+		hashQuery := ctx.db.Table("image_hashes rootHash").
+			Select("d_hash").
+			Where("rootHash.resource_id = ?", id).
+			Limit(1)
+
+		sameHashIdsQuery := ctx.db.Table("image_hashes").
+			Select("resource_id").
+			Group("resource_id").
+			Where("d_hash = (?)", hashQuery)
+
+		return &resources, ctx.db.
+			Preload("Tags").
+			Joins("Owner").
+			Where("resources.id IN (?)", sameHashIdsQuery).
+			Where("resources.id <> ?", id).
+			Find(&resources).Error
+	}
+
+	// Fetch resources
+	if err := ctx.db.
 		Preload("Tags").
 		Joins("Owner").
-		Where("resources.id IN (?)", sameHashIdsQuery).
-		Where("resources.id <> ?", id).
-		Find(&resources).Error
+		Where("resources.id IN ?", similarIDs).
+		Find(&resources).Error; err != nil {
+		return nil, err
+	}
+
+	// Preserve order from similarity query (sorted by hamming_distance ASC)
+	idToIndex := make(map[uint]int, len(similarIDs))
+	for i, id := range similarIDs {
+		idToIndex[id] = i
+	}
+
+	sortedResources := make([]*models.Resource, len(similarIDs))
+	for i := range resources {
+		sortedResources[idToIndex[resources[i].ID]] = resources[i]
+	}
+
+	// Filter out any nil entries (in case of missing resources)
+	result := make([]*models.Resource, 0, len(sortedResources))
+	for _, r := range sortedResources {
+		if r != nil {
+			result = append(result, r)
+		}
+	}
+
+	return &result, nil
 }
 
 func (ctx *MahresourcesContext) GetResourceCount(query *query_models.ResourceSearchQuery) (int64, error) {
