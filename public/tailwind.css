@@ -930,6 +930,9 @@
   .h-32 {
     height: calc(var(--spacing) * 32);
   }
+  .h-64 {
+    height: calc(var(--spacing) * 64);
+  }
   .h-\[600px\] {
     height: 600px;
   }
