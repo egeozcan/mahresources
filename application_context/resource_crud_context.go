@@ -40,6 +40,9 @@ func (ctx *MahresourcesContext) GetSimilarResources(id uint) (*[]*models.Resourc
 		}
 		similarIDs = append(similarIDs, similarID)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
 	if len(similarIDs) == 0 {
 		// Fall back to exact hash match for resources not yet processed by worker

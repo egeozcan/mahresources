@@ -127,7 +127,15 @@ func (w *HashWorker) runQueueProcessor() {
 		case resourceID := <-w.hashQueue:
 			w.processResource(resourceID)
 		case <-w.stopCh:
-			return
+			// Drain remaining items from queue before exiting
+			for {
+				select {
+				case resourceID := <-w.hashQueue:
+					w.processResource(resourceID)
+				default:
+					return
+				}
+			}
 		}
 	}
 }
@@ -174,14 +182,8 @@ func (w *HashWorker) hashNewResources() {
 	var resources []models.Resource
 	subQuery := w.db.Table("image_hashes").Select("resource_id")
 
-	// Build content type list from HashableContentTypes
-	contentTypes := make([]string, 0, len(HashableContentTypes))
-	for ct := range HashableContentTypes {
-		contentTypes = append(contentTypes, ct)
-	}
-
 	if err := w.db.
-		Where("content_type IN ?", contentTypes).
+		Where("content_type IN ?", hashableContentTypesList).
 		Where("id NOT IN (?)", subQuery).
 		Limit(w.config.BatchSize).
 		Find(&resources).Error; err != nil {
@@ -260,7 +262,9 @@ func (w *HashWorker) ensureCacheLoaded() {
 	}
 
 	w.cacheLoaded = true
-	log.Printf("Hash worker: loaded %d hashes into cache", len(w.hashCache))
+	// Log cache size for memory monitoring (each entry ~24 bytes with map overhead)
+	estimatedMB := float64(len(w.hashCache)*24) / (1024 * 1024)
+	log.Printf("Hash worker: loaded %d hashes into cache (estimated %.1f MB)", len(w.hashCache), estimatedMB)
 }
 
 func (w *HashWorker) hashAndStoreSimilarities(resource models.Resource) {
