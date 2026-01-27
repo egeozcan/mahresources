@@ -17,21 +17,54 @@ func (ctx *MahresourcesContext) GetResource(id uint) (*models.Resource, error) {
 func (ctx *MahresourcesContext) GetSimilarResources(id uint) (*[]*models.Resource, error) {
 	var resources []*models.Resource
 
-	hashQuery := ctx.db.Table("image_hashes rootHash").
-		Select("d_hash").
-		Where("rootHash.resource_id = ?", id).
-		Limit(1)
+	// Find all resource IDs similar to this one from pre-computed similarities
+	var similarIDs []uint
 
-	sameHashIdsQuery := ctx.db.Table("image_hashes").
-		Select("resource_id").
-		Group("resource_id").
-		Where("d_hash = (?)", hashQuery)
+	// Query both directions since we store with ResourceID1 < ResourceID2
+	rows, err := ctx.db.Raw(`
+		SELECT CASE WHEN resource_id_1 = ? THEN resource_id_2 ELSE resource_id_1 END as similar_id
+		FROM resource_similarities
+		WHERE resource_id_1 = ? OR resource_id_2 = ?
+		ORDER BY hamming_distance ASC
+	`, id, id, id).Rows()
+
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var similarID uint
+		if err := rows.Scan(&similarID); err != nil {
+			return nil, err
+		}
+		similarIDs = append(similarIDs, similarID)
+	}
+
+	if len(similarIDs) == 0 {
+		// Fall back to exact hash match for resources not yet processed by worker
+		hashQuery := ctx.db.Table("image_hashes rootHash").
+			Select("d_hash").
+			Where("rootHash.resource_id = ?", id).
+			Limit(1)
+
+		sameHashIdsQuery := ctx.db.Table("image_hashes").
+			Select("resource_id").
+			Group("resource_id").
+			Where("d_hash = (?)", hashQuery)
+
+		return &resources, ctx.db.
+			Preload("Tags").
+			Joins("Owner").
+			Where("resources.id IN (?)", sameHashIdsQuery).
+			Where("resources.id <> ?", id).
+			Find(&resources).Error
+	}
 
 	return &resources, ctx.db.
 		Preload("Tags").
 		Joins("Owner").
-		Where("resources.id IN (?)", sameHashIdsQuery).
-		Where("resources.id <> ?", id).
+		Where("resources.id IN ?", similarIDs).
 		Find(&resources).Error
 }
 
