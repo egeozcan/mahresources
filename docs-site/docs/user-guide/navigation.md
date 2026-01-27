@@ -168,7 +168,7 @@ The interface adapts to different screen sizes:
 
 - **Desktop (1024px+)** - Full layout with sidebar filters and detailed tables
 - **Tablet (768-1024px)** - Condensed navigation, scrollable tables
-- **Mobile (<768px)** - Hamburger menu, stacked layouts, simplified views
+- **Mobile (under 768px)** - Hamburger menu, stacked layouts, simplified views
 
 ## Keyboard Shortcuts
 
