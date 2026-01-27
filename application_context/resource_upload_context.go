@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"mahresources/hash_worker"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/interfaces"
@@ -25,19 +26,6 @@ import (
 	// Register additional image formats for dimension detection
 	_ "golang.org/x/image/tiff"
 )
-
-// hashableContentTypes is the set of content types that can be perceptually hashed.
-var hashableContentTypes = map[string]bool{
-	"image/jpeg": true,
-	"image/png":  true,
-	"image/gif":  true,
-	"image/webp": true,
-}
-
-// IsHashableContentType returns true if the content type can be perceptually hashed.
-func IsHashableContentType(contentType string) bool {
-	return hashableContentTypes[contentType]
-}
 
 // timeoutReader wraps an io.Reader and returns an error if no data is read within the timeout period
 type timeoutReader struct {
@@ -570,7 +558,7 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)
 
 	// Queue for async hash processing if it's a hashable image type
-	if IsHashableContentType(res.ContentType) {
+	if hash_worker.IsHashable(res.ContentType) {
 		ctx.QueueForHashing(res.ID)
 	}
 

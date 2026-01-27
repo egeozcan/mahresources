@@ -174,8 +174,14 @@ func (w *HashWorker) hashNewResources() {
 	var resources []models.Resource
 	subQuery := w.db.Table("image_hashes").Select("resource_id")
 
+	// Build content type list from HashableContentTypes
+	contentTypes := make([]string, 0, len(HashableContentTypes))
+	for ct := range HashableContentTypes {
+		contentTypes = append(contentTypes, ct)
+	}
+
 	if err := w.db.
-		Where("content_type IN ?", []string{"image/jpeg", "image/png", "image/gif", "image/webp"}).
+		Where("content_type IN ?", contentTypes).
 		Where("id NOT IN (?)", subQuery).
 		Limit(w.config.BatchSize).
 		Find(&resources).Error; err != nil {

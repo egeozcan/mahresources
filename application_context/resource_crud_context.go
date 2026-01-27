@@ -61,11 +61,35 @@ func (ctx *MahresourcesContext) GetSimilarResources(id uint) (*[]*models.Resourc
 			Find(&resources).Error
 	}
 
-	return &resources, ctx.db.
+	// Fetch resources
+	if err := ctx.db.
 		Preload("Tags").
 		Joins("Owner").
 		Where("resources.id IN ?", similarIDs).
-		Find(&resources).Error
+		Find(&resources).Error; err != nil {
+		return nil, err
+	}
+
+	// Preserve order from similarity query (sorted by hamming_distance ASC)
+	idToIndex := make(map[uint]int, len(similarIDs))
+	for i, id := range similarIDs {
+		idToIndex[id] = i
+	}
+
+	sortedResources := make([]*models.Resource, len(resources))
+	for i := range resources {
+		sortedResources[idToIndex[resources[i].ID]] = resources[i]
+	}
+
+	// Filter out any nil entries (in case of missing resources)
+	result := make([]*models.Resource, 0, len(sortedResources))
+	for _, r := range sortedResources {
+		if r != nil {
+			result = append(result, r)
+		}
+	}
+
+	return &result, nil
 }
 
 func (ctx *MahresourcesContext) GetResourceCount(query *query_models.ResourceSearchQuery) (int64, error) {
