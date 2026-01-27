@@ -20,13 +20,14 @@ func (ctx *MahresourcesContext) GetSimilarResources(id uint) (*[]*models.Resourc
 	// Find all resource IDs similar to this one from pre-computed similarities
 	var similarIDs []uint
 
-	// Query both directions since we store with ResourceID1 < ResourceID2
+	// Query both directions using UNION ALL for better index utilization.
+	// We store with ResourceID1 < ResourceID2, so we need to check both columns.
 	rows, err := ctx.db.Raw(`
-		SELECT CASE WHEN resource_id_1 = ? THEN resource_id_2 ELSE resource_id_1 END as similar_id
-		FROM resource_similarities
-		WHERE resource_id_1 = ? OR resource_id_2 = ?
+		SELECT resource_id2 as similar_id, hamming_distance FROM resource_similarities WHERE resource_id1 = ?
+		UNION ALL
+		SELECT resource_id1 as similar_id, hamming_distance FROM resource_similarities WHERE resource_id2 = ?
 		ORDER BY hamming_distance ASC
-	`, id, id, id).Rows()
+	`, id, id).Rows()
 
 	if err != nil {
 		return nil, err

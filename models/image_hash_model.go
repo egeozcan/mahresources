@@ -1,6 +1,9 @@
 package models
 
-import "strconv"
+import (
+	"log"
+	"strconv"
+)
 
 type ImageHash struct {
 	ID         uint      `gorm:"primarykey"`
@@ -21,7 +24,11 @@ func (h *ImageHash) GetDHash() uint64 {
 	if h.DHash == "" {
 		return 0
 	}
-	val, _ := strconv.ParseUint(h.DHash, 16, 64)
+	val, err := strconv.ParseUint(h.DHash, 16, 64)
+	if err != nil {
+		log.Printf("Warning: failed to parse DHash %q for hash ID %d: %v", h.DHash, h.ID, err)
+		return 0
+	}
 	return val
 }
 
@@ -34,7 +41,11 @@ func (h *ImageHash) GetAHash() uint64 {
 	if h.AHash == "" {
 		return 0
 	}
-	val, _ := strconv.ParseUint(h.AHash, 16, 64)
+	val, err := strconv.ParseUint(h.AHash, 16, 64)
+	if err != nil {
+		log.Printf("Warning: failed to parse AHash %q for hash ID %d: %v", h.AHash, h.ID, err)
+		return 0
+	}
 	return val
 }
 

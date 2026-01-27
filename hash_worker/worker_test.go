@@ -119,3 +119,88 @@ func TestHashWorker_FindSimilarities(t *testing.T) {
 		}
 	}
 }
+
+func TestSimilarityQuery_UnionBothDirections(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create similarity records with various Hamming distances
+	// Resource 5 is similar to resources 1, 2, 3 with different distances
+	similarities := []models.ResourceSimilarity{
+		{ResourceID1: 1, ResourceID2: 5, HammingDistance: 3}, // 5 is larger, stored as (1, 5)
+		{ResourceID1: 2, ResourceID2: 5, HammingDistance: 1}, // closest match
+		{ResourceID1: 3, ResourceID2: 5, HammingDistance: 5}, // furthest match
+		{ResourceID1: 5, ResourceID2: 10, HammingDistance: 2}, // 5 is smaller, stored as (5, 10)
+	}
+
+	for _, s := range similarities {
+		if err := db.Create(&s).Error; err != nil {
+			t.Fatalf("Failed to create similarity: %v", err)
+		}
+	}
+
+	// Query similar resources for resource 5 using UNION ALL query
+	var similarIDs []uint
+	rows, err := db.Raw(`
+		SELECT resource_id2 as similar_id, hamming_distance FROM resource_similarities WHERE resource_id1 = ?
+		UNION ALL
+		SELECT resource_id1 as similar_id, hamming_distance FROM resource_similarities WHERE resource_id2 = ?
+		ORDER BY hamming_distance ASC
+	`, 5, 5).Rows()
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id uint
+		var dist int
+		if err := rows.Scan(&id, &dist); err != nil {
+			t.Fatalf("Scan failed: %v", err)
+		}
+		similarIDs = append(similarIDs, id)
+	}
+
+	// Should find 4 similar resources: 10 (dist 2 from resource_id_1=5),
+	// 1, 2, 3 (from resource_id_2=5)
+	if len(similarIDs) != 4 {
+		t.Errorf("Expected 4 similar resources, got %d: %v", len(similarIDs), similarIDs)
+	}
+
+	// Verify ordering by Hamming distance (ascending)
+	expectedOrder := []uint{2, 10, 1, 3} // distances: 1, 2, 3, 5
+	for i, id := range similarIDs {
+		if i < len(expectedOrder) && id != expectedOrder[i] {
+			t.Errorf("Position %d: got resource %d, want %d", i, id, expectedOrder[i])
+		}
+	}
+}
+
+func TestSimilarityQuery_NoResults(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Query for a resource with no similarities
+	var similarIDs []uint
+	rows, err := db.Raw(`
+		SELECT resource_id2 as similar_id, hamming_distance FROM resource_similarities WHERE resource_id1 = ?
+		UNION ALL
+		SELECT resource_id1 as similar_id, hamming_distance FROM resource_similarities WHERE resource_id2 = ?
+		ORDER BY hamming_distance ASC
+	`, 999, 999).Rows()
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id uint
+		var dist int
+		if err := rows.Scan(&id, &dist); err != nil {
+			t.Fatalf("Scan failed: %v", err)
+		}
+		similarIDs = append(similarIDs, id)
+	}
+
+	if len(similarIDs) != 0 {
+		t.Errorf("Expected 0 similar resources, got %d", len(similarIDs))
+	}
+}
