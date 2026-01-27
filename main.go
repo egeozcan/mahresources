@@ -162,6 +162,7 @@ func main() {
 		&models.GroupRelation{},
 		&models.GroupRelationType{},
 		&models.ImageHash{},
+		&models.ResourceSimilarity{},
 		&models.LogEntry{},
 	); err != nil {
 		log.Fatalf("failed to migrate: %v", err)
