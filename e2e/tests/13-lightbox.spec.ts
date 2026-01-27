@@ -497,7 +497,8 @@ test.describe('Lightbox Edit Panel', () => {
   let ownerGroupId: number;
   let testTagId: number;
   const createdResourceIds: number[] = [];
-  const testRunId = Date.now();
+  // Use timestamp + random to avoid collisions with parallel workers
+  const testRunId = Date.now() + Math.floor(Math.random() * 100000);
 
   test.beforeAll(async ({ apiClient }) => {
     // Create prerequisite data
@@ -628,11 +629,15 @@ test.describe('Lightbox Edit Panel', () => {
   });
 
   test('should update resource name from edit panel', async ({ page }) => {
-    await page.goto('/resources');
+    // Navigate to resources filtered by owner to ensure our test resources are visible
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
-    // Open lightbox
+    // Wait for resources to load
     const imageLink = page.locator('[data-lightbox-item]').first();
+    await expect(imageLink).toBeVisible({ timeout: 10000 });
+
+    // Open lightbox
     await imageLink.click();
 
     const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
@@ -647,11 +652,11 @@ test.describe('Lightbox Edit Panel', () => {
     const nameInput = editPanel.locator('input#lightbox-edit-name');
     await expect(nameInput).toBeVisible();
 
-    // Wait for the name to be populated
+    // Wait for the name to be populated (with extended timeout for parallel test runs)
     await page.waitForFunction(() => {
       const input = document.querySelector('#lightbox-edit-name') as HTMLInputElement;
       return input && input.value.length > 0;
-    });
+    }, { timeout: 30000 });
 
     // Clear and type new name
     await nameInput.fill('Updated Name From Lightbox');
