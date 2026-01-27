@@ -36,7 +36,8 @@ func (ctx *MahresourcesContext) GetSimilarResources(id uint) (*[]*models.Resourc
 
 	for rows.Next() {
 		var similarID uint
-		if err := rows.Scan(&similarID); err != nil {
+		var hammingDistance int
+		if err := rows.Scan(&similarID, &hammingDistance); err != nil {
 			return nil, err
 		}
 		similarIDs = append(similarIDs, similarID)
@@ -80,7 +81,7 @@ func (ctx *MahresourcesContext) GetSimilarResources(id uint) (*[]*models.Resourc
 		idToIndex[id] = i
 	}
 
-	sortedResources := make([]*models.Resource, len(resources))
+	sortedResources := make([]*models.Resource, len(similarIDs))
 	for i := range resources {
 		sortedResources[idToIndex[resources[i].ID]] = resources[i]
 	}

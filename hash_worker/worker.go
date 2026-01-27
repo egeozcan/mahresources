@@ -311,13 +311,15 @@ func (w *HashWorker) hashAndStoreSimilarities(resource models.Resource) {
 		return
 	}
 
-	// Find and store similarities
-	w.findAndStoreSimilarities(resource.ID, dHashInt)
-
-	// Update cache
+	// Update cache BEFORE finding similarities to avoid race condition
+	// where concurrent goroutines miss detecting similarities between
+	// resources being processed simultaneously
 	w.cacheMutex.Lock()
 	w.hashCache[resource.ID] = dHashInt
 	w.cacheMutex.Unlock()
+
+	// Find and store similarities
+	w.findAndStoreSimilarities(resource.ID, dHashInt)
 }
 
 func (w *HashWorker) findAndStoreSimilarities(resourceID uint, dHash uint64) {

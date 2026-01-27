@@ -176,6 +176,15 @@ func (ctx *MahresourcesContext) QueueForHashing(resourceID uint) bool {
 	}
 }
 
+// OnResourceFileChanged handles cleanup when a resource's file content changes.
+// This deletes the old hash (cascade removes similarity pairs) and re-queues for hashing.
+func (ctx *MahresourcesContext) OnResourceFileChanged(resourceID uint) {
+	// Delete old hash - cascade will remove associated similarity pairs
+	ctx.db.Where("resource_id = ?", resourceID).Delete(&models.ImageHash{})
+	// Re-queue for hashing
+	ctx.QueueForHashing(resourceID)
+}
+
 // EnsureForeignKeysActive ensures that sqlite connection somehow didn't manage to deactivate foreign keys
 // I really don't know why this happens, so @todo please remove this if you can fix the root issue
 func (ctx *MahresourcesContext) EnsureForeignKeysActive(db *gorm.DB) {
