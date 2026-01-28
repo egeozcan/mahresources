@@ -10,12 +10,12 @@ func TestImageHash_GetDHash(t *testing.T) {
 	}{
 		{
 			name:     "returns uint64 value when DHashInt is set",
-			hash:     ImageHash{ID: 1, DHashInt: ptr(uint64(0x1234567890abcdef))},
+			hash:     ImageHash{ID: 1, DHashInt: ptr(int64(0x1234567890abcdef))},
 			expected: 0x1234567890abcdef,
 		},
 		{
 			name:     "prefers DHashInt over DHash string",
-			hash:     ImageHash{ID: 2, DHashInt: ptr(uint64(0x1111)), DHash: "2222"},
+			hash:     ImageHash{ID: 2, DHashInt: ptr(int64(0x1111)), DHash: "2222"},
 			expected: 0x1111,
 		},
 		{
@@ -62,13 +62,13 @@ func TestImageHash_GetAHash(t *testing.T) {
 		expected uint64
 	}{
 		{
-			name:     "returns uint64 value when AHashInt is set",
-			hash:     ImageHash{ID: 1, AHashInt: ptr(uint64(0xabcdef1234567890))},
+			name:     "returns uint64 value when AHashInt is set (bit-reinterpreted from int64)",
+			hash:     ImageHash{ID: 1, AHashInt: ptr(int64(-6066930261531658096))}, // 0xabcdef1234567890 as int64
 			expected: 0xabcdef1234567890,
 		},
 		{
 			name:     "prefers AHashInt over AHash string",
-			hash:     ImageHash{ID: 2, AHashInt: ptr(uint64(0x3333)), AHash: "4444"},
+			hash:     ImageHash{ID: 2, AHashInt: ptr(int64(0x3333)), AHash: "4444"},
 			expected: 0x3333,
 		},
 		{
@@ -106,7 +106,7 @@ func TestImageHash_IsMigrated(t *testing.T) {
 	}{
 		{
 			name:     "returns true when DHashInt is set",
-			hash:     ImageHash{DHashInt: ptr(uint64(123))},
+			hash:     ImageHash{DHashInt: ptr(int64(123))},
 			expected: true,
 		},
 		{

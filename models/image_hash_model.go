@@ -9,17 +9,18 @@ type ImageHash struct {
 	ID         uint      `gorm:"primarykey"`
 	AHash      string    `gorm:"index"`  // old, kept during migration
 	DHash      string    `gorm:"index"`  // old, kept during migration
-	AHashInt   *uint64   `gorm:"index"`  // new uint64 column
-	DHashInt   *uint64   `gorm:"index"`  // new uint64 column
+	AHashInt   *int64    `gorm:"index"`  // stored as int64 (bit-reinterpreted from uint64 for PostgreSQL compatibility)
+	DHashInt   *int64    `gorm:"index"`  // stored as int64 (bit-reinterpreted from uint64 for PostgreSQL compatibility)
 	Resource   *Resource `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	ResourceId *uint     `gorm:"uniqueIndex"`
 }
 
 // GetDHash returns the DHash as uint64, preferring the new column
 // and falling back to parsing the old string column.
+// The int64 storage is bit-reinterpreted back to uint64.
 func (h *ImageHash) GetDHash() uint64 {
 	if h.DHashInt != nil {
-		return *h.DHashInt
+		return uint64(*h.DHashInt)
 	}
 	if h.DHash == "" {
 		return 0
@@ -34,9 +35,10 @@ func (h *ImageHash) GetDHash() uint64 {
 
 // GetAHash returns the AHash as uint64, preferring the new column
 // and falling back to parsing the old string column.
+// The int64 storage is bit-reinterpreted back to uint64.
 func (h *ImageHash) GetAHash() uint64 {
 	if h.AHashInt != nil {
-		return *h.AHashInt
+		return uint64(*h.AHashInt)
 	}
 	if h.AHash == "" {
 		return 0

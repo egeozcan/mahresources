@@ -297,12 +297,17 @@ func (w *HashWorker) hashAndStoreSimilarities(resource models.Resource) {
 	aHashInt := uint64(aHash)
 	dHashInt := uint64(dHash)
 
+	// Convert to int64 for PostgreSQL storage (bit-reinterpretation, not value conversion)
+	// This preserves the hash bits while avoiding PostgreSQL bigint overflow
+	aHashIntSigned := int64(aHashInt)
+	dHashIntSigned := int64(dHashInt)
+
 	// Save hash
 	imgHash := models.ImageHash{
 		AHash:      aHash.String(),
 		DHash:      dHash.String(),
-		AHashInt:   &aHashInt,
-		DHashInt:   &dHashInt,
+		AHashInt:   &aHashIntSigned,
+		DHashInt:   &dHashIntSigned,
 		ResourceId: &resource.ID,
 	}
 

@@ -68,17 +68,18 @@ func TestHashWorker_MigrateStringHashes(t *testing.T) {
 	}
 
 	if updated.AHashInt == nil || updated.DHashInt == nil {
-		t.Fatal("Hash not migrated to uint64")
+		t.Fatal("Hash not migrated to int64")
 	}
 
 	expectedAHash := uint64(0x1234567890abcdef)
 	expectedDHash := uint64(0x0fedcba987654321)
 
-	if *updated.AHashInt != expectedAHash {
-		t.Errorf("AHashInt = %x, want %x", *updated.AHashInt, expectedAHash)
+	// Compare using GetAHash/GetDHash which handle int64 to uint64 conversion
+	if updated.GetAHash() != expectedAHash {
+		t.Errorf("AHashInt = %x, want %x", updated.GetAHash(), expectedAHash)
 	}
-	if *updated.DHashInt != expectedDHash {
-		t.Errorf("DHashInt = %x, want %x", *updated.DHashInt, expectedDHash)
+	if updated.GetDHash() != expectedDHash {
+		t.Errorf("DHashInt = %x, want %x", updated.GetDHash(), expectedDHash)
 	}
 }
 
