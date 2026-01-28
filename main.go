@@ -263,7 +263,7 @@ func main() {
 		altFsMap[name] = storage.CreateStorage(path)
 	}
 
-	hw := hash_worker.New(db, mainFs, altFsMap, hashWorkerConfig)
+	hw := hash_worker.New(db, mainFs, altFsMap, hashWorkerConfig, context.Logger())
 	hw.Start()
 	context.SetHashQueue(hw.GetQueue())
 	defer hw.Stop()

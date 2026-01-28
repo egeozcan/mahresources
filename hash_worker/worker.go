@@ -1,6 +1,7 @@
 package hash_worker
 
 import (
+	"fmt"
 	"image"
 	"log"
 	"sync"
@@ -20,12 +21,20 @@ import (
 	"mahresources/models"
 )
 
+// AppLogger is an interface for application-level logging that persists to the database.
+type AppLogger interface {
+	Info(action, entityType string, entityID *uint, entityName, message string, details map[string]interface{})
+	Warning(action, entityType string, entityID *uint, entityName, message string, details map[string]interface{})
+	Error(action, entityType string, entityID *uint, entityName, message string, details map[string]interface{})
+}
+
 // HashWorker processes resources to calculate perceptual hashes and find similarities.
 type HashWorker struct {
-	db     *gorm.DB
-	fs     afero.Fs
-	altFS  map[string]afero.Fs
-	config Config
+	db        *gorm.DB
+	fs        afero.Fs
+	altFS     map[string]afero.Fs
+	config    Config
+	appLogger AppLogger
 
 	// hashCache maps resource ID to DHash for fast similarity lookups
 	hashCache   map[uint]uint64
@@ -40,16 +49,39 @@ type HashWorker struct {
 }
 
 // New creates a new HashWorker.
-func New(db *gorm.DB, fs afero.Fs, altFS map[string]afero.Fs, config Config) *HashWorker {
+// appLogger is optional - if nil, progress will only be logged to stdout.
+func New(db *gorm.DB, fs afero.Fs, altFS map[string]afero.Fs, config Config, appLogger AppLogger) *HashWorker {
 	return &HashWorker{
 		db:        db,
 		fs:        fs,
 		altFS:     altFS,
 		config:    config,
+		appLogger: appLogger,
 		hashCache: make(map[uint]uint64),
 		hashQueue: make(chan uint, 1000), // Buffer for on-upload async processing
 		stopCh:    make(chan struct{}),
 	}
+}
+
+// logProgress logs progress to both stdout and the app logger (if available).
+func (w *HashWorker) logProgress(message string, details map[string]interface{}) {
+	log.Print(message)
+	if w.appLogger != nil {
+		w.appLogger.Info("progress", "hash_worker", nil, "", message, details)
+	}
+}
+
+// logError logs an error to both stdout and the app logger (if available).
+func (w *HashWorker) logError(message string, details map[string]interface{}) {
+	log.Print(message)
+	if w.appLogger != nil {
+		w.appLogger.Error("error", "hash_worker", nil, "", message, details)
+	}
+}
+
+// logInfo is a convenience wrapper for fmt.Sprintf + logProgress
+func (w *HashWorker) logInfo(format string, args ...interface{}) {
+	w.logProgress(fmt.Sprintf(format, args...), nil)
 }
 
 // Start begins the background hash processing.
@@ -164,7 +196,7 @@ func (w *HashWorker) migrateStringHashes() {
 		Where("d_hash_int IS NULL AND d_hash IS NOT NULL AND d_hash != ''").
 		Limit(w.config.BatchSize).
 		Find(&toMigrate).Error; err != nil {
-		log.Printf("Hash worker: error finding hashes to migrate: %v", err)
+		w.logError(fmt.Sprintf("Hash worker: error finding hashes to migrate: %v", err), nil)
 		return
 	}
 
@@ -172,7 +204,8 @@ func (w *HashWorker) migrateStringHashes() {
 		return
 	}
 
-	log.Printf("Hash worker: migrating %d hashes (remaining: %d)", len(toMigrate), totalRemaining)
+	w.logProgress(fmt.Sprintf("Hash worker: migrating %d hashes (remaining: %d)", len(toMigrate), totalRemaining),
+		map[string]interface{}{"batch_size": len(toMigrate), "remaining": totalRemaining})
 
 	for _, h := range toMigrate {
 		aHash := h.GetAHash()
@@ -212,7 +245,7 @@ func (w *HashWorker) hashNewResources() {
 		Where("id NOT IN (?)", subQuery).
 		Limit(w.config.BatchSize).
 		Find(&resources).Error; err != nil {
-		log.Printf("Hash worker: error finding resources to hash: %v", err)
+		w.logError(fmt.Sprintf("Hash worker: error finding resources to hash: %v", err), nil)
 		return
 	}
 
@@ -220,7 +253,8 @@ func (w *HashWorker) hashNewResources() {
 		return
 	}
 
-	log.Printf("Hash worker: hashing %d resources (remaining: %d)", len(resources), totalRemaining)
+	w.logProgress(fmt.Sprintf("Hash worker: hashing %d resources (remaining: %d)", len(resources), totalRemaining),
+		map[string]interface{}{"batch_size": len(resources), "remaining": totalRemaining})
 
 	// Ensure cache is loaded
 	w.ensureCacheLoaded()

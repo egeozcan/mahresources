@@ -57,7 +57,7 @@ func TestHashWorker_MigrateStringHashes(t *testing.T) {
 		BatchSize:           100,
 		PollInterval:        time.Hour,
 		SimilarityThreshold: 10,
-	})
+	}, nil)
 
 	w.migrateStringHashes()
 
@@ -90,7 +90,7 @@ func TestHashWorker_FindSimilarities(t *testing.T) {
 		BatchSize:           100,
 		PollInterval:        time.Hour,
 		SimilarityThreshold: 10,
-	})
+	}, nil)
 
 	// Seed cache with some hashes
 	// Use values without high bit set to avoid SQLite uint64 limitations
