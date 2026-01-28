@@ -52,6 +52,23 @@ export function registerLightboxStore(Alpine) {
     // Fullscreen state
     isFullscreen: false,
 
+    // Zoom state
+    scale: 1,
+    translateX: 0,
+    translateY: 0,
+    minScale: 1,
+    maxScale: 5,
+    // Pinch tracking
+    initialPinchDistance: null,
+    initialScale: 1,
+    lastPinchCenter: null,
+    // Pan tracking (for dragging when zoomed)
+    isPanning: false,
+    panStartX: 0,
+    panStartY: 0,
+    initialTranslateX: 0,
+    initialTranslateY: 0,
+
     init() {
       // Guard against multiple initializations (prevents memory leak)
       if (this.liveRegion) return;
@@ -194,6 +211,9 @@ export function registerLightboxStore(Alpine) {
       // Pause any playing video before closing
       this.pauseCurrentVideo();
 
+      // Reset zoom
+      this.resetZoom();
+
       // Exit fullscreen if active
       if (this.isFullscreen) {
         this.exitFullscreen();
@@ -298,6 +318,8 @@ export function registerLightboxStore(Alpine) {
 
       // Pause any playing video before navigating
       this.pauseCurrentVideo();
+      // Reset zoom when navigating
+      this.resetZoom();
 
       if (this.currentIndex < this.items.length - 1) {
         this.currentIndex++;
@@ -325,6 +347,8 @@ export function registerLightboxStore(Alpine) {
 
       // Pause any playing video before navigating
       this.pauseCurrentVideo();
+      // Reset zoom when navigating
+      this.resetZoom();
 
       if (this.currentIndex > 0) {
         this.currentIndex--;
@@ -589,24 +613,109 @@ export function registerLightboxStore(Alpine) {
     },
 
     /**
-     * Handle touch start for swipe gestures
+     * Handle touch start for swipe gestures and pinch zoom
      * @param {TouchEvent} event
      */
     handleTouchStart(event) {
       // Ignore touches that start within the edit panel
       if (event.target.closest('[data-edit-panel]')) {
         this.touchStartX = null;
+        this.initialPinchDistance = null;
         return;
       }
-      this.touchStartX = event.touches[0].clientX;
-      this.touchStartY = event.touches[0].clientY;
+
+      if (event.touches.length === 2) {
+        // Pinch start
+        event.preventDefault();
+        this.initialPinchDistance = this.getPinchDistance(event.touches);
+        this.initialScale = this.scale;
+        this.lastPinchCenter = this.getPinchCenter(event.touches);
+        this.touchStartX = null; // Cancel any swipe
+      } else if (event.touches.length === 1) {
+        if (this.scale > 1) {
+          // Pan start when zoomed
+          event.preventDefault();
+          this.isPanning = true;
+          this.panStartX = event.touches[0].clientX;
+          this.panStartY = event.touches[0].clientY;
+          this.initialTranslateX = this.translateX;
+          this.initialTranslateY = this.translateY;
+          this.touchStartX = null;
+        } else {
+          // Swipe start
+          this.touchStartX = event.touches[0].clientX;
+          this.touchStartY = event.touches[0].clientY;
+        }
+      }
     },
 
     /**
-     * Handle touch end for swipe gestures
+     * Handle touch move for pinch zoom and panning
+     * @param {TouchEvent} event
+     */
+    handleTouchMove(event) {
+      if (event.target.closest('[data-edit-panel]')) {
+        return;
+      }
+
+      if (event.touches.length === 2 && this.initialPinchDistance !== null) {
+        // Pinch zoom
+        event.preventDefault();
+        const currentDistance = this.getPinchDistance(event.touches);
+        const scaleChange = currentDistance / this.initialPinchDistance;
+        let newScale = this.initialScale * scaleChange;
+
+        // Clamp scale
+        newScale = Math.max(this.minScale, Math.min(this.maxScale, newScale));
+        this.scale = newScale;
+
+        // Adjust translation to zoom toward pinch center
+        const center = this.getPinchCenter(event.touches);
+        if (this.lastPinchCenter) {
+          this.translateX += center.x - this.lastPinchCenter.x;
+          this.translateY += center.y - this.lastPinchCenter.y;
+        }
+        this.lastPinchCenter = center;
+
+        // Constrain pan bounds
+        this.constrainPan();
+      } else if (event.touches.length === 1 && this.isPanning) {
+        // Panning when zoomed
+        event.preventDefault();
+        const deltaX = event.touches[0].clientX - this.panStartX;
+        const deltaY = event.touches[0].clientY - this.panStartY;
+        this.translateX = this.initialTranslateX + deltaX;
+        this.translateY = this.initialTranslateY + deltaY;
+
+        // Constrain pan bounds
+        this.constrainPan();
+      }
+    },
+
+    /**
+     * Handle touch end for swipe gestures and pinch zoom
      * @param {TouchEvent} event
      */
     handleTouchEnd(event) {
+      // End pinch
+      if (this.initialPinchDistance !== null) {
+        this.initialPinchDistance = null;
+        this.lastPinchCenter = null;
+
+        // Snap to 1 if close
+        if (this.scale < 1.1) {
+          this.resetZoom();
+        }
+        return;
+      }
+
+      // End panning
+      if (this.isPanning) {
+        this.isPanning = false;
+        return;
+      }
+
+      // Handle swipe
       if (this.touchStartX === null) return;
 
       const touchEndX = event.changedTouches[0].clientX;
@@ -614,8 +723,8 @@ export function registerLightboxStore(Alpine) {
       const diffX = this.touchStartX - touchEndX;
       const diffY = this.touchStartY - touchEndY;
 
-      // Only handle horizontal swipes (ignore vertical scrolling)
-      if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 50) {
+      // Only handle horizontal swipes when not zoomed (ignore vertical scrolling)
+      if (this.scale === 1 && Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 50) {
         if (diffX > 0) {
           this.next();
         } else {
@@ -625,6 +734,77 @@ export function registerLightboxStore(Alpine) {
 
       this.touchStartX = null;
       this.touchStartY = null;
+    },
+
+    /**
+     * Calculate distance between two touch points
+     * @param {TouchList} touches
+     * @returns {number}
+     */
+    getPinchDistance(touches) {
+      const dx = touches[0].clientX - touches[1].clientX;
+      const dy = touches[0].clientY - touches[1].clientY;
+      return Math.sqrt(dx * dx + dy * dy);
+    },
+
+    /**
+     * Calculate center point between two touches
+     * @param {TouchList} touches
+     * @returns {{x: number, y: number}}
+     */
+    getPinchCenter(touches) {
+      return {
+        x: (touches[0].clientX + touches[1].clientX) / 2,
+        y: (touches[0].clientY + touches[1].clientY) / 2
+      };
+    },
+
+    /**
+     * Constrain pan to keep image within reasonable bounds
+     */
+    constrainPan() {
+      const mediaEl = document.querySelector('[data-lightbox-dialog] [data-lightbox-media]');
+      if (!mediaEl) return;
+
+      const rect = mediaEl.getBoundingClientRect();
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+
+      // Calculate scaled dimensions
+      const scaledWidth = rect.width;
+      const scaledHeight = rect.height;
+
+      // Allow panning only if scaled image is larger than viewport
+      const maxTranslateX = Math.max(0, (scaledWidth - viewportWidth) / 2 + 50);
+      const maxTranslateY = Math.max(0, (scaledHeight - viewportHeight) / 2 + 50);
+
+      this.translateX = Math.max(-maxTranslateX, Math.min(maxTranslateX, this.translateX));
+      this.translateY = Math.max(-maxTranslateY, Math.min(maxTranslateY, this.translateY));
+    },
+
+    /**
+     * Reset zoom to default
+     */
+    resetZoom() {
+      this.scale = 1;
+      this.translateX = 0;
+      this.translateY = 0;
+    },
+
+    /**
+     * Get CSS transform string for media element
+     * @returns {string}
+     */
+    getMediaTransform() {
+      return `scale(${this.scale}) translate(${this.translateX / this.scale}px, ${this.translateY / this.scale}px)`;
+    },
+
+    /**
+     * Check if currently zoomed
+     * @returns {boolean}
+     */
+    isZoomed() {
+      return this.scale > 1;
     },
 
     /**

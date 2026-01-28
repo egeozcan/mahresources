@@ -17,6 +17,7 @@
     @keydown.f.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.toggleFullscreen()"
     @keydown.f2.window.prevent="$store.lightbox.isOpen && $store.lightbox.toggleEditPanel()"
     @touchstart="$store.lightbox.handleTouchStart($event)"
+    @touchmove="$store.lightbox.handleTouchMove($event)"
     @touchend="$store.lightbox.handleTouchEnd($event)"
     @wheel="$store.lightbox.isOpen && $store.lightbox.handleWheel($event)"
     class="fixed inset-0 z-50 flex h-screen w-screen"
@@ -55,12 +56,14 @@
                 <img
                     :src="$store.lightbox.getCurrentItem()?.viewUrl"
                     :alt="$store.lightbox.getCurrentItem()?.name || 'Image'"
-                    class="max-h-[90vh] object-contain transition-all duration-300 cursor-pointer"
+                    data-lightbox-media
+                    class="max-h-[90vh] object-contain transition-transform duration-150 cursor-pointer touch-none"
                     :class="$store.lightbox.editPanelOpen ? 'md:max-w-[calc(100vw-450px)]' : 'max-w-[90vw]'"
+                    :style="{ transform: $store.lightbox.getMediaTransform() }"
                     x-init="$nextTick(() => $store.lightbox.checkIfMediaLoaded($el))"
                     @load="$store.lightbox.onMediaLoaded()"
                     @error="$store.lightbox.onMediaLoaded()"
-                    @dblclick.stop="$store.lightbox.toggleFullscreen()"
+                    @dblclick.stop="$store.lightbox.isZoomed() ? $store.lightbox.resetZoom() : $store.lightbox.toggleFullscreen()"
                 >
             </template>
 
@@ -70,12 +73,14 @@
                     :data="$store.lightbox.getCurrentItem()?.viewUrl"
                     type="image/svg+xml"
                     :aria-label="$store.lightbox.getCurrentItem()?.name || 'SVG Image'"
-                    class="max-h-[90vh] max-w-[90vw] min-h-[50vh] min-w-[50vw] transition-all duration-300 cursor-pointer"
+                    data-lightbox-media
+                    class="max-h-[90vh] max-w-[90vw] min-h-[50vh] min-w-[50vw] transition-transform duration-150 cursor-pointer touch-none"
                     :class="$store.lightbox.editPanelOpen ? 'md:max-w-[calc(100vw-450px)]' : ''"
+                    :style="{ transform: $store.lightbox.getMediaTransform() }"
                     x-init="$nextTick(() => $store.lightbox.checkIfMediaLoaded($el))"
                     @load="$store.lightbox.onMediaLoaded()"
                     @error="$store.lightbox.onMediaLoaded()"
-                    @dblclick.stop="$store.lightbox.toggleFullscreen()"
+                    @dblclick.stop="$store.lightbox.isZoomed() ? $store.lightbox.resetZoom() : $store.lightbox.toggleFullscreen()"
                 >
                     <!-- Fallback to img if object fails -->
                     <img
@@ -92,12 +97,14 @@
                     :src="$store.lightbox.getCurrentItem()?.viewUrl"
                     :key="$store.lightbox.getCurrentItem()?.id"
                     controls
-                    class="max-h-[90vh] transition-all duration-300 cursor-pointer"
+                    data-lightbox-media
+                    class="max-h-[90vh] transition-transform duration-150 cursor-pointer touch-none"
                     :class="$store.lightbox.editPanelOpen ? 'md:max-w-[calc(100vw-450px)]' : 'max-w-[90vw]'"
+                    :style="{ transform: $store.lightbox.getMediaTransform() }"
                     x-init="$nextTick(() => $store.lightbox.checkIfMediaLoaded($el))"
                     @loadeddata="$store.lightbox.onMediaLoaded()"
                     @error="$store.lightbox.onMediaLoaded()"
-                    @dblclick.stop="$store.lightbox.toggleFullscreen()"
+                    @dblclick.stop="$store.lightbox.isZoomed() ? $store.lightbox.resetZoom() : $store.lightbox.toggleFullscreen()"
                 >
                     Your browser does not support video playback.
                 </video>
