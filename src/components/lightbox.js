@@ -669,14 +669,29 @@ export function registerLightboxStore(Alpine) {
     },
 
     /**
-     * Handle escape key - close edit panel first, then lightbox
+     * Handle escape key - close edit panel first, then exit fullscreen, then close lightbox
+     * @param {KeyboardEvent} [event] - The keyboard event (used to prevent default)
      * @returns {boolean} true if escape was handled
      */
-    handleEscape() {
+    handleEscape(event) {
+      // Priority 1: Close edit panel if open
       if (this.editPanelOpen) {
+        // Prevent browser from exiting fullscreen when we just want to close edit panel
+        if (this.isFullscreen && event) {
+          event.preventDefault();
+        }
         this.closeEditPanel();
         return true;
       }
+
+      // Priority 2: Exit fullscreen if active (let browser handle or do it explicitly)
+      if (this.isFullscreen) {
+        // Browser's native Escape handling will exit fullscreen
+        // Our handleFullscreenChange() will sync the state
+        return true;
+      }
+
+      // Priority 3: Close lightbox
       this.close();
       return true;
     },
