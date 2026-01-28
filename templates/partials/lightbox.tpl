@@ -14,6 +14,9 @@
     @keydown.arrow-right.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.next()"
     @keydown.page-up.window.prevent="$store.lightbox.isOpen && $store.lightbox.prev()"
     @keydown.page-down.window.prevent="$store.lightbox.isOpen && $store.lightbox.next()"
+    @keydown.enter.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.toggleFullscreen()"
+    @keydown.e.window="$store.lightbox.isOpen && canNavigate() && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
+    @keydown.f2.window.prevent="$store.lightbox.isOpen && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
     @touchstart="$store.lightbox.handleTouchStart($event)"
     @touchend="$store.lightbox.handleTouchEnd($event)"
     @wheel="$store.lightbox.isOpen && $store.lightbox.handleWheel($event)"
@@ -385,6 +388,24 @@
             <span x-text="$store.lightbox.items.length"></span>
             <span x-show="$store.lightbox.hasNextPage" class="text-gray-400">+</span>
         </div>
+
+        <!-- Fullscreen button -->
+        <button
+            x-show="$store.lightbox.fullscreenSupported()"
+            @click.stop="$store.lightbox.toggleFullscreen()"
+            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
+            :title="$store.lightbox.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'"
+            :aria-label="$store.lightbox.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'"
+        >
+            <!-- Expand icon (not fullscreen) -->
+            <svg x-show="!$store.lightbox.isFullscreen" aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path>
+            </svg>
+            <!-- Compress icon (fullscreen) -->
+            <svg x-show="$store.lightbox.isFullscreen" x-cloak aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9L4 4m0 0v4m0-4h4m6 0l5-5m0 0v4m0-4h-4M9 15l-5 5m0 0v-4m0 4h4m6 0l5 5m0 0v-4m0 4h-4"></path>
+            </svg>
+        </button>
 
         <!-- Name -->
         <div
