@@ -14,15 +14,12 @@
     @keydown.arrow-right.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.next()"
     @keydown.page-up.window.prevent="$store.lightbox.isOpen && $store.lightbox.prev()"
     @keydown.page-down.window.prevent="$store.lightbox.isOpen && $store.lightbox.next()"
-    @keydown.f.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.toggleFullscreen()"
-    @keydown.e.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.toggleEditPanel()"
     @touchstart="$store.lightbox.handleTouchStart($event)"
     @touchend="$store.lightbox.handleTouchEnd($event)"
     @wheel="$store.lightbox.isOpen && $store.lightbox.handleWheel($event)"
     class="fixed inset-0 z-50 flex h-screen w-screen"
     role="dialog"
     aria-modal="true"
-    data-lightbox-dialog
     :aria-label="$store.lightbox.getCurrentItem()?.name || 'Media viewer'"
 >
     <!-- Backdrop -->
@@ -55,12 +52,11 @@
                 <img
                     :src="$store.lightbox.getCurrentItem()?.viewUrl"
                     :alt="$store.lightbox.getCurrentItem()?.name || 'Image'"
-                    class="max-h-[90vh] object-contain transition-all duration-300 cursor-pointer"
+                    class="max-h-[90vh] object-contain transition-all duration-300"
                     :class="$store.lightbox.editPanelOpen ? 'md:max-w-[calc(100vw-450px)]' : 'max-w-[90vw]'"
                     x-init="$nextTick(() => $store.lightbox.checkIfMediaLoaded($el))"
                     @load="$store.lightbox.onMediaLoaded()"
                     @error="$store.lightbox.onMediaLoaded()"
-                    @dblclick.stop="$store.lightbox.toggleFullscreen()"
                 >
             </template>
 
@@ -70,12 +66,11 @@
                     :data="$store.lightbox.getCurrentItem()?.viewUrl"
                     type="image/svg+xml"
                     :aria-label="$store.lightbox.getCurrentItem()?.name || 'SVG Image'"
-                    class="max-h-[90vh] max-w-[90vw] min-h-[50vh] min-w-[50vw] transition-all duration-300 cursor-pointer"
+                    class="max-h-[90vh] max-w-[90vw] min-h-[50vh] min-w-[50vw] transition-all duration-300"
                     :class="$store.lightbox.editPanelOpen ? 'md:max-w-[calc(100vw-450px)]' : ''"
                     x-init="$nextTick(() => $store.lightbox.checkIfMediaLoaded($el))"
                     @load="$store.lightbox.onMediaLoaded()"
                     @error="$store.lightbox.onMediaLoaded()"
-                    @dblclick.stop="$store.lightbox.toggleFullscreen()"
                 >
                     <!-- Fallback to img if object fails -->
                     <img
@@ -92,12 +87,11 @@
                     :src="$store.lightbox.getCurrentItem()?.viewUrl"
                     :key="$store.lightbox.getCurrentItem()?.id"
                     controls
-                    class="max-h-[90vh] transition-all duration-300 cursor-pointer"
+                    class="max-h-[90vh] transition-all duration-300"
                     :class="$store.lightbox.editPanelOpen ? 'md:max-w-[calc(100vw-450px)]' : 'max-w-[90vw]'"
                     x-init="$nextTick(() => $store.lightbox.checkIfMediaLoaded($el))"
                     @loadeddata="$store.lightbox.onMediaLoaded()"
                     @error="$store.lightbox.onMediaLoaded()"
-                    @dblclick.stop="$store.lightbox.toggleFullscreen()"
                 >
                     Your browser does not support video playback.
                 </video>
@@ -125,23 +119,6 @@
         >
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
-            </svg>
-        </button>
-
-        <!-- Fullscreen button -->
-        <button
-            @click.stop="$store.lightbox.toggleFullscreen()"
-            class="absolute top-4 right-16 p-2 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 z-20"
-            :aria-label="$store.lightbox.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'"
-            :title="$store.lightbox.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'"
-        >
-            <!-- Expand icon (when not fullscreen) -->
-            <svg x-show="!$store.lightbox.isFullscreen" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path>
-            </svg>
-            <!-- Collapse icon (when fullscreen) -->
-            <svg x-show="$store.lightbox.isFullscreen" x-cloak class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25"></path>
             </svg>
         </button>
 
