@@ -376,6 +376,19 @@
         Loading more items...
     </div>
 
+    <!-- Zoom indicator -->
+    <div
+        x-show="$store.lightbox.zoomIndicatorVisible && $store.lightbox.zoomLevel > 1"
+        x-transition:enter="transition ease-out duration-150"
+        x-transition:enter-start="opacity-0"
+        x-transition:enter-end="opacity-100"
+        x-transition:leave="transition ease-in duration-150"
+        x-transition:leave-start="opacity-100"
+        x-transition:leave-end="opacity-0"
+        class="absolute bottom-20 left-4 px-3 py-1.5 bg-black/50 rounded text-white text-sm z-20"
+        x-text="$store.lightbox.zoomLevel.toFixed(1) + 'x'"
+    ></div>
+
     <!-- Bottom bar with counter and name -->
     <div
         class="absolute bottom-4 left-0 flex justify-between items-center px-4 text-white text-sm transition-all duration-300 z-20"
