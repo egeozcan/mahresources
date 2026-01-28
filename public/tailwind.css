@@ -320,6 +320,9 @@
   .right-4 {
     right: calc(var(--spacing) * 4);
   }
+  .right-16 {
+    right: calc(var(--spacing) * 16);
+  }
   .bottom-0 {
     bottom: calc(var(--spacing) * 0);
   }

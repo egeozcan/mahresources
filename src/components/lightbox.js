@@ -49,6 +49,9 @@ export function registerLightboxStore(Alpine) {
     // Track if changes were made that require refreshing the page content
     needsRefreshOnClose: false,
 
+    // Fullscreen state
+    isFullscreen: false,
+
     init() {
       // Guard against multiple initializations (prevents memory leak)
       if (this.liveRegion) return;
@@ -70,6 +73,12 @@ export function registerLightboxStore(Alpine) {
         border: '0'
       });
       document.body.appendChild(this.liveRegion);
+
+      // Listen for fullscreen change events to sync state
+      const handleFullscreenChange = () => this.handleFullscreenChange();
+      document.addEventListener('fullscreenchange', handleFullscreenChange);
+      document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.addEventListener('msfullscreenchange', handleFullscreenChange);
     },
 
     announce(message) {
@@ -185,6 +194,11 @@ export function registerLightboxStore(Alpine) {
       // Pause any playing video before closing
       this.pauseCurrentVideo();
 
+      // Exit fullscreen if active
+      if (this.isFullscreen) {
+        this.exitFullscreen();
+      }
+
       // Close edit panel if open
       if (this.editPanelOpen) {
         this.closeEditPanel();
@@ -210,6 +224,70 @@ export function registerLightboxStore(Alpine) {
       }
 
       this.announce('Media viewer closed');
+    },
+
+    /**
+     * Toggle fullscreen mode
+     */
+    toggleFullscreen() {
+      if (this.isFullscreen) {
+        this.exitFullscreen();
+      } else {
+        this.enterFullscreen();
+      }
+    },
+
+    /**
+     * Enter fullscreen mode
+     */
+    async enterFullscreen() {
+      const dialog = document.querySelector('[data-lightbox-dialog]');
+      if (!dialog) return;
+
+      try {
+        if (dialog.requestFullscreen) {
+          await dialog.requestFullscreen();
+        } else if (dialog.webkitRequestFullscreen) {
+          await dialog.webkitRequestFullscreen();
+        } else if (dialog.msRequestFullscreen) {
+          await dialog.msRequestFullscreen();
+        }
+        this.isFullscreen = true;
+        this.announce('Entered fullscreen mode');
+      } catch (err) {
+        console.error('Failed to enter fullscreen:', err);
+      }
+    },
+
+    /**
+     * Exit fullscreen mode
+     */
+    async exitFullscreen() {
+      try {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        } else if (document.webkitExitFullscreen) {
+          await document.webkitExitFullscreen();
+        } else if (document.msExitFullscreen) {
+          await document.msExitFullscreen();
+        }
+        this.isFullscreen = false;
+        this.announce('Exited fullscreen mode');
+      } catch (err) {
+        console.error('Failed to exit fullscreen:', err);
+      }
+    },
+
+    /**
+     * Handle fullscreen change events (e.g., user pressing Escape)
+     */
+    handleFullscreenChange() {
+      const isCurrentlyFullscreen = !!(
+        document.fullscreenElement ||
+        document.webkitFullscreenElement ||
+        document.msFullscreenElement
+      );
+      this.isFullscreen = isCurrentlyFullscreen;
     },
 
     /**
@@ -578,6 +656,17 @@ export function registerLightboxStore(Alpine) {
     },
 
     // ==================== Edit Panel Methods ====================
+
+    /**
+     * Toggle edit panel open/closed
+     */
+    toggleEditPanel() {
+      if (this.editPanelOpen) {
+        this.closeEditPanel();
+      } else {
+        this.openEditPanel();
+      }
+    },
 
     /**
      * Handle escape key - close edit panel first, then lightbox
