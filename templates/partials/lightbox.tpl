@@ -9,7 +9,7 @@
     x-show="$store.lightbox.isOpen"
     x-cloak
     x-trap.noscroll="$store.lightbox.isOpen"
-    @keydown.escape.window="$store.lightbox.isOpen && $store.lightbox.handleEscape($event)"
+    @keydown.escape.window="$store.lightbox.isOpen && $store.lightbox.handleEscape()"
     @keydown.arrow-left.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.prev()"
     @keydown.arrow-right.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.next()"
     @keydown.page-up.window.prevent="$store.lightbox.isOpen && $store.lightbox.prev()"
