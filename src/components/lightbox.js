@@ -52,6 +52,25 @@ export function registerLightboxStore(Alpine) {
     // Fullscreen state
     isFullscreen: false,
 
+    // Zoom state
+    zoomLevel: 1,
+    minZoom: 1,
+    maxZoom: 5,
+    panX: 0,
+    panY: 0,
+    zoomIndicatorVisible: false,
+    zoomIndicatorTimeout: null,
+
+    // Pinch tracking
+    pinchStartDistance: null,
+    pinchStartZoom: null,
+    pinchCenterX: null,
+    pinchCenterY: null,
+
+    // Image dimensions for pan bounds
+    imageRect: null,
+    containerRect: null,
+
     init() {
       // Guard against multiple initializations (prevents memory leak)
       if (this.liveRegion) return;
@@ -116,6 +135,72 @@ export function registerLightboxStore(Alpine) {
         }
       } catch (err) {
         console.error('Fullscreen toggle failed:', err);
+      }
+    },
+
+    /**
+     * Check if currently zoomed in
+     * @returns {boolean}
+     */
+    isZoomed() {
+      return this.zoomLevel > 1;
+    },
+
+    /**
+     * Set zoom level with bounds checking and indicator display
+     * @param {number} level
+     */
+    setZoomLevel(level) {
+      const oldLevel = this.zoomLevel;
+      this.zoomLevel = Math.max(this.minZoom, Math.min(this.maxZoom, level));
+
+      if (this.zoomLevel !== oldLevel) {
+        this.showZoomIndicator();
+        if (this.zoomLevel === 1) {
+          this.panX = 0;
+          this.panY = 0;
+        }
+      }
+    },
+
+    /**
+     * Show zoom indicator and auto-hide after delay
+     */
+    showZoomIndicator() {
+      this.zoomIndicatorVisible = true;
+
+      if (this.zoomIndicatorTimeout) {
+        clearTimeout(this.zoomIndicatorTimeout);
+      }
+
+      this.zoomIndicatorTimeout = setTimeout(() => {
+        this.zoomIndicatorVisible = false;
+        this.zoomIndicatorTimeout = null;
+      }, 1500);
+    },
+
+    /**
+     * Reset zoom and pan to default
+     */
+    resetZoom() {
+      this.zoomLevel = 1;
+      this.panX = 0;
+      this.panY = 0;
+      this.zoomIndicatorVisible = false;
+      if (this.zoomIndicatorTimeout) {
+        clearTimeout(this.zoomIndicatorTimeout);
+        this.zoomIndicatorTimeout = null;
+      }
+    },
+
+    /**
+     * Announce zoom level to screen readers
+     */
+    announceZoom() {
+      if (this.zoomLevel === 1) {
+        this.announce('Zoom reset to 100%');
+      } else {
+        this.announce(`Zoomed to ${Math.round(this.zoomLevel * 100)}%`);
       }
     },
 
@@ -277,6 +362,7 @@ export function registerLightboxStore(Alpine) {
 
       // Pause any playing video before navigating
       this.pauseCurrentVideo();
+      this.resetZoom();
 
       if (this.currentIndex < this.items.length - 1) {
         this.currentIndex++;
@@ -304,6 +390,7 @@ export function registerLightboxStore(Alpine) {
 
       // Pause any playing video before navigating
       this.pauseCurrentVideo();
+      this.resetZoom();
 
       if (this.currentIndex > 0) {
         this.currentIndex--;
