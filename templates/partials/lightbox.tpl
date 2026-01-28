@@ -15,7 +15,7 @@
     @keydown.page-up.window.prevent="$store.lightbox.isOpen && $store.lightbox.prev()"
     @keydown.page-down.window.prevent="$store.lightbox.isOpen && $store.lightbox.next()"
     @keydown.f.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.toggleFullscreen()"
-    @keydown.f2.window.prevent="$store.lightbox.isOpen && $store.lightbox.toggleEditPanel()"
+    @keydown.e.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.toggleEditPanel()"
     @touchstart="$store.lightbox.handleTouchStart($event)"
     @touchend="$store.lightbox.handleTouchEnd($event)"
     @wheel="$store.lightbox.isOpen && $store.lightbox.handleWheel($event)"
