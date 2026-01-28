@@ -67,6 +67,12 @@ export function registerLightboxStore(Alpine) {
     pinchCenterX: null,
     pinchCenterY: null,
 
+    // Two-finger pan tracking (when zoomed)
+    twoFingerPanStartX: null,
+    twoFingerPanStartY: null,
+    twoFingerPanStartPanX: null,
+    twoFingerPanStartPanY: null,
+
     // Mouse drag tracking
     isDragging: false,
     dragStartX: null,
@@ -708,10 +714,22 @@ export function registerLightboxStore(Alpine) {
         const center = this.getPinchCenter(event.touches);
         this.pinchCenterX = center.x;
         this.pinchCenterY = center.y;
+
+        // Also track for pan if zoomed
+        if (this.isZoomed()) {
+          this.twoFingerPanStartX = center.x;
+          this.twoFingerPanStartY = center.y;
+          this.twoFingerPanStartPanX = this.panX;
+          this.twoFingerPanStartPanY = this.panY;
+        }
       } else if (event.touches.length === 1) {
         // Single touch - swipe or drag
         this.touchStartX = event.touches[0].clientX;
         this.touchStartY = event.touches[0].clientY;
+        if (this.isZoomed()) {
+          this.dragStartPanX = this.panX;
+          this.dragStartPanY = this.panY;
+        }
       }
     },
 
@@ -723,12 +741,35 @@ export function registerLightboxStore(Alpine) {
       // Skip for videos
       if (this.isVideo(this.getCurrentItem()?.contentType)) return;
 
-      if (event.touches.length === 2 && this.pinchStartDistance !== null) {
-        // Pinch zoom
+      if (event.touches.length === 2) {
         event.preventDefault();
-        const currentDistance = this.getPinchDistance(event.touches);
-        const scale = currentDistance / this.pinchStartDistance;
-        this.setZoomLevel(this.pinchStartZoom * scale);
+
+        if (this.pinchStartDistance !== null) {
+          // Pinch zoom
+          const currentDistance = this.getPinchDistance(event.touches);
+          const scale = currentDistance / this.pinchStartDistance;
+          this.setZoomLevel(this.pinchStartZoom * scale);
+        }
+
+        // Two-finger pan when zoomed
+        if (this.isZoomed() && this.twoFingerPanStartX !== null) {
+          const center = this.getPinchCenter(event.touches);
+          const dx = center.x - this.twoFingerPanStartX;
+          const dy = center.y - this.twoFingerPanStartY;
+          this.panX = this.twoFingerPanStartPanX + dx / this.zoomLevel;
+          this.panY = this.twoFingerPanStartPanY + dy / this.zoomLevel;
+          this.constrainPan();
+        }
+      } else if (event.touches.length === 1 && this.isZoomed()) {
+        // Single finger pan when zoomed
+        if (this.touchStartX !== null) {
+          event.preventDefault();
+          const dx = event.touches[0].clientX - this.touchStartX;
+          const dy = event.touches[0].clientY - this.touchStartY;
+          this.panX = (this.dragStartPanX || 0) + dx / this.zoomLevel;
+          this.panY = (this.dragStartPanY || 0) + dy / this.zoomLevel;
+          this.constrainPan();
+        }
       }
     },
 
@@ -745,6 +786,10 @@ export function registerLightboxStore(Alpine) {
         }
         this.pinchStartDistance = null;
         this.pinchStartZoom = null;
+        this.twoFingerPanStartX = null;
+        this.twoFingerPanStartY = null;
+        this.twoFingerPanStartPanX = null;
+        this.twoFingerPanStartPanY = null;
         this.announceZoom();
         return;
       }
@@ -760,7 +805,7 @@ export function registerLightboxStore(Alpine) {
       // Only handle horizontal swipes (ignore vertical scrolling)
       if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 50) {
         if (this.isZoomed()) {
-          // Pan when zoomed (handled by handleTouchMove in future task)
+          // Pan is handled by handleTouchMove, swipe ignored when zoomed
         } else {
           // Navigate when not zoomed
           if (diffX > 0) {
