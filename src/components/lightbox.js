@@ -1099,6 +1099,27 @@ export function registerLightboxStore(Alpine) {
      */
     getCurrentTags() {
       return this.resourceDetails?.Tags || [];
+    },
+
+    /**
+     * Handle double-click/double-tap to toggle zoom
+     * @param {MouseEvent} event
+     */
+    handleDoubleClick(event) {
+      // Skip for videos
+      if (this.isVideo(this.getCurrentItem()?.contentType)) return;
+
+      event.preventDefault();
+
+      if (this.zoomLevel === 1) {
+        // Zoom in to 2x
+        this.setZoomLevel(2);
+        this.announceZoom();
+      } else {
+        // Zoom out to 1x
+        this.setZoomLevel(1);
+        this.announceZoom();
+      }
     }
   });
 }

@@ -49,7 +49,7 @@
         </div>
 
         <!-- Media content -->
-        <div class="relative max-h-[90vh] max-w-[90vw] flex items-center justify-center" @click.self="$store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.close()">
+        <div class="relative max-h-[90vh] max-w-[90vw] flex items-center justify-center" @click.self="$store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.close()" @dblclick="$store.lightbox.handleDoubleClick($event)">
             <!-- Image display -->
             <template x-if="$store.lightbox.isImage($store.lightbox.getCurrentItem()?.contentType)">
                 <img
