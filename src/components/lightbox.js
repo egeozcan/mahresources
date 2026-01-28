@@ -64,6 +64,8 @@ export function registerLightboxStore(Alpine) {
     // Pinch tracking
     pinchStartDistance: null,
     pinchStartZoom: null,
+    pinchStartCenterX: null,
+    pinchStartCenterY: null,
     pinchCenterX: null,
     pinchCenterY: null,
 
@@ -712,6 +714,8 @@ export function registerLightboxStore(Alpine) {
         this.pinchStartDistance = this.getPinchDistance(event.touches);
         this.pinchStartZoom = this.zoomLevel;
         const center = this.getPinchCenter(event.touches);
+        this.pinchStartCenterX = center.x;
+        this.pinchStartCenterY = center.y;
         this.pinchCenterX = center.x;
         this.pinchCenterY = center.y;
 
@@ -744,16 +748,21 @@ export function registerLightboxStore(Alpine) {
       if (event.touches.length === 2) {
         event.preventDefault();
 
+        const center = this.getPinchCenter(event.touches);
+
         if (this.pinchStartDistance !== null) {
           // Pinch zoom
           const currentDistance = this.getPinchDistance(event.touches);
           const scale = currentDistance / this.pinchStartDistance;
           this.setZoomLevel(this.pinchStartZoom * scale);
+
+          // Track current center for two-finger swipe navigation
+          this.pinchCenterX = center.x;
+          this.pinchCenterY = center.y;
         }
 
         // Two-finger pan when zoomed
         if (this.isZoomed() && this.twoFingerPanStartX !== null) {
-          const center = this.getPinchCenter(event.touches);
           const dx = center.x - this.twoFingerPanStartX;
           const dy = center.y - this.twoFingerPanStartY;
           this.panX = this.twoFingerPanStartPanX + dx / this.zoomLevel;
@@ -778,14 +787,32 @@ export function registerLightboxStore(Alpine) {
      * @param {TouchEvent} event
      */
     handleTouchEnd(event) {
-      // Handle pinch end
+      // Handle pinch/two-finger gesture end
       if (this.pinchStartDistance !== null) {
         // Snap back if below minimum
         if (this.zoomLevel < this.minZoom) {
           this.setZoomLevel(this.minZoom);
         }
+
+        // Two-finger swipe navigation when not zoomed
+        if (!this.isZoomed() && this.pinchStartCenterX !== null && this.pinchCenterX !== null) {
+          // Calculate how far the center point moved from start to end
+          const diffX = this.pinchStartCenterX - this.pinchCenterX;
+          if (Math.abs(diffX) > 50) {
+            if (diffX > 0) {
+              this.next();
+            } else {
+              this.prev();
+            }
+          }
+        }
+
         this.pinchStartDistance = null;
         this.pinchStartZoom = null;
+        this.pinchStartCenterX = null;
+        this.pinchStartCenterY = null;
+        this.pinchCenterX = null;
+        this.pinchCenterY = null;
         this.twoFingerPanStartX = null;
         this.twoFingerPanStartY = null;
         this.twoFingerPanStartPanX = null;
