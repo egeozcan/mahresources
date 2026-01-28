@@ -833,11 +833,58 @@ export function registerLightboxStore(Alpine) {
     },
 
     /**
-     * Constrain pan to image bounds
+     * Get the current media element and its dimensions
+     * @returns {{element: HTMLElement, rect: DOMRect}|null}
+     */
+    getMediaElement() {
+      const el = document.querySelector('[role="dialog"] img, [role="dialog"] object');
+      if (!el) return null;
+      return { element: el, rect: el.getBoundingClientRect() };
+    },
+
+    /**
+     * Get the container element dimensions
+     * @returns {DOMRect|null}
+     */
+    getContainerRect() {
+      const container = document.querySelector('[role="dialog"] .relative.max-h-\\[90vh\\]');
+      return container?.getBoundingClientRect() || null;
+    },
+
+    /**
+     * Constrain pan to keep image edges within or beyond viewport edges
+     * When zoomed, you should be able to pan just enough to see all edges
      */
     constrainPan() {
-      // Will be implemented with proper bounds checking
-      // For now, allow free pan
+      if (this.zoomLevel <= 1) {
+        this.panX = 0;
+        this.panY = 0;
+        return;
+      }
+
+      const media = this.getMediaElement();
+      const containerRect = this.getContainerRect();
+      if (!media || !containerRect) return;
+
+      const el = media.element;
+
+      // Get displayed dimensions (before zoom transform)
+      // The image is displayed at its fitted size within the container
+      const displayedWidth = el.clientWidth;
+      const displayedHeight = el.clientHeight;
+
+      // Calculate the zoomed dimensions
+      const zoomedWidth = displayedWidth * this.zoomLevel;
+      const zoomedHeight = displayedHeight * this.zoomLevel;
+
+      // Calculate max pan distances
+      // Pan is applied after scale, so we need to divide by zoom level
+      const maxPanX = Math.max(0, (zoomedWidth - containerRect.width) / 2 / this.zoomLevel);
+      const maxPanY = Math.max(0, (zoomedHeight - containerRect.height) / 2 / this.zoomLevel);
+
+      // Constrain pan
+      this.panX = Math.max(-maxPanX, Math.min(maxPanX, this.panX));
+      this.panY = Math.max(-maxPanY, Math.min(maxPanY, this.panY));
     },
 
     // ==================== Edit Panel Methods ====================
