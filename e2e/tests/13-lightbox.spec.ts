@@ -121,9 +121,9 @@ test.describe('Lightbox Functionality', () => {
     const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
     await expect(lightbox).toBeVisible();
 
-    // Get initial counter
-    const counter = lightbox.locator('div.bg-black\\/50').first();
-    await expect(counter).toContainText('1');
+    // Get initial counter (contains "/" to distinguish from zoom indicator)
+    const counter = lightbox.locator('div.bg-black\\/50:has-text("/")').first();
+    await expect(counter).toContainText('1 /');
 
     // Click next button
     const nextButton = lightbox.locator('button[aria-label="Next"]');
@@ -133,7 +133,7 @@ test.describe('Lightbox Functionality', () => {
     await page.waitForTimeout(300);
 
     // Verify counter updated
-    await expect(counter).toContainText('2');
+    await expect(counter).toContainText('2 /');
   });
 
   test('should navigate using keyboard arrows', async ({ page }) => {
@@ -151,13 +151,13 @@ test.describe('Lightbox Functionality', () => {
     await page.keyboard.press('ArrowRight');
     await page.waitForTimeout(300);
 
-    const counter = lightbox.locator('div.bg-black\\/50').first();
-    await expect(counter).toContainText('2');
+    const counter = lightbox.locator('div.bg-black\\/50:has-text("/")').first();
+    await expect(counter).toContainText('2 /');
 
     // Navigate back with left arrow
     await page.keyboard.press('ArrowLeft');
     await page.waitForTimeout(300);
-    await expect(counter).toContainText('1');
+    await expect(counter).toContainText('1 /');
   });
 
   test('should close lightbox with Escape key', async ({ page }) => {
