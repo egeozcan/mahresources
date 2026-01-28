@@ -655,7 +655,30 @@ export function registerLightboxStore(Alpine) {
     },
 
     /**
-     * Handle touch start for swipe gestures
+     * Calculate distance between two touch points
+     * @param {TouchList} touches
+     * @returns {number}
+     */
+    getPinchDistance(touches) {
+      const dx = touches[0].clientX - touches[1].clientX;
+      const dy = touches[0].clientY - touches[1].clientY;
+      return Math.sqrt(dx * dx + dy * dy);
+    },
+
+    /**
+     * Get center point between two touches
+     * @param {TouchList} touches
+     * @returns {{x: number, y: number}}
+     */
+    getPinchCenter(touches) {
+      return {
+        x: (touches[0].clientX + touches[1].clientX) / 2,
+        y: (touches[0].clientY + touches[1].clientY) / 2
+      };
+    },
+
+    /**
+     * Handle touch start for swipe and pinch gestures
      * @param {TouchEvent} event
      */
     handleTouchStart(event) {
@@ -664,15 +687,57 @@ export function registerLightboxStore(Alpine) {
         this.touchStartX = null;
         return;
       }
-      this.touchStartX = event.touches[0].clientX;
-      this.touchStartY = event.touches[0].clientY;
+
+      if (event.touches.length === 2) {
+        // Pinch gesture start
+        event.preventDefault();
+        this.pinchStartDistance = this.getPinchDistance(event.touches);
+        this.pinchStartZoom = this.zoomLevel;
+        const center = this.getPinchCenter(event.touches);
+        this.pinchCenterX = center.x;
+        this.pinchCenterY = center.y;
+      } else if (event.touches.length === 1) {
+        // Single touch - swipe or drag
+        this.touchStartX = event.touches[0].clientX;
+        this.touchStartY = event.touches[0].clientY;
+      }
     },
 
     /**
-     * Handle touch end for swipe gestures
+     * Handle touch move for pinch zoom
+     * @param {TouchEvent} event
+     */
+    handleTouchMove(event) {
+      // Skip for videos
+      if (this.isVideo(this.getCurrentItem()?.contentType)) return;
+
+      if (event.touches.length === 2 && this.pinchStartDistance !== null) {
+        // Pinch zoom
+        event.preventDefault();
+        const currentDistance = this.getPinchDistance(event.touches);
+        const scale = currentDistance / this.pinchStartDistance;
+        this.setZoomLevel(this.pinchStartZoom * scale);
+      }
+    },
+
+    /**
+     * Handle touch end for swipe and pinch gestures
      * @param {TouchEvent} event
      */
     handleTouchEnd(event) {
+      // Handle pinch end
+      if (this.pinchStartDistance !== null) {
+        // Snap back if below minimum
+        if (this.zoomLevel < this.minZoom) {
+          this.setZoomLevel(this.minZoom);
+        }
+        this.pinchStartDistance = null;
+        this.pinchStartZoom = null;
+        this.announceZoom();
+        return;
+      }
+
+      // Handle swipe (existing logic)
       if (this.touchStartX === null) return;
 
       const touchEndX = event.changedTouches[0].clientX;
@@ -682,10 +747,15 @@ export function registerLightboxStore(Alpine) {
 
       // Only handle horizontal swipes (ignore vertical scrolling)
       if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 50) {
-        if (diffX > 0) {
-          this.next();
+        if (this.isZoomed()) {
+          // Pan when zoomed (handled by handleTouchMove in future task)
         } else {
-          this.prev();
+          // Navigate when not zoomed
+          if (diffX > 0) {
+            this.next();
+          } else {
+            this.prev();
+          }
         }
       }
 
