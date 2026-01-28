@@ -149,6 +149,16 @@ func (w *HashWorker) processBatch() {
 }
 
 func (w *HashWorker) migrateStringHashes() {
+	// Count total remaining for progress logging
+	var totalRemaining int64
+	w.db.Model(&models.ImageHash{}).
+		Where("d_hash_int IS NULL AND d_hash IS NOT NULL AND d_hash != ''").
+		Count(&totalRemaining)
+
+	if totalRemaining == 0 {
+		return
+	}
+
 	var toMigrate []models.ImageHash
 	if err := w.db.
 		Where("d_hash_int IS NULL AND d_hash IS NOT NULL AND d_hash != ''").
@@ -162,7 +172,7 @@ func (w *HashWorker) migrateStringHashes() {
 		return
 	}
 
-	log.Printf("Hash worker: migrating %d string hashes to uint64", len(toMigrate))
+	log.Printf("Hash worker: migrating %d hashes (remaining: %d)", len(toMigrate), totalRemaining)
 
 	for _, h := range toMigrate {
 		aHash := h.GetAHash()
@@ -186,6 +196,17 @@ func (w *HashWorker) hashNewResources() {
 	var resources []models.Resource
 	subQuery := w.db.Table("image_hashes").Select("resource_id")
 
+	// Count total remaining for progress logging
+	var totalRemaining int64
+	w.db.Model(&models.Resource{}).
+		Where("content_type IN ?", hashableContentTypesList).
+		Where("id NOT IN (?)", subQuery).
+		Count(&totalRemaining)
+
+	if totalRemaining == 0 {
+		return
+	}
+
 	if err := w.db.
 		Where("content_type IN ?", hashableContentTypesList).
 		Where("id NOT IN (?)", subQuery).
@@ -199,7 +220,7 @@ func (w *HashWorker) hashNewResources() {
 		return
 	}
 
-	log.Printf("Hash worker: processing %d new resources", len(resources))
+	log.Printf("Hash worker: hashing %d resources (remaining: %d)", len(resources), totalRemaining)
 
 	// Ensure cache is loaded
 	w.ensureCacheLoaded()
