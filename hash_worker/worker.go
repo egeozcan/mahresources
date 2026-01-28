@@ -168,9 +168,13 @@ func (w *HashWorker) migrateStringHashes() {
 		aHash := h.GetAHash()
 		dHash := h.GetDHash()
 
+		// Convert to int64 for PostgreSQL storage (bit-reinterpretation)
+		aHashSigned := int64(aHash)
+		dHashSigned := int64(dHash)
+
 		if err := w.db.Model(&h).Updates(map[string]any{
-			"a_hash_int": aHash,
-			"d_hash_int": dHash,
+			"a_hash_int": aHashSigned,
+			"d_hash_int": dHashSigned,
 		}).Error; err != nil {
 			log.Printf("Hash worker: error migrating hash %d: %v", h.ID, err)
 		}
