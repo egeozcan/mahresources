@@ -43,6 +43,21 @@ func TestImageHash_GetDHash(t *testing.T) {
 			hash:     ImageHash{ID: 7, DHash: "0000000000000001"},
 			expected: 1,
 		},
+		{
+			name:     "parses 64-char binary string",
+			hash:     ImageHash{ID: 8, DHash: "1011010011110100011101000111100011101000011010111111101110110011"},
+			expected: 0xb4f47478e86bfbb3,
+		},
+		{
+			name:     "parses binary string of all zeros",
+			hash:     ImageHash{ID: 9, DHash: "0000000000000000000000000000000000000000000000000000000000000000"},
+			expected: 0,
+		},
+		{
+			name:     "parses binary string of all ones",
+			hash:     ImageHash{ID: 10, DHash: "1111111111111111111111111111111111111111111111111111111111111111"},
+			expected: 0xffffffffffffffff,
+		},
 	}
 
 	for _, tt := range tests {

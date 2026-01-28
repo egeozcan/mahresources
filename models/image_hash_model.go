@@ -25,7 +25,7 @@ func (h *ImageHash) GetDHash() uint64 {
 	if h.DHash == "" {
 		return 0
 	}
-	val, err := strconv.ParseUint(h.DHash, 16, 64)
+	val, err := parseHashString(h.DHash)
 	if err != nil {
 		log.Printf("Warning: failed to parse DHash %q for hash ID %d: %v", h.DHash, h.ID, err)
 		return 0
@@ -43,12 +43,31 @@ func (h *ImageHash) GetAHash() uint64 {
 	if h.AHash == "" {
 		return 0
 	}
-	val, err := strconv.ParseUint(h.AHash, 16, 64)
+	val, err := parseHashString(h.AHash)
 	if err != nil {
 		log.Printf("Warning: failed to parse AHash %q for hash ID %d: %v", h.AHash, h.ID, err)
 		return 0
 	}
 	return val
+}
+
+// parseHashString parses a hash string that may be in binary (64 chars of 0/1)
+// or hexadecimal format (16 chars).
+func parseHashString(s string) (uint64, error) {
+	if len(s) == 64 && isBinaryString(s) {
+		return strconv.ParseUint(s, 2, 64)
+	}
+	return strconv.ParseUint(s, 16, 64)
+}
+
+// isBinaryString returns true if s contains only '0' and '1' characters.
+func isBinaryString(s string) bool {
+	for _, c := range s {
+		if c != '0' && c != '1' {
+			return false
+		}
+	}
+	return true
 }
 
 // IsMigrated returns true if this hash has been migrated to uint64 format.
