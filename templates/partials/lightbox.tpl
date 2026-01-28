@@ -35,8 +35,12 @@
     <!-- Main content area (shrinks when edit panel opens on desktop) -->
     <div
         class="relative flex-1 flex items-center justify-center transition-all duration-300 ease-in-out"
-        :class="$store.lightbox.editPanelOpen ? 'md:mr-[400px]' : ''"
+        :class="[$store.lightbox.editPanelOpen ? 'md:mr-[400px]' : '', $store.lightbox.isDragging ? 'cursor-grabbing' : 'cursor-grab']"
         @click.self="$store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.close()"
+        @mousedown="$store.lightbox.handleMouseDown($event)"
+        @mousemove="$store.lightbox.handleMouseMove($event)"
+        @mouseup="$store.lightbox.handleMouseUp($event)"
+        @mouseleave="$store.lightbox.handleMouseUp($event)"
     >
         <!-- Loading spinner (shown while media is loading) -->
         <div

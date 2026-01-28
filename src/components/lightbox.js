@@ -67,6 +67,18 @@ export function registerLightboxStore(Alpine) {
     pinchCenterX: null,
     pinchCenterY: null,
 
+    // Mouse drag tracking
+    isDragging: false,
+    dragStartX: null,
+    dragStartY: null,
+    dragStartPanX: null,
+    dragStartPanY: null,
+    dragVelocityX: 0,
+    dragVelocityY: 0,
+    lastDragTime: null,
+    lastDragX: null,
+    lastDragY: null,
+
     // Image dimensions for pan bounds
     imageRect: null,
     containerRect: null,
@@ -1227,6 +1239,93 @@ export function registerLightboxStore(Alpine) {
         this.setZoomLevel(1);
         this.announceZoom();
       }
+    },
+
+    /**
+     * Handle mouse down for drag start
+     * @param {MouseEvent} event
+     */
+    handleMouseDown(event) {
+      // Skip for videos or if clicking on controls
+      if (this.isVideo(this.getCurrentItem()?.contentType)) return;
+      if (event.target.closest('button')) return;
+      if (event.target.closest('[data-edit-panel]')) return;
+
+      event.preventDefault();
+      this.isDragging = true;
+      this.dragStartX = event.clientX;
+      this.dragStartY = event.clientY;
+      this.dragStartPanX = this.panX;
+      this.dragStartPanY = this.panY;
+      this.lastDragX = event.clientX;
+      this.lastDragY = event.clientY;
+      this.lastDragTime = performance.now();
+      this.dragVelocityX = 0;
+      this.dragVelocityY = 0;
+    },
+
+    /**
+     * Handle mouse move for dragging
+     * @param {MouseEvent} event
+     */
+    handleMouseMove(event) {
+      if (!this.isDragging) return;
+
+      const now = performance.now();
+      const dt = now - this.lastDragTime;
+
+      if (dt > 0) {
+        // Calculate velocity for momentum
+        this.dragVelocityX = (event.clientX - this.lastDragX) / dt;
+        this.dragVelocityY = (event.clientY - this.lastDragY) / dt;
+      }
+
+      this.lastDragX = event.clientX;
+      this.lastDragY = event.clientY;
+      this.lastDragTime = now;
+
+      if (this.isZoomed()) {
+        // Pan when zoomed
+        const dx = event.clientX - this.dragStartX;
+        const dy = event.clientY - this.dragStartY;
+        this.panX = this.dragStartPanX + dx / this.zoomLevel;
+        this.panY = this.dragStartPanY + dy / this.zoomLevel;
+        this.constrainPan();
+      }
+    },
+
+    /**
+     * Handle mouse up for drag end
+     * @param {MouseEvent} event
+     */
+    handleMouseUp(event) {
+      if (!this.isDragging) return;
+
+      const dx = event.clientX - this.dragStartX;
+      const dy = event.clientY - this.dragStartY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      const speed = Math.sqrt(this.dragVelocityX ** 2 + this.dragVelocityY ** 2);
+
+      this.isDragging = false;
+
+      if (!this.isZoomed()) {
+        // Navigate based on momentum - quick flick triggers navigation
+        const threshold = 0.3; // pixels per ms
+        const minDistance = 30;
+
+        if (Math.abs(this.dragVelocityX) > Math.abs(this.dragVelocityY)) {
+          if (speed > threshold || distance > minDistance) {
+            if (dx < 0) {
+              this.next();
+            } else if (dx > 0) {
+              this.prev();
+            }
+          }
+        }
+      }
+
+      this.dragStartX = null;
+      this.dragStartY = null;
     }
   });
 }
