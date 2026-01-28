@@ -764,31 +764,68 @@ export function registerLightboxStore(Alpine) {
     },
 
     /**
-     * Handle wheel events for trackpad horizontal swipe gestures
+     * Handle wheel events for trackpad gestures
      * @param {WheelEvent} event
      */
     handleWheel(event) {
-      // Ignore wheel events within the edit panel (allow normal scrolling)
+      // Ignore wheel events within the edit panel
       if (event.target.closest('[data-edit-panel]')) {
         return;
       }
 
-      // Only handle horizontal scrolling (trackpad swipe)
-      // deltaX is negative for swipe right, positive for swipe left
-      if (Math.abs(event.deltaX) > Math.abs(event.deltaY) && Math.abs(event.deltaX) > 10) {
+      // Skip for videos
+      if (this.isVideo(this.getCurrentItem()?.contentType)) return;
+
+      // Trackpad pinch zoom (ctrlKey is set by browser for pinch gestures)
+      if (event.ctrlKey) {
         event.preventDefault();
 
-        // Debounce to prevent multiple navigations from a single swipe
-        if (this._wheelDebounce) return;
-        this._wheelDebounce = true;
-        setTimeout(() => { this._wheelDebounce = false; }, 300);
+        // Negate deltaY so pinch-out zooms in and pinch-in zooms out
+        const zoomDelta = -event.deltaY * 0.01;
+        this.setZoomLevel(this.zoomLevel + zoomDelta);
 
-        if (event.deltaX > 0) {
-          this.next();
-        } else {
-          this.prev();
+        // Announce on debounced basis
+        if (!this._zoomAnnounceDebounce) {
+          this._zoomAnnounceDebounce = true;
+          setTimeout(() => {
+            this.announceZoom();
+            this._zoomAnnounceDebounce = false;
+          }, 500);
         }
+        return;
       }
+
+      // Horizontal scrolling (trackpad swipe) for navigation when not zoomed
+      if (!this.isZoomed()) {
+        if (Math.abs(event.deltaX) > Math.abs(event.deltaY) && Math.abs(event.deltaX) > 10) {
+          event.preventDefault();
+
+          // Debounce to prevent multiple navigations from a single swipe
+          if (this._wheelDebounce) return;
+          this._wheelDebounce = true;
+          setTimeout(() => { this._wheelDebounce = false; }, 300);
+
+          if (event.deltaX > 0) {
+            this.next();
+          } else {
+            this.prev();
+          }
+        }
+      } else {
+        // Pan when zoomed (using trackpad scroll)
+        event.preventDefault();
+        this.panX -= event.deltaX / this.zoomLevel;
+        this.panY -= event.deltaY / this.zoomLevel;
+        this.constrainPan();
+      }
+    },
+
+    /**
+     * Constrain pan to image bounds
+     */
+    constrainPan() {
+      // Will be implemented with proper bounds checking
+      // For now, allow free pan
     },
 
     // ==================== Edit Panel Methods ====================
