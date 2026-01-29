@@ -3,6 +3,7 @@ package application_context
 import (
 	"encoding/json"
 	"errors"
+	"log"
 
 	"mahresources/models"
 	"mahresources/models/block_types"
@@ -131,6 +132,25 @@ func (ctx *MahresourcesContext) DeleteBlock(blockID uint) error {
 
 // ReorderBlocks updates positions for multiple blocks in a single transaction
 func (ctx *MahresourcesContext) ReorderBlocks(noteID uint, positions map[uint]string) error {
+	if len(positions) == 0 {
+		return nil
+	}
+
+	// Collect block IDs for validation
+	blockIDs := make([]uint, 0, len(positions))
+	for blockID := range positions {
+		blockIDs = append(blockIDs, blockID)
+	}
+
+	// Verify all blocks belong to the specified note
+	var count int64
+	if err := ctx.db.Model(&models.NoteBlock{}).Where("id IN ? AND note_id = ?", blockIDs, noteID).Count(&count).Error; err != nil {
+		return err
+	}
+	if int(count) != len(positions) {
+		return errors.New("one or more block IDs do not belong to the specified note")
+	}
+
 	tx := ctx.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -152,8 +172,11 @@ func (ctx *MahresourcesContext) ReorderBlocks(noteID uint, positions map[uint]st
 // syncFirstTextBlockToDescription syncs the first text block's content to the note's Description
 func (ctx *MahresourcesContext) syncFirstTextBlockToDescription(noteID uint) {
 	var blocks []models.NoteBlock
-	ctx.db.Where("note_id = ? AND type = ?", noteID, "text").
-		Order("position ASC").Limit(1).Find(&blocks)
+	if err := ctx.db.Where("note_id = ? AND type = ?", noteID, "text").
+		Order("position ASC").Limit(1).Find(&blocks).Error; err != nil {
+		log.Printf("Warning: failed to query text blocks for note %d: %v", noteID, err)
+		return
+	}
 
 	if len(blocks) == 0 {
 		return
@@ -163,8 +186,11 @@ func (ctx *MahresourcesContext) syncFirstTextBlockToDescription(noteID uint) {
 		Text string `json:"text"`
 	}
 	if err := json.Unmarshal(blocks[0].Content, &content); err != nil {
+		log.Printf("Warning: failed to unmarshal text block content for note %d: %v", noteID, err)
 		return
 	}
 
-	ctx.db.Model(&models.Note{}).Where("id = ?", noteID).Update("description", content.Text)
+	if err := ctx.db.Model(&models.Note{}).Where("id = ?", noteID).Update("description", content.Text).Error; err != nil {
+		log.Printf("Warning: failed to sync description for note %d: %v", noteID, err)
+	}
 }

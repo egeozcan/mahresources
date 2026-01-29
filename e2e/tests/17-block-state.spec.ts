@@ -68,9 +68,9 @@ test.describe('Block State Persistence', () => {
       };
       await apiClient.updateBlockState(todoBlockId, checkedState);
 
-      // Navigate to the note page
+      // Navigate to the note page (use domcontentloaded to avoid networkidle timeout)
       await page.goto(`${baseURL}/note?id=${noteId}`);
-      await page.waitForLoadState('networkidle');
+      await page.waitForLoadState('domcontentloaded');
 
       // Fetch the block again via API to verify state persisted
       const block = await apiClient.getBlock(todoBlockId);
@@ -78,7 +78,7 @@ test.describe('Block State Persistence', () => {
 
       // Reload the page
       await page.reload();
-      await page.waitForLoadState('networkidle');
+      await page.waitForLoadState('domcontentloaded');
 
       // Verify state is still persisted after reload
       const blockAfterReload = await apiClient.getBlock(todoBlockId);
@@ -163,9 +163,9 @@ test.describe('Block State Persistence', () => {
       };
       await apiClient.updateBlockState(tableBlockId, sortState);
 
-      // Navigate to the note page
+      // Navigate to the note page (use domcontentloaded to avoid networkidle timeout)
       await page.goto(`${baseURL}/note?id=${noteId}`);
-      await page.waitForLoadState('networkidle');
+      await page.waitForLoadState('domcontentloaded');
 
       // Fetch the block again via API to verify state persisted
       const block = await apiClient.getBlock(tableBlockId);
@@ -173,7 +173,7 @@ test.describe('Block State Persistence', () => {
 
       // Reload the page
       await page.reload();
-      await page.waitForLoadState('networkidle');
+      await page.waitForLoadState('domcontentloaded');
 
       // Verify state is still persisted after reload
       const blockAfterReload = await apiClient.getBlock(tableBlockId);

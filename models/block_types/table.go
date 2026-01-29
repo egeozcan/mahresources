@@ -5,12 +5,20 @@ import (
 	"errors"
 )
 
+// tableColumn represents a column definition in a table block.
+type tableColumn struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
 // tableContent represents the content schema for table blocks.
 // Either columns+rows OR queryId should be provided, not both.
+// Columns can be either simple strings or objects with id/label.
+// Rows can be either arrays of values or objects with column IDs as keys.
 type tableContent struct {
-	Columns []string        `json:"columns"`
-	Rows    [][]any `json:"rows"`
-	QueryID *uint           `json:"queryId"`
+	Columns []json.RawMessage      `json:"columns"`
+	Rows    []json.RawMessage      `json:"rows"`
+	QueryID *uint                  `json:"queryId"`
 }
 
 // tableState represents the state schema for table blocks.

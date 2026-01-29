@@ -160,6 +160,24 @@ func TestRegistry_ValidateContent_Todos_MissingID(t *testing.T) {
 	assert.Contains(t, err.Error(), "must have an id")
 }
 
+func TestRegistry_ValidateContent_Todos_MissingID_LargeIndex(t *testing.T) {
+	bt := GetBlockType("todos")
+	// Create 15 items where the 12th item (index 11) has an empty ID
+	items := make([]map[string]string, 15)
+	for i := 0; i < 15; i++ {
+		if i == 11 {
+			items[i] = map[string]string{"id": "", "label": "Task with empty ID"}
+		} else {
+			items[i] = map[string]string{"id": string(rune('a' + i)), "label": "Task"}
+		}
+	}
+	itemsJSON, _ := json.Marshal(items)
+	content := json.RawMessage(`{"items": ` + string(itemsJSON) + `}`)
+	err := bt.ValidateContent(content)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "index 11")
+}
+
 func TestRegistry_ValidateState_Todos(t *testing.T) {
 	bt := GetBlockType("todos")
 	state := json.RawMessage(`{"checked": ["1", "2"]}`)
@@ -176,6 +194,23 @@ func TestRegistry_GetBlockType_Table(t *testing.T) {
 func TestRegistry_ValidateContent_Table_ManualData(t *testing.T) {
 	bt := GetBlockType("table")
 	content := json.RawMessage(`{"columns": ["Name", "Value"], "rows": [["a", 1], ["b", 2]]}`)
+	err := bt.ValidateContent(content)
+	assert.NoError(t, err)
+}
+
+func TestRegistry_ValidateContent_Table_RichFormat(t *testing.T) {
+	bt := GetBlockType("table")
+	// Rich format with column objects and row objects (as used by the block editor UI)
+	content := json.RawMessage(`{
+		"columns": [
+			{"id": "col1", "label": "Name"},
+			{"id": "col2", "label": "Value"}
+		],
+		"rows": [
+			{"id": "row1", "col1": "Item 1", "col2": "100"},
+			{"id": "row2", "col1": "Item 2", "col2": "200"}
+		]
+	}`)
 	err := bt.ValidateContent(content)
 	assert.NoError(t, err)
 }

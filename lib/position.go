@@ -1,4 +1,3 @@
-// lib/position.go
 package lib
 
 const (
@@ -88,11 +87,4 @@ func midpoint(a, b byte) byte {
 // FirstPosition returns the initial position for the first block
 func FirstPosition() string {
 	return "n"
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

@@ -2,7 +2,7 @@ package block_types
 
 import (
 	"encoding/json"
-	"errors"
+	"fmt"
 )
 
 // todoItem represents a single todo item in the content.
@@ -36,7 +36,7 @@ func (t TodosBlockType) ValidateContent(content json.RawMessage) error {
 	// Validate that each item has an id
 	for i, item := range c.Items {
 		if item.ID == "" {
-			return errors.New("todo item at index " + string(rune('0'+i)) + " must have an id")
+			return fmt.Errorf("todo item at index %d must have an id", i)
 		}
 	}
 	return nil

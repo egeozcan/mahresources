@@ -294,6 +294,60 @@ func TestBlockContext_ReorderBlocks(t *testing.T) {
 	assert.Equal(t, block1.ID, (*blocks)[1].ID) // block1 now second (position "b")
 }
 
+func TestBlockContext_ReorderBlocks_EmptyPositions(t *testing.T) {
+	ctx := createBlockTestContext(t)
+
+	note, _ := createTestNote(ctx, "Test")
+
+	// Empty positions should succeed (no-op)
+	err := ctx.ReorderBlocks(note.ID, map[uint]string{})
+	assert.NoError(t, err)
+}
+
+func TestBlockContext_ReorderBlocks_InvalidBlockID(t *testing.T) {
+	ctx := createBlockTestContext(t)
+
+	note1, _ := createTestNote(ctx, "Note 1")
+	note2, _ := createTestNote(ctx, "Note 2")
+
+	// Create block in note2
+	block, _ := ctx.CreateBlock(&query_models.NoteBlockEditor{
+		NoteID: note2.ID, Type: "text", Position: "a", Content: json.RawMessage(`{"text": "Hello"}`),
+	})
+
+	// Try to reorder note1 with a block from note2 - should fail
+	positions := map[uint]string{
+		block.ID: "z",
+	}
+	err := ctx.ReorderBlocks(note1.ID, positions)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "do not belong to the specified note")
+}
+
+func TestBlockContext_ReorderBlocks_MixedValidInvalid(t *testing.T) {
+	ctx := createBlockTestContext(t)
+
+	note1, _ := createTestNote(ctx, "Note 1")
+	note2, _ := createTestNote(ctx, "Note 2")
+
+	// Create block in each note
+	block1, _ := ctx.CreateBlock(&query_models.NoteBlockEditor{
+		NoteID: note1.ID, Type: "text", Position: "a", Content: json.RawMessage(`{"text": "Block 1"}`),
+	})
+	block2, _ := ctx.CreateBlock(&query_models.NoteBlockEditor{
+		NoteID: note2.ID, Type: "text", Position: "a", Content: json.RawMessage(`{"text": "Block 2"}`),
+	})
+
+	// Try to reorder note1 with a mix of valid and invalid blocks - should fail
+	positions := map[uint]string{
+		block1.ID: "z",
+		block2.ID: "y", // This block belongs to note2
+	}
+	err := ctx.ReorderBlocks(note1.ID, positions)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "do not belong to the specified note")
+}
+
 func TestBlockContext_SyncDescriptionOnCreate(t *testing.T) {
 	ctx := createBlockTestContext(t)
 

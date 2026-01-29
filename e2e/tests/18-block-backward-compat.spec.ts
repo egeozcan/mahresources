@@ -54,9 +54,11 @@ test.describe('Block Backward Compatibility - Description Sync', () => {
     const block = await apiClient.createBlock(noteId, 'text', 'a', { text: 'Original block content' });
     expect(block.id).toBeGreaterThan(0);
 
-    // Update note description via legacy API
+    // Update note description via legacy API (name and ownerId are required for updates)
     const updatedNote = await apiClient.updateNote(noteId, {
+      name: 'Backward Compat Test Note',
       description: 'Updated via legacy API',
+      ownerId: ownerGroupId,
     });
     expect(updatedNote.Description).toBe('Updated via legacy API');
 
