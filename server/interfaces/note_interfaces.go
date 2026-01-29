@@ -35,3 +35,10 @@ type NoteMetaReader interface {
 type NoteTypeReader interface {
 	GetNoteTypes(query *query_models.NoteTypeQuery, offset, maxResults int) (*[]models.NoteType, error)
 }
+
+// NoteSharer provides note sharing operations via share tokens
+type NoteSharer interface {
+	ShareNote(noteId uint) (string, error)
+	UnshareNote(noteId uint) error
+	GetNoteByShareToken(token string) (*models.Note, error)
+}
