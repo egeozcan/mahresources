@@ -186,6 +186,13 @@ func NoteContextProvider(context *application_context.MahresourcesContext) func(
 			return addErrContext(err, baseContext)
 		}
 
+		// Determine share server base URL if sharing is enabled
+		shareEnabled := context.Config.SharePort != ""
+		shareBaseUrl := ""
+		if shareEnabled {
+			shareBaseUrl = fmt.Sprintf("http://%s:%s", context.Config.ShareBindAddress, context.Config.SharePort)
+		}
+
 		return pongo2.Context{
 			"pageTitle": "Note: " + note.GetName(),
 			"note":      note,
@@ -199,6 +206,8 @@ func NoteContextProvider(context *application_context.MahresourcesContext) func(
 			},
 			"mainEntity":     note,
 			"mainEntityType": "note",
+			"shareEnabled":   shareEnabled,
+			"shareBaseUrl":   shareBaseUrl,
 		}.Update(baseContext)
 	}
 }
