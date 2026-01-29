@@ -20,7 +20,6 @@
     @touchstart="$store.lightbox.handleTouchStart($event)"
     @touchmove="$store.lightbox.handleTouchMove($event)"
     @touchend="$store.lightbox.handleTouchEnd($event)"
-    @wheel="$store.lightbox.isOpen && $store.lightbox.handleWheel($event)"
     class="fixed inset-0 z-50 flex h-screen w-screen"
     role="dialog"
     aria-modal="true"

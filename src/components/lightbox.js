@@ -124,6 +124,14 @@ export function registerLightboxStore(Alpine) {
       };
       document.addEventListener('fullscreenchange', handleFullscreenChange);
       document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+
+      // Add non-passive wheel listener to allow preventDefault for browser back/forward
+      document.addEventListener('wheel', (event) => {
+        if (!this.isOpen) return;
+        // Let edit panel handle its own scrolling
+        if (event.target.closest('[data-edit-panel]')) return;
+        this.handleWheel(event);
+      }, { passive: false });
     },
 
     /**
@@ -859,11 +867,6 @@ export function registerLightboxStore(Alpine) {
      * @param {WheelEvent} event
      */
     handleWheel(event) {
-      // Ignore wheel events within the edit panel
-      if (event.target.closest('[data-edit-panel]')) {
-        return;
-      }
-
       // Skip for videos
       if (this.isVideo(this.getCurrentItem()?.contentType)) return;
 
@@ -889,18 +892,22 @@ export function registerLightboxStore(Alpine) {
 
       // Horizontal scrolling (trackpad swipe) for navigation when not zoomed
       if (!this.isZoomed()) {
-        if (Math.abs(event.deltaX) > Math.abs(event.deltaY) && Math.abs(event.deltaX) > 10) {
+        // Prevent browser back/forward navigation on any horizontal swipe
+        if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
           event.preventDefault();
 
-          // Debounce to prevent multiple navigations from a single swipe
-          if (this._wheelDebounce) return;
-          this._wheelDebounce = true;
-          setTimeout(() => { this._wheelDebounce = false; }, 300);
+          // Only trigger navigation after threshold is met
+          if (Math.abs(event.deltaX) > 10) {
+            // Debounce to prevent multiple navigations from a single swipe
+            if (this._wheelDebounce) return;
+            this._wheelDebounce = true;
+            setTimeout(() => { this._wheelDebounce = false; }, 300);
 
-          if (event.deltaX > 0) {
-            this.next();
-          } else {
-            this.prev();
+            if (event.deltaX > 0) {
+              this.next();
+            } else {
+              this.prev();
+            }
           }
         }
       } else {
