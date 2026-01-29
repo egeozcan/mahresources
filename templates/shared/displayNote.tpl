@@ -11,9 +11,9 @@
         {% endif %}
     </header>
 
-    {% if note.Blocks && note.Blocks|length > 0 %}
+    {% if blocks && blocks|length > 0 %}
     <div class="space-y-4" x-data="{ shareToken: '{{ shareToken }}' }">
-        {% for block in note.Blocks %}
+        {% for block in blocks %}
             {% include "/partials/blocks/sharedBlock.tpl" %}
         {% endfor %}
     </div>
