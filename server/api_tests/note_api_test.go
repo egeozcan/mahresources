@@ -138,7 +138,7 @@ func TestShareNote(t *testing.T) {
 	note := tc.CreateDummyNote("Test Share Note")
 
 	t.Run("Share note creates token", func(t *testing.T) {
-		url := fmt.Sprintf("/v1/note/share?id=%d", note.ID)
+		url := fmt.Sprintf("/v1/note/share?noteId=%d", note.ID)
 		resp := tc.MakeRequest(http.MethodPost, url, nil)
 		assert.Equal(t, http.StatusOK, resp.Code)
 
@@ -149,7 +149,7 @@ func TestShareNote(t *testing.T) {
 	})
 
 	t.Run("Share note returns same token on repeat", func(t *testing.T) {
-		url := fmt.Sprintf("/v1/note/share?id=%d", note.ID)
+		url := fmt.Sprintf("/v1/note/share?noteId=%d", note.ID)
 		resp1 := tc.MakeRequest(http.MethodPost, url, nil)
 		resp2 := tc.MakeRequest(http.MethodPost, url, nil)
 
@@ -160,7 +160,7 @@ func TestShareNote(t *testing.T) {
 	})
 
 	t.Run("Unshare note removes token", func(t *testing.T) {
-		url := fmt.Sprintf("/v1/note/share?id=%d", note.ID)
+		url := fmt.Sprintf("/v1/note/share?noteId=%d", note.ID)
 		tc.MakeRequest(http.MethodDelete, url, nil)
 
 		// Verify note is no longer shared
@@ -169,7 +169,7 @@ func TestShareNote(t *testing.T) {
 	})
 
 	t.Run("Share nonexistent note returns error", func(t *testing.T) {
-		url := "/v1/note/share?id=99999"
+		url := "/v1/note/share?noteId=99999"
 		resp := tc.MakeRequest(http.MethodPost, url, nil)
 		assert.Equal(t, http.StatusNotFound, resp.Code)
 	})

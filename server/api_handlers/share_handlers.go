@@ -19,7 +19,7 @@ func GetShareNoteHandler(ctx interfaces.NoteSharer) func(writer http.ResponseWri
 		// Enable request-aware logging if the context supports it
 		effectiveCtx := withRequestContext(ctx, request).(interfaces.NoteSharer)
 
-		noteId := http_utils.GetUIntQueryParameter(request, "id", 0)
+		noteId := http_utils.GetUIntQueryParameter(request, "noteId", 0)
 		if noteId == 0 {
 			http_utils.HandleError(
 				&json.InvalidUnmarshalError{},
@@ -54,7 +54,7 @@ func GetUnshareNoteHandler(ctx interfaces.NoteSharer) func(writer http.ResponseW
 		// Enable request-aware logging if the context supports it
 		effectiveCtx := withRequestContext(ctx, request).(interfaces.NoteSharer)
 
-		noteId := http_utils.GetUIntQueryParameter(request, "id", 0)
+		noteId := http_utils.GetUIntQueryParameter(request, "noteId", 0)
 		if noteId == 0 {
 			http_utils.HandleError(
 				&json.InvalidUnmarshalError{},

@@ -34,6 +34,7 @@ export interface Note extends Entity {
   EndDate?: string;
   OwnerId?: number;
   NoteTypeId?: number;
+  ShareToken?: string;
 }
 
 export interface Query extends Entity {
@@ -582,5 +583,22 @@ export class ApiClient {
       data: JSON.stringify({ noteId, positions }),
     });
     await this.handleVoidResponse(response);
+  }
+
+  // Note sharing operations
+  async shareNote(noteId: number): Promise<{ token: string }> {
+    const response = await this.request.post(`${this.baseUrl}/v1/note/share?noteId=${noteId}`);
+    const data = await this.handleResponse<{ shareToken: string; shareUrl: string }>(response);
+    return { token: data.shareToken };
+  }
+
+  async unshareNote(noteId: number): Promise<void> {
+    const response = await this.request.delete(`${this.baseUrl}/v1/note/share?noteId=${noteId}`);
+    await this.handleVoidResponse(response);
+  }
+
+  async getSharedNotes(): Promise<Note[]> {
+    const response = await this.request.get(`${this.baseUrl}/v1/notes?Shared=1`);
+    return this.handleResponse<Note[]>(response);
   }
 }

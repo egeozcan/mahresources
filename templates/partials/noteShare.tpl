@@ -3,7 +3,7 @@
 <div class="mt-4 pt-4 border-t border-gray-200">
     {% include "/partials/sideTitle.tpl" with title="Sharing" %}
     <div x-data="{
-        shared: {{ note.ShareToken != nil|yesno:'true,false' }},
+        shared: {% if note.ShareToken %}true{% else %}false{% endif %},
         shareToken: '{{ note.ShareToken|default:'' }}',
         loading: false,
         error: null,
