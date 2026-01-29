@@ -164,8 +164,10 @@
                         <div x-data="blockGallery(block, (id, content) => updateBlockContent(id, content), () => editMode)">
                             <template x-if="!editMode && resourceIds.length > 0">
                                 <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-                                    <template x-for="resId in resourceIds" :key="resId">
-                                        <a :href="'/resource?id=' + resId" class="block aspect-square bg-gray-100 rounded overflow-hidden">
+                                    <template x-for="(resId, idx) in resourceIds" :key="resId">
+                                        <a :href="'/v1/resource/view?id=' + resId"
+                                           @click.prevent="openGalleryLightbox(idx)"
+                                           class="block aspect-square bg-gray-100 rounded overflow-hidden cursor-pointer hover:opacity-90 transition-opacity">
                                             <img :src="'/v1/resource/preview?id=' + resId" class="w-full h-full object-cover" loading="lazy">
                                         </a>
                                     </template>
