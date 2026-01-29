@@ -91,6 +91,10 @@ export function registerLightboxStore(Alpine) {
     imageRect: null,
     containerRect: null,
 
+    // Track when to disable CSS transitions for smooth real-time interaction
+    animationsDisabled: false,
+    animationTimeout: null,
+
     init() {
       // Guard against multiple initializations (prevents memory leak)
       if (this.liveRegion) return;
@@ -752,6 +756,7 @@ export function registerLightboxStore(Alpine) {
 
         if (this.pinchStartDistance !== null) {
           // Pinch zoom
+          this.disableAnimations(); // Disable transitions for smooth zoom
           const currentDistance = this.getPinchDistance(event.touches);
           const scale = currentDistance / this.pinchStartDistance;
           this.setZoomLevel(this.pinchStartZoom * scale);
@@ -763,6 +768,7 @@ export function registerLightboxStore(Alpine) {
 
         // Two-finger pan when zoomed
         if (this.isZoomed() && this.twoFingerPanStartX !== null) {
+          this.disableAnimations();
           const dx = center.x - this.twoFingerPanStartX;
           const dy = center.y - this.twoFingerPanStartY;
           this.panX = this.twoFingerPanStartPanX + dx / this.zoomLevel;
@@ -773,6 +779,7 @@ export function registerLightboxStore(Alpine) {
         // Single finger pan when zoomed
         if (this.touchStartX !== null) {
           event.preventDefault();
+          this.disableAnimations();
           const dx = event.touches[0].clientX - this.touchStartX;
           const dy = event.touches[0].clientY - this.touchStartY;
           this.panX = (this.dragStartPanX || 0) + dx / this.zoomLevel;
@@ -863,6 +870,7 @@ export function registerLightboxStore(Alpine) {
       // Trackpad pinch zoom (ctrlKey is set by browser for pinch gestures)
       if (event.ctrlKey) {
         event.preventDefault();
+        this.disableAnimations(); // Disable transitions for smooth zoom
 
         // Negate deltaY so pinch-out zooms in and pinch-in zooms out
         const zoomDelta = -event.deltaY * 0.01;
@@ -898,6 +906,7 @@ export function registerLightboxStore(Alpine) {
       } else {
         // Pan when zoomed (using trackpad scroll)
         event.preventDefault();
+        this.disableAnimations();
         this.panX -= event.deltaX / this.zoomLevel;
         this.panY -= event.deltaY / this.zoomLevel;
         this.constrainPan();
@@ -957,6 +966,25 @@ export function registerLightboxStore(Alpine) {
       // Constrain pan
       this.panX = Math.max(-maxPanX, Math.min(maxPanX, this.panX));
       this.panY = Math.max(-maxPanY, Math.min(maxPanY, this.panY));
+    },
+
+    /**
+     * Temporarily disable CSS transitions for smooth real-time interaction
+     * Auto-restores after a brief delay when interaction stops
+     */
+    disableAnimations() {
+      this.animationsDisabled = true;
+
+      // Clear any existing timeout
+      if (this.animationTimeout) {
+        clearTimeout(this.animationTimeout);
+      }
+
+      // Re-enable animations after interaction stops
+      this.animationTimeout = setTimeout(() => {
+        this.animationsDisabled = false;
+        this.animationTimeout = null;
+      }, 100);
     },
 
     // ==================== Edit Panel Methods ====================
@@ -1405,6 +1433,7 @@ export function registerLightboxStore(Alpine) {
 
       if (this.isZoomed()) {
         // Pan when zoomed
+        this.disableAnimations();
         const dx = event.clientX - this.dragStartX;
         const dy = event.clientY - this.dragStartY;
         this.panX = this.dragStartPanX + dx / this.zoomLevel;
