@@ -429,3 +429,59 @@ func TestBlockContext_SyncDescriptionSkipsNonTextBlocks(t *testing.T) {
 	ctx.db.First(&updatedNote, note.ID)
 	assert.Equal(t, "First text block", updatedNote.Description)
 }
+
+func TestBlockContext_RebalanceBlockPositions(t *testing.T) {
+	ctx := createBlockTestContext(t)
+
+	note, _ := createTestNote(ctx, "Test")
+
+	// Create blocks with long position strings (simulating many insertions)
+	ctx.CreateBlock(&query_models.NoteBlockEditor{
+		NoteID: note.ID, Type: "text", Position: "aaaa",
+		Content: json.RawMessage(`{"text": "First"}`),
+	})
+	ctx.CreateBlock(&query_models.NoteBlockEditor{
+		NoteID: note.ID, Type: "text", Position: "aaab",
+		Content: json.RawMessage(`{"text": "Second"}`),
+	})
+	ctx.CreateBlock(&query_models.NoteBlockEditor{
+		NoteID: note.ID, Type: "text", Position: "zzzz",
+		Content: json.RawMessage(`{"text": "Third"}`),
+	})
+
+	// Rebalance positions
+	err := ctx.RebalanceBlockPositions(note.ID)
+	assert.NoError(t, err)
+
+	// Fetch blocks and verify
+	blocks, _ := ctx.GetBlocksForNote(note.ID)
+	assert.Len(t, *blocks, 3)
+
+	// Positions should now be single characters and evenly distributed
+	for _, block := range *blocks {
+		assert.Len(t, block.Position, 1, "position should be single character after rebalancing")
+	}
+
+	// Order should be preserved
+	assert.Equal(t, "First", extractText((*blocks)[0].Content))
+	assert.Equal(t, "Second", extractText((*blocks)[1].Content))
+	assert.Equal(t, "Third", extractText((*blocks)[2].Content))
+}
+
+func TestBlockContext_RebalanceBlockPositions_Empty(t *testing.T) {
+	ctx := createBlockTestContext(t)
+
+	note, _ := createTestNote(ctx, "Test")
+
+	// Rebalancing empty note should succeed (no-op)
+	err := ctx.RebalanceBlockPositions(note.ID)
+	assert.NoError(t, err)
+}
+
+func extractText(content []byte) string {
+	var c struct {
+		Text string `json:"text"`
+	}
+	json.Unmarshal(content, &c)
+	return c.Text
+}

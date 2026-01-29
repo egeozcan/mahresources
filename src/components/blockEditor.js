@@ -24,11 +24,53 @@ export function blockEditor(noteId, initialBlocks = []) {
     loading: false,
     error: null,
     _pendingUpdates: {}, // Track pending updates for optimistic UI
+    _blockTypesLoaded: false,
 
     async init() {
+      // Load block types from API if not already loaded
+      if (!this._blockTypesLoaded) {
+        await this.loadBlockTypes();
+      }
       if (this.blocks.length === 0 && this.noteId) {
         await this.loadBlocks();
       }
+    },
+
+    async loadBlockTypes() {
+      try {
+        const res = await fetch('/v1/note/block/types');
+        if (res.ok) {
+          const types = await res.json();
+          // Update blockTypes with data from server
+          this.blockTypes = types.map(bt => ({
+            type: bt.type,
+            label: this._formatLabel(bt.type),
+            icon: this._getIconForType(bt.type),
+            defaultContent: bt.defaultContent
+          }));
+          this._blockTypesLoaded = true;
+        }
+      } catch (err) {
+        console.warn('Failed to load block types from API, using defaults:', err);
+      }
+    },
+
+    _formatLabel(type) {
+      // Capitalize first letter
+      return type.charAt(0).toUpperCase() + type.slice(1);
+    },
+
+    _getIconForType(type) {
+      const icons = {
+        text: '📝',
+        heading: '🔤',
+        divider: '──',
+        gallery: '🖼️',
+        references: '📁',
+        todos: '☑️',
+        table: '📊'
+      };
+      return icons[type] || '📦';
     },
 
     async loadBlocks() {
@@ -281,7 +323,13 @@ export function blockEditor(noteId, initialBlocks = []) {
     },
 
     getDefaultContent(type) {
-      const defaults = {
+      // First check if we have server-provided defaults
+      const blockType = this.blockTypes.find(bt => bt.type === type);
+      if (blockType && blockType.defaultContent) {
+        return blockType.defaultContent;
+      }
+      // Fallback to hardcoded defaults if API hasn't loaded yet
+      const fallbackDefaults = {
         text: { text: '' },
         heading: { text: '', level: 2 },
         divider: {},
@@ -290,9 +338,10 @@ export function blockEditor(noteId, initialBlocks = []) {
         todos: { items: [] },
         table: { columns: [], rows: [] }
       };
-      return defaults[type] || {};
+      return fallbackDefaults[type] || {};
     },
 
+    // Default block types (will be replaced by API response)
     blockTypes: [
       { type: 'text', label: 'Text', icon: '📝' },
       { type: 'heading', label: 'Heading', icon: '🔤' },

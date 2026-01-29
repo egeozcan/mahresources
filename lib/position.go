@@ -88,3 +88,39 @@ func midpoint(a, b byte) byte {
 func FirstPosition() string {
 	return "n"
 }
+
+// GenerateEvenPositions returns n evenly distributed position strings.
+// For n items, it divides the alphabet space evenly to maximize room for insertions.
+// For example, with 5 items: ["d", "h", "l", "p", "t"]
+func GenerateEvenPositions(n int) []string {
+	if n <= 0 {
+		return []string{}
+	}
+	if n == 1 {
+		return []string{"n"} // middle of alphabet
+	}
+
+	positions := make([]string, n)
+	// Use the range from 'a' to 'z' (26 characters)
+	// Divide into n+1 segments to get n evenly spaced positions
+	step := float64(maxChar-minChar) / float64(n+1)
+
+	for i := 0; i < n; i++ {
+		charCode := minChar + byte(step*float64(i+1))
+		positions[i] = string(charCode)
+	}
+
+	return positions
+}
+
+// NeedsRebalancing checks if any position string exceeds the threshold length.
+// Position strings grow when many insertions happen at the same point.
+// A threshold of 4-5 characters is reasonable (allows ~26^4 = 456,976 distinct positions).
+func NeedsRebalancing(positions []string, threshold int) bool {
+	for _, pos := range positions {
+		if len(pos) > threshold {
+			return true
+		}
+	}
+	return false
+}

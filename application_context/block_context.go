@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"gorm.io/gorm"
+	"mahresources/lib"
 	"mahresources/models"
 	"mahresources/models/block_types"
 	"mahresources/models/query_models"
@@ -35,13 +36,24 @@ func (ctx *MahresourcesContext) CreateBlock(editor *query_models.NoteBlockEditor
 		State:    types.JSON(bt.DefaultState()),
 	}
 
-	if err := ctx.db.Create(&block).Error; err != nil {
-		return nil, err
-	}
+	// Use transaction to ensure atomicity of block creation and description sync
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&block).Error; err != nil {
+			return err
+		}
 
-	// Sync first text block to note description
-	if editor.Type == "text" {
-		ctx.syncFirstTextBlockToDescription(editor.NoteID)
+		// Sync first text block to note description within the same transaction
+		if editor.Type == "text" {
+			if err := syncFirstTextBlockToDescriptionTx(tx, editor.NoteID); err != nil {
+				log.Printf("Warning: failed to sync description for note %d: %v", editor.NoteID, err)
+				// Don't fail the transaction for sync errors
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
 	}
 
 	return &block, nil
@@ -77,13 +89,24 @@ func (ctx *MahresourcesContext) UpdateBlockContent(blockID uint, content json.Ra
 	}
 
 	block.Content = types.JSON(content)
-	if err := ctx.db.Save(&block).Error; err != nil {
-		return nil, err
-	}
 
-	// Sync first text block to note description
-	if block.Type == "text" {
-		ctx.syncFirstTextBlockToDescription(block.NoteID)
+	// Use transaction to ensure atomicity of content update and description sync
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(&block).Error; err != nil {
+			return err
+		}
+
+		// Sync first text block to note description within the same transaction
+		if block.Type == "text" {
+			if err := syncFirstTextBlockToDescriptionTx(tx, block.NoteID); err != nil {
+				log.Printf("Warning: failed to sync description for note %d: %v", block.NoteID, err)
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
 	}
 
 	return &block, nil
@@ -119,16 +142,20 @@ func (ctx *MahresourcesContext) DeleteBlock(blockID uint) error {
 	noteID := block.NoteID
 	isText := block.Type == "text"
 
-	if err := ctx.db.Delete(&block).Error; err != nil {
-		return err
-	}
+	// Use transaction to ensure atomicity of deletion and description sync
+	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&block).Error; err != nil {
+			return err
+		}
 
-	// Sync first text block to note description
-	if isText {
-		ctx.syncFirstTextBlockToDescription(noteID)
-	}
-
-	return nil
+		// Sync first text block to note description within the same transaction
+		if isText {
+			if err := syncFirstTextBlockToDescriptionTx(tx, noteID); err != nil {
+				log.Printf("Warning: failed to sync description for note %d: %v", noteID, err)
+			}
+		}
+		return nil
+	})
 }
 
 // ReorderBlocks updates positions for multiple blocks in a single transaction
@@ -163,28 +190,52 @@ func (ctx *MahresourcesContext) ReorderBlocks(noteID uint, positions map[uint]st
 	})
 }
 
-// syncFirstTextBlockToDescription syncs the first text block's content to the note's Description
-func (ctx *MahresourcesContext) syncFirstTextBlockToDescription(noteID uint) {
+// syncFirstTextBlockToDescriptionTx syncs the first text block's content to the note's Description
+// within an existing transaction. This ensures atomicity between block operations and description sync.
+func syncFirstTextBlockToDescriptionTx(tx *gorm.DB, noteID uint) error {
 	var blocks []models.NoteBlock
-	if err := ctx.db.Where("note_id = ? AND type = ?", noteID, "text").
+	if err := tx.Where("note_id = ? AND type = ?", noteID, "text").
 		Order("position ASC").Limit(1).Find(&blocks).Error; err != nil {
-		log.Printf("Warning: failed to query text blocks for note %d: %v", noteID, err)
-		return
+		return err
 	}
 
 	if len(blocks) == 0 {
-		return
+		return nil
 	}
 
 	var content struct {
 		Text string `json:"text"`
 	}
 	if err := json.Unmarshal(blocks[0].Content, &content); err != nil {
-		log.Printf("Warning: failed to unmarshal text block content for note %d: %v", noteID, err)
-		return
+		return err
 	}
 
-	if err := ctx.db.Model(&models.Note{}).Where("id = ?", noteID).Update("description", content.Text).Error; err != nil {
-		log.Printf("Warning: failed to sync description for note %d: %v", noteID, err)
+	return tx.Model(&models.Note{}).Where("id = ?", noteID).Update("description", content.Text).Error
+}
+
+// RebalanceBlockPositions normalizes block positions for a note to prevent position string growth.
+// This reassigns positions using evenly distributed values (e.g., "d", "h", "l", "p", "t").
+// Call this periodically or when positions become too long.
+func (ctx *MahresourcesContext) RebalanceBlockPositions(noteID uint) error {
+	var blocks []models.NoteBlock
+	if err := ctx.db.Where("note_id = ?", noteID).Order("position ASC").Find(&blocks).Error; err != nil {
+		return err
 	}
+
+	if len(blocks) == 0 {
+		return nil
+	}
+
+	// Generate evenly distributed positions
+	newPositions := lib.GenerateEvenPositions(len(blocks))
+
+	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		for i, block := range blocks {
+			if err := tx.Model(&models.NoteBlock{}).Where("id = ?", block.ID).
+				Update("position", newPositions[i]).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

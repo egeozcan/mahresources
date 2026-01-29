@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"mahresources/constants"
+	"mahresources/models/block_types"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
 	"mahresources/server/interfaces"
@@ -154,6 +155,51 @@ func ReorderBlocksHandler(ctx interfaces.BlockWriter) func(http.ResponseWriter, 
 		}
 
 		if err := ctx.ReorderBlocks(body.NoteID, body.Positions); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		writer.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// BlockTypeInfo represents the API response for a block type
+type BlockTypeInfo struct {
+	Type           string          `json:"type"`
+	DefaultContent json.RawMessage `json:"defaultContent"`
+	DefaultState   json.RawMessage `json:"defaultState"`
+}
+
+// GetBlockTypesHandler returns all registered block types with their defaults.
+// This allows the frontend to dynamically discover available block types
+// instead of hardcoding them.
+func GetBlockTypesHandler() func(http.ResponseWriter, *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		allTypes := block_types.GetAllBlockTypes()
+		result := make([]BlockTypeInfo, 0, len(allTypes))
+
+		for _, bt := range allTypes {
+			result = append(result, BlockTypeInfo{
+				Type:           bt.Type(),
+				DefaultContent: bt.DefaultContent(),
+				DefaultState:   bt.DefaultState(),
+			})
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(result)
+	}
+}
+
+func RebalanceBlocksHandler(ctx interfaces.BlockRebalancer) func(http.ResponseWriter, *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		noteID := uint(http_utils.GetIntQueryParameter(request, "noteId", 0))
+		if noteID == 0 {
+			http_utils.HandleError(errors.New("noteId is required"), writer, request, http.StatusBadRequest)
+			return
+		}
+
+		if err := ctx.RebalanceBlockPositions(noteID); err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}

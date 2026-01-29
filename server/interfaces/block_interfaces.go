@@ -24,3 +24,7 @@ type BlockStateWriter interface {
 type BlockDeleter interface {
 	DeleteBlock(blockID uint) error
 }
+
+type BlockRebalancer interface {
+	RebalanceBlockPositions(noteID uint) error
+}
