@@ -22,6 +22,7 @@
         {% include "/partials/form/dateInput.tpl" with name='StartDateAfter' label='Start Date After' value=queryValues.StartDateAfter.0 %}
         {% include "/partials/form/dateInput.tpl" with name='EndDateBefore' label='End Date Before' value=queryValues.EndDateBefore.0 %}
         {% include "/partials/form/dateInput.tpl" with name='EndDateAfter' label='End Date After' value=queryValues.EndDateAfter.0 %}
+        {% include "/partials/form/checkboxInput.tpl" with name='Shared' label='Shared Only' value=queryValues.Shared.0 id=getNextId("Shared") %}
         {% include "/partials/form/searchButton.tpl" %}
     </form>
 {% endblock %}
