@@ -7,6 +7,7 @@ import (
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"mahresources/lib"
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
@@ -181,6 +182,62 @@ func (ctx *MahresourcesContext) DeleteNote(noteId uint) error {
 		ctx.InvalidateSearchCacheByType(EntityTypeNote)
 	}
 	return err
+}
+
+func (ctx *MahresourcesContext) ShareNote(noteId uint) (string, error) {
+	var note models.Note
+	if err := ctx.db.First(&note, noteId).Error; err != nil {
+		return "", err
+	}
+
+	// If already shared, return existing token
+	if note.ShareToken != nil {
+		return *note.ShareToken, nil
+	}
+
+	token := lib.GenerateShareToken()
+	if err := ctx.db.Model(&note).Update("share_token", token).Error; err != nil {
+		return "", err
+	}
+
+	ctx.Logger().Info(models.LogActionUpdate, "note", &noteId, note.Name, "Created share token", nil)
+	return token, nil
+}
+
+func (ctx *MahresourcesContext) UnshareNote(noteId uint) error {
+	var note models.Note
+	if err := ctx.db.First(&note, noteId).Error; err != nil {
+		return err
+	}
+
+	if err := ctx.db.Model(&note).Update("share_token", nil).Error; err != nil {
+		return err
+	}
+
+	ctx.Logger().Info(models.LogActionUpdate, "note", &noteId, note.Name, "Removed share token", nil)
+	return nil
+}
+
+func (ctx *MahresourcesContext) GetNoteByShareToken(token string) (*models.Note, error) {
+	if token == "" {
+		return nil, errors.New("share token required")
+	}
+
+	var note models.Note
+	err := ctx.db.
+		Preload("Blocks", func(db *gorm.DB) *gorm.DB {
+			return db.Order("position ASC")
+		}).
+		Preload("Resources").
+		Preload("NoteType").
+		Where("share_token = ?", token).
+		First(&note).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &note, nil
 }
 
 func (ctx *MahresourcesContext) NoteMetaKeys() (*[]interfaces.MetaKey, error) {
