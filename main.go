@@ -284,5 +284,15 @@ func main() {
 	context.SetHashQueue(hw.GetQueue())
 	defer hw.Stop()
 
+	// Start share server if configured
+	if cfg.SharePort != "" {
+		shareServer := server.NewShareServer(context)
+		if err := shareServer.Start(cfg.ShareBindAddress, cfg.SharePort); err != nil {
+			log.Fatalf("Failed to start share server: %v", err)
+		}
+		defer shareServer.Stop()
+		log.Printf("Share server available at http://%s:%s", cfg.ShareBindAddress, cfg.SharePort)
+	}
+
 	log.Fatal(server.CreateServer(context, mainFs, context.Config.AltFileSystems).ListenAndServe())
 }
