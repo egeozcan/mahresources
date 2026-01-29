@@ -508,6 +508,9 @@ components:
                     items:
                         $ref: '#/components/schemas/NoteBlockPartial'
                     type: array
+                shareToken:
+                    nullable: true
+                    type: string
             type: object
         NoteBlockPartial:
             properties:
