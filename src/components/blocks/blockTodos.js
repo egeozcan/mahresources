@@ -6,7 +6,6 @@ export function blockTodos(block, saveContentFn, saveStateFn, getEditMode) {
     saveContentFn,
     saveStateFn,
     getEditMode,
-    newItemText: '',
     items: [...(block?.content?.items || [])],
     checked: [...(block?.state?.checked || [])],
 
@@ -32,11 +31,9 @@ export function blockTodos(block, saveContentFn, saveStateFn, getEditMode) {
     },
 
     addItem() {
-      if (!this.newItemText.trim()) return;
-      const newItem = { id: crypto.randomUUID(), label: this.newItemText.trim() };
+      const newItem = { id: crypto.randomUUID(), label: 'New item' };
       this.items = [...this.items, newItem];
       this.saveContentFn(this.block.id, { items: this.items });
-      this.newItemText = '';
     },
 
     removeItem(idx) {
