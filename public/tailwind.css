@@ -66,6 +66,7 @@
     --container-md: 28rem;
     --container-lg: 32rem;
     --container-2xl: 42rem;
+    --container-3xl: 48rem;
     --container-7xl: 80rem;
     --text-xs: 0.75rem;
     --text-xs--line-height: calc(1 / 0.75);
@@ -297,6 +298,9 @@
   .top-0 {
     top: calc(var(--spacing) * 0);
   }
+  .top-1 {
+    top: calc(var(--spacing) * 1);
+  }
   .top-1\/2 {
     top: calc(1/2 * 100%);
   }
@@ -311,6 +315,9 @@
   }
   .right-0 {
     right: calc(var(--spacing) * 0);
+  }
+  .right-1 {
+    right: calc(var(--spacing) * 1);
   }
   .right-2 {
     right: calc(var(--spacing) * 2);
@@ -838,6 +845,9 @@
   .mr-3 {
     margin-right: calc(var(--spacing) * 3);
   }
+  .-mb-px {
+    margin-bottom: -1px;
+  }
   .mb-1 {
     margin-bottom: calc(var(--spacing) * 1);
   }
@@ -958,6 +968,9 @@
   .max-h-32 {
     max-height: calc(var(--spacing) * 32);
   }
+  .max-h-40 {
+    max-height: calc(var(--spacing) * 40);
+  }
   .max-h-48 {
     max-height: calc(var(--spacing) * 48);
   }
@@ -970,6 +983,9 @@
   .max-h-\[60vh\] {
     max-height: 60vh;
   }
+  .max-h-\[80vh\] {
+    max-height: 80vh;
+  }
   .max-h-\[90vh\] {
     max-height: 90vh;
   }
@@ -978,6 +994,9 @@
   }
   .min-h-\[100px\] {
     min-height: 100px;
+  }
+  .min-h-full {
+    min-height: 100%;
   }
   .min-h-screen {
     min-height: 100vh;
@@ -1042,6 +1061,9 @@
   .max-w-2xl {
     max-width: var(--container-2xl);
   }
+  .max-w-3xl {
+    max-width: var(--container-3xl);
+  }
   .max-w-7xl {
     max-width: var(--container-7xl);
   }
@@ -1050,6 +1072,9 @@
   }
   .max-w-\[90vw\] {
     max-width: 90vw;
+  }
+  .max-w-\[100px\] {
+    max-width: 100px;
   }
   .max-w-\[150px\] {
     max-width: 150px;
@@ -1156,6 +1181,9 @@
   }
   .grid-cols-3 {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .grid-cols-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
   .flex-col {
     flex-direction: column;
@@ -1585,6 +1613,21 @@
   .bg-yellow-500 {
     background-color: var(--color-yellow-500);
   }
+  .bg-gradient-to-t {
+    --tw-gradient-position: to top in oklab;
+    background-image: linear-gradient(var(--tw-gradient-stops));
+  }
+  .from-black\/60 {
+    --tw-gradient-from: color-mix(in srgb, #000 60%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      --tw-gradient-from: color-mix(in oklab, var(--color-black) 60%, transparent);
+    }
+    --tw-gradient-stops: var(--tw-gradient-via-stops, var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position));
+  }
+  .to-transparent {
+    --tw-gradient-to: transparent;
+    --tw-gradient-stops: var(--tw-gradient-via-stops, var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position));
+  }
   .object-contain {
     object-fit: contain;
   }
@@ -1990,6 +2033,9 @@
   .ring-blue-200 {
     --tw-ring-color: var(--color-blue-200);
   }
+  .ring-blue-500 {
+    --tw-ring-color: var(--color-blue-500);
+  }
   .ring-indigo-500 {
     --tw-ring-color: var(--color-indigo-500);
   }
@@ -2083,6 +2129,13 @@
     -webkit-user-select: none;
     user-select: none;
   }
+  .group-hover\:opacity-100 {
+    &:is(:where(.group):hover *) {
+      @media (hover: hover) {
+        opacity: 100%;
+      }
+    }
+  }
   .hover\:border-blue-400 {
     &:hover {
       @media (hover: hover) {
@@ -2101,6 +2154,13 @@
     &:hover {
       @media (hover: hover) {
         background-color: var(--color-blue-200);
+      }
+    }
+  }
+  .hover\:bg-blue-700 {
+    &:hover {
+      @media (hover: hover) {
+        background-color: var(--color-blue-700);
       }
     }
   }
@@ -2246,6 +2306,13 @@
       }
     }
   }
+  .hover\:text-green-600 {
+    &:hover {
+      @media (hover: hover) {
+        color: var(--color-green-600);
+      }
+    }
+  }
   .hover\:text-green-800 {
     &:hover {
       @media (hover: hover) {
@@ -2323,6 +2390,26 @@
       }
     }
   }
+  .hover\:ring-2 {
+    &:hover {
+      @media (hover: hover) {
+        --tw-ring-shadow: var(--tw-ring-inset,) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color, currentcolor);
+        box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+      }
+    }
+  }
+  .hover\:ring-gray-300 {
+    &:hover {
+      @media (hover: hover) {
+        --tw-ring-color: var(--color-gray-300);
+      }
+    }
+  }
+  .focus\:border-blue-500 {
+    &:focus {
+      border-color: var(--color-blue-500);
+    }
+  }
   .focus\:border-green-500 {
     &:focus {
       border-color: var(--color-green-500);
@@ -2369,6 +2456,11 @@
     &:focus {
       --tw-ring-shadow: var(--tw-ring-inset,) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color, currentcolor);
       box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+    }
+  }
+  .focus\:ring-blue-500 {
+    &:focus {
+      --tw-ring-color: var(--color-blue-500);
     }
   }
   .focus\:ring-gray-500 {
@@ -2485,6 +2577,11 @@
   .sm\:grid-cols-3 {
     @media (width >= 40rem) {
       grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+  .sm\:grid-cols-4 {
+    @media (width >= 40rem) {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
     }
   }
   .sm\:grid-cols-6 {
@@ -2650,6 +2747,16 @@
   .md\:grid-cols-3 {
     @media (width >= 48rem) {
       grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+  .md\:grid-cols-5 {
+    @media (width >= 48rem) {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+  }
+  .md\:grid-cols-6 {
+    @media (width >= 48rem) {
+      grid-template-columns: repeat(6, minmax(0, 1fr));
     }
   }
   .md\:flex-wrap {
@@ -3151,6 +3258,48 @@
   inherits: false;
   initial-value: solid;
 }
+@property --tw-gradient-position {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-gradient-from {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #0000;
+}
+@property --tw-gradient-via {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #0000;
+}
+@property --tw-gradient-to {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #0000;
+}
+@property --tw-gradient-stops {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-gradient-via-stops {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-gradient-from-position {
+  syntax: "<length-percentage>";
+  inherits: false;
+  initial-value: 0%;
+}
+@property --tw-gradient-via-position {
+  syntax: "<length-percentage>";
+  inherits: false;
+  initial-value: 50%;
+}
+@property --tw-gradient-to-position {
+  syntax: "<length-percentage>";
+  inherits: false;
+  initial-value: 100%;
+}
 @property --tw-leading {
   syntax: "*";
   inherits: false;
@@ -3355,6 +3504,15 @@
       --tw-space-x-reverse: 0;
       --tw-divide-y-reverse: 0;
       --tw-border-style: solid;
+      --tw-gradient-position: initial;
+      --tw-gradient-from: #0000;
+      --tw-gradient-via: #0000;
+      --tw-gradient-to: #0000;
+      --tw-gradient-stops: initial;
+      --tw-gradient-via-stops: initial;
+      --tw-gradient-from-position: 0%;
+      --tw-gradient-via-position: 50%;
+      --tw-gradient-to-position: 100%;
       --tw-leading: initial;
       --tw-font-weight: initial;
       --tw-tracking: initial;

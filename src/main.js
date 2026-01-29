@@ -29,6 +29,7 @@ import { registerSavedSettingStore } from './components/storeConfig.js';
 import { globalSearch } from './components/globalSearch.js';
 import { schemaForm } from './components/schemaForm.js';
 import { registerLightboxStore } from './components/lightbox.js';
+import { registerResourcePickerStore } from './components/blocks/resourcePicker.js';
 import { multiSort } from './components/multiSort.js';
 import { downloadCockpit } from './components/downloadCockpit.js';
 import { compareView } from './components/compareView.js';
@@ -65,6 +66,7 @@ Alpine.plugin(focus);
 registerBulkSelectionStore(Alpine);
 registerSavedSettingStore(Alpine);
 registerLightboxStore(Alpine);
+registerResourcePickerStore(Alpine);
 
 // Register Alpine data components
 Alpine.data('autocompleter', autocompleter);
