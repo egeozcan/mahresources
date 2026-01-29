@@ -115,11 +115,11 @@ func TestNoteEndpoints(t *testing.T) {
 		}
 		resp := tc.MakeRequest(http.MethodPost, "/v1/note/noteType", ntPayload)
 		assert.Equal(t, http.StatusOK, resp.Code)
-		
+
 		var nt models.NoteType
 		json.Unmarshal(resp.Body.Bytes(), &nt)
 		assert.NotZero(t, nt.ID)
-		
+
 		// List
 		respList := tc.MakeRequest(http.MethodGet, "/v1/note/noteTypes", nil)
 		assert.Equal(t, http.StatusOK, respList.Code)
@@ -127,8 +127,50 @@ func TestNoteEndpoints(t *testing.T) {
 		// Delete
 		delUrl := fmt.Sprintf("/v1/note/noteType/delete?Id=%d", nt.ID)
 		tc.MakeRequest(http.MethodPost, delUrl, nil)
-		
+
 		var check models.NoteType
 		assert.Error(t, tc.DB.First(&check, nt.ID).Error)
+	})
+}
+
+func TestShareNote(t *testing.T) {
+	tc := SetupTestEnv(t)
+	note := tc.CreateDummyNote("Test Share Note")
+
+	t.Run("Share note creates token", func(t *testing.T) {
+		url := fmt.Sprintf("/v1/note/share?id=%d", note.ID)
+		resp := tc.MakeRequest(http.MethodPost, url, nil)
+		assert.Equal(t, http.StatusOK, resp.Code)
+
+		var result map[string]interface{}
+		json.Unmarshal(resp.Body.Bytes(), &result)
+		assert.NotEmpty(t, result["shareToken"])
+		assert.NotEmpty(t, result["shareUrl"])
+	})
+
+	t.Run("Share note returns same token on repeat", func(t *testing.T) {
+		url := fmt.Sprintf("/v1/note/share?id=%d", note.ID)
+		resp1 := tc.MakeRequest(http.MethodPost, url, nil)
+		resp2 := tc.MakeRequest(http.MethodPost, url, nil)
+
+		var result1, result2 map[string]interface{}
+		json.Unmarshal(resp1.Body.Bytes(), &result1)
+		json.Unmarshal(resp2.Body.Bytes(), &result2)
+		assert.Equal(t, result1["shareToken"], result2["shareToken"])
+	})
+
+	t.Run("Unshare note removes token", func(t *testing.T) {
+		url := fmt.Sprintf("/v1/note/share?id=%d", note.ID)
+		tc.MakeRequest(http.MethodDelete, url, nil)
+
+		// Verify note is no longer shared
+		updatedNote, _ := tc.AppCtx.GetNote(note.ID)
+		assert.Nil(t, updatedNote.ShareToken)
+	})
+
+	t.Run("Share nonexistent note returns error", func(t *testing.T) {
+		url := "/v1/note/share?id=99999"
+		resp := tc.MakeRequest(http.MethodPost, url, nil)
+		assert.Equal(t, http.StatusNotFound, resp.Code)
 	})
 }
