@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -106,6 +107,15 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 		if createTagsErr := tx.Model(&note).Association("Tags").Append(&tags); createTagsErr != nil {
 			tx.Rollback()
 			return nil, createTagsErr
+		}
+	}
+
+	// Sync description to first text block if blocks exist (backward compatibility)
+	if noteQuery.ID != 0 {
+		var blocks []models.NoteBlock
+		if err := tx.Where("note_id = ? AND type = ?", note.ID, "text").Order("position ASC").Limit(1).Find(&blocks).Error; err == nil && len(blocks) > 0 {
+			content, _ := json.Marshal(map[string]string{"text": noteQuery.Description})
+			tx.Model(&blocks[0]).Update("content", content)
 		}
 	}
 
