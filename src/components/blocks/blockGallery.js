@@ -1,10 +1,11 @@
 // src/components/blocks/blockGallery.js
 // editMode is passed as a getter function to maintain reactivity with parent scope
-export function blockGallery(block, saveContentFn, getEditMode) {
+export function blockGallery(block, saveContentFn, getEditMode, noteId) {
   return {
     block,
     saveContentFn,
     getEditMode,
+    noteId,
     resourceIds: [...(block?.content?.resourceIds || [])],
     resourceMeta: {}, // Cache for resource metadata (contentType, name, hash)
 
@@ -41,6 +42,17 @@ export function blockGallery(block, saveContentFn, getEditMode) {
       } catch (err) {
         console.warn('Failed to fetch resource metadata for gallery:', err);
       }
+    },
+
+    openPicker() {
+      const picker = Alpine.store('resourcePicker');
+      if (!picker) {
+        console.error('resourcePicker store not found');
+        return;
+      }
+      picker.open(this.noteId, this.resourceIds, (selectedIds) => {
+        this.addResources(selectedIds);
+      });
     },
 
     openGalleryLightbox(index) {
