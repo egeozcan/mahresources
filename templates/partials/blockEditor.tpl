@@ -570,18 +570,18 @@
                     </div>
                     {# Tag & Group filters #}
                     <div class="flex gap-3">
-                        {# Tag filter #}
+                        {# Tag filter (multi-select) #}
                         <div class="flex-1"
                              x-data="autocompleter({
                                  selectedResults: [],
                                  url: '/v1/tags',
-                                 max: 1,
+                                 max: 0,
                                  standalone: true,
-                                 onSelect: (tag) => $store.resourcePicker.setTagFilter(tag.ID),
-                                 onRemove: () => $store.resourcePicker.clearTagFilter()
+                                 onSelect: (tag) => $store.resourcePicker.addTagFilter(tag.ID),
+                                 onRemove: (tag) => $store.resourcePicker.removeTagFilter(tag.ID)
                              })"
                              @resource-picker-closed.window="selectedResults = []">
-                            <label class="block text-xs text-gray-500 mb-1">Tag</label>
+                            <label class="block text-xs text-gray-500 mb-1">Tags</label>
                             <div class="relative">
                                 <input x-ref="autocompleter"
                                        type="text"
