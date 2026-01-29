@@ -22,6 +22,7 @@ type Note struct {
 	EndDate     *time.Time
 	NoteType    *NoteType `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	NoteTypeId  *uint
+	ShareToken  *string      `gorm:"uniqueIndex;size:32" json:"shareToken,omitempty"`
 	Blocks      []*NoteBlock `gorm:"foreignKey:NoteID" json:"blocks,omitempty"`
 }
 

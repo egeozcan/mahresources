@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"net/http"
 
 	"gorm.io/gorm"
 	"mahresources/lib"
@@ -238,4 +239,17 @@ func (ctx *MahresourcesContext) RebalanceBlockPositions(noteID uint) error {
 		}
 		return nil
 	})
+}
+
+// UpdateBlockStateFromRequest decodes a block state update from an HTTP request body
+// and applies it using UpdateBlockState. This is used by the share server for
+// allowing anonymous visitors to update todo checkboxes on shared notes.
+func (ctx *MahresourcesContext) UpdateBlockStateFromRequest(blockId uint, r *http.Request) error {
+	var stateUpdate json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&stateUpdate); err != nil {
+		return err
+	}
+
+	_, err := ctx.UpdateBlockState(blockId, stateUpdate)
+	return err
 }

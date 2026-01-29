@@ -59,6 +59,15 @@ func parseIntEnv(envVar string, defaultVal int) int {
 	return i
 }
 
+// getEnvOrDefault returns the value of the environment variable or a default if not set
+func getEnvOrDefault(envVar string, defaultVal string) string {
+	val := os.Getenv(envVar)
+	if val == "" {
+		return defaultVal
+	}
+	return val
+}
+
 func main() {
 	// Load .env first so environment variables are available as defaults
 	// you may have no .env, it's okay
@@ -100,6 +109,10 @@ func main() {
 	remoteConnectTimeout := flag.Duration("remote-connect-timeout", parseDurationEnv("REMOTE_CONNECT_TIMEOUT", 30*time.Second), "Timeout for connecting to remote URLs (env: REMOTE_CONNECT_TIMEOUT)")
 	remoteIdleTimeout := flag.Duration("remote-idle-timeout", parseDurationEnv("REMOTE_IDLE_TIMEOUT", 60*time.Second), "Timeout for idle remote transfers (env: REMOTE_IDLE_TIMEOUT)")
 	remoteOverallTimeout := flag.Duration("remote-overall-timeout", parseDurationEnv("REMOTE_OVERALL_TIMEOUT", 30*time.Minute), "Maximum total time for remote downloads (env: REMOTE_OVERALL_TIMEOUT)")
+
+	// Share server options
+	sharePort := flag.String("share-port", os.Getenv("SHARE_PORT"), "Port for public share server (env: SHARE_PORT)")
+	shareBindAddress := flag.String("share-bind-address", getEnvOrDefault("SHARE_BIND_ADDRESS", "0.0.0.0"), "Bind address for share server (env: SHARE_BIND_ADDRESS)")
 
 	flag.Parse()
 
@@ -144,6 +157,8 @@ func main() {
 		DbReadOnlyDsn:                *dbReadOnlyDsn,
 		DbLogFile:                    *dbLogFile,
 		BindAddress:                  *bindAddress,
+		SharePort:                    *sharePort,
+		ShareBindAddress:             *shareBindAddress,
 		FfmpegPath:                   *ffmpegPath,
 		LibreOfficePath:              *libreOfficePath,
 		AltFileSystems:               altFileSystems,
@@ -268,6 +283,16 @@ func main() {
 	hw.Start()
 	context.SetHashQueue(hw.GetQueue())
 	defer hw.Stop()
+
+	// Start share server if configured
+	if cfg.SharePort != "" {
+		shareServer := server.NewShareServer(context)
+		if err := shareServer.Start(cfg.ShareBindAddress, cfg.SharePort); err != nil {
+			log.Fatalf("Failed to start share server: %v", err)
+		}
+		defer shareServer.Stop()
+		log.Printf("Share server available at http://%s:%s", cfg.ShareBindAddress, cfg.SharePort)
+	}
 
 	log.Fatal(server.CreateServer(context, mainFs, context.Config.AltFileSystems).ListenAndServe())
 }

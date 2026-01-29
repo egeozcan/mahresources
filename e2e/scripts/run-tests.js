@@ -151,6 +151,10 @@ async function main() {
     const port = await findAvailablePort(START_PORT, MAX_PORT);
     console.log(`Using port ${port}`);
 
+    // Find a second available port for share server
+    const sharePort = await findAvailablePort(port + 1, MAX_PORT + 100);
+    console.log(`Using share port ${sharePort}`);
+
     // Start server
     // Use max-db-connections=2 to reduce SQLite lock contention while avoiding deadlocks
     // (1 connection can deadlock when multiple concurrent requests need DB access)
@@ -158,7 +162,9 @@ async function main() {
     serverProcess = spawn(SERVER_BINARY, [
       '-ephemeral',
       `-bind-address=:${port}`,
-      '-max-db-connections=2'
+      '-max-db-connections=2',
+      `-share-port=${sharePort}`,
+      '-share-bind-address=127.0.0.1'
     ], {
       cwd: PROJECT_ROOT,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -213,7 +219,8 @@ async function main() {
       stdio: 'inherit',
       env: {
         ...process.env,
-        BASE_URL: `http://localhost:${port}`
+        BASE_URL: `http://localhost:${port}`,
+        SHARE_BASE_URL: `http://127.0.0.1:${sharePort}`
       }
     });
 

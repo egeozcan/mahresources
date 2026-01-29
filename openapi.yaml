@@ -508,6 +508,9 @@ components:
                     items:
                         $ref: '#/components/schemas/NoteBlockPartial'
                     type: array
+                shareToken:
+                    nullable: true
+                    type: string
             type: object
         NoteBlockPartial:
             properties:
@@ -556,6 +559,9 @@ components:
                     type: integer
                 OwnerId:
                     type: integer
+                Shared:
+                    nullable: true
+                    type: boolean
                 SortBy:
                     items:
                         type: string
@@ -2113,6 +2119,11 @@ paths:
                   name: NoteTypeId
                   schema:
                     type: integer
+                - in: query
+                  name: Shared
+                  schema:
+                    nullable: true
+                    type: boolean
                 - description: Page number for pagination
                   in: query
                   name: page

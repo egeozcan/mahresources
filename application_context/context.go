@@ -27,8 +27,10 @@ type MahresourcesConfig struct {
 	DbType         string
 	AltFileSystems map[string]string
 	FfmpegPath     string
-	LibreOfficePath string
-	BindAddress    string
+	LibreOfficePath  string
+	BindAddress      string
+	SharePort        string
+	ShareBindAddress string
 	// RemoteResourceConnectTimeout is the timeout for connecting to remote URLs (dial, TLS, response headers)
 	RemoteResourceConnectTimeout time.Duration
 	// RemoteResourceIdleTimeout is how long to wait before erroring if a remote server stops sending data
@@ -46,9 +48,11 @@ type MahresourcesInputConfig struct {
 	DbReadOnlyDsn  string
 	DbLogFile      string
 	BindAddress    string
-	FfmpegPath      string
-	LibreOfficePath string
-	AltFileSystems  map[string]string
+	FfmpegPath       string
+	LibreOfficePath  string
+	SharePort        string
+	ShareBindAddress string
+	AltFileSystems   map[string]string
 	// MemoryDB uses an in-memory SQLite database (ephemeral, no persistence)
 	MemoryDB bool
 	// MemoryFS uses an in-memory filesystem (ephemeral, no persistence)
@@ -423,6 +427,8 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		FfmpegPath:                   cfg.FfmpegPath,
 		LibreOfficePath:              cfg.LibreOfficePath,
 		BindAddress:                  cfg.BindAddress,
+		SharePort:                    cfg.SharePort,
+		ShareBindAddress:             cfg.ShareBindAddress,
 		RemoteResourceConnectTimeout: connectTimeout,
 		RemoteResourceIdleTimeout:    idleTimeout,
 		RemoteResourceOverallTimeout: overallTimeout,
