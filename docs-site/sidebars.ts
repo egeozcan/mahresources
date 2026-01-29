@@ -55,6 +55,7 @@ const sidebars: SidebarsConfig = {
         'features/image-similarity',
         'features/saved-queries',
         'features/custom-templates',
+        'features/note-sharing',
       ],
     },
     {
@@ -75,6 +76,7 @@ const sidebars: SidebarsConfig = {
         'deployment/docker',
         'deployment/systemd',
         'deployment/reverse-proxy',
+        'deployment/public-sharing',
         'deployment/backups',
       ],
     },

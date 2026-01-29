@@ -64,6 +64,8 @@ Command-line flags take precedence over environment variables. This allows you t
 | `-remote-connect-timeout` | `REMOTE_CONNECT_TIMEOUT` | Timeout for remote connections | `30s` |
 | `-remote-idle-timeout` | `REMOTE_IDLE_TIMEOUT` | Timeout for idle transfers | `60s` |
 | `-remote-overall-timeout` | `REMOTE_OVERALL_TIMEOUT` | Maximum total download time | `30m` |
+| `-share-port` | `SHARE_PORT` | Port for public share server | (disabled) |
+| `-share-bind-address` | `SHARE_BIND_ADDRESS` | Share server bind address | `127.0.0.1` |
 
 ## Common Configurations
 
