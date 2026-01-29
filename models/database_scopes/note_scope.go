@@ -98,6 +98,10 @@ func NoteQuery(query *query_models.NoteQuery, ignoreSort bool) func(db *gorm.DB)
 			}
 		}
 
+		if query.Shared != nil {
+			dbQuery = dbQuery.Where("share_token IS NOT NULL")
+		}
+
 		return dbQuery
 	}
 }
