@@ -166,7 +166,7 @@
                                 <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
                                     <template x-for="resId in resourceIds" :key="resId">
                                         <a :href="'/resource?id=' + resId" class="block aspect-square bg-gray-100 rounded overflow-hidden">
-                                            <img :src="'/v1/resource/thumbnail?id=' + resId" class="w-full h-full object-cover" loading="lazy">
+                                            <img :src="'/v1/resource/preview?id=' + resId" class="w-full h-full object-cover" loading="lazy">
                                         </a>
                                     </template>
                                 </div>
