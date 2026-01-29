@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 
+	"gorm.io/gorm"
 	"mahresources/models"
 	"mahresources/models/block_types"
 	"mahresources/models/query_models"
@@ -151,35 +152,15 @@ func (ctx *MahresourcesContext) ReorderBlocks(noteID uint, positions map[uint]st
 		return errors.New("one or more block IDs do not belong to the specified note")
 	}
 
-	tx := ctx.db.Begin()
-	if tx.Error != nil {
-		return tx.Error
-	}
-
-	var txErr error
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-			panic(r) // Re-panic after rollback
-		} else if txErr != nil {
-			tx.Rollback()
+	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		for blockID, position := range positions {
+			if err := tx.Model(&models.NoteBlock{}).Where("id = ? AND note_id = ?", blockID, noteID).
+				Update("position", position).Error; err != nil {
+				return err
+			}
 		}
-	}()
-
-	for blockID, position := range positions {
-		if err := tx.Model(&models.NoteBlock{}).Where("id = ? AND note_id = ?", blockID, noteID).
-			Update("position", position).Error; err != nil {
-			txErr = err
-			return err
-		}
-	}
-
-	if err := tx.Commit().Error; err != nil {
-		txErr = err
-		return err
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // syncFirstTextBlockToDescription syncs the first text block's content to the note's Description

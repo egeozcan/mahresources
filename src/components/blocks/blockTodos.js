@@ -1,35 +1,52 @@
 // src/components/blocks/blockTodos.js
-export function blockTodos() {
+// editMode is passed as a getter function to maintain reactivity with parent scope
+export function blockTodos(block, saveContentFn, saveStateFn, getEditMode) {
   return {
+    block,
+    saveContentFn,
+    saveStateFn,
+    getEditMode,
     newItemText: '',
+    items: [...(block?.content?.items || [])],
+    checked: [...(block?.state?.checked || [])],
 
-    get items() {
-      return this.block?.content?.items || [];
+    get editMode() {
+      return this.getEditMode ? this.getEditMode() : false;
     },
-    get checked() {
-      return this.block?.state?.checked || [];
-    },
+
     isChecked(itemId) {
       return this.checked.includes(itemId);
     },
-    toggleItem(itemId) {
-      const newChecked = this.isChecked(itemId)
-        ? this.checked.filter(id => id !== itemId)
-        : [...this.checked, itemId];
-      this.$dispatch('update-state', { checked: newChecked });
+
+    toggleCheck(itemId) {
+      if (this.isChecked(itemId)) {
+        this.checked = this.checked.filter(id => id !== itemId);
+      } else {
+        this.checked = [...this.checked, itemId];
+      }
+      this.saveStateFn(this.block.id, { checked: this.checked });
     },
+
+    saveContent() {
+      this.saveContentFn(this.block.id, { items: this.items });
+    },
+
     addItem() {
       if (!this.newItemText.trim()) return;
       const newItem = { id: crypto.randomUUID(), label: this.newItemText.trim() };
-      const newItems = [...this.items, newItem];
-      this.$dispatch('update-content', { items: newItems });
+      this.items = [...this.items, newItem];
+      this.saveContentFn(this.block.id, { items: this.items });
       this.newItemText = '';
     },
-    removeItem(itemId) {
-      const newItems = this.items.filter(i => i.id !== itemId);
-      const newChecked = this.checked.filter(id => id !== itemId);
-      this.$dispatch('update-content', { items: newItems });
-      this.$dispatch('update-state', { checked: newChecked });
+
+    removeItem(idx) {
+      const removedItem = this.items[idx];
+      this.items = this.items.filter((_, i) => i !== idx);
+      if (removedItem) {
+        this.checked = this.checked.filter(id => id !== removedItem.id);
+      }
+      this.saveContentFn(this.block.id, { items: this.items });
+      this.saveStateFn(this.block.id, { checked: this.checked });
     }
   };
 }

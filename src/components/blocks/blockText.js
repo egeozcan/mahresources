@@ -1,11 +1,22 @@
 // src/components/blocks/blockText.js
-export function blockText() {
+// Note: editMode is accessed from parent scope via $parent.editMode in the template
+export function blockText(block, saveFn, saveDebouncedFn) {
   return {
-    get text() {
-      return this.block?.content?.text || '';
+    block,
+    saveFn,
+    saveDebouncedFn,
+    text: block?.content?.text || '',
+
+    // Called on input for debounced auto-save
+    onInput() {
+      if (this.saveDebouncedFn) {
+        this.saveDebouncedFn(this.block.id, { text: this.text });
+      }
     },
-    updateText(newText) {
-      this.$dispatch('update-content', { text: newText });
+
+    // Called on blur for immediate save
+    save() {
+      this.saveFn(this.block.id, { text: this.text });
     }
   };
 }

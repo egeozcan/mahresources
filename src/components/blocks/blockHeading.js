@@ -1,14 +1,23 @@
 // src/components/blocks/blockHeading.js
-export function blockHeading() {
+// Note: editMode is accessed from parent scope via $parent.editMode in the template
+export function blockHeading(block, saveFn, saveDebouncedFn) {
   return {
-    get text() {
-      return this.block?.content?.text || '';
+    block,
+    saveFn,
+    saveDebouncedFn,
+    text: block?.content?.text || '',
+    level: block?.content?.level || 2,
+
+    // Called on input for debounced auto-save
+    onInput() {
+      if (this.saveDebouncedFn) {
+        this.saveDebouncedFn(this.block.id, { text: this.text, level: this.level });
+      }
     },
-    get level() {
-      return this.block?.content?.level || 2;
-    },
-    updateHeading(text, level) {
-      this.$dispatch('update-content', { text, level: parseInt(level) });
+
+    // Called on blur or select change for immediate save
+    save() {
+      this.saveFn(this.block.id, { text: this.text, level: this.level });
     }
   };
 }

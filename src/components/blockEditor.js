@@ -2,13 +2,28 @@
 const MIN_CHAR = 'a'.charCodeAt(0); // 97
 const MAX_CHAR = 'z'.charCodeAt(0); // 122
 
+// Simple debounce utility
+function debounce(fn, delay) {
+  let timeoutId;
+  return function (...args) {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => fn.apply(this, args), delay);
+  };
+}
+
 export function blockEditor(noteId, initialBlocks = []) {
+  // Create debounced update function outside the return object
+  const debouncedUpdateFn = debounce(async function (blockId, content) {
+    await this._doUpdateBlockContent(blockId, content);
+  }, 500);
+
   return {
     noteId,
     blocks: initialBlocks,
     editMode: false,
     loading: false,
     error: null,
+    _pendingUpdates: {}, // Track pending updates for optimistic UI
 
     async init() {
       if (this.blocks.length === 0 && this.noteId) {
@@ -63,7 +78,26 @@ export function blockEditor(noteId, initialBlocks = []) {
       }
     },
 
+    // Debounced content update - use this for text inputs to avoid excessive API calls
+    updateBlockContentDebounced(blockId, content) {
+      // Optimistic update for immediate UI feedback
+      const idx = this.blocks.findIndex(b => b.id === blockId);
+      if (idx >= 0) {
+        this.blocks[idx] = { ...this.blocks[idx], content };
+      }
+      this._pendingUpdates[blockId] = content;
+      debouncedUpdateFn.call(this, blockId, content);
+    },
+
+    // Immediate content update - use this for blur events or explicit saves
     async updateBlockContent(blockId, content) {
+      // Cancel any pending debounced update for this block
+      delete this._pendingUpdates[blockId];
+      await this._doUpdateBlockContent(blockId, content);
+    },
+
+    // Internal method that performs the actual API call
+    async _doUpdateBlockContent(blockId, content) {
       this.error = null;
       try {
         const res = await fetch(`/v1/note/block?id=${blockId}`, {

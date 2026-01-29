@@ -69,24 +69,27 @@
                 <div class="block-content p-4">
                     {# Text block #}
                     <template x-if="block.type === 'text'">
-                        <div x-data="blockText(block, editMode, (id, content) => updateBlockContent(id, content))">
+                        <div>
                             <template x-if="!editMode">
                                 <div class="prose max-w-none" x-html="renderMarkdown(block.content?.text || '')"></div>
                             </template>
                             <template x-if="editMode">
-                                <textarea
-                                    x-model="text"
-                                    @blur="save()"
-                                    class="w-full min-h-[100px] p-2 border border-gray-300 rounded resize-y"
-                                    placeholder="Enter text..."
-                                ></textarea>
+                                <div x-data="blockText(block, (id, content) => updateBlockContent(id, content), (id, content) => updateBlockContentDebounced(id, content))">
+                                    <textarea
+                                        x-model="text"
+                                        @input="onInput()"
+                                        @blur="save()"
+                                        class="w-full min-h-[100px] p-2 border border-gray-300 rounded resize-y"
+                                        placeholder="Enter text..."
+                                    ></textarea>
+                                </div>
                             </template>
                         </div>
                     </template>
 
                     {# Heading block #}
                     <template x-if="block.type === 'heading'">
-                        <div x-data="blockHeading(block, editMode, (id, content) => updateBlockContent(id, content))">
+                        <div>
                             <template x-if="!editMode">
                                 <div>
                                     <h1 x-show="block.content?.level === 1" x-text="block.content?.text || ''" class="text-3xl font-bold"></h1>
@@ -95,7 +98,7 @@
                                 </div>
                             </template>
                             <template x-if="editMode">
-                                <div class="flex gap-2">
+                                <div x-data="blockHeading(block, (id, content) => updateBlockContent(id, content), (id, content) => updateBlockContentDebounced(id, content))" class="flex gap-2">
                                     <select x-model.number="level" @change="save()" class="border border-gray-300 rounded px-2 py-1">
                                         <option value="1">H1</option>
                                         <option value="2">H2</option>
@@ -104,6 +107,7 @@
                                     <input
                                         type="text"
                                         x-model="text"
+                                        @input="onInput()"
                                         @blur="save()"
                                         class="flex-1 p-2 border border-gray-300 rounded"
                                         placeholder="Heading text..."
@@ -120,7 +124,7 @@
 
                     {# Todos block #}
                     <template x-if="block.type === 'todos'">
-                        <div x-data="blockTodos(block, editMode, (id, content) => updateBlockContent(id, content), (id, state) => updateBlockState(id, state))">
+                        <div x-data="blockTodos(block, (id, content) => updateBlockContent(id, content), (id, state) => updateBlockState(id, state), () => editMode)">
                             <template x-if="!editMode">
                                 <ul class="space-y-1">
                                     <template x-for="item in items" :key="item.id">
@@ -157,7 +161,7 @@
 
                     {# Gallery block #}
                     <template x-if="block.type === 'gallery'">
-                        <div x-data="blockGallery(block, editMode, (id, content) => updateBlockContent(id, content))">
+                        <div x-data="blockGallery(block, (id, content) => updateBlockContent(id, content), () => editMode)">
                             <template x-if="!editMode && resourceIds.length > 0">
                                 <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
                                     <template x-for="resId in resourceIds" :key="resId">
@@ -187,7 +191,7 @@
 
                     {# References block #}
                     <template x-if="block.type === 'references'">
-                        <div x-data="blockReferences(block, editMode, (id, content) => updateBlockContent(id, content))">
+                        <div x-data="blockReferences(block, (id, content) => updateBlockContent(id, content), () => editMode)">
                             <template x-if="!editMode && groupIds.length > 0">
                                 <div class="flex flex-wrap gap-2">
                                     <template x-for="gId in groupIds" :key="gId">
@@ -217,7 +221,7 @@
 
                     {# Table block #}
                     <template x-if="block.type === 'table'">
-                        <div x-data="blockTable(block, editMode, (id, content) => updateBlockContent(id, content), (id, state) => updateBlockState(id, state))">
+                        <div x-data="blockTable(block, (id, content) => updateBlockContent(id, content), (id, state) => updateBlockState(id, state), () => editMode)">
                             <template x-if="!editMode && columns.length > 0">
                                 <div class="overflow-x-auto">
                                     <table class="min-w-full divide-y divide-gray-200">

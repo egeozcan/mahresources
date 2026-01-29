@@ -1,35 +1,72 @@
 // src/components/blocks/blockTable.js
-export function blockTable() {
+// editMode is passed as a getter function to maintain reactivity with parent scope
+export function blockTable(block, saveContentFn, saveStateFn, getEditMode) {
   return {
-    get columns() {
-      return this.block?.content?.columns || [];
+    block,
+    saveContentFn,
+    saveStateFn,
+    getEditMode,
+
+    get editMode() {
+      return this.getEditMode ? this.getEditMode() : false;
     },
-    get rows() {
-      return this.block?.content?.rows || [];
+    columns: JSON.parse(JSON.stringify(block?.content?.columns || [])),
+    rows: JSON.parse(JSON.stringify(block?.content?.rows || [])),
+    queryId: block?.content?.queryId,
+    sortColumn: block?.state?.sortColumn || '',
+    sortDirection: block?.state?.sortDirection || 'asc',
+
+    toggleSort(colId) {
+      this.sortDirection = this.sortColumn === colId && this.sortDirection === 'asc' ? 'desc' : 'asc';
+      this.sortColumn = colId;
+      this.saveStateFn(this.block.id, { sortColumn: this.sortColumn, sortDirection: this.sortDirection });
     },
-    get queryId() {
-      return this.block?.content?.queryId;
+
+    saveContent() {
+      this.saveContentFn(this.block.id, { columns: this.columns, rows: this.rows });
     },
-    get sortColumn() {
-      return this.block?.state?.sortColumn || '';
+
+    addColumn() {
+      const newCol = { id: crypto.randomUUID(), label: 'New Column' };
+      this.columns = [...this.columns, newCol];
+      this.saveContent();
     },
-    get sortDir() {
-      return this.block?.state?.sortDir || 'asc';
+
+    removeColumn(idx) {
+      const removedCol = this.columns[idx];
+      this.columns = this.columns.filter((_, i) => i !== idx);
+      // Also remove the column data from rows
+      if (removedCol) {
+        this.rows = this.rows.map(row => {
+          const newRow = { ...row };
+          delete newRow[removedCol.id];
+          return newRow;
+        });
+      }
+      this.saveContent();
     },
-    sortBy(column) {
-      const newDir = this.sortColumn === column && this.sortDir === 'asc' ? 'desc' : 'asc';
-      this.$dispatch('update-state', { sortColumn: column, sortDir: newDir });
+
+    addRow() {
+      const newRow = { id: crypto.randomUUID() };
+      this.rows = [...this.rows, newRow];
+      this.saveContent();
     },
+
+    removeRow(idx) {
+      this.rows = this.rows.filter((_, i) => i !== idx);
+      this.saveContent();
+    },
+
     get sortedRows() {
       if (!this.sortColumn) return this.rows;
-      const colIdx = this.columns.indexOf(this.sortColumn);
-      if (colIdx < 0) return this.rows;
+      const col = this.columns.find(c => c.id === this.sortColumn);
+      if (!col) return this.rows;
 
       return [...this.rows].sort((a, b) => {
-        const va = a[colIdx];
-        const vb = b[colIdx];
+        const va = a[this.sortColumn] || '';
+        const vb = b[this.sortColumn] || '';
         const cmp = va < vb ? -1 : va > vb ? 1 : 0;
-        return this.sortDir === 'asc' ? cmp : -cmp;
+        return this.sortDirection === 'asc' ? cmp : -cmp;
       });
     }
   };

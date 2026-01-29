@@ -103,27 +103,34 @@ func TestBlockEndpoints(t *testing.T) {
 	})
 
 	t.Run("Reorder Blocks", func(t *testing.T) {
-		// Create another block
+		// Create another block with a unique position
 		payload := map[string]interface{}{
 			"noteId":   note.ID,
 			"type":     "text",
 			"position": "a",
 			"content":  map[string]string{"text": "First block"},
 		}
-		tc.MakeRequest(http.MethodPost, "/v1/note/block", payload)
+		createResp := tc.MakeRequest(http.MethodPost, "/v1/note/block", payload)
+		assert.Equal(t, http.StatusCreated, createResp.Code, "Second block creation should succeed")
 
 		// Get all blocks
 		url := fmt.Sprintf("/v1/note/blocks?noteId=%d", note.ID)
 		resp := tc.MakeRequest(http.MethodGet, url, nil)
 		var blocks []models.NoteBlock
-		json.Unmarshal(resp.Body.Bytes(), &blocks)
+		err := json.Unmarshal(resp.Body.Bytes(), &blocks)
+		assert.NoError(t, err)
+		assert.GreaterOrEqual(t, len(blocks), 2, "Should have at least 2 blocks")
 
-		// Reorder - swap positions
+		if len(blocks) < 2 {
+			t.FailNow()
+		}
+
+		// Reorder - swap positions (use new unique positions to avoid constraint violations)
 		reorderPayload := map[string]interface{}{
 			"noteId": note.ID,
 			"positions": map[uint]string{
-				blocks[0].ID: "z",
-				blocks[1].ID: "a",
+				blocks[0].ID: "x",
+				blocks[1].ID: "y",
 			},
 		}
 
