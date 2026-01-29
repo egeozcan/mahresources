@@ -223,78 +223,231 @@
 
                     {# Table block #}
                     <template x-if="block.type === 'table'">
-                        <div x-data="blockTable(block, (id, content) => updateBlockContent(id, content), (id, state) => updateBlockState(id, state), () => editMode)">
-                            <template x-if="!editMode && columns.length > 0">
-                                <div class="overflow-x-auto">
-                                    <table class="min-w-full divide-y divide-gray-200">
-                                        <thead class="bg-gray-50">
-                                            <tr>
-                                                <template x-for="col in columns" :key="col.id">
-                                                    <th
-                                                        @click="toggleSort(col.id)"
-                                                        class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
-                                                    >
-                                                        <span x-text="col.label"></span>
-                                                        <span x-show="sortColumn === col.id" x-text="sortDirection === 'asc' ? ' ▲' : ' ▼'"></span>
-                                                    </th>
+                        <div x-data="blockTable(block, (id, content) => updateBlockContent(id, content), (id, state) => updateBlockState(id, state), () => editMode)" x-init="init()">
+                            {# Display mode - Table view #}
+                            <template x-if="!editMode">
+                                <div>
+                                    {# Query mode loading state #}
+                                    <template x-if="isQueryMode && queryLoading && !isRefreshing">
+                                        <div class="flex items-center justify-center py-8 text-gray-500">
+                                            <svg class="animate-spin h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                            </svg>
+                                            Loading data...
+                                        </div>
+                                    </template>
+
+                                    {# Query mode error state #}
+                                    <template x-if="isQueryMode && queryError">
+                                        <div class="p-3 bg-red-50 border border-red-200 rounded-lg text-sm">
+                                            <div class="flex items-center justify-between text-red-700">
+                                                <span x-text="queryError"></span>
+                                                <button @click="manualRefresh()" class="ml-2 px-2 py-1 bg-red-100 hover:bg-red-200 rounded text-xs">
+                                                    Retry
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </template>
+
+                                    {# Table header with refresh controls for query mode #}
+                                    <template x-if="isQueryMode && !queryLoading && !queryError && displayColumns.length > 0">
+                                        <div class="flex items-center justify-between mb-2 text-xs text-gray-500">
+                                            <div class="flex items-center gap-2">
+                                                <span x-show="lastFetchTime" x-text="'Updated ' + lastFetchTimeFormatted"></span>
+                                                <template x-if="isRefreshing">
+                                                    <span class="flex items-center">
+                                                        <svg class="animate-spin h-3 w-3 mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                        </svg>
+                                                        Refreshing...
+                                                    </span>
                                                 </template>
-                                            </tr>
-                                        </thead>
-                                        <tbody class="bg-white divide-y divide-gray-200">
-                                            <template x-for="row in sortedRows" :key="row.id">
-                                                <tr>
-                                                    <template x-for="col in columns" :key="col.id">
-                                                        <td class="px-3 py-2 text-sm text-gray-900" x-text="row[col.id] || ''"></td>
+                                                <span x-show="isStatic" class="px-1.5 py-0.5 bg-gray-100 rounded text-gray-600">Static</span>
+                                            </div>
+                                            <button @click="manualRefresh()" :disabled="queryLoading" class="px-2 py-1 text-blue-600 hover:text-blue-800 disabled:opacity-50" title="Refresh data">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    </template>
+
+                                    {# Table display #}
+                                    <template x-if="displayColumns.length > 0 && !queryLoading">
+                                        <div class="overflow-x-auto">
+                                            <table class="min-w-full divide-y divide-gray-200">
+                                                <thead class="bg-gray-50">
+                                                    <tr>
+                                                        <template x-for="col in displayColumns" :key="col.id">
+                                                            <th
+                                                                @click="toggleSort(col.id)"
+                                                                class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                                                            >
+                                                                <span x-text="col.label"></span>
+                                                                <span x-show="sortColumn === col.id" x-text="sortDirection === 'asc' ? ' ▲' : ' ▼'"></span>
+                                                            </th>
+                                                        </template>
+                                                    </tr>
+                                                </thead>
+                                                <tbody class="bg-white divide-y divide-gray-200">
+                                                    <template x-for="row in displayRows" :key="row.id">
+                                                        <tr>
+                                                            <template x-for="col in displayColumns" :key="col.id">
+                                                                <td class="px-3 py-2 text-sm text-gray-900" x-text="row[col.id] ?? ''"></td>
+                                                            </template>
+                                                        </tr>
                                                     </template>
-                                                </tr>
-                                            </template>
-                                        </tbody>
-                                    </table>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </template>
+
+                                    {# Empty state #}
+                                    <template x-if="displayColumns.length === 0 && !queryLoading && !queryError">
+                                        <p class="text-gray-400 text-sm">No table data</p>
+                                    </template>
                                 </div>
                             </template>
-                            <template x-if="!editMode && columns.length === 0">
-                                <p class="text-gray-400 text-sm">No table data</p>
-                            </template>
+
+                            {# Edit mode #}
                             <template x-if="editMode">
-                                <div class="space-y-3">
-                                    <div>
-                                        <p class="text-sm font-medium text-gray-700 mb-1">Columns</p>
-                                        <div class="space-y-1">
-                                            <template x-for="(col, idx) in columns" :key="col.id">
-                                                <div class="flex items-center gap-2">
-                                                    <input
-                                                        type="text"
-                                                        x-model="col.label"
-                                                        @blur="saveContent()"
-                                                        class="flex-1 p-1 border border-gray-300 rounded text-sm"
-                                                        placeholder="Column label"
-                                                    >
-                                                    <button @click="removeColumn(idx)" class="text-red-500 hover:text-red-700 text-sm">&times;</button>
-                                                </div>
-                                            </template>
-                                            <button @click="addColumn()" class="text-sm text-blue-600 hover:underline">+ Add column</button>
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <p class="text-sm font-medium text-gray-700 mb-1">Rows</p>
-                                        <div class="space-y-1">
-                                            <template x-for="(row, rowIdx) in rows" :key="row.id">
-                                                <div class="flex items-center gap-2">
-                                                    <template x-for="col in columns" :key="col.id">
+                                <div class="space-y-4">
+                                    {# Data Source Section #}
+                                    <div class="p-3 bg-gray-50 rounded-lg border border-gray-200"
+                                         @table-query-selected="selectQuery($event.detail)"
+                                         @table-query-cleared="clearQuery()">
+                                        <div class="flex items-center gap-3 flex-wrap">
+                                            <label class="text-sm font-medium text-gray-700">Data Source:</label>
+                                            {# Query autocomplete or Manual indicator #}
+                                            <div class="w-48"
+                                                 x-data="autocompleter({
+                                                     selectedResults: queryId ? [{ ID: queryId, Name: selectedQueryName || ('Query #' + queryId) }] : [],
+                                                     url: '/v1/queries',
+                                                     max: 1,
+                                                     standalone: true,
+                                                     onSelect: (q) => $dispatch('table-query-selected', q),
+                                                     onRemove: () => $dispatch('table-query-cleared')
+                                                 })"
+                                                 class="relative">
+                                                <template x-if="addModeForTag == ''">
+                                                    <div>
                                                         <input
+                                                            x-ref="autocompleter"
                                                             type="text"
-                                                            x-model="row[col.id]"
-                                                            @blur="saveContent()"
-                                                            class="flex-1 p-1 border border-gray-300 rounded text-sm"
-                                                            :placeholder="col.label"
+                                                            x-bind="inputEvents"
+                                                            class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-indigo-500 focus:border-indigo-500"
+                                                            :placeholder="selectedResults.length ? '' : 'Search queries...'"
+                                                            autocomplete="off"
                                                         >
-                                                    </template>
-                                                    <button @click="removeRow(rowIdx)" class="text-red-500 hover:text-red-700 text-sm">&times;</button>
-                                                </div>
+                                                        {# Dropdown results #}
+                                                        <template x-if="dropdownActive && results.length > 0">
+                                                            <div class="absolute z-20 mt-1 w-48 bg-white border border-gray-200 rounded shadow-lg max-h-48 overflow-y-auto">
+                                                                <template x-for="(result, index) in results" :key="result.ID">
+                                                                    <div
+                                                                        class="px-3 py-1.5 cursor-pointer text-sm truncate"
+                                                                        :class="{'bg-blue-500 text-white': index === selectedIndex, 'hover:bg-gray-50': index !== selectedIndex}"
+                                                                        @mousedown="pushVal"
+                                                                        @mouseover="selectedIndex = index"
+                                                                        x-text="result.Name"
+                                                                    ></div>
+                                                                </template>
+                                                            </div>
+                                                        </template>
+                                                        {# Selected query chip #}
+                                                        <template x-if="selectedResults.length > 0">
+                                                            <div class="flex flex-wrap gap-1 mt-1">
+                                                                <template x-for="item in selectedResults" :key="item.ID">
+                                                                    <span class="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-800 rounded text-xs">
+                                                                        <span x-text="item.Name" class="truncate max-w-[150px]"></span>
+                                                                        <button type="button" @click="removeItem(item)" class="hover:text-blue-600">&times;</button>
+                                                                    </span>
+                                                                </template>
+                                                            </div>
+                                                        </template>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                            <template x-if="isQueryMode">
+                                                <label class="flex items-center gap-1.5 text-sm text-gray-600">
+                                                    <input type="checkbox" x-model="isStatic" @change="saveContent()" class="rounded border-gray-300">
+                                                    <span>Static</span>
+                                                </label>
                                             </template>
-                                            <button @click="addRow()" class="text-sm text-blue-600 hover:underline">+ Add row</button>
                                         </div>
+
+                                        {# Query mode: parameters and preview #}
+                                        <template x-if="isQueryMode">
+                                            <div class="mt-3 pt-3 border-t border-gray-200 space-y-2">
+                                                {# Query parameters #}
+                                                <div class="flex items-start gap-2 flex-wrap">
+                                                    <span class="text-xs text-gray-500 pt-1">Params:</span>
+                                                    <template x-for="(value, key) in queryParams" :key="key">
+                                                        <span class="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-100 rounded text-xs">
+                                                            <span class="font-mono" x-text="key + '=' + value"></span>
+                                                            <button @click="removeQueryParam(key)" class="text-gray-400 hover:text-red-500">&times;</button>
+                                                        </span>
+                                                    </template>
+                                                    <button @click="addQueryParam()" class="text-xs text-blue-600 hover:underline">+ param</button>
+                                                </div>
+                                                {# Preview info #}
+                                                <div class="flex items-center gap-2 text-xs text-gray-500">
+                                                    <span x-text="queryColumns.length + ' cols, ' + queryRows.length + ' rows'"></span>
+                                                    <button @click="manualRefresh()" :disabled="queryLoading" class="text-blue-600 hover:underline disabled:opacity-50">
+                                                        <span x-show="!queryLoading">refresh</span>
+                                                        <span x-show="queryLoading">...</span>
+                                                    </button>
+                                                    <span x-show="queryError" class="text-red-500" x-text="queryError"></span>
+                                                </div>
+                                            </div>
+                                        </template>
                                     </div>
+
+                                    {# Manual mode editor #}
+                                    <template x-if="!isQueryMode">
+                                        <div class="space-y-3">
+                                            <div>
+                                                <p class="text-sm font-medium text-gray-700 mb-1">Columns</p>
+                                                <div class="space-y-1">
+                                                    <template x-for="(col, idx) in columns" :key="col.id">
+                                                        <div class="flex items-center gap-2">
+                                                            <input
+                                                                type="text"
+                                                                x-model="col.label"
+                                                                @blur="saveContent()"
+                                                                class="flex-1 p-1 border border-gray-300 rounded text-sm"
+                                                                placeholder="Column label"
+                                                            >
+                                                            <button @click="removeColumn(idx)" class="text-red-500 hover:text-red-700 text-sm">&times;</button>
+                                                        </div>
+                                                    </template>
+                                                    <button @click="addColumn()" class="text-sm text-blue-600 hover:underline">+ Add column</button>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <p class="text-sm font-medium text-gray-700 mb-1">Rows</p>
+                                                <div class="space-y-1">
+                                                    <template x-for="(row, rowIdx) in rows" :key="row.id">
+                                                        <div class="flex items-center gap-2">
+                                                            <template x-for="col in columns" :key="col.id">
+                                                                <input
+                                                                    type="text"
+                                                                    x-model="row[col.id]"
+                                                                    @blur="saveContent()"
+                                                                    class="flex-1 p-1 border border-gray-300 rounded text-sm"
+                                                                    :placeholder="col.label"
+                                                                >
+                                                            </template>
+                                                            <button @click="removeRow(rowIdx)" class="text-red-500 hover:text-red-700 text-sm">&times;</button>
+                                                        </div>
+                                                    </template>
+                                                    <button @click="addRow()" class="text-sm text-blue-600 hover:underline">+ Add row</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </template>
+
                                 </div>
                             </template>
                         </div>

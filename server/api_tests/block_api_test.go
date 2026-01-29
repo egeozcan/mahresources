@@ -216,3 +216,121 @@ func TestBlockEndpoints(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, resp.Code)
 	})
 }
+
+func TestTableBlockQueryEndpoint(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create a note for testing
+	note := tc.CreateDummyNote("Table Query Test Note")
+
+	// Create a query that returns data
+	var query models.Query
+	tc.DB.Create(&models.Query{
+		Name: "Test Query",
+		Text: "SELECT 1 as col1, 'value1' as col2 UNION SELECT 2, 'value2'",
+	})
+	tc.DB.First(&query, "name = ?", "Test Query")
+
+	t.Run("Table Block Query Endpoint", func(t *testing.T) {
+		// Create a table block with queryId
+		blockContent := fmt.Sprintf(`{"queryId": %d, "queryParams": {}, "isStatic": false}`, query.ID)
+		block := tc.CreateDummyBlock(note.ID, "table", blockContent, "tq")
+
+		// Call the new endpoint
+		url := fmt.Sprintf("/v1/note/block/table/query?blockId=%d", block.ID)
+		resp := tc.MakeRequest(http.MethodGet, url, nil)
+
+		assert.Equal(t, http.StatusOK, resp.Code)
+
+		// Parse response
+		var result map[string]interface{}
+		err := json.Unmarshal(resp.Body.Bytes(), &result)
+		assert.NoError(t, err)
+
+		// Verify response structure
+		assert.Contains(t, result, "columns")
+		assert.Contains(t, result, "rows")
+		assert.Contains(t, result, "cachedAt")
+		assert.Contains(t, result, "queryId")
+
+		// Verify columns
+		columns := result["columns"].([]interface{})
+		assert.Len(t, columns, 2)
+
+		// Verify rows
+		rows := result["rows"].([]interface{})
+		assert.Len(t, rows, 2)
+	})
+
+	t.Run("Table Block Query - Missing blockId", func(t *testing.T) {
+		resp := tc.MakeRequest(http.MethodGet, "/v1/note/block/table/query", nil)
+		assert.Equal(t, http.StatusBadRequest, resp.Code)
+	})
+
+	t.Run("Table Block Query - Block Not Found", func(t *testing.T) {
+		resp := tc.MakeRequest(http.MethodGet, "/v1/note/block/table/query?blockId=99999", nil)
+		assert.Equal(t, http.StatusNotFound, resp.Code)
+	})
+
+	t.Run("Table Block Query - Not a Table Block", func(t *testing.T) {
+		// Create a text block
+		textBlock := tc.CreateDummyBlock(note.ID, "text", `{"text": "hello"}`, "txt")
+
+		url := fmt.Sprintf("/v1/note/block/table/query?blockId=%d", textBlock.ID)
+		resp := tc.MakeRequest(http.MethodGet, url, nil)
+		assert.Equal(t, http.StatusBadRequest, resp.Code)
+	})
+
+	t.Run("Table Block Query - No QueryId Configured", func(t *testing.T) {
+		// Create a table block without queryId (manual data mode)
+		manualBlock := tc.CreateDummyBlock(note.ID, "table", `{"columns": [], "rows": []}`, "manual")
+
+		url := fmt.Sprintf("/v1/note/block/table/query?blockId=%d", manualBlock.ID)
+		resp := tc.MakeRequest(http.MethodGet, url, nil)
+		assert.Equal(t, http.StatusBadRequest, resp.Code)
+	})
+
+	t.Run("Table Block Query - With Query Params", func(t *testing.T) {
+		// Create a query that uses parameters
+		var paramQuery models.Query
+		tc.DB.Create(&models.Query{
+			Name: "Param Query",
+			Text: "SELECT :param1 as result",
+		})
+		tc.DB.First(&paramQuery, "name = ?", "Param Query")
+
+		// Create a table block with stored queryParams
+		blockContent := fmt.Sprintf(`{"queryId": %d, "queryParams": {"param1": "stored_value"}, "isStatic": true}`, paramQuery.ID)
+		block := tc.CreateDummyBlock(note.ID, "table", blockContent, "params")
+
+		// Call endpoint - stored params should be used
+		url := fmt.Sprintf("/v1/note/block/table/query?blockId=%d", block.ID)
+		resp := tc.MakeRequest(http.MethodGet, url, nil)
+		assert.Equal(t, http.StatusOK, resp.Code)
+
+		var result map[string]interface{}
+		json.Unmarshal(resp.Body.Bytes(), &result)
+
+		// isStatic should be preserved
+		assert.Equal(t, true, result["isStatic"])
+	})
+
+	t.Run("Table Block Query - Request Params Override", func(t *testing.T) {
+		// Create a query that uses parameters
+		var paramQuery models.Query
+		tc.DB.Create(&models.Query{
+			Name: "Override Query",
+			Text: "SELECT :param1 as result",
+		})
+		tc.DB.First(&paramQuery, "name = ?", "Override Query")
+
+		// Create a table block with stored queryParams
+		blockContent := fmt.Sprintf(`{"queryId": %d, "queryParams": {"param1": "stored"}, "isStatic": false}`, paramQuery.ID)
+		block := tc.CreateDummyBlock(note.ID, "table", blockContent, "override")
+
+		// Call endpoint with override param in URL
+		url := fmt.Sprintf("/v1/note/block/table/query?blockId=%d&param1=overridden", block.ID)
+		resp := tc.MakeRequest(http.MethodGet, url, nil)
+		assert.Equal(t, http.StatusOK, resp.Code)
+	})
+}

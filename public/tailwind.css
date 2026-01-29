@@ -832,6 +832,9 @@
   .mr-1 {
     margin-right: calc(var(--spacing) * 1);
   }
+  .mr-2 {
+    margin-right: calc(var(--spacing) * 2);
+  }
   .mr-3 {
     margin-right: calc(var(--spacing) * 3);
   }
@@ -900,6 +903,9 @@
   }
   .h-2 {
     height: calc(var(--spacing) * 2);
+  }
+  .h-3 {
+    height: calc(var(--spacing) * 3);
   }
   .h-3\.5 {
     height: calc(var(--spacing) * 3.5);
@@ -988,6 +994,9 @@
   .w-2 {
     width: calc(var(--spacing) * 2);
   }
+  .w-3 {
+    width: calc(var(--spacing) * 3);
+  }
   .w-3\.5 {
     width: calc(var(--spacing) * 3.5);
   }
@@ -1041,6 +1050,9 @@
   }
   .max-w-\[90vw\] {
     max-width: 90vw;
+  }
+  .max-w-\[150px\] {
+    max-width: 150px;
   }
   .max-w-full {
     max-width: 100%;
@@ -1651,6 +1663,12 @@
   .py-12 {
     padding-block: calc(var(--spacing) * 12);
   }
+  .pt-1 {
+    padding-top: calc(var(--spacing) * 1);
+  }
+  .pt-3 {
+    padding-top: calc(var(--spacing) * 3);
+  }
   .pt-4 {
     padding-top: calc(var(--spacing) * 4);
   }
@@ -2159,6 +2177,13 @@
       }
     }
   }
+  .hover\:bg-red-200 {
+    &:hover {
+      @media (hover: hover) {
+        background-color: var(--color-red-200);
+      }
+    }
+  }
   .hover\:bg-red-700 {
     &:hover {
       @media (hover: hover) {
@@ -2190,6 +2215,13 @@
     &:hover {
       @media (hover: hover) {
         color: var(--color-blue-500);
+      }
+    }
+  }
+  .hover\:text-blue-600 {
+    &:hover {
+      @media (hover: hover) {
+        color: var(--color-blue-600);
       }
     }
   }
@@ -2239,6 +2271,13 @@
     &:hover {
       @media (hover: hover) {
         color: var(--color-indigo-800);
+      }
+    }
+  }
+  .hover\:text-red-500 {
+    &:hover {
+      @media (hover: hover) {
+        color: var(--color-red-500);
       }
     }
   }

@@ -2,6 +2,7 @@ package interfaces
 
 import (
 	"encoding/json"
+	"github.com/jmoiron/sqlx"
 	"mahresources/models"
 	"mahresources/models/query_models"
 )
@@ -27,4 +28,10 @@ type BlockDeleter interface {
 
 type BlockRebalancer interface {
 	RebalanceBlockPositions(noteID uint) error
+}
+
+// TableBlockQueryRunner combines block reading and query execution for table blocks.
+type TableBlockQueryRunner interface {
+	GetBlock(id uint) (*models.NoteBlock, error)
+	RunReadOnlyQuery(queryId uint, params map[string]any) (*sqlx.Rows, error)
 }

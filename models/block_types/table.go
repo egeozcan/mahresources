@@ -15,10 +15,13 @@ type tableColumn struct {
 // Either columns+rows OR queryId should be provided, not both.
 // Columns can be either simple strings or objects with id/label.
 // Rows can be either arrays of values or objects with column IDs as keys.
+// QueryParams and IsStatic are only valid when QueryID is set.
 type tableContent struct {
-	Columns []json.RawMessage      `json:"columns"`
-	Rows    []json.RawMessage      `json:"rows"`
-	QueryID *uint                  `json:"queryId"`
+	Columns     []json.RawMessage `json:"columns"`
+	Rows        []json.RawMessage `json:"rows"`
+	QueryID     *uint             `json:"queryId"`
+	QueryParams map[string]any    `json:"queryParams,omitempty"`
+	IsStatic    bool              `json:"isStatic,omitempty"`
 }
 
 // tableState represents the state schema for table blocks.
@@ -45,6 +48,16 @@ func (t TableBlockType) ValidateContent(content json.RawMessage) error {
 
 	if hasManualData && hasQueryID {
 		return errors.New("table cannot have both columns/rows and queryId")
+	}
+
+	// queryParams and isStatic are only valid when queryId is set
+	if !hasQueryID {
+		if len(c.QueryParams) > 0 {
+			return errors.New("queryParams is only valid when queryId is set")
+		}
+		if c.IsStatic {
+			return errors.New("isStatic is only valid when queryId is set")
+		}
 	}
 
 	return nil
