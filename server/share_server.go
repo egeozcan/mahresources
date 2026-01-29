@@ -7,22 +7,30 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/flosch/pongo2/v4"
 	"github.com/gorilla/mux"
 	"mahresources/application_context"
+	"mahresources/models"
+	"mahresources/server/template_handlers/loaders"
+	_ "mahresources/server/template_handlers/template_filters"
 )
 
 // ShareServer is a separate HTTP server for serving shared notes publicly.
 // It runs on a different port from the main server and only exposes
 // shared content through cryptographically secure tokens.
 type ShareServer struct {
-	server     *http.Server
-	appContext *application_context.MahresourcesContext
+	server      *http.Server
+	appContext  *application_context.MahresourcesContext
+	templateSet *pongo2.TemplateSet
 }
 
 // NewShareServer creates a new ShareServer instance
 func NewShareServer(appContext *application_context.MahresourcesContext) *ShareServer {
+	// Initialize template set for shared templates
+	templateSet := pongo2.NewSet("", loaders.MustNewLocalFileSystemLoader("./templates", make(map[string]string)))
 	return &ShareServer{
-		appContext: appContext,
+		appContext:  appContext,
+		templateSet: templateSet,
 	}
 }
 
@@ -72,7 +80,7 @@ func (s *ShareServer) registerShareRoutes(router *mux.Router) {
 	router.Methods(http.MethodGet).Path("/s/{token}").HandlerFunc(s.handleSharedNote)
 
 	// Block state update (for interactive todos)
-	router.Methods(http.MethodPut).Path("/s/{token}/block/{blockId}/state").HandlerFunc(s.handleBlockStateUpdate)
+	router.Methods(http.MethodPost).Path("/s/{token}/block/{blockId}/state").HandlerFunc(s.handleBlockStateUpdate)
 
 	// Resource serving (for gallery images)
 	router.Methods(http.MethodGet).Path("/s/{token}/resource/{hash}").HandlerFunc(s.handleSharedResource)
@@ -93,7 +101,7 @@ func (s *ShareServer) handleSharedNote(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Render the shared note template
-	s.renderSharedNote(w, note)
+	s.renderSharedNote(w, note, token)
 }
 
 // handleBlockStateUpdate updates a block's state (e.g., todo checkbox)
@@ -170,9 +178,18 @@ func (s *ShareServer) handleSharedResource(w http.ResponseWriter, r *http.Reques
 }
 
 // renderSharedNote renders a shared note using templates
-// This is a placeholder - will be updated to use Pongo2 templates in Task 16
-func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note interface{}) {
-	// Placeholder - will be implemented with template rendering
-	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte("<html><body><h1>Shared Note</h1><p>Template rendering coming soon</p></body></html>"))
+func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note, shareToken string) {
+	template := pongo2.Must(s.templateSet.FromFile("/shared/displayNote.tpl"))
+
+	context := pongo2.Context{
+		"note":       note,
+		"pageTitle":  note.Name,
+		"shareToken": shareToken,
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := template.ExecuteWriter(context, w); err != nil {
+		log.Printf("Error rendering shared note template: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
 }
