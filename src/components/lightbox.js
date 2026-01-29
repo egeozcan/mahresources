@@ -1445,6 +1445,10 @@ export function registerLightboxStore(Alpine) {
 
       this.dragStartX = null;
       this.dragStartY = null;
+
+      // Refocus the dialog to ensure keyboard shortcuts work after clicking
+      const dialog = document.querySelector('[role="dialog"][aria-modal="true"]');
+      if (dialog) dialog.focus();
     }
   });
 }

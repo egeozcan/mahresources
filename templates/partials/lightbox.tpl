@@ -24,6 +24,7 @@
     class="fixed inset-0 z-50 flex h-screen w-screen"
     role="dialog"
     aria-modal="true"
+    tabindex="-1"
     :aria-label="$store.lightbox.getCurrentItem()?.name || 'Media viewer'"
 >
     <!-- Backdrop -->
