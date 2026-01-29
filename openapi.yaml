@@ -504,6 +504,15 @@ components:
                     format: date-time
                     readOnly: true
                     type: string
+                blocks:
+                    items:
+                        $ref: '#/components/schemas/NoteBlockPartial'
+                    type: array
+            type: object
+        NoteBlockPartial:
+            properties:
+                id:
+                    type: integer
             type: object
         NoteEditor:
             properties:
