@@ -285,6 +285,13 @@ func GetTableBlockQueryDataHandler(ctx interfaces.TableBlockQueryRunner) func(ht
 		}
 		defer rows.Close()
 
+		// Get column names in database order (before consuming rows)
+		colNames, err := rows.Columns()
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
 		// Transform results using the existing sQLToMap helper
 		resultMap, err := sQLToMap(rows)
 		if err != nil {
@@ -292,16 +299,13 @@ func GetTableBlockQueryDataHandler(ctx interfaces.TableBlockQueryRunner) func(ht
 			return
 		}
 
-		// Build column definitions from result keys
-		columns := make([]map[string]string, 0)
-		if len(resultMap) > 0 {
-			// Use the first row's keys as column definitions
-			for key := range resultMap[0] {
-				columns = append(columns, map[string]string{
-					"id":    key,
-					"label": key, // Use key as label; could be enhanced
-				})
-			}
+		// Build column definitions preserving database order
+		columns := make([]map[string]string, 0, len(colNames))
+		for _, colName := range colNames {
+			columns = append(columns, map[string]string{
+				"id":    colName,
+				"label": colName,
+			})
 		}
 
 		// Add row IDs to each row

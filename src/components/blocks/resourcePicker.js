@@ -22,7 +22,7 @@ export function registerResourcePickerStore(Alpine) {
 
     // Search & filters
     searchQuery: '',
-    selectedTagId: null,
+    selectedTagIds: [],
     selectedGroupId: null,
     searchDebounceTimer: null,
     requestAborter: null,
@@ -33,7 +33,7 @@ export function registerResourcePickerStore(Alpine) {
       this.onConfirm = onConfirm;
       this.selectedIds = new Set();
       this.searchQuery = '';
-      this.selectedTagId = null;
+      this.selectedTagIds = [];
       this.selectedGroupId = null;
       this.error = null;
       this.isOpen = true;
@@ -91,8 +91,8 @@ export function registerResourcePickerStore(Alpine) {
       if (this.searchQuery.trim()) {
         params.set('name', this.searchQuery.trim());
       }
-      if (this.selectedTagId) {
-        params.set('Tags', this.selectedTagId);
+      for (const tagId of this.selectedTagIds) {
+        params.append('Tags', tagId);
       }
       if (this.selectedGroupId) {
         params.set('Groups', this.selectedGroupId);
@@ -124,18 +124,20 @@ export function registerResourcePickerStore(Alpine) {
       }, 200);
     },
 
-    setTagFilter(tagId) {
-      this.selectedTagId = tagId;
+    addTagFilter(tagId) {
+      if (!this.selectedTagIds.includes(tagId)) {
+        this.selectedTagIds = [...this.selectedTagIds, tagId];
+        this.loadAllResources();
+      }
+    },
+
+    removeTagFilter(tagId) {
+      this.selectedTagIds = this.selectedTagIds.filter(id => id !== tagId);
       this.loadAllResources();
     },
 
     setGroupFilter(groupId) {
       this.selectedGroupId = groupId;
-      this.loadAllResources();
-    },
-
-    clearTagFilter() {
-      this.selectedTagId = null;
       this.loadAllResources();
     },
 
