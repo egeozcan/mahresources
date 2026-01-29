@@ -117,6 +117,16 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/noteType/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.NoteType](basicNoteTypeWriter, "noteType"))
 	router.Methods(http.MethodPost).Path("/v1/noteType/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.NoteType](basicNoteTypeWriter, "noteType"))
 
+	// Block API routes
+	router.Methods(http.MethodGet).Path("/v1/note/blocks").HandlerFunc(api_handlers.GetBlocksHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/note/block").HandlerFunc(api_handlers.GetBlockHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/note/block").HandlerFunc(api_handlers.CreateBlockHandler(appContext))
+	router.Methods(http.MethodPut).Path("/v1/note/block").HandlerFunc(api_handlers.UpdateBlockContentHandler(appContext))
+	router.Methods(http.MethodPatch).Path("/v1/note/block/state").HandlerFunc(api_handlers.UpdateBlockStateHandler(appContext))
+	router.Methods(http.MethodDelete).Path("/v1/note/block").HandlerFunc(api_handlers.DeleteBlockHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/note/block/delete").HandlerFunc(api_handlers.DeleteBlockHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/note/blocks/reorder").HandlerFunc(api_handlers.ReorderBlocksHandler(appContext))
+
 	router.Methods(http.MethodGet).Path("/v1/groups").HandlerFunc(api_handlers.GetGroupsHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/groups/meta/keys").HandlerFunc(api_handlers.GetGroupMetaKeysHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/group").HandlerFunc(api_handlers.GetGroupHandler(appContext))
