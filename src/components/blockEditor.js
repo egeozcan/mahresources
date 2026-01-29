@@ -26,6 +26,27 @@ export function blockEditor(noteId, initialBlocks = []) {
     _pendingUpdates: {}, // Track pending updates for optimistic UI
     _blockTypesLoaded: false,
 
+    // Simple markdown-like rendering: escapes HTML, converts newlines to <br>, and handles basic formatting
+    renderMarkdown(text) {
+      if (!text) return '';
+      // Escape HTML entities
+      let escaped = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+      // Convert newlines to <br>
+      escaped = escaped.replace(/\n/g, '<br>');
+      // Basic bold: **text** -> <strong>text</strong>
+      escaped = escaped.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      // Basic italic: *text* -> <em>text</em>
+      escaped = escaped.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+      // Basic links: [text](url) -> <a href="url">text</a>
+      escaped = escaped.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" class="text-blue-600 hover:underline" target="_blank" rel="noopener">$1</a>');
+      return escaped;
+    },
+
     async init() {
       // Load block types from API if not already loaded
       if (!this._blockTypesLoaded) {
