@@ -61,6 +61,7 @@
                 <img
                     :src="$store.lightbox.getCurrentItem()?.viewUrl"
                     :alt="$store.lightbox.getCurrentItem()?.name || 'Image'"
+                    tabindex="-1"
                     class="max-h-[90vh] object-contain transition-all duration-300"
                     :class="$store.lightbox.editPanelOpen ? 'md:max-w-[calc(100vw-450px)]' : 'max-w-[90vw]'"
                     :style="{ transform: `scale(${$store.lightbox.zoomLevel}) translate(${$store.lightbox.panX}px, ${$store.lightbox.panY}px)`, transformOrigin: 'center center' }"
@@ -76,6 +77,7 @@
                     :data="$store.lightbox.getCurrentItem()?.viewUrl"
                     type="image/svg+xml"
                     :aria-label="$store.lightbox.getCurrentItem()?.name || 'SVG Image'"
+                    tabindex="-1"
                     class="max-h-[90vh] max-w-[90vw] min-h-[50vh] min-w-[50vw] transition-all duration-300"
                     :class="$store.lightbox.editPanelOpen ? 'md:max-w-[calc(100vw-450px)]' : ''"
                     :style="{ transform: `scale(${$store.lightbox.zoomLevel}) translate(${$store.lightbox.panX}px, ${$store.lightbox.panY}px)`, transformOrigin: 'center center' }"
@@ -87,6 +89,7 @@
                     <img
                         :src="$store.lightbox.getCurrentItem()?.viewUrl"
                         :alt="$store.lightbox.getCurrentItem()?.name || 'SVG Image'"
+                        tabindex="-1"
                         class="max-h-[90vh] max-w-[90vw]"
                     >
                 </object>
