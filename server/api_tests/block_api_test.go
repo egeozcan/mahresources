@@ -174,4 +174,38 @@ func TestBlockEndpoints(t *testing.T) {
 		resp := tc.MakeRequest(http.MethodGet, "/v1/note/blocks", nil)
 		assert.Equal(t, http.StatusBadRequest, resp.Code)
 	})
+
+	t.Run("Get Block Missing Id", func(t *testing.T) {
+		resp := tc.MakeRequest(http.MethodGet, "/v1/note/block", nil)
+		assert.Equal(t, http.StatusBadRequest, resp.Code)
+	})
+
+	t.Run("Update Block Content Missing Id", func(t *testing.T) {
+		payload := map[string]interface{}{
+			"content": map[string]string{"text": "Some content"},
+		}
+		resp := tc.MakeRequest(http.MethodPut, "/v1/note/block", payload)
+		assert.Equal(t, http.StatusBadRequest, resp.Code)
+	})
+
+	t.Run("Update Block State Missing Id", func(t *testing.T) {
+		payload := map[string]interface{}{
+			"state": map[string][]string{"checked": {"x1"}},
+		}
+		resp := tc.MakeRequest(http.MethodPatch, "/v1/note/block/state", payload)
+		assert.Equal(t, http.StatusBadRequest, resp.Code)
+	})
+
+	t.Run("Delete Block Missing Id", func(t *testing.T) {
+		resp := tc.MakeRequest(http.MethodDelete, "/v1/note/block", nil)
+		assert.Equal(t, http.StatusBadRequest, resp.Code)
+	})
+
+	t.Run("Reorder Blocks Missing NoteId", func(t *testing.T) {
+		payload := map[string]interface{}{
+			"positions": map[uint]string{1: "a"},
+		}
+		resp := tc.MakeRequest(http.MethodPost, "/v1/note/blocks/reorder", payload)
+		assert.Equal(t, http.StatusBadRequest, resp.Code)
+	})
 }

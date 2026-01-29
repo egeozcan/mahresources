@@ -32,6 +32,11 @@ func GetBlocksHandler(ctx interfaces.BlockReader) func(http.ResponseWriter, *htt
 func GetBlockHandler(ctx interfaces.BlockReader) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := uint(http_utils.GetIntQueryParameter(request, "id", 0))
+		if id == 0 {
+			http_utils.HandleError(errors.New("id is required"), writer, request, http.StatusBadRequest)
+			return
+		}
+
 		block, err := ctx.GetBlock(id)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusNotFound)
@@ -67,6 +72,10 @@ func CreateBlockHandler(ctx interfaces.BlockWriter) func(http.ResponseWriter, *h
 func UpdateBlockContentHandler(ctx interfaces.BlockWriter) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := uint(http_utils.GetIntQueryParameter(request, "id", 0))
+		if id == 0 {
+			http_utils.HandleError(errors.New("id is required"), writer, request, http.StatusBadRequest)
+			return
+		}
 
 		var body struct {
 			Content json.RawMessage `json:"content"`
@@ -90,6 +99,10 @@ func UpdateBlockContentHandler(ctx interfaces.BlockWriter) func(http.ResponseWri
 func UpdateBlockStateHandler(ctx interfaces.BlockStateWriter) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := uint(http_utils.GetIntQueryParameter(request, "id", 0))
+		if id == 0 {
+			http_utils.HandleError(errors.New("id is required"), writer, request, http.StatusBadRequest)
+			return
+		}
 
 		var body struct {
 			State json.RawMessage `json:"state"`
@@ -113,6 +126,10 @@ func UpdateBlockStateHandler(ctx interfaces.BlockStateWriter) func(http.Response
 func DeleteBlockHandler(ctx interfaces.BlockDeleter) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := uint(http_utils.GetIntQueryParameter(request, "id", 0))
+		if id == 0 {
+			http_utils.HandleError(errors.New("id is required"), writer, request, http.StatusBadRequest)
+			return
+		}
 
 		if err := ctx.DeleteBlock(id); err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
@@ -128,6 +145,11 @@ func ReorderBlocksHandler(ctx interfaces.BlockWriter) func(http.ResponseWriter, 
 		var body query_models.NoteBlockReorderEditor
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+
+		if body.NoteID == 0 {
+			http_utils.HandleError(errors.New("noteId is required"), writer, request, http.StatusBadRequest)
 			return
 		}
 

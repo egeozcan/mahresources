@@ -152,8 +152,16 @@ func (ctx *MahresourcesContext) ReorderBlocks(noteID uint, positions map[uint]st
 	}
 
 	tx := ctx.db.Begin()
+	if tx.Error != nil {
+		return tx.Error
+	}
+
+	var txErr error
 	defer func() {
 		if r := recover(); r != nil {
+			tx.Rollback()
+			panic(r) // Re-panic after rollback
+		} else if txErr != nil {
 			tx.Rollback()
 		}
 	}()
@@ -161,12 +169,17 @@ func (ctx *MahresourcesContext) ReorderBlocks(noteID uint, positions map[uint]st
 	for blockID, position := range positions {
 		if err := tx.Model(&models.NoteBlock{}).Where("id = ? AND note_id = ?", blockID, noteID).
 			Update("position", position).Error; err != nil {
-			tx.Rollback()
+			txErr = err
 			return err
 		}
 	}
 
-	return tx.Commit().Error
+	if err := tx.Commit().Error; err != nil {
+		txErr = err
+		return err
+	}
+
+	return nil
 }
 
 // syncFirstTextBlockToDescription syncs the first text block's content to the note's Description

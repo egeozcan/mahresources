@@ -16,6 +16,14 @@
         Loading blocks...
     </div>
 
+    {# Error state #}
+    <div x-show="error" x-cloak class="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+        <div class="flex items-center justify-between">
+            <span x-text="error"></span>
+            <button @click="error = null" class="text-red-500 hover:text-red-700">&times;</button>
+        </div>
+    </div>
+
     {# Blocks list #}
     <div x-show="!loading" class="space-y-4">
         <template x-for="(block, index) in blocks" :key="block.id">
