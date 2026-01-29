@@ -14,7 +14,7 @@
                 const response = await fetch('/v1/note/share?noteId={{ note.ID }}', { method: 'POST' });
                 if (!response.ok) throw new Error('Failed to share');
                 const data = await response.json();
-                this.shareToken = data.token;
+                this.shareToken = data.shareToken;
                 this.shared = true;
                 await updateClipboard(this.getShareUrl());
             } catch (e) {

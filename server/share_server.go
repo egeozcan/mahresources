@@ -181,10 +181,17 @@ func (s *ShareServer) handleSharedResource(w http.ResponseWriter, r *http.Reques
 func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note, shareToken string) {
 	template := pongo2.Must(s.templateSet.FromFile("/shared/displayNote.tpl"))
 
+	// Build a map of resource ID to hash for gallery blocks
+	resourceHashMap := make(map[uint]string)
+	for _, resource := range note.Resources {
+		resourceHashMap[resource.ID] = resource.Hash
+	}
+
 	context := pongo2.Context{
-		"note":       note,
-		"pageTitle":  note.Name,
-		"shareToken": shareToken,
+		"note":            note,
+		"pageTitle":       note.Name,
+		"shareToken":      shareToken,
+		"resourceHashMap": resourceHashMap,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

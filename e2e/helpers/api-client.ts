@@ -224,6 +224,7 @@ export class ApiClient {
     noteTypeId?: number;
     tags?: number[];
     groups?: number[];
+    resources?: number[];
     startDate?: string;
     endDate?: string;
   }): Promise<Note> {
@@ -239,6 +240,9 @@ export class ApiClient {
     }
     if (data.groups) {
       data.groups.forEach(groupId => formData.append('groups', groupId.toString()));
+    }
+    if (data.resources) {
+      data.resources.forEach(resourceId => formData.append('Resources', resourceId.toString()));
     }
 
     const response = await this.request.post(`${this.baseUrl}/v1/note`, {
@@ -600,5 +604,38 @@ export class ApiClient {
   async getSharedNotes(): Promise<Note[]> {
     const response = await this.request.get(`${this.baseUrl}/v1/notes?Shared=1`);
     return this.handleResponse<Note[]>(response);
+  }
+
+  // Get resource details including hash
+  async getResource(id: number): Promise<{
+    ID: number;
+    Name: string;
+    Hash: string;
+    ContentType: string;
+  }> {
+    const response = await this.request.get(`${this.baseUrl}/v1/resource?Id=${id}`);
+    return this.handleResponse<{
+      ID: number;
+      Name: string;
+      Hash: string;
+      ContentType: string;
+    }>(response);
+  }
+
+  // Add resources to a note by updating the note
+  async addResourcesToNote(noteId: number, resourceIds: number[]): Promise<Note> {
+    // First get the note to preserve its name (uses existing getNote method)
+    const existingNote = await this.getNote(noteId);
+
+    const formData = new URLSearchParams();
+    formData.append('ID', noteId.toString());
+    formData.append('Name', existingNote.Name);
+    resourceIds.forEach(id => formData.append('Resources', id.toString()));
+
+    const response = await this.request.post(`${this.baseUrl}/v1/note`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+    return this.handleResponse<Note>(response);
   }
 }

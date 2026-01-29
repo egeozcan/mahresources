@@ -14,7 +14,7 @@
 {% elif block.Type == "divider" %}
     <hr class="border-gray-200">
 {% elif block.Type == "todos" %}
-    <div class="space-y-2" x-data="sharedTodos({{ block.ID }}, {{ block.State|tojson }}, '{{ shareToken }}')">
+    <div class="space-y-2" x-data="sharedTodos({{ block.ID }}, {{ block.State|json }}, '{{ shareToken }}')">
         {% for item in block.Content.items %}
         <label class="flex items-center gap-2 cursor-pointer">
             <input
@@ -33,7 +33,7 @@
     <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
         {% for resourceId in block.Content.resourceIds %}
         <img
-            src="/s/{{ shareToken }}/resource/{{ resourceId }}"
+            src="/s/{{ shareToken }}/resource/{{ resourceHashMap|lookup:resourceId }}"
             alt="Gallery image"
             class="w-full h-48 object-cover rounded-lg"
         >
@@ -57,7 +57,7 @@
                 <tr>
                     {% for col in block.Content.columns %}
                     <td class="px-3 py-2 text-sm text-gray-900">
-                        {{ row[col.id]|default:"" }}
+                        {{ row|lookup:col.id }}
                     </td>
                     {% endfor %}
                 </tr>

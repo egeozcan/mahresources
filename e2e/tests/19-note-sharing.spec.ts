@@ -265,3 +265,111 @@ test.describe('Shared Notes Filter', () => {
     }
   });
 });
+
+test.describe('Share Server Content', () => {
+  let categoryId: number;
+  let ownerGroupId: number;
+  let noteId: number;
+  let resourceId: number;
+  let shareToken: string;
+
+  test.beforeAll(async ({ apiClient }) => {
+    // Create prerequisite data
+    const category = await apiClient.createCategory('Share Server Test Category', 'Category for share server tests');
+    categoryId = category.ID;
+
+    const ownerGroup = await apiClient.createGroup({
+      name: 'Share Server Test Owner',
+      description: 'Owner for share server tests',
+      categoryId: categoryId,
+    });
+    ownerGroupId = ownerGroup.ID;
+
+    // Create a resource (image) for gallery testing
+    const path = await import('path');
+    const resource = await apiClient.createResource({
+      filePath: path.join(__dirname, '../test-assets/sample-image.png'),
+      name: 'Gallery Test Image',
+      description: 'Image for gallery block testing',
+      ownerId: ownerGroupId,
+    });
+    resourceId = resource.ID;
+
+    // Create a note with the resource attached
+    const note = await apiClient.createNote({
+      name: 'Share Server Content Test Note',
+      description: 'This note tests share server content rendering',
+      ownerId: ownerGroupId,
+      resources: [resourceId],
+    });
+    noteId = note.ID;
+
+    // Share the note
+    const shareResult = await apiClient.shareNote(noteId);
+    shareToken = shareResult.token;
+  });
+
+  test('should display shared note page', async ({ page, shareBaseUrl }) => {
+    // Navigate to the share server
+    await page.goto(`${shareBaseUrl}/s/${shareToken}`);
+
+    // Should display the note title
+    await expect(page.locator('h1')).toContainText('Share Server Content Test Note');
+
+    // Should display the footer
+    await expect(page.locator('footer')).toContainText('Shared via Mahresources');
+  });
+
+  test('should return 404 for invalid share token', async ({ page, shareBaseUrl }) => {
+    // Navigate to an invalid token
+    const response = await page.goto(`${shareBaseUrl}/s/invalidtoken12345678901234`);
+
+    // Should return 404
+    expect(response?.status()).toBe(404);
+  });
+
+  test('should not serve resources with wrong token', async ({ apiClient, page, shareBaseUrl }) => {
+    // Get the resource hash
+    const resourceDetails = await apiClient.getResource(resourceId);
+    const resourceHash = resourceDetails.Hash;
+
+    // Try to access resource with wrong token
+    const response = await page.goto(`${shareBaseUrl}/s/wrongtoken1234567890123456/resource/${resourceHash}`);
+
+    // Should return 404
+    expect(response?.status()).toBe(404);
+  });
+
+  test('should serve resources with valid token', async ({ apiClient, page, shareBaseUrl }) => {
+    // Get the resource hash
+    const resourceDetails = await apiClient.getResource(resourceId);
+    const resourceHash = resourceDetails.Hash;
+
+    // Access resource with valid token
+    const response = await page.goto(`${shareBaseUrl}/s/${shareToken}/resource/${resourceHash}`);
+
+    // Should return 200
+    expect(response?.status()).toBe(200);
+
+    // Should have correct content type for image
+    const contentType = response?.headers()['content-type'];
+    expect(contentType).toContain('image');
+  });
+
+  test.afterAll(async ({ apiClient }) => {
+    // Clean up in reverse dependency order
+    if (noteId) {
+      await apiClient.unshareNote(noteId).catch(() => {});
+      await apiClient.deleteNote(noteId);
+    }
+    if (resourceId) {
+      await apiClient.deleteResource(resourceId);
+    }
+    if (ownerGroupId) {
+      await apiClient.deleteGroup(ownerGroupId);
+    }
+    if (categoryId) {
+      await apiClient.deleteCategory(categoryId);
+    }
+  });
+});

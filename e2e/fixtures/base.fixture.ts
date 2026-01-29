@@ -21,6 +21,7 @@ type TestFixtures = {
   resourcePage: ResourcePage;
   relationTypePage: RelationTypePage;
   relationPage: RelationPage;
+  shareBaseUrl: string;
 };
 
 export const test = base.extend<TestFixtures>({
@@ -66,6 +67,11 @@ export const test = base.extend<TestFixtures>({
 
   relationPage: async ({ page }, use) => {
     await use(new RelationPage(page));
+  },
+
+  shareBaseUrl: async ({}, use) => {
+    const shareBaseUrl = process.env.SHARE_BASE_URL || 'http://127.0.0.1:8183';
+    await use(shareBaseUrl);
   },
 });
 
