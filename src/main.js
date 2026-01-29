@@ -34,6 +34,8 @@ import { downloadCockpit } from './components/downloadCockpit.js';
 import { compareView } from './components/compareView.js';
 import { imageCompare } from './components/imageCompare.js';
 import { textDiff } from './components/textDiff.js';
+import { blockEditor } from './components/blockEditor.js';
+import { blockText, blockHeading, blockDivider, blockTodos, blockGallery, blockReferences, blockTable } from './components/blocks/index.js';
 
 // Import web components
 import './webcomponents/expandabletext.js';
@@ -77,6 +79,14 @@ Alpine.data('downloadCockpit', downloadCockpit);
 Alpine.data('compareView', compareView);
 Alpine.data('imageCompare', imageCompare);
 Alpine.data('textDiff', textDiff);
+Alpine.data('blockEditor', blockEditor);
+Alpine.data('blockText', blockText);
+Alpine.data('blockHeading', blockHeading);
+Alpine.data('blockDivider', blockDivider);
+Alpine.data('blockTodos', blockTodos);
+Alpine.data('blockGallery', blockGallery);
+Alpine.data('blockReferences', blockReferences);
+Alpine.data('blockTable', blockTable);
 
 // Expose Alpine globally for debugging and morph usage
 window.Alpine = Alpine;
