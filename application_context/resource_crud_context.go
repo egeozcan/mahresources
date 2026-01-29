@@ -1,11 +1,12 @@
 package application_context
 
 import (
+	"net/http"
+
+	"gorm.io/gorm/clause"
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
-
-	"gorm.io/gorm/clause"
 )
 
 func (ctx *MahresourcesContext) GetResource(id uint) (*models.Resource, error) {
@@ -204,4 +205,42 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)
 	return &resource, nil
+}
+
+// GetResourceByHash retrieves a resource by its content hash.
+// This is useful for serving resources in contexts where only the hash is known,
+// such as shared note resource serving.
+func (ctx *MahresourcesContext) GetResourceByHash(hash string) (*models.Resource, error) {
+	var resource models.Resource
+	if err := ctx.db.Where("hash = ?", hash).First(&resource).Error; err != nil {
+		return nil, err
+	}
+	return &resource, nil
+}
+
+// ServeResourceByHash serves a resource file by its content hash.
+// This is used by the share server to serve resources for shared notes.
+func (ctx *MahresourcesContext) ServeResourceByHash(w http.ResponseWriter, r *http.Request, hash string) {
+	resource, err := ctx.GetResourceByHash(hash)
+	if err != nil {
+		http.Error(w, "Not found", http.StatusNotFound)
+		return
+	}
+
+	// Get the appropriate filesystem for this resource
+	fs, err := ctx.GetFsForStorageLocation(resource.StorageLocation)
+	if err != nil {
+		http.Error(w, "Storage not found", http.StatusNotFound)
+		return
+	}
+
+	file, err := fs.Open(resource.GetCleanLocation())
+	if err != nil {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+	defer file.Close()
+
+	w.Header().Set("Content-Type", resource.ContentType)
+	http.ServeContent(w, r, resource.Name, resource.UpdatedAt, file)
 }
