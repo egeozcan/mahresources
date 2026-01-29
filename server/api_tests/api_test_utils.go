@@ -49,6 +49,7 @@ func SetupTestEnv(t *testing.T) *TestContext {
 		&models.GroupRelationType{},
 		&models.ImageHash{},
 		&models.LogEntry{},
+		&models.NoteBlock{},
 	)
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)
@@ -122,6 +123,19 @@ func (tc *TestContext) CreateDummyGroup(name string) *models.Group {
 
 func UintPtr(v uint) *uint {
 	return &v
+}
+
+// Helper to create a dummy block for testing
+func (tc *TestContext) CreateDummyBlock(noteID uint, blockType, content, position string) *models.NoteBlock {
+	block := &models.NoteBlock{
+		NoteID:   noteID,
+		Type:     blockType,
+		Position: position,
+		Content:  []byte(content),
+		State:    []byte("{}"),
+	}
+	tc.DB.Create(block)
+	return block
 }
 
 // Add more helpers as needed...

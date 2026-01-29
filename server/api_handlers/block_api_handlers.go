@@ -2,6 +2,7 @@ package api_handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"mahresources/constants"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
@@ -13,7 +14,7 @@ func GetBlocksHandler(ctx interfaces.BlockReader) func(http.ResponseWriter, *htt
 	return func(writer http.ResponseWriter, request *http.Request) {
 		noteID := uint(http_utils.GetIntQueryParameter(request, "noteId", 0))
 		if noteID == 0 {
-			http_utils.HandleError(nil, writer, request, http.StatusBadRequest)
+			http_utils.HandleError(errors.New("noteId is required"), writer, request, http.StatusBadRequest)
 			return
 		}
 
