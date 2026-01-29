@@ -1,9 +1,11 @@
 package application_context
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"mahresources/models"
 	"mahresources/models/database_scopes"
@@ -108,6 +110,15 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 		}
 	}
 
+	// Sync description to first text block if blocks exist (backward compatibility)
+	if noteQuery.ID != 0 {
+		var blocks []models.NoteBlock
+		if err := tx.Where("note_id = ? AND type = ?", note.ID, "text").Order("position ASC").Limit(1).Find(&blocks).Error; err == nil && len(blocks) > 0 {
+			content, _ := json.Marshal(map[string]string{"text": noteQuery.Description})
+			tx.Model(&blocks[0]).Update("content", content)
+		}
+	}
+
 	if err := tx.Commit().Error; err != nil {
 		return nil, err
 	}
@@ -125,7 +136,11 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 func (ctx *MahresourcesContext) GetNote(id uint) (*models.Note, error) {
 	var note models.Note
 
-	return &note, ctx.db.Preload(clause.Associations, pageLimit).First(&note, id).Error
+	return &note, ctx.db.Preload(clause.Associations, pageLimit).
+		Preload("Blocks", func(db *gorm.DB) *gorm.DB {
+			return db.Order("position ASC")
+		}).
+		First(&note, id).Error
 }
 
 func (ctx *MahresourcesContext) GetNotes(offset, maxResults int, query *query_models.NoteQuery) (*[]models.Note, error) {

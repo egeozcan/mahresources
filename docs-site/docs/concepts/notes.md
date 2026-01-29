@@ -49,6 +49,161 @@ Notes support standard Markdown formatting:
 `inline code` and code blocks
 ```
 
+## Block-Based Content
+
+Notes support an optional block-based content structure that enables rich, interactive content beyond plain text or Markdown.
+
+### What Are Blocks?
+
+Blocks are structured content units within a note. Each block has a specific type and stores its data as JSON. This allows for interactive elements like to-do lists, image galleries, and sortable tables that maintain state between sessions.
+
+### Block Properties
+
+| Property | Description |
+|----------|-------------|
+| `type` | Block type (text, heading, divider, gallery, references, todos, table) |
+| `content` | JSON data edited in edit mode |
+| `state` | JSON data modified while viewing |
+| `position` | Lexicographic string for ordering |
+
+### Content vs State
+
+Blocks separate **content** (what you edit) from **state** (runtime changes):
+
+- **Content**: Data changed in edit mode. Examples: todo item labels, heading text, table columns
+- **State**: Data modified while viewing. Examples: which todos are checked, table sort order
+
+This separation allows users to interact with blocks (checking items, sorting tables) without entering edit mode.
+
+### Block Types
+
+#### Text Block
+
+Basic text content, supports Markdown.
+
+```json
+{
+  "type": "text",
+  "content": { "text": "This is a paragraph of text." }
+}
+```
+
+#### Heading Block
+
+Section headings with configurable level.
+
+```json
+{
+  "type": "heading",
+  "content": { "text": "Section Title", "level": 2 }
+}
+```
+
+Supported levels: 1, 2, or 3.
+
+#### Divider Block
+
+Visual separator between content sections.
+
+```json
+{
+  "type": "divider",
+  "content": {}
+}
+```
+
+#### Gallery Block
+
+Displays attached resources as an image gallery.
+
+```json
+{
+  "type": "gallery",
+  "content": { "resourceIds": [101, 102, 103] }
+}
+```
+
+#### References Block
+
+Links to related groups.
+
+```json
+{
+  "type": "references",
+  "content": { "groupIds": [5, 12, 27] }
+}
+```
+
+#### Todos Block
+
+Interactive to-do list with checkable items.
+
+```json
+{
+  "type": "todos",
+  "content": {
+    "items": [
+      { "id": "a1b2", "label": "First task" },
+      { "id": "c3d4", "label": "Second task" }
+    ]
+  },
+  "state": {
+    "checked": ["a1b2"]
+  }
+}
+```
+
+- `content.items`: The to-do items (edited in edit mode)
+- `state.checked`: IDs of checked items (toggled while viewing)
+
+#### Table Block
+
+Sortable data table.
+
+```json
+{
+  "type": "table",
+  "content": {
+    "columns": [
+      { "id": "name", "label": "Name" },
+      { "id": "status", "label": "Status" }
+    ],
+    "rows": [
+      { "id": "r1", "name": "Item A", "status": "Active" },
+      { "id": "r2", "name": "Item B", "status": "Pending" }
+    ]
+  },
+  "state": {
+    "sortColumn": "name",
+    "sortDir": "asc"
+  }
+}
+```
+
+- `content.columns` and `content.rows`: Table structure (edited in edit mode)
+- `state.sortColumn` and `state.sortDir`: Current sort settings (changed by clicking headers)
+
+### Position Ordering
+
+Blocks use lexicographic position strings (e.g., "a", "b", "c" or "aaa", "aab") for ordering. This allows inserting blocks between existing ones without renumbering:
+
+| Position | Block |
+|----------|-------|
+| `a` | First block |
+| `b` | Second block |
+| `am` | Inserted between first and second |
+
+### Backward Compatibility
+
+For backward compatibility with existing notes:
+
+- A note's `description` field syncs bidirectionally with its first text block
+- Notes without blocks render the `description` field as before
+- Adding blocks to an existing note preserves the description as the first text block
+- Editing the first text block updates the description field
+
+This ensures older clients and integrations continue to work while new features use the block system.
+
 ## Date Ranges
 
 Notes can have optional date fields for temporal organization:

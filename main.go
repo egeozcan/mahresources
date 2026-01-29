@@ -164,6 +164,7 @@ func main() {
 		&models.Resource{},
 		&models.ResourceVersion{},
 		&models.Note{},
+		&models.NoteBlock{},
 		&models.Tag{},
 		&models.Group{},
 		&models.Category{},

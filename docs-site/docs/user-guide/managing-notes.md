@@ -215,6 +215,104 @@ Note deletion is permanent. Related resources are not deleted but the link to th
 
 :::
 
+## Using the Block Editor
+
+The block editor provides a structured way to organize note content using different block types. It appears on the note detail page below the main content area.
+
+### Entering and Exiting Edit Mode
+
+- Click the **Edit Blocks** button in the top-right corner of the block editor to enter edit mode
+- The button changes to **Done** when in edit mode
+- Click **Done** to exit edit mode and return to view mode
+- Changes to block content are saved automatically when you click away from a field
+
+### Block Types
+
+The block editor supports seven block types:
+
+| Block Type | Description |
+|------------|-------------|
+| **Text** | Rich text content with Markdown support |
+| **Heading** | Section headers with H1, H2, or H3 levels |
+| **Divider** | Horizontal line to separate content sections |
+| **Gallery** | Grid display of resource thumbnails by ID |
+| **References** | Links to groups by ID |
+| **Todos** | Checklist with interactive checkboxes |
+| **Table** | Data table with sortable columns |
+
+### Adding Blocks
+
+1. Enter edit mode by clicking **Edit Blocks**
+2. Click the **+ Add Block** button at the bottom of the block list
+3. Select a block type from the dropdown menu
+4. The new block appears at the end of the list
+
+### Editing Block Content
+
+Each block type has its own editing interface:
+
+**Text blocks**: A textarea appears for entering Markdown-formatted text.
+
+**Heading blocks**: A dropdown to select the heading level (H1, H2, H3) and a text input for the heading text.
+
+**Divider blocks**: No content to edit - displays as a horizontal line.
+
+**Gallery blocks**: Enter comma-separated resource IDs (e.g., "1, 2, 3") to display those resources as thumbnails.
+
+**References blocks**: Enter comma-separated group IDs (e.g., "1, 2, 3") to create links to those groups.
+
+**Todos blocks**:
+- Edit item labels in text inputs
+- Click **+ Add item** to add new todo items
+- Click the **x** button to remove items
+
+**Table blocks**:
+- Add/remove columns with labels
+- Add/remove rows with values for each column
+- Click **+ Add column** or **+ Add row** to expand the table
+
+### Reordering Blocks
+
+In edit mode, each block displays control buttons in its header:
+
+- Click the **up arrow** to move the block up one position
+- Click the **down arrow** to move the block down one position
+- The up arrow is disabled for the first block
+- The down arrow is disabled for the last block
+
+### Deleting Blocks
+
+1. Enter edit mode
+2. Click the **trash icon** on the block you want to delete
+3. Confirm the deletion in the dialog that appears
+
+:::warning
+
+Block deletion is immediate and cannot be undone.
+
+:::
+
+### Interactive Features (View Mode)
+
+Some blocks have interactive features available in view mode:
+
+**Todos**: Click checkboxes to mark items as complete or incomplete. Completed items show strikethrough text. Checkbox state is saved automatically.
+
+**Tables**: Click column headers to sort the table by that column. Click again to toggle between ascending and descending order. Sort state is preserved during your session.
+
+**Gallery**: Click thumbnails to open the resource detail page.
+
+**References**: Click group links to navigate to the group detail page.
+
+### Description Field Synchronization
+
+The note's **Description** field (shown in the main content area and note lists) automatically stays synchronized with the first text block in the block editor:
+
+- When you edit the first text block, the Description field updates to match
+- When you create a new text block and it becomes the first one, its content becomes the Description
+- If you delete the first text block, the next text block's content becomes the Description
+- This ensures backward compatibility with notes that don't use the block editor
+
 ## Notes in Context
 
 Notes appear in several contexts:

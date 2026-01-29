@@ -60,6 +60,17 @@ export interface SearchResult {
   URL?: string;
 }
 
+export interface NoteBlock {
+  id: number;
+  createdAt: string;
+  updatedAt: string;
+  noteId: number;
+  type: string;
+  position: string;
+  content: Record<string, unknown>;
+  state: Record<string, unknown>;
+}
+
 export class ApiClient {
   constructor(
     private request: APIRequestContext,
@@ -246,6 +257,43 @@ export class ApiClient {
     return this.handleResponse<Note[]>(response);
   }
 
+  async getNote(id: number): Promise<Note> {
+    const response = await this.request.get(`${this.baseUrl}/v1/note?id=${id}`);
+    return this.handleResponse<Note>(response);
+  }
+
+  async updateNote(id: number, data: {
+    name?: string;
+    description?: string;
+    ownerId?: number;
+    noteTypeId?: number;
+    tags?: number[];
+    groups?: number[];
+    startDate?: string;
+    endDate?: string;
+  }): Promise<Note> {
+    const formData = new URLSearchParams();
+    formData.append('ID', id.toString());
+    if (data.name) formData.append('Name', data.name);
+    if (data.description !== undefined) formData.append('Description', data.description);
+    if (data.ownerId) formData.append('ownerId', data.ownerId.toString());
+    if (data.noteTypeId) formData.append('NoteTypeId', data.noteTypeId.toString());
+    if (data.startDate) formData.append('startDate', data.startDate);
+    if (data.endDate) formData.append('endDate', data.endDate);
+    if (data.tags) {
+      data.tags.forEach(tagId => formData.append('tags', tagId.toString()));
+    }
+    if (data.groups) {
+      data.groups.forEach(groupId => formData.append('groups', groupId.toString()));
+    }
+
+    const response = await this.request.post(`${this.baseUrl}/v1/note`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+    return this.handleResponse<Note>(response);
+  }
+
   // Query operations
   async createQuery(data: {
     name: string;
@@ -411,7 +459,12 @@ export class ApiClient {
     const fileName = pathModule.basename(data.filePath);
 
     // Build multipart object - the field name must be "resource" to match server
-    const multipartData: Record<string, unknown> = {
+    type MultipartValue = string | number | boolean | {
+      name: string;
+      mimeType: string;
+      buffer: Buffer;
+    };
+    const multipartData: Record<string, MultipartValue> = {
       resource: {
         name: fileName,
         mimeType: 'image/png',
@@ -463,6 +516,70 @@ export class ApiClient {
     const response = await this.request.post(`${this.baseUrl}/v1/resources/removeTags`, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       data: formData.toString(),
+    });
+    await this.handleVoidResponse(response);
+  }
+
+  // Block operations
+  async createBlock(
+    noteId: number,
+    type: string,
+    position: string,
+    content: Record<string, unknown>
+  ): Promise<NoteBlock> {
+    const response = await this.request.post(`${this.baseUrl}/v1/note/block`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: JSON.stringify({
+        noteId,
+        type,
+        position,
+        content,
+      }),
+    });
+    return this.handleResponse<NoteBlock>(response);
+  }
+
+  async getBlocks(noteId: number): Promise<NoteBlock[]> {
+    const response = await this.request.get(`${this.baseUrl}/v1/note/blocks?noteId=${noteId}`);
+    return this.handleResponse<NoteBlock[]>(response);
+  }
+
+  async getBlock(blockId: number): Promise<NoteBlock> {
+    const response = await this.request.get(`${this.baseUrl}/v1/note/block?id=${blockId}`);
+    return this.handleResponse<NoteBlock>(response);
+  }
+
+  async updateBlockContent(
+    blockId: number,
+    content: Record<string, unknown>
+  ): Promise<NoteBlock> {
+    const response = await this.request.put(`${this.baseUrl}/v1/note/block?id=${blockId}`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: JSON.stringify({ content }),
+    });
+    return this.handleResponse<NoteBlock>(response);
+  }
+
+  async updateBlockState(
+    blockId: number,
+    state: Record<string, unknown>
+  ): Promise<NoteBlock> {
+    const response = await this.request.patch(`${this.baseUrl}/v1/note/block/state?id=${blockId}`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: JSON.stringify({ state }),
+    });
+    return this.handleResponse<NoteBlock>(response);
+  }
+
+  async deleteBlock(blockId: number): Promise<void> {
+    const response = await this.request.delete(`${this.baseUrl}/v1/note/block?id=${blockId}`);
+    await this.handleVoidResponse(response);
+  }
+
+  async reorderBlocks(noteId: number, positions: Record<number, string>): Promise<void> {
+    const response = await this.request.post(`${this.baseUrl}/v1/note/blocks/reorder`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: JSON.stringify({ noteId, positions }),
     });
     await this.handleVoidResponse(response);
   }

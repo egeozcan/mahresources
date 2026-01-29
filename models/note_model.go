@@ -22,6 +22,7 @@ type Note struct {
 	EndDate     *time.Time
 	NoteType    *NoteType `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	NoteTypeId  *uint
+	Blocks      []*NoteBlock `gorm:"foreignKey:NoteID" json:"blocks,omitempty"`
 }
 
 func (a Note) GetId() uint {
