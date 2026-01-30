@@ -21,6 +21,7 @@ export function blockEditor(noteId, initialBlocks = []) {
     noteId,
     blocks: initialBlocks,
     editMode: false,
+    addBlockPickerOpen: false, // State for add block dropdown
     loading: false,
     error: null,
     _pendingUpdates: {}, // Track pending updates for optimistic UI

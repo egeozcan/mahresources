@@ -1,5 +1,5 @@
 {# with noteId= blocks= #}
-<div x-data="blockEditor({{ noteId }}, {{ blocks|json }})" class="block-editor">
+<div x-data="blockEditor({{ noteId }}, {{ blocks|json }})" x-init="init()" class="block-editor">
     {# Edit mode toggle #}
     <div class="flex justify-end mb-4">
         <button
@@ -693,23 +693,23 @@
         </div>
 
         {# Add block picker (edit mode only) #}
-        <div x-show="editMode" class="mt-4" x-data="{ open: false }">
+        <div x-show="editMode" class="mt-4">
             <div class="relative">
                 <button
-                    @click="open = !open"
+                    @click="addBlockPickerOpen = !addBlockPickerOpen"
                     class="w-full py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-blue-400 hover:text-blue-500 transition-colors"
                 >
                     + Add Block
                 </button>
                 <div
-                    x-show="open"
-                    @click.away="open = false"
+                    x-show="addBlockPickerOpen"
+                    @click.away="addBlockPickerOpen = false"
                     x-transition
                     class="absolute z-10 mt-2 w-full bg-white border border-gray-200 rounded-lg shadow-lg py-2"
                 >
                     <template x-for="bt in blockTypes" :key="bt.type">
                         <button
-                            @click="addBlock(bt.type); open = false"
+                            @click="addBlock(bt.type); addBlockPickerOpen = false"
                             class="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center gap-2"
                         >
                             <span x-text="bt.icon"></span>
