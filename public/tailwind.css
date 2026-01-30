@@ -1286,9 +1286,6 @@
   .max-w-\[100px\] {
     max-width: 100px;
   }
-  .max-w-\[120px\] {
-    max-width: 120px;
-  }
   .max-w-\[150px\] {
     max-width: 150px;
   }
@@ -2096,9 +2093,6 @@
   }
   .\!text-white {
     color: var(--color-white) !important;
-  }
-  .text-blue-200 {
-    color: var(--color-blue-200);
   }
   .text-blue-400 {
     color: var(--color-blue-400);
