@@ -8,6 +8,7 @@ import (
 // Usage: {{ map|lookup:key }}
 // Supports:
 // - map[uint]string for resource hash lookups
+// - map[float64]string for group name lookups (JSON numbers are float64)
 // - map[string]interface{} for table row lookups
 // - map[string]string for general string maps
 func lookupFilter(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *pongo2.Error) {
@@ -36,6 +37,29 @@ func lookupFilter(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *pongo2
 		}
 
 		if val, exists := hashMap[uintKey]; exists {
+			return pongo2.AsValue(val), nil
+		}
+	}
+
+	// Handle map[float64]string (group name map - JSON numbers are float64)
+	if floatMap, ok := m.(map[float64]string); ok {
+		var floatKey float64
+		switch k := key.(type) {
+		case float64:
+			floatKey = k
+		case int:
+			floatKey = float64(k)
+		case int64:
+			floatKey = float64(k)
+		case uint:
+			floatKey = float64(k)
+		case uint64:
+			floatKey = float64(k)
+		default:
+			return pongo2.AsValue(""), nil
+		}
+
+		if val, exists := floatMap[floatKey]; exists {
 			return pongo2.AsValue(val), nil
 		}
 	}

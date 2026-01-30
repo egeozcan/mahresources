@@ -373,3 +373,253 @@ test.describe('Share Server Content', () => {
     }
   });
 });
+
+test.describe('Shared Note Block Rendering', () => {
+  let categoryId: number;
+  let ownerGroupId: number;
+  let refGroupIds: number[] = [];
+  let noteId: number;
+  let resourceIds: number[] = [];
+  let shareToken: string;
+
+  test.beforeAll(async ({ apiClient }) => {
+    // Create prerequisite data
+    const category = await apiClient.createCategory('Block Render Test Category', 'Category for block rendering tests');
+    categoryId = category.ID;
+
+    const ownerGroup = await apiClient.createGroup({
+      name: 'Block Render Test Owner',
+      description: 'Owner for block rendering tests',
+      categoryId: categoryId,
+    });
+    ownerGroupId = ownerGroup.ID;
+
+    // Create groups for references block
+    for (let i = 1; i <= 2; i++) {
+      const refGroup = await apiClient.createGroup({
+        name: `Reference Group ${i}`,
+        description: `Reference group ${i} for testing`,
+        categoryId: categoryId,
+      });
+      refGroupIds.push(refGroup.ID);
+    }
+
+    // Create resources for gallery (use different image files to avoid hash conflicts)
+    const path = await import('path');
+    const imageFiles = ['sample-image-21.png', 'sample-image-22.png'];
+    for (let i = 0; i < imageFiles.length; i++) {
+      const resource = await apiClient.createResource({
+        filePath: path.join(__dirname, '../test-assets', imageFiles[i]),
+        name: `Block Test Gallery Image ${i + 1}`,
+        description: `Gallery image ${i + 1} for block rendering testing`,
+        ownerId: ownerGroupId,
+      });
+      resourceIds.push(resource.ID);
+    }
+
+    // Create note with description (to test no duplicate when blocks exist)
+    const note = await apiClient.createNote({
+      name: 'Block Rendering Test Note',
+      description: 'This description should NOT appear when blocks exist',
+      ownerId: ownerGroupId,
+    });
+    noteId = note.ID;
+
+    // Create blocks
+    // 1. Text block with markdown
+    await apiClient.createBlock(noteId, 'text', 'a', {
+      text: 'Hello **bold** and *italic* text\n\n# Heading in text',
+    });
+
+    // 2. Heading block
+    await apiClient.createBlock(noteId, 'heading', 'b', {
+      text: 'Test Heading',
+      level: 1,
+    });
+
+    // 3. Gallery block with resources
+    await apiClient.createBlock(noteId, 'gallery', 'c', {
+      resourceIds: resourceIds,
+    });
+
+    // 4. References block with groups
+    await apiClient.createBlock(noteId, 'references', 'd', {
+      groupIds: refGroupIds,
+    });
+
+    // 5. Static table block
+    await apiClient.createBlock(noteId, 'table', 'e', {
+      columns: [
+        { id: 'col1', label: 'Column 1' },
+        { id: 'col2', label: 'Column 2' },
+      ],
+      rows: [
+        { id: 'row1', col1: 'Value A', col2: 'Value B' },
+        { id: 'row2', col1: 'Value C', col2: 'Value D' },
+      ],
+    });
+
+    // Share the note
+    const shareResult = await apiClient.shareNote(noteId);
+    shareToken = shareResult.token;
+  });
+
+  test('should render text block with markdown', async ({ page, shareBaseUrl }) => {
+    await page.goto(`${shareBaseUrl}/s/${shareToken}`);
+
+    // Should render bold text
+    await expect(page.locator('strong:has-text("bold")')).toBeVisible();
+
+    // Should render italic text
+    await expect(page.locator('em:has-text("italic")')).toBeVisible();
+
+    // Should render heading from markdown
+    await expect(page.locator('h1:has-text("Heading in text")')).toBeVisible();
+  });
+
+  test('should render heading block', async ({ page, shareBaseUrl }) => {
+    await page.goto(`${shareBaseUrl}/s/${shareToken}`);
+
+    // Should render the heading block (could be h2, h3, or h4 depending on level)
+    await expect(page.locator('h2:has-text("Test Heading"), h3:has-text("Test Heading"), h4:has-text("Test Heading")')).toBeVisible();
+  });
+
+  test('should render gallery with images', async ({ page, shareBaseUrl }) => {
+    await page.goto(`${shareBaseUrl}/s/${shareToken}`);
+
+    // Should have gallery container
+    const gallery = page.locator('.shared-gallery');
+    await expect(gallery).toBeVisible();
+
+    // Should have correct number of images
+    const images = gallery.locator('img');
+    await expect(images).toHaveCount(2);
+
+    // Images should have valid src (not empty)
+    const firstImage = images.first();
+    const src = await firstImage.getAttribute('src');
+    expect(src).toMatch(/\/s\/[a-f0-9]+\/resource\/[a-f0-9]+/);
+  });
+
+  test('should render references with group names', async ({ page, shareBaseUrl }) => {
+    await page.goto(`${shareBaseUrl}/s/${shareToken}`);
+
+    // Should show "References:" label
+    await expect(page.locator('text=References:')).toBeVisible();
+
+    // Should show actual group names, not IDs
+    await expect(page.locator('text=Reference Group 1')).toBeVisible();
+    await expect(page.locator('text=Reference Group 2')).toBeVisible();
+  });
+
+  test('should render static table', async ({ page, shareBaseUrl }) => {
+    await page.goto(`${shareBaseUrl}/s/${shareToken}`);
+
+    // Should have table
+    const table = page.locator('table');
+    await expect(table).toBeVisible();
+
+    // Should have column headers
+    await expect(page.locator('th:has-text("Column 1")')).toBeVisible();
+    await expect(page.locator('th:has-text("Column 2")')).toBeVisible();
+
+    // Should have row data
+    await expect(page.locator('td:has-text("Value A")')).toBeVisible();
+    await expect(page.locator('td:has-text("Value D")')).toBeVisible();
+  });
+
+  test('should NOT show description when blocks exist', async ({ page, shareBaseUrl }) => {
+    await page.goto(`${shareBaseUrl}/s/${shareToken}`);
+
+    // The description text should NOT be visible (blocks replace description)
+    await expect(page.locator('text=This description should NOT appear')).not.toBeVisible();
+  });
+
+  test('should open lightbox when clicking gallery image', async ({ page, shareBaseUrl }) => {
+    await page.goto(`${shareBaseUrl}/s/${shareToken}`);
+
+    // Click the first gallery image
+    const firstImage = page.locator('.shared-gallery a.gallery-item').first();
+    await firstImage.click();
+
+    // Lightbox should be visible
+    const lightbox = page.locator('#shared-lightbox');
+    await expect(lightbox).toBeVisible();
+
+    // Should show counter
+    await expect(page.locator('#lightbox-counter')).toContainText('1 / 2');
+
+    // Should have image in lightbox
+    const lightboxImg = page.locator('#lightbox-img');
+    await expect(lightboxImg).toBeVisible();
+    const src = await lightboxImg.getAttribute('src');
+    expect(src).toBeTruthy();
+  });
+
+  test('should navigate lightbox with buttons', async ({ page, shareBaseUrl }) => {
+    await page.goto(`${shareBaseUrl}/s/${shareToken}`);
+
+    // Open lightbox
+    await page.locator('.shared-gallery a.gallery-item').first().click();
+    await expect(page.locator('#shared-lightbox')).toBeVisible();
+
+    // Should be on first image
+    await expect(page.locator('#lightbox-counter')).toContainText('1 / 2');
+
+    // Click next
+    await page.locator('button:has-text("›")').click();
+    await expect(page.locator('#lightbox-counter')).toContainText('2 / 2');
+
+    // Click prev
+    await page.locator('button:has-text("‹")').click();
+    await expect(page.locator('#lightbox-counter')).toContainText('1 / 2');
+  });
+
+  test('should close lightbox with X button', async ({ page, shareBaseUrl }) => {
+    await page.goto(`${shareBaseUrl}/s/${shareToken}`);
+
+    // Open lightbox
+    await page.locator('.shared-gallery a.gallery-item').first().click();
+    await expect(page.locator('#shared-lightbox')).toBeVisible();
+
+    // Close with X button
+    await page.locator('#shared-lightbox button:has-text("×")').click();
+
+    // Lightbox should be hidden
+    await expect(page.locator('#shared-lightbox')).toBeHidden();
+  });
+
+  test('should close lightbox with Escape key', async ({ page, shareBaseUrl }) => {
+    await page.goto(`${shareBaseUrl}/s/${shareToken}`);
+
+    // Open lightbox
+    await page.locator('.shared-gallery a.gallery-item').first().click();
+    await expect(page.locator('#shared-lightbox')).toBeVisible();
+
+    // Press Escape
+    await page.keyboard.press('Escape');
+
+    // Lightbox should be hidden
+    await expect(page.locator('#shared-lightbox')).toBeHidden();
+  });
+
+  test.afterAll(async ({ apiClient }) => {
+    // Clean up in reverse dependency order
+    if (noteId) {
+      await apiClient.unshareNote(noteId).catch(() => {});
+      await apiClient.deleteNote(noteId);
+    }
+    for (const resourceId of resourceIds) {
+      await apiClient.deleteResource(resourceId).catch(() => {});
+    }
+    for (const groupId of refGroupIds) {
+      await apiClient.deleteGroup(groupId).catch(() => {});
+    }
+    if (ownerGroupId) {
+      await apiClient.deleteGroup(ownerGroupId);
+    }
+    if (categoryId) {
+      await apiClient.deleteCategory(categoryId);
+    }
+  });
+});

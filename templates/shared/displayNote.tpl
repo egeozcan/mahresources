@@ -4,9 +4,10 @@
 <article class="bg-white rounded-lg shadow-sm p-6">
     <header class="mb-6">
         <h1 class="text-2xl font-bold text-gray-900">{{ note.Name }}</h1>
-        {% if note.Description %}
+        {# Only show description if there are no blocks - blocks replace description #}
+        {% if note.Description && (!blocks || blocks|length == 0) %}
         <div class="mt-4 prose prose-sm max-w-none text-gray-600">
-            {{ note.Description|safe }}
+            {{ note.Description|markdown2|safe }}
         </div>
         {% endif %}
     </header>

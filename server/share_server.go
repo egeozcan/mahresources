@@ -18,10 +18,11 @@ import (
 
 // templateBlock represents a block with decoded Content and State for template rendering
 type templateBlock struct {
-	ID      uint
-	Type    string
-	Content map[string]interface{}
-	State   map[string]interface{}
+	ID        uint
+	Type      string
+	Content   map[string]interface{}
+	State     map[string]interface{}
+	QueryData map[string]interface{} // For query-based tables: contains "columns" and "rows"
 }
 
 // ShareServer is a separate HTTP server for serving shared notes publicly.
@@ -156,7 +157,8 @@ func (s *ShareServer) handleBlockStateUpdate(w http.ResponseWriter, r *http.Requ
 }
 
 // handleSharedResource serves a resource (image/file) that belongs to a shared note
-// It validates that the token is valid and the resource belongs to the note
+// It validates that the token is valid and the resource is referenced in the note
+// (either in note.Resources or in a gallery block)
 func (s *ShareServer) handleSharedResource(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	token := vars["token"]
@@ -169,15 +171,52 @@ func (s *ShareServer) handleSharedResource(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Verify resource belongs to this note
-	resourceBelongsToNote := false
+	// Check if resource is in note.Resources
+	resourceAllowed := false
 	for _, resource := range note.Resources {
 		if resource.Hash == hash {
-			resourceBelongsToNote = true
+			resourceAllowed = true
 			break
 		}
 	}
-	if !resourceBelongsToNote {
+
+	// If not found in note.Resources, check gallery blocks
+	if !resourceAllowed {
+		// Collect resource IDs from gallery blocks
+		resourceIdsSet := make(map[uint]bool)
+		for _, block := range note.Blocks {
+			if block.Type == "gallery" && len(block.Content) > 0 {
+				var content map[string]interface{}
+				if err := json.Unmarshal(block.Content, &content); err == nil {
+					if resourceIds, ok := content["resourceIds"].([]interface{}); ok {
+						for _, rId := range resourceIds {
+							if id, ok := rId.(float64); ok {
+								resourceIdsSet[uint(id)] = true
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Load those resources and check if hash matches
+		if len(resourceIdsSet) > 0 {
+			resourceIds := make([]uint, 0, len(resourceIdsSet))
+			for id := range resourceIdsSet {
+				resourceIds = append(resourceIds, id)
+			}
+			if resources, err := s.appContext.GetResourcesWithIds(&resourceIds); err == nil {
+				for _, resource := range *resources {
+					if resource.Hash == hash {
+						resourceAllowed = true
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if !resourceAllowed {
 		http.Error(w, "Resource not found", http.StatusNotFound)
 		return
 	}
@@ -190,11 +229,9 @@ func (s *ShareServer) handleSharedResource(w http.ResponseWriter, r *http.Reques
 func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note, shareToken string) {
 	template := pongo2.Must(s.templateSet.FromFile("/shared/displayNote.tpl"))
 
-	// Build a map of resource ID to hash for gallery blocks
-	resourceHashMap := make(map[uint]string)
-	for _, resource := range note.Resources {
-		resourceHashMap[resource.ID] = resource.Hash
-	}
+	// Collect all group IDs from references blocks and resource IDs from gallery blocks
+	groupIdsSet := make(map[uint]bool)
+	resourceIdsSet := make(map[uint]bool)
 
 	// Convert blocks to template-friendly format with decoded JSON
 	blocks := make([]templateBlock, 0, len(note.Blocks))
@@ -220,7 +257,79 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 			}
 		}
 
+		// Collect group IDs from references blocks
+		if block.Type == "references" {
+			if groupIds, ok := tb.Content["groupIds"].([]interface{}); ok {
+				for _, gId := range groupIds {
+					if id, ok := gId.(float64); ok {
+						groupIdsSet[uint(id)] = true
+					}
+				}
+			}
+		}
+
+		// Collect resource IDs from gallery blocks
+		if block.Type == "gallery" {
+			if resourceIds, ok := tb.Content["resourceIds"].([]interface{}); ok {
+				for _, rId := range resourceIds {
+					if id, ok := rId.(float64); ok {
+						resourceIdsSet[uint(id)] = true
+					}
+				}
+			}
+		}
+
+		// Fetch query data for table blocks with queryId
+		if block.Type == "table" {
+			if queryIdFloat, ok := tb.Content["queryId"].(float64); ok {
+				queryId := uint(queryIdFloat)
+				// Get query params from content
+				params := make(map[string]any)
+				if queryParams, ok := tb.Content["queryParams"].(map[string]interface{}); ok {
+					for k, v := range queryParams {
+						params[k] = v
+					}
+				}
+				// Execute query
+				if queryData, err := s.fetchTableQueryData(queryId, params); err == nil {
+					tb.QueryData = queryData
+				} else {
+					log.Printf("Error fetching table query data: %v", err)
+				}
+			}
+		}
+
 		blocks = append(blocks, tb)
+	}
+
+	// Build resource hash map from gallery block resources
+	// Use float64 keys since JSON numbers come as float64
+	resourceHashMap := make(map[float64]string)
+	if len(resourceIdsSet) > 0 {
+		resourceIds := make([]uint, 0, len(resourceIdsSet))
+		for id := range resourceIdsSet {
+			resourceIds = append(resourceIds, id)
+		}
+		if resources, err := s.appContext.GetResourcesWithIds(&resourceIds); err == nil {
+			for _, resource := range *resources {
+				resourceHashMap[float64(resource.ID)] = resource.Hash
+			}
+		}
+	}
+
+	// Build group name map
+	groupNameMap := make(map[float64]string)
+	if len(groupIdsSet) > 0 {
+		groupIds := make([]uint, 0, len(groupIdsSet))
+		for id := range groupIdsSet {
+			groupIds = append(groupIds, id)
+		}
+		if groups, err := s.appContext.GetGroupsWithIds(&groupIds); err == nil {
+			for _, group := range *groups {
+				// Use float64 key since JSON numbers come as float64
+				groupNameMap[float64(group.ID)] = group.Name
+			}
+		}
 	}
 
 	ctx := pongo2.Context{
@@ -229,6 +338,7 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 		"pageTitle":       note.Name,
 		"shareToken":      shareToken,
 		"resourceHashMap": resourceHashMap,
+		"groupNameMap":    groupNameMap,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -236,4 +346,59 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 		log.Printf("Error rendering shared note template: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
+}
+
+// fetchTableQueryData executes a query and returns data formatted for table display
+func (s *ShareServer) fetchTableQueryData(queryId uint, params map[string]any) (map[string]interface{}, error) {
+	rows, err := s.appContext.RunReadOnlyQuery(queryId, params)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Get column names
+	colNames, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+
+	// Build column definitions
+	columns := make([]map[string]string, 0, len(colNames))
+	for _, colName := range colNames {
+		columns = append(columns, map[string]string{
+			"id":    colName,
+			"label": colName,
+		})
+	}
+
+	// Scan rows into maps
+	resultRows := make([]map[string]interface{}, 0)
+	for rows.Next() {
+		columnValues := make([]interface{}, len(colNames))
+		columnPointers := make([]interface{}, len(colNames))
+		for i := range columnValues {
+			columnPointers[i] = &columnValues[i]
+		}
+
+		if err := rows.Scan(columnPointers...); err != nil {
+			return nil, err
+		}
+
+		row := make(map[string]interface{})
+		for i, colName := range colNames {
+			val := columnValues[i]
+			// Convert []byte to string for display
+			if b, ok := val.([]byte); ok {
+				row[colName] = string(b)
+			} else {
+				row[colName] = val
+			}
+		}
+		resultRows = append(resultRows, row)
+	}
+
+	return map[string]interface{}{
+		"columns": columns,
+		"rows":    resultRows,
+	}, nil
 }
