@@ -38,6 +38,7 @@ import { textDiff } from './components/textDiff.js';
 import { blockEditor } from './components/blockEditor.js';
 import { blockText, blockHeading, blockDivider, blockTodos, blockGallery, blockReferences, blockTable, blockCalendar } from './components/blocks/index.js';
 import { sharedTodos } from './components/sharedTodos.js';
+import { sharedCalendar } from './components/sharedCalendar.js';
 
 // Import web components
 import './webcomponents/expandabletext.js';
@@ -92,6 +93,7 @@ Alpine.data('blockReferences', blockReferences);
 Alpine.data('blockTable', blockTable);
 Alpine.data('blockCalendar', blockCalendar);
 Alpine.data('sharedTodos', sharedTodos);
+Alpine.data('sharedCalendar', sharedCalendar);
 
 // Expose Alpine globally for debugging and morph usage
 window.Alpine = Alpine;

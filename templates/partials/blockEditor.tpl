@@ -506,7 +506,7 @@
                                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
                                                         </svg>
                                                     </button>
-                                                    <span class="text-lg font-semibold" x-text="currentMonth + ' ' + currentYear"></span>
+                                                    <span class="text-lg font-semibold w-36 text-center" x-text="currentMonth + ' ' + currentYear"></span>
                                                     <button @click="nextMonth()" class="p-1 hover:bg-gray-100 rounded" title="Next">
                                                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
@@ -535,11 +535,6 @@
                                         </div>
                                     </div>
 
-                                    {# Loading #}
-                                    <template x-if="loading && events.length === 0">
-                                        <div class="text-center py-8 text-gray-500">Loading events...</div>
-                                    </template>
-
                                     {# Error #}
                                     <template x-if="error">
                                         <div class="p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm mb-4">
@@ -548,9 +543,9 @@
                                         </div>
                                     </template>
 
-                                    {# Month view #}
-                                    <template x-if="view === 'month' && !loading">
-                                        <div>
+                                    {# Month view - show even while loading to prevent layout jump #}
+                                    <template x-if="view === 'month'">
+                                        <div class="relative" :class="{ 'opacity-60': loading }">
                                             <div class="grid grid-cols-7 gap-px bg-gray-200 rounded overflow-hidden">
                                                 <template x-for="day in ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']">
                                                     <div class="bg-gray-50 py-2 text-center text-xs font-medium text-gray-500" x-text="day"></div>
@@ -577,9 +572,9 @@
                                         </div>
                                     </template>
 
-                                    {# Agenda view #}
-                                    <template x-if="view === 'agenda' && !loading">
-                                        <div class="space-y-4">
+                                    {# Agenda view - show even while loading to prevent layout jump #}
+                                    <template x-if="view === 'agenda'">
+                                        <div class="space-y-4 relative" :class="{ 'opacity-60': loading }">
                                             <template x-if="agendaEvents.length === 0">
                                                 <div class="text-center py-8 text-gray-400">No upcoming events</div>
                                             </template>
