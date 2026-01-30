@@ -637,8 +637,10 @@
                                             <div class="px-3 py-1.5 cursor-pointer text-sm"
                                                  :class="{'bg-blue-500 text-white': index === selectedIndex, 'hover:bg-gray-50': index !== selectedIndex}"
                                                  @mousedown="pushVal"
-                                                 @mouseover="selectedIndex = index"
-                                                 x-text="result.Name"></div>
+                                                 @mouseover="selectedIndex = index">
+                                                <span x-text="result.Name"></span>
+                                                <span x-show="result.Category" class="text-xs ml-1" :class="index === selectedIndex ? 'text-blue-200' : 'text-gray-400'" x-text="'(' + (result.Category?.Name || '') + ')'"></span>
+                                            </div>
                                         </template>
                                     </div>
                                 </template>
@@ -646,7 +648,10 @@
                                     <div class="flex flex-wrap gap-1 mt-1">
                                         <template x-for="item in selectedResults" :key="item.ID">
                                             <span class="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-800 rounded text-xs">
-                                                <span x-text="item.Name" class="truncate max-w-[100px]"></span>
+                                                <span class="truncate max-w-[120px]">
+                                                    <span x-text="item.Name"></span>
+                                                    <span x-show="item.Category" class="text-green-600" x-text="'(' + (item.Category?.Name || '') + ')'"></span>
+                                                </span>
                                                 <button type="button" @click="removeItem(item)" class="hover:text-green-600">&times;</button>
                                             </span>
                                         </template>
