@@ -347,3 +347,229 @@ END:VCALENDAR`
 		t.Errorf("expected 0 events (before range), got %d", len(events))
 	}
 }
+
+func TestParseICSEvents_NoExplicitTimezone(t *testing.T) {
+	// Event without explicit timezone (no TZID, no Z suffix)
+	// These are treated as "floating" time in ICS spec, but we parse them in UTC
+	icsContent := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:floating-event
+DTSTART:20260115T140000
+DTEND:20260115T150000
+SUMMARY:Floating Time Event
+END:VEVENT
+END:VCALENDAR`
+
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 1, 31, 23, 59, 59, 0, time.UTC)
+
+	events, err := ParseICSEvents([]byte(icsContent), "cal-1", start, end)
+	if err != nil {
+		t.Fatalf("ParseICSEvents failed: %v", err)
+	}
+
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+
+	// Without timezone info, the time is parsed as UTC
+	expectedStart := time.Date(2026, 1, 15, 14, 0, 0, 0, time.UTC)
+	if !events[0].Start.Equal(expectedStart) {
+		t.Errorf("expected start time %v, got %v", expectedStart, events[0].Start)
+	}
+}
+
+func TestParseICSEvents_UnknownTimezone(t *testing.T) {
+	// Event with an unknown/invalid timezone identifier
+	// Should fall back to UTC parsing
+	icsContent := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:unknown-tz-event
+DTSTART;TZID=Unknown/FakeTimezone:20260115T100000
+DTEND;TZID=Unknown/FakeTimezone:20260115T110000
+SUMMARY:Unknown Timezone Event
+END:VEVENT
+END:VCALENDAR`
+
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 1, 31, 23, 59, 59, 0, time.UTC)
+
+	events, err := ParseICSEvents([]byte(icsContent), "cal-1", start, end)
+	if err != nil {
+		t.Fatalf("ParseICSEvents failed: %v", err)
+	}
+
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+
+	// Unknown timezone should fall back to UTC
+	expectedStart := time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC)
+	if !events[0].Start.Equal(expectedStart) {
+		t.Errorf("expected start time %v, got %v", expectedStart, events[0].Start)
+	}
+}
+
+func TestParseICSEvents_MultipleTimezones(t *testing.T) {
+	// Events with different timezones in the same calendar
+	icsContent := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:utc-event
+DTSTART:20260115T120000Z
+DTEND:20260115T130000Z
+SUMMARY:UTC Event
+END:VEVENT
+BEGIN:VEVENT
+UID:london-event
+DTSTART;TZID=Europe/London:20260115T120000
+DTEND;TZID=Europe/London:20260115T130000
+SUMMARY:London Event
+END:VEVENT
+BEGIN:VEVENT
+UID:tokyo-event
+DTSTART;TZID=Asia/Tokyo:20260115T210000
+DTEND;TZID=Asia/Tokyo:20260115T220000
+SUMMARY:Tokyo Event
+END:VEVENT
+END:VCALENDAR`
+
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 1, 31, 23, 59, 59, 0, time.UTC)
+
+	events, err := ParseICSEvents([]byte(icsContent), "cal-1", start, end)
+	if err != nil {
+		t.Fatalf("ParseICSEvents failed: %v", err)
+	}
+
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(events))
+	}
+
+	// All events should be converted to UTC
+	// UTC event: 12:00 UTC stays 12:00 UTC
+	// London event: 12:00 GMT (January, no DST) = 12:00 UTC
+	// Tokyo event: 21:00 JST = 12:00 UTC (JST is UTC+9)
+	for _, e := range events {
+		expectedHour := 12
+		if e.Start.Hour() != expectedHour {
+			t.Errorf("event %s: expected hour %d, got %d", e.Title, expectedHour, e.Start.Hour())
+		}
+	}
+}
+
+func TestParseICSEvents_EventMissingDTEND(t *testing.T) {
+	// Event without DTEND - should default to start + 1 hour
+	icsContent := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:no-end-event
+DTSTART:20260115T100000Z
+SUMMARY:No End Time Event
+END:VEVENT
+END:VCALENDAR`
+
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 1, 31, 23, 59, 59, 0, time.UTC)
+
+	events, err := ParseICSEvents([]byte(icsContent), "cal-1", start, end)
+	if err != nil {
+		t.Fatalf("ParseICSEvents failed: %v", err)
+	}
+
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+
+	// Should default to start + 1 hour
+	expectedEnd := time.Date(2026, 1, 15, 11, 0, 0, 0, time.UTC)
+	if !events[0].End.Equal(expectedEnd) {
+		t.Errorf("expected end time %v, got %v", expectedEnd, events[0].End)
+	}
+}
+
+func TestParseICSEvents_AllDayEventMissingDTEND(t *testing.T) {
+	// All-day event without DTEND - should default to start + 1 day
+	icsContent := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:no-end-allday
+DTSTART;VALUE=DATE:20260115
+SUMMARY:All Day No End
+END:VEVENT
+END:VCALENDAR`
+
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 1, 31, 23, 59, 59, 0, time.UTC)
+
+	events, err := ParseICSEvents([]byte(icsContent), "cal-1", start, end)
+	if err != nil {
+		t.Fatalf("ParseICSEvents failed: %v", err)
+	}
+
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+
+	if !events[0].AllDay {
+		t.Error("event should be marked as all-day")
+	}
+
+	// Should default to start + 1 day
+	expectedEnd := time.Date(2026, 1, 16, 0, 0, 0, 0, time.UTC)
+	if !events[0].End.Equal(expectedEnd) {
+		t.Errorf("expected end time %v, got %v", expectedEnd, events[0].End)
+	}
+}
+
+func TestParseICSEvents_EventMissingDTSTART(t *testing.T) {
+	// Event without DTSTART - should be skipped
+	icsContent := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:no-start-event
+DTEND:20260115T110000Z
+SUMMARY:No Start Time Event
+END:VEVENT
+END:VCALENDAR`
+
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 1, 31, 23, 59, 59, 0, time.UTC)
+
+	events, err := ParseICSEvents([]byte(icsContent), "cal-1", start, end)
+	if err != nil {
+		t.Fatalf("ParseICSEvents failed: %v", err)
+	}
+
+	// Event without DTSTART should be skipped
+	if len(events) != 0 {
+		t.Errorf("expected 0 events (missing DTSTART), got %d", len(events))
+	}
+}
+
+func TestParseICSEvents_EventMissingUID(t *testing.T) {
+	// Event without UID - should be skipped
+	icsContent := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+DTSTART:20260115T100000Z
+DTEND:20260115T110000Z
+SUMMARY:No UID Event
+END:VEVENT
+END:VCALENDAR`
+
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 1, 31, 23, 59, 59, 0, time.UTC)
+
+	events, err := ParseICSEvents([]byte(icsContent), "cal-1", start, end)
+	if err != nil {
+		t.Fatalf("ParseICSEvents failed: %v", err)
+	}
+
+	// Event without UID should be skipped
+	if len(events) != 0 {
+		t.Errorf("expected 0 events (missing UID), got %d", len(events))
+	}
+}

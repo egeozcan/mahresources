@@ -19,6 +19,10 @@ import (
 	"mahresources/server/interfaces"
 )
 
+// maxICSFileSize is the maximum size for ICS calendar files (10MB).
+// This prevents memory exhaustion from malicious or corrupted calendar URLs.
+const maxICSFileSize = 10 * 1024 * 1024
+
 // CreateBlock creates a new block in a note
 func (ctx *MahresourcesContext) CreateBlock(editor *query_models.NoteBlockEditor) (*models.NoteBlock, error) {
 	// Validate block type
@@ -260,7 +264,25 @@ func (ctx *MahresourcesContext) UpdateBlockStateFromRequest(blockId uint, r *htt
 }
 
 // GetCalendarEvents fetches and parses calendar events for a calendar block.
-// It supports both URL-based and resource-based calendar sources with caching.
+// It supports both URL-based and resource-based calendar sources.
+//
+// ## Caching Strategy (Backend Tier)
+//
+// URL-based calendars use a two-layer caching approach:
+//   - LRU cache (ICSCache) stores fetched ICS content with configurable TTL (default 30 min)
+//   - Conditional HTTP requests (ETag/Last-Modified) minimize bandwidth when refreshing
+//   - Stale cache entries are returned if conditional fetch fails (resilience)
+//
+// Resource-based calendars read directly from storage (no HTTP caching needed).
+//
+// The frontend (blockCalendar.js) has its own shorter cache (5 min stale threshold)
+// for instant UI feedback. This tiered approach balances responsiveness with efficiency.
+//
+// ## Limitations
+//
+// This parser does not support recurring events (RRULE). Events with RRULE will
+// only show their first occurrence. Full RRULE expansion would require significant
+// complexity to handle all recurrence patterns correctly.
 func (ctx *MahresourcesContext) GetCalendarEvents(blockID uint, start, end time.Time) (*interfaces.CalendarEventsResponse, error) {
 	// Get the block
 	block, err := ctx.GetBlock(blockID)
@@ -339,19 +361,7 @@ func (ctx *MahresourcesContext) GetCalendarEvents(blockID uint, start, end time.
 			continue
 		}
 
-		// Convert to interface type
-		for _, evt := range events {
-			allEvents = append(allEvents, interfaces.CalendarEvent{
-				ID:          evt.ID,
-				CalendarID:  evt.CalendarID,
-				Title:       evt.Title,
-				Start:       evt.Start,
-				End:         evt.End,
-				AllDay:      evt.AllDay,
-				Location:    evt.Location,
-				Description: evt.Description,
-			})
-		}
+		allEvents = append(allEvents, events...)
 
 		// Add calendar info
 		calendars = append(calendars, interfaces.CalendarInfo{
@@ -449,9 +459,15 @@ func (ctx *MahresourcesContext) fetchAndCacheICS(url string, existingEntry *ICSC
 		return nil, time.Time{}, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	content, err := io.ReadAll(resp.Body)
+	// Limit read size to prevent memory exhaustion from large responses
+	content, err := io.ReadAll(io.LimitReader(resp.Body, maxICSFileSize))
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Check if we hit the size limit (content was truncated)
+	if int64(len(content)) == maxICSFileSize {
+		return nil, time.Time{}, fmt.Errorf("ICS file exceeds maximum size of %d bytes", maxICSFileSize)
 	}
 
 	// Cache the result

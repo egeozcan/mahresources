@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"mahresources/models"
+	"mahresources/server/interfaces"
 	"net/http"
 	"testing"
 
@@ -332,5 +333,128 @@ func TestTableBlockQueryEndpoint(t *testing.T) {
 		url := fmt.Sprintf("/v1/note/block/table/query?blockId=%d&param1=overridden", block.ID)
 		resp := tc.MakeRequest(http.MethodGet, url, nil)
 		assert.Equal(t, http.StatusOK, resp.Code)
+	})
+}
+
+func TestCalendarBlockEventsEndpoint(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create a note for testing
+	note := tc.CreateDummyNote("Calendar Block Test Note")
+
+	t.Run("Calendar Block Events - Missing blockId", func(t *testing.T) {
+		resp := tc.MakeRequest(http.MethodGet, "/v1/note/block/calendar/events?start=2026-01-01&end=2026-01-31", nil)
+		assert.Equal(t, http.StatusBadRequest, resp.Code)
+	})
+
+	t.Run("Calendar Block Events - Missing start date", func(t *testing.T) {
+		block := tc.CreateDummyBlock(note.ID, "calendar", `{"calendars": []}`, "cal1")
+		url := fmt.Sprintf("/v1/note/block/calendar/events?blockId=%d&end=2026-01-31", block.ID)
+		resp := tc.MakeRequest(http.MethodGet, url, nil)
+		assert.Equal(t, http.StatusBadRequest, resp.Code)
+	})
+
+	t.Run("Calendar Block Events - Missing end date", func(t *testing.T) {
+		block := tc.CreateDummyBlock(note.ID, "calendar", `{"calendars": []}`, "cal2")
+		url := fmt.Sprintf("/v1/note/block/calendar/events?blockId=%d&start=2026-01-01", block.ID)
+		resp := tc.MakeRequest(http.MethodGet, url, nil)
+		assert.Equal(t, http.StatusBadRequest, resp.Code)
+	})
+
+	t.Run("Calendar Block Events - Invalid start date format", func(t *testing.T) {
+		block := tc.CreateDummyBlock(note.ID, "calendar", `{"calendars": []}`, "cal3")
+		url := fmt.Sprintf("/v1/note/block/calendar/events?blockId=%d&start=invalid&end=2026-01-31", block.ID)
+		resp := tc.MakeRequest(http.MethodGet, url, nil)
+		assert.Equal(t, http.StatusBadRequest, resp.Code)
+	})
+
+	t.Run("Calendar Block Events - Invalid end date format", func(t *testing.T) {
+		block := tc.CreateDummyBlock(note.ID, "calendar", `{"calendars": []}`, "cal4")
+		url := fmt.Sprintf("/v1/note/block/calendar/events?blockId=%d&start=2026-01-01&end=invalid", block.ID)
+		resp := tc.MakeRequest(http.MethodGet, url, nil)
+		assert.Equal(t, http.StatusBadRequest, resp.Code)
+	})
+
+	t.Run("Calendar Block Events - Block Not Found", func(t *testing.T) {
+		resp := tc.MakeRequest(http.MethodGet, "/v1/note/block/calendar/events?blockId=99999&start=2026-01-01&end=2026-01-31", nil)
+		assert.Equal(t, http.StatusInternalServerError, resp.Code)
+	})
+
+	t.Run("Calendar Block Events - Not a Calendar Block", func(t *testing.T) {
+		// Create a text block
+		textBlock := tc.CreateDummyBlock(note.ID, "text", `{"text": "hello"}`, "txt2")
+
+		url := fmt.Sprintf("/v1/note/block/calendar/events?blockId=%d&start=2026-01-01&end=2026-01-31", textBlock.ID)
+		resp := tc.MakeRequest(http.MethodGet, url, nil)
+		assert.Equal(t, http.StatusInternalServerError, resp.Code)
+	})
+
+	t.Run("Calendar Block Events - Empty Calendars", func(t *testing.T) {
+		// Create a calendar block with no calendars configured
+		block := tc.CreateDummyBlock(note.ID, "calendar", `{"calendars": []}`, "cal5")
+
+		url := fmt.Sprintf("/v1/note/block/calendar/events?blockId=%d&start=2026-01-01&end=2026-01-31", block.ID)
+		resp := tc.MakeRequest(http.MethodGet, url, nil)
+		assert.Equal(t, http.StatusOK, resp.Code)
+
+		var result interfaces.CalendarEventsResponse
+		err := json.Unmarshal(resp.Body.Bytes(), &result)
+		assert.NoError(t, err)
+
+		// Should return empty events and calendars
+		assert.Empty(t, result.Events)
+		assert.Empty(t, result.Calendars)
+		assert.NotEmpty(t, result.CachedAt)
+	})
+
+	t.Run("Calendar Block Events - With Invalid URL Source", func(t *testing.T) {
+		// Create a calendar block with an invalid URL (will fail to fetch)
+		content := `{
+			"calendars": [{
+				"id": "test-cal",
+				"name": "Test Calendar",
+				"color": "#3b82f6",
+				"source": {"type": "url", "url": "http://invalid.example.com/notexist.ics"}
+			}]
+		}`
+		block := tc.CreateDummyBlock(note.ID, "calendar", content, "cal6")
+
+		url := fmt.Sprintf("/v1/note/block/calendar/events?blockId=%d&start=2026-01-01&end=2026-01-31", block.ID)
+		resp := tc.MakeRequest(http.MethodGet, url, nil)
+		assert.Equal(t, http.StatusOK, resp.Code)
+
+		var result interfaces.CalendarEventsResponse
+		err := json.Unmarshal(resp.Body.Bytes(), &result)
+		assert.NoError(t, err)
+
+		// Should return with errors for the failed calendar
+		assert.Len(t, result.Errors, 1)
+		assert.Equal(t, "test-cal", result.Errors[0].CalendarID)
+	})
+
+	t.Run("Calendar Block Events - With Resource Source Missing ResourceID", func(t *testing.T) {
+		// Create a calendar block with resource type but no resourceId
+		content := `{
+			"calendars": [{
+				"id": "res-cal",
+				"name": "Resource Calendar",
+				"color": "#10b981",
+				"source": {"type": "resource"}
+			}]
+		}`
+		block := tc.CreateDummyBlock(note.ID, "calendar", content, "cal7")
+
+		url := fmt.Sprintf("/v1/note/block/calendar/events?blockId=%d&start=2026-01-01&end=2026-01-31", block.ID)
+		resp := tc.MakeRequest(http.MethodGet, url, nil)
+		assert.Equal(t, http.StatusOK, resp.Code)
+
+		var result interfaces.CalendarEventsResponse
+		err := json.Unmarshal(resp.Body.Bytes(), &result)
+		assert.NoError(t, err)
+
+		// Should return with errors for missing resourceId
+		assert.Len(t, result.Errors, 1)
+		assert.Equal(t, "res-cal", result.Errors[0].CalendarID)
+		assert.Contains(t, result.Errors[0].Error, "resourceId")
 	})
 }

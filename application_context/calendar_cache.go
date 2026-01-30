@@ -7,6 +7,7 @@ import (
 	"time"
 
 	ics "github.com/arran4/golang-ical"
+	"mahresources/server/interfaces"
 )
 
 // ICSCacheEntry represents a cached ICS file with metadata for conditional fetching
@@ -122,26 +123,16 @@ func (c *ICSCache) Clear() {
 	c.order.Init()
 }
 
-// CalendarEvent represents a parsed calendar event
-type CalendarEvent struct {
-	ID          string    `json:"id"`
-	CalendarID  string    `json:"calendarId"`
-	Title       string    `json:"title"`
-	Start       time.Time `json:"start"`
-	End         time.Time `json:"end"`
-	AllDay      bool      `json:"allDay"`
-	Location    string    `json:"location,omitempty"`
-	Description string    `json:"description,omitempty"`
-}
-
-// ParseICSEvents parses ICS content and returns events within the specified date range
-func ParseICSEvents(content []byte, calendarID string, rangeStart, rangeEnd time.Time) ([]CalendarEvent, error) {
+// ParseICSEvents parses ICS content and returns events within the specified date range.
+// Note: This parser does not support recurring events (RRULE). Events with RRULE will
+// only show their first occurrence. Full RRULE support would require significant complexity.
+func ParseICSEvents(content []byte, calendarID string, rangeStart, rangeEnd time.Time) ([]interfaces.CalendarEvent, error) {
 	cal, err := ics.ParseCalendar(strings.NewReader(string(content)))
 	if err != nil {
 		return nil, err
 	}
 
-	var events []CalendarEvent
+	var events []interfaces.CalendarEvent
 
 	for _, component := range cal.Components {
 		event, ok := component.(*ics.VEvent)
@@ -165,7 +156,7 @@ func ParseICSEvents(content []byte, calendarID string, rangeStart, rangeEnd time
 }
 
 // parseVEvent converts an ICS VEvent to a CalendarEvent
-func parseVEvent(event *ics.VEvent, calendarID string) *CalendarEvent {
+func parseVEvent(event *ics.VEvent, calendarID string) *interfaces.CalendarEvent {
 	uid := event.GetProperty(ics.ComponentPropertyUniqueId)
 	if uid == nil {
 		return nil
@@ -197,7 +188,7 @@ func parseVEvent(event *ics.VEvent, calendarID string) *CalendarEvent {
 		}
 	}
 
-	calEvent := &CalendarEvent{
+	calEvent := &interfaces.CalendarEvent{
 		ID:         uid.Value,
 		CalendarID: calendarID,
 		Start:      startTime,

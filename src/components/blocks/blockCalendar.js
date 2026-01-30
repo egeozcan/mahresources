@@ -1,10 +1,29 @@
 // src/components/blocks/blockCalendar.js
 // Calendar block component with month/agenda views and stale-while-revalidate caching
+//
+// ## Tiered Caching Strategy
+//
+// This component uses a multi-tier caching approach for calendar events:
+//
+// 1. **Frontend (this file)**: Stale-while-revalidate pattern
+//    - STALE_THRESHOLD (5 min): Data is served immediately from cache, background refresh triggered
+//    - Beyond threshold: Cache miss, full loading state shown
+//    - This provides instant UI feedback for recently viewed calendars
+//
+// 2. **Backend (block_context.go)**: HTTP cache with conditional requests
+//    - Default TTL: 30 minutes (configurable via ICSCacheTTL)
+//    - Uses ETag/Last-Modified headers for conditional fetching
+//    - Returns stale data if conditional fetch fails (resilience)
+//
+// The frontend cache is intentionally shorter than the backend cache. This means:
+// - Users get instant feedback from frontend cache (5 min)
+// - Backend cache reduces external HTTP requests (30 min)
+// - Background refreshes keep data reasonably fresh without blocking UI
 
 // Module-level cache for calendar events
 const eventCache = new Map();
-const CACHE_TTL = 30000;       // 30s - data considered expired
-const STALE_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL = 30000;       // 30s - unused, kept for potential future use
+const STALE_THRESHOLD = 5 * 60 * 1000; // 5 minutes - data still usable but triggers background refresh
 const MAX_CACHE_SIZE = 50;
 
 function getCacheKey(blockId, start, end) {
