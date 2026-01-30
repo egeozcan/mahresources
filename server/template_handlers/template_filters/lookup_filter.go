@@ -1,6 +1,8 @@
 package template_filters
 
 import (
+	"reflect"
+
 	"github.com/flosch/pongo2/v4"
 )
 
@@ -9,6 +11,7 @@ import (
 // Supports:
 // - map[uint]string for resource hash lookups
 // - map[float64]string for group name lookups (JSON numbers are float64)
+// - map[float64]any for group data lookups (structs)
 // - map[string]interface{} for table row lookups
 // - map[string]string for general string maps
 func lookupFilter(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *pongo2.Error) {
@@ -64,26 +67,33 @@ func lookupFilter(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *pongo2
 		}
 	}
 
-	// Handle map[float64]interface{} (group data map with struct values)
-	if floatAnyMap, ok := m.(map[float64]any); ok {
-		var floatKey float64
-		switch k := key.(type) {
-		case float64:
-			floatKey = k
-		case int:
-			floatKey = float64(k)
-		case int64:
-			floatKey = float64(k)
-		case uint:
-			floatKey = float64(k)
-		case uint64:
-			floatKey = float64(k)
-		default:
-			return pongo2.AsValue(nil), nil
-		}
+	// Handle map[float64]interface{} using reflection (for struct values like groupInfo)
+	// This handles cases where the concrete type doesn't match direct type assertion
+	rv := reflect.ValueOf(m)
+	if rv.Kind() == reflect.Map {
+		keyType := rv.Type().Key()
+		if keyType.Kind() == reflect.Float64 {
+			var floatKey float64
+			switch k := key.(type) {
+			case float64:
+				floatKey = k
+			case int:
+				floatKey = float64(k)
+			case int64:
+				floatKey = float64(k)
+			case uint:
+				floatKey = float64(k)
+			case uint64:
+				floatKey = float64(k)
+			default:
+				return pongo2.AsValue(nil), nil
+			}
 
-		if val, exists := floatAnyMap[floatKey]; exists {
-			return pongo2.AsValue(val), nil
+			mapKey := reflect.ValueOf(floatKey)
+			val := rv.MapIndex(mapKey)
+			if val.IsValid() {
+				return pongo2.AsValue(val.Interface()), nil
+			}
 		}
 	}
 
