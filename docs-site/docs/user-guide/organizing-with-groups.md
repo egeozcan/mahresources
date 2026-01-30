@@ -252,3 +252,32 @@ Use categories to enforce structure:
 - **Groups** - Containers with hierarchy, ownership, and relations
 
 Use tags for attributes; use groups for structure.
+
+## Adding Groups to Notes via References Block
+
+Notes can reference groups using the **References block** in the block editor. This creates visual links to related groups.
+
+### Adding Groups
+
+1. Open a note and click **Edit Blocks**
+2. Add a **References** block or find an existing one
+3. Click **+ Select Groups**
+4. In the picker modal:
+   - Search by group name
+   - Filter by category
+   - Click groups to select them
+   - Click **Confirm** to add
+
+### Viewing References
+
+In view mode, referenced groups appear as clickable pills showing:
+- Group name
+- Parent group breadcrumb (if applicable)
+
+Click any group pill to navigate to that group's detail page.
+
+### Removing Groups
+
+In edit mode:
+1. Find the group pill you want to remove
+2. Click the **×** button on the pill
