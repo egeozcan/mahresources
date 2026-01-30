@@ -286,3 +286,58 @@ test.describe('Component Accessibility - Tables and Lists', () => {
     await checkA11y();
   });
 });
+
+test.describe('Component Accessibility - Entity Picker', () => {
+  test('Entity picker modal should be accessible', async ({ page, checkA11y, apiClient, a11yTestData }) => {
+    // Create a gallery block on the test note
+    await apiClient.createBlock(a11yTestData.noteId, 'gallery', 'a11ytest', { resourceIds: [] });
+
+    await page.goto(`/note?id=${a11yTestData.noteId}`);
+    await page.waitForLoadState('load');
+
+    // Enter edit mode and open picker
+    await page.locator('button:has-text("Edit Blocks")').click();
+    await page.locator('button:has-text("Select Resources")').click();
+
+    // Wait for dialog to be visible
+    const dialog = page.locator('[role="dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    // Check accessibility of the picker modal
+    await checkA11y({ include: '[role="dialog"]' });
+  });
+
+  test('Entity picker with search results should be accessible', async ({ page, checkA11y, apiClient, a11yTestData }) => {
+    await apiClient.createBlock(a11yTestData.noteId, 'gallery', 'a11ytest2', { resourceIds: [] });
+
+    await page.goto(`/note?id=${a11yTestData.noteId}`);
+    await page.waitForLoadState('load');
+
+    await page.locator('button:has-text("Edit Blocks")').click();
+    await page.locator('button:has-text("Select Resources")').click();
+
+    // Switch to All Resources tab
+    await page.locator('button:has-text("All Resources")').click();
+
+    // Wait for results to load
+    await page.waitForSelector('[role="option"]', { timeout: 5000 });
+
+    await checkA11y({ include: '[role="dialog"]' });
+  });
+
+  test('Group picker modal should be accessible', async ({ page, checkA11y, apiClient, a11yTestData }) => {
+    // Create a references block on the test note
+    await apiClient.createBlock(a11yTestData.noteId, 'references', 'a11ytest3', { groupIds: [] });
+
+    await page.goto(`/note?id=${a11yTestData.noteId}`);
+    await page.waitForLoadState('load');
+
+    await page.locator('button:has-text("Edit Blocks")').click();
+    await page.locator('button:has-text("Select Groups")').click();
+
+    const dialog = page.locator('[role="dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    await checkA11y({ include: '[role="dialog"]' });
+  });
+});
