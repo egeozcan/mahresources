@@ -25,6 +25,13 @@ type templateBlock struct {
 	QueryData map[string]interface{} // For query-based tables: contains "columns" and "rows"
 }
 
+// groupInfo holds group data for template rendering in shared views
+type groupInfo struct {
+	Name         string
+	Description  string
+	CategoryName string
+}
+
 // ShareServer is a separate HTTP server for serving shared notes publicly.
 // It runs on a different port from the main server and only exposes
 // shared content through cryptographically secure tokens.
@@ -317,8 +324,8 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 		}
 	}
 
-	// Build group name map
-	groupNameMap := make(map[float64]string)
+	// Build group data map with full group info for tooltips
+	groupDataMap := make(map[float64]any)
 	if len(groupIdsSet) > 0 {
 		groupIds := make([]uint, 0, len(groupIdsSet))
 		for id := range groupIdsSet {
@@ -327,7 +334,14 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 		if groups, err := s.appContext.GetGroupsWithIds(&groupIds); err == nil {
 			for _, group := range *groups {
 				// Use float64 key since JSON numbers come as float64
-				groupNameMap[float64(group.ID)] = group.Name
+				info := groupInfo{
+					Name:        group.Name,
+					Description: group.Description,
+				}
+				if group.Category != nil {
+					info.CategoryName = group.Category.Name
+				}
+				groupDataMap[float64(group.ID)] = info
 			}
 		}
 	}
@@ -338,7 +352,7 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 		"pageTitle":       note.Name,
 		"shareToken":      shareToken,
 		"resourceHashMap": resourceHashMap,
-		"groupNameMap":    groupNameMap,
+		"groupDataMap":    groupDataMap,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

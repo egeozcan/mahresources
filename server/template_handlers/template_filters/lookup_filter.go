@@ -64,6 +64,29 @@ func lookupFilter(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *pongo2
 		}
 	}
 
+	// Handle map[float64]interface{} (group data map with struct values)
+	if floatAnyMap, ok := m.(map[float64]any); ok {
+		var floatKey float64
+		switch k := key.(type) {
+		case float64:
+			floatKey = k
+		case int:
+			floatKey = float64(k)
+		case int64:
+			floatKey = float64(k)
+		case uint:
+			floatKey = float64(k)
+		case uint64:
+			floatKey = float64(k)
+		default:
+			return pongo2.AsValue(nil), nil
+		}
+
+		if val, exists := floatAnyMap[floatKey]; exists {
+			return pongo2.AsValue(val), nil
+		}
+	}
+
 	// Handle map[string]interface{} (table rows, JSON objects)
 	if strMap, ok := m.(map[string]interface{}); ok {
 		strKey, ok := key.(string)

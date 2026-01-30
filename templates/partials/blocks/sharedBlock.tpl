@@ -1,4 +1,4 @@
-{# with block= shareToken= resourceHashMap= groupNameMap= #}
+{# with block= shareToken= resourceHashMap= groupDataMap= #}
 {% if block.Type == "text" %}
     <div class="prose prose-sm max-w-none">
         {{ block.Content.text|default:""|markdown2|safe }}
@@ -97,14 +97,30 @@
     </div>
     {% endif %}
 {% elif block.Type == "references" %}
-    {# References block - show as simple list in shared view #}
+    {# References block - show as list with tooltips in shared view #}
     {% if block.Content.groupIds && block.Content.groupIds|length > 0 %}
     <div class="text-sm text-gray-500">
         <span class="font-medium">References:</span>
         {% for gId in block.Content.groupIds %}
-        <span class="inline-flex items-center px-2 py-0.5 bg-gray-100 rounded text-gray-600 ml-1">
-            {{ groupNameMap|lookup:gId|default:"Group" }}
+        {% with groupData=groupDataMap|lookup:gId %}
+        <span class="group-reference-tooltip inline-flex items-center px-2 py-0.5 bg-gray-100 rounded text-gray-600 ml-1 cursor-default relative"
+              tabindex="0"
+              data-group-name="{{ groupData.Name|default:'Group' }}"
+              data-group-description="{{ groupData.Description|default:'' }}"
+              data-group-category="{{ groupData.CategoryName|default:'' }}">
+            {{ groupData.Name|default:"Group" }}
+            <div class="tooltip-content hidden absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-gray-900 text-white text-xs rounded-lg shadow-lg">
+                <div class="font-semibold text-sm mb-1">{{ groupData.Name|default:"Group" }}</div>
+                {% if groupData.CategoryName %}
+                <div class="text-gray-400 text-xs mb-1">{{ groupData.CategoryName }}</div>
+                {% endif %}
+                {% if groupData.Description %}
+                <div class="text-gray-300 mt-1">{{ groupData.Description|truncatechars:150 }}</div>
+                {% endif %}
+                <div class="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
+            </div>
         </span>
+        {% endwith %}
         {% endfor %}
     </div>
     {% endif %}

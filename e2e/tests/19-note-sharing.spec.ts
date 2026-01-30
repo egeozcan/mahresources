@@ -507,9 +507,51 @@ test.describe('Shared Note Block Rendering', () => {
     // Should show "References:" label
     await expect(page.locator('text=References:')).toBeVisible();
 
-    // Should show actual group names, not IDs
-    await expect(page.locator('text=Reference Group 1')).toBeVisible();
-    await expect(page.locator('text=Reference Group 2')).toBeVisible();
+    // Should show actual group names in reference spans (not IDs)
+    const refSpans = page.locator('.group-reference-tooltip');
+    await expect(refSpans).toHaveCount(2);
+    await expect(refSpans.first()).toContainText('Reference Group 1');
+    await expect(refSpans.last()).toContainText('Reference Group 2');
+  });
+
+  test('should show tooltip with group details on hover', async ({ page, shareBaseUrl }) => {
+    await page.goto(`${shareBaseUrl}/s/${shareToken}`);
+
+    // Find the first reference span with a tooltip
+    const refSpan = page.locator('.group-reference-tooltip').first();
+    await expect(refSpan).toBeVisible();
+
+    // Tooltip should be hidden by default
+    const tooltip = refSpan.locator('.tooltip-content');
+    await expect(tooltip).toBeHidden();
+
+    // Hover to show tooltip
+    await refSpan.hover();
+    await expect(tooltip).toBeVisible();
+
+    // Tooltip should show group name and description
+    await expect(tooltip).toContainText('Reference Group 1');
+    await expect(tooltip).toContainText('Reference group 1 for testing');
+
+    // Move away to hide tooltip
+    await page.mouse.move(0, 0);
+    await expect(tooltip).toBeHidden();
+  });
+
+  test('should show tooltip on focus for accessibility', async ({ page, shareBaseUrl }) => {
+    await page.goto(`${shareBaseUrl}/s/${shareToken}`);
+
+    // Find the first reference span
+    const refSpan = page.locator('.group-reference-tooltip').first();
+    const tooltip = refSpan.locator('.tooltip-content');
+
+    // Focus the element (keyboard navigation)
+    await refSpan.focus();
+    await expect(tooltip).toBeVisible();
+
+    // Blur to hide
+    await refSpan.blur();
+    await expect(tooltip).toBeHidden();
   });
 
   test('should render static table', async ({ page, shareBaseUrl }) => {

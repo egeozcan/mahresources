@@ -93,6 +93,35 @@
             if (e.key === 'ArrowRight') window.sharedLightbox.next();
             if (e.key === 'ArrowLeft') window.sharedLightbox.prev();
         });
+
+        // Group reference tooltips
+        document.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('.group-reference-tooltip').forEach(function(el) {
+                var tooltip = el.querySelector('.tooltip-content');
+                if (!tooltip) return;
+
+                // Only show tooltip if there's meaningful content (description or category)
+                var hasDescription = el.dataset.groupDescription && el.dataset.groupDescription.trim();
+                var hasCategory = el.dataset.groupCategory && el.dataset.groupCategory.trim();
+                if (!hasDescription && !hasCategory) {
+                    tooltip.remove();
+                    el.style.cursor = 'default';
+                    return;
+                }
+
+                function showTooltip() {
+                    tooltip.classList.remove('hidden');
+                }
+                function hideTooltip() {
+                    tooltip.classList.add('hidden');
+                }
+
+                el.addEventListener('mouseenter', showTooltip);
+                el.addEventListener('mouseleave', hideTooltip);
+                el.addEventListener('focus', showTooltip);
+                el.addEventListener('blur', hideTooltip);
+            });
+        });
     </script>
 </body>
 </html>

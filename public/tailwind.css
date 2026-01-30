@@ -343,6 +343,9 @@
   .bottom-20 {
     bottom: calc(var(--spacing) * 20);
   }
+  .bottom-full {
+    bottom: 100%;
+  }
   .left-0 {
     left: calc(var(--spacing) * 0);
   }
@@ -1266,6 +1269,9 @@
   .w-48 {
     width: calc(var(--spacing) * 48);
   }
+  .w-64 {
+    width: calc(var(--spacing) * 64);
+  }
   .w-full {
     width: 100%;
   }
@@ -1368,6 +1374,9 @@
   }
   .animate-spin {
     animation: var(--animate-spin);
+  }
+  .cursor-default {
+    cursor: default;
   }
   .cursor-ew-resize {
     cursor: ew-resize;
@@ -1700,6 +1709,9 @@
   }
   .border-yellow-200 {
     border-color: var(--color-yellow-200);
+  }
+  .border-t-gray-900 {
+    border-top-color: var(--color-gray-900);
   }
   .bg-black {
     background-color: var(--color-black);
