@@ -192,6 +192,12 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
       (data.calendars || []).forEach(cal => {
         this.calendarMeta[cal.id] = { name: cal.name, color: cal.color };
       });
+      // Display any calendar-specific errors
+      const errors = data.errors || [];
+      if (errors.length > 0) {
+        const errorMessages = errors.map(e => `${e.calendarId}: ${e.error}`).join('; ');
+        this.error = `Some calendars failed to load: ${errorMessages}`;
+      }
     },
 
     // Navigation
@@ -230,18 +236,29 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
 
     // Calendar management
     addCalendarFromUrl() {
-      if (!this.newUrl.trim()) return;
+      const trimmedUrl = this.newUrl.trim();
+      if (!trimmedUrl) return;
+
+      // Validate URL format
+      try {
+        new URL(trimmedUrl);
+      } catch {
+        this.error = 'Invalid URL format. Please enter a valid URL starting with http:// or https://';
+        return;
+      }
+
       const id = crypto.randomUUID();
       const colorIndex = this.calendars.length % COLOR_PALETTE.length;
       const newCal = {
         id,
         name: 'Calendar ' + (this.calendars.length + 1),
         color: COLOR_PALETTE[colorIndex],
-        source: { type: 'url', url: this.newUrl.trim() }
+        source: { type: 'url', url: trimmedUrl }
       };
       this.calendars.push(newCal);
       this.calendarMeta[id] = { name: newCal.name, color: newCal.color };
       this.newUrl = '';
+      this.error = null;
       this.saveContent();
       this.fetchEvents(true);
     },
@@ -298,19 +315,27 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
         noteId: this.noteId,
         existingIds: [],
         contentTypeFilter: 'text/calendar',
-        onConfirm: (selectedIds) => {
-          // Fetch resource info and add
-          selectedIds.forEach(async (id) => {
-            try {
+        onConfirm: async (selectedIds) => {
+          // Fetch resource info and add calendars
+          const results = await Promise.allSettled(
+            selectedIds.map(async (id) => {
               const res = await fetch(`/v1/resource?id=${id}`);
-              if (res.ok) {
-                const resource = await res.json();
-                this.addCalendarFromResource(id, resource.Name);
+              if (!res.ok) {
+                throw new Error(`Failed to fetch resource ${id}: HTTP ${res.status}`);
               }
-            } catch (err) {
-              console.error('Failed to fetch resource:', err);
+              const resource = await res.json();
+              return { id, name: resource.Name };
+            })
+          );
+
+          // Process successful fetches
+          for (const result of results) {
+            if (result.status === 'fulfilled') {
+              this.addCalendarFromResource(result.value.id, result.value.name);
+            } else {
+              console.error('Failed to fetch resource:', result.reason);
             }
-          });
+          }
         }
       });
     },

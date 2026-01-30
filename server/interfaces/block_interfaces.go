@@ -49,7 +49,14 @@ type CalendarBlockEventFetcher interface {
 type CalendarEventsResponse struct {
 	Events    []CalendarEvent `json:"events"`
 	Calendars []CalendarInfo  `json:"calendars"`
+	Errors    []CalendarError `json:"errors,omitempty"`
 	CachedAt  string          `json:"cachedAt"`
+}
+
+// CalendarError represents an error that occurred while fetching a specific calendar.
+type CalendarError struct {
+	CalendarID string `json:"calendarId"`
+	Error      string `json:"error"`
 }
 
 // CalendarEvent represents a single calendar event.

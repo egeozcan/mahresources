@@ -19,9 +19,6 @@ import (
 	"mahresources/server/interfaces"
 )
 
-// Global ICS cache (shared across all calendar blocks)
-var icsCache = NewICSCache(100, 30*time.Minute)
-
 // CreateBlock creates a new block in a note
 func (ctx *MahresourcesContext) CreateBlock(editor *query_models.NoteBlockEditor) (*models.NoteBlock, error) {
 	// Validate block type
@@ -286,6 +283,7 @@ func (ctx *MahresourcesContext) GetCalendarEvents(blockID uint, start, end time.
 
 	var allEvents []interfaces.CalendarEvent
 	var calendars []interfaces.CalendarInfo
+	var calendarErrors []interfaces.CalendarError
 	var cachedAt time.Time
 
 	// Fetch events from each calendar source
@@ -299,16 +297,28 @@ func (ctx *MahresourcesContext) GetCalendarEvents(blockID uint, start, end time.
 			icsContent, fetchTime, fetchErr = ctx.fetchICSFromURL(cal.Source.URL)
 		case "resource":
 			if cal.Source.ResourceID == nil {
+				calendarErrors = append(calendarErrors, interfaces.CalendarError{
+					CalendarID: cal.ID,
+					Error:      "resource source missing resourceId",
+				})
 				log.Printf("Calendar %s: resource source missing resourceId", cal.ID)
 				continue
 			}
 			icsContent, fetchTime, fetchErr = ctx.fetchICSFromResource(*cal.Source.ResourceID)
 		default:
+			calendarErrors = append(calendarErrors, interfaces.CalendarError{
+				CalendarID: cal.ID,
+				Error:      fmt.Sprintf("unknown source type: %s", cal.Source.Type),
+			})
 			log.Printf("Calendar %s: unknown source type %s", cal.ID, cal.Source.Type)
 			continue
 		}
 
 		if fetchErr != nil {
+			calendarErrors = append(calendarErrors, interfaces.CalendarError{
+				CalendarID: cal.ID,
+				Error:      fmt.Sprintf("failed to fetch: %v", fetchErr),
+			})
 			log.Printf("Calendar %s: failed to fetch ICS: %v", cal.ID, fetchErr)
 			continue
 		}
@@ -321,6 +331,10 @@ func (ctx *MahresourcesContext) GetCalendarEvents(blockID uint, start, end time.
 		// Parse events from ICS content
 		events, parseErr := ParseICSEvents(icsContent, cal.ID, start, end)
 		if parseErr != nil {
+			calendarErrors = append(calendarErrors, interfaces.CalendarError{
+				CalendarID: cal.ID,
+				Error:      fmt.Sprintf("failed to parse: %v", parseErr),
+			})
 			log.Printf("Calendar %s: failed to parse ICS: %v", cal.ID, parseErr)
 			continue
 		}
@@ -360,6 +374,7 @@ func (ctx *MahresourcesContext) GetCalendarEvents(blockID uint, start, end time.
 	return &interfaces.CalendarEventsResponse{
 		Events:    allEvents,
 		Calendars: calendars,
+		Errors:    calendarErrors,
 		CachedAt:  cachedAt.UTC().Format(time.RFC3339),
 	}, nil
 }
@@ -367,9 +382,15 @@ func (ctx *MahresourcesContext) GetCalendarEvents(blockID uint, start, end time.
 // fetchICSFromURL fetches ICS content from a URL with caching support.
 // Returns the content, the time it was fetched, and any error.
 func (ctx *MahresourcesContext) fetchICSFromURL(url string) ([]byte, time.Time, error) {
+	// Get configured TTL or default
+	cacheTTL := ctx.Config.ICSCacheTTL
+	if cacheTTL == 0 {
+		cacheTTL = 30 * time.Minute
+	}
+
 	// Check cache first
-	if entry, ok := icsCache.Get(url); ok {
-		if entry.IsFresh(30 * time.Minute) {
+	if entry, ok := ctx.icsCache.Get(url); ok {
+		if entry.IsFresh(cacheTTL) {
 			return entry.Content, entry.FetchedAt, nil
 		}
 		// Entry exists but is stale - try conditional fetch
@@ -420,7 +441,7 @@ func (ctx *MahresourcesContext) fetchAndCacheICS(url string, existingEntry *ICSC
 	// Handle 304 Not Modified
 	if resp.StatusCode == http.StatusNotModified && existingEntry != nil {
 		// Refresh the cache entry timestamp
-		icsCache.Set(url, existingEntry.Content, existingEntry.ETag, existingEntry.LastModified)
+		ctx.icsCache.Set(url, existingEntry.Content, existingEntry.ETag, existingEntry.LastModified)
 		return existingEntry.Content, time.Now(), nil
 	}
 
@@ -436,7 +457,7 @@ func (ctx *MahresourcesContext) fetchAndCacheICS(url string, existingEntry *ICSC
 	// Cache the result
 	etag := resp.Header.Get("ETag")
 	lastModified := resp.Header.Get("Last-Modified")
-	icsCache.Set(url, content, etag, lastModified)
+	ctx.icsCache.Set(url, content, etag, lastModified)
 
 	return content, time.Now(), nil
 }

@@ -372,7 +372,8 @@ export function blockEditor(noteId, initialBlocks = []) {
       { type: 'gallery', label: 'Gallery', icon: '🖼️' },
       { type: 'references', label: 'References', icon: '📁' },
       { type: 'todos', label: 'Todos', icon: '☑️' },
-      { type: 'table', label: 'Table', icon: '📊' }
+      { type: 'table', label: 'Table', icon: '📊' },
+      { type: 'calendar', label: 'Calendar', icon: '📅' }
     ]
   };
 }

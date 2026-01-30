@@ -193,12 +193,10 @@ test.describe('Calendar Block', () => {
   });
 
   // === UI Tests (add calendar block via UI) ===
-  // NOTE: These UI tests are skipped due to a pre-existing issue where the block type
-  // dropdown doesn't show options. This affects all block UI tests (see 16-blocks.spec.ts).
-  // The issue is that blockTypes array is empty when the dropdown opens.
-  // Investigation needed: check why loadBlockTypes() isn't completing before dropdown opens.
+  // Each test creates its own calendar block. We use .last() to target the most recently
+  // created block since blocks from previous tests may still exist on the shared note.
 
-  test.skip('can add calendar block via UI', async ({ page, baseURL }) => {
+  test('can add calendar block via UI', async ({ page, baseURL }) => {
     await page.goto(`${baseURL}/note?id=${noteId}`);
     await page.waitForLoadState('load');
 
@@ -219,16 +217,17 @@ test.describe('Calendar Block', () => {
     await calendarOption.click();
 
     // Wait for block to be added - should see calendar block UI elements
-    await expect(page.locator('text=No calendars configured')).toBeVisible({ timeout: 10000 });
+    // Use .last() to get the most recently added block
+    await expect(page.locator('text=No calendars configured').last()).toBeVisible({ timeout: 10000 });
 
     // Exit edit mode
     await page.locator('button:has-text("Done")').click();
 
-    // In view mode, should see empty state
-    await expect(page.locator('text=No calendars added yet')).toBeVisible();
+    // In view mode, should see empty state (at least one instance)
+    await expect(page.locator('text=No calendars added yet').last()).toBeVisible();
   });
 
-  test.skip('can add calendar from URL in edit mode', async ({ page, baseURL }) => {
+  test('can add calendar from URL in edit mode', async ({ page, baseURL }) => {
     await page.goto(`${baseURL}/note?id=${noteId}`);
     await page.waitForLoadState('load');
 
@@ -245,24 +244,37 @@ test.describe('Calendar Block', () => {
     const calendarOption = page.locator('button:has-text("Calendar")').first();
     await expect(calendarOption).toBeVisible({ timeout: 10000 });
     await calendarOption.click();
-    await expect(page.locator('text=No calendars configured')).toBeVisible({ timeout: 10000 });
 
-    // Find URL input and add a calendar
-    const urlInput = page.locator('input[placeholder*="ICS calendar URL"]');
+    // Wait for the new block to appear - use .last() to get the most recently added block
+    await expect(page.locator('text=No calendars configured').last()).toBeVisible({ timeout: 10000 });
+
+    // Find URL input in the last/newest block and add a calendar
+    // The newest block is at the bottom, so use .last()
+    const urlInput = page.locator('input[placeholder*="ICS calendar URL"]').last();
     await expect(urlInput).toBeVisible();
-    await urlInput.fill('https://example.com/test.ics');
 
-    // Click Add URL button
-    const addButton = page.locator('button:has-text("Add URL")');
-    await expect(addButton).toBeEnabled();
+    // Use click + fill to ensure proper focus and Alpine.js binding
+    await urlInput.click();
+    await urlInput.fill('https://example.com/test.ics');
+    // Trigger input event to ensure Alpine.js x-model updates
+    await urlInput.dispatchEvent('input');
+
+    // Click Add URL button in the same block (use .last() to target the newest block's button)
+    // Wait for Alpine.js to process the input and enable the button
+    const addButton = page.locator('button:has-text("Add URL")').last();
+    await expect(addButton).toBeEnabled({ timeout: 5000 });
     await addButton.click();
 
-    // Should see the calendar listed
-    await expect(page.locator('input[value="Calendar 1"]')).toBeVisible({ timeout: 5000 });
-    await expect(page.locator('text=🔗 URL')).toBeVisible();
+    // Should see the calendar listed in the newest block
+    // The calendar name input appears after adding a calendar
+    const calendarNameInput = page.locator('.bg-gray-50 input[type="text"]').last();
+    await expect(calendarNameInput).toBeVisible({ timeout: 5000 });
+    await expect(calendarNameInput).toHaveValue('Calendar 1');
+    // The source type indicator shows "URL" for URL-sourced calendars
+    await expect(page.locator('.text-gray-400:has-text("URL")').last()).toBeVisible();
   });
 
-  test.skip('Add URL button is disabled when input is empty', async ({ page, baseURL }) => {
+  test('Add URL button is disabled when input is empty', async ({ page, baseURL }) => {
     await page.goto(`${baseURL}/note?id=${noteId}`);
     await page.waitForLoadState('load');
 
@@ -279,19 +291,27 @@ test.describe('Calendar Block', () => {
     const calendarOption = page.locator('button:has-text("Calendar")').first();
     await expect(calendarOption).toBeVisible({ timeout: 10000 });
     await calendarOption.click();
-    await expect(page.locator('text=No calendars configured')).toBeVisible({ timeout: 10000 });
+
+    // Wait for the new block to appear
+    await expect(page.locator('text=No calendars configured').last()).toBeVisible({ timeout: 10000 });
+
+    // Get the Add URL button from the newest block
+    const addButton = page.locator('button:has-text("Add URL")').last();
+    const urlInput = page.locator('input[placeholder*="ICS calendar URL"]').last();
 
     // Add URL button should be disabled when input is empty
-    const addButton = page.locator('button:has-text("Add URL")');
     await expect(addButton).toBeDisabled();
 
     // Type something and verify it becomes enabled
-    const urlInput = page.locator('input[placeholder*="ICS calendar URL"]');
+    // Use click + fill + dispatchEvent to ensure Alpine.js picks up the change
+    await urlInput.click();
     await urlInput.fill('https://example.com/test.ics');
-    await expect(addButton).toBeEnabled();
+    await urlInput.dispatchEvent('input');
+    await expect(addButton).toBeEnabled({ timeout: 5000 });
 
     // Clear and verify it becomes disabled again
     await urlInput.clear();
-    await expect(addButton).toBeDisabled();
+    await urlInput.dispatchEvent('input');
+    await expect(addButton).toBeDisabled({ timeout: 5000 });
   });
 });

@@ -37,6 +37,10 @@ type MahresourcesConfig struct {
 	RemoteResourceIdleTimeout time.Duration
 	// RemoteResourceOverallTimeout is the maximum total time for a remote resource download (default: 30m)
 	RemoteResourceOverallTimeout time.Duration
+	// ICSCacheMaxEntries is the maximum number of ICS calendar files to cache (default: 100)
+	ICSCacheMaxEntries int
+	// ICSCacheTTL is how long cached ICS content is considered fresh (default: 30m)
+	ICSCacheTTL time.Duration
 }
 
 // MahresourcesInputConfig holds all configuration options that can be passed
@@ -99,6 +103,8 @@ type MahresourcesContext struct {
 	currentRequest *http.Request
 	// hashQueue is a channel to queue resources for async hash processing
 	hashQueue chan<- uint
+	// icsCache provides LRU caching for ICS calendar data
+	icsCache *ICSCache
 }
 
 func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.DB, config *MahresourcesConfig) *MahresourcesContext {
@@ -116,6 +122,17 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 	// Initialize search cache with 60 second TTL and 1000 max entries
 	searchCache := NewSearchCache(60*time.Second, 1000)
 
+	// Initialize ICS cache with configurable or default values
+	icsCacheMaxEntries := config.ICSCacheMaxEntries
+	if icsCacheMaxEntries == 0 {
+		icsCacheMaxEntries = 100
+	}
+	icsCacheTTL := config.ICSCacheTTL
+	if icsCacheTTL == 0 {
+		icsCacheTTL = 30 * time.Minute
+	}
+	icsCache := NewICSCache(icsCacheMaxEntries, icsCacheTTL)
+
 	ctx := &MahresourcesContext{
 		fs:             filesystem,
 		db:             db,
@@ -129,6 +146,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 			ResourceHashLock:             resourceHashLock,
 		},
 		searchCache: searchCache,
+		icsCache:    icsCache,
 	}
 
 	// Initialize download manager with timeout config
