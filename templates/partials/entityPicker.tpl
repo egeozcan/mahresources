@@ -246,10 +246,10 @@
                                 {# Breadcrumb #}
                                 <p x-show="item.Owner?.Name" class="text-xs text-gray-500 truncate" x-text="item.Owner?.Name"></p>
                                 {# Metadata #}
-                                <div class="flex items-center gap-2 mt-1 text-xs text-gray-500">
-                                    <span x-show="item.ResourceCount > 0" x-text="item.ResourceCount + ' resources'"></span>
-                                    <span x-show="item.NoteCount > 0" x-text="item.NoteCount + ' notes'"></span>
-                                    <span x-show="item.Category?.Name" class="px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded" x-text="item.Category?.Name"></span>
+                                <div class="flex items-center gap-2 mt-1 text-xs text-gray-500 overflow-hidden">
+                                    <span x-show="item.ResourceCount > 0" class="flex-shrink-0" x-text="item.ResourceCount + ' resources'"></span>
+                                    <span x-show="item.NoteCount > 0" class="flex-shrink-0" x-text="item.NoteCount + ' notes'"></span>
+                                    <span x-show="item.Category?.Name" class="px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded truncate max-w-[120px]" x-text="item.Category?.Name"></span>
                                 </div>
                             </div>
                         </div>

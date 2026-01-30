@@ -176,7 +176,7 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 		dbQuery = ApplyDateRange(dbQuery, "groups.", query.CreatedBefore, query.CreatedAfter)
 
 		if query.CategoryId != 0 {
-			dbQuery = dbQuery.Where("groups.category_id >= ?", query.CategoryId)
+			dbQuery = dbQuery.Where("groups.category_id = ?", query.CategoryId)
 		}
 
 		if query.OwnerId != 0 {
