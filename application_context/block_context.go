@@ -3,8 +3,12 @@ package application_context
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"sort"
+	"time"
 
 	"gorm.io/gorm"
 	"mahresources/lib"
@@ -12,7 +16,11 @@ import (
 	"mahresources/models/block_types"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
+	"mahresources/server/interfaces"
 )
+
+// Global ICS cache (shared across all calendar blocks)
+var icsCache = NewICSCache(100, 30*time.Minute)
 
 // CreateBlock creates a new block in a note
 func (ctx *MahresourcesContext) CreateBlock(editor *query_models.NoteBlockEditor) (*models.NoteBlock, error) {
@@ -252,4 +260,214 @@ func (ctx *MahresourcesContext) UpdateBlockStateFromRequest(blockId uint, r *htt
 
 	_, err := ctx.UpdateBlockState(blockId, stateUpdate)
 	return err
+}
+
+// GetCalendarEvents fetches and parses calendar events for a calendar block.
+// It supports both URL-based and resource-based calendar sources with caching.
+func (ctx *MahresourcesContext) GetCalendarEvents(blockID uint, start, end time.Time) (*interfaces.CalendarEventsResponse, error) {
+	// Get the block
+	block, err := ctx.GetBlock(blockID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Verify block type
+	if block.Type != "calendar" {
+		return nil, errors.New("block is not a calendar type")
+	}
+
+	// Parse block content to get calendar sources
+	var content struct {
+		Calendars []block_types.CalendarSource `json:"calendars"`
+	}
+	if err := json.Unmarshal(block.Content, &content); err != nil {
+		return nil, fmt.Errorf("failed to parse block content: %w", err)
+	}
+
+	var allEvents []interfaces.CalendarEvent
+	var calendars []interfaces.CalendarInfo
+	var cachedAt time.Time
+
+	// Fetch events from each calendar source
+	for _, cal := range content.Calendars {
+		var icsContent []byte
+		var fetchTime time.Time
+		var fetchErr error
+
+		switch cal.Source.Type {
+		case "url":
+			icsContent, fetchTime, fetchErr = ctx.fetchICSFromURL(cal.Source.URL)
+		case "resource":
+			if cal.Source.ResourceID == nil {
+				log.Printf("Calendar %s: resource source missing resourceId", cal.ID)
+				continue
+			}
+			icsContent, fetchTime, fetchErr = ctx.fetchICSFromResource(*cal.Source.ResourceID)
+		default:
+			log.Printf("Calendar %s: unknown source type %s", cal.ID, cal.Source.Type)
+			continue
+		}
+
+		if fetchErr != nil {
+			log.Printf("Calendar %s: failed to fetch ICS: %v", cal.ID, fetchErr)
+			continue
+		}
+
+		// Track the most recent cache time
+		if fetchTime.After(cachedAt) {
+			cachedAt = fetchTime
+		}
+
+		// Parse events from ICS content
+		events, parseErr := ParseICSEvents(icsContent, cal.ID, start, end)
+		if parseErr != nil {
+			log.Printf("Calendar %s: failed to parse ICS: %v", cal.ID, parseErr)
+			continue
+		}
+
+		// Convert to interface type
+		for _, evt := range events {
+			allEvents = append(allEvents, interfaces.CalendarEvent{
+				ID:          evt.ID,
+				CalendarID:  evt.CalendarID,
+				Title:       evt.Title,
+				Start:       evt.Start,
+				End:         evt.End,
+				AllDay:      evt.AllDay,
+				Location:    evt.Location,
+				Description: evt.Description,
+			})
+		}
+
+		// Add calendar info
+		calendars = append(calendars, interfaces.CalendarInfo{
+			ID:    cal.ID,
+			Name:  cal.Name,
+			Color: cal.Color,
+		})
+	}
+
+	// Sort events by start time
+	sort.Slice(allEvents, func(i, j int) bool {
+		return allEvents[i].Start.Before(allEvents[j].Start)
+	})
+
+	// Use current time if no calendars were fetched
+	if cachedAt.IsZero() {
+		cachedAt = time.Now()
+	}
+
+	return &interfaces.CalendarEventsResponse{
+		Events:    allEvents,
+		Calendars: calendars,
+		CachedAt:  cachedAt.UTC().Format(time.RFC3339),
+	}, nil
+}
+
+// fetchICSFromURL fetches ICS content from a URL with caching support.
+// Returns the content, the time it was fetched, and any error.
+func (ctx *MahresourcesContext) fetchICSFromURL(url string) ([]byte, time.Time, error) {
+	// Check cache first
+	if entry, ok := icsCache.Get(url); ok {
+		if entry.IsFresh(30 * time.Minute) {
+			return entry.Content, entry.FetchedAt, nil
+		}
+		// Entry exists but is stale - try conditional fetch
+		content, fetchTime, err := ctx.fetchAndCacheICS(url, entry)
+		if err != nil {
+			// If conditional fetch fails, return stale data
+			log.Printf("Conditional fetch failed for %s, using cached data: %v", url, err)
+			return entry.Content, entry.FetchedAt, nil
+		}
+		return content, fetchTime, nil
+	}
+
+	// No cache entry - fetch fresh
+	return ctx.fetchAndCacheICS(url, nil)
+}
+
+// fetchAndCacheICS performs the actual HTTP fetch with optional conditional headers.
+func (ctx *MahresourcesContext) fetchAndCacheICS(url string, existingEntry *ICSCacheEntry) ([]byte, time.Time, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Add conditional headers if we have a previous entry
+	if existingEntry != nil {
+		if existingEntry.ETag != "" {
+			req.Header.Set("If-None-Match", existingEntry.ETag)
+		}
+		if existingEntry.LastModified != "" {
+			req.Header.Set("If-Modified-Since", existingEntry.LastModified)
+		}
+	}
+
+	// Use configured timeouts
+	client := &http.Client{
+		Timeout: ctx.Config.RemoteResourceConnectTimeout,
+	}
+	if client.Timeout == 0 {
+		client.Timeout = 30 * time.Second
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("failed to fetch URL: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Handle 304 Not Modified
+	if resp.StatusCode == http.StatusNotModified && existingEntry != nil {
+		// Refresh the cache entry timestamp
+		icsCache.Set(url, existingEntry.Content, existingEntry.ETag, existingEntry.LastModified)
+		return existingEntry.Content, time.Now(), nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, time.Time{}, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	content, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Cache the result
+	etag := resp.Header.Get("ETag")
+	lastModified := resp.Header.Get("Last-Modified")
+	icsCache.Set(url, content, etag, lastModified)
+
+	return content, time.Now(), nil
+}
+
+// fetchICSFromResource reads ICS content from a stored resource file.
+func (ctx *MahresourcesContext) fetchICSFromResource(resourceID uint) ([]byte, time.Time, error) {
+	resource, err := ctx.GetResource(resourceID)
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("failed to get resource: %w", err)
+	}
+
+	// Determine which filesystem to use
+	var fs = ctx.fs
+	if resource.StorageLocation != nil && *resource.StorageLocation != "" {
+		if altFs, ok := ctx.altFileSystems[*resource.StorageLocation]; ok {
+			fs = altFs
+		}
+	}
+
+	// Open and read the file
+	f, err := fs.Open(resource.GetCleanLocation())
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("failed to open resource file: %w", err)
+	}
+	defer f.Close()
+
+	content, err := io.ReadAll(f)
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("failed to read resource file: %w", err)
+	}
+
+	// Use the resource's updated time as the fetch time
+	return content, resource.UpdatedAt, nil
 }

@@ -2,6 +2,8 @@ package interfaces
 
 import (
 	"encoding/json"
+	"time"
+
 	"github.com/jmoiron/sqlx"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -34,4 +36,37 @@ type BlockRebalancer interface {
 type TableBlockQueryRunner interface {
 	GetBlock(id uint) (*models.NoteBlock, error)
 	RunReadOnlyQuery(queryId uint, params map[string]any) (*sqlx.Rows, error)
+}
+
+// CalendarBlockEventFetcher combines block reading and resource access for calendar blocks.
+type CalendarBlockEventFetcher interface {
+	GetBlock(id uint) (*models.NoteBlock, error)
+	GetResource(id uint) (*models.Resource, error)
+	GetCalendarEvents(blockID uint, start, end time.Time) (*CalendarEventsResponse, error)
+}
+
+// CalendarEventsResponse is the response for the calendar events API.
+type CalendarEventsResponse struct {
+	Events    []CalendarEvent `json:"events"`
+	Calendars []CalendarInfo  `json:"calendars"`
+	CachedAt  string          `json:"cachedAt"`
+}
+
+// CalendarEvent represents a single calendar event.
+type CalendarEvent struct {
+	ID          string    `json:"id"`
+	CalendarID  string    `json:"calendarId"`
+	Title       string    `json:"title"`
+	Start       time.Time `json:"start"`
+	End         time.Time `json:"end"`
+	AllDay      bool      `json:"allDay"`
+	Location    string    `json:"location,omitempty"`
+	Description string    `json:"description,omitempty"`
+}
+
+// CalendarInfo represents calendar metadata.
+type CalendarInfo struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Color string `json:"color"`
 }
