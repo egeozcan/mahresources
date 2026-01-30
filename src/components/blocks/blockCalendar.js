@@ -22,7 +22,6 @@
 
 // Module-level cache for calendar events
 const eventCache = new Map();
-const CACHE_TTL = 30000;       // 30s - unused, kept for potential future use
 const STALE_THRESHOLD = 5 * 60 * 1000; // 5 minutes - data still usable but triggers background refresh
 const MAX_CACHE_SIZE = 50;
 

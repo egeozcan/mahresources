@@ -479,6 +479,7 @@ func (ctx *MahresourcesContext) fetchAndCacheICS(url string, existingEntry *ICSC
 }
 
 // fetchICSFromResource reads ICS content from a stored resource file.
+// Like URL fetches, this enforces maxICSFileSize to prevent memory exhaustion.
 func (ctx *MahresourcesContext) fetchICSFromResource(resourceID uint) ([]byte, time.Time, error) {
 	resource, err := ctx.GetResource(resourceID)
 	if err != nil {
@@ -493,16 +494,21 @@ func (ctx *MahresourcesContext) fetchICSFromResource(resourceID uint) ([]byte, t
 		}
 	}
 
-	// Open and read the file
+	// Open and read the file with size limit (consistent with URL fetch)
 	f, err := fs.Open(resource.GetCleanLocation())
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("failed to open resource file: %w", err)
 	}
 	defer f.Close()
 
-	content, err := io.ReadAll(f)
+	content, err := io.ReadAll(io.LimitReader(f, maxICSFileSize))
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("failed to read resource file: %w", err)
+	}
+
+	// Check if we hit the size limit
+	if int64(len(content)) == maxICSFileSize {
+		return nil, time.Time{}, fmt.Errorf("ICS resource file exceeds maximum size of %d bytes", maxICSFileSize)
 	}
 
 	// Use the resource's updated time as the fetch time
