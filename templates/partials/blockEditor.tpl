@@ -488,9 +488,6 @@
                             </template>
                         </div>
                     </template>
-                </div>
-            </div>
-        </template>
 
                     {# Calendar block #}
                     <template x-if="block.type === 'calendar'">
