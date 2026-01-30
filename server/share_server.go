@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -14,6 +15,14 @@ import (
 	"mahresources/server/template_handlers/loaders"
 	_ "mahresources/server/template_handlers/template_filters"
 )
+
+// templateBlock represents a block with decoded Content and State for template rendering
+type templateBlock struct {
+	ID      uint
+	Type    string
+	Content map[string]interface{}
+	State   map[string]interface{}
+}
 
 // ShareServer is a separate HTTP server for serving shared notes publicly.
 // It runs on a different port from the main server and only exposes
@@ -187,15 +196,43 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 		resourceHashMap[resource.ID] = resource.Hash
 	}
 
-	context := pongo2.Context{
+	// Convert blocks to template-friendly format with decoded JSON
+	blocks := make([]templateBlock, 0, len(note.Blocks))
+	for _, block := range note.Blocks {
+		tb := templateBlock{
+			ID:      block.ID,
+			Type:    block.Type,
+			Content: make(map[string]interface{}),
+			State:   make(map[string]interface{}),
+		}
+
+		// Decode Content JSON
+		if len(block.Content) > 0 {
+			if err := json.Unmarshal(block.Content, &tb.Content); err != nil {
+				log.Printf("Error decoding block content: %v", err)
+			}
+		}
+
+		// Decode State JSON
+		if len(block.State) > 0 {
+			if err := json.Unmarshal(block.State, &tb.State); err != nil {
+				log.Printf("Error decoding block state: %v", err)
+			}
+		}
+
+		blocks = append(blocks, tb)
+	}
+
+	ctx := pongo2.Context{
 		"note":            note,
+		"blocks":          blocks,
 		"pageTitle":       note.Name,
 		"shareToken":      shareToken,
 		"resourceHashMap": resourceHashMap,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := template.ExecuteWriter(context, w); err != nil {
+	if err := template.ExecuteWriter(ctx, w); err != nil {
 		log.Printf("Error rendering shared note template: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}

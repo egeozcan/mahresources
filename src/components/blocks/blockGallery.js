@@ -45,13 +45,18 @@ export function blockGallery(block, saveContentFn, getEditMode, noteId) {
     },
 
     openPicker() {
-      const picker = Alpine.store('resourcePicker');
+      const picker = Alpine.store('entityPicker');
       if (!picker) {
-        console.error('resourcePicker store not found');
+        console.error('entityPicker store not found');
         return;
       }
-      picker.open(this.noteId, this.resourceIds, (selectedIds) => {
-        this.addResources(selectedIds);
+      picker.open({
+        entityType: 'resource',
+        noteId: this.noteId,
+        existingIds: this.resourceIds,
+        onConfirm: (selectedIds) => {
+          this.addResources(selectedIds);
+        }
       });
     },
 
