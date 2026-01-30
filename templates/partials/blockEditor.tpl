@@ -498,17 +498,26 @@
                                     {# Header #}
                                     <div class="flex items-center justify-between mb-4">
                                         <div class="flex items-center gap-2">
-                                            <button @click="prevMonth()" class="p-1 hover:bg-gray-100 rounded" title="Previous">
-                                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
-                                                </svg>
-                                            </button>
-                                            <span class="text-lg font-semibold" x-text="currentMonth + ' ' + currentYear"></span>
-                                            <button @click="nextMonth()" class="p-1 hover:bg-gray-100 rounded" title="Next">
-                                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-                                                </svg>
-                                            </button>
+                                            {# Month navigation - only shown in month view #}
+                                            <template x-if="view === 'month'">
+                                                <div class="flex items-center gap-2">
+                                                    <button @click="prevMonth()" class="p-1 hover:bg-gray-100 rounded" title="Previous">
+                                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+                                                        </svg>
+                                                    </button>
+                                                    <span class="text-lg font-semibold" x-text="currentMonth + ' ' + currentYear"></span>
+                                                    <button @click="nextMonth()" class="p-1 hover:bg-gray-100 rounded" title="Next">
+                                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                                        </svg>
+                                                    </button>
+                                                </div>
+                                            </template>
+                                            {# Agenda title #}
+                                            <template x-if="view === 'agenda'">
+                                                <span class="text-lg font-semibold">Upcoming Events</span>
+                                            </template>
                                         </div>
                                         <div class="flex items-center gap-2">
                                             <template x-if="isRefreshing">
@@ -579,7 +588,9 @@
                                                     <div class="text-sm font-medium text-gray-600 mb-2" x-text="formatAgendaDate(group.date)"></div>
                                                     <div class="space-y-2">
                                                         <template x-for="event in group.events" :key="event.id">
-                                                            <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-50">
+                                                            <div @click="goToEventMonth(event)"
+                                                                 class="flex items-start gap-3 p-2 rounded hover:bg-gray-50 cursor-pointer"
+                                                                 title="Click to view in month">
                                                                 <div class="w-1 h-full min-h-[40px] rounded" :style="'background-color: ' + getCalendarColor(event.calendarId)"></div>
                                                                 <div class="flex-1 min-w-0">
                                                                     <div class="font-medium text-sm" x-text="event.title"></div>

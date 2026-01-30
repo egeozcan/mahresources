@@ -112,11 +112,11 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
         const end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
         return { start, end };
       } else {
-        // Agenda: next 30 days
+        // Agenda: fetch 1 year ahead to ensure we have enough events
         const start = new Date();
         start.setHours(0, 0, 0, 0);
         const end = new Date(start);
-        end.setDate(end.getDate() + 30);
+        end.setFullYear(end.getFullYear() + 1);
         return { start, end };
       }
     },
@@ -409,9 +409,10 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
 
     // Agenda view helpers
     get agendaEvents() {
-      // Group events by date
+      // Take next 30 events and group by date
+      const upcomingEvents = this.events.slice(0, 30);
       const groups = {};
-      this.events.forEach(e => {
+      upcomingEvents.forEach(e => {
         const dateKey = new Date(e.start).toDateString();
         if (!groups[dateKey]) {
           groups[dateKey] = { date: new Date(e.start), events: [] };
@@ -419,6 +420,16 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
         groups[dateKey].events.push(e);
       });
       return Object.values(groups).sort((a, b) => a.date - b.date);
+    },
+
+    // Navigate to event's month in month view
+    // Note: Don't refetch - we already have events loaded from agenda (1 year range)
+    // The month view's getEventsForDay() will filter from existing events
+    goToEventMonth(event) {
+      const eventDate = new Date(event.start);
+      this.currentDate = eventDate;
+      this.view = 'month';
+      this.saveState();
     },
 
     formatEventTime(event) {
