@@ -3,7 +3,27 @@
 /**
  * Fetch metadata for entities to display in blocks.
  * Returns an object keyed by ID with entity-specific metadata.
+ * Uses batched concurrent requests to avoid overwhelming the server.
  */
+
+const BATCH_SIZE = 5; // Max concurrent requests per batch
+
+/**
+ * Execute promises in batches to limit concurrency.
+ * @param {Array<() => Promise>} promiseFns - Array of functions returning promises
+ * @param {number} batchSize - Max concurrent promises
+ * @returns {Promise<Array>} - Results in order
+ */
+async function batchedPromises(promiseFns, batchSize = BATCH_SIZE) {
+  const results = [];
+  for (let i = 0; i < promiseFns.length; i += batchSize) {
+    const batch = promiseFns.slice(i, i + batchSize);
+    const batchResults = await Promise.all(batch.map(fn => fn()));
+    results.push(...batchResults);
+  }
+  return results;
+}
+
 export async function fetchEntityMeta(entityType, ids) {
   if (!ids || ids.length === 0) return {};
 
@@ -27,10 +47,10 @@ async function fetchResourceMeta(ids) {
   if (toFetch.length === 0) return meta;
 
   try {
-    const promises = toFetch.map(id =>
+    const promiseFns = toFetch.map(id => () =>
       fetch(`/v1/resource?id=${id}`).then(r => r.ok ? r.json() : null)
     );
-    const results = await Promise.all(promises);
+    const results = await batchedPromises(promiseFns);
     results.forEach((res, i) => {
       if (res) {
         meta[toFetch[i]] = {
@@ -53,10 +73,10 @@ async function fetchGroupMeta(ids) {
   if (toFetch.length === 0) return meta;
 
   try {
-    const promises = toFetch.map(id =>
+    const promiseFns = toFetch.map(id => () =>
       fetch(`/v1/group?id=${id}`).then(r => r.ok ? r.json() : null)
     );
-    const results = await Promise.all(promises);
+    const results = await batchedPromises(promiseFns);
     results.forEach((res, i) => {
       if (res) {
         meta[toFetch[i]] = {

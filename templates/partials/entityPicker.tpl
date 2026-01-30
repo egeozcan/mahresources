@@ -8,6 +8,7 @@
      @keydown.escape.window="$store.entityPicker.close()">
     {# Backdrop #}
     <div class="fixed inset-0 bg-black bg-opacity-50 transition-opacity"
+         tabindex="-1"
          @click="$store.entityPicker.close()"></div>
 
     {# Modal content #}
@@ -34,10 +35,13 @@
                 <div class="flex border-b border-gray-200 px-4" role="tablist">
                     <template x-for="tab in $store.entityPicker.config.tabs" :key="tab.id">
                         <button @click="$store.entityPicker.setActiveTab(tab.id)"
-                                :class="$store.entityPicker.activeTab === tab.id ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+                                :class="{
+                                    'border-blue-500 text-blue-600': $store.entityPicker.activeTab === tab.id,
+                                    'border-transparent text-gray-500 hover:text-gray-700': $store.entityPicker.activeTab !== tab.id,
+                                    'opacity-50 cursor-not-allowed': tab.id === 'note' && !$store.entityPicker.noteId
+                                }"
                                 class="px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors"
                                 :disabled="tab.id === 'note' && !$store.entityPicker.noteId"
-                                :class="{ 'opacity-50 cursor-not-allowed': tab.id === 'note' && !$store.entityPicker.noteId }"
                                 role="tab"
                                 :aria-selected="$store.entityPicker.activeTab === tab.id">
                             <span x-text="tab.label"></span>
@@ -116,6 +120,10 @@
 
             {# Results grid #}
             <div class="flex-1 overflow-y-auto p-4" tabindex="0">
+                {# ARIA live region for screen readers #}
+                <span class="sr-only" aria-live="polite" aria-atomic="true"
+                      x-text="$store.entityPicker.loading ? 'Loading...' : $store.entityPicker.displayResults.length + ' items found'"></span>
+
                 {# Loading state #}
                 <div x-show="$store.entityPicker.loading" class="flex items-center justify-center py-12 text-gray-500">
                     <svg class="animate-spin h-6 w-6 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -147,7 +155,10 @@
                      :aria-label="'Available ' + ($store.entityPicker.config?.entityLabel?.toLowerCase() || 'items')">
                     <template x-for="item in $store.entityPicker.displayResults" :key="$store.entityPicker.config.getItemId(item)">
                         <div @click="$store.entityPicker.toggleSelection($store.entityPicker.config.getItemId(item))"
-                             class="relative aspect-square bg-gray-100 rounded-lg overflow-hidden cursor-pointer transition-all"
+                             @keydown.enter.prevent="$store.entityPicker.toggleSelection($store.entityPicker.config.getItemId(item))"
+                             @keydown.space.prevent="$store.entityPicker.toggleSelection($store.entityPicker.config.getItemId(item))"
+                             tabindex="0"
+                             class="relative aspect-square bg-gray-100 rounded-lg overflow-hidden cursor-pointer transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
                              :class="{
                                  'ring-2 ring-blue-500 ring-offset-2': $store.entityPicker.isSelected($store.entityPicker.config.getItemId(item)),
                                  'opacity-50 cursor-not-allowed': $store.entityPicker.isAlreadyAdded($store.entityPicker.config.getItemId(item)),
@@ -155,7 +166,8 @@
                              }"
                              role="option"
                              :aria-selected="$store.entityPicker.isSelected($store.entityPicker.config.getItemId(item))"
-                             :aria-disabled="$store.entityPicker.isAlreadyAdded($store.entityPicker.config.getItemId(item))">
+                             :aria-disabled="$store.entityPicker.isAlreadyAdded($store.entityPicker.config.getItemId(item))"
+                             :aria-label="$store.entityPicker.config.getItemLabel(item)">
                             <img :src="'/v1/resource/preview?id=' + $store.entityPicker.config.getItemId(item)"
                                  :alt="$store.entityPicker.config.getItemLabel(item)"
                                  class="w-full h-full object-cover"
@@ -188,7 +200,10 @@
                      :aria-label="'Available ' + ($store.entityPicker.config?.entityLabel?.toLowerCase() || 'items')">
                     <template x-for="item in $store.entityPicker.displayResults" :key="$store.entityPicker.config.getItemId(item)">
                         <div @click="$store.entityPicker.toggleSelection($store.entityPicker.config.getItemId(item))"
-                             class="flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-all"
+                             @keydown.enter.prevent="$store.entityPicker.toggleSelection($store.entityPicker.config.getItemId(item))"
+                             @keydown.space.prevent="$store.entityPicker.toggleSelection($store.entityPicker.config.getItemId(item))"
+                             tabindex="0"
+                             class="flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
                              :class="{
                                  'ring-2 ring-blue-500 border-blue-500 bg-blue-50': $store.entityPicker.isSelected($store.entityPicker.config.getItemId(item)),
                                  'opacity-50 cursor-not-allowed bg-gray-50': $store.entityPicker.isAlreadyAdded($store.entityPicker.config.getItemId(item)),
@@ -196,7 +211,8 @@
                              }"
                              role="option"
                              :aria-selected="$store.entityPicker.isSelected($store.entityPicker.config.getItemId(item))"
-                             :aria-disabled="$store.entityPicker.isAlreadyAdded($store.entityPicker.config.getItemId(item))">
+                             :aria-disabled="$store.entityPicker.isAlreadyAdded($store.entityPicker.config.getItemId(item))"
+                             :aria-label="(item.Name || 'Unnamed Group') + ($store.entityPicker.isAlreadyAdded($store.entityPicker.config.getItemId(item)) ? ' (already added)' : '')">
                             {# Thumbnail or icon #}
                             <div class="w-14 h-14 flex-shrink-0 bg-gray-100 rounded overflow-hidden">
                                 <template x-if="item.MainResource?.ID">
