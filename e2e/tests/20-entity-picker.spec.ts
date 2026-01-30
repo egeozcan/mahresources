@@ -73,10 +73,13 @@ test.describe('Entity Picker - Resource Selection', () => {
 
     // Search for resource
     const searchInput = page.locator('[aria-labelledby="entity-picker-title"] input[placeholder="Search by name..."]');
-    await searchInput.fill('Test Resource');
 
-    // Wait for results
-    await page.waitForTimeout(300); // Debounce wait
+    // Fill search and wait for the debounced API request to complete
+    const searchResponsePromise = page.waitForResponse(resp =>
+      resp.url().includes('/v1/resources') && resp.status() === 200
+    );
+    await searchInput.fill('Test Resource');
+    await searchResponsePromise;
 
     // Should show matching resource (use .first() since there might be multiple)
     await expect(page.locator('[aria-labelledby="entity-picker-title"] [role="option"]').first()).toBeVisible();
@@ -241,26 +244,25 @@ test.describe('Entity Picker - Resource Tag Filtering', () => {
     const pickerModal = page.locator('[aria-labelledby="entity-picker-title"]');
     await expect(pickerModal).toBeVisible();
 
-    // Switch to All Resources tab
+    // Switch to All Resources tab and wait for results to appear
     await page.locator('button:has-text("All Resources")').click();
-
-    // Wait for initial results
-    await page.waitForTimeout(300);
+    await pickerModal.locator('[role="option"]').first().waitFor({ state: 'visible' });
 
     // Find the Tags filter input
     const tagsFilter = pickerModal.locator('label:has-text("Tags")').locator('..').locator('input');
     await expect(tagsFilter).toBeVisible();
 
-    // Type the tag name to search
+    // Type the tag name and wait for autocomplete dropdown
     await tagsFilter.fill('Filter Test');
-    await page.waitForTimeout(200);
-
-    // Select the tag from dropdown
     const tagOption = pickerModal.locator('.absolute.z-30').locator('text=Filter Test Tag');
-    await tagOption.click();
+    await tagOption.waitFor({ state: 'visible' });
 
-    // Wait for filtered results
-    await page.waitForTimeout(300);
+    // Select the tag - this triggers a filtered API request
+    const filteredResultsPromise = page.waitForResponse(resp =>
+      resp.url().includes('/v1/resources') && resp.url().includes('Tags=') && resp.status() === 200
+    );
+    await tagOption.click();
+    await filteredResultsPromise;
 
     // Verify the tag chip appears showing filter is active
     await expect(pickerModal.locator('text=Filter Test Tag').first()).toBeVisible();
@@ -281,12 +283,11 @@ test.describe('Entity Picker - Resource Tag Filtering', () => {
 
     await page.locator('button:has-text("All Resources")').click();
 
-    // Add tag filter
+    // Add tag filter - type and wait for autocomplete dropdown
     const tagsFilter = pickerModal.locator('label:has-text("Tags")').locator('..').locator('input');
     await tagsFilter.fill('Filter Test');
-    await page.waitForTimeout(200);
-
     const tagOption = pickerModal.locator('.absolute.z-30').locator('text=Filter Test Tag');
+    await tagOption.waitFor({ state: 'visible' });
     await tagOption.click();
 
     // Verify chip appears
@@ -463,17 +464,15 @@ test.describe('Entity Picker - Group Selection', () => {
 
     // Find any remove button for the Selectable Test Group and click the first one
     // (multiple blocks may have this group, but removing from any one proves the feature works)
-    const removeButton = page.locator('button[title="Remove"]').first();
-    await removeButton.click();
+    const removeButtons = page.locator('button[title="Remove"]');
+    const initialCount = await removeButtons.count();
+    await removeButtons.first().click();
 
-    // Wait a moment for the removal to take effect
-    await page.waitForTimeout(200);
-
-    // Verify one fewer remove buttons exist (can't be specific about which block)
-    // Just verify the click happened successfully by checking the button count decreased
-    const removeButtonCount = await page.locator('button[title="Remove"]').count();
-    // The test passes if the click succeeded - no assertion needed on specific count
-    // since the test setup varies based on previous test runs
+    // Wait for the removal to take effect by checking the button count decreased
+    await expect(async () => {
+      const currentCount = await removeButtons.count();
+      expect(currentCount).toBeLessThan(initialCount);
+    }).toPass({ timeout: 5000 });
   });
 
   test.afterAll(async ({ apiClient }) => {
