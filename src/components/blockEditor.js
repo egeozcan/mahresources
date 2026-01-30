@@ -89,7 +89,8 @@ export function blockEditor(noteId, initialBlocks = []) {
         gallery: '🖼️',
         references: '📁',
         todos: '☑️',
-        table: '📊'
+        table: '📊',
+        calendar: '📅'
       };
       return icons[type] || '📦';
     },

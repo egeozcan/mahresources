@@ -36,7 +36,7 @@ import { compareView } from './components/compareView.js';
 import { imageCompare } from './components/imageCompare.js';
 import { textDiff } from './components/textDiff.js';
 import { blockEditor } from './components/blockEditor.js';
-import { blockText, blockHeading, blockDivider, blockTodos, blockGallery, blockReferences, blockTable } from './components/blocks/index.js';
+import { blockText, blockHeading, blockDivider, blockTodos, blockGallery, blockReferences, blockTable, blockCalendar } from './components/blocks/index.js';
 import { sharedTodos } from './components/sharedTodos.js';
 
 // Import web components
@@ -90,6 +90,7 @@ Alpine.data('blockTodos', blockTodos);
 Alpine.data('blockGallery', blockGallery);
 Alpine.data('blockReferences', blockReferences);
 Alpine.data('blockTable', blockTable);
+Alpine.data('blockCalendar', blockCalendar);
 Alpine.data('sharedTodos', sharedTodos);
 
 // Expose Alpine globally for debugging and morph usage
