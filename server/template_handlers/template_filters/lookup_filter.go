@@ -65,7 +65,7 @@ func lookupFilter(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *pongo2
 	}
 
 	// Handle map[float64]interface{} (group data map with struct values)
-	if floatAnyMap, ok := m.(map[float64]any); ok {
+	if floatAnyMap, ok := m.(map[float64]interface{}); ok {
 		var floatKey float64
 		switch k := key.(type) {
 		case float64:
@@ -109,5 +109,5 @@ func lookupFilter(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *pongo2
 		}
 	}
 
-	return pongo2.AsValue(""), nil
+	return pongo2.AsValue(nil), nil
 }

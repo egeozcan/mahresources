@@ -103,14 +103,15 @@
         <span class="font-medium">References:</span>
         {% for gId in block.Content.groupIds %}
         {% with groupData=groupDataMap|lookup:gId %}
+        {% if groupData %}
         <span class="group-reference-tooltip inline-flex items-center px-2 py-0.5 bg-gray-100 rounded text-gray-600 ml-1 cursor-default relative"
               tabindex="0"
-              data-group-name="{{ groupData.Name|default:'Group' }}"
+              data-group-name="{{ groupData.Name }}"
               data-group-description="{{ groupData.Description|default:'' }}"
               data-group-category="{{ groupData.CategoryName|default:'' }}">
-            {{ groupData.Name|default:"Group" }}
+            {{ groupData.Name }}
             <div class="tooltip-content hidden absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-gray-900 text-white text-xs rounded-lg shadow-lg">
-                <div class="font-semibold text-sm mb-1">{{ groupData.Name|default:"Group" }}</div>
+                <div class="font-semibold text-sm mb-1">{{ groupData.Name }}</div>
                 {% if groupData.CategoryName %}
                 <div class="text-gray-400 text-xs mb-1">{{ groupData.CategoryName }}</div>
                 {% endif %}
@@ -120,6 +121,11 @@
                 <div class="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
             </div>
         </span>
+        {% else %}
+        <span class="inline-flex items-center px-2 py-0.5 bg-gray-100 rounded text-gray-600 ml-1">
+            Group
+        </span>
+        {% endif %}
         {% endwith %}
         {% endfor %}
     </div>
