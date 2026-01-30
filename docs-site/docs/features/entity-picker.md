@@ -125,7 +125,8 @@ The picker is entity-agnostic. All entity-specific behavior comes from configura
 | `entityType` | string | Unique identifier for this entity type |
 | `entityLabel` | string | Display name for the modal title |
 | `searchEndpoint` | string | API endpoint for searching entities |
-| `searchParams` | function | Builds URLSearchParams from query and filters |
+| `maxResults` | number | Maximum results to fetch (default: 50) |
+| `searchParams` | function | Builds URLSearchParams from query, filters, and maxResults |
 | `filters` | array | Filter definitions (see below) |
 | `tabs` | array\|null | Tab definitions (null for no tabs) |
 | `renderItem` | string | Render mode: `'thumbnail'` or `'groupCard'` |
@@ -162,3 +163,31 @@ window.dispatchEvent(new CustomEvent('entity-picker-closed'));
 ```
 
 Filter autocompleters listen for this event to reset their state.
+
+## Metadata Caching
+
+Entity metadata fetched for display in blocks is cached in memory to avoid redundant API requests. The cache has a 5-minute TTL and is automatically managed.
+
+### Cache Behavior
+
+- Metadata is cached per entity (keyed by `entityType:id`)
+- Cache entries expire after 5 minutes
+- Failed requests retry up to 2 times with exponential backoff
+- Cache is cleared on page reload
+
+### Clearing the Cache
+
+If you need to force-refresh metadata (e.g., after editing an entity):
+
+```javascript
+import { clearMetaCache } from './components/picker/index.js';
+
+// Clear all cached metadata
+clearMetaCache();
+
+// Clear only group metadata
+clearMetaCache('group');
+
+// Clear only resource metadata
+clearMetaCache('resource');
+```

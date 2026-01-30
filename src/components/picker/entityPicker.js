@@ -68,6 +68,11 @@ export function registerEntityPickerStore(Alpine) {
       this.tabResults = {};
       this.selectedIds = new Set();
       this.config = null;
+      // Clean up pending debounce timer
+      if (this.searchDebounceTimer) {
+        clearTimeout(this.searchDebounceTimer);
+        this.searchDebounceTimer = null;
+      }
       if (this.requestAborter) {
         this.requestAborter();
         this.requestAborter = null;
@@ -106,7 +111,8 @@ export function registerEntityPickerStore(Alpine) {
       this.loading = true;
       this.error = null;
 
-      const params = this.config.searchParams(this.searchQuery.trim(), this.filterValues);
+      const maxResults = this.config.maxResults || 50;
+      const params = this.config.searchParams(this.searchQuery.trim(), this.filterValues, maxResults);
       const url = `${this.config.searchEndpoint}?${params}`;
 
       const { abort, ready } = abortableFetch(url);

@@ -5,8 +5,9 @@ export const entityConfigs = {
     entityType: 'resource',
     entityLabel: 'Resources',
     searchEndpoint: '/v1/resources',
-    searchParams: (query, filters) => {
-      const params = new URLSearchParams({ MaxResults: '50' });
+    maxResults: 50,
+    searchParams: (query, filters, maxResults) => {
+      const params = new URLSearchParams({ MaxResults: String(maxResults) });
       if (query) params.set('name', query);
       if (filters.tags) {
         filters.tags.forEach(id => params.append('Tags', id));
@@ -32,8 +33,9 @@ export const entityConfigs = {
     entityType: 'group',
     entityLabel: 'Groups',
     searchEndpoint: '/v1/groups',
-    searchParams: (query, filters) => {
-      const params = new URLSearchParams({ MaxResults: '50' });
+    maxResults: 50,
+    searchParams: (query, filters, maxResults) => {
+      const params = new URLSearchParams({ MaxResults: String(maxResults) });
       if (query) params.set('name', query);
       if (filters.category) params.set('categoryId', filters.category);
       return params;

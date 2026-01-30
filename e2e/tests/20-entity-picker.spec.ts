@@ -159,9 +159,159 @@ test.describe('Entity Picker - Resource Selection', () => {
   });
 
   test.afterAll(async ({ apiClient }) => {
+    // Delete in reverse dependency order to avoid FK constraint errors
     if (noteId) await apiClient.deleteNote(noteId);
     if (ownerGroupId) await apiClient.deleteGroup(ownerGroupId);
     if (categoryId) await apiClient.deleteCategory(categoryId);
+  });
+});
+
+test.describe('Entity Picker - Resource Tag Filtering', () => {
+  test.describe.configure({ mode: 'serial' });
+  let categoryId: number;
+  let ownerGroupId: number;
+  let secondGroupId: number;
+  let noteId: number;
+  let tagId: number;
+  let taggedResourceId: number;
+  let untaggedResourceId: number;
+
+  test.beforeAll(async ({ apiClient }) => {
+    // Use unique suffix to avoid collisions on test retries
+    const testSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    // Create prerequisite data with unique names to avoid collisions on retries
+    const category = await apiClient.createCategory(`Tag Filter Category ${testSuffix}`, 'Category for tag filter tests');
+    categoryId = category.ID;
+
+    const ownerGroup = await apiClient.createGroup({
+      name: `Tag Filter Owner ${testSuffix}`,
+      categoryId: categoryId,
+    });
+    ownerGroupId = ownerGroup.ID;
+
+    // Create a second group for the second resource to avoid deduplication
+    // (resources are deduplicated by hash + parent group)
+    const secondGroup = await apiClient.createGroup({
+      name: `Tag Filter Second Owner ${testSuffix}`,
+      categoryId: categoryId,
+    });
+    secondGroupId = secondGroup.ID;
+
+    // Create a tag for filtering
+    const tag = await apiClient.createTag('Filter Test Tag', 'Tag for filter tests');
+    tagId = tag.ID;
+
+    const note = await apiClient.createNote({
+      name: `Tag Filter Test Note ${testSuffix}`,
+      ownerId: ownerGroupId,
+    });
+    noteId = note.ID;
+
+    // Create resources - one tagged, one not
+    // Use different owner groups to avoid duplicate resource errors
+    // (resources are deduplicated by file hash + parent group)
+    const taggedResource = await apiClient.createResource({
+      filePath: path.join(__dirname, '../test-assets/sample-image.png'),
+      name: `Tagged Resource ${testSuffix}`,
+      ownerId: ownerGroupId,
+      tagIds: [tagId],
+    });
+    taggedResourceId = taggedResource.ID;
+
+    const untaggedResource = await apiClient.createResource({
+      filePath: path.join(__dirname, '../test-assets/sample-image.png'),
+      name: `Untagged Resource ${testSuffix}`,
+      ownerId: secondGroupId,
+    });
+    untaggedResourceId = untaggedResource.ID;
+
+    // Create a gallery block for testing
+    await apiClient.createBlock(noteId, 'gallery', 'tag-filter-test', { resourceIds: [] });
+  });
+
+  test('should filter resources by tag', async ({ page, baseURL }) => {
+    await page.goto(`${baseURL}/note?id=${noteId}`);
+    await page.waitForLoadState('load');
+
+    await page.locator('button:has-text("Edit Blocks")').click();
+    await page.locator('button:has-text("Select Resources")').click();
+
+    // Wait for modal
+    const pickerModal = page.locator('[aria-labelledby="entity-picker-title"]');
+    await expect(pickerModal).toBeVisible();
+
+    // Switch to All Resources tab
+    await page.locator('button:has-text("All Resources")').click();
+
+    // Wait for initial results
+    await page.waitForTimeout(300);
+
+    // Find the Tags filter input
+    const tagsFilter = pickerModal.locator('label:has-text("Tags")').locator('..').locator('input');
+    await expect(tagsFilter).toBeVisible();
+
+    // Type the tag name to search
+    await tagsFilter.fill('Filter Test');
+    await page.waitForTimeout(200);
+
+    // Select the tag from dropdown
+    const tagOption = pickerModal.locator('.absolute.z-30').locator('text=Filter Test Tag');
+    await tagOption.click();
+
+    // Wait for filtered results
+    await page.waitForTimeout(300);
+
+    // Verify the tag chip appears showing filter is active
+    await expect(pickerModal.locator('text=Filter Test Tag').first()).toBeVisible();
+
+    // Close modal
+    await page.keyboard.press('Escape');
+  });
+
+  test('should show tag filter chips and allow removal', async ({ page, baseURL }) => {
+    await page.goto(`${baseURL}/note?id=${noteId}`);
+    await page.waitForLoadState('load');
+
+    await page.locator('button:has-text("Edit Blocks")').click();
+    await page.locator('button:has-text("Select Resources")').click();
+
+    const pickerModal = page.locator('[aria-labelledby="entity-picker-title"]');
+    await expect(pickerModal).toBeVisible();
+
+    await page.locator('button:has-text("All Resources")').click();
+
+    // Add tag filter
+    const tagsFilter = pickerModal.locator('label:has-text("Tags")').locator('..').locator('input');
+    await tagsFilter.fill('Filter Test');
+    await page.waitForTimeout(200);
+
+    const tagOption = pickerModal.locator('.absolute.z-30').locator('text=Filter Test Tag');
+    await tagOption.click();
+
+    // Verify chip appears
+    const tagChip = pickerModal.locator('span.inline-flex').filter({ hasText: 'Filter Test Tag' });
+    await expect(tagChip).toBeVisible();
+
+    // Remove the filter by clicking the x button
+    await tagChip.locator('button').click();
+
+    // Verify chip is removed
+    await expect(tagChip).not.toBeVisible();
+
+    await page.keyboard.press('Escape');
+  });
+
+  test.afterAll(async ({ apiClient }) => {
+    // Delete in reverse dependency order to avoid FK constraint errors
+    // Use try/catch to handle cases where entities were already deleted or test setup failed
+    try { if (noteId) await apiClient.deleteNote(noteId); } catch { /* ignore */ }
+    try { if (taggedResourceId) await apiClient.deleteResource(taggedResourceId); } catch { /* ignore */ }
+    try { if (untaggedResourceId) await apiClient.deleteResource(untaggedResourceId); } catch { /* ignore */ }
+    try { if (tagId) await apiClient.deleteTag(tagId); } catch { /* ignore */ }
+    try { if (secondGroupId) await apiClient.deleteGroup(secondGroupId); } catch { /* ignore */ }
+    try { if (ownerGroupId) await apiClient.deleteGroup(ownerGroupId); } catch { /* ignore */ }
+    try { if (categoryId) await apiClient.deleteCategory(categoryId); } catch { /* ignore */ }
   });
 });
 
@@ -327,6 +477,7 @@ test.describe('Entity Picker - Group Selection', () => {
   });
 
   test.afterAll(async ({ apiClient }) => {
+    // Delete in reverse dependency order to avoid FK constraint errors
     if (noteId) await apiClient.deleteNote(noteId);
     if (selectableGroupId) await apiClient.deleteGroup(selectableGroupId);
     if (ownerGroupId) await apiClient.deleteGroup(ownerGroupId);
