@@ -288,11 +288,48 @@ test.describe('Component Accessibility - Tables and Lists', () => {
 });
 
 test.describe('Component Accessibility - Entity Picker', () => {
-  test('Entity picker modal should be accessible', async ({ page, checkA11y, apiClient, a11yTestData }) => {
-    // Create a gallery block on the test note
-    await apiClient.createBlock(a11yTestData.noteId, 'gallery', 'a11ytest', { resourceIds: [] });
+  // Tests in this block share state and must run serially in the same worker
+  test.describe.configure({ mode: 'serial' });
 
-    await page.goto(`/note?id=${a11yTestData.noteId}`);
+  let pickerTestNoteId: number;
+  let pickerCategoryId: number;
+  let pickerGroupId: number;
+  let pickerResourceId: number;
+
+  test.beforeAll(async ({ apiClient }) => {
+    // Create dedicated test data for picker a11y tests
+    const category = await apiClient.createCategory('Picker A11y Category', 'For picker a11y tests');
+    pickerCategoryId = category.ID;
+
+    const group = await apiClient.createGroup({
+      name: 'Picker A11y Group',
+      categoryId: category.ID,
+    });
+    pickerGroupId = group.ID;
+
+    // Create a resource for the "with search results" test
+    const path = await import('path');
+    const resource = await apiClient.createResource({
+      filePath: path.join(__dirname, '../../test-assets/sample-image.png'),
+      name: 'Picker A11y Test Resource',
+      ownerId: group.ID,
+    });
+    pickerResourceId = resource.ID;
+
+    const note = await apiClient.createNote({
+      name: 'Picker A11y Test Note',
+      description: 'Note for picker accessibility tests',
+      ownerId: group.ID,
+    });
+    pickerTestNoteId = note.ID;
+
+    // Create the blocks needed for testing
+    await apiClient.createBlock(note.ID, 'gallery', 'a11ytest', { resourceIds: [] });
+    await apiClient.createBlock(note.ID, 'references', 'a11ytest2', { groupIds: [] });
+  });
+
+  test('Entity picker modal should be accessible', async ({ page, checkA11y }) => {
+    await page.goto(`/note?id=${pickerTestNoteId}`);
     await page.waitForLoadState('load');
 
     // Enter edit mode and open picker
@@ -300,17 +337,15 @@ test.describe('Component Accessibility - Entity Picker', () => {
     await page.locator('button:has-text("Select Resources")').click();
 
     // Wait for dialog to be visible
-    const dialog = page.locator('[role="dialog"]');
+    const dialog = page.locator('[aria-labelledby="entity-picker-title"]');
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
 
     // Check accessibility of the picker modal
-    await checkA11y({ include: '[role="dialog"]' });
+    await checkA11y({ include: ['[aria-labelledby="entity-picker-title"]'] });
   });
 
-  test('Entity picker with search results should be accessible', async ({ page, checkA11y, apiClient, a11yTestData }) => {
-    await apiClient.createBlock(a11yTestData.noteId, 'gallery', 'a11ytest2', { resourceIds: [] });
-
-    await page.goto(`/note?id=${a11yTestData.noteId}`);
+  test('Entity picker with search results should be accessible', async ({ page, checkA11y }) => {
+    await page.goto(`/note?id=${pickerTestNoteId}`);
     await page.waitForLoadState('load');
 
     await page.locator('button:has-text("Edit Blocks")').click();
@@ -322,22 +357,35 @@ test.describe('Component Accessibility - Entity Picker', () => {
     // Wait for results to load
     await page.waitForSelector('[role="option"]', { timeout: 5000 });
 
-    await checkA11y({ include: '[role="dialog"]' });
+    await checkA11y({ include: ['[aria-labelledby="entity-picker-title"]'] });
   });
 
-  test('Group picker modal should be accessible', async ({ page, checkA11y, apiClient, a11yTestData }) => {
-    // Create a references block on the test note
-    await apiClient.createBlock(a11yTestData.noteId, 'references', 'a11ytest3', { groupIds: [] });
-
-    await page.goto(`/note?id=${a11yTestData.noteId}`);
+  test('Group picker modal should be accessible', async ({ page, checkA11y }) => {
+    await page.goto(`/note?id=${pickerTestNoteId}`);
     await page.waitForLoadState('load');
 
     await page.locator('button:has-text("Edit Blocks")').click();
     await page.locator('button:has-text("Select Groups")').click();
 
-    const dialog = page.locator('[role="dialog"]');
+    const dialog = page.locator('[aria-labelledby="entity-picker-title"]');
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
 
-    await checkA11y({ include: '[role="dialog"]' });
+    await checkA11y({ include: ['[aria-labelledby="entity-picker-title"]'] });
+  });
+
+  test.afterAll(async ({ apiClient }) => {
+    // Use try/catch to handle cases where entities were already deleted
+    try {
+      if (pickerTestNoteId) await apiClient.deleteNote(pickerTestNoteId);
+    } catch { /* ignore cleanup errors */ }
+    try {
+      if (pickerResourceId) await apiClient.deleteResource(pickerResourceId);
+    } catch { /* ignore cleanup errors */ }
+    try {
+      if (pickerGroupId) await apiClient.deleteGroup(pickerGroupId);
+    } catch { /* ignore cleanup errors */ }
+    try {
+      if (pickerCategoryId) await apiClient.deleteCategory(pickerCategoryId);
+    } catch { /* ignore cleanup errors */ }
   });
 });

@@ -115,7 +115,7 @@
             </div>
 
             {# Results grid #}
-            <div class="flex-1 overflow-y-auto p-4">
+            <div class="flex-1 overflow-y-auto p-4" tabindex="0">
                 {# Loading state #}
                 <div x-show="$store.entityPicker.loading" class="flex items-center justify-center py-12 text-gray-500">
                     <svg class="animate-spin h-6 w-6 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -230,10 +230,10 @@
                                 {# Breadcrumb #}
                                 <p x-show="item.Owner?.Name" class="text-xs text-gray-500 truncate" x-text="item.Owner?.Name"></p>
                                 {# Metadata #}
-                                <div class="flex items-center gap-2 mt-1 text-xs text-gray-400">
+                                <div class="flex items-center gap-2 mt-1 text-xs text-gray-500">
                                     <span x-show="item.ResourceCount > 0" x-text="item.ResourceCount + ' resources'"></span>
                                     <span x-show="item.NoteCount > 0" x-text="item.NoteCount + ' notes'"></span>
-                                    <span x-show="item.Category?.Name" class="px-1.5 py-0.5 bg-gray-100 rounded" x-text="item.Category?.Name"></span>
+                                    <span x-show="item.Category?.Name" class="px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded" x-text="item.Category?.Name"></span>
                                 </div>
                             </div>
                         </div>
