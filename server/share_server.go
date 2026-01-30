@@ -99,6 +99,9 @@ func (s *ShareServer) registerShareRoutes(router *mux.Router) {
 	// Block state update (for interactive todos)
 	router.Methods(http.MethodPost).Path("/s/{token}/block/{blockId}/state").HandlerFunc(s.handleBlockStateUpdate)
 
+	// Calendar events for calendar blocks
+	router.Methods(http.MethodGet).Path("/s/{token}/block/{blockId}/calendar/events").HandlerFunc(s.handleCalendarEvents)
+
 	// Resource serving (for gallery images)
 	router.Methods(http.MethodGet).Path("/s/{token}/resource/{hash}").HandlerFunc(s.handleSharedResource)
 
@@ -161,6 +164,68 @@ func (s *ShareServer) handleBlockStateUpdate(w http.ResponseWriter, r *http.Requ
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"success": true}`))
+}
+
+// handleCalendarEvents returns calendar events for a calendar block in a shared note
+func (s *ShareServer) handleCalendarEvents(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	token := vars["token"]
+	blockIdStr := vars["blockId"]
+
+	// Verify token and get note
+	note, err := s.appContext.GetNoteByShareToken(token)
+	if err != nil {
+		http.Error(w, "Not found", http.StatusNotFound)
+		return
+	}
+
+	// Parse block ID
+	var blockId uint
+	fmt.Sscanf(blockIdStr, "%d", &blockId)
+
+	// Verify block belongs to this note and is a calendar block
+	blockBelongsToNote := false
+	for _, block := range note.Blocks {
+		if block.ID == blockId && block.Type == "calendar" {
+			blockBelongsToNote = true
+			break
+		}
+	}
+	if !blockBelongsToNote {
+		http.Error(w, "Block not found", http.StatusNotFound)
+		return
+	}
+
+	// Parse date range from query params
+	startStr := r.URL.Query().Get("start")
+	endStr := r.URL.Query().Get("end")
+	if startStr == "" || endStr == "" {
+		http.Error(w, "start and end dates required", http.StatusBadRequest)
+		return
+	}
+
+	start, err := time.Parse("2006-01-02", startStr)
+	if err != nil {
+		http.Error(w, "invalid start date", http.StatusBadRequest)
+		return
+	}
+
+	end, err := time.Parse("2006-01-02", endStr)
+	if err != nil {
+		http.Error(w, "invalid end date", http.StatusBadRequest)
+		return
+	}
+	end = end.Add(24*time.Hour - time.Second)
+
+	// Fetch calendar events
+	response, err := s.appContext.GetCalendarEvents(blockId, start, end)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
 
 // handleSharedResource serves a resource (image/file) that belongs to a shared note

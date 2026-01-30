@@ -332,3 +332,44 @@ func GetTableBlockQueryDataHandler(ctx interfaces.TableBlockQueryRunner) func(ht
 		_ = json.NewEncoder(writer).Encode(response)
 	}
 }
+
+// GetCalendarBlockEventsHandler returns events for a calendar block.
+// Route: GET /v1/note/block/calendar/events?blockId=X&start=Y&end=Z
+func GetCalendarBlockEventsHandler(ctx interfaces.CalendarBlockEventFetcher) func(http.ResponseWriter, *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		blockID := uint(http_utils.GetIntQueryParameter(request, "blockId", 0))
+		if blockID == 0 {
+			http_utils.HandleError(errors.New("blockId is required"), writer, request, http.StatusBadRequest)
+			return
+		}
+
+		startStr := request.URL.Query().Get("start")
+		endStr := request.URL.Query().Get("end")
+		if startStr == "" || endStr == "" {
+			http_utils.HandleError(errors.New("start and end dates are required"), writer, request, http.StatusBadRequest)
+			return
+		}
+
+		start, err := time.Parse("2006-01-02", startStr)
+		if err != nil {
+			http_utils.HandleError(errors.New("invalid start date format, use YYYY-MM-DD"), writer, request, http.StatusBadRequest)
+			return
+		}
+
+		end, err := time.Parse("2006-01-02", endStr)
+		if err != nil {
+			http_utils.HandleError(errors.New("invalid end date format, use YYYY-MM-DD"), writer, request, http.StatusBadRequest)
+			return
+		}
+		end = end.Add(24*time.Hour - time.Second)
+
+		response, err := ctx.GetCalendarEvents(blockID, start, end)
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(response)
+	}
+}

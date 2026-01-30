@@ -6,3 +6,4 @@ export { blockTodos } from './blockTodos.js';
 export { blockGallery } from './blockGallery.js';
 export { blockReferences } from './blockReferences.js';
 export { blockTable } from './blockTable.js';
+export { blockCalendar } from './blockCalendar.js';

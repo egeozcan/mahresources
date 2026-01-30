@@ -3,8 +3,12 @@ package application_context
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"sort"
+	"time"
 
 	"gorm.io/gorm"
 	"mahresources/lib"
@@ -12,7 +16,12 @@ import (
 	"mahresources/models/block_types"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
+	"mahresources/server/interfaces"
 )
+
+// maxICSFileSize is the maximum size for ICS calendar files (10MB).
+// This prevents memory exhaustion from malicious or corrupted calendar URLs.
+const maxICSFileSize = 10 * 1024 * 1024
 
 // CreateBlock creates a new block in a note
 func (ctx *MahresourcesContext) CreateBlock(editor *query_models.NoteBlockEditor) (*models.NoteBlock, error) {
@@ -252,4 +261,256 @@ func (ctx *MahresourcesContext) UpdateBlockStateFromRequest(blockId uint, r *htt
 
 	_, err := ctx.UpdateBlockState(blockId, stateUpdate)
 	return err
+}
+
+// GetCalendarEvents fetches and parses calendar events for a calendar block.
+// It supports both URL-based and resource-based calendar sources.
+//
+// ## Caching Strategy (Backend Tier)
+//
+// URL-based calendars use a two-layer caching approach:
+//   - LRU cache (ICSCache) stores fetched ICS content with configurable TTL (default 30 min)
+//   - Conditional HTTP requests (ETag/Last-Modified) minimize bandwidth when refreshing
+//   - Stale cache entries are returned if conditional fetch fails (resilience)
+//
+// Resource-based calendars read directly from storage (no HTTP caching needed).
+//
+// The frontend (blockCalendar.js) has its own shorter cache (5 min stale threshold)
+// for instant UI feedback. This tiered approach balances responsiveness with efficiency.
+//
+// ## Limitations
+//
+// This parser does not support recurring events (RRULE). Events with RRULE will
+// only show their first occurrence. Full RRULE expansion would require significant
+// complexity to handle all recurrence patterns correctly.
+func (ctx *MahresourcesContext) GetCalendarEvents(blockID uint, start, end time.Time) (*interfaces.CalendarEventsResponse, error) {
+	// Get the block
+	block, err := ctx.GetBlock(blockID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Verify block type
+	if block.Type != "calendar" {
+		return nil, errors.New("block is not a calendar type")
+	}
+
+	// Parse block content to get calendar sources
+	var content struct {
+		Calendars []block_types.CalendarSource `json:"calendars"`
+	}
+	if err := json.Unmarshal(block.Content, &content); err != nil {
+		return nil, fmt.Errorf("failed to parse block content: %w", err)
+	}
+
+	var allEvents []interfaces.CalendarEvent
+	var calendars []interfaces.CalendarInfo
+	var calendarErrors []interfaces.CalendarError
+	var cachedAt time.Time
+
+	// Fetch events from each calendar source
+	for _, cal := range content.Calendars {
+		var icsContent []byte
+		var fetchTime time.Time
+		var fetchErr error
+
+		switch cal.Source.Type {
+		case "url":
+			icsContent, fetchTime, fetchErr = ctx.fetchICSFromURL(cal.Source.URL)
+		case "resource":
+			if cal.Source.ResourceID == nil {
+				calendarErrors = append(calendarErrors, interfaces.CalendarError{
+					CalendarID: cal.ID,
+					Error:      "resource source missing resourceId",
+				})
+				log.Printf("Calendar %s: resource source missing resourceId", cal.ID)
+				continue
+			}
+			icsContent, fetchTime, fetchErr = ctx.fetchICSFromResource(*cal.Source.ResourceID)
+		default:
+			calendarErrors = append(calendarErrors, interfaces.CalendarError{
+				CalendarID: cal.ID,
+				Error:      fmt.Sprintf("unknown source type: %s", cal.Source.Type),
+			})
+			log.Printf("Calendar %s: unknown source type %s", cal.ID, cal.Source.Type)
+			continue
+		}
+
+		if fetchErr != nil {
+			calendarErrors = append(calendarErrors, interfaces.CalendarError{
+				CalendarID: cal.ID,
+				Error:      fmt.Sprintf("failed to fetch: %v", fetchErr),
+			})
+			log.Printf("Calendar %s: failed to fetch ICS: %v", cal.ID, fetchErr)
+			continue
+		}
+
+		// Track the most recent cache time
+		if fetchTime.After(cachedAt) {
+			cachedAt = fetchTime
+		}
+
+		// Parse events from ICS content
+		events, parseErr := ParseICSEvents(icsContent, cal.ID, start, end)
+		if parseErr != nil {
+			calendarErrors = append(calendarErrors, interfaces.CalendarError{
+				CalendarID: cal.ID,
+				Error:      fmt.Sprintf("failed to parse: %v", parseErr),
+			})
+			log.Printf("Calendar %s: failed to parse ICS: %v", cal.ID, parseErr)
+			continue
+		}
+
+		allEvents = append(allEvents, events...)
+
+		// Add calendar info
+		calendars = append(calendars, interfaces.CalendarInfo{
+			ID:    cal.ID,
+			Name:  cal.Name,
+			Color: cal.Color,
+		})
+	}
+
+	// Sort events by start time
+	sort.Slice(allEvents, func(i, j int) bool {
+		return allEvents[i].Start.Before(allEvents[j].Start)
+	})
+
+	// Use current time if no calendars were fetched
+	if cachedAt.IsZero() {
+		cachedAt = time.Now()
+	}
+
+	return &interfaces.CalendarEventsResponse{
+		Events:    allEvents,
+		Calendars: calendars,
+		Errors:    calendarErrors,
+		CachedAt:  cachedAt.UTC().Format(time.RFC3339),
+	}, nil
+}
+
+// fetchICSFromURL fetches ICS content from a URL with caching support.
+// Returns the content, the time it was fetched, and any error.
+func (ctx *MahresourcesContext) fetchICSFromURL(url string) ([]byte, time.Time, error) {
+	// Get configured TTL or default
+	cacheTTL := ctx.Config.ICSCacheTTL
+	if cacheTTL == 0 {
+		cacheTTL = 30 * time.Minute
+	}
+
+	// Check cache first
+	if entry, ok := ctx.icsCache.Get(url); ok {
+		if entry.IsFresh(cacheTTL) {
+			return entry.Content, entry.FetchedAt, nil
+		}
+		// Entry exists but is stale - try conditional fetch
+		content, fetchTime, err := ctx.fetchAndCacheICS(url, entry)
+		if err != nil {
+			// If conditional fetch fails, return stale data
+			log.Printf("Conditional fetch failed for %s, using cached data: %v", url, err)
+			return entry.Content, entry.FetchedAt, nil
+		}
+		return content, fetchTime, nil
+	}
+
+	// No cache entry - fetch fresh
+	return ctx.fetchAndCacheICS(url, nil)
+}
+
+// fetchAndCacheICS performs the actual HTTP fetch with optional conditional headers.
+func (ctx *MahresourcesContext) fetchAndCacheICS(url string, existingEntry *ICSCacheEntry) ([]byte, time.Time, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Add conditional headers if we have a previous entry
+	if existingEntry != nil {
+		if existingEntry.ETag != "" {
+			req.Header.Set("If-None-Match", existingEntry.ETag)
+		}
+		if existingEntry.LastModified != "" {
+			req.Header.Set("If-Modified-Since", existingEntry.LastModified)
+		}
+	}
+
+	// Use configured timeouts
+	client := &http.Client{
+		Timeout: ctx.Config.RemoteResourceConnectTimeout,
+	}
+	if client.Timeout == 0 {
+		client.Timeout = 30 * time.Second
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("failed to fetch URL: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Handle 304 Not Modified
+	if resp.StatusCode == http.StatusNotModified && existingEntry != nil {
+		// Refresh the cache entry timestamp
+		ctx.icsCache.Set(url, existingEntry.Content, existingEntry.ETag, existingEntry.LastModified)
+		return existingEntry.Content, time.Now(), nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, time.Time{}, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	// Limit read size to prevent memory exhaustion from large responses
+	content, err := io.ReadAll(io.LimitReader(resp.Body, maxICSFileSize))
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Check if we hit the size limit (content was truncated)
+	if int64(len(content)) == maxICSFileSize {
+		return nil, time.Time{}, fmt.Errorf("ICS file exceeds maximum size of %d bytes", maxICSFileSize)
+	}
+
+	// Cache the result
+	etag := resp.Header.Get("ETag")
+	lastModified := resp.Header.Get("Last-Modified")
+	ctx.icsCache.Set(url, content, etag, lastModified)
+
+	return content, time.Now(), nil
+}
+
+// fetchICSFromResource reads ICS content from a stored resource file.
+// Like URL fetches, this enforces maxICSFileSize to prevent memory exhaustion.
+func (ctx *MahresourcesContext) fetchICSFromResource(resourceID uint) ([]byte, time.Time, error) {
+	resource, err := ctx.GetResource(resourceID)
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("failed to get resource: %w", err)
+	}
+
+	// Determine which filesystem to use
+	var fs = ctx.fs
+	if resource.StorageLocation != nil && *resource.StorageLocation != "" {
+		if altFs, ok := ctx.altFileSystems[*resource.StorageLocation]; ok {
+			fs = altFs
+		}
+	}
+
+	// Open and read the file with size limit (consistent with URL fetch)
+	f, err := fs.Open(resource.GetCleanLocation())
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("failed to open resource file: %w", err)
+	}
+	defer f.Close()
+
+	content, err := io.ReadAll(io.LimitReader(f, maxICSFileSize))
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("failed to read resource file: %w", err)
+	}
+
+	// Check if we hit the size limit
+	if int64(len(content)) == maxICSFileSize {
+		return nil, time.Time{}, fmt.Errorf("ICS resource file exceeds maximum size of %d bytes", maxICSFileSize)
+	}
+
+	// Use the resource's updated time as the fetch time
+	return content, resource.UpdatedAt, nil
 }
