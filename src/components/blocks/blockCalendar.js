@@ -80,6 +80,9 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
     view: block?.state?.view || 'month',
     currentDate: block?.state?.currentDate ? new Date(block.state.currentDate) : new Date(),
 
+    // Custom events stored in state
+    customEvents: JSON.parse(JSON.stringify(block?.state?.customEvents || [])),
+
     // Events data
     events: [],
     calendarMeta: {}, // id -> {name, color}
@@ -91,6 +94,23 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
     // Edit mode state
     newUrl: '',
     showColorPicker: null, // calendar ID being edited
+
+    // Event modal state
+    showEventModal: false,
+    editingEvent: null,
+    eventForm: {
+      title: '',
+      startDate: '',
+      startTime: '09:00',
+      endDate: '',
+      endTime: '10:00',
+      allDay: false,
+      location: '',
+      description: ''
+    },
+
+    // Expanded day popover state (stores date string of expanded day)
+    expandedDay: null,
 
     get editMode() {
       return this.getEditMode ? this.getEditMode() : false;
@@ -121,24 +141,34 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
       }
     },
 
-    // Format date for API
+    // Format date for API (using local time, not UTC)
     formatDate(date) {
-      return date.toISOString().split('T')[0];
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
     },
 
     async init() {
+
       // Build calendar metadata map
       this.calendars.forEach(cal => {
         this.calendarMeta[cal.id] = { name: cal.name, color: cal.color };
       });
 
-      if (this.calendars.length > 0) {
+      // Add custom calendar metadata if there are custom events
+      if (this.customEvents.length > 0) {
+        this.calendarMeta['custom'] = { name: 'My Events', color: '#6366f1' };
+      }
+
+      if (this.calendars.length > 0 || this.customEvents.length > 0) {
         await this.fetchEvents();
       }
     },
 
     async fetchEvents(forceRefresh = false) {
-      if (this.calendars.length === 0) {
+      // Only skip fetch if there are no calendars AND no custom events
+      if (this.calendars.length === 0 && this.customEvents.length === 0) {
         this.events = [];
         return;
       }
@@ -241,10 +271,11 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
       this.fetchEvents();
     },
 
-    saveState() {
-      this.saveStateFn(this.block.id, {
+    async saveState() {
+      return this.saveStateFn(this.block.id, {
         view: this.view,
-        currentDate: this.currentDate.toISOString().split('T')[0]
+        currentDate: this.currentDate.toISOString().split('T')[0],
+        customEvents: this.customEvents
       });
     },
 
@@ -407,6 +438,24 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
              date.getFullYear() === today.getFullYear();
     },
 
+    // Expanded day popover helpers
+    getDayKey(date) {
+      return this.formatDateInput(date);
+    },
+
+    isExpanded(date) {
+      return this.expandedDay === this.getDayKey(date);
+    },
+
+    toggleExpandedDay(date) {
+      const key = this.getDayKey(date);
+      this.expandedDay = this.expandedDay === key ? null : key;
+    },
+
+    closeExpandedDay() {
+      this.expandedDay = null;
+    },
+
     // Agenda view helpers
     get agendaEvents() {
       // Take next 30 events and group by date
@@ -448,6 +497,127 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
 
     getCalendarName(calId) {
       return this.calendarMeta[calId]?.name || 'Unknown';
+    },
+
+    // Custom event management
+    isCustomEvent(event) {
+      return event.calendarId === 'custom';
+    },
+
+    // Open modal to create event for a specific day
+    openEventModalForDay(date) {
+      const dateStr = this.formatDateInput(date);
+      this.editingEvent = null;
+      this.eventForm = {
+        title: '',
+        startDate: dateStr,
+        startTime: '09:00',
+        endDate: dateStr,
+        endTime: '10:00',
+        allDay: false,
+        location: '',
+        description: ''
+      };
+      this.showEventModal = true;
+    },
+
+    // Open modal to edit an existing custom event
+    openEventModalForEdit(event) {
+      if (!this.isCustomEvent(event)) return;
+
+      const start = new Date(event.start);
+      const end = new Date(event.end);
+      this.editingEvent = event;
+      this.eventForm = {
+        title: event.title,
+        startDate: this.formatDateInput(start),
+        startTime: this.formatTimeInput(start),
+        endDate: this.formatDateInput(end),
+        endTime: this.formatTimeInput(end),
+        allDay: event.allDay || false,
+        location: event.location || '',
+        description: event.description || ''
+      };
+      this.showEventModal = true;
+    },
+
+    closeEventModal() {
+      this.showEventModal = false;
+      this.editingEvent = null;
+    },
+
+    // Save event (create or update)
+    async saveEvent() {
+      if (!this.eventForm.title.trim()) return;
+
+      let startDateTime, endDateTime;
+      if (this.eventForm.allDay) {
+        startDateTime = new Date(this.eventForm.startDate + 'T00:00:00');
+        endDateTime = new Date(this.eventForm.endDate + 'T23:59:59');
+      } else {
+        startDateTime = new Date(this.eventForm.startDate + 'T' + this.eventForm.startTime);
+        endDateTime = new Date(this.eventForm.endDate + 'T' + this.eventForm.endTime);
+      }
+
+      // Auto-adjust end time if needed
+      if (endDateTime <= startDateTime && !this.eventForm.allDay) {
+        endDateTime = new Date(startDateTime.getTime() + 60 * 60 * 1000);
+      }
+
+      const eventData = {
+        id: this.editingEvent?.id || crypto.randomUUID(),
+        title: this.eventForm.title.trim(),
+        start: startDateTime.toISOString(),
+        end: endDateTime.toISOString(),
+        allDay: this.eventForm.allDay,
+        location: this.eventForm.location.trim() || undefined,
+        description: this.eventForm.description.trim() || undefined,
+        calendarId: 'custom'
+      };
+
+      if (this.editingEvent) {
+        // Update existing event
+        const idx = this.customEvents.findIndex(e => e.id === eventData.id);
+        if (idx >= 0) {
+          this.customEvents[idx] = eventData;
+        }
+      } else {
+        // Add new event
+        this.customEvents.push(eventData);
+      }
+
+      // Wait for state to be saved before fetching
+      await this.saveState();
+      this.closeEventModal();
+      // Refresh events from server to get merged list
+      await this.fetchEvents(true);
+    },
+
+    // Delete a custom event
+    async deleteEvent() {
+      if (!this.editingEvent) return;
+
+      this.customEvents = this.customEvents.filter(e => e.id !== this.editingEvent.id);
+      // Wait for state to be saved before fetching
+      await this.saveState();
+      this.closeEventModal();
+      // Refresh events from server to get updated list
+      await this.fetchEvents(true);
+    },
+
+    // Format date as YYYY-MM-DD for input[type="date"]
+    formatDateInput(date) {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    },
+
+    // Format time as HH:MM for input[type="time"]
+    formatTimeInput(date) {
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      return `${hours}:${minutes}`;
     }
   };
 }

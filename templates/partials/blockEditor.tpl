@@ -528,6 +528,10 @@
                                                     </svg>
                                                 </span>
                                             </template>
+                                            <button @click="openEventModalForDay(currentDate)"
+                                                    class="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600">
+                                                + Add Event
+                                            </button>
                                             <div class="flex border border-gray-200 rounded overflow-hidden text-sm">
                                                 <button @click="setView('month')" class="px-3 py-1" :class="view === 'month' ? 'bg-blue-500 text-white' : 'bg-white hover:bg-gray-50'">Month</button>
                                                 <button @click="setView('agenda')" class="px-3 py-1" :class="view === 'agenda' ? 'bg-blue-500 text-white' : 'bg-white hover:bg-gray-50'">Agenda</button>
@@ -551,21 +555,56 @@
                                                     <div class="bg-gray-50 py-2 text-center text-xs font-medium text-gray-500" x-text="day"></div>
                                                 </template>
                                                 <template x-for="day in monthDays" :key="day.date.toISOString()">
-                                                    <div class="bg-white min-h-[80px] p-1 relative"
-                                                         :class="{ 'bg-gray-50': !day.isCurrentMonth, 'ring-2 ring-blue-500 ring-inset': isToday(day.date) }">
+                                                    <div class="bg-white min-h-[80px] p-1 relative cursor-pointer hover:bg-blue-50 transition-colors"
+                                                         @click="openEventModalForDay(day.date)"
+                                                         :class="{ 'bg-gray-50 hover:bg-gray-100': !day.isCurrentMonth, 'ring-2 ring-blue-500 ring-inset': isToday(day.date) }">
                                                         <span class="text-xs" :class="day.isCurrentMonth ? 'text-gray-700' : 'text-gray-400'" x-text="day.date.getDate()"></span>
                                                         <div class="mt-1 space-y-0.5">
                                                             <template x-for="event in getEventsForDay(day.date).slice(0, 3)" :key="event.id">
-                                                                <div class="text-xs px-1 py-0.5 rounded truncate cursor-pointer hover:opacity-80"
+                                                                <div @click.stop="isCustomEvent(event) ? openEventModalForEdit(event) : null"
+                                                                     class="text-xs px-1 py-0.5 rounded truncate"
+                                                                     :class="isCustomEvent(event) ? 'cursor-pointer hover:opacity-80' : ''"
                                                                      :style="'background-color: ' + getCalendarColor(event.calendarId) + '20; color: ' + getCalendarColor(event.calendarId)"
-                                                                     :title="event.title + (event.location ? ' @ ' + event.location : '')"
+                                                                     :title="event.title + (event.location ? ' @ ' + event.location : '') + (isCustomEvent(event) ? ' (click to edit)' : '')"
                                                                      x-text="event.allDay ? event.title : formatEventTime(event) + ' ' + event.title">
                                                                 </div>
                                                             </template>
                                                             <template x-if="getEventsForDay(day.date).length > 3">
-                                                                <div class="text-xs text-gray-400 px-1" x-text="'+' + (getEventsForDay(day.date).length - 3) + ' more'"></div>
+                                                                <div @click.stop="toggleExpandedDay(day.date)"
+                                                                     class="text-xs text-blue-500 hover:text-blue-700 px-1 cursor-pointer"
+                                                                     x-text="'+' + (getEventsForDay(day.date).length - 3) + ' more'"></div>
                                                             </template>
                                                         </div>
+                                                        {# Expanded events popover #}
+                                                        <template x-if="isExpanded(day.date)">
+                                                            <div class="absolute z-20 left-0 top-full mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg p-2"
+                                                                 @click.stop
+                                                                 @click.away="closeExpandedDay()">
+                                                                <div class="flex justify-between items-center mb-2 pb-1 border-b">
+                                                                    <span class="text-sm font-medium" x-text="day.date.toLocaleDateString('default', { weekday: 'short', month: 'short', day: 'numeric' })"></span>
+                                                                    <button @click="closeExpandedDay()" class="text-gray-400 hover:text-gray-600">
+                                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                                                        </svg>
+                                                                    </button>
+                                                                </div>
+                                                                <div class="space-y-1 max-h-48 overflow-y-auto">
+                                                                    <template x-for="event in getEventsForDay(day.date)" :key="event.id">
+                                                                        <div @click.stop="if (isCustomEvent(event)) { openEventModalForEdit(event); closeExpandedDay(); }"
+                                                                             class="text-xs px-2 py-1 rounded"
+                                                                             :class="isCustomEvent(event) ? 'cursor-pointer hover:opacity-80' : ''"
+                                                                             :style="'background-color: ' + getCalendarColor(event.calendarId) + '20; color: ' + getCalendarColor(event.calendarId)">
+                                                                            <div class="font-medium" x-text="event.title"></div>
+                                                                            <div class="opacity-75" x-text="formatEventTime(event)"></div>
+                                                                        </div>
+                                                                    </template>
+                                                                </div>
+                                                                <button @click="openEventModalForDay(day.date); closeExpandedDay()"
+                                                                        class="w-full mt-2 pt-1 border-t text-xs text-blue-500 hover:text-blue-700">
+                                                                    + Add event
+                                                                </button>
+                                                            </div>
+                                                        </template>
                                                     </div>
                                                 </template>
                                             </div>
@@ -583,12 +622,19 @@
                                                     <div class="text-sm font-medium text-gray-600 mb-2" x-text="formatAgendaDate(group.date)"></div>
                                                     <div class="space-y-2">
                                                         <template x-for="event in group.events" :key="event.id">
-                                                            <div @click="goToEventMonth(event)"
+                                                            <div @click="isCustomEvent(event) ? openEventModalForEdit(event) : goToEventMonth(event)"
                                                                  class="flex items-start gap-3 p-2 rounded hover:bg-gray-50 cursor-pointer"
-                                                                 title="Click to view in month">
+                                                                 :title="isCustomEvent(event) ? 'Click to edit' : 'Click to view in month'">
                                                                 <div class="w-1 h-full min-h-[40px] rounded" :style="'background-color: ' + getCalendarColor(event.calendarId)"></div>
                                                                 <div class="flex-1 min-w-0">
-                                                                    <div class="font-medium text-sm" x-text="event.title"></div>
+                                                                    <div class="font-medium text-sm flex items-center gap-1">
+                                                                        <span x-text="event.title"></span>
+                                                                        <template x-if="isCustomEvent(event)">
+                                                                            <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
+                                                                            </svg>
+                                                                        </template>
+                                                                    </div>
                                                                     <div class="text-xs text-gray-500">
                                                                         <span x-text="formatEventTime(event)"></span>
                                                                         <span x-show="event.location" class="ml-2">@ <span x-text="event.location"></span></span>
@@ -608,10 +654,93 @@
                                     </template>
 
                                     {# Empty state #}
-                                    <template x-if="calendars.length === 0 && !loading">
+                                    <template x-if="calendars.length === 0 && customEvents.length === 0 && !loading">
                                         <div class="text-center py-8 text-gray-400">
-                                            <p>No calendars added yet.</p>
-                                            <p class="text-sm mt-1">Click "Edit Blocks" to add calendars.</p>
+                                            <p>No calendars or events yet.</p>
+                                            <p class="text-sm mt-1">Click "+ Add Event" to create an event or "Edit Blocks" to add calendars.</p>
+                                        </div>
+                                    </template>
+
+                                    {# Event Modal #}
+                                    <template x-if="showEventModal">
+                                        <div class="fixed inset-0 z-50 flex items-center justify-center" @keydown.escape.window="closeEventModal()">
+                                            <div class="absolute inset-0 bg-black/50" @click="closeEventModal()"></div>
+                                            <div class="relative bg-white rounded-lg shadow-xl w-full max-w-md mx-4 p-6">
+                                                <h3 class="text-lg font-semibold mb-4" x-text="editingEvent ? 'Edit Event' : 'New Event'"></h3>
+
+                                                <form @submit.prevent="saveEvent()">
+                                                    {# Title #}
+                                                    <div class="mb-4">
+                                                        <label class="block text-sm font-medium text-gray-700 mb-1">Title</label>
+                                                        <input type="text" x-model="eventForm.title" required
+                                                               class="w-full px-3 py-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500">
+                                                    </div>
+
+                                                    {# All Day toggle #}
+                                                    <label class="flex items-center gap-2 mb-4 cursor-pointer">
+                                                        <input type="checkbox" x-model="eventForm.allDay" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                                                        <span class="text-sm">All day event</span>
+                                                    </label>
+
+                                                    {# Start date/time #}
+                                                    <div class="grid grid-cols-2 gap-3 mb-4">
+                                                        <div>
+                                                            <label class="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
+                                                            <input type="date" x-model="eventForm.startDate" required
+                                                                   class="w-full px-3 py-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500">
+                                                        </div>
+                                                        <div x-show="!eventForm.allDay">
+                                                            <label class="block text-sm font-medium text-gray-700 mb-1">Start Time</label>
+                                                            <input type="time" x-model="eventForm.startTime"
+                                                                   class="w-full px-3 py-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500">
+                                                        </div>
+                                                    </div>
+
+                                                    {# End date/time #}
+                                                    <div class="grid grid-cols-2 gap-3 mb-4">
+                                                        <div>
+                                                            <label class="block text-sm font-medium text-gray-700 mb-1">End Date</label>
+                                                            <input type="date" x-model="eventForm.endDate" required
+                                                                   class="w-full px-3 py-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500">
+                                                        </div>
+                                                        <div x-show="!eventForm.allDay">
+                                                            <label class="block text-sm font-medium text-gray-700 mb-1">End Time</label>
+                                                            <input type="time" x-model="eventForm.endTime"
+                                                                   class="w-full px-3 py-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500">
+                                                        </div>
+                                                    </div>
+
+                                                    {# Location #}
+                                                    <div class="mb-4">
+                                                        <label class="block text-sm font-medium text-gray-700 mb-1">Location (optional)</label>
+                                                        <input type="text" x-model="eventForm.location"
+                                                               class="w-full px-3 py-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500">
+                                                    </div>
+
+                                                    {# Description #}
+                                                    <div class="mb-4">
+                                                        <label class="block text-sm font-medium text-gray-700 mb-1">Description (optional)</label>
+                                                        <textarea x-model="eventForm.description" rows="2"
+                                                                  class="w-full px-3 py-2 border border-gray-300 rounded resize-none focus:ring-blue-500 focus:border-blue-500"></textarea>
+                                                    </div>
+
+                                                    {# Actions #}
+                                                    <div class="flex justify-between pt-2">
+                                                        <div>
+                                                            <button x-show="editingEvent" type="button" @click="deleteEvent()"
+                                                                    class="px-4 py-2 text-red-600 hover:text-red-800 text-sm">
+                                                                Delete
+                                                            </button>
+                                                        </div>
+                                                        <div class="flex gap-2">
+                                                            <button type="button" @click="closeEventModal()"
+                                                                    class="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">Cancel</button>
+                                                            <button type="submit"
+                                                                    class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm">Save</button>
+                                                        </div>
+                                                    </div>
+                                                </form>
+                                            </div>
                                         </div>
                                     </template>
                                 </div>
