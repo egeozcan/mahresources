@@ -7,3 +7,4 @@ export { blockGallery } from './blockGallery.js';
 export { blockReferences } from './blockReferences.js';
 export { blockTable } from './blockTable.js';
 export { blockCalendar } from './blockCalendar.js';
+export { eventModal } from './eventModal.js';

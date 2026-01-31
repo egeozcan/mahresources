@@ -30,10 +30,26 @@ type calendarContent struct {
 	Calendars []CalendarSource `json:"calendars"`
 }
 
+// CustomCalendarEvent represents a user-created event stored in block state.
+type CustomCalendarEvent struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Start       string `json:"start"`       // ISO 8601 datetime
+	End         string `json:"end"`         // ISO 8601 datetime
+	AllDay      bool   `json:"allDay"`
+	Location    string `json:"location,omitempty"`
+	Description string `json:"description,omitempty"`
+	CalendarID  string `json:"calendarId"`  // Must be "custom"
+}
+
+// MaxCustomEvents is the maximum number of custom events allowed per calendar block.
+const MaxCustomEvents = 500
+
 // calendarState represents the state schema for calendar blocks.
 type calendarState struct {
-	View        string `json:"view"`        // "month", "week", or "agenda"
-	CurrentDate string `json:"currentDate"` // ISO date string
+	View         string                `json:"view"`                   // "month", "week", or "agenda"
+	CurrentDate  string                `json:"currentDate"`            // ISO date string
+	CustomEvents []CustomCalendarEvent `json:"customEvents,omitempty"` // User-created events
 }
 
 // CalendarBlockType implements BlockType for calendar content.
@@ -86,6 +102,37 @@ func (c CalendarBlockType) ValidateState(state json.RawMessage) error {
 		return errors.New("view must be 'month', 'week', or 'agenda'")
 	}
 
+	// Validate custom events
+	if len(s.CustomEvents) > MaxCustomEvents {
+		return fmt.Errorf("too many custom events: max %d allowed", MaxCustomEvents)
+	}
+
+	for i, event := range s.CustomEvents {
+		if err := validateCustomEvent(event, i); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateCustomEvent validates a single custom calendar event.
+func validateCustomEvent(event CustomCalendarEvent, index int) error {
+	if event.ID == "" {
+		return fmt.Errorf("custom event at index %d: id is required", index)
+	}
+	if event.Title == "" {
+		return fmt.Errorf("custom event '%s': title is required", event.ID)
+	}
+	if event.Start == "" {
+		return fmt.Errorf("custom event '%s': start is required", event.ID)
+	}
+	if event.End == "" {
+		return fmt.Errorf("custom event '%s': end is required", event.ID)
+	}
+	if event.CalendarID != "custom" {
+		return fmt.Errorf("custom event '%s': calendarId must be 'custom'", event.ID)
+	}
 	return nil
 }
 

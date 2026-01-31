@@ -275,3 +275,155 @@ func TestCalendar_Registered(t *testing.T) {
 	assert.NotNil(t, bt)
 	assert.Equal(t, "calendar", bt.Type())
 }
+
+func TestCalendar_ValidateState_WithCustomEvents(t *testing.T) {
+	bt := CalendarBlockType{}
+	state := json.RawMessage(`{
+		"view": "month",
+		"currentDate": "2024-01-15",
+		"customEvents": [{
+			"id": "evt1",
+			"title": "Team Meeting",
+			"start": "2024-01-15T14:00:00Z",
+			"end": "2024-01-15T15:00:00Z",
+			"allDay": false,
+			"location": "Conference Room A",
+			"calendarId": "custom"
+		}]
+	}`)
+	err := bt.ValidateState(state)
+	assert.NoError(t, err)
+}
+
+func TestCalendar_ValidateState_CustomEventMissingID(t *testing.T) {
+	bt := CalendarBlockType{}
+	state := json.RawMessage(`{
+		"view": "month",
+		"customEvents": [{
+			"title": "Meeting",
+			"start": "2024-01-15T14:00:00Z",
+			"end": "2024-01-15T15:00:00Z",
+			"calendarId": "custom"
+		}]
+	}`)
+	err := bt.ValidateState(state)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "id is required")
+}
+
+func TestCalendar_ValidateState_CustomEventMissingTitle(t *testing.T) {
+	bt := CalendarBlockType{}
+	state := json.RawMessage(`{
+		"view": "month",
+		"customEvents": [{
+			"id": "evt1",
+			"start": "2024-01-15T14:00:00Z",
+			"end": "2024-01-15T15:00:00Z",
+			"calendarId": "custom"
+		}]
+	}`)
+	err := bt.ValidateState(state)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "title is required")
+}
+
+func TestCalendar_ValidateState_CustomEventMissingStart(t *testing.T) {
+	bt := CalendarBlockType{}
+	state := json.RawMessage(`{
+		"view": "month",
+		"customEvents": [{
+			"id": "evt1",
+			"title": "Meeting",
+			"end": "2024-01-15T15:00:00Z",
+			"calendarId": "custom"
+		}]
+	}`)
+	err := bt.ValidateState(state)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "start is required")
+}
+
+func TestCalendar_ValidateState_CustomEventMissingEnd(t *testing.T) {
+	bt := CalendarBlockType{}
+	state := json.RawMessage(`{
+		"view": "month",
+		"customEvents": [{
+			"id": "evt1",
+			"title": "Meeting",
+			"start": "2024-01-15T14:00:00Z",
+			"calendarId": "custom"
+		}]
+	}`)
+	err := bt.ValidateState(state)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "end is required")
+}
+
+func TestCalendar_ValidateState_CustomEventWrongCalendarID(t *testing.T) {
+	bt := CalendarBlockType{}
+	state := json.RawMessage(`{
+		"view": "month",
+		"customEvents": [{
+			"id": "evt1",
+			"title": "Meeting",
+			"start": "2024-01-15T14:00:00Z",
+			"end": "2024-01-15T15:00:00Z",
+			"calendarId": "wrong"
+		}]
+	}`)
+	err := bt.ValidateState(state)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "calendarId must be 'custom'")
+}
+
+func TestCalendar_ValidateState_TooManyCustomEvents(t *testing.T) {
+	bt := CalendarBlockType{}
+
+	// Build a state with too many events
+	events := make([]CustomCalendarEvent, MaxCustomEvents+1)
+	for i := range events {
+		events[i] = CustomCalendarEvent{
+			ID:         "evt" + string(rune(i)),
+			Title:      "Event",
+			Start:      "2024-01-15T14:00:00Z",
+			End:        "2024-01-15T15:00:00Z",
+			CalendarID: "custom",
+		}
+	}
+	stateStruct := calendarState{
+		View:         "month",
+		CustomEvents: events,
+	}
+	stateBytes, _ := json.Marshal(stateStruct)
+
+	err := bt.ValidateState(stateBytes)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "too many custom events")
+}
+
+func TestCalendar_ValidateState_EmptyCustomEvents(t *testing.T) {
+	bt := CalendarBlockType{}
+	state := json.RawMessage(`{
+		"view": "month",
+		"customEvents": []
+	}`)
+	err := bt.ValidateState(state)
+	assert.NoError(t, err)
+}
+
+func TestCalendar_ValidateState_CustomEventAllDay(t *testing.T) {
+	bt := CalendarBlockType{}
+	state := json.RawMessage(`{
+		"view": "month",
+		"customEvents": [{
+			"id": "evt1",
+			"title": "Holiday",
+			"start": "2024-01-15T00:00:00Z",
+			"end": "2024-01-15T23:59:59Z",
+			"allDay": true,
+			"calendarId": "custom"
+		}]
+	}`)
+	err := bt.ValidateState(state)
+	assert.NoError(t, err)
+}

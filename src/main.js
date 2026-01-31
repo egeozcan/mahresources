@@ -36,7 +36,7 @@ import { compareView } from './components/compareView.js';
 import { imageCompare } from './components/imageCompare.js';
 import { textDiff } from './components/textDiff.js';
 import { blockEditor } from './components/blockEditor.js';
-import { blockText, blockHeading, blockDivider, blockTodos, blockGallery, blockReferences, blockTable, blockCalendar } from './components/blocks/index.js';
+import { blockText, blockHeading, blockDivider, blockTodos, blockGallery, blockReferences, blockTable, blockCalendar, eventModal } from './components/blocks/index.js';
 import { sharedTodos } from './components/sharedTodos.js';
 import { sharedCalendar } from './components/sharedCalendar.js';
 
@@ -92,6 +92,7 @@ Alpine.data('blockGallery', blockGallery);
 Alpine.data('blockReferences', blockReferences);
 Alpine.data('blockTable', blockTable);
 Alpine.data('blockCalendar', blockCalendar);
+Alpine.data('eventModal', eventModal);
 Alpine.data('sharedTodos', sharedTodos);
 Alpine.data('sharedCalendar', sharedCalendar);
 

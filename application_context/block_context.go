@@ -371,6 +371,22 @@ func (ctx *MahresourcesContext) GetCalendarEvents(blockID uint, start, end time.
 		})
 	}
 
+	// Parse and merge custom events from block state
+	if len(block.State) > 0 {
+		customEvents, hasCustom := ctx.parseCustomEventsFromState(block.State, start, end)
+		if len(customEvents) > 0 {
+			allEvents = append(allEvents, customEvents...)
+		}
+		// Add "custom" calendar info if there are any custom events defined
+		if hasCustom {
+			calendars = append(calendars, interfaces.CalendarInfo{
+				ID:    "custom",
+				Name:  "My Events",
+				Color: "#6366f1", // Indigo - distinct from the palette
+			})
+		}
+	}
+
 	// Sort events by start time
 	sort.Slice(allEvents, func(i, j int) bool {
 		return allEvents[i].Start.Before(allEvents[j].Start)
@@ -513,4 +529,50 @@ func (ctx *MahresourcesContext) fetchICSFromResource(resourceID uint) ([]byte, t
 
 	// Use the resource's updated time as the fetch time
 	return content, resource.UpdatedAt, nil
+}
+
+// parseCustomEventsFromState parses custom events from block state and filters to the date range.
+// Returns the filtered events and whether any custom events exist in the state (for calendar info).
+func (ctx *MahresourcesContext) parseCustomEventsFromState(stateJSON []byte, start, end time.Time) ([]interfaces.CalendarEvent, bool) {
+	var state struct {
+		CustomEvents []block_types.CustomCalendarEvent `json:"customEvents"`
+	}
+	if err := json.Unmarshal(stateJSON, &state); err != nil {
+		log.Printf("Failed to parse custom events from state: %v", err)
+		return nil, false
+	}
+
+	if len(state.CustomEvents) == 0 {
+		return nil, false
+	}
+
+	var filtered []interfaces.CalendarEvent
+	for _, ce := range state.CustomEvents {
+		eventStart, err := time.Parse(time.RFC3339, ce.Start)
+		if err != nil {
+			log.Printf("Custom event %s: failed to parse start time: %v", ce.ID, err)
+			continue
+		}
+		eventEnd, err := time.Parse(time.RFC3339, ce.End)
+		if err != nil {
+			log.Printf("Custom event %s: failed to parse end time: %v", ce.ID, err)
+			continue
+		}
+
+		// Filter to date range (same logic as ICS events)
+		if eventStart.Before(end) && eventEnd.After(start) {
+			filtered = append(filtered, interfaces.CalendarEvent{
+				ID:          ce.ID,
+				CalendarID:  ce.CalendarID, // "custom"
+				Title:       ce.Title,
+				Start:       eventStart,
+				End:         eventEnd,
+				AllDay:      ce.AllDay,
+				Location:    ce.Location,
+				Description: ce.Description,
+			})
+		}
+	}
+
+	return filtered, true
 }
