@@ -233,16 +233,21 @@ func (w *HashWorker) migrateStringHashes() {
 }
 
 func (w *HashWorker) hashNewResources() {
+	log.Println("Hash worker: hashNewResources starting")
+
 	// Find resources that need hashing
 	var resources []models.Resource
 	subQuery := w.db.Table("image_hashes").Select("resource_id")
 
 	// Count total remaining for progress logging
+	log.Println("Hash worker: counting resources to hash (this may be slow with large datasets)...")
+	start := time.Now()
 	var totalRemaining int64
 	w.db.Model(&models.Resource{}).
 		Where("content_type IN ?", hashableContentTypesList).
 		Where("id NOT IN (?)", subQuery).
 		Count(&totalRemaining)
+	log.Printf("Hash worker: count query took %v, found %d resources to hash", time.Since(start), totalRemaining)
 
 	if totalRemaining == 0 {
 		return
