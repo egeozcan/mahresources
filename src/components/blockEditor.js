@@ -21,6 +21,7 @@ export function blockEditor(noteId, initialBlocks = []) {
     noteId,
     blocks: initialBlocks,
     editMode: false,
+    addBlockPickerOpen: false, // State for add block dropdown
     loading: false,
     error: null,
     _pendingUpdates: {}, // Track pending updates for optimistic UI
@@ -89,7 +90,8 @@ export function blockEditor(noteId, initialBlocks = []) {
         gallery: '🖼️',
         references: '📁',
         todos: '☑️',
-        table: '📊'
+        table: '📊',
+        calendar: '📅'
       };
       return icons[type] || '📦';
     },
@@ -370,7 +372,8 @@ export function blockEditor(noteId, initialBlocks = []) {
       { type: 'gallery', label: 'Gallery', icon: '🖼️' },
       { type: 'references', label: 'References', icon: '📁' },
       { type: 'todos', label: 'Todos', icon: '☑️' },
-      { type: 'table', label: 'Table', icon: '📊' }
+      { type: 'table', label: 'Table', icon: '📊' },
+      { type: 'calendar', label: 'Calendar', icon: '📅' }
     ]
   };
 }
