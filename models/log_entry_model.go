@@ -30,8 +30,9 @@ const (
 
 // Log actions
 const (
-	LogActionCreate = "create"
-	LogActionUpdate = "update"
-	LogActionDelete = "delete"
-	LogActionSystem = "system"
+	LogActionCreate   = "create"
+	LogActionUpdate   = "update"
+	LogActionDelete   = "delete"
+	LogActionSystem   = "system"
+	LogActionProgress = "progress"
 )

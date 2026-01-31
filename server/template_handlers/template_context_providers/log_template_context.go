@@ -28,6 +28,7 @@ var logActions = []SelectOption{
 	{Link: models.LogActionUpdate, Title: "Update"},
 	{Link: models.LogActionDelete, Title: "Delete"},
 	{Link: models.LogActionSystem, Title: "System"},
+	{Link: models.LogActionProgress, Title: "Progress"},
 }
 
 var entityTypes = []SelectOption{

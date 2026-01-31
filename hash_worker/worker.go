@@ -140,20 +140,12 @@ func (w *HashWorker) runBatchProcessor() {
 	ticker := time.NewTicker(w.config.PollInterval)
 	defer ticker.Stop()
 
-	iteration := 0
 	for {
-		iteration++
-		log.Printf("Hash worker: starting batch cycle #%d", iteration)
-
 		w.processBatch()
-
-		log.Printf("Hash worker: batch cycle #%d completed, waiting %v for next cycle", iteration, w.config.PollInterval)
 
 		select {
 		case <-ticker.C:
-			log.Printf("Hash worker: ticker fired, starting next cycle")
 		case <-w.stopCh:
-			log.Printf("Hash worker: stop signal received")
 			return
 		}
 	}
@@ -233,13 +225,9 @@ func (w *HashWorker) migrateStringHashes() {
 }
 
 func (w *HashWorker) hashNewResources() {
-	log.Println("Hash worker: hashNewResources starting")
-
 	// Find resources that need hashing using LEFT JOIN (much faster than NOT IN with large datasets)
 	var resources []models.Resource
 
-	// First, try to fetch a batch of resources to hash
-	// Using LEFT JOIN instead of NOT IN for performance with large image_hashes tables
 	if err := w.db.
 		Joins("LEFT JOIN image_hashes ON image_hashes.resource_id = resources.id").
 		Where("image_hashes.id IS NULL").
@@ -251,7 +239,6 @@ func (w *HashWorker) hashNewResources() {
 	}
 
 	if len(resources) == 0 {
-		log.Println("Hash worker: no resources to hash")
 		return
 	}
 
