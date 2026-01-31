@@ -235,27 +235,15 @@ func (w *HashWorker) migrateStringHashes() {
 func (w *HashWorker) hashNewResources() {
 	log.Println("Hash worker: hashNewResources starting")
 
-	// Find resources that need hashing
+	// Find resources that need hashing using LEFT JOIN (much faster than NOT IN with large datasets)
 	var resources []models.Resource
-	subQuery := w.db.Table("image_hashes").Select("resource_id")
 
-	// Count total remaining for progress logging
-	log.Println("Hash worker: counting resources to hash (this may be slow with large datasets)...")
-	start := time.Now()
-	var totalRemaining int64
-	w.db.Model(&models.Resource{}).
-		Where("content_type IN ?", hashableContentTypesList).
-		Where("id NOT IN (?)", subQuery).
-		Count(&totalRemaining)
-	log.Printf("Hash worker: count query took %v, found %d resources to hash", time.Since(start), totalRemaining)
-
-	if totalRemaining == 0 {
-		return
-	}
-
+	// First, try to fetch a batch of resources to hash
+	// Using LEFT JOIN instead of NOT IN for performance with large image_hashes tables
 	if err := w.db.
-		Where("content_type IN ?", hashableContentTypesList).
-		Where("id NOT IN (?)", subQuery).
+		Joins("LEFT JOIN image_hashes ON image_hashes.resource_id = resources.id").
+		Where("image_hashes.id IS NULL").
+		Where("resources.content_type IN ?", hashableContentTypesList).
 		Limit(w.config.BatchSize).
 		Find(&resources).Error; err != nil {
 		w.logError(fmt.Sprintf("Hash worker: error finding resources to hash: %v", err), nil)
@@ -263,8 +251,17 @@ func (w *HashWorker) hashNewResources() {
 	}
 
 	if len(resources) == 0 {
+		log.Println("Hash worker: no resources to hash")
 		return
 	}
+
+	// Count total remaining for progress logging (only if we have work to do)
+	var totalRemaining int64
+	w.db.Model(&models.Resource{}).
+		Joins("LEFT JOIN image_hashes ON image_hashes.resource_id = resources.id").
+		Where("image_hashes.id IS NULL").
+		Where("resources.content_type IN ?", hashableContentTypesList).
+		Count(&totalRemaining)
 
 	w.logProgress(fmt.Sprintf("Hash worker: hashing %d resources (remaining: %d)", len(resources), totalRemaining),
 		map[string]interface{}{"batch_size": len(resources), "remaining": totalRemaining})
