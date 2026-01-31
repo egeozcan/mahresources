@@ -140,12 +140,20 @@ func (w *HashWorker) runBatchProcessor() {
 	ticker := time.NewTicker(w.config.PollInterval)
 	defer ticker.Stop()
 
+	iteration := 0
 	for {
+		iteration++
+		log.Printf("Hash worker: starting batch cycle #%d", iteration)
+
 		w.processBatch()
+
+		log.Printf("Hash worker: batch cycle #%d completed, waiting %v for next cycle", iteration, w.config.PollInterval)
 
 		select {
 		case <-ticker.C:
+			log.Printf("Hash worker: ticker fired, starting next cycle")
 		case <-w.stopCh:
+			log.Printf("Hash worker: stop signal received")
 			return
 		}
 	}
