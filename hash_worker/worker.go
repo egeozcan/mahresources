@@ -336,6 +336,7 @@ func (w *HashWorker) hashAndStoreSimilarities(resource models.Resource) {
 	file, err := fs.Open(resource.GetCleanLocation())
 	if err != nil {
 		log.Printf("Hash worker: error opening resource %d: %v", resource.ID, err)
+		w.markResourceFailed(resource.ID)
 		return
 	}
 	defer file.Close()
@@ -343,6 +344,7 @@ func (w *HashWorker) hashAndStoreSimilarities(resource models.Resource) {
 	img, _, err := image.Decode(file)
 	if err != nil {
 		log.Printf("Hash worker: error decoding resource %d: %v", resource.ID, err)
+		w.markResourceFailed(resource.ID)
 		return
 	}
 
@@ -416,5 +418,19 @@ func (w *HashWorker) findAndStoreSimilarities(resourceID uint, dHash uint64) {
 	// Batch insert with conflict handling
 	if err := w.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&similarities).Error; err != nil {
 		log.Printf("Hash worker: error saving similarities for resource %d: %v", resourceID, err)
+	}
+}
+
+// markResourceFailed creates a placeholder hash record to mark a resource as processed
+// but unhashable (corrupt file, unsupported format, etc). This prevents the worker
+// from retrying the same failed resources every cycle.
+func (w *HashWorker) markResourceFailed(resourceID uint) {
+	imgHash := models.ImageHash{
+		ResourceId: &resourceID,
+		// Leave hash fields empty/nil to indicate failure
+	}
+
+	if err := w.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&imgHash).Error; err != nil {
+		log.Printf("Hash worker: error marking resource %d as failed: %v", resourceID, err)
 	}
 }
