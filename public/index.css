@@ -53,13 +53,16 @@
 }
 
 .navbar-toggle {
-    display: flex;
+    display: flex;  /* Visible on mobile by default */
     align-items: center;
     justify-content: center;
     width: 36px;
     height: 36px;
     border-radius: var(--radius-sm);
     color: var(--nav-text);
+    background: none;
+    border: none;
+    cursor: pointer;
     transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
@@ -69,8 +72,18 @@
 }
 
 .navbar-links {
-    display: flex;
+    display: none;
     align-items: center;
+}
+
+@media (min-width: 768px) {
+    .navbar-links {
+        display: flex;
+    }
+
+    .navbar-toggle {
+        display: none;
+    }
 }
 
 .navbar-link {

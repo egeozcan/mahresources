@@ -3111,11 +3111,6 @@
       display: flex;
     }
   }
-  .md\:hidden {
-    @media (width >= 48rem) {
-      display: none;
-    }
-  }
   .md\:w-\[400px\] {
     @media (width >= 48rem) {
       width: 400px;
@@ -3155,16 +3150,6 @@
   .md\:grid-cols-6 {
     @media (width >= 48rem) {
       grid-template-columns: repeat(6, minmax(0, 1fr));
-    }
-  }
-  .md\:items-center {
-    @media (width >= 48rem) {
-      align-items: center;
-    }
-  }
-  .md\:gap-0\.5 {
-    @media (width >= 48rem) {
-      gap: calc(var(--spacing) * 0.5);
     }
   }
   .md\:bg-gray-900\/95 {

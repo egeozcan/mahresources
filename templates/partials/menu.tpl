@@ -1,6 +1,6 @@
 <nav x-data="{ mobileOpen: false, adminOpen: false }" class="navbar flex items-center gap-1">
     <!-- Mobile hamburger -->
-    <button @click="mobileOpen = !mobileOpen" class="navbar-toggle md:hidden" aria-label="Toggle menu">
+    <button @click="mobileOpen = !mobileOpen" class="navbar-toggle" aria-label="Toggle menu">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path x-show="!mobileOpen" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6h16M4 12h16M4 18h16" />
             <path x-show="mobileOpen" x-cloak stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 18L18 6M6 6l12 12" />
@@ -8,7 +8,7 @@
     </button>
 
     <!-- Desktop navigation -->
-    <div class="navbar-links hidden md:flex md:items-center md:gap-0.5">
+    <div class="navbar-links">
         {% for menuEntry in menu %}
         <a href="{{ menuEntry.Url }}"
            class="navbar-link {% if menuEntry.Url == path %}navbar-link--active{% endif %}">
