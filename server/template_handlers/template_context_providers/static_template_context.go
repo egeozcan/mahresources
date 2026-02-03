@@ -35,6 +35,8 @@ var baseTemplateContext = pongo2.Context{
 			Name: "Queries",
 			Url:  "/queries",
 		},
+	},
+	"adminMenu": []template_entities.Entry{
 		{
 			Name: "Categories",
 			Url:  "/categories",
