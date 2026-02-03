@@ -40,8 +40,6 @@
     z-index: 40;
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-sm);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
 }
 
 /* ========================================
@@ -131,12 +129,10 @@
     left: 0;
     min-width: 160px;
     padding: 6px;
-    background: var(--nav-bg);
+    background: white;
     border: 1px solid var(--nav-border);
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-lg);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
     z-index: 50;
 }
 
@@ -169,12 +165,10 @@
     left: 0;
     right: 0;
     padding: 8px;
-    background: var(--nav-bg);
+    background: white;
     border: 1px solid var(--nav-border);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-lg);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
     z-index: 50;
     max-width: 280px;
 }
