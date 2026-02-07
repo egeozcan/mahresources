@@ -1,15 +1,27 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
-    <div class="flex gap-4 flex-wrap">
+    <div class="items-container">
         {% for relation in relations %}
-            <div class="bg-gray-50 p-4">
-                <a href="/relation?id={{ relation.ID }}" class="pb-3 block">
-                    {% include "/partials/subtitle.tpl" with title=relation.Name alternativeTitle="Relation" %}
-                </a>
-                {% include "/partials/relation.tpl" with entity=relation %}
-                {% include "/partials/relation_reverse.tpl" with entity=relation %}
-            </div>
+            <article class="card card--relation-container">
+                <header class="card-header">
+                    <div class="card-title-section">
+                        <a href="/relation?id={{ relation.ID }}">
+                            <h3 class="card-title">{% if relation.Name %}{{ relation.Name }}{% else %}Relation{% endif %}</h3>
+                        </a>
+                    </div>
+                </header>
+                <div class="relation-groups">
+                    {% include "/partials/relation.tpl" with entity=relation %}
+                    <div class="relation-arrow">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                            <polyline points="12 5 19 12 12 19"></polyline>
+                        </svg>
+                    </div>
+                    {% include "/partials/relation_reverse.tpl" with entity=relation %}
+                </div>
+            </article>
         {% endfor %}
     </div>
 {% endblock %}

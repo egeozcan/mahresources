@@ -1,14 +1,18 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
-    <div class="flex gap-4 flex-wrap">
+    <div class="list-container">
         {% for relationType in relationTypes %}
-            <a href="/relationType?id={{ relationType.ID }}">
-                <div class="bg-gray-50 p-4">
-                    {% include "/partials/subtitle.tpl" with title=relationType.Name %}
-                    {% include "/partials/description.tpl" with description=relationType.Description %}
+            <article class="card">
+                <h3 class="card-title card-title--simple">
+                    <a href="/relationType?id={{ relationType.ID }}">{{ relationType.Name }}</a>
+                </h3>
+                {% if relationType.Description %}
+                <div class="card-description">
+                    {% include "/partials/description.tpl" with description=relationType.Description preview=true %}
                 </div>
-            </a>
+                {% endif %}
+            </article>
         {% endfor %}
     </div>
 {% endblock %}

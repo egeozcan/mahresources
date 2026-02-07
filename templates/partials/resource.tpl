@@ -1,38 +1,53 @@
-<div class="resource {% if selectable %} pl-4 {% endif %}"  {% if selectable %} x-data="selectableItem({ itemId: {{ entity.ID }} })" {% endif %}>
+<article class="card card--with-image{% if selectable %} card--selectable{% endif %}" {% if selectable %}x-data="selectableItem({ itemId: {{ entity.ID }} })"{% endif %}>
+    {% if selectable %}
+    <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" aria-label="Select {{ entity.Name }}" class="card-checkbox focus:ring-indigo-500 h-5 w-5 text-indigo-600 border-gray-300 rounded">
+    {% endif %}
+
     <div x-data="{ entity: {{ entity|json }} }">
-        <div class="flex gap-2 items-center">
-            {% if selectable %}
-            <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" aria-label="Select {{ entity.Name }}" class="focus:ring-indigo-500 h-8 w-8 text-indigo-600 border-gray-300 rounded">
-            {% endif %}
-            <a title="{{ entity.Name }}" class="min-w-0" href="/resource?id={{ entity.ID }}">
-                <h3 class="min-w-0 font-bold whitespace-nowrap overflow-hidden overflow-ellipsis text-left" style="direction: rtl">{{ entity.Name }}</h3>
-                <h4>{{ entity.FileSize | humanReadableSize }}</h4>
+        <div class="card-image">
+            <a href="/v1/resource/view?id={{ entity.ID }}&v={{ entity.Hash }}#{{ entity.ContentType }}"
+               @click.prevent="$store.lightbox.openFromClick($event, {{ entity.ID }}, '{{ entity.ContentType }}')"
+               data-lightbox-item
+               data-resource-id="{{ entity.ID }}"
+               data-content-type="{{ entity.ContentType }}"
+               data-resource-name="{{ entity.Name }}"
+               data-resource-hash="{{ entity.Hash }}">
+                <img height="300" src="/v1/resource/preview?id={{ entity.ID }}&height=300&v={{ entity.Hash }}" alt="Preview">
             </a>
         </div>
-        {% include "partials/description.tpl" with description=entity.Description preview=true %}
-        <a href="/v1/resource/view?id={{ entity.ID }}&v={{ entity.Hash }}#{{ entity.ContentType }}"
-           @click.prevent="$store.lightbox.openFromClick($event, {{ entity.ID }}, '{{ entity.ContentType }}')"
-           data-lightbox-item
-           data-resource-id="{{ entity.ID }}"
-           data-content-type="{{ entity.ContentType }}"
-           data-resource-name="{{ entity.Name }}"
-           data-resource-hash="{{ entity.Hash }}">
-            <img height="300" src="/v1/resource/preview?id={{ entity.ID }}&height=300&v={{ entity.Hash }}" alt="Preview">
-        </a>
-        <div class="tags mt-3 mb-2" style="margin-left: -0.5rem">
+
+        <header class="card-header card-header--compact">
+            <div class="card-title-section">
+                <h3 class="card-title">
+                    <a href="/resource?id={{ entity.ID }}" title="{{ entity.Name }}">{{ entity.Name }}</a>
+                </h3>
+                <div class="card-meta">
+                    <span class="card-meta-item">{{ entity.FileSize | humanReadableSize }}</span>
+                    {% if entity.Owner %}
+                    <span class="card-meta-item">
+                        <span class="card-meta-label">Owner:</span>
+                        <a href="/group?id={{ entity.Owner.ID }}" class="card-meta-link">{{ entity.Owner.Name }}</a>
+                    </span>
+                    {% endif %}
+                </div>
+            </div>
+        </header>
+
+        {% if entity.Description %}
+        <div class="card-description">
+            {% include "partials/description.tpl" with description=entity.Description preview=true %}
+        </div>
+        {% endif %}
+
+        <div class="tags card-tags">
             {% for tag in entity.Tags %}
-            <a class="no-underline" href='{{ withQuery("tags", stringId(tag.ID), true) }}'>
-                {% include "partials/tag.tpl" with name=tag.Name active=hasQuery("tags", stringId(tag.ID)) %}
+            <a class="card-badge{% if hasQuery("tags", stringId(tag.ID)) %} card-badge--tag-active{% else %} card-badge--tag{% endif %}" href='{{ withQuery("tags", stringId(tag.ID), true) }}'>
+                {{ tag.Name }}
             </a>
             {% endfor %}
-            <button x-cloak data-entity-type="resource" class="edit-in-list inline-flex justify-center py-1 px-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:ring-indigo-500 focus:outline-none focus:ring-2 focus:ring-offset-2">
+            <button x-cloak data-entity-type="resource" class="edit-in-list card-badge card-badge--action">
                 Edit Tags
             </button>
         </div>
-        {% if entity.Owner %}
-        <p>
-            Owner: <a href="/group?id={{ entity.Owner.ID }}">{{ entity.Owner.Name }}</a>
-        </p>
-        {% endif %}
     </div>
-</div>
+</article>

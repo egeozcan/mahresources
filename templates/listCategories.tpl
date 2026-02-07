@@ -1,14 +1,18 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
-    <div class="flex gap-4 flex-wrap">
+    <div class="list-container">
         {% for category in categories %}
-            <a href="/category?id={{ category.ID }}">
-                <div class="bg-gray-50 p-4">
-                    {% include "/partials/subtitle.tpl" with title=category.Name %}
-                    {% include "/partials/description.tpl" with description=category.Description %}
+            <article class="card">
+                <h3 class="card-title card-title--simple">
+                    <a href="/category?id={{ category.ID }}">{{ category.Name }}</a>
+                </h3>
+                {% if category.Description %}
+                <div class="card-description">
+                    {% include "/partials/description.tpl" with description=category.Description preview=true %}
                 </div>
-            </a>
+                {% endif %}
+            </article>
         {% endfor %}
     </div>
 {% endblock %}

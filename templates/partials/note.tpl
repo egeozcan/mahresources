@@ -1,26 +1,32 @@
-<div class="note" x-data='{ "entity": {{ entity|json }} }'>
-    <div class="flex gap-3">
-        <div>
+<article class="card" x-data='{ "entity": {{ entity|json }} }'>
+    <header class="card-header">
+        <div class="card-avatar">
             {% autoescape off %}{{ entity.NoteType.CustomAvatar }}{% endautoescape %}
             {% if not entity.NoteType.CustomAvatar %}
                 {% include "partials/avatar.tpl" with initials=entity.Initials() %}
             {% endif %}
         </div>
-        <div class="flex-1 min-w-0">
-            <a href="/note?id={{ entity.ID }}">
-                <h3 class="mb-2 font-bold">{{ entity.Name }}</h3>
-            </a>
+        <div class="card-title-section">
+            <h3 class="card-title">
+                <a href="/note?id={{ entity.ID }}">{{ entity.Name }}</a>
+            </h3>
             {% autoescape off %}
                 {{ entity.NoteType.CustomSummary }}
             {% endautoescape %}
-            {% include "partials/description.tpl" with description=entity.Description descriptionEditUrl="/blabla" preview=true %}
-            <div class="tags mt-3 mb-2" style="margin-left: -0.5rem">
-                {% for tag in entity.Tags %}
-                    <a class="no-underline" href='{{ withQuery("tags", stringId(tag.ID), true) }}'>
-                        {% include "partials/tag.tpl" with name=tag.Name active=hasQuery("tags", stringId(tag.ID)) %}
-                    </a>
-                {% endfor %}
-            </div>
         </div>
+    </header>
+
+    <div class="card-description">
+        {% include "partials/description.tpl" with description=entity.Description descriptionEditUrl="/blabla" preview=true %}
     </div>
-</div>
+
+    {% if entity.Tags %}
+    <div class="tags card-tags">
+        {% for tag in entity.Tags %}
+        <a class="card-badge{% if hasQuery("tags", stringId(tag.ID)) %} card-badge--tag-active{% else %} card-badge--tag{% endif %}" href='{{ withQuery("tags", stringId(tag.ID), true) }}'>
+            {{ tag.Name }}
+        </a>
+        {% endfor %}
+    </div>
+    {% endif %}
+</article>
