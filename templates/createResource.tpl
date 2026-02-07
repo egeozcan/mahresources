@@ -120,6 +120,19 @@
                     </div>
                 </div>
 
+                <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-gray-200 sm:pt-5">
+                    <span class="block text-sm font-medium text-gray-700">
+                        Resource Category
+                    </span>
+                    <div class="mt-1 sm:mt-0 sm:col-span-2">
+                        <div class="flex gap-2">
+                            <div class="flex-1">
+                                {% include "/partials/form/autocompleter.tpl" with url='/v1/resourceCategories' elName='ResourceCategoryId' title='Resource Category' selectedItems=resourceCategories min=0 max=1 id=getNextId("autocompleter") %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 {% include "/partials/form/freeFields.tpl" with name="Meta" url='/v1/resources/meta/keys' fromJSON=resource.Meta jsonOutput="true" id=getNextId("freeField") %}
             </div>
         </div>

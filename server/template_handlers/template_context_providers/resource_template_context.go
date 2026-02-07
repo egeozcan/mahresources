@@ -88,6 +88,14 @@ func ResourceListContextProvider(context *application_context.MahresourcesContex
 			}
 		}
 
+		var selectedResourceCategory []*models.ResourceCategory
+		if query.ResourceCategoryId != 0 {
+			rc, err := context.GetResourceCategory(query.ResourceCategoryId)
+			if err == nil {
+				selectedResourceCategory = []*models.ResourceCategory{rc}
+			}
+		}
+
 		popularTags, err := context.GetPopularResourceTags()
 
 		if err != nil {
@@ -95,16 +103,17 @@ func ResourceListContextProvider(context *application_context.MahresourcesContex
 		}
 
 		return pongo2.Context{
-			"pageTitle":   "Resources",
-			"resources":   resources,
-			"pagination":  pagination,
-			"tags":        tags,
-			"popularTags": popularTags,
-			"notes":       notes,
-			"owner":       owner,
-			"groups":      groups,
-			"parsedQuery": query,
-			"simpleMode":  simpleMode,
+			"pageTitle":                "Resources",
+			"resources":                resources,
+			"pagination":               pagination,
+			"tags":                     tags,
+			"popularTags":              popularTags,
+			"notes":                    notes,
+			"owner":                    owner,
+			"groups":                   groups,
+			"selectedResourceCategory": selectedResourceCategory,
+			"parsedQuery":              query,
+			"simpleMode":               simpleMode,
 			"action": template_entities.Entry{
 				Name: "Create",
 				Url:  "/resource/new",
@@ -176,6 +185,13 @@ func ResourceCreateContextProvider(context *application_context.MahresourcesCont
 		tplContext["tags"] = &resource.Tags
 		tplContext["groups"] = &resource.Groups
 		tplContext["notes"] = &resource.Notes
+
+		if resource.ResourceCategoryId != nil {
+			resourceCategory, err := context.GetResourceCategory(*resource.ResourceCategoryId)
+			if err == nil {
+				tplContext["resourceCategories"] = &[]*models.ResourceCategory{resourceCategory}
+			}
+		}
 
 		return tplContext
 	}
