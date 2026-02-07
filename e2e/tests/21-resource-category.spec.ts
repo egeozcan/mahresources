@@ -14,7 +14,7 @@ test.describe.serial('Resource Category CRUD Operations', () => {
   test('should display the created resource category', async ({ resourceCategoryPage, page }) => {
     expect(createdId, 'Resource category must be created first').toBeGreaterThan(0);
     await resourceCategoryPage.gotoDisplay(createdId);
-    await expect(page.locator('h1, .page-title')).toContainText('E2E Test Resource Category');
+    await expect(page.locator('h1, .title')).toContainText('E2E Test Resource Category');
   });
 
   test('should update the resource category', async ({ resourceCategoryPage, page }) => {
@@ -23,7 +23,7 @@ test.describe.serial('Resource Category CRUD Operations', () => {
       name: 'Updated E2E Resource Category',
       description: 'Updated description',
     });
-    await expect(page.locator('h1, .page-title')).toContainText('Updated E2E Resource Category');
+    await expect(page.locator('h1, .title')).toContainText('Updated E2E Resource Category');
   });
 
   test('should list the resource category', async ({ resourceCategoryPage }) => {
