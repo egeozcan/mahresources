@@ -244,6 +244,44 @@
     width: auto;
 }
 
+/* Simple view: strip card chrome for compact image-only grid */
+.simple .card {
+    padding: 0;
+    border: none;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: #f3f4f6;
+}
+
+.simple .card:hover {
+    box-shadow: none;
+}
+
+.simple .card--with-image .card-image {
+    margin: 0;
+    border-radius: 0;
+}
+
+.simple .card--with-image .card-image img {
+    max-height: none;
+    object-fit: contain;
+    width: 100%;
+    height: auto;
+}
+
+.simple .card-header,
+.simple .card-description,
+.simple .card-tags,
+.simple .card-meta,
+.simple .card-badges {
+    display: none;
+}
+
+.simple .list-container {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    grid-gap: 0.5rem;
+}
+
 .content .sidebar {
     grid-column: 2 / 3;
     display: flex;
@@ -525,8 +563,7 @@
     display: block;
     width: 100%;
     height: auto;
-    max-height: 220px;
-    object-fit: cover;
+    object-fit: contain;
 }
 
 /* Items container for list views (groups, queries) */
