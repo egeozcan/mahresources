@@ -25,8 +25,10 @@ type Resource struct {
 	FileSize         int64
 	Category         string     `gorm:"index"`
 	ContentType      string     `gorm:"index"`
-	ContentCategory  string     `gorm:"index"`
-	Tags             []*Tag     `gorm:"many2many:resource_tags;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	ContentCategory    string            `gorm:"index"`
+	ResourceCategoryId *uint             `gorm:"index" json:"resourceCategoryId"`
+	ResourceCategory   *ResourceCategory `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"resourceCategory,omitempty"`
+	Tags               []*Tag            `gorm:"many2many:resource_tags;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	Notes            []*Note    `gorm:"many2many:resource_notes;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	Groups           []*Group   `gorm:"many2many:groups_related_resources;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	Owner            *Group     `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`

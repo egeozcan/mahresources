@@ -790,10 +790,47 @@ components:
                 currentVersionId:
                     nullable: true
                     type: integer
+                resourceCategory:
+                    $ref: '#/components/schemas/ResourceCategory'
+                resourceCategoryId:
+                    nullable: true
+                    type: integer
                 versions:
                     items:
                         $ref: '#/components/schemas/ResourceVersionPartial'
                     type: array
+            type: object
+        ResourceCategory:
+            properties:
+                CreatedAt:
+                    format: date-time
+                    readOnly: true
+                    type: string
+                CustomAvatar:
+                    type: string
+                CustomHeader:
+                    type: string
+                CustomSidebar:
+                    type: string
+                CustomSummary:
+                    type: string
+                Description:
+                    type: string
+                ID:
+                    readOnly: true
+                    type: integer
+                MetaSchema:
+                    type: string
+                Name:
+                    type: string
+                Resources:
+                    items:
+                        $ref: '#/components/schemas/ResourcePartial'
+                    type: array
+                UpdatedAt:
+                    format: date-time
+                    readOnly: true
+                    type: string
             type: object
         ResourceEditor:
             properties:

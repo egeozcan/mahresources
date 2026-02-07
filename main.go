@@ -183,6 +183,7 @@ func main() {
 		&models.Tag{},
 		&models.Group{},
 		&models.Category{},
+		&models.ResourceCategory{},
 		&models.NoteType{},
 		&models.Preview{},
 		&models.GroupRelation{},
