@@ -87,6 +87,40 @@ func buildCategory(creator *query_models.CategoryCreator) (models.Category, erro
 	}, nil
 }
 
+// ResourceCategoryCRUD returns generic CRUD components for resource categories.
+func (ctx *MahresourcesContext) ResourceCategoryCRUD() (
+	*CRUDReader[models.ResourceCategory, *query_models.ResourceCategoryQuery],
+	*CRUDWriter[models.ResourceCategory, *query_models.ResourceCategoryCreator],
+) {
+	reader := NewCRUDReader[models.ResourceCategory, *query_models.ResourceCategoryQuery](ctx.db, CRUDReaderConfig[*query_models.ResourceCategoryQuery]{
+		ScopeFn:      database_scopes.ResourceCategoryQuery,
+		PreloadAssoc: true,
+	})
+
+	writer := NewCRUDWriter[models.ResourceCategory, *query_models.ResourceCategoryCreator](
+		ctx.db,
+		buildResourceCategory,
+		"resourceCategory",
+	)
+
+	return reader, writer
+}
+
+func buildResourceCategory(creator *query_models.ResourceCategoryCreator) (models.ResourceCategory, error) {
+	if strings.TrimSpace(creator.Name) == "" {
+		return models.ResourceCategory{}, errors.New("resource category name must be non-empty")
+	}
+	return models.ResourceCategory{
+		Name:          creator.Name,
+		Description:   creator.Description,
+		CustomHeader:  creator.CustomHeader,
+		CustomSidebar: creator.CustomSidebar,
+		CustomSummary: creator.CustomSummary,
+		CustomAvatar:  creator.CustomAvatar,
+		MetaSchema:    creator.MetaSchema,
+	}, nil
+}
+
 // QueryCRUD returns generic CRUD components for queries.
 func (ctx *MahresourcesContext) QueryCRUD() (
 	*CRUDReader[models.Query, *query_models.QueryQuery],
