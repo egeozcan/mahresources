@@ -211,17 +211,18 @@ func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.Re
 
 			res, err := ctx.AddResource(timeoutBody, resourceQuery.FileName, &query_models.ResourceCreator{
 				ResourceQueryBase: query_models.ResourceQueryBase{
-					Name:             name,
-					Description:      resourceQuery.Description,
-					OwnerId:          resourceQuery.OwnerId,
-					Groups:           resourceQuery.Groups,
-					Tags:             resourceQuery.Tags,
-					Notes:            resourceQuery.Notes,
-					Meta:             resourceQuery.Meta,
-					ContentCategory:  resourceQuery.ContentCategory,
-					Category:         resourceQuery.Category,
-					OriginalName:     url,
-					OriginalLocation: url,
+					Name:               name,
+					Description:        resourceQuery.Description,
+					OwnerId:            resourceQuery.OwnerId,
+					Groups:             resourceQuery.Groups,
+					Tags:               resourceQuery.Tags,
+					Notes:              resourceQuery.Notes,
+					Meta:               resourceQuery.Meta,
+					ContentCategory:    resourceQuery.ContentCategory,
+					Category:           resourceQuery.Category,
+					ResourceCategoryId: resourceQuery.ResourceCategoryId,
+					OriginalName:       url,
+					OriginalLocation:   url,
 				},
 			})
 
@@ -288,20 +289,21 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 	hash := hex.EncodeToString(h.Sum(nil))
 
 	res := &models.Resource{
-		Name:             fileName,
-		Hash:             hash,
-		HashType:         "SHA1",
-		Location:         resourceQuery.LocalPath,
-		Meta:             []byte(resourceQuery.Meta),
-		Category:         resourceQuery.Category,
-		ContentType:      fileMime.String(),
-		ContentCategory:  resourceQuery.ContentCategory,
-		FileSize:         int64(len(fileBytes)),
-		OwnerId:          &resourceQuery.OwnerId,
-		StorageLocation:  &resourceQuery.PathName,
-		Description:      resourceQuery.Description,
-		OriginalLocation: resourceQuery.OriginalLocation,
-		OriginalName:     resourceQuery.OriginalName,
+		Name:               fileName,
+		Hash:               hash,
+		HashType:           "SHA1",
+		Location:           resourceQuery.LocalPath,
+		Meta:               []byte(resourceQuery.Meta),
+		Category:           resourceQuery.Category,
+		ContentType:        fileMime.String(),
+		ContentCategory:    resourceQuery.ContentCategory,
+		ResourceCategoryId: uintPtrOrNil(resourceQuery.ResourceCategoryId),
+		FileSize:           int64(len(fileBytes)),
+		OwnerId:            &resourceQuery.OwnerId,
+		StorageLocation:    &resourceQuery.PathName,
+		Description:        resourceQuery.Description,
+		OriginalLocation:   resourceQuery.OriginalLocation,
+		OriginalName:       resourceQuery.OriginalName,
 	}
 
 	if err := ctx.db.Save(res).Error; err != nil {
@@ -474,21 +476,22 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 	fileSize := fileInfo.Size()
 
 	res := &models.Resource{
-		Name:             name,
-		Hash:             hash,
-		HashType:         "SHA1",
-		Location:         filePath,
-		Meta:             []byte(resourceQuery.Meta),
-		Category:         resourceQuery.Category,
-		ContentType:      fileMime.String(),
-		ContentCategory:  resourceQuery.ContentCategory,
-		FileSize:         fileSize,
-		OwnerId:          &resourceQuery.OwnerId,
-		Description:      resourceQuery.Description,
-		OriginalLocation: resourceQuery.OriginalLocation,
-		OriginalName:     resourceQuery.OriginalName,
-		Width:            uint(width),
-		Height:           uint(height),
+		Name:               name,
+		Hash:               hash,
+		HashType:           "SHA1",
+		Location:           filePath,
+		Meta:               []byte(resourceQuery.Meta),
+		Category:           resourceQuery.Category,
+		ContentType:        fileMime.String(),
+		ContentCategory:    resourceQuery.ContentCategory,
+		ResourceCategoryId: uintPtrOrNil(resourceQuery.ResourceCategoryId),
+		FileSize:           fileSize,
+		OwnerId:            &resourceQuery.OwnerId,
+		Description:        resourceQuery.Description,
+		OriginalLocation:   resourceQuery.OriginalLocation,
+		OriginalName:       resourceQuery.OriginalName,
+		Width:              uint(width),
+		Height:             uint(height),
 	}
 
 	if err := tx.Save(res).Error; err != nil {

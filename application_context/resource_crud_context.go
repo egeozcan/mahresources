@@ -189,6 +189,7 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 	resource.OriginalLocation = resourceQuery.OriginalLocation
 	resource.Category = resourceQuery.Category
 	resource.ContentCategory = resourceQuery.ContentCategory
+	resource.ResourceCategoryId = uintPtrOrNil(resourceQuery.ResourceCategoryId)
 	resource.OwnerId = &resourceQuery.OwnerId
 	resource.Owner = &models.Group{ID: resourceQuery.OwnerId}
 
@@ -243,4 +244,11 @@ func (ctx *MahresourcesContext) ServeResourceByHash(w http.ResponseWriter, r *ht
 
 	w.Header().Set("Content-Type", resource.ContentType)
 	http.ServeContent(w, r, resource.Name, resource.UpdatedAt, file)
+}
+
+func uintPtrOrNil(v uint) *uint {
+	if v == 0 {
+		return nil
+	}
+	return &v
 }
