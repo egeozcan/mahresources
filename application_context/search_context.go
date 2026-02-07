@@ -26,7 +26,8 @@ const (
 	EntityTypeCategory     = "category"
 	EntityTypeQuery        = "query"
 	EntityTypeRelationType = "relationType"
-	EntityTypeNoteType     = "noteType"
+	EntityTypeNoteType             = "noteType"
+	EntityTypeResourceCategory     = "resourceCategory"
 )
 
 // InvalidateSearchCacheByType removes cached search results that contain the specified entity type.
@@ -48,7 +49,7 @@ func (ctx *MahresourcesContext) ClearSearchCache() {
 var allEntityTypes = []string{
 	EntityTypeResource, EntityTypeNote, EntityTypeGroup,
 	EntityTypeTag, EntityTypeCategory, EntityTypeQuery,
-	EntityTypeRelationType, EntityTypeNoteType,
+	EntityTypeRelationType, EntityTypeNoteType, EntityTypeResourceCategory,
 }
 
 // InitFTS initializes the FTS provider based on the database type

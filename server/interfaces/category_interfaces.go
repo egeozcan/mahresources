@@ -17,3 +17,16 @@ type CategoryWriter interface {
 type CategoryDeleter interface {
 	DeleteCategory(categoryId uint) error
 }
+
+type ResourceCategoryReader interface {
+	GetResourceCategories(offset, maxResults int, query *query_models.ResourceCategoryQuery) (*[]models.ResourceCategory, error)
+}
+
+type ResourceCategoryWriter interface {
+	UpdateResourceCategory(query *query_models.ResourceCategoryEditor) (*models.ResourceCategory, error)
+	CreateResourceCategory(query *query_models.ResourceCategoryCreator) (*models.ResourceCategory, error)
+}
+
+type ResourceCategoryDeleter interface {
+	DeleteResourceCategory(resourceCategoryId uint) error
+}
