@@ -43,4 +43,18 @@ func AddInitialData(db *gorm.DB) {
 			db.Model(&models.Note{}).Where("note_type_id IS NULL").Update("note_type_id", defaultNoteType.ID)
 		}
 	}
+
+	var resourceCategoryCount int64
+	db.Model(&models.ResourceCategory{}).Count(&resourceCategoryCount)
+
+	if resourceCategoryCount == 0 {
+		var resourceCount int64
+		db.Model(&models.Resource{}).Count(&resourceCount)
+
+		if resourceCount > 0 {
+			defaultResourceCategory := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}
+			db.Create(defaultResourceCategory)
+			db.Model(&models.Resource{}).Where("resource_category_id IS NULL").Update("resource_category_id", defaultResourceCategory.ID)
+		}
+	}
 }
