@@ -16,6 +16,14 @@ export interface Category extends Entity {
   MetaSchema?: string;
 }
 
+export interface ResourceCategory extends Entity {
+  CustomHeader?: string;
+  CustomSidebar?: string;
+  CustomSummary?: string;
+  CustomAvatar?: string;
+  MetaSchema?: string;
+}
+
 export interface NoteType extends Entity {
   CustomHeader?: string;
   CustomSidebar?: string;
@@ -146,6 +154,44 @@ export class ApiClient {
   async getCategories(): Promise<Category[]> {
     const response = await this.request.get(`${this.baseUrl}/v1/categories`);
     return this.handleResponse<Category[]>(response);
+  }
+
+  // ResourceCategory operations
+  async createResourceCategory(
+    name: string,
+    description?: string,
+    options?: {
+      CustomHeader?: string;
+      CustomSidebar?: string;
+      CustomSummary?: string;
+      CustomAvatar?: string;
+      MetaSchema?: string;
+    }
+  ): Promise<ResourceCategory> {
+    const formData = new URLSearchParams();
+    formData.append('name', name);
+    if (description) formData.append('Description', description);
+    if (options?.CustomHeader) formData.append('CustomHeader', options.CustomHeader);
+    if (options?.CustomSidebar) formData.append('CustomSidebar', options.CustomSidebar);
+    if (options?.CustomSummary) formData.append('CustomSummary', options.CustomSummary);
+    if (options?.CustomAvatar) formData.append('CustomAvatar', options.CustomAvatar);
+    if (options?.MetaSchema) formData.append('MetaSchema', options.MetaSchema);
+
+    const response = await this.request.post(`${this.baseUrl}/v1/resourceCategory`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+    return this.handleResponse<ResourceCategory>(response);
+  }
+
+  async deleteResourceCategory(id: number): Promise<void> {
+    const response = await this.request.post(`${this.baseUrl}/v1/resourceCategory/delete?Id=${id}`);
+    await this.handleVoidResponse(response);
+  }
+
+  async getResourceCategories(): Promise<ResourceCategory[]> {
+    const response = await this.request.get(`${this.baseUrl}/v1/resourceCategories`);
+    return this.handleResponse<ResourceCategory[]>(response);
   }
 
   // NoteType operations

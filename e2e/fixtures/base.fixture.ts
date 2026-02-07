@@ -9,6 +9,7 @@ import { QueryPage } from '../pages/QueryPage';
 import { ResourcePage } from '../pages/ResourcePage';
 import { RelationTypePage } from '../pages/RelationTypePage';
 import { RelationPage } from '../pages/RelationPage';
+import { ResourceCategoryPage } from '../pages/ResourceCategoryPage';
 
 type TestFixtures = {
   apiClient: ApiClient;
@@ -21,6 +22,7 @@ type TestFixtures = {
   resourcePage: ResourcePage;
   relationTypePage: RelationTypePage;
   relationPage: RelationPage;
+  resourceCategoryPage: ResourceCategoryPage;
   shareBaseUrl: string;
 };
 
@@ -67,6 +69,10 @@ export const test = base.extend<TestFixtures>({
 
   relationPage: async ({ page }, use) => {
     await use(new RelationPage(page));
+  },
+
+  resourceCategoryPage: async ({ page }, use) => {
+    await use(new ResourceCategoryPage(page));
   },
 
   shareBaseUrl: async ({}, use) => {
