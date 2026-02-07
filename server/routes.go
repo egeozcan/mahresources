@@ -61,6 +61,11 @@ var templates = map[string]templateInformation{
 	"/category":      {template_context_providers.CategoryContextProvider, "displayCategory.tpl", http.MethodGet},
 	"/category/edit": {template_context_providers.CategoryCreateContextProvider, "createCategory.tpl", http.MethodGet},
 
+	"/resourceCategory/new":  {template_context_providers.ResourceCategoryCreateContextProvider, "createResourceCategory.tpl", http.MethodGet},
+	"/resourceCategories":    {template_context_providers.ResourceCategoryListContextProvider, "listResourceCategories.tpl", http.MethodGet},
+	"/resourceCategory":      {template_context_providers.ResourceCategoryContextProvider, "displayResourceCategory.tpl", http.MethodGet},
+	"/resourceCategory/edit": {template_context_providers.ResourceCategoryCreateContextProvider, "createResourceCategory.tpl", http.MethodGet},
+
 	"/query/new":  {template_context_providers.QueryCreateContextProvider, "createQuery.tpl", http.MethodGet},
 	"/queries":    {template_context_providers.QueryListContextProvider, "listQueries.tpl", http.MethodGet},
 	"/query":      {template_context_providers.QueryContextProvider, "displayQuery.tpl", http.MethodGet},
