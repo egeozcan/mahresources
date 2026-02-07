@@ -37,6 +37,11 @@
     </a>
     {% include "/partials/tagList.tpl" with tags=resource.Tags addTagUrl='/v1/resources/addTags' id=resource.ID %}
 
+    {% if resource.ResourceCategory %}
+    {% include "/partials/sideTitle.tpl" with title="Resource Category" %}
+    <a href="/resourceCategory?id={{ resource.ResourceCategory.ID }}">{{ resource.ResourceCategory.Name }}</a>
+    {% endif %}
+
     {% if isImage %}
         {% include "/partials/sideTitle.tpl" with title="Update Dimensions" %}
         <form action="/v1/resource/recalculateDimensions?redirect={{ url|urlencode }}" method="post">

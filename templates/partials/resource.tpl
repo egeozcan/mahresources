@@ -29,6 +29,11 @@
                         <a href="/group?id={{ entity.Owner.ID }}" class="card-meta-link">{{ entity.Owner.Name }}</a>
                     </span>
                     {% endif %}
+                    {% if entity.ResourceCategory %}
+                    <span class="card-meta-item">
+                        <a href="/resourceCategory?id={{ entity.ResourceCategory.ID }}" class="card-meta-link">{{ entity.ResourceCategory.Name }}</a>
+                    </span>
+                    {% endif %}
                 </div>
             </div>
         </header>

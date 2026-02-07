@@ -118,6 +118,7 @@ func (ctx *MahresourcesContext) GetResources(offset, maxResults int, query *quer
 		Offset(offset).
 		Preload("Tags").
 		Preload("Owner").
+		Preload("ResourceCategory").
 		Find(&resources).
 		Error
 }
