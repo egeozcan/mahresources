@@ -1,19 +1,20 @@
 package query_models
 
 type ResourceQueryBase struct {
-	Name             string
-	Description      string
-	OwnerId          uint
-	Groups           []uint
-	Tags             []uint
-	Notes            []uint
-	Meta             string
-	ContentCategory  string
-	Category         string
-	OriginalName     string
-	OriginalLocation string
-	Width            uint
-	Height           uint
+	Name               string
+	Description        string
+	OwnerId            uint
+	Groups             []uint
+	Tags               []uint
+	Notes              []uint
+	Meta               string
+	ContentCategory    string
+	Category           string
+	ResourceCategoryId uint
+	OriginalName       string
+	OriginalLocation   string
+	Width              uint
+	Height             uint
 }
 
 type ResourceCreator struct {
@@ -41,13 +42,14 @@ type ResourceEditor struct {
 }
 
 type ResourceSearchQuery struct {
-	Name             string
-	Description      string
-	ContentType      string
-	OwnerId          uint
-	Groups           []uint
-	Tags             []uint
-	Notes            []uint
+	Name               string
+	Description        string
+	ContentType        string
+	OwnerId            uint
+	ResourceCategoryId uint
+	Groups             []uint
+	Tags               []uint
+	Notes              []uint
 	Ids              []uint
 	CreatedBefore    string
 	CreatedAfter     string

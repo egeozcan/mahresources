@@ -862,6 +862,8 @@ components:
                     type: string
                 OwnerId:
                     type: integer
+                ResourceCategoryId:
+                    type: integer
                 Tags:
                     items:
                         type: integer
@@ -901,6 +903,8 @@ components:
                     type: integer
                 PathName:
                     type: string
+                ResourceCategoryId:
+                    type: integer
                 Tags:
                     items:
                         type: integer
@@ -943,6 +947,8 @@ components:
                 OriginalName:
                     type: string
                 OwnerId:
+                    type: integer
+                ResourceCategoryId:
                     type: integer
                 Tags:
                     items:
@@ -1005,6 +1011,8 @@ components:
                 OriginalName:
                     type: string
                 OwnerId:
+                    type: integer
+                ResourceCategoryId:
                     type: integer
                 ShowWithSimilar:
                     type: boolean
@@ -2757,6 +2765,10 @@ paths:
                     type: string
                 - in: query
                   name: OwnerId
+                  schema:
+                    type: integer
+                - in: query
+                  name: ResourceCategoryId
                   schema:
                     type: integer
                 - explode: true
