@@ -33,6 +33,9 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 	// Categories
 	registerCategoryRoutes(registry)
 
+	// Resource Categories
+	registerResourceCategoryRoutes(registry)
+
 	// Queries
 	registerQueryRoutes(registry)
 
@@ -725,6 +728,52 @@ func registerCategoryRoutes(r *openapi.Registry) {
 		WithIDParam("id", true))
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/category/editDescription", "editCategoryDescription", "Edit a category's description", "categories").
+		WithIDParam("id", true))
+}
+
+func registerResourceCategoryRoutes(r *openapi.Registry) {
+	resourceCategoryType := reflect.TypeOf(models.ResourceCategory{})
+	resourceCategoryQueryType := reflect.TypeOf(query_models.ResourceCategoryQuery{})
+	resourceCategoryEditorType := reflect.TypeOf(query_models.ResourceCategoryEditor{})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/resourceCategories",
+		OperationID:          "listResourceCategories",
+		Summary:              "List resource categories",
+		Tags:                 []string{"resourceCategories"},
+		QueryType:            resourceCategoryQueryType,
+		ResponseType:         reflect.SliceOf(resourceCategoryType),
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		Paginated:            true,
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/resourceCategory",
+		OperationID:          "createOrUpdateResourceCategory",
+		Summary:              "Create or update a resource category",
+		Tags:                 []string{"resourceCategories"},
+		RequestType:          resourceCategoryEditorType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseType:         resourceCategoryType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:       http.MethodPost,
+		Path:         "/v1/resourceCategory/delete",
+		OperationID:  "deleteResourceCategory",
+		Summary:      "Delete a resource category",
+		Tags:         []string{"resourceCategories"},
+		IDQueryParam: "Id",
+		IDRequired:   true,
+	})
+
+	r.Register(openapi.NewRoute(http.MethodPost, "/v1/resourceCategory/editName", "editResourceCategoryName", "Edit a resource category's name", "resourceCategories").
+		WithIDParam("id", true))
+
+	r.Register(openapi.NewRoute(http.MethodPost, "/v1/resourceCategory/editDescription", "editResourceCategoryDescription", "Edit a resource category's description", "resourceCategories").
 		WithIDParam("id", true))
 }
 

@@ -259,6 +259,43 @@ func CreateCategoryHandler(writer interfaces.CategoryWriter) http.HandlerFunc {
 	}
 }
 
+// CreateResourceCategoryHandler returns a handler that creates or updates resource categories.
+func CreateResourceCategoryHandler(writer interfaces.ResourceCategoryWriter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var editor query_models.ResourceCategoryEditor
+
+		if err := tryFillStructValuesFromRequest(&editor, r); err != nil {
+			http_utils.HandleError(err, w, r, http.StatusBadRequest)
+			return
+		}
+
+		var result interface{}
+		var err error
+
+		if editor.ID != 0 {
+			result, err = writer.UpdateResourceCategory(&editor)
+		} else {
+			result, err = writer.CreateResourceCategory(&editor.ResourceCategoryCreator)
+		}
+
+		if err != nil {
+			http_utils.HandleError(err, w, r, http.StatusBadRequest)
+			return
+		}
+
+		type hasID interface{ GetId() uint }
+		if entity, ok := result.(hasID); ok {
+			redirectURL := "/resourceCategory?id=" + strconv.Itoa(int(entity.GetId()))
+			if http_utils.RedirectIfHTMLAccepted(w, r, redirectURL) {
+				return
+			}
+		}
+
+		w.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(w).Encode(result)
+	}
+}
+
 // CreateQueryHandler returns a handler that creates or updates queries.
 // Queries use QueryCreator for create and QueryEditor (with ID) for update.
 func CreateQueryHandler(writer interfaces.QueryWriter) http.HandlerFunc {

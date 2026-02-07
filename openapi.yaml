@@ -832,6 +832,39 @@ components:
                     readOnly: true
                     type: string
             type: object
+        ResourceCategoryEditor:
+            properties:
+                CustomAvatar:
+                    type: string
+                CustomHeader:
+                    type: string
+                CustomSidebar:
+                    type: string
+                CustomSummary:
+                    type: string
+                Description:
+                    type: string
+                ID:
+                    type: integer
+                MetaSchema:
+                    type: string
+                Name:
+                    type: string
+            type: object
+        ResourceCategoryPartial:
+            properties:
+                ID:
+                    type: integer
+                Name:
+                    type: string
+            type: object
+        ResourceCategoryQuery:
+            properties:
+                Description:
+                    type: string
+                Name:
+                    type: string
+            type: object
         ResourceEditor:
             properties:
                 Category:
@@ -2747,6 +2780,115 @@ paths:
             summary: View a resource's content
             tags:
                 - resources
+    /v1/resourceCategories:
+        get:
+            operationId: listResourceCategories
+            parameters:
+                - in: query
+                  name: Name
+                  schema:
+                    type: string
+                - in: query
+                  name: Description
+                  schema:
+                    type: string
+                - description: Page number for pagination
+                  in: query
+                  name: page
+                  schema:
+                    default: 1
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/ResourceCategoryPartial'
+                                type: array
+                    description: Successful response
+            summary: List resource categories
+            tags:
+                - resourceCategories
+    /v1/resourceCategory:
+        post:
+            operationId: createOrUpdateResourceCategory
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/ResourceCategoryEditor'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/ResourceCategoryEditor'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ResourceCategory'
+                    description: Successful response
+            summary: Create or update a resource category
+            tags:
+                - resourceCategories
+    /v1/resourceCategory/delete:
+        post:
+            operationId: deleteResourceCategory
+            parameters:
+                - in: query
+                  name: Id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Delete a resource category
+            tags:
+                - resourceCategories
+    /v1/resourceCategory/editDescription:
+        post:
+            operationId: editResourceCategoryDescription
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Edit a resource category's description
+            tags:
+                - resourceCategories
+    /v1/resourceCategory/editName:
+        post:
+            operationId: editResourceCategoryName
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Edit a resource category's name
+            tags:
+                - resourceCategories
     /v1/resources:
         get:
             operationId: listResources
@@ -3235,6 +3377,8 @@ tags:
       name: queries
     - description: Operations related to relations
       name: relations
+    - description: Operations related to resourceCategories
+      name: resourceCategories
     - description: Operations related to resources
       name: resources
     - description: Search operations

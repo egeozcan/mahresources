@@ -223,6 +223,16 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/category/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Category](basicCategoryWriter, "category"))
 	router.Methods(http.MethodPost).Path("/v1/category/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.Category](basicCategoryWriter, "category"))
 
+	// Resource Category routes using factory
+	resourceCategoryReader, resourceCategoryWriter := appContext.ResourceCategoryCRUD()
+	resourceCategoryFactory := api_handlers.NewCRUDHandlerFactory("resourceCategory", "resourceCategories", resourceCategoryReader, resourceCategoryWriter)
+	basicResourceCategoryWriter := application_context.NewEntityWriter[models.ResourceCategory](appContext)
+	router.Methods(http.MethodGet).Path("/v1/resourceCategories").HandlerFunc(resourceCategoryFactory.ListHandler())
+	router.Methods(http.MethodPost).Path("/v1/resourceCategory").HandlerFunc(api_handlers.CreateResourceCategoryHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/resourceCategory/delete").HandlerFunc(resourceCategoryFactory.DeleteHandler())
+	router.Methods(http.MethodPost).Path("/v1/resourceCategory/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.ResourceCategory](basicResourceCategoryWriter, "resourceCategory"))
+	router.Methods(http.MethodPost).Path("/v1/resourceCategory/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.ResourceCategory](basicResourceCategoryWriter, "resourceCategory"))
+
 	// Query routes using factory
 	queryReader, queryWriter := appContext.QueryCRUD()
 	queryFactory := api_handlers.NewCRUDHandlerFactory("query", "queries", queryReader, queryWriter)
