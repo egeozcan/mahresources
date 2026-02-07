@@ -209,6 +209,8 @@ func (ctx *MahresourcesContext) searchEntityType(entityType, searchTerm string, 
 		return ctx.searchRelationTypes(searchTerm, limit)
 	case EntityTypeNoteType:
 		return ctx.searchNoteTypes(searchTerm, limit)
+	case EntityTypeResourceCategory:
+		return ctx.searchResourceCategories(searchTerm, limit)
 	}
 	return nil
 }
@@ -444,6 +446,30 @@ func (ctx *MahresourcesContext) searchNoteTypes(searchTerm string, limit int) []
 	return results
 }
 
+func (ctx *MahresourcesContext) searchResourceCategories(searchTerm string, limit int) []query_models.SearchResultItem {
+	var resourceCategories []models.ResourceCategory
+	likeOp := ctx.getLikeOperator()
+	pattern := "%" + searchTerm + "%"
+
+	ctx.db.
+		Where("name "+likeOp+" ? OR description "+likeOp+" ?", pattern, pattern).
+		Limit(limit).
+		Find(&resourceCategories)
+
+	results := make([]query_models.SearchResultItem, 0, len(resourceCategories))
+	for _, rc := range resourceCategories {
+		results = append(results, query_models.SearchResultItem{
+			ID:          rc.ID,
+			Type:        EntityTypeResourceCategory,
+			Name:        rc.Name,
+			Description: truncateDescription(rc.Description, 100),
+			Score:       calculateRelevanceScore(rc.Name, rc.Description, searchTerm),
+			URL:         fmt.Sprintf("/resourceCategory?id=%d", rc.ID),
+		})
+	}
+	return results
+}
+
 // =============================================================================
 // FTS-based search functions
 // =============================================================================
@@ -466,6 +492,8 @@ func (ctx *MahresourcesContext) searchEntityTypeFTS(entityType string, query fts
 		return ctx.searchRelationTypesFTS(query, limit)
 	case EntityTypeNoteType:
 		return ctx.searchNoteTypesFTS(query, limit)
+	case EntityTypeResourceCategory:
+		return ctx.searchResourceCategoriesFTS(query, limit)
 	}
 	return nil
 }
@@ -719,6 +747,37 @@ func (ctx *MahresourcesContext) searchNoteTypesFTS(query fts.ParsedQuery, limit 
 			Description: truncateDescription(nt.Description, 100),
 			Score:       score,
 			URL:         fmt.Sprintf("/noteType?id=%d", nt.ID),
+		})
+	}
+	return results
+}
+
+func (ctx *MahresourcesContext) searchResourceCategoriesFTS(query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
+	config := fts.GetEntityConfig(EntityTypeResourceCategory)
+	if config == nil {
+		return nil
+	}
+
+	var resourceCategories []models.ResourceCategory
+	db := ctx.db.Model(&models.ResourceCategory{}).
+		Scopes(ftsProvider.BuildSearchScope(config.TableName, config.Columns, query)).
+		Limit(limit)
+
+	db.Find(&resourceCategories)
+
+	results := make([]query_models.SearchResultItem, 0, len(resourceCategories))
+	for i, rc := range resourceCategories {
+		score := 100 - i
+		if score < 1 {
+			score = 1
+		}
+		results = append(results, query_models.SearchResultItem{
+			ID:          rc.ID,
+			Type:        EntityTypeResourceCategory,
+			Name:        rc.Name,
+			Description: truncateDescription(rc.Description, 100),
+			Score:       score,
+			URL:         fmt.Sprintf("/resourceCategory?id=%d", rc.ID),
 		})
 	}
 	return results

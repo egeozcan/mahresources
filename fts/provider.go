@@ -111,6 +111,14 @@ var EntityConfigs = map[string]EntityFTSConfig{
 			"description": "B",
 		},
 	},
+	"resourceCategory": {
+		TableName: "resource_categories",
+		Columns:   []string{"name", "description"},
+		WeightedCols: map[string]string{
+			"name":        "A",
+			"description": "B",
+		},
+	},
 }
 
 // GetEntityConfig returns the FTS config for an entity type, or nil if not found
