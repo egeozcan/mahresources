@@ -3,7 +3,7 @@
 {% block body %}
     <div class="list-container">
         {% for relationType in relationTypes %}
-            <article class="card">
+            <article class="card relation-type-card">
                 <h3 class="card-title card-title--simple">
                     <a href="/relationType?id={{ relationType.ID }}">{{ relationType.Name }}</a>
                 </h3>

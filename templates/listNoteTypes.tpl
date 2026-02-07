@@ -3,7 +3,7 @@
 {% block body %}
     <div class="list-container">
         {% for noteType in noteTypes %}
-            <article class="card">
+            <article class="card note-type-card">
                 <h3 class="card-title card-title--simple">
                     <a href="/noteType?id={{ noteType.ID }}">{{ noteType.Name }}</a>
                 </h3>

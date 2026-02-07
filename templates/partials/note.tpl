@@ -1,4 +1,4 @@
-<article class="card" x-data='{ "entity": {{ entity|json }} }'>
+<article class="card note-card" x-data='{ "entity": {{ entity|json }} }'>
     <header class="card-header">
         <div class="card-avatar">
             {% autoescape off %}{{ entity.NoteType.CustomAvatar }}{% endautoescape %}

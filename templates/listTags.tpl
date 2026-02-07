@@ -3,7 +3,7 @@
 {% block body %}
     <div class="list-container">
         {% for tag in tags %}
-            <article class="card">
+            <article class="card tag-card">
                 <h3 class="card-title card-title--simple">
                     <a href="/tag?id={{ tag.ID }}">{{ tag.Name }}</a>
                 </h3>

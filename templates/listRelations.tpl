@@ -3,7 +3,7 @@
 {% block body %}
     <div class="items-container">
         {% for relation in relations %}
-            <article class="card card--relation-container">
+            <article class="card relation-card card--relation-container">
                 <header class="card-header">
                     <div class="card-title-section">
                         <a href="/relation?id={{ relation.ID }}">

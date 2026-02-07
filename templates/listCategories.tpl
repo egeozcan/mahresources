@@ -3,7 +3,7 @@
 {% block body %}
     <div class="list-container">
         {% for category in categories %}
-            <article class="card">
+            <article class="card category-card">
                 <h3 class="card-title card-title--simple">
                     <a href="/category?id={{ category.ID }}">{{ category.Name }}</a>
                 </h3>
