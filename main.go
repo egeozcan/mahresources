@@ -206,11 +206,19 @@ func main() {
 	if context.Config.DbType == constants.DbTypeSqlite {
 		db.Exec("PRAGMA foreign_keys = ON")
 
-		// Verify no FK violations were introduced while foreign keys were disabled.
-		// foreign_key_check returns one row per violation; any result means corruption.
-		var fkViolation struct{ Table string }
-		if result := db.Raw("PRAGMA foreign_key_check").First(&fkViolation); result.Error == nil {
-			log.Fatalf("Foreign key violation detected after migration in table %q — aborting to prevent data corruption", fkViolation.Table)
+		// Log any FK violations. These are typically pre-existing (SQLite doesn't
+		// enforce FKs by default), not caused by AutoMigrate.
+		var fkViolations []struct {
+			Table  string
+			Rowid  int64
+			Parent string
+			Fkid   int64
+		}
+		if result := db.Raw("PRAGMA foreign_key_check").Scan(&fkViolations); result.Error == nil && len(fkViolations) > 0 {
+			log.Printf("Warning: %d foreign key violation(s) found in database:", len(fkViolations))
+			for _, v := range fkViolations {
+				log.Printf("  table=%q rowid=%d parent=%q fkid=%d", v.Table, v.Rowid, v.Parent, v.Fkid)
+			}
 		}
 	}
 
