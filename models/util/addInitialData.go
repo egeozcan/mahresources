@@ -54,7 +54,16 @@ func AddInitialData(db *gorm.DB) {
 		if resourceCount > 0 {
 			defaultResourceCategory := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}
 			db.Create(defaultResourceCategory)
-			db.Model(&models.Resource{}).Where("resource_category_id IS NULL").Update("resource_category_id", defaultResourceCategory.ID)
+			// Batch update to avoid a single massive transaction on large databases
+			for {
+				result := db.Exec(
+					"UPDATE resources SET resource_category_id = ? WHERE id IN (SELECT id FROM resources WHERE resource_category_id IS NULL LIMIT 10000)",
+					defaultResourceCategory.ID,
+				)
+				if result.Error != nil || result.RowsAffected == 0 {
+					break
+				}
+			}
 		}
 	}
 }
