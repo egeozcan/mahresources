@@ -174,6 +174,14 @@ func main() {
 
 	context, db, mainFs := application_context.CreateContextWithConfig(cfg)
 
+	// Disable foreign keys during AutoMigrate for SQLite.
+	// SQLite can't ALTER TABLE to add constraints, so GORM recreates the table
+	// (create temp, copy, drop original, rename). The DROP fails if other tables
+	// reference it with FKs enabled.
+	if context.Config.DbType == constants.DbTypeSqlite {
+		db.Exec("PRAGMA foreign_keys = OFF")
+	}
+
 	if err := db.AutoMigrate(
 		&models.Query{},
 		&models.Resource{},
@@ -193,6 +201,10 @@ func main() {
 		&models.LogEntry{},
 	); err != nil {
 		log.Fatalf("failed to migrate: %v", err)
+	}
+
+	if context.Config.DbType == constants.DbTypeSqlite {
+		db.Exec("PRAGMA foreign_keys = ON")
 	}
 
 	util.AddInitialData(db)
