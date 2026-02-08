@@ -205,6 +205,13 @@ func main() {
 
 	if context.Config.DbType == constants.DbTypeSqlite {
 		db.Exec("PRAGMA foreign_keys = ON")
+
+		// Verify no FK violations were introduced while foreign keys were disabled.
+		// foreign_key_check returns one row per violation; any result means corruption.
+		var fkViolation struct{ Table string }
+		if result := db.Raw("PRAGMA foreign_key_check").First(&fkViolation); result.Error == nil {
+			log.Fatalf("Foreign key violation detected after migration in table %q — aborting to prevent data corruption", fkViolation.Table)
+		}
 	}
 
 	util.AddInitialData(db)
