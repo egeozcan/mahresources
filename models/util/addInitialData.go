@@ -1,8 +1,14 @@
 package util
 
 import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"time"
+
 	"gorm.io/gorm"
 	"mahresources/models"
+	"mahresources/models/types"
 )
 
 func AddInitialData(db *gorm.DB) {
@@ -54,16 +60,57 @@ func AddInitialData(db *gorm.DB) {
 		if resourceCount > 0 {
 			defaultResourceCategory := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}
 			db.Create(defaultResourceCategory)
+
+			var totalRemaining int64
+			db.Model(&models.Resource{}).Where("resource_category_id IS NULL").Count(&totalRemaining)
+
+			logMigrationProgress(db, fmt.Sprintf("Resource category migration: starting (%d resources to update)", totalRemaining),
+				map[string]interface{}{"total": totalRemaining})
+
 			// Batch update to avoid a single massive transaction on large databases
+			var totalUpdated int64
 			for {
 				result := db.Exec(
 					"UPDATE resources SET resource_category_id = ? WHERE id IN (SELECT id FROM resources WHERE resource_category_id IS NULL LIMIT 10000)",
 					defaultResourceCategory.ID,
 				)
-				if result.Error != nil || result.RowsAffected == 0 {
+				if result.Error != nil {
+					logMigrationProgress(db, fmt.Sprintf("Resource category migration: error: %v", result.Error), nil)
 					break
 				}
+				if result.RowsAffected == 0 {
+					break
+				}
+				totalUpdated += result.RowsAffected
+				logMigrationProgress(db,
+					fmt.Sprintf("Resource category migration: updated %d/%d resources", totalUpdated, totalRemaining),
+					map[string]interface{}{"updated": totalUpdated, "remaining": totalRemaining - totalUpdated})
 			}
+
+			logMigrationProgress(db, fmt.Sprintf("Resource category migration: complete (%d resources updated)", totalUpdated),
+				map[string]interface{}{"total_updated": totalUpdated})
 		}
 	}
+}
+
+// logMigrationProgress logs to both stdout and the log_entries table,
+// matching the hash worker's progress reporting pattern.
+func logMigrationProgress(db *gorm.DB, message string, details map[string]interface{}) {
+	log.Print(message)
+
+	entry := models.LogEntry{
+		CreatedAt:  time.Now(),
+		Level:      models.LogLevelInfo,
+		Action:     models.LogActionProgress,
+		EntityType: "migration",
+		Message:    message,
+	}
+
+	if details != nil {
+		if jsonBytes, err := json.Marshal(details); err == nil {
+			entry.Details = types.JSON(jsonBytes)
+		}
+	}
+
+	db.Create(&entry)
 }
