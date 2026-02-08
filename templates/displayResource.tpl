@@ -1,6 +1,12 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
+    <div x-data="{ entity: {{ resource|json }} }">
+        {% autoescape off %}
+            {{ resource.ResourceCategory.CustomHeader }}
+        {% endautoescape %}
+    </div>
+
     {% include "/partials/description.tpl" with description=resource.Description %}
 
     <div class="mb-6">
@@ -30,6 +36,12 @@
 {% endblock %}
 
 {% block sidebar %}
+    <div x-data="{ entity: {{ resource|json }} }">
+        {% autoescape off %}
+            {{ resource.ResourceCategory.CustomSidebar }}
+        {% endautoescape %}
+    </div>
+
     {% include "/partials/ownerDisplay.tpl" with owner=resource.Owner %}
     <p>{{ resource.FileSize | humanReadableSize }}</p>
     <a href="/v1/resource/view?id={{ resource.ID }}&v={{ resource.Hash }}#{{ resource.ContentType }}">

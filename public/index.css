@@ -406,12 +406,12 @@
 }
 
 .card-meta-link {
-    color: var(--nav-hover);
+    color: var(--nav-active);
     text-decoration: none;
 }
 
 .card-meta-link:hover {
-    color: var(--nav-active);
+    color: #115e59;
     text-decoration: underline;
 }
 

@@ -502,6 +502,7 @@ export class ApiClient {
     description?: string;
     ownerId?: number;
     tags?: number[];
+    resourceCategoryId?: number;
   }): Promise<{ ID: number; Name: string; ContentType: string }> {
     const fs = await import('fs');
     const pathModule = await import('path');
@@ -529,6 +530,9 @@ export class ApiClient {
     }
     if (data.ownerId) {
       multipartData.OwnerId = data.ownerId.toString();
+    }
+    if (data.resourceCategoryId) {
+      multipartData.ResourceCategoryId = data.resourceCategoryId.toString();
     }
 
     const response = await this.request.post(`${this.baseUrl}/v1/resource`, {

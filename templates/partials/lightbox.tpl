@@ -364,6 +364,27 @@
                         </div>
                     </template>
 
+                    <!-- Resource Category section -->
+                    <template x-if="$store.lightbox.resourceDetails?.resourceCategory">
+                        <div class="space-y-2">
+                            <label class="block text-sm font-medium text-gray-300 mb-1.5">Category</label>
+                            <a
+                                :href="'/resourceCategory?id=' + $store.lightbox.resourceDetails.resourceCategory.ID"
+                                class="text-indigo-400 hover:text-indigo-300 text-sm"
+                                x-text="$store.lightbox.resourceDetails.resourceCategory.Name"
+                            ></a>
+
+                            <!-- Custom sidebar template from ResourceCategory -->
+                            <template x-if="$store.lightbox.resourceDetails.resourceCategory.CustomSidebar">
+                                <div
+                                    x-data="{ entity: $store.lightbox.resourceDetails }"
+                                    x-html="$store.lightbox.resourceDetails.resourceCategory.CustomSidebar"
+                                    class="text-sm text-gray-300"
+                                ></div>
+                            </template>
+                        </div>
+                    </template>
+
                     <!-- Link to full details page -->
                     <div class="pt-4 border-t border-gray-700">
                         <a

@@ -361,6 +361,9 @@
   .left-4 {
     left: calc(var(--spacing) * 4);
   }
+  .isolate {
+    isolation: isolate;
+  }
   .z-10 {
     z-index: 10;
   }

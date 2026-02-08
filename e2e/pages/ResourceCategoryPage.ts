@@ -38,6 +38,7 @@ export class ResourceCategoryPage extends BasePage {
       customHeader?: string;
       customSidebar?: string;
       customSummary?: string;
+      customAvatar?: string;
       metaSchema?: string;
     }
   ): Promise<number> {
@@ -54,6 +55,9 @@ export class ResourceCategoryPage extends BasePage {
     }
     if (options?.customSummary) {
       await this.page.locator('textarea[name="CustomSummary"]').fill(options.customSummary);
+    }
+    if (options?.customAvatar) {
+      await this.page.locator('textarea[name="CustomAvatar"]').fill(options.customAvatar);
     }
     if (options?.metaSchema) {
       await this.page.locator('textarea[name="MetaSchema"]').fill(options.metaSchema);

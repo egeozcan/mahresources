@@ -31,12 +31,17 @@
                     {% endif %}
                     {% if entity.ResourceCategory %}
                     <span class="card-meta-item">
+                        {% autoescape off %}{{ entity.ResourceCategory.CustomAvatar }}{% endautoescape %}
                         <a href="/resourceCategory?id={{ entity.ResourceCategory.ID }}" class="card-meta-link">{{ entity.ResourceCategory.Name }}</a>
                     </span>
                     {% endif %}
                 </div>
             </div>
         </header>
+
+        {% autoescape off %}
+            {{ entity.ResourceCategory.CustomSummary }}
+        {% endautoescape %}
 
         {% if entity.Description %}
         <div class="card-description">
