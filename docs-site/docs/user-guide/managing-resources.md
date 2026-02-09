@@ -4,11 +4,9 @@ sidebar_position: 2
 
 # Managing Resources
 
-Resources are the core content type in Mahresources, representing files of any type. This guide covers uploading, viewing, editing, and managing your resources.
+Resources represent files of any type -- images, documents, videos, or anything else you want to store and organize.
 
 ## Uploading Resources
-
-There are several ways to add resources to Mahresources.
 
 ### File Upload
 
@@ -22,6 +20,7 @@ There are several ways to add resources to Mahresources.
    - **Groups** - Associate with groups
    - **Notes** - Link to existing notes
    - **Owner** - The group that owns this resource
+   - **Resource Category** - Classify the resource type
    - **Meta** - Custom key-value metadata
 5. Click **Save** to upload
 
@@ -44,26 +43,14 @@ The URL field accepts multiple URLs (one per line) for batch imports.
 For large files or slow connections, enable **Download in background**:
 
 - The download starts immediately but you can navigate away
-- Progress is tracked in the **Download Cockpit** (accessible from the footer)
+- Progress is tracked in the **Download Cockpit** (a floating button in the bottom-right corner of the screen)
 - Failed downloads can be retried from the cockpit
 
 ## Viewing Resources
 
 ### Resource List
 
-The resources list shows all uploaded files with:
-
-| Column | Description |
-|--------|-------------|
-| Checkbox | For bulk selection |
-| ID | Unique identifier |
-| Name | Display name (click to view details) |
-| Preview | Thumbnail image (click to view/open lightbox) |
-| Size | File size in human-readable format |
-| Created | Upload timestamp |
-| Updated | Last modification timestamp |
-| Original Name | Original filename at upload |
-| Original Location | Source URL (for URL imports) |
+Resources display as cards. Each card shows a thumbnail preview (click to open the lightbox), the resource name (click for the detail page), file size, owner, category with avatar, an expandable description, and tags with an inline "Edit Tags" button. A checkbox appears for bulk selection.
 
 ### Resource Detail Page
 
@@ -85,12 +72,7 @@ Click a resource name to view its detail page, showing:
 
 ### Previewing Files
 
-Click a resource thumbnail to:
-- Open images in the **lightbox** viewer
-- View PDFs in the browser
-- Download other file types
-
-The lightbox supports keyboard navigation (arrow keys) and lets you browse through all visible resources.
+Click a resource thumbnail to open images in the lightbox, view PDFs in the browser, or download other file types. The lightbox supports arrow-key navigation across all visible resources.
 
 ## Editing Resources
 
@@ -148,14 +130,9 @@ This re-reads the image file and updates the stored width/height values.
 
 ## Finding Similar Resources
 
-For image resources, Mahresources can find visually similar images using perceptual hashing.
+Mahresources uses perceptual hashing to find visually similar images. On any image resource's detail page, the **Similar Resources** section shows matches with thumbnails and similarity scores. Click **Merge Others To This** to combine duplicates into one resource.
 
-When viewing an image resource:
-- The **Similar Resources** section shows visually similar images
-- Each similar image displays a thumbnail and similarity score
-- Click **Merge Others To This** to combine similar images into one resource
-
-This feature requires the background hash worker to be enabled (the default setting).
+This requires the background hash worker (enabled by default).
 
 ## Deleting Resources
 
@@ -205,7 +182,7 @@ Custom metadata is searchable and can be used in filters.
 
 ### Metadata Keys Autocomplete
 
-When adding metadata, existing keys from other resources appear as suggestions, helping maintain consistent naming across your collection.
+When adding metadata, existing keys from other resources appear as autocomplete suggestions to help maintain consistent naming.
 
 ## Thumbnails
 
@@ -224,7 +201,7 @@ Thumbnails are generated at upload time and cached for fast display.
 
 The Download Cockpit manages background URL downloads:
 
-- Access it via the icon in the page footer
+- Access it via the floating button in the bottom-right corner, or press **Cmd/Ctrl+Shift+D**
 - View active, pending, and completed downloads
 - Retry failed downloads
 - Cancel pending downloads

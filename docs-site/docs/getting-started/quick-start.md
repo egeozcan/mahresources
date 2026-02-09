@@ -8,35 +8,35 @@ Get Mahresources running in under a minute.
 
 ## Ephemeral Mode (Try It Out)
 
-The fastest way to explore Mahresources is ephemeral mode, which uses in-memory storage. No files are written to disk, and all data is lost when you stop the server.
+Ephemeral mode uses in-memory storage -- nothing is written to disk, and all data is lost when the server stops.
 
 ```bash
 ./mahresources -ephemeral -bind-address=:8080
 ```
 
-Open your browser to [http://localhost:8080](http://localhost:8080) and start exploring.
+Open [http://localhost:8080](http://localhost:8080) in your browser.
 
 ## Your First Upload
 
-1. Navigate to **Resources** in the sidebar
-2. Click **Create Resource**
+1. Navigate to **Resources** in the top navigation bar
+2. Click the **Create** button
 3. Drag and drop a file or click to select one
 4. Add a name and optional description
 5. Click **Save**
 
-Your file is now stored and indexed. If it's an image, a thumbnail is automatically generated.
+Mahresources stores and indexes the file. Images get automatic thumbnails.
 
 ## Your First Note
 
-1. Navigate to **Notes** in the sidebar
-2. Click **Create Note**
+1. Navigate to **Notes** in the top navigation bar
+2. Click the **Create** button
 3. Enter a title and content
-4. Select a Note Type (or create one first under **Note Types**)
+4. Optionally select a Note Type (you can create one under **Note Types** in the Admin menu)
 5. Click **Save**
 
 ## Persistent Setup
 
-For real use, you'll want data to persist between restarts.
+To keep data between restarts, configure a database and file path.
 
 ### SQLite (Recommended for Getting Started)
 
@@ -64,7 +64,7 @@ This creates:
 
 ## Environment Variables
 
-Instead of command-line flags, you can use environment variables or a `.env` file:
+All flags can also be set as environment variables in a `.env` file:
 
 ```bash
 # .env file
@@ -74,11 +74,11 @@ FILE_SAVE_PATH=./files
 BIND_ADDRESS=:8080
 ```
 
-Then simply run:
+Then run:
 ```bash
 ./mahresources
 ```
 
 ## Next Steps
 
-Now that Mahresources is running, follow the [First Steps](./first-steps) guide to learn the basics of organizing your content.
+Next: [First Steps](./first-steps) -- learn how to organize content.

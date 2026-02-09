@@ -6,7 +6,7 @@ description: Backing up and restoring Mahresources data
 
 # Backup and Restore
 
-Regular backups are essential to protect your data. Mahresources stores data in two locations that must both be backed up.
+Mahresources stores data in two locations that must both be backed up: the database and the file storage directory.
 
 ## What to Back Up
 
@@ -22,7 +22,7 @@ The database contains all metadata: notes, groups, tags, resource metadata, and 
 The file storage directory contains all uploaded resources (images, documents, videos, etc.).
 
 - Default location: configured via `FILE_SAVE_PATH`
-- Includes thumbnails and the original files
+- Contains the original uploaded files (thumbnails are stored in the database, not on disk)
 
 :::warning
 Both the database AND files must be backed up together. Restoring only one will result in orphaned records or missing files.
@@ -126,14 +126,6 @@ rsync -av --delete /opt/mahresources/files/ /backup/mahresources-files/
 
 ```bash
 rsync -avz --delete /opt/mahresources/files/ user@backup-server:/backup/mahresources-files/
-```
-
-### Exclude Thumbnails (Optional)
-
-Thumbnails can be regenerated, so you may exclude them to save space:
-
-```bash
-rsync -av --delete --exclude='thumbs/' /opt/mahresources/files/ /backup/mahresources-files/
 ```
 
 ## Cloud Backup with rclone
@@ -252,6 +244,50 @@ Regularly test your backups by restoring to a test environment:
 ```
 
 This starts a read-only test instance without affecting your production data.
+
+## Docker Volume Backup
+
+If you use Docker named volumes, back them up by running a temporary container that mounts the volumes.
+
+### Backup Docker Volumes
+
+```bash
+# Backup the database volume
+docker run --rm \
+  -v app-data:/data:ro \
+  -v $(pwd)/backup:/backup \
+  alpine sh -c "cp /data/*.db /backup/"
+
+# Backup the files volume
+docker run --rm \
+  -v app-files:/files:ro \
+  -v $(pwd)/backup:/backup \
+  alpine sh -c "cp -r /files /backup/files"
+```
+
+### Restore Docker Volumes
+
+```bash
+# Stop the container first
+docker compose down
+
+# Restore database
+docker run --rm \
+  -v app-data:/data \
+  -v $(pwd)/backup:/backup:ro \
+  alpine sh -c "cp /backup/mahresources.db /data/"
+
+# Restore files
+docker run --rm \
+  -v app-files:/files \
+  -v $(pwd)/backup:/backup:ro \
+  alpine sh -c "cp -r /backup/files/* /files/"
+
+# Start the container
+docker compose up -d
+```
+
+If you use bind mounts instead of named volumes (e.g., `./data:/app/data`), you can back up the host directories directly using the file-based methods described above.
 
 ## Backup Checklist
 

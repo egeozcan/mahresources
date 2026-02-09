@@ -4,7 +4,7 @@ sidebar_position: 2
 
 # Resources API
 
-Resources represent files stored in Mahresources. The Resources API provides endpoints for uploading, downloading, searching, and managing files and their metadata.
+A Resource is a file -- image, document, video, or anything else -- stored with metadata, tags, and relationships to other entities.
 
 ## List Resources
 
@@ -38,6 +38,9 @@ GET /v1/resources
 | `MaxWidth` | integer | Maximum image width in pixels |
 | `MinHeight` | integer | Minimum image height in pixels |
 | `MaxHeight` | integer | Maximum image height in pixels |
+| `ResourceCategoryId` | integer | Filter by resource category ID |
+| `MetaQuery` | object[] | Filter by metadata conditions (key/value/operator) |
+| `MaxResults` | integer | Limit the number of results returned |
 | `SortBy` | string[] | Sort order |
 
 ### Example
@@ -402,29 +405,15 @@ curl -X POST http://localhost:8181/v1/resources/addTags \
   }'
 ```
 
-### Bulk Remove Tags
+### Bulk Remove Tags, Replace Tags, Add Groups
 
-Remove tags from multiple resources.
+These endpoints follow the same pattern as Bulk Add Tags, using `ID` for the resource IDs and `EditedId` for the entity IDs to add or remove:
 
-```
-POST /v1/resources/removeTags
-```
-
-### Bulk Replace Tags
-
-Replace all tags on resources with new set.
-
-```
-POST /v1/resources/replaceTags
-```
-
-### Bulk Add Groups
-
-Add groups to multiple resources.
-
-```
-POST /v1/resources/addGroups
-```
+| Endpoint | Description |
+|----------|-------------|
+| `POST /v1/resources/removeTags` | Remove tags from multiple resources |
+| `POST /v1/resources/replaceTags` | Replace all tags on multiple resources with a new set |
+| `POST /v1/resources/addGroups` | Add groups to multiple resources |
 
 ### Bulk Add Metadata
 
@@ -559,3 +548,216 @@ POST /v1/resource/editDescription?id={id}
 ```
 
 These endpoints accept the new value in the request body.
+
+---
+
+## Resource Versions API
+
+Resource versions track historical copies of a resource's file. When a new file is uploaded for an existing resource, the previous file is saved as a version.
+
+### List Versions
+
+Get all versions for a resource.
+
+```
+GET /v1/resource/versions?resourceId={id}
+```
+
+#### Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `resourceId` | integer | **Required.** The resource ID |
+
+#### Example
+
+```bash
+curl "http://localhost:8181/v1/resource/versions?resourceId=123"
+```
+
+### Get Single Version
+
+```
+GET /v1/resource/version?id={versionId}
+```
+
+#### Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | integer | **Required.** The version ID |
+
+### Upload New Version
+
+Upload a new file as a version of a resource.
+
+```
+POST /v1/resource/versions?resourceId={id}
+Content-Type: multipart/form-data
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `resourceId` | integer | **Required.** The resource ID (query param) |
+| `file` | file | **Required.** The file to upload |
+| `comment` | string | Optional comment describing the change |
+
+#### Example
+
+```bash
+curl -X POST "http://localhost:8181/v1/resource/versions?resourceId=123" \
+  -H "Accept: application/json" \
+  -F "file=@/path/to/new-version.jpg" \
+  -F "comment=Updated resolution"
+```
+
+### Restore Version
+
+Restore a previous version as the current resource file.
+
+```
+POST /v1/resource/version/restore
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `resourceId` | integer | **Required.** The resource ID |
+| `versionId` | integer | **Required.** The version ID to restore |
+| `comment` | string | Optional comment for the restore |
+
+#### Example
+
+```bash
+curl -X POST http://localhost:8181/v1/resource/version/restore \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{"resourceId": 123, "versionId": 5, "comment": "Reverting to original"}'
+```
+
+### Delete Version
+
+Delete a specific version.
+
+```
+DELETE /v1/resource/version?resourceId={resourceId}&versionId={versionId}
+```
+
+Or using POST:
+
+```
+POST /v1/resource/version/delete?resourceId={resourceId}&versionId={versionId}
+```
+
+#### Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `resourceId` | integer | **Required.** The resource ID |
+| `versionId` | integer | **Required.** The version ID |
+
+### Get Version File
+
+Download the file content of a specific version.
+
+```
+GET /v1/resource/version/file?versionId={versionId}
+```
+
+#### Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `versionId` | integer | **Required.** The version ID |
+
+#### Example
+
+```bash
+curl "http://localhost:8181/v1/resource/version/file?versionId=5" -o version-file.jpg
+```
+
+### Cleanup Versions
+
+Remove old versions for a specific resource based on age or count criteria.
+
+```
+POST /v1/resource/versions/cleanup
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `resourceId` | integer | **Required.** The resource ID |
+| `keepLast` | integer | Number of most recent versions to keep |
+| `olderThanDays` | integer | Delete versions older than N days |
+| `dryRun` | boolean | If true, return what would be deleted without deleting |
+
+#### Example
+
+```bash
+# Preview what would be cleaned up
+curl -X POST http://localhost:8181/v1/resource/versions/cleanup \
+  -H "Content-Type: application/json" \
+  -d '{"resourceId": 123, "keepLast": 5, "dryRun": true}'
+```
+
+#### Response
+
+```json
+{
+  "deletedVersionIds": [1, 2, 3],
+  "count": 3
+}
+```
+
+### Bulk Cleanup Versions
+
+Remove old versions across multiple resources.
+
+```
+POST /v1/resources/versions/cleanup
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `keepLast` | integer | Number of most recent versions to keep per resource |
+| `olderThanDays` | integer | Delete versions older than N days |
+| `ownerId` | integer | Only clean up versions for resources owned by this group |
+| `dryRun` | boolean | If true, return what would be deleted without deleting |
+
+#### Response
+
+```json
+{
+  "deletedByResource": {"123": [1, 2], "456": [3]},
+  "totalDeleted": 3
+}
+```
+
+### Compare Versions
+
+Compare two versions of a resource.
+
+```
+GET /v1/resource/versions/compare?resourceId={id}&v1={versionId1}&v2={versionId2}
+```
+
+#### Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `resourceId` | integer | **Required.** The resource ID |
+| `v1` | integer | **Required.** First version ID |
+| `v2` | integer | **Required.** Second version ID |
+
+#### Example
+
+```bash
+curl "http://localhost:8181/v1/resource/versions/compare?resourceId=123&v1=1&v2=5"
+```

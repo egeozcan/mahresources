@@ -4,7 +4,7 @@ sidebar_position: 5
 
 # Custom Block Types
 
-The block editor uses an extensible block type system that allows contributors to add new types of content blocks. Each block type consists of a backend Go implementation for validation and storage, plus a frontend Alpine.js component for rendering and editing.
+The block editor uses an extensible block type system. Contributors can add new content block types by implementing a backend Go type for validation and storage, plus a frontend Alpine.js component for rendering and editing.
 
 ## Overview
 
@@ -18,6 +18,7 @@ Block types define how different types of content (text, headings, images, table
 - `references` - Links to groups
 - `todos` - Checklist items
 - `table` - Tabular data
+- `calendar` - Calendar with iCal sources and custom events
 
 ## Architecture
 
@@ -396,8 +397,8 @@ Understanding the difference between content and state is crucial:
 }
 ```
 
-This separation allows:
-- Checking/unchecking items without modifying the content
+With this separation:
+- Checking/unchecking items does not modify content
 - Different users can have different checked states
 - Content changes are tracked separately from state changes
 

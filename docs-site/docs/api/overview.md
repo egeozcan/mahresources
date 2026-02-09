@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # API Overview
 
-Mahresources provides a comprehensive REST API for programmatic access to all features. The API supports both JSON and form-encoded requests, with responses available in JSON format.
+All features are accessible via a REST API. The API supports both JSON and form-encoded requests, with responses available in JSON format.
 
 :::danger No Authentication
 
@@ -28,8 +28,6 @@ Mahresources supports a dual response format system. The same endpoints can retu
 
 ### Getting JSON Responses
 
-There are two ways to request JSON responses:
-
 **1. Add `.json` suffix to the URL:**
 
 ```bash
@@ -45,6 +43,14 @@ curl http://localhost:8181/v1/resources.json
 ```bash
 curl -H "Accept: application/json" http://localhost:8181/v1/resources
 ```
+
+**3. Add `.body` suffix to get just the HTML body (no layout wrapper):**
+
+```bash
+curl http://localhost:8181/v1/resources.body
+```
+
+This is useful for embedding partial HTML content or HTMX-style updates.
 
 ## Request Content Types
 
@@ -142,7 +148,11 @@ curl http://localhost:8181/v1/resource.json?id=123
 curl -X POST http://localhost:8181/v1/tag/delete?Id=456
 ```
 
-Note: Some endpoints use `id` (lowercase) and others use `Id` (capitalized). Refer to the specific endpoint documentation.
+:::caution Inconsistent ID casing
+
+Some endpoints use `id` (lowercase) and others use `Id` (capitalized). This is a known inconsistency in the API. Check the specific endpoint documentation for the correct casing.
+
+:::
 
 ## OpenAPI Specification
 
@@ -168,4 +178,4 @@ The API is organized into these categories:
 - **[Resources](./resources)** - File management (upload, download, metadata)
 - **[Notes](./notes)** - Text content and note types
 - **[Groups](./groups)** - Hierarchical organization and relations
-- **[Other Endpoints](./other-endpoints)** - Tags, Categories, Queries, Search, Logs
+- **[Tags, Categories, Queries & More](./other-endpoints)** - Tags, Categories, Queries, Search, Logs, Download Queue

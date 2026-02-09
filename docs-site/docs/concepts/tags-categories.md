@@ -4,7 +4,7 @@ sidebar_position: 5
 
 # Tags and Categories
 
-Tags and Categories provide different organizational mechanisms in Mahresources. Tags offer flat labeling across entities, while Categories define group types with custom presentation.
+Tags and Categories organize content differently. Tags are flat labels that apply across Resources, Notes, and Groups. Categories define group types with custom presentation and metadata schemas.
 
 ## Tags
 
@@ -293,13 +293,80 @@ Query groups by category:
 GET /v1/groups?categoryId=1
 ```
 
+---
+
+## Resource Categories
+
+Resource Categories work like Categories but apply to Resources instead of Groups. They define types of Resources with custom presentation and optional metadata schemas.
+
+### Resource Category Properties
+
+| Property | Description |
+|----------|-------------|
+| `name` | Unique resource category name |
+| `description` | Explanation of the category |
+| `customHeader` | HTML template for resource page headers |
+| `customSidebar` | HTML template for resource page sidebars |
+| `customSummary` | HTML template for list views |
+| `customAvatar` | HTML template for resource avatars/icons |
+| `metaSchema` | JSON Schema for metadata validation |
+
+### Characteristics
+
+- **Resource-only**: Resource Categories apply only to Resources
+- **Unique names**: Each name must be unique
+- **One-to-many**: A resource category can have multiple resources, but each resource has at most one resource category
+- **Custom presentation**: Templates customize how resources appear (same system as Categories for Groups)
+- **Deletion behavior**: Deleting a resource category sets `resourceCategoryId` to NULL on associated resources
+
+### Use Cases
+
+| Resource Category | Description | Custom Fields |
+|-------------------|-------------|---------------|
+| Receipt | Purchase receipts | Vendor, amount, date |
+| Screenshot | Screen captures | Application, OS |
+| Invoice | Business invoices | Client, due date, amount |
+| Certificate | Certificates/diplomas | Issuer, expiry date |
+
+### Resource Category Operations
+
+#### Creating Resource Categories
+
+```
+POST /v1/resourceCategory
+Content-Type: application/json
+
+{
+  "name": "Receipt",
+  "description": "Purchase receipts",
+  "metaSchema": "{...}"
+}
+```
+
+#### Assigning Resource Categories
+
+Set resource category when creating or updating a resource:
+
+```
+POST /v1/resource
+Content-Type: multipart/form-data
+
+resourceCategoryId: 1
+```
+
+#### Filtering by Resource Category
+
+```
+GET /v1/resources?resourceCategoryId=1
+```
+
 ## Comparison
 
-| Aspect | Tags | Categories |
-|--------|------|------------|
-| Applies to | Resources, Notes, Groups | Groups only |
-| Cardinality | Many-to-many | One-to-many |
-| Structure | Flat | Single level |
-| Presentation | None | Custom templates |
-| Validation | None | JSON Schema |
-| Purpose | Cross-cutting labels | Type definition |
+| Aspect | Tags | Categories | Resource Categories |
+|--------|------|------------|---------------------|
+| Applies to | Resources, Notes, Groups | Groups only | Resources only |
+| Cardinality | Many-to-many | One-to-many | One-to-many |
+| Structure | Flat | Single level | Single level |
+| Presentation | None | Custom templates | Custom templates |
+| Validation | None | JSON Schema | JSON Schema |
+| Purpose | Cross-cutting labels | Group type definition | Resource type definition |

@@ -4,7 +4,7 @@ sidebar_position: 3
 
 # Notes
 
-Notes are text-based entities for storing written content. They support rich text, date ranges, and attachments through resource relationships.
+A Note holds text content -- meeting minutes, journal entries, research, or any written material. Mahresources renders Notes as Markdown, supports optional date ranges, and attaches Resources (files) to them.
 
 ## Note Properties
 
@@ -16,6 +16,8 @@ Notes are text-based entities for storing written content. They support rich tex
 | `startDate` | Optional start date |
 | `endDate` | Optional end date |
 | `noteTypeId` | Optional type for categorization |
+| `shareToken` | Token for public sharing (see [Note Sharing](../features/note-sharing.md)) |
+| `blocks` | Block-based content units (see [Block-Based Content](#block-based-content)) |
 
 ## Content Format
 
@@ -51,17 +53,17 @@ Notes support standard Markdown formatting:
 
 ## Block-Based Content
 
-Notes support an optional block-based content structure that enables rich, interactive content beyond plain text or Markdown.
+Beyond plain text or Markdown, Mahresources supports an optional block-based content structure for rich, interactive content.
 
 ### What Are Blocks?
 
-Blocks are structured content units within a note. Each block has a specific type and stores its data as JSON. This allows for interactive elements like to-do lists, image galleries, and sortable tables that maintain state between sessions.
+Blocks are structured content units within a note. Each block has a specific type and stores its data as JSON -- enabling interactive elements like to-do lists, image galleries, and sortable tables that maintain state between sessions.
 
 ### Block Properties
 
 | Property | Description |
 |----------|-------------|
-| `type` | Block type (text, heading, divider, gallery, references, todos, table) |
+| `type` | Block type (text, heading, divider, gallery, references, todos, table, calendar) |
 | `content` | JSON data edited in edit mode |
 | `state` | JSON data modified while viewing |
 | `position` | Lexicographic string for ordering |
@@ -73,7 +75,7 @@ Blocks separate **content** (what you edit) from **state** (runtime changes):
 - **Content**: Data changed in edit mode. Examples: todo item labels, heading text, table columns
 - **State**: Data modified while viewing. Examples: which todos are checked, table sort order
 
-This separation allows users to interact with blocks (checking items, sorting tables) without entering edit mode.
+Users can interact with blocks (checking items, sorting tables) without entering edit mode.
 
 ### Block Types
 
@@ -99,7 +101,7 @@ Section headings with configurable level.
 }
 ```
 
-Supported levels: 1, 2, or 3.
+Supported levels: 1 through 6.
 
 #### Divider Block
 
@@ -183,9 +185,53 @@ Sortable data table.
 - `content.columns` and `content.rows`: Table structure (edited in edit mode)
 - `state.sortColumn` and `state.sortDir`: Current sort settings (changed by clicking headers)
 
+#### Calendar Block
+
+Displays calendar events from iCal sources or custom entries.
+
+```json
+{
+  "type": "calendar",
+  "content": {
+    "calendars": [
+      {
+        "id": "work",
+        "name": "Work Calendar",
+        "color": "#3b82f6",
+        "source": { "type": "url", "url": "https://example.com/cal.ics" }
+      },
+      {
+        "id": "local",
+        "name": "Local File",
+        "color": "#10b981",
+        "source": { "type": "resource", "resourceId": 42 }
+      }
+    ]
+  },
+  "state": {
+    "view": "month",
+    "currentDate": "2024-06-15",
+    "customEvents": [
+      {
+        "id": "evt1",
+        "title": "Team Meeting",
+        "start": "2024-06-20T10:00:00Z",
+        "end": "2024-06-20T11:00:00Z",
+        "allDay": false,
+        "calendarId": "custom"
+      }
+    ]
+  }
+}
+```
+
+- `content.calendars`: Calendar sources -- each with an `id`, `name`, optional hex `color`, and a `source` (either `url` or `resource` with a `resourceId` pointing to an iCal file)
+- `state.view`: Current view mode (`month`, `week`, or `agenda`)
+- `state.customEvents`: User-created events (max 500 per block). Each event must have `calendarId` set to `"custom"`
+
 ### Position Ordering
 
-Blocks use lexicographic position strings (e.g., "a", "b", "c" or "aaa", "aab") for ordering. This allows inserting blocks between existing ones without renumbering:
+Blocks use lexicographic position strings (e.g., "a", "b", "c" or "aaa", "aab") for ordering. Blocks can be inserted between existing ones without renumbering:
 
 | Position | Block |
 |----------|-------|
@@ -195,14 +241,14 @@ Blocks use lexicographic position strings (e.g., "a", "b", "c" or "aaa", "aab") 
 
 ### Backward Compatibility
 
-For backward compatibility with existing notes:
+Mahresources maintains backward compatibility with existing notes:
 
 - A note's `description` field syncs bidirectionally with its first text block
 - Notes without blocks render the `description` field as before
 - Adding blocks to an existing note preserves the description as the first text block
 - Editing the first text block updates the description field
 
-This ensures older clients and integrations continue to work while new features use the block system.
+Older clients and integrations continue to work while new features use the block system.
 
 ## Date Ranges
 
@@ -229,12 +275,7 @@ Dates enable filtering and sorting notes chronologically.
 
 ## Note Types
 
-Note Types provide categorization and custom presentation:
-
-### Purpose
-- Group similar notes together
-- Apply consistent styling
-- Enable type-specific filtering
+Note Types group similar notes and apply consistent styling. Mahresources uses them for type-specific filtering and custom presentation.
 
 ### Note Type Properties
 
@@ -249,7 +290,7 @@ Note Types provide categorization and custom presentation:
 
 ### Custom Templates
 
-Note Types can include custom HTML templates that are rendered using Pongo2 (Django-like) syntax:
+Note Types can include custom HTML templates rendered with Pongo2 (Django-like) syntax:
 
 ```html
 <!-- customHeader example -->
@@ -266,17 +307,7 @@ Templates have access to:
 
 ## Attachments
 
-Notes can have attached Resources through many-to-many relationships:
-
-### Attaching Resources
-- Link existing resources to a note
-- Resources appear in the note's attachments section
-- One resource can be attached to multiple notes
-
-### Use Cases
-- Reference documents for meeting notes
-- Images to illustrate content
-- Supporting files for research notes
+Mahresources links Resources to Notes through many-to-many relationships. A resource can be attached to multiple notes, and each note can have multiple attachments -- reference documents for meeting minutes, images to illustrate content, or supporting files for research.
 
 ## Relationships
 
@@ -327,30 +358,4 @@ Filter notes with these parameters:
 
 ## API Operations
 
-### Create Note
-
-```
-POST /v1/note
-Content-Type: application/json
-
-{
-  "name": "Meeting Notes",
-  "description": "# Agenda\n\n- Item 1\n- Item 2",
-  "ownerId": 123,
-  "noteTypeId": 1,
-  "startDate": "2024-01-15T10:00:00Z"
-}
-```
-
-### Query Notes
-
-```
-GET /v1/notes?noteTypeId=1&ownerId=123
-```
-
-### Bulk Operations
-
-- `POST /v1/notes/addTags` - Add tags to notes
-- `POST /v1/notes/removeTags` - Remove tags from notes
-- `POST /v1/notes/addMeta` - Merge metadata into notes
-- `POST /v1/notes/delete` - Delete multiple notes
+For full API details -- creating, querying, and bulk operations on Notes -- see [API: Notes](../api/notes.md).

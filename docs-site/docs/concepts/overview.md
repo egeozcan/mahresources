@@ -4,11 +4,9 @@ sidebar_position: 1
 
 # Core Concepts Overview
 
-Mahresources organizes your personal information through a set of interconnected entity types. Understanding how these entities relate to each other is key to using the system effectively.
+Mahresources has seven entity types. Here is how they connect.
 
 ## Entity Types
-
-Mahresources manages the following primary entities:
 
 | Entity | Purpose | Example Uses |
 |--------|---------|--------------|
@@ -22,7 +20,7 @@ Mahresources manages the following primary entities:
 
 ## Ownership vs Relationships
 
-Mahresources distinguishes between two types of connections:
+Mahresources has two types of connections:
 
 ### Ownership (Hierarchical)
 
@@ -30,7 +28,7 @@ Ownership creates a parent-child hierarchy. Each entity can have one owner:
 
 - A **Group** can own other Groups, Notes, and Resources
 - Owned entities appear in the owner's "Owned" section
-- Deleting an owner cascades to owned entities (with some exceptions)
+- Deleting an owner cascades to owned Groups and Notes, but owned Resources have their owner set to NULL (preserved)
 
 ```
 Project Alpha (Group)
@@ -94,7 +92,7 @@ Metadata supports:
 
 ### Full-Text Search
 
-Mahresources provides global search across all entity types:
+Mahresources searches across all entity types:
 
 - Access via keyboard shortcut: `Cmd/Ctrl + K`
 - Searches names and descriptions
@@ -113,9 +111,7 @@ All API endpoints support both HTML and JSON responses:
 - HTML: Default browser response with full UI
 - JSON: Add `.json` suffix or use `Accept: application/json` header
 
-This enables:
-- Web UI for interactive use
-- API access for automation and integrations
+The web UI serves HTML by default; automation clients get JSON.
 
 ## Entity Lifecycle
 
@@ -144,7 +140,10 @@ Mahresources supports bulk operations on multiple items:
 
 ### Deletion
 
-Deletion behavior varies by entity type and relationships:
-- Tags can only be deleted if not in use
-- Groups can be deleted, affecting owned entities
-- Resources and Notes can be deleted independently
+| Entity | Deletion Behavior |
+|--------|-------------------|
+| **Tag** | Fails if any entity still uses the tag |
+| **Group** | Cascades to owned Groups and Notes; owned Resources have their owner set to NULL (preserved) |
+| **Resource** | Deleted independently; file removed from storage |
+| **Note** | Deleted independently |
+| **Category** | Fails if any Group still uses the category |

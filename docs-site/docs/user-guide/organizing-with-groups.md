@@ -4,7 +4,7 @@ sidebar_position: 4
 
 # Organizing with Groups
 
-Groups are the primary organizational structure in Mahresources. They support hierarchical nesting, can own other entities, and form relationships with each other through typed relations.
+Groups are the primary organizational structure. They support hierarchical nesting, own other entities, and form typed relationships with each other.
 
 ## Understanding Groups
 
@@ -198,7 +198,7 @@ Note: Cloning does not copy owned content or relations.
 
 ### Schema-Based Metadata
 
-When the group's category has a metadata schema defined, the edit form shows structured fields matching the schema. This ensures consistent data across groups of the same type.
+When the group's category has a metadata schema defined, the edit form shows structured fields matching the schema instead of free-form inputs.
 
 ### Free-Form Metadata
 

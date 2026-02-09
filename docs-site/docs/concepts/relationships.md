@@ -4,7 +4,7 @@ sidebar_position: 6
 
 # Relationships
 
-Relationships in Mahresources enable graph-like connections between Groups. Unlike simple ownership or many-to-many relations, typed relationships add semantic meaning to connections.
+Typed relationships add semantic meaning to connections between Groups -- beyond simple ownership or many-to-many relations. Mahresources stores each relationship as a directed edge with a named type, forming a navigable graph.
 
 ## Relationship Types (RelationTypes)
 
@@ -39,7 +39,7 @@ RelationTypes can optionally constrain which categories of groups can participat
 - **toCategoryId**: If set, only groups of this category can be the target
 - **No constraint**: Any group can participate when left empty
 
-This enables domain modeling:
+Examples:
 - "works at" only makes sense from Person to Company
 - "located in" can apply to any group going to a Location
 
@@ -98,7 +98,7 @@ Content-Type: application/json
 
 ## Graph Navigation
 
-Relations enable graph-like traversal between groups:
+Mahresources traverses relations as a graph between groups:
 
 ```
 John Smith (Person)
@@ -176,89 +176,7 @@ Event "held at" Venue
 
 ## API Operations
 
-### Create RelationType
-
-```
-POST /v1/relationType
-Content-Type: application/json
-
-{
-  "name": "works at",
-  "description": "Employment relationship",
-  "fromCategoryId": 1,
-  "toCategoryId": 2
-}
-```
-
-### Create Inverse Pair
-
-Create both directions of a relationship:
-
-```
-POST /v1/relationType
-Content-Type: application/json
-
-{
-  "name": "works at",
-  "fromCategoryId": 1,
-  "toCategoryId": 2
-}
-
-// Returns id: 1
-
-POST /v1/relationType
-Content-Type: application/json
-
-{
-  "name": "employs",
-  "fromCategoryId": 2,
-  "toCategoryId": 1,
-  "backRelationId": 1
-}
-
-// Then update the first to link back
-PUT /v1/relationType
-Content-Type: application/json
-
-{
-  "id": 1,
-  "backRelationId": 2
-}
-```
-
-### Create Relation
-
-```
-POST /v1/relation
-Content-Type: application/json
-
-{
-  "fromGroupId": 100,
-  "toGroupId": 200,
-  "relationTypeId": 1
-}
-```
-
-### Query Relations
-
-Get all relations of a type:
-
-```
-GET /v1/relations?relationTypeId=1
-```
-
-Get relations for a specific group:
-
-```
-GET /v1/relations?fromGroupId=100
-GET /v1/relations?toGroupId=200
-```
-
-### Delete Relation
-
-```
-DELETE /v1/relation?id=123
-```
+For full API details -- creating relation types, setting up inverse pairs, creating relations, and querying -- see [API: Other Endpoints](../api/other-endpoints.md).
 
 ## Best Practices
 

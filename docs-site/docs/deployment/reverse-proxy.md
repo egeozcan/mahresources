@@ -145,7 +145,7 @@ services:
       - traefik-certs:/letsencrypt
 
   mahresources:
-    image: ghcr.io/egeozcan/mahresources:latest
+    build: .                     # build from local Dockerfile
     volumes:
       - ./data/db:/data/db
       - ./data/files:/data/files

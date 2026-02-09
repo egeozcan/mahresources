@@ -10,19 +10,31 @@ description: Running Mahresources in Docker containers
 Mahresources has **no built-in authentication**. Never expose Docker containers directly to the internet. Always use a reverse proxy with authentication. See [Reverse Proxy](./reverse-proxy.md) for setup instructions.
 :::
 
+## Building the Image
+
+No pre-built Docker image is published. Build it locally from the repository root:
+
+```bash
+git clone https://github.com/egeozcan/mahresources.git
+cd mahresources
+docker build -t mahresources .
+```
+
+Or use the [template Dockerfile](#template-dockerfile) below if you want to customize the build.
+
 ## Quick Start with Docker Run
 
 ```bash
 docker run -d \
   --name mahresources \
   -p 8181:8181 \
-  -v mahresources-data:/data/db \
-  -v mahresources-files:/data/files \
+  -v mahresources-data:/app/data \
+  -v mahresources-files:/app/files \
   -e DB_TYPE=SQLITE \
-  -e DB_DSN=/data/db/mahresources.db \
-  -e FILE_SAVE_PATH=/data/files \
-  -e BIND_ADDRESS=:8181 \
-  ghcr.io/egeozcan/mahresources:latest
+  -e DB_DSN=/app/data/mahresources.db \
+  -e FILE_SAVE_PATH=/app/files \
+  -e BIND_ADDRESS=0.0.0.0:8181 \
+  mahresources
 ```
 
 ## Docker Compose
@@ -32,27 +44,25 @@ docker run -d \
 Create a `docker-compose.yml` file:
 
 ```yaml
-version: '3.8'
-
 services:
   mahresources:
-    image: ghcr.io/egeozcan/mahresources:latest
+    build: .                     # build from local Dockerfile
     container_name: mahresources
     restart: unless-stopped
     ports:
       - "8181:8181"
     volumes:
-      - ./data/db:/data/db
-      - ./data/files:/data/files
+      - app-data:/app/data       # SQLite database
+      - app-files:/app/files     # uploaded files
     environment:
       - DB_TYPE=SQLITE
-      - DB_DSN=/data/db/mahresources.db
-      - FILE_SAVE_PATH=/data/files
-      - BIND_ADDRESS=:8181
+      - DB_DSN=/app/data/mahresources.db
+      - FILE_SAVE_PATH=/app/files
+      - BIND_ADDRESS=0.0.0.0:8181
 
 volumes:
-  mahresources-db:
-  mahresources-files:
+  app-data:    # persist database across restarts
+  app-files:   # persist uploaded files across restarts
 ```
 
 Start the service:
@@ -63,20 +73,18 @@ docker compose up -d
 
 ### PostgreSQL Configuration
 
-For larger deployments or when you need better concurrent access:
+Use PostgreSQL when you need concurrent access or have a large collection:
 
 ```yaml
-version: '3.8'
-
 services:
   mahresources:
-    image: ghcr.io/egeozcan/mahresources:latest
+    build: .                     # build from local Dockerfile
     container_name: mahresources
     restart: unless-stopped
     ports:
       - "8181:8181"
     volumes:
-      - ./data/files:/data/files
+      - ./data/files:/data/files    # uploaded files (bind mount)
     environment:
       - DB_TYPE=POSTGRES
       - DB_DSN=host=postgres user=mahresources password=secretpassword dbname=mahresources sslmode=disable
@@ -84,7 +92,7 @@ services:
       - BIND_ADDRESS=:8181
     depends_on:
       postgres:
-        condition: service_healthy
+        condition: service_healthy  # wait for DB to be ready
 
   postgres:
     image: postgres:16-alpine
@@ -94,7 +102,7 @@ services:
       - postgres-data:/var/lib/postgresql/data
     environment:
       - POSTGRES_USER=mahresources
-      - POSTGRES_PASSWORD=secretpassword
+      - POSTGRES_PASSWORD=secretpassword    # change this
       - POSTGRES_DB=mahresources
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U mahresources"]
@@ -108,7 +116,7 @@ volumes:
 
 ## Environment Variables
 
-All configuration options can be set via environment variables:
+All configuration options can be set via environment variables. The most common:
 
 | Variable | Description | Example |
 |----------|-------------|---------|
@@ -123,42 +131,64 @@ All configuration options can be set via environment variables:
 
 ## Volume Mounts
 
-Two volumes are essential for persistent data:
+Two volumes must persist across container restarts:
 
-1. **Database volume** (`/data/db`): Stores the SQLite database file
-2. **Files volume** (`/data/files`): Stores uploaded resources
+1. **Database volume** (`/app/data`) -- the SQLite database file
+2. **Files volume** (`/app/files`) -- uploaded resources
 
-:::tip
-Use named volumes or bind mounts to ensure data persists across container restarts and updates.
-:::
+Use named volumes (as shown above) or bind mounts.
 
 ## Updating
 
-To update to the latest version:
+Pull the latest source and rebuild:
 
 ```bash
-docker compose pull
+git pull
+docker compose build
 docker compose up -d
 ```
 
-## Building Your Own Image
+## Template Dockerfile
 
-If you need to build the image yourself:
+The repository includes a Dockerfile. If you need to customize it, here is the template:
 
 ```dockerfile
-FROM golang:1.22-alpine AS builder
-RUN apk add --no-cache git nodejs npm
+# Stage 1: Build frontend assets
+FROM node:20-alpine AS frontend-builder
 WORKDIR /app
-COPY . .
-RUN npm install && npm run build
-RUN go build --tags 'json1 fts5' -o mahresources
+COPY package*.json ./
+RUN npm ci
+COPY src/ ./src/
+COPY index.css vite.config.js postcss.config.js ./
+RUN npm run build-css && npm run build-js
 
-FROM alpine:latest
-RUN apk add --no-cache ffmpeg libreoffice
-COPY --from=builder /app/mahresources /usr/local/bin/
-COPY --from=builder /app/public /app/public
-COPY --from=builder /app/templates /app/templates
+# Stage 2: Build Go binary
+FROM golang:1.22-alpine AS go-builder
+RUN apk add --no-cache gcc musl-dev sqlite-dev
 WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+COPY --from=frontend-builder /app/public/dist ./public/dist
+COPY --from=frontend-builder /app/public/tailwind.css ./public/tailwind.css
+RUN CGO_ENABLED=1 go build --tags 'json1 fts5' -o mahresources
+
+# Stage 3: Runtime
+FROM alpine:3.19
+RUN apk add --no-cache sqlite-libs ca-certificates
+WORKDIR /app
+COPY --from=go-builder /app/mahresources .
+COPY --from=go-builder /app/templates ./templates
+COPY --from=go-builder /app/public ./public
+RUN mkdir -p /app/data /app/files
+ENV DB_TYPE=SQLITE
+ENV DB_DSN=/app/data/mahresources.db
+ENV FILE_SAVE_PATH=/app/files
+ENV BIND_ADDRESS=0.0.0.0:8181
 EXPOSE 8181
-CMD ["mahresources"]
+CMD ["./mahresources"]
 ```
+
+:::note
+The `gcc`, `musl-dev`, and `sqlite-dev` packages are required in the Go build stage because SQLite support requires CGO. The runtime stage only needs `sqlite-libs`.
+:::

@@ -432,7 +432,7 @@ POST /v1/relationType/edit
 
 ### Parameters
 
-Same as create, but include `Id` to identify the relation type.
+Same as create, but include the `Id` field to identify which relation type to update.
 
 ## Delete Relation Type
 

@@ -2,9 +2,9 @@
 sidebar_position: 5
 ---
 
-# Other API Endpoints
+# Tags, Categories, Queries & More
 
-This page covers Tags, Categories, Queries, Search, Logs, and Download Queue endpoints.
+This page covers Tags, Categories, Resource Categories, Queries, Search, Logs, and Download Queue endpoints.
 
 ---
 
@@ -183,6 +183,93 @@ POST /v1/category/editDescription?id={id}
 
 ---
 
+## Resource Categories API
+
+Resource categories define types for resources with optional display customizations and metadata schemas.
+
+### List Resource Categories
+
+```
+GET /v1/resourceCategories
+```
+
+#### Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `page` | integer | Page number (default: 1) |
+| `Name` | string | Filter by name |
+| `Description` | string | Filter by description |
+
+#### Example
+
+```bash
+curl http://localhost:8181/v1/resourceCategories.json
+```
+
+#### Response
+
+```json
+[
+  {
+    "ID": 1,
+    "Name": "Photo",
+    "Description": "Photograph files",
+    "CustomHeader": "...",
+    "CustomSidebar": "...",
+    "CustomSummary": "...",
+    "CustomAvatar": "...",
+    "MetaSchema": "..."
+  }
+]
+```
+
+### Create or Update Resource Category
+
+```
+POST /v1/resourceCategory
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `ID` | integer | Resource category ID (include to update) |
+| `Name` | string | Resource category name |
+| `Description` | string | Description |
+| `CustomHeader` | string | Custom header template |
+| `CustomSidebar` | string | Custom sidebar template |
+| `CustomSummary` | string | Custom summary template |
+| `CustomAvatar` | string | Custom avatar template |
+| `MetaSchema` | string | JSON schema for metadata validation |
+
+#### Example
+
+```bash
+curl -X POST http://localhost:8181/v1/resourceCategory \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{
+    "Name": "Photo",
+    "Description": "Photograph files"
+  }'
+```
+
+### Delete Resource Category
+
+```
+POST /v1/resourceCategory/delete?Id={id}
+```
+
+### Inline Editing
+
+```
+POST /v1/resourceCategory/editName?id={id}
+POST /v1/resourceCategory/editDescription?id={id}
+```
+
+---
+
 ## Queries API
 
 Queries are saved SQL queries that can be executed to generate custom reports.
@@ -298,7 +385,7 @@ GET /v1/search
 |-----------|------|-------------|
 | `q` | string | **Required.** Search query |
 | `limit` | integer | Maximum results (default: 20) |
-| `types` | string | Comma-separated entity types to search |
+| `types` | string[] | Entity types to search (repeated query param, e.g. `types=resources&types=notes`) |
 
 #### Example
 
@@ -310,7 +397,7 @@ curl "http://localhost:8181/v1/search.json?q=project"
 curl "http://localhost:8181/v1/search.json?q=project&limit=50"
 
 # Search specific types
-curl "http://localhost:8181/v1/search.json?q=project&types=resources,notes"
+curl "http://localhost:8181/v1/search.json?q=project&types=resources&types=notes"
 ```
 
 #### Response
@@ -439,7 +526,7 @@ curl "http://localhost:8181/v1/logs/entity.json?entityType=resource&entityId=123
 
 ## Download Queue API
 
-Manage background downloads for remote resources.
+Manage background downloads for remote resources. The queue supports up to 100 jobs and runs up to 3 concurrent downloads. Completed jobs are retained for 1 hour before eviction.
 
 ### Submit Download
 
@@ -453,7 +540,7 @@ POST /v1/download/submit
 
 Same as `POST /v1/resource/remote`, but always queues for background download.
 
-Multiple URLs can be submitted by separating them with newlines in the `URL` field.
+Submit multiple URLs by separating them with newlines in the `URL` field. Each URL becomes a separate job.
 
 #### Example
 
@@ -495,37 +582,16 @@ curl http://localhost:8181/v1/download/queue.json
 ]
 ```
 
-### Cancel Download
+### Job Operations
 
-Cancel a pending or in-progress download.
+| Endpoint | Description |
+|----------|-------------|
+| `POST /v1/download/cancel?id={job_id}` | Cancel a pending or in-progress download |
+| `POST /v1/download/pause?id={job_id}` | Pause a download job |
+| `POST /v1/download/resume?id={job_id}` | Resume a paused download (restarts from the beginning) |
+| `POST /v1/download/retry?id={job_id}` | Retry a failed or cancelled download |
 
-```
-POST /v1/download/cancel?id={job_id}
-```
-
-### Pause Download
-
-Pause a download job.
-
-```
-POST /v1/download/pause?id={job_id}
-```
-
-### Resume Download
-
-Resume a paused download (restarts from beginning).
-
-```
-POST /v1/download/resume?id={job_id}
-```
-
-### Retry Download
-
-Retry a failed or cancelled download.
-
-```
-POST /v1/download/retry?id={job_id}
-```
+A download can fail due to network errors, connection timeouts (default 30s), idle timeouts (default 60s), or exceeding the overall timeout (default 30m). Configure these with the `-remote-connect-timeout`, `-remote-idle-timeout`, and `-remote-overall-timeout` flags.
 
 ### Download Events (SSE)
 

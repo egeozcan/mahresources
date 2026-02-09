@@ -4,19 +4,11 @@ sidebar_position: 6
 
 # Bulk Operations
 
-Bulk operations let you modify multiple items at once. Mahresources supports bulk tag management, metadata updates, group assignments, and deletion across resources, notes, and groups.
+Bulk operations let you modify multiple resources or groups at once: add/remove tags, update metadata, assign groups, or delete.
 
 ## Selecting Items
 
-Before performing bulk operations, you need to select the items you want to modify.
-
-### Individual Selection
-
 Click the checkbox next to any item in a list view to select it.
-
-### Keyboard Selection
-
-With items selected, use keyboard shortcuts:
 
 | Action | Method |
 |--------|--------|
@@ -44,99 +36,56 @@ Click **Deselect All** or clear individual checkboxes to deselect items.
 
 ## The Bulk Editor
 
-When one or more items are selected, the bulk editor appears above the list with available operations.
-
-### Editor Interface
-
-The bulk editor shows:
-- **Deselect** button
-- **Select All** button
-- Operation buttons (collapsed by default)
-- Active operation form (when expanded)
-
-Click an operation button to expand its form. Click again to collapse.
+When you select one or more items, the bulk editor appears inline above the list. It shows all available operations simultaneously (Add Tag, Remove Tag, Add Metadata, etc.) along with Deselect and Select All buttons.
 
 ### Available Operations by Entity Type
 
-| Operation | Resources | Notes | Groups |
-|-----------|:---------:|:-----:|:------:|
-| Add Tags | Yes | Yes | Yes |
-| Remove Tags | Yes | Yes | Yes |
-| Add Metadata | Yes | Yes | Yes |
-| Add Groups | Yes | - | - |
-| Update Dimensions | Yes | - | - |
-| Compare | Yes (2 only) | - | - |
-| Delete | Yes | Yes | Yes |
+| Operation | Resources | Groups |
+|-----------|:---------:|:------:|
+| Add Tags | Yes | Yes |
+| Remove Tags | Yes | Yes |
+| Add Metadata | Yes | Yes |
+| Add Groups | Yes | - |
+| Update Dimensions | Yes | - |
+| Compare | Yes (2 only) | - |
+| Delete | Yes | Yes |
 
 ## Adding Tags
 
-Add one or more tags to all selected items:
-
 1. Select items in the list
-2. Click **Add Tag** in the bulk editor
-3. Search for tags using the autocomplete
-4. Select one or more tags
-5. Click **Add**
+2. In the **Add Tag** form in the bulk editor, search for tags using autocomplete
+3. Click **Add**
 
-Tags are added immediately. Existing tags on items are preserved.
-
-### Creating Tags During Bulk Add
-
-If the tag you need doesn't exist:
-
-1. Type the new tag name
-2. Click the **+** button or press Enter
-3. The tag is created and selected
-4. Continue with the add operation
+Tags are added immediately. Existing tags on items are preserved. If a tag doesn't exist yet, type the name and click **+** to create it.
 
 ## Removing Tags
 
-Remove tags from all selected items:
-
 1. Select items in the list
-2. Click **Remove Tag** in the bulk editor
-3. Search for and select tags to remove
-4. Click **Remove**
+2. In the **Remove Tag** form, search for and select tags to remove
+3. Click **Remove**
 
 Only the specified tags are removed. Other tags remain.
 
 ## Adding Metadata
 
-Add or update metadata across selected items:
-
 1. Select items in the list
-2. Click **Add Metadata** in the bulk editor
-3. Enter a key name
-4. Enter a value
-5. Add more key-value pairs if needed
-6. Click **Add**
+2. In the **Add Metadata** form, enter a key and value
+3. Add more key-value pairs if needed
+4. Click **Add**
 
-### Metadata Behavior
-
-- New keys are added to items
-- Existing keys are updated with the new value
-- Other metadata keys are preserved
+New keys are added to items. Existing keys are overwritten with the new value. Other metadata keys are preserved.
 
 ## Adding to Groups
 
-For resources, add selected items to groups:
-
 1. Select resources in the list
-2. Click **Add Groups** in the bulk editor
-3. Search for and select target groups
-4. Click **Add**
+2. In the **Add Groups** form, search for and select target groups
+3. Click **Add**
 
-Resources are added as **related** to the selected groups (not owned).
+Resources are added as **related** to the selected groups (not owned). This operation is available for resources only.
 
 ## Updating Dimensions
 
-For image resources, recalculate width and height:
-
-1. Select image resources
-2. Click **Update Dimensions** in the bulk editor
-3. Click **Update Dimensions**
-
-This re-reads each image file and updates the stored dimension values.
+Select image resources and click **Update Dimensions** to re-read each file and update stored width/height values.
 
 ## Comparing Resources
 
@@ -194,33 +143,12 @@ The merge operation:
 - Updates relations to point to the winner
 - Deletes the merged groups
 
-## Bulk Operation Tips
+## Important Notes
 
-### Working with Large Selections
-
-- Operations apply only to items on the current page
-- For very large operations, work in batches
-- The page refreshes after each operation
-
-### Undo
-
-Bulk operations cannot be undone through the UI. To recover:
-- Restore from backups
-- Manually reverse the changes
-
-### Performance
-
-- Tag operations are fast (database updates only)
-- Metadata operations are fast
-- Deletion may take time for many resources (file removal)
-- Dimension updates require reading each file
-
-### Error Handling
-
-If an operation fails:
-- Partial completion is possible (some items modified)
-- Error messages display what went wrong
-- Retry the operation after fixing issues
+- Operations apply only to items on the current page. For large sets, work in batches.
+- Bulk operations cannot be undone. Restore from backups if needed.
+- If an operation fails partway through, some items may already be modified. Check results and retry.
+- Deletion may be slow for many resources (files must be removed from disk).
 
 ## Keyboard Shortcuts Summary
 
@@ -230,29 +158,3 @@ If an operation fails:
 | Shift + Click | Select range |
 | Right-click | Select range (alternative) |
 | Space (with text selected) | Toggle selected checkboxes |
-
-## Best Practices
-
-### Before Bulk Operations
-
-1. **Verify selection** - Check the selected count
-2. **Consider backups** - Especially before deletion
-3. **Test with small batches** - When trying new operations
-
-### Tag Management
-
-- Use bulk add to apply common tags
-- Use bulk remove to clean up incorrect tags
-- Create consistent tag naming conventions
-
-### Metadata Consistency
-
-- Use bulk metadata to standardize fields
-- Autocomplete suggests existing keys
-- Apply metadata in batches by type
-
-### Organizing Content
-
-- Bulk add to groups to organize imports
-- Use filters first to select related items
-- Merge duplicates after identification

@@ -10,9 +10,12 @@ Saved queries let you store and reuse database queries. They are useful for crea
 
 A saved query consists of:
 
-- **Name** - A unique identifier for the query
-- **Text** - The SQL query to execute
-- **Template** - Optional HTML template for custom result display
+| Property | Description |
+|----------|-------------|
+| **Name** | A unique identifier for the query |
+| **Description** | Optional explanation of what the query does |
+| **Text** | The SQL query to execute |
+| **Template** | Optional HTML template for custom result display |
 
 Queries run against a read-only database connection, so they cannot modify data.
 

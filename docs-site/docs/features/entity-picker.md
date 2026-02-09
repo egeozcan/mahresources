@@ -4,7 +4,7 @@ sidebar_position: 7
 
 # Entity Picker
 
-The entity picker is a reusable modal component for selecting entities (resources, groups, etc.) in the block editor. It's designed to be extensible for additional entity types.
+The entity picker is a reusable modal component for selecting entities (resources, groups, etc.) in the block editor. New entity types can be added through configuration objects without modifying core logic.
 
 ## Using the Picker
 

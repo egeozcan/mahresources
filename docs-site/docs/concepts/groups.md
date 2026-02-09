@@ -4,7 +4,7 @@ sidebar_position: 4
 
 # Groups
 
-Groups are hierarchical containers that organize Resources, Notes, and other Groups. They are the primary structural element in Mahresources.
+Groups are folders that form a tree. Each Group can own other Groups, Notes, and Resources, creating a hierarchy for organizing content.
 
 ## Group Properties
 
@@ -39,14 +39,14 @@ Company (Group)
 
 ### Finding Parents
 
-The system supports finding all ancestors of a group:
+Mahresources supports finding all ancestors of a group:
 
 ```sql
 -- Recursive query finds parent chain
 Company <- Engineering <- Backend Team
 ```
 
-This enables breadcrumb navigation and ancestry queries.
+Mahresources uses this for breadcrumb navigation and ancestry queries.
 
 ## Owned vs Related Entities
 
@@ -119,7 +119,7 @@ Categories can define a JSON Schema to validate group metadata:
 }
 ```
 
-This enables structured data entry for specific group types.
+Mahresources uses this schema for structured data entry on specific group types.
 
 ## Group Operations
 
@@ -219,41 +219,4 @@ Groups are included in global search:
 
 ## API Operations
 
-### Create Group
-
-```
-POST /v1/group
-Content-Type: application/json
-
-{
-  "name": "New Project",
-  "description": "Project description",
-  "ownerId": 123,
-  "categoryId": 1,
-  "url": "https://example.com/project"
-}
-```
-
-### Query Groups
-
-```
-GET /v1/groups?categoryId=1&ownerId=123
-```
-
-### Duplicate Group
-
-```
-POST /v1/group/duplicate?id=123
-```
-
-### Merge Groups
-
-```
-POST /v1/groups/merge
-Content-Type: application/json
-
-{
-  "winnerId": 1,
-  "loserIds": [2, 3, 4]
-}
-```
+For full API details -- creating, querying, duplicating, merging, and bulk operations on Groups -- see [API: Groups](../api/groups.md).

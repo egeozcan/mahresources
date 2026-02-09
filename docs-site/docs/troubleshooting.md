@@ -4,7 +4,7 @@ sidebar_position: 100
 
 # Troubleshooting
 
-This page covers common issues you may encounter when running Mahresources and how to resolve them.
+Common issues and how to resolve them.
 
 ## Common Issues
 

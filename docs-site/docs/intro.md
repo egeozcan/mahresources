@@ -5,43 +5,37 @@ sidebar_position: 1
 
 # Introduction
 
-Mahresources is a personal information management system designed to help you organize, connect, and retrieve your files, notes, and knowledge. Built with Go and designed for self-hosting, it provides a powerful yet intuitive way to manage your digital resources.
+Mahresources is a self-hosted system for storing files, writing notes, and linking them together. It runs as a single Go binary with SQLite or PostgreSQL, and serves a web UI for browsing, searching, and editing everything.
 
 ## What is Mahresources?
 
-At its core, Mahresources is a CRUD application that manages the relationships between your digital assets. Whether you're organizing research materials, managing a personal knowledge base, or archiving files with rich metadata, Mahresources provides the tools to keep everything connected and searchable.
+Mahresources stores files (called Resources), Notes, and Groups in a database, tracks the relationships between them, and makes everything searchable. Groups can nest inside each other and contain any mix of Resources and Notes. Tags and Categories provide additional ways to classify items across Groups.
 
 ## Key Features
 
-- **Resource Management** - Upload, organize, and manage files of any type with automatic thumbnail generation for images, videos, and documents
-- **Note Taking** - Create rich text notes and link them to your resources and groups
-- **Hierarchical Organization** - Organize content into nested groups with parent-child relationships
-- **Tagging System** - Flexible tagging with categories for multi-dimensional organization
-- **Full-Text Search** - Fast search across all your content with SQLite FTS5
-- **Image Similarity** - Find visually similar images using perceptual hashing
-- **Version Control** - Track different versions of your resources over time
-- **Saved Queries** - Save and reuse complex search queries
-- **Relationships** - Define custom typed relationships between groups
-- **REST API** - Full JSON API for integration with other tools and automation
+- **File storage with thumbnails** - Store any file type. Images, videos, and Office documents get automatic thumbnails (videos require FFmpeg, documents require LibreOffice).
+- **Notes** - Create text notes and link them to specific Resources and Groups.
+- **Nested Groups** - Groups contain Resources, Notes, and other Groups, forming a hierarchy.
+- **Tags and Categories** - Tag any entity. Categories define types for Groups (e.g., "Person", "Project").
+- **Full-text search** - SQLite FTS5-backed search across all content, accessible via Cmd/Ctrl+K.
+- **Image similarity** - Perceptual hashing finds visually similar images automatically.
+- **Resource versioning** - Track versions of a Resource over time.
+- **Saved queries** - Store and re-run search filters.
+- **Group relations** - Define typed relationships between Groups (e.g., "works at", "belongs to").
+- **JSON API** - Every page has a JSON equivalent (`Accept: application/json` or `.json` suffix) for scripting and integration.
 
 :::danger No Authentication
 
-Mahresources does **not** include authentication or authorization. It is designed for deployment on private networks only.
+Mahresources has **no** authentication or authorization. Run it on a private network only.
 
-**Do not expose Mahresources directly to the internet.** If you need remote access, use a reverse proxy with authentication (such as nginx with basic auth, OAuth2 Proxy, or Authelia).
+**Do not expose it to the internet.** For remote access, put it behind a reverse proxy with authentication (nginx + basic auth, OAuth2 Proxy, Authelia, etc.).
 
 :::
 
 ## Who is This For?
 
-Mahresources is ideal for:
-
-- **Researchers** managing papers, notes, and source materials
-- **Knowledge workers** building personal knowledge bases
-- **Digital archivists** organizing large file collections with metadata
-- **Hobbyists** cataloging collections (photos, media, documents)
-- **Anyone** who wants more control over their personal data than cloud services provide
+Anyone who wants to store files and notes locally, link them together, and search across them without relying on a cloud service. Common uses include research material management, personal knowledge bases, and file archiving with metadata.
 
 ## Getting Started
 
-Ready to dive in? Head to the [Installation Guide](./getting-started/installation) to get Mahresources running on your system.
+[Install Mahresources](./getting-started/installation) to get started.

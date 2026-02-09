@@ -4,7 +4,7 @@ sidebar_position: 3
 
 # Managing Notes
 
-Notes in Mahresources are text content containers that can be linked to resources, groups, and tags. They support rich metadata, date ranges, and custom note types for specialized formatting.
+Notes are text entries that link to resources, groups, and tags. They support date ranges, custom metadata, and note types for specialized formatting.
 
 ## Creating Notes
 
@@ -89,7 +89,7 @@ Click the note title in the header to edit it directly. Changes save automatical
 
 ## Note Types
 
-Note types let you define custom templates and styling for different kinds of notes.
+Note types add custom templates and styling to notes.
 
 ### What Note Types Provide
 
@@ -128,13 +128,12 @@ The `entity` object contains all note fields including custom metadata.
 
 ## Wide Display Mode
 
-For notes with longer content, use wide display mode for distraction-free reading:
+Wide display mode shows just the note text in a full-width layout, hiding the sidebar:
 
 1. Navigate to a note detail page
 2. Click **Wide display** link below the title
 3. The note content displays in a full-width layout
 
-Wide display shows only the note text without the sidebar, optimized for reading.
 
 ## Attaching Resources
 
@@ -193,7 +192,7 @@ Add key-value pairs using the **Meta Data** section:
 
 ### Metadata Keys
 
-Existing keys from other notes appear as autocomplete suggestions, promoting consistent naming.
+Existing keys from other notes appear as autocomplete suggestions.
 
 ## Deleting Notes
 
@@ -217,7 +216,7 @@ Note deletion is permanent. Related resources are not deleted but the link to th
 
 ## Using the Block Editor
 
-The block editor provides a structured way to organize note content using different block types. It appears on the note detail page below the main content area.
+The block editor appears below the main content area on note detail pages. It lets you organize note content using different block types.
 
 ### Entering and Exiting Edit Mode
 

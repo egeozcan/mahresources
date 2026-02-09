@@ -4,92 +4,90 @@ sidebar_position: 3
 
 # First Steps
 
-This guide walks you through the basic workflow of organizing content in Mahresources.
+## The Data Model
 
-## Understanding the Data Model
-
-Before diving in, it helps to understand how Mahresources organizes information:
+Mahresources has five main entity types:
 
 - **Resources** - Files you upload (images, documents, videos, etc.)
 - **Notes** - Text content you create
-- **Groups** - Collections that can contain Resources, Notes, and other Groups
-- **Tags** - Labels you can attach to Resources, Notes, and Groups
-- **Categories** - Organize your Tags into logical groupings
+- **Groups** - Collections that contain Resources, Notes, and other Groups
+- **Tags** - Labels you attach to Resources, Notes, and Groups
+- **Categories** - Types for your Groups (e.g., Person, Project, Topic)
 
 ## Step 1: Create a Category
 
-Categories help organize your tags. Let's create one for project status.
+Every Group requires a Category. Categories define what kind of thing a Group represents (e.g., "Person", "Project", "Location").
 
-1. Navigate to **Categories** in the sidebar
-2. Click **Create Category**
-3. Enter a name like "Project Status"
+1. Navigate to **Categories** under the **Admin** dropdown in the top navigation bar
+2. Click the **Add** button
+3. Enter a name like "Project"
 4. Click **Save**
 
 ## Step 2: Create Some Tags
 
-Now create tags within your category.
+Tags are labels you can attach to Resources, Notes, and Groups.
 
-1. Navigate to **Tags** in the sidebar
-2. Click **Create Tag**
+1. Navigate to **Tags** in the top navigation bar
+2. Click the **Add** button
 3. Enter "In Progress" as the name
-4. Select "Project Status" as the category
+4. Add an optional description
 5. Click **Save**
 
-Repeat to create "Completed" and "On Hold" tags in the same category.
+Repeat to create "Completed" and "On Hold" tags.
 
 ## Step 3: Create a Group
 
-Groups are the primary way to organize related content.
+Groups hold related Resources, Notes, and other Groups.
 
-1. Navigate to **Groups** in the sidebar
-2. Click **Create Group**
+1. Navigate to **Groups** in the top navigation bar
+2. Click the **Add** button
 3. Enter a name like "Research Project"
 4. Add an optional description
 5. Click **Save**
 
-You can create nested groups by setting a parent group, building a hierarchy for complex projects.
+Set a parent Group to create a hierarchy.
 
 ## Step 4: Upload Resources
 
-Add some files to your group.
+Add files to your Group.
 
-1. Navigate to **Resources** in the sidebar
-2. Click **Create Resource**
+1. Navigate to **Resources** in the top navigation bar
+2. Click the **Create** button
 3. Upload a file by dragging and dropping or clicking to browse
 4. Add a name and description
 5. Under **Groups**, select "Research Project"
 6. Under **Tags**, select "In Progress"
 7. Click **Save**
 
-Repeat to add more files. Each resource can belong to multiple groups and have multiple tags.
+Each Resource can belong to multiple Groups and have multiple Tags.
 
 ## Step 5: Create a Note
 
-Add a note to document your findings.
+Add a Note linked to your Group.
 
-1. Navigate to **Notes** in the sidebar
-2. Click **Create Note**
+1. Navigate to **Notes** in the top navigation bar
+2. Click the **Create** button
 3. Enter a title like "Initial Observations"
 4. Write your note content
-5. Select a Note Type (create one first if needed)
+5. Optionally select a Note Type
 6. Under **Groups**, select "Research Project"
 7. Optionally link to specific Resources
 8. Click **Save**
 
 ## Step 6: Use Global Search
 
-The fastest way to find anything is global search.
+Global search finds Resources, Notes, and Groups by content.
 
 1. Press **Cmd+K** (Mac) or **Ctrl+K** (Windows/Linux)
 2. Start typing your search query
 3. Results appear instantly, showing Resources, Notes, and Groups
 4. Click a result to navigate directly to it
 
-Global search uses full-text search across all your content, making it easy to find items even when you don't remember exactly where they are.
+Results come from the FTS5 full-text index and appear as you type.
 
 ## Step 7: Explore Relationships
 
-View how your content is connected.
+See how items connect to each other.
 
 1. Open the "Research Project" group
 2. See all Resources and Notes in this group
@@ -100,15 +98,15 @@ View how your content is connected.
 
 - **Use Groups for projects or themes** - Keep related items together
 - **Use Tags for cross-cutting concerns** - Status, priority, type of content
-- **Use Categories to organize Tags** - Prevent tag sprawl
+- **Use Categories to type your Groups** - Every Group needs a Category (e.g., Person, Project)
 - **Link Notes to Resources** - Connect your thoughts to source materials
 - **Use the global search liberally** - It's faster than navigating
 
 ## What's Next?
 
-You now know the basics of Mahresources. Explore these areas to learn more:
+From here, you can:
 
-- Create **Saved Queries** to reuse complex searches
-- Set up **Group Relations** to define relationships between groups
-- Use the **API** to integrate with other tools
-- Configure **Image Similarity** to find visually related images
+- Create **Saved Queries** to store and re-run searches
+- Set up **Group Relations** to link Groups to each other with typed relationships
+- Use the **JSON API** to script and automate operations
+- Enable **Image Similarity** to find visually related images

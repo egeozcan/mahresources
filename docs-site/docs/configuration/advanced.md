@@ -173,6 +173,44 @@ For SQLite under concurrent load (like E2E tests):
 
 This reduces lock contention but may impact performance under heavy load.
 
+## Share Server
+
+Mahresources includes a separate share server for publicly sharing notes. The share server is disabled by default and only starts when a port is configured.
+
+:::warning Default Bind Address
+The share server binds to `0.0.0.0` (all interfaces) by default. If you only want the share server accessible locally, set `-share-bind-address=127.0.0.1`.
+:::
+
+| Flag | Env Variable | Default | Description |
+|------|--------------|---------|-------------|
+| `-share-port` | `SHARE_PORT` | (disabled) | Port for the share server. Must be set to enable sharing. |
+| `-share-bind-address` | `SHARE_BIND_ADDRESS` | `0.0.0.0` | Bind address for the share server |
+
+### Example
+
+```bash
+# Enable share server on port 8282 (accessible on all interfaces)
+./mahresources -share-port=8282 ...
+
+# Enable share server on localhost only
+./mahresources -share-port=8282 -share-bind-address=127.0.0.1 ...
+```
+
+## Log Cleanup
+
+Automatically delete old log entries on startup:
+
+| Flag | Env Variable | Default | Description |
+|------|--------------|---------|-------------|
+| `-cleanup-logs-days` | `CLEANUP_LOGS_DAYS` | `0` (disabled) | Delete log entries older than N days on startup |
+
+### Example
+
+```bash
+# Delete logs older than 90 days on each startup
+./mahresources -cleanup-logs-days=90 ...
+```
+
 ## Configuration Reference
 
 | Flag | Env Variable | Default | Description |
@@ -191,3 +229,6 @@ This reduces lock contention but may impact performance under heavy load.
 | `-skip-fts` | `SKIP_FTS=1` | `false` | Skip FTS initialization |
 | `-skip-version-migration` | `SKIP_VERSION_MIGRATION=1` | `false` | Skip version migration |
 | `-max-db-connections` | `MAX_DB_CONNECTIONS` | - | Connection pool limit |
+| `-share-port` | `SHARE_PORT` | (disabled) | Share server port |
+| `-share-bind-address` | `SHARE_BIND_ADDRESS` | `0.0.0.0` | Share server bind address |
+| `-cleanup-logs-days` | `CLEANUP_LOGS_DAYS` | `0` (disabled) | Delete old logs on startup |

@@ -6,10 +6,10 @@ description: Securely deploy the share server for public access
 
 # Public Sharing Deployment
 
-This guide covers how to securely deploy the note sharing feature for public access while keeping your main Mahresources instance private.
+Deploy the note sharing feature for public access while keeping your main instance private.
 
-:::danger Security First
-The share server exposes content publicly. Ensure you understand the security implications before deploying. Only notes you explicitly share will be accessible, but those notes become fully public.
+:::danger Security Implications
+The share server makes shared notes accessible to **anyone with the URL** -- no authentication is required. Shared notes expose their full text, embedded resources, and metadata. Only share notes you are comfortable making fully public. The share URL contains an unguessable token, but anyone who obtains it can view the note.
 :::
 
 ## Architecture Overview
@@ -35,7 +35,11 @@ Key principles:
 | Flag | Env Variable | Description | Default |
 |------|--------------|-------------|---------|
 | `-share-port` | `SHARE_PORT` | Port for share server | (disabled) |
-| `-share-bind-address` | `SHARE_BIND_ADDRESS` | Interface to bind | `127.0.0.1` |
+| `-share-bind-address` | `SHARE_BIND_ADDRESS` | Interface to bind | `0.0.0.0` |
+
+:::caution
+The default bind address is `0.0.0.0`, which listens on all interfaces. For production deployments, set this to `127.0.0.1` and use a reverse proxy to control public access.
+:::
 
 ### Basic Setup
 
@@ -78,7 +82,7 @@ version: '3.8'
 
 services:
   mahresources:
-    image: ghcr.io/egeozcan/mahresources:latest
+    build: .                     # build from local Dockerfile
     container_name: mahresources
     restart: unless-stopped
     ports:
@@ -309,10 +313,4 @@ openssl s_client -connect share.example.com:443 -servername share.example.com
 
 ## Performance Considerations
 
-The share server is lightweight but consider:
-
-- **Caching**: Add caching at reverse proxy for static assets
-- **CDN**: Use a CDN for geographically distributed access
-- **Resources**: Large embedded resources may affect load times
-
-For high-traffic deployments, consider running multiple share server instances behind a load balancer.
+The share server is lightweight. If shared notes contain large embedded resources, consider adding reverse proxy caching for static assets.

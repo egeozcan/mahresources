@@ -4,7 +4,7 @@ sidebar_position: 3
 
 # Notes API
 
-Notes are text-based content items that can be associated with resources, groups, and tags. Each note can have a type that defines its display and behavior.
+A Note holds text content with optional start/end dates, metadata, and associations to resources, groups, and tags. Each note has a type that controls its display and behavior.
 
 ## List Notes
 
@@ -204,9 +204,72 @@ POST /v1/note/editDescription?id={id}
 
 ---
 
+# Note Sharing API
+
+Notes can be shared publicly via a unique token. Shared notes are accessible on the share server without authentication. See the [Note Sharing feature docs](../features/note-sharing.md) for more details.
+
+## Share a Note
+
+Generate a public share token for a note.
+
+```
+POST /v1/note/share?noteId={id}
+```
+
+### Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `noteId` | integer | **Required.** The note ID to share |
+
+### Example
+
+```bash
+curl -X POST "http://localhost:8181/v1/note/share?noteId=123"
+```
+
+### Response
+
+```json
+{
+  "shareToken": "abc123def456",
+  "shareUrl": "/s/abc123def456"
+}
+```
+
+## Unshare a Note
+
+Remove public access from a shared note.
+
+```
+DELETE /v1/note/share?noteId={id}
+```
+
+### Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `noteId` | integer | **Required.** The note ID to unshare |
+
+### Example
+
+```bash
+curl -X DELETE "http://localhost:8181/v1/note/share?noteId=123"
+```
+
+### Response
+
+```json
+{
+  "success": true
+}
+```
+
+---
+
 # Note Blocks API
 
-Note blocks provide a block-based editing system for note content. Each block has a type, position, content (edited in edit mode), and state (updated while viewing). Blocks are ordered by their position string, which uses fractional indexing for efficient reordering.
+Note blocks provide a block-based editing system for note content. Each block has a type, position, content, and state. Content is what you edit in edit mode. State is what updates while viewing (e.g., checking a todo item). Blocks are ordered by their position string, which uses fractional indexing for efficient reordering.
 
 ## Block Types
 
@@ -221,6 +284,38 @@ The following block types are available:
 | `references` | Links to groups |
 | `todos` | Checklist with items |
 | `table` | Data table (manual data or query-based) |
+| `calendar` | Calendar view driven by a query |
+
+## Get Block Types
+
+List all available block types programmatically, including their default content and state.
+
+```
+GET /v1/note/block/types
+```
+
+### Example
+
+```bash
+curl http://localhost:8181/v1/note/block/types
+```
+
+### Response
+
+```json
+[
+  {
+    "type": "text",
+    "defaultContent": {"text": ""},
+    "defaultState": {}
+  },
+  {
+    "type": "heading",
+    "defaultContent": {"text": "", "level": 2},
+    "defaultState": {}
+  }
+]
+```
 
 ## List Blocks for a Note
 
@@ -510,6 +605,80 @@ curl -X POST http://localhost:8181/v1/note/blocks/reorder \
 
 Returns HTTP status 204 (No Content) on success.
 
+## Rebalance Block Positions
+
+Recalculate and normalize position strings for all blocks in a note. Useful when position strings have become too long from repeated insertions.
+
+```
+POST /v1/note/blocks/rebalance?noteId={id}
+```
+
+### Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `noteId` | integer | **Required.** The note ID |
+
+### Response
+
+Returns HTTP status 204 (No Content) on success.
+
+## Get Table Block Query Data
+
+Execute the query associated with a table block and return the results in table format.
+
+```
+GET /v1/note/block/table/query?blockId={id}
+```
+
+### Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `blockId` | integer | **Required.** The table block ID |
+
+Any additional query parameters are passed through to the query as parameters (merged with the block's stored `queryParams`).
+
+### Example
+
+```bash
+curl "http://localhost:8181/v1/note/block/table/query?blockId=10"
+```
+
+### Response
+
+```json
+{
+  "columns": [{"id": "name", "label": "name"}, {"id": "value", "label": "value"}],
+  "rows": [{"id": "row_0", "name": "Example", "value": 42}],
+  "cachedAt": "2024-01-15T10:00:00Z",
+  "queryId": 5,
+  "isStatic": false
+}
+```
+
+## Get Calendar Block Events
+
+Get events for a calendar block within a date range.
+
+```
+GET /v1/note/block/calendar/events?blockId={id}&start={date}&end={date}
+```
+
+### Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `blockId` | integer | **Required.** The calendar block ID |
+| `start` | string | **Required.** Start date (YYYY-MM-DD) |
+| `end` | string | **Required.** End date (YYYY-MM-DD) |
+
+### Example
+
+```bash
+curl "http://localhost:8181/v1/note/block/calendar/events?blockId=15&start=2024-01-01&end=2024-01-31"
+```
+
 ## Block Type Schemas
 
 Each block type has specific content and state schemas.
@@ -719,7 +888,7 @@ POST /v1/note/noteType/edit
 
 ### Parameters
 
-Same as create, but include `ID` to identify the note type to update.
+Same as create, but include the `ID` field to identify which note type to update.
 
 ### Example
 

@@ -4,8 +4,6 @@ sidebar_position: 1
 
 # Installation
 
-This guide covers the different ways to install and run Mahresources.
-
 :::danger Security Warning
 
 Mahresources has **no built-in authentication**. Never expose it directly to the public internet. Always run it on a private network or behind a reverse proxy with proper authentication.
@@ -14,13 +12,11 @@ Mahresources has **no built-in authentication**. Never expose it directly to the
 
 ## Prerequisites
 
-Depending on your installation method, you'll need:
-
-### For Building from Source
-- **Go 1.21+** - [Download Go](https://go.dev/dl/)
+### Building from Source
+- **Go 1.22+** - [Download Go](https://go.dev/dl/)
 - **Node.js 18+** - [Download Node.js](https://nodejs.org/)
 
-### For Docker
+### Docker
 - **Docker 20+** - [Install Docker](https://docs.docker.com/get-docker/)
 
 ## Option 1: Pre-built Binaries
@@ -40,7 +36,7 @@ chmod +x mahresources
 
 ## Option 2: Build from Source
 
-Clone the repository and build:
+Clone and build:
 
 ```bash
 # Clone the repository
@@ -50,38 +46,36 @@ cd mahresources
 # Install dependencies and build everything (CSS + JS + Go binary)
 npm install
 npm run build
-
-# Build the Go binary with required SQLite extensions
-go build --tags 'json1 fts5'
 ```
 
-The `json1` tag enables SQLite JSON functions, and `fts5` enables full-text search.
+The `npm run build` command builds the Tailwind CSS, bundles the JavaScript with Vite, and compiles the Go binary with the `json1` (SQLite JSON functions) and `fts5` (full-text search) build tags.
 
 ## Option 3: Docker
 
-Run Mahresources with Docker:
+No pre-built image is published. Build it locally from the repository:
 
 ```bash
-# Pull and run (ephemeral mode)
-docker run -p 8080:8080 ghcr.io/egeozcan/mahresources:latest -ephemeral
+git clone https://github.com/egeozcan/mahresources.git
+cd mahresources
+docker build -t mahresources .
+
+# Run in ephemeral mode (data lost on exit)
+docker run -p 8181:8181 mahresources -ephemeral
 
 # Run with persistent storage
-docker run -p 8080:8080 \
-  -v $(pwd)/data:/data \
-  -v $(pwd)/files:/files \
-  ghcr.io/egeozcan/mahresources:latest \
-  -db-type=SQLITE \
-  -db-dsn=/data/mahresources.db \
-  -file-save-path=/files
+docker run -p 8181:8181 \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/files:/app/files \
+  mahresources
 ```
+
+See the [Docker deployment guide](../deployment/docker) for compose files and production setup.
 
 ## Optional Dependencies
 
-For enhanced functionality, install these optional tools:
-
 ### FFmpeg (Video Thumbnails)
 
-FFmpeg enables automatic thumbnail generation for video files.
+Install FFmpeg to generate thumbnails for video files.
 
 ```bash
 # macOS
@@ -101,7 +95,7 @@ Then specify the path (if not in PATH):
 
 ### LibreOffice (Document Thumbnails)
 
-LibreOffice enables thumbnail generation for Office documents (Word, Excel, PowerPoint, etc.).
+Install LibreOffice to generate thumbnails for Office documents (Word, Excel, PowerPoint, etc.).
 
 ```bash
 # macOS
@@ -121,4 +115,4 @@ Mahresources auto-detects `soffice` or `libreoffice` in your PATH. To specify a 
 
 ## Next Steps
 
-Once installed, proceed to the [Quick Start](./quick-start) guide to run Mahresources for the first time.
+Next: [Quick Start](./quick-start) -- run Mahresources for the first time.

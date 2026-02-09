@@ -4,19 +4,19 @@ sidebar_position: 4
 
 # Custom Templates
 
-Categories and Note Types support custom HTML templates that let you create specialized views for different types of content. Templates can display entity data dynamically and include interactive elements using Alpine.js.
+Categories (for Groups), Note Types (for Notes), and Resource Categories (for Resources) support custom HTML templates that let you create specialized views for different types of content. Templates can display entity data dynamically and include interactive elements using Alpine.js.
 
 :::warning Security Notice
 
-Custom templates execute arbitrary HTML and JavaScript. This is a powerful feature intended for **trusted network deployments only**.
+Custom templates execute arbitrary HTML and JavaScript. Only use them on **trusted network deployments**.
 
-Do not allow untrusted users to create or edit Categories and Note Types with custom templates, as they could inject malicious scripts.
+Do not allow untrusted users to create or edit Categories, Resource Categories, and Note Types with custom templates, as they could inject malicious scripts.
 
 :::
 
 ## Template Locations
 
-Each Category (for Groups) and Note Type (for Notes) can define four custom templates:
+Each Category (for Groups), Resource Category (for Resources), and Note Type (for Notes) can define four custom templates:
 
 | Template | Display Location |
 |----------|-----------------|
@@ -242,6 +242,19 @@ The CustomAvatar template controls how the entity appears when linked:
    - **Custom Summary** - HTML for list view cards
    - **Custom Avatar** - HTML for link avatars
 5. Click **Submit**
+
+## Creating Resource Categories with Templates
+
+1. Navigate to **Resource Categories**
+2. Click **Create**
+3. Fill in the Name and Description
+4. Add your templates in the appropriate fields:
+   - **Custom Header** - HTML for the resource detail page header
+   - **Custom Sidebar** - HTML for the resource detail page sidebar
+   - **Custom Summary** - HTML for list view cards
+   - **Custom Avatar** - HTML for link avatars
+5. Optionally define a **MetaSchema** (JSON Schema for metadata validation)
+6. Click **Submit**
 
 ## Creating Note Types with Templates
 

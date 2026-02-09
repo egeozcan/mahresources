@@ -4,11 +4,9 @@ sidebar_position: 5
 
 # Search
 
-Mahresources provides multiple ways to find content: global search for quick lookups, list view filters for detailed queries, full-text search for content matching, and saved queries for complex, reusable searches.
+Four ways to find content: global search for quick lookups, list view filters for detailed queries, full-text search for content matching, and saved queries for complex SQL.
 
 ## Global Search
-
-Global search is the fastest way to find any item across all entity types.
 
 ### Accessing Global Search
 
@@ -53,7 +51,7 @@ Each result displays:
 
 ## List View Filters
 
-Each entity list page provides detailed filtering in the sidebar.
+Each entity list page has filtering controls in the sidebar.
 
 ### Common Filters
 
@@ -138,7 +136,7 @@ Sort by multiple fields in priority order:
 
 ## Full-Text Search
 
-Mahresources uses SQLite FTS5 for full-text search capabilities.
+Mahresources uses SQLite FTS5 for full-text search.
 
 ### What It Searches
 
@@ -155,10 +153,7 @@ Standard search terms work naturally:
 
 ### Performance
 
-Full-text search is optimized for:
-- Large collections (millions of items)
-- Fast substring matching
-- Relevance ranking
+Full-text search handles millions of items with substring matching and relevance ranking.
 
 ### Enabling FTS
 

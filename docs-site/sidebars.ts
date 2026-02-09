@@ -56,6 +56,9 @@ const sidebars: SidebarsConfig = {
         'features/saved-queries',
         'features/custom-templates',
         'features/note-sharing',
+        'features/download-queue',
+        'features/activity-log',
+        'features/custom-block-types',
       ],
     },
     {

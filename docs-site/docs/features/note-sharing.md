@@ -6,7 +6,7 @@ description: Share notes publicly via secure, unguessable URLs
 
 # Note Sharing
 
-Note sharing allows you to publish individual notes to a separate, public-facing server. Shared notes can be accessed via cryptographically secure URLs without authentication, making them suitable for sharing content publicly while keeping your main Mahresources instance private.
+Mahresources can publish individual notes to a separate, public-facing server. Shared notes are accessible via cryptographically secure URLs without authentication, so you can share content publicly while keeping your main instance private.
 
 ## How It Works
 
@@ -46,8 +46,7 @@ Quick start with command-line flags:
   -db-dsn=./data/mahresources.db \
   -file-save-path=./data/files \
   -bind-address=:8181 \
-  -share-port=8383 \
-  -share-bind-address=0.0.0.0
+  -share-port=8383
 ```
 
 ## Sharing a Note
@@ -103,7 +102,7 @@ Interactive blocks (like todo lists) work differently on shared notes:
 - **Limited functionality** - Only toggle operations work (e.g., checking items)
 - **No add/remove** - Creating or deleting items is not allowed
 
-This allows collaboration on shared content while preventing spam or vandalism.
+Viewers can collaborate on shared content but cannot add or remove items, which prevents spam and vandalism.
 
 ## Finding Shared Notes
 
@@ -166,7 +165,7 @@ Use todo blocks in shared notes for simple collaborative task tracking. All view
 
 ### Content Publishing
 
-Publish selected notes as a lightweight blog or knowledge base. Each shared note gets a permanent URL.
+Share selected notes publicly. Each shared note gets a stable URL that persists until you unshare it.
 
 ### Temporary Sharing
 
