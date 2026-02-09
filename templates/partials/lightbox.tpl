@@ -412,19 +412,6 @@
         Loading more items...
     </div>
 
-    <!-- Zoom indicator -->
-    <div
-        x-show="$store.lightbox.zoomIndicatorVisible && $store.lightbox.zoomLevel > 1"
-        x-transition:enter="transition ease-out duration-150"
-        x-transition:enter-start="opacity-0"
-        x-transition:enter-end="opacity-100"
-        x-transition:leave="transition ease-in duration-150"
-        x-transition:leave-start="opacity-100"
-        x-transition:leave-end="opacity-0"
-        class="absolute bottom-20 left-4 px-3 py-1.5 bg-black/50 rounded text-white text-sm z-20"
-        x-text="$store.lightbox.zoomLevel.toFixed(1) + 'x'"
-    ></div>
-
     <!-- Bottom bar with counter and name -->
     <div
         class="absolute bottom-4 left-0 flex justify-between items-center px-4 text-white text-sm transition-all duration-300 z-20"
@@ -436,6 +423,16 @@
             /
             <span x-text="$store.lightbox.items.length"></span>
             <span x-show="$store.lightbox.hasNextPage" class="text-gray-400">+</span>
+        </div>
+
+        <!-- Native zoom percentage with preset picker -->
+        <div x-show="$store.lightbox.nativeZoomPercent()">
+            <button
+                @click.stop="$store.lightbox.showZoomPresets($el)"
+                class="bg-black/50 px-3 py-1 rounded tabular-nums hover:bg-white/30 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50"
+                x-text="$store.lightbox.nativeZoomPercent()"
+                title="Choose zoom level"
+            ></button>
         </div>
 
         <!-- Fullscreen button -->
@@ -477,4 +474,7 @@
             <span x-text="$store.lightbox.editPanelOpen ? 'Close' : 'Edit'"></span>
         </button>
     </div>
+
+    <!-- Zoom preset popover (top layer, no clipping) -->
+    <div id="zoom-preset-popover" popover></div>
 </div>

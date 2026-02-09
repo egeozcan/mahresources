@@ -58,8 +58,6 @@ export function registerLightboxStore(Alpine) {
     maxZoom: 5,
     panX: 0,
     panY: 0,
-    zoomIndicatorVisible: false,
-    zoomIndicatorTimeout: null,
 
     // Pinch tracking
     pinchStartDistance: null,
@@ -187,28 +185,11 @@ export function registerLightboxStore(Alpine) {
       this.zoomLevel = Math.max(this.minZoom, Math.min(this.maxZoom, level));
 
       if (this.zoomLevel !== oldLevel) {
-        this.showZoomIndicator();
         if (this.zoomLevel === 1) {
           this.panX = 0;
           this.panY = 0;
         }
       }
-    },
-
-    /**
-     * Show zoom indicator and auto-hide after delay
-     */
-    showZoomIndicator() {
-      this.zoomIndicatorVisible = true;
-
-      if (this.zoomIndicatorTimeout) {
-        clearTimeout(this.zoomIndicatorTimeout);
-      }
-
-      this.zoomIndicatorTimeout = setTimeout(() => {
-        this.zoomIndicatorVisible = false;
-        this.zoomIndicatorTimeout = null;
-      }, 1500);
     },
 
     /**
@@ -218,11 +199,70 @@ export function registerLightboxStore(Alpine) {
       this.zoomLevel = 1;
       this.panX = 0;
       this.panY = 0;
-      this.zoomIndicatorVisible = false;
-      if (this.zoomIndicatorTimeout) {
-        clearTimeout(this.zoomIndicatorTimeout);
-        this.zoomIndicatorTimeout = null;
+      this.hideZoomPresets();
+    },
+
+    /**
+     * Hide the zoom preset popover if open
+     */
+    hideZoomPresets() {
+      const p = document.getElementById('zoom-preset-popover');
+      if (p?.matches(':popover-open')) p.hidePopover();
+    },
+
+    /**
+     * Build and show the zoom preset popover anchored to a button element.
+     * @param {HTMLElement} btn - The button that triggered the popover
+     */
+    showZoomPresets(btn) {
+      const p = document.getElementById('zoom-preset-popover');
+      if (!p) return;
+
+      if (p.matches(':popover-open')) {
+        p.hidePopover();
+        return;
       }
+
+      const presets = this.zoomPresets();
+      if (!presets.length) return;
+
+      const self = this;
+      p.innerHTML = '';
+      Object.assign(p.style, {
+        background: 'rgba(0,0,0,0.8)',
+        backdropFilter: 'blur(8px)',
+        border: '1px solid rgba(255,255,255,0.1)',
+        borderRadius: '0.375rem',
+        padding: '0.25rem 0',
+        margin: '0',
+        minWidth: '7rem',
+        textAlign: 'center',
+        color: 'white',
+        fontSize: '0.875rem',
+      });
+
+      for (const preset of presets) {
+        const item = document.createElement('button');
+        item.textContent = preset.label;
+        item.style.cssText = 'display:block;width:100%;padding:0.375rem 0.75rem;transition:background 150ms;font-variant-numeric:tabular-nums;background:none;border:none;color:inherit;cursor:pointer;font-size:inherit;';
+        item.addEventListener('mouseenter', () => item.style.background = 'rgba(255,255,255,0.2)');
+        item.addEventListener('mouseleave', () => item.style.background = 'none');
+        item.addEventListener('click', (e) => {
+          e.stopPropagation();
+          self.setNativeZoom(preset.nativePct);
+        });
+        p.appendChild(item);
+      }
+
+      // Position above the button, centered
+      const rect = btn.getBoundingClientRect();
+      p.showPopover();
+      const popRect = p.getBoundingClientRect();
+      p.style.position = 'fixed';
+      p.style.left = (rect.left + rect.width / 2 - popRect.width / 2) + 'px';
+      p.style.top = (rect.top - popRect.height - 4) + 'px';
+      p.style.bottom = 'auto';
+      p.style.right = 'auto';
     },
 
     /**
@@ -598,6 +638,114 @@ export function registerLightboxStore(Alpine) {
      */
     isImage(contentType) {
       return contentType?.startsWith('image/') && !this.isSvg(contentType);
+    },
+
+    /**
+     * Get zoom level relative to native image resolution as a percentage string.
+     * Returns e.g. "50%" when the image is displayed at half its native pixels.
+     * Returns null for videos or when the image element is unavailable.
+     * @returns {string|null}
+     */
+    nativeZoomPercent() {
+      // Read reactive properties so Alpine re-evaluates when they change
+      const loading = this.loading;
+      const zoom = this.zoomLevel;
+
+      const item = this.getCurrentItem();
+      if (!item || this.isVideo(item.contentType) || loading) return null;
+
+      const media = this.getMediaElement();
+      if (!media) return null;
+
+      const el = media.element;
+      const naturalW = el.naturalWidth;
+      const displayedW = el.clientWidth;
+      if (!naturalW || !displayedW) return null;
+
+      const pct = (zoom * displayedW / naturalW) * 100;
+      return Math.round(pct) + '%';
+    },
+
+    /**
+     * Get available zoom preset percentages (relative to native resolution).
+     * Returns presets that fall within the allowed zoom range, plus "Fit".
+     * @returns {Array<{label: string, nativePct: number|null}>}
+     */
+    zoomPresets() {
+      const media = this.getMediaElement();
+      if (!media) return [];
+
+      const el = media.element;
+      const naturalW = el.naturalWidth;
+      const displayedW = el.clientWidth;
+      const displayedH = el.clientHeight;
+      if (!naturalW || !displayedW) return [];
+
+      const fitNativePct = Math.round((displayedW / naturalW) * 100);
+      const candidates = [25, 50, 100, 200, 300, 500];
+
+      const presets = [{label: 'Fit (' + fitNativePct + '%)', nativePct: null}];
+
+      // Add "Stretch" option when the image at fit size is smaller than the available space
+      const availW = window.innerWidth * 0.9;
+      const availH = window.innerHeight * 0.9;
+      if (displayedW && displayedH) {
+        const stretchZoom = Math.min(availW / displayedW, availH / displayedH);
+        if (stretchZoom > 1.01 && stretchZoom <= this.maxZoom) {
+          const stretchNativePct = Math.round(stretchZoom * displayedW / naturalW * 100);
+          presets.push({label: 'Stretch (' + stretchNativePct + '%)', nativePct: 'stretch'});
+        }
+      }
+
+      for (const pct of candidates) {
+        // Convert native pct to zoom level and check if it's within bounds
+        const zoomForPct = (pct / 100) * (naturalW / displayedW);
+        if (zoomForPct >= this.minZoom && zoomForPct <= this.maxZoom && pct !== fitNativePct) {
+          presets.push({label: pct + '%', nativePct: pct});
+        }
+      }
+
+      return presets;
+    },
+
+    /**
+     * Set zoom level to show the image at a specific native resolution percentage,
+     * or 'stretch' to fill the container.
+     * @param {number|string|null} nativePct - Percentage (100 = 1:1), null for fit, 'stretch' to fill container.
+     */
+    setNativeZoom(nativePct) {
+      this.hideZoomPresets();
+
+      if (nativePct === null) {
+        this.setZoomLevel(1);
+        this.announceZoom();
+        return;
+      }
+
+      const media = this.getMediaElement();
+      if (!media) return;
+
+      const el = media.element;
+      const displayedW = el.clientWidth;
+      const displayedH = el.clientHeight;
+      if (!displayedW || !displayedH) return;
+
+      let targetZoom;
+      if (nativePct === 'stretch') {
+        const availW = window.innerWidth * 0.9;
+        const availH = window.innerHeight * 0.9;
+        targetZoom = Math.min(availW / displayedW, availH / displayedH);
+      } else {
+        const naturalW = el.naturalWidth;
+        if (!naturalW) return;
+        targetZoom = (nativePct / 100) * (naturalW / displayedW);
+      }
+
+      this.panX = 0;
+      this.panY = 0;
+      this.setZoomLevel(targetZoom);
+      this.constrainPan();
+      this.announceZoom();
     },
 
     /**
@@ -1385,8 +1533,32 @@ export function registerLightboxStore(Alpine) {
       event.preventDefault();
 
       if (this.zoomLevel === 1) {
-        // Zoom in to 2x
-        this.setZoomLevel(2);
+        const media = this.getMediaElement();
+        if (!media) return;
+
+        const el = media.element;
+        const displayedWidth = el.clientWidth;
+        const displayedHeight = el.clientHeight;
+
+        // Calculate native resolution zoom level, clamped to maxZoom
+        const nativeWidth = el.naturalWidth || displayedWidth;
+        const nativeHeight = el.naturalHeight || displayedHeight;
+        const nativeZoom = Math.max(nativeWidth / displayedWidth, nativeHeight / displayedHeight);
+        const targetZoom = Math.max(this.minZoom + 0.01, Math.min(this.maxZoom, nativeZoom));
+
+        // Calculate click position relative to image center (in displayed pixels)
+        const rect = media.rect;
+        const clickRelX = event.clientX - (rect.left + rect.width / 2);
+        const clickRelY = event.clientY - (rect.top + rect.height / 2);
+
+        // Pan so the clicked point moves to viewport center.
+        // CSS transform: scale(Z) translate(tx,ty) applies translate first, then scale,
+        // so screen offset = Z * (displayedOffset + pan). For screen offset = 0: pan = -displayedOffset.
+        this.panX = -clickRelX;
+        this.panY = -clickRelY;
+
+        this.setZoomLevel(targetZoom);
+        this.constrainPan();
         this.announceZoom();
       } else {
         // Zoom out to 1x
