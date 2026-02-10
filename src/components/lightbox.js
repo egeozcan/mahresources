@@ -1025,8 +1025,8 @@ export function registerLightboxStore(Alpine) {
       // Skip for videos
       if (this.isVideo(this.getCurrentItem()?.contentType)) return;
 
-      // Zoom toward cursor: trackpad pinch (ctrlKey) or vertical scroll
-      if (event.ctrlKey || Math.abs(event.deltaY) >= Math.abs(event.deltaX)) {
+      // Trackpad pinch zoom (ctrlKey is set by browser for pinch gestures)
+      if (event.ctrlKey) {
         event.preventDefault();
         this.disableAnimations();
 
@@ -1036,7 +1036,7 @@ export function registerLightboxStore(Alpine) {
         const oldPanX = this.panX;
         const oldPanY = this.panY;
 
-        // Negate deltaY so scroll-up/pinch-out zooms in
+        // Negate deltaY so pinch-out zooms in and pinch-in zooms out
         const zoomDelta = -event.deltaY * 0.01;
         this.setZoomLevel(this.zoomLevel + zoomDelta);
         const newZoom = this.zoomLevel;
@@ -1070,26 +1070,30 @@ export function registerLightboxStore(Alpine) {
 
       // Horizontal scrolling (trackpad swipe) for navigation when not zoomed
       if (!this.isZoomed()) {
-        event.preventDefault();
+        // Prevent browser back/forward navigation on any horizontal swipe
+        if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+          event.preventDefault();
 
-        // Only trigger navigation after threshold is met
-        if (Math.abs(event.deltaX) > 10) {
-          // Debounce to prevent multiple navigations from a single swipe
-          if (this._wheelDebounce) return;
-          this._wheelDebounce = true;
-          setTimeout(() => { this._wheelDebounce = false; }, 300);
+          // Only trigger navigation after threshold is met
+          if (Math.abs(event.deltaX) > 10) {
+            // Debounce to prevent multiple navigations from a single swipe
+            if (this._wheelDebounce) return;
+            this._wheelDebounce = true;
+            setTimeout(() => { this._wheelDebounce = false; }, 300);
 
-          if (event.deltaX > 0) {
-            this.next();
-          } else {
-            this.prev();
+            if (event.deltaX > 0) {
+              this.next();
+            } else {
+              this.prev();
+            }
           }
         }
       } else {
-        // Horizontal pan when zoomed (trackpad swipe)
+        // Pan when zoomed (using trackpad scroll)
         event.preventDefault();
         this.disableAnimations();
         this.panX -= event.deltaX / this.zoomLevel;
+        this.panY -= event.deltaY / this.zoomLevel;
         this.constrainPan();
       }
     },
