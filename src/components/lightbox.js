@@ -67,11 +67,11 @@ export function registerLightboxStore(Alpine) {
     pinchCenterX: null,
     pinchCenterY: null,
 
-    // Two-finger pan tracking (when zoomed)
-    twoFingerPanStartX: null,
-    twoFingerPanStartY: null,
-    twoFingerPanStartPanX: null,
-    twoFingerPanStartPanY: null,
+    // Pinch zoom-toward-center tracking
+    pinchOriginX: null,
+    pinchOriginY: null,
+    pinchImageX: null,
+    pinchImageY: null,
 
     // Mouse drag tracking
     isDragging: false,
@@ -879,12 +879,22 @@ export function registerLightboxStore(Alpine) {
         this.pinchCenterX = center.x;
         this.pinchCenterY = center.y;
 
-        // Also track for pan if zoomed
-        if (this.isZoomed()) {
-          this.twoFingerPanStartX = center.x;
-          this.twoFingerPanStartY = center.y;
-          this.twoFingerPanStartPanX = this.panX;
-          this.twoFingerPanStartPanY = this.panY;
+        // Compute transform origin and image point under pinch center
+        // so zoom tracks toward the pinch point
+        const media = this.getMediaElement();
+        if (media) {
+          const rect = media.rect;
+          const rectCenterX = rect.left + rect.width / 2;
+          const rectCenterY = rect.top + rect.height / 2;
+          this.pinchOriginX = rectCenterX - this.zoomLevel * this.panX;
+          this.pinchOriginY = rectCenterY - this.zoomLevel * this.panY;
+          this.pinchImageX = (center.x - this.pinchOriginX) / this.zoomLevel - this.panX;
+          this.pinchImageY = (center.y - this.pinchOriginY) / this.zoomLevel - this.panY;
+        } else {
+          this.pinchOriginX = null;
+          this.pinchOriginY = null;
+          this.pinchImageX = null;
+          this.pinchImageY = null;
         }
       } else if (event.touches.length === 1) {
         // Single touch - swipe or drag
@@ -912,24 +922,21 @@ export function registerLightboxStore(Alpine) {
 
         if (this.pinchStartDistance !== null) {
           // Pinch zoom
-          this.disableAnimations(); // Disable transitions for smooth zoom
+          this.disableAnimations();
           const currentDistance = this.getPinchDistance(event.touches);
           const scale = currentDistance / this.pinchStartDistance;
           this.setZoomLevel(this.pinchStartZoom * scale);
 
+          // Adjust pan to keep the initial image point under the current pinch center
+          if (this.pinchOriginX !== null) {
+            this.panX = (center.x - this.pinchOriginX) / this.zoomLevel - this.pinchImageX;
+            this.panY = (center.y - this.pinchOriginY) / this.zoomLevel - this.pinchImageY;
+            this.constrainPan();
+          }
+
           // Track current center for two-finger swipe navigation
           this.pinchCenterX = center.x;
           this.pinchCenterY = center.y;
-        }
-
-        // Two-finger pan when zoomed
-        if (this.isZoomed() && this.twoFingerPanStartX !== null) {
-          this.disableAnimations();
-          const dx = center.x - this.twoFingerPanStartX;
-          const dy = center.y - this.twoFingerPanStartY;
-          this.panX = this.twoFingerPanStartPanX + dx / this.zoomLevel;
-          this.panY = this.twoFingerPanStartPanY + dy / this.zoomLevel;
-          this.constrainPan();
         }
       } else if (event.touches.length === 1 && this.isZoomed()) {
         // Single finger pan when zoomed
@@ -976,10 +983,10 @@ export function registerLightboxStore(Alpine) {
         this.pinchStartCenterY = null;
         this.pinchCenterX = null;
         this.pinchCenterY = null;
-        this.twoFingerPanStartX = null;
-        this.twoFingerPanStartY = null;
-        this.twoFingerPanStartPanX = null;
-        this.twoFingerPanStartPanY = null;
+        this.pinchOriginX = null;
+        this.pinchOriginY = null;
+        this.pinchImageX = null;
+        this.pinchImageY = null;
         this.announceZoom();
         return;
       }
@@ -1021,11 +1028,34 @@ export function registerLightboxStore(Alpine) {
       // Trackpad pinch zoom (ctrlKey is set by browser for pinch gestures)
       if (event.ctrlKey) {
         event.preventDefault();
-        this.disableAnimations(); // Disable transitions for smooth zoom
+        this.disableAnimations();
+
+        // Capture state before zoom change
+        const media = this.getMediaElement();
+        const oldZoom = this.zoomLevel;
+        const oldPanX = this.panX;
+        const oldPanY = this.panY;
 
         // Negate deltaY so pinch-out zooms in and pinch-in zooms out
         const zoomDelta = -event.deltaY * 0.01;
         this.setZoomLevel(this.zoomLevel + zoomDelta);
+        const newZoom = this.zoomLevel;
+
+        // Adjust pan so the point under the cursor stays fixed
+        if (newZoom !== oldZoom && media) {
+          const rect = media.rect;
+          const rectCenterX = rect.left + rect.width / 2;
+          const rectCenterY = rect.top + rect.height / 2;
+          // Transform origin (element center before transforms)
+          const originX = rectCenterX - oldZoom * oldPanX;
+          const originY = rectCenterY - oldZoom * oldPanY;
+          // Cursor position relative to transform origin
+          const cursorRelX = event.clientX - originX;
+          const cursorRelY = event.clientY - originY;
+          this.panX = oldPanX + cursorRelX * (1 / newZoom - 1 / oldZoom);
+          this.panY = oldPanY + cursorRelY * (1 / newZoom - 1 / oldZoom);
+          this.constrainPan();
+        }
 
         // Announce on debounced basis
         if (!this._zoomAnnounceDebounce) {
