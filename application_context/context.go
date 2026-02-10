@@ -41,6 +41,12 @@ type MahresourcesConfig struct {
 	ICSCacheMaxEntries int
 	// ICSCacheTTL is how long cached ICS content is considered fresh (default: 30m)
 	ICSCacheTTL time.Duration
+	// VideoThumbnailTimeout is the max time for a single ffmpeg invocation (default: 30s)
+	VideoThumbnailTimeout time.Duration
+	// VideoThumbnailLockTimeout is the max time to wait for the video thumbnail lock (default: 60s)
+	VideoThumbnailLockTimeout time.Duration
+	// VideoThumbnailConcurrency is the max number of concurrent video thumbnail generations (default: 4)
+	VideoThumbnailConcurrency uint
 }
 
 // MahresourcesInputConfig holds all configuration options that can be passed
@@ -74,6 +80,12 @@ type MahresourcesInputConfig struct {
 	// MaxDBConnections limits the database connection pool size (useful for SQLite in test environments)
 	// When set to 0 (default), no limit is applied
 	MaxDBConnections int
+	// VideoThumbnailTimeout is the max time for a single ffmpeg invocation (default: 30s)
+	VideoThumbnailTimeout time.Duration
+	// VideoThumbnailLockTimeout is the max time to wait for the video thumbnail lock (default: 60s)
+	VideoThumbnailLockTimeout time.Duration
+	// VideoThumbnailConcurrency is the max number of concurrent video thumbnail generations (default: 4)
+	VideoThumbnailConcurrency uint
 }
 
 type MahresourcesLocks struct {
@@ -103,6 +115,8 @@ type MahresourcesContext struct {
 	currentRequest *http.Request
 	// hashQueue is a channel to queue resources for async hash processing
 	hashQueue chan<- uint
+	// thumbnailQueue is a channel to queue video resources for async thumbnail generation
+	thumbnailQueue chan<- uint
 	// icsCache provides LRU caching for ICS calendar data
 	icsCache *ICSCache
 }
@@ -115,7 +129,11 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 	}
 
 	thumbnailGenerationLock := lib.NewIDLock[uint](uint(0), nil)
-	videoThumbnailGenerationLock := lib.NewIDLock[uint](uint(1), nil)
+	videoThumbConcurrency := config.VideoThumbnailConcurrency
+	if videoThumbConcurrency == 0 {
+		videoThumbConcurrency = 4
+	}
+	videoThumbnailGenerationLock := lib.NewIDLock[uint](videoThumbConcurrency, nil)
 	officeDocumentGenerationLock := lib.NewIDLock[uint](uint(2), nil)
 	resourceHashLock := lib.NewIDLock[string](uint(0), nil)
 
@@ -192,6 +210,25 @@ func (ctx *MahresourcesContext) QueueForHashing(resourceID uint) bool {
 	}
 	select {
 	case ctx.hashQueue <- resourceID:
+		return true
+	default:
+		return false
+	}
+}
+
+// SetThumbnailQueue sets the channel for queueing resources for thumbnail generation.
+func (ctx *MahresourcesContext) SetThumbnailQueue(queue chan<- uint) {
+	ctx.thumbnailQueue = queue
+}
+
+// QueueForThumbnailing queues a resource ID for async thumbnail generation.
+// Returns true if queued, false if queue is nil or full.
+func (ctx *MahresourcesContext) QueueForThumbnailing(resourceID uint) bool {
+	if ctx.thumbnailQueue == nil {
+		return false
+	}
+	select {
+	case ctx.thumbnailQueue <- resourceID:
 		return true
 	default:
 		return false
@@ -439,6 +476,16 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		overallTimeout = 30 * time.Minute
 	}
 
+	// Apply default video thumbnail timeouts if not specified
+	videoThumbTimeout := cfg.VideoThumbnailTimeout
+	if videoThumbTimeout == 0 {
+		videoThumbTimeout = 30 * time.Second
+	}
+	videoThumbLockTimeout := cfg.VideoThumbnailLockTimeout
+	if videoThumbLockTimeout == 0 {
+		videoThumbLockTimeout = 60 * time.Second
+	}
+
 	return NewMahresourcesContext(mainFs, db, readOnlyDb, &MahresourcesConfig{
 		DbType:                       dbType,
 		AltFileSystems:               cfg.AltFileSystems,
@@ -450,6 +497,9 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		RemoteResourceConnectTimeout: connectTimeout,
 		RemoteResourceIdleTimeout:    idleTimeout,
 		RemoteResourceOverallTimeout: overallTimeout,
+		VideoThumbnailTimeout:        videoThumbTimeout,
+		VideoThumbnailLockTimeout:    videoThumbLockTimeout,
+		VideoThumbnailConcurrency:    cfg.VideoThumbnailConcurrency,
 	}), db, mainFs
 }
 

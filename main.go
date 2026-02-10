@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"mahresources/models/util"
 	"mahresources/server"
 	"mahresources/storage"
+	"mahresources/thumbnail_worker"
 )
 
 // altFS is a custom flag type that collects multiple -alt-fs flags
@@ -101,6 +103,18 @@ func main() {
 	hashSimilarityThreshold := flag.Int("hash-similarity-threshold", parseIntEnv("HASH_SIMILARITY_THRESHOLD", 10), "Maximum Hamming distance for similarity (env: HASH_SIMILARITY_THRESHOLD)")
 	hashWorkerDisabled := flag.Bool("hash-worker-disabled", os.Getenv("HASH_WORKER_DISABLED") == "1", "Disable hash worker (env: HASH_WORKER_DISABLED=1)")
 
+	// Video thumbnail options
+	videoThumbTimeout := flag.Duration("video-thumb-timeout", parseDurationEnv("VIDEO_THUMB_TIMEOUT", 30*time.Second), "Timeout for video thumbnail ffmpeg invocation (env: VIDEO_THUMB_TIMEOUT)")
+	videoThumbLockTimeout := flag.Duration("video-thumb-lock-timeout", parseDurationEnv("VIDEO_THUMB_LOCK_TIMEOUT", 60*time.Second), "Timeout waiting for video thumbnail lock (env: VIDEO_THUMB_LOCK_TIMEOUT)")
+	videoThumbConcurrency := flag.Int("video-thumb-concurrency", parseIntEnv("VIDEO_THUMB_CONCURRENCY", 4), "Max concurrent video thumbnail generations (env: VIDEO_THUMB_CONCURRENCY)")
+
+	// Thumbnail worker options
+	thumbWorkerCount := flag.Int("thumb-worker-count", parseIntEnv("THUMB_WORKER_COUNT", 2), "Number of concurrent thumbnail generation workers (env: THUMB_WORKER_COUNT)")
+	thumbWorkerDisabled := flag.Bool("thumb-worker-disabled", os.Getenv("THUMB_WORKER_DISABLED") == "1", "Disable thumbnail worker (env: THUMB_WORKER_DISABLED=1)")
+	thumbBatchSize := flag.Int("thumb-batch-size", parseIntEnv("THUMB_BATCH_SIZE", 10), "Videos to process per backfill cycle (env: THUMB_BATCH_SIZE)")
+	thumbPollInterval := flag.Duration("thumb-poll-interval", parseDurationEnv("THUMB_POLL_INTERVAL", time.Minute), "Time between backfill processing cycles (env: THUMB_POLL_INTERVAL)")
+	thumbBackfill := flag.Bool("thumb-backfill", os.Getenv("THUMB_BACKFILL") == "1", "Enable backfilling thumbnails for existing videos (env: THUMB_BACKFILL=1)")
+
 	// Alternative file systems: can be specified multiple times as -alt-fs=key:path
 	var altFSFlags altFS
 	flag.Var(&altFSFlags, "alt-fs", "Alternative file system in format key:path (can be specified multiple times)")
@@ -170,9 +184,26 @@ func main() {
 		RemoteResourceIdleTimeout:    *remoteIdleTimeout,
 		RemoteResourceOverallTimeout: *remoteOverallTimeout,
 		MaxDBConnections:             *maxDBConnections,
+		VideoThumbnailTimeout:        *videoThumbTimeout,
+		VideoThumbnailLockTimeout:    *videoThumbLockTimeout,
+		VideoThumbnailConcurrency:    uint(*videoThumbConcurrency),
 	}
 
 	context, db, mainFs := application_context.CreateContextWithConfig(cfg)
+
+	// Validate or auto-detect ffmpeg
+	if context.Config.FfmpegPath != "" {
+		if _, err := exec.LookPath(context.Config.FfmpegPath); err != nil {
+			log.Printf("Warning: configured ffmpeg path %q not found, video thumbnails will be unavailable", context.Config.FfmpegPath)
+		}
+	} else {
+		if path, err := exec.LookPath("ffmpeg"); err == nil {
+			context.Config.FfmpegPath = path
+			log.Printf("Auto-detected ffmpeg at %s", path)
+		} else {
+			log.Println("Warning: ffmpeg not found in PATH, video thumbnails will be unavailable")
+		}
+	}
 
 	// Disable foreign keys during AutoMigrate for SQLite.
 	// SQLite can't ALTER TABLE to add constraints, so GORM recreates the table
@@ -311,6 +342,20 @@ func main() {
 	hw.Start()
 	context.SetHashQueue(hw.GetQueue())
 	defer hw.Stop()
+
+	// Start thumbnail worker for background video thumbnail pre-generation
+	thumbWorkerConfig := thumbnail_worker.Config{
+		WorkerCount:  *thumbWorkerCount,
+		BatchSize:    *thumbBatchSize,
+		PollInterval: *thumbPollInterval,
+		Disabled:     *thumbWorkerDisabled,
+		Backfill:     *thumbBackfill,
+	}
+
+	tw := thumbnail_worker.New(db, context, thumbWorkerConfig)
+	tw.Start()
+	context.SetThumbnailQueue(tw.GetQueue())
+	defer tw.Stop()
 
 	// Start share server if configured
 	if cfg.SharePort != "" {

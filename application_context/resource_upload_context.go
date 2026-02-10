@@ -565,5 +565,10 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 		ctx.QueueForHashing(res.ID)
 	}
 
+	// Queue for async thumbnail pre-generation if it's a video
+	if strings.HasPrefix(res.ContentType, "video/") {
+		ctx.QueueForThumbnailing(res.ID)
+	}
+
 	return res, nil
 }

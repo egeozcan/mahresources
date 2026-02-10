@@ -340,7 +340,8 @@ func GetResourceThumbnailHandler(ctx interfaces.ResourceThumbnailLoader) func(wr
 
 		if err != nil || thumbnail == nil {
 			fmt.Printf("\n[ERROR]: %v\n", err)
-			http.Redirect(writer, request, "/public/placeholders/file.jpg", http.StatusMovedPermanently)
+			writer.Header().Set("Cache-Control", "no-cache")
+			http.Redirect(writer, request, "/public/placeholders/file.jpg", http.StatusTemporaryRedirect)
 			return
 		}
 

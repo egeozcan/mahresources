@@ -540,15 +540,38 @@ func (ctx *MahresourcesContext) generateImageThumbnailFromFile(
 	return buf.Bytes(), nil
 }
 
+// resolveLocalFilePath attempts to resolve the real OS path for a file in an afero filesystem.
+// Returns the absolute path and true if the filesystem is a BasePathFs wrapping a real OS filesystem.
+// Returns ("", false) for non-local filesystems (MemMapFs, CopyOnWriteFs, etc.).
+func resolveLocalFilePath(fs afero.Fs, name string) (string, bool) {
+	bpFs, ok := fs.(*afero.BasePathFs)
+	if !ok {
+		return "", false
+	}
+
+	realPath, err := bpFs.RealPath(name)
+	if err != nil {
+		return "", false
+	}
+
+	if _, err := os.Stat(realPath); err != nil {
+		return "", false
+	}
+
+	return realPath, true
+}
+
 // generateVideoThumbnail generates a thumbnail from the video resource.
+// It produces a "null thumbnail" (full-width JPEG) and stores it in the DB,
+// so subsequent requests for any size can resize from the cached version without ffmpeg.
 func (ctx *MahresourcesContext) generateVideoThumbnail(
 	resource models.Resource,
 	fs afero.Fs,
 	width, height uint,
 	httpContext context.Context,
 ) ([]byte, error) {
-	// Determine runTimeout based on context's deadline
-	runTimeout := 10 * time.Second // default run timeout
+	// Determine runTimeout based on config and context's deadline
+	runTimeout := ctx.Config.VideoThumbnailTimeout
 
 	// Check if the context has a deadline and adjust the runTimeout accordingly
 	if deadline, ok := httpContext.Deadline(); ok {
@@ -562,27 +585,46 @@ func (ctx *MahresourcesContext) generateVideoThumbnail(
 
 	// Execute thumbnail generation with lock and timeout using RunWithLockTimeout
 	lockAcquired, err := ctx.locks.VideoThumbnailGenerationLock.RunWithLockTimeout(
-		resource.ID,    // Assuming resourceId is of type T comparable (uint)
-		30*time.Second, // lockTimeout
-		runTimeout,     // runTimeout
+		resource.ID,
+		ctx.Config.VideoThumbnailLockTimeout,
+		runTimeout,
 		func() error {
-			// Perform thumbnail generation
-			file, err := fs.Open(resource.GetCleanLocation())
-			if err != nil {
-				return fmt.Errorf("failed to open video file: %w", err)
-			}
-			defer file.Close()
-
 			select {
 			case <-httpContext.Done():
 				return httpContext.Err()
 			default:
 			}
 
-			// Create thumbnail from video
+			// Try to extract a frame from the video
 			resultBuffer := bytes.NewBuffer([]byte{})
-			if err := ctx.createThumbFromVideo(httpContext, file, resultBuffer, &resource); err != nil {
-				return fmt.Errorf("failed to create thumbnail from video: %w", err)
+			var extractErr error
+
+			// Priority 1: Try direct file path with fast seeking (local filesystems only)
+			if localPath, ok := resolveLocalFilePath(fs, resource.GetCleanLocation()); ok {
+				extractErr = ctx.createThumbFromVideoFileAtTime(httpContext, localPath, resultBuffer, 1)
+				if extractErr != nil || resultBuffer.Len() == 0 {
+					resultBuffer.Reset()
+					extractErr = ctx.createThumbFromVideoFileAtTime(httpContext, localPath, resultBuffer, 0)
+				}
+			}
+
+			// Priority 2: Fall back to stdin-based approach (non-local filesystems or if local failed)
+			if resultBuffer.Len() == 0 {
+				resultBuffer.Reset()
+				file, err := fs.Open(resource.GetCleanLocation())
+				if err != nil {
+					return fmt.Errorf("failed to open video file: %w", err)
+				}
+				defer file.Close()
+
+				extractErr = ctx.createThumbFromVideo(httpContext, file, resultBuffer, &resource)
+				if extractErr != nil {
+					return fmt.Errorf("failed to create thumbnail from video: %w", extractErr)
+				}
+			}
+
+			if resultBuffer.Len() == 0 {
+				return fmt.Errorf("ffmpeg produced no output for video: %w", extractErr)
 			}
 
 			select {
@@ -591,25 +633,29 @@ func (ctx *MahresourcesContext) generateVideoThumbnail(
 			default:
 			}
 
-			// Decode the generated thumbnail image
-			originalImage, _, err := image.Decode(resultBuffer)
+			// The ffmpeg output is now JPEG. Store it as a null thumbnail (width=0, height=0)
+			// so subsequent requests for any size can resize from this cached version.
+			nullThumbData := resultBuffer.Bytes()
+			nullPreview := &models.Preview{
+				Data:        nullThumbData,
+				Width:       0,
+				Height:      0,
+				ContentType: "image/jpeg",
+				ResourceId:  &resource.ID,
+			}
+
+			if err := ctx.db.WithContext(httpContext).Save(nullPreview).Error; err != nil {
+				log.Printf("Warning: failed to save null thumbnail for resource %d: %v", resource.ID, err)
+				// Continue anyway - we can still resize for this request
+			}
+
+			// Resize the null thumbnail to the requested dimensions
+			resized, err := ctx.generateImageThumbnail(nullThumbData, width, height)
 			if err != nil {
-				return fmt.Errorf("failed to decode thumbnail image: %w", err)
+				return fmt.Errorf("failed to resize video thumbnail: %w", err)
 			}
 
-			// Use imaging library for faster, high-quality resize with Lanczos filter
-			newImage := imaging.Resize(originalImage, int(width), int(height), imaging.Lanczos)
-
-			// Use adaptive JPEG quality based on dimensions
-			quality := getJPEGQuality(width, height)
-			var buf bytes.Buffer
-			if err := imaging.Encode(&buf, newImage, imaging.JPEG, imaging.JPEGQuality(quality)); err != nil {
-				return fmt.Errorf("failed to encode resized image: %w", err)
-			}
-
-			fileBytes = buf.Bytes()
-
-			// Indicate success
+			fileBytes = resized
 			return nil
 		},
 	)
@@ -706,7 +752,8 @@ func (ctx *MahresourcesContext) createThumbFromVideoAtGivenTime(
 		"-ss", fmt.Sprintf("00:00:%02d", secondsIn), // capture frame at secondsIn
 		"-vframes", "1", // grab one frame
 		"-vf", "scale=640:-1", // scale the image if needed
-		"-c:v", "png", // encode to PNG
+		"-c:v", "mjpeg", // encode to JPEG (faster than PNG)
+		"-q:v", "3", // JPEG quality (lower = better, 2-5 is good)
 		"-f", "image2pipe", // output format
 		"pipe:1", // output to stdout (pipe)
 	)
@@ -812,7 +859,8 @@ func (ctx *MahresourcesContext) createThumbFromVideoFileAtTime(
 		"-i", filePath,                      // File input (enables seeking)
 		"-vframes", "1",                     // Grab one frame
 		"-vf", "scale=640:-1",               // Scale the image
-		"-c:v", "png",                       // Encode to PNG
+		"-c:v", "mjpeg",                     // Encode to JPEG (faster than PNG)
+		"-q:v", "3",                         // JPEG quality (lower = better, 2-5 is good)
 		"-f", "image2pipe",                  // Output format
 		"pipe:1",                            // Output to stdout
 	)
