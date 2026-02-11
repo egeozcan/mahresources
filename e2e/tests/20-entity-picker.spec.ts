@@ -28,8 +28,9 @@ test.describe('Entity Picker - Resource Selection', () => {
     noteId = note.ID;
 
     // Create a resource to select (requires a file)
+    // Use unique image to avoid hash deduplication conflicts with other tests
     const resource = await apiClient.createResource({
-      filePath: path.join(__dirname, '../test-assets/sample-image.png'),
+      filePath: path.join(__dirname, '../test-assets/sample-image-28.png'),
       name: 'Test Resource for Picker',
       ownerId: ownerGroupId,
     });
@@ -163,6 +164,7 @@ test.describe('Entity Picker - Resource Selection', () => {
 
   test.afterAll(async ({ apiClient }) => {
     // Delete in reverse dependency order to avoid FK constraint errors
+    if (resourceId) await apiClient.deleteResource(resourceId).catch(() => {});
     if (noteId) await apiClient.deleteNote(noteId);
     if (ownerGroupId) await apiClient.deleteGroup(ownerGroupId);
     if (categoryId) await apiClient.deleteCategory(categoryId);
@@ -212,18 +214,19 @@ test.describe('Entity Picker - Resource Tag Filtering', () => {
     noteId = note.ID;
 
     // Create resources - one tagged, one not
-    // Use different owner groups to avoid duplicate resource errors
-    // (resources are deduplicated by file hash + parent group)
+    // Use unique images to avoid hash deduplication conflicts with other tests
     const taggedResource = await apiClient.createResource({
-      filePath: path.join(__dirname, '../test-assets/sample-image.png'),
+      filePath: path.join(__dirname, '../test-assets/sample-image-29.png'),
       name: `Tagged Resource ${testSuffix}`,
       ownerId: ownerGroupId,
-      tagIds: [tagId],
     });
     taggedResourceId = taggedResource.ID;
 
+    // Add tag to resource after creation (createResource doesn't support tags param)
+    await apiClient.addTagsToResources([taggedResourceId], [tagId]);
+
     const untaggedResource = await apiClient.createResource({
-      filePath: path.join(__dirname, '../test-assets/sample-image.png'),
+      filePath: path.join(__dirname, '../test-assets/sample-image-30.png'),
       name: `Untagged Resource ${testSuffix}`,
       ownerId: secondGroupId,
     });

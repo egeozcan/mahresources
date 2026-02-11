@@ -217,11 +217,18 @@ test.describe('Resource Category Custom Template Rendering', () => {
 
     try {
       // Navigate to resources sorted by ID desc so our new resource appears first
-      await page.goto('/resources?sort=ID&order=desc');
+      // Use large pageSize to ensure visibility when parallel tests create many resources
+      await page.goto('/resources?sort=ID&order=desc&pageSize=100');
       await page.waitForLoadState('load');
 
       // Find the lightbox-item anchor for this specific resource
+      // Retry with reload if resource isn't visible (SQLite read-after-write visibility)
       const imageLink = page.locator(`a[data-resource-id="${noCatResourceId}"]`);
+      if (!(await imageLink.isVisible())) {
+        await page.waitForTimeout(500);
+        await page.reload();
+        await page.waitForLoadState('load');
+      }
       await expect(imageLink).toBeVisible({ timeout: 10000 });
       await imageLink.click();
 
