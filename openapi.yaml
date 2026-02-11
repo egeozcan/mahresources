@@ -2375,6 +2375,16 @@ paths:
             summary: Run a saved query
             tags:
                 - queries
+    /v1/query/schema:
+        get:
+            description: Returns a map of table names to their column names for autocompletion.
+            operationId: getDatabaseSchema
+            responses:
+                "200":
+                    description: Successful response
+            summary: Get database table and column names
+            tags:
+                - queries
     /v1/relation:
         post:
             operationId: createOrUpdateRelation

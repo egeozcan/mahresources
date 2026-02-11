@@ -66,6 +66,7 @@ func QueryCreateContextProvider(context *application_context.MahresourcesContext
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
 			"pageTitle": "Create Query",
+			"dbType":    context.Config.DbType,
 		}.Update(staticTemplateCtx(request))
 
 		var entityId query_models.EntityIdQuery

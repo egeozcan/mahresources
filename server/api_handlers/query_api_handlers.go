@@ -58,6 +58,20 @@ func sQLToMap(rows *sqlx.Rows) ([]map[string]any, error) {
 	return data, nil
 }
 
+func GetDatabaseSchemaHandler(ctx interfaces.SchemaReader) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		schema, err := ctx.GetDatabaseSchema()
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		writer.Header().Set("Cache-Control", "max-age=300")
+		_ = json.NewEncoder(writer).Encode(schema)
+	}
+}
+
 func GetRunQueryHandler(ctx interfaces.QueryRunner) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := uint(http_utils.GetIntQueryParameter(request, "id", 0))

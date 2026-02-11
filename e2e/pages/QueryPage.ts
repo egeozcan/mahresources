@@ -31,6 +31,30 @@ export class QueryPage extends BasePage {
     await this.page.waitForLoadState('load');
   }
 
+  /** Set a CodeMirror editor's content by field name, updating both the editor and hidden input */
+  private async fillCodeEditor(fieldName: string, text: string) {
+    // Wait for the CodeMirror editor to initialize
+    const hiddenInput = this.page.locator(`input[type="hidden"][name="${fieldName}"]`);
+    await hiddenInput.waitFor({ state: 'attached' });
+    const container = hiddenInput.locator('..');
+    await container.locator('.cm-editor').first().waitFor({ state: 'visible' });
+
+    // Set the value via the CodeMirror EditorView API and update the hidden input
+    await this.page.evaluate(({ name, value }) => {
+      const input = document.querySelector(`input[type="hidden"][name="${name}"]`) as HTMLInputElement;
+      if (!input) return;
+      input.value = value;
+      // Access the EditorView via CodeMirror's DOM binding
+      const cmEditor = input.parentElement?.querySelector('.cm-editor') as any;
+      if (cmEditor?.cmView?.view) {
+        const view = cmEditor.cmView.view;
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: value }
+        });
+      }
+    }, { name: fieldName, value: text });
+  }
+
   async create(data: {
     name: string;
     text: string;
@@ -39,12 +63,10 @@ export class QueryPage extends BasePage {
     await this.gotoNew();
 
     await this.fillName(data.name);
-    await this.page.locator('textarea[name="Text"]').fill(data.text);
-
-    // Note: Query form does not have a description field
+    await this.fillCodeEditor('Text', data.text);
 
     if (data.template) {
-      await this.page.locator('textarea[name="Template"]').fill(data.template);
+      await this.fillCodeEditor('Template', data.template);
     }
 
     await this.save();
@@ -60,10 +82,8 @@ export class QueryPage extends BasePage {
       await this.fillName(updates.name);
     }
     if (updates.text !== undefined) {
-      await this.page.locator('textarea[name="Text"]').clear();
-      await this.page.locator('textarea[name="Text"]').fill(updates.text);
+      await this.fillCodeEditor('Text', updates.text);
     }
-    // Note: Query form does not have a description field
     await this.save();
   }
 
@@ -85,7 +105,6 @@ export class QueryPage extends BasePage {
 
   async runQuery(id: number): Promise<void> {
     await this.gotoDisplay(id);
-    // Look for a run button if available
     const runButton = this.page.locator('button:has-text("Run"), input[type="submit"][value="Run"]');
     if (await runButton.isVisible()) {
       await runButton.click();

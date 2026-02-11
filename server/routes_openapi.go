@@ -841,6 +841,16 @@ func registerQueryRoutes(r *openapi.Registry) {
 		},
 	})
 
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/query/schema",
+		OperationID:          "getDatabaseSchema",
+		Summary:              "Get database table and column names",
+		Description:          "Returns a map of table names to their column names for autocompletion.",
+		Tags:                 []string{"queries"},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/query/editName", "editQueryName", "Edit a query's name", "queries").
 		WithIDParam("id", true))
 

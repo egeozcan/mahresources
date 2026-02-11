@@ -24,3 +24,7 @@ type QueryRunner interface {
 	RunReadOnlyQuery(queryId uint, params map[string]any) (*sqlx.Rows, error)
 	RunReadOnlyQueryByName(queryName string, params map[string]any) (*sqlx.Rows, error)
 }
+
+type SchemaReader interface {
+	GetDatabaseSchema() (map[string][]string, error)
+}
