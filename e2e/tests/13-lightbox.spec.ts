@@ -198,6 +198,45 @@ test.describe('Lightbox Functionality', () => {
     await expect(lightbox).toBeHidden();
   });
 
+  test('should not scroll the page when opening and closing lightbox', async ({ page }) => {
+    await page.goto('/resources');
+    await page.waitForLoadState('load');
+
+    // Pick an image that is not the first one so we can scroll to it
+    const imageLinks = page.locator('[data-lightbox-item]');
+    const count = await imageLinks.count();
+    // Use the last image to maximize the chance it's below the fold
+    const targetIndex = count - 1;
+    const targetImage = imageLinks.nth(targetIndex);
+
+    // Scroll the target image into the center of the viewport
+    await targetImage.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      const elementCenter = rect.top + window.scrollY + rect.height / 2;
+      const viewportCenter = window.innerHeight / 2;
+      window.scrollTo(0, elementCenter - viewportCenter);
+    });
+    // Let the scroll settle
+    await page.waitForTimeout(200);
+
+    // Record the scroll position before opening lightbox
+    const scrollBefore = await page.evaluate(() => window.scrollY);
+
+    // Click the image to open lightbox
+    await targetImage.click();
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    await expect(lightbox).toBeVisible();
+
+    // Close lightbox by clicking the backdrop
+    const mainContent = lightbox.locator('div.flex-1.flex.items-center');
+    await mainContent.click({ position: { x: 10, y: 10 } });
+    await expect(lightbox).toBeHidden();
+
+    // Verify the page did not scroll
+    const scrollAfter = await page.evaluate(() => window.scrollY);
+    expect(scrollAfter).toBe(scrollBefore);
+  });
+
   test('should show details link that navigates to resource page', async ({ page }) => {
     await page.goto('/resources');
     await page.waitForLoadState('load');
