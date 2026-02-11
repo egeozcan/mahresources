@@ -369,10 +369,19 @@ export function registerLightboxStore(Alpine) {
      * @param {number} index
      */
     open(index) {
+      // Lock body scroll using position:fixed with negative top offset.
+      // This preserves visual position unlike overflow:hidden on <html>,
+      // which Chrome resets scrollY to 0.
+      this._savedScrollY = window.scrollY;
+      document.body.style.position = 'fixed';
+      document.body.style.top = `-${this._savedScrollY}px`;
+      document.body.style.left = '0';
+      document.body.style.right = '0';
+      document.body.style.overflow = 'hidden';
+
       this.currentIndex = index;
       this.isOpen = true;
       this.loading = true;
-      document.body.style.overflow = 'hidden';
 
       const item = this.getCurrentItem();
       const mediaType = this.isVideo(item?.contentType) ? 'video' : this.isSvg(item?.contentType) ? 'SVG' : 'image';
@@ -407,7 +416,15 @@ export function registerLightboxStore(Alpine) {
       this.isOpen = false;
       this.loading = false;
       this.resetZoom();
+
+      // Unlock body scroll and restore position
+      const savedY = this._savedScrollY;
+      document.body.style.position = '';
+      document.body.style.top = '';
+      document.body.style.left = '';
+      document.body.style.right = '';
       document.body.style.overflow = '';
+      window.scrollTo(0, savedY);
 
       // Clear resource details to prevent stale data when reopening
       this.resourceDetails = null;
@@ -425,6 +442,12 @@ export function registerLightboxStore(Alpine) {
       }
 
       this.announce('Media viewer closed');
+
+      // Restore scroll again after Alpine's x-trap deactivation settles,
+      // in case focus-trap's returnFocus causes a scroll jump.
+      requestAnimationFrame(() => {
+        window.scrollTo(0, savedY);
+      });
     },
 
     /**
