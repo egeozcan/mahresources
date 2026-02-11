@@ -23,6 +23,12 @@ import (
 	"mahresources/storage"
 )
 
+type PopularTag struct {
+	Name  string
+	Id    uint
+	Count int
+}
+
 type MahresourcesConfig struct {
 	DbType         string
 	AltFileSystems map[string]string

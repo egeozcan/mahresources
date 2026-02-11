@@ -211,6 +211,21 @@ func (ctx *MahresourcesContext) GetGroupsCount(query *query_models.GroupQuery) (
 	return count, ctx.db.Scopes(database_scopes.GroupQuery(query, true, ctx.db)).Model(&group).Count(&count).Error
 }
 
+func (ctx *MahresourcesContext) GetPopularGroupTags(query *query_models.GroupQuery) ([]PopularTag, error) {
+	var res []PopularTag
+
+	db := ctx.db.Table("groups").
+		Scopes(database_scopes.GroupQuery(query, true, ctx.db)).
+		Joins("INNER JOIN group_tags pt ON pt.group_id = groups.id").
+		Joins("INNER JOIN tags t ON t.id = pt.tag_id").
+		Select("t.id AS id, t.name AS name, count(*) AS count").
+		Group("t.id, t.name").
+		Order("count DESC").
+		Limit(20)
+
+	return res, db.Scan(&res).Error
+}
+
 func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {
 	// Load group name before deletion for audit log
 	var group models.Group

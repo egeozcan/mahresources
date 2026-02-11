@@ -7,6 +7,7 @@ import (
 	"io"
 	"mahresources/constants"
 	"mahresources/models"
+	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
 	"mahresources/server/interfaces"
@@ -268,26 +269,19 @@ func (ctx *MahresourcesContext) BulkDeleteResources(query *query_models.BulkQuer
 	return nil
 }
 
-func (ctx *MahresourcesContext) GetPopularResourceTags() ([]struct {
-	Name  string
-	Id    uint
-	count int
-}, error) {
-	var res []struct {
-		Name  string
-		Id    uint
-		count int
-	}
+func (ctx *MahresourcesContext) GetPopularResourceTags(query *query_models.ResourceSearchQuery) ([]PopularTag, error) {
+	var res []PopularTag
 
-	return res, ctx.db.
-		Table("resource_tags").
-		Select("t.id AS Id, t.name AS name, count(*) AS count").
-		Joins("INNER JOIN tags t ON t.id = resource_tags.tag_id").
+	db := ctx.db.Table("resources").
+		Scopes(database_scopes.ResourceQuery(query, true, ctx.db)).
+		Joins("INNER JOIN resource_tags pt ON pt.resource_id = resources.id").
+		Joins("INNER JOIN tags t ON t.id = pt.tag_id").
+		Select("t.id AS id, t.name AS name, count(*) AS count").
 		Group("t.id, t.name").
-		Order("count(*) DESC").
-		Limit(20).
-		Scan(&res).
-		Error
+		Order("count DESC").
+		Limit(20)
+
+	return res, db.Scan(&res).Error
 }
 
 func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) error {

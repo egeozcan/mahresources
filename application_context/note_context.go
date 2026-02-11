@@ -168,6 +168,21 @@ func (ctx *MahresourcesContext) GetNoteCount(query *query_models.NoteQuery) (int
 	return count, ctx.db.Scopes(database_scopes.NoteQuery(query, true)).Model(&note).Count(&count).Error
 }
 
+func (ctx *MahresourcesContext) GetPopularNoteTags(query *query_models.NoteQuery) ([]PopularTag, error) {
+	var res []PopularTag
+
+	db := ctx.db.Table("notes").
+		Scopes(database_scopes.NoteQuery(query, true)).
+		Joins("INNER JOIN note_tags pt ON pt.note_id = notes.id").
+		Joins("INNER JOIN tags t ON t.id = pt.tag_id").
+		Select("t.id AS id, t.name AS name, count(*) AS count").
+		Group("t.id, t.name").
+		Order("count DESC").
+		Limit(20)
+
+	return res, db.Scan(&res).Error
+}
+
 func (ctx *MahresourcesContext) DeleteNote(noteId uint) error {
 	// Load note name before deletion for audit log
 	var note models.Note

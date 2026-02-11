@@ -83,6 +83,12 @@ func NoteListContextProvider(context *application_context.MahresourcesContext) f
 			return addErrContext(err, baseContext)
 		}
 
+		popularTags, err := context.GetPopularNoteTags(&query)
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
 		return pongo2.Context{
 			"pageTitle":   "Notes",
 			"notes":       notes,
@@ -90,6 +96,7 @@ func NoteListContextProvider(context *application_context.MahresourcesContext) f
 			"owners":      owners,
 			"pagination":  pagination,
 			"tags":        tags,
+			"popularTags": popularTags,
 			"noteTypes":   noteTypes,
 			"parsedQuery": query,
 			"action": template_entities.Entry{

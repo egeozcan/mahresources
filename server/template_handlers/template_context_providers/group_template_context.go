@@ -105,6 +105,12 @@ func GroupsListContextProvider(context *application_context.MahresourcesContext)
 			return addErrContext(err, baseContext)
 		}
 
+		popularTags, err := context.GetPopularGroupTags(&query)
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
 		return pongo2.Context{
 			"pageTitle":       "Groups",
 			"groups":          groups,
@@ -113,6 +119,7 @@ func GroupsListContextProvider(context *application_context.MahresourcesContext)
 			"categories":      categories,
 			"pagination":      pagination,
 			"tags":            tags,
+			"popularTags":     popularTags,
 			"notes":           notes,
 			"resources":       resources,
 			"parsedQuery":     query,

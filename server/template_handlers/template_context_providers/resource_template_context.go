@@ -96,7 +96,7 @@ func ResourceListContextProvider(context *application_context.MahresourcesContex
 			}
 		}
 
-		popularTags, err := context.GetPopularResourceTags()
+		popularTags, err := context.GetPopularResourceTags(&query)
 
 		if err != nil {
 			return addErrContext(err, baseContext)

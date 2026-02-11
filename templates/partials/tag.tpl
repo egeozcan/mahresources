@@ -6,7 +6,7 @@
         {% if active %}bg-green-200 text-green-700 rounded-full
         {% else %} rounded-full bg-yellow-100 text-gray-700 border
         {% endif %}">
-    {{ name }}
+    {{ name }}{% if count %} ({{ count }}){% endif %}
 </span>
     {% if ID %}
 </a>
