@@ -892,3 +892,194 @@ test.describe('Lightbox Edit Panel', () => {
     expect(typeof newTagCount).toBe('number');
   });
 });
+
+test.describe('Lightbox Edit After Pagination', () => {
+  let categoryId: number;
+  let ownerGroupId: number;
+  const createdResourceIds: number[] = [];
+  const testRunId = Date.now() + Math.floor(Math.random() * 100000);
+
+  test.beforeAll(async ({ apiClient }) => {
+    const category = await apiClient.createCategory(
+      `PagEdit Category ${testRunId}`,
+      'Category for pagination edit tests'
+    );
+    categoryId = category.ID;
+
+    const ownerGroup = await apiClient.createGroup({
+      name: `PagEdit Owner ${testRunId}`,
+      description: 'Owner for pagination edit test resources',
+      categoryId: categoryId,
+    });
+    ownerGroupId = ownerGroup.ID;
+
+    // Create 4 image resources — enough for 2 pages with pageSize=2
+    // Use images 24-27 which aren't used by other tests
+    const testImageFiles = [
+      path.join(__dirname, '../test-assets/sample-image-24.png'),
+      path.join(__dirname, '../test-assets/sample-image-25.png'),
+      path.join(__dirname, '../test-assets/sample-image-26.png'),
+      path.join(__dirname, '../test-assets/sample-image-27.png'),
+    ];
+    for (let i = 0; i < testImageFiles.length; i++) {
+      const resource = await apiClient.createResource({
+        filePath: testImageFiles[i],
+        name: `PagEdit Image ${i + 1} - ${testRunId}`,
+        description: `Test image ${i + 1} for pagination edit`,
+        ownerId: ownerGroupId,
+      });
+      createdResourceIds.push(resource.ID);
+    }
+  });
+
+  test.afterAll(async ({ apiClient }) => {
+    for (const resourceId of createdResourceIds) {
+      try { await apiClient.deleteResource(resourceId); } catch { /* ignore */ }
+    }
+    if (ownerGroupId) await apiClient.deleteGroup(ownerGroupId).catch(() => {});
+    if (categoryId) await apiClient.deleteCategory(categoryId).catch(() => {});
+  });
+
+  test('should preserve lightbox image after editing a resource loaded from next page', async ({ page }) => {
+    // Navigate with pageSize=2, filtered to our test resources
+    await page.goto(`/resources?OwnerId=${ownerGroupId}&pageSize=2`);
+    await page.waitForLoadState('load');
+
+    // Verify page 1 shows exactly 2 lightbox items
+    const lightboxItems = page.locator('[data-lightbox-item]');
+    await expect(lightboxItems).toHaveCount(2, { timeout: 5000 });
+
+    // Verify pagination indicates a next page
+    const paginationNav = page.locator('nav[aria-label="Pagination"]');
+    await expect(paginationNav).toHaveAttribute('data-has-next', 'true');
+
+    // Open lightbox on the last item on page 1 (position 2 of 2)
+    await lightboxItems.last().click();
+
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    await expect(lightbox).toBeVisible();
+
+    // Wait for image to load
+    const lightboxImage = lightbox.locator('img');
+    await expect(lightboxImage).toBeVisible({ timeout: 5000 });
+
+    const counter = lightbox.locator('div.bg-black\\/50:has-text("/")').first();
+    await expect(counter).toContainText('2 / 2');
+
+    // Click Next — this triggers loadNextPage() to fetch page 2 items
+    const nextButton = lightbox.locator('button[aria-label="Next"]');
+    await nextButton.click();
+
+    // Wait for page 2 items to load and navigation to complete
+    // Counter should update from "2 / 2" to "3 / 4"
+    await expect(counter).toContainText('3 / 4', { timeout: 10000 });
+
+    // Verify the new image is displayed
+    await expect(lightboxImage).toBeVisible();
+
+    // Open edit panel on this page-2 resource
+    const editButton = lightbox.locator('button:has-text("Edit")');
+    await editButton.click();
+
+    const editPanel = lightbox.locator('[data-edit-panel]');
+    await expect(editPanel).toBeVisible();
+
+    // Wait for resource details to load
+    const nameInput = editPanel.locator('input#lightbox-edit-name');
+    await expect(nameInput).toBeVisible();
+    await page.waitForFunction(() => {
+      const input = document.querySelector('#lightbox-edit-name') as HTMLInputElement;
+      return input && input.value.length > 0;
+    }, { timeout: 30000 });
+
+    // Change name to trigger needsRefreshOnClose
+    await nameInput.fill(`Edited PagEdit Image - ${testRunId}`);
+    await nameInput.blur();
+    await page.waitForTimeout(500);
+
+    // Close edit panel — triggers refreshPageContent() + DOM morph
+    // Click header to ensure focus is not on an input
+    await editPanel.locator('h2:has-text("Edit Resource")').click();
+    await page.waitForTimeout(100);
+    await page.keyboard.press('Escape');
+
+    // Wait for edit panel to close and background refresh to complete
+    await expect(editPanel).toBeHidden();
+    await page.waitForTimeout(1500);
+
+    // KEY ASSERTIONS: lightbox should still show the image (not disappear)
+    await expect(lightbox).toBeVisible();
+    await expect(lightboxImage).toBeVisible({ timeout: 5000 });
+
+    // Counter should still show the same position
+    await expect(counter).toContainText('3 / 4');
+
+    // Navigation should still work — go to next item
+    await nextButton.click();
+    await page.waitForTimeout(500);
+    await expect(counter).toContainText('4 / 4');
+    await expect(lightboxImage).toBeVisible();
+
+    // Navigate back
+    const prevButton = lightbox.locator('button[aria-label="Previous"]');
+    await prevButton.click();
+    await page.waitForTimeout(500);
+    await expect(counter).toContainText('3 / 4');
+    await expect(lightboxImage).toBeVisible();
+  });
+
+  test('should preserve lightbox state when closing and reopening after pagination edit', async ({ page }) => {
+    // Navigate with pageSize=2, filtered to our test resources
+    await page.goto(`/resources?OwnerId=${ownerGroupId}&pageSize=2`);
+    await page.waitForLoadState('load');
+
+    const lightboxItems = page.locator('[data-lightbox-item]');
+    await expect(lightboxItems).toHaveCount(2, { timeout: 5000 });
+
+    // Open lightbox on last page-1 item
+    await lightboxItems.last().click();
+
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    await expect(lightbox).toBeVisible();
+
+    const counter = lightbox.locator('div.bg-black\\/50:has-text("/")').first();
+
+    // Navigate to page 2
+    const nextButton = lightbox.locator('button[aria-label="Next"]');
+    await nextButton.click();
+    await expect(counter).toContainText('3 / 4', { timeout: 10000 });
+
+    // Edit the resource
+    const editButton = lightbox.locator('button:has-text("Edit")');
+    await editButton.click();
+
+    const editPanel = lightbox.locator('[data-edit-panel]');
+    await expect(editPanel).toBeVisible();
+
+    // Wait for details to load, then update description
+    const descInput = editPanel.locator('textarea#lightbox-edit-description');
+    await expect(descInput).toBeVisible();
+    await page.waitForTimeout(500);
+    await descInput.fill(`Updated desc - ${testRunId}`);
+    await descInput.blur();
+    await page.waitForTimeout(300);
+
+    // Close edit panel
+    await editPanel.locator('h2:has-text("Edit Resource")').click();
+    await page.waitForTimeout(100);
+    await page.keyboard.press('Escape');
+    await expect(editPanel).toBeHidden();
+    await page.waitForTimeout(1500);
+
+    // Close the lightbox entirely
+    await page.keyboard.press('Escape');
+    await expect(lightbox).toBeHidden();
+
+    // Reopen lightbox on a page-1 item — should still work normally
+    await lightboxItems.first().click();
+    await expect(lightbox).toBeVisible();
+
+    const lightboxImage = lightbox.locator('img');
+    await expect(lightboxImage).toBeVisible({ timeout: 5000 });
+  });
+});

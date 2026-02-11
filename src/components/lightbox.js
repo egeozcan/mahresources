@@ -406,6 +406,7 @@ export function registerLightboxStore(Alpine) {
 
       this.isOpen = false;
       this.loading = false;
+      this.resetZoom();
       document.body.style.overflow = '';
 
       // Clear resource details to prevent stale data when reopening
@@ -417,9 +418,9 @@ export function registerLightboxStore(Alpine) {
         this.requestAborter = null;
       }
 
-      // Restore focus to trigger element
+      // Restore focus to trigger element without scrolling the page
       if (this.triggerElement) {
-        this.triggerElement.focus();
+        this.triggerElement.focus({ preventScroll: true });
         this.triggerElement = null;
       }
 
@@ -1271,11 +1272,49 @@ export function registerLightboxStore(Alpine) {
           // Restore scroll position after morph
           window.scrollTo(scrollX, scrollY);
 
-          // Re-initialize lightbox items from the updated DOM
-          this.initFromDOM();
+          // Update lightbox items from the refreshed DOM without losing
+          // items loaded from other pages via pagination.
+          this.updateItemsFromDOM();
         }
       } catch (err) {
         console.error('Failed to refresh page content:', err);
+      }
+    },
+
+    /**
+     * Update existing lightbox items from the current DOM without
+     * rebuilding the entire items array. This preserves items loaded
+     * from other pages and keeps currentIndex valid.
+     */
+    updateItemsFromDOM() {
+      const container = document.querySelector('.list-container, .gallery');
+      if (!container) return;
+
+      const links = container.querySelectorAll('[data-lightbox-item]');
+      const domItems = new Map();
+
+      links.forEach(link => {
+        const id = parseInt(link.dataset.resourceId, 10);
+        const contentType = link.dataset.contentType || '';
+        if (contentType.startsWith('image/') || contentType.startsWith('video/')) {
+          const hash = link.dataset.resourceHash || '';
+          const versionParam = hash ? `&v=${hash}` : '';
+          domItems.set(id, {
+            id,
+            viewUrl: `/v1/resource/view?id=${id}${versionParam}`,
+            contentType,
+            name: link.dataset.resourceName || link.querySelector('img')?.alt || '',
+            hash,
+          });
+        }
+      });
+
+      // Update properties of existing items that appear in the refreshed DOM
+      for (let i = 0; i < this.items.length; i++) {
+        const updated = domItems.get(this.items[i].id);
+        if (updated) {
+          this.items[i] = { ...this.items[i], ...updated };
+        }
       }
     },
 
