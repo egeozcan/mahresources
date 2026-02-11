@@ -32,6 +32,7 @@
     --color-green-700: oklch(52.7% 0.154 150.069);
     --color-green-800: oklch(44.8% 0.119 151.328);
     --color-green-900: oklch(39.3% 0.095 152.535);
+    --color-teal-500: oklch(70.4% 0.14 182.503);
     --color-blue-50: oklch(97% 0.014 254.604);
     --color-blue-100: oklch(93.2% 0.032 255.585);
     --color-blue-200: oklch(88.2% 0.059 254.128);
@@ -2976,6 +2977,11 @@
   .focus\:ring-red-500 {
     &:focus {
       --tw-ring-color: var(--color-red-500);
+    }
+  }
+  .focus\:ring-teal-500 {
+    &:focus {
+      --tw-ring-color: var(--color-teal-500);
     }
   }
   .focus\:ring-white {

@@ -1,13 +1,11 @@
 import { setCheckBox } from '../index.js';
 
-const btnDefaultClass = "bg-gray-500";
-const btnActiveClass = "bg-indigo-600";
-const btnClasses = `inline-flex justify-center
-      py-2 px-4 mt-3
-      border border-transparent
+const btnClasses = `bulk-action-btn inline-flex justify-center
+      py-1.5 px-3 mt-3
+      border
       items-center
-      shadow-sm text-sm font-medium rounded-md text-white
-      ${btnDefaultClass} focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500`;
+      text-sm font-medium rounded-md
+      focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500`;
 
 let currentIndex = 0;
 
@@ -140,8 +138,7 @@ export function registerBulkSelectionStore(Alpine) {
       btn.addEventListener("click", () => this.toggleEditor(form));
       btn.setAttribute("x-effect", `() => {
         const isActive = $store.bulkSelection.isActiveEditor($el.nextElementSibling);
-        $el.classList.toggle("${btnActiveClass}", isActive);
-        $el.classList.toggle("${btnDefaultClass}", !isActive);
+        $el.dataset.active = isActive;
         $el.setAttribute("aria-expanded", isActive);
       }`);
 
