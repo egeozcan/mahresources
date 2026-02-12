@@ -304,6 +304,8 @@ export function registerLightboxStore(Alpine) {
           contentType: link.dataset.contentType || '',
           name: link.dataset.resourceName || link.querySelector('img')?.alt || '',
           hash: hash,
+          width: parseInt(link.dataset.resourceWidth, 10) || 0,
+          height: parseInt(link.dataset.resourceHeight, 10) || 0,
           domIndex: index
         };
       }).filter(item =>
@@ -648,7 +650,9 @@ export function registerLightboxStore(Alpine) {
             viewUrl: `/v1/resource/view?id=${r.ID}${versionParam}`,
             contentType: r.ContentType,
             name: r.Name || '',
-            hash: r.Hash || ''
+            hash: r.Hash || '',
+            width: r.Width || 0,
+            height: r.Height || 0
           };
         });
 

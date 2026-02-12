@@ -11,7 +11,9 @@
                data-resource-id="{{ entity.ID }}"
                data-content-type="{{ entity.ContentType }}"
                data-resource-name="{{ entity.Name }}"
-               data-resource-hash="{{ entity.Hash }}">
+               data-resource-hash="{{ entity.Hash }}"
+               data-resource-width="{{ entity.Width }}"
+               data-resource-height="{{ entity.Height }}">
                 <img height="300" src="/v1/resource/preview?id={{ entity.ID }}&height=300&v={{ entity.Hash }}" alt="Preview">
             </a>
         </div>

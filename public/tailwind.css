@@ -1264,6 +1264,9 @@
   .max-h-\[90vh\] {
     max-height: 90vh;
   }
+  .min-h-0 {
+    min-height: calc(var(--spacing) * 0);
+  }
   .min-h-\[40px\] {
     min-height: 40px;
   }
@@ -3183,11 +3186,6 @@
   .md\:right-0 {
     @media (width >= 48rem) {
       right: calc(var(--spacing) * 0);
-    }
-  }
-  .md\:right-\[400px\] {
-    @media (width >= 48rem) {
-      right: 400px;
     }
   }
   .md\:bottom-0 {

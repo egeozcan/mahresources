@@ -34,8 +34,13 @@
 
     <!-- Main content area (shrinks when edit panel opens on desktop) -->
     <div
-        class="relative flex-1 flex items-center justify-center transition-all duration-300 ease-in-out"
-        :class="[$store.lightbox.editPanelOpen ? 'md:mr-[400px]' : '', $store.lightbox.isDragging ? 'cursor-grabbing' : 'cursor-grab']"
+        class="relative flex-1 flex flex-col transition-all duration-300 ease-in-out"
+        :class="$store.lightbox.editPanelOpen ? 'md:mr-[400px]' : ''"
+    >
+    <!-- Media area (centered, fills available space) -->
+    <div
+        class="flex-1 flex items-center justify-center min-h-0 relative"
+        :class="$store.lightbox.isDragging ? 'cursor-grabbing' : 'cursor-grab'"
         @click.self="$store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.close()"
         @mousedown="$store.lightbox.handleMouseDown($event)"
         @mousemove="$store.lightbox.handleMouseMove($event)"
@@ -150,6 +155,74 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
             </svg>
         </button>
+    </div>
+
+    <!-- Bottom bar with counter, resolution, and controls (in flow, does not cover media) -->
+    <div class="flex justify-between items-center px-4 py-2 text-white text-sm z-20">
+        <!-- Counter -->
+        <div class="bg-black/50 px-3 py-1 rounded">
+            <span x-text="$store.lightbox.currentIndex + 1"></span>
+            /
+            <span x-text="$store.lightbox.items.length"></span>
+            <span x-show="$store.lightbox.hasNextPage" class="text-gray-400">+</span>
+        </div>
+
+        <!-- Native resolution -->
+        <div
+            x-show="$store.lightbox.getCurrentItem()?.width && $store.lightbox.getCurrentItem()?.height"
+            class="bg-black/50 px-3 py-1 rounded tabular-nums"
+            x-text="($store.lightbox.getCurrentItem()?.width || '') + ' \u00d7 ' + ($store.lightbox.getCurrentItem()?.height || '')"
+        ></div>
+
+        <!-- Native zoom percentage with preset picker -->
+        <div x-show="$store.lightbox.nativeZoomPercent()">
+            <button
+                @click.stop="$store.lightbox.showZoomPresets($el)"
+                class="bg-black/50 px-3 py-1 rounded tabular-nums hover:bg-white/30 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50"
+                x-text="$store.lightbox.nativeZoomPercent()"
+                title="Choose zoom level"
+            ></button>
+        </div>
+
+        <!-- Fullscreen button -->
+        <button
+            x-show="$store.lightbox.fullscreenSupported()"
+            @click.stop="$store.lightbox.toggleFullscreen()"
+            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
+            :title="$store.lightbox.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'"
+            :aria-label="$store.lightbox.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'"
+        >
+            <!-- Expand icon (not fullscreen) -->
+            <svg x-show="!$store.lightbox.isFullscreen" aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path>
+            </svg>
+            <!-- Compress icon (fullscreen) -->
+            <svg x-show="$store.lightbox.isFullscreen" x-cloak aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9L4 4m0 0v4m0-4h4m6 0l5-5m0 0v4m0-4h-4M9 15l-5 5m0 0v-4m0 4h4m6 0l5 5m0 0v-4m0 4h-4"></path>
+            </svg>
+        </button>
+
+        <!-- Name -->
+        <div
+            x-show="$store.lightbox.getCurrentItem()?.name"
+            class="bg-black/50 px-3 py-1 rounded max-w-[30vw] truncate hidden md:block"
+            x-text="$store.lightbox.getCurrentItem()?.name"
+        ></div>
+
+        <!-- Edit button -->
+        <button
+            @click.stop="$store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel()"
+            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
+            :class="$store.lightbox.editPanelOpen ? 'bg-indigo-600/80 hover:bg-indigo-700/80' : ''"
+            :aria-pressed="$store.lightbox.editPanelOpen"
+            :title="$store.lightbox.editPanelOpen ? 'Close edit panel' : 'Edit resource'"
+        >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+            </svg>
+            <span x-text="$store.lightbox.editPanelOpen ? 'Close' : 'Edit'"></span>
+        </button>
+    </div>
     </div>
 
     <!-- Edit Panel (slides in from right) -->
@@ -410,69 +483,6 @@
         :class="$store.lightbox.editPanelOpen ? 'md:-translate-x-[calc(50%+200px)]' : ''"
     >
         Loading more items...
-    </div>
-
-    <!-- Bottom bar with counter and name -->
-    <div
-        class="absolute bottom-4 left-0 flex justify-between items-center px-4 text-white text-sm transition-all duration-300 z-20"
-        :class="$store.lightbox.editPanelOpen ? 'right-0 md:right-[400px]' : 'right-0'"
-    >
-        <!-- Counter -->
-        <div class="bg-black/50 px-3 py-1 rounded">
-            <span x-text="$store.lightbox.currentIndex + 1"></span>
-            /
-            <span x-text="$store.lightbox.items.length"></span>
-            <span x-show="$store.lightbox.hasNextPage" class="text-gray-400">+</span>
-        </div>
-
-        <!-- Native zoom percentage with preset picker -->
-        <div x-show="$store.lightbox.nativeZoomPercent()">
-            <button
-                @click.stop="$store.lightbox.showZoomPresets($el)"
-                class="bg-black/50 px-3 py-1 rounded tabular-nums hover:bg-white/30 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50"
-                x-text="$store.lightbox.nativeZoomPercent()"
-                title="Choose zoom level"
-            ></button>
-        </div>
-
-        <!-- Fullscreen button -->
-        <button
-            x-show="$store.lightbox.fullscreenSupported()"
-            @click.stop="$store.lightbox.toggleFullscreen()"
-            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
-            :title="$store.lightbox.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'"
-            :aria-label="$store.lightbox.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'"
-        >
-            <!-- Expand icon (not fullscreen) -->
-            <svg x-show="!$store.lightbox.isFullscreen" aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path>
-            </svg>
-            <!-- Compress icon (fullscreen) -->
-            <svg x-show="$store.lightbox.isFullscreen" x-cloak aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9L4 4m0 0v4m0-4h4m6 0l5-5m0 0v4m0-4h-4M9 15l-5 5m0 0v-4m0 4h4m6 0l5 5m0 0v-4m0 4h-4"></path>
-            </svg>
-        </button>
-
-        <!-- Name -->
-        <div
-            x-show="$store.lightbox.getCurrentItem()?.name"
-            class="bg-black/50 px-3 py-1 rounded max-w-[30vw] truncate hidden md:block"
-            x-text="$store.lightbox.getCurrentItem()?.name"
-        ></div>
-
-        <!-- Edit button -->
-        <button
-            @click.stop="$store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel()"
-            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
-            :class="$store.lightbox.editPanelOpen ? 'bg-indigo-600/80 hover:bg-indigo-700/80' : ''"
-            :aria-pressed="$store.lightbox.editPanelOpen"
-            :title="$store.lightbox.editPanelOpen ? 'Close edit panel' : 'Edit resource'"
-        >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
-            </svg>
-            <span x-text="$store.lightbox.editPanelOpen ? 'Close' : 'Edit'"></span>
-        </button>
     </div>
 
     <!-- Zoom preset popover (top layer, no clipping) -->
