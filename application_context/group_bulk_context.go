@@ -102,8 +102,7 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 				return err
 			}
 
-			backups[fmt.Sprintf("resource_%v", loser.ID)] = backupData
-			fmt.Printf("%#v\n", backups)
+			backups[fmt.Sprintf("group_%v", loser.ID)] = backupData
 
 			switch altCtx.Config.DbType {
 			case constants.DbTypePosgres:
@@ -133,8 +132,6 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 			}
 		}
 
-		fmt.Printf("%#v\n", backups)
-
 		backupObj := make(map[string]any)
 		backupObj["backups"] = backups
 
@@ -145,11 +142,11 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 		}
 
 		if ctx.Config.DbType == constants.DbTypePosgres {
-			if err := altCtx.db.Exec("update resources set meta = meta || ? where id = ?", backupsBytes, winner.ID).Error; err != nil {
+			if err := altCtx.db.Exec("update groups set meta = meta || ? where id = ?", backupsBytes, winner.ID).Error; err != nil {
 				return err
 			}
 		} else if ctx.Config.DbType == constants.DbTypeSqlite {
-			if err := altCtx.db.Exec("update resources set meta = json_patch(meta, ?) where id = ?", backupsBytes, winner.ID).Error; err != nil {
+			if err := altCtx.db.Exec("update groups set meta = json_patch(meta, ?) where id = ?", backupsBytes, winner.ID).Error; err != nil {
 				return err
 			}
 		}
@@ -162,25 +159,24 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 	})
 }
 
-func (ctx *MahresourcesContext) GroupMetaKeys() (*[]interfaces.MetaKey, error) {
+func (ctx *MahresourcesContext) GroupMetaKeys() ([]interfaces.MetaKey, error) {
 	return metaKeys(ctx, "groups")
 }
 
 func (ctx *MahresourcesContext) BulkAddTagsToGroups(query *query_models.BulkEditQuery) error {
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		tags := make([]*models.Tag, 0, len(query.EditedId))
 		for _, editedId := range query.EditedId {
 			tag, err := ctx.GetTag(editedId)
-
 			if err != nil {
 				return err
 			}
+			tags = append(tags, tag)
+		}
 
-			for _, groupId := range query.ID {
-				appendErr := tx.Model(&models.Group{ID: groupId}).Association("Tags").Append(tag)
-
-				if appendErr != nil {
-					return appendErr
-				}
+		for _, groupId := range query.ID {
+			if appendErr := tx.Model(&models.Group{ID: groupId}).Association("Tags").Append(tags); appendErr != nil {
+				return appendErr
 			}
 		}
 
@@ -190,19 +186,18 @@ func (ctx *MahresourcesContext) BulkAddTagsToGroups(query *query_models.BulkEdit
 
 func (ctx *MahresourcesContext) BulkRemoveTagsFromGroups(query *query_models.BulkEditQuery) error {
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		tags := make([]*models.Tag, 0, len(query.EditedId))
 		for _, editedId := range query.EditedId {
 			tag, err := ctx.GetTag(editedId)
-
 			if err != nil {
 				return err
 			}
+			tags = append(tags, tag)
+		}
 
-			for _, groupId := range query.ID {
-				appendErr := tx.Model(&models.Group{ID: groupId}).Association("Tags").Delete(tag)
-
-				if appendErr != nil {
-					return appendErr
-				}
+		for _, groupId := range query.ID {
+			if deleteErr := tx.Model(&models.Group{ID: groupId}).Association("Tags").Delete(tags); deleteErr != nil {
+				return deleteErr
 			}
 		}
 
@@ -231,16 +226,17 @@ func (ctx *MahresourcesContext) BulkAddMetaToGroups(query *query_models.BulkEdit
 }
 
 func (ctx *MahresourcesContext) BulkDeleteGroups(query *query_models.BulkQuery) error {
-	for _, id := range query.ID {
-		if err := ctx.DeleteGroup(id); err != nil {
-			return err
+	return ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
+		for _, id := range query.ID {
+			if err := altCtx.DeleteGroup(id); err != nil {
+				return err
+			}
 		}
-	}
-
-	return nil
+		return nil
+	})
 }
 
-func (ctx *MahresourcesContext) FindParentsOfGroup(id uint) (*[]models.Group, error) {
+func (ctx *MahresourcesContext) FindParentsOfGroup(id uint) ([]models.Group, error) {
 	var results []models.Group
 	var ids []uint
 
@@ -271,14 +267,14 @@ func (ctx *MahresourcesContext) FindParentsOfGroup(id uint) (*[]models.Group, er
 		return lib.IndexOf(ids, results[i].ID) > lib.IndexOf(ids, results[j].ID)
 	})
 
-	return &results, nil
+	return results, nil
 }
 
 func (ctx *MahresourcesContext) DuplicateGroup(id uint) (*models.Group, error) {
 	var result *models.Group
 	var original models.Group
 
-	if err := ctx.db.First(&original, id).Error; err != nil {
+	if err := ctx.db.Preload(clause.Associations).First(&original, id).Error; err != nil {
 		return nil, err
 	}
 

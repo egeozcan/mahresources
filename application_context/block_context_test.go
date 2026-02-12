@@ -172,10 +172,10 @@ func TestBlockContext_GetBlocksForNote(t *testing.T) {
 
 	blocks, err := ctx.GetBlocksForNote(note.ID)
 	assert.NoError(t, err)
-	assert.Len(t, *blocks, 2)
+	assert.Len(t, blocks, 2)
 	// Should be ordered by position
-	assert.Equal(t, "a", (*blocks)[0].Position)
-	assert.Equal(t, "b", (*blocks)[1].Position)
+	assert.Equal(t, "a", (blocks)[0].Position)
+	assert.Equal(t, "b", (blocks)[1].Position)
 }
 
 func TestBlockContext_GetBlocksForNote_Empty(t *testing.T) {
@@ -185,7 +185,7 @@ func TestBlockContext_GetBlocksForNote_Empty(t *testing.T) {
 
 	blocks, err := ctx.GetBlocksForNote(note.ID)
 	assert.NoError(t, err)
-	assert.Len(t, *blocks, 0)
+	assert.Len(t, blocks, 0)
 }
 
 func TestBlockContext_UpdateBlockContent(t *testing.T) {
@@ -258,7 +258,7 @@ func TestBlockContext_DeleteBlock(t *testing.T) {
 	assert.NoError(t, err)
 
 	blocks, _ := ctx.GetBlocksForNote(note.ID)
-	assert.Len(t, *blocks, 0)
+	assert.Len(t, blocks, 0)
 }
 
 func TestBlockContext_DeleteBlock_NotFound(t *testing.T) {
@@ -290,8 +290,8 @@ func TestBlockContext_ReorderBlocks(t *testing.T) {
 
 	// Verify new order
 	blocks, _ := ctx.GetBlocksForNote(note.ID)
-	assert.Equal(t, block2.ID, (*blocks)[0].ID) // block2 now first (position "a")
-	assert.Equal(t, block1.ID, (*blocks)[1].ID) // block1 now second (position "b")
+	assert.Equal(t, block2.ID, (blocks)[0].ID) // block2 now first (position "a")
+	assert.Equal(t, block1.ID, (blocks)[1].ID) // block1 now second (position "b")
 }
 
 func TestBlockContext_ReorderBlocks_EmptyPositions(t *testing.T) {
@@ -455,17 +455,17 @@ func TestBlockContext_RebalanceBlockPositions(t *testing.T) {
 
 	// Fetch blocks and verify
 	blocks, _ := ctx.GetBlocksForNote(note.ID)
-	assert.Len(t, *blocks, 3)
+	assert.Len(t, blocks, 3)
 
 	// Positions should now be single characters and evenly distributed
-	for _, block := range *blocks {
+	for _, block := range blocks {
 		assert.Len(t, block.Position, 1, "position should be single character after rebalancing")
 	}
 
 	// Order should be preserved
-	assert.Equal(t, "First", extractText((*blocks)[0].Content))
-	assert.Equal(t, "Second", extractText((*blocks)[1].Content))
-	assert.Equal(t, "Third", extractText((*blocks)[2].Content))
+	assert.Equal(t, "First", extractText((blocks)[0].Content))
+	assert.Equal(t, "Second", extractText((blocks)[1].Content))
+	assert.Equal(t, "Third", extractText((blocks)[2].Content))
 }
 
 func TestBlockContext_RebalanceBlockPositions_Empty(t *testing.T) {

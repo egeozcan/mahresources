@@ -189,11 +189,8 @@ func (ctx *MahresourcesContext) getOrCreateNullThumbnail(
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		// Null thumbnail doesn't exist; attempt to create it from the original image
 		name := resource.GetCleanLocation() + constants.ThumbFileSuffix
-		fmt.Println("Attempting to open", name)
-
 		file, fopenErr := fs.Open(name)
 		if fopenErr != nil {
-			fmt.Println("Failed to open file:", fopenErr)
 			return nullThumbnail, fileBytes, nil // Return empty fileBytes; no null thumbnail
 		}
 		defer file.Close()

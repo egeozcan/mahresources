@@ -101,25 +101,24 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 	return nil
 }
 
-func (ctx *MahresourcesContext) ResourceMetaKeys() (*[]interfaces.MetaKey, error) {
+func (ctx *MahresourcesContext) ResourceMetaKeys() ([]interfaces.MetaKey, error) {
 	return metaKeys(ctx, "resources")
 }
 
 func (ctx *MahresourcesContext) BulkRemoveTagsFromResources(query *query_models.BulkEditQuery) error {
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		tags := make([]*models.Tag, 0, len(query.EditedId))
 		for _, editedId := range query.EditedId {
 			tag, err := ctx.GetTag(editedId)
-
 			if err != nil {
 				return err
 			}
+			tags = append(tags, tag)
+		}
 
-			for _, id := range query.ID {
-				appendErr := tx.Model(&models.Resource{ID: id}).Association("Tags").Delete(tag)
-
-				if appendErr != nil {
-					return appendErr
-				}
+		for _, id := range query.ID {
+			if deleteErr := tx.Model(&models.Resource{ID: id}).Association("Tags").Delete(tags); deleteErr != nil {
+				return deleteErr
 			}
 		}
 
@@ -198,19 +197,18 @@ func (ctx *MahresourcesContext) BulkAddMetaToResources(query *query_models.BulkE
 
 func (ctx *MahresourcesContext) BulkAddTagsToResources(query *query_models.BulkEditQuery) error {
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		tags := make([]*models.Tag, 0, len(query.EditedId))
 		for _, editedId := range query.EditedId {
 			tag, err := ctx.GetTag(editedId)
-
 			if err != nil {
 				return err
 			}
+			tags = append(tags, tag)
+		}
 
-			for _, id := range query.ID {
-				appendErr := tx.Model(&models.Resource{ID: id}).Association("Tags").Append(tag)
-
-				if appendErr != nil {
-					return appendErr
-				}
+		for _, id := range query.ID {
+			if appendErr := tx.Model(&models.Resource{ID: id}).Association("Tags").Append(tags); appendErr != nil {
+				return appendErr
 			}
 		}
 
@@ -229,19 +227,18 @@ func (ctx *MahresourcesContext) BulkAddTagsToResources(query *query_models.BulkE
 
 func (ctx *MahresourcesContext) BulkAddGroupsToResources(query *query_models.BulkEditQuery) error {
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		groups := make([]*models.Group, 0, len(query.EditedId))
 		for _, editedId := range query.EditedId {
 			group, err := ctx.GetGroup(editedId)
-
 			if err != nil {
 				return err
 			}
+			groups = append(groups, group)
+		}
 
-			for _, id := range query.ID {
-				appendErr := tx.Model(&models.Resource{ID: id}).Association("Groups").Append(group)
-
-				if appendErr != nil {
-					return appendErr
-				}
+		for _, id := range query.ID {
+			if appendErr := tx.Model(&models.Resource{ID: id}).Association("Groups").Append(groups); appendErr != nil {
+				return appendErr
 			}
 		}
 
@@ -259,14 +256,14 @@ func (ctx *MahresourcesContext) BulkAddGroupsToResources(query *query_models.Bul
 }
 
 func (ctx *MahresourcesContext) BulkDeleteResources(query *query_models.BulkQuery) error {
-	// Each DeleteResource call logs individually, so no bulk log needed
-	for _, id := range query.ID {
-		if err := ctx.DeleteResource(id); err != nil {
-			return err
+	return ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
+		for _, id := range query.ID {
+			if err := altCtx.DeleteResource(id); err != nil {
+				return err
+			}
 		}
-	}
-
-	return nil
+		return nil
+	})
 }
 
 func (ctx *MahresourcesContext) GetPopularResourceTags(query *query_models.ResourceSearchQuery) ([]PopularTag, error) {
@@ -348,7 +345,7 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 			}
 
 			deletedResBackups[fmt.Sprintf("resource_%v", loser.ID)] = backupData
-			fmt.Printf("%#v\n", deletedResBackups)
+
 
 			switch transactionCtx.Config.DbType {
 			case constants.DbTypePosgres:
@@ -378,8 +375,6 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 			}
 		}
 
-		fmt.Printf("%#v\n", deletedResBackups)
-
 		backupObj := make(map[string]any)
 		backupObj["backups"] = deletedResBackups
 
@@ -388,8 +383,6 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 		if err != nil {
 			return err
 		}
-
-		fmt.Println(string(backups))
 
 		if transactionCtx.Config.DbType == constants.DbTypePosgres {
 			if err := tx.Exec("update resources set meta = meta || ? where id = ?", backups, winner.ID).Error; err != nil {

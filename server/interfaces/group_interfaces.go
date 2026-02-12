@@ -6,9 +6,9 @@ import (
 )
 
 type GroupReader interface {
-	GetGroups(offset, maxResults int, query *query_models.GroupQuery) (*[]models.Group, error)
+	GetGroups(offset, maxResults int, query *query_models.GroupQuery) ([]models.Group, error)
 	GetGroup(id uint) (*models.Group, error)
-	FindParentsOfGroup(id uint) (*[]models.Group, error)
+	FindParentsOfGroup(id uint) ([]models.Group, error)
 }
 
 // --- Granular Group Writer Interfaces ---
@@ -69,5 +69,5 @@ type GroupDeleter interface {
 
 // GroupMetaReader provides access to group metadata keys
 type GroupMetaReader interface {
-	GroupMetaKeys() (*[]MetaKey, error)
+	GroupMetaKeys() ([]MetaKey, error)
 }

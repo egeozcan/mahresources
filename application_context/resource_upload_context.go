@@ -159,7 +159,7 @@ func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.Re
 		if firstError == nil {
 			firstError = err
 		}
-		print(err)
+		ctx.Logger().Warning(models.LogActionCreate, "resource", nil, "Remote resource error", err.Error(), nil)
 	}
 
 	for _, url := range urls {
@@ -249,7 +249,7 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 
 	query := ctx.db.Where("location = ? AND storage_location = ?", resourceQuery.LocalPath, resourceQuery.PathName).First(&existingResource)
 	if err := query.Error; err == nil && existingResource.ID != 0 {
-		fmt.Println(fmt.Sprintf("we already have %v, moving on", resourceQuery.LocalPath))
+		ctx.Logger().Info(models.LogActionCreate, "resource", &existingResource.ID, existingResource.Name, "Resource already exists, skipping", nil)
 		// this resource is already saved, return it instead
 		return &existingResource, nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -346,16 +346,18 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 
 	_, err = tempFile.Seek(0, io.SeekStart)
 	if err != nil {
+		tx.Rollback()
 		return nil, err
 	}
 
 	// Calculate the SHA1 hash of the uploaded file
 	h := sha1.New()
-	_, err = io.Copy(h, tempFile)
+	if _, err = io.Copy(h, tempFile); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
 
-	_, err = tempFile.Seek(0, io.SeekStart)
-
-	if err != nil {
+	if _, err = tempFile.Seek(0, io.SeekStart); err != nil {
 		tx.Rollback()
 		return nil, err
 	}
@@ -372,12 +374,17 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 	if existingNotFoundErr := tx.Where("hash = ?", hash).Preload("Groups").First(&existingResource).Error; existingNotFoundErr == nil {
 		if existingResource.OwnerId != nil && resourceQuery.OwnerId == *existingResource.OwnerId {
 			if len(resourceQuery.Groups) > 0 {
-				go func() {
-					groups, _ := ctx.GetGroupsWithIds(&resourceQuery.Groups)
-					_ = ctx.db.Model(&existingResource).Association("Groups").Append(groups)
-				}()
+				groups := BuildAssociationSlice(resourceQuery.Groups, GroupFromID)
+				if appendErr := tx.Model(&existingResource).Association("Groups").Append(&groups); appendErr != nil {
+					tx.Rollback()
+					return nil, appendErr
+				}
+				if commitErr := tx.Commit().Error; commitErr != nil {
+					return nil, commitErr
+				}
+			} else {
+				tx.Rollback()
 			}
-			tx.Rollback()
 			return nil, errors.New(fmt.Sprintf("existing resource (%v) with same parent", existingResource.ID))
 		}
 
@@ -415,7 +422,7 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 
 	if statError == nil && stat != nil {
 		savedFile, err = ctx.fs.Open(filePath)
-		println("reusing stale file at " + filePath)
+		ctx.Logger().Info(models.LogActionCreate, "resource", nil, "", "Reusing stale file at "+filePath, nil)
 		fileExists = true
 	} else {
 		savedFile, err = ctx.fs.Create(filePath)
@@ -437,6 +444,7 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 
 		_, err = tempFile.Seek(0, io.SeekStart)
 		if err != nil {
+			tx.Rollback()
 			return nil, err
 		}
 	}

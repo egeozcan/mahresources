@@ -172,10 +172,10 @@ func (ctx *MahresourcesContext) EditRelationType(query *query_models.Relationshi
 	return &relationType, err
 }
 
-func (ctx *MahresourcesContext) GetRelationTypes(offset int, maxResults int, query *query_models.RelationshipTypeQuery) (*[]*models.GroupRelationType, error) {
+func (ctx *MahresourcesContext) GetRelationTypes(offset int, maxResults int, query *query_models.RelationshipTypeQuery) ([]*models.GroupRelationType, error) {
 	var groupRelationTypes []*models.GroupRelationType
 
-	return &groupRelationTypes, ctx.db.Scopes(database_scopes.RelationTypeQuery(query)).Limit(maxResults).Offset(offset).Find(&groupRelationTypes).Error
+	return groupRelationTypes, ctx.db.Scopes(database_scopes.RelationTypeQuery(query)).Limit(maxResults).Offset(offset).Find(&groupRelationTypes).Error
 }
 
 func (ctx *MahresourcesContext) GetRelationTypesCount(query *query_models.RelationshipTypeQuery) (int64, error) {
@@ -185,10 +185,10 @@ func (ctx *MahresourcesContext) GetRelationTypesCount(query *query_models.Relati
 	return count, ctx.db.Scopes(database_scopes.RelationTypeQuery(query)).Model(&relationType).Count(&count).Error
 }
 
-func (ctx *MahresourcesContext) GetRelations(offset int, maxResults int, query *query_models.GroupRelationshipQuery) (*[]*models.GroupRelation, error) {
+func (ctx *MahresourcesContext) GetRelations(offset int, maxResults int, query *query_models.GroupRelationshipQuery) ([]*models.GroupRelation, error) {
 	var groupRelations []*models.GroupRelation
 
-	return &groupRelations, ctx.db.Scopes(database_scopes.RelationQuery(query)).Preload(clause.Associations, pageLimit).Limit(maxResults).Offset(offset).Find(&groupRelations).Error
+	return groupRelations, ctx.db.Scopes(database_scopes.RelationQuery(query)).Preload(clause.Associations, pageLimit).Limit(maxResults).Offset(offset).Find(&groupRelations).Error
 }
 
 func (ctx *MahresourcesContext) GetRelationsCount(query *query_models.GroupRelationshipQuery) (int64, error) {
@@ -199,14 +199,14 @@ func (ctx *MahresourcesContext) GetRelationsCount(query *query_models.GroupRelat
 	return count, err
 }
 
-func (ctx *MahresourcesContext) GetRelationTypesWithIds(ids *[]uint) (*[]*models.GroupRelationType, error) {
+func (ctx *MahresourcesContext) GetRelationTypesWithIds(ids *[]uint) ([]*models.GroupRelationType, error) {
 	var relationTypes []*models.GroupRelationType
 
 	if len(*ids) == 0 {
-		return &relationTypes, nil
+		return relationTypes, nil
 	}
 
-	return &relationTypes, ctx.db.Find(&relationTypes, ids).Error
+	return relationTypes, ctx.db.Find(&relationTypes, ids).Error
 }
 
 func (ctx *MahresourcesContext) DeleteRelationship(relationshipId uint) error {

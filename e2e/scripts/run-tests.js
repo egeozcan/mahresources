@@ -164,7 +164,9 @@ async function main() {
       `-bind-address=:${port}`,
       '-max-db-connections=2',
       `-share-port=${sharePort}`,
-      '-share-bind-address=127.0.0.1'
+      '-share-bind-address=127.0.0.1',
+      '-hash-worker-disabled',
+      '-thumb-worker-disabled'
     ], {
       cwd: PROJECT_ROOT,
       stdio: ['ignore', 'pipe', 'pipe'],

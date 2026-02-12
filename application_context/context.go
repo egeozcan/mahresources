@@ -17,6 +17,7 @@ import (
 	"gorm.io/gorm"
 	"mahresources/constants"
 	"mahresources/download_queue"
+	"mahresources/fts"
 	"mahresources/lib"
 	"mahresources/models"
 	"mahresources/server/interfaces"
@@ -125,6 +126,10 @@ type MahresourcesContext struct {
 	thumbnailQueue chan<- uint
 	// icsCache provides LRU caching for ICS calendar data
 	icsCache *ICSCache
+	// ftsProvider is the active FTS provider (nil if FTS is not initialized)
+	ftsProvider fts.FTSProvider
+	// ftsEnabled indicates whether FTS is available
+	ftsEnabled bool
 }
 
 func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.DB, config *MahresourcesConfig) *MahresourcesContext {
@@ -261,6 +266,7 @@ func (ctx *MahresourcesContext) EnsureForeignKeysActive(db *gorm.DB) {
 
 	if db == nil {
 		ctx.db.Exec(query)
+		return
 	}
 
 	db.Exec(query)
@@ -268,8 +274,11 @@ func (ctx *MahresourcesContext) EnsureForeignKeysActive(db *gorm.DB) {
 
 func (ctx *MahresourcesContext) WithTransaction(txFn func(transactionCtx *MahresourcesContext) error) error {
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
-		altContext := NewMahresourcesContext(ctx.fs, tx, ctx.readOnlyDB, ctx.Config)
-		return txFn(altContext)
+		// Create a shallow copy that shares the parent's locks, caches, and alt filesystems
+		// but uses the transactional *gorm.DB
+		txCtx := *ctx
+		txCtx.db = tx
+		return txFn(&txCtx)
 	})
 }
 
@@ -297,7 +306,7 @@ func pageLimitCustom(maxResults int) func(db *gorm.DB) *gorm.DB {
 	}
 }
 
-func metaKeys(ctx *MahresourcesContext, table string) (*[]interfaces.MetaKey, error) {
+func metaKeys(ctx *MahresourcesContext, table string) ([]interfaces.MetaKey, error) {
 	var results []interfaces.MetaKey
 
 	if ctx.Config.DbType == constants.DbTypePosgres {
@@ -320,7 +329,7 @@ func metaKeys(ctx *MahresourcesContext, table string) (*[]interfaces.MetaKey, er
 		results = make([]interfaces.MetaKey, 0)
 	}
 
-	return &results, nil
+	return results, nil
 }
 
 // copySeedDatabase copies a SQLite database file to the destination path

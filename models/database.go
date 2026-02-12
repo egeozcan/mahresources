@@ -1,8 +1,10 @@
 package models
 
 import (
+	"database/sql"
 	"errors"
 	"github.com/jmoiron/sqlx"
+	sqlite3 "github.com/mattn/go-sqlite3"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -13,7 +15,30 @@ import (
 	"mahresources/constants"
 	"os"
 	"strings"
+	"sync"
 )
+
+var registerOnce sync.Once
+
+// registerSQLiteDriver registers a custom SQLite driver that applies PRAGMAs
+// (foreign_keys, busy_timeout) on every new connection via ConnectHook.
+// This ensures ALL connections in Go's connection pool have the correct settings,
+// not just the first one.
+func registerSQLiteDriver() {
+	registerOnce.Do(func() {
+		sql.Register("sqlite3_pragmas", &sqlite3.SQLiteDriver{
+			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+				if _, err := conn.Exec("PRAGMA foreign_keys = ON", nil); err != nil {
+					return err
+				}
+				if _, err := conn.Exec("PRAGMA busy_timeout = 10000", nil); err != nil {
+					return err
+				}
+				return nil
+			},
+		})
+	})
+}
 
 func CreateDatabaseConnection(dbType, dsn, logType string) (*gorm.DB, error) {
 	var dbLogger logger.Interface
@@ -61,15 +86,18 @@ func CreateDatabaseConnection(dbType, dsn, logType string) (*gorm.DB, error) {
 			db = pgDb
 		}
 	case constants.DbTypeSqlite:
-		if sqliteDb, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		registerSQLiteDriver()
+
+		if sqliteDb, err := gorm.Open(&sqlite.Dialector{
+			DriverName: "sqlite3_pragmas",
+			DSN:        dsn,
+		}, &gorm.Config{
 			Logger: dbLogger,
 		}); err != nil {
 			return nil, err
 		} else {
 			db = sqliteDb
 		}
-
-		db.Exec("PRAGMA foreign_keys = ON;")
 	default:
 		return nil, errors.New("please set the DB_TYPE env var to SQLITE or POSTGRES")
 	}
@@ -79,7 +107,9 @@ func CreateDatabaseConnection(dbType, dsn, logType string) (*gorm.DB, error) {
 
 func CreateReadOnlyDatabaseConnection(dbType, dsn string) (*sqlx.DB, error) {
 	if dbType == strings.ToLower(constants.DbTypeSqlite) {
-		dbType = "sqlite3"
+		// Use the custom driver that sets busy_timeout on every connection
+		registerSQLiteDriver()
+		dbType = "sqlite3_pragmas"
 	}
 
 	return sqlx.Open(dbType, dsn)

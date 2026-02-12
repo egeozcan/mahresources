@@ -68,13 +68,13 @@ func (r *CRUDReader[T, Q]) Get(id uint) (*T, error) {
 }
 
 // List retrieves entities with pagination and filtering.
-func (r *CRUDReader[T, Q]) List(offset, limit int, query Q) (*[]T, error) {
+func (r *CRUDReader[T, Q]) List(offset, limit int, query Q) ([]T, error) {
 	var entities []T
 	dbQuery := r.db.Scopes(r.scopeFn(query))
 	for _, preloadClause := range r.preloadClauses {
 		dbQuery = dbQuery.Preload(preloadClause)
 	}
-	return &entities, dbQuery.Limit(limit).Offset(offset).Find(&entities).Error
+	return entities, dbQuery.Limit(limit).Offset(offset).Find(&entities).Error
 }
 
 // Count returns the total count of entities matching the query.

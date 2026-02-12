@@ -76,7 +76,7 @@ type ResourceWriter interface {
 
 type ResourceReader interface {
 	GetResource(id uint) (*models.Resource, error)
-	GetResources(offset int, maxResults int, h *query_models.ResourceSearchQuery) (*[]models.Resource, error)
+	GetResources(offset int, maxResults int, h *query_models.ResourceSearchQuery) ([]models.Resource, error)
 }
 
 type ResourceDeleter interface {
@@ -85,7 +85,7 @@ type ResourceDeleter interface {
 
 // ResourceMetaReader provides access to resource metadata keys
 type ResourceMetaReader interface {
-	ResourceMetaKeys() (*[]MetaKey, error)
+	ResourceMetaKeys() ([]MetaKey, error)
 }
 
 // ResourceThumbnailLoader handles thumbnail retrieval for resources

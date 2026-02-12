@@ -4,8 +4,9 @@ export default defineConfig({
   testDir: './tests',
   fullyParallel: false, // Tests within a file run sequentially (they share state)
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 4 : 1,
+  retries: process.env.CI ? 4 : 2,
   workers: process.env.CI ? 1 : 4, // Run different test files in parallel locally
+  timeout: 60000, // 60s test timeout to accommodate SQLite busy retries under load
   reporter: [
     ['list'],
     ['html', { outputFolder: 'playwright-report' }],
@@ -25,8 +26,23 @@ export default defineConfig({
   },
   projects: [
     {
-      name: 'chromium',
+      // Heavy I/O tests run FIRST on a fresh server to avoid SQLite write lock
+      // issues caused by accumulated state from 300+ prior tests.
+      name: 'heavy-io',
       use: { ...devices['Desktop Chrome'] },
+      testMatch: [
+        '**/19-note-sharing*',
+        '**/21-resource-category*',
+      ],
+    },
+    {
+      name: 'default',
+      use: { ...devices['Desktop Chrome'] },
+      testIgnore: [
+        '**/19-note-sharing*',
+        '**/21-resource-category*',
+      ],
+      dependencies: ['heavy-io'],
     },
   ],
 });

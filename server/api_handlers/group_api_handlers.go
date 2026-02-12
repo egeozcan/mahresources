@@ -13,7 +13,8 @@ import (
 
 func GetGroupsHandler(ctx interfaces.GroupReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		offset := (http_utils.GetIntQueryParameter(request, "page", 1) - 1) * constants.MaxResultsPerPage
+		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.GroupQuery
 		err := decoder.Decode(&query, request.URL.Query())
 
@@ -29,6 +30,7 @@ func GetGroupsHandler(ctx interfaces.GroupReader) func(writer http.ResponseWrite
 			return
 		}
 
+		http_utils.SetPaginationHeaders(writer, int(page), constants.MaxResultsPerPage, -1)
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(groups)
 	}
@@ -75,7 +77,7 @@ func GetAddGroupHandler(ctx interfaces.GroupCRUD) func(writer http.ResponseWrite
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err == nil && editor.ID == 0 {
 			if editor.Name == "" {
-				writer.WriteHeader(http.StatusInternalServerError)
+				http_utils.HandleError(fmt.Errorf("group name is required"), writer, request, http.StatusBadRequest)
 				return
 			}
 
@@ -85,7 +87,7 @@ func GetAddGroupHandler(ctx interfaces.GroupCRUD) func(writer http.ResponseWrite
 		}
 
 		if err != nil {
-			writer.WriteHeader(http.StatusBadRequest)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 

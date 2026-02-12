@@ -128,7 +128,8 @@ func GetQueryHandler(ctx interfaces.QueryReader) func(writer http.ResponseWriter
 func GetQueriesHandler(ctx interfaces.QueryReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var query query_models.QueryQuery
-		offset := (http_utils.GetIntQueryParameter(request, "page", 1) - 1) * constants.MaxResultsPerPage
+		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		offset := (page - 1) * constants.MaxResultsPerPage
 		err := decoder.Decode(&query, request.URL.Query())
 
 		if err != nil {
@@ -143,6 +144,7 @@ func GetQueriesHandler(ctx interfaces.QueryReader) func(writer http.ResponseWrit
 			return
 		}
 
+		http_utils.SetPaginationHeaders(writer, int(page), constants.MaxResultsPerPage, -1)
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(queries)
 	}

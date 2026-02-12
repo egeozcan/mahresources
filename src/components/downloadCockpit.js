@@ -1,3 +1,5 @@
+import { createLiveRegion } from '../utils/ariaLiveRegion.js';
+
 export function downloadCockpit() {
     return {
         isOpen: false,
@@ -5,8 +7,7 @@ export function downloadCockpit() {
         retainedCompletedJobs: [],  // Completed jobs retained for display after backend removal
         eventSource: null,
         connectionStatus: 'disconnected', // 'connected', 'disconnected', 'connecting'
-        liveRegion: null,
-        announceTimeout: null,
+        _liveRegion: null,
         speedTracking: {},  // Track progress for speed calculation: { jobId: { lastProgress, lastTime, speed } }
 
         statusIcons: {
@@ -30,23 +31,7 @@ export function downloadCockpit() {
         },
 
         init() {
-            // Create ARIA live region for screen reader announcements
-            this.liveRegion = document.createElement('div');
-            this.liveRegion.setAttribute('role', 'status');
-            this.liveRegion.setAttribute('aria-live', 'polite');
-            this.liveRegion.setAttribute('aria-atomic', 'true');
-            Object.assign(this.liveRegion.style, {
-                position: 'absolute',
-                width: '1px',
-                height: '1px',
-                padding: '0',
-                margin: '-1px',
-                overflow: 'hidden',
-                clip: 'rect(0, 0, 0, 0)',
-                whiteSpace: 'nowrap',
-                border: '0'
-            });
-            document.body.appendChild(this.liveRegion);
+            this._liveRegion = createLiveRegion();
 
             // Listen for keyboard shortcut: Cmd/Ctrl+Shift+D
             document.addEventListener('keydown', (e) => {
@@ -67,24 +52,11 @@ export function downloadCockpit() {
         },
 
         announce(message) {
-            if (this.liveRegion) {
-                if (this.announceTimeout) {
-                    clearTimeout(this.announceTimeout);
-                }
-                this.liveRegion.textContent = '';
-                this.announceTimeout = setTimeout(() => {
-                    this.liveRegion.textContent = message;
-                }, 50);
-            }
+            this._liveRegion?.announce(message);
         },
 
         destroy() {
-            if (this.liveRegion && this.liveRegion.parentNode) {
-                this.liveRegion.parentNode.removeChild(this.liveRegion);
-            }
-            if (this.announceTimeout) {
-                clearTimeout(this.announceTimeout);
-            }
+            this._liveRegion?.destroy();
             this.disconnect();
         },
 

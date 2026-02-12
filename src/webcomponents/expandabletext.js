@@ -37,9 +37,22 @@ class ExpandableText extends HTMLElement {
         this.shadowRoot.appendChild(style);
     }
 
+    disconnectedCallback() {
+        // Remove the dynamically created container to prevent duplicate rendering
+        // if the element is later re-connected
+        if (this._container) {
+            this._container.remove();
+            this._container = null;
+        }
+    }
+
     connectedCallback() {
+        // Guard against duplicate rendering if already connected
+        if (this._container) return;
+
         const container = document.createElement('span');
         container.setAttribute('class', 'container');
+        this._container = container;
 
         // Get the full text from the slot
         const fullText = this.innerHTML.trim();

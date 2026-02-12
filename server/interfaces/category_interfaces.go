@@ -6,7 +6,7 @@ import (
 )
 
 type CategoryReader interface {
-	GetCategories(offset, maxResults int, query *query_models.CategoryQuery) (*[]models.Category, error)
+	GetCategories(offset, maxResults int, query *query_models.CategoryQuery) ([]models.Category, error)
 }
 
 type CategoryWriter interface {
@@ -19,7 +19,7 @@ type CategoryDeleter interface {
 }
 
 type ResourceCategoryReader interface {
-	GetResourceCategories(offset, maxResults int, query *query_models.ResourceCategoryQuery) (*[]models.ResourceCategory, error)
+	GetResourceCategories(offset, maxResults int, query *query_models.ResourceCategoryQuery) ([]models.ResourceCategory, error)
 }
 
 type ResourceCategoryWriter interface {

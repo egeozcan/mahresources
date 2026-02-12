@@ -227,9 +227,9 @@ func groupContextProviderImpl(context interfaces.GroupReader) func(request *http
 			return addErrContext(err, baseContext)
 		}
 
-		breadcrumbEls := make([]template_entities.Entry, len(*parents))
+		breadcrumbEls := make([]template_entities.Entry, len(parents))
 
-		for i, m := range *parents {
+		for i, m := range parents {
 			breadcrumbEls[i] = template_entities.Entry{
 				Name: m.Name,
 				ID:   m.ID,

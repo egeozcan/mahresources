@@ -27,6 +27,17 @@ components:
                         type: integer
                     type: array
             type: object
+        BulkVersionCleanupQuery:
+            properties:
+                dryRun:
+                    type: boolean
+                keepLast:
+                    type: integer
+                olderThanDays:
+                    type: integer
+                ownerId:
+                    type: integer
+            type: object
         Category:
             properties:
                 CreatedAt:
@@ -512,10 +523,60 @@ components:
                     nullable: true
                     type: string
             type: object
+        NoteBlock:
+            properties:
+                content:
+                    additionalProperties: true
+                    description: Arbitrary JSON data
+                    type: object
+                createdAt:
+                    format: date-time
+                    readOnly: true
+                    type: string
+                id:
+                    readOnly: true
+                    type: integer
+                noteId:
+                    type: integer
+                position:
+                    type: string
+                state:
+                    additionalProperties: true
+                    description: Arbitrary JSON data
+                    type: object
+                type:
+                    type: string
+                updatedAt:
+                    format: date-time
+                    readOnly: true
+                    type: string
+            type: object
+        NoteBlockEditor:
+            properties:
+                Content:
+                    format: binary
+                    type: string
+                ID:
+                    type: integer
+                NoteID:
+                    type: integer
+                Position:
+                    type: string
+                Type:
+                    type: string
+            type: object
         NoteBlockPartial:
             properties:
                 id:
                     type: integer
+            type: object
+        NoteBlockReorderEditor:
+            properties:
+                noteId:
+                    type: integer
+                positions:
+                    additionalProperties: true
+                    type: object
             type: object
         NoteEditor:
             properties:
@@ -1172,6 +1233,26 @@ components:
                     items:
                         type: string
                     type: array
+            type: object
+        VersionCleanupQuery:
+            properties:
+                dryRun:
+                    type: boolean
+                keepLast:
+                    type: integer
+                olderThanDays:
+                    type: integer
+                resourceId:
+                    type: integer
+            type: object
+        VersionRestoreQuery:
+            properties:
+                comment:
+                    type: string
+                resourceId:
+                    type: integer
+                versionId:
+                    type: integer
             type: object
 info:
     title: mahresources
@@ -1924,6 +2005,211 @@ paths:
             summary: Create or update a note
             tags:
                 - notes
+    /v1/note/block:
+        delete:
+            operationId: deleteBlock
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Delete a block
+            tags:
+                - blocks
+        get:
+            operationId: getBlock
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NoteBlock'
+                    description: Successful response
+            summary: Get a specific block
+            tags:
+                - blocks
+        post:
+            operationId: createBlock
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/NoteBlockEditor'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NoteBlock'
+                    description: Successful response
+            summary: Create a new block
+            tags:
+                - blocks
+        put:
+            operationId: updateBlockContent
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NoteBlock'
+                    description: Successful response
+            summary: Update a block's content
+            tags:
+                - blocks
+    /v1/note/block/calendar/events:
+        get:
+            operationId: getCalendarBlockEvents
+            parameters:
+                - in: query
+                  name: blockId
+                  required: true
+                  schema:
+                    type: integer
+                - description: Start date (YYYY-MM-DD)
+                  in: query
+                  name: start
+                  required: true
+                  schema:
+                    type: string
+                - description: End date (YYYY-MM-DD)
+                  in: query
+                  name: end
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: Successful response
+            summary: Get events for a calendar block
+            tags:
+                - blocks
+    /v1/note/block/delete:
+        post:
+            operationId: deleteBlockPost
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Delete a block (POST alternative)
+            tags:
+                - blocks
+    /v1/note/block/state:
+        patch:
+            operationId: updateBlockState
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NoteBlock'
+                    description: Successful response
+            summary: Update a block's state
+            tags:
+                - blocks
+    /v1/note/block/table/query:
+        get:
+            operationId: getTableBlockQueryData
+            parameters:
+                - in: query
+                  name: blockId
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Get query data for a table block
+            tags:
+                - blocks
+    /v1/note/block/types:
+        get:
+            operationId: getBlockTypes
+            responses:
+                "200":
+                    description: Successful response
+            summary: Get all available block types
+            tags:
+                - blocks
+    /v1/note/blocks:
+        get:
+            operationId: getBlocksForNote
+            parameters:
+                - in: query
+                  name: noteId
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/NoteBlockPartial'
+                                type: array
+                    description: Successful response
+            summary: Get all blocks for a note
+            tags:
+                - blocks
+    /v1/note/blocks/rebalance:
+        post:
+            operationId: rebalanceBlocks
+            parameters:
+                - in: query
+                  name: noteId
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Rebalance block positions for a note
+            tags:
+                - blocks
+    /v1/note/blocks/reorder:
+        post:
+            operationId: reorderBlocks
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/NoteBlockReorderEditor'
+                required: true
+            responses:
+                "200":
+                    description: Successful response
+            summary: Reorder blocks within a note
+            tags:
+                - blocks
     /v1/note/delete:
         post:
             operationId: deleteNote
@@ -2068,6 +2354,35 @@ paths:
                                 type: array
                     description: Successful response
             summary: Get all note types
+            tags:
+                - notes
+    /v1/note/share:
+        delete:
+            operationId: unshareNote
+            parameters:
+                - in: query
+                  name: noteId
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Remove public sharing for a note
+            tags:
+                - notes
+        post:
+            operationId: shareNote
+            parameters:
+                - in: query
+                  name: noteId
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Share a note via public link
             tags:
                 - notes
     /v1/noteType/editDescription:
@@ -2776,6 +3091,201 @@ paths:
             summary: Add a resource from a remote URL
             tags:
                 - resources
+    /v1/resource/version:
+        delete:
+            operationId: deleteVersion
+            parameters:
+                - description: Resource ID
+                  in: query
+                  name: resourceId
+                  required: true
+                  schema:
+                    type: integer
+                - description: Version ID
+                  in: query
+                  name: versionId
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Delete a version
+            tags:
+                - versions
+        get:
+            operationId: getVersion
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ResourceVersion'
+                    description: Successful response
+            summary: Get a specific version
+            tags:
+                - versions
+    /v1/resource/version/delete:
+        post:
+            operationId: deleteVersionPost
+            parameters:
+                - description: Resource ID
+                  in: query
+                  name: resourceId
+                  required: true
+                  schema:
+                    type: integer
+                - description: Version ID
+                  in: query
+                  name: versionId
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Delete a version (POST alternative)
+            tags:
+                - versions
+    /v1/resource/version/file:
+        get:
+            operationId: getVersionFile
+            parameters:
+                - in: query
+                  name: versionId
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Download a version's file
+            tags:
+                - versions
+    /v1/resource/version/restore:
+        post:
+            operationId: restoreVersion
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/VersionRestoreQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/VersionRestoreQuery'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ResourceVersion'
+                    description: Successful response
+            summary: Restore a previous version
+            tags:
+                - versions
+    /v1/resource/versions:
+        get:
+            operationId: listVersions
+            parameters:
+                - in: query
+                  name: resourceId
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/ResourceVersionPartial'
+                                type: array
+                    description: Successful response
+            summary: List versions for a resource
+            tags:
+                - versions
+        post:
+            operationId: uploadVersion
+            parameters:
+                - description: Resource ID
+                  in: query
+                  name: resourceId
+                  required: true
+                  schema:
+                    type: integer
+            requestBody:
+                content:
+                    multipart/form-data:
+                        schema:
+                            properties:
+                                file:
+                                    format: binary
+                                    type: string
+                            type: object
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ResourceVersion'
+                    description: Successful response
+            summary: Upload a new version of a resource
+            tags:
+                - versions
+    /v1/resource/versions/cleanup:
+        post:
+            operationId: cleanupVersions
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/VersionCleanupQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/VersionCleanupQuery'
+                required: true
+            responses:
+                "200":
+                    description: Successful response
+            summary: Clean up old versions for a resource
+            tags:
+                - versions
+    /v1/resource/versions/compare:
+        get:
+            operationId: compareVersions
+            parameters:
+                - description: Resource ID
+                  in: query
+                  name: resourceId
+                  required: true
+                  schema:
+                    type: integer
+                - description: First version ID
+                  in: query
+                  name: v1
+                  required: true
+                  schema:
+                    type: integer
+                - description: Second version ID
+                  in: query
+                  name: v2
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Compare two versions of a resource
+            tags:
+                - versions
     /v1/resource/view:
         get:
             operationId: viewResource
@@ -3208,6 +3718,24 @@ paths:
             summary: Set dimensions for a resource
             tags:
                 - resources
+    /v1/resources/versions/cleanup:
+        post:
+            operationId: bulkCleanupVersions
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BulkVersionCleanupQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BulkVersionCleanupQuery'
+                required: true
+            responses:
+                "200":
+                    description: Successful response
+            summary: Bulk clean up old versions
+            tags:
+                - versions
     /v1/search:
         get:
             operationId: globalSearch
@@ -3373,6 +3901,8 @@ servers:
     - description: API Version 1
       url: /v1
 tags:
+    - description: Operations related to blocks
+      name: blocks
     - description: Operations related to categories
       name: categories
     - description: Operations related to downloads
@@ -3395,3 +3925,5 @@ tags:
       name: search
     - description: Operations related to tags
       name: tags
+    - description: Operations related to versions
+      name: versions

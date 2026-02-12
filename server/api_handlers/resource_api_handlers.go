@@ -17,7 +17,8 @@ import (
 
 func GetResourcesHandler(ctx interfaces.ResourceReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		offset := (http_utils.GetIntQueryParameter(request, "page", 1) - 1) * constants.MaxResultsPerPage
+		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.ResourceSearchQuery
 
 		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
@@ -32,6 +33,7 @@ func GetResourcesHandler(ctx interfaces.ResourceReader) func(writer http.Respons
 			return
 		}
 
+		http_utils.SetPaginationHeaders(writer, int(page), constants.MaxResultsPerPage, -1)
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(resources)
 	}
@@ -71,12 +73,12 @@ func GetResourceContentHandler(ctx interfaces.ResourceReader) func(writer http.R
 			} else {
 				resources, err := ctx.GetResources(0, 1, &detailsQuery)
 
-				if err != nil || len(*resources) != 1 {
+				if err != nil || len(resources) != 1 {
 					http_utils.HandleError(errors.New("no suitable resource found"), writer, request, http.StatusNotFound)
 					return
 				}
 
-				resource = &(*resources)[0]
+				resource = &resources[0]
 			}
 		} else {
 			resource, err = ctx.GetResource(query.ID)

@@ -144,21 +144,21 @@ func (ctx *MahresourcesContext) GetNote(id uint) (*models.Note, error) {
 		First(&note, id).Error
 }
 
-func (ctx *MahresourcesContext) GetNotes(offset, maxResults int, query *query_models.NoteQuery) (*[]models.Note, error) {
+func (ctx *MahresourcesContext) GetNotes(offset, maxResults int, query *query_models.NoteQuery) ([]models.Note, error) {
 	var notes []models.Note
 	noteScope := database_scopes.NoteQuery(query, false)
 
-	return &notes, ctx.db.Scopes(noteScope).Limit(maxResults).Offset(offset).Preload("Tags").Preload("NoteType").Find(&notes).Error
+	return notes, ctx.db.Scopes(noteScope).Limit(maxResults).Offset(offset).Preload("Tags").Preload("NoteType").Find(&notes).Error
 }
 
-func (ctx *MahresourcesContext) GetNotesWithIds(ids *[]uint) (*[]*models.Note, error) {
+func (ctx *MahresourcesContext) GetNotesWithIds(ids *[]uint) ([]*models.Note, error) {
 	var notes []*models.Note
 
 	if len(*ids) == 0 {
-		return &notes, nil
+		return notes, nil
 	}
 
-	return &notes, ctx.db.Find(&notes, ids).Error
+	return notes, ctx.db.Find(&notes, ids).Error
 }
 
 func (ctx *MahresourcesContext) GetNoteCount(query *query_models.NoteQuery) (int64, error) {
@@ -255,7 +255,7 @@ func (ctx *MahresourcesContext) GetNoteByShareToken(token string) (*models.Note,
 	return &note, nil
 }
 
-func (ctx *MahresourcesContext) NoteMetaKeys() (*[]interfaces.MetaKey, error) {
+func (ctx *MahresourcesContext) NoteMetaKeys() ([]interfaces.MetaKey, error) {
 	return metaKeys(ctx, "notes")
 }
 
@@ -264,18 +264,18 @@ func (ctx *MahresourcesContext) GetNoteType(id uint) (*models.NoteType, error) {
 	return &noteType, ctx.db.Preload(clause.Associations).First(&noteType, id).Error
 }
 
-func (ctx *MahresourcesContext) GetNoteTypes(query *query_models.NoteTypeQuery, offset, maxResults int) (*[]models.NoteType, error) {
+func (ctx *MahresourcesContext) GetNoteTypes(query *query_models.NoteTypeQuery, offset, maxResults int) ([]models.NoteType, error) {
 	var noteTypes []models.NoteType
 	err := ctx.db.Scopes(database_scopes.NoteTypeQuery(query)).Limit(maxResults).Offset(offset).Find(&noteTypes).Error
-	return &noteTypes, err
+	return noteTypes, err
 }
 
-func (ctx *MahresourcesContext) GetNoteTypesWithIds(ids []uint) (*[]models.NoteType, error) {
+func (ctx *MahresourcesContext) GetNoteTypesWithIds(ids []uint) ([]models.NoteType, error) {
 	var noteTypes []models.NoteType
 	if len(ids) == 0 || (len(ids) == 1 && ids[0] == 0) {
-		return &noteTypes, nil
+		return noteTypes, nil
 	}
-	return &noteTypes, ctx.db.Find(&noteTypes, ids).Error
+	return noteTypes, ctx.db.Find(&noteTypes, ids).Error
 }
 
 func (ctx *MahresourcesContext) GetNoteTypesCount(query *query_models.NoteTypeQuery) (int64, error) {

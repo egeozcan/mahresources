@@ -18,6 +18,12 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 	// NoteTypes
 	registerNoteTypeRoutes(registry)
 
+	// Note Sharing
+	registerNoteShareRoutes(registry)
+
+	// Note Blocks
+	registerBlockRoutes(registry)
+
 	// Groups
 	registerGroupRoutes(registry)
 
@@ -26,6 +32,9 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 
 	// Resources
 	registerResourceRoutes(registry)
+
+	// Resource Versions
+	registerVersionRoutes(registry)
 
 	// Tags
 	registerTagRoutes(registry)
@@ -47,6 +56,303 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 
 	// Downloads
 	registerDownloadRoutes(registry)
+}
+
+func registerNoteShareRoutes(r *openapi.Registry) {
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/note/share",
+		OperationID:          "shareNote",
+		Summary:              "Share a note via public link",
+		Tags:                 []string{"notes"},
+		IDQueryParam:         "noteId",
+		IDRequired:           true,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodDelete,
+		Path:                 "/v1/note/share",
+		OperationID:          "unshareNote",
+		Summary:              "Remove public sharing for a note",
+		Tags:                 []string{"notes"},
+		IDQueryParam:         "noteId",
+		IDRequired:           true,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+}
+
+func registerBlockRoutes(r *openapi.Registry) {
+	noteBlockType := reflect.TypeOf(models.NoteBlock{})
+	noteBlockEditorType := reflect.TypeOf(query_models.NoteBlockEditor{})
+	noteBlockReorderType := reflect.TypeOf(query_models.NoteBlockReorderEditor{})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/note/blocks",
+		OperationID:          "getBlocksForNote",
+		Summary:              "Get all blocks for a note",
+		Tags:                 []string{"blocks"},
+		IDQueryParam:         "noteId",
+		IDRequired:           true,
+		ResponseType:         reflect.SliceOf(noteBlockType),
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/note/block",
+		OperationID:          "getBlock",
+		Summary:              "Get a specific block",
+		Tags:                 []string{"blocks"},
+		IDQueryParam:         "id",
+		IDRequired:           true,
+		ResponseType:         noteBlockType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/note/block/types",
+		OperationID:          "getBlockTypes",
+		Summary:              "Get all available block types",
+		Tags:                 []string{"blocks"},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/note/block",
+		OperationID:          "createBlock",
+		Summary:              "Create a new block",
+		Tags:                 []string{"blocks"},
+		RequestType:          noteBlockEditorType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON},
+		ResponseType:         noteBlockType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPut,
+		Path:                 "/v1/note/block",
+		OperationID:          "updateBlockContent",
+		Summary:              "Update a block's content",
+		Tags:                 []string{"blocks"},
+		IDQueryParam:         "id",
+		IDRequired:           true,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON},
+		ResponseType:         noteBlockType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPatch,
+		Path:                 "/v1/note/block/state",
+		OperationID:          "updateBlockState",
+		Summary:              "Update a block's state",
+		Tags:                 []string{"blocks"},
+		IDQueryParam:         "id",
+		IDRequired:           true,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON},
+		ResponseType:         noteBlockType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:       http.MethodDelete,
+		Path:         "/v1/note/block",
+		OperationID:  "deleteBlock",
+		Summary:      "Delete a block",
+		Tags:         []string{"blocks"},
+		IDQueryParam: "id",
+		IDRequired:   true,
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:       http.MethodPost,
+		Path:         "/v1/note/block/delete",
+		OperationID:  "deleteBlockPost",
+		Summary:      "Delete a block (POST alternative)",
+		Tags:         []string{"blocks"},
+		IDQueryParam: "id",
+		IDRequired:   true,
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:              http.MethodPost,
+		Path:                "/v1/note/blocks/reorder",
+		OperationID:         "reorderBlocks",
+		Summary:             "Reorder blocks within a note",
+		Tags:                []string{"blocks"},
+		RequestType:         noteBlockReorderType,
+		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:       http.MethodPost,
+		Path:         "/v1/note/blocks/rebalance",
+		OperationID:  "rebalanceBlocks",
+		Summary:      "Rebalance block positions for a note",
+		Tags:         []string{"blocks"},
+		IDQueryParam: "noteId",
+		IDRequired:   true,
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/note/block/table/query",
+		OperationID:          "getTableBlockQueryData",
+		Summary:              "Get query data for a table block",
+		Tags:                 []string{"blocks"},
+		IDQueryParam:         "blockId",
+		IDRequired:           true,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:       http.MethodGet,
+		Path:         "/v1/note/block/calendar/events",
+		OperationID:  "getCalendarBlockEvents",
+		Summary:      "Get events for a calendar block",
+		Tags:         []string{"blocks"},
+		IDQueryParam: "blockId",
+		IDRequired:   true,
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "start", Type: "string", Required: true, Description: "Start date (YYYY-MM-DD)"},
+			{Name: "end", Type: "string", Required: true, Description: "End date (YYYY-MM-DD)"},
+		},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+}
+
+func registerVersionRoutes(r *openapi.Registry) {
+	versionType := reflect.TypeOf(models.ResourceVersion{})
+	versionRestoreType := reflect.TypeOf(query_models.VersionRestoreQuery{})
+	versionCleanupType := reflect.TypeOf(query_models.VersionCleanupQuery{})
+	bulkCleanupType := reflect.TypeOf(query_models.BulkVersionCleanupQuery{})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/resource/versions",
+		OperationID:          "listVersions",
+		Summary:              "List versions for a resource",
+		Tags:                 []string{"versions"},
+		IDQueryParam:         "resourceId",
+		IDRequired:           true,
+		ResponseType:         reflect.SliceOf(versionType),
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/resource/version",
+		OperationID:          "getVersion",
+		Summary:              "Get a specific version",
+		Tags:                 []string{"versions"},
+		IDQueryParam:         "id",
+		IDRequired:           true,
+		ResponseType:         versionType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/resource/versions",
+		OperationID:          "uploadVersion",
+		Summary:              "Upload a new version of a resource",
+		Tags:                 []string{"versions"},
+		HasFileUpload:        true,
+		FileFieldName:        "file",
+		ResponseType:         versionType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "resourceId", Type: "integer", Required: true, Description: "Resource ID"},
+		},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/resource/version/restore",
+		OperationID:          "restoreVersion",
+		Summary:              "Restore a previous version",
+		Tags:                 []string{"versions"},
+		RequestType:          versionRestoreType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseType:         versionType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:       http.MethodDelete,
+		Path:         "/v1/resource/version",
+		OperationID:  "deleteVersion",
+		Summary:      "Delete a version",
+		Tags:         []string{"versions"},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "resourceId", Type: "integer", Required: true, Description: "Resource ID"},
+			{Name: "versionId", Type: "integer", Required: true, Description: "Version ID"},
+		},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:       http.MethodPost,
+		Path:         "/v1/resource/version/delete",
+		OperationID:  "deleteVersionPost",
+		Summary:      "Delete a version (POST alternative)",
+		Tags:         []string{"versions"},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "resourceId", Type: "integer", Required: true, Description: "Resource ID"},
+			{Name: "versionId", Type: "integer", Required: true, Description: "Version ID"},
+		},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:       http.MethodGet,
+		Path:         "/v1/resource/version/file",
+		OperationID:  "getVersionFile",
+		Summary:      "Download a version's file",
+		Tags:         []string{"versions"},
+		IDQueryParam: "versionId",
+		IDRequired:   true,
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/resource/versions/cleanup",
+		OperationID:          "cleanupVersions",
+		Summary:              "Clean up old versions for a resource",
+		Tags:                 []string{"versions"},
+		RequestType:          versionCleanupType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/resources/versions/cleanup",
+		OperationID:          "bulkCleanupVersions",
+		Summary:              "Bulk clean up old versions",
+		Tags:                 []string{"versions"},
+		RequestType:          bulkCleanupType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodGet,
+		Path:        "/v1/resource/versions/compare",
+		OperationID: "compareVersions",
+		Summary:     "Compare two versions of a resource",
+		Tags:        []string{"versions"},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "resourceId", Type: "integer", Required: true, Description: "Resource ID"},
+			{Name: "v1", Type: "integer", Required: true, Description: "First version ID"},
+			{Name: "v2", Type: "integer", Required: true, Description: "Second version ID"},
+		},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
 }
 
 func registerNoteRoutes(r *openapi.Registry) {

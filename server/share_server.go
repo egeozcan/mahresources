@@ -278,7 +278,7 @@ func (s *ShareServer) handleSharedResource(w http.ResponseWriter, r *http.Reques
 				resourceIds = append(resourceIds, id)
 			}
 			if resources, err := s.appContext.GetResourcesWithIds(&resourceIds); err == nil {
-				for _, resource := range *resources {
+				for _, resource := range resources {
 					if resource.Hash == hash {
 						resourceAllowed = true
 						break
@@ -383,7 +383,7 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 			resourceIds = append(resourceIds, id)
 		}
 		if resources, err := s.appContext.GetResourcesWithIds(&resourceIds); err == nil {
-			for _, resource := range *resources {
+			for _, resource := range resources {
 				resourceHashMap[float64(resource.ID)] = resource.Hash
 			}
 		}
@@ -397,7 +397,7 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 			groupIds = append(groupIds, id)
 		}
 		if groups, err := s.appContext.GetGroupsWithIds(&groupIds); err == nil {
-			for _, group := range *groups {
+			for _, group := range groups {
 				// Use float64 key since JSON numbers come as float64
 				info := groupInfo{
 					Name:        group.Name,

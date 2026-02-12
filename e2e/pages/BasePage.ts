@@ -76,9 +76,10 @@ export class BasePage {
     await this.page.waitForTimeout(100);
     await input.fill(searchText);
 
-    // Wait for dropdown to appear and click the matching option
-    const option = this.page.locator(`div[role="option"]:has-text("${optionText || searchText}")`).first();
-    await option.waitFor({ state: 'visible', timeout: 10000 });
+    // Wait for dropdown to appear and click the matching option.
+    // Use :visible to avoid picking hidden options from other autocompleter popovers on the page.
+    const option = this.page.locator(`div[role="option"]:visible:has-text("${optionText || searchText}")`).first();
+    await option.waitFor({ timeout: 10000 });
     await option.click();
 
     // Wait for dropdown to close (indicates selection was registered)

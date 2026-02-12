@@ -15,11 +15,11 @@ func (ctx *MahresourcesContext) GetResourceCategory(id uint) (*models.ResourceCa
 	return &resourceCategory, ctx.db.Preload(clause.Associations, pageLimit).First(&resourceCategory, id).Error
 }
 
-func (ctx *MahresourcesContext) GetResourceCategories(offset, maxResults int, query *query_models.ResourceCategoryQuery) (*[]models.ResourceCategory, error) {
+func (ctx *MahresourcesContext) GetResourceCategories(offset, maxResults int, query *query_models.ResourceCategoryQuery) ([]models.ResourceCategory, error) {
 	var resourceCategories []models.ResourceCategory
 	scope := database_scopes.ResourceCategoryQuery(query)
 
-	return &resourceCategories, ctx.db.Scopes(scope).Limit(maxResults).Offset(offset).Find(&resourceCategories).Error
+	return resourceCategories, ctx.db.Scopes(scope).Limit(maxResults).Offset(offset).Find(&resourceCategories).Error
 }
 
 func (ctx *MahresourcesContext) GetResourceCategoriesCount(query *query_models.ResourceCategoryQuery) (int64, error) {
@@ -29,11 +29,11 @@ func (ctx *MahresourcesContext) GetResourceCategoriesCount(query *query_models.R
 	return count, ctx.db.Scopes(database_scopes.ResourceCategoryQuery(query)).Model(&resourceCategory).Count(&count).Error
 }
 
-func (ctx *MahresourcesContext) GetResourceCategoriesWithIds(ids *[]uint, limit int) (*[]models.ResourceCategory, error) {
+func (ctx *MahresourcesContext) GetResourceCategoriesWithIds(ids *[]uint, limit int) ([]models.ResourceCategory, error) {
 	var resourceCategories []models.ResourceCategory
 
 	if len(*ids) == 0 {
-		return &resourceCategories, nil
+		return resourceCategories, nil
 	}
 
 	query := ctx.db
@@ -42,7 +42,7 @@ func (ctx *MahresourcesContext) GetResourceCategoriesWithIds(ids *[]uint, limit 
 		query = query.Limit(limit)
 	}
 
-	return &resourceCategories, query.Find(&resourceCategories, *ids).Error
+	return resourceCategories, query.Find(&resourceCategories, *ids).Error
 }
 
 func (ctx *MahresourcesContext) CreateResourceCategory(query *query_models.ResourceCategoryCreator) (*models.ResourceCategory, error) {

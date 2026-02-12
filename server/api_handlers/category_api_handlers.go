@@ -14,7 +14,8 @@ import (
 
 func GetCategoriesHandler(ctx interfaces.CategoryReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		offset := (http_utils.GetIntQueryParameter(request, "page", 1) - 1) * constants.MaxResultsPerPage
+		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.CategoryQuery
 		err := decoder.Decode(&query, request.URL.Query())
 
@@ -30,6 +31,7 @@ func GetCategoriesHandler(ctx interfaces.CategoryReader) func(writer http.Respon
 			return
 		}
 
+		http_utils.SetPaginationHeaders(writer, int(page), constants.MaxResultsPerPage, -1)
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(categories)
 	}

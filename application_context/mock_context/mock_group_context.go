@@ -67,7 +67,7 @@ func NewMockGroupContext() *MockGroupContext {
 	return &MockGroupContext{}
 }
 
-func (MockGroupContext) GetGroups(offset, maxResults int, query *query_models.GroupQuery) (*[]models.Group, error) {
+func (MockGroupContext) GetGroups(offset, maxResults int, query *query_models.GroupQuery) ([]models.Group, error) {
 	//TODO implement me
 	panic("implement me")
 }
@@ -97,6 +97,6 @@ func (MockGroupContext) GetGroup(id uint) (*models.Group, error) {
 	}, nil
 }
 
-func (r MockGroupContext) FindParentsOfGroup(id uint) (*[]models.Group, error) {
-	return &[]models.Group{}, nil
+func (r MockGroupContext) FindParentsOfGroup(id uint) ([]models.Group, error) {
+	return []models.Group{}, nil
 }

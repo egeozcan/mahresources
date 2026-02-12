@@ -14,7 +14,7 @@ import (
 
 // LogEntriesResponse wraps log entries with pagination info for API responses.
 type LogEntriesResponse struct {
-	Logs       *[]models.LogEntry `json:"logs"`
+	Logs       []models.LogEntry `json:"logs"`
 	TotalCount int64              `json:"totalCount"`
 	Page       int                `json:"page"`
 	PerPage    int                `json:"perPage"`

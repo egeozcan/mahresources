@@ -76,10 +76,10 @@ func (ctx *MahresourcesContext) GetBlock(id uint) (*models.NoteBlock, error) {
 }
 
 // GetBlocksForNote retrieves all blocks for a note, ordered by position
-func (ctx *MahresourcesContext) GetBlocksForNote(noteID uint) (*[]models.NoteBlock, error) {
+func (ctx *MahresourcesContext) GetBlocksForNote(noteID uint) ([]models.NoteBlock, error) {
 	var blocks []models.NoteBlock
 	err := ctx.db.Where("note_id = ?", noteID).Order("position ASC").Find(&blocks).Error
-	return &blocks, err
+	return blocks, err
 }
 
 // UpdateBlockContent updates a block's content

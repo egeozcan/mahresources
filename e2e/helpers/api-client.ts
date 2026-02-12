@@ -101,22 +101,71 @@ export class ApiClient {
     }
   }
 
+  /**
+   * Retry a request function on transient SQLite "database is locked" errors.
+   * These occur when parallel test workers contend for the same SQLite database.
+   */
+  private async withRetry<T>(fn: () => Promise<T>, maxRetries = 5): Promise<T> {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const start = Date.now();
+      try {
+        return await fn();
+      } catch (err) {
+        const elapsed = Date.now() - start;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (attempt < maxRetries && msg.includes('database is locked')) {
+          // Exponential backoff with jitter to avoid thundering herd
+          const baseDelay = 500 * Math.pow(2, attempt);
+          const jitter = Math.random() * 300;
+          const delay = baseDelay + jitter;
+          console.log(`[withRetry] attempt ${attempt + 1}/${maxRetries} failed after ${elapsed}ms (database locked), retrying in ${Math.round(delay)}ms`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw new Error('withRetry: unreachable');
+  }
+
+  /** POST with automatic retry on transient SQLite errors. */
+  private async postRetry<T>(url: string, options?: Parameters<APIRequestContext['post']>[1]): Promise<T> {
+    return this.withRetry(async () => {
+      const response = await this.request.post(url, options);
+      return this.handleResponse<T>(response);
+    });
+  }
+
+  /** POST (void response) with automatic retry on transient SQLite errors. */
+  private async postVoidRetry(url: string, options?: Parameters<APIRequestContext['post']>[1]): Promise<void> {
+    return this.withRetry(async () => {
+      const response = await this.request.post(url, options);
+      return this.handleVoidResponse(response);
+    });
+  }
+
+  /** DELETE with automatic retry on transient SQLite errors. */
+  private async deleteRetry(url: string, options?: Parameters<APIRequestContext['delete']>[1]): Promise<void> {
+    return this.withRetry(async () => {
+      const response = await this.request.delete(url, options);
+      return this.handleVoidResponse(response);
+    });
+  }
+
   // Tag operations
   async createTag(name: string, description?: string): Promise<Tag> {
     const formData = new URLSearchParams();
     formData.append('name', name);
     if (description) formData.append('Description', description);
 
-    const response = await this.request.post(`${this.baseUrl}/v1/tag`, {
+    return this.postRetry<Tag>(`${this.baseUrl}/v1/tag`, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       data: formData.toString(),
     });
-    return this.handleResponse<Tag>(response);
   }
 
   async deleteTag(id: number): Promise<void> {
-    const response = await this.request.post(`${this.baseUrl}/v1/tag/delete?Id=${id}`);
-    await this.handleVoidResponse(response);
+    return this.postVoidRetry(`${this.baseUrl}/v1/tag/delete?Id=${id}`);
   }
 
   async getTags(): Promise<Tag[]> {
@@ -139,16 +188,14 @@ export class ApiClient {
     if (options?.CustomAvatar) formData.append('CustomAvatar', options.CustomAvatar);
     if (options?.MetaSchema) formData.append('MetaSchema', options.MetaSchema);
 
-    const response = await this.request.post(`${this.baseUrl}/v1/category`, {
+    return this.postRetry<Category>(`${this.baseUrl}/v1/category`, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       data: formData.toString(),
     });
-    return this.handleResponse<Category>(response);
   }
 
   async deleteCategory(id: number): Promise<void> {
-    const response = await this.request.post(`${this.baseUrl}/v1/category/delete?Id=${id}`);
-    await this.handleVoidResponse(response);
+    return this.postVoidRetry(`${this.baseUrl}/v1/category/delete?Id=${id}`);
   }
 
   async getCategories(): Promise<Category[]> {
@@ -177,16 +224,14 @@ export class ApiClient {
     if (options?.CustomAvatar) formData.append('CustomAvatar', options.CustomAvatar);
     if (options?.MetaSchema) formData.append('MetaSchema', options.MetaSchema);
 
-    const response = await this.request.post(`${this.baseUrl}/v1/resourceCategory`, {
+    return this.postRetry<ResourceCategory>(`${this.baseUrl}/v1/resourceCategory`, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       data: formData.toString(),
     });
-    return this.handleResponse<ResourceCategory>(response);
   }
 
   async deleteResourceCategory(id: number): Promise<void> {
-    const response = await this.request.post(`${this.baseUrl}/v1/resourceCategory/delete?Id=${id}`);
-    await this.handleVoidResponse(response);
+    return this.postVoidRetry(`${this.baseUrl}/v1/resourceCategory/delete?Id=${id}`);
   }
 
   async getResourceCategories(): Promise<ResourceCategory[]> {
@@ -200,16 +245,14 @@ export class ApiClient {
     formData.append('name', name);
     if (description) formData.append('Description', description);
 
-    const response = await this.request.post(`${this.baseUrl}/v1/note/noteType`, {
+    return this.postRetry<NoteType>(`${this.baseUrl}/v1/note/noteType`, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       data: formData.toString(),
     });
-    return this.handleResponse<NoteType>(response);
   }
 
   async deleteNoteType(id: number): Promise<void> {
-    const response = await this.request.post(`${this.baseUrl}/v1/note/noteType/delete?Id=${id}`);
-    await this.handleVoidResponse(response);
+    return this.postVoidRetry(`${this.baseUrl}/v1/note/noteType/delete?Id=${id}`);
   }
 
   async getNoteTypes(): Promise<NoteType[]> {
@@ -240,16 +283,14 @@ export class ApiClient {
       data.groups.forEach(groupId => formData.append('groups', groupId.toString()));
     }
 
-    const response = await this.request.post(`${this.baseUrl}/v1/group`, {
+    return this.postRetry<Group>(`${this.baseUrl}/v1/group`, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       data: formData.toString(),
     });
-    return this.handleResponse<Group>(response);
   }
 
   async deleteGroup(id: number): Promise<void> {
-    const response = await this.request.post(`${this.baseUrl}/v1/group/delete?Id=${id}`);
-    await this.handleVoidResponse(response);
+    return this.postVoidRetry(`${this.baseUrl}/v1/group/delete?Id=${id}`);
   }
 
   async getGroups(): Promise<Group[]> {
@@ -291,16 +332,14 @@ export class ApiClient {
       data.resources.forEach(resourceId => formData.append('Resources', resourceId.toString()));
     }
 
-    const response = await this.request.post(`${this.baseUrl}/v1/note`, {
+    return this.postRetry<Note>(`${this.baseUrl}/v1/note`, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       data: formData.toString(),
     });
-    return this.handleResponse<Note>(response);
   }
 
   async deleteNote(id: number): Promise<void> {
-    const response = await this.request.post(`${this.baseUrl}/v1/note/delete?Id=${id}`);
-    await this.handleVoidResponse(response);
+    return this.postVoidRetry(`${this.baseUrl}/v1/note/delete?Id=${id}`);
   }
 
   async getNotes(): Promise<Note[]> {
@@ -338,11 +377,10 @@ export class ApiClient {
       data.groups.forEach(groupId => formData.append('groups', groupId.toString()));
     }
 
-    const response = await this.request.post(`${this.baseUrl}/v1/note`, {
+    return this.postRetry<Note>(`${this.baseUrl}/v1/note`, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       data: formData.toString(),
     });
-    return this.handleResponse<Note>(response);
   }
 
   // Query operations
@@ -358,16 +396,14 @@ export class ApiClient {
     if (data.description) formData.append('Description', data.description);
     if (data.template) formData.append('Template', data.template);
 
-    const response = await this.request.post(`${this.baseUrl}/v1/query`, {
+    return this.postRetry<Query>(`${this.baseUrl}/v1/query`, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       data: formData.toString(),
     });
-    return this.handleResponse<Query>(response);
   }
 
   async deleteQuery(id: number): Promise<void> {
-    const response = await this.request.post(`${this.baseUrl}/v1/query/delete?Id=${id}`);
-    await this.handleVoidResponse(response);
+    return this.postVoidRetry(`${this.baseUrl}/v1/query/delete?Id=${id}`);
   }
 
   async getQueries(): Promise<Query[]> {
@@ -389,16 +425,14 @@ export class ApiClient {
     if (data.fromCategoryId) formData.append('FromCategory', data.fromCategoryId.toString());
     if (data.toCategoryId) formData.append('ToCategory', data.toCategoryId.toString());
 
-    const response = await this.request.post(`${this.baseUrl}/v1/relationType`, {
+    return this.postRetry<RelationType>(`${this.baseUrl}/v1/relationType`, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       data: formData.toString(),
     });
-    return this.handleResponse<RelationType>(response);
   }
 
   async deleteRelationType(id: number): Promise<void> {
-    const response = await this.request.post(`${this.baseUrl}/v1/relationType/delete?Id=${id}`);
-    await this.handleVoidResponse(response);
+    return this.postVoidRetry(`${this.baseUrl}/v1/relationType/delete?Id=${id}`);
   }
 
   async getRelationTypes(): Promise<RelationType[]> {
@@ -423,19 +457,16 @@ export class ApiClient {
       GroupRelationTypeId: data.relationTypeId,
     };
 
-    const response = await this.request.post(`${this.baseUrl}/v1/relation`, {
+    return this.postRetry<Relation>(`${this.baseUrl}/v1/relation`, {
       headers: {
         'Content-Type': 'application/json',
       },
       data: JSON.stringify(jsonBody),
     });
-
-    return this.handleResponse<Relation>(response);
   }
 
   async deleteRelation(id: number): Promise<void> {
-    const response = await this.request.post(`${this.baseUrl}/v1/relation/delete?Id=${id}`);
-    await this.handleVoidResponse(response);
+    return this.postVoidRetry(`${this.baseUrl}/v1/relation/delete?Id=${id}`);
   }
 
   // Search
@@ -453,11 +484,10 @@ export class ApiClient {
     groupIds.forEach(id => formData.append('ID', id.toString()));
     tagIds.forEach(id => formData.append('EditedId', id.toString()));
 
-    const response = await this.request.post(`${this.baseUrl}/v1/groups/addTags`, {
+    return this.postVoidRetry(`${this.baseUrl}/v1/groups/addTags`, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       data: formData.toString(),
     });
-    await this.handleVoidResponse(response);
   }
 
   async removeTagsFromGroups(groupIds: number[], tagIds: number[]): Promise<void> {
@@ -466,11 +496,10 @@ export class ApiClient {
     groupIds.forEach(id => formData.append('ID', id.toString()));
     tagIds.forEach(id => formData.append('EditedId', id.toString()));
 
-    const response = await this.request.post(`${this.baseUrl}/v1/groups/removeTags`, {
+    return this.postVoidRetry(`${this.baseUrl}/v1/groups/removeTags`, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       data: formData.toString(),
     });
-    await this.handleVoidResponse(response);
   }
 
   async bulkDeleteGroups(groupIds: number[]): Promise<void> {
@@ -478,11 +507,10 @@ export class ApiClient {
     // BulkQuery expects ID[] for group IDs
     groupIds.forEach(id => formData.append('ID', id.toString()));
 
-    const response = await this.request.post(`${this.baseUrl}/v1/groups/delete`, {
+    return this.postVoidRetry(`${this.baseUrl}/v1/groups/delete`, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       data: formData.toString(),
     });
-    await this.handleVoidResponse(response);
   }
 
   // Resource operations
@@ -535,20 +563,21 @@ export class ApiClient {
       multipartData.ResourceCategoryId = data.resourceCategoryId.toString();
     }
 
-    const response = await this.request.post(`${this.baseUrl}/v1/resource`, {
-      multipart: multipartData,
+    return this.withRetry(async () => {
+      const response = await this.request.post(`${this.baseUrl}/v1/resource`, {
+        multipart: multipartData,
+      });
+      // The API returns an array of resources, extract the first one
+      const resources = await this.handleResponse<{ ID: number; Name: string; ContentType: string }[]>(response);
+      if (!resources || resources.length === 0) {
+        throw new Error('No resource returned from API');
+      }
+      return resources[0];
     });
-    // The API returns an array of resources, extract the first one
-    const resources = await this.handleResponse<{ ID: number; Name: string; ContentType: string }[]>(response);
-    if (!resources || resources.length === 0) {
-      throw new Error('No resource returned from API');
-    }
-    return resources[0];
   }
 
   async deleteResource(id: number): Promise<void> {
-    const response = await this.request.post(`${this.baseUrl}/v1/resource/delete?Id=${id}`);
-    await this.handleVoidResponse(response);
+    return this.postVoidRetry(`${this.baseUrl}/v1/resource/delete?Id=${id}`);
   }
 
   async addTagsToResources(resourceIds: number[], tagIds: number[]): Promise<void> {
@@ -582,7 +611,7 @@ export class ApiClient {
     position: string,
     content: Record<string, unknown>
   ): Promise<NoteBlock> {
-    const response = await this.request.post(`${this.baseUrl}/v1/note/block`, {
+    return this.postRetry<NoteBlock>(`${this.baseUrl}/v1/note/block`, {
       headers: { 'Content-Type': 'application/json' },
       data: JSON.stringify({
         noteId,
@@ -591,7 +620,6 @@ export class ApiClient {
         content,
       }),
     });
-    return this.handleResponse<NoteBlock>(response);
   }
 
   async getBlocks(noteId: number): Promise<NoteBlock[]> {
@@ -608,47 +636,49 @@ export class ApiClient {
     blockId: number,
     content: Record<string, unknown>
   ): Promise<NoteBlock> {
-    const response = await this.request.put(`${this.baseUrl}/v1/note/block?id=${blockId}`, {
-      headers: { 'Content-Type': 'application/json' },
-      data: JSON.stringify({ content }),
+    return this.withRetry(async () => {
+      const response = await this.request.put(`${this.baseUrl}/v1/note/block?id=${blockId}`, {
+        headers: { 'Content-Type': 'application/json' },
+        data: JSON.stringify({ content }),
+      });
+      return this.handleResponse<NoteBlock>(response);
     });
-    return this.handleResponse<NoteBlock>(response);
   }
 
   async updateBlockState(
     blockId: number,
     state: Record<string, unknown>
   ): Promise<NoteBlock> {
-    const response = await this.request.patch(`${this.baseUrl}/v1/note/block/state?id=${blockId}`, {
-      headers: { 'Content-Type': 'application/json' },
-      data: JSON.stringify({ state }),
+    return this.withRetry(async () => {
+      const response = await this.request.patch(`${this.baseUrl}/v1/note/block/state?id=${blockId}`, {
+        headers: { 'Content-Type': 'application/json' },
+        data: JSON.stringify({ state }),
+      });
+      return this.handleResponse<NoteBlock>(response);
     });
-    return this.handleResponse<NoteBlock>(response);
   }
 
   async deleteBlock(blockId: number): Promise<void> {
-    const response = await this.request.delete(`${this.baseUrl}/v1/note/block?id=${blockId}`);
-    await this.handleVoidResponse(response);
+    return this.deleteRetry(`${this.baseUrl}/v1/note/block?id=${blockId}`);
   }
 
   async reorderBlocks(noteId: number, positions: Record<number, string>): Promise<void> {
-    const response = await this.request.post(`${this.baseUrl}/v1/note/blocks/reorder`, {
+    return this.postVoidRetry(`${this.baseUrl}/v1/note/blocks/reorder`, {
       headers: { 'Content-Type': 'application/json' },
       data: JSON.stringify({ noteId, positions }),
     });
-    await this.handleVoidResponse(response);
   }
 
   // Note sharing operations
   async shareNote(noteId: number): Promise<{ token: string }> {
-    const response = await this.request.post(`${this.baseUrl}/v1/note/share?noteId=${noteId}`);
-    const data = await this.handleResponse<{ shareToken: string; shareUrl: string }>(response);
+    const data = await this.postRetry<{ shareToken: string; shareUrl: string }>(
+      `${this.baseUrl}/v1/note/share?noteId=${noteId}`
+    );
     return { token: data.shareToken };
   }
 
   async unshareNote(noteId: number): Promise<void> {
-    const response = await this.request.delete(`${this.baseUrl}/v1/note/share?noteId=${noteId}`);
-    await this.handleVoidResponse(response);
+    return this.deleteRetry(`${this.baseUrl}/v1/note/share?noteId=${noteId}`);
   }
 
   async getSharedNotes(): Promise<Note[]> {

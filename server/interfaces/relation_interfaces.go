@@ -13,7 +13,7 @@ type RelationshipWriter interface {
 }
 
 type RelationshipReader interface {
-	GetRelationTypes(offset int, maxResults int, query *query_models.RelationshipTypeQuery) (*[]*models.GroupRelationType, error)
+	GetRelationTypes(offset int, maxResults int, query *query_models.RelationshipTypeQuery) ([]*models.GroupRelationType, error)
 }
 
 type RelationshipDeleter interface {

@@ -4,7 +4,7 @@ package interfaces
 // T is the entity type, Q is the query parameter type.
 type GenericReader[T, Q any] interface {
 	Get(id uint) (*T, error)
-	List(offset, limit int, query Q) (*[]T, error)
+	List(offset, limit int, query Q) ([]T, error)
 	Count(query Q) (int64, error)
 	GetByIDs(ids []uint, limit int) ([]*T, error)
 }

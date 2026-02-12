@@ -85,9 +85,9 @@ func (l *Logger) log(level, action, entityType string, entityID *uint, entityNam
 }
 
 // GetLogEntries retrieves log entries with filtering and pagination.
-func (ctx *MahresourcesContext) GetLogEntries(offset, maxResults int, query *query_models.LogEntryQuery) (*[]models.LogEntry, error) {
+func (ctx *MahresourcesContext) GetLogEntries(offset, maxResults int, query *query_models.LogEntryQuery) ([]models.LogEntry, error) {
 	var logs []models.LogEntry
-	return &logs, ctx.db.Scopes(database_scopes.LogEntryQuery(query, false)).
+	return logs, ctx.db.Scopes(database_scopes.LogEntryQuery(query, false)).
 		Limit(maxResults).
 		Offset(offset).
 		Find(&logs).Error
@@ -108,7 +108,7 @@ func (ctx *MahresourcesContext) GetLogEntry(id uint) (*models.LogEntry, error) {
 }
 
 // GetEntityHistory retrieves log entries for a specific entity with pagination.
-func (ctx *MahresourcesContext) GetEntityHistory(entityType string, entityID uint, offset, limit int) (*[]models.LogEntry, error) {
+func (ctx *MahresourcesContext) GetEntityHistory(entityType string, entityID uint, offset, limit int) ([]models.LogEntry, error) {
 	var logs []models.LogEntry
 	query := &query_models.EntityHistoryQuery{
 		EntityType: entityType,
@@ -118,7 +118,7 @@ func (ctx *MahresourcesContext) GetEntityHistory(entityType string, entityID uin
 	if limit > 0 {
 		db = db.Limit(limit).Offset(offset)
 	}
-	return &logs, db.Find(&logs).Error
+	return logs, db.Find(&logs).Error
 }
 
 // GetEntityHistoryCount returns the total count of log entries for a specific entity.

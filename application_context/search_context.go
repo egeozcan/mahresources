@@ -11,12 +11,6 @@ import (
 	"sync"
 )
 
-// ftsProvider is the active FTS provider (nil if FTS is not initialized)
-var ftsProvider fts.FTSProvider
-
-// ftsEnabled indicates whether FTS is available
-var ftsEnabled bool
-
 // Entity type constants
 const (
 	EntityTypeResource     = "resource"
@@ -55,18 +49,18 @@ var allEntityTypes = []string{
 // InitFTS initializes the FTS provider based on the database type
 func (ctx *MahresourcesContext) InitFTS() error {
 	if ctx.Config.DbType == constants.DbTypePosgres {
-		ftsProvider = fts.NewPostgresFTS()
+		ctx.ftsProvider = fts.NewPostgresFTS()
 	} else {
-		ftsProvider = fts.NewSQLiteFTS()
+		ctx.ftsProvider = fts.NewSQLiteFTS()
 	}
 
-	if err := ftsProvider.Setup(ctx.db); err != nil {
-		ftsProvider = nil
-		ftsEnabled = false
+	if err := ctx.ftsProvider.Setup(ctx.db); err != nil {
+		ctx.ftsProvider = nil
+		ctx.ftsEnabled = false
 		return err
 	}
 
-	ftsEnabled = true
+	ctx.ftsEnabled = true
 	return nil
 }
 
@@ -122,7 +116,7 @@ func (ctx *MahresourcesContext) GlobalSearch(query *query_models.GlobalSearchQue
 		go func(et string) {
 			defer wg.Done()
 			var results []query_models.SearchResultItem
-			if ftsEnabled {
+			if ctx.ftsEnabled {
 				results = ctx.searchEntityTypeFTS(et, parsedQuery, searchLimit)
 			} else {
 				// Fallback to LIKE-based search if FTS is not available
@@ -153,7 +147,7 @@ func (ctx *MahresourcesContext) GlobalSearch(query *query_models.GlobalSearchQue
 
 	// Cache results before applying user's limit
 	if shouldCache {
-		ctx.searchCache.Set(searchTerm, allResults)
+		ctx.searchCache.Set(strings.ToLower(searchTerm), allResults)
 	}
 
 	// Apply user's requested limit for response
@@ -191,26 +185,77 @@ func getTypesToSearch(requestedTypes []string) []string {
 	return filtered
 }
 
+// searchable is a constraint for models that can appear in search results.
+type searchable interface {
+	models.Group | models.Note | models.Resource | models.Tag |
+		models.Category | models.Query | models.GroupRelationType |
+		models.NoteType | models.ResourceCategory
+}
+
+// searchEntityInfo holds the metadata needed to search a specific entity type.
+type searchEntityInfo struct {
+	entityType string
+	urlFormat  string
+	// extraLikeCols are additional columns to include in LIKE searches beyond name+description
+	extraLikeCols []string
+}
+
+var entitySearchInfo = map[string]searchEntityInfo{
+	EntityTypeGroup:            {entityType: EntityTypeGroup, urlFormat: "/group?id=%d"},
+	EntityTypeNote:             {entityType: EntityTypeNote, urlFormat: "/note?id=%d"},
+	EntityTypeResource:         {entityType: EntityTypeResource, urlFormat: "/resource?id=%d", extraLikeCols: []string{"original_name"}},
+	EntityTypeTag:              {entityType: EntityTypeTag, urlFormat: "/tag?id=%d"},
+	EntityTypeCategory:         {entityType: EntityTypeCategory, urlFormat: "/category?id=%d"},
+	EntityTypeQuery:            {entityType: EntityTypeQuery, urlFormat: "/query?id=%d"},
+	EntityTypeRelationType:     {entityType: EntityTypeRelationType, urlFormat: "/relationType?id=%d"},
+	EntityTypeNoteType:         {entityType: EntityTypeNoteType, urlFormat: "/noteType?id=%d"},
+	EntityTypeResourceCategory: {entityType: EntityTypeResourceCategory, urlFormat: "/resourceCategory?id=%d"},
+}
+
 func (ctx *MahresourcesContext) searchEntityType(entityType, searchTerm string, limit int) []query_models.SearchResultItem {
 	switch entityType {
 	case EntityTypeGroup:
-		return ctx.searchGroups(searchTerm, limit)
+		return searchEntitiesLike[models.Group](ctx, entityType, searchTerm, limit)
 	case EntityTypeNote:
-		return ctx.searchNotes(searchTerm, limit)
+		return searchEntitiesLike[models.Note](ctx, entityType, searchTerm, limit)
 	case EntityTypeResource:
-		return ctx.searchResources(searchTerm, limit)
+		return searchEntitiesLike[models.Resource](ctx, entityType, searchTerm, limit)
 	case EntityTypeTag:
-		return ctx.searchTags(searchTerm, limit)
+		return searchEntitiesLike[models.Tag](ctx, entityType, searchTerm, limit)
 	case EntityTypeCategory:
-		return ctx.searchCategories(searchTerm, limit)
+		return searchEntitiesLike[models.Category](ctx, entityType, searchTerm, limit)
 	case EntityTypeQuery:
-		return ctx.searchQueries(searchTerm, limit)
+		return searchEntitiesLike[models.Query](ctx, entityType, searchTerm, limit)
 	case EntityTypeRelationType:
-		return ctx.searchRelationTypes(searchTerm, limit)
+		return searchEntitiesLike[models.GroupRelationType](ctx, entityType, searchTerm, limit)
 	case EntityTypeNoteType:
-		return ctx.searchNoteTypes(searchTerm, limit)
+		return searchEntitiesLike[models.NoteType](ctx, entityType, searchTerm, limit)
 	case EntityTypeResourceCategory:
-		return ctx.searchResourceCategories(searchTerm, limit)
+		return searchEntitiesLike[models.ResourceCategory](ctx, entityType, searchTerm, limit)
+	}
+	return nil
+}
+
+func (ctx *MahresourcesContext) searchEntityTypeFTS(entityType string, query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
+	switch entityType {
+	case EntityTypeResource:
+		return searchEntitiesFTS[models.Resource](ctx, entityType, query, limit)
+	case EntityTypeNote:
+		return searchEntitiesFTS[models.Note](ctx, entityType, query, limit)
+	case EntityTypeGroup:
+		return searchEntitiesFTS[models.Group](ctx, entityType, query, limit)
+	case EntityTypeTag:
+		return searchEntitiesFTS[models.Tag](ctx, entityType, query, limit)
+	case EntityTypeCategory:
+		return searchEntitiesFTS[models.Category](ctx, entityType, query, limit)
+	case EntityTypeQuery:
+		return searchEntitiesFTS[models.Query](ctx, entityType, query, limit)
+	case EntityTypeRelationType:
+		return searchEntitiesFTS[models.GroupRelationType](ctx, entityType, query, limit)
+	case EntityTypeNoteType:
+		return searchEntitiesFTS[models.NoteType](ctx, entityType, query, limit)
+	case EntityTypeResourceCategory:
+		return searchEntitiesFTS[models.ResourceCategory](ctx, entityType, query, limit)
 	}
 	return nil
 }
@@ -248,536 +293,108 @@ func truncateDescription(desc string, maxLen int) string {
 	return desc[:maxLen-3] + "..."
 }
 
-func (ctx *MahresourcesContext) searchGroups(searchTerm string, limit int) []query_models.SearchResultItem {
-	var groups []models.Group
-	likeOp := ctx.getLikeOperator()
-	pattern := "%" + searchTerm + "%"
-
-	ctx.db.
-		Where("name "+likeOp+" ? OR description "+likeOp+" ?", pattern, pattern).
-		Limit(limit).
-		Find(&groups)
-
-	results := make([]query_models.SearchResultItem, 0, len(groups))
-	for _, g := range groups {
-		results = append(results, query_models.SearchResultItem{
-			ID:          g.ID,
-			Type:        EntityTypeGroup,
-			Name:        g.Name,
-			Description: truncateDescription(g.Description, 100),
-			Score:       calculateRelevanceScore(g.Name, g.Description, searchTerm),
-			URL:         fmt.Sprintf("/group?id=%d", g.ID),
-		})
+// entityFields extracts the common search fields (id, name, description) from any searchable model.
+func entityFields(v any) (id uint, name, description string) {
+	switch e := v.(type) {
+	case models.Group:
+		return e.ID, e.Name, e.Description
+	case models.Note:
+		return e.ID, e.Name, e.Description
+	case models.Resource:
+		return e.ID, e.Name, e.Description
+	case models.Tag:
+		return e.ID, e.Name, e.Description
+	case models.Category:
+		return e.ID, e.Name, e.Description
+	case models.Query:
+		return e.ID, e.Name, e.Description
+	case models.GroupRelationType:
+		return e.ID, e.Name, e.Description
+	case models.NoteType:
+		return e.ID, e.Name, e.Description
+	case models.ResourceCategory:
+		return e.ID, e.Name, e.Description
 	}
-	return results
+	return 0, "", ""
 }
 
-func (ctx *MahresourcesContext) searchNotes(searchTerm string, limit int) []query_models.SearchResultItem {
-	var notes []models.Note
-	likeOp := ctx.getLikeOperator()
-	pattern := "%" + searchTerm + "%"
-
-	ctx.db.
-		Where("name "+likeOp+" ? OR description "+likeOp+" ?", pattern, pattern).
-		Limit(limit).
-		Find(&notes)
-
-	results := make([]query_models.SearchResultItem, 0, len(notes))
-	for _, n := range notes {
-		results = append(results, query_models.SearchResultItem{
-			ID:          n.ID,
-			Type:        EntityTypeNote,
-			Name:        n.Name,
-			Description: truncateDescription(n.Description, 100),
-			Score:       calculateRelevanceScore(n.Name, n.Description, searchTerm),
-			URL:         fmt.Sprintf("/note?id=%d", n.ID),
-		})
-	}
-	return results
-}
-
-func (ctx *MahresourcesContext) searchResources(searchTerm string, limit int) []query_models.SearchResultItem {
-	var resources []models.Resource
-	likeOp := ctx.getLikeOperator()
-	pattern := "%" + searchTerm + "%"
-
-	ctx.db.
-		Where("name "+likeOp+" ? OR description "+likeOp+" ? OR original_name "+likeOp+" ?",
-			pattern, pattern, pattern).
-		Limit(limit).
-		Find(&resources)
-
-	results := make([]query_models.SearchResultItem, 0, len(resources))
-	for _, r := range resources {
-		extra := make(map[string]string)
-		if r.ContentType != "" {
-			extra["contentType"] = r.ContentType
-		}
-		results = append(results, query_models.SearchResultItem{
-			ID:          r.ID,
-			Type:        EntityTypeResource,
-			Name:        r.Name,
-			Description: truncateDescription(r.Description, 100),
-			Score:       calculateRelevanceScore(r.Name, r.Description, searchTerm),
-			URL:         fmt.Sprintf("/resource?id=%d", r.ID),
-			Extra:       extra,
-		})
-	}
-	return results
-}
-
-func (ctx *MahresourcesContext) searchTags(searchTerm string, limit int) []query_models.SearchResultItem {
-	var tags []models.Tag
-	likeOp := ctx.getLikeOperator()
-	pattern := "%" + searchTerm + "%"
-
-	ctx.db.
-		Where("name "+likeOp+" ? OR description "+likeOp+" ?", pattern, pattern).
-		Limit(limit).
-		Find(&tags)
-
-	results := make([]query_models.SearchResultItem, 0, len(tags))
-	for _, t := range tags {
-		results = append(results, query_models.SearchResultItem{
-			ID:          t.ID,
-			Type:        EntityTypeTag,
-			Name:        t.Name,
-			Description: truncateDescription(t.Description, 100),
-			Score:       calculateRelevanceScore(t.Name, t.Description, searchTerm),
-			URL:         fmt.Sprintf("/tag?id=%d", t.ID),
-		})
-	}
-	return results
-}
-
-func (ctx *MahresourcesContext) searchCategories(searchTerm string, limit int) []query_models.SearchResultItem {
-	var categories []models.Category
-	likeOp := ctx.getLikeOperator()
-	pattern := "%" + searchTerm + "%"
-
-	ctx.db.
-		Where("name "+likeOp+" ? OR description "+likeOp+" ?", pattern, pattern).
-		Limit(limit).
-		Find(&categories)
-
-	results := make([]query_models.SearchResultItem, 0, len(categories))
-	for _, c := range categories {
-		results = append(results, query_models.SearchResultItem{
-			ID:          c.ID,
-			Type:        EntityTypeCategory,
-			Name:        c.Name,
-			Description: truncateDescription(c.Description, 100),
-			Score:       calculateRelevanceScore(c.Name, c.Description, searchTerm),
-			URL:         fmt.Sprintf("/category?id=%d", c.ID),
-		})
-	}
-	return results
-}
-
-func (ctx *MahresourcesContext) searchQueries(searchTerm string, limit int) []query_models.SearchResultItem {
-	var queries []models.Query
-	likeOp := ctx.getLikeOperator()
-	pattern := "%" + searchTerm + "%"
-
-	ctx.db.
-		Where("name "+likeOp+" ? OR description "+likeOp+" ?", pattern, pattern).
-		Limit(limit).
-		Find(&queries)
-
-	results := make([]query_models.SearchResultItem, 0, len(queries))
-	for _, q := range queries {
-		results = append(results, query_models.SearchResultItem{
-			ID:          q.ID,
-			Type:        EntityTypeQuery,
-			Name:        q.Name,
-			Description: truncateDescription(q.Description, 100),
-			Score:       calculateRelevanceScore(q.Name, q.Description, searchTerm),
-			URL:         fmt.Sprintf("/query?id=%d", q.ID),
-		})
-	}
-	return results
-}
-
-func (ctx *MahresourcesContext) searchRelationTypes(searchTerm string, limit int) []query_models.SearchResultItem {
-	var relationTypes []models.GroupRelationType
-	likeOp := ctx.getLikeOperator()
-	pattern := "%" + searchTerm + "%"
-
-	ctx.db.
-		Where("name "+likeOp+" ? OR description "+likeOp+" ?", pattern, pattern).
-		Limit(limit).
-		Find(&relationTypes)
-
-	results := make([]query_models.SearchResultItem, 0, len(relationTypes))
-	for _, rt := range relationTypes {
-		results = append(results, query_models.SearchResultItem{
-			ID:          rt.ID,
-			Type:        EntityTypeRelationType,
-			Name:        rt.Name,
-			Description: truncateDescription(rt.Description, 100),
-			Score:       calculateRelevanceScore(rt.Name, rt.Description, searchTerm),
-			URL:         fmt.Sprintf("/relationType?id=%d", rt.ID),
-		})
-	}
-	return results
-}
-
-func (ctx *MahresourcesContext) searchNoteTypes(searchTerm string, limit int) []query_models.SearchResultItem {
-	var noteTypes []models.NoteType
-	likeOp := ctx.getLikeOperator()
-	pattern := "%" + searchTerm + "%"
-
-	ctx.db.
-		Where("name "+likeOp+" ? OR description "+likeOp+" ?", pattern, pattern).
-		Limit(limit).
-		Find(&noteTypes)
-
-	results := make([]query_models.SearchResultItem, 0, len(noteTypes))
-	for _, nt := range noteTypes {
-		results = append(results, query_models.SearchResultItem{
-			ID:          nt.ID,
-			Type:        EntityTypeNoteType,
-			Name:        nt.Name,
-			Description: truncateDescription(nt.Description, 100),
-			Score:       calculateRelevanceScore(nt.Name, nt.Description, searchTerm),
-			URL:         fmt.Sprintf("/noteType?id=%d", nt.ID),
-		})
-	}
-	return results
-}
-
-func (ctx *MahresourcesContext) searchResourceCategories(searchTerm string, limit int) []query_models.SearchResultItem {
-	var resourceCategories []models.ResourceCategory
-	likeOp := ctx.getLikeOperator()
-	pattern := "%" + searchTerm + "%"
-
-	ctx.db.
-		Where("name "+likeOp+" ? OR description "+likeOp+" ?", pattern, pattern).
-		Limit(limit).
-		Find(&resourceCategories)
-
-	results := make([]query_models.SearchResultItem, 0, len(resourceCategories))
-	for _, rc := range resourceCategories {
-		results = append(results, query_models.SearchResultItem{
-			ID:          rc.ID,
-			Type:        EntityTypeResourceCategory,
-			Name:        rc.Name,
-			Description: truncateDescription(rc.Description, 100),
-			Score:       calculateRelevanceScore(rc.Name, rc.Description, searchTerm),
-			URL:         fmt.Sprintf("/resourceCategory?id=%d", rc.ID),
-		})
-	}
-	return results
-}
-
-// =============================================================================
-// FTS-based search functions
-// =============================================================================
-
-func (ctx *MahresourcesContext) searchEntityTypeFTS(entityType string, query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
-	switch entityType {
-	case EntityTypeResource:
-		return ctx.searchResourcesFTS(query, limit)
-	case EntityTypeNote:
-		return ctx.searchNotesFTS(query, limit)
-	case EntityTypeGroup:
-		return ctx.searchGroupsFTS(query, limit)
-	case EntityTypeTag:
-		return ctx.searchTagsFTS(query, limit)
-	case EntityTypeCategory:
-		return ctx.searchCategoriesFTS(query, limit)
-	case EntityTypeQuery:
-		return ctx.searchQueriesFTS(query, limit)
-	case EntityTypeRelationType:
-		return ctx.searchRelationTypesFTS(query, limit)
-	case EntityTypeNoteType:
-		return ctx.searchNoteTypesFTS(query, limit)
-	case EntityTypeResourceCategory:
-		return ctx.searchResourceCategoriesFTS(query, limit)
+// entityExtra returns additional metadata for a search result (e.g., contentType for resources).
+func entityExtra(v any) map[string]string {
+	if r, ok := v.(models.Resource); ok && r.ContentType != "" {
+		return map[string]string{"contentType": r.ContentType}
 	}
 	return nil
 }
 
-func (ctx *MahresourcesContext) searchResourcesFTS(query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
-	config := fts.GetEntityConfig(EntityTypeResource)
-	if config == nil {
-		return nil
+// searchEntitiesLike performs a LIKE-based search for any searchable entity type.
+func searchEntitiesLike[T searchable](ctx *MahresourcesContext, entityType, searchTerm string, limit int) []query_models.SearchResultItem {
+	info := entitySearchInfo[entityType]
+	likeOp := ctx.getLikeOperator()
+	pattern := "%" + searchTerm + "%"
+
+	// Build WHERE clause: always search name and description, plus any extra columns
+	whereParts := []string{
+		"name " + likeOp + " ?",
+		"description " + likeOp + " ?",
+	}
+	args := []any{pattern, pattern}
+	for _, col := range info.extraLikeCols {
+		whereParts = append(whereParts, col+" "+likeOp+" ?")
+		args = append(args, pattern)
 	}
 
-	var resources []models.Resource
-	db := ctx.db.Model(&models.Resource{}).
-		Scopes(ftsProvider.BuildSearchScope(config.TableName, config.Columns, query)).
-		Limit(limit)
+	var entities []T
+	ctx.db.
+		Where(strings.Join(whereParts, " OR "), args...).
+		Limit(limit).
+		Find(&entities)
 
-	db.Find(&resources)
-
-	results := make([]query_models.SearchResultItem, 0, len(resources))
-	for i, r := range resources {
-		extra := make(map[string]string)
-		if r.ContentType != "" {
-			extra["contentType"] = r.ContentType
-		}
-		// Use position-based scoring since results are ordered by relevance
-		score := 100 - i
-		if score < 1 {
-			score = 1
-		}
+	results := make([]query_models.SearchResultItem, 0, len(entities))
+	for _, e := range entities {
+		id, name, description := entityFields(e)
 		results = append(results, query_models.SearchResultItem{
-			ID:          r.ID,
-			Type:        EntityTypeResource,
-			Name:        r.Name,
-			Description: truncateDescription(r.Description, 100),
-			Score:       score,
-			URL:         fmt.Sprintf("/resource?id=%d", r.ID),
-			Extra:       extra,
+			ID:          id,
+			Type:        info.entityType,
+			Name:        name,
+			Description: truncateDescription(description, 100),
+			Score:       calculateRelevanceScore(name, description, searchTerm),
+			URL:         fmt.Sprintf(info.urlFormat, id),
+			Extra:       entityExtra(e),
 		})
 	}
 	return results
 }
 
-func (ctx *MahresourcesContext) searchNotesFTS(query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
-	config := fts.GetEntityConfig(EntityTypeNote)
+// searchEntitiesFTS performs an FTS-based search for any searchable entity type.
+func searchEntitiesFTS[T searchable](ctx *MahresourcesContext, entityType string, query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
+	config := fts.GetEntityConfig(entityType)
 	if config == nil {
 		return nil
 	}
 
-	var notes []models.Note
-	db := ctx.db.Model(&models.Note{}).
-		Scopes(ftsProvider.BuildSearchScope(config.TableName, config.Columns, query)).
-		Limit(limit)
+	info := entitySearchInfo[entityType]
 
-	db.Find(&notes)
+	var entities []T
+	ctx.db.Model(new(T)).
+		Scopes(ctx.ftsProvider.BuildSearchScope(config.TableName, config.Columns, query)).
+		Limit(limit).
+		Find(&entities)
 
-	results := make([]query_models.SearchResultItem, 0, len(notes))
-	for i, n := range notes {
+	results := make([]query_models.SearchResultItem, 0, len(entities))
+	for i, e := range entities {
+		id, name, description := entityFields(e)
 		score := 100 - i
 		if score < 1 {
 			score = 1
 		}
 		results = append(results, query_models.SearchResultItem{
-			ID:          n.ID,
-			Type:        EntityTypeNote,
-			Name:        n.Name,
-			Description: truncateDescription(n.Description, 100),
+			ID:          id,
+			Type:        info.entityType,
+			Name:        name,
+			Description: truncateDescription(description, 100),
 			Score:       score,
-			URL:         fmt.Sprintf("/note?id=%d", n.ID),
-		})
-	}
-	return results
-}
-
-func (ctx *MahresourcesContext) searchGroupsFTS(query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
-	config := fts.GetEntityConfig(EntityTypeGroup)
-	if config == nil {
-		return nil
-	}
-
-	var groups []models.Group
-	db := ctx.db.Model(&models.Group{}).
-		Scopes(ftsProvider.BuildSearchScope(config.TableName, config.Columns, query)).
-		Limit(limit)
-
-	db.Find(&groups)
-
-	results := make([]query_models.SearchResultItem, 0, len(groups))
-	for i, g := range groups {
-		score := 100 - i
-		if score < 1 {
-			score = 1
-		}
-		results = append(results, query_models.SearchResultItem{
-			ID:          g.ID,
-			Type:        EntityTypeGroup,
-			Name:        g.Name,
-			Description: truncateDescription(g.Description, 100),
-			Score:       score,
-			URL:         fmt.Sprintf("/group?id=%d", g.ID),
-		})
-	}
-	return results
-}
-
-func (ctx *MahresourcesContext) searchTagsFTS(query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
-	config := fts.GetEntityConfig(EntityTypeTag)
-	if config == nil {
-		return nil
-	}
-
-	var tags []models.Tag
-	db := ctx.db.Model(&models.Tag{}).
-		Scopes(ftsProvider.BuildSearchScope(config.TableName, config.Columns, query)).
-		Limit(limit)
-
-	db.Find(&tags)
-
-	results := make([]query_models.SearchResultItem, 0, len(tags))
-	for i, t := range tags {
-		score := 100 - i
-		if score < 1 {
-			score = 1
-		}
-		results = append(results, query_models.SearchResultItem{
-			ID:          t.ID,
-			Type:        EntityTypeTag,
-			Name:        t.Name,
-			Description: truncateDescription(t.Description, 100),
-			Score:       score,
-			URL:         fmt.Sprintf("/tag?id=%d", t.ID),
-		})
-	}
-	return results
-}
-
-func (ctx *MahresourcesContext) searchCategoriesFTS(query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
-	config := fts.GetEntityConfig(EntityTypeCategory)
-	if config == nil {
-		return nil
-	}
-
-	var categories []models.Category
-	db := ctx.db.Model(&models.Category{}).
-		Scopes(ftsProvider.BuildSearchScope(config.TableName, config.Columns, query)).
-		Limit(limit)
-
-	db.Find(&categories)
-
-	results := make([]query_models.SearchResultItem, 0, len(categories))
-	for i, c := range categories {
-		score := 100 - i
-		if score < 1 {
-			score = 1
-		}
-		results = append(results, query_models.SearchResultItem{
-			ID:          c.ID,
-			Type:        EntityTypeCategory,
-			Name:        c.Name,
-			Description: truncateDescription(c.Description, 100),
-			Score:       score,
-			URL:         fmt.Sprintf("/category?id=%d", c.ID),
-		})
-	}
-	return results
-}
-
-func (ctx *MahresourcesContext) searchQueriesFTS(query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
-	config := fts.GetEntityConfig(EntityTypeQuery)
-	if config == nil {
-		return nil
-	}
-
-	var queries []models.Query
-	db := ctx.db.Model(&models.Query{}).
-		Scopes(ftsProvider.BuildSearchScope(config.TableName, config.Columns, query)).
-		Limit(limit)
-
-	db.Find(&queries)
-
-	results := make([]query_models.SearchResultItem, 0, len(queries))
-	for i, q := range queries {
-		score := 100 - i
-		if score < 1 {
-			score = 1
-		}
-		results = append(results, query_models.SearchResultItem{
-			ID:          q.ID,
-			Type:        EntityTypeQuery,
-			Name:        q.Name,
-			Description: truncateDescription(q.Description, 100),
-			Score:       score,
-			URL:         fmt.Sprintf("/query?id=%d", q.ID),
-		})
-	}
-	return results
-}
-
-func (ctx *MahresourcesContext) searchRelationTypesFTS(query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
-	config := fts.GetEntityConfig(EntityTypeRelationType)
-	if config == nil {
-		return nil
-	}
-
-	var relationTypes []models.GroupRelationType
-	db := ctx.db.Model(&models.GroupRelationType{}).
-		Scopes(ftsProvider.BuildSearchScope(config.TableName, config.Columns, query)).
-		Limit(limit)
-
-	db.Find(&relationTypes)
-
-	results := make([]query_models.SearchResultItem, 0, len(relationTypes))
-	for i, rt := range relationTypes {
-		score := 100 - i
-		if score < 1 {
-			score = 1
-		}
-		results = append(results, query_models.SearchResultItem{
-			ID:          rt.ID,
-			Type:        EntityTypeRelationType,
-			Name:        rt.Name,
-			Description: truncateDescription(rt.Description, 100),
-			Score:       score,
-			URL:         fmt.Sprintf("/relationType?id=%d", rt.ID),
-		})
-	}
-	return results
-}
-
-func (ctx *MahresourcesContext) searchNoteTypesFTS(query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
-	config := fts.GetEntityConfig(EntityTypeNoteType)
-	if config == nil {
-		return nil
-	}
-
-	var noteTypes []models.NoteType
-	db := ctx.db.Model(&models.NoteType{}).
-		Scopes(ftsProvider.BuildSearchScope(config.TableName, config.Columns, query)).
-		Limit(limit)
-
-	db.Find(&noteTypes)
-
-	results := make([]query_models.SearchResultItem, 0, len(noteTypes))
-	for i, nt := range noteTypes {
-		score := 100 - i
-		if score < 1 {
-			score = 1
-		}
-		results = append(results, query_models.SearchResultItem{
-			ID:          nt.ID,
-			Type:        EntityTypeNoteType,
-			Name:        nt.Name,
-			Description: truncateDescription(nt.Description, 100),
-			Score:       score,
-			URL:         fmt.Sprintf("/noteType?id=%d", nt.ID),
-		})
-	}
-	return results
-}
-
-func (ctx *MahresourcesContext) searchResourceCategoriesFTS(query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
-	config := fts.GetEntityConfig(EntityTypeResourceCategory)
-	if config == nil {
-		return nil
-	}
-
-	var resourceCategories []models.ResourceCategory
-	db := ctx.db.Model(&models.ResourceCategory{}).
-		Scopes(ftsProvider.BuildSearchScope(config.TableName, config.Columns, query)).
-		Limit(limit)
-
-	db.Find(&resourceCategories)
-
-	results := make([]query_models.SearchResultItem, 0, len(resourceCategories))
-	for i, rc := range resourceCategories {
-		score := 100 - i
-		if score < 1 {
-			score = 1
-		}
-		results = append(results, query_models.SearchResultItem{
-			ID:          rc.ID,
-			Type:        EntityTypeResourceCategory,
-			Name:        rc.Name,
-			Description: truncateDescription(rc.Description, 100),
-			Score:       score,
-			URL:         fmt.Sprintf("/resourceCategory?id=%d", rc.ID),
+			URL:         fmt.Sprintf(info.urlFormat, id),
+			Extra:       entityExtra(e),
 		})
 	}
 	return results

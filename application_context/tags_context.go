@@ -10,10 +10,10 @@ import (
 	"strings"
 )
 
-func (ctx *MahresourcesContext) GetTags(offset, maxResults int, query *query_models.TagQuery) (*[]models.Tag, error) {
+func (ctx *MahresourcesContext) GetTags(offset, maxResults int, query *query_models.TagQuery) ([]models.Tag, error) {
 	var tags []models.Tag
 
-	return &tags, ctx.db.Scopes(database_scopes.TagQuery(query, false)).Limit(maxResults).Offset(offset).Find(&tags).Error
+	return tags, ctx.db.Scopes(database_scopes.TagQuery(query, false)).Limit(maxResults).Offset(offset).Find(&tags).Error
 }
 
 func (ctx *MahresourcesContext) GetTagsCount(query *query_models.TagQuery) (int64, error) {
@@ -29,11 +29,11 @@ func (ctx *MahresourcesContext) GetTag(id uint) (*models.Tag, error) {
 	return &tag, ctx.db.Preload(clause.Associations, pageLimit).First(&tag, id).Error
 }
 
-func (ctx *MahresourcesContext) GetTagsWithIds(ids *[]uint, limit int) (*[]models.Tag, error) {
+func (ctx *MahresourcesContext) GetTagsWithIds(ids *[]uint, limit int) ([]models.Tag, error) {
 	var tags []models.Tag
 
 	if len(*ids) == 0 {
-		return &tags, nil
+		return tags, nil
 	}
 
 	query := ctx.db
@@ -42,7 +42,7 @@ func (ctx *MahresourcesContext) GetTagsWithIds(ids *[]uint, limit int) (*[]model
 		query = query.Limit(limit)
 	}
 
-	return &tags, query.Find(&tags, *ids).Error
+	return tags, query.Find(&tags, *ids).Error
 }
 
 func (ctx *MahresourcesContext) CreateTag(tagQuery *query_models.TagCreator) (*models.Tag, error) {

@@ -204,7 +204,9 @@ function escapeHTML(str) {
     }
 
     if (str.indexOf("data:image") === 0) {
-        return "<img src='" + str + "' />";
+        const img = document.createElement("img");
+        img.src = str;
+        return img.outerHTML;
     }
 
     const text = document.createTextNode(str);

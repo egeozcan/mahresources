@@ -11,7 +11,7 @@ import (
 
 type BlockReader interface {
 	GetBlock(id uint) (*models.NoteBlock, error)
-	GetBlocksForNote(noteID uint) (*[]models.NoteBlock, error)
+	GetBlocksForNote(noteID uint) ([]models.NoteBlock, error)
 }
 
 type BlockWriter interface {

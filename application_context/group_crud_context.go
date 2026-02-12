@@ -186,22 +186,22 @@ func (ctx *MahresourcesContext) GetGroup(id uint) (*models.Group, error) {
 	return &group, err
 }
 
-func (ctx *MahresourcesContext) GetGroups(offset, maxResults int, query *query_models.GroupQuery) (*[]models.Group, error) {
+func (ctx *MahresourcesContext) GetGroups(offset, maxResults int, query *query_models.GroupQuery) ([]models.Group, error) {
 	var groups []models.Group
 	groupScope := database_scopes.GroupQuery(query, false, ctx.db)
 
-	return &groups, ctx.db.Scopes(groupScope).Limit(maxResults).
+	return groups, ctx.db.Scopes(groupScope).Limit(maxResults).
 		Offset(offset).Preload("Tags").Preload("Category").Find(&groups).Error
 }
 
-func (ctx *MahresourcesContext) GetGroupsWithIds(ids *[]uint) (*[]*models.Group, error) {
+func (ctx *MahresourcesContext) GetGroupsWithIds(ids *[]uint) ([]*models.Group, error) {
 	var groups []*models.Group
 
 	if len(*ids) == 0 {
-		return &groups, nil
+		return groups, nil
 	}
 
-	return &groups, ctx.db.Preload("Category").Find(&groups, ids).Error
+	return groups, ctx.db.Preload("Category").Find(&groups, ids).Error
 }
 
 func (ctx *MahresourcesContext) GetGroupsCount(query *query_models.GroupQuery) (int64, error) {

@@ -1,9 +1,12 @@
 package http_utils
 
 import (
+	"encoding/json"
 	"fmt"
+	"html"
 	"mahresources/constants"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -40,18 +43,18 @@ func GetUIntQueryParameter(request *http.Request, paramName string, defVal uint)
 	return uint(param)
 }
 
-func RedirectIfHTMLAccepted(writer http.ResponseWriter, request *http.Request, url string) bool {
+func RedirectIfHTMLAccepted(writer http.ResponseWriter, request *http.Request, defaultURL string) bool {
 	requestedBackUrl := GetQueryParameter(request, "redirect", "")
 
-	if requestedBackUrl != "" {
+	if requestedBackUrl != "" && isSafeRedirect(requestedBackUrl) {
 		http.Redirect(writer, request, requestedBackUrl, http.StatusSeeOther)
 
 		return true
 	}
 
-	backUrl := url
+	backUrl := defaultURL
 
-	if url == "" {
+	if defaultURL == "" {
 		backUrl = request.Referer()
 	}
 
@@ -81,22 +84,44 @@ func RemoveValue(items []string, item string) []string {
 }
 
 func HandleError(err error, writer http.ResponseWriter, request *http.Request, responseCode int) {
-	writer.WriteHeader(responseCode)
 	fmt.Printf("\n[ERROR]: %v\n", err)
 
 	if requestAcceptsHTML(request) {
 		writer.Header().Set("Content-Type", "text/html")
+		writer.WriteHeader(responseCode)
 		_, _ = fmt.Fprintf(writer, `
 			<html>
 				<head><title>Error</title></head>
 				<body><h1>An error has occured:</h1><pre><code>%v</code></pre></body>
 			</html>
-		`, err.Error())
+		`, html.EscapeString(err.Error()))
 		return
 	}
 
 	writer.Header().Set("Content-Type", constants.JSON)
-	_, _ = fmt.Fprint(writer, err.Error())
+	writer.WriteHeader(responseCode)
+	_ = json.NewEncoder(writer).Encode(map[string]string{"error": err.Error()})
+}
+
+// isSafeRedirect checks that a redirect URL is a relative path and not an open redirect.
+func isSafeRedirect(rawURL string) bool {
+	// Must start with a single slash (not //)
+	if !strings.HasPrefix(rawURL, "/") || strings.HasPrefix(rawURL, "//") {
+		return false
+	}
+
+	// Parse the URL to check for scheme-based tricks
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+
+	// Reject if it has a scheme or host (e.g., "javascript:", "data:", or absolute URLs)
+	if parsed.Scheme != "" || parsed.Host != "" {
+		return false
+	}
+
+	return true
 }
 
 func requestAcceptsHTML(request *http.Request) bool {
@@ -114,6 +139,16 @@ func requestAcceptsHTML(request *http.Request) bool {
 	}
 
 	return false
+}
+
+// SetPaginationHeaders sets standard pagination response headers.
+// totalCount of -1 means the total is unknown (header will not be set).
+func SetPaginationHeaders(writer http.ResponseWriter, page, perPage int, totalCount int64) {
+	writer.Header().Set("X-Page", strconv.Itoa(page))
+	writer.Header().Set("X-Per-Page", strconv.Itoa(perPage))
+	if totalCount >= 0 {
+		writer.Header().Set("X-Total-Count", strconv.FormatInt(totalCount, 10))
+	}
 }
 
 func GetQueryParameter(request *http.Request, paramName string, defVal string) string {

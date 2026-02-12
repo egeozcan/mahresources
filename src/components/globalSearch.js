@@ -1,4 +1,5 @@
 import { abortableFetch } from '../index.js';
+import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 
 // Client-side search cache with TTL
 const searchCache = new Map();
@@ -40,8 +41,7 @@ export function globalSearch() {
         loading: false,
         requestAborter: null,
         debounceTimer: null,
-        liveRegion: null,
-        announceTimeout: null,
+        _liveRegion: null,
 
         typeIcons: {
             resource: '\u{1F4C4}',
@@ -66,30 +66,15 @@ export function globalSearch() {
         },
 
         init() {
-            // Create ARIA live region for screen reader announcements
-            this.liveRegion = document.createElement('div');
-            this.liveRegion.setAttribute('role', 'status');
-            this.liveRegion.setAttribute('aria-live', 'polite');
-            this.liveRegion.setAttribute('aria-atomic', 'true');
-            Object.assign(this.liveRegion.style, {
-                position: 'absolute',
-                width: '1px',
-                height: '1px',
-                padding: '0',
-                margin: '-1px',
-                overflow: 'hidden',
-                clip: 'rect(0, 0, 0, 0)',
-                whiteSpace: 'nowrap',
-                border: '0'
-            });
-            document.body.appendChild(this.liveRegion);
+            this._liveRegion = createLiveRegion();
 
-            document.addEventListener('keydown', (e) => {
+            this._keydownHandler = (e) => {
                 if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
                     e.preventDefault();
                     this.toggle();
                 }
-            });
+            };
+            document.addEventListener('keydown', this._keydownHandler);
 
             this.$watch('isOpen', (value) => {
                 if (value) {
@@ -102,26 +87,20 @@ export function globalSearch() {
         },
 
         announce(message) {
-            if (this.liveRegion) {
-                // Cancel any pending announcement to avoid race conditions
-                if (this.announceTimeout) {
-                    clearTimeout(this.announceTimeout);
-                }
-                this.liveRegion.textContent = '';
-                // Small delay to ensure screen readers pick up the change
-                this.announceTimeout = setTimeout(() => {
-                    this.liveRegion.textContent = message;
-                }, 50);
-            }
+            this._liveRegion?.announce(message);
         },
 
         destroy() {
-            // Clean up live region when component is destroyed
-            if (this.liveRegion && this.liveRegion.parentNode) {
-                this.liveRegion.parentNode.removeChild(this.liveRegion);
+            this._liveRegion?.destroy();
+            if (this._keydownHandler) {
+                document.removeEventListener('keydown', this._keydownHandler);
             }
-            if (this.announceTimeout) {
-                clearTimeout(this.announceTimeout);
+            if (this.debounceTimer) {
+                clearTimeout(this.debounceTimer);
+            }
+            if (this.requestAborter) {
+                this.requestAborter();
+                this.requestAborter = null;
             }
         },
 
@@ -264,8 +243,16 @@ export function globalSearch() {
 
         highlightMatch(text, query) {
             if (!text || !query) return text;
-            const regex = new RegExp(`(${this.escapeRegex(query)})`, 'gi');
-            return text.replace(regex, '<mark class="bg-yellow-200">$1</mark>');
+            const escaped = this.escapeHTML(text);
+            const escapedQuery = this.escapeHTML(query);
+            const regex = new RegExp(`(${this.escapeRegex(escapedQuery)})`, 'gi');
+            return escaped.replace(regex, '<mark class="bg-yellow-200">$1</mark>');
+        },
+
+        escapeHTML(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
         },
 
         escapeRegex(string) {

@@ -11,7 +11,7 @@ type TagsWriter interface {
 }
 
 type TagsReader interface {
-	GetTags(i int, results int, h *query_models.TagQuery) (*[]models.Tag, error)
+	GetTags(i int, results int, h *query_models.TagQuery) ([]models.Tag, error)
 }
 
 type TagDeleter interface {

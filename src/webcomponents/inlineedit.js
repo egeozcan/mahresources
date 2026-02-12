@@ -90,6 +90,13 @@ class InlineEdit extends HTMLElement {
         this.displayText.textContent = this.textContent.trim();
     }
 
+    disconnectedCallback() {
+        // If currently editing, cancel without saving
+        if (this.isEditing) {
+            this.isEditing = false;
+        }
+    }
+
     attributeChangedCallback() {
         this.updateProperties();
     }
@@ -145,7 +152,8 @@ class InlineEdit extends HTMLElement {
     enterEditMode() {
         if (this.isEditing) return;
         this.isEditing = true;
-        this.inputElement.value = this.displayText.textContent;
+        this._originalValue = this.displayText.textContent;
+        this.inputElement.value = this._originalValue;
         this.shadowRoot.replaceChild(this.inputElement, this.displayContainer);
         this.inputElement.focus();
         this.inputElement.select();
@@ -159,8 +167,8 @@ class InlineEdit extends HTMLElement {
         this.displayText.textContent = newValue;
         this.shadowRoot.replaceChild(this.displayContainer, this.inputElement);
 
-        // Post data to server
-        if (this.postUrl) {
+        // Only post if the value actually changed
+        if (this.postUrl && newValue !== this._originalValue) {
             const formData = new FormData();
             formData.append(this.name, newValue);
 

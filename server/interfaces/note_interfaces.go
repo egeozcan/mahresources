@@ -6,7 +6,7 @@ import (
 )
 
 type NoteReader interface {
-	GetNotes(offset, maxResults int, query *query_models.NoteQuery) (*[]models.Note, error)
+	GetNotes(offset, maxResults int, query *query_models.NoteQuery) ([]models.Note, error)
 	GetNote(id uint) (*models.Note, error)
 }
 
@@ -28,12 +28,12 @@ type NoteTypeDeleter interface {
 
 // NoteMetaReader provides access to note metadata keys
 type NoteMetaReader interface {
-	NoteMetaKeys() (*[]MetaKey, error)
+	NoteMetaKeys() ([]MetaKey, error)
 }
 
 // NoteTypeReader provides read access to note types
 type NoteTypeReader interface {
-	GetNoteTypes(query *query_models.NoteTypeQuery, offset, maxResults int) (*[]models.NoteType, error)
+	GetNoteTypes(query *query_models.NoteTypeQuery, offset, maxResults int) ([]models.NoteType, error)
 }
 
 // NoteSharer provides note sharing operations via share tokens

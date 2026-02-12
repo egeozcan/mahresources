@@ -245,7 +245,6 @@ func ResourceContextProvider(context *application_context.MahresourcesContext) f
 
 		if resource.OwnerId != nil {
 			parents, err := context.FindParentsOfGroup(*resource.OwnerId)
-			breadcrumbEls := make([]template_entities.Entry, len(*parents)+1)
 
 			if err != nil {
 				fmt.Println(err)
@@ -253,7 +252,9 @@ func ResourceContextProvider(context *application_context.MahresourcesContext) f
 				return addErrContext(err, baseContext)
 			}
 
-			for i, m := range *parents {
+			breadcrumbEls := make([]template_entities.Entry, len(parents)+1)
+
+			for i, m := range parents {
 				breadcrumbEls[i] = template_entities.Entry{
 					Name: m.Name,
 					ID:   m.ID,
@@ -261,7 +262,7 @@ func ResourceContextProvider(context *application_context.MahresourcesContext) f
 				}
 			}
 
-			breadcrumbEls[len(*parents)] = template_entities.Entry{
+			breadcrumbEls[len(parents)] = template_entities.Entry{
 				Name: resource.Name,
 				ID:   resource.ID,
 				Url:  fmt.Sprintf("/resouce?id=%v", resource.ID),

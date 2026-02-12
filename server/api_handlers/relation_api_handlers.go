@@ -118,7 +118,8 @@ func GetAddRelationHandler(ctx interfaces.RelationshipWriter) func(writer http.R
 
 func GetRelationTypesHandler(ctx interfaces.RelationshipReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		offset := (http_utils.GetIntQueryParameter(request, "page", 1) - 1) * constants.MaxResultsPerPage
+		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		offset := (page - 1) * constants.MaxResultsPerPage
 		var query = query_models.RelationshipTypeQuery{}
 
 		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
@@ -133,6 +134,7 @@ func GetRelationTypesHandler(ctx interfaces.RelationshipReader) func(writer http
 			return
 		}
 
+		http_utils.SetPaginationHeaders(writer, int(page), constants.MaxResultsPerPage, -1)
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(relationships)
 	}

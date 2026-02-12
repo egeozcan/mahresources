@@ -64,7 +64,8 @@ func (f *CRUDHandlerFactory[T, Q, C]) GetHandler() http.HandlerFunc {
 // Note: Q must be a pointer type (e.g., *TagQuery) for proper decoding.
 func (f *CRUDHandlerFactory[T, Q, C]) ListHandler() http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		offset := (http_utils.GetIntQueryParameter(request, "page", 1) - 1) * constants.MaxResultsPerPage
+		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		offset := (page - 1) * constants.MaxResultsPerPage
 
 		// Create a new instance of the underlying query type
 		var query Q
@@ -85,6 +86,13 @@ func (f *CRUDHandlerFactory[T, Q, C]) ListHandler() http.HandlerFunc {
 			return
 		}
 
+		// Get total count for pagination metadata
+		totalCount, countErr := f.reader.Count(typedQuery)
+		if countErr != nil {
+			totalCount = -1
+		}
+
+		http_utils.SetPaginationHeaders(writer, int(page), constants.MaxResultsPerPage, totalCount)
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(entities)
 	}

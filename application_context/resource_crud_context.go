@@ -15,7 +15,7 @@ func (ctx *MahresourcesContext) GetResource(id uint) (*models.Resource, error) {
 	return &resource, ctx.db.Preload(clause.Associations, pageLimit).First(&resource, id).Error
 }
 
-func (ctx *MahresourcesContext) GetSimilarResources(id uint) (*[]*models.Resource, error) {
+func (ctx *MahresourcesContext) GetSimilarResources(id uint) ([]*models.Resource, error) {
 	var resources []*models.Resource
 
 	// Find all resource IDs similar to this one from pre-computed similarities
@@ -59,7 +59,7 @@ func (ctx *MahresourcesContext) GetSimilarResources(id uint) (*[]*models.Resourc
 			Group("resource_id").
 			Where("d_hash = (?)", hashQuery)
 
-		return &resources, ctx.db.
+		return resources, ctx.db.
 			Preload("Tags").
 			Joins("Owner").
 			Where("resources.id IN (?)", sameHashIdsQuery).
@@ -95,7 +95,7 @@ func (ctx *MahresourcesContext) GetSimilarResources(id uint) (*[]*models.Resourc
 		}
 	}
 
-	return &result, nil
+	return result, nil
 }
 
 func (ctx *MahresourcesContext) GetResourceCount(query *query_models.ResourceSearchQuery) (int64, error) {
@@ -105,7 +105,7 @@ func (ctx *MahresourcesContext) GetResourceCount(query *query_models.ResourceSea
 	return count, ctx.db.Scopes(database_scopes.ResourceQuery(query, true, ctx.db)).Model(&resource).Count(&count).Error
 }
 
-func (ctx *MahresourcesContext) GetResources(offset, maxResults int, query *query_models.ResourceSearchQuery) (*[]models.Resource, error) {
+func (ctx *MahresourcesContext) GetResources(offset, maxResults int, query *query_models.ResourceSearchQuery) ([]models.Resource, error) {
 	var resources []models.Resource
 	resLimit := maxResults
 
@@ -113,7 +113,7 @@ func (ctx *MahresourcesContext) GetResources(offset, maxResults int, query *quer
 		resLimit = int(query.MaxResults)
 	}
 
-	return &resources, ctx.db.Scopes(database_scopes.ResourceQuery(query, false, ctx.db)).
+	return resources, ctx.db.Scopes(database_scopes.ResourceQuery(query, false, ctx.db)).
 		Limit(resLimit).
 		Offset(offset).
 		Preload("Tags").
@@ -123,83 +123,70 @@ func (ctx *MahresourcesContext) GetResources(offset, maxResults int, query *quer
 		Error
 }
 
-func (ctx *MahresourcesContext) GetResourcesWithIds(ids *[]uint) (*[]*models.Resource, error) {
+func (ctx *MahresourcesContext) GetResourcesWithIds(ids *[]uint) ([]*models.Resource, error) {
 	var resources []*models.Resource
 
 	if len(*ids) == 0 {
-		return &resources, nil
+		return resources, nil
 	}
 
-	return &resources, ctx.db.Find(&resources, ids).Preload("Tags").Error
+	return resources, ctx.db.Find(&resources, ids).Preload("Tags").Error
 }
 
 func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.ResourceEditor) (*models.Resource, error) {
-	tx := ctx.db.Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
-
 	var resource models.Resource
 
-	if err := tx.Preload(clause.Associations, pageLimit).First(&resource, resourceQuery.ID).Error; err != nil {
-		tx.Rollback()
-		return nil, err
-	}
+	err := ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
+		tx := altCtx.db
 
-	if err := tx.Model(&resource).Association("Groups").Clear(); err != nil {
-		tx.Rollback()
-		return nil, err
-	}
+		if err := tx.Preload(clause.Associations, pageLimit).First(&resource, resourceQuery.ID).Error; err != nil {
+			return err
+		}
 
-	if err := tx.Model(&resource).Association("Tags").Clear(); err != nil {
-		tx.Rollback()
-		return nil, err
-	}
+		if err := tx.Model(&resource).Association("Groups").Clear(); err != nil {
+			return err
+		}
 
-	if err := tx.Model(&resource).Association("Notes").Clear(); err != nil {
-		tx.Rollback()
-		return nil, err
-	}
+		if err := tx.Model(&resource).Association("Tags").Clear(); err != nil {
+			return err
+		}
 
-	groups := BuildAssociationSlice(resourceQuery.Groups, GroupFromID)
-	if err := tx.Model(&resource).Association("Groups").Append(&groups); err != nil {
-		tx.Rollback()
-		return nil, err
-	}
+		if err := tx.Model(&resource).Association("Notes").Clear(); err != nil {
+			return err
+		}
 
-	notes := BuildAssociationSlice(resourceQuery.Notes, NoteFromID)
-	if err := tx.Model(&resource).Association("Notes").Append(&notes); err != nil {
-		tx.Rollback()
-		return nil, err
-	}
+		groups := BuildAssociationSlice(resourceQuery.Groups, GroupFromID)
+		if err := tx.Model(&resource).Association("Groups").Append(&groups); err != nil {
+			return err
+		}
 
-	tags := BuildAssociationSlice(resourceQuery.Tags, TagFromID)
-	if err := tx.Model(&resource).Association("Tags").Append(&tags); err != nil {
-		tx.Rollback()
-		return nil, err
-	}
+		notes := BuildAssociationSlice(resourceQuery.Notes, NoteFromID)
+		if err := tx.Model(&resource).Association("Notes").Append(&notes); err != nil {
+			return err
+		}
 
-	resource.Name = resourceQuery.Name
-	if resourceQuery.Meta != "" {
-		resource.Meta = []byte(resourceQuery.Meta)
-	}
-	resource.Description = resourceQuery.Description
-	resource.OriginalName = resourceQuery.OriginalName
-	resource.OriginalLocation = resourceQuery.OriginalLocation
-	resource.Category = resourceQuery.Category
-	resource.ContentCategory = resourceQuery.ContentCategory
-	resource.ResourceCategoryId = uintPtrOrNil(resourceQuery.ResourceCategoryId)
-	resource.OwnerId = &resourceQuery.OwnerId
-	resource.Owner = &models.Group{ID: resourceQuery.OwnerId}
+		tags := BuildAssociationSlice(resourceQuery.Tags, TagFromID)
+		if err := tx.Model(&resource).Association("Tags").Append(&tags); err != nil {
+			return err
+		}
 
-	if err := tx.Save(resource).Error; err != nil {
-		tx.Rollback()
-		return nil, err
-	}
+		resource.Name = resourceQuery.Name
+		if resourceQuery.Meta != "" {
+			resource.Meta = []byte(resourceQuery.Meta)
+		}
+		resource.Description = resourceQuery.Description
+		resource.OriginalName = resourceQuery.OriginalName
+		resource.OriginalLocation = resourceQuery.OriginalLocation
+		resource.Category = resourceQuery.Category
+		resource.ContentCategory = resourceQuery.ContentCategory
+		resource.ResourceCategoryId = uintPtrOrNil(resourceQuery.ResourceCategoryId)
+		resource.OwnerId = &resourceQuery.OwnerId
+		resource.Owner = &models.Group{ID: resourceQuery.OwnerId}
 
-	if err := tx.Commit().Error; err != nil {
+		return tx.Save(resource).Error
+	})
+
+	if err != nil {
 		return nil, err
 	}
 

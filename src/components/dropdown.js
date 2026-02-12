@@ -1,4 +1,5 @@
 import { abortableFetch } from '../index.js';
+import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 
 export function autocompleter({
     selectedResults,
@@ -42,6 +43,7 @@ export function autocompleter({
         filterEls,
         sortBy,
         requestAborter: null,
+        debounceTimer: null,
         addModeForTag: false,
         loading: false,
 
@@ -51,12 +53,7 @@ export function autocompleter({
             });
 
             // Add ARIA live region for announcements
-            const liveRegion = document.createElement('div');
-            liveRegion.setAttribute('aria-live', 'polite');
-            liveRegion.setAttribute('aria-atomic', 'true');
-            liveRegion.className = 'sr-only';
-            this.$el.appendChild(liveRegion);
-            this.liveRegion = liveRegion;
+            this._liveRegion = createLiveRegion(this.$el);
 
             this.$watch('selectedResults', (values, oldValues) => {
                 this.selectedIds.clear();
@@ -69,9 +66,9 @@ export function autocompleter({
 
                 // Announce selection changes
                 if (values.length > oldValues.length) {
-                    this.liveRegion.textContent = `Added ${values[values.length-1].Name}`;
+                    this._liveRegion.announce(`Added ${values[values.length-1].Name}`);
                 } else if (values.length < oldValues.length) {
-                    this.liveRegion.textContent = `Removed item, ${values.length} items remaining`;
+                    this._liveRegion.announce(`Removed item, ${values.length} items remaining`);
                 }
             });
 
@@ -108,6 +105,10 @@ export function autocompleter({
                 window.removeEventListener('scroll', this._repositionHandler, true);
                 window.removeEventListener('resize', this._repositionHandler);
             }
+            if (this.debounceTimer) {
+                clearTimeout(this.debounceTimer);
+            }
+            this._liveRegion?.destroy();
         },
 
         async updatePopover() {
@@ -198,7 +199,7 @@ export function autocompleter({
             // Announce selection
             if (this.results[this.selectedIndex]) {
                 const selectedName = this.getItemDisplayName(this.results[this.selectedIndex]);
-                this.liveRegion.textContent = `${selectedName} selected. Use arrow keys to navigate and enter to confirm.`;
+                this._liveRegion.announce(`${selectedName} selected. Use arrow keys to navigate and enter to confirm.`);
             }
 
             /*
@@ -278,9 +279,9 @@ export function autocompleter({
 
         // Announce selected item for screen readers
         announceSelectedItem() {
-            if (this.liveRegion && this.results[this.selectedIndex]) {
+            if (this.results[this.selectedIndex]) {
                 const name = this.getItemDisplayName(this.results[this.selectedIndex]);
-                this.liveRegion.textContent = `${name}, ${this.selectedIndex + 1} of ${this.results.length}`;
+                this._liveRegion.announce(`${name}, ${this.selectedIndex + 1} of ${this.results.length}`);
             }
         },
 
@@ -375,39 +376,43 @@ export function autocompleter({
 
                 this.results = this.results.filter(val => !this.selectedIds.has(val.ID));
 
+                if (this.debounceTimer) {
+                    clearTimeout(this.debounceTimer);
+                }
+
                 if (this.requestAborter) {
                     this.requestAborter();
                     this.requestAborter = null;
                 }
 
-                const params = new URLSearchParams({ name: target.value, ...this.getAdditionalParams() })
+                this.debounceTimer = setTimeout(() => {
+                    const params = new URLSearchParams({ name: target.value, ...this.getAdditionalParams() })
 
-                const {
-                    abort,
-                    ready
-                } = abortableFetch(url + '?' + params.toString(), {})
+                    const {
+                        abort,
+                        ready
+                    } = abortableFetch(url + '?' + params.toString(), {})
 
-                ready.then(x => x.json()).then(values => {
-                    if (value !== target.value) {
-                        return;
-                    }
-                    this.results = values.filter(val => !this.selectedIds.has(val.ID));
-
-                    if (this.results.length && document.activeElement === target) {
-                        this.dropdownActive = true;
-                        this.selectedIndex = 0;
-                        // Announce results for screen readers
-                        if (this.liveRegion) {
-                            this.liveRegion.textContent = `${this.results.length} result${this.results.length === 1 ? '' : 's'} available. Use arrow keys to navigate.`;
+                    ready.then(x => x.json()).then(values => {
+                        if (value !== target.value) {
+                            return;
                         }
-                    } else if (this.results.length === 0 && this.liveRegion) {
-                        this.liveRegion.textContent = 'No results found.';
-                    }
-                }).catch(err => {
-                    this.errorMessage = err.toString();
-                });
+                        this.results = values.filter(val => !this.selectedIds.has(val.ID));
 
-                this.requestAborter = abort;
+                        if (this.results.length && document.activeElement === target) {
+                            this.dropdownActive = true;
+                            this.selectedIndex = 0;
+                            // Announce results for screen readers
+                            this._liveRegion.announce(`${this.results.length} result${this.results.length === 1 ? '' : 's'} available. Use arrow keys to navigate.`);
+                        } else if (this.results.length === 0) {
+                            this._liveRegion.announce('No results found.');
+                        }
+                    }).catch(err => {
+                        this.errorMessage = err.toString();
+                    });
+
+                    this.requestAborter = abort;
+                }, 200);
             }
         },
 
