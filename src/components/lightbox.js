@@ -1248,6 +1248,9 @@ export function registerLightboxStore(Alpine) {
         this.detailsAborter = null;
       }
 
+      // Clear stale details so reopening on a different resource doesn't flash old data
+      this.resourceDetails = null;
+
       // Trigger background refresh if changes were made
       if (this.needsRefreshOnClose) {
         this.needsRefreshOnClose = false;
@@ -1396,6 +1399,19 @@ export function registerLightboxStore(Alpine) {
      */
     async onResourceChange() {
       if (!this.editPanelOpen) return;
+
+      // Remember which input was focused so we can restore it after loading
+      const focused = document.activeElement;
+      const panel = document.querySelector('[data-edit-panel]');
+      let focusSelector = null;
+      if (focused && panel?.contains(focused)) {
+        if (focused.id) {
+          focusSelector = `#${focused.id}`;
+        } else if (focused.matches('input[placeholder]')) {
+          focusSelector = `input[placeholder="${focused.getAttribute('placeholder')}"]`;
+        }
+      }
+
       // Clear current details to show loading state and ensure autocompleter
       // recreates with fresh data when fetch completes
       this.resourceDetails = null;
@@ -1405,6 +1421,14 @@ export function registerLightboxStore(Alpine) {
         this.detailsCache.delete(resourceId);
       }
       await this.fetchResourceDetails();
+
+      // Restore focus to the same input after new details render
+      if (focusSelector) {
+        requestAnimationFrame(() => {
+          const el = document.querySelector(`[data-edit-panel] ${focusSelector}`);
+          if (el) el.focus();
+        });
+      }
     },
 
     /**

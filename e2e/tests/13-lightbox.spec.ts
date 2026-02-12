@@ -646,12 +646,7 @@ test.describe('Lightbox Edit Panel', () => {
     const editPanel = lightbox.locator('[data-edit-panel]');
     await expect(editPanel).toBeVisible();
 
-    // The edit panel auto-focuses an input. First Escape blurs it, second closes panel.
-    // Click the panel header to ensure focus is not on an input
-    await editPanel.locator('h2:has-text("Edit Resource")').click();
-    await page.waitForTimeout(100);
-
-    // Now press Escape - should close edit panel but not lightbox
+    // Press Escape - should close edit panel but not lightbox (even with input focused)
     await page.keyboard.press('Escape');
 
     // Wait for animation to complete
@@ -787,10 +782,6 @@ test.describe('Lightbox Edit Panel', () => {
     // Count the number of tag chips on first resource
     const firstResourceTagCount = await editPanel.locator('.flex.flex-wrap.gap-2 span.inline-flex').count();
 
-    // Click header to remove focus from inputs before pressing Escape
-    await editPanel.locator('h2:has-text("Edit Resource")').click();
-    await page.waitForTimeout(100);
-
     // Close lightbox completely
     await page.keyboard.press('Escape'); // Close edit panel
     await page.waitForTimeout(400);
@@ -830,6 +821,67 @@ test.describe('Lightbox Edit Panel', () => {
     await expect(tagsOrNoTags).toBeVisible();
   });
 
+  test('should not show stale tags after closing edit panel and navigating to another resource', async ({ page, apiClient }) => {
+    // This tests the exact bug: open edit panel -> Escape -> arrow navigate -> press 'e'
+    // The second resource should NOT show the first resource's tags
+
+    // Add tag to the last created resource only (shown first in default desc sort)
+    if (createdResourceIds.length >= 2) {
+      await apiClient.addTagsToResources([createdResourceIds[createdResourceIds.length - 1]], [testTagId]);
+    }
+
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    // Open lightbox on first resource (which has the tag)
+    const imageLink = page.locator('[data-lightbox-item]').first();
+    await imageLink.click();
+
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    await expect(lightbox).toBeVisible();
+
+    // Press 'e' to open edit panel
+    await page.keyboard.press('e');
+
+    const editPanel = lightbox.locator('[data-edit-panel]');
+    await expect(editPanel).toBeVisible();
+
+    // Wait for resource details to load
+    await page.waitForFunction(() => {
+      const input = document.querySelector('#lightbox-edit-name') as HTMLInputElement;
+      return input && input.value.length > 0;
+    }, { timeout: 30000 });
+
+    // Verify the tag is shown on the first resource
+    const tagChip = editPanel.locator(`.flex.flex-wrap.gap-2 span.inline-flex:has-text("LightboxEditTag-${testRunId}")`);
+    await expect(tagChip).toBeVisible();
+
+    // Press Escape to close edit panel (NOT the lightbox)
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(400);
+    await expect(editPanel).toBeHidden();
+    await expect(lightbox).toBeVisible(); // lightbox should still be open
+
+    // Arrow navigate to the next resource
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(500);
+
+    // Press 'e' to reopen edit panel on the second resource
+    await page.keyboard.press('e');
+    await expect(editPanel).toBeVisible();
+
+    // Wait for new resource details to load
+    await page.waitForFunction(() => {
+      const input = document.querySelector('#lightbox-edit-name') as HTMLInputElement;
+      return input && input.value.length > 0;
+    }, { timeout: 30000 });
+
+    // The second resource should NOT have the test tag
+    // (we only added it to the first resource)
+    const staleTag = editPanel.locator(`.flex.flex-wrap.gap-2 span.inline-flex:has-text("LightboxEditTag-${testRunId}")`);
+    await expect(staleTag).toHaveCount(0);
+  });
+
   test('should refresh page content without full reload after editing in lightbox', async ({ page }) => {
     // This test verifies that editing in lightbox triggers a background refresh
     // without a full page reload (which would lose state)
@@ -862,10 +914,6 @@ test.describe('Lightbox Edit Panel', () => {
     await descriptionInput.fill('Updated description via lightbox');
     await descriptionInput.blur();
     await page.waitForTimeout(300);
-
-    // Click header to remove focus from inputs before pressing Escape
-    await editPanel.locator('h2:has-text("Edit Resource")').click();
-    await page.waitForTimeout(100);
 
     // Close lightbox
     await page.keyboard.press('Escape'); // Close edit panel
@@ -929,6 +977,69 @@ test.describe('Lightbox Edit Panel', () => {
     // As long as the panel updated (loading completed), we're good
     // The actual tag count may vary
     expect(typeof newTagCount).toBe('number');
+  });
+
+  test('should restore focus to the same input after navigating with edit panel open', async ({ page }) => {
+    await page.goto('/resources');
+    await page.waitForLoadState('load');
+
+    // Open lightbox
+    const imageLink = page.locator('[data-lightbox-item]').first();
+    await imageLink.click();
+
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    await expect(lightbox).toBeVisible();
+
+    // Open edit panel
+    const editButton = lightbox.locator('button:has-text("Edit")');
+    await editButton.click();
+
+    const editPanel = lightbox.locator('[data-edit-panel]');
+    await expect(editPanel).toBeVisible();
+
+    // Wait for details to load
+    await page.waitForFunction(() => {
+      const input = document.querySelector('#lightbox-edit-name') as HTMLInputElement;
+      return input && input.value.length > 0;
+    }, { timeout: 30000 });
+
+    // Focus the name input
+    const nameInput = editPanel.locator('input#lightbox-edit-name');
+    await nameInput.focus();
+
+    // Verify name input is focused
+    const focusedBefore = await page.evaluate(() => document.activeElement?.id);
+    expect(focusedBefore).toBe('lightbox-edit-name');
+
+    // Navigate to next resource with Page Down
+    await page.keyboard.press('PageDown');
+
+    // Wait for new resource details to load
+    await page.waitForFunction(() => {
+      const input = document.querySelector('#lightbox-edit-name') as HTMLInputElement;
+      return input && input.value.length > 0;
+    }, { timeout: 30000 });
+
+    // Verify name input is still focused
+    const focusedAfter = await page.evaluate(() => document.activeElement?.id);
+    expect(focusedAfter).toBe('lightbox-edit-name');
+
+    // Now test with description textarea
+    const descInput = editPanel.locator('textarea#lightbox-edit-description');
+    await descInput.focus();
+
+    // Navigate with Page Up
+    await page.keyboard.press('PageUp');
+
+    // Wait for details to load
+    await page.waitForFunction(() => {
+      const input = document.querySelector('#lightbox-edit-name') as HTMLInputElement;
+      return input && input.value.length > 0;
+    }, { timeout: 30000 });
+
+    // Verify description textarea is still focused
+    const focusedAfterDesc = await page.evaluate(() => document.activeElement?.id);
+    expect(focusedAfterDesc).toBe('lightbox-edit-description');
   });
 });
 
@@ -1037,9 +1148,6 @@ test.describe('Lightbox Edit After Pagination', () => {
     await page.waitForTimeout(500);
 
     // Close edit panel — triggers refreshPageContent() + DOM morph
-    // Click header to ensure focus is not on an input
-    await editPanel.locator('h2:has-text("Edit Resource")').click();
-    await page.waitForTimeout(100);
     await page.keyboard.press('Escape');
 
     // Wait for edit panel to close and background refresh to complete
@@ -1104,8 +1212,6 @@ test.describe('Lightbox Edit After Pagination', () => {
     await page.waitForTimeout(300);
 
     // Close edit panel
-    await editPanel.locator('h2:has-text("Edit Resource")').click();
-    await page.waitForTimeout(100);
     await page.keyboard.press('Escape');
     await expect(editPanel).toBeHidden();
     await page.waitForTimeout(1500);

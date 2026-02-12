@@ -254,6 +254,7 @@ export function autocompleter({
                 }
 
                 e.preventDefault();
+                e.stopPropagation();
                 this.dropdownActive = false;
             },
 
@@ -287,6 +288,10 @@ export function autocompleter({
                         this.dropdownActive = false;
                     }, 100);
                 }
+            },
+
+            ['@keydown.tab']() {
+                this.dropdownActive = false;
             },
 
             ['@blur'](e) {
