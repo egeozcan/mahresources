@@ -227,7 +227,7 @@ export function autocompleter({
         async showSelected() {
             await this.$nextTick();
 
-            const list = this.$refs?.list?.closest(".overflow-x-auto");
+            const list = this.$refs?.list?.closest(".overflow-y-auto");
 
             if (!list) {
                 return;
