@@ -75,6 +75,18 @@ export function autocompleter({
                 }
             });
 
+            // Popover management: show/hide and reposition
+            this.$watch('dropdownActive', () => this.updatePopover());
+            this.$watch('results', () => this.updatePopover());
+
+            this._repositionHandler = () => {
+                if (this.dropdownActive && this.results.length > 0) {
+                    this.positionDropdown();
+                }
+            };
+            window.addEventListener('scroll', this._repositionHandler, true);
+            window.addEventListener('resize', this._repositionHandler);
+
             // Form handling only when not in standalone mode
             const form = this.$el.closest('form');
             if (form && !standalone) {
@@ -88,6 +100,55 @@ export function autocompleter({
                 form.addEventListener('reset', (e) => {
                     this.selectedResults = [];
                 });
+            }
+        },
+
+        destroy() {
+            if (this._repositionHandler) {
+                window.removeEventListener('scroll', this._repositionHandler, true);
+                window.removeEventListener('resize', this._repositionHandler);
+            }
+        },
+
+        async updatePopover() {
+            await this.$nextTick();
+            const popover = this.$refs?.dropdown;
+            if (!popover) return;
+
+            const shouldShow = this.dropdownActive && this.results.length > 0;
+
+            if (shouldShow) {
+                if (!popover.matches(':popover-open')) {
+                    popover.showPopover();
+                }
+                this.positionDropdown();
+            } else {
+                if (popover.matches(':popover-open')) {
+                    popover.hidePopover();
+                }
+            }
+        },
+
+        positionDropdown() {
+            const popover = this.$refs?.dropdown;
+            const input = this.$refs?.autocompleter;
+            if (!popover || !input) return;
+
+            const inputRect = input.getBoundingClientRect();
+            const popoverHeight = popover.offsetHeight;
+            const spaceBelow = window.innerHeight - inputRect.bottom;
+            const spaceAbove = inputRect.top;
+            const gap = 4;
+
+            popover.style.width = inputRect.width + 'px';
+            popover.style.left = inputRect.left + 'px';
+
+            if (spaceBelow < popoverHeight && spaceAbove > spaceBelow) {
+                popover.style.top = 'auto';
+                popover.style.bottom = (window.innerHeight - inputRect.top + gap) + 'px';
+            } else {
+                popover.style.top = (inputRect.bottom + gap) + 'px';
+                popover.style.bottom = 'auto';
             }
         },
 
@@ -227,7 +288,7 @@ export function autocompleter({
         async showSelected() {
             await this.$nextTick();
 
-            const list = this.$refs?.list?.closest(".overflow-y-auto");
+            const list = this.$refs?.dropdown;
 
             if (!list) {
                 return;

@@ -36,7 +36,7 @@
                     aria-owns="{{ id }}-listbox"
                     :aria-activedescendant="selectedIndex >= 0 && results[selectedIndex] ? '{{ id }}-result-' + selectedIndex : null"
             >
-            {% include "/partials/form/formParts/dropDownResults.tpl" with condition="dropdownActive && results.length > 0" action="pushVal" %}
+            {% include "/partials/form/formParts/dropDownResults.tpl" with action="pushVal" %}
             {% include "/partials/form/formParts/dropDownSelectedResults.tpl" %}
         </div>
     </template>

@@ -404,6 +404,9 @@
       max-width: 96rem;
     }
   }
+  .m-0 {
+    margin: calc(var(--spacing) * 0);
+  }
   .mx-4 {
     margin-inline: calc(var(--spacing) * 4);
   }
@@ -2002,6 +2005,9 @@
   }
   .object-left {
     object-position: left;
+  }
+  .p-0 {
+    padding: calc(var(--spacing) * 0);
   }
   .p-0\.5 {
     padding: calc(var(--spacing) * 0.5);
