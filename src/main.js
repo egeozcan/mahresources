@@ -116,7 +116,18 @@ window.addEventListener('paste', e => {
   if (!fileInput || !e.clipboardData.files || !e.clipboardData.files.length) {
     return;
   }
-  fileInput.files = e.clipboardData.files;
+  e.preventDefault();
+  const dt = new DataTransfer();
+  for (const file of fileInput.files) {
+    dt.items.add(file);
+  }
+  for (const file of e.clipboardData.files) {
+    dt.items.add(file);
+  }
+  fileInput.files = dt.files;
+  fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+  fileInput.closest('.flex')?.classList.add('ring-2', 'ring-indigo-500', 'rounded-md');
+  setTimeout(() => fileInput.closest('.flex')?.classList.remove('ring-2', 'ring-indigo-500', 'rounded-md'), 1500);
 });
 
 // Setup bulk selection listeners
