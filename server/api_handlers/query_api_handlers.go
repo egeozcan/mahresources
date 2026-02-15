@@ -190,7 +190,7 @@ func GetRemoveQueryHandler(ctx interfaces.QueryDeleter) func(writer http.Respons
 		// Enable request-aware logging if the context supports it
 		effectiveCtx := withRequestContext(ctx, request).(interfaces.QueryDeleter)
 
-		id := http_utils.GetUIntQueryParameter(request, "Id", 0)
+		id := getEntityID(request)
 
 		if id == 0 {
 			http_utils.HandleError(errors.New("query id is needed"), writer, request, http.StatusInternalServerError)

@@ -66,15 +66,15 @@ func (ctx *MahresourcesContext) CreateTag(tagQuery *query_models.TagCreator) (*m
 }
 
 func (ctx *MahresourcesContext) UpdateTag(tagQuery *query_models.TagCreator) (*models.Tag, error) {
-	if strings.TrimSpace(tagQuery.Name) == "" {
-		return nil, errors.New("tag name must be non-empty")
+	var tag models.Tag
+	if err := ctx.db.First(&tag, tagQuery.ID).Error; err != nil {
+		return nil, err
 	}
 
-	tag := models.Tag{
-		ID:          tagQuery.ID,
-		Name:        tagQuery.Name,
-		Description: tagQuery.Description,
+	if strings.TrimSpace(tagQuery.Name) != "" {
+		tag.Name = tagQuery.Name
 	}
+	tag.Description = tagQuery.Description
 
 	if err := ctx.db.Save(&tag).Error; err != nil {
 		return nil, err

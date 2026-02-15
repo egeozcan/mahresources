@@ -215,6 +215,7 @@ func main() {
 
 	if err := db.AutoMigrate(
 		&models.Query{},
+		&models.Series{},
 		&models.Resource{},
 		&models.ResourceVersion{},
 		&models.Note{},

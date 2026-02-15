@@ -15,6 +15,29 @@
 
     {% include "/partials/seeAll.tpl" with entities=resource.Notes subtitle="Notes" formAction="/notes" formID=resource.ID formParamName="resources" templateName="note" %}
     {% include "/partials/seeAll.tpl" with entities=resource.Groups subtitle="Groups" formAction="/groups" formID=resource.ID formParamName="resources" templateName="group" %}
+
+    {% if resource.Series %}
+    <section class="mb-6">
+        <div class="flex gap-4 items-center mb-4">
+            {% include "partials/subtitle.tpl" with small=true title="Series" %}
+            <a href="/series?id={{ resource.Series.ID }}" class="text-blue-600 hover:text-blue-800 text-sm">{{ resource.Series.Name }}</a>
+            <form method="POST" action="/v1/resource/removeSeries?redirect={{ url|urlencode }}"
+                x-data="confirmAction({ message: 'Remove this resource from the series?' })"
+                x-bind="events">
+                <input type="hidden" name="Id" value="{{ resource.ID }}">
+                <button type="submit" class="text-sm text-red-600 hover:text-red-800">Remove from series</button>
+            </form>
+        </div>
+        {% if seriesSiblings %}
+        <div class="list-container">
+            {% for entity in seriesSiblings %}
+                {% include partial("resource") %}
+            {% endfor %}
+        </div>
+        {% endif %}
+    </section>
+    {% endif %}
+
     {% if similarResources %}
         {% include "/partials/seeAll.tpl" with entities=similarResources subtitle="Similar Resources" templateName="resource" %}
         <form

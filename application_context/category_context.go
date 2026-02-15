@@ -71,20 +71,20 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 }
 
 func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.CategoryEditor) (*models.Category, error) {
-	if strings.TrimSpace(categoryQuery.Name) == "" {
-		return nil, errors.New("category name must be non-empty")
+	var category models.Category
+	if err := ctx.db.First(&category, categoryQuery.ID).Error; err != nil {
+		return nil, err
 	}
 
-	category := models.Category{
-		ID:            categoryQuery.ID,
-		Name:          categoryQuery.Name,
-		Description:   categoryQuery.Description,
-		CustomHeader:  categoryQuery.CustomHeader,
-		CustomSidebar: categoryQuery.CustomSidebar,
-		CustomSummary: categoryQuery.CustomSummary,
-		CustomAvatar:  categoryQuery.CustomAvatar,
-		MetaSchema:    categoryQuery.MetaSchema,
+	if strings.TrimSpace(categoryQuery.Name) != "" {
+		category.Name = categoryQuery.Name
 	}
+	category.Description = categoryQuery.Description
+	category.CustomHeader = categoryQuery.CustomHeader
+	category.CustomSidebar = categoryQuery.CustomSidebar
+	category.CustomSummary = categoryQuery.CustomSummary
+	category.CustomAvatar = categoryQuery.CustomAvatar
+	category.MetaSchema = categoryQuery.MetaSchema
 
 	if err := ctx.db.Save(&category).Error; err != nil {
 		return nil, err

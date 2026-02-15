@@ -82,7 +82,7 @@ func GetRemoveNoteHandler(ctx interfaces.NoteDeleter) func(writer http.ResponseW
 		// Enable request-aware logging if the context supports it
 		effectiveCtx := withRequestContext(ctx, request).(interfaces.NoteDeleter)
 
-		id := http_utils.GetUIntQueryParameter(request, "Id", 0)
+		id := getEntityID(request)
 
 		err := effectiveCtx.DeleteNote(id)
 		if err != nil {
@@ -170,7 +170,7 @@ func GetRemoveNoteTypeHandler(ctx interfaces.NoteTypeDeleter) func(writer http.R
 		// Enable request-aware logging if the context supports it
 		effectiveCtx := withRequestContext(ctx, request).(interfaces.NoteTypeDeleter)
 
-		id := http_utils.GetUIntQueryParameter(request, "Id", 0)
+		id := getEntityID(request)
 
 		err := effectiveCtx.DeleteNoteType(id)
 		if err != nil {

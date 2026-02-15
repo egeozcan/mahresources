@@ -1,12 +1,14 @@
 package application_context
 
 import (
+	"fmt"
 	"net/http"
 
 	"gorm.io/gorm/clause"
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
+	"mahresources/models/types"
 )
 
 func (ctx *MahresourcesContext) GetResource(id uint) (*models.Resource, error) {
@@ -119,6 +121,7 @@ func (ctx *MahresourcesContext) GetResources(offset, maxResults int, query *quer
 		Preload("Tags").
 		Preload("Owner").
 		Preload("ResourceCategory").
+		Preload("Series").
 		Find(&resources).
 		Error
 }
@@ -173,6 +176,14 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 		resource.Name = resourceQuery.Name
 		if resourceQuery.Meta != "" {
 			resource.Meta = []byte(resourceQuery.Meta)
+			// Recompute OwnMeta if the resource is in a series
+			if resource.SeriesID != nil && resource.Series != nil {
+				ownMeta, err := computeOwnMeta(resource.Meta, resource.Series.Meta)
+				if err != nil {
+					return err
+				}
+				resource.OwnMeta = ownMeta
+			}
 		}
 		resource.Description = resourceQuery.Description
 		resource.OriginalName = resourceQuery.OriginalName
@@ -183,7 +194,63 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 		resource.OwnerId = &resourceQuery.OwnerId
 		resource.Owner = &models.Group{ID: resourceQuery.OwnerId}
 
-		return tx.Save(resource).Error
+		// Handle series assignment changes
+		newSeriesID := resourceQuery.SeriesId
+		oldSeriesID := resource.SeriesID
+		seriesChanged := false
+
+		if newSeriesID > 0 {
+			if oldSeriesID == nil || *oldSeriesID != newSeriesID {
+				seriesChanged = true
+			}
+		} else if oldSeriesID != nil {
+			seriesChanged = true
+		}
+
+		if seriesChanged {
+			if newSeriesID > 0 {
+				// Assigning to a (new) series
+				var newSeries models.Series
+				if err := tx.First(&newSeries, newSeriesID).Error; err != nil {
+					return fmt.Errorf("series %d not found: %w", newSeriesID, err)
+				}
+				ownMeta, err := computeOwnMeta(resource.Meta, newSeries.Meta)
+				if err != nil {
+					return err
+				}
+				resource.OwnMeta = ownMeta
+				resource.SeriesID = &newSeries.ID
+			} else {
+				// Removing from series - Meta already has effective value
+				resource.OwnMeta = types.JSON("{}")
+				resource.SeriesID = nil
+			}
+		}
+
+		if err := tx.Save(resource).Error; err != nil {
+			return err
+		}
+
+		// Explicitly persist OwnMeta to ensure it's saved even if GORM's
+		// Save doesn't detect the change on the JSON field
+		if resource.SeriesID != nil || seriesChanged {
+			if err := tx.Model(resource).Update("own_meta", resource.OwnMeta).Error; err != nil {
+				return err
+			}
+		}
+
+		// Auto-delete old series if it became empty
+		if seriesChanged && oldSeriesID != nil {
+			var count int64
+			tx.Model(&models.Resource{}).Where("series_id = ?", *oldSeriesID).Count(&count)
+			if count == 0 {
+				if err := tx.Delete(&models.Series{}, *oldSeriesID).Error; err != nil {
+					return err
+				}
+			}
+		}
+
+		return nil
 	})
 
 	if err != nil {
@@ -194,6 +261,15 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)
 	return &resource, nil
+}
+
+// GetSeriesSiblings returns other resources in the same series, ordered by created_at.
+func (ctx *MahresourcesContext) GetSeriesSiblings(resourceID uint, seriesID uint) ([]*models.Resource, error) {
+	var resources []*models.Resource
+	return resources, ctx.db.
+		Where("series_id = ? AND id != ?", seriesID, resourceID).
+		Order("created_at ASC").
+		Find(&resources).Error
 }
 
 // GetResourceByHash retrieves a resource by its content hash.

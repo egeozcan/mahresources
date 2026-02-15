@@ -285,9 +285,6 @@ func (ctx *MahresourcesContext) GetNoteTypesCount(query *query_models.NoteTypeQu
 }
 
 func (ctx *MahresourcesContext) CreateOrUpdateNoteType(query *query_models.NoteTypeEditor) (*models.NoteType, error) {
-	if strings.TrimSpace(query.Name) == "" {
-		return nil, errors.New("note type name must be non-empty")
-	}
 	isNew := query.ID == 0
 	var noteType models.NoteType
 	if query.ID != 0 {
@@ -295,7 +292,11 @@ func (ctx *MahresourcesContext) CreateOrUpdateNoteType(query *query_models.NoteT
 			return nil, err
 		}
 	}
-	noteType.Name = query.Name
+	if strings.TrimSpace(query.Name) != "" {
+		noteType.Name = query.Name
+	} else if isNew {
+		return nil, errors.New("note type name must be non-empty")
+	}
 	noteType.Description = query.Description
 	noteType.CustomHeader = query.CustomHeader
 	noteType.CustomSidebar = query.CustomSidebar

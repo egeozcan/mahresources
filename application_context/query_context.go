@@ -80,16 +80,16 @@ func (ctx *MahresourcesContext) CreateQuery(queryQuery *query_models.QueryCreato
 }
 
 func (ctx *MahresourcesContext) UpdateQuery(queryQuery *query_models.QueryEditor) (*models.Query, error) {
-	if strings.TrimSpace(queryQuery.Name) == "" {
-		return nil, errors.New("query name must be non-empty")
+	var query models.Query
+	if err := ctx.db.First(&query, queryQuery.ID).Error; err != nil {
+		return nil, err
 	}
 
-	query := models.Query{
-		ID:       queryQuery.ID,
-		Name:     queryQuery.Name,
-		Text:     queryQuery.Text,
-		Template: queryQuery.Template,
+	if strings.TrimSpace(queryQuery.Name) != "" {
+		query.Name = queryQuery.Name
 	}
+	query.Text = queryQuery.Text
+	query.Template = queryQuery.Template
 
 	if err := ctx.db.Save(&query).Error; err != nil {
 		return nil, err

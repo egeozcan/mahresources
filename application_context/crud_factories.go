@@ -185,6 +185,38 @@ func buildNoteType(editor *query_models.NoteTypeEditor) (models.NoteType, error)
 	}, nil
 }
 
+// SeriesCRUD returns generic CRUD components for series.
+func (ctx *MahresourcesContext) SeriesCRUD() (
+	*CRUDReader[models.Series, *query_models.SeriesQuery],
+	*CRUDWriter[models.Series, *query_models.SeriesCreator],
+) {
+	reader := NewCRUDReader[models.Series, *query_models.SeriesQuery](ctx.db, CRUDReaderConfig[*query_models.SeriesQuery]{
+		ScopeFn:       ScopeWithIgnoreSort(database_scopes.SeriesQuery),
+		ScopeFnNoSort: ScopeWithIgnoreSortForCount(database_scopes.SeriesQuery),
+		PreloadAssoc:  false,
+	})
+
+	writer := NewCRUDWriter[models.Series, *query_models.SeriesCreator](
+		ctx.db,
+		buildSeries,
+		"series",
+	)
+
+	return reader, writer
+}
+
+func buildSeries(creator *query_models.SeriesCreator) (models.Series, error) {
+	name := strings.TrimSpace(creator.Name)
+	if name == "" {
+		return models.Series{}, errors.New("series name must be non-empty")
+	}
+	return models.Series{
+		Name: name,
+		Slug: name,
+		Meta: []byte("{}"),
+	}, nil
+}
+
 // NoteCRUDReader returns a read-only CRUD reader for notes.
 // Note writes are complex (associations, transactions) and remain in note_context.go.
 func (ctx *MahresourcesContext) NoteCRUDReader() *CRUDReader[models.Note, *query_models.NoteQuery] {

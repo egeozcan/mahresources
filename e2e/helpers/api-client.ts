@@ -61,6 +61,22 @@ export interface Relation extends Entity {
   RelationTypeId: number;
 }
 
+export interface Series {
+  ID: number;
+  Name: string;
+  Slug: string;
+  Meta: Record<string, unknown>;
+  Resources?: Resource[];
+}
+
+export interface Resource extends Entity {
+  Hash?: string;
+  ContentType?: string;
+  Meta?: Record<string, unknown>;
+  seriesId?: number;
+  ownMeta?: Record<string, unknown>;
+}
+
 export interface SearchResult {
   ID: number;
   Name: string;
@@ -531,6 +547,9 @@ export class ApiClient {
     ownerId?: number;
     tags?: number[];
     resourceCategoryId?: number;
+    seriesSlug?: string;
+    seriesId?: number;
+    meta?: string;
   }): Promise<{ ID: number; Name: string; ContentType: string }> {
     const fs = await import('fs');
     const pathModule = await import('path');
@@ -561,6 +580,15 @@ export class ApiClient {
     }
     if (data.resourceCategoryId) {
       multipartData.ResourceCategoryId = data.resourceCategoryId.toString();
+    }
+    if (data.seriesSlug) {
+      multipartData.SeriesSlug = data.seriesSlug;
+    }
+    if (data.seriesId) {
+      multipartData.SeriesId = data.seriesId.toString();
+    }
+    if (data.meta) {
+      multipartData.Meta = data.meta;
     }
 
     return this.withRetry(async () => {
@@ -686,20 +714,36 @@ export class ApiClient {
     return this.handleResponse<Note[]>(response);
   }
 
-  // Get resource details including hash
-  async getResource(id: number): Promise<{
-    ID: number;
-    Name: string;
-    Hash: string;
-    ContentType: string;
-  }> {
+  // Series operations
+  async getSeries(id: number): Promise<Series> {
+    const response = await this.request.get(`${this.baseUrl}/v1/series?id=${id}`);
+    return this.handleResponse<Series>(response);
+  }
+
+  async updateSeries(id: number, data: { name?: string; meta?: string }): Promise<Series> {
+    const formData = new URLSearchParams();
+    formData.append('ID', id.toString());
+    if (data.name) formData.append('Name', data.name);
+    if (data.meta) formData.append('Meta', data.meta);
+
+    return this.postRetry<Series>(`${this.baseUrl}/v1/series`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+  }
+
+  async deleteSeries(id: number): Promise<void> {
+    return this.postVoidRetry(`${this.baseUrl}/v1/series/delete?Id=${id}`);
+  }
+
+  async removeResourceFromSeries(resourceId: number): Promise<void> {
+    return this.postVoidRetry(`${this.baseUrl}/v1/resource/removeSeries?Id=${resourceId}`);
+  }
+
+  // Get resource details including hash and series
+  async getResource(id: number): Promise<Resource> {
     const response = await this.request.get(`${this.baseUrl}/v1/resource?Id=${id}`);
-    return this.handleResponse<{
-      ID: number;
-      Name: string;
-      Hash: string;
-      ContentType: string;
-    }>(response);
+    return this.handleResponse<Resource>(response);
   }
 
   // Add resources to a note by updating the note

@@ -851,9 +851,18 @@ components:
                 currentVersionId:
                     nullable: true
                     type: integer
+                ownMeta:
+                    additionalProperties: true
+                    description: Arbitrary JSON data
+                    type: object
                 resourceCategory:
                     $ref: '#/components/schemas/ResourceCategory'
                 resourceCategoryId:
+                    nullable: true
+                    type: integer
+                series:
+                    $ref: '#/components/schemas/Series'
+                seriesId:
                     nullable: true
                     type: integer
                 versions:
@@ -958,6 +967,10 @@ components:
                     type: integer
                 ResourceCategoryId:
                     type: integer
+                SeriesId:
+                    type: integer
+                SeriesSlug:
+                    type: string
                 Tags:
                     items:
                         type: integer
@@ -999,6 +1012,10 @@ components:
                     type: string
                 ResourceCategoryId:
                     type: integer
+                SeriesId:
+                    type: integer
+                SeriesSlug:
+                    type: string
                 Tags:
                     items:
                         type: integer
@@ -1044,6 +1061,10 @@ components:
                     type: integer
                 ResourceCategoryId:
                     type: integer
+                SeriesId:
+                    type: integer
+                SeriesSlug:
+                    type: string
                 Tags:
                     items:
                         type: integer
@@ -1171,6 +1192,32 @@ components:
                 id:
                     type: integer
                 name:
+                    type: string
+            type: object
+        Series:
+            properties:
+                CreatedAt:
+                    format: date-time
+                    readOnly: true
+                    type: string
+                ID:
+                    readOnly: true
+                    type: integer
+                Meta:
+                    additionalProperties: true
+                    description: Arbitrary JSON data
+                    type: object
+                Name:
+                    type: string
+                Resources:
+                    items:
+                        $ref: '#/components/schemas/ResourcePartial'
+                    type: array
+                Slug:
+                    type: string
+                UpdatedAt:
+                    format: date-time
+                    readOnly: true
                     type: string
             type: object
         Tag:

@@ -36,6 +36,8 @@ var templates = map[string]templateInformation{
 	"/resource/edit":     {template_context_providers.ResourceCreateContextProvider, "createResource.tpl", http.MethodGet},
 	"/resource/compare":  {template_context_providers.CompareContextProvider, "compare.tpl", http.MethodGet},
 
+	"/series": {template_context_providers.SeriesContextProvider, "displaySeries.tpl", http.MethodGet},
+
 	"/group/new":   {template_context_providers.GroupCreateContextProvider, "createGroup.tpl", http.MethodGet},
 	"/groups":      {template_context_providers.GroupsListContextProvider, "listGroups.tpl", http.MethodGet},
 	"/groups/text": {template_context_providers.GroupsListContextProvider, "listGroupsText.tpl", http.MethodGet},
@@ -208,6 +210,16 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 		HandlerFunc(api_handlers.GetBulkCleanupVersionsHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/resource/versions/compare").
 		HandlerFunc(api_handlers.GetCompareVersionsHandler(appContext))
+
+	// Series routes
+	seriesReader, seriesWriter := appContext.SeriesCRUD()
+	seriesFactory := api_handlers.NewCRUDHandlerFactory("series", "series", seriesReader, seriesWriter)
+	router.Methods(http.MethodGet).Path("/v1/seriesList").HandlerFunc(seriesFactory.ListHandler())
+	router.Methods(http.MethodPost).Path("/v1/series/create").HandlerFunc(seriesFactory.CreateHandler())
+	router.Methods(http.MethodGet).Path("/v1/series").HandlerFunc(api_handlers.GetSeriesHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/series").HandlerFunc(api_handlers.GetUpdateSeriesHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/series/delete").HandlerFunc(api_handlers.GetDeleteSeriesHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/resource/removeSeries").HandlerFunc(api_handlers.GetRemoveResourceFromSeriesHandler(appContext))
 
 	// Tag routes using factory
 	tagReader, tagWriter := appContext.TagCRUD()

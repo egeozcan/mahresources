@@ -9,9 +9,24 @@ package api_handlers
 import (
 	"encoding/json"
 	"mahresources/constants"
+	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
 	"net/http"
 )
+
+// getEntityID extracts an entity ID from a request, checking form body first,
+// then falling back to URL query parameters with both "Id" and "id" casing.
+func getEntityID(request *http.Request) uint {
+	var query query_models.EntityIdQuery
+	_ = tryFillStructValuesFromRequest(&query, request)
+	if query.ID == 0 {
+		query.ID = http_utils.GetUIntQueryParameter(request, "Id", 0)
+	}
+	if query.ID == 0 {
+		query.ID = http_utils.GetUIntQueryParameter(request, "id", 0)
+	}
+	return query.ID
+}
 
 // ParsedHandler is a handler function that receives a parsed request struct.
 type ParsedHandler[T any] func(writer http.ResponseWriter, request *http.Request, parsed *T)

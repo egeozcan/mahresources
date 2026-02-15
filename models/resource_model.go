@@ -28,6 +28,9 @@ type Resource struct {
 	ContentCategory    string            `gorm:"index"`
 	ResourceCategoryId *uint             `gorm:"index" json:"resourceCategoryId"`
 	ResourceCategory   *ResourceCategory `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"resourceCategory,omitempty"`
+	SeriesID           *uint             `gorm:"index" json:"seriesId"`
+	Series             *Series           `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"series,omitempty"`
+	OwnMeta            types.JSON        `json:"ownMeta"`
 	Tags               []*Tag            `gorm:"many2many:resource_tags;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	Notes            []*Note    `gorm:"many2many:resource_notes;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	Groups           []*Group   `gorm:"many2many:groups_related_resources;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`

@@ -193,6 +193,10 @@ func ResourceCreateContextProvider(context *application_context.MahresourcesCont
 			}
 		}
 
+		if resource.SeriesID != nil && resource.Series != nil {
+			tplContext["series"] = []*models.Series{resource.Series}
+		}
+
 		return tplContext
 	}
 }
@@ -224,10 +228,16 @@ func ResourceContextProvider(context *application_context.MahresourcesContext) f
 
 		versions, _ := context.GetVersions(resource.ID)
 
+		var seriesSiblings []*models.Resource
+		if resource.SeriesID != nil {
+			seriesSiblings, _ = context.GetSeriesSiblings(resource.ID, *resource.SeriesID)
+		}
+
 		result := pongo2.Context{
 			"pageTitle":        "Resource " + resource.Name,
 			"resource":         resource,
 			"versions":         versions,
+			"seriesSiblings":   seriesSiblings,
 			"similarResources": similarResources,
 			"action": template_entities.Entry{
 				Name: "Edit",

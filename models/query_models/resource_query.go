@@ -15,6 +15,8 @@ type ResourceQueryBase struct {
 	OriginalLocation   string
 	Width              uint
 	Height             uint
+	SeriesSlug         string
+	SeriesId           uint
 }
 
 type ResourceCreator struct {

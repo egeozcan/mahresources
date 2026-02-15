@@ -105,7 +105,7 @@ func GetRemoveGroupHandler(ctx interfaces.GroupDeleter) func(writer http.Respons
 		// Enable request-aware logging if the context supports it
 		effectiveCtx := withRequestContext(ctx, request).(interfaces.GroupDeleter)
 
-		id := http_utils.GetUIntQueryParameter(request, "Id", 0)
+		id := getEntityID(request)
 
 		err := effectiveCtx.DeleteGroup(id)
 		if err != nil {

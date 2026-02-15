@@ -145,7 +145,7 @@ func GetRemoveRelationHandler(ctx interfaces.RelationshipDeleter) func(writer ht
 		// Enable request-aware logging if the context supports it
 		effectiveCtx := withRequestContext(ctx, request).(interfaces.RelationshipDeleter)
 
-		id := http_utils.GetUIntQueryParameter(request, "Id", 0)
+		id := getEntityID(request)
 
 		err := effectiveCtx.DeleteRelationship(id)
 		if err != nil {
@@ -167,7 +167,7 @@ func GetRemoveRelationTypeHandler(ctx interfaces.RelationshipDeleter) func(write
 		// Enable request-aware logging if the context supports it
 		effectiveCtx := withRequestContext(ctx, request).(interfaces.RelationshipDeleter)
 
-		id := http_utils.GetUIntQueryParameter(request, "Id", 0)
+		id := getEntityID(request)
 
 		err := effectiveCtx.DeleteRelationshipType(id)
 		if err != nil {

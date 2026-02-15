@@ -223,6 +223,7 @@ func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.Re
 					ResourceCategoryId: resourceQuery.ResourceCategoryId,
 					OriginalName:       url,
 					OriginalLocation:   url,
+					SeriesSlug:         resourceQuery.SeriesSlug,
 				},
 			})
 
@@ -294,6 +295,7 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		HashType:           "SHA1",
 		Location:           resourceQuery.LocalPath,
 		Meta:               []byte(resourceQuery.Meta),
+		OwnMeta:            []byte("{}"),
 		Category:           resourceQuery.Category,
 		ContentType:        fileMime.String(),
 		ContentCategory:    resourceQuery.ContentCategory,
@@ -306,7 +308,41 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		OriginalName:       resourceQuery.OriginalName,
 	}
 
-	if err := ctx.db.Save(res).Error; err != nil {
+	tx := ctx.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	if err := tx.Save(res).Error; err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	if resourceQuery.SeriesId != 0 {
+		var series models.Series
+		if err := tx.First(&series, resourceQuery.SeriesId).Error; err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("series with id %d not found: %w", resourceQuery.SeriesId, err)
+		}
+		if err := ctx.AssignResourceToSeries(tx, res, &series, false); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	} else if resourceQuery.SeriesSlug != "" {
+		series, isCreator, err := ctx.GetOrCreateSeriesForResource(tx, resourceQuery.SeriesSlug)
+		if err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		if err := ctx.AssignResourceToSeries(tx, res, series, isCreator); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
 		return nil, err
 	}
 
@@ -489,6 +525,7 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 		HashType:           "SHA1",
 		Location:           filePath,
 		Meta:               []byte(resourceQuery.Meta),
+		OwnMeta:            []byte("{}"),
 		Category:           resourceQuery.Category,
 		ContentType:        fileMime.String(),
 		ContentCategory:    resourceQuery.ContentCategory,
@@ -531,6 +568,29 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 		if createTagsErr := tx.Model(&res).Association("Tags").Append(&tags); createTagsErr != nil {
 			tx.Rollback()
 			return nil, createTagsErr
+		}
+	}
+
+	// Series assignment
+	if resourceQuery.SeriesId != 0 {
+		var series models.Series
+		if err := tx.First(&series, resourceQuery.SeriesId).Error; err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("series with id %d not found: %w", resourceQuery.SeriesId, err)
+		}
+		if err := ctx.AssignResourceToSeries(tx, res, &series, false); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	} else if resourceQuery.SeriesSlug != "" {
+		series, isCreator, err := ctx.GetOrCreateSeriesForResource(tx, resourceQuery.SeriesSlug)
+		if err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		if err := ctx.AssignResourceToSeries(tx, res, series, isCreator); err != nil {
+			tx.Rollback()
+			return nil, err
 		}
 	}
 

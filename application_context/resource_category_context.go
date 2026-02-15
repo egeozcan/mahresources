@@ -71,20 +71,20 @@ func (ctx *MahresourcesContext) CreateResourceCategory(query *query_models.Resou
 }
 
 func (ctx *MahresourcesContext) UpdateResourceCategory(query *query_models.ResourceCategoryEditor) (*models.ResourceCategory, error) {
-	if strings.TrimSpace(query.Name) == "" {
-		return nil, errors.New("resource category name must be non-empty")
+	var resourceCategory models.ResourceCategory
+	if err := ctx.db.First(&resourceCategory, query.ID).Error; err != nil {
+		return nil, err
 	}
 
-	resourceCategory := models.ResourceCategory{
-		ID:            query.ID,
-		Name:          query.Name,
-		Description:   query.Description,
-		CustomHeader:  query.CustomHeader,
-		CustomSidebar: query.CustomSidebar,
-		CustomSummary: query.CustomSummary,
-		CustomAvatar:  query.CustomAvatar,
-		MetaSchema:    query.MetaSchema,
+	if strings.TrimSpace(query.Name) != "" {
+		resourceCategory.Name = query.Name
 	}
+	resourceCategory.Description = query.Description
+	resourceCategory.CustomHeader = query.CustomHeader
+	resourceCategory.CustomSidebar = query.CustomSidebar
+	resourceCategory.CustomSummary = query.CustomSummary
+	resourceCategory.CustomAvatar = query.CustomAvatar
+	resourceCategory.MetaSchema = query.MetaSchema
 
 	if err := ctx.db.Save(&resourceCategory).Error; err != nil {
 		return nil, err
