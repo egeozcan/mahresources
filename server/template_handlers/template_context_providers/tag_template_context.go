@@ -69,7 +69,13 @@ func TagCreateContextProvider(context *application_context.MahresourcesContext) 
 		}.Update(staticTemplateCtx(request))
 
 		var query query_models.EntityIdQuery
-		err := decoder.Decode(&query, request.URL.Query())
+		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
+			return addErrContext(err, tplContext)
+		}
+
+		if query.ID == 0 {
+			return tplContext
+		}
 
 		tag, err := context.GetTag(query.ID)
 

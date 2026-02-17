@@ -65,7 +65,13 @@ func ResourceCategoryCreateContextProvider(context *application_context.Mahresou
 		}.Update(staticTemplateCtx(request))
 
 		var query query_models.EntityIdQuery
-		_ = decoder.Decode(&query, request.URL.Query())
+		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
+			return addErrContext(err, tplContext)
+		}
+
+		if query.ID == 0 {
+			return tplContext
+		}
 
 		resourceCategory, err := context.GetResourceCategory(query.ID)
 

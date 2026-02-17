@@ -70,7 +70,13 @@ func QueryCreateContextProvider(context *application_context.MahresourcesContext
 		}.Update(staticTemplateCtx(request))
 
 		var entityId query_models.EntityIdQuery
-		err := decoder.Decode(&entityId, request.URL.Query())
+		if err := decoder.Decode(&entityId, request.URL.Query()); err != nil {
+			return addErrContext(err, tplContext)
+		}
+
+		if entityId.ID == 0 {
+			return tplContext
+		}
 
 		query, err := context.GetQuery(entityId.ID)
 
