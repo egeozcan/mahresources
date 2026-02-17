@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/flosch/pongo2/v4"
@@ -138,12 +139,13 @@ func (s *ShareServer) handleBlockStateUpdate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Parse block ID
-	var blockId uint
-	if _, err := fmt.Sscanf(blockIdStr, "%d", &blockId); err != nil {
+	// Parse block ID (strict: reject partial matches like "123abc")
+	blockIdParsed, err := strconv.ParseUint(blockIdStr, 10, 64)
+	if err != nil {
 		http.Error(w, "Invalid block ID", http.StatusBadRequest)
 		return
 	}
+	blockId := uint(blockIdParsed)
 
 	// Verify block belongs to this note
 	blockBelongsToNote := false
@@ -182,12 +184,13 @@ func (s *ShareServer) handleCalendarEvents(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Parse block ID
-	var blockId uint
-	if _, err := fmt.Sscanf(blockIdStr, "%d", &blockId); err != nil {
+	// Parse block ID (strict: reject partial matches like "123abc")
+	blockIdParsed, err := strconv.ParseUint(blockIdStr, 10, 64)
+	if err != nil {
 		http.Error(w, "Invalid block ID", http.StatusBadRequest)
 		return
 	}
+	blockId := uint(blockIdParsed)
 
 	// Verify block belongs to this note and is a calendar block
 	blockBelongsToNote := false
