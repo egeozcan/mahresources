@@ -275,7 +275,7 @@ func ResourceContextProvider(context *application_context.MahresourcesContext) f
 			breadcrumbEls[len(parents)] = template_entities.Entry{
 				Name: resource.Name,
 				ID:   resource.ID,
-				Url:  fmt.Sprintf("/resouce?id=%v", resource.ID),
+				Url:  fmt.Sprintf("/resource?id=%v", resource.ID),
 			}
 
 			result["breadcrumb"] = pongo2.Context{

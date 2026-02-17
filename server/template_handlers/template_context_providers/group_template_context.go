@@ -59,11 +59,6 @@ func GroupsListContextProvider(context *application_context.MahresourcesContext)
 
 			return addErrContext(err, baseContext)
 		}
-		if err != nil {
-			fmt.Println(err)
-
-			return addErrContext(err, baseContext)
-		}
 
 		notes, err := context.GetNotesWithIds(&query.Notes)
 
