@@ -1,7 +1,6 @@
 package template_context_providers
 
 import (
-	"fmt"
 	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
 	"mahresources/constants"
@@ -21,32 +20,24 @@ func CategoryListContextProvider(context *application_context.MahresourcesContex
 		baseContext := staticTemplateCtx(request)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		categories, err := context.GetCategories(int(offset), constants.MaxResultsPerPage, &query)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		categoriesCount, err := context.GetCategoriesCount(&query)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), categoriesCount, constants.MaxResultsPerPage, int(page))
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
@@ -97,16 +88,12 @@ func CategoryContextProvider(context *application_context.MahresourcesContext) f
 		baseContext := staticTemplateCtx(request)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		category, err := context.GetCategory(query.ID)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 

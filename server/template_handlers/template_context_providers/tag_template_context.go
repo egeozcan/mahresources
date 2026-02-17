@@ -1,7 +1,6 @@
 package template_context_providers
 
 import (
-	"fmt"
 	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
 	"mahresources/constants"
@@ -21,32 +20,24 @@ func TagListContextProvider(context *application_context.MahresourcesContext) fu
 		baseContext := staticTemplateCtx(request)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		tags, err := context.GetTags(int(offset), constants.MaxResultsPerPage, &query)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		tagsCount, err := context.GetTagsCount(&query)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), tagsCount, constants.MaxResultsPerPage, int(page))
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
@@ -97,16 +88,12 @@ func TagContextProvider(context *application_context.MahresourcesContext) func(r
 		baseContext := staticTemplateCtx(request)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		tag, err := context.GetTag(query.ID)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 

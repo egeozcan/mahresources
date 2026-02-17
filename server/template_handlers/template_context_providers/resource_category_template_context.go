@@ -1,7 +1,6 @@
 package template_context_providers
 
 import (
-	"fmt"
 	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
 	"mahresources/constants"
@@ -21,28 +20,24 @@ func ResourceCategoryListContextProvider(context *application_context.Mahresourc
 		baseContext := staticTemplateCtx(request)
 
 		if err != nil {
-			fmt.Println(err)
 			return addErrContext(err, baseContext)
 		}
 
 		resourceCategories, err := context.GetResourceCategories(int(offset), constants.MaxResultsPerPage, &query)
 
 		if err != nil {
-			fmt.Println(err)
 			return addErrContext(err, baseContext)
 		}
 
 		resourceCategoriesCount, err := context.GetResourceCategoriesCount(&query)
 
 		if err != nil {
-			fmt.Println(err)
 			return addErrContext(err, baseContext)
 		}
 
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), resourceCategoriesCount, constants.MaxResultsPerPage, int(page))
 
 		if err != nil {
-			fmt.Println(err)
 			return addErrContext(err, baseContext)
 		}
 
@@ -93,14 +88,12 @@ func ResourceCategoryContextProvider(context *application_context.MahresourcesCo
 		baseContext := staticTemplateCtx(request)
 
 		if err != nil {
-			fmt.Println(err)
 			return addErrContext(err, baseContext)
 		}
 
 		resourceCategory, err := context.GetResourceCategory(query.ID)
 
 		if err != nil {
-			fmt.Println(err)
 			return addErrContext(err, baseContext)
 		}
 
@@ -113,7 +106,6 @@ func ResourceCategoryContextProvider(context *application_context.MahresourcesCo
 
 		resources, err := context.GetResources(int(resourceOffset), constants.MaxResultsPerPage, resourceQuery)
 		if err != nil {
-			fmt.Println(err)
 			return addErrContext(err, baseContext)
 		}
 

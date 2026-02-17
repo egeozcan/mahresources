@@ -23,80 +23,60 @@ func GroupsListContextProvider(context *application_context.MahresourcesContext)
 		baseContext := staticTemplateCtx(request)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		groups, err := context.GetGroups(int(offset), constants.MaxResultsPerPage, &query)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		groupsCount, err := context.GetGroupsCount(&query)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), groupsCount, constants.MaxResultsPerPage, int(page))
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		tags, err := context.GetTagsWithIds(&query.Tags, 0)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		notes, err := context.GetNotesWithIds(&query.Notes)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		resources, err := context.GetResourcesWithIds(&query.Resources)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		categories, err := context.GetCategoriesWithIds(&query.Categories, 0)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		groupsSelection, err := context.GetGroupsWithIds(&query.Groups)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		owners, err := context.GetGroupsWithIds(&[]uint{query.OwnerId})
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
@@ -201,24 +181,18 @@ func groupContextProviderImpl(context interfaces.GroupReader) func(request *http
 		baseContext := staticTemplateCtx(request)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		group, err := context.GetGroup(query.ID)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		parents, err := context.FindParentsOfGroup(group.ID)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 

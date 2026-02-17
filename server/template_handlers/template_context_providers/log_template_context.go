@@ -1,7 +1,6 @@
 package template_context_providers
 
 import (
-	"fmt"
 	"net/http"
 	"strconv"
 
@@ -54,25 +53,21 @@ func LogListContextProvider(context *application_context.MahresourcesContext) fu
 		baseContext := staticTemplateCtx(request)
 
 		if err != nil {
-			fmt.Println(err)
 			return addErrContext(err, baseContext)
 		}
 
 		logs, err := context.GetLogEntries(int(offset), constants.MaxResultsPerPage, &query)
 		if err != nil {
-			fmt.Println(err)
 			return addErrContext(err, baseContext)
 		}
 
 		logsCount, err := context.GetLogEntriesCount(&query)
 		if err != nil {
-			fmt.Println(err)
 			return addErrContext(err, baseContext)
 		}
 
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), logsCount, constants.MaxResultsPerPage, int(page))
 		if err != nil {
-			fmt.Println(err)
 			return addErrContext(err, baseContext)
 		}
 
@@ -101,13 +96,11 @@ func LogContextProvider(context *application_context.MahresourcesContext) func(r
 		baseContext := staticTemplateCtx(request)
 
 		if err != nil {
-			fmt.Println(err)
 			return addErrContext(err, baseContext)
 		}
 
 		log, err := context.GetLogEntry(query.ID)
 		if err != nil {
-			fmt.Println(err)
 			return addErrContext(err, baseContext)
 		}
 

@@ -20,48 +20,36 @@ func RelationTypeListContextProvider(context *application_context.MahresourcesCo
 		baseContext := staticTemplateCtx(request)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		fromCategories, err := context.GetCategoriesWithIds(&[]uint{query.FromCategory}, 0)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		toCategories, err := context.GetCategoriesWithIds(&[]uint{query.ToCategory}, 0)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		relationTypes, err := context.GetRelationTypes(int(offset), constants.MaxResultsPerPage, &query)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		relationTypesCount, err := context.GetRelationTypesCount(&query)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), relationTypesCount, constants.MaxResultsPerPage, int(page))
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
@@ -86,16 +74,12 @@ func RelationTypeContextProvider(context *application_context.MahresourcesContex
 		baseContext := staticTemplateCtx(request)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		relationType, err := context.GetRelationType(query.ID)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
@@ -133,16 +117,12 @@ func RelationTypeEditContextProvider(context *application_context.MahresourcesCo
 		err := decoder.Decode(&query, request.URL.Query())
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		relationType, err := context.GetRelationType(query.ID)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
@@ -164,56 +144,42 @@ func RelationListContextProvider(context *application_context.MahresourcesContex
 		baseContext := staticTemplateCtx(request)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		fromTypes, err := context.GetRelationTypesWithIds(&[]uint{query.GroupRelationTypeId})
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		toGroups, err := context.GetGroupsWithIds(&[]uint{query.ToGroupId})
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		fromGroups, err := context.GetGroupsWithIds(&[]uint{query.FromGroupId})
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		relations, err := context.GetRelations(int(offset), constants.MaxResultsPerPage, &query)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		relationTypesCount, err := context.GetRelationsCount(&query)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), relationTypesCount, constants.MaxResultsPerPage, int(page))
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
@@ -239,32 +205,24 @@ func RelationContextProvider(context *application_context.MahresourcesContext) f
 		baseContext := staticTemplateCtx(request)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		relation, err := context.GetRelation(query.ID)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		groupFrom, err := context.GetGroup(*relation.FromGroupId)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		groupTo, err := context.GetGroup(*relation.ToGroupId)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
@@ -300,8 +258,6 @@ func RelationCreateContextProvider(context *application_context.MahresourcesCont
 		err := decoder.Decode(&query, request.URL.Query())
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
@@ -310,8 +266,6 @@ func RelationCreateContextProvider(context *application_context.MahresourcesCont
 			relationType, err := context.GetRelationTypesWithIds(&ids)
 
 			if err != nil {
-				fmt.Println(err)
-
 				return addErrContext(err, baseContext)
 			}
 
@@ -323,8 +277,6 @@ func RelationCreateContextProvider(context *application_context.MahresourcesCont
 			fromGroup, err := context.GetGroupsWithIds(&ids)
 
 			if err != nil {
-				fmt.Println(err)
-
 				return addErrContext(err, baseContext)
 			}
 
@@ -336,8 +288,6 @@ func RelationCreateContextProvider(context *application_context.MahresourcesCont
 			toGroup, err := context.GetGroupsWithIds(&ids)
 
 			if err != nil {
-				fmt.Println(err)
-
 				return addErrContext(err, baseContext)
 			}
 
@@ -359,16 +309,12 @@ func RelationEditContextProvider(context *application_context.MahresourcesContex
 		err := decoder.Decode(&query, request.URL.Query())
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		relation, err := context.GetRelation(query.ID)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 

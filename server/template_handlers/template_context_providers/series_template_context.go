@@ -1,7 +1,6 @@
 package template_context_providers
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/flosch/pongo2/v4"
@@ -17,13 +16,11 @@ func SeriesContextProvider(context *application_context.MahresourcesContext) fun
 		baseContext := staticTemplateCtx(request)
 
 		if err != nil {
-			fmt.Println(err)
 			return addErrContext(err, baseContext)
 		}
 
 		series, err := context.GetSeries(query.ID)
 		if err != nil {
-			fmt.Println(err)
 			return addErrContext(err, baseContext)
 		}
 

@@ -39,40 +39,30 @@ func ResourceListContextProvider(context *application_context.MahresourcesContex
 		baseContext := staticTemplateCtx(request)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		resources, err := context.GetResources(int(offset), resultsPerPage, &query)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		resourceCount, err := context.GetResourceCount(&query)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), resourceCount, resultsPerPage, int(page))
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		tags, err := context.GetTagsWithIds(&query.Tags, 0)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
@@ -208,21 +198,18 @@ func ResourceContextProvider(context *application_context.MahresourcesContext) f
 		baseContext := staticTemplateCtx(request)
 
 		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
-			fmt.Println(err)
 			return addErrContext(err, baseContext)
 		}
 
 		similarResources, err := context.GetSimilarResources(query.ID)
 
 		if err != nil {
-			fmt.Println(err)
 			return addErrContext(err, baseContext)
 		}
 
 		resource, err := context.GetResource(query.ID)
 
 		if err != nil {
-			fmt.Println(err)
 			return addErrContext(err, baseContext)
 		}
 
@@ -257,8 +244,6 @@ func ResourceContextProvider(context *application_context.MahresourcesContext) f
 			parents, err := context.FindParentsOfGroup(*resource.OwnerId)
 
 			if err != nil {
-				fmt.Println(err)
-
 				return addErrContext(err, baseContext)
 			}
 

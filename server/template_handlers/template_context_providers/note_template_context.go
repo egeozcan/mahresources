@@ -22,64 +22,48 @@ func NoteListContextProvider(context *application_context.MahresourcesContext) f
 		baseContext := staticTemplateCtx(request)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		notes, err := context.GetNotes(int(offset), constants.MaxResultsPerPage, &query)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		noteCount, err := context.GetNoteCount(&query)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), noteCount, constants.MaxResultsPerPage, int(page))
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		tags, err := context.GetTagsWithIds(&query.Tags, 0)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		groups, err := context.GetGroupsWithIds(&query.Groups)
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		owners, err := context.GetGroupsWithIds(&[]uint{query.OwnerId})
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		noteTypes, err := context.GetNoteTypesWithIds([]uint{query.NoteTypeId})
 
 		if err != nil {
-			fmt.Println(err)
-
 			return addErrContext(err, baseContext)
 		}
 
@@ -180,16 +164,12 @@ func NoteContextProvider(context *application_context.MahresourcesContext) func(
 		baseContext := staticTemplateCtx(request)
 
 		if err != nil {
-			fmt.Println("error parsing query", err)
-
 			return addErrContext(err, baseContext)
 		}
 
 		note, err := context.GetNote(query.ID)
 
 		if err != nil {
-			fmt.Println("error getting the note", err)
-
 			return addErrContext(err, baseContext)
 		}
 
