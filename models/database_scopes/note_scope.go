@@ -6,7 +6,7 @@ import (
 	"mahresources/models/types"
 )
 
-func NoteQuery(query *query_models.NoteQuery, ignoreSort bool) func(db *gorm.DB) *gorm.DB {
+func NoteQuery(query *query_models.NoteQuery, ignoreSort bool, originalDB *gorm.DB) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
 		likeOperator := GetLikeOperator(db)
 		dbQuery := db
@@ -16,11 +16,14 @@ func NoteQuery(query *query_models.NoteQuery, ignoreSort bool) func(db *gorm.DB)
 		}
 
 		if len(query.Tags) > 0 {
-			dbQuery = dbQuery.Where(
-				"(SELECT Count(*) FROM note_tags at WHERE at.tag_id IN ? AND at.note_id = notes.id) = ?",
-				query.Tags,
-				len(query.Tags),
-			)
+			subQuery := originalDB.
+				Table("note_tags nt").
+				Where("nt.tag_id IN ?", query.Tags).
+				Group("nt.note_id").
+				Having("count(*) = ?", len(query.Tags)).
+				Select("nt.note_id")
+
+			dbQuery = dbQuery.Where("notes.id IN (?)", subQuery)
 		}
 
 		if len(query.Ids) > 0 {

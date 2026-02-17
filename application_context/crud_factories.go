@@ -221,8 +221,12 @@ func buildSeries(creator *query_models.SeriesCreator) (models.Series, error) {
 // Note writes are complex (associations, transactions) and remain in note_context.go.
 func (ctx *MahresourcesContext) NoteCRUDReader() *CRUDReader[models.Note, *query_models.NoteQuery] {
 	return NewCRUDReader[models.Note, *query_models.NoteQuery](ctx.db, CRUDReaderConfig[*query_models.NoteQuery]{
-		ScopeFn:        ScopeWithIgnoreSort(database_scopes.NoteQuery),
-		ScopeFnNoSort:  ScopeWithIgnoreSortForCount(database_scopes.NoteQuery),
+		ScopeFn: func(query *query_models.NoteQuery) func(db *gorm.DB) *gorm.DB {
+			return database_scopes.NoteQuery(query, false, ctx.db)
+		},
+		ScopeFnNoSort: func(query *query_models.NoteQuery) func(db *gorm.DB) *gorm.DB {
+			return database_scopes.NoteQuery(query, true, ctx.db)
+		},
 		PreloadAssoc:   true,
 		PreloadClauses: []string{"Tags", "NoteType"},
 	})

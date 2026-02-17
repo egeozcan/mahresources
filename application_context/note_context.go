@@ -146,7 +146,7 @@ func (ctx *MahresourcesContext) GetNote(id uint) (*models.Note, error) {
 
 func (ctx *MahresourcesContext) GetNotes(offset, maxResults int, query *query_models.NoteQuery) ([]models.Note, error) {
 	var notes []models.Note
-	noteScope := database_scopes.NoteQuery(query, false)
+	noteScope := database_scopes.NoteQuery(query, false, ctx.db)
 
 	return notes, ctx.db.Scopes(noteScope).Limit(maxResults).Offset(offset).Preload("Tags").Preload("NoteType").Find(&notes).Error
 }
@@ -165,14 +165,14 @@ func (ctx *MahresourcesContext) GetNoteCount(query *query_models.NoteQuery) (int
 	var note models.Note
 	var count int64
 
-	return count, ctx.db.Scopes(database_scopes.NoteQuery(query, true)).Model(&note).Count(&count).Error
+	return count, ctx.db.Scopes(database_scopes.NoteQuery(query, true, ctx.db)).Model(&note).Count(&count).Error
 }
 
 func (ctx *MahresourcesContext) GetPopularNoteTags(query *query_models.NoteQuery) ([]PopularTag, error) {
 	var res []PopularTag
 
 	db := ctx.db.Table("notes").
-		Scopes(database_scopes.NoteQuery(query, true)).
+		Scopes(database_scopes.NoteQuery(query, true, ctx.db)).
 		Joins("INNER JOIN note_tags pt ON pt.note_id = notes.id").
 		Joins("INNER JOIN tags t ON t.id = pt.tag_id").
 		Select("t.id AS id, t.name AS name, count(*) AS count").
