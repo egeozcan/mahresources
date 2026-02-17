@@ -38,7 +38,7 @@ func init() {
 func tryFillStructValuesFromRequest(dst any, request *http.Request) error {
 	contentTypeHeader := request.Header.Get("Content-type")
 
-	if contentTypeHeader == constants.JSON {
+	if strings.HasPrefix(contentTypeHeader, constants.JSON) {
 		return json.NewDecoder(request.Body).Decode(dst)
 	}
 
