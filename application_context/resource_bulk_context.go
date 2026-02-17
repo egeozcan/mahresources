@@ -323,89 +323,66 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 	}
 
 	return ctx.WithTransaction(func(transactionCtx *MahresourcesContext) error {
-		var losers []*models.Resource
-
 		tx := transactionCtx.db
 
-		if loadResourcesErr := tx.Preload(clause.Associations).Find(&losers, &loserIds).Error; loadResourcesErr != nil {
+		// Load losers WITHOUT associations — we only need their basic fields for backup
+		var losers []*models.Resource
+		if loadResourcesErr := tx.Find(&losers, &loserIds).Error; loadResourcesErr != nil {
 			return loadResourcesErr
 		}
 
-		if winnerId == 0 || loserIds == nil || len(loserIds) == 0 {
-			return nil
+		// Load winner WITHOUT associations
+		var winner models.Resource
+		if err := tx.First(&winner, winnerId).Error; err != nil {
+			return err
 		}
 
-		var winner models.Resource
-
-		if err := tx.Preload(clause.Associations).First(&winner, winnerId).Error; err != nil {
+		// Transfer associations via direct SQL (no Go-side loading needed)
+		if err := tx.Exec("INSERT INTO resource_tags (resource_id, tag_id) SELECT ?, tag_id FROM resource_tags WHERE resource_id IN ? ON CONFLICT DO NOTHING", winnerId, loserIds).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec("INSERT INTO resource_notes (resource_id, note_id) SELECT ?, note_id FROM resource_notes WHERE resource_id IN ? ON CONFLICT DO NOTHING", winnerId, loserIds).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec("INSERT INTO groups_related_resources (resource_id, group_id) SELECT ?, group_id FROM groups_related_resources WHERE resource_id IN ? ON CONFLICT DO NOTHING", winnerId, loserIds).Error; err != nil {
+			return err
+		}
+		// Also add losers' owners as related groups
+		if err := tx.Exec("INSERT INTO groups_related_resources (resource_id, group_id) SELECT ?, owner_id FROM resources WHERE id IN ? AND owner_id IS NOT NULL ON CONFLICT DO NOTHING", winnerId, loserIds).Error; err != nil {
 			return err
 		}
 
 		deletedResBackups := make(map[string]types.JSON)
 
 		for _, loser := range losers {
-
-			for _, tag := range loser.Tags {
-				if err := tx.Exec(`INSERT INTO resource_tags (resource_id, tag_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, winnerId, tag.ID).Error; err != nil {
-					return err
-				}
-			}
-			for _, note := range loser.Notes {
-				if err := tx.Exec(`INSERT INTO resource_notes (resource_id, note_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, winnerId, note.ID).Error; err != nil {
-					return err
-				}
-			}
-			for _, group := range loser.Groups {
-				if err := tx.Exec(`INSERT INTO groups_related_resources (resource_id, group_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, winnerId, group.ID).Error; err != nil {
-					return err
-				}
-			}
-			if err := tx.Exec(`INSERT INTO groups_related_resources (resource_id, group_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, winnerId, loser.OwnerId).Error; err != nil {
-				return err
-			}
-
 			backupData, err := json.Marshal(loser)
-
 			if err != nil {
 				return err
 			}
-
 			deletedResBackups[fmt.Sprintf("resource_%v", loser.ID)] = backupData
 
-
+			// Merge meta
 			switch transactionCtx.Config.DbType {
 			case constants.DbTypePosgres:
-				err = tx.Exec(`
-				UPDATE resources
-				SET meta = coalesce((SELECT meta FROM resources WHERE id = ?), '{}'::jsonb) || meta
-				WHERE id = ?
-			`, loser.ID, winnerId).Error
+				err = tx.Exec(`UPDATE resources SET meta = coalesce((SELECT meta FROM resources WHERE id = ?), '{}'::jsonb) || meta WHERE id = ?`, loser.ID, winnerId).Error
 			case constants.DbTypeSqlite:
-				err = tx.Exec(`
-				UPDATE resources
-				SET meta = json_patch(meta, coalesce((SELECT meta FROM resources WHERE id = ?), '{}'))
-				WHERE id = ?
-			`, loser.ID, winnerId).Error
+				err = tx.Exec(`UPDATE resources SET meta = json_patch(meta, coalesce((SELECT meta FROM resources WHERE id = ?), '{}')) WHERE id = ?`, loser.ID, winnerId).Error
 			default:
 				err = errors.New("db doesn't support merging meta")
 			}
-
 			if err != nil {
 				return err
 			}
 
-			err = transactionCtx.DeleteResource(loser.ID)
-
-			if err != nil {
+			if err := transactionCtx.DeleteResource(loser.ID); err != nil {
 				return err
 			}
 		}
 
+		// Save backups to winner's meta
 		backupObj := make(map[string]any)
 		backupObj["backups"] = deletedResBackups
-
 		backups, err := json.Marshal(&backupObj)
-
 		if err != nil {
 			return err
 		}

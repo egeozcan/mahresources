@@ -28,115 +28,95 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 	}
 
 	return ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
+		// Load losers WITHOUT associations — we only need their basic fields for backup
 		var losers []*models.Group
-
-		if loadErr := altCtx.db.Preload(clause.Associations).Find(&losers, &loserIds).Error; loadErr != nil {
+		if loadErr := altCtx.db.Find(&losers, &loserIds).Error; loadErr != nil {
 			return loadErr
 		}
 
+		// Load winner WITHOUT associations
 		var winner models.Group
+		if err := altCtx.db.First(&winner, winnerId).Error; err != nil {
+			return err
+		}
 
-		if err := altCtx.db.Preload(clause.Associations).First(&winner, winnerId).Error; err != nil {
+		// Batch SQL transfers — tags
+		if err := altCtx.db.Exec("INSERT INTO group_tags (group_id, tag_id) SELECT ?, tag_id FROM group_tags WHERE group_id IN ? ON CONFLICT DO NOTHING", winnerId, loserIds).Error; err != nil {
+			return err
+		}
+
+		// Batch SQL transfers — related groups (exclude self-references)
+		if err := altCtx.db.Exec("INSERT INTO group_related_groups (group_id, related_group_id) SELECT ?, related_group_id FROM group_related_groups WHERE group_id IN ? AND related_group_id != ? ON CONFLICT DO NOTHING", winnerId, loserIds, winnerId).Error; err != nil {
+			return err
+		}
+
+		// Batch SQL transfers — related notes
+		if err := altCtx.db.Exec("INSERT INTO groups_related_notes (group_id, note_id) SELECT ?, note_id FROM groups_related_notes WHERE group_id IN ? ON CONFLICT DO NOTHING", winnerId, loserIds).Error; err != nil {
+			return err
+		}
+
+		// Batch SQL transfers — related resources
+		if err := altCtx.db.Exec("INSERT INTO groups_related_resources (group_id, resource_id) SELECT ?, resource_id FROM groups_related_resources WHERE group_id IN ? ON CONFLICT DO NOTHING", winnerId, loserIds).Error; err != nil {
+			return err
+		}
+
+		// Batch SQL transfers — group_relations (both directions)
+		if err := altCtx.db.Exec("INSERT INTO group_relations (from_group_id, to_group_id) SELECT ?, to_group_id FROM group_relations WHERE from_group_id IN ? ON CONFLICT DO NOTHING", winnerId, loserIds).Error; err != nil {
+			return err
+		}
+		if err := altCtx.db.Exec("INSERT INTO group_relations (from_group_id, to_group_id) SELECT from_group_id, ? FROM group_relations WHERE to_group_id IN ? ON CONFLICT DO NOTHING", winnerId, loserIds).Error; err != nil {
+			return err
+		}
+
+		// Batch SQL transfers — ownership updates
+		if err := altCtx.db.Exec("UPDATE groups SET owner_id = ? WHERE owner_id IN ?", winnerId, loserIds).Error; err != nil {
+			return err
+		}
+		if err := altCtx.db.Exec("UPDATE notes SET owner_id = ? WHERE owner_id IN ?", winnerId, loserIds).Error; err != nil {
+			return err
+		}
+		if err := altCtx.db.Exec("UPDATE resources SET owner_id = ? WHERE owner_id IN ?", winnerId, loserIds).Error; err != nil {
 			return err
 		}
 
 		backups := make(map[string]types.JSON)
 
 		for _, loser := range losers {
+			// Handle owner_id self-reference: if winner is owned by a loser, clear it
 			if winner.OwnerId != nil && loser.ID == *winner.OwnerId {
-				if err := altCtx.db.Exec(`UPDATE groups set owner_id = NULL where id = ?`, winnerId).Error; err != nil {
+				if err := altCtx.db.Exec(`UPDATE groups SET owner_id = NULL WHERE id = ?`, winnerId).Error; err != nil {
 					return err
 				}
-			}
-
-			for _, tag := range loser.Tags {
-				if err := altCtx.db.Exec(`INSERT INTO group_tags (group_id, tag_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, winnerId, tag.ID).Error; err != nil {
-					return err
-				}
-			}
-
-			if err := altCtx.db.Exec(`UPDATE groups SET owner_id = ? WHERE owner_id = ?`, winnerId, loser.ID).Error; err != nil {
-				return err
-			}
-
-			for _, group := range loser.RelatedGroups {
-				if group.ID == winnerId {
-					continue
-				}
-				if err := altCtx.db.Exec(`INSERT INTO group_related_groups (group_id, related_group_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, winnerId, group.ID).Error; err != nil {
-					return err
-				}
-			}
-
-			if err := altCtx.db.Exec(`UPDATE notes SET owner_id = ? WHERE owner_id = ?`, winnerId, loser.ID).Error; err != nil {
-				return err
-			}
-
-			for _, note := range loser.RelatedNotes {
-				if err := altCtx.db.Exec(`INSERT INTO groups_related_notes (group_id, note_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, winnerId, note.ID).Error; err != nil {
-					return err
-				}
-			}
-
-			if err := altCtx.db.Exec(`UPDATE resources SET owner_id = ? WHERE owner_id = ?`, winnerId, loser.ID).Error; err != nil {
-				return err
-			}
-
-			for _, resource := range loser.RelatedResources {
-				if err := altCtx.db.Exec(`INSERT INTO groups_related_resources (group_id, resource_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, winnerId, resource.ID).Error; err != nil {
-					return err
-				}
-			}
-
-			if err := altCtx.db.Exec(`INSERT INTO group_relations (from_group_id, to_group_id) SELECT ? as from_group_id, to_group_id FROM group_relations WHERE from_group_id = ? ON CONFLICT DO NOTHING`, winnerId, loser.ID).Error; err != nil {
-				return err
-			}
-
-			if err := altCtx.db.Exec(`INSERT INTO group_relations (from_group_id, to_group_id) SELECT from_group_id, ? as to_group_id FROM group_relations WHERE to_group_id = ? ON CONFLICT DO NOTHING`, winnerId, loser.ID).Error; err != nil {
-				return err
 			}
 
 			backupData, err := json.Marshal(loser)
-
 			if err != nil {
 				return err
 			}
-
 			backups[fmt.Sprintf("group_%v", loser.ID)] = backupData
 
+			// Merge meta
 			switch altCtx.Config.DbType {
 			case constants.DbTypePosgres:
-				err = altCtx.db.Exec(`
-				UPDATE groups
-				SET meta = coalesce((SELECT meta FROM groups WHERE id = ?), '{}'::jsonb) || meta
-				WHERE id = ?
-			`, loser.ID, winnerId).Error
+				err = altCtx.db.Exec(`UPDATE groups SET meta = coalesce((SELECT meta FROM groups WHERE id = ?), '{}'::jsonb) || meta WHERE id = ?`, loser.ID, winnerId).Error
 			case constants.DbTypeSqlite:
-				err = altCtx.db.Exec(`
-				UPDATE groups
-				SET meta = json_patch(meta, coalesce((SELECT meta FROM groups WHERE id = ?), '{}'))
-				WHERE id = ?
-			`, loser.ID, winnerId).Error
+				err = altCtx.db.Exec(`UPDATE groups SET meta = json_patch(meta, coalesce((SELECT meta FROM groups WHERE id = ?), '{}')) WHERE id = ?`, loser.ID, winnerId).Error
 			default:
 				err = errors.New("db doesn't support merging meta")
 			}
-
 			if err != nil {
 				return err
 			}
 
-			err = altCtx.DeleteGroup(loser.ID)
-
-			if err != nil {
+			if err := altCtx.DeleteGroup(loser.ID); err != nil {
 				return err
 			}
 		}
 
+		// Save backups to winner's meta
 		backupObj := make(map[string]any)
 		backupObj["backups"] = backups
-
 		backupsBytes, err := json.Marshal(&backupObj)
-
 		if err != nil {
 			return err
 		}
@@ -151,6 +131,7 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 			}
 		}
 
+		// Clean up any self-referential group relations created during the merge
 		if err := altCtx.db.Exec(`DELETE FROM group_relations WHERE to_group_id = from_group_id`).Error; err != nil {
 			return err
 		}
