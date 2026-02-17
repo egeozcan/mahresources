@@ -46,7 +46,7 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 			return
 		}
 
-		if contentType := request.Header.Get("Content-type"); contentType == constants.JSON || strings.HasSuffix(request.URL.Path, ".json") {
+		if accept := request.Header.Get("Accept"); strings.Contains(accept, constants.JSON) || strings.HasSuffix(request.URL.Path, ".json") {
 			writer.Header().Set("Content-Type", constants.JSON)
 			if err := json.NewEncoder(writer).Encode(discardFields(map[string]bool{
 				"partial":     true,
