@@ -311,7 +311,8 @@ func (l *IDLock[T]) RunWithLockTimeout(id T, lockTimeout, runTimeout time.Durati
 	// Wait for the function to complete, or for the runTimeout context to expire
 	select {
 	case <-ctx.Done():
-		// The runTimeout was exceeded
+		// Timeout exceeded. Wait for fn to finish before releasing the lock.
+		<-errChan
 		return true, context.DeadlineExceeded // Lock was acquired, but run timed out
 	case runErr := <-errChan:
 		// The function completed (or panicked)

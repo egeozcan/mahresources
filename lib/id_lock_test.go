@@ -552,6 +552,45 @@ func TestAcquireContext_AlreadyCanceled_LockFree_GlobalLimit(t *testing.T) {
 	}
 }
 
+// TestRunWithLockTimeout_HoldsLockUntilFnCompletes verifies that when fn exceeds
+// runTimeout, the lock is NOT released until fn actually finishes.
+func TestRunWithLockTimeout_HoldsLockUntilFnCompletes(t *testing.T) {
+	lock := NewIDLock[string](0, nil)
+	id := "testHoldsLock"
+
+	fnStarted := make(chan struct{})
+	fnDone := make(chan struct{})
+
+	// Start RunWithLockTimeout with a short runTimeout but long fn
+	go func() {
+		lock.RunWithLockTimeout(id, 1*time.Second, 50*time.Millisecond, func() error {
+			close(fnStarted)
+			time.Sleep(300 * time.Millisecond) // Exceeds runTimeout
+			close(fnDone)
+			return nil
+		})
+	}()
+
+	<-fnStarted
+	// fn is running and runTimeout will expire. Try to acquire the same lock.
+	// It should NOT succeed until fn finishes (fnDone closes).
+	acquired := lock.AcquireWithTimeout(id, 100*time.Millisecond)
+	if acquired {
+		lock.Release(id)
+		t.Fatal("Lock was acquired while fn was still running — mutual exclusion violated")
+	}
+
+	// Now wait for fn to complete, then the lock should be available
+	<-fnDone
+	time.Sleep(50 * time.Millisecond) // Give time for Release to execute
+
+	acquired = lock.AcquireWithTimeout(id, 500*time.Millisecond)
+	if !acquired {
+		t.Fatal("Lock should be free after fn completes")
+	}
+	lock.Release(id)
+}
+
 // TestAcquireContext_AlreadyCanceled_LockHeld verifies behavior when context
 // is canceled *before* the call, but the lock is already held by someone else.
 func TestAcquireContext_AlreadyCanceled_LockHeld(t *testing.T) {
