@@ -1,28 +1,45 @@
 package template_context_providers
 
 import (
-	"fmt"
-	"io"
 	"mahresources/application_context/mock_context"
-	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
 func TestGroupContextProviderImpl(t *testing.T) {
 	reader := mock_context.NewMockGroupContext()
-	handler := func(w http.ResponseWriter, r *http.Request) {
-		groupContextProviderImpl(reader)(r)
+	provider := groupContextProviderImpl(reader)
+
+	req := httptest.NewRequest("GET", "http://example.com/group?id=1", nil)
+	ctx := provider(req)
+
+	if ctx["pageTitle"] == nil {
+		t.Error("expected pageTitle in context, got nil")
 	}
 
-	req := httptest.NewRequest("GET", "http://example.com/foo", nil)
-	w := httptest.NewRecorder()
-	handler(w, req)
+	if ctx["group"] == nil {
+		t.Error("expected group in context, got nil")
+	}
 
-	resp := w.Result()
-	body, _ := io.ReadAll(resp.Body)
+	if ctx["breadcrumb"] == nil {
+		t.Error("expected breadcrumb in context, got nil")
+	}
+}
 
-	fmt.Println(resp.StatusCode)
-	fmt.Println(resp.Header.Get("Content-Type"))
-	fmt.Println(string(body))
+func TestGroupContextProviderImpl_NoID(t *testing.T) {
+	reader := mock_context.NewMockGroupContext()
+	provider := groupContextProviderImpl(reader)
+
+	req := httptest.NewRequest("GET", "http://example.com/group", nil)
+	ctx := provider(req)
+
+	// When no ID is provided, the decoder sets ID to 0 and GetGroup(0)
+	// succeeds with the mock, so we still get a valid context.
+	if ctx["group"] == nil {
+		t.Error("expected group in context, got nil")
+	}
+
+	if ctx["pageTitle"] == nil {
+		t.Error("expected pageTitle in context, got nil")
+	}
 }
