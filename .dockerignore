@@ -1,0 +1,10 @@
+.git
+node_modules
+e2e
+*.db
+.env
+docs
+docs-site
+.github
+.husky
+.claude
