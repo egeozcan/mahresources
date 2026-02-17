@@ -197,8 +197,8 @@ func (f *CRUDHandlerFactory[T, Q, C]) CreateHandler() http.HandlerFunc {
 func createOrUpdateHandler[T any](
 	entityName string,
 	getID func(*T) uint,
-	create func(*T) (interface{}, error),
-	update func(*T) (interface{}, error),
+	create func(*T) (any, error),
+	update func(*T) (any, error),
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var editor T
@@ -208,7 +208,7 @@ func createOrUpdateHandler[T any](
 			return
 		}
 
-		var result interface{}
+		var result any
 		var err error
 
 		if getID(&editor) != 0 {
@@ -241,8 +241,8 @@ func CreateTagHandler(writer interfaces.TagsWriter) http.HandlerFunc {
 	return createOrUpdateHandler(
 		"tag",
 		func(c *query_models.TagCreator) uint { return c.ID },
-		func(c *query_models.TagCreator) (interface{}, error) { return writer.CreateTag(c) },
-		func(c *query_models.TagCreator) (interface{}, error) { return writer.UpdateTag(c) },
+		func(c *query_models.TagCreator) (any, error) { return writer.CreateTag(c) },
+		func(c *query_models.TagCreator) (any, error) { return writer.UpdateTag(c) },
 	)
 }
 
@@ -252,8 +252,8 @@ func CreateCategoryHandler(writer interfaces.CategoryWriter) http.HandlerFunc {
 	return createOrUpdateHandler(
 		"category",
 		func(e *query_models.CategoryEditor) uint { return e.ID },
-		func(e *query_models.CategoryEditor) (interface{}, error) { return writer.CreateCategory(&e.CategoryCreator) },
-		func(e *query_models.CategoryEditor) (interface{}, error) { return writer.UpdateCategory(e) },
+		func(e *query_models.CategoryEditor) (any, error) { return writer.CreateCategory(&e.CategoryCreator) },
+		func(e *query_models.CategoryEditor) (any, error) { return writer.UpdateCategory(e) },
 	)
 }
 
@@ -262,8 +262,8 @@ func CreateResourceCategoryHandler(writer interfaces.ResourceCategoryWriter) htt
 	return createOrUpdateHandler(
 		"resourceCategory",
 		func(e *query_models.ResourceCategoryEditor) uint { return e.ID },
-		func(e *query_models.ResourceCategoryEditor) (interface{}, error) { return writer.CreateResourceCategory(&e.ResourceCategoryCreator) },
-		func(e *query_models.ResourceCategoryEditor) (interface{}, error) { return writer.UpdateResourceCategory(e) },
+		func(e *query_models.ResourceCategoryEditor) (any, error) { return writer.CreateResourceCategory(&e.ResourceCategoryCreator) },
+		func(e *query_models.ResourceCategoryEditor) (any, error) { return writer.UpdateResourceCategory(e) },
 	)
 }
 
@@ -273,7 +273,7 @@ func CreateQueryHandler(writer interfaces.QueryWriter) http.HandlerFunc {
 	return createOrUpdateHandler(
 		"query",
 		func(e *query_models.QueryEditor) uint { return e.ID },
-		func(e *query_models.QueryEditor) (interface{}, error) { return writer.CreateQuery(&e.QueryCreator) },
-		func(e *query_models.QueryEditor) (interface{}, error) { return writer.UpdateQuery(e) },
+		func(e *query_models.QueryEditor) (any, error) { return writer.CreateQuery(&e.QueryCreator) },
+		func(e *query_models.QueryEditor) (any, error) { return writer.UpdateQuery(e) },
 	)
 }

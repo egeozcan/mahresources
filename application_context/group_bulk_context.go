@@ -206,7 +206,7 @@ func (ctx *MahresourcesContext) BulkRemoveTagsFromGroups(query *query_models.Bul
 }
 
 func (ctx *MahresourcesContext) BulkAddMetaToGroups(query *query_models.BulkEditMetaQuery) error {
-	if json.Valid([]byte(query.Meta)) == false {
+	if !json.Valid([]byte(query.Meta)) {
 		return errors.New("invalid json")
 	}
 

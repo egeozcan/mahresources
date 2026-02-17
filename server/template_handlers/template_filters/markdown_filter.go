@@ -13,11 +13,11 @@ func markDownFilter(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *pong
 	interfaceVal := in.Interface()
 	var md string
 
-	switch interfaceVal.(type) {
+	switch v := interfaceVal.(type) {
 	case string:
-		md = interfaceVal.(string)
+		md = v
 	case *string:
-		md = *interfaceVal.(*string)
+		md = *v
 	}
 
 	converter := goldmark.New(

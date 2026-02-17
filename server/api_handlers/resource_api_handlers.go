@@ -166,7 +166,7 @@ func GetResourceUploadHandler(ctx interfaces.ResourceCreator) func(writer http.R
 
 		if len(errorMessages) > 0 {
 			messageText := strings.Join(errorMessages, ", ")
-			aggregateError := errors.New(fmt.Sprintf("following errors were encountered: %v", messageText))
+			aggregateError := fmt.Errorf("following errors were encountered: %v", messageText)
 			http_utils.HandleError(aggregateError, writer, request, http.StatusInternalServerError)
 			return
 		}

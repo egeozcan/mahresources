@@ -196,7 +196,7 @@ func (r *Registry) generateOperation(route RouteInfo) *openapi3.Operation {
 			}
 			p.Schema = openapi3.NewSchemaRef("", arrSchema)
 			p.Style = "form"
-			p.Explode = openapi3.BoolPtr(true)
+			p.Explode = openapi3.Ptr(true)
 		}
 
 		op.Parameters = append(op.Parameters, &openapi3.ParameterRef{Value: p})

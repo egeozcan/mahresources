@@ -208,13 +208,13 @@ func getPathExtensionOptions(url *url.URL, options *[]*SelectOption) *[]*SelectO
 }
 
 func dereference(v interface{}) interface{} {
-	switch v.(type) {
+	switch v := v.(type) {
 	case *uint:
-		return *v.(*uint)
+		return *v
 	case *string:
-		return *v.(*string)
+		return *v
 	case *time.Time:
-		return *v.(*time.Time)
+		return *v
 	default:
 		return v
 	}

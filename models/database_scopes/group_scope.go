@@ -38,11 +38,11 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 			childAdded = true
 		}
 
-		if query.Ids != nil && len(query.Ids) > 0 {
+		if len(query.Ids) > 0 {
 			dbQuery = dbQuery.Where("groups.id IN (?)", query.Ids)
 		}
 
-		if query.Tags != nil && len(query.Tags) > 0 {
+		if len(query.Tags) > 0 {
 			subSelectCondition := originalDB.
 				Where("groups.id = gt.group_id")
 
@@ -65,7 +65,7 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 			dbQuery = dbQuery.Where("(?) = ?", subSelect, len(query.Tags))
 		}
 
-		if query.Notes != nil && len(query.Notes) > 0 {
+		if len(query.Notes) > 0 {
 			justRelatedNotesSubQuery := originalDB.
 				Table("notes n").
 				Select("count(*)").
@@ -85,7 +85,7 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 			dbQuery = dbQuery.Where("(?) + (?) = ?", justRelatedNotesSubQuery, justOwnedNotesSubquery, len(query.Notes))
 		}
 
-		if query.Resources != nil && len(query.Resources) > 0 {
+		if len(query.Resources) > 0 {
 			justRelatedResourcesQuery := originalDB.
 				Table("resources r").
 				Select("count(*)").
@@ -105,7 +105,7 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 			dbQuery = dbQuery.Where("(?) + (?) = ?", justRelatedResourcesQuery, justOwnedResourcesQuery, len(query.Resources))
 		}
 
-		if query.Groups != nil && len(query.Groups) > 0 {
+		if len(query.Groups) > 0 {
 			dbQuery = dbQuery.Where(
 				`
 					(

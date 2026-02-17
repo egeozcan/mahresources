@@ -421,13 +421,13 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 			} else {
 				tx.Rollback()
 			}
-			return nil, errors.New(fmt.Sprintf("existing resource (%v) with same parent", existingResource.ID))
+			return nil, fmt.Errorf("existing resource (%v) with same parent", existingResource.ID)
 		}
 
 		for _, group := range existingResource.Groups {
 			if resourceQuery.OwnerId == group.ID {
 				tx.Rollback()
-				return nil, errors.New(fmt.Sprintf("existing resource (%v) with same relation", existingResource.ID))
+				return nil, fmt.Errorf("existing resource (%v) with same relation", existingResource.ID)
 			}
 		}
 

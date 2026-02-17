@@ -301,7 +301,7 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 
 	for i, id := range loserIds {
 		if id == 0 {
-			return errors.New(fmt.Sprintf("loser number %v has 0 id", i+1))
+			return fmt.Errorf("loser number %v has 0 id", i+1)
 		}
 
 		if id == winnerId {

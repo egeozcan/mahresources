@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -75,7 +74,7 @@ func (fs *LocalFilesystemLoader) setBaseDir(path string) error {
 
 // Get reads the path's content from your local filesystem.
 func (fs *LocalFilesystemLoader) Get(path string) (io.Reader, error) {
-	buf, err := ioutil.ReadFile(path)
+	buf, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}

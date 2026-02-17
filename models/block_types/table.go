@@ -5,12 +5,6 @@ import (
 	"errors"
 )
 
-// tableColumn represents a column definition in a table block.
-type tableColumn struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
-}
-
 // tableContent represents the content schema for table blocks.
 // Either columns+rows OR queryId should be provided, not both.
 // Columns can be either simple strings or objects with id/label.

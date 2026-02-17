@@ -25,7 +25,7 @@ func sQLToMap(rows *sqlx.Rows) ([]map[string]any, error) {
 	for rows.Next() {
 		columns := make([]any, len(cols))
 		columnPointers := make([]any, len(cols))
-		for i, _ := range columns {
+		for i := range columns {
 			columnPointers[i] = &columns[i]
 		}
 

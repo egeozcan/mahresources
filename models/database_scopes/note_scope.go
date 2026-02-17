@@ -15,7 +15,7 @@ func NoteQuery(query *query_models.NoteQuery, ignoreSort bool) func(db *gorm.DB)
 			dbQuery = ApplySortColumns(dbQuery, query.SortBy, "", "created_at desc")
 		}
 
-		if query.Tags != nil && len(query.Tags) > 0 {
+		if len(query.Tags) > 0 {
 			dbQuery = dbQuery.Where(
 				"(SELECT Count(*) FROM note_tags at WHERE at.tag_id IN ? AND at.note_id = notes.id) = ?",
 				query.Tags,
@@ -23,11 +23,11 @@ func NoteQuery(query *query_models.NoteQuery, ignoreSort bool) func(db *gorm.DB)
 			)
 		}
 
-		if query.Ids != nil && len(query.Ids) > 0 {
+		if len(query.Ids) > 0 {
 			dbQuery = dbQuery.Where("notes.id IN (?)", query.Ids)
 		}
 
-		if query.Groups != nil && len(query.Groups) > 0 {
+		if len(query.Groups) > 0 {
 			dbQuery = dbQuery.Where(
 				`
 					(

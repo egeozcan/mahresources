@@ -15,7 +15,7 @@ func base64Filter(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *pongo2
 
 	input := i.([]byte)
 
-	if input == nil || len(input) == 0 {
+	if len(input) == 0 {
 		return pongo2.AsValue(""), nil
 	}
 

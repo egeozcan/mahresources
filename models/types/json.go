@@ -17,14 +17,14 @@ type JsonOperation string
 
 const (
 	OperatorEquals              JsonOperation = "="
-	OperatorLike                              = "LIKE"
-	OperatorNotEquals                         = "<>"
-	OperatorNotLike                           = "NOT LIKE"
-	OperatorGreaterThan                       = ">"
-	OperatorGreaterThanOrEquals               = ">="
-	OperatorLessThan                          = "<"
-	OperatorLessThanOrEquals                  = "<="
-	OperatorHasKeys                           = "HAS_KEYS"
+	OperatorLike                JsonOperation = "LIKE"
+	OperatorNotEquals           JsonOperation = "<>"
+	OperatorNotLike             JsonOperation = "NOT LIKE"
+	OperatorGreaterThan         JsonOperation = ">"
+	OperatorGreaterThanOrEquals JsonOperation = ">="
+	OperatorLessThan            JsonOperation = "<"
+	OperatorLessThanOrEquals    JsonOperation = "<="
+	OperatorHasKeys             JsonOperation = "HAS_KEYS"
 )
 
 // JSON defined JSON data type, need to implements driver.Valuer, sql.Scanner interface

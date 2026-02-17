@@ -100,7 +100,7 @@ func (g *SchemaGenerator) GenerateQueryParams(t reflect.Type) openapi3.Parameter
 		// Arrays in query params need special handling
 		if field.Type.Kind() == reflect.Slice {
 			param.Style = "form"
-			param.Explode = openapi3.BoolPtr(true)
+			param.Explode = openapi3.Ptr(true)
 		}
 
 		params = append(params, &openapi3.ParameterRef{Value: param})

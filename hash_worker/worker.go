@@ -79,11 +79,6 @@ func (w *HashWorker) logError(message string, details map[string]interface{}) {
 	}
 }
 
-// logInfo is a convenience wrapper for fmt.Sprintf + logProgress
-func (w *HashWorker) logInfo(format string, args ...interface{}) {
-	w.logProgress(fmt.Sprintf(format, args...), nil)
-}
-
 // Start begins the background hash processing.
 func (w *HashWorker) Start() {
 	if w.config.Disabled {

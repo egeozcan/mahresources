@@ -2,7 +2,6 @@ package models
 
 import (
 	"mahresources/models/types"
-	"strings"
 	"time"
 )
 
@@ -45,17 +44,6 @@ func (g Group) GetName() string {
 }
 
 func (g Group) GetDescription() string { return g.Description }
-
-func (g Group) initials() string {
-	res := ""
-
-	if len(g.Name) > 0 {
-		r := firstRune(g.Name)
-		res = string(r)
-	}
-
-	return strings.ToUpper(res)
-}
 
 func limit(str string, maxLen int) string {
 	if len(str) < maxLen {

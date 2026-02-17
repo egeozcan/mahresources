@@ -15,10 +15,6 @@ type Tag struct {
 	Groups      []*Group    `gorm:"many2many:group_tags;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 }
 
-func (t Tag) setId(id uint) {
-	t.ID = id
-}
-
 func (t Tag) GetId() uint {
 	return t.ID
 }

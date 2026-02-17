@@ -74,10 +74,12 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(
 	}
 
 	// Attempt to find or create a null thumbnail (original image without size)
-	nullThumbnail, fileBytes, err := ctx.getOrCreateNullThumbnail(resource, fs, httpContext)
+	nullThumbnail, _, err := ctx.getOrCreateNullThumbnail(resource, fs, httpContext)
 	if err != nil {
 		return nil, fmt.Errorf("error handling null thumbnail: %w", err)
 	}
+
+	var fileBytes []byte
 
 	// Depending on the resource's content type, generate the appropriate thumbnail
 	if nullThumbnail.ID != 0 {
@@ -1092,7 +1094,7 @@ func (ctx *MahresourcesContext) GetFsForStorageLocation(storageLocation *string)
 		altFs, ok := ctx.altFileSystems[*storageLocation]
 
 		if !ok {
-			return nil, errors.New(fmt.Sprintf("alt fs '%v' is not attached", *storageLocation))
+			return nil, fmt.Errorf("alt fs '%v' is not attached", *storageLocation)
 		}
 
 		return altFs, nil

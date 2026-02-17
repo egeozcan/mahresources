@@ -15,11 +15,11 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 			dbQuery = ApplySortColumns(dbQuery, query.SortBy, "", "created_at desc")
 		}
 
-		if query.Ids != nil && len(query.Ids) > 0 {
+		if len(query.Ids) > 0 {
 			dbQuery = dbQuery.Where("resources.id IN (?)", query.Ids)
 		}
 
-		if query.Tags != nil && len(query.Tags) > 0 {
+		if len(query.Tags) > 0 {
 			subQuery := originalDb.
 				Table("resource_tags rt").
 				Where("rt.tag_id IN ?", query.Tags).
@@ -33,7 +33,7 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 			)
 		}
 
-		if query.Groups != nil && len(query.Groups) > 0 {
+		if len(query.Groups) > 0 {
 			dbQuery = dbQuery.Where(`
 				resources.id IN (
 					WITH cte AS (
@@ -51,7 +51,7 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 			)
 		}
 
-		if query.Notes != nil && len(query.Notes) > 0 {
+		if len(query.Notes) > 0 {
 			subQuery := originalDb.
 				Table("resource_notes rn").
 				Where("rn.note_id IN ?", query.Notes).
