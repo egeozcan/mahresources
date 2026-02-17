@@ -14,6 +14,8 @@ type Config struct {
 	SimilarityThreshold int
 	// Disabled prevents the hash worker from starting.
 	Disabled bool
+	// CacheSize is the maximum number of entries in the hash LRU cache.
+	CacheSize int
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -24,5 +26,6 @@ func DefaultConfig() Config {
 		PollInterval:        time.Minute,
 		SimilarityThreshold: 10,
 		Disabled:            false,
+		CacheSize:           100000,
 	}
 }

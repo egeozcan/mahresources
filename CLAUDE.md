@@ -132,6 +132,7 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-hash-poll-interval` | `HASH_POLL_INTERVAL` | Time between batch cycles (default: 1m) |
 | `-hash-similarity-threshold` | `HASH_SIMILARITY_THRESHOLD` | Max Hamming distance for similarity (default: 10) |
 | `-hash-worker-disabled` | `HASH_WORKER_DISABLED=1` | Disable background hash worker |
+| `-hash-cache-size` | `HASH_CACHE_SIZE` | Maximum entries in the hash similarity LRU cache (default: 100000) |
 
 Alternative file systems via flags use format `-alt-fs=key:path` (can be repeated).
 Via env vars, use `FILE_ALT_COUNT=N` with `FILE_ALT_NAME_1`, `FILE_ALT_PATH_1`, etc.

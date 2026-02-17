@@ -102,6 +102,7 @@ func main() {
 	hashPollInterval := flag.Duration("hash-poll-interval", parseDurationEnv("HASH_POLL_INTERVAL", time.Minute), "Time between batch processing cycles (env: HASH_POLL_INTERVAL)")
 	hashSimilarityThreshold := flag.Int("hash-similarity-threshold", parseIntEnv("HASH_SIMILARITY_THRESHOLD", 10), "Maximum Hamming distance for similarity (env: HASH_SIMILARITY_THRESHOLD)")
 	hashWorkerDisabled := flag.Bool("hash-worker-disabled", os.Getenv("HASH_WORKER_DISABLED") == "1", "Disable hash worker (env: HASH_WORKER_DISABLED=1)")
+	hashCacheSize := flag.Int("hash-cache-size", parseIntEnv("HASH_CACHE_SIZE", 100000), "Maximum entries in the hash similarity cache (env: HASH_CACHE_SIZE)")
 
 	// Video thumbnail options
 	videoThumbTimeout := flag.Duration("video-thumb-timeout", parseDurationEnv("VIDEO_THUMB_TIMEOUT", 30*time.Second), "Timeout for video thumbnail ffmpeg invocation (env: VIDEO_THUMB_TIMEOUT)")
@@ -331,6 +332,7 @@ func main() {
 		PollInterval:        *hashPollInterval,
 		SimilarityThreshold: *hashSimilarityThreshold,
 		Disabled:            *hashWorkerDisabled,
+		CacheSize:           *hashCacheSize,
 	}
 
 	// Build alt filesystems map for hash worker

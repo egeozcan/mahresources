@@ -15,6 +15,7 @@ import (
 	_ "golang.org/x/image/webp"
 
 	"github.com/Nr90/imgsim"
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/spf13/afero"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -36,10 +37,8 @@ type HashWorker struct {
 	config    Config
 	appLogger AppLogger
 
-	// hashCache maps resource ID to DHash for fast similarity lookups
-	hashCache   map[uint]uint64
-	cacheMutex  sync.RWMutex
-	cacheLoaded bool
+	// hashCache is a bounded LRU cache mapping resource ID to DHash
+	hashCache *lru.Cache[uint, uint64]
 
 	// hashQueue receives resource IDs for immediate async processing
 	hashQueue chan uint
@@ -51,13 +50,19 @@ type HashWorker struct {
 // New creates a new HashWorker.
 // appLogger is optional - if nil, progress will only be logged to stdout.
 func New(db *gorm.DB, fs afero.Fs, altFS map[string]afero.Fs, config Config, appLogger AppLogger) *HashWorker {
+	cacheSize := config.CacheSize
+	if cacheSize <= 0 {
+		cacheSize = 100000
+	}
+	cache, _ := lru.New[uint, uint64](cacheSize)
+
 	return &HashWorker{
 		db:        db,
 		fs:        fs,
 		altFS:     altFS,
 		config:    config,
 		appLogger: appLogger,
-		hashCache: make(map[uint]uint64),
+		hashCache: cache,
 		hashQueue: make(chan uint, 1000), // Buffer for on-upload async processing
 		stopCh:    make(chan struct{}),
 	}
@@ -270,8 +275,10 @@ func (w *HashWorker) hashNewResources() {
 	w.logProgress(fmt.Sprintf("Hash worker: hashing %d resources (remaining: %d)", len(resources), totalRemaining),
 		map[string]interface{}{"batch_size": len(resources), "remaining": totalRemaining})
 
-	// Ensure cache is loaded
-	w.ensureCacheLoaded()
+	// Warm cache if needed
+	if w.hashCache.Len() == 0 {
+		w.warmCache()
+	}
 
 	// Process with concurrency limit
 	sem := make(chan struct{}, w.config.WorkerCount)
@@ -310,34 +317,47 @@ func (w *HashWorker) processResource(resourceID uint) {
 		return
 	}
 
-	w.ensureCacheLoaded()
+	if w.hashCache.Len() == 0 {
+		w.warmCache()
+	}
 	w.hashAndStoreSimilarities(resource)
 }
 
-func (w *HashWorker) ensureCacheLoaded() {
-	w.cacheMutex.Lock()
-	defer w.cacheMutex.Unlock()
-
-	if w.cacheLoaded {
-		return
+func (w *HashWorker) warmCache() {
+	// Load hashes in pages to seed the LRU cache without loading everything at once
+	batchSize := w.config.CacheSize
+	if batchSize > 50000 {
+		batchSize = 50000
 	}
+	offset := 0
 
-	var hashes []models.ImageHash
-	if err := w.db.Select("resource_id, d_hash, d_hash_int").Find(&hashes).Error; err != nil {
-		log.Printf("Hash worker: error loading hash cache: %v", err)
-		return
-	}
-
-	for _, h := range hashes {
-		if h.ResourceId != nil {
-			w.hashCache[*h.ResourceId] = h.GetDHash()
+	for {
+		var hashes []models.ImageHash
+		if err := w.db.Select("resource_id, d_hash, d_hash_int").
+			Offset(offset).Limit(batchSize).
+			Find(&hashes).Error; err != nil {
+			log.Printf("Hash worker: error warming cache: %v", err)
+			return
 		}
+
+		if len(hashes) == 0 {
+			break
+		}
+
+		for _, h := range hashes {
+			if h.ResourceId != nil {
+				w.hashCache.Add(*h.ResourceId, h.GetDHash())
+			}
+		}
+
+		if w.hashCache.Len() >= w.config.CacheSize {
+			break // Cache is full
+		}
+
+		offset += batchSize
 	}
 
-	w.cacheLoaded = true
-	// Log cache size for memory monitoring (each entry ~24 bytes with map overhead)
-	estimatedMB := float64(len(w.hashCache)*24) / (1024 * 1024)
-	log.Printf("Hash worker: loaded %d hashes into cache (estimated %.1f MB)", len(w.hashCache), estimatedMB)
+	log.Printf("Hash worker: cache warmed with %d entries (max %d)", w.hashCache.Len(), w.config.CacheSize)
 }
 
 func (w *HashWorker) hashAndStoreSimilarities(resource models.Resource) {
@@ -394,9 +414,7 @@ func (w *HashWorker) hashAndStoreSimilarities(resource models.Resource) {
 	// Update cache BEFORE finding similarities to avoid race condition
 	// where concurrent goroutines miss detecting similarities between
 	// resources being processed simultaneously
-	w.cacheMutex.Lock()
-	w.hashCache[resource.ID] = dHashInt
-	w.cacheMutex.Unlock()
+	w.hashCache.Add(resource.ID, dHashInt)
 
 	// Find and store similarities
 	w.findAndStoreSimilarities(resource.ID, dHashInt)
@@ -405,9 +423,12 @@ func (w *HashWorker) hashAndStoreSimilarities(resource models.Resource) {
 func (w *HashWorker) findAndStoreSimilarities(resourceID uint, dHash uint64) {
 	var similarities []models.ResourceSimilarity
 
-	w.cacheMutex.RLock()
-	for otherID, otherHash := range w.hashCache {
+	for _, otherID := range w.hashCache.Keys() {
 		if otherID == resourceID {
+			continue
+		}
+		otherHash, ok := w.hashCache.Peek(otherID)
+		if !ok {
 			continue
 		}
 
@@ -426,7 +447,6 @@ func (w *HashWorker) findAndStoreSimilarities(resourceID uint, dHash uint64) {
 			})
 		}
 	}
-	w.cacheMutex.RUnlock()
 
 	if len(similarities) == 0 {
 		return

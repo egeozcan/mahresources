@@ -94,10 +94,9 @@ func TestHashWorker_FindSimilarities(t *testing.T) {
 
 	// Seed cache with some hashes
 	// Use values without high bit set to avoid SQLite uint64 limitations
-	w.hashCache[1] = 0x7F00FF00FF00FF00 // Base hash
-	w.hashCache[2] = 0x7F00FF00FF00FF01 // 1 bit different (similar)
-	w.hashCache[3] = 0x00FF00FF00FF00FF // Many bits different (not similar)
-	w.cacheLoaded = true
+	w.hashCache.Add(1, 0x7F00FF00FF00FF00) // Base hash
+	w.hashCache.Add(2, 0x7F00FF00FF00FF01) // 1 bit different (similar)
+	w.hashCache.Add(3, 0x00FF00FF00FF00FF) // Many bits different (not similar)
 
 	// Find similarities for a new hash that's similar to #1 and #2
 	newHash := uint64(0x7F00FF00FF00FF00) // Identical to #1
