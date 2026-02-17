@@ -99,6 +99,11 @@ func (ctx *MahresourcesContext) GetVersionByNumber(resourceID uint, versionNumbe
 
 // UploadNewVersion uploads a new version of an existing resource
 func (ctx *MahresourcesContext) UploadNewVersion(resourceID uint, file multipart.File, header *multipart.FileHeader, comment string) (*models.ResourceVersion, error) {
+	// Serialize per-resource to prevent version number races and
+	// lazy migration conflicts under concurrent uploads
+	ctx.locks.VersionUploadLock.Acquire(resourceID)
+	defer ctx.locks.VersionUploadLock.Release(resourceID)
+
 	// Verify resource exists
 	resource, err := ctx.GetResource(resourceID)
 	if err != nil {
@@ -281,6 +286,11 @@ func buildVersionResourcePath(hash, ext string) string {
 
 // RestoreVersion creates a new version by copying metadata from an old version
 func (ctx *MahresourcesContext) RestoreVersion(resourceID, versionID uint, comment string) (*models.ResourceVersion, error) {
+	// Serialize per-resource to prevent version number races and
+	// lazy migration conflicts under concurrent uploads
+	ctx.locks.VersionUploadLock.Acquire(resourceID)
+	defer ctx.locks.VersionUploadLock.Release(resourceID)
+
 	sourceVersion, err := ctx.GetVersion(versionID)
 	if err != nil {
 		return nil, fmt.Errorf("version not found: %w", err)

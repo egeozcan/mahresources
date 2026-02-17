@@ -100,6 +100,7 @@ type MahresourcesLocks struct {
 	VideoThumbnailGenerationLock      *lib.IDLock[uint]
 	OfficeDocumentGenerationLock      *lib.IDLock[uint]
 	ResourceHashLock                  *lib.IDLock[string]
+	VersionUploadLock                 *lib.IDLock[uint]
 }
 
 type MahresourcesContext struct {
@@ -147,6 +148,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 	videoThumbnailGenerationLock := lib.NewIDLock[uint](videoThumbConcurrency, nil)
 	officeDocumentGenerationLock := lib.NewIDLock[uint](uint(2), nil)
 	resourceHashLock := lib.NewIDLock[string](uint(0), nil)
+	versionUploadLock := lib.NewIDLock[uint](uint(0), nil)
 
 	// Initialize search cache with 60 second TTL and 1000 max entries
 	searchCache := NewSearchCache(60*time.Second, 1000)
@@ -173,6 +175,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 			VideoThumbnailGenerationLock: videoThumbnailGenerationLock,
 			OfficeDocumentGenerationLock: officeDocumentGenerationLock,
 			ResourceHashLock:             resourceHashLock,
+			VersionUploadLock:            versionUploadLock,
 		},
 		searchCache: searchCache,
 		icsCache:    icsCache,
