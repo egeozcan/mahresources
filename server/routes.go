@@ -225,7 +225,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	tagReader, tagWriter := appContext.TagCRUD()
 	tagFactory := api_handlers.NewCRUDHandlerFactory("tag", "tags", tagReader, tagWriter)
 	router.Methods(http.MethodGet).Path("/v1/tags").HandlerFunc(tagFactory.ListHandler())
-	router.Methods(http.MethodPost).Path("/v1/tag").HandlerFunc(api_handlers.CreateTagHandler(appContext, appContext))
+	router.Methods(http.MethodPost).Path("/v1/tag").HandlerFunc(api_handlers.CreateTagHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/tag/delete").HandlerFunc(tagFactory.DeleteHandler())
 	router.Methods(http.MethodPost).Path("/v1/tag/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Tag](basicTagWriter, "tag"))
 	router.Methods(http.MethodPost).Path("/v1/tag/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.Tag](basicTagWriter, "tag"))

@@ -190,13 +190,20 @@ func (f *CRUDHandlerFactory[T, Q, C]) CreateHandler() http.HandlerFunc {
 	}
 }
 
-// CreateTagHandler returns a handler that creates or updates tags based on ID presence.
-// Tags use TagCreator for both operations - ID=0 means create, ID>0 means update.
-func CreateTagHandler(reader interfaces.TagsReader, writer interfaces.TagsWriter) http.HandlerFunc {
+// createOrUpdateHandler creates an HTTP handler for create-or-update operations.
+// getID extracts the ID from the decoded request struct.
+// create and update are the respective operations.
+// entityName is used for redirect URL construction (e.g., "tag", "category").
+func createOrUpdateHandler[T any](
+	entityName string,
+	getID func(*T) uint,
+	create func(*T) (interface{}, error),
+	update func(*T) (interface{}, error),
+) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var creator query_models.TagCreator
+		var editor T
 
-		if err := tryFillStructValuesFromRequest(&creator, r); err != nil {
+		if err := tryFillStructValuesFromRequest(&editor, r); err != nil {
 			http_utils.HandleError(err, w, r, http.StatusBadRequest)
 			return
 		}
@@ -204,10 +211,10 @@ func CreateTagHandler(reader interfaces.TagsReader, writer interfaces.TagsWriter
 		var result interface{}
 		var err error
 
-		if creator.ID != 0 {
-			result, err = writer.UpdateTag(&creator)
+		if getID(&editor) != 0 {
+			result, err = update(&editor)
 		} else {
-			result, err = writer.CreateTag(&creator)
+			result, err = create(&editor)
 		}
 
 		if err != nil {
@@ -215,10 +222,9 @@ func CreateTagHandler(reader interfaces.TagsReader, writer interfaces.TagsWriter
 			return
 		}
 
-		// Get ID from result for redirect - this works because our Tag model has GetId()
 		type hasID interface{ GetId() uint }
 		if entity, ok := result.(hasID); ok {
-			redirectURL := "/tag?id=" + strconv.Itoa(int(entity.GetId()))
+			redirectURL := "/" + entityName + "?id=" + strconv.Itoa(int(entity.GetId()))
 			if http_utils.RedirectIfHTMLAccepted(w, r, redirectURL) {
 				return
 			}
@@ -227,117 +233,47 @@ func CreateTagHandler(reader interfaces.TagsReader, writer interfaces.TagsWriter
 		w.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(w).Encode(result)
 	}
+}
+
+// CreateTagHandler returns a handler that creates or updates tags based on ID presence.
+// Tags use TagCreator for both operations - ID=0 means create, ID>0 means update.
+func CreateTagHandler(writer interfaces.TagsWriter) http.HandlerFunc {
+	return createOrUpdateHandler(
+		"tag",
+		func(c *query_models.TagCreator) uint { return c.ID },
+		func(c *query_models.TagCreator) (interface{}, error) { return writer.CreateTag(c) },
+		func(c *query_models.TagCreator) (interface{}, error) { return writer.UpdateTag(c) },
+	)
 }
 
 // CreateCategoryHandler returns a handler that creates or updates categories.
 // Categories use CategoryCreator for create and CategoryEditor (with ID) for update.
 func CreateCategoryHandler(writer interfaces.CategoryWriter) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var editor query_models.CategoryEditor
-
-		if err := tryFillStructValuesFromRequest(&editor, r); err != nil {
-			http_utils.HandleError(err, w, r, http.StatusBadRequest)
-			return
-		}
-
-		var result interface{}
-		var err error
-
-		if editor.ID != 0 {
-			result, err = writer.UpdateCategory(&editor)
-		} else {
-			result, err = writer.CreateCategory(&editor.CategoryCreator)
-		}
-
-		if err != nil {
-			http_utils.HandleError(err, w, r, http.StatusBadRequest)
-			return
-		}
-
-		type hasID interface{ GetId() uint }
-		if entity, ok := result.(hasID); ok {
-			redirectURL := "/category?id=" + strconv.Itoa(int(entity.GetId()))
-			if http_utils.RedirectIfHTMLAccepted(w, r, redirectURL) {
-				return
-			}
-		}
-
-		w.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(w).Encode(result)
-	}
+	return createOrUpdateHandler(
+		"category",
+		func(e *query_models.CategoryEditor) uint { return e.ID },
+		func(e *query_models.CategoryEditor) (interface{}, error) { return writer.CreateCategory(&e.CategoryCreator) },
+		func(e *query_models.CategoryEditor) (interface{}, error) { return writer.UpdateCategory(e) },
+	)
 }
 
 // CreateResourceCategoryHandler returns a handler that creates or updates resource categories.
 func CreateResourceCategoryHandler(writer interfaces.ResourceCategoryWriter) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var editor query_models.ResourceCategoryEditor
-
-		if err := tryFillStructValuesFromRequest(&editor, r); err != nil {
-			http_utils.HandleError(err, w, r, http.StatusBadRequest)
-			return
-		}
-
-		var result interface{}
-		var err error
-
-		if editor.ID != 0 {
-			result, err = writer.UpdateResourceCategory(&editor)
-		} else {
-			result, err = writer.CreateResourceCategory(&editor.ResourceCategoryCreator)
-		}
-
-		if err != nil {
-			http_utils.HandleError(err, w, r, http.StatusBadRequest)
-			return
-		}
-
-		type hasID interface{ GetId() uint }
-		if entity, ok := result.(hasID); ok {
-			redirectURL := "/resourceCategory?id=" + strconv.Itoa(int(entity.GetId()))
-			if http_utils.RedirectIfHTMLAccepted(w, r, redirectURL) {
-				return
-			}
-		}
-
-		w.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(w).Encode(result)
-	}
+	return createOrUpdateHandler(
+		"resourceCategory",
+		func(e *query_models.ResourceCategoryEditor) uint { return e.ID },
+		func(e *query_models.ResourceCategoryEditor) (interface{}, error) { return writer.CreateResourceCategory(&e.ResourceCategoryCreator) },
+		func(e *query_models.ResourceCategoryEditor) (interface{}, error) { return writer.UpdateResourceCategory(e) },
+	)
 }
 
 // CreateQueryHandler returns a handler that creates or updates queries.
 // Queries use QueryCreator for create and QueryEditor (with ID) for update.
 func CreateQueryHandler(writer interfaces.QueryWriter) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var editor query_models.QueryEditor
-
-		if err := tryFillStructValuesFromRequest(&editor, r); err != nil {
-			http_utils.HandleError(err, w, r, http.StatusBadRequest)
-			return
-		}
-
-		var result interface{}
-		var err error
-
-		if editor.ID != 0 {
-			result, err = writer.UpdateQuery(&editor)
-		} else {
-			result, err = writer.CreateQuery(&editor.QueryCreator)
-		}
-
-		if err != nil {
-			http_utils.HandleError(err, w, r, http.StatusBadRequest)
-			return
-		}
-
-		type hasID interface{ GetId() uint }
-		if entity, ok := result.(hasID); ok {
-			redirectURL := "/query?id=" + strconv.Itoa(int(entity.GetId()))
-			if http_utils.RedirectIfHTMLAccepted(w, r, redirectURL) {
-				return
-			}
-		}
-
-		w.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(w).Encode(result)
-	}
+	return createOrUpdateHandler(
+		"query",
+		func(e *query_models.QueryEditor) uint { return e.ID },
+		func(e *query_models.QueryEditor) (interface{}, error) { return writer.CreateQuery(&e.QueryCreator) },
+		func(e *query_models.QueryEditor) (interface{}, error) { return writer.UpdateQuery(e) },
+	)
 }
