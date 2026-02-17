@@ -29,6 +29,13 @@ func (ctx *MahresourcesContext) GetTag(id uint) (*models.Tag, error) {
 	return &tag, ctx.db.Preload(clause.Associations, pageLimit).First(&tag, id).Error
 }
 
+// GetTagByID returns a tag without preloading associations.
+// Use this for internal operations that only need the tag entity itself.
+func (ctx *MahresourcesContext) GetTagByID(id uint) (*models.Tag, error) {
+	var tag models.Tag
+	return &tag, ctx.db.First(&tag, id).Error
+}
+
 func (ctx *MahresourcesContext) GetTagsWithIds(ids *[]uint, limit int) ([]models.Tag, error) {
 	var tags []models.Tag
 

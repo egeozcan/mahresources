@@ -186,6 +186,13 @@ func (ctx *MahresourcesContext) GetGroup(id uint) (*models.Group, error) {
 	return &group, err
 }
 
+// GetGroupByID returns a group without preloading associations.
+// Use this for internal operations that only need the group entity itself.
+func (ctx *MahresourcesContext) GetGroupByID(id uint) (*models.Group, error) {
+	var group models.Group
+	return &group, ctx.db.First(&group, id).Error
+}
+
 func (ctx *MahresourcesContext) GetGroups(offset, maxResults int, query *query_models.GroupQuery) ([]models.Group, error) {
 	var groups []models.Group
 	groupScope := database_scopes.GroupQuery(query, false, ctx.db)

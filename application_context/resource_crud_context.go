@@ -17,6 +17,13 @@ func (ctx *MahresourcesContext) GetResource(id uint) (*models.Resource, error) {
 	return &resource, ctx.db.Preload(clause.Associations, pageLimit).First(&resource, id).Error
 }
 
+// GetResourceByID returns a resource without preloading associations.
+// Use this for internal operations that only need the resource entity itself.
+func (ctx *MahresourcesContext) GetResourceByID(id uint) (*models.Resource, error) {
+	var resource models.Resource
+	return &resource, ctx.db.First(&resource, id).Error
+}
+
 func (ctx *MahresourcesContext) GetSimilarResources(id uint) ([]*models.Resource, error) {
 	var resources []*models.Resource
 
