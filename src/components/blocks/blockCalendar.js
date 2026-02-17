@@ -377,13 +377,28 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
             })
           );
 
-          // Process successful fetches
+          // Process successful fetches - add all at once, then save+fetch once
+          let added = false;
           for (const result of results) {
             if (result.status === 'fulfilled') {
-              this.addCalendarFromResource(result.value.id, result.value.name);
+              const id = crypto.randomUUID();
+              const colorIndex = this.calendars.length % COLOR_PALETTE.length;
+              const newCal = {
+                id,
+                name: result.value.name || 'Calendar ' + (this.calendars.length + 1),
+                color: COLOR_PALETTE[colorIndex],
+                source: { type: 'resource', resourceId: result.value.id }
+              };
+              this.calendars.push(newCal);
+              this.calendarMeta[id] = { name: newCal.name, color: newCal.color };
+              added = true;
             } else {
               console.error('Failed to fetch resource:', result.reason);
             }
+          }
+          if (added) {
+            this.saveContent();
+            this.fetchEvents(true);
           }
         }
       });
