@@ -1152,8 +1152,11 @@ func (ctx *MahresourcesContext) SetResourceDimensions(resourceId uint, width, he
 }
 
 func (ctx *MahresourcesContext) RotateResource(resourceId uint, degrees int) error {
-	var resource models.Resource
+	// Acquire version lock to prevent concurrent version operations
+	ctx.locks.VersionUploadLock.Acquire(resourceId)
+	defer ctx.locks.VersionUploadLock.Release(resourceId)
 
+	var resource models.Resource
 	if err := ctx.db.First(&resource, resourceId).Error; err != nil {
 		return err
 	}
@@ -1162,21 +1165,23 @@ func (ctx *MahresourcesContext) RotateResource(resourceId uint, degrees int) err
 		return errors.New("not an image")
 	}
 
-	f, err := ctx.fs.Open(resource.GetCleanLocation())
+	// Use correct filesystem for this resource's storage location
+	fs, err := ctx.GetFsForStorageLocation(resource.StorageLocation)
+	if err != nil {
+		return err
+	}
 
+	f, err := fs.Open(resource.GetCleanLocation())
 	if err != nil {
 		return err
 	}
 
 	img, _, err := image.Decode(f)
-
 	if err != nil {
+		f.Close()
 		return err
 	}
-
-	if err := f.Close(); err != nil {
-		return err
-	}
+	f.Close()
 
 	rotatedImage := transform.Rotate(img, float64(degrees), &transform.RotationOptions{ResizeBounds: true})
 
@@ -1185,31 +1190,96 @@ func (ctx *MahresourcesContext) RotateResource(resourceId uint, degrees int) err
 		return err
 	}
 
-	newFile, err := ctx.fs.Create(resource.GetCleanLocation() + ".rotated")
-	if err != nil {
+	// Create a new version with the rotated content instead of overwriting in place.
+	// This preserves the original, updates the hash, and respects the versioning system.
+	rotatedBytes := buf.Bytes()
+	hash := computeSHA1(rotatedBytes)
+	contentType := detectContentType(rotatedBytes)
+	width, height := getDimensionsFromContent(rotatedBytes, contentType)
+	ext := getExtensionFromFilename(resource.Name, contentType)
+	if ext == "" {
+		ext = ".jpg" // Rotation always re-encodes as JPEG
+	}
+	location := buildVersionResourcePath(hash, ext)
+
+	// Store the rotated file (deduplication: skip if already exists)
+	if exists, _ := afero.Exists(ctx.fs, location); !exists {
+		if err := ctx.storeVersionFile(location, rotatedBytes); err != nil {
+			return err
+		}
+	}
+
+	// Ensure resource has versions (lazy migration)
+	var versionCount int64
+	ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceId).Count(&versionCount)
+	if versionCount == 0 {
+		v1 := models.ResourceVersion{
+			ResourceID:      resourceId,
+			VersionNumber:   1,
+			Hash:            resource.Hash,
+			HashType:        resource.HashType,
+			FileSize:        resource.FileSize,
+			ContentType:     resource.ContentType,
+			Width:           resource.Width,
+			Height:          resource.Height,
+			Location:        resource.Location,
+			StorageLocation: resource.StorageLocation,
+			Comment:         "Original (before rotation)",
+		}
+		if err := ctx.db.Create(&v1).Error; err != nil {
+			return fmt.Errorf("failed to create initial version: %w", err)
+		}
+	}
+
+	// Get next version number
+	var maxVersion int
+	ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceId).Select("COALESCE(MAX(version_number), 0)").Scan(&maxVersion)
+
+	version := models.ResourceVersion{
+		ResourceID:    resourceId,
+		VersionNumber: maxVersion + 1,
+		Hash:          hash,
+		HashType:      "SHA1",
+		FileSize:      int64(len(rotatedBytes)),
+		ContentType:   contentType,
+		Width:         width,
+		Height:        height,
+		Location:      location,
+		Comment:       fmt.Sprintf("Rotated %d degrees", degrees),
+	}
+
+	tx := ctx.db.Begin()
+	if err := tx.Create(&version).Error; err != nil {
+		tx.Rollback()
 		return err
 	}
 
-	if _, err := io.Copy(newFile, &buf); err != nil {
+	resourceUpdates := map[string]interface{}{
+		"current_version_id": version.ID,
+		"hash":               version.Hash,
+		"location":           version.Location,
+		"storage_location":   version.StorageLocation,
+		"content_type":       version.ContentType,
+		"width":              version.Width,
+		"height":             version.Height,
+		"file_size":          version.FileSize,
+	}
+	if err := tx.Model(&models.Resource{}).Where("id = ?", resourceId).Updates(resourceUpdates).Error; err != nil {
+		tx.Rollback()
 		return err
 	}
 
-	if err := ctx.fs.Remove(resource.GetCleanLocation()); err != nil {
+	// Delete cached thumbnails
+	if err := tx.Where("resource_id = ?", resourceId).Delete(&models.Preview{}).Error; err != nil {
+		tx.Rollback()
 		return err
 	}
 
-	if err := newFile.Close(); err != nil {
+	if err := tx.Commit().Error; err != nil {
 		return err
 	}
 
-	if err := ctx.fs.Rename(resource.GetCleanLocation()+".rotated", resource.GetCleanLocation()); err != nil {
-		return err
-	}
+	ctx.OnResourceFileChanged(resourceId)
 
-	// delete the thumbnail(s)
-	if err := ctx.db.Where("resource_id = ?", resourceId).Delete(&models.Preview{}).Error; err != nil {
-		return err
-	}
-
-	return ctx.RecalculateResourceDimensions(&query_models.EntityIdQuery{ID: resourceId})
+	return nil
 }
