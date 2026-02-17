@@ -50,11 +50,10 @@ type HashWorker struct {
 // New creates a new HashWorker.
 // appLogger is optional - if nil, progress will only be logged to stdout.
 func New(db *gorm.DB, fs afero.Fs, altFS map[string]afero.Fs, config Config, appLogger AppLogger) *HashWorker {
-	cacheSize := config.CacheSize
-	if cacheSize <= 0 {
-		cacheSize = 100000
+	if config.CacheSize <= 0 {
+		config.CacheSize = 100000
 	}
-	cache, _ := lru.New[uint, uint64](cacheSize)
+	cache, _ := lru.New[uint, uint64](config.CacheSize)
 
 	return &HashWorker{
 		db:        db,

@@ -146,14 +146,16 @@ func (ctx *MahresourcesContext) BulkReplaceTagsFromResources(query *query_models
 		return nil
 	}
 
+	uniqueEditedIds := deduplicateUints(query.EditedId)
+
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		// Validate all tags exist
-		if len(query.EditedId) > 0 {
+		if len(uniqueEditedIds) > 0 {
 			var tagCount int64
-			if err := tx.Model(&models.Tag{}).Where("id IN ?", query.EditedId).Count(&tagCount).Error; err != nil {
+			if err := tx.Model(&models.Tag{}).Where("id IN ?", uniqueEditedIds).Count(&tagCount).Error; err != nil {
 				return err
 			}
-			if int(tagCount) != len(query.EditedId) {
+			if int(tagCount) != len(uniqueEditedIds) {
 				return fmt.Errorf("one or more tags not found")
 			}
 		}
@@ -164,7 +166,7 @@ func (ctx *MahresourcesContext) BulkReplaceTagsFromResources(query *query_models
 		}
 
 		// Add the new tags
-		for _, tagID := range query.EditedId {
+		for _, tagID := range uniqueEditedIds {
 			if err := tx.Exec(
 				"INSERT INTO resource_tags (resource_id, tag_id) SELECT id, ? FROM resources WHERE id IN ? ON CONFLICT DO NOTHING",
 				tagID, query.ID,
@@ -215,18 +217,20 @@ func (ctx *MahresourcesContext) BulkAddTagsToResources(query *query_models.BulkE
 		return nil
 	}
 
+	uniqueEditedIds := deduplicateUints(query.EditedId)
+
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		// Validate all tags exist (single query, no preloads)
 		var tagCount int64
-		if err := tx.Model(&models.Tag{}).Where("id IN ?", query.EditedId).Count(&tagCount).Error; err != nil {
+		if err := tx.Model(&models.Tag{}).Where("id IN ?", uniqueEditedIds).Count(&tagCount).Error; err != nil {
 			return err
 		}
-		if int(tagCount) != len(query.EditedId) {
+		if int(tagCount) != len(uniqueEditedIds) {
 			return fmt.Errorf("one or more tags not found")
 		}
 
 		// Batch insert: one INSERT per tag, skip conflicts
-		for _, tagID := range query.EditedId {
+		for _, tagID := range uniqueEditedIds {
 			if err := tx.Exec(
 				"INSERT INTO resource_tags (resource_id, tag_id) SELECT id, ? FROM resources WHERE id IN ? ON CONFLICT DO NOTHING",
 				tagID, query.ID,
@@ -240,7 +244,7 @@ func (ctx *MahresourcesContext) BulkAddTagsToResources(query *query_models.BulkE
 	if err == nil {
 		ctx.Logger().Info(models.LogActionUpdate, "resource", nil, "", "Bulk added tags to resources", map[string]interface{}{
 			"resourceIds": query.ID,
-			"tagIds":      query.EditedId,
+			"tagIds":      uniqueEditedIds,
 		})
 	}
 
@@ -252,16 +256,18 @@ func (ctx *MahresourcesContext) BulkAddGroupsToResources(query *query_models.Bul
 		return nil
 	}
 
+	uniqueEditedIds := deduplicateUints(query.EditedId)
+
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		var groupCount int64
-		if err := tx.Model(&models.Group{}).Where("id IN ?", query.EditedId).Count(&groupCount).Error; err != nil {
+		if err := tx.Model(&models.Group{}).Where("id IN ?", uniqueEditedIds).Count(&groupCount).Error; err != nil {
 			return err
 		}
-		if int(groupCount) != len(query.EditedId) {
+		if int(groupCount) != len(uniqueEditedIds) {
 			return fmt.Errorf("one or more groups not found")
 		}
 
-		for _, groupID := range query.EditedId {
+		for _, groupID := range uniqueEditedIds {
 			if err := tx.Exec(
 				"INSERT INTO groups_related_resources (resource_id, group_id) SELECT id, ? FROM resources WHERE id IN ? ON CONFLICT DO NOTHING",
 				groupID, query.ID,
@@ -385,18 +391,20 @@ func (ctx *MahresourcesContext) BulkDeleteResources(query *query_models.BulkQuer
 			continue
 		}
 
+		backupOK := false
 		file, openErr := action.SourceFS.Open(action.SourcePath)
 		if openErr == nil {
 			backup, createErr := ctx.fs.Create(action.BackupPath)
 			if createErr == nil {
-				io.Copy(backup, file)
+				_, copyErr := io.Copy(backup, file)
 				backup.Close()
+				backupOK = copyErr == nil
 			}
 			file.Close()
 		}
 
-		// Remove source file if no other references
-		if action.ShouldRemoveSource {
+		// Only remove source file if backup succeeded (or source couldn't be opened, meaning it's already gone)
+		if action.ShouldRemoveSource && (backupOK || openErr != nil) {
 			_ = action.SourceFS.Remove(action.SourcePath)
 		}
 	}

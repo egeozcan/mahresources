@@ -149,16 +149,18 @@ func (ctx *MahresourcesContext) BulkAddTagsToGroups(query *query_models.BulkEdit
 		return nil
 	}
 
+	uniqueEditedIds := deduplicateUints(query.EditedId)
+
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
 		var tagCount int64
-		if err := tx.Model(&models.Tag{}).Where("id IN ?", query.EditedId).Count(&tagCount).Error; err != nil {
+		if err := tx.Model(&models.Tag{}).Where("id IN ?", uniqueEditedIds).Count(&tagCount).Error; err != nil {
 			return err
 		}
-		if int(tagCount) != len(query.EditedId) {
+		if int(tagCount) != len(uniqueEditedIds) {
 			return fmt.Errorf("one or more tags not found")
 		}
 
-		for _, tagID := range query.EditedId {
+		for _, tagID := range uniqueEditedIds {
 			if err := tx.Exec(
 				"INSERT INTO group_tags (group_id, tag_id) SELECT id, ? FROM groups WHERE id IN ? ON CONFLICT DO NOTHING",
 				tagID, query.ID,

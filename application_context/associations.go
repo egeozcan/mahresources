@@ -55,3 +55,16 @@ func ResourceFromID(id uint) models.Resource {
 func ResourcePtrFromID(id uint) *models.Resource {
 	return &models.Resource{ID: id}
 }
+
+// deduplicateUints returns a new slice with duplicate values removed, preserving order.
+func deduplicateUints(ids []uint) []uint {
+	seen := make(map[uint]struct{}, len(ids))
+	result := make([]uint, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			result = append(result, id)
+		}
+	}
+	return result
+}
