@@ -119,23 +119,15 @@ func (ctx *MahresourcesContext) ResourceMetaKeys() ([]interfaces.MetaKey, error)
 }
 
 func (ctx *MahresourcesContext) BulkRemoveTagsFromResources(query *query_models.BulkEditQuery) error {
-	err := ctx.db.Transaction(func(tx *gorm.DB) error {
-		tags := make([]*models.Tag, 0, len(query.EditedId))
-		for _, editedId := range query.EditedId {
-			tag, err := ctx.GetTag(editedId)
-			if err != nil {
-				return err
-			}
-			tags = append(tags, tag)
-		}
-
-		for _, id := range query.ID {
-			if deleteErr := tx.Model(&models.Resource{ID: id}).Association("Tags").Delete(tags); deleteErr != nil {
-				return deleteErr
-			}
-		}
-
+	if len(query.ID) == 0 || len(query.EditedId) == 0 {
 		return nil
+	}
+
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		return tx.Exec(
+			"DELETE FROM resource_tags WHERE resource_id IN ? AND tag_id IN ?",
+			query.ID, query.EditedId,
+		).Error
 	})
 
 	if err == nil {
@@ -149,27 +141,36 @@ func (ctx *MahresourcesContext) BulkRemoveTagsFromResources(query *query_models.
 }
 
 func (ctx *MahresourcesContext) BulkReplaceTagsFromResources(query *query_models.BulkEditQuery) error {
+	if len(query.ID) == 0 {
+		return nil
+	}
+
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
-		tags := make([]*models.Tag, len(query.EditedId))
-
-		for i, editedId := range query.EditedId {
-			tag, err := ctx.GetTag(editedId)
-
-			if err != nil {
+		// Validate all tags exist
+		if len(query.EditedId) > 0 {
+			var tagCount int64
+			if err := tx.Model(&models.Tag{}).Where("id IN ?", query.EditedId).Count(&tagCount).Error; err != nil {
 				return err
 			}
-
-			tags[i] = tag
-		}
-
-		for _, id := range query.ID {
-			appendErr := tx.Model(&models.Resource{ID: id}).Association("Tags").Replace(tags)
-
-			if appendErr != nil {
-				return appendErr
+			if int(tagCount) != len(query.EditedId) {
+				return fmt.Errorf("one or more tags not found")
 			}
 		}
 
+		// Remove all existing tags for these resources
+		if err := tx.Exec("DELETE FROM resource_tags WHERE resource_id IN ?", query.ID).Error; err != nil {
+			return err
+		}
+
+		// Add the new tags
+		for _, tagID := range query.EditedId {
+			if err := tx.Exec(
+				"INSERT INTO resource_tags (resource_id, tag_id) SELECT id, ? FROM resources WHERE id IN ? ON CONFLICT DO NOTHING",
+				tagID, query.ID,
+			).Error; err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 
@@ -209,22 +210,29 @@ func (ctx *MahresourcesContext) BulkAddMetaToResources(query *query_models.BulkE
 }
 
 func (ctx *MahresourcesContext) BulkAddTagsToResources(query *query_models.BulkEditQuery) error {
+	if len(query.ID) == 0 || len(query.EditedId) == 0 {
+		return nil
+	}
+
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
-		tags := make([]*models.Tag, 0, len(query.EditedId))
-		for _, editedId := range query.EditedId {
-			tag, err := ctx.GetTag(editedId)
-			if err != nil {
+		// Validate all tags exist (single query, no preloads)
+		var tagCount int64
+		if err := tx.Model(&models.Tag{}).Where("id IN ?", query.EditedId).Count(&tagCount).Error; err != nil {
+			return err
+		}
+		if int(tagCount) != len(query.EditedId) {
+			return fmt.Errorf("one or more tags not found")
+		}
+
+		// Batch insert: one INSERT per tag, skip conflicts
+		for _, tagID := range query.EditedId {
+			if err := tx.Exec(
+				"INSERT INTO resource_tags (resource_id, tag_id) SELECT id, ? FROM resources WHERE id IN ? ON CONFLICT DO NOTHING",
+				tagID, query.ID,
+			).Error; err != nil {
 				return err
 			}
-			tags = append(tags, tag)
 		}
-
-		for _, id := range query.ID {
-			if appendErr := tx.Model(&models.Resource{ID: id}).Association("Tags").Append(tags); appendErr != nil {
-				return appendErr
-			}
-		}
-
 		return nil
 	})
 
@@ -239,22 +247,27 @@ func (ctx *MahresourcesContext) BulkAddTagsToResources(query *query_models.BulkE
 }
 
 func (ctx *MahresourcesContext) BulkAddGroupsToResources(query *query_models.BulkEditQuery) error {
+	if len(query.ID) == 0 || len(query.EditedId) == 0 {
+		return nil
+	}
+
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
-		groups := make([]*models.Group, 0, len(query.EditedId))
-		for _, editedId := range query.EditedId {
-			group, err := ctx.GetGroup(editedId)
-			if err != nil {
+		var groupCount int64
+		if err := tx.Model(&models.Group{}).Where("id IN ?", query.EditedId).Count(&groupCount).Error; err != nil {
+			return err
+		}
+		if int(groupCount) != len(query.EditedId) {
+			return fmt.Errorf("one or more groups not found")
+		}
+
+		for _, groupID := range query.EditedId {
+			if err := tx.Exec(
+				"INSERT INTO groups_related_resources (resource_id, group_id) SELECT id, ? FROM resources WHERE id IN ? ON CONFLICT DO NOTHING",
+				groupID, query.ID,
+			).Error; err != nil {
 				return err
 			}
-			groups = append(groups, group)
 		}
-
-		for _, id := range query.ID {
-			if appendErr := tx.Model(&models.Resource{ID: id}).Association("Groups").Append(groups); appendErr != nil {
-				return appendErr
-			}
-		}
-
 		return nil
 	})
 

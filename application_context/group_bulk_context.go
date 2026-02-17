@@ -164,44 +164,41 @@ func (ctx *MahresourcesContext) GroupMetaKeys() ([]interfaces.MetaKey, error) {
 }
 
 func (ctx *MahresourcesContext) BulkAddTagsToGroups(query *query_models.BulkEditQuery) error {
+	if len(query.ID) == 0 || len(query.EditedId) == 0 {
+		return nil
+	}
+
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
-		tags := make([]*models.Tag, 0, len(query.EditedId))
-		for _, editedId := range query.EditedId {
-			tag, err := ctx.GetTag(editedId)
-			if err != nil {
+		var tagCount int64
+		if err := tx.Model(&models.Tag{}).Where("id IN ?", query.EditedId).Count(&tagCount).Error; err != nil {
+			return err
+		}
+		if int(tagCount) != len(query.EditedId) {
+			return fmt.Errorf("one or more tags not found")
+		}
+
+		for _, tagID := range query.EditedId {
+			if err := tx.Exec(
+				"INSERT INTO group_tags (group_id, tag_id) SELECT id, ? FROM groups WHERE id IN ? ON CONFLICT DO NOTHING",
+				tagID, query.ID,
+			).Error; err != nil {
 				return err
 			}
-			tags = append(tags, tag)
 		}
-
-		for _, groupId := range query.ID {
-			if appendErr := tx.Model(&models.Group{ID: groupId}).Association("Tags").Append(tags); appendErr != nil {
-				return appendErr
-			}
-		}
-
 		return nil
 	})
 }
 
 func (ctx *MahresourcesContext) BulkRemoveTagsFromGroups(query *query_models.BulkEditQuery) error {
-	return ctx.db.Transaction(func(tx *gorm.DB) error {
-		tags := make([]*models.Tag, 0, len(query.EditedId))
-		for _, editedId := range query.EditedId {
-			tag, err := ctx.GetTag(editedId)
-			if err != nil {
-				return err
-			}
-			tags = append(tags, tag)
-		}
-
-		for _, groupId := range query.ID {
-			if deleteErr := tx.Model(&models.Group{ID: groupId}).Association("Tags").Delete(tags); deleteErr != nil {
-				return deleteErr
-			}
-		}
-
+	if len(query.ID) == 0 || len(query.EditedId) == 0 {
 		return nil
+	}
+
+	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		return tx.Exec(
+			"DELETE FROM group_tags WHERE group_id IN ? AND tag_id IN ?",
+			query.ID, query.EditedId,
+		).Error
 	})
 }
 
