@@ -136,7 +136,7 @@ func (w *HashWorker) runBatchProcessor() {
 	defer ticker.Stop()
 
 	for {
-		w.processBatch()
+		w.safeProcessBatch()
 
 		select {
 		case <-ticker.C:
@@ -146,25 +146,47 @@ func (w *HashWorker) runBatchProcessor() {
 	}
 }
 
+// safeProcessBatch wraps processBatch with panic recovery to prevent the
+// batch processor goroutine from dying permanently on unexpected panics.
+func (w *HashWorker) safeProcessBatch() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[hash_worker] batch processor recovered from panic: %v", r)
+		}
+	}()
+	w.processBatch()
+}
+
 func (w *HashWorker) runQueueProcessor() {
 	defer w.wg.Done()
 
 	for {
 		select {
 		case resourceID := <-w.hashQueue:
-			w.processResource(resourceID)
+			w.safeProcessResource(resourceID)
 		case <-w.stopCh:
 			// Drain remaining items from queue before exiting
 			for {
 				select {
 				case resourceID := <-w.hashQueue:
-					w.processResource(resourceID)
+					w.safeProcessResource(resourceID)
 				default:
 					return
 				}
 			}
 		}
 	}
+}
+
+// safeProcessResource wraps processResource with panic recovery to prevent
+// queue processor goroutines from dying permanently on unexpected panics.
+func (w *HashWorker) safeProcessResource(resourceID uint) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[hash_worker] queue processor recovered from panic for resource %d: %v", resourceID, r)
+		}
+	}()
+	w.processResource(resourceID)
 }
 
 func (w *HashWorker) processBatch() {

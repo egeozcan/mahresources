@@ -2,6 +2,7 @@ package api_handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"mahresources/constants"
@@ -22,7 +23,7 @@ func GetShareNoteHandler(ctx interfaces.NoteSharer) func(writer http.ResponseWri
 		noteId := http_utils.GetUIntQueryParameter(request, "noteId", 0)
 		if noteId == 0 {
 			http_utils.HandleError(
-				&json.InvalidUnmarshalError{},
+				errors.New("noteId is required"),
 				writer,
 				request,
 				http.StatusBadRequest,
@@ -57,7 +58,7 @@ func GetUnshareNoteHandler(ctx interfaces.NoteSharer) func(writer http.ResponseW
 		noteId := http_utils.GetUIntQueryParameter(request, "noteId", 0)
 		if noteId == 0 {
 			http_utils.HandleError(
-				&json.InvalidUnmarshalError{},
+				errors.New("noteId is required"),
 				writer,
 				request,
 				http.StatusBadRequest,

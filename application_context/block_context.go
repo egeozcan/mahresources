@@ -475,14 +475,15 @@ func (ctx *MahresourcesContext) fetchAndCacheICS(url string, existingEntry *ICSC
 		return nil, time.Time{}, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	// Limit read size to prevent memory exhaustion from large responses
-	content, err := io.ReadAll(io.LimitReader(resp.Body, maxICSFileSize))
+	// Limit read size to prevent memory exhaustion from large responses.
+	// Read one extra byte beyond maxICSFileSize to distinguish "exactly max size" from "too large".
+	content, err := io.ReadAll(io.LimitReader(resp.Body, maxICSFileSize+1))
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// Check if we hit the size limit (content was truncated)
-	if int64(len(content)) == maxICSFileSize {
+	// Check if we exceeded the size limit
+	if int64(len(content)) > maxICSFileSize {
 		return nil, time.Time{}, fmt.Errorf("ICS file exceeds maximum size of %d bytes", maxICSFileSize)
 	}
 
@@ -517,13 +518,13 @@ func (ctx *MahresourcesContext) fetchICSFromResource(resourceID uint) ([]byte, t
 	}
 	defer f.Close()
 
-	content, err := io.ReadAll(io.LimitReader(f, maxICSFileSize))
+	content, err := io.ReadAll(io.LimitReader(f, maxICSFileSize+1))
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("failed to read resource file: %w", err)
 	}
 
-	// Check if we hit the size limit
-	if int64(len(content)) == maxICSFileSize {
+	// Check if we exceeded the size limit
+	if int64(len(content)) > maxICSFileSize {
 		return nil, time.Time{}, fmt.Errorf("ICS resource file exceeds maximum size of %d bytes", maxICSFileSize)
 	}
 

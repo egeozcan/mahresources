@@ -55,6 +55,10 @@ func sQLToMap(rows *sqlx.Rows) ([]map[string]any, error) {
 		data = append(data, m)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %v", err)
+	}
+
 	return data, nil
 }
 
@@ -97,6 +101,7 @@ func GetRunQueryHandler(ctx interfaces.QueryRunner) func(writer http.ResponseWri
 			http_utils.HandleError(err, writer, request, http.StatusNotFound)
 			return
 		}
+		defer result.Close()
 
 		resultMap, err := sQLToMap(result)
 

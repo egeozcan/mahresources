@@ -140,7 +140,10 @@ func (s *ShareServer) handleBlockStateUpdate(w http.ResponseWriter, r *http.Requ
 
 	// Parse block ID
 	var blockId uint
-	fmt.Sscanf(blockIdStr, "%d", &blockId)
+	if _, err := fmt.Sscanf(blockIdStr, "%d", &blockId); err != nil {
+		http.Error(w, "Invalid block ID", http.StatusBadRequest)
+		return
+	}
 
 	// Verify block belongs to this note
 	blockBelongsToNote := false
@@ -181,7 +184,10 @@ func (s *ShareServer) handleCalendarEvents(w http.ResponseWriter, r *http.Reques
 
 	// Parse block ID
 	var blockId uint
-	fmt.Sscanf(blockIdStr, "%d", &blockId)
+	if _, err := fmt.Sscanf(blockIdStr, "%d", &blockId); err != nil {
+		http.Error(w, "Invalid block ID", http.StatusBadRequest)
+		return
+	}
 
 	// Verify block belongs to this note and is a calendar block
 	blockBelongsToNote := false
@@ -225,7 +231,7 @@ func (s *ShareServer) handleCalendarEvents(w http.ResponseWriter, r *http.Reques
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 // handleSharedResource serves a resource (image/file) that belongs to a shared note
@@ -474,6 +480,10 @@ func (s *ShareServer) fetchTableQueryData(queryId uint, params map[string]any) (
 			}
 		}
 		resultRows = append(resultRows, row)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return map[string]interface{}{

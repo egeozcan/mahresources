@@ -72,7 +72,10 @@ func NewDownloadManager(resourceCtx ResourceCreator, timeoutConfig TimeoutConfig
 // generateShortID creates a short random ID for display
 func generateShortID() string {
 	b := make([]byte, 4)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to timestamp-based ID if crypto/rand fails
+		return fmt.Sprintf("%08x", time.Now().UnixNano()&0xFFFFFFFF)
+	}
 	return hex.EncodeToString(b)
 }
 

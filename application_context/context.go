@@ -265,11 +265,15 @@ func (ctx *MahresourcesContext) EnsureForeignKeysActive(db *gorm.DB) {
 	query := "PRAGMA foreign_keys = ON;"
 
 	if db == nil {
-		ctx.db.Exec(query)
+		if err := ctx.db.Exec(query).Error; err != nil {
+			log.Printf("warning: failed to enable foreign keys: %v", err)
+		}
 		return
 	}
 
-	db.Exec(query)
+	if err := db.Exec(query).Error; err != nil {
+		log.Printf("warning: failed to enable foreign keys: %v", err)
+	}
 }
 
 func (ctx *MahresourcesContext) WithTransaction(txFn func(transactionCtx *MahresourcesContext) error) error {

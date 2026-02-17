@@ -126,7 +126,12 @@ func (tr *timeoutReader) Read(p []byte) (n int, err error) {
 }
 
 func (tr *timeoutReader) Close() error {
-	close(tr.done)
+	select {
+	case <-tr.done:
+		// already closed
+	default:
+		close(tr.done)
+	}
 	return nil
 }
 
@@ -279,6 +284,13 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		return nil, err
 	}
 
+	// Seek back to start after DetectReader consumed initial bytes
+	if seeker, ok := file.(io.Seeker); ok {
+		if _, err := seeker.Seek(0, io.SeekStart); err != nil {
+			return nil, fmt.Errorf("failed to seek after MIME detection: %w", err)
+		}
+	}
+
 	fileBytes, err := io.ReadAll(file)
 
 	if err != nil {
@@ -365,7 +377,10 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 		tx.Rollback()
 		return nil, err
 	}
-	defer os.Remove(tempFile.Name())
+	defer func() {
+		tempFile.Close()
+		os.Remove(tempFile.Name())
+	}()
 
 	// Copy the contents of the uploaded file to the temporary file
 	_, err = io.Copy(tempFile, file)
