@@ -14,6 +14,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/spf13/afero"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -281,15 +282,126 @@ func (ctx *MahresourcesContext) BulkAddGroupsToResources(query *query_models.Bul
 	return err
 }
 
+// FileCleanupAction describes a file operation to perform after a transaction commits.
+type FileCleanupAction struct {
+	// SourceFS is the filesystem containing the resource file
+	SourceFS afero.Fs
+	// SourcePath is the path to the original resource file
+	SourcePath string
+	// BackupPath is the path to write the backup copy (in /deleted/)
+	BackupPath string
+	// ShouldRemoveSource indicates if the source file should be deleted (no other references)
+	ShouldRemoveSource bool
+}
+
+// deleteResourceDBOnly performs only the database operations of DeleteResource.
+// Returns file cleanup actions to be performed after the transaction commits.
+func (ctx *MahresourcesContext) deleteResourceDBOnly(resourceId uint) (*FileCleanupAction, error) {
+	resource := models.Resource{ID: resourceId}
+	if err := ctx.db.Model(&resource).First(&resource).Error; err != nil {
+		return nil, err
+	}
+
+	fs, storageErr := ctx.GetFsForStorageLocation(resource.StorageLocation)
+	if storageErr != nil {
+		return nil, storageErr
+	}
+
+	subFolder := "deleted"
+	if resource.StorageLocation != nil && *resource.StorageLocation != "" {
+		subFolder = *resource.StorageLocation
+	}
+	folder := fmt.Sprintf("/deleted/%v/", subFolder)
+
+	ownerIdStr := "nil"
+	if resource.OwnerId != nil {
+		ownerIdStr = fmt.Sprintf("%v", *resource.OwnerId)
+	}
+	backupPath := path.Join(folder, fmt.Sprintf("%v__%v__%v___%v", resource.Hash, resource.ID, ownerIdStr, strings.ReplaceAll(path.Clean(path.Base(resource.GetCleanLocation())), "\\", "_")))
+
+	// Clear CurrentVersionID to break circular reference before deletion
+	if resource.CurrentVersionID != nil {
+		if err := ctx.db.Model(&resource).Update("current_version_id", nil).Error; err != nil {
+			return nil, err
+		}
+	}
+
+	if err := ctx.db.Select(clause.Associations).Delete(&resource).Error; err != nil {
+		return nil, err
+	}
+
+	// Auto-delete empty series
+	if resource.SeriesID != nil {
+		seriesID := *resource.SeriesID
+		result := ctx.db.Where("id = ? AND NOT EXISTS (SELECT 1 FROM resources WHERE series_id = ?)", seriesID, seriesID).Delete(&models.Series{})
+		if result.Error != nil {
+			ctx.Logger().Warning(models.LogActionDelete, "series", &seriesID, "Failed to auto-delete empty series", result.Error.Error(), nil)
+		}
+	}
+
+	// Check hash references for file deletion decision
+	refCount, countErr := ctx.CountHashReferences(resource.Hash)
+	if countErr != nil {
+		ctx.Logger().Warning(models.LogActionDelete, "resource", &resourceId, "Failed to count hash references", countErr.Error(), nil)
+		refCount = 1 // Assume referenced to be safe
+	}
+
+	ctx.Logger().Info(models.LogActionDelete, "resource", &resourceId, resource.Name, "Deleted resource", nil)
+	ctx.InvalidateSearchCacheByType(EntityTypeResource)
+
+	return &FileCleanupAction{
+		SourceFS:           fs,
+		SourcePath:         resource.GetCleanLocation(),
+		BackupPath:         backupPath,
+		ShouldRemoveSource: refCount == 0,
+	}, nil
+}
+
 func (ctx *MahresourcesContext) BulkDeleteResources(query *query_models.BulkQuery) error {
-	return ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
+	var cleanupActions []*FileCleanupAction
+
+	err := ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
 		for _, id := range query.ID {
-			if err := altCtx.DeleteResource(id); err != nil {
+			action, err := altCtx.deleteResourceDBOnly(id)
+			if err != nil {
 				return err
+			}
+			if action != nil {
+				cleanupActions = append(cleanupActions, action)
 			}
 		}
 		return nil
 	})
+
+	if err != nil {
+		return err // Transaction rolled back, no file operations performed
+	}
+
+	// Phase 2: File operations after successful commit
+	for _, action := range cleanupActions {
+		// Create backup
+		if err := ctx.fs.MkdirAll(path.Dir(action.BackupPath), 0777); err != nil {
+			ctx.Logger().Warning(models.LogActionDelete, "resource", nil, "Failed to create backup dir", err.Error(), nil)
+			continue
+		}
+
+		file, openErr := action.SourceFS.Open(action.SourcePath)
+		if openErr == nil {
+			backup, createErr := ctx.fs.Create(action.BackupPath)
+			if createErr == nil {
+				io.Copy(backup, file)
+				backup.Close()
+			}
+			file.Close()
+		}
+
+		// Remove source file if no other references
+		if action.ShouldRemoveSource {
+			_ = action.SourceFS.Remove(action.SourcePath)
+		}
+	}
+
+	return nil
 }
 
 func (ctx *MahresourcesContext) GetPopularResourceTags(query *query_models.ResourceSearchQuery) ([]PopularTag, error) {
