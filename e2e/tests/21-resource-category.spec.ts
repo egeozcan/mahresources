@@ -208,27 +208,25 @@ test.describe('Resource Category Custom Template Rendering', () => {
   });
 
   test('should not show category section in lightbox for resources without a category', async ({ apiClient, page }) => {
-    // Create a resource without a category via apiClient
+    // Create a resource without a category via apiClient - use the owner group so it's properly visible
     const noCatResource = await apiClient.createResource({
       filePath: path.join(__dirname, '../test-assets/sample-image-22.png'),
       name: `No Category Resource ${testRunId}`,
+      ownerId: ownerGroupId,
     });
     const noCatResourceId = noCatResource.ID;
 
     try {
-      // Navigate to resources sorted by ID desc so our new resource appears first
-      // Use large pageSize to ensure visibility when parallel tests create many resources
-      await page.goto('/resources?sort=ID&order=desc&pageSize=100');
+      // Verify the resource exists via API
+      const fetched = await apiClient.getResource(noCatResourceId);
+      expect(fetched.ID).toBe(noCatResourceId);
+
+      // Navigate to resources filtered to our specific resource to avoid pagination issues
+      await page.goto(`/resources?Ids=${noCatResourceId}&pageSize=100`);
       await page.waitForLoadState('load');
 
       // Find the lightbox-item anchor for this specific resource
-      // Retry with reload if resource isn't visible (SQLite read-after-write visibility)
       const imageLink = page.locator(`a[data-resource-id="${noCatResourceId}"]`);
-      if (!(await imageLink.isVisible())) {
-        await page.waitForTimeout(500);
-        await page.reload();
-        await page.waitForLoadState('load');
-      }
       await expect(imageLink).toBeVisible({ timeout: 10000 });
       await imageLink.click();
 

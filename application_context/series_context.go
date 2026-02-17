@@ -116,24 +116,28 @@ func (ctx *MahresourcesContext) RemoveResourceFromSeries(resourceID uint) error 
 		tx := txCtx.db
 
 		var resource models.Resource
-		if err := tx.Preload("Series").First(&resource, resourceID).Error; err != nil {
+		if err := tx.First(&resource, resourceID).Error; err != nil {
 			return err
 		}
 
-		if resource.SeriesID == nil || resource.Series == nil {
+		if resource.SeriesID == nil {
 			return errors.New("resource is not in a series")
 		}
 
 		seriesID := *resource.SeriesID
-		seriesMeta := resource.Series.Meta
+
+		var series models.Series
+		if err := tx.First(&series, seriesID).Error; err != nil {
+			return err
+		}
 
 		// Merge meta back (resource wins): series meta as base, OwnMeta on top
-		effectiveMeta, err := mergeMeta(seriesMeta, resource.OwnMeta)
+		effectiveMeta, err := mergeMeta(series.Meta, resource.OwnMeta)
 		if err != nil {
 			return err
 		}
 
-		if err := tx.Model(&resource).Updates(map[string]interface{}{
+		if err := tx.Model(&models.Resource{}).Where("id = ?", resourceID).Updates(map[string]interface{}{
 			"meta":      effectiveMeta,
 			"own_meta":  types.JSON("{}"),
 			"series_id": nil,
