@@ -44,6 +44,18 @@ function generateObjectTable(obj, path = ["$"]) {
     table.classList.add("objectTable", "jsonTable");
     table.appendChild(tbody);
 
+    // Use event delegation for copy-on-click instead of per-cell listeners
+    table.addEventListener("click", (e) => {
+        if (e.target.matches("button") || e.target.matches("expandable-text")) {
+            return;
+        }
+        const cell = e.target.closest("th, td, tr");
+        if (cell && cell.title) {
+            updateClipboard(cell.title);
+            e.stopPropagation();
+        }
+    });
+
     objKeys.forEach(key => {
         const row = tbody.insertRow(-1);
         const header = document.createElement("th");
@@ -54,8 +66,7 @@ function generateObjectTable(obj, path = ["$"]) {
         row.appendChild(header);
         header.innerHTML = escapeHTML(key);
         header.title = pathText;
-        addCopyListener(header, pathText);
-        addCopyListener(row, pathText);
+        row.title = pathText;
 
         if (typeof content === "string") {
             const contentCell = row.insertCell();
@@ -69,7 +80,7 @@ function generateObjectTable(obj, path = ["$"]) {
         } else {
             row.classList.add("hasSubTable");
             content.classList.add("subTable");
-            addCopyListener(content, pathText);
+            content.title = pathText;
             header.colSpan = 2;
 
             const toggler = document.createElement("button");
@@ -131,6 +142,18 @@ function generateArrayTable(arr, path = ["$"]) {
         return table;
     }
 
+    // Use event delegation for copy-on-click instead of per-cell listeners
+    table.addEventListener("click", (e) => {
+        if (e.target.matches("button") || e.target.matches("expandable-text")) {
+            return;
+        }
+        const cell = e.target.closest("th, td, tr");
+        if (cell && cell.title) {
+            updateClipboard(cell.title);
+            e.stopPropagation();
+        }
+    });
+
     const titles = getAllKeysFromObjArray(arr);
 
     if (arr.some(el => !isRenderableAsArray(el))) {
@@ -141,14 +164,14 @@ function generateArrayTable(arr, path = ["$"]) {
             const pathText = subPath.join("");
             const content = renderJsonTable(el, subPath);
 
-            addCopyListener(row, pathText);
+            row.title = pathText;
 
             if (typeof content === "string") {
                 contentCell.innerHTML = escapeHTML(content);
             } else if (content?.matches?.("expandable-text")) {
                 contentCell.appendChild(content);
             } else {
-                addCopyListener(content, pathText);
+                content.title = pathText;
                 contentCell.appendChild(content);
             }
         });
@@ -168,17 +191,16 @@ function generateArrayTable(arr, path = ["$"]) {
     arr.forEach((el, idx) => {
         const row = tbody.insertRow();
         const cellClass = idx % 2 === 0 ? "even" : "odd";
-        addCopyListener(row, [...path, escapeKey(idx)].join(""));
+        row.title = [...path, escapeKey(idx)].join("");
 
         titles.forEach(title => {
             const contentCell = row.insertCell();
             const subPath = [...path, escapeKey(idx), escapeKey(title)];
             const pathText = subPath.join("");
-            addCopyListener(contentCell, pathText);
             const content = renderJsonTable(el[title], subPath);
 
             contentCell.classList.add(cellClass);
-            contentCell.title = subPath.join("");
+            contentCell.title = pathText;
 
             if (typeof content === "string") {
                 contentCell.innerHTML = escapeHTML(content);
@@ -186,7 +208,7 @@ function generateArrayTable(arr, path = ["$"]) {
                 contentCell.appendChild(content);
             } else {
                 contentCell.appendChild(content);
-                addCopyListener(content, pathText);
+                content.title = pathText;
             }
         });
     });
@@ -230,23 +252,6 @@ function escapeKey(key) {
     }
 
     return `["${key.replaceAll('"', '\\"')}"]`;
-}
-
-/**
- *
- * @param {HTMLElement} el
- * @param {string} text
- */
-function addCopyListener(el, text) {
-    el.addEventListener("click", (e) => {
-        // if the target is a button, ignore the click event
-        if (e.target.matches("button") || e.target.matches("expandable-text")) {
-            return;
-        }
-
-        updateClipboard(text);
-        e.stopPropagation();
-    });
 }
 
 /**

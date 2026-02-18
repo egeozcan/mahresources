@@ -188,6 +188,10 @@ func (ctx *MahresourcesContext) BulkReplaceTagsFromResources(query *query_models
 }
 
 func (ctx *MahresourcesContext) BulkAddMetaToResources(query *query_models.BulkEditMetaQuery) error {
+	if !json.Valid([]byte(query.Meta)) {
+		return errors.New("invalid json")
+	}
+
 	var resource models.Resource
 
 	var expr clause.Expr
@@ -442,7 +446,10 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 		}
 	}
 
-	return ctx.WithTransaction(func(transactionCtx *MahresourcesContext) error {
+	// Two-phase approach: DB operations in transaction, file I/O after commit
+	var cleanupActions []*FileCleanupAction
+
+	err := ctx.WithTransaction(func(transactionCtx *MahresourcesContext) error {
 		tx := transactionCtx.db
 
 		// Load losers WITHOUT associations — we only need their basic fields for backup
@@ -494,8 +501,13 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 				return err
 			}
 
-			if err := transactionCtx.DeleteResource(loser.ID); err != nil {
-				return err
+			// DB-only delete; collect file cleanup for after commit
+			action, deleteErr := transactionCtx.deleteResourceDBOnly(loser.ID)
+			if deleteErr != nil {
+				return deleteErr
+			}
+			if action != nil {
+				cleanupActions = append(cleanupActions, action)
 			}
 		}
 
@@ -524,4 +536,34 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 
 		return nil
 	})
+
+	if err != nil {
+		return err
+	}
+
+	// Phase 2: File operations after successful commit
+	for _, action := range cleanupActions {
+		if mkdirErr := ctx.fs.MkdirAll(path.Dir(action.BackupPath), 0777); mkdirErr != nil {
+			ctx.Logger().Warning(models.LogActionDelete, "resource", nil, "Failed to create backup dir during merge", mkdirErr.Error(), nil)
+			continue
+		}
+
+		backupOK := false
+		file, openErr := action.SourceFS.Open(action.SourcePath)
+		if openErr == nil {
+			backup, createErr := ctx.fs.Create(action.BackupPath)
+			if createErr == nil {
+				_, copyErr := io.Copy(backup, file)
+				backup.Close()
+				backupOK = copyErr == nil
+			}
+			file.Close()
+		}
+
+		if action.ShouldRemoveSource && (backupOK || openErr != nil) {
+			_ = action.SourceFS.Remove(action.SourcePath)
+		}
+	}
+
+	return nil
 }

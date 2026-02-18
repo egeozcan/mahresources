@@ -247,7 +247,7 @@ func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.Re
 		return nil, firstError
 	}
 
-	return firstResource, nil
+	return firstResource, firstError
 }
 
 func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery *query_models.ResourceFromLocalCreator) (*models.Resource, error) {

@@ -68,25 +68,40 @@ func (j *DownloadJob) SetError(err string) {
 	j.Error = err
 }
 
-// SetResourceID safely sets the completed resource ID
+// SetResourceID safely sets the completed resource ID.
+// A zero value clears the resource ID.
 func (j *DownloadJob) SetResourceID(id uint) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	j.ResourceID = &id
+	if id == 0 {
+		j.ResourceID = nil
+	} else {
+		j.ResourceID = &id
+	}
 }
 
-// SetStartedAt safely sets the job's start time
+// SetStartedAt safely sets the job's start time.
+// A zero time value clears the start time.
 func (j *DownloadJob) SetStartedAt(t time.Time) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	j.StartedAt = &t
+	if t.IsZero() {
+		j.StartedAt = nil
+	} else {
+		j.StartedAt = &t
+	}
 }
 
-// SetCompletedAt safely sets the job's completion time
+// SetCompletedAt safely sets the job's completion time.
+// A zero time value clears the completion time.
 func (j *DownloadJob) SetCompletedAt(t time.Time) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	j.CompletedAt = &t
+	if t.IsZero() {
+		j.CompletedAt = nil
+	} else {
+		j.CompletedAt = &t
+	}
 }
 
 // GetStatus safely returns the job's current status

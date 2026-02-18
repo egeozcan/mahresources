@@ -473,37 +473,49 @@ func (ctx *MahresourcesContext) CleanupVersions(query *query_models.VersionClean
 	return deletedIDs, nil
 }
 
-// BulkCleanupVersions cleans up versions across multiple resources
+// BulkCleanupVersions cleans up versions across multiple resources.
+// Processes resource IDs in batches to avoid loading all IDs into memory at once.
 func (ctx *MahresourcesContext) BulkCleanupVersions(query *query_models.BulkVersionCleanupQuery) (map[uint][]uint, error) {
 	result := make(map[uint][]uint)
 
-	q := ctx.db.Model(&models.Resource{})
+	baseQuery := ctx.db.Model(&models.Resource{})
 	if query.OwnerID > 0 {
-		q = q.Where("owner_id = ?", query.OwnerID)
+		baseQuery = baseQuery.Where("owner_id = ?", query.OwnerID)
 	}
 
-	var resourceIDs []uint
-	if err := q.Pluck("id", &resourceIDs).Error; err != nil {
-		return nil, err
-	}
+	batchSize := 500
+	offset := 0
 
-	for _, resourceID := range resourceIDs {
-		cleanupQuery := &query_models.VersionCleanupQuery{
-			ResourceID:    resourceID,
-			KeepLast:      query.KeepLast,
-			OlderThanDays: query.OlderThanDays,
-			DryRun:        query.DryRun,
+	for {
+		var batchIDs []uint
+		if err := baseQuery.Offset(offset).Limit(batchSize).Pluck("id", &batchIDs).Error; err != nil {
+			return nil, err
 		}
 
-		deletedIDs, err := ctx.CleanupVersions(cleanupQuery)
-		if err != nil {
-			ctx.Logger().Warning(models.LogActionDelete, "bulk_version_cleanup", &resourceID, "Failed to cleanup versions", err.Error(), nil)
-			continue
+		if len(batchIDs) == 0 {
+			break
 		}
 
-		if len(deletedIDs) > 0 {
-			result[resourceID] = deletedIDs
+		for _, resourceID := range batchIDs {
+			cleanupQuery := &query_models.VersionCleanupQuery{
+				ResourceID:    resourceID,
+				KeepLast:      query.KeepLast,
+				OlderThanDays: query.OlderThanDays,
+				DryRun:        query.DryRun,
+			}
+
+			deletedIDs, err := ctx.CleanupVersions(cleanupQuery)
+			if err != nil {
+				ctx.Logger().Warning(models.LogActionDelete, "bulk_version_cleanup", &resourceID, "Failed to cleanup versions", err.Error(), nil)
+				continue
+			}
+
+			if len(deletedIDs) > 0 {
+				result[resourceID] = deletedIDs
+			}
 		}
+
+		offset += batchSize
 	}
 
 	return result, nil
@@ -641,34 +653,44 @@ func (ctx *MahresourcesContext) SyncResourcesFromCurrentVersion() error {
 	log.Printf("Syncing %d resources to their current versions...", len(outOfSync))
 	ctx.Logger().Info(models.LogActionUpdate, "system", nil, "Version Sync Started", fmt.Sprintf("Syncing %d resources", len(outOfSync)), nil)
 
-	for i, item := range outOfSync {
-		if (i+1)%10000 == 0 {
-			progress := fmt.Sprintf("%d/%d (%.1f%%)", i+1, len(outOfSync), float64(i+1)/float64(len(outOfSync))*100)
+	// Process updates in batches within transactions to reduce per-statement overhead
+	batchSize := 100
+	for batchStart := 0; batchStart < len(outOfSync); batchStart += batchSize {
+		batchEnd := batchStart + batchSize
+		if batchEnd > len(outOfSync) {
+			batchEnd = len(outOfSync)
+		}
+		batch := outOfSync[batchStart:batchEnd]
+
+		tx := silentDB.Begin()
+		for _, item := range batch {
+			updates := map[string]interface{}{
+				"hash":             item.VersionHash,
+				"location":         item.VersionLocation,
+				"storage_location": item.StorageLocation,
+				"content_type":     item.VersionType,
+				"width":            item.VersionWidth,
+				"height":           item.VersionHeight,
+				"file_size":        item.VersionFileSize,
+			}
+			if err := tx.Model(&models.Resource{}).Where("id = ?", item.ResourceID).Updates(updates).Error; err != nil {
+				ctx.Logger().Warning(models.LogActionCreate, "sync_version", &item.ResourceID, "Failed to sync resource from version", err.Error(), nil)
+				continue
+			}
+
+			// Clear cached previews
+			tx.Where("resource_id = ?", item.ResourceID).Delete(&models.Preview{})
+		}
+		tx.Commit()
+
+		if batchEnd%10000 < batchSize {
+			progress := fmt.Sprintf("%d/%d (%.1f%%)", batchEnd, len(outOfSync), float64(batchEnd)/float64(len(outOfSync))*100)
 			log.Printf("  Version sync progress: %s", progress)
 			ctx.Logger().Info(models.LogActionUpdate, "system", nil, "Version Sync Progress", progress, nil)
 		}
 
-		updates := map[string]interface{}{
-			"hash":             item.VersionHash,
-			"location":         item.VersionLocation,
-			"storage_location": item.StorageLocation,
-			"content_type":     item.VersionType,
-			"width":            item.VersionWidth,
-			"height":           item.VersionHeight,
-			"file_size":        item.VersionFileSize,
-		}
-		if err := silentDB.Model(&models.Resource{}).Where("id = ?", item.ResourceID).Updates(updates).Error; err != nil {
-			ctx.Logger().Warning(models.LogActionCreate, "sync_version", &item.ResourceID, "Failed to sync resource from version", err.Error(), nil)
-			continue
-		}
-
-		// Clear cached previews
-		silentDB.Where("resource_id = ?", item.ResourceID).Delete(&models.Preview{})
-
-		// Yield CPU time every 100 items (lower priority background task)
-		if (i+1)%100 == 0 {
-			time.Sleep(10 * time.Millisecond)
-		}
+		// Yield CPU time between batches (lower priority background task)
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	log.Printf("Version sync complete: %d resources synced", len(outOfSync))

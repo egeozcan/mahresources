@@ -46,6 +46,7 @@ export function autocompleter({
         debounceTimer: null,
         addModeForTag: false,
         loading: false,
+        _selecting: false,
 
         init() {
             this.selectedResults.forEach(val => {
@@ -61,7 +62,7 @@ export function autocompleter({
                     this.selectedIds.add(val.ID);
                 });
                 if (!standalone) {
-                    this.$dispatch('multiple-input', { value: selectedResults, name: elName });
+                    this.$dispatch('multiple-input', { value: this.selectedResults, name: elName });
                 }
 
                 // Announce selection changes
@@ -88,9 +89,9 @@ export function autocompleter({
             const form = this.$el.closest('form');
             if (form && !standalone) {
                 form.addEventListener('submit', (e) => {
-                    if (selectedResults.length < min) {
+                    if (this.selectedResults.length < this.min) {
                         e.preventDefault();
-                        this.errorMessage = 'Please select at least ' + min + ' ' + (min === 1 ? 'value' : 'values');
+                        this.errorMessage = 'Please select at least ' + this.min + ' ' + (this.min === 1 ? 'value' : 'values');
                     }
                 });
 
@@ -177,6 +178,7 @@ export function autocompleter({
                 }
             } catch (e) {
                 this.errorMessage = `Could not add ${this.addModeForTag}`
+                setTimeout(() => { this.errorMessage = '' }, 3000);
             } finally {
                 this.loading = false;
                 this.exitAdd();
@@ -191,10 +193,15 @@ export function autocompleter({
             this.addModeForTag = '';
         },
 
+        startSelecting() {
+            this._selecting = true;
+        },
+
         pushVal($event) {
             if (this.loading) {
                 return;
             }
+            this._selecting = false;
 
             // Announce selection
             if (this.results[this.selectedIndex]) {
@@ -345,7 +352,7 @@ export function autocompleter({
 
                 this.pushVal(e);
 
-                if (this.selectedResults.length === max) {
+                if (this.selectedResults.length === this.max) {
                     setTimeout(() => {
                         this.dropdownActive = false;
                     }, 100);
@@ -361,8 +368,10 @@ export function autocompleter({
                     return;
                 }
                 setTimeout(() => {
-                    this.dropdownActive = false;
-                }, 10);
+                    if (!this._selecting) {
+                        this.dropdownActive = false;
+                    }
+                }, 150);
             },
 
             ['@focus']() {

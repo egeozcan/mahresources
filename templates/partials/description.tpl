@@ -5,7 +5,7 @@
      :class="{ 'lg:prose-xl prose bg-gray-50 p-4 mb-2': !editing }"
 >
     <template x-if="!editing">
-        <div class="contents" @dblclick="editing = !!descriptionEditUrl">
+        <div class="contents" @dblclick="editing = !!descriptionEditUrl" title="Double-click to edit">
             {% autoescape off %}
                 {% if !preview %}{{ description|markdown2 }}{% endif %}
                 {% if preview %}{{ description|markdown|truncatechars_html:250 }}{% endif %}

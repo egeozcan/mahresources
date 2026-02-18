@@ -396,10 +396,10 @@ func (dm *DownloadManager) Resume(jobID string) error {
 	job.ctx = ctx
 	job.cancel = cancel
 
-	// Reset progress and mark as pending
+	// Reset progress and mark as pending (all under lock)
 	job.SetStatus(JobStatusPending)
 	job.UpdateProgress(0, -1)
-	job.StartedAt = nil
+	job.SetStartedAt(time.Time{})
 
 	dm.mu.Unlock()
 
@@ -430,13 +430,13 @@ func (dm *DownloadManager) Retry(jobID string) error {
 	job.ctx = ctx
 	job.cancel = cancel
 
-	// Reset progress and error, mark as pending
+	// Reset progress and error, mark as pending (all under lock)
 	job.SetStatus(JobStatusPending)
 	job.SetError("")
 	job.UpdateProgress(0, -1)
-	job.StartedAt = nil
-	job.CompletedAt = nil
-	job.ResourceID = nil
+	job.SetStartedAt(time.Time{})
+	job.SetCompletedAt(time.Time{})
+	job.SetResourceID(0)
 
 	dm.mu.Unlock()
 

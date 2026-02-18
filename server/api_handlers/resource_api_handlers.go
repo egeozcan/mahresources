@@ -131,6 +131,11 @@ func GetResourceUploadHandler(ctx interfaces.ResourceCreator) func(writer http.R
 
 		creator := query_models.ResourceCreator{ResourceQueryBase: remoteCreator.ResourceQueryBase}
 
+		if request.MultipartForm == nil || request.MultipartForm.File == nil {
+			http.Error(writer, "no multipart form data found", http.StatusBadRequest)
+			return
+		}
+
 		files := request.MultipartForm.File["resource"]
 
 		if len(files) == 0 {
@@ -326,7 +331,7 @@ func GetResourceThumbnailHandler(ctx interfaces.ResourceThumbnailLoader) func(wr
 			return
 		}
 
-		e := fmt.Sprintf(`"%v"`, resource.Hash)
+		e := fmt.Sprintf(`"%v-%d-%d"`, resource.Hash, query.Width, query.Height)
 
 		writer.Header().Set("Etag", e)
 		writer.Header().Set("Cache-Control", "max-age=2592000")

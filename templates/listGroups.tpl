@@ -15,7 +15,7 @@
 
 
 {% block sidebar %}
-    <form class="flex gap-2 items-start flex-col">
+    <form class="flex gap-2 items-start flex-col" aria-label="Filter groups">
         <div class="tags mt-3 mb-2 gap-1 flex flex-wrap" style="margin-left: -0.5rem">
             {% for tag in popularTags %}
             <a class="no-underline" href='{{ withQuery("tags", stringId(tag.Id), true) }}'>

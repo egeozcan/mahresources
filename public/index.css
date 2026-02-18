@@ -300,6 +300,10 @@
     .content > * {
         grid-column: 1 !important;
     }
+
+    .content > .sidebar {
+        order: -1;
+    }
 }
 
 .list-container {
@@ -308,7 +312,10 @@
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
 }
 
-.list-container * {
+.list-container p,
+.list-container span,
+.list-container a,
+.list-container h3 {
     word-wrap: break-word;
     text-overflow: ellipsis;
 }

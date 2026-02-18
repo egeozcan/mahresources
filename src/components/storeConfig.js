@@ -19,8 +19,8 @@ export function registerSavedSettingStore(Alpine) {
 
             el.addEventListener("change", () => {
                 const value = el.checked ?? el.value;
-                store.setItem("settings", JSON.stringify({ ...settings, [el.name]: value }));
                 settings[el.name] = value;
+                store.setItem("settings", JSON.stringify(settings));
             });
         }
     });

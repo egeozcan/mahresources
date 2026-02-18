@@ -2923,6 +2923,28 @@
       }
     }
   }
+  .focus\:not-sr-only {
+    &:focus {
+      position: static;
+      width: auto;
+      height: auto;
+      padding: 0;
+      margin: 0;
+      overflow: visible;
+      clip-path: none;
+      white-space: normal;
+    }
+  }
+  .focus\:absolute {
+    &:focus {
+      position: absolute;
+    }
+  }
+  .focus\:z-50 {
+    &:focus {
+      z-index: 50;
+    }
+  }
   .focus\:border-blue-500 {
     &:focus {
       border-color: var(--color-blue-500);
@@ -2946,6 +2968,21 @@
   .focus\:bg-indigo-500 {
     &:focus {
       background-color: var(--color-indigo-500);
+    }
+  }
+  .focus\:bg-white {
+    &:focus {
+      background-color: var(--color-white);
+    }
+  }
+  .focus\:p-4 {
+    &:focus {
+      padding: calc(var(--spacing) * 4);
+    }
+  }
+  .focus\:text-indigo-600 {
+    &:focus {
+      color: var(--color-indigo-600);
     }
   }
   .focus\:text-white {

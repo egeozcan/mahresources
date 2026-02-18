@@ -27,12 +27,13 @@
     {% block head %}{% endblock %}
 </head>
 <body class="site">
+    <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:p-4 focus:bg-white focus:text-indigo-600">Skip to main content</a>
     <header class="header flex items-center justify-between gap-2 px-2">
         {% include "/partials/menu.tpl" %}
         <div class="flex items-center gap-1 flex-shrink-0">
             {% include "/partials/globalSearch.tpl" %}
             <div x-cloak x-data="{ active: false }" class="settings relative">
-                <button class="p-1 text-lg" @click="active = !active" @click.outside="setTimeout(() => active = false, 100)" title="Settings">⚙</button>
+                <button class="p-1 text-lg" @click="active = !active" @click.outside="setTimeout(() => active = false, 100)" title="Settings" aria-label="Settings"><span aria-hidden="true">⚙</span></button>
                 <div x-show="active" x-cloak class="absolute right-0 top-full mt-1 w-48 bg-white shadow-lg ring-1 ring-black/5 z-50 p-3 rounded">
                     <label class="flex justify-between items-center text-sm">
                         Show Descriptions
@@ -45,19 +46,19 @@
         {% block header %}{% endblock %}
     </header>
     {% include "/partials/title.tpl" %}
-    <article class="content pb-16">
-        <section class="sidebar">
+    <main class="content pb-16" id="main-content">
+        <aside class="sidebar">
             {% if mainEntity %}
             <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-600">Updated: </span>{{ mainEntity.UpdatedAt|date:"2006-01-02 15:04" }}</small>
             <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-600">Created: </span>{{ mainEntity.CreatedAt|date:"2006-01-02 15:04" }}</small>
             {% endif %}
             {% block sidebar %}{% endblock %}
-        </section>
+        </aside>
         <section class="main">
             {% block prebody %}{% endblock %}
             {% block body %}{% endblock %}
         </section>
-    </article>
+    </main>
     <footer class="footer sticky bottom-0 bg-white">
         {% include "/partials/pagination.tpl" %}
         {% block footer %}{% endblock %}

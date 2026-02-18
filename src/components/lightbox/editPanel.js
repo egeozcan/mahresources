@@ -145,6 +145,11 @@ export const editPanelMethods = {
       return;
     }
 
+    // Evict oldest entry if cache exceeds max size
+    if (this.detailsCache.size > 100) {
+      this.detailsCache.delete(this.detailsCache.keys().next().value);
+    }
+
     this.detailsLoading = true;
 
     if (this.detailsAborter) {

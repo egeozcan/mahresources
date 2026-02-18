@@ -138,7 +138,11 @@ class InlineEdit extends HTMLElement {
 
             this.inputElement.addEventListener('blur', () => this.exitEditMode());
             this.inputElement.addEventListener('keydown', (e) => {
-                if ((!this.multiline && e.key === 'Enter') || e.key === 'Escape') {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    this._cancelled = true;
+                    this.exitEditMode();
+                } else if (!this.multiline && e.key === 'Enter') {
                     e.preventDefault();
                     this.exitEditMode();
                 }
@@ -163,6 +167,13 @@ class InlineEdit extends HTMLElement {
         if (!this.isEditing) return;
         this.isEditing = false;
 
+        if (this._cancelled) {
+            this._cancelled = false;
+            this.displayText.textContent = this._originalValue;
+            this.shadowRoot.replaceChild(this.displayContainer, this.inputElement);
+            return;
+        }
+
         const newValue = this.inputElement.value.trim();
         this.displayText.textContent = newValue;
         this.shadowRoot.replaceChild(this.displayContainer, this.inputElement);
@@ -175,8 +186,18 @@ class InlineEdit extends HTMLElement {
             fetch(this.postUrl, {
                 method: 'POST',
                 body: formData,
+            }).then(() => {
+                // Flash success indicator
+                this.displayText.style.transition = 'background-color 0.3s';
+                this.displayText.style.backgroundColor = '#d1fae5';
+                setTimeout(() => { this.displayText.style.backgroundColor = ''; }, 1000);
             }).catch((error) => {
                 console.error('Error posting data:', error);
+                // Revert on error
+                this.displayText.textContent = this._originalValue;
+                this.displayText.style.transition = 'background-color 0.3s';
+                this.displayText.style.backgroundColor = '#fee2e2';
+                setTimeout(() => { this.displayText.style.backgroundColor = ''; }, 1000);
             });
         }
     }

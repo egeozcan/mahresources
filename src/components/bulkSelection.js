@@ -1,4 +1,5 @@
 import { setCheckBox } from '../index.js';
+import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 
 const btnClasses = `bulk-action-btn inline-flex justify-center
       py-1.5 px-3 mt-3
@@ -8,6 +9,7 @@ const btnClasses = `bulk-action-btn inline-flex justify-center
       focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500`;
 
 let currentIndex = 0;
+let _bulkLiveRegion = null;
 
 export function registerBulkSelectionStore(Alpine) {
   Alpine.store("bulkSelection", {
@@ -17,6 +19,17 @@ export function registerBulkSelectionStore(Alpine) {
     options: {},
     activeEditor: null,
     lastSelected: null,
+
+    init() {
+      currentIndex = 0;
+      if (!_bulkLiveRegion) {
+        _bulkLiveRegion = createLiveRegion();
+      }
+    },
+
+    announce(message) {
+      _bulkLiveRegion?.announce(message);
+    },
 
     isSelected(id) {
       return this.selectedIds.has(id);
@@ -36,6 +49,7 @@ export function registerBulkSelectionStore(Alpine) {
 
       this.selectedIds.add(id);
       setCheckBox(this.options[id].el, true);
+      this.announce(`${this.selectedIds.size} item${this.selectedIds.size === 1 ? '' : 's'} selected`);
     },
 
     deselect(id) {
@@ -48,6 +62,7 @@ export function registerBulkSelectionStore(Alpine) {
 
       this.selectedIds.delete(id);
       setCheckBox(this.options[id].el, false);
+      this.announce(this.selectedIds.size > 0 ? `${this.selectedIds.size} item${this.selectedIds.size === 1 ? '' : 's'} selected` : 'Selection cleared');
     },
 
     toggle(id) {
@@ -72,9 +87,9 @@ export function registerBulkSelectionStore(Alpine) {
       );
 
       if (this.isSelected(id)) {
-        elementsToProcess.forEach((option) => this.deselect(option.itemId));
+        elementsToProcess.forEach((option) => { if (option) this.deselect(option.itemId); });
       } else {
-        elementsToProcess.forEach((option) => this.select(option.itemId));
+        elementsToProcess.forEach((option) => { if (option) this.select(option.itemId); });
       }
     },
 
@@ -157,13 +172,20 @@ export function registerBulkSelectionStore(Alpine) {
         e.preventDefault();
         try {
           form.parentElement.classList.add("pointer-events-none");
-          await fetch(form.action, { method: "POST", body: new FormData(form) });
+          const response = await fetch(form.action, { method: "POST", body: new FormData(form) });
+          if (!response.ok) {
+            throw new Error(`Server error: ${response.status}`);
+          }
           const url = new URL(window.location);
           url.pathname = url.pathname + ".body";
           const newHtml = await fetch(url.toString()).then(x => x.text());
           form.reset();
           this.deselectAll();
           Alpine.morph(document.querySelector(".list-container, .items-container"), newHtml);
+          this.announce('Bulk operation completed successfully');
+        } catch (err) {
+          this.announce(`Bulk operation failed: ${err.message}`);
+          alert(`Bulk operation failed: ${err.message}`);
         } finally {
           form.parentElement.classList.remove("pointer-events-none");
         }
@@ -304,6 +326,8 @@ export function setupBulkSelectionListeners() {
 
       container.innerHTML = "";
       container.appendChild(form);
+
+      window.Alpine.initTree(form);
 
       setTimeout(() => form.querySelector("[x-ref='autocompleter']")?.focus(), 10);
     })

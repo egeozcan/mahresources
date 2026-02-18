@@ -322,6 +322,10 @@ func (w *HashWorker) processResource(resourceID uint) {
 	w.hashAndStoreSimilarities(resource)
 }
 
+// warmCache loads existing perceptual hashes into the LRU cache on first use.
+// For large deployments (millions of hashed images) this may take several seconds
+// at startup due to the database scan. The batched approach avoids loading all rows
+// into memory at once, but the total I/O is proportional to the number of hashed images.
 func (w *HashWorker) warmCache() {
 	// Load hashes in pages to seed the LRU cache without loading everything at once
 	batchSize := w.config.CacheSize
@@ -419,6 +423,11 @@ func (w *HashWorker) hashAndStoreSimilarities(resource models.Resource) {
 	w.findAndStoreSimilarities(resource.ID, dHashInt)
 }
 
+// findAndStoreSimilarities compares a newly hashed resource against all entries in
+// the in-memory cache. This is O(N) per resource (O(N^2) overall when hashing N new
+// resources in a batch). For typical deployments (< 1M images) this is fast enough
+// since Hamming distance is a single XOR + popcount. For very large deployments, a
+// BK-tree or VP-tree index on Hamming distance would reduce this to O(log N) per lookup.
 func (w *HashWorker) findAndStoreSimilarities(resourceID uint, dHash uint64) {
 	var similarities []models.ResourceSimilarity
 

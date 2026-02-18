@@ -295,7 +295,7 @@ func parseHTMLTime(timeStr string) *time.Time {
 
 func timeOrNil(time time.Time, err error) *time.Time {
 	if err != nil {
-		fmt.Println("couldn't parse date", err.Error())
+		log.Printf("couldn't parse date: %v", err)
 
 		return nil
 	}

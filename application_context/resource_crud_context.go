@@ -180,6 +180,14 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 			return err
 		}
 
+		// Ensure Series is loaded if SeriesID is set (clause.Associations with pageLimit may not load it)
+		if resource.SeriesID != nil && resource.Series == nil {
+			resource.Series = &models.Series{}
+			if err := tx.First(resource.Series, *resource.SeriesID).Error; err != nil {
+				return err
+			}
+		}
+
 		resource.Name = resourceQuery.Name
 		if resourceQuery.Meta != "" {
 			resource.Meta = []byte(resourceQuery.Meta)

@@ -258,16 +258,29 @@ func (ctx *MahresourcesContext) DuplicateGroup(id uint) (*models.Group, error) {
 		return nil, err
 	}
 
+	// Copy slices to avoid shared references with the original
+	relatedResources := make([]*models.Resource, len(original.RelatedResources))
+	copy(relatedResources, original.RelatedResources)
+
+	relatedNotes := make([]*models.Note, len(original.RelatedNotes))
+	copy(relatedNotes, original.RelatedNotes)
+
+	relatedGroups := make([]*models.Group, len(original.RelatedGroups))
+	copy(relatedGroups, original.RelatedGroups)
+
+	tags := make([]*models.Tag, len(original.Tags))
+	copy(tags, original.Tags)
+
 	result = &models.Group{
 		Name:             original.Name,
 		Description:      original.Description,
 		URL:              original.URL,
 		Meta:             original.Meta,
 		OwnerId:          original.OwnerId,
-		RelatedResources: original.RelatedResources,
-		RelatedNotes:     original.RelatedNotes,
-		RelatedGroups:    original.RelatedGroups,
-		Tags:             original.Tags,
+		RelatedResources: relatedResources,
+		RelatedNotes:     relatedNotes,
+		RelatedGroups:    relatedGroups,
+		Tags:             tags,
 		CategoryId:       original.CategoryId,
 	}
 

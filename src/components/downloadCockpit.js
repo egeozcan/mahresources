@@ -152,9 +152,9 @@ export function downloadCockpit() {
             this.eventSource.onerror = () => {
                 this.connectionStatus = 'disconnected';
                 this.disconnect();
-                // Reconnect after 3 seconds
+                // Always reconnect since SSE events drive background behavior
                 setTimeout(() => {
-                    if (this.isOpen) this.connect();
+                    this.connect();
                 }, 3000);
             };
         },

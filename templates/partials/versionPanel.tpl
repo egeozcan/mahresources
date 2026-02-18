@@ -11,6 +11,7 @@
                             :value="{{ version.VersionNumber }}"
                             @change="selected.includes({{ version.VersionNumber }}) ? selected = selected.filter(x => x !== {{ version.VersionNumber }}) : selected.push({{ version.VersionNumber }})"
                             :disabled="selected.length >= 2 && !selected.includes({{ version.VersionNumber }})"
+                            :aria-label="'Select version {{ version.VersionNumber }} for comparison'"
                             class="rounded">
                     </template>
                     <span class="font-medium">
@@ -67,9 +68,9 @@
 
                 <form action="/v1/resource/versions?resourceId={{ resourceId }}" method="post" enctype="multipart/form-data"
                       class="flex items-center space-x-2">
-                    <input type="file" name="file" required class="text-sm">
+                    <input type="file" name="file" required class="text-sm" aria-label="Upload file for new version">
                     <input type="text" name="comment" placeholder="Comment (optional)"
-                           class="px-2 py-1 text-sm border rounded">
+                           class="px-2 py-1 text-sm border rounded" aria-label="Version comment">
                     <button type="submit" class="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700">
                         Upload New Version
                     </button>

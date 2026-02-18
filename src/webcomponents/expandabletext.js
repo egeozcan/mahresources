@@ -55,7 +55,7 @@ class ExpandableText extends HTMLElement {
         this._container = container;
 
         // Get the full text from the slot
-        const fullText = this.innerHTML.trim();
+        const fullText = this.textContent.trim();
 
         // Show only the first 30 characters initially
         const previewText = fullText.length > 30 ? fullText.substring(0, 30) : fullText;

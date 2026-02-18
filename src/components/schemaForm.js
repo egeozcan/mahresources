@@ -438,7 +438,7 @@ function generateFormElement(schema, data, onChange, rootSchema) {
         input.disabled = true;
         input.className = "shadow-sm bg-gray-100 block w-full sm:text-sm border-gray-300 rounded-md mt-1 text-gray-500";
         if (data !== schema.const) {
-            setTimeout(() => onChange(schema.const), 0);
+            onChange(schema.const);
         }
         return input;
     }
@@ -487,7 +487,7 @@ function generateFormElement(schema, data, onChange, rootSchema) {
 
         if (typeof data !== 'object' || data === null || Array.isArray(data)) {
             data = {};
-            setTimeout(() => onChange(data), 0);
+            onChange(data);
         }
 
         if (schema.title) {
@@ -720,7 +720,7 @@ function generateFormElement(schema, data, onChange, rootSchema) {
 
         if (!Array.isArray(data)) {
             data = [];
-            setTimeout(() => onChange(data), 0);
+            onChange(data);
         }
 
         // Check constraints

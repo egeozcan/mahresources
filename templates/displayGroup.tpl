@@ -67,9 +67,11 @@
     </form>
 
     <form
+        x-data="confirmAction({ message: 'Clone this group and all its associations?' })"
         action="/v1/group/clone"
         :action="'/v1/group/clone?redirect=' + encodeURIComponent(window.location)"
         method="post"
+        x-bind="events"
     >
         <input type="hidden" name="Id" value="{{ group.ID }}">
         <p>Clone group?</p>

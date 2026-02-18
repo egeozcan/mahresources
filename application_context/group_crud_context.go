@@ -5,6 +5,7 @@ import (
 	"net/url"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
@@ -119,10 +120,6 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 		group.URL = groupUrl
 	} else {
 		group.URL = nil
-		if err := tx.Model(&group).Update("url", nil).Error; err != nil {
-			tx.Rollback()
-			return nil, err
-		}
 	}
 
 	if groupQuery.OwnerId != 0 {
@@ -133,7 +130,7 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 		return nil, err
 	}
 
-	if err := tx.Model(group).Updates(group).Error; err != nil {
+	if err := tx.Model(group).Select("Name", "Description", "Meta", "URL", "OwnerId", "Owner").Updates(group).Error; err != nil {
 		tx.Rollback()
 		return nil, err
 	}
@@ -163,17 +160,13 @@ func (ctx *MahresourcesContext) GetGroup(id uint) (*models.Group, error) {
 
 	err := ctx.db.
 		Preload("OwnGroups", pageLimit).
-		Preload("OwnGroups.Category", pageLimit).
 		Preload("OwnResources", pageLimitCustom(5)).
-		Preload("OwnResources.Tags").
 		Preload("OwnNotes", pageLimit).
 		Preload("RelatedResources", pageLimitCustom(5)).
-		Preload("RelatedResources.Tags").
 		Preload("RelatedNotes", pageLimit).
 		Preload("RelatedGroups", pageLimit).
 		Preload("Tags").
 		Preload("Owner").
-		Preload("Owner.Category").
 		Preload("Category", pageLimit).
 		Preload("Relationships").
 		Preload("Relationships.ToGroup").
@@ -245,14 +238,7 @@ func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {
 		ctx.EnsureForeignKeysActive(tx)
 
 		return tx.
-			Select("OwnGroups").
-			Select("OwnNotes").
-			Select("RelatedResources").
-			Select("RelatedNotes").
-			Select("RelatedGroups").
-			Select("Relationships").
-			Select("BackRelations").
-			Select("Tags").
+			Select(clause.Associations).
 			Delete(&group).Error
 	})
 	if err == nil {

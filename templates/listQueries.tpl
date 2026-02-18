@@ -13,7 +13,7 @@
 
 
 {% block sidebar %}
-    <form class="flex gap-2 items-start flex-col">
+    <form class="flex gap-2 items-start flex-col" aria-label="Filter queries">
         {% include "/partials/sideTitle.tpl" with title="Sort" %}
         {% include "/partials/form/selectInput.tpl" with name='SortBy' label='Sort' values=sortValues %}
         {% include "/partials/sideTitle.tpl" with title="Filter" %}

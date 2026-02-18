@@ -25,20 +25,26 @@ export function blockGallery(block, saveContentFn, getEditMode, noteId) {
       const toFetch = this.resourceIds.filter(id => !this.resourceMeta[id]);
       if (toFetch.length === 0) return;
 
+      // Fetch in chunks to limit concurrent requests
+      const chunkSize = 5;
       try {
-        const promises = toFetch.map(id =>
-          fetch(`/v1/resource?id=${id}`).then(r => r.ok ? r.json() : null)
-        );
-        const results = await Promise.all(promises);
-        results.forEach((res, i) => {
-          if (res) {
-            this.resourceMeta[toFetch[i]] = {
-              contentType: res.ContentType || '',
-              name: res.Name || '',
-              hash: res.Hash || ''
-            };
-          }
-        });
+        for (let i = 0; i < toFetch.length; i += chunkSize) {
+          const chunk = toFetch.slice(i, i + chunkSize);
+          const results = await Promise.all(
+            chunk.map(id =>
+              fetch(`/v1/resource?id=${id}`).then(r => r.ok ? r.json() : null)
+            )
+          );
+          results.forEach((res, j) => {
+            if (res) {
+              this.resourceMeta[chunk[j]] = {
+                contentType: res.ContentType || '',
+                name: res.Name || '',
+                hash: res.Hash || ''
+              };
+            }
+          });
+        }
       } catch (err) {
         console.warn('Failed to fetch resource metadata for gallery:', err);
       }

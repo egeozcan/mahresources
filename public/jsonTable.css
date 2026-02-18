@@ -79,7 +79,7 @@
     padding: 0 !important;
 }
 
-body > div {
+.tableContainer > div {
     margin-bottom: 20px;
 }
 
@@ -102,6 +102,6 @@ body > div {
     color: white;
 }
 
-th:hover, td:hover {
+.jsonTable th:hover, .jsonTable td:hover {
     background: #fddea2;
 }

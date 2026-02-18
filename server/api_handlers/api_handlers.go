@@ -50,7 +50,7 @@ func tryFillStructValuesFromRequest(dst any, request *http.Request) error {
 	}
 
 	if strings.HasPrefix(contentTypeHeader, constants.MultiPartForm) {
-		if err := request.ParseMultipartForm(int64(4096) << 20); err != nil {
+		if err := request.ParseMultipartForm(int64(32) << 20); err != nil {
 			return err
 		}
 		return decoder.Decode(dst, request.PostForm)
