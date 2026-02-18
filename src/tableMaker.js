@@ -49,9 +49,9 @@ function generateObjectTable(obj, path = ["$"]) {
         if (e.target.matches("button") || e.target.matches("expandable-text")) {
             return;
         }
-        const cell = e.target.closest("th, td, tr");
-        if (cell && cell.title) {
-            updateClipboard(cell.title);
+        const titled = findTitledAncestor(e.target, table);
+        if (titled) {
+            updateClipboard(titled.title);
             e.stopPropagation();
         }
     });
@@ -147,9 +147,9 @@ function generateArrayTable(arr, path = ["$"]) {
         if (e.target.matches("button") || e.target.matches("expandable-text")) {
             return;
         }
-        const cell = e.target.closest("th, td, tr");
-        if (cell && cell.title) {
-            updateClipboard(cell.title);
+        const titled = findTitledAncestor(e.target, table);
+        if (titled) {
+            updateClipboard(titled.title);
             e.stopPropagation();
         }
     });
@@ -214,6 +214,20 @@ function generateArrayTable(arr, path = ["$"]) {
     });
 
     return table;
+}
+
+/**
+ * Walk from el up through th/td/tr ancestors until we find one with a title,
+ * stopping at the table boundary. This handles cases where a td has no title
+ * but its parent tr does (e.g. object table value cells).
+ */
+function findTitledAncestor(el, table) {
+    let current = el.closest("th, td, tr");
+    while (current && current !== table) {
+        if (current.title) return current;
+        current = current.parentElement?.closest("th, td, tr");
+    }
+    return null;
 }
 
 function isRenderableAsArray(obj) {
