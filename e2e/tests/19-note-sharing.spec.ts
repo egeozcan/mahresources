@@ -238,7 +238,7 @@ test.describe('Shared Notes Filter', () => {
     await sharedCheckbox.check();
 
     // Submit the form (use exact match and type=submit to avoid hitting global search button)
-    await page.getByRole('button', { name: 'Search', exact: true }).click();
+    await page.getByRole('button', { name: 'Apply Filters', exact: true }).click();
 
     // Wait for page to reload with filter
     await page.waitForURL(/Shared=1/);

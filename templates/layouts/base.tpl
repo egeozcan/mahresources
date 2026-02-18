@@ -46,7 +46,7 @@
         {% block header %}{% endblock %}
     </header>
     {% include "/partials/title.tpl" %}
-    <main class="content pb-16" id="main-content">
+    <div class="content pb-16" id="main-content">
         <aside class="sidebar">
             {% if mainEntity %}
             <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-600">Updated: </span>{{ mainEntity.UpdatedAt|date:"2006-01-02 15:04" }}</small>
@@ -54,11 +54,11 @@
             {% endif %}
             {% block sidebar %}{% endblock %}
         </aside>
-        <section class="main">
+        <main class="main">
             {% block prebody %}{% endblock %}
             {% block body %}{% endblock %}
-        </section>
-    </main>
+        </main>
+    </div>
     <footer class="footer sticky bottom-0 bg-white">
         {% include "/partials/pagination.tpl" %}
         {% block footer %}{% endblock %}

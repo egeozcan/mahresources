@@ -161,7 +161,7 @@ test.describe.serial('Resource Versioning', () => {
     await resourcePage.gotoDisplay(resourceId);
 
     // Get the preview image URL and extract the hash parameter
-    const previewImg = page.locator('img[alt="Preview"]').first();
+    const previewImg = page.locator('img[alt^="Preview"]').first();
     await expect(previewImg).toBeVisible();
     const initialSrc = await previewImg.getAttribute('src');
     const initialHash = new URLSearchParams(initialSrc?.split('?')[1] || '').get('v');
@@ -179,7 +179,7 @@ test.describe.serial('Resource Versioning', () => {
     await page.waitForLoadState('load');
 
     // Check that the preview URL now has a different hash
-    const newPreviewImg = page.locator('img[alt="Preview"]').first();
+    const newPreviewImg = page.locator('img[alt^="Preview"]').first();
     await expect(newPreviewImg).toBeVisible();
     const newSrc = await newPreviewImg.getAttribute('src');
     const newHash = new URLSearchParams(newSrc?.split('?')[1] || '').get('v');

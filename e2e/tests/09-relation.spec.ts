@@ -65,8 +65,8 @@ test.describe('Relation CRUD Operations', () => {
       name: `Updated Relation ${testRunId}`,
       description: 'Updated description',
     });
-    // The relation name is displayed in a subtitle h2 in the body section
-    await expect(page.locator('article h2').first()).toContainText(`Updated Relation ${testRunId}`);
+    // The relation name is displayed in a subtitle h2 in the main content section
+    await expect(page.locator('main h2').first()).toContainText(`Updated Relation ${testRunId}`);
   });
 
   test('should list the relation', async ({ relationPage }) => {
