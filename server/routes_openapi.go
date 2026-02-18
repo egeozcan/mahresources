@@ -36,6 +36,9 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 	// Resource Versions
 	registerVersionRoutes(registry)
 
+	// Series
+	registerSeriesRoutes(registry)
+
 	// Tags
 	registerTagRoutes(registry)
 
@@ -352,6 +355,81 @@ func registerVersionRoutes(r *openapi.Registry) {
 			{Name: "v2", Type: "integer", Required: true, Description: "Second version ID"},
 		},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+}
+
+func registerSeriesRoutes(r *openapi.Registry) {
+	seriesType := reflect.TypeOf(models.Series{})
+	seriesQueryType := reflect.TypeOf(query_models.SeriesQuery{})
+	seriesEditorType := reflect.TypeOf(query_models.SeriesEditor{})
+	seriesCreatorType := reflect.TypeOf(query_models.SeriesCreator{})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/seriesList",
+		OperationID:          "listSeries",
+		Summary:              "List series",
+		Tags:                 []string{"series"},
+		QueryType:            seriesQueryType,
+		ResponseType:         reflect.SliceOf(seriesType),
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		Paginated:            true,
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/series/create",
+		OperationID:          "createSeries",
+		Summary:              "Create a new series",
+		Tags:                 []string{"series"},
+		RequestType:          seriesCreatorType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseType:         seriesType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/series",
+		OperationID:          "getSeries",
+		Summary:              "Get a specific series",
+		Tags:                 []string{"series"},
+		IDQueryParam:         "id",
+		IDRequired:           true,
+		ResponseType:         seriesType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/series",
+		OperationID:          "updateSeries",
+		Summary:              "Update a series",
+		Tags:                 []string{"series"},
+		RequestType:          seriesEditorType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseType:         seriesType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:       http.MethodPost,
+		Path:         "/v1/series/delete",
+		OperationID:  "deleteSeries",
+		Summary:      "Delete a series",
+		Tags:         []string{"series"},
+		IDQueryParam: "Id",
+		IDRequired:   true,
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:       http.MethodPost,
+		Path:         "/v1/resource/removeSeries",
+		OperationID:  "removeResourceFromSeries",
+		Summary:      "Remove a resource from its series",
+		Tags:         []string{"series"},
+		IDQueryParam: "id",
+		IDRequired:   true,
 	})
 }
 

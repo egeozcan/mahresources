@@ -1220,6 +1220,42 @@ components:
                     readOnly: true
                     type: string
             type: object
+        SeriesCreator:
+            properties:
+                Name:
+                    type: string
+            type: object
+        SeriesEditor:
+            properties:
+                ID:
+                    type: integer
+                Meta:
+                    type: string
+                Name:
+                    type: string
+            type: object
+        SeriesPartial:
+            properties:
+                ID:
+                    type: integer
+                Name:
+                    type: string
+            type: object
+        SeriesQuery:
+            properties:
+                CreatedAfter:
+                    type: string
+                CreatedBefore:
+                    type: string
+                Name:
+                    type: string
+                Slug:
+                    type: string
+                SortBy:
+                    items:
+                        type: string
+                    type: array
+            type: object
         Tag:
             properties:
                 CreatedAt:
@@ -3138,6 +3174,21 @@ paths:
             summary: Add a resource from a remote URL
             tags:
                 - resources
+    /v1/resource/removeSeries:
+        post:
+            operationId: removeResourceFromSeries
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Remove a resource from its series
+            tags:
+                - series
     /v1/resource/version:
         delete:
             operationId: deleteVersion
@@ -3819,6 +3870,129 @@ paths:
             summary: Global search across all entities
             tags:
                 - search
+    /v1/series:
+        get:
+            operationId: getSeries
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Series'
+                    description: Successful response
+            summary: Get a specific series
+            tags:
+                - series
+        post:
+            operationId: updateSeries
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/SeriesEditor'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/SeriesEditor'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Series'
+                    description: Successful response
+            summary: Update a series
+            tags:
+                - series
+    /v1/series/create:
+        post:
+            operationId: createSeries
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/SeriesCreator'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/SeriesCreator'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Series'
+                    description: Successful response
+            summary: Create a new series
+            tags:
+                - series
+    /v1/series/delete:
+        post:
+            operationId: deleteSeries
+            parameters:
+                - in: query
+                  name: Id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Delete a series
+            tags:
+                - series
+    /v1/seriesList:
+        get:
+            operationId: listSeries
+            parameters:
+                - in: query
+                  name: Name
+                  schema:
+                    type: string
+                - in: query
+                  name: Slug
+                  schema:
+                    type: string
+                - in: query
+                  name: CreatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: CreatedAfter
+                  schema:
+                    type: string
+                - explode: true
+                  in: query
+                  name: SortBy
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - description: Page number for pagination
+                  in: query
+                  name: page
+                  schema:
+                    default: 1
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/SeriesPartial'
+                                type: array
+                    description: Successful response
+            summary: List series
+            tags:
+                - series
     /v1/tag:
         post:
             operationId: createOrUpdateTag
@@ -3970,6 +4144,8 @@ tags:
       name: resources
     - description: Search operations
       name: search
+    - description: Operations related to series
+      name: series
     - description: Operations related to tags
       name: tags
     - description: Operations related to versions
