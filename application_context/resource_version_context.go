@@ -681,7 +681,10 @@ func (ctx *MahresourcesContext) SyncResourcesFromCurrentVersion() error {
 			// Clear cached previews
 			tx.Where("resource_id = ?", item.ResourceID).Delete(&models.Preview{})
 		}
-		tx.Commit()
+		if err := tx.Commit().Error; err != nil {
+			ctx.Logger().Warning(models.LogActionCreate, "sync_version", nil, "Failed to commit version sync batch", err.Error(), nil)
+			return fmt.Errorf("version sync batch commit failed at %d/%d: %w", batchEnd, len(outOfSync), err)
+		}
 
 		if batchEnd%10000 < batchSize {
 			progress := fmt.Sprintf("%d/%d (%.1f%%)", batchEnd, len(outOfSync), float64(batchEnd)/float64(len(outOfSync))*100)

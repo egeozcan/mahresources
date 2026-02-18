@@ -5,7 +5,6 @@ import (
 	"net/url"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
@@ -238,7 +237,7 @@ func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {
 		ctx.EnsureForeignKeysActive(tx)
 
 		return tx.
-			Select(clause.Associations).
+			Select("OwnGroups", "OwnNotes", "RelatedResources", "RelatedNotes", "RelatedGroups", "Relationships", "BackRelations", "Tags").
 			Delete(&group).Error
 	})
 	if err == nil {
