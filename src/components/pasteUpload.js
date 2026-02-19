@@ -224,7 +224,7 @@ export function setupPasteListener() {
     const ownerId = new URLSearchParams(window.location.search).get('ownerId');
     if (ownerId) {
       try {
-        const resp = await fetch(`/v1/group.json?id=${ownerId}`);
+        const resp = await fetch(`/v1/group.json?id=${encodeURIComponent(ownerId)}`);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const group = await resp.json();
         store.open(items, { type: 'group', id: group.ID, name: group.Name });
@@ -272,6 +272,10 @@ export function registerPasteUploadStore(Alpine) {
      */
     open(items, context) {
       if (!items || items.length === 0) return;
+      // Revoke any existing preview URLs from a previous open (e.g. rapid paste)
+      for (const existing of this.items) {
+        if (existing.previewUrl) URL.revokeObjectURL(existing.previewUrl);
+      }
       this.items = items;
       this.context = context || null;
       this.tags = [];

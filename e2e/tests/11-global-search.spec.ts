@@ -39,7 +39,7 @@ test.describe('Global Search', () => {
     await page.keyboard.press('ControlOrMeta+k');
 
     // Wait for search modal to appear
-    const searchInput = page.locator('.global-search input[type="text"], input[placeholder*="Search"]');
+    const searchInput = page.locator('.global-search input[type="text"]');
     await expect(searchInput).toBeVisible({ timeout: 5000 });
   });
 

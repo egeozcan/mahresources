@@ -22,7 +22,7 @@
                 <h2 id="paste-upload-title" class="text-lg font-semibold text-gray-900">
                     Upload to <span x-text="$store.pasteUpload.context?.name || 'Unknown'"></span>
                 </h2>
-                <button @click="$store.pasteUpload.close()"
+                <button @click="$store.pasteUpload.state !== 'uploading' && $store.pasteUpload.close()"
                         :disabled="$store.pasteUpload.state === 'uploading'"
                         class="text-gray-400 hover:text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
                         aria-label="Close">
@@ -164,7 +164,7 @@
 
                 {# Right: Cancel + Upload buttons #}
                 <div class="flex gap-2">
-                    <button @click="$store.pasteUpload.close()"
+                    <button @click="$store.pasteUpload.state !== 'uploading' && $store.pasteUpload.close()"
                             :disabled="$store.pasteUpload.state === 'uploading'"
                             type="button"
                             class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">

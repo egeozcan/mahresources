@@ -88,6 +88,8 @@ test.describe.serial('Paste Upload', () => {
   let categoryId: number;
   let groupId: number;
   let groupName: string;
+  let noteId: number;
+  let noteName: string;
   // Track resources created by paste-upload so we can clean up
   const createdResourceIds: number[] = [];
 
@@ -103,6 +105,13 @@ test.describe.serial('Paste Upload', () => {
       categoryId,
     });
     groupId = group.ID;
+
+    noteName = `PasteTest Note ${uid}`;
+    const note = await apiClient.createNote({
+      name: noteName,
+      ownerId: groupId,
+    });
+    noteId = note.ID;
   });
 
   // 1. Paste image on group detail -- modal appears with group name + preview
@@ -297,6 +306,63 @@ test.describe.serial('Paste Upload', () => {
     await expect(modal).not.toBeVisible();
   });
 
+  // 8. Paste image on note detail -- modal appears with note name + ownerId context
+  test('should open modal with note context on note detail paste', async ({
+    page,
+    notePage,
+  }) => {
+    await notePage.gotoDisplay(noteId);
+    await page.locator('body').click();
+    await page.waitForTimeout(200);
+
+    await pasteImage(page);
+
+    const modal = page.locator(MODAL_SELECTOR);
+    await expect(modal).toBeVisible({ timeout: 5000 });
+
+    // Title should include the note name
+    const title = page.locator(MODAL_TITLE);
+    await expect(title).toContainText(noteName);
+
+    // Verify the store context has the correct type and ownerId
+    const context = await page.evaluate(
+      () => {
+        const ctx = (window as any).Alpine?.store('pasteUpload')?.context;
+        return ctx ? { type: ctx.type, id: ctx.id, ownerId: ctx.ownerId } : null;
+      },
+    );
+    expect(context).toBeTruthy();
+    expect(context!.type).toBe('note');
+    expect(context!.id).toBe(noteId);
+    expect(context!.ownerId).toBe(groupId);
+
+    // Close modal
+    await modal.locator('button:has-text("Cancel")').click();
+    await expect(modal).not.toBeVisible();
+  });
+
+  // 9. Paste on groups list page with ownerId filter -- modal appears
+  test('should open modal when pasting on list page with owner filter', async ({
+    page,
+  }) => {
+    await page.goto(`/groups?ownerId=${groupId}`);
+    await page.locator('body').click();
+    await page.waitForTimeout(200);
+
+    await pasteImage(page);
+
+    const modal = page.locator(MODAL_SELECTOR);
+    await expect(modal).toBeVisible({ timeout: 5000 });
+
+    // Title should include the group name (resolved from ownerId)
+    const title = page.locator(MODAL_TITLE);
+    await expect(title).toContainText(groupName);
+
+    // Close modal
+    await modal.locator('button:has-text("Cancel")').click();
+    await expect(modal).not.toBeVisible();
+  });
+
   test.afterAll(async ({ apiClient }) => {
     // Clean up resources created during tests
     for (const id of createdResourceIds) {
@@ -304,6 +370,13 @@ test.describe.serial('Paste Upload', () => {
         await apiClient.deleteResource(id);
       } catch {
         // ignore cleanup errors
+      }
+    }
+    if (noteId) {
+      try {
+        await apiClient.deleteNote(noteId);
+      } catch {
+        // ignore
       }
     }
     if (groupId) {
