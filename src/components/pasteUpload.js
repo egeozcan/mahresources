@@ -153,6 +153,100 @@ export function extractPasteContent(clipboardData) {
 let _infoTimer = null;
 
 /**
+ * Set up the global paste event listener.
+ *
+ * The handler runs three guard checks before opening the paste-upload modal:
+ *  1. If a file input exists AND the clipboard has files, reproduce the legacy
+ *     paste-into-file-input behaviour (merge files, flash ring).
+ *  2. If the active element is a text input / textarea / contentEditable, bail.
+ *  3. If no useful clipboard content can be extracted, bail.
+ *
+ * When all guards pass the handler tries to determine an upload context from the
+ * page (data-paste-context attribute, or ownerId query-param) and opens the
+ * paste-upload store accordingly.
+ */
+export function setupPasteListener() {
+  window.addEventListener('paste', async (e) => {
+    // --- Guard 1: file input on page + clipboard has files → legacy behaviour -
+    const fileInput = document.querySelector("input[type='file']");
+    if (fileInput && e.clipboardData?.files && e.clipboardData.files.length > 0) {
+      e.preventDefault();
+      const dt = new DataTransfer();
+      for (const file of fileInput.files) {
+        dt.items.add(file);
+      }
+      for (const file of e.clipboardData.files) {
+        dt.items.add(file);
+      }
+      fileInput.files = dt.files;
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+      fileInput.closest('.flex')?.classList.add('ring-2', 'ring-indigo-500', 'rounded-md');
+      setTimeout(() => fileInput.closest('.flex')?.classList.remove('ring-2', 'ring-indigo-500', 'rounded-md'), 1500);
+      return;
+    }
+
+    // --- Guard 2: focus is inside a text input / textarea / contentEditable ----
+    const active = document.activeElement;
+    if (active) {
+      const tag = active.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || active.isContentEditable) {
+        return;
+      }
+    }
+
+    // --- Guard 3: extract paste content; bail if empty -------------------------
+    const items = extractPasteContent(e.clipboardData);
+    if (items.length === 0) return;
+
+    e.preventDefault();
+
+    // --- Obtain Alpine store ---------------------------------------------------
+    const store = window.Alpine?.store('pasteUpload');
+    if (!store) return;
+
+    // --- Context detection: data-paste-context attribute -----------------------
+    const ctxEl = document.querySelector('[data-paste-context]');
+    if (ctxEl) {
+      try {
+        const context = JSON.parse(ctxEl.getAttribute('data-paste-context'));
+        store.open(items, context);
+      } catch (err) {
+        console.error('Failed to parse data-paste-context:', err);
+        store.showInfo('Invalid paste context on this page.');
+        for (const item of items) {
+          if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+        }
+      }
+      return;
+    }
+
+    // --- Context detection: ownerId query param → fetch group -----------------
+    const ownerId = new URLSearchParams(window.location.search).get('ownerId');
+    if (ownerId) {
+      try {
+        const resp = await fetch(`/v1/group.json?id=${ownerId}`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const group = await resp.json();
+        store.open(items, { type: 'group', id: group.ID, name: group.Name });
+      } catch (err) {
+        console.error('Failed to fetch owner group:', err);
+        store.showInfo('Could not determine the owner group for pasted content.');
+        for (const item of items) {
+          if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+        }
+      }
+      return;
+    }
+
+    // --- No context found ------------------------------------------------------
+    store.showInfo('To paste and upload, navigate to a group or note detail page, or filter a list by owner.');
+    for (const item of items) {
+      if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+    }
+  });
+}
+
+/**
  * Register the `pasteUpload` Alpine store.
  * @param {import('alpinejs').Alpine} Alpine
  */

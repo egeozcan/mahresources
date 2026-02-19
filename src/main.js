@@ -30,6 +30,7 @@ import { globalSearch } from './components/globalSearch.js';
 import { schemaForm } from './components/schemaForm.js';
 import { registerLightboxStore } from './components/lightbox.js';
 import { registerEntityPickerStore } from './components/picker/index.js';
+import { registerPasteUploadStore, setupPasteListener } from './components/pasteUpload.js';
 import { multiSort } from './components/multiSort.js';
 import { downloadCockpit } from './components/downloadCockpit.js';
 import { compareView } from './components/compareView.js';
@@ -70,6 +71,7 @@ registerBulkSelectionStore(Alpine);
 registerSavedSettingStore(Alpine);
 registerLightboxStore(Alpine);
 registerEntityPickerStore(Alpine);
+registerPasteUploadStore(Alpine);
 
 // Register Alpine data components
 Alpine.data('autocompleter', autocompleter);
@@ -110,28 +112,11 @@ document.addEventListener('DOMContentLoaded', () => {
   Alpine.store('lightbox').initFromDOM();
 });
 
-// Setup paste handler for file inputs
-window.addEventListener('paste', e => {
-  const fileInput = document.querySelector("input[type='file']");
-  if (!fileInput || !e.clipboardData.files || !e.clipboardData.files.length) {
-    return;
-  }
-  e.preventDefault();
-  const dt = new DataTransfer();
-  for (const file of fileInput.files) {
-    dt.items.add(file);
-  }
-  for (const file of e.clipboardData.files) {
-    dt.items.add(file);
-  }
-  fileInput.files = dt.files;
-  fileInput.dispatchEvent(new Event('change', { bubbles: true }));
-  fileInput.closest('.flex')?.classList.add('ring-2', 'ring-indigo-500', 'rounded-md');
-  setTimeout(() => fileInput.closest('.flex')?.classList.remove('ring-2', 'ring-indigo-500', 'rounded-md'), 1500);
-});
-
 // Setup bulk selection listeners
 setupBulkSelectionListeners();
+
+// Setup global paste listener (handles file-input paste, modal, and context detection)
+setupPasteListener();
 
 // Refresh resource lists when background downloads complete
 window.addEventListener('download-completed', async (e) => {
