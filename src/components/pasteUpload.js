@@ -243,5 +243,112 @@ export function registerPasteUploadStore(Alpine) {
         _infoTimer = null;
       }, 4000);
     },
+
+    /**
+     * Upload items sequentially to the server, tracking progress and errors.
+     * Skips items already marked as 'done' (useful for retries).
+     */
+    async upload() {
+      if (this.items.length === 0 || !this.context) return;
+
+      this.state = 'uploading';
+      this.errorMessage = '';
+
+      const total = this.items.filter(i => i.error !== 'done').length;
+      let successCount = 0;
+      let current = 0;
+
+      for (const item of this.items) {
+        if (item.error === 'done') continue;
+
+        current++;
+        this.uploadProgress = `Uploading ${current} of ${total}...`;
+
+        const formData = new FormData();
+        formData.append('resource', item.file, item.name);
+
+        if (this.context.type === 'group') {
+          formData.append('ownerId', this.context.id);
+          formData.append('groups', this.context.id);
+        } else if (this.context.type === 'note') {
+          if (this.context.ownerId) {
+            formData.append('ownerId', this.context.ownerId);
+          }
+          formData.append('notes', this.context.id);
+        }
+
+        for (const tagId of this.tags) {
+          formData.append('tags', tagId);
+        }
+
+        if (this.categoryId) {
+          formData.append('resourceCategoryId', this.categoryId);
+        }
+
+        try {
+          const response = await fetch('/v1/resource', {
+            method: 'POST',
+            body: formData,
+          });
+          if (!response.ok) {
+            const text = await response.text();
+            item.error = text || `HTTP ${response.status}`;
+          } else {
+            item.error = 'done';
+            successCount++;
+          }
+        } catch (err) {
+          item.error = err.message || 'Network error';
+        }
+      }
+
+      if (successCount === total) {
+        this.state = 'success';
+        this.uploadProgress = `Uploaded ${successCount} file${successCount !== 1 ? 's' : ''} successfully.`;
+        setTimeout(() => {
+          this.close();
+          this._refreshPage();
+        }, 800);
+      } else if (successCount > 0) {
+        this.items = this.items.filter(i => i.error !== 'done');
+        this.state = 'error';
+        this.errorMessage = `${successCount} succeeded, ${total - successCount} failed.`;
+      } else {
+        this.state = 'error';
+        this.errorMessage = `All ${total} upload${total !== 1 ? 's' : ''} failed.`;
+      }
+    },
+
+    /**
+     * Re-fetch the current page HTML and morph the `.main` container in place,
+     * preserving Alpine state. Falls back to a full reload on error.
+     */
+    async _refreshPage() {
+      try {
+        const response = await fetch(window.location.href, {
+          headers: { 'Accept': 'text/html' },
+        });
+        const html = await response.text();
+
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        const newMain = doc.querySelector('.main');
+        const main = document.querySelector('.main');
+
+        if (main && newMain) {
+          window.Alpine.morph(main, newMain, {
+            updating(el, toEl, childrenOnly, skip) {
+              if (el._x_dataStack) {
+                toEl._x_dataStack = el._x_dataStack;
+              }
+            },
+          });
+          window.Alpine.store('lightbox').initFromDOM();
+        }
+      } catch (err) {
+        console.error('Failed to refresh page after upload:', err);
+        window.location.reload();
+      }
+    },
   });
 }
