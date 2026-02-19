@@ -19,7 +19,7 @@
             {# Header #}
             <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200">
                 <h2 id="paste-upload-title" class="text-lg font-semibold text-gray-900">
-                    Upload to <span x-text="$store.pasteUpload.contextName"></span>
+                    Upload to <span x-text="$store.pasteUpload.context?.name || 'Unknown'"></span>
                 </h2>
                 <button @click="$store.pasteUpload.close()"
                         :disabled="$store.pasteUpload.state === 'uploading'"
@@ -36,7 +36,7 @@
                 {# ARIA live region for screen readers #}
                 <span class="sr-only" aria-live="polite" aria-atomic="true"
                       x-text="$store.pasteUpload.state === 'uploading'
-                          ? 'Uploading ' + $store.pasteUpload.uploadedCount + ' of ' + $store.pasteUpload.items.length
+                          ? $store.pasteUpload.uploadProgress
                           : $store.pasteUpload.items.length + ' items ready to upload'"></span>
 
                 {# Error message #}
@@ -48,7 +48,7 @@
                 </div>
 
                 {# Item rows #}
-                <template x-for="(item, index) in $store.pasteUpload.items" :key="item.id">
+                <template x-for="(item, index) in $store.pasteUpload.items" :key="index">
                     <div class="flex items-center gap-3 p-3 border rounded-lg"
                          :class="{
                              'border-red-300 bg-red-50': item.error && item.error !== 'done',
@@ -66,7 +66,7 @@
                             </template>
                             <template x-if="item.type === 'text' || item.type === 'html'">
                                 <div class="w-full h-full p-1 text-xs text-gray-500 overflow-hidden leading-tight"
-                                     x-text="(item.textSnippet || '').substring(0, 80)"></div>
+                                     x-text="(item._snippet || '').substring(0, 80)"></div>
                             </template>
                         </div>
 
@@ -151,12 +151,12 @@
                 {# Left: status text #}
                 <span class="text-sm text-gray-600">
                     <template x-if="$store.pasteUpload.state === 'uploading'">
-                        <span x-text="'Uploading ' + $store.pasteUpload.uploadedCount + ' of ' + $store.pasteUpload.items.length + '...'"></span>
+                        <span x-text="$store.pasteUpload.uploadProgress"></span>
                     </template>
-                    <template x-if="$store.pasteUpload.state === 'done'">
-                        <span class="text-green-600" x-text="$store.pasteUpload.successMessage || 'Upload complete'"></span>
+                    <template x-if="$store.pasteUpload.state === 'success'">
+                        <span class="text-green-600" x-text="$store.pasteUpload.uploadProgress"></span>
                     </template>
-                    <template x-if="$store.pasteUpload.state !== 'uploading' && $store.pasteUpload.state !== 'done'">
+                    <template x-if="$store.pasteUpload.state !== 'uploading' && $store.pasteUpload.state !== 'success'">
                         <span x-text="$store.pasteUpload.items.length + ' item' + ($store.pasteUpload.items.length !== 1 ? 's' : '')"></span>
                     </template>
                 </span>
