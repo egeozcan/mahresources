@@ -4122,6 +4122,24 @@ paths:
             summary: List tags
             tags:
                 - tags
+    /v1/tags/merge:
+        post:
+            operationId: mergeTags
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/MergeQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/MergeQuery'
+                required: true
+            responses:
+                "200":
+                    description: Successful response
+            summary: Merge tags
+            tags:
+                - tags
 servers:
     - description: API Version 1
       url: /v1

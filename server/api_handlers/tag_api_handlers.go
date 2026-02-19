@@ -96,3 +96,27 @@ func GetRemoveTagHandler(ctx interfaces.TagDeleter) func(writer http.ResponseWri
 		_ = json.NewEncoder(writer).Encode(&models.Tag{ID: query.ID})
 	}
 }
+
+func GetMergeTagsHandler(ctx interfaces.TagMerger) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.TagMerger)
+
+		var editor = query_models.MergeQuery{}
+		var err error
+
+		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		err = effectiveCtx.MergeTags(editor.Winner, editor.Losers)
+
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		http_utils.RedirectIfHTMLAccepted(writer, request, "/tags")
+	}
+}

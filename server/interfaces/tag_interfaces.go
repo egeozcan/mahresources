@@ -17,3 +17,8 @@ type TagsReader interface {
 type TagDeleter interface {
 	DeleteTag(tagId uint) error
 }
+
+// TagMerger handles tag merging operations
+type TagMerger interface {
+	MergeTags(winnerId uint, loserIds []uint) error
+}

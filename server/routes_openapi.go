@@ -1067,6 +1067,18 @@ func registerTagRoutes(r *openapi.Registry) {
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/tag/editDescription", "editTagDescription", "Edit a tag's description", "tags").
 		WithIDParam("id", true))
+
+	mergeQueryType := reflect.TypeOf(query_models.MergeQuery{})
+
+	r.Register(openapi.RouteInfo{
+		Method:              http.MethodPost,
+		Path:                "/v1/tags/merge",
+		OperationID:         "mergeTags",
+		Summary:             "Merge tags",
+		Tags:                []string{"tags"},
+		RequestType:         mergeQueryType,
+		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+	})
 }
 
 func registerCategoryRoutes(r *openapi.Registry) {
