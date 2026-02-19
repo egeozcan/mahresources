@@ -8,5 +8,19 @@
 {% endblock %}
 
 {% block sidebar %}
+    {% include "/partials/sideTitle.tpl" with title="Meta Data" %}
+    {% include "/partials/json.tpl" with jsonData=tag.Meta %}
 
+    <form
+        x-data="confirmAction({ message: `Selected tags will be deleted and merged to {{ tag.Name|json }}. Are you sure?` })"
+        action="/v1/tags/merge"
+        :action="'/v1/tags/merge?redirect=' + encodeURIComponent(window.location)"
+        method="post"
+        x-bind="events"
+    >
+        <input type="hidden" name="winner" value="{{ tag.ID }}">
+        <p>Merge others with this tag?</p>
+        {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' elName='losers' title='Tags To Merge' id=getNextId("autocompleter") %}
+        <div class="mt-2">{% include "/partials/form/searchButton.tpl" with text="Merge" %}</div>
+    </form>
 {% endblock %}
