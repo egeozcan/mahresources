@@ -184,6 +184,29 @@ export class ApiClient {
     return this.postVoidRetry(`${this.baseUrl}/v1/tag/delete?Id=${id}`);
   }
 
+  async mergeTags(winnerId: number, loserIds: number[]): Promise<void> {
+    const formData = new URLSearchParams();
+    formData.append('Winner', winnerId.toString());
+    for (const id of loserIds) {
+      formData.append('Losers', id.toString());
+    }
+    return this.postVoidRetry(`${this.baseUrl}/v1/tags/merge`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+  }
+
+  async bulkDeleteTags(ids: number[]): Promise<void> {
+    const formData = new URLSearchParams();
+    for (const id of ids) {
+      formData.append('ID', id.toString());
+    }
+    return this.postVoidRetry(`${this.baseUrl}/v1/tags/delete`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+  }
+
   async getTags(): Promise<Tag[]> {
     const response = await this.request.get(`${this.baseUrl}/v1/tags`);
     return this.handleResponse<Tag[]>(response);
