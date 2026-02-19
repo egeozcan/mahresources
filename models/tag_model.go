@@ -1,6 +1,7 @@
 package models
 
 import (
+	"mahresources/models/types"
 	"time"
 )
 
@@ -10,6 +11,7 @@ type Tag struct {
 	UpdatedAt   time.Time   `gorm:"index"`
 	Name        string      `gorm:"uniqueIndex:unique_tag_name"`
 	Description string      `gorm:"index"`
+	Meta        types.JSON
 	Resources   []*Resource `gorm:"many2many:resource_tags;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	Notes       []*Note     `gorm:"many2many:note_tags;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	Groups      []*Group    `gorm:"many2many:group_tags;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`

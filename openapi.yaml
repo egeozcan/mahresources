@@ -1271,6 +1271,10 @@ components:
                 ID:
                     readOnly: true
                     type: integer
+                Meta:
+                    additionalProperties: true
+                    description: Arbitrary JSON data
+                    type: object
                 Name:
                     type: string
                 Notes:
