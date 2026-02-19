@@ -3105,6 +3105,11 @@
       cursor: not-allowed;
     }
   }
+  .disabled\:bg-gray-100 {
+    &:disabled {
+      background-color: var(--color-gray-100);
+    }
+  }
   .disabled\:opacity-30 {
     &:disabled {
       opacity: 30%;
