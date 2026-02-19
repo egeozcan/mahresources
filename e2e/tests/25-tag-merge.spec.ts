@@ -5,7 +5,9 @@ test.describe.serial('Tag Merge Operations', () => {
   let loserTag1Id: number;
   let loserTag2Id: number;
   let groupId: number;
+  let noteId: number;
   let categoryId: number;
+  let noteTypeId: number;
   let testRunId: string;
 
   test.beforeAll(async ({ apiClient }) => {
@@ -17,6 +19,12 @@ test.describe.serial('Tag Merge Operations', () => {
     );
     categoryId = category.ID;
 
+    const noteType = await apiClient.createNoteType(
+      `Merge Test NoteType ${testRunId}`,
+      'NoteType for tag merge tests'
+    );
+    noteTypeId = noteType.ID;
+
     const winner = await apiClient.createTag(`Winner Tag ${testRunId}`, 'The winner');
     winnerTagId = winner.ID;
 
@@ -26,24 +34,43 @@ test.describe.serial('Tag Merge Operations', () => {
     const loser2 = await apiClient.createTag(`Loser Tag 2 ${testRunId}`, 'Second loser');
     loserTag2Id = loser2.ID;
 
+    // Create a group tagged with loser tags
     const group = await apiClient.createGroup({
       name: `Merge Test Group ${testRunId}`,
       categoryId: categoryId,
       tags: [loserTag1Id, loserTag2Id],
     });
     groupId = group.ID;
+
+    // Create a note tagged with a loser tag (ownerId required to avoid FK constraint on owner_id=0)
+    const note = await apiClient.createNote({
+      name: `Merge Test Note ${testRunId}`,
+      noteTypeId: noteTypeId,
+      ownerId: groupId,
+      tags: [loserTag1Id],
+    });
+    noteId = note.ID;
   });
 
-  test('should merge tags and transfer associations', async ({ apiClient, tagPage, groupPage, page }) => {
+  test('should merge tags and transfer group associations', async ({ apiClient, tagPage, groupPage, page }) => {
     await apiClient.mergeTags(winnerTagId, [loserTag1Id, loserTag2Id]);
 
+    // Verify loser tags are deleted
     await tagPage.verifyTagNotInList(`Loser Tag 1 ${testRunId}`);
     await tagPage.verifyTagNotInList(`Loser Tag 2 ${testRunId}`);
 
+    // Verify winner tag still exists
     await tagPage.verifyTagInList(`Winner Tag ${testRunId}`);
 
+    // Verify group now has the winner tag (group_tags transferred)
     await groupPage.gotoDisplay(groupId);
     await expect(page.locator(`a:has-text("Winner Tag ${testRunId}")`).first()).toBeVisible();
+  });
+
+  test('should transfer note associations to winner tag', async ({ tagPage, page }) => {
+    // Verify the winner tag detail page shows the note (note_tags transferred)
+    await tagPage.gotoDisplay(winnerTagId);
+    await expect(page.locator(`a:has-text("Merge Test Note ${testRunId}")`).first()).toBeVisible();
   });
 
   test('should show merge form on tag detail page', async ({ tagPage, page }) => {

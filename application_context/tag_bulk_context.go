@@ -100,12 +100,17 @@ func (ctx *MahresourcesContext) MergeTags(winnerId uint, loserIds []uint) error 
 			return errors.New("db doesn't support merging meta")
 		}
 
+		// Log the merge operation
+		altCtx.Logger().Info(models.LogActionUpdate, "tag", &winner.ID, winner.Name, fmt.Sprintf("Merged %d tags into this tag", len(losers)), nil)
+
 		// Delete losers
 		for _, loser := range losers {
 			if err := altCtx.DeleteTag(loser.ID); err != nil {
 				return err
 			}
 		}
+
+		altCtx.InvalidateSearchCacheByType(EntityTypeTag)
 
 		return nil
 	})

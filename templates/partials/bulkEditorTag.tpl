@@ -11,7 +11,9 @@
         x-data="confirmAction('Selected tags will be merged. Are you sure?')"
         x-bind="events"
     >
-        {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
+        <template x-for="(id, i) in [...$store.bulkSelection.selectedIds]">
+            <input type="hidden" name="losers" :value="id">
+        </template>
         <div class="flex gap-2 items-start">
             {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' max=1 elName='winner' title='Merge Winner' id=getNextId("tag_autocompleter") %}
             <div class="mt-7">{% include "/partials/form/searchButton.tpl" with text="Merge" %}</div>
