@@ -92,22 +92,24 @@ export function extractPasteContent(clipboardData) {
 
   // --- Priority 2: image items (screenshots) ----------------------------------
   if (clipboardData.items) {
+    const imageItems = [];
     for (const item of clipboardData.items) {
       if (item.kind === 'file' && item.type.startsWith('image/')) {
         const file = item.getAsFile();
         if (!file) continue;
         const ext = item.type.split('/')[1] || 'png';
         const name = timestampedName('pasted-image', ext);
-        return [{
+        imageItems.push({
           file,
           name,
           previewUrl: URL.createObjectURL(file),
           type: 'image',
           error: null,
           _snippet: null,
-        }];
+        });
       }
     }
+    if (imageItems.length > 0) return imageItems;
   }
 
   // --- Priority 3: HTML text --------------------------------------------------
@@ -136,7 +138,7 @@ export function extractPasteContent(clipboardData) {
       previewUrl: null,
       type: 'text',
       error: null,
-      _snippet: text.length > 120 ? text.slice(0, 120) + '\u2026' : text,
+      _snippet: stripToSnippet(text),
     }];
   }
 
@@ -146,6 +148,9 @@ export function extractPasteContent(clipboardData) {
 // ---------------------------------------------------------------------------
 // Alpine store
 // ---------------------------------------------------------------------------
+
+/** Timer handle for the auto-dismissing info message (kept outside the store to avoid Alpine reactivity). */
+let _infoTimer = null;
 
 /**
  * Register the `pasteUpload` Alpine store.
@@ -163,9 +168,6 @@ export function registerPasteUploadStore(Alpine) {
     uploadProgress: '',
     errorMessage: '',
     infoMessage: '',
-
-    /** @type {number|null} */
-    _infoTimer: null,
 
     // ----- methods --------------------------------------------------------
 
@@ -191,6 +193,11 @@ export function registerPasteUploadStore(Alpine) {
      * Close the modal and clean up object URLs to prevent memory leaks.
      */
     close() {
+      // Clear any pending info-message timer
+      if (_infoTimer) {
+        clearTimeout(_infoTimer);
+        _infoTimer = null;
+      }
       // Revoke every object URL still held by items
       for (const item of this.items) {
         if (item.previewUrl) {
@@ -230,10 +237,10 @@ export function registerPasteUploadStore(Alpine) {
      */
     showInfo(message) {
       this.infoMessage = message;
-      if (this._infoTimer) clearTimeout(this._infoTimer);
-      this._infoTimer = setTimeout(() => {
+      if (_infoTimer) clearTimeout(_infoTimer);
+      _infoTimer = setTimeout(() => {
         this.infoMessage = '';
-        this._infoTimer = null;
+        _infoTimer = null;
       }, 4000);
     },
   });
