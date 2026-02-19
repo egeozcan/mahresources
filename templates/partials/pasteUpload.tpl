@@ -1,5 +1,6 @@
 {# Paste/Drop Upload Modal #}
-<div x-show="$store.pasteUpload.isOpen"
+<div x-data
+     x-show="$store.pasteUpload.isOpen"
      x-cloak
      class="fixed inset-0 z-50 overflow-y-auto"
      role="dialog"

@@ -69,7 +69,7 @@ test.describe('Lightbox Functionality', () => {
     await imageLink.click();
 
     // Verify lightbox opened
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
     // Verify image is displayed
@@ -86,7 +86,7 @@ test.describe('Lightbox Functionality', () => {
     await imageLink.click();
 
     // Wait for lightbox to open
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
     // Wait for image to actually load in the DOM
@@ -118,7 +118,7 @@ test.describe('Lightbox Functionality', () => {
     const imageLink = page.locator('[data-lightbox-item]').first();
     await imageLink.click();
 
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
     // Get initial counter (contains "/" to distinguish from zoom indicator)
@@ -144,7 +144,7 @@ test.describe('Lightbox Functionality', () => {
     const imageLink = page.locator('[data-lightbox-item]').first();
     await imageLink.click();
 
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
     // Navigate with right arrow
@@ -168,7 +168,7 @@ test.describe('Lightbox Functionality', () => {
     const imageLink = page.locator('[data-lightbox-item]').first();
     await imageLink.click();
 
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
     // Press Escape
@@ -186,7 +186,7 @@ test.describe('Lightbox Functionality', () => {
     const imageLink = page.locator('[data-lightbox-item]').first();
     await imageLink.click();
 
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
     // Click on empty space in the main content area (not on the image)
@@ -224,7 +224,7 @@ test.describe('Lightbox Functionality', () => {
 
     // Click the image to open lightbox
     await targetImage.click();
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
     // Close lightbox by clicking the backdrop
@@ -245,7 +245,7 @@ test.describe('Lightbox Functionality', () => {
     const imageLink = page.locator('[data-lightbox-item]').first();
     await imageLink.click();
 
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
     // Open the edit panel first
@@ -322,7 +322,7 @@ test.describe('Lightbox SVG Support', () => {
     await svgLink.click();
 
     // Verify lightbox opened
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
     // Verify SVG is displayed (using object element for better SVG rendering)
@@ -506,7 +506,7 @@ test.describe('Lightbox Loading State', () => {
     await expect(imageLink).toBeVisible({ timeout: 10000 });
     await imageLink.click();
 
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible({ timeout: 10000 });
 
     // Wait for first image to load
@@ -604,7 +604,7 @@ test.describe('Lightbox Edit Panel', () => {
     const imageLink = page.locator('[data-lightbox-item]').first();
     await imageLink.click();
 
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
     // Click the Edit button
@@ -636,7 +636,7 @@ test.describe('Lightbox Edit Panel', () => {
     const imageLink = page.locator('[data-lightbox-item]').first();
     await imageLink.click();
 
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
     // Open edit panel
@@ -674,7 +674,7 @@ test.describe('Lightbox Edit Panel', () => {
     // Open lightbox
     await imageLink.click();
 
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
     // Open edit panel
@@ -721,7 +721,7 @@ test.describe('Lightbox Edit Panel', () => {
     const imageLink = page.locator('[data-lightbox-item]').first();
     await imageLink.click();
 
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
     // Open edit panel
@@ -766,7 +766,7 @@ test.describe('Lightbox Edit Panel', () => {
     const imageLink = page.locator('[data-lightbox-item]').first();
     await imageLink.click();
 
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
     // Open edit panel
@@ -837,7 +837,7 @@ test.describe('Lightbox Edit Panel', () => {
     const imageLink = page.locator('[data-lightbox-item]').first();
     await imageLink.click();
 
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
     // Press 'e' to open edit panel
@@ -895,7 +895,7 @@ test.describe('Lightbox Edit Panel', () => {
     const imageLink = page.locator('[data-lightbox-item]').first();
     await imageLink.click();
 
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
     // Open edit panel and make a change
@@ -948,7 +948,7 @@ test.describe('Lightbox Edit Panel', () => {
     const imageLink = page.locator('[data-lightbox-item]').first();
     await imageLink.click();
 
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
     // Open edit panel
@@ -987,7 +987,7 @@ test.describe('Lightbox Edit Panel', () => {
     const imageLink = page.locator('[data-lightbox-item]').first();
     await imageLink.click();
 
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
     // Open edit panel
@@ -1106,7 +1106,7 @@ test.describe('Lightbox Edit After Pagination', () => {
     // Open lightbox on the last item on page 1 (position 2 of 2)
     await lightboxItems.last().click();
 
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
     // Wait for image to load
@@ -1186,7 +1186,7 @@ test.describe('Lightbox Edit After Pagination', () => {
     // Open lightbox on last page-1 item
     await lightboxItems.last().click();
 
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
     const counter = lightbox.locator('div.bg-black\\/50:has-text("/")').first();

@@ -182,7 +182,7 @@ test.describe('Resource Category Custom Template Rendering', () => {
     await expect(imageLink).toBeVisible();
     await imageLink.click();
 
-    const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
     // Open edit panel
@@ -230,7 +230,7 @@ test.describe('Resource Category Custom Template Rendering', () => {
       await expect(imageLink).toBeVisible({ timeout: 10000 });
       await imageLink.click();
 
-      const lightbox = page.locator('[role="dialog"][aria-modal="true"]');
+      const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
       await expect(lightbox).toBeVisible();
 
       // Open edit panel
