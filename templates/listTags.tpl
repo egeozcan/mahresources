@@ -1,9 +1,14 @@
 {% extends "/layouts/base.tpl" %}
 
+{% block prebody %}
+    {% include "/partials/bulkEditorTag.tpl" %}
+{% endblock %}
+
 {% block body %}
     <div class="list-container">
         {% for tag in tags %}
-            <article class="card tag-card">
+            <article class="card tag-card card--selectable" x-data="selectableItem({ itemId: {{ tag.ID }} })">
+                <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" aria-label="Select {{ tag.Name }}" class="card-checkbox focus:ring-indigo-500 h-6 w-6 text-indigo-600 border-gray-300 rounded">
                 <h3 class="card-title card-title--simple">
                     <a href="/tag?id={{ tag.ID }}">{{ tag.Name }}</a>
                 </h3>

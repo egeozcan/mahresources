@@ -4122,6 +4122,24 @@ paths:
             summary: List tags
             tags:
                 - tags
+    /v1/tags/delete:
+        post:
+            operationId: bulkDeleteTags
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BulkQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BulkQuery'
+                required: true
+            responses:
+                "200":
+                    description: Successful response
+            summary: Bulk delete tags
+            tags:
+                - tags
     /v1/tags/merge:
         post:
             operationId: mergeTags

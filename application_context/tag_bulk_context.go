@@ -7,6 +7,7 @@ import (
 
 	"mahresources/constants"
 	"mahresources/models"
+	"mahresources/models/query_models"
 	"mahresources/models/types"
 )
 
@@ -106,6 +107,17 @@ func (ctx *MahresourcesContext) MergeTags(winnerId uint, loserIds []uint) error 
 			}
 		}
 
+		return nil
+	})
+}
+
+func (ctx *MahresourcesContext) BulkDeleteTags(query *query_models.BulkQuery) error {
+	return ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
+		for _, id := range query.ID {
+			if err := altCtx.DeleteTag(id); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 }

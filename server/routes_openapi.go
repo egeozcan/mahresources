@@ -1079,6 +1079,18 @@ func registerTagRoutes(r *openapi.Registry) {
 		RequestType:         mergeQueryType,
 		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 	})
+
+	bulkQueryType := reflect.TypeOf(query_models.BulkQuery{})
+
+	r.Register(openapi.RouteInfo{
+		Method:              http.MethodPost,
+		Path:                "/v1/tags/delete",
+		OperationID:         "bulkDeleteTags",
+		Summary:             "Bulk delete tags",
+		Tags:                []string{"tags"},
+		RequestType:         bulkQueryType,
+		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+	})
 }
 
 func registerCategoryRoutes(r *openapi.Registry) {

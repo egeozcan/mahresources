@@ -22,3 +22,8 @@ type TagDeleter interface {
 type TagMerger interface {
 	MergeTags(winnerId uint, loserIds []uint) error
 }
+
+// BulkTagDeleter handles bulk tag deletion
+type BulkTagDeleter interface {
+	BulkDeleteTags(query *query_models.BulkQuery) error
+}

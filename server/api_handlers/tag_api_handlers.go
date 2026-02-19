@@ -97,6 +97,29 @@ func GetRemoveTagHandler(ctx interfaces.TagDeleter) func(writer http.ResponseWri
 	}
 }
 
+func GetBulkDeleteTagsHandler(ctx interfaces.BulkTagDeleter) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.BulkTagDeleter)
+
+		var editor = query_models.BulkQuery{}
+		var err error
+
+		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		err = effectiveCtx.BulkDeleteTags(&editor)
+
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		http_utils.RedirectIfHTMLAccepted(writer, request, "/tags")
+	}
+}
+
 func GetMergeTagsHandler(ctx interfaces.TagMerger) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it

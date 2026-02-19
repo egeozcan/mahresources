@@ -230,6 +230,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/tag/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Tag](basicTagWriter, "tag"))
 	router.Methods(http.MethodPost).Path("/v1/tag/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.Tag](basicTagWriter, "tag"))
 	router.Methods(http.MethodPost).Path("/v1/tags/merge").HandlerFunc(api_handlers.GetMergeTagsHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/tags/delete").HandlerFunc(api_handlers.GetBulkDeleteTagsHandler(appContext))
 
 	// Category routes using factory
 	categoryReader, categoryWriter := appContext.CategoryCRUD()
