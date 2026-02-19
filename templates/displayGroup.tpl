@@ -1,7 +1,7 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
-    <div x-data="{ entity: {{ group|json }} }">
+    <div x-data="{ entity: {{ group|json }} }" data-paste-context='{"type":"group","id":{{ group.ID }},"name":"{{ group.Name|escapejs }}"}'>
         {% autoescape off %}
             {{ group.Category.CustomHeader }}
         {% endautoescape %}
