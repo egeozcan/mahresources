@@ -310,6 +310,11 @@ export function registerPasteUploadStore(Alpine) {
           this._refreshPage();
         }, 800);
       } else if (successCount > 0) {
+        for (const item of this.items) {
+          if (item.error === 'done' && item.previewUrl) {
+            URL.revokeObjectURL(item.previewUrl);
+          }
+        }
         this.items = this.items.filter(i => i.error !== 'done');
         this.state = 'error';
         this.errorMessage = `${successCount} succeeded, ${total - successCount} failed.`;
@@ -328,6 +333,10 @@ export function registerPasteUploadStore(Alpine) {
         const response = await fetch(window.location.href, {
           headers: { 'Accept': 'text/html' },
         });
+        if (!response.ok) {
+          window.location.reload();
+          return;
+        }
         const html = await response.text();
 
         const parser = new DOMParser();
@@ -343,7 +352,7 @@ export function registerPasteUploadStore(Alpine) {
               }
             },
           });
-          window.Alpine.store('lightbox').initFromDOM();
+          window.Alpine?.store('lightbox')?.initFromDOM();
         }
       } catch (err) {
         console.error('Failed to refresh page after upload:', err);
