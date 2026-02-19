@@ -6,7 +6,7 @@
 {% endblock %}
 
 {% block body %}
-    <section class="list-container">
+    <section class="list-container"{% if owner && owner|length == 1 %} data-paste-context='{"type":"group","id":{{ owner.0.ID }},"name":"{{ owner.0.Name|escapejs }}"}'{% endif %}>
         {% for entity in resources %}
             {% include "/partials/resource.tpl" with selectable=true %}
         {% endfor %}

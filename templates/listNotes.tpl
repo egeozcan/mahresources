@@ -1,9 +1,11 @@
 {% extends "/layouts/gallery.tpl" %}
 
 {% block gallery %}
+    <div{% if owners && owners|length == 1 %} data-paste-context='{"type":"group","id":{{ owners.0.ID }},"name":"{{ owners.0.Name|escapejs }}"}'{% endif %}>
     {% for entity in notes %}
         {% include "/partials/note.tpl" %}
     {% endfor %}
+    </div>
 {% endblock %}
 
 {% block sidebar %}
