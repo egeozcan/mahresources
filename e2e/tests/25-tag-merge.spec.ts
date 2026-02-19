@@ -88,7 +88,9 @@ test.describe.serial('Tag Merge Operations', () => {
 
   test.afterAll(async ({ apiClient }) => {
     try { await apiClient.deleteTag(winnerTagId); } catch {}
+    try { await apiClient.deleteNote(noteId); } catch {}
     try { await apiClient.deleteGroup(groupId); } catch {}
+    try { await apiClient.deleteNoteType(noteTypeId); } catch {}
     try { await apiClient.deleteCategory(categoryId); } catch {}
   });
 });

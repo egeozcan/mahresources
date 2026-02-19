@@ -34,6 +34,9 @@ func (ctx *MahresourcesContext) MergeTags(winnerId uint, loserIds []uint) error 
 		if err := altCtx.db.Find(&losers, &loserIds).Error; err != nil {
 			return err
 		}
+		if len(losers) != len(loserIds) {
+			return errors.New("one or more loser tags not found")
+		}
 
 		var winner models.Tag
 		if err := altCtx.db.First(&winner, winnerId).Error; err != nil {
