@@ -16,7 +16,7 @@ type Group struct {
 
 	Meta types.JSON
 
-	Owner   *Group `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	Owner   *Group `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 	OwnerId *uint  `gorm:"index"`
 
 	RelatedResources []*Resource `gorm:"many2many:groups_related_resources;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
@@ -24,8 +24,8 @@ type Group struct {
 	RelatedGroups    []*Group    `gorm:"many2many:group_related_groups;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 
 	OwnResources []*Resource `gorm:"foreignKey:OwnerId;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
-	OwnNotes     []*Note     `gorm:"foreignKey:OwnerId;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
-	OwnGroups    []*Group    `gorm:"foreignKey:OwnerId;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	OwnNotes     []*Note     `gorm:"foreignKey:OwnerId;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+	OwnGroups    []*Group    `gorm:"foreignKey:OwnerId;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 
 	Relationships []*GroupRelation `gorm:"foreignKey:FromGroupId;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
 	BackRelations []*GroupRelation `gorm:"foreignKey:ToGroupId;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`

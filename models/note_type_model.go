@@ -10,7 +10,7 @@ type NoteType struct {
 	UpdatedAt   time.Time `gorm:"index"`
 	Name        string    `gorm:"index"`
 	Description string
-	Notes       []*Note `gorm:"foreignKey:NoteTypeId;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	Notes       []*Note `gorm:"foreignKey:NoteTypeId;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 	// CustomHeader is used in the note page
 	CustomHeader string `gorm:"type:text"`
 	// CustomSidebar is used in the note page

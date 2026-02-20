@@ -11,7 +11,7 @@ type Category struct {
 
 	Name        string   `gorm:"uniqueIndex:unique_category_name"`
 	Description string   `gorm:"index"`
-	Groups      []*Group `gorm:"foreignKey:CategoryId;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	Groups      []*Group `gorm:"foreignKey:CategoryId;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 
 	// CustomHeader is used in the group page
 	CustomHeader string `gorm:"type:text"`
