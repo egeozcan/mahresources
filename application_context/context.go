@@ -32,6 +32,8 @@ type PopularTag struct {
 
 type MahresourcesConfig struct {
 	DbType         string
+	DbDsn          string
+	DbReadOnlyDsn  string
 	AltFileSystems map[string]string
 	FfmpegPath     string
 	LibreOfficePath  string
@@ -279,6 +281,22 @@ func (ctx *MahresourcesContext) EnsureForeignKeysActive(db *gorm.DB) {
 	}
 }
 
+// IsReadOnlyDBEnforced returns true if the read-only database connection
+// has database-level read-only enforcement (e.g., SQLite mode=ro or separate DSN).
+func (ctx *MahresourcesContext) IsReadOnlyDBEnforced() bool {
+	if ctx.readOnlyDB == nil {
+		return false
+	}
+	dsn := ctx.Config.DbReadOnlyDsn
+	if strings.Contains(dsn, "mode=ro") {
+		return true
+	}
+	if ctx.Config.DbType == constants.DbTypePosgres && dsn != "" && dsn != ctx.Config.DbDsn {
+		return true
+	}
+	return false
+}
+
 func (ctx *MahresourcesContext) WithTransaction(txFn func(transactionCtx *MahresourcesContext) error) error {
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
 		// Create a shallow copy that shares the parent's locks, caches, and alt filesystems
@@ -510,6 +528,8 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 
 	return NewMahresourcesContext(mainFs, db, readOnlyDb, &MahresourcesConfig{
 		DbType:                       dbType,
+		DbDsn:                        dbDsn,
+		DbReadOnlyDsn:                readOnlyDsn,
 		AltFileSystems:               cfg.AltFileSystems,
 		FfmpegPath:                   cfg.FfmpegPath,
 		LibreOfficePath:              cfg.LibreOfficePath,
