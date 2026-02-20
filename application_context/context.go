@@ -452,7 +452,7 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		mainFs = storage.CreateStorage(cfg.FileSavePath)
 	}
 
-	fmt.Printf("DB_TYPE %v DB_DSN %v FILE_SAVE_PATH %v\n", dbType, dbDsn, cfg.FileSavePath)
+	fmt.Printf("DB_TYPE %v FILE_SAVE_PATH %v\n", dbType, cfg.FileSavePath)
 
 	if connectedDB, err := models.CreateDatabaseConnection(dbType, dbDsn, cfg.DbLogFile); err != nil {
 		log.Fatal(err)
