@@ -104,6 +104,37 @@ func (j *DownloadJob) SetCompletedAt(t time.Time) {
 	}
 }
 
+// GetContext safely returns the job's context.
+func (j *DownloadJob) GetContext() context.Context {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.ctx
+}
+
+// SetContext safely sets the job's context and cancel function.
+func (j *DownloadJob) SetContext(ctx context.Context, cancel context.CancelFunc) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.ctx = ctx
+	j.cancel = cancel
+}
+
+// Cancel safely calls the job's cancel function.
+func (j *DownloadJob) Cancel() {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	if j.cancel != nil {
+		j.cancel()
+	}
+}
+
+// GetCompletedAt safely returns the job's completion time.
+func (j *DownloadJob) GetCompletedAt() *time.Time {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.CompletedAt
+}
+
 // GetStatus safely returns the job's current status
 func (j *DownloadJob) GetStatus() JobStatus {
 	j.mu.RLock()

@@ -201,7 +201,7 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 	select {
 	case dm.semaphore <- struct{}{}:
 		defer func() { <-dm.semaphore }()
-	case <-job.ctx.Done():
+	case <-job.GetContext().Done():
 		// Check if job was paused (don't override paused status)
 		if job.GetStatus() != JobStatusPaused {
 			job.SetStatus(JobStatusCancelled)
@@ -228,7 +228,7 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 	job.SetCompletedAt(now)
 
 	if err != nil {
-		if job.ctx.Err() != nil {
+		if job.GetContext().Err() != nil {
 			job.SetStatus(JobStatusCancelled)
 			job.SetError("Download cancelled")
 		} else {
@@ -260,7 +260,7 @@ func (dm *DownloadManager) createHTTPClient() *http.Client {
 func (dm *DownloadManager) downloadWithProgress(job *DownloadJob) (*models.Resource, error) {
 	httpClient := dm.createHTTPClient()
 
-	req, err := http.NewRequestWithContext(job.ctx, "GET", job.URL, nil)
+	req, err := http.NewRequestWithContext(job.GetContext(), "GET", job.URL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +281,7 @@ func (dm *DownloadManager) downloadWithProgress(job *DownloadJob) (*models.Resou
 	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
 
 	// Wrap with timeout reader for idle detection and cancellation
-	timeoutBody := NewTimeoutReaderWithContext(resp.Body, dm.timeoutConfig.IdleTimeout, job.ctx)
+	timeoutBody := NewTimeoutReaderWithContext(resp.Body, dm.timeoutConfig.IdleTimeout, job.GetContext())
 	defer timeoutBody.Close()
 
 	// Throttle progress updates to avoid flooding SSE clients
@@ -346,7 +346,7 @@ func (dm *DownloadManager) Cancel(jobID string) error {
 		return fmt.Errorf("job %s already finished", jobID)
 	}
 
-	job.cancel() // This triggers context cancellation
+	job.Cancel() // This triggers context cancellation
 	return nil
 }
 
@@ -370,7 +370,7 @@ func (dm *DownloadManager) Pause(jobID string) error {
 	job.SetError("") // Clear any previous error
 
 	// Now cancel the download context
-	job.cancel()
+	job.Cancel()
 
 	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
 
@@ -393,8 +393,7 @@ func (dm *DownloadManager) Resume(jobID string) error {
 
 	// Create a new context for the resumed download
 	ctx, cancel := context.WithCancel(context.Background())
-	job.ctx = ctx
-	job.cancel = cancel
+	job.SetContext(ctx, cancel)
 
 	// Reset progress and mark as pending (all under lock)
 	job.SetStatus(JobStatusPending)
@@ -427,8 +426,7 @@ func (dm *DownloadManager) Retry(jobID string) error {
 
 	// Create a new context for the retried download
 	ctx, cancel := context.WithCancel(context.Background())
-	job.ctx = ctx
-	job.cancel = cancel
+	job.SetContext(ctx, cancel)
 
 	// Reset progress and error, mark as pending (all under lock)
 	job.SetStatus(JobStatusPending)
@@ -529,7 +527,7 @@ func (dm *DownloadManager) cleanupOldJobs() {
 		shouldRemove := false
 
 		// Remove completed/failed/cancelled jobs after retention period
-		if job.CompletedAt != nil && job.CompletedAt.Before(completedCutoff) {
+		if completedAt := job.GetCompletedAt(); completedAt != nil && completedAt.Before(completedCutoff) {
 			shouldRemove = true
 		}
 
@@ -558,7 +556,7 @@ func (dm *DownloadManager) Shutdown() {
 	dm.mu.Lock()
 	for _, job := range dm.jobs {
 		if job.IsActive() {
-			job.cancel()
+			job.Cancel()
 		}
 	}
 	dm.mu.Unlock()
