@@ -4,7 +4,7 @@ sidebar_position: 3
 
 # Storage Configuration
 
-Mahresources stores uploaded files on the filesystem. This page covers primary storage, alternative filesystems, and advanced features like copy-on-write.
+Uploaded files are stored on the filesystem. This page covers primary storage, alternative filesystems, and copy-on-write overlays.
 
 ## Primary Storage
 
@@ -49,7 +49,7 @@ This is equivalent to `-memory-db -memory-fs` and is useful for:
 
 ## Alternative Filesystems
 
-Mahresources supports multiple storage locations. This is useful for:
+Multiple storage locations can be configured. This is useful for:
 - Spreading storage across multiple drives
 - Accessing legacy file locations
 - Organizing files by type or date
@@ -150,19 +150,22 @@ Writes go to memory, seed stays on disk:
 
 ## Storage Layout
 
-Mahresources organizes files by their hash to prevent duplicates and enable content-addressable storage:
+Files are organized by content hash to prevent duplicates and enable content-addressable storage:
 
 ```
 files/
-  ab/
-    cd/
-      abcd1234...  # file stored by content hash
-  12/
-    34/
-      12345678...
+  resources/
+    ab/
+      cd/
+        ef/
+          abcdef1234567890.jpg
+    12/
+      34/
+        56/
+          1234567890abcdef.png
 ```
 
-This structure:
+Files are stored under a `resources/` prefix, split into three directory levels derived from the content hash, and retain their original extension. This structure:
 - Prevents duplicate storage of identical files
 - Distributes files across directories for filesystem efficiency
 - Enables fast lookup by content hash

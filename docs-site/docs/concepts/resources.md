@@ -4,7 +4,7 @@ sidebar_position: 2
 
 # Resources
 
-Every file in Mahresources -- image, document, video, or anything else -- is a Resource. Mahresources hashes each file for deduplication, generates thumbnails automatically, and tracks version history.
+Every file in Mahresources is a Resource: images, documents, videos, or anything else. Each file is hashed for deduplication, gets automatic thumbnails where supported, and has version history.
 
 ## Resource Properties
 
@@ -16,7 +16,7 @@ Every file in Mahresources -- image, document, video, or anything else -- is a R
 | `description` | Free-text description |
 | `meta` | Arbitrary JSON metadata |
 | `contentType` | MIME type (e.g., `image/jpeg`) |
-| `contentCategory` | Derived category (image, video, document, etc.) |
+| `contentCategory` | User-specified category (e.g., image, video, document) |
 | `fileSize` | Size in bytes |
 | `width`, `height` | Dimensions for images and videos |
 | `hash` | Content hash for deduplication |
@@ -45,12 +45,12 @@ Configure multiple storage locations for:
 Mahresources generates thumbnails automatically for supported file types:
 
 ### Image Thumbnails
-- Mahresources generates thumbnails on upload for all image types
+- Generated on upload for all image types
 - Multiple sizes available for different UI contexts
 
 ### Video Thumbnails
 - Requires FFmpeg to be installed and configured
-- Extracts frame from video for preview
+- Extracts a frame from the video for preview
 - Configure via `-ffmpeg-path` or `FFMPEG_PATH`
 
 ### Document Thumbnails

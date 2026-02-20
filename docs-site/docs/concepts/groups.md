@@ -37,16 +37,9 @@ Company (Group)
 - Circular ownership is prevented
 - Root groups have no owner
 
-### Finding Parents
+### Ancestor chain
 
-Mahresources supports finding all ancestors of a group:
-
-```sql
--- Recursive query finds parent chain
-Company <- Engineering <- Backend Team
-```
-
-Mahresources uses this for breadcrumb navigation and ancestry queries.
+Mahresources can resolve the full parent chain of a group (e.g., `Company > Engineering > Backend Team`). The UI uses this for breadcrumb navigation.
 
 ## Owned vs Related Entities
 
@@ -119,7 +112,7 @@ Categories can define a JSON Schema to validate group metadata:
 }
 ```
 
-Mahresources uses this schema for structured data entry on specific group types.
+This schema drives structured data entry in the UI for groups of that category.
 
 ## Group Operations
 

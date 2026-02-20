@@ -7,7 +7,7 @@ description: Configuring a reverse proxy with authentication for Mahresources
 # Reverse Proxy Configuration
 
 :::danger Required for Remote Access
-Mahresources has **no built-in authentication or authorization**. You **must** use a reverse proxy with authentication if accessing from outside your local network. Exposing Mahresources directly to the internet will allow anyone to access, modify, and delete all your data.
+There is **no built-in authentication or authorization**. You **must** use a reverse proxy with authentication if accessing from outside your local network. Exposing the server directly to the internet allows anyone to access, modify, and delete all your data.
 :::
 
 ## Network Restriction
@@ -86,7 +86,7 @@ sudo systemctl reload nginx
 
 ## Caddy
 
-Caddy provides automatic HTTPS and simpler configuration.
+Caddy provides automatic HTTPS with simpler configuration.
 
 ### Caddyfile
 
@@ -123,8 +123,6 @@ caddy hash-password
 ### Docker Compose with Traefik
 
 ```yaml
-version: '3.8'
-
 services:
   traefik:
     image: traefik:v2.10

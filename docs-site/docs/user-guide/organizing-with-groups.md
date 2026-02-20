@@ -31,9 +31,9 @@ An entity can have one owner but many relations.
 ### Basic Creation
 
 1. Navigate to **Groups** in the top menu
-2. Click **New Group**
+2. Click the **Add** button
 3. Fill in required fields:
-   - **Category** - The type of group (required for new groups)
+   - **Category** - The type of group (required in the create form; the API allows it to be empty)
    - **Name** - Display name (required)
 4. Optionally add:
    - **Description** - Text describing the group
@@ -98,7 +98,7 @@ Categories define the type of a group and can provide:
 
 ### Using Categories
 
-When creating a group, you must select a category. Categories help organize groups themselves:
+The create form requires a category. Categories help organize groups themselves:
 
 ```
 Category: Person

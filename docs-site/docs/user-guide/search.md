@@ -31,6 +31,7 @@ Global search queries across:
 | Groups | Name, Description |
 | Tags | Name |
 | Categories | Name |
+| Resource Categories | Name |
 | Queries | Name |
 | Note Types | Name |
 | Relation Types | Name |
@@ -136,7 +137,7 @@ Sort by multiple fields in priority order:
 
 ## Full-Text Search
 
-Mahresources uses SQLite FTS5 for full-text search.
+Full-text search uses SQLite FTS5.
 
 ### What It Searches
 

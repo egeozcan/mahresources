@@ -291,7 +291,7 @@ getDefaultContent(type) {
   return defaults[type] || {};
 }
 
-// In blockTypes array:
+// In blockTypes array (showing built-in types plus your addition):
 blockTypes: [
   { type: 'text', label: 'Text', icon: '📝' },
   { type: 'heading', label: 'Heading', icon: '🔤' },
@@ -300,6 +300,7 @@ blockTypes: [
   { type: 'references', label: 'References', icon: '📁' },
   { type: 'todos', label: 'Todos', icon: '☑️' },
   { type: 'table', label: 'Table', icon: '📊' },
+  { type: 'calendar', label: 'Calendar', icon: '📅' },
   { type: 'quote', label: 'Quote', icon: '💬' }  // Add this
 ]
 ```

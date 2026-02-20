@@ -143,12 +143,12 @@ The merge operation:
 - Updates relations to point to the winner
 - Deletes the merged groups
 
-## Important Notes
+## Limitations
 
 - Operations apply only to items on the current page. For large sets, work in batches.
 - Bulk operations cannot be undone. Restore from backups if needed.
-- If an operation fails partway through, some items may already be modified. Check results and retry.
-- Deletion may be slow for many resources (files must be removed from disk).
+- Partial failures are possible: some items may already be modified if an operation fails midway. Check results and retry.
+- Deleting many resources may be slow because files must be removed from disk.
 
 ## Keyboard Shortcuts Summary
 

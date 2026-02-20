@@ -4,7 +4,7 @@ sidebar_position: 3
 
 # Notes
 
-A Note holds text content -- meeting minutes, journal entries, research, or any written material. Mahresources renders Notes as Markdown, supports optional date ranges, and attaches Resources (files) to them.
+A Note holds text content: meeting minutes, journal entries, research, or any written material. Notes render as Markdown, support optional date ranges, and can have Resources (files) attached.
 
 ## Note Properties
 
@@ -53,7 +53,7 @@ Notes support standard Markdown formatting:
 
 ## Block-Based Content
 
-Beyond plain text or Markdown, Mahresources supports an optional block-based content structure for rich, interactive content.
+Notes also support an optional block-based content structure for rich, interactive content.
 
 ### What Are Blocks?
 
@@ -241,7 +241,7 @@ Blocks use lexicographic position strings (e.g., "a", "b", "c" or "aaa", "aab") 
 
 ### Backward Compatibility
 
-Mahresources maintains backward compatibility with existing notes:
+Blocks are backward compatible with existing notes:
 
 - A note's `description` field syncs bidirectionally with its first text block
 - Notes without blocks render the `description` field as before
@@ -275,7 +275,7 @@ Dates enable filtering and sorting notes chronologically.
 
 ## Note Types
 
-Note Types group similar notes and apply consistent styling. Mahresources uses them for type-specific filtering and custom presentation.
+Note Types group similar notes and apply consistent styling, enabling type-specific filtering and custom presentation.
 
 ### Note Type Properties
 

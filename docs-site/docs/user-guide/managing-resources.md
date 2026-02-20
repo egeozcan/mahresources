@@ -4,14 +4,14 @@ sidebar_position: 2
 
 # Managing Resources
 
-Resources represent files of any type -- images, documents, videos, or anything else you want to store and organize.
+Resources are files of any type: images, documents, videos, or anything else you want to store and organize.
 
 ## Uploading Resources
 
 ### File Upload
 
 1. Navigate to **Resources** in the top menu
-2. Click the **New Resource** button
+2. Click the **Create** button
 3. Use the file picker to select one or more files
 4. Fill in optional metadata:
    - **Name** - Display name (defaults to filename if left empty)
@@ -30,7 +30,7 @@ You can upload multiple files at once by selecting them in the file picker.
 
 Import resources directly from web URLs:
 
-1. Navigate to **Resources** > **New Resource**
+1. Navigate to **Resources** > **Create**
 2. Instead of using the file picker, paste a URL into the **URL** field
 3. Optionally check **Download in background** for large files
 4. Fill in metadata as desired
@@ -130,7 +130,7 @@ This re-reads the image file and updates the stored width/height values.
 
 ## Finding Similar Resources
 
-Mahresources uses perceptual hashing to find visually similar images. On any image resource's detail page, the **Similar Resources** section shows matches with thumbnails and similarity scores. Click **Merge Others To This** to combine duplicates into one resource.
+Perceptual hashing finds visually similar images. On any image resource's detail page, the **Similar Resources** section shows matches with thumbnails and similarity scores. Click **Merge Others To This** to combine duplicates into one resource.
 
 This requires the background hash worker (enabled by default).
 
@@ -158,7 +158,7 @@ Resource deletion is permanent. The file is removed from storage and cannot be r
 
 ### Automatic Metadata
 
-Mahresources automatically captures:
+Automatically captured on upload:
 
 - **Original Name** - The filename at upload
 - **Original Location** - Source URL for imports
@@ -186,7 +186,7 @@ When adding metadata, existing keys from other resources appear as autocomplete 
 
 ## Thumbnails
 
-Mahresources generates thumbnails automatically for supported file types:
+Thumbnails are generated automatically for supported file types:
 
 | File Type | Requirements |
 |-----------|--------------|

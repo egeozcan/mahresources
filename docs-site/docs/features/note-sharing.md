@@ -6,7 +6,7 @@ description: Share notes publicly via secure, unguessable URLs
 
 # Note Sharing
 
-Mahresources can publish individual notes to a separate, public-facing server. Shared notes are accessible via cryptographically secure URLs without authentication, so you can share content publicly while keeping your main instance private.
+Individual notes can be published to a separate, public-facing server. Shared notes are accessible via cryptographically secure URLs without authentication, letting you share content publicly while keeping the main instance private.
 
 ## How It Works
 

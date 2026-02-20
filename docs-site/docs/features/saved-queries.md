@@ -50,7 +50,7 @@ ORDER BY r.created_at DESC
 
 ## Query Parameters
 
-Queries support named parameters using the `:paramName` syntax. When you run a query with parameters, Mahresources displays input fields for each parameter.
+Queries support named parameters using the `:paramName` syntax. When you run a query with parameters, input fields appear for each parameter.
 
 ### Parameter Example
 

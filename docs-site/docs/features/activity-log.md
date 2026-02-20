@@ -4,7 +4,7 @@ sidebar_position: 7
 
 # Activity Log
 
-Mahresources maintains an activity log that tracks operations performed on entities. The log provides an audit trail of create, update, and delete actions across the system.
+An activity log tracks all operations performed on entities, providing an audit trail of create, update, and delete actions.
 
 ## Log Entry Properties
 

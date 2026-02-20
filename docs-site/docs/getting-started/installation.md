@@ -6,7 +6,7 @@ sidebar_position: 1
 
 :::danger Security Warning
 
-Mahresources has **no built-in authentication**. Never expose it directly to the public internet. Always run it on a private network or behind a reverse proxy with proper authentication.
+There is **no built-in authentication**. Never expose the server directly to the public internet. Always run it on a private network or behind a reverse proxy with proper authentication.
 
 :::
 
@@ -19,40 +19,26 @@ Mahresources has **no built-in authentication**. Never expose it directly to the
 ### Docker
 - **Docker 20+** - [Install Docker](https://docs.docker.com/get-docker/)
 
-## Option 1: Pre-built Binaries
-
-Download the latest release for your platform from the [GitHub Releases](https://github.com/egeozcan/mahresources/releases) page.
+## Option 1: Build from Source
 
 ```bash
-# Extract the archive
-tar -xzf mahresources-linux-amd64.tar.gz
-
-# Make it executable (Linux/macOS)
-chmod +x mahresources
-
-# Run it
-./mahresources -ephemeral -bind-address=:8080
-```
-
-## Option 2: Build from Source
-
-Clone and build:
-
-```bash
-# Clone the repository
 git clone https://github.com/egeozcan/mahresources.git
 cd mahresources
-
-# Install dependencies and build everything (CSS + JS + Go binary)
 npm install
 npm run build
 ```
 
-The `npm run build` command builds the Tailwind CSS, bundles the JavaScript with Vite, and compiles the Go binary with the `json1` (SQLite JSON functions) and `fts5` (full-text search) build tags.
+`npm run build` compiles Tailwind CSS, bundles JavaScript with Vite, and builds the Go binary with `json1` and `fts5` build tags.
 
-## Option 3: Docker
+## Option 2: Docker
 
 No pre-built image is published. Build it locally from the repository:
+
+:::caution Dockerfile Go version
+
+The Dockerfile currently uses `golang:1.21-alpine`, but the module requires Go 1.22+. You may need to update line 11 of the Dockerfile to `golang:1.22-alpine` or later before building.
+
+:::
 
 ```bash
 git clone https://github.com/egeozcan/mahresources.git
@@ -69,7 +55,7 @@ docker run -p 8181:8181 \
   mahresources
 ```
 
-See the [Docker deployment guide](../deployment/docker) for compose files and production setup.
+The persistent storage example stores the database as `data/test.db` (the Dockerfile default). See the [Docker deployment guide](../deployment/docker) for compose files, custom database names, and production setup.
 
 ## Optional Dependencies
 
@@ -108,11 +94,11 @@ sudo apt install libreoffice
 # Download from https://www.libreoffice.org/download/
 ```
 
-Mahresources auto-detects `soffice` or `libreoffice` in your PATH. To specify a custom path:
+`soffice` or `libreoffice` in your PATH is auto-detected. To specify a custom path:
 ```bash
 ./mahresources -libreoffice-path=/usr/bin/libreoffice
 ```
 
 ## Next Steps
 
-Next: [Quick Start](./quick-start) -- run Mahresources for the first time.
+Next: [Quick Start](./quick-start) to run the application for the first time.

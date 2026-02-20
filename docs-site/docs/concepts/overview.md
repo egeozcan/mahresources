@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # Core Concepts Overview
 
-Mahresources has seven entity types. Here is how they connect.
+Mahresources has seven entity types. This page describes how they connect.
 
 ## Entity Types
 
@@ -74,7 +74,7 @@ Tags are simple labels that can be applied to Resources, Notes, and Groups. They
 
 ### Metadata (Meta)
 
-Every Resource, Note, and Group has a `meta` field for storing arbitrary JSON data:
+Every Resource, Note, Group, and Tag has a `meta` field for storing arbitrary JSON data:
 
 ```json
 {
@@ -142,8 +142,8 @@ Mahresources supports bulk operations on multiple items:
 
 | Entity | Deletion Behavior |
 |--------|-------------------|
-| **Tag** | Fails if any entity still uses the tag |
+| **Tag** | Removed from all associated entities (cascade) |
 | **Group** | Cascades to owned Groups and Notes; owned Resources have their owner set to NULL (preserved) |
 | **Resource** | Deleted independently; file removed from storage |
 | **Note** | Deleted independently |
-| **Category** | Fails if any Group still uses the category |
+| **Category** | Cascades: **deletes all Groups** in the category |

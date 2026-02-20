@@ -4,7 +4,7 @@ sidebar_position: 4
 
 # Groups API
 
-Groups are hierarchical containers that can own resources, notes, and other groups. They support custom relationships between each other through the relations system.
+Groups are hierarchical containers that own resources, notes, and other groups. Custom relationships between groups are defined through the relations system.
 
 ## List Groups
 
@@ -343,7 +343,7 @@ POST /v1/group/editDescription?id={id}
 
 # Group Relations API
 
-Relations define typed connections between groups (e.g., "Person works at Company").
+Relations define typed, directional connections between groups (e.g., "Person works at Company").
 
 ## List Relation Types
 

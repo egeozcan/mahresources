@@ -4,7 +4,7 @@ sidebar_position: 2
 
 # Image Similarity Detection
 
-Mahresources finds visually similar images using perceptual hashing. It detects duplicates, near-duplicates, and related images even when they differ in resolution, compression, or minor edits.
+Perceptual hashing finds visually similar images -- duplicates, near-duplicates, and related images -- even when they differ in resolution, compression, or minor edits.
 
 ## How It Works
 
@@ -12,14 +12,14 @@ Mahresources finds visually similar images using perceptual hashing. It detects 
 
 Unlike cryptographic hashes (SHA1, MD5) which produce completely different outputs for any change, perceptual hashes (pHash) produce similar outputs for visually similar images.
 
-Mahresources uses two types of perceptual hashes:
+Two types of perceptual hashes are computed:
 
 | Hash Type | Description |
 |-----------|-------------|
 | **Average Hash (aHash)** | Compares the average brightness of image blocks |
 | **Difference Hash (dHash)** | Compares brightness gradients between adjacent pixels |
 
-Mahresources uses the difference hash (dHash) for similarity comparison because it tolerates small changes (crops, compression, resizing) better than average hash.
+The difference hash (dHash) is used for similarity comparison because it tolerates small changes (crops, compression, resizing) better than average hash.
 
 ### Hamming Distance
 
@@ -35,7 +35,7 @@ Similarity is measured by **Hamming distance** - the number of bits that differ 
 
 ## Background Hash Worker
 
-Mahresources runs a background worker that automatically processes images and calculates their hashes.
+A background worker automatically processes images and calculates their hashes.
 
 ### What Gets Processed
 

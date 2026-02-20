@@ -4,10 +4,10 @@ sidebar_position: 1
 
 # Configuration Overview
 
-Mahresources can be configured through environment variables or command-line flags. This section covers all available configuration options.
+Configuration uses environment variables or command-line flags. This section covers all available options.
 
 :::danger Security Reminder
-Mahresources has **no built-in authentication or authorization**. It is designed for use on private, trusted networks only. Do not expose Mahresources directly to the public internet without placing it behind a reverse proxy with proper authentication.
+Mahresources has **no built-in authentication or authorization**. It is designed for private, trusted networks only. Do not expose it to the public internet without a reverse proxy with proper authentication.
 :::
 
 ## Configuration Methods
@@ -44,7 +44,7 @@ Command-line flags take precedence over environment variables. This allows you t
 | `-db-readonly-dsn` | `DB_READONLY_DSN` | Read-only database connection | - |
 | `-db-log-file` | `DB_LOG_FILE` | DB log output: `STDOUT`, empty, or file path | - |
 | `-file-save-path` | `FILE_SAVE_PATH` | Main file storage directory | - |
-| `-bind-address` | `BIND_ADDRESS` | Server address:port | `:8181` |
+| `-bind-address` | `BIND_ADDRESS` | Server address:port | - |
 | `-memory-db` | `MEMORY_DB=1` | Use in-memory SQLite database | `false` |
 | `-memory-fs` | `MEMORY_FS=1` | Use in-memory filesystem | `false` |
 | `-ephemeral` | `EPHEMERAL=1` | Fully ephemeral mode (memory DB + FS) | `false` |
@@ -61,6 +61,15 @@ Command-line flags take precedence over environment variables. This allows you t
 | `-hash-poll-interval` | `HASH_POLL_INTERVAL` | Time between batch cycles | `1m` |
 | `-hash-similarity-threshold` | `HASH_SIMILARITY_THRESHOLD` | Max Hamming distance for similarity | `10` |
 | `-hash-worker-disabled` | `HASH_WORKER_DISABLED=1` | Disable background hash worker | `false` |
+| `-hash-cache-size` | `HASH_CACHE_SIZE` | Max entries in hash similarity cache | `100000` |
+| `-thumb-worker-count` | `THUMB_WORKER_COUNT` | Concurrent thumbnail workers | `2` |
+| `-thumb-worker-disabled` | `THUMB_WORKER_DISABLED=1` | Disable thumbnail worker | `false` |
+| `-thumb-batch-size` | `THUMB_BATCH_SIZE` | Videos per backfill cycle | `10` |
+| `-thumb-poll-interval` | `THUMB_POLL_INTERVAL` | Time between backfill cycles | `1m` |
+| `-thumb-backfill` | `THUMB_BACKFILL=1` | Backfill thumbnails for existing videos | `false` |
+| `-video-thumb-timeout` | `VIDEO_THUMB_TIMEOUT` | Timeout for ffmpeg thumbnail generation | `30s` |
+| `-video-thumb-lock-timeout` | `VIDEO_THUMB_LOCK_TIMEOUT` | Timeout waiting for thumbnail lock | `60s` |
+| `-video-thumb-concurrency` | `VIDEO_THUMB_CONCURRENCY` | Max concurrent video thumbnail jobs | `4` |
 | `-remote-connect-timeout` | `REMOTE_CONNECT_TIMEOUT` | Timeout for remote connections | `30s` |
 | `-remote-idle-timeout` | `REMOTE_IDLE_TIMEOUT` | Timeout for idle transfers | `60s` |
 | `-remote-overall-timeout` | `REMOTE_OVERALL_TIMEOUT` | Maximum total download time | `30m` |
@@ -82,7 +91,7 @@ Command-line flags take precedence over environment variables. This allows you t
 
 ### Development/Testing (Ephemeral)
 
-Start with no persistence - all data is lost when the server stops:
+No persistence -- all data is lost when the server stops:
 
 ```bash
 ./mahresources -ephemeral -bind-address=:8181
@@ -90,7 +99,7 @@ Start with no persistence - all data is lost when the server stops:
 
 ### Demo with Seeded Data
 
-Load existing data in read-only mode for demos:
+Load existing data for demos (changes stay in memory):
 
 ```bash
 ./mahresources \

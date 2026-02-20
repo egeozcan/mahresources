@@ -4,11 +4,11 @@ sidebar_position: 2
 
 # Quick Start
 
-Get Mahresources running in under a minute.
+Get up and running in under a minute.
 
 ## Ephemeral Mode (Try It Out)
 
-Ephemeral mode uses in-memory storage -- nothing is written to disk, and all data is lost when the server stops.
+Ephemeral mode uses in-memory storage. Nothing is written to disk, and all data is lost when the server stops.
 
 ```bash
 ./mahresources -ephemeral -bind-address=:8080
@@ -20,17 +20,17 @@ Open [http://localhost:8080](http://localhost:8080) in your browser.
 
 1. Navigate to **Resources** in the top navigation bar
 2. Click the **Create** button
-3. Drag and drop a file or click to select one
+3. Select one or more files to upload
 4. Add a name and optional description
 5. Click **Save**
 
-Mahresources stores and indexes the file. Images get automatic thumbnails.
+The file is stored and indexed. Images get automatic thumbnails.
 
 ## Your First Note
 
 1. Navigate to **Notes** in the top navigation bar
 2. Click the **Create** button
-3. Enter a title and content
+3. Enter a title and text
 4. Optionally select a Note Type (you can create one under **Note Types** in the Admin menu)
 5. Click **Save**
 
@@ -81,4 +81,4 @@ Then run:
 
 ## Next Steps
 
-Next: [First Steps](./first-steps) -- learn how to organize content.
+Next: [First Steps](./first-steps) to learn how to organize content.

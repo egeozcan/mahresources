@@ -4,7 +4,7 @@ sidebar_position: 3
 
 # Notes API
 
-A Note holds text content with optional start/end dates, metadata, and associations to resources, groups, and tags. Each note has a type that controls its display and behavior.
+A note holds text content with optional start/end dates, metadata, and associations to resources, groups, and tags. Each note has a type that controls its display and behavior.
 
 ## List Notes
 
@@ -206,7 +206,7 @@ POST /v1/note/editDescription?id={id}
 
 # Note Sharing API
 
-Notes can be shared publicly via a unique token. Shared notes are accessible on the share server without authentication. See the [Note Sharing feature docs](../features/note-sharing.md) for more details.
+Share notes publicly via a unique token. Shared notes are accessible on the share server without authentication. See the [Note Sharing feature docs](../features/note-sharing.md) for details.
 
 ## Share a Note
 
@@ -269,11 +269,11 @@ curl -X DELETE "http://localhost:8181/v1/note/share?noteId=123"
 
 # Note Blocks API
 
-Note blocks provide a block-based editing system for note content. Each block has a type, position, content, and state. Content is what you edit in edit mode. State is what updates while viewing (e.g., checking a todo item). Blocks are ordered by their position string, which uses fractional indexing for efficient reordering.
+Blocks provide a structured editing system for note content. Each block has a type, position, content, and state. Content is what you edit in edit mode. State is what updates while viewing (e.g., checking a todo item). Blocks are ordered by position string, which uses fractional indexing for efficient reordering.
 
 ## Block Types
 
-The following block types are available:
+Available block types:
 
 | Type | Description |
 |------|-------------|
@@ -288,7 +288,7 @@ The following block types are available:
 
 ## Get Block Types
 
-List all available block types programmatically, including their default content and state.
+List all block types with their default content and state.
 
 ```
 GET /v1/note/block/types
@@ -607,7 +607,7 @@ Returns HTTP status 204 (No Content) on success.
 
 ## Rebalance Block Positions
 
-Recalculate and normalize position strings for all blocks in a note. Useful when position strings have become too long from repeated insertions.
+Normalize position strings for all blocks in a note. Useful when position strings have grown too long from repeated insertions.
 
 ```
 POST /v1/note/blocks/rebalance?noteId={id}
@@ -637,7 +637,7 @@ GET /v1/note/block/table/query?blockId={id}
 |-----------|------|-------------|
 | `blockId` | integer | **Required.** The table block ID |
 
-Any additional query parameters are passed through to the query as parameters (merged with the block's stored `queryParams`).
+Additional query parameters are passed through to the query (merged with the block's stored `queryParams`).
 
 ### Example
 
@@ -681,7 +681,7 @@ curl "http://localhost:8181/v1/note/block/calendar/events?blockId=15&start=2024-
 
 ## Block Type Schemas
 
-Each block type has specific content and state schemas.
+Each block type has its own content and state schema.
 
 ### Text Block
 

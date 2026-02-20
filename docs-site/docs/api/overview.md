@@ -8,7 +8,7 @@ All features are accessible via a REST API. The API supports both JSON and form-
 
 :::danger No Authentication
 
-Mahresources does not include authentication or authorization. The API is designed for use on private, trusted networks only. **Never expose Mahresources directly to the public internet.**
+There is no authentication or authorization. The API is designed for use on private, trusted networks only. **Never expose the server directly to the public internet.**
 
 :::
 
@@ -24,7 +24,7 @@ http://localhost:8181/v1/groups
 
 ## Dual Response Format
 
-Mahresources supports a dual response format system. The same endpoints can return either HTML (for browser access) or JSON (for API access).
+Every endpoint can return either HTML (for browser access) or JSON (for API access).
 
 ### Getting JSON Responses
 
@@ -87,7 +87,7 @@ curl http://localhost:8181/v1/resources.json?page=2
 curl http://localhost:8181/v1/resources.json?page=3
 ```
 
-The default page size is 30 results per page. This is not configurable via the API.
+The default page size is 50 results per page. This is not configurable via the API.
 
 ## Common Query Parameters
 
@@ -156,7 +156,7 @@ Some endpoints use `id` (lowercase) and others use `Id` (capitalized). This is a
 
 ## OpenAPI Specification
 
-Mahresources can generate an OpenAPI 3.0 specification from its route definitions:
+An OpenAPI 3.0 specification can be generated from the route definitions:
 
 ```bash
 # Generate YAML spec (default)
@@ -169,7 +169,7 @@ go run ./cmd/openapi-gen -output api-spec.yaml
 go run ./cmd/openapi-gen -output api-spec.json -format json
 ```
 
-This generates a complete OpenAPI specification that can be used with tools like Swagger UI, Postman, or code generators.
+The generated spec works with Swagger UI, Postman, or code generators.
 
 ## API Endpoint Categories
 

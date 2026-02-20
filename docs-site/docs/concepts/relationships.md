@@ -4,7 +4,7 @@ sidebar_position: 6
 
 # Relationships
 
-Typed relationships add semantic meaning to connections between Groups -- beyond simple ownership or many-to-many relations. Mahresources stores each relationship as a directed edge with a named type, forming a navigable graph.
+Typed relationships add meaning to connections between Groups beyond ownership or many-to-many associations. Each relationship is a directed edge with a named type, forming a navigable graph.
 
 ## Relationship Types (RelationTypes)
 
@@ -98,7 +98,7 @@ Content-Type: application/json
 
 ## Graph Navigation
 
-Mahresources traverses relations as a graph between groups:
+Relations form a graph between groups:
 
 ```
 John Smith (Person)

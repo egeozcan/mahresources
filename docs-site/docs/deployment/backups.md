@@ -6,7 +6,7 @@ description: Backing up and restoring Mahresources data
 
 # Backup and Restore
 
-Mahresources stores data in two locations that must both be backed up: the database and the file storage directory.
+Data lives in two locations that must both be backed up: the database and the file storage directory.
 
 ## What to Back Up
 
@@ -232,7 +232,7 @@ sudo systemctl start mahresources
 
 ## Backup Verification
 
-Regularly test your backups by restoring to a test environment:
+Test your backups regularly by restoring to a test environment:
 
 ```bash
 # Create test instance with ephemeral mode using backup

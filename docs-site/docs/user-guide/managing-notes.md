@@ -11,7 +11,7 @@ Notes are text entries that link to resources, groups, and tags. They support da
 ### Basic Note Creation
 
 1. Navigate to **Notes** in the top menu
-2. Click the **New Note** button
+2. Click the **Create** button
 3. Fill in the note fields:
    - **Title** - The note's display name (required)
    - **Text** - The main content of the note
@@ -96,6 +96,8 @@ Note types add custom templates and styling to notes.
 - **Name** - Identifier for the type
 - **Custom Header** - HTML template displayed above note content
 - **Custom Sidebar** - HTML template displayed in the sidebar
+- **Custom Summary** - HTML template for list views
+- **Custom Avatar** - HTML template for note avatars
 
 ### Using Note Types
 
@@ -124,6 +126,8 @@ The `entity` object contains all note fields including custom metadata.
 4. Optionally add:
    - **Custom Header** - HTML displayed above note content
    - **Custom Sidebar** - HTML displayed in the sidebar
+   - **Custom Summary** - HTML for list views
+   - **Custom Avatar** - HTML for note avatars
 5. Click **Save**
 
 ## Wide Display Mode

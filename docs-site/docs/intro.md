@@ -9,7 +9,7 @@ Mahresources is a self-hosted system for storing files, writing notes, and linki
 
 ## What is Mahresources?
 
-Mahresources stores files (called Resources), Notes, and Groups in a database, tracks the relationships between them, and makes everything searchable. Groups can nest inside each other and contain any mix of Resources and Notes. Tags and Categories provide additional ways to classify items across Groups.
+Files (called Resources), Notes, and Groups are stored in a database with tracked relationships and full-text search. Groups nest inside each other and contain any mix of Resources and Notes. Tags and Categories provide additional ways to classify items across Groups.
 
 ## Key Features
 
@@ -26,7 +26,7 @@ Mahresources stores files (called Resources), Notes, and Groups in a database, t
 
 :::danger No Authentication
 
-Mahresources has **no** authentication or authorization. Run it on a private network only.
+There is **no** authentication or authorization. Run it on a private network only.
 
 **Do not expose it to the internet.** For remote access, put it behind a reverse proxy with authentication (nginx + basic auth, OAuth2 Proxy, Authelia, etc.).
 
@@ -34,7 +34,7 @@ Mahresources has **no** authentication or authorization. Run it on a private net
 
 ## Who is This For?
 
-Anyone who wants to store files and notes locally, link them together, and search across them without relying on a cloud service. Common uses include research material management, personal knowledge bases, and file archiving with metadata.
+Anyone who wants to store files and notes locally, link them together, and search across them without a cloud service. Common uses: research material management, personal knowledge bases, and file archiving with metadata.
 
 ## Getting Started
 

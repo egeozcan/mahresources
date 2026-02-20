@@ -70,11 +70,16 @@ Most list views use a table showing:
 
 ### Display Options
 
-Some list views offer alternative display modes. Use the selector at the top of the list to switch between:
+List views offer alternative display modes. Use the selector at the top of the list to switch between them.
 
+**Resources:**
+- **Thumbnails** (default) - Card grid with thumbnail previews
 - **Details** - Full table with all columns
 - **Simple** - Compact list with essential information
-- **Gallery** - Grid of thumbnails (for resources)
+
+**Groups:**
+- **List** (default) - Standard list view
+- **Text** - Text-focused view
 
 ### Sidebar Filters
 

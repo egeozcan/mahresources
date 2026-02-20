@@ -6,7 +6,7 @@ description: Securely deploy the share server for public access
 
 # Public Sharing Deployment
 
-Deploy the note sharing feature for public access while keeping your main instance private.
+Deploy the note sharing feature for public access while keeping the main instance private.
 
 :::danger Security Implications
 The share server makes shared notes accessible to **anyone with the URL** -- no authentication is required. Shared notes expose their full text, embedded resources, and metadata. Only share notes you are comfortable making fully public. The share URL contains an unguessable token, but anyone who obtains it can view the note.
@@ -78,8 +78,6 @@ SHARE_BIND_ADDRESS=127.0.0.1
 ### Docker Compose with Sharing
 
 ```yaml
-version: '3.8'
-
 services:
   mahresources:
     build: .                     # build from local Dockerfile
@@ -313,4 +311,4 @@ openssl s_client -connect share.example.com:443 -servername share.example.com
 
 ## Performance Considerations
 
-The share server is lightweight. If shared notes contain large embedded resources, consider adding reverse proxy caching for static assets.
+The share server is lightweight. For shared notes with large embedded resources, consider adding reverse proxy caching for static assets.

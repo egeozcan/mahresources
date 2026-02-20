@@ -8,7 +8,7 @@ This page covers external tool integration, hash worker settings, network timeou
 
 ## External Tools
 
-Mahresources can use external tools to generate thumbnails for videos and office documents.
+External tools generate thumbnails for videos and office documents.
 
 ### FFmpeg (Video Thumbnails)
 
@@ -24,11 +24,11 @@ Or with environment variables:
 FFMPEG_PATH=/usr/bin/ffmpeg
 ```
 
-If not specified, Mahresources will attempt to find `ffmpeg` in your PATH.
+If not specified, `ffmpeg` is auto-detected from your PATH.
 
 ### LibreOffice (Office Document Thumbnails)
 
-LibreOffice can generate thumbnails for Word documents, spreadsheets, presentations, and PDFs.
+LibreOffice generates thumbnails for Word documents, spreadsheets, presentations, and PDFs.
 
 ```bash
 ./mahresources -libreoffice-path=/usr/bin/soffice -db-type=SQLITE -db-dsn=./db.sqlite -file-save-path=./files
@@ -40,7 +40,7 @@ Or with environment variables:
 LIBREOFFICE_PATH=/usr/bin/soffice
 ```
 
-Mahresources auto-detects `soffice` or `libreoffice` in your PATH if not specified.
+Auto-detected from your PATH (`soffice` or `libreoffice`) if not specified.
 
 :::tip macOS
 On macOS, LibreOffice is typically at:
@@ -51,7 +51,7 @@ On macOS, LibreOffice is typically at:
 
 ## Hash Worker Configuration
 
-Mahresources runs a background worker that calculates perceptual hashes for images. These hashes enable finding visually similar images.
+A background worker calculates perceptual hashes for images, enabling visual similarity search.
 
 ### Worker Settings
 
@@ -62,6 +62,7 @@ Mahresources runs a background worker that calculates perceptual hashes for imag
 | `-hash-poll-interval` | `HASH_POLL_INTERVAL` | `1m` | Time between batch cycles |
 | `-hash-similarity-threshold` | `HASH_SIMILARITY_THRESHOLD` | `10` | Maximum Hamming distance for similarity |
 | `-hash-worker-disabled` | `HASH_WORKER_DISABLED=1` | `false` | Disable the hash worker entirely |
+| `-hash-cache-size` | `HASH_CACHE_SIZE` | `100000` | Max entries in hash similarity LRU cache |
 
 ### Tuning for Your Hardware
 
@@ -96,6 +97,38 @@ The `-hash-similarity-threshold` controls how similar images must be to be consi
 - **Higher values** (e.g., 15): Looser matching, finds more variations
 - **Default (10)**: Good balance for finding similar images
 
+## Thumbnail Worker Configuration
+
+A background worker generates thumbnails for video files using ffmpeg. It runs in batch cycles, similar to the hash worker.
+
+| Flag | Env Variable | Default | Description |
+|------|--------------|---------|-------------|
+| `-thumb-worker-count` | `THUMB_WORKER_COUNT` | `2` | Concurrent thumbnail workers |
+| `-thumb-worker-disabled` | `THUMB_WORKER_DISABLED=1` | `false` | Disable the thumbnail worker entirely |
+| `-thumb-batch-size` | `THUMB_BATCH_SIZE` | `10` | Videos processed per backfill cycle |
+| `-thumb-poll-interval` | `THUMB_POLL_INTERVAL` | `1m` | Time between backfill cycles |
+| `-thumb-backfill` | `THUMB_BACKFILL=1` | `false` | Backfill thumbnails for existing videos |
+
+Enable backfill to generate thumbnails for videos that were uploaded before ffmpeg was configured:
+
+```bash
+./mahresources \
+  -thumb-backfill \
+  -thumb-worker-count=4 \
+  -thumb-batch-size=50 \
+  ...
+```
+
+### Video Thumbnail Settings
+
+Fine-tune individual video thumbnail generation:
+
+| Flag | Env Variable | Default | Description |
+|------|--------------|---------|-------------|
+| `-video-thumb-timeout` | `VIDEO_THUMB_TIMEOUT` | `30s` | Timeout for a single ffmpeg thumbnail job |
+| `-video-thumb-lock-timeout` | `VIDEO_THUMB_LOCK_TIMEOUT` | `60s` | Timeout waiting for a thumbnail lock |
+| `-video-thumb-concurrency` | `VIDEO_THUMB_CONCURRENCY` | `4` | Max concurrent video thumbnail jobs |
+
 ## Network Timeouts
 
 Configure timeouts for downloading remote resources:
@@ -129,7 +162,7 @@ Configure timeouts for downloading remote resources:
 Configure the server address and port:
 
 ```bash
-# Listen on all interfaces, port 8181 (default)
+# Listen on all interfaces, port 8181
 ./mahresources -bind-address=:8181 ...
 
 # Listen on localhost only
@@ -141,7 +174,7 @@ Configure the server address and port:
 
 ## Startup Optimizations
 
-For large databases, certain startup operations can be slow. These flags help reduce startup time:
+On large databases, certain startup operations can be slow. These flags reduce startup time:
 
 ### Skip Full-Text Search
 
@@ -171,11 +204,11 @@ For SQLite under concurrent load (like E2E tests):
 ./mahresources -max-db-connections=2 ...
 ```
 
-This reduces lock contention but may impact performance under heavy load.
+Reduces lock contention at the cost of throughput under heavy load.
 
 ## Share Server
 
-Mahresources includes a separate share server for publicly sharing notes. The share server is disabled by default and only starts when a port is configured.
+A separate share server can expose notes publicly. It is disabled by default and only starts when a port is configured.
 
 :::warning Default Bind Address
 The share server binds to `0.0.0.0` (all interfaces) by default. If you only want the share server accessible locally, set `-share-bind-address=127.0.0.1`.
@@ -215,7 +248,7 @@ Automatically delete old log entries on startup:
 
 | Flag | Env Variable | Default | Description |
 |------|--------------|---------|-------------|
-| `-bind-address` | `BIND_ADDRESS` | `:8181` | Server address:port |
+| `-bind-address` | `BIND_ADDRESS` | - | Server address:port |
 | `-ffmpeg-path` | `FFMPEG_PATH` | auto-detect | Path to ffmpeg binary |
 | `-libreoffice-path` | `LIBREOFFICE_PATH` | auto-detect | Path to LibreOffice binary |
 | `-hash-worker-count` | `HASH_WORKER_COUNT` | `4` | Concurrent hash workers |
@@ -223,6 +256,15 @@ Automatically delete old log entries on startup:
 | `-hash-poll-interval` | `HASH_POLL_INTERVAL` | `1m` | Time between batches |
 | `-hash-similarity-threshold` | `HASH_SIMILARITY_THRESHOLD` | `10` | Max Hamming distance |
 | `-hash-worker-disabled` | `HASH_WORKER_DISABLED=1` | `false` | Disable hash worker |
+| `-hash-cache-size` | `HASH_CACHE_SIZE` | `100000` | Hash similarity LRU cache size |
+| `-thumb-worker-count` | `THUMB_WORKER_COUNT` | `2` | Concurrent thumbnail workers |
+| `-thumb-worker-disabled` | `THUMB_WORKER_DISABLED=1` | `false` | Disable thumbnail worker |
+| `-thumb-batch-size` | `THUMB_BATCH_SIZE` | `10` | Videos per backfill cycle |
+| `-thumb-poll-interval` | `THUMB_POLL_INTERVAL` | `1m` | Time between backfill cycles |
+| `-thumb-backfill` | `THUMB_BACKFILL=1` | `false` | Backfill thumbnails for existing videos |
+| `-video-thumb-timeout` | `VIDEO_THUMB_TIMEOUT` | `30s` | Timeout per ffmpeg thumbnail job |
+| `-video-thumb-lock-timeout` | `VIDEO_THUMB_LOCK_TIMEOUT` | `60s` | Thumbnail lock timeout |
+| `-video-thumb-concurrency` | `VIDEO_THUMB_CONCURRENCY` | `4` | Max concurrent video thumbnail jobs |
 | `-remote-connect-timeout` | `REMOTE_CONNECT_TIMEOUT` | `30s` | Connection timeout |
 | `-remote-idle-timeout` | `REMOTE_IDLE_TIMEOUT` | `60s` | Idle timeout |
 | `-remote-overall-timeout` | `REMOTE_OVERALL_TIMEOUT` | `30m` | Total download timeout |

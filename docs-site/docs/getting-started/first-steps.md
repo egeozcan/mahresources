@@ -6,7 +6,7 @@ sidebar_position: 3
 
 ## The Data Model
 
-Mahresources has five main entity types:
+Five main entity types form the core data model:
 
 - **Resources** - Files you upload (images, documents, videos, etc.)
 - **Notes** - Text content you create
@@ -16,7 +16,7 @@ Mahresources has five main entity types:
 
 ## Step 1: Create a Category
 
-Every Group requires a Category. Categories define what kind of thing a Group represents (e.g., "Person", "Project", "Location").
+Categories define what kind of thing a Group represents (e.g., "Person", "Project", "Location"). Groups can optionally have a Category, but creating a few early helps keep things organized.
 
 1. Navigate to **Categories** under the **Admin** dropdown in the top navigation bar
 2. Click the **Add** button
@@ -53,7 +53,7 @@ Add files to your Group.
 
 1. Navigate to **Resources** in the top navigation bar
 2. Click the **Create** button
-3. Upload a file by dragging and dropping or clicking to browse
+3. Select one or more files to upload
 4. Add a name and description
 5. Under **Groups**, select "Research Project"
 6. Under **Tags**, select "In Progress"
@@ -68,7 +68,7 @@ Add a Note linked to your Group.
 1. Navigate to **Notes** in the top navigation bar
 2. Click the **Create** button
 3. Enter a title like "Initial Observations"
-4. Write your note content
+4. Write your note text
 5. Optionally select a Note Type
 6. Under **Groups**, select "Research Project"
 7. Optionally link to specific Resources
@@ -76,7 +76,7 @@ Add a Note linked to your Group.
 
 ## Step 6: Use Global Search
 
-Global search finds Resources, Notes, and Groups by content.
+Global search finds items across all entity types -- resources, notes, groups, tags, categories, and more.
 
 1. Press **Cmd+K** (Mac) or **Ctrl+K** (Windows/Linux)
 2. Start typing your search query
@@ -98,9 +98,9 @@ See how items connect to each other.
 
 - **Use Groups for projects or themes** - Keep related items together
 - **Use Tags for cross-cutting concerns** - Status, priority, type of content
-- **Use Categories to type your Groups** - Every Group needs a Category (e.g., Person, Project)
+- **Use Categories to type your Groups** - e.g., Person, Project, Location
 - **Link Notes to Resources** - Connect your thoughts to source materials
-- **Use the global search liberally** - It's faster than navigating
+- **Use global search often** - It's faster than clicking through menus
 
 ## What's Next?
 

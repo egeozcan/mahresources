@@ -4,11 +4,11 @@ sidebar_position: 1
 
 # Resource Versioning
 
-Mahresources tracks the history of your files, allowing you to upload new versions, compare changes, and restore previous versions when needed.
+Every resource keeps a full version history. You can upload new versions, compare changes side-by-side, and restore previous versions at any time.
 
 ## How Versioning Works
 
-When you upload a new version of a resource, Mahresources:
+When you upload a new version of a resource:
 
 1. Stores the new file using content-addressable storage (files are stored by their SHA1 hash)
 2. Creates a version record with metadata (file size, dimensions, content type, etc.)
@@ -152,7 +152,7 @@ Each version adds one row to the `resource_versions` table. For large databases 
 
 ### Cleanup Options
 
-Mahresources provides cleanup operations:
+Two cleanup modes are available:
 
 **Per-resource cleanup:**
 - Keep only the last N versions
@@ -171,7 +171,7 @@ Version deletion is permanent. Always use dry-run mode first to verify what will
 
 If you have resources that were created before versioning was added:
 
-1. On startup, Mahresources automatically migrates existing resources
+1. On startup, existing resources are automatically migrated
 2. Each resource gets a "v1" representing its current state
 3. The migration runs in the background and does not block startup
 4. Progress is logged to the console and activity log

@@ -7,7 +7,7 @@ description: Running Mahresources in Docker containers
 # Docker Deployment
 
 :::danger Security Warning
-Mahresources has **no built-in authentication**. Never expose Docker containers directly to the internet. Always use a reverse proxy with authentication. See [Reverse Proxy](./reverse-proxy.md) for setup instructions.
+There is **no built-in authentication**. Never expose Docker containers directly to the internet. Always use a reverse proxy with authentication. See [Reverse Proxy](./reverse-proxy.md) for setup instructions.
 :::
 
 ## Building the Image
@@ -116,7 +116,7 @@ volumes:
 
 ## Environment Variables
 
-All configuration options can be set via environment variables. The most common:
+All configuration options can be set via environment variables. The most common ones:
 
 | Variable | Description | Example |
 |----------|-------------|---------|
@@ -150,7 +150,7 @@ docker compose up -d
 
 ## Template Dockerfile
 
-The repository includes a Dockerfile. If you need to customize it, here is the template:
+The repository includes a Dockerfile. Note that the repository Dockerfile is configured for development/testing (it uses `test.db` as the default database name and sets `SKIP_FTS=1`, which disables full-text search). The template below is a production-ready alternative:
 
 ```dockerfile
 # Stage 1: Build frontend assets

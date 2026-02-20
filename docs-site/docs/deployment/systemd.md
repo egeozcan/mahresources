@@ -6,11 +6,11 @@ description: Running Mahresources as a systemd service on Linux
 
 # Systemd Service
 
-This guide covers running Mahresources as a systemd service on Linux systems.
+Run the application as a systemd service on Linux.
 
 ## Create a Service User
 
-Create a dedicated user for running Mahresources:
+Create a dedicated user for the service:
 
 ```bash
 sudo useradd -r -s /bin/false -d /opt/mahresources mahresources
@@ -147,7 +147,7 @@ And ensure the PostgreSQL service dependency is enabled in the unit file.
 
 ## Updating
 
-To update Mahresources:
+To update to a new version:
 
 ```bash
 # Stop the service

@@ -268,7 +268,7 @@ The CustomAvatar template controls how the entity appears when linked:
 
 ### Use Tailwind CSS
 
-Mahresources includes Tailwind CSS. Use Tailwind utility classes for styling:
+Tailwind CSS is included. Use utility classes for styling:
 
 ```html
 <div class="p-4 bg-gray-50 rounded-lg shadow-sm">
@@ -308,7 +308,7 @@ If a template does not render correctly:
 
 ## MetaSchema for Validation
 
-Categories also support a **MetaSchema** field - a JSON Schema that validates the metadata of groups in that category. This is separate from templates but works well together:
+Categories and Resource Categories support a **MetaSchema** field -- a JSON Schema that validates metadata. Note Types do not support MetaSchema. This is separate from templates but works well together:
 
 1. Define a MetaSchema to ensure required fields exist
 2. Create templates that rely on those fields

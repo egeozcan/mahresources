@@ -4,11 +4,11 @@ sidebar_position: 2
 
 # Database Configuration
 
-Mahresources supports SQLite and PostgreSQL databases. This page covers setup and configuration for both.
+SQLite and PostgreSQL are supported. This page covers setup and configuration for both.
 
 ## SQLite
 
-SQLite is the simplest option and works well for most deployments, even with millions of resources.
+SQLite works well for most deployments, even with millions of resources.
 
 ### Basic Setup
 
@@ -25,7 +25,7 @@ DB_DSN=./mahresources.db
 
 ### Build Requirements
 
-When building from source, SQLite requires special build tags for full functionality:
+Building from source requires build tags for full SQLite functionality:
 
 ```bash
 go build --tags 'json1 fts5'
@@ -127,7 +127,7 @@ Control database query logging with `-db-log-file`:
 
 ## Startup Optimizations
 
-For large databases with millions of resources, certain startup operations can be slow.
+On large databases with millions of resources, certain startup operations can be slow.
 
 ### Skip Full-Text Search Initialization
 
@@ -135,7 +135,7 @@ For large databases with millions of resources, certain startup operations can b
 ./mahresources -skip-fts -db-type=SQLITE -db-dsn=./large.db -file-save-path=./files
 ```
 
-This skips FTS index creation/update at startup. Useful if you do not need text search.
+Skips FTS index creation/update at startup. Use this if you do not need text search.
 
 ### Skip Version Migration
 
@@ -143,7 +143,7 @@ This skips FTS index creation/update at startup. Useful if you do not need text 
 ./mahresources -skip-version-migration -db-type=SQLITE -db-dsn=./large.db -file-save-path=./files
 ```
 
-Skips the resource version migration that runs at startup. Use this for faster startup on large databases after the initial migration has completed.
+Skips the resource version migration that runs at startup. Safe to use after the initial migration has completed.
 
 ## Configuration Reference
 

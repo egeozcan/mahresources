@@ -87,6 +87,35 @@ curl -X POST http://localhost:8181/v1/tag \
 POST /v1/tag/delete?Id={id}
 ```
 
+### Bulk Delete Tags
+
+Delete multiple tags at once.
+
+```
+POST /v1/tags/delete
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `ID` | integer[] | Tag IDs to delete |
+
+### Merge Tags
+
+Merge multiple tags into one, transferring all associations.
+
+```
+POST /v1/tags/merge
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `Winner` | integer | Tag ID to keep |
+| `Losers` | integer[] | Tag IDs to merge and delete |
+
 ### Inline Editing
 
 ```
@@ -360,6 +389,22 @@ curl -X POST "http://localhost:8181/v1/query/run?name=Recent%20Resources" \
   -H "Accept: application/json"
 ```
 
+### Get Database Schema
+
+Return the database table and column schema. Useful for writing saved queries.
+
+```
+GET /v1/query/schema
+```
+
+#### Example
+
+```bash
+curl http://localhost:8181/v1/query/schema
+```
+
+The response is cached for 5 minutes.
+
 ### Inline Editing
 
 ```
@@ -385,7 +430,7 @@ GET /v1/search
 |-----------|------|-------------|
 | `q` | string | **Required.** Search query |
 | `limit` | integer | Maximum results (default: 20) |
-| `types` | string[] | Entity types to search (repeated query param, e.g. `types=resources&types=notes`) |
+| `types` | string | Entity types to search (comma-separated, e.g. `types=resources,notes`) |
 
 #### Example
 
@@ -397,7 +442,7 @@ curl "http://localhost:8181/v1/search.json?q=project"
 curl "http://localhost:8181/v1/search.json?q=project&limit=50"
 
 # Search specific types
-curl "http://localhost:8181/v1/search.json?q=project&types=resources&types=notes"
+curl "http://localhost:8181/v1/search.json?q=project&types=resources,notes"
 ```
 
 #### Response
@@ -432,7 +477,7 @@ curl "http://localhost:8181/v1/search.json?q=project&types=resources&types=notes
 
 ## Logs API
 
-Access the audit log of system events and entity changes.
+Query the audit log of system events and entity changes.
 
 ### List Log Entries
 
@@ -489,7 +534,7 @@ curl "http://localhost:8181/v1/logs.json?Level=error"
   ],
   "totalCount": 1500,
   "page": 1,
-  "perPage": 30
+  "perPage": 50
 }
 ```
 
@@ -526,7 +571,7 @@ curl "http://localhost:8181/v1/logs/entity.json?entityType=resource&entityId=123
 
 ## Download Queue API
 
-Manage background downloads for remote resources. The queue supports up to 100 jobs and runs up to 3 concurrent downloads. Completed jobs are retained for 1 hour before eviction.
+Queue background downloads for remote resources. The queue holds up to 100 jobs and runs up to 3 concurrently. Completed jobs are retained for 1 hour before eviction.
 
 ### Submit Download
 
@@ -591,11 +636,11 @@ curl http://localhost:8181/v1/download/queue.json
 | `POST /v1/download/resume?id={job_id}` | Resume a paused download (restarts from the beginning) |
 | `POST /v1/download/retry?id={job_id}` | Retry a failed or cancelled download |
 
-A download can fail due to network errors, connection timeouts (default 30s), idle timeouts (default 60s), or exceeding the overall timeout (default 30m). Configure these with the `-remote-connect-timeout`, `-remote-idle-timeout`, and `-remote-overall-timeout` flags.
+Downloads can fail due to network errors, connection timeouts (default 30s), idle timeouts (default 60s), or exceeding the overall timeout (default 30m). Configure these with the `-remote-connect-timeout`, `-remote-idle-timeout`, and `-remote-overall-timeout` flags.
 
 ### Download Events (SSE)
 
-Subscribe to real-time download status updates via Server-Sent Events.
+Stream real-time download status updates via Server-Sent Events.
 
 ```
 GET /v1/download/events
@@ -614,6 +659,74 @@ eventSource.onmessage = (event) => {
 
 ---
 
+## Series API
+
+A series groups related resources into an ordered sequence (e.g., pages of a scanned document, frames of an animation).
+
+### List Series
+
+```
+GET /v1/series/list
+```
+
+#### Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `Name` | string | Filter by name (partial match) |
+| `Slug` | string | Filter by slug |
+| `CreatedBefore` | string | Filter by creation date (ISO 8601) |
+| `CreatedAfter` | string | Filter by creation date (ISO 8601) |
+| `SortBy` | string[] | Sort order |
+
+### Get Single Series
+
+```
+GET /v1/series?id={id}
+```
+
+### Create Series
+
+```
+POST /v1/series/create
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `Name` | string | **Required.** Series name |
+
+### Update Series
+
+```
+POST /v1/series
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `ID` | integer | **Required.** Series ID |
+| `Name` | string | New name |
+| `Meta` | string | JSON metadata |
+
+### Delete Series
+
+```
+POST /v1/series/delete?Id={id}
+```
+
+### Remove Resource from Series
+
+```
+POST /v1/resource/removeSeries?id={resourceId}
+```
+
+Removes a resource from its series without deleting the series itself.
+
+---
+
 ## Meta Keys Endpoints
 
 Get all unique metadata keys used across entities.
@@ -624,7 +737,7 @@ Get all unique metadata keys used across entities.
 | Notes | `GET /v1/notes/meta/keys` |
 | Groups | `GET /v1/groups/meta/keys` |
 
-These endpoints return arrays of strings representing all metadata keys in use:
+Each returns an array of strings representing all metadata keys in use:
 
 ```json
 ["author", "source", "date_created", "location"]

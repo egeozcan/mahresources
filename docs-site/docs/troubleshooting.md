@@ -15,7 +15,7 @@ This error occurs when multiple processes or connections attempt to write to the
 **Solutions:**
 - Reduce the number of database connections using `-max-db-connections=2`
 - Check for hung processes that may be holding database locks: `lsof | grep your-database.db`
-- Ensure only one instance of Mahresources is running against the SQLite database
+- Ensure only one instance is running against the SQLite database
 - If running E2E tests, use ephemeral mode to avoid conflicts with a production database
 
 ### Thumbnails Not Generating
@@ -30,7 +30,7 @@ Thumbnails may fail to generate for videos or office documents if external tools
 **For office documents (LibreOffice):**
 - Verify LibreOffice is installed: `libreoffice --version` or `soffice --version`
 - Set the path explicitly: `-libreoffice-path=/usr/bin/libreoffice` or `LIBREOFFICE_PATH=/usr/bin/libreoffice`
-- The application auto-detects `soffice` or `libreoffice` in PATH, but explicit configuration may be needed
+- `soffice` or `libreoffice` in PATH is auto-detected, but explicit configuration may be needed
 
 **General checks:**
 - Ensure the file storage directory has write permissions
@@ -88,13 +88,13 @@ The image similarity feature uses perceptual hashing to find visually similar im
 
 ## Frequently Asked Questions
 
-### Can multiple users access Mahresources?
+### Can multiple users access the same instance?
 
-Yes, multiple users can access the same Mahresources instance simultaneously. However, there is **no user isolation** - all users see and can modify the same data. Mahresources is designed for personal use or trusted environments, not multi-tenant deployments.
+Yes, multiple users can connect simultaneously. However, there is **no user isolation** -- all users see and can modify the same data. The application is designed for personal use or trusted environments, not multi-tenant deployments.
 
 ### How do I migrate from SQLite to PostgreSQL?
 
-Mahresources does not provide a built-in migration tool. To migrate:
+There is no built-in migration tool. To migrate:
 
 1. Export your data from SQLite (you may need to write custom scripts)
 2. Set up a PostgreSQL database
@@ -109,12 +109,11 @@ Consider using third-party tools like `pgloader` for the data migration.
 
 ### What file types are supported?
 
-Mahresources can store any file type. Special handling is provided for:
+Any file type can be stored. Special handling is provided for:
 
 - **Images:** JPEG, PNG, GIF, WebP, BMP - thumbnails generated automatically
 - **Videos:** MP4, WebM, MOV, AVI, MKV - thumbnails via ffmpeg
 - **Documents:** PDF, DOCX, XLSX, PPTX, ODT, ODS, ODP - thumbnails via LibreOffice
-- **Audio:** MP3, WAV, FLAC, OGG - metadata extraction
 
 Files without special handling are stored and served without processing.
 
@@ -134,7 +133,7 @@ To manage disk usage:
 
 **With PostgreSQL:** Yes, multiple Mahresources instances can connect to the same PostgreSQL database.
 
-**With SQLite:** Only one instance should write to a SQLite database at a time. SQLite allows only one writer, and concurrent writes will cause "database is locked" errors. You can run a read-only instance with `-db-readonly-dsn` for queries while another instance handles writes.
+**With SQLite:** Only one instance should write to a SQLite database at a time. Concurrent writes cause "database is locked" errors. You can run a read-only instance with `-db-readonly-dsn` for queries while another instance handles writes.
 
 ### How do I perform a factory reset?
 
@@ -166,9 +165,9 @@ CREATE DATABASE mahresources;
 If you encounter issues not covered here:
 
 - **GitHub Issues:** Report bugs and request features at [https://github.com/egeozcan/mahresources/issues](https://github.com/egeozcan/mahresources/issues)
-- **Search existing issues** before creating a new one - your problem may already have a solution
+- **Search existing issues** before creating a new one -- your problem may already have a solution
 - When reporting issues, include:
-  - Mahresources version
+  - Application version
   - Database type (SQLite/PostgreSQL)
   - Operating system
   - Relevant log output

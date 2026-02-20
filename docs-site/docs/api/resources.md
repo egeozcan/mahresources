@@ -4,7 +4,7 @@ sidebar_position: 2
 
 # Resources API
 
-A Resource is a file -- image, document, video, or anything else -- stored with metadata, tags, and relationships to other entities.
+A resource is a file -- image, document, video, or anything else -- stored with metadata, tags, and relationships to other entities.
 
 ## List Resources
 
@@ -553,7 +553,7 @@ These endpoints accept the new value in the request body.
 
 ## Resource Versions API
 
-Resource versions track historical copies of a resource's file. When a new file is uploaded for an existing resource, the previous file is saved as a version.
+Each resource keeps historical copies of its file. When a new file is uploaded, the previous file is saved as a version.
 
 ### List Versions
 

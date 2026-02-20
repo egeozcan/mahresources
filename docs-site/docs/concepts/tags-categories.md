@@ -16,6 +16,7 @@ Tags are simple labels that can be applied to Resources, Notes, and Groups.
 |----------|-------------|
 | `name` | Unique tag name |
 | `description` | Optional explanation |
+| `meta` | Arbitrary JSON metadata |
 
 ### Characteristics
 
@@ -81,13 +82,15 @@ Content-Type: application/json
 
 #### Deleting Tags
 
-Tags can only be deleted if not in use:
+:::danger Cascade delete
+
+Deleting a tag removes it from all associated Resources, Notes, and Groups. This cannot be undone.
+
+:::
 
 ```
 DELETE /v1/tag?id=123
 ```
-
-If the tag is attached to any entity, deletion fails.
 
 ### Searching by Tags
 
@@ -129,7 +132,7 @@ Categories define types of Groups with custom presentation and optional metadata
 
 - **Group-only**: Categories apply only to Groups, not Resources or Notes
 - **Unique names**: Each category name must be unique
-- **One-to-many**: A category can have multiple groups, but each group has one category
+- **One-to-many**: A category can have multiple groups, but each group has at most one category
 - **Custom presentation**: Templates customize how groups appear
 
 ### Use Cases
@@ -279,7 +282,11 @@ Content-Type: application/json
 
 #### Deleting Categories
 
-Categories can only be deleted if no groups use them:
+:::danger Cascade delete
+
+Deleting a category **deletes all Groups** assigned to it. This cannot be undone.
+
+:::
 
 ```
 DELETE /v1/category?id=123
@@ -297,7 +304,7 @@ GET /v1/groups?categoryId=1
 
 ## Resource Categories
 
-Resource Categories work like Categories but apply to Resources instead of Groups. They define types of Resources with custom presentation and optional metadata schemas.
+Resource Categories work like Categories but apply to Resources instead of Groups. They define resource types with custom presentation and optional metadata schemas.
 
 ### Resource Category Properties
 
