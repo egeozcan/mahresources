@@ -21,11 +21,13 @@ RUN CGO_ENABLED=1 go build --tags 'json1 fts5' -o mahresources
 # Stage 3: Runtime
 FROM alpine:3.19
 RUN apk add --no-cache sqlite-libs ca-certificates
+RUN addgroup -S mahres && adduser -S mahres -G mahres
 WORKDIR /app
 COPY --from=go-builder /app/mahresources .
 COPY --from=go-builder /app/templates ./templates
 COPY --from=go-builder /app/public ./public
-RUN mkdir -p /app/data /app/files
+RUN mkdir -p /app/data /app/files && chown -R mahres:mahres /app
+USER mahres
 ENV DB_TYPE=SQLITE
 ENV DB_DSN=/app/data/test.db
 ENV FILE_SAVE_PATH=/app/files
