@@ -41,8 +41,12 @@
 {% endblock %}
 
 {% block sidebar %}
+    {% comment %}KAN-6: Unescaped CustomSidebar HTML is by design. Mahresources is a personal information
+    management application designed to run on private/internal networks with no authentication
+    layer. All users are trusted, and CustomSidebar is an intentional extension point for
+    admin-authored HTML templates.{% endcomment %}
     <div x-data="{ entity: {{ group|json }} }">
-        {% autoescape off %}
+        {% autoescape off %} {# KAN-6: by design — internal network app, all users trusted #}
             {{ group.Category.CustomSidebar }}
         {% endautoescape %}
     </div>

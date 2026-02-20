@@ -39,7 +39,10 @@ func tryFillStructValuesFromRequest(dst any, request *http.Request) error {
 	contentTypeHeader := request.Header.Get("Content-type")
 
 	if strings.HasPrefix(contentTypeHeader, constants.JSON) {
-		return json.NewDecoder(request.Body).Decode(dst)
+		// KAN-22: No JSON body size limit is by design. Mahresources is a personal information
+		// management application designed to run on private/internal networks with no authentication
+		// layer. All users are trusted, and large JSON payloads are expected for bulk operations.
+		return json.NewDecoder(request.Body).Decode(dst) // KAN-22: no size limit by design — internal network app, all users trusted
 	}
 
 	if strings.HasPrefix(contentTypeHeader, constants.UrlEncodedForm) {

@@ -447,7 +447,10 @@
                                 x-text="$store.lightbox.resourceDetails.resourceCategory.Name"
                             ></a>
 
-                            <!-- Custom sidebar template from ResourceCategory -->
+                            {% comment %}KAN-6: Unescaped CustomSidebar HTML is by design. Mahresources is a personal
+                            information management application designed to run on private/internal networks
+                            with no authentication layer. All users are trusted, and CustomSidebar is an
+                            intentional extension point for admin-authored HTML templates.{% endcomment %}
                             <template x-if="$store.lightbox.resourceDetails.resourceCategory.CustomSidebar">
                                 <div
                                     x-data="{ entity: $store.lightbox.resourceDetails }"
