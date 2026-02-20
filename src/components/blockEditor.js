@@ -44,7 +44,13 @@ export function blockEditor(noteId, initialBlocks = []) {
       // Basic italic: *text* -> <em>text</em>
       escaped = escaped.replace(/\*([^*]+)\*/g, '<em>$1</em>');
       // Basic links: [text](url) -> <a href="url">text</a>
-      escaped = escaped.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" class="text-blue-600 hover:underline" target="_blank" rel="noopener">$1</a>');
+      escaped = escaped.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, href) => {
+          const trimmed = href.trim().toLowerCase();
+          if (trimmed.startsWith('javascript:') || trimmed.startsWith('data:') || trimmed.startsWith('vbscript:')) {
+              return text;
+          }
+          return `<a href="${href}" class="text-blue-600 hover:underline" target="_blank" rel="noopener">${text}</a>`;
+      });
       return escaped;
     },
 

@@ -42,9 +42,10 @@ func QueryListContextProvider(context *application_context.MahresourcesContext) 
 		}
 
 		return pongo2.Context{
-			"pageTitle":  "Queries",
-			"queries":    queries,
-			"pagination": pagination,
+			"pageTitle":        "Queries",
+			"queries":          queries,
+			"pagination":       pagination,
+			"readOnlyEnforced": context.IsReadOnlyDBEnforced(),
 			"action": template_entities.Entry{
 				Name: "Add",
 				Url:  "/query/new",
@@ -56,8 +57,9 @@ func QueryListContextProvider(context *application_context.MahresourcesContext) 
 func QueryCreateContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
-			"pageTitle": "Create Query",
-			"dbType":    context.Config.DbType,
+			"pageTitle":        "Create Query",
+			"dbType":           context.Config.DbType,
+			"readOnlyEnforced": context.IsReadOnlyDBEnforced(),
 		}.Update(staticTemplateCtx(request))
 
 		var entityId query_models.EntityIdQuery
@@ -99,8 +101,9 @@ func QueryContextProvider(context *application_context.MahresourcesContext) func
 		}
 
 		return pongo2.Context{
-			"pageTitle": "Query " + query.Name,
-			"query":     query,
+			"pageTitle":        "Query " + query.Name,
+			"query":            query,
+			"readOnlyEnforced": context.IsReadOnlyDBEnforced(),
 			"action": template_entities.Entry{
 				Name: "Edit",
 				Url:  "/query/edit?id=" + strconv.Itoa(int(query.ID)),

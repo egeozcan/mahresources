@@ -95,9 +95,10 @@ func (tr *timeoutReader) Read(p []byte) (n int, err error) {
 	// Run read in goroutine so we can interrupt it on timeout.
 	// Note: On timeout, this goroutine may outlive the Read call. It will exit
 	// when the underlying reader returns (e.g., when the HTTP connection closes).
+	buf := make([]byte, len(p))
 	resultCh := make(chan readResult, 1)
 	go func() {
-		n, err := tr.reader.Read(p)
+		n, err := tr.reader.Read(buf)
 		resultCh <- readResult{n, err}
 	}()
 
@@ -106,6 +107,7 @@ func (tr *timeoutReader) Read(p []byte) (n int, err error) {
 		select {
 		case result := <-resultCh:
 			if result.n > 0 {
+				copy(p[:result.n], buf[:result.n])
 				tr.mu.Lock()
 				tr.lastRead = time.Now()
 				tr.mu.Unlock()

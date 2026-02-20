@@ -526,7 +526,7 @@ func TestCancel(t *testing.T) {
 
 		// Context should be cancelled
 		select {
-		case <-job.ctx.Done():
+		case <-job.GetContext().Done():
 			// Expected
 		default:
 			t.Error("job context should be cancelled")

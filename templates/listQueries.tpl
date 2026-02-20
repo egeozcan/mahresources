@@ -4,6 +4,12 @@
 {% endblock %}
 
 {% block body %}
+    {% if not readOnlyEnforced %}
+    <div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 mb-4" role="alert">
+        <p class="font-bold">Warning</p>
+        <p>Queries run without database-level read-only enforcement. Configure a separate <code>DB_READONLY_DSN</code> with read-only access for safety.</p>
+    </div>
+    {% endif %}
     <div class="flex flex-col gap-4 items-container">
         {% for entity in queries %}
             {% include "/partials/query.tpl" %}

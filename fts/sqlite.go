@@ -203,9 +203,9 @@ func (s *SQLiteFTS) fuzzyFallback(db *gorm.DB, tableName, term string) *gorm.DB 
 }
 
 // GetRankExpr returns a SQL expression for relevance ranking
-func (s *SQLiteFTS) GetRankExpr(tableName string, columns []string, query ParsedQuery) string {
+func (s *SQLiteFTS) GetRankExpr(tableName string, columns []string, query ParsedQuery) (string, []interface{}) {
 	if query.Term == "" {
-		return "0"
+		return "0", nil
 	}
 
 	ftsTableName := tableName + "_fts"
@@ -215,7 +215,7 @@ func (s *SQLiteFTS) GetRankExpr(tableName string, columns []string, query Parsed
 	case ModeFuzzy:
 		// For fuzzy search fallback, we can't get proper ranking
 		// Return a simple expression that prefers shorter names (more likely exact matches)
-		return fmt.Sprintf("(1.0 / (1 + length(%s.name)))", tableName)
+		return fmt.Sprintf("(1.0 / (1 + length(%s.name)))", tableName), nil
 
 	case ModePrefix:
 		// FTS5 bm25() returns negative values (lower = better match)
@@ -228,15 +228,15 @@ func (s *SQLiteFTS) GetRankExpr(tableName string, columns []string, query Parsed
 		matchExpr := strings.Join(matchParts, " ")
 
 		return fmt.Sprintf(
-			"(SELECT -bm25(%s) FROM %s WHERE rowid = %s.id AND %s MATCH '%s')",
-			ftsTableName, ftsTableName, tableName, ftsTableName, matchExpr,
-		)
+			"(SELECT -bm25(%s) FROM %s WHERE rowid = %s.id AND %s MATCH ?)",
+			ftsTableName, ftsTableName, tableName, ftsTableName,
+		), []interface{}{matchExpr}
 
 	default: // ModeExact
 		return fmt.Sprintf(
-			"(SELECT -bm25(%s) FROM %s WHERE rowid = %s.id AND %s MATCH '%s')",
-			ftsTableName, ftsTableName, tableName, ftsTableName, escapedTerm,
-		)
+			"(SELECT -bm25(%s) FROM %s WHERE rowid = %s.id AND %s MATCH ?)",
+			ftsTableName, ftsTableName, tableName, ftsTableName,
+		), []interface{}{escapedTerm}
 	}
 }
 

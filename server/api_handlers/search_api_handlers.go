@@ -14,7 +14,7 @@ func GetGlobalSearchHandler(ctx interfaces.GlobalSearcher) func(writer http.Resp
 	return func(writer http.ResponseWriter, request *http.Request) {
 		searchQuery := &query_models.GlobalSearchQuery{
 			Query: http_utils.GetQueryParameter(request, "q", ""),
-			Limit: int(http_utils.GetIntQueryParameter(request, "limit", 20)),
+			Limit: min(int(http_utils.GetIntQueryParameter(request, "limit", 20)), 200),
 		}
 
 		typesParam := http_utils.GetQueryParameter(request, "types", "")

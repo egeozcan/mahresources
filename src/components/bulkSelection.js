@@ -321,7 +321,9 @@ export function setupBulkSelectionListeners() {
       elInput.name = "ID";
       elInput.type = "hidden";
 
-      form.innerHTML = res;
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(res, 'text/html');
+      form.replaceChildren(...doc.body.childNodes);
       form.appendChild(elInput);
 
       container.innerHTML = "";

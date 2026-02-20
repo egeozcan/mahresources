@@ -148,11 +148,10 @@ func GetResourceUploadHandler(ctx interfaces.ResourceCreator) func(writer http.R
 
 		for i := range files {
 			func(i int) {
-				var res *models.Resource
 				file, err := files[i].Open()
 
 				if err != nil {
-					http.Error(writer, err.Error(), http.StatusInternalServerError)
+					errorMessages = append(errorMessages, err.Error())
 					return
 				}
 
@@ -160,7 +159,7 @@ func GetResourceUploadHandler(ctx interfaces.ResourceCreator) func(writer http.R
 
 				name := files[i].Filename
 
-				res, err = effectiveCtx.AddResource(file, name, &creator)
+				res, err := effectiveCtx.AddResource(file, name, &creator)
 				resources[i] = res
 
 				if err != nil {
@@ -372,6 +371,11 @@ func GetRemoveResourceHandler(ctx interfaces.ResourceDeleter) func(writer http.R
 
 		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		if query.ID == 0 {
+			http_utils.HandleError(fmt.Errorf("missing or invalid resource ID"), writer, request, http.StatusBadRequest)
 			return
 		}
 

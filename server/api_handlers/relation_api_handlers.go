@@ -9,6 +9,7 @@ import (
 	"mahresources/server/http_utils"
 	"mahresources/server/interfaces"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -98,7 +99,7 @@ func GetAddRelationHandler(ctx interfaces.RelationshipWriter) func(writer http.R
 				backUrl := fmt.Sprintf(
 					"/relation/new?FromGroupId=%v&ToGroupId=%v&GroupRelationTypeId=%v&Error=%v",
 					editor.FromGroupId, editor.ToGroupId, editor.GroupRelationTypeId,
-					err.Error(),
+					url.QueryEscape(err.Error()),
 				)
 				http.Redirect(writer, request, backUrl, http.StatusSeeOther)
 				return
