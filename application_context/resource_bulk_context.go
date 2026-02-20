@@ -493,7 +493,7 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 			case constants.DbTypePosgres:
 				err = tx.Exec(`UPDATE resources SET meta = coalesce((SELECT meta FROM resources WHERE id = ?), '{}'::jsonb) || meta WHERE id = ?`, loser.ID, winnerId).Error
 			case constants.DbTypeSqlite:
-				err = tx.Exec(`UPDATE resources SET meta = json_patch(meta, coalesce((SELECT meta FROM resources WHERE id = ?), '{}')) WHERE id = ?`, loser.ID, winnerId).Error
+				err = tx.Exec(`UPDATE resources SET meta = json_patch(coalesce((SELECT meta FROM resources WHERE id = ?), '{}'), meta) WHERE id = ?`, loser.ID, winnerId).Error
 			default:
 				err = errors.New("db doesn't support merging meta")
 			}
