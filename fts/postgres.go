@@ -134,9 +134,9 @@ func (p *PostgresFTS) BuildSearchScope(tableName string, columns []string, query
 }
 
 // GetRankExpr returns a SQL expression for relevance ranking
-func (p *PostgresFTS) GetRankExpr(tableName string, columns []string, query ParsedQuery) string {
+func (p *PostgresFTS) GetRankExpr(tableName string, columns []string, query ParsedQuery) (string, []interface{}) {
 	if query.Term == "" {
-		return "0"
+		return "0", nil
 	}
 
 	escapedTerm := EscapeForFTS(query.Term)
@@ -144,7 +144,7 @@ func (p *PostgresFTS) GetRankExpr(tableName string, columns []string, query Pars
 	switch query.Mode {
 	case ModeFuzzy:
 		// Use similarity score for fuzzy search
-		return fmt.Sprintf("similarity(%s.name, '%s')", tableName, escapedTerm)
+		return fmt.Sprintf("similarity(%s.name, ?)", tableName), []interface{}{escapedTerm}
 
 	case ModePrefix:
 		// Use ts_rank with prefix query
@@ -155,15 +155,15 @@ func (p *PostgresFTS) GetRankExpr(tableName string, columns []string, query Pars
 		}
 		tsquery := strings.Join(tsqueryParts, " & ")
 		return fmt.Sprintf(
-			"ts_rank(%s.search_vector, to_tsquery('english', '%s'))",
-			tableName, tsquery,
-		)
+			"ts_rank(%s.search_vector, to_tsquery('english', ?))",
+			tableName,
+		), []interface{}{tsquery}
 
 	default: // ModeExact
 		return fmt.Sprintf(
-			"ts_rank(%s.search_vector, plainto_tsquery('english', '%s'))",
-			tableName, escapedTerm,
-		)
+			"ts_rank(%s.search_vector, plainto_tsquery('english', ?))",
+			tableName,
+		), []interface{}{escapedTerm}
 	}
 }
 

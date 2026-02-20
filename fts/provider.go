@@ -30,7 +30,7 @@ type FTSProvider interface {
 
 	// GetRankExpr returns a SQL expression for relevance ranking
 	// Returns empty string if ranking is not supported
-	GetRankExpr(tableName string, columns []string, query ParsedQuery) string
+	GetRankExpr(tableName string, columns []string, query ParsedQuery) (string, []interface{})
 
 	// SupportsFeature checks if a feature is supported by this provider
 	SupportsFeature(feature string) bool
