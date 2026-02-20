@@ -57,6 +57,11 @@ func GetDeleteSeriesHandler(ctx interfaces.SeriesDeleter) func(writer http.Respo
 
 		id := getEntityID(request)
 
+		if id == 0 {
+			http_utils.HandleError(fmt.Errorf("missing or invalid series ID"), writer, request, http.StatusBadRequest)
+			return
+		}
+
 		if err := effectiveCtx.DeleteSeries(id); err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
