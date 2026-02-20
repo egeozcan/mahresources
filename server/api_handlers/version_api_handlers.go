@@ -6,14 +6,14 @@ import (
 	"net/http"
 	"strconv"
 
-	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
+	"mahresources/server/interfaces"
 )
 
 // GetListVersionsHandler returns handler for listing versions
-func GetListVersionsHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetListVersionsHandler(ctx interfaces.VersionReader) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		resourceID, err := strconv.ParseUint(r.URL.Query().Get("resourceId"), 10, 64)
 		if err != nil {
@@ -33,7 +33,7 @@ func GetListVersionsHandler(ctx *application_context.MahresourcesContext) func(h
 }
 
 // GetVersionHandler returns handler for getting a single version
-func GetVersionHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetVersionHandler(ctx interfaces.VersionReader) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		versionID, err := strconv.ParseUint(r.URL.Query().Get("id"), 10, 64)
 		if err != nil {
@@ -53,7 +53,7 @@ func GetVersionHandler(ctx *application_context.MahresourcesContext) func(http.R
 }
 
 // GetUploadVersionHandler returns handler for uploading a new version
-func GetUploadVersionHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetUploadVersionHandler(ctx interfaces.VersionWriter) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		resourceID, err := strconv.ParseUint(r.URL.Query().Get("resourceId"), 10, 64)
 		if err != nil {
@@ -91,7 +91,7 @@ func GetUploadVersionHandler(ctx *application_context.MahresourcesContext) func(
 }
 
 // GetRestoreVersionHandler returns handler for restoring a version
-func GetRestoreVersionHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetRestoreVersionHandler(ctx interfaces.VersionWriter) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var query query_models.VersionRestoreQuery
 		if err := tryFillStructValuesFromRequest(&query, r); err != nil {
@@ -115,7 +115,7 @@ func GetRestoreVersionHandler(ctx *application_context.MahresourcesContext) func
 }
 
 // GetDeleteVersionHandler returns handler for deleting a version
-func GetDeleteVersionHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetDeleteVersionHandler(ctx interfaces.VersionDeleter) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		resourceID, err := strconv.ParseUint(r.URL.Query().Get("resourceId"), 10, 64)
 		if err != nil {
@@ -144,7 +144,7 @@ func GetDeleteVersionHandler(ctx *application_context.MahresourcesContext) func(
 }
 
 // GetVersionFileHandler returns handler for downloading version file
-func GetVersionFileHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetVersionFileHandler(ctx interfaces.VersionFileServer) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		versionID, err := strconv.ParseUint(r.URL.Query().Get("versionId"), 10, 64)
 		if err != nil {
@@ -179,7 +179,7 @@ func GetVersionFileHandler(ctx *application_context.MahresourcesContext) func(ht
 }
 
 // GetCleanupVersionsHandler returns handler for cleaning up versions
-func GetCleanupVersionsHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetCleanupVersionsHandler(ctx interfaces.VersionCleaner) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var query query_models.VersionCleanupQuery
 		if err := tryFillStructValuesFromRequest(&query, r); err != nil {
@@ -202,7 +202,7 @@ func GetCleanupVersionsHandler(ctx *application_context.MahresourcesContext) fun
 }
 
 // GetBulkCleanupVersionsHandler returns handler for bulk cleanup
-func GetBulkCleanupVersionsHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetBulkCleanupVersionsHandler(ctx interfaces.VersionCleaner) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var query query_models.BulkVersionCleanupQuery
 		if err := tryFillStructValuesFromRequest(&query, r); err != nil {
@@ -230,7 +230,7 @@ func GetBulkCleanupVersionsHandler(ctx *application_context.MahresourcesContext)
 }
 
 // GetCompareVersionsHandler returns handler for comparing versions
-func GetCompareVersionsHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetCompareVersionsHandler(ctx interfaces.VersionComparer) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		resourceID, err := strconv.ParseUint(r.URL.Query().Get("resourceId"), 10, 64)
 		if err != nil {

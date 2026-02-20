@@ -229,8 +229,21 @@ export function globalSearch() {
         },
 
         navigateTo(url) {
-            this.close();
-            window.location.href = url;
+            // Only allow relative URLs or same-origin to prevent open redirect
+            if (url && (url.startsWith('/') || url.startsWith('?') || url.startsWith('#'))) {
+                this.close();
+                window.location.href = url;
+            } else {
+                try {
+                    const parsed = new URL(url, window.location.origin);
+                    if (parsed.origin === window.location.origin) {
+                        this.close();
+                        window.location.href = url;
+                    }
+                } catch {
+                    // Invalid URL, ignore
+                }
+            }
         },
 
         getIcon(type) {

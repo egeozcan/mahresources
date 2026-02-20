@@ -53,7 +53,11 @@ export function freeFields({ fields, name, url, jsonOutput, id, title, fromJSON 
       }
 
       if (this.url) {
-        this.remoteFields = await fetch(this.url).then((x) => x.json());
+        try {
+          this.remoteFields = await fetch(this.url).then((x) => x.json());
+        } catch (err) {
+          console.error('Failed to fetch remote fields:', err);
+        }
       }
     },
 

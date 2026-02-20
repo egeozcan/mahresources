@@ -217,11 +217,22 @@ func (jsonQuery *JSONQueryExpression) Build(builder clause.Builder) {
 						stmt.WriteString("(")
 						stmt.AddVar(builder, jsonQuery.value)
 						stmt.WriteString("::text)")
-					case bool, float64:
+					case bool:
 						if !isTextBased {
-							stmt.WriteString("to_jsonb")
+							stmt.WriteString("to_jsonb(")
+						} else {
+							stmt.WriteString("(")
 						}
-						stmt.WriteString(fmt.Sprintf("(%v)", jsonQuery.value))
+						stmt.AddVar(builder, jsonQuery.value)
+						stmt.WriteString("::boolean)")
+					case float64:
+						if !isTextBased {
+							stmt.WriteString("to_jsonb(")
+						} else {
+							stmt.WriteString("(")
+						}
+						stmt.AddVar(builder, jsonQuery.value)
+						stmt.WriteString("::numeric)")
 					case nil:
 						stmt.WriteString("NULL")
 					default:

@@ -8,6 +8,11 @@ export function downloadCockpit() {
         eventSource: null,
         connectionStatus: 'disconnected', // 'connected', 'disconnected', 'connecting'
         _liveRegion: null,
+        _keydownHandler: null,
+        _reconnectDelay: 1000,  // Initial reconnect delay (ms)
+        _reconnectAttempts: 0,
+        _maxReconnectAttempts: 10,
+        _maxReconnectDelay: 60000,  // Max 60 seconds
         speedTracking: {},  // Track progress for speed calculation: { jobId: { lastProgress, lastTime, speed } }
 
         statusIcons: {
@@ -34,12 +39,13 @@ export function downloadCockpit() {
             this._liveRegion = createLiveRegion();
 
             // Listen for keyboard shortcut: Cmd/Ctrl+Shift+D
-            document.addEventListener('keydown', (e) => {
+            this._keydownHandler = (e) => {
                 if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'd') {
                     e.preventDefault();
                     this.toggle();
                 }
-            });
+            };
+            document.addEventListener('keydown', this._keydownHandler);
 
             // Always connect to SSE to track download completions
             this.connect();
@@ -57,6 +63,9 @@ export function downloadCockpit() {
 
         destroy() {
             this._liveRegion?.destroy();
+            if (this._keydownHandler) {
+                document.removeEventListener('keydown', this._keydownHandler);
+            }
             this.disconnect();
         },
 
@@ -79,6 +88,9 @@ export function downloadCockpit() {
                 this.jobs = data.jobs || [];
                 this.retainedCompletedJobs = [];  // Clear retained on reconnect
                 this.connectionStatus = 'connected';
+                // Reset backoff on successful connection
+                this._reconnectDelay = 1000;
+                this._reconnectAttempts = 0;
             });
 
             this.eventSource.addEventListener('added', (e) => {
@@ -152,10 +164,14 @@ export function downloadCockpit() {
             this.eventSource.onerror = () => {
                 this.connectionStatus = 'disconnected';
                 this.disconnect();
-                // Always reconnect since SSE events drive background behavior
-                setTimeout(() => {
-                    this.connect();
-                }, 3000);
+                this._reconnectAttempts++;
+                if (this._reconnectAttempts <= this._maxReconnectAttempts) {
+                    setTimeout(() => {
+                        this.connect();
+                    }, this._reconnectDelay);
+                    // Exponential backoff: double delay each attempt, capped at max
+                    this._reconnectDelay = Math.min(this._reconnectDelay * 2, this._maxReconnectDelay);
+                }
             };
         },
 

@@ -2,19 +2,33 @@ package types
 
 import (
 	"database/sql/driver"
+	"fmt"
 	"net/url"
 )
 
 type URL url.URL
 
 func (u *URL) Scan(value any) error {
-	url, err := url.Parse(value.(string))
+	if value == nil {
+		return nil
+	}
 
+	var s string
+	switch v := value.(type) {
+	case string:
+		s = v
+	case []byte:
+		s = string(v)
+	default:
+		return fmt.Errorf("unsupported type for URL.Scan: %T", value)
+	}
+
+	parsed, err := url.Parse(s)
 	if err != nil {
 		return err
 	}
 
-	*u = URL(*url)
+	*u = URL(*parsed)
 
 	return nil
 }

@@ -521,21 +521,8 @@ func (ctx *MahresourcesContext) BulkCleanupVersions(query *query_models.BulkVers
 	return result, nil
 }
 
-// VersionComparison holds comparison data between two versions
-type VersionComparison struct {
-	Version1       *models.ResourceVersion `json:"version1"`
-	Version2       *models.ResourceVersion `json:"version2"`
-	Resource1      *models.Resource        `json:"resource1,omitempty"`
-	Resource2      *models.Resource        `json:"resource2,omitempty"`
-	SizeDelta      int64                   `json:"sizeDelta"`
-	SameHash       bool                    `json:"sameHash"`
-	SameType       bool                    `json:"sameType"`
-	DimensionsDiff bool                    `json:"dimensionsDiff"`
-	CrossResource  bool                    `json:"crossResource"`
-}
-
 // CompareVersions compares two versions and returns comparison data
-func (ctx *MahresourcesContext) CompareVersions(resourceID, v1ID, v2ID uint) (*VersionComparison, error) {
+func (ctx *MahresourcesContext) CompareVersions(resourceID, v1ID, v2ID uint) (*models.VersionComparison, error) {
 	version1, err := ctx.GetVersion(v1ID)
 	if err != nil {
 		return nil, fmt.Errorf("version 1 not found: %w", err)
@@ -550,7 +537,7 @@ func (ctx *MahresourcesContext) CompareVersions(resourceID, v1ID, v2ID uint) (*V
 		return nil, errors.New("versions do not belong to this resource")
 	}
 
-	comparison := &VersionComparison{
+	comparison := &models.VersionComparison{
 		Version1:       version1,
 		Version2:       version2,
 		SizeDelta:      version2.FileSize - version1.FileSize,
@@ -563,7 +550,7 @@ func (ctx *MahresourcesContext) CompareVersions(resourceID, v1ID, v2ID uint) (*V
 }
 
 // CompareVersionsCross compares versions that may belong to different resources
-func (ctx *MahresourcesContext) CompareVersionsCross(r1ID uint, v1Num int, r2ID uint, v2Num int) (*VersionComparison, error) {
+func (ctx *MahresourcesContext) CompareVersionsCross(r1ID uint, v1Num int, r2ID uint, v2Num int) (*models.VersionComparison, error) {
 	// If r2ID is 0, use r1ID (same-resource comparison)
 	if r2ID == 0 {
 		r2ID = r1ID
@@ -579,7 +566,7 @@ func (ctx *MahresourcesContext) CompareVersionsCross(r1ID uint, v1Num int, r2ID 
 		return nil, fmt.Errorf("version 2 not found: %w", err)
 	}
 
-	comparison := &VersionComparison{
+	comparison := &models.VersionComparison{
 		Version1:       version1,
 		Version2:       version2,
 		SizeDelta:      version2.FileSize - version1.FileSize,
@@ -663,6 +650,7 @@ func (ctx *MahresourcesContext) SyncResourcesFromCurrentVersion() error {
 		batch := outOfSync[batchStart:batchEnd]
 
 		tx := silentDB.Begin()
+		var batchErr error
 		for _, item := range batch {
 			updates := map[string]interface{}{
 				"hash":             item.VersionHash,
@@ -675,11 +663,21 @@ func (ctx *MahresourcesContext) SyncResourcesFromCurrentVersion() error {
 			}
 			if err := tx.Model(&models.Resource{}).Where("id = ?", item.ResourceID).Updates(updates).Error; err != nil {
 				ctx.Logger().Warning(models.LogActionCreate, "sync_version", &item.ResourceID, "Failed to sync resource from version", err.Error(), nil)
-				continue
+				tx.Rollback()
+				batchErr = fmt.Errorf("version sync failed for resource %d: %w", item.ResourceID, err)
+				break
 			}
 
 			// Clear cached previews
-			tx.Where("resource_id = ?", item.ResourceID).Delete(&models.Preview{})
+			if err := tx.Where("resource_id = ?", item.ResourceID).Delete(&models.Preview{}).Error; err != nil {
+				ctx.Logger().Warning(models.LogActionCreate, "sync_version", &item.ResourceID, "Failed to clear previews", err.Error(), nil)
+				tx.Rollback()
+				batchErr = fmt.Errorf("preview cleanup failed for resource %d: %w", item.ResourceID, err)
+				break
+			}
+		}
+		if batchErr != nil {
+			return fmt.Errorf("version sync batch failed at %d/%d: %w", batchEnd, len(outOfSync), batchErr)
 		}
 		if err := tx.Commit().Error; err != nil {
 			ctx.Logger().Warning(models.LogActionCreate, "sync_version", nil, "Failed to commit version sync batch", err.Error(), nil)

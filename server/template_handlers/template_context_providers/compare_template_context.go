@@ -7,6 +7,7 @@ import (
 
 	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
+	"mahresources/models"
 	"mahresources/models/query_models"
 	"net/http"
 )
@@ -74,7 +75,7 @@ func CompareContextProvider(context *application_context.MahresourcesContext) fu
 		}
 
 		// Perform comparison if both versions specified
-		var comparison *application_context.VersionComparison
+		var comparison *models.VersionComparison
 		if query.Version1 > 0 && query.Version2 > 0 {
 			comparison, err = context.CompareVersionsCross(
 				query.Resource1ID, query.Version1,

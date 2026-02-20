@@ -81,13 +81,13 @@ func (w *ThumbnailWorker) runQueueProcessor() {
 	for {
 		select {
 		case resourceID := <-w.thumbQueue:
-			w.processResource(resourceID)
+			w.safeProcessResource(resourceID)
 		case <-w.stopCh:
 			// Drain remaining items from queue before exiting
 			for {
 				select {
 				case resourceID := <-w.thumbQueue:
-					w.processResource(resourceID)
+					w.safeProcessResource(resourceID)
 				default:
 					return
 				}
@@ -110,7 +110,7 @@ func (w *ThumbnailWorker) runBackfillProcessor() {
 	defer ticker.Stop()
 
 	for {
-		w.processBackfillBatch()
+		w.safeProcessBackfillBatch()
 
 		select {
 		case <-ticker.C:
@@ -149,6 +149,27 @@ func (w *ThumbnailWorker) processResource(resourceID uint) {
 	if err != nil {
 		log.Printf("Thumbnail worker: error generating thumbnail for resource %d: %v", resourceID, err)
 	}
+}
+
+// safeProcessResource wraps processResource with panic recovery to prevent
+// queue processor goroutines from dying permanently on unexpected panics.
+func (w *ThumbnailWorker) safeProcessResource(resourceID uint) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[thumbnail_worker] queue processor recovered from panic for resource %d: %v", resourceID, r)
+		}
+	}()
+	w.processResource(resourceID)
+}
+
+// safeProcessBackfillBatch wraps processBackfillBatch with panic recovery.
+func (w *ThumbnailWorker) safeProcessBackfillBatch() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[thumbnail_worker] backfill processor recovered from panic: %v", r)
+		}
+	}()
+	w.processBackfillBatch()
 }
 
 func (w *ThumbnailWorker) processBackfillBatch() {

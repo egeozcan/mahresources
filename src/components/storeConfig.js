@@ -1,9 +1,17 @@
 import { setCheckBox } from '../index.js';
 
+function safeParse(raw) {
+    try {
+        return JSON.parse(raw || '{}');
+    } catch {
+        return {};
+    }
+}
+
 export function registerSavedSettingStore(Alpine) {
     Alpine.store('savedSetting', {
-        sessionSettings: JSON.parse(sessionStorage.getItem("settings") || '{}'),
-        localSettings: JSON.parse(localStorage.getItem("settings") || '{}'),
+        sessionSettings: safeParse(sessionStorage.getItem("settings")),
+        localSettings: safeParse(localStorage.getItem("settings")),
         /** @param {HTMLInputElement} el
          @param {boolean} isLocal
          @param {boolean} defVal */
