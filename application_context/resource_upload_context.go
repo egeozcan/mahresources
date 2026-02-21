@@ -27,6 +27,24 @@ import (
 	_ "golang.org/x/image/tiff"
 )
 
+// Reason constants for ResourceExistsError.
+const (
+	ReasonSameParent   = "same parent"
+	ReasonSameRelation = "same relation"
+)
+
+// ResourceExistsError is returned when an uploaded file's hash matches an
+// existing resource.  It carries the duplicate resource's ID so callers
+// (e.g. API handlers) can include it in a structured response.
+type ResourceExistsError struct {
+	ResourceID uint
+	Reason     string
+}
+
+func (e *ResourceExistsError) Error() string {
+	return fmt.Sprintf("existing resource (%v) with %s", e.ResourceID, e.Reason)
+}
+
 // timeoutReader wraps an io.Reader and returns an error if no data is read within the timeout period
 type timeoutReader struct {
 	reader      io.Reader
@@ -438,13 +456,13 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 			} else {
 				tx.Rollback()
 			}
-			return nil, fmt.Errorf("existing resource (%v) with same parent", existingResource.ID)
+			return nil, &ResourceExistsError{ResourceID: existingResource.ID, Reason: ReasonSameParent}
 		}
 
 		for _, group := range existingResource.Groups {
 			if resourceQuery.OwnerId == group.ID {
 				tx.Rollback()
-				return nil, fmt.Errorf("existing resource (%v) with same relation", existingResource.ID)
+				return nil, &ResourceExistsError{ResourceID: existingResource.ID, Reason: ReasonSameRelation}
 			}
 		}
 

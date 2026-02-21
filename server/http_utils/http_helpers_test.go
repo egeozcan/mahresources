@@ -331,9 +331,9 @@ func TestRequestAcceptsHTML(t *testing.T) {
 			if tt.accept != "" {
 				req.Header.Set("Accept", tt.accept)
 			}
-			got := requestAcceptsHTML(req)
+			got := RequestAcceptsHTML(req)
 			if got != tt.want {
-				t.Errorf("requestAcceptsHTML(req with Accept=%q) = %v, want %v", tt.accept, got, tt.want)
+				t.Errorf("RequestAcceptsHTML(req with Accept=%q) = %v, want %v", tt.accept, got, tt.want)
 			}
 		})
 	}

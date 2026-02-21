@@ -48,6 +48,46 @@ function stripToSnippet(html, maxLen = 120) {
   return text.length > maxLen ? text.slice(0, maxLen) + '\u2026' : text;
 }
 
+/**
+ * Parse an upload error response into a user-friendly message and optional
+ * resource ID (when the server reports a duplicate).
+ *
+ * The backend returns structured JSON:
+ *   { "error": "...", "details": [{ "error": "...", "existingResourceId": 52 }] }
+ *
+ * @param {string} responseText  Raw response body
+ * @param {number} statusCode    HTTP status code
+ * @returns {{ message: string, resourceId: number|null }}
+ */
+function parseUploadError(responseText, statusCode) {
+  let message = responseText || `Upload failed (HTTP ${statusCode})`;
+  let resourceId = null;
+
+  try {
+    const json = JSON.parse(responseText);
+
+    // Use the first detail entry when available (paste-upload sends one file per request)
+    const detail = json.details?.[0];
+    if (detail) {
+      message = detail.error;
+      if (detail.existingResourceId != null) {
+        resourceId = detail.existingResourceId;
+      }
+    } else if (json.error) {
+      message = json.error;
+    }
+  } catch (_) {
+    // Not JSON – use raw text as-is
+  }
+
+  // Capitalise first letter for display
+  if (message.length > 0) {
+    message = message.charAt(0).toUpperCase() + message.slice(1);
+  }
+
+  return { message, resourceId };
+}
+
 // ---------------------------------------------------------------------------
 // Content extraction
 // ---------------------------------------------------------------------------
@@ -62,10 +102,10 @@ function stripToSnippet(html, maxLen = 120) {
  *  4. `text/plain` data              -- plain text, wrapped in a Blob
  *
  * Each returned item has the shape:
- *   { file: File, name: string, previewUrl: string|null, type: string, error: null, _snippet: string|null }
+ *   { file: File, name: string, previewUrl: string|null, type: string, error: null, errorResourceId: null, _snippet: string|null }
  *
  * @param {DataTransfer} clipboardData
- * @returns {Array<{file: File, name: string, previewUrl: string|null, type: string, error: null, _snippet: string|null}>}
+ * @returns {Array<{file: File, name: string, previewUrl: string|null, type: string, error: null, errorResourceId: null, _snippet: string|null}>}
  */
 export function extractPasteContent(clipboardData) {
   if (!clipboardData) return [];
@@ -84,6 +124,7 @@ export function extractPasteContent(clipboardData) {
         previewUrl: isImage ? URL.createObjectURL(file) : null,
         type: friendlyType(file.type),
         error: null,
+        errorResourceId: null,
         _snippet: null,
       });
     }
@@ -105,6 +146,7 @@ export function extractPasteContent(clipboardData) {
           previewUrl: URL.createObjectURL(file),
           type: 'image',
           error: null,
+          errorResourceId: null,
           _snippet: null,
         });
       }
@@ -123,6 +165,7 @@ export function extractPasteContent(clipboardData) {
       previewUrl: null,
       type: 'html',
       error: null,
+      errorResourceId: null,
       _snippet: stripToSnippet(html),
     }];
   }
@@ -138,6 +181,7 @@ export function extractPasteContent(clipboardData) {
       previewUrl: null,
       type: 'text',
       error: null,
+      errorResourceId: null,
       _snippet: stripToSnippet(text),
     }];
   }
@@ -151,6 +195,9 @@ export function extractPasteContent(clipboardData) {
 
 /** Timer handle for the auto-dismissing info message (kept outside the store to avoid Alpine reactivity). */
 let _infoTimer = null;
+
+/** Timer handle for the auto-close after successful upload. */
+let _autoCloseTimer = null;
 
 /**
  * Set up the global paste event listener.
@@ -258,6 +305,7 @@ export function registerPasteUploadStore(Alpine) {
     context: null,       // { type, id, ownerId?, name }
     tags: [],
     categoryId: null,
+    seriesId: null,
     state: 'idle',       // 'idle' | 'preview' | 'uploading' | 'success' | 'error'
     uploadProgress: '',
     errorMessage: '',
@@ -267,12 +315,38 @@ export function registerPasteUploadStore(Alpine) {
 
     /**
      * Open the paste-upload modal with extracted items and page context.
+     *
+     * When the dialog is already open (and not mid-upload), new items are
+     * **appended** so users can build up a batch across multiple pastes.
+     *
      * @param {Array} items   output of `extractPasteContent`
      * @param {{ type: string, id: number|string, ownerId?: number|string, name?: string }|null} context
      */
     open(items, context) {
       if (!items || items.length === 0) return;
-      // Revoke any existing preview URLs from a previous open (e.g. rapid paste)
+
+      // Append to existing list when the dialog is already visible
+      if (this.isOpen && this.state !== 'uploading') {
+        // Cancel any pending auto-close from a previous successful upload
+        if (_autoCloseTimer) {
+          clearTimeout(_autoCloseTimer);
+          _autoCloseTimer = null;
+        }
+        // Remove successfully-uploaded items from a previous batch
+        for (const existing of this.items) {
+          if (existing.error === 'done' && existing.previewUrl) {
+            URL.revokeObjectURL(existing.previewUrl);
+          }
+        }
+        this.items = this.items.filter(i => i.error !== 'done');
+
+        this.items.push(...items);
+        this.state = 'preview';
+        this.errorMessage = '';
+        return;
+      }
+
+      // Fresh open – revoke any stale preview URLs
       for (const existing of this.items) {
         if (existing.previewUrl) URL.revokeObjectURL(existing.previewUrl);
       }
@@ -280,6 +354,7 @@ export function registerPasteUploadStore(Alpine) {
       this.context = context || null;
       this.tags = [];
       this.categoryId = null;
+      this.seriesId = null;
       this.state = 'preview';
       this.uploadProgress = '';
       this.errorMessage = '';
@@ -291,6 +366,11 @@ export function registerPasteUploadStore(Alpine) {
      * Close the modal and clean up object URLs to prevent memory leaks.
      */
     close() {
+      // Clear any pending auto-close timer
+      if (_autoCloseTimer) {
+        clearTimeout(_autoCloseTimer);
+        _autoCloseTimer = null;
+      }
       // Clear any pending info-message timer
       if (_infoTimer) {
         clearTimeout(_infoTimer);
@@ -306,6 +386,7 @@ export function registerPasteUploadStore(Alpine) {
       this.context = null;
       this.tags = [];
       this.categoryId = null;
+      this.seriesId = null;
       this.state = 'idle';
       this.uploadProgress = '';
       this.errorMessage = '';
@@ -383,6 +464,10 @@ export function registerPasteUploadStore(Alpine) {
           formData.append('resourceCategoryId', this.categoryId);
         }
 
+        if (this.seriesId) {
+          formData.append('SeriesId', this.seriesId);
+        }
+
         try {
           const response = await fetch('/v1/resource', {
             method: 'POST',
@@ -390,9 +475,12 @@ export function registerPasteUploadStore(Alpine) {
           });
           if (!response.ok) {
             const text = await response.text();
-            item.error = text || `HTTP ${response.status}`;
+            const parsed = parseUploadError(text, response.status);
+            item.error = parsed.message;
+            item.errorResourceId = parsed.resourceId;
           } else {
             item.error = 'done';
+            item.errorResourceId = null;
             successCount++;
           }
         } catch (err) {
@@ -403,10 +491,11 @@ export function registerPasteUploadStore(Alpine) {
       if (successCount === total) {
         this.state = 'success';
         this.uploadProgress = `Uploaded ${successCount} file${successCount !== 1 ? 's' : ''} successfully.`;
-        setTimeout(() => {
+        _autoCloseTimer = setTimeout(() => {
+          _autoCloseTimer = null;
           this.close();
           this._refreshPage();
-        }, 800);
+        }, 1200);
       } else if (successCount > 0) {
         for (const item of this.items) {
           if (item.error === 'done' && item.previewUrl) {

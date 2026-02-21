@@ -2,6 +2,12 @@
 <div x-data
      x-show="$store.pasteUpload.isOpen"
      x-cloak
+     x-transition:enter="transition ease-out duration-200"
+     x-transition:enter-start="opacity-0"
+     x-transition:enter-end="opacity-100"
+     x-transition:leave="transition ease-in duration-150"
+     x-transition:leave-start="opacity-100"
+     x-transition:leave-end="opacity-0"
      class="fixed inset-0 z-50 overflow-y-auto"
      role="dialog"
      aria-modal="true"
@@ -40,6 +46,17 @@
                           ? $store.pasteUpload.uploadProgress
                           : $store.pasteUpload.items.length + ' items ready to upload'"></span>
 
+                {# Success banner #}
+                <div x-show="$store.pasteUpload.state === 'success'"
+                     x-cloak
+                     class="p-3 bg-green-50 border border-green-200 rounded-md text-sm text-green-700 flex items-center gap-2"
+                     role="status">
+                    <svg class="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                    </svg>
+                    <span x-text="$store.pasteUpload.uploadProgress"></span>
+                </div>
+
                 {# Error message #}
                 <div x-show="$store.pasteUpload.errorMessage"
                      x-cloak
@@ -50,10 +67,11 @@
 
                 {# Item rows #}
                 <template x-for="(item, index) in $store.pasteUpload.items" :key="index">
-                    <div class="flex items-center gap-3 p-3 border rounded-lg"
+                    <div class="flex items-center gap-3 p-3 border rounded-lg transition-colors duration-200"
                          :class="{
                              'border-red-300 bg-red-50': item.error && item.error !== 'done',
-                             'border-gray-200': !item.error || item.error === 'done'
+                             'border-green-300 bg-green-50': item.error === 'done',
+                             'border-gray-200': !item.error
                          }">
                         {# Preview column #}
                         <div class="w-16 h-16 flex-shrink-0 bg-gray-100 rounded overflow-hidden flex items-center justify-center">
@@ -79,9 +97,19 @@
                                    :aria-label="'Name for item ' + (index + 1)"
                                    class="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed">
                             {# Per-item error text #}
-                            <p x-show="item.error && item.error !== 'done'"
-                               x-text="item.error"
-                               class="mt-1 text-xs text-red-600"></p>
+                            <template x-if="item.error && item.error !== 'done'">
+                                <p class="mt-1 text-xs text-red-600">
+                                    <span x-text="item.error"></span>
+                                    <template x-if="item.errorResourceId">
+                                        <span> &mdash;
+                                            <a :href="'/resource?id=' + item.errorResourceId"
+                                               class="text-blue-600 hover:text-blue-800 underline font-medium"
+                                               target="_blank"
+                                               @click.stop>View existing resource</a>
+                                        </span>
+                                    </template>
+                                </p>
+                            </template>
                         </div>
 
                         {# Remove button #}
@@ -97,7 +125,7 @@
                 </template>
 
                 {# Shared metadata section #}
-                <div x-show="$store.pasteUpload.state !== 'uploading' && $store.pasteUpload.items.length > 0"
+                <div x-show="$store.pasteUpload.state !== 'uploading' && $store.pasteUpload.state !== 'success' && $store.pasteUpload.items.length > 0"
                      class="space-y-3 pt-2 border-t border-gray-200">
                     <p class="text-sm font-medium text-gray-700">Shared metadata</p>
 
@@ -144,6 +172,29 @@
                             {% include "/partials/form/formParts/dropDownSelectedResults.tpl" %}
                         </div>
                     </div>
+
+                    {# Series autocompleter #}
+                    <div x-data="autocompleter({
+                             selectedResults: [],
+                             url: '/v1/seriesList',
+                             addUrl: '/v1/series/create',
+                             max: 1,
+                             standalone: true,
+                         })"
+                         x-effect="$store.pasteUpload.seriesId = selectedResults[0]?.ID || null"
+                         class="relative w-full">
+                        <label class="block text-xs text-gray-500 mb-1">Series</label>
+                        <div class="relative">
+                            <input x-ref="autocompleter"
+                                   type="text"
+                                   x-bind="inputEvents"
+                                   class="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                                   placeholder="Search or create series..."
+                                   autocomplete="off">
+                            {% include "/partials/form/formParts/dropDownResults.tpl" with action="pushVal" id="paste-upload-series" title="Series" %}
+                            {% include "/partials/form/formParts/dropDownSelectedResults.tpl" %}
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -181,7 +232,7 @@
                             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                         </svg>
-                        Upload
+                        <span x-text="$store.pasteUpload.state === 'error' ? 'Retry' : 'Upload'"></span>
                     </button>
                 </div>
             </div>

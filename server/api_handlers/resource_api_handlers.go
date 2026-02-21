@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -14,6 +15,12 @@ import (
 	"strconv"
 	"strings"
 )
+
+// uploadErrorDetail describes a single error from a multi-file upload request.
+type uploadErrorDetail struct {
+	Error      string `json:"error"`
+	ResourceID uint   `json:"existingResourceId,omitempty"`
+}
 
 func GetResourcesHandler(ctx interfaces.ResourceReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
@@ -144,14 +151,14 @@ func GetResourceUploadHandler(ctx interfaces.ResourceCreator) func(writer http.R
 		}
 
 		var resources = make([]*models.Resource, len(files))
-		var errorMessages = make([]string, 0)
+		var uploadErrors []error
 
 		for i := range files {
 			func(i int) {
 				file, err := files[i].Open()
 
 				if err != nil {
-					errorMessages = append(errorMessages, err.Error())
+					uploadErrors = append(uploadErrors, err)
 					return
 				}
 
@@ -163,15 +170,51 @@ func GetResourceUploadHandler(ctx interfaces.ResourceCreator) func(writer http.R
 				resources[i] = res
 
 				if err != nil {
-					errorMessages = append(errorMessages, err.Error())
+					uploadErrors = append(uploadErrors, err)
 				}
 			}(i)
 		}
 
-		if len(errorMessages) > 0 {
-			messageText := strings.Join(errorMessages, ", ")
+		if len(uploadErrors) > 0 {
+			var details []uploadErrorDetail
+			var messages []string
+			allConflict := true
+
+			for _, err := range uploadErrors {
+				detail := uploadErrorDetail{Error: err.Error()}
+				var resErr *application_context.ResourceExistsError
+				if errors.As(err, &resErr) {
+					detail.ResourceID = resErr.ResourceID
+				} else {
+					allConflict = false
+				}
+				details = append(details, detail)
+				messages = append(messages, err.Error())
+			}
+
+			messageText := strings.Join(messages, ", ")
 			aggregateError := fmt.Errorf("following errors were encountered: %v", messageText)
-			http_utils.HandleError(aggregateError, writer, request, http.StatusInternalServerError)
+
+			statusCode := http.StatusInternalServerError
+			if allConflict {
+				statusCode = http.StatusConflict
+			}
+
+			// Structured JSON response for API / fetch callers
+			if !http_utils.RequestAcceptsHTML(request) {
+				fmt.Printf("\n[ERROR]: %v\n", aggregateError)
+
+				writer.Header().Set("Content-Type", constants.JSON)
+				writer.WriteHeader(statusCode)
+				_ = json.NewEncoder(writer).Encode(map[string]any{
+					"error":   aggregateError.Error(),
+					"details": details,
+				})
+				return
+			}
+
+			// HTML clients (standard form uploads) get the normal error page
+			http_utils.HandleError(aggregateError, writer, request, statusCode)
 			return
 		}
 

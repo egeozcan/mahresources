@@ -62,7 +62,7 @@ func RedirectIfHTMLAccepted(writer http.ResponseWriter, request *http.Request, d
 		return false
 	}
 
-	if requestAcceptsHTML(request) {
+	if RequestAcceptsHTML(request) {
 		http.Redirect(writer, request, backUrl, http.StatusSeeOther)
 
 		return true
@@ -86,7 +86,7 @@ func RemoveValue(items []string, item string) []string {
 func HandleError(err error, writer http.ResponseWriter, request *http.Request, responseCode int) {
 	fmt.Printf("\n[ERROR]: %v\n", err)
 
-	if requestAcceptsHTML(request) {
+	if RequestAcceptsHTML(request) {
 		writer.Header().Set("Content-Type", "text/html")
 		writer.WriteHeader(responseCode)
 		_, _ = fmt.Fprintf(writer, `
@@ -124,7 +124,8 @@ func isSafeRedirect(rawURL string) bool {
 	return true
 }
 
-func requestAcceptsHTML(request *http.Request) bool {
+// RequestAcceptsHTML reports whether the request's Accept header includes text/html.
+func RequestAcceptsHTML(request *http.Request) bool {
 	accepts := request.Header["Accept"]
 
 	if len(accepts) == 0 {
