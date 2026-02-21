@@ -13,7 +13,8 @@
                data-resource-name="{{ entity.Name }}"
                data-resource-hash="{{ entity.Hash }}"
                data-resource-width="{{ entity.Width }}"
-               data-resource-height="{{ entity.Height }}">
+               data-resource-height="{{ entity.Height }}"
+               {% if entity.Owner %}data-owner-name="{{ entity.Owner.Name }}" data-owner-id="{{ entity.Owner.ID }}"{% endif %}>
                 <img height="300" src="/v1/resource/preview?id={{ entity.ID }}&height=300&v={{ entity.Hash }}" alt="Preview of {{ entity.Name }}">
             </a>
         </div>

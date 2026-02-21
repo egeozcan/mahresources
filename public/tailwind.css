@@ -1373,6 +1373,9 @@
   .max-w-7xl {
     max-width: var(--container-7xl);
   }
+  .max-w-\[20vw\] {
+    max-width: 20vw;
+  }
   .max-w-\[30vw\] {
     max-width: 30vw;
   }

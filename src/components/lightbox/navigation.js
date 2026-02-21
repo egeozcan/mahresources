@@ -46,6 +46,8 @@ export const navigationMethods = {
         hash: hash,
         width: parseInt(link.dataset.resourceWidth, 10) || 0,
         height: parseInt(link.dataset.resourceHeight, 10) || 0,
+        ownerName: link.dataset.ownerName || '',
+        ownerId: parseInt(link.dataset.ownerId, 10) || 0,
         domIndex: index
       };
     }).filter(item =>
@@ -317,7 +319,9 @@ export const navigationMethods = {
           name: r.Name || '',
           hash: r.Hash || '',
           width: r.Width || 0,
-          height: r.Height || 0
+          height: r.Height || 0,
+          ownerName: r.Owner?.Name || '',
+          ownerId: r.Owner?.ID || 0
         };
       });
 

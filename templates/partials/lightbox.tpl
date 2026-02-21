@@ -202,6 +202,14 @@
             </svg>
         </button>
 
+        <!-- Owner -->
+        <a
+            x-show="$store.lightbox.getCurrentItem()?.ownerName"
+            :href="'/group?id=' + $store.lightbox.getCurrentItem()?.ownerId"
+            class="bg-black/50 px-3 py-1 rounded max-w-[20vw] truncate hidden md:block hover:bg-white/20 transition-colors"
+            x-text="$store.lightbox.getCurrentItem()?.ownerName"
+        ></a>
+
         <!-- Name -->
         <div
             x-show="$store.lightbox.getCurrentItem()?.name"
