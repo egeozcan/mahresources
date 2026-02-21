@@ -140,12 +140,28 @@
                          class="relative w-full">
                         <label class="block text-xs text-gray-500 mb-1">Tags</label>
                         <div class="relative">
-                            <input x-ref="autocompleter"
-                                   type="text"
-                                   x-bind="inputEvents"
-                                   class="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
-                                   placeholder="Search tags..."
-                                   autocomplete="off">
+                            <template x-if="!addModeForTag">
+                                <input x-ref="autocompleter"
+                                       type="text"
+                                       x-bind="inputEvents"
+                                       class="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                                       placeholder="Search tags..."
+                                       autocomplete="off">
+                            </template>
+                            <template x-if="addModeForTag">
+                                <div class="flex gap-2 items-stretch">
+                                    <button type="button"
+                                            class="flex-1 px-2 py-1.5 text-sm font-medium text-white bg-green-700 rounded hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-green-500"
+                                            x-text="'Add ' + addModeForTag + '?'"
+                                            x-init="setTimeout(() => $el.focus(), 1)"
+                                            @keydown.escape.prevent="exitAdd"
+                                            @keydown.enter.prevent="addVal"
+                                            @click="addVal"></button>
+                                    <button type="button"
+                                            class="px-2 py-1.5 text-sm text-gray-600 bg-gray-100 rounded hover:bg-gray-200"
+                                            @click="exitAdd">Cancel</button>
+                                </div>
+                            </template>
                             {% include "/partials/form/formParts/dropDownResults.tpl" with action="pushVal" id="paste-upload-tags" title="Tags" %}
                             {% include "/partials/form/formParts/dropDownSelectedResults.tpl" %}
                         </div>
@@ -185,12 +201,28 @@
                          class="relative w-full">
                         <label class="block text-xs text-gray-500 mb-1">Series</label>
                         <div class="relative">
-                            <input x-ref="autocompleter"
-                                   type="text"
-                                   x-bind="inputEvents"
-                                   class="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
-                                   placeholder="Search or create series..."
-                                   autocomplete="off">
+                            <template x-if="!addModeForTag">
+                                <input x-ref="autocompleter"
+                                       type="text"
+                                       x-bind="inputEvents"
+                                       class="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                                       placeholder="Search or create series..."
+                                       autocomplete="off">
+                            </template>
+                            <template x-if="addModeForTag">
+                                <div class="flex gap-2 items-stretch">
+                                    <button type="button"
+                                            class="flex-1 px-2 py-1.5 text-sm font-medium text-white bg-green-700 rounded hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-green-500"
+                                            x-text="'Add ' + addModeForTag + '?'"
+                                            x-init="setTimeout(() => $el.focus(), 1)"
+                                            @keydown.escape.prevent="exitAdd"
+                                            @keydown.enter.prevent="addVal"
+                                            @click="addVal"></button>
+                                    <button type="button"
+                                            class="px-2 py-1.5 text-sm text-gray-600 bg-gray-100 rounded hover:bg-gray-200"
+                                            @click="exitAdd">Cancel</button>
+                                </div>
+                            </template>
                             {% include "/partials/form/formParts/dropDownResults.tpl" with action="pushVal" id="paste-upload-series" title="Series" %}
                             {% include "/partials/form/formParts/dropDownSelectedResults.tpl" %}
                         </div>
