@@ -30,12 +30,8 @@ export const navigationState = {
 };
 
 export const navigationMethods = {
-  initFromDOM() {
-    const container = document.querySelector('.list-container, .gallery');
-    if (!container) return;
-
-    const links = container.querySelectorAll('[data-lightbox-item]');
-    this.items = Array.from(links).map((link, index) => {
+  _extractItemsFromLinks(links) {
+    return Array.from(links).map(link => {
       const hash = link.dataset.resourceHash || '';
       const versionParam = hash ? `&v=${hash}` : '';
       return {
@@ -48,12 +44,23 @@ export const navigationMethods = {
         height: parseInt(link.dataset.resourceHeight, 10) || 0,
         ownerName: link.dataset.ownerName || '',
         ownerId: parseInt(link.dataset.ownerId, 10) || 0,
-        domIndex: index
       };
     }).filter(item =>
       item.contentType?.startsWith('image/') ||
       item.contentType?.startsWith('video/')
     );
+  },
+
+  initFromDOM() {
+    const containers = document.querySelectorAll('.list-container, .gallery');
+    if (containers.length === 0) return;
+
+    const allItems = [];
+    containers.forEach(container => {
+      const links = container.querySelectorAll('[data-lightbox-item]');
+      allItems.push(...this._extractItemsFromLinks(links));
+    });
+    this.items = allItems;
 
     const urlParams = new URLSearchParams(window.location.search);
     this.currentPage = parseInt(urlParams.get('page'), 10) || 1;
@@ -70,7 +77,7 @@ export const navigationMethods = {
 
     this.loadedPages.add(this.currentPage);
 
-    const pageSizeAttr = container.dataset.pageSize;
+    const pageSizeAttr = containers[0].dataset.pageSize;
     if (pageSizeAttr) {
       this.pageSize = parseInt(pageSizeAttr, 10) || 50;
     } else if (window.location.pathname.includes('/simple')) {
@@ -87,7 +94,42 @@ export const navigationMethods = {
     event.preventDefault();
     this.triggerElement = event.currentTarget;
 
+    // Check if inside a container with a lightbox source (multi-section pages)
+    const sourceContainer = event.currentTarget.closest('[data-lightbox-source]');
+    if (sourceContainer) {
+      this._openFromSourceContainer(sourceContainer, resourceId);
+      return;
+    }
+
     const index = this.items.findIndex(item => item.id === resourceId);
+    if (index !== -1) {
+      this.open(index);
+    }
+  },
+
+  _openFromSourceContainer(container, resourceId) {
+    const links = container.querySelectorAll('[data-lightbox-item]');
+    const containerItems = this._extractItemsFromLinks(links);
+    if (containerItems.length === 0) return;
+
+    // Build pagination URL from container's data attributes
+    const basePath = container.dataset.lightboxSource;
+    const paramName = container.dataset.lightboxParamName;
+    const paramValue = container.dataset.lightboxParamValue;
+    const url = new URL(basePath, window.location.origin);
+    url.searchParams.set(paramName, paramValue);
+
+    // Configure lightbox for this container's resources
+    this.items = containerItems;
+    this.baseUrl = url.pathname + url.search;
+    this.currentPage = 1;
+    this.loadedPages = new Set([1]);
+    this.pageSize = 50;
+    // The group page preloads 5 resources; if fewer exist, there are no more
+    this.hasNextPage = containerItems.length >= 5;
+    this.hasPrevPage = false;
+
+    const index = containerItems.findIndex(item => item.id === resourceId);
     if (index !== -1) {
       this.open(index);
     }

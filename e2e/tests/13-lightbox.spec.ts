@@ -1228,3 +1228,102 @@ test.describe('Lightbox Edit After Pagination', () => {
     await expect(lightboxImage).toBeVisible({ timeout: 5000 });
   });
 });
+
+test.describe('Lightbox on Group Detail Page', () => {
+  let categoryId: number;
+  let ownerGroupId: number;
+  const createdResourceIds: number[] = [];
+  const testRunId = Date.now() + Math.floor(Math.random() * 100000);
+
+  test.beforeAll(async ({ apiClient }) => {
+    const category = await apiClient.createCategory(
+      `GroupLB Category ${testRunId}`,
+      'Category for group detail lightbox tests'
+    );
+    categoryId = category.ID;
+
+    const ownerGroup = await apiClient.createGroup({
+      name: `GroupLB Owner ${testRunId}`,
+      description: 'Owner for group detail lightbox test',
+      categoryId: categoryId,
+    });
+    ownerGroupId = ownerGroup.ID;
+
+    // Create 3 image resources owned by this group
+    const testImageFiles = [
+      path.join(__dirname, '../test-assets/sample-image-28.png'),
+      path.join(__dirname, '../test-assets/sample-image-29.png'),
+      path.join(__dirname, '../test-assets/sample-image-30.png'),
+    ];
+    for (let i = 0; i < testImageFiles.length; i++) {
+      const resource = await apiClient.createResource({
+        filePath: testImageFiles[i],
+        name: `GroupLB Image ${i + 1} - ${testRunId}`,
+        description: `Test image ${i + 1} for group detail lightbox`,
+        ownerId: ownerGroupId,
+      });
+      createdResourceIds.push(resource.ID);
+    }
+  });
+
+  test.afterAll(async ({ apiClient }) => {
+    for (const resourceId of createdResourceIds) {
+      try { await apiClient.deleteResource(resourceId); } catch { /* ignore */ }
+    }
+    if (ownerGroupId) await apiClient.deleteGroup(ownerGroupId).catch(() => {});
+    if (categoryId) await apiClient.deleteCategory(categoryId).catch(() => {});
+  });
+
+  test('should open lightbox when clicking resource thumbnail on group detail page', async ({ page }) => {
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    // Ensure the "Own Entities" details section is open
+    const ownSection = page.locator('details:has(summary:has-text("Own Entities"))');
+    await expect(ownSection).toBeVisible();
+
+    // Find a lightbox-enabled resource link within the page
+    const imageLink = page.locator('[data-lightbox-item]').first();
+    await expect(imageLink).toBeVisible();
+    await imageLink.click();
+
+    // Verify lightbox opened
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
+    await expect(lightbox).toBeVisible();
+
+    // Verify image is displayed
+    const lightboxImage = lightbox.locator('img');
+    await expect(lightboxImage).toBeVisible({ timeout: 5000 });
+  });
+
+  test('should navigate between images in lightbox on group detail page', async ({ page }) => {
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    // Open lightbox on first resource
+    const imageLink = page.locator('[data-lightbox-item]').first();
+    await expect(imageLink).toBeVisible();
+    await imageLink.click();
+
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
+    await expect(lightbox).toBeVisible();
+
+    // Verify counter shows position
+    const counter = lightbox.locator('div.bg-black\\/50:has-text("/")').first();
+    await expect(counter).toContainText('1 /');
+
+    // Navigate to next
+    const nextButton = lightbox.locator('button[aria-label="Next"]');
+    await nextButton.click();
+    await page.waitForTimeout(300);
+
+    await expect(counter).toContainText('2 /');
+
+    // Navigate back
+    const prevButton = lightbox.locator('button[aria-label="Previous"]');
+    await prevButton.click();
+    await page.waitForTimeout(300);
+
+    await expect(counter).toContainText('1 /');
+  });
+});

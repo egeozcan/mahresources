@@ -19,7 +19,7 @@
             {% endif %}
         </div>
         {% if entities %}
-        <div class="list-container">
+        <div class="list-container"{% if templateName == "resource" and formAction and formParamName and formID %} data-lightbox-source="{{ formAction }}" data-lightbox-param-name="{{ formParamName }}" data-lightbox-param-value="{{ formID }}"{% endif %}>
             {% for entity in entities %}
                 {% include partial(templateName) %}
             {% endfor %}
