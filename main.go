@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -376,6 +377,13 @@ func main() {
 
 	srv := server.CreateServer(context, mainFs, context.Config.AltFileSystems)
 
+	// Set BaseContext so all request contexts derive from a cancellable parent.
+	// This allows long-lived handlers (e.g. SSE) to detect shutdown and return.
+	serverCtx, serverCancel := gocontext.WithCancel(gocontext.Background())
+	srv.BaseContext = func(_ net.Listener) gocontext.Context {
+		return serverCtx
+	}
+
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
@@ -387,7 +395,9 @@ func main() {
 	<-quit
 	log.Println("Shutting down server...")
 
-	shutdownCtx, shutdownCancel := gocontext.WithTimeout(gocontext.Background(), 30*time.Second)
+	serverCancel()
+
+	shutdownCtx, shutdownCancel := gocontext.WithTimeout(gocontext.Background(), 5*time.Second)
 	defer shutdownCancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
