@@ -82,6 +82,7 @@ func (ctx *MahresourcesContext) GetGroupTreeDown(rootID uint, maxLevels int, chi
 		FROM tree t
 		LEFT JOIN categories c ON c.id = t.category_id
 		ORDER BY t.level, t.name
+		LIMIT 5000
 	`, rootID, maxLevels).Scan(&results).Error
 
 	if err != nil {
@@ -89,30 +90,28 @@ func (ctx *MahresourcesContext) GetGroupTreeDown(rootID uint, maxLevels int, chi
 	}
 
 	// Enforce per-parent child limit in Go
-	if childLimit > 0 {
-		parentChildCount := make(map[uint]int)
-		filtered := make([]query_models.GroupTreeRow, 0, len(results))
+	parentChildCount := make(map[uint]int)
+	filtered := make([]query_models.GroupTreeRow, 0, len(results))
 
-		for _, row := range results {
-			if row.Level == 0 {
-				// Always include root
-				filtered = append(filtered, row)
-				continue
-			}
-
-			parentID := uint(0)
-			if row.OwnerID != nil {
-				parentID = *row.OwnerID
-			}
-
-			if parentChildCount[parentID] < childLimit {
-				filtered = append(filtered, row)
-				parentChildCount[parentID]++
-			}
+	for _, row := range results {
+		if row.Level == 0 {
+			// Always include root
+			filtered = append(filtered, row)
+			continue
 		}
 
-		results = filtered
+		parentID := uint(0)
+		if row.OwnerID != nil {
+			parentID = *row.OwnerID
+		}
+
+		if parentChildCount[parentID] < childLimit {
+			filtered = append(filtered, row)
+			parentChildCount[parentID]++
+		}
 	}
+
+	results = filtered
 
 	return results, nil
 }

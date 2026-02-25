@@ -107,6 +107,11 @@ func GetRemoveGroupHandler(ctx interfaces.GroupDeleter) func(writer http.Respons
 
 		id := getEntityID(request)
 
+		if id == 0 {
+			http_utils.HandleError(fmt.Errorf("missing or invalid group ID"), writer, request, http.StatusBadRequest)
+			return
+		}
+
 		err := effectiveCtx.DeleteGroup(id)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)

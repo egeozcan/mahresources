@@ -43,17 +43,20 @@ export function groupTree({ initialRows = [], highlightedPath = null, containing
       const rootNodes = this.tree['root'] || this.tree[0] || [];
 
       if (rootNodes.length === 0) {
-        container.innerHTML = '<p class="text-gray-500 p-4">No groups found.</p>';
+        const p = document.createElement('p');
+        p.className = 'text-gray-500 p-4';
+        p.textContent = 'No groups found.';
+        container.replaceChildren(p);
         return;
       }
 
-      let html = '<ul class="tree-chart-list">';
+      const ul = document.createElement('ul');
+      ul.className = 'tree-chart-list';
       for (const node of rootNodes) {
-        html += this.renderNode(node, true);
+        ul.appendChild(this.renderNode(node, true));
       }
-      html += '</ul>';
 
-      container.innerHTML = html;
+      container.replaceChildren(ul);
     },
 
     renderNode(node, isRoot) {
@@ -68,42 +71,80 @@ export function groupTree({ initialRows = [], highlightedPath = null, containing
       if (isFocused) boxClass += ' tree-node-box--focused';
       else if (isHighlighted) boxClass += ' tree-node-box--path';
 
-      let html = `<li class="${isRoot ? 'tree-root-node' : ''}">`;
-      html += `<a href="/group?id=${node.id}" class="${boxClass}" title="${this.escapeHtml(node.name)}">`;
-      html += `<span class="tree-node-name">${this.escapeHtml(node.name)}</span>`;
+      const li = document.createElement('li');
+      if (isRoot) li.className = 'tree-root-node';
+
+      const a = document.createElement('a');
+      a.href = `/group?id=${node.id}`;
+      a.className = boxClass;
+      a.title = node.name || '';
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'tree-node-name';
+      nameSpan.textContent = node.name || '';
+      a.appendChild(nameSpan);
+
       if (node.categoryName) {
-        html += `<span class="tree-node-category">${this.escapeHtml(node.categoryName)}</span>`;
+        const catSpan = document.createElement('span');
+        catSpan.className = 'tree-node-category';
+        catSpan.textContent = node.categoryName;
+        a.appendChild(catSpan);
       }
-      html += '</a>';
+
+      li.appendChild(a);
 
       if (hasChildren) {
         if (isLoading) {
-          html += '<button class="tree-node-expand" disabled>Loading...</button>';
+          const btn = document.createElement('button');
+          btn.className = 'tree-node-expand';
+          btn.disabled = true;
+          btn.textContent = 'Loading...';
+          li.appendChild(btn);
         } else if (isExpanded && children.length > 0) {
-          html += `<button class="tree-node-expand" data-node-id="${node.id}" data-action="collapse">`;
-          html += `<span class="tree-node-arrow tree-node-arrow--down"></span> ${node.childCount}`;
-          html += '</button>';
+          const btn = document.createElement('button');
+          btn.className = 'tree-node-expand';
+          btn.dataset.nodeId = node.id;
+          btn.dataset.action = 'collapse';
 
-          html += '<ul class="tree-chart-list">';
+          const arrow = document.createElement('span');
+          arrow.className = 'tree-node-arrow tree-node-arrow--down';
+          btn.appendChild(arrow);
+          btn.appendChild(document.createTextNode(` ${node.childCount}`));
+          li.appendChild(btn);
+
+          const childUl = document.createElement('ul');
+          childUl.className = 'tree-chart-list';
           for (const child of children) {
-            html += this.renderNode(child, false);
+            childUl.appendChild(this.renderNode(child, false));
           }
 
           // If we loaded fewer children than the total, show a "more" link
           if (children.length < node.childCount) {
-            html += `<li><a href="/groups?OwnerId=${node.id}" class="tree-node-more">+${node.childCount - children.length} more...</a></li>`;
+            const moreLi = document.createElement('li');
+            const moreA = document.createElement('a');
+            moreA.href = `/groups?OwnerId=${node.id}`;
+            moreA.className = 'tree-node-more';
+            moreA.textContent = `+${node.childCount - children.length} more...`;
+            moreLi.appendChild(moreA);
+            childUl.appendChild(moreLi);
           }
 
-          html += '</ul>';
+          li.appendChild(childUl);
         } else {
-          html += `<button class="tree-node-expand" data-node-id="${node.id}" data-action="expand">`;
-          html += `<span class="tree-node-arrow"></span> ${node.childCount}`;
-          html += '</button>';
+          const btn = document.createElement('button');
+          btn.className = 'tree-node-expand';
+          btn.dataset.nodeId = node.id;
+          btn.dataset.action = 'expand';
+
+          const arrow = document.createElement('span');
+          arrow.className = 'tree-node-arrow';
+          btn.appendChild(arrow);
+          btn.appendChild(document.createTextNode(` ${node.childCount}`));
+          li.appendChild(btn);
         }
       }
 
-      html += '</li>';
-      return html;
+      return li;
     },
 
     handleClick(e) {
@@ -140,10 +181,10 @@ export function groupTree({ initialRows = [], highlightedPath = null, containing
           this.requestAborter();
         }
 
-        const [response, abort] = abortableFetch(`/v1/group/tree/children?parentId=${nodeId}&limit=50`);
+        const { abort, ready } = abortableFetch(`/v1/group/tree/children?parentId=${nodeId}&limit=50`);
         this.requestAborter = abort;
 
-        const res = await response;
+        const res = await ready;
         if (!res.ok) throw new Error('Failed to load children');
 
         const children = await res.json();
@@ -159,13 +200,6 @@ export function groupTree({ initialRows = [], highlightedPath = null, containing
         this.requestAborter = null;
         this.render();
       }
-    },
-
-    escapeHtml(str) {
-      if (!str) return '';
-      const div = document.createElement('div');
-      div.textContent = str;
-      return div.innerHTML;
     }
   };
 }

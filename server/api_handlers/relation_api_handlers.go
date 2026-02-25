@@ -148,6 +148,11 @@ func GetRemoveRelationHandler(ctx interfaces.RelationshipDeleter) func(writer ht
 
 		id := getEntityID(request)
 
+		if id == 0 {
+			http_utils.HandleError(fmt.Errorf("missing or invalid relation ID"), writer, request, http.StatusBadRequest)
+			return
+		}
+
 		err := effectiveCtx.DeleteRelationship(id)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
@@ -169,6 +174,11 @@ func GetRemoveRelationTypeHandler(ctx interfaces.RelationshipDeleter) func(write
 		effectiveCtx := withRequestContext(ctx, request).(interfaces.RelationshipDeleter)
 
 		id := getEntityID(request)
+
+		if id == 0 {
+			http_utils.HandleError(fmt.Errorf("missing or invalid relation type ID"), writer, request, http.StatusBadRequest)
+			return
+		}
 
 		err := effectiveCtx.DeleteRelationshipType(id)
 		if err != nil {

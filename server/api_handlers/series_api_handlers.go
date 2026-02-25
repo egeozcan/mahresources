@@ -82,6 +82,11 @@ func GetRemoveResourceFromSeriesHandler(ctx interfaces.ResourceSeriesRemover) fu
 
 		id := getEntityID(request)
 
+		if id == 0 {
+			http_utils.HandleError(fmt.Errorf("missing or invalid resource ID"), writer, request, http.StatusBadRequest)
+			return
+		}
+
 		if err := effectiveCtx.RemoveResourceFromSeries(id); err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return

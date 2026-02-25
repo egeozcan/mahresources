@@ -1,0 +1,156 @@
+package application_context
+
+import (
+	"testing"
+
+	"mahresources/models"
+)
+
+func TestGetGroupTreeRoots(t *testing.T) {
+	ctx := createTestContext(t)
+
+	// Create root groups (no owner)
+	root1 := &models.Group{Name: "Root A"}
+	root2 := &models.Group{Name: "Root B"}
+	ctx.db.Create(root1)
+	ctx.db.Create(root2)
+
+	// Create a child group under root1
+	child := &models.Group{Name: "Child of A", OwnerId: &root1.ID}
+	ctx.db.Create(child)
+
+	roots, err := ctx.GetGroupTreeRoots(50)
+	if err != nil {
+		t.Fatalf("GetGroupTreeRoots() error: %v", err)
+	}
+
+	if len(roots) != 2 {
+		t.Fatalf("expected 2 roots, got %d", len(roots))
+	}
+
+	// Results are ordered by name
+	if roots[0].Name != "Root A" {
+		t.Errorf("first root name = %q, want %q", roots[0].Name, "Root A")
+	}
+	if roots[1].Name != "Root B" {
+		t.Errorf("second root name = %q, want %q", roots[1].Name, "Root B")
+	}
+
+	// Root A should have 1 child
+	if roots[0].ChildCount != 1 {
+		t.Errorf("Root A childCount = %d, want 1", roots[0].ChildCount)
+	}
+
+	// Root B should have 0 children
+	if roots[1].ChildCount != 0 {
+		t.Errorf("Root B childCount = %d, want 0", roots[1].ChildCount)
+	}
+}
+
+func TestGetGroupTreeChildren(t *testing.T) {
+	ctx := createTestContext(t)
+
+	parent := &models.Group{Name: "Parent"}
+	ctx.db.Create(parent)
+
+	child1 := &models.Group{Name: "Child 1", OwnerId: &parent.ID}
+	child2 := &models.Group{Name: "Child 2", OwnerId: &parent.ID}
+	ctx.db.Create(child1)
+	ctx.db.Create(child2)
+
+	// Create a grandchild under child1
+	grandchild := &models.Group{Name: "Grandchild", OwnerId: &child1.ID}
+	ctx.db.Create(grandchild)
+
+	children, err := ctx.GetGroupTreeChildren(parent.ID, 50)
+	if err != nil {
+		t.Fatalf("GetGroupTreeChildren() error: %v", err)
+	}
+
+	if len(children) != 2 {
+		t.Fatalf("expected 2 children, got %d", len(children))
+	}
+
+	// Child 1 should have 1 child (grandchild)
+	found := false
+	for _, c := range children {
+		if c.Name == "Child 1" {
+			found = true
+			if c.ChildCount != 1 {
+				t.Errorf("Child 1 childCount = %d, want 1", c.ChildCount)
+			}
+		}
+	}
+	if !found {
+		t.Error("Child 1 not found in results")
+	}
+}
+
+func TestGetGroupTreeDown(t *testing.T) {
+	ctx := createTestContext(t)
+
+	root := &models.Group{Name: "Root"}
+	ctx.db.Create(root)
+
+	child := &models.Group{Name: "Level 1", OwnerId: &root.ID}
+	ctx.db.Create(child)
+
+	grandchild := &models.Group{Name: "Level 2", OwnerId: &child.ID}
+	ctx.db.Create(grandchild)
+
+	rows, err := ctx.GetGroupTreeDown(root.ID, 3, 50)
+	if err != nil {
+		t.Fatalf("GetGroupTreeDown() error: %v", err)
+	}
+
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(rows))
+	}
+
+	// Verify levels
+	for _, row := range rows {
+		switch row.Name {
+		case "Root":
+			if row.Level != 0 {
+				t.Errorf("Root level = %d, want 0", row.Level)
+			}
+		case "Level 1":
+			if row.Level != 1 {
+				t.Errorf("Level 1 level = %d, want 1", row.Level)
+			}
+		case "Level 2":
+			if row.Level != 2 {
+				t.Errorf("Level 2 level = %d, want 2", row.Level)
+			}
+		}
+	}
+}
+
+func TestGetGroupTreeDown_RespectsMaxLevels(t *testing.T) {
+	ctx := createTestContext(t)
+
+	root := &models.Group{Name: "Root"}
+	ctx.db.Create(root)
+
+	child := &models.Group{Name: "Level 1", OwnerId: &root.ID}
+	ctx.db.Create(child)
+
+	grandchild := &models.Group{Name: "Level 2", OwnerId: &child.ID}
+	ctx.db.Create(grandchild)
+
+	// maxLevels=1 should only include root and direct children
+	rows, err := ctx.GetGroupTreeDown(root.ID, 1, 50)
+	if err != nil {
+		t.Fatalf("GetGroupTreeDown() error: %v", err)
+	}
+
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows (root + 1 level), got %d", len(rows))
+	}
+
+	for _, row := range rows {
+		if row.Name == "Level 2" {
+			t.Error("grandchild should be excluded with maxLevels=1")
+		}
+	}
+}

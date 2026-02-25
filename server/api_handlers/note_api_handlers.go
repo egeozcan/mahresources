@@ -177,6 +177,11 @@ func GetRemoveNoteTypeHandler(ctx interfaces.NoteTypeDeleter) func(writer http.R
 
 		id := getEntityID(request)
 
+		if id == 0 {
+			http_utils.HandleError(fmt.Errorf("missing or invalid note type ID"), writer, request, http.StatusBadRequest)
+			return
+		}
+
 		err := effectiveCtx.DeleteNoteType(id)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)

@@ -397,7 +397,7 @@ func main() {
 
 	serverCancel()
 
-	shutdownCtx, shutdownCancel := gocontext.WithTimeout(gocontext.Background(), 5*time.Second)
+	shutdownCtx, shutdownCancel := gocontext.WithTimeout(gocontext.Background(), 30*time.Second)
 	defer shutdownCancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {

@@ -282,6 +282,79 @@ func TestGetUIntQueryParameter(t *testing.T) {
 	}
 }
 
+func TestIsSafeRedirect(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		want bool
+	}{
+		{
+			name: "valid absolute path",
+			url:  "/groups",
+			want: true,
+		},
+		{
+			name: "valid path with query string",
+			url:  "/resource?id=42",
+			want: true,
+		},
+		{
+			name: "valid path with fragment",
+			url:  "/notes#section",
+			want: true,
+		},
+		{
+			name: "valid nested path",
+			url:  "/v1/groups/addMeta",
+			want: true,
+		},
+		{
+			name: "double slash rejected",
+			url:  "//evil.com/path",
+			want: false,
+		},
+		{
+			name: "absolute URL rejected",
+			url:  "https://evil.com/path",
+			want: false,
+		},
+		{
+			name: "javascript scheme rejected",
+			url:  "javascript:alert(1)",
+			want: false,
+		},
+		{
+			name: "data scheme rejected",
+			url:  "data:text/html,<script>alert(1)</script>",
+			want: false,
+		},
+		{
+			name: "empty string rejected",
+			url:  "",
+			want: false,
+		},
+		{
+			name: "relative path rejected",
+			url:  "relative/path",
+			want: false,
+		},
+		{
+			name: "backslash path rejected",
+			url:  "\\evil.com",
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isSafeRedirect(tt.url)
+			if got != tt.want {
+				t.Errorf("isSafeRedirect(%q) = %v, want %v", tt.url, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRequestAcceptsHTML(t *testing.T) {
 	tests := []struct {
 		name   string

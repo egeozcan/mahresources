@@ -2,6 +2,7 @@ package api_handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -79,6 +80,11 @@ func GetRemoveTagHandler(ctx interfaces.TagDeleter) func(writer http.ResponseWri
 
 		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+
+		if query.ID == 0 {
+			http_utils.HandleError(fmt.Errorf("missing or invalid tag ID"), writer, request, http.StatusBadRequest)
 			return
 		}
 

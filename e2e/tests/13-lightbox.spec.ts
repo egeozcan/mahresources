@@ -129,9 +129,6 @@ test.describe('Lightbox Functionality', () => {
     const nextButton = lightbox.locator('button[aria-label="Next"]');
     await nextButton.click();
 
-    // Wait for navigation
-    await page.waitForTimeout(300);
-
     // Verify counter updated
     await expect(counter).toContainText('2 /');
   });
@@ -149,14 +146,12 @@ test.describe('Lightbox Functionality', () => {
 
     // Navigate with right arrow
     await page.keyboard.press('ArrowRight');
-    await page.waitForTimeout(300);
 
     const counter = lightbox.locator('div.bg-black\\/50:has-text("/")').first();
     await expect(counter).toContainText('2 /');
 
     // Navigate back with left arrow
     await page.keyboard.press('ArrowLeft');
-    await page.waitForTimeout(300);
     await expect(counter).toContainText('1 /');
   });
 
@@ -1315,14 +1310,12 @@ test.describe('Lightbox on Group Detail Page', () => {
     // Navigate to next
     const nextButton = lightbox.locator('button[aria-label="Next"]');
     await nextButton.click();
-    await page.waitForTimeout(300);
 
     await expect(counter).toContainText('2 /');
 
     // Navigate back
     const prevButton = lightbox.locator('button[aria-label="Previous"]');
     await prevButton.click();
-    await page.waitForTimeout(300);
 
     await expect(counter).toContainText('1 /');
   });

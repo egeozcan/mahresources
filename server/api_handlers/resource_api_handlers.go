@@ -202,8 +202,6 @@ func GetResourceUploadHandler(ctx interfaces.ResourceCreator) func(writer http.R
 
 			// Structured JSON response for API / fetch callers
 			if !http_utils.RequestAcceptsHTML(request) {
-				fmt.Printf("\n[ERROR]: %v\n", aggregateError)
-
 				writer.Header().Set("Content-Type", constants.JSON)
 				writer.WriteHeader(statusCode)
 				_ = json.NewEncoder(writer).Encode(map[string]any{
