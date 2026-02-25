@@ -233,15 +233,11 @@ npm run report         # View HTML test report
 - `tests/` - Test specs organized by feature
 - `tests/accessibility/` - axe-core accessibility tests (WCAG compliance)
 
-The test suite covers:
-- CRUD operations for all entities (Tags, Categories, NoteTypes, Queries, Groups, Notes, Resources, Relations)
-- Bulk operations and global search
-- Edge cases and error handling
-- Accessibility (a11y) testing with axe-core for WCAG compliance
-
 ## Important Notes
 
 - No authentication/authorization - designed for private networks only
+- Fully aware that we can inject all kinds of content via unescaped via CustomHeader, CustomSidebar, etc. and that's okay.
+- A11y is important. Very important.
 - SQLite requires `--tags json1` build flag for JSON query support
 - Image processing uses bild and nfnt/resize libraries
 - File system abstraction via Afero supports multiple storage locations
