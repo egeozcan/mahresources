@@ -41,6 +41,7 @@ import { blockText, blockHeading, blockDivider, blockTodos, blockGallery, blockR
 import { sharedTodos } from './components/sharedTodos.js';
 import { sharedCalendar } from './components/sharedCalendar.js';
 import { codeEditor } from './components/codeEditor.js';
+import { groupTree } from './components/groupTree.js';
 
 // Import web components
 import './webcomponents/expandabletext.js';
@@ -99,6 +100,7 @@ Alpine.data('eventModal', eventModal);
 Alpine.data('sharedTodos', sharedTodos);
 Alpine.data('sharedCalendar', sharedCalendar);
 Alpine.data('codeEditor', codeEditor);
+Alpine.data('groupTree', groupTree);
 
 // Expose Alpine globally for debugging and morph usage
 window.Alpine = Alpine;

@@ -1,6 +1,7 @@
 package template_context_providers
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
@@ -110,6 +111,7 @@ func GroupsListContextProvider(context *application_context.MahresourcesContext)
 			"displayOptions": getPathExtensionOptions(request.URL, &[]*SelectOption{
 				{Title: "List", Link: "/groups"},
 				{Title: "Text", Link: "/groups/text"},
+				{Title: "Tree", Link: "/group/tree"},
 			}),
 		}.Update(baseContext)
 	}
@@ -234,5 +236,85 @@ func groupContextProviderImpl(context interfaces.GroupReader) func(request *http
 				"Entries":  breadcrumbEls,
 			},
 		}.Update(baseContext)
+	}
+}
+
+func GroupTreeContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+	return func(request *http.Request) pongo2.Context {
+		baseContext := staticTemplateCtx(request)
+
+		rootID := http_utils.GetUIntQueryParameter(request, "root", 0)
+		containingID := http_utils.GetUIntQueryParameter(request, "containing", 0)
+
+		tplContext := pongo2.Context{
+			"pageTitle": "Group Tree",
+		}
+
+		// If containing= is set, find the root ancestor and build a highlighted path
+		var highlightedPath []uint
+		if containingID > 0 {
+			parents, err := context.FindParentsOfGroup(containingID)
+			if err != nil {
+				return addErrContext(err, baseContext).Update(tplContext)
+			}
+
+			if len(parents) > 0 {
+				// parents is ordered [root, ..., parent, self]
+				rootID = parents[0].ID
+				highlightedPath = make([]uint, len(parents))
+				for i, p := range parents {
+					highlightedPath[i] = p.ID
+				}
+			}
+		}
+
+		// No root specified: show list of root groups
+		if rootID == 0 {
+			roots, err := context.GetGroupTreeRoots(50)
+			if err != nil {
+				return addErrContext(err, baseContext).Update(tplContext)
+			}
+
+			tplContext["roots"] = roots
+			return tplContext.Update(baseContext)
+		}
+
+		// Fetch initial tree (3 levels deep)
+		treeRows, err := context.GetGroupTreeDown(rootID, 3, 50)
+		if err != nil {
+			return addErrContext(err, baseContext).Update(tplContext)
+		}
+
+		treeRowsJSON, err := json.Marshal(treeRows)
+		if err != nil {
+			return addErrContext(err, baseContext).Update(tplContext)
+		}
+
+		highlightedPathJSON, err := json.Marshal(highlightedPath)
+		if err != nil {
+			return addErrContext(err, baseContext).Update(tplContext)
+		}
+
+		// Get root group name for the page title
+		rootGroup, err := context.GetGroup(rootID)
+		if err != nil {
+			return addErrContext(err, baseContext).Update(tplContext)
+		}
+
+		tplContext["pageTitle"] = "Tree: " + rootGroup.GetName()
+		tplContext["rootId"] = rootID
+		tplContext["containingId"] = containingID
+		tplContext["treeRowsJSON"] = string(treeRowsJSON)
+		tplContext["highlightedPathJSON"] = string(highlightedPathJSON)
+		tplContext["rootGroup"] = rootGroup
+		tplContext["breadcrumb"] = pongo2.Context{
+			"HomeName": "Groups",
+			"HomeUrl":  "groups",
+			"Entries": []template_entities.Entry{
+				{Name: rootGroup.GetName(), ID: rootGroup.ID, Url: fmt.Sprintf("/group?id=%v", rootGroup.ID)},
+			},
+		}
+
+		return tplContext.Update(baseContext)
 	}
 }

@@ -52,6 +52,7 @@
     </div>
 
     {% if group.Owner %}{% include "/partials/ownerDisplay.tpl" with owner=group.Owner %}{% endif %}
+    <a href="/group/tree?containing={{ group.ID }}" class="block text-sm text-indigo-600 hover:text-indigo-800 mb-2">Show in Tree</a>
     {% include "/partials/tagList.tpl" with tags=group.Tags addTagUrl='/v1/groups/addTags' id=group.ID %}
 
     {% include "/partials/sideTitle.tpl" with title="Meta Data" %}

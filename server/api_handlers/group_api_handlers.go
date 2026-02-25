@@ -247,6 +247,34 @@ func GetMergeGroupsHandler(ctx interfaces.GroupMerger) func(writer http.Response
 	}
 }
 
+func GetGroupTreeChildrenHandler(ctx interfaces.GroupTreeReader) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		parentID := uint(http_utils.GetIntQueryParameter(request, "parentId", 0))
+		limit := int(http_utils.GetIntQueryParameter(request, "limit", 50))
+
+		if limit > 100 {
+			limit = 100
+		}
+
+		var nodes []query_models.GroupTreeNode
+		var err error
+
+		if parentID == 0 {
+			nodes, err = ctx.GetGroupTreeRoots(limit)
+		} else {
+			nodes, err = ctx.GetGroupTreeChildren(parentID, limit)
+		}
+
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(nodes)
+	}
+}
+
 func GetDuplicateGroupHandler(ctx interfaces.GroupDuplicator) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it

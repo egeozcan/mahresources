@@ -5,6 +5,13 @@ import (
 	"mahresources/models/query_models"
 )
 
+// GroupTreeReader provides tree-structure queries for groups
+type GroupTreeReader interface {
+	GetGroupTreeRoots(limit int) ([]query_models.GroupTreeNode, error)
+	GetGroupTreeChildren(parentID uint, limit int) ([]query_models.GroupTreeNode, error)
+	GetGroupTreeDown(rootID uint, maxLevels int, childLimit int) ([]query_models.GroupTreeRow, error)
+}
+
 type GroupReader interface {
 	GetGroups(offset, maxResults int, query *query_models.GroupQuery) ([]models.Group, error)
 	GetGroup(id uint) (*models.Group, error)

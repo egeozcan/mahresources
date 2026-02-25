@@ -43,6 +43,7 @@ var templates = map[string]templateInformation{
 	"/groups/text": {template_context_providers.GroupsListContextProvider, "listGroupsText.tpl", http.MethodGet},
 	"/group":       {template_context_providers.GroupContextProvider, "displayGroup.tpl", http.MethodGet},
 	"/group/edit":  {template_context_providers.GroupCreateContextProvider, "createGroup.tpl", http.MethodGet},
+	"/group/tree":  {template_context_providers.GroupTreeContextProvider, "displayGroupTree.tpl", http.MethodGet},
 
 	"/tag/new":  {template_context_providers.TagCreateContextProvider, "createTag.tpl", http.MethodGet},
 	"/tags":     {template_context_providers.TagListContextProvider, "listTags.tpl", http.MethodGet},
@@ -146,6 +147,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/groups/meta/keys").HandlerFunc(api_handlers.GetGroupMetaKeysHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/group").HandlerFunc(api_handlers.GetGroupHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/group/parents").HandlerFunc(api_handlers.GetGroupsParentsHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/group/tree/children").HandlerFunc(api_handlers.GetGroupTreeChildrenHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/group/clone").HandlerFunc(api_handlers.GetDuplicateGroupHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/group").HandlerFunc(api_handlers.GetAddGroupHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/group/delete").HandlerFunc(api_handlers.GetRemoveGroupHandler(appContext))
