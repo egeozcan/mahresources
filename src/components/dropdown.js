@@ -170,6 +170,7 @@ export function autocompleter({
                     },
                 }).then(x => x.json());
                 this.selectedResults.push(newVal);
+                this.selectedIds.add(newVal.ID);
                 this.ensureMaxItems();
 
                 // Call onSelect callback if provided
@@ -234,6 +235,7 @@ export function autocompleter({
 
             const selectedItem = this.results[this.selectedIndex];
             this.selectedResults.push(selectedItem);
+            this.selectedIds.add(selectedItem.ID);
             this.ensureMaxItems();
 
             // Call onSelect callback if provided

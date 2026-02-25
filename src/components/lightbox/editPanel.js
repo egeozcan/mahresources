@@ -13,7 +13,7 @@ export const editPanelState = {
   detailsAborter: null,
 
   // Tag editing
-  savingTag: false,
+  _savingTagIds: new Set(),
 
   // Track if changes were made that require refreshing the page content
   needsRefreshOnClose: false,
@@ -290,9 +290,9 @@ export const editPanelMethods = {
 
   async saveTagAddition(tag) {
     const resourceId = this.getCurrentItem()?.id;
-    if (!resourceId || this.savingTag) return;
+    if (!resourceId || this._savingTagIds.has(tag.ID)) return;
 
-    this.savingTag = true;
+    this._savingTagIds.add(tag.ID);
 
     if (this.resourceDetails) {
       if (!this.resourceDetails.Tags) {
@@ -334,7 +334,7 @@ export const editPanelMethods = {
       this.announce('Failed to add tag');
       throw err;
     } finally {
-      this.savingTag = false;
+      this._savingTagIds.delete(tag.ID);
     }
   },
 
