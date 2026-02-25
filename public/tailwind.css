@@ -1245,11 +1245,11 @@
   .h-auto {
     height: auto;
   }
+  .h-dvh {
+    height: 100dvh;
+  }
   .h-full {
     height: 100%;
-  }
-  .h-screen {
-    height: 100vh;
   }
   .max-h-32 {
     max-height: calc(var(--spacing) * 32);
@@ -1356,11 +1356,11 @@
   .w-64 {
     width: calc(var(--spacing) * 64);
   }
+  .w-dvw {
+    width: 100dvw;
+  }
   .w-full {
     width: 100%;
-  }
-  .w-screen {
-    width: 100vw;
   }
   .max-w-2xl {
     max-width: var(--container-2xl);
