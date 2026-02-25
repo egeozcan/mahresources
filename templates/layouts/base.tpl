@@ -4,10 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{{ title }}</title>
-    <link rel="stylesheet" href="/public/index.css">
-    <link rel="stylesheet" href="/public/tailwind.css">
-    <link rel="stylesheet" href="/public/jsonTable.css">
-    <script type="module" src="/public/dist/main.js"></script>
+    <link rel="stylesheet" href="/public/index.css?v={{ assetVersion }}">
+    <link rel="stylesheet" href="/public/tailwind.css?v={{ assetVersion }}">
+    <link rel="stylesheet" href="/public/jsonTable.css?v={{ assetVersion }}">
+    <script type="module" src="/public/dist/main.js?v={{ assetVersion }}"></script>
     <link rel="apple-touch-icon" sizes="57x57" href="/public/favicon/apple-icon-57x57.png">
     <link rel="apple-touch-icon" sizes="60x60" href="/public/favicon/apple-icon-60x60.png">
     <link rel="apple-touch-icon" sizes="72x72" href="/public/favicon/apple-icon-72x72.png">

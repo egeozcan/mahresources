@@ -1,7 +1,11 @@
 package template_context_providers
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"os"
+
 	"github.com/flosch/pongo2/v4"
 	"mahresources/server/http_utils"
 	"mahresources/server/template_handlers/template_entities"
@@ -12,7 +16,25 @@ import (
 	"time"
 )
 
+func computeAssetVersion() string {
+	h := sha256.New()
+	for _, path := range []string{
+		"public/index.css",
+		"public/tailwind.css",
+		"public/jsonTable.css",
+		"public/dist/main.js",
+	} {
+		if data, err := os.ReadFile(path); err == nil {
+			h.Write(data)
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))[:10]
+}
+
+var AssetVersion = computeAssetVersion()
+
 var baseTemplateContext = pongo2.Context{
+	"assetVersion": AssetVersion,
 	"title": "mahresources",
 	"menu": []template_entities.Entry{
 		{

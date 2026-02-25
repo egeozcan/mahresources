@@ -15,6 +15,7 @@ import (
 	"mahresources/models"
 	"mahresources/server/template_handlers/loaders"
 	_ "mahresources/server/template_handlers/template_filters"
+	"mahresources/server/template_handlers/template_context_providers"
 )
 
 // templateBlock represents a block with decoded Content and State for template rendering
@@ -427,6 +428,7 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 		"shareToken":      shareToken,
 		"resourceHashMap": resourceHashMap,
 		"groupDataMap":    groupDataMap,
+		"assetVersion":    template_context_providers.AssetVersion,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
