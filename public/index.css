@@ -160,17 +160,15 @@
 
 /* Mobile Navigation */
 .navbar-mobile {
-    position: absolute;
-    top: calc(100% + 8px);
+    position: fixed;
+    top: 0;
     left: 0;
     right: 0;
-    padding: 8px;
+    bottom: 0;
+    padding: 60px 8px 8px;
     background: white;
-    border: 1px solid var(--nav-border);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-lg);
-    z-index: 50;
-    max-width: 280px;
+    z-index: 39;
+    overflow-y: auto;
 }
 
 .navbar-mobile-section {
