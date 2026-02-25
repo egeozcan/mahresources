@@ -129,6 +129,11 @@ func GetDeleteVersionHandler(ctx interfaces.VersionDeleter) func(http.ResponseWr
 			return
 		}
 
+		if resourceID == 0 || versionID == 0 {
+			http_utils.HandleError(fmt.Errorf("resourceId and versionId are required"), w, r, http.StatusBadRequest)
+			return
+		}
+
 		if err := ctx.DeleteVersion(uint(resourceID), uint(versionID)); err != nil {
 			http_utils.HandleError(err, w, r, http.StatusInternalServerError)
 			return

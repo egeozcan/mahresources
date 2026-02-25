@@ -86,7 +86,7 @@ func GetRemoveCategoryHandler(ctx interfaces.CategoryDeleter) func(writer http.R
 		id := http_utils.GetUIntQueryParameter(request, "Id", 0)
 
 		if id == 0 {
-			http_utils.HandleError(errors.New("category id is needed"), writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(errors.New("category id is needed"), writer, request, http.StatusBadRequest)
 			return
 		}
 

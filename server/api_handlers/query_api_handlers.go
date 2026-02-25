@@ -198,7 +198,7 @@ func GetRemoveQueryHandler(ctx interfaces.QueryDeleter) func(writer http.Respons
 		id := getEntityID(request)
 
 		if id == 0 {
-			http_utils.HandleError(errors.New("query id is needed"), writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(errors.New("query id is needed"), writer, request, http.StatusBadRequest)
 			return
 		}
 

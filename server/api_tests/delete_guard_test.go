@@ -19,6 +19,8 @@ func TestDeleteHandlers_ZeroIDGuard(t *testing.T) {
 		{"resource removeSeries", "/v1/resource/removeSeries"},
 		{"tag delete", "/v1/tag/delete"},
 		{"series delete", "/v1/series/delete"},
+		{"query delete", "/v1/query/delete"},
+		{"category delete", "/v1/category/delete"},
 	}
 
 	for _, tt := range tests {
@@ -47,6 +49,8 @@ func TestDeleteHandlers_ZeroIDGuard_ExplicitZero(t *testing.T) {
 		{"resource removeSeries with zero ID", "/v1/resource/removeSeries"},
 		{"tag delete with zero ID", "/v1/tag/delete"},
 		{"series delete with zero ID", "/v1/series/delete"},
+		{"query delete with zero ID", "/v1/query/delete"},
+		{"category delete with zero ID", "/v1/category/delete"},
 	}
 
 	for _, tt := range tests {
@@ -59,4 +63,22 @@ func TestDeleteHandlers_ZeroIDGuard_ExplicitZero(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDeleteHandlers_ZeroIDGuard_VersionDelete(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	t.Run("version delete with no params", func(t *testing.T) {
+		rr := tc.MakeRequest(http.MethodPost, "/v1/resource/version/delete", nil)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d (body: %s)", rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("version delete with zero params", func(t *testing.T) {
+		rr := tc.MakeRequest(http.MethodPost, "/v1/resource/version/delete?resourceId=0&versionId=0", nil)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d (body: %s)", rr.Code, rr.Body.String())
+		}
+	})
 }

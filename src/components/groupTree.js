@@ -9,7 +9,7 @@ export function groupTree({ initialRows = [], highlightedPath = null, containing
     highlightedSet: new Set(pathArray),
     containingId,
     rootId,
-    requestAborter: null,
+    requestAborters: new Map(),
 
     init() {
       this.buildTree(initialRows);
@@ -177,12 +177,12 @@ export function groupTree({ initialRows = [], highlightedPath = null, containing
       this.render();
 
       try {
-        if (this.requestAborter) {
-          this.requestAborter();
+        if (this.requestAborters.has(nodeId)) {
+          this.requestAborters.get(nodeId)();
         }
 
         const { abort, ready } = abortableFetch(`/v1/group/tree/children?parentId=${nodeId}&limit=50`);
-        this.requestAborter = abort;
+        this.requestAborters.set(nodeId, abort);
 
         const res = await ready;
         if (!res.ok) throw new Error('Failed to load children');
@@ -197,7 +197,7 @@ export function groupTree({ initialRows = [], highlightedPath = null, containing
         }
       } finally {
         this.loadingNodes.delete(nodeId);
-        this.requestAborter = null;
+        this.requestAborters.delete(nodeId);
         this.render();
       }
     }
