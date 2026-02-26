@@ -28,6 +28,7 @@ require (
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
 	github.com/stretchr/testify v1.9.0
 	github.com/yuin/goldmark v1.4.13
+	github.com/yuin/gopher-lua v1.1.1
 	golang.org/x/image v0.18.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/postgres v1.2.3
@@ -62,7 +63,6 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/woodsbury/decimal128 v1.3.0 // indirect
-	github.com/yuin/gopher-lua v1.1.1 // indirect
 	golang.org/x/crypto v0.23.0 // indirect
 	golang.org/x/net v0.25.0 // indirect
 	golang.org/x/text v0.16.0 // indirect
