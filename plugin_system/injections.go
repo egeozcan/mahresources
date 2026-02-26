@@ -19,6 +19,9 @@ func (pm *PluginManager) RenderSlot(slot string, ctx map[string]any) string {
 	var parts []string
 	for _, inj := range injections {
 		L := inj.state
+		mu := pm.VMLock(L)
+		mu.Lock()
+
 		tbl := goToLuaTable(L, ctx)
 
 		err := L.CallByParam(lua.P{
@@ -28,6 +31,7 @@ func (pm *PluginManager) RenderSlot(slot string, ctx map[string]any) string {
 		}, tbl)
 
 		if err != nil {
+			mu.Unlock()
 			log.Printf("[plugin] warning: injection for slot %q returned error: %v", slot, err)
 			continue
 		}
@@ -38,6 +42,8 @@ func (pm *PluginManager) RenderSlot(slot string, ctx map[string]any) string {
 		if str, ok := ret.(lua.LString); ok {
 			parts = append(parts, string(str))
 		}
+
+		mu.Unlock()
 	}
 
 	return strings.Join(parts, "")

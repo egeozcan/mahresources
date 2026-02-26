@@ -38,6 +38,7 @@ type PluginManager struct {
 	hooks      map[string][]hookEntry
 	injections map[string][]injectionEntry
 	mu         sync.RWMutex
+	vmLocks    map[*lua.LState]*sync.Mutex
 }
 
 // NewPluginManager scans dir for subdirectories containing plugin.lua,
@@ -47,6 +48,7 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 	pm := &PluginManager{
 		hooks:      make(map[string][]hookEntry),
 		injections: make(map[string][]injectionEntry),
+		vmLocks:    make(map[*lua.LState]*sync.Mutex),
 	}
 
 	entries, err := os.ReadDir(dir)
@@ -86,6 +88,7 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 // reads metadata, and calls init() if present.
 func (pm *PluginManager) loadPlugin(pluginDir, scriptPath string) error {
 	L := lua.NewState()
+	pm.vmLocks[L] = &sync.Mutex{}
 
 	// Register the mah module.
 	pm.registerMahModule(L)
@@ -195,6 +198,11 @@ func (pm *PluginManager) GetInjections(slot string) []injectionEntry {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 	return pm.injections[slot]
+}
+
+// VMLock returns the mutex associated with the given Lua state.
+func (pm *PluginManager) VMLock(L *lua.LState) *sync.Mutex {
+	return pm.vmLocks[L]
 }
 
 // Close shuts down all Lua VMs.

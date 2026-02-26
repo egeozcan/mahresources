@@ -102,6 +102,9 @@ func (pm *PluginManager) RunBeforeHooks(event string, data map[string]any) (map[
 
 	for _, hook := range hooks {
 		L := hook.state
+		mu := pm.VMLock(L)
+		mu.Lock()
+
 		tbl := goToLuaTable(L, data)
 
 		err := L.CallByParam(lua.P{
@@ -111,6 +114,7 @@ func (pm *PluginManager) RunBeforeHooks(event string, data map[string]any) (map[
 		}, tbl)
 
 		if err != nil {
+			mu.Unlock()
 			if isAbort, reason := parseAbortError(err); isAbort {
 				return nil, &PluginAbortError{Reason: reason}
 			}
@@ -125,6 +129,8 @@ func (pm *PluginManager) RunBeforeHooks(event string, data map[string]any) (map[
 		if retTbl, ok := ret.(*lua.LTable); ok {
 			data = luaTableToGoMap(retTbl)
 		}
+
+		mu.Unlock()
 	}
 
 	return data, nil
@@ -140,6 +146,9 @@ func (pm *PluginManager) RunAfterHooks(event string, data map[string]any) {
 
 	for _, hook := range hooks {
 		L := hook.state
+		mu := pm.VMLock(L)
+		mu.Lock()
+
 		tbl := goToLuaTable(L, data)
 
 		err := L.CallByParam(lua.P{
@@ -147,6 +156,8 @@ func (pm *PluginManager) RunAfterHooks(event string, data map[string]any) {
 			NRet:    0,
 			Protect: true,
 		}, tbl)
+
+		mu.Unlock()
 
 		if err != nil {
 			log.Printf("[plugin] warning: after-hook for %q returned error: %v", event, err)
