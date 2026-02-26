@@ -56,6 +56,10 @@ type MahresourcesConfig struct {
 	VideoThumbnailLockTimeout time.Duration
 	// VideoThumbnailConcurrency is the max number of concurrent video thumbnail generations (default: 4)
 	VideoThumbnailConcurrency uint
+	// PluginPath is the directory where Lua plugins are loaded from (default: "./plugins")
+	PluginPath string
+	// PluginsDisabled disables all plugin loading when true
+	PluginsDisabled bool
 }
 
 // MahresourcesInputConfig holds all configuration options that can be passed
@@ -95,6 +99,10 @@ type MahresourcesInputConfig struct {
 	VideoThumbnailLockTimeout time.Duration
 	// VideoThumbnailConcurrency is the max number of concurrent video thumbnail generations (default: 4)
 	VideoThumbnailConcurrency uint
+	// PluginPath is the directory where Lua plugins are loaded from (default: "./plugins")
+	PluginPath string
+	// PluginsDisabled disables all plugin loading when true
+	PluginsDisabled bool
 }
 
 type MahresourcesLocks struct {
@@ -542,6 +550,8 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		VideoThumbnailTimeout:        videoThumbTimeout,
 		VideoThumbnailLockTimeout:    videoThumbLockTimeout,
 		VideoThumbnailConcurrency:    cfg.VideoThumbnailConcurrency,
+		PluginPath:                   cfg.PluginPath,
+		PluginsDisabled:              cfg.PluginsDisabled,
 	}), db, mainFs
 }
 

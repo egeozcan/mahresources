@@ -134,6 +134,10 @@ func main() {
 	sharePort := flag.String("share-port", os.Getenv("SHARE_PORT"), "Port for public share server (env: SHARE_PORT)")
 	shareBindAddress := flag.String("share-bind-address", getEnvOrDefault("SHARE_BIND_ADDRESS", "0.0.0.0"), "Bind address for share server (env: SHARE_BIND_ADDRESS)")
 
+	// Plugin options
+	pluginPath := flag.String("plugin-path", getEnvOrDefault("PLUGIN_PATH", "./plugins"), "Path to plugin directory (env: PLUGIN_PATH)")
+	pluginsDisabled := flag.Bool("plugins-disabled", os.Getenv("PLUGINS_DISABLED") == "1", "Disable all plugins (env: PLUGINS_DISABLED=1)")
+
 	flag.Parse()
 
 	// Build alt file systems map from flags or fall back to env vars
@@ -193,6 +197,8 @@ func main() {
 		VideoThumbnailTimeout:        *videoThumbTimeout,
 		VideoThumbnailLockTimeout:    *videoThumbLockTimeout,
 		VideoThumbnailConcurrency:    uint(*videoThumbConcurrency),
+		PluginPath:                   *pluginPath,
+		PluginsDisabled:              *pluginsDisabled,
 	}
 
 	context, db, mainFs := application_context.CreateContextWithConfig(cfg)
