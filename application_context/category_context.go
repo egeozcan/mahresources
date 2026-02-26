@@ -50,6 +50,22 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 		return nil, errors.New("category name must be non-empty")
 	}
 
+	hookData := map[string]any{
+		"id":          float64(0),
+		"name":        categoryQuery.Name,
+		"description": categoryQuery.Description,
+	}
+	hookData, hookErr := ctx.RunBeforePluginHooks("before_category_create", hookData)
+	if hookErr != nil {
+		return nil, hookErr
+	}
+	if name, ok := hookData["name"].(string); ok {
+		categoryQuery.Name = name
+	}
+	if desc, ok := hookData["description"].(string); ok {
+		categoryQuery.Description = desc
+	}
+
 	category := models.Category{
 		Name:          categoryQuery.Name,
 		Description:   categoryQuery.Description,
@@ -66,11 +82,33 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 
 	ctx.Logger().Info(models.LogActionCreate, "category", &category.ID, category.Name, "Created category", nil)
 
+	ctx.RunAfterPluginHooks("after_category_create", map[string]any{
+		"id":          float64(category.ID),
+		"name":        category.Name,
+		"description": category.Description,
+	})
+
 	ctx.InvalidateSearchCacheByType(EntityTypeCategory)
 	return &category, nil
 }
 
 func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.CategoryEditor) (*models.Category, error) {
+	hookData := map[string]any{
+		"id":          float64(categoryQuery.ID),
+		"name":        categoryQuery.Name,
+		"description": categoryQuery.Description,
+	}
+	hookData, hookErr := ctx.RunBeforePluginHooks("before_category_update", hookData)
+	if hookErr != nil {
+		return nil, hookErr
+	}
+	if name, ok := hookData["name"].(string); ok {
+		categoryQuery.Name = name
+	}
+	if desc, ok := hookData["description"].(string); ok {
+		categoryQuery.Description = desc
+	}
+
 	var category models.Category
 	if err := ctx.db.First(&category, categoryQuery.ID).Error; err != nil {
 		return nil, err
@@ -92,11 +130,23 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 
 	ctx.Logger().Info(models.LogActionUpdate, "category", &category.ID, category.Name, "Updated category", nil)
 
+	ctx.RunAfterPluginHooks("after_category_update", map[string]any{
+		"id":          float64(category.ID),
+		"name":        category.Name,
+		"description": category.Description,
+	})
+
 	ctx.InvalidateSearchCacheByType(EntityTypeCategory)
 	return &category, nil
 }
 
 func (ctx *MahresourcesContext) DeleteCategory(categoryId uint) error {
+	beforeData, hookErr := ctx.RunBeforePluginHooks("before_category_delete", map[string]any{"id": float64(categoryId)})
+	if hookErr != nil {
+		return hookErr
+	}
+	_ = beforeData
+
 	// Load category name before deletion for audit log
 	var category models.Category
 	if err := ctx.db.First(&category, categoryId).Error; err != nil {
@@ -107,6 +157,7 @@ func (ctx *MahresourcesContext) DeleteCategory(categoryId uint) error {
 	err := ctx.db.Select(clause.Associations).Delete(&category).Error
 	if err == nil {
 		ctx.Logger().Info(models.LogActionDelete, "category", &categoryId, categoryName, "Deleted category", nil)
+		ctx.RunAfterPluginHooks("after_category_delete", map[string]any{"id": float64(categoryId), "name": categoryName})
 		ctx.InvalidateSearchCacheByType(EntityTypeCategory)
 	}
 	return err

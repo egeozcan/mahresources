@@ -144,6 +144,22 @@ func (ctx *MahresourcesContext) GetResourcesWithIds(ids *[]uint) ([]*models.Reso
 }
 
 func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.ResourceEditor) (*models.Resource, error) {
+	hookData := map[string]any{
+		"id":          float64(resourceQuery.ID),
+		"name":        resourceQuery.Name,
+		"description": resourceQuery.Description,
+	}
+	hookData, hookErr := ctx.RunBeforePluginHooks("before_resource_update", hookData)
+	if hookErr != nil {
+		return nil, hookErr
+	}
+	if name, ok := hookData["name"].(string); ok {
+		resourceQuery.Name = name
+	}
+	if desc, ok := hookData["description"].(string); ok {
+		resourceQuery.Description = desc
+	}
+
 	var resource models.Resource
 
 	err := ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
@@ -273,6 +289,12 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 	}
 
 	ctx.Logger().Info(models.LogActionUpdate, "resource", &resource.ID, resource.Name, "Updated resource", nil)
+
+	ctx.RunAfterPluginHooks("after_resource_update", map[string]any{
+		"id":          float64(resource.ID),
+		"name":        resource.Name,
+		"description": resource.Description,
+	})
 
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)
 	return &resource, nil

@@ -20,6 +20,12 @@ import (
 )
 
 func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
+	beforeData, hookErr := ctx.RunBeforePluginHooks("before_resource_delete", map[string]any{"id": float64(resourceId)})
+	if hookErr != nil {
+		return hookErr
+	}
+	_ = beforeData
+
 	resource := models.Resource{ID: resourceId}
 
 	if err := ctx.db.Model(&resource).First(&resource).Error; err != nil {
@@ -110,6 +116,8 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 	}
 
 	ctx.Logger().Info(models.LogActionDelete, "resource", &resourceId, resource.Name, "Deleted resource", nil)
+
+	ctx.RunAfterPluginHooks("after_resource_delete", map[string]any{"id": float64(resourceId), "name": resource.Name})
 
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)
 	return nil

@@ -57,6 +57,22 @@ func (ctx *MahresourcesContext) CreateTag(tagQuery *query_models.TagCreator) (*m
 		return nil, errors.New("tag name must be non-empty")
 	}
 
+	hookData := map[string]any{
+		"id":          float64(0),
+		"name":        tagQuery.Name,
+		"description": tagQuery.Description,
+	}
+	hookData, hookErr := ctx.RunBeforePluginHooks("before_tag_create", hookData)
+	if hookErr != nil {
+		return nil, hookErr
+	}
+	if name, ok := hookData["name"].(string); ok {
+		tagQuery.Name = name
+	}
+	if desc, ok := hookData["description"].(string); ok {
+		tagQuery.Description = desc
+	}
+
 	tag := models.Tag{
 		Name:        tagQuery.Name,
 		Description: tagQuery.Description,
@@ -68,11 +84,33 @@ func (ctx *MahresourcesContext) CreateTag(tagQuery *query_models.TagCreator) (*m
 
 	ctx.Logger().Info(models.LogActionCreate, "tag", &tag.ID, tag.Name, "Created tag", nil)
 
+	ctx.RunAfterPluginHooks("after_tag_create", map[string]any{
+		"id":          float64(tag.ID),
+		"name":        tag.Name,
+		"description": tag.Description,
+	})
+
 	ctx.InvalidateSearchCacheByType(EntityTypeTag)
 	return &tag, nil
 }
 
 func (ctx *MahresourcesContext) UpdateTag(tagQuery *query_models.TagCreator) (*models.Tag, error) {
+	hookData := map[string]any{
+		"id":          float64(tagQuery.ID),
+		"name":        tagQuery.Name,
+		"description": tagQuery.Description,
+	}
+	hookData, hookErr := ctx.RunBeforePluginHooks("before_tag_update", hookData)
+	if hookErr != nil {
+		return nil, hookErr
+	}
+	if name, ok := hookData["name"].(string); ok {
+		tagQuery.Name = name
+	}
+	if desc, ok := hookData["description"].(string); ok {
+		tagQuery.Description = desc
+	}
+
 	var tag models.Tag
 	if err := ctx.db.First(&tag, tagQuery.ID).Error; err != nil {
 		return nil, err
@@ -89,11 +127,23 @@ func (ctx *MahresourcesContext) UpdateTag(tagQuery *query_models.TagCreator) (*m
 
 	ctx.Logger().Info(models.LogActionUpdate, "tag", &tag.ID, tag.Name, "Updated tag", nil)
 
+	ctx.RunAfterPluginHooks("after_tag_update", map[string]any{
+		"id":          float64(tag.ID),
+		"name":        tag.Name,
+		"description": tag.Description,
+	})
+
 	ctx.InvalidateSearchCacheByType(EntityTypeTag)
 	return &tag, nil
 }
 
 func (ctx *MahresourcesContext) DeleteTag(tagId uint) error {
+	beforeData, hookErr := ctx.RunBeforePluginHooks("before_tag_delete", map[string]any{"id": float64(tagId)})
+	if hookErr != nil {
+		return hookErr
+	}
+	_ = beforeData
+
 	// Load tag name before deletion for audit log
 	var tag models.Tag
 	if err := ctx.db.First(&tag, tagId).Error; err != nil {
@@ -104,6 +154,7 @@ func (ctx *MahresourcesContext) DeleteTag(tagId uint) error {
 	err := ctx.db.Select(clause.Associations).Delete(&tag).Error
 	if err == nil {
 		ctx.Logger().Info(models.LogActionDelete, "tag", &tagId, tagName, "Deleted tag", nil)
+		ctx.RunAfterPluginHooks("after_tag_delete", map[string]any{"id": float64(tagId), "name": tagName})
 		ctx.InvalidateSearchCacheByType(EntityTypeTag)
 	}
 	return err

@@ -554,6 +554,23 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 	}
 	fileSize := fileInfo.Size()
 
+	hookData := map[string]any{
+		"id":          float64(0),
+		"name":        name,
+		"description": resourceQuery.Description,
+	}
+	hookData, hookErr := ctx.RunBeforePluginHooks("before_resource_create", hookData)
+	if hookErr != nil {
+		tx.Rollback()
+		return nil, hookErr
+	}
+	if hName, ok := hookData["name"].(string); ok {
+		name = hName
+	}
+	if hDesc, ok := hookData["description"].(string); ok {
+		resourceQuery.Description = hDesc
+	}
+
 	res := &models.Resource{
 		Name:               name,
 		Hash:               hash,
@@ -660,6 +677,12 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 	}
 
 	ctx.Logger().Info(models.LogActionCreate, "resource", &res.ID, res.Name, "Created resource", nil)
+
+	ctx.RunAfterPluginHooks("after_resource_create", map[string]any{
+		"id":          float64(res.ID),
+		"name":        res.Name,
+		"description": res.Description,
+	})
 
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)
 

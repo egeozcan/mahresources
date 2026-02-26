@@ -30,6 +30,26 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 		noteTypeId = &noteQuery.NoteTypeId
 	}
 
+	hookEvent := "before_note_create"
+	if noteQuery.ID != 0 {
+		hookEvent = "before_note_update"
+	}
+	hookData := map[string]any{
+		"id":          float64(noteQuery.ID),
+		"name":        noteQuery.Name,
+		"description": noteQuery.Description,
+	}
+	hookData, hookErr := ctx.RunBeforePluginHooks(hookEvent, hookData)
+	if hookErr != nil {
+		return nil, hookErr
+	}
+	if name, ok := hookData["name"].(string); ok {
+		noteQuery.Name = name
+	}
+	if desc, ok := hookData["description"].(string); ok {
+		noteQuery.Description = desc
+	}
+
 	tx := ctx.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -130,6 +150,16 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 		ctx.Logger().Info(models.LogActionUpdate, "note", &note.ID, note.Name, "Updated note", nil)
 	}
 
+	afterEvent := "after_note_create"
+	if noteQuery.ID != 0 {
+		afterEvent = "after_note_update"
+	}
+	ctx.RunAfterPluginHooks(afterEvent, map[string]any{
+		"id":          float64(note.ID),
+		"name":        note.Name,
+		"description": note.Description,
+	})
+
 	ctx.InvalidateSearchCacheByType(EntityTypeNote)
 	return &note, nil
 }
@@ -184,6 +214,12 @@ func (ctx *MahresourcesContext) GetPopularNoteTags(query *query_models.NoteQuery
 }
 
 func (ctx *MahresourcesContext) DeleteNote(noteId uint) error {
+	beforeData, hookErr := ctx.RunBeforePluginHooks("before_note_delete", map[string]any{"id": float64(noteId)})
+	if hookErr != nil {
+		return hookErr
+	}
+	_ = beforeData
+
 	// Load note name before deletion for audit log
 	var note models.Note
 	if err := ctx.db.First(&note, noteId).Error; err != nil {
@@ -194,6 +230,7 @@ func (ctx *MahresourcesContext) DeleteNote(noteId uint) error {
 	err := ctx.db.Select(clause.Associations).Delete(&note).Error
 	if err == nil {
 		ctx.Logger().Info(models.LogActionDelete, "note", &noteId, noteName, "Deleted note", nil)
+		ctx.RunAfterPluginHooks("after_note_delete", map[string]any{"id": float64(noteId), "name": noteName})
 		ctx.InvalidateSearchCacheByType(EntityTypeNote)
 	}
 	return err

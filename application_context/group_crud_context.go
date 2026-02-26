@@ -20,6 +20,22 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 		groupQuery.Meta = "{}"
 	}
 
+	hookData := map[string]any{
+		"id":          float64(0),
+		"name":        groupQuery.Name,
+		"description": groupQuery.Description,
+	}
+	hookData, hookErr := ctx.RunBeforePluginHooks("before_group_create", hookData)
+	if hookErr != nil {
+		return nil, hookErr
+	}
+	if name, ok := hookData["name"].(string); ok {
+		groupQuery.Name = name
+	}
+	if desc, ok := hookData["description"].(string); ok {
+		groupQuery.Description = desc
+	}
+
 	tx := ctx.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -76,6 +92,12 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 
 	ctx.Logger().Info(models.LogActionCreate, "group", &group.ID, group.Name, "Created group", nil)
 
+	ctx.RunAfterPluginHooks("after_group_create", map[string]any{
+		"id":          float64(group.ID),
+		"name":        group.Name,
+		"description": group.Description,
+	})
+
 	ctx.InvalidateSearchCacheByType(EntityTypeGroup)
 	return &group, nil
 }
@@ -83,6 +105,22 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor) (*models.Group, error) {
 	if groupQuery.Name == "" {
 		return nil, errors.New("group name needed")
+	}
+
+	hookData := map[string]any{
+		"id":          float64(groupQuery.ID),
+		"name":        groupQuery.Name,
+		"description": groupQuery.Description,
+	}
+	hookData, hookErr := ctx.RunBeforePluginHooks("before_group_update", hookData)
+	if hookErr != nil {
+		return nil, hookErr
+	}
+	if name, ok := hookData["name"].(string); ok {
+		groupQuery.Name = name
+	}
+	if desc, ok := hookData["description"].(string); ok {
+		groupQuery.Description = desc
 	}
 
 	tx := ctx.db.Begin()
@@ -149,6 +187,12 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 	}
 
 	ctx.Logger().Info(models.LogActionUpdate, "group", &group.ID, group.Name, "Updated group", nil)
+
+	ctx.RunAfterPluginHooks("after_group_update", map[string]any{
+		"id":          float64(group.ID),
+		"name":        group.Name,
+		"description": group.Description,
+	})
 
 	ctx.InvalidateSearchCacheByType(EntityTypeGroup)
 	return group, nil
@@ -226,6 +270,12 @@ func (ctx *MahresourcesContext) GetPopularGroupTags(query *query_models.GroupQue
 }
 
 func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {
+	beforeData, hookErr := ctx.RunBeforePluginHooks("before_group_delete", map[string]any{"id": float64(groupId)})
+	if hookErr != nil {
+		return hookErr
+	}
+	_ = beforeData
+
 	// Load group name before deletion for audit log
 	var group models.Group
 	if err := ctx.db.First(&group, groupId).Error; err != nil {
@@ -242,6 +292,7 @@ func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {
 	})
 	if err == nil {
 		ctx.Logger().Info(models.LogActionDelete, "group", &groupId, groupName, "Deleted group", nil)
+		ctx.RunAfterPluginHooks("after_group_delete", map[string]any{"id": float64(groupId), "name": groupName})
 		ctx.InvalidateSearchCacheByType(EntityTypeGroup)
 	}
 	return err
