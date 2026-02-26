@@ -9,9 +9,141 @@
 
     {% include "/partials/description.tpl" with description=resource.Description %}
 
-    <div class="mb-6">
-        {% include "/partials/json.tpl" with jsonData=resource keys="ID,CreatedAt,UpdatedAt,Name,OriginalName,OriginalLocation,Hash,HashType,Location,StorageLocation,Description,Width,Height" %}
-    </div>
+    <section class="mb-6" aria-label="Resource metadata">
+        <dl class="grid grid-cols-2 md:grid-cols-3 gap-3" x-data>
+            {% if resource.Name %}
+            <div class="group relative bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-lg px-4 py-3">
+                <dt class="text-xs text-gray-500">Name</dt>
+                <dd class="text-sm mt-0.5">{{ resource.Name }}</dd>
+                <button
+                    type="button"
+                    class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
+                    aria-label="Copy Name"
+                    @click="updateClipboard('{{ resource.Name|escapejs }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
+                >⧉</button>
+            </div>
+            {% endif %}
+            {% if resource.OriginalName %}
+            <div class="group relative bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-lg px-4 py-3">
+                <dt class="text-xs text-gray-500">Original Name</dt>
+                <dd class="text-sm mt-0.5">{{ resource.OriginalName }}</dd>
+                <button
+                    type="button"
+                    class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
+                    aria-label="Copy Original Name"
+                    @click="updateClipboard('{{ resource.OriginalName|escapejs }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
+                >⧉</button>
+            </div>
+            {% endif %}
+            {% if resource.Width and resource.Height %}
+            <div class="group relative bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-lg px-4 py-3">
+                <dt class="text-xs text-gray-500">Dimensions</dt>
+                <dd class="text-sm mt-0.5">{{ resource.Width }} × {{ resource.Height }}</dd>
+                <button
+                    type="button"
+                    class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
+                    aria-label="Copy Dimensions"
+                    @click="updateClipboard('{{ resource.Width }}x{{ resource.Height }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
+                >⧉</button>
+            </div>
+            {% endif %}
+            <div class="group relative bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-lg px-4 py-3">
+                <dt class="text-xs text-gray-500">Created</dt>
+                <dd class="text-sm mt-0.5">{{ resource.CreatedAt|date:"Jan 02, 2006 15:04" }}</dd>
+                <button
+                    type="button"
+                    class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
+                    aria-label="Copy Created"
+                    @click="updateClipboard('{{ resource.CreatedAt|date:"2006-01-02T15:04:05Z07:00" }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
+                >⧉</button>
+            </div>
+            <div class="group relative bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-lg px-4 py-3">
+                <dt class="text-xs text-gray-500">Updated</dt>
+                <dd class="text-sm mt-0.5">{{ resource.UpdatedAt|date:"Jan 02, 2006 15:04" }}</dd>
+                <button
+                    type="button"
+                    class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
+                    aria-label="Copy Updated"
+                    @click="updateClipboard('{{ resource.UpdatedAt|date:"2006-01-02T15:04:05Z07:00" }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
+                >⧉</button>
+            </div>
+        </dl>
+        <details class="mt-3">
+            <summary class="cursor-pointer text-sm text-gray-500 hover:text-gray-700 select-none py-1">Technical Details</summary>
+            <dl class="grid grid-cols-2 md:grid-cols-3 gap-3 mt-3" x-data>
+                <div class="group relative bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-lg px-4 py-3">
+                    <dt class="text-xs text-gray-500">ID</dt>
+                    <dd class="text-sm mt-0.5">{{ resource.ID }}</dd>
+                    <button
+                        type="button"
+                        class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
+                        aria-label="Copy ID"
+                        @click="updateClipboard('{{ resource.ID }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
+                    >⧉</button>
+                </div>
+                {% if resource.Hash %}
+                <div class="group relative bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-lg px-4 py-3">
+                    <dt class="text-xs text-gray-500">Hash{% if resource.HashType %} ({{ resource.HashType }}){% endif %}</dt>
+                    <dd class="text-sm mt-0.5 break-all font-mono">{{ resource.Hash }}</dd>
+                    <button
+                        type="button"
+                        class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
+                        aria-label="Copy Hash"
+                        @click="updateClipboard('{{ resource.Hash|escapejs }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
+                    >⧉</button>
+                </div>
+                {% endif %}
+                {% if resource.Location %}
+                <div class="group relative bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-lg px-4 py-3">
+                    <dt class="text-xs text-gray-500">Location</dt>
+                    <dd class="text-sm mt-0.5 break-all font-mono">{{ resource.Location }}</dd>
+                    <button
+                        type="button"
+                        class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
+                        aria-label="Copy Location"
+                        @click="updateClipboard('{{ resource.Location|escapejs }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
+                    >⧉</button>
+                </div>
+                {% endif %}
+                {% if resource.OriginalLocation %}
+                <div class="group relative bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-lg px-4 py-3">
+                    <dt class="text-xs text-gray-500">Original Location</dt>
+                    <dd class="text-sm mt-0.5 break-all font-mono">{{ resource.OriginalLocation }}</dd>
+                    <button
+                        type="button"
+                        class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
+                        aria-label="Copy Original Location"
+                        @click="updateClipboard('{{ resource.OriginalLocation|escapejs }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
+                    >⧉</button>
+                </div>
+                {% endif %}
+                {% if resource.StorageLocation %}
+                <div class="group relative bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-lg px-4 py-3">
+                    <dt class="text-xs text-gray-500">Storage Location</dt>
+                    <dd class="text-sm mt-0.5">{{ resource.StorageLocation }}</dd>
+                    <button
+                        type="button"
+                        class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
+                        aria-label="Copy Storage Location"
+                        @click="updateClipboard('{{ resource.StorageLocation|escapejs }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
+                    >⧉</button>
+                </div>
+                {% endif %}
+                {% if resource.Description %}
+                <div class="group relative bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-lg px-4 py-3 col-span-2 md:col-span-3">
+                    <dt class="text-xs text-gray-500">Description</dt>
+                    <dd class="text-sm mt-0.5">{{ resource.Description }}</dd>
+                    <button
+                        type="button"
+                        class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
+                        aria-label="Copy Description"
+                        @click="updateClipboard('{{ resource.Description|escapejs }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
+                    >⧉</button>
+                </div>
+                {% endif %}
+            </dl>
+        </details>
+    </section>
 
     {% include "/partials/seeAll.tpl" with entities=resource.Notes subtitle="Notes" formAction="/notes" formID=resource.ID formParamName="resources" templateName="note" %}
     {% include "/partials/seeAll.tpl" with entities=resource.Groups subtitle="Groups" formAction="/groups" formID=resource.ID formParamName="resources" templateName="group" %}
