@@ -78,25 +78,40 @@ var templates = map[string]templateInformation{
 	"/log":  {template_context_providers.LogContextProvider, "displayLog.tpl", http.MethodGet},
 }
 
+func wrapContextWithPlugins(appContext *application_context.MahresourcesContext, ctxFn func(request *http.Request) pongo2.Context) func(request *http.Request) pongo2.Context {
+	pm := appContext.PluginManager()
+	if pm == nil {
+		return ctxFn
+	}
+	return func(request *http.Request) pongo2.Context {
+		ctx := ctxFn(request)
+		ctx["_pluginManager"] = pm
+		ctx["currentPath"] = request.URL.String()
+		return ctx
+	}
+}
+
 func registerRoutes(router *mux.Router, appContext *application_context.MahresourcesContext) {
 	for path, templateInfo := range templates {
+		wrappedCtxFn := wrapContextWithPlugins(appContext, templateInfo.contextFn(appContext))
+
 		router.Methods(templateInfo.method).Path(path).HandlerFunc(
-			template_handlers.RenderTemplate(templateInfo.templateName, templateInfo.contextFn(appContext)),
+			template_handlers.RenderTemplate(templateInfo.templateName, wrappedCtxFn),
 		)
 
 		router.Methods(templateInfo.method).Path(path + ".json").HandlerFunc(
-			template_handlers.RenderTemplate(templateInfo.templateName, templateInfo.contextFn(appContext)),
+			template_handlers.RenderTemplate(templateInfo.templateName, wrappedCtxFn),
 		)
 
 		router.Methods(templateInfo.method).Path(path + ".body").HandlerFunc(
-			template_handlers.RenderTemplate(templateInfo.templateName, templateInfo.contextFn(appContext)),
+			template_handlers.RenderTemplate(templateInfo.templateName, wrappedCtxFn),
 		)
 	}
 
 	router.Methods(http.MethodGet).
 		Path("/partials/autocompleter").
 		HandlerFunc(template_handlers.
-			RenderTemplate("partials/form/autocompleter.tpl", template_context_providers.PartialContextProvider(appContext)))
+			RenderTemplate("partials/form/autocompleter.tpl", wrapContextWithPlugins(appContext, template_context_providers.PartialContextProvider(appContext))))
 
 	router.Methods(http.MethodGet).Path("/").HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		http.Redirect(writer, request, "/notes", http.StatusMovedPermanently)

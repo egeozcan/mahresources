@@ -49,13 +49,15 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 		if accept := request.Header.Get("Accept"); strings.Contains(accept, constants.JSON) || strings.HasSuffix(request.URL.Path, ".json") {
 			writer.Header().Set("Content-Type", constants.JSON)
 			if err := json.NewEncoder(writer).Encode(discardFields(map[string]bool{
-				"partial":     true,
-				"path":        true,
-				"withQuery":   true,
-				"hasQuery":    true,
-				"stringId":    true,
-				"getNextId":   true,
-				"dereference": true,
+				"partial":        true,
+				"path":           true,
+				"withQuery":      true,
+				"hasQuery":       true,
+				"stringId":       true,
+				"getNextId":      true,
+				"dereference":    true,
+				"_pluginManager": true,
+				"currentPath":    true,
 			}, context)); err != nil {
 				fmt.Println(err)
 			}
