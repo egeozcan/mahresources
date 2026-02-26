@@ -14,10 +14,10 @@
             {% if resource.Name %}
             <div class="group relative bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-lg px-4 py-3">
                 <dt class="text-xs text-gray-500">Name</dt>
-                <dd class="text-sm mt-0.5">{{ resource.Name }}</dd>
+                <dd class="text-sm mt-0.5 break-all">{{ resource.Name }}</dd>
                 <button
                     type="button"
-                    class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
+                    class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
                     aria-label="Copy Name"
                     @click="updateClipboard('{{ resource.Name|escapejs }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
                 >⧉</button>
@@ -26,10 +26,10 @@
             {% if resource.OriginalName %}
             <div class="group relative bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-lg px-4 py-3">
                 <dt class="text-xs text-gray-500">Original Name</dt>
-                <dd class="text-sm mt-0.5">{{ resource.OriginalName }}</dd>
+                <dd class="text-sm mt-0.5 break-all">{{ resource.OriginalName }}</dd>
                 <button
                     type="button"
-                    class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
+                    class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
                     aria-label="Copy Original Name"
                     @click="updateClipboard('{{ resource.OriginalName|escapejs }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
                 >⧉</button>
@@ -41,7 +41,7 @@
                 <dd class="text-sm mt-0.5">{{ resource.Width }} × {{ resource.Height }}</dd>
                 <button
                     type="button"
-                    class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
+                    class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
                     aria-label="Copy Dimensions"
                     @click="updateClipboard('{{ resource.Width }}x{{ resource.Height }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
                 >⧉</button>
@@ -52,7 +52,7 @@
                 <dd class="text-sm mt-0.5">{{ resource.CreatedAt|date:"Jan 02, 2006 15:04" }}</dd>
                 <button
                     type="button"
-                    class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
+                    class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
                     aria-label="Copy Created"
                     @click="updateClipboard('{{ resource.CreatedAt|date:"2006-01-02T15:04:05Z07:00" }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
                 >⧉</button>
@@ -62,7 +62,7 @@
                 <dd class="text-sm mt-0.5">{{ resource.UpdatedAt|date:"Jan 02, 2006 15:04" }}</dd>
                 <button
                     type="button"
-                    class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
+                    class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
                     aria-label="Copy Updated"
                     @click="updateClipboard('{{ resource.UpdatedAt|date:"2006-01-02T15:04:05Z07:00" }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
                 >⧉</button>
@@ -76,7 +76,7 @@
                     <dd class="text-sm mt-0.5">{{ resource.ID }}</dd>
                     <button
                         type="button"
-                        class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
+                        class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
                         aria-label="Copy ID"
                         @click="updateClipboard('{{ resource.ID }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
                     >⧉</button>
@@ -87,7 +87,7 @@
                     <dd class="text-sm mt-0.5 break-all font-mono">{{ resource.Hash }}</dd>
                     <button
                         type="button"
-                        class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
+                        class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
                         aria-label="Copy Hash"
                         @click="updateClipboard('{{ resource.Hash|escapejs }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
                     >⧉</button>
@@ -99,7 +99,7 @@
                     <dd class="text-sm mt-0.5 break-all font-mono">{{ resource.Location }}</dd>
                     <button
                         type="button"
-                        class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
+                        class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
                         aria-label="Copy Location"
                         @click="updateClipboard('{{ resource.Location|escapejs }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
                     >⧉</button>
@@ -111,7 +111,7 @@
                     <dd class="text-sm mt-0.5 break-all font-mono">{{ resource.OriginalLocation }}</dd>
                     <button
                         type="button"
-                        class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
+                        class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
                         aria-label="Copy Original Location"
                         @click="updateClipboard('{{ resource.OriginalLocation|escapejs }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
                     >⧉</button>
@@ -120,10 +120,10 @@
                 {% if resource.StorageLocation %}
                 <div class="group relative bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-lg px-4 py-3">
                     <dt class="text-xs text-gray-500">Storage Location</dt>
-                    <dd class="text-sm mt-0.5">{{ resource.StorageLocation }}</dd>
+                    <dd class="text-sm mt-0.5 break-all font-mono">{{ resource.StorageLocation }}</dd>
                     <button
                         type="button"
-                        class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
+                        class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
                         aria-label="Copy Storage Location"
                         @click="updateClipboard('{{ resource.StorageLocation|escapejs }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
                     >⧉</button>
@@ -135,7 +135,7 @@
                     <dd class="text-sm mt-0.5">{{ resource.Description }}</dd>
                     <button
                         type="button"
-                        class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
+                        class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-0.5"
                         aria-label="Copy Description"
                         @click="updateClipboard('{{ resource.Description|escapejs }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
                     >⧉</button>
