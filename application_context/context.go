@@ -20,6 +20,7 @@ import (
 	"mahresources/fts"
 	"mahresources/lib"
 	"mahresources/models"
+	"mahresources/plugin_system"
 	"mahresources/server/interfaces"
 	"mahresources/storage"
 )
@@ -141,6 +142,8 @@ type MahresourcesContext struct {
 	ftsProvider fts.FTSProvider
 	// ftsEnabled indicates whether FTS is available
 	ftsEnabled bool
+	// pluginManager manages Lua plugin loading and hook execution
+	pluginManager *plugin_system.PluginManager
 }
 
 func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.DB, config *MahresourcesConfig) *MahresourcesContext {
@@ -198,7 +201,50 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		OverallTimeout: config.RemoteResourceOverallTimeout,
 	})
 
+	// Initialize plugin manager unless disabled
+	if !config.PluginsDisabled {
+		pluginPath := config.PluginPath
+		if pluginPath == "" {
+			pluginPath = "./plugins"
+		}
+		pm, pmErr := plugin_system.NewPluginManager(pluginPath)
+		if pmErr != nil {
+			log.Printf("[plugin] WARNING: failed to initialize plugin system: %v", pmErr)
+		} else {
+			ctx.pluginManager = pm
+			if plugins := pm.Plugins(); len(plugins) > 0 {
+				log.Printf("[plugin] Loaded %d plugin(s)", len(plugins))
+				for _, p := range plugins {
+					log.Printf("[plugin]   - %s v%s", p.Name, p.Version)
+				}
+			}
+		}
+	}
+
 	return ctx
+}
+
+// PluginManager returns the plugin manager, or nil if plugins are disabled.
+func (ctx *MahresourcesContext) PluginManager() *plugin_system.PluginManager {
+	return ctx.pluginManager
+}
+
+// RunBeforePluginHooks executes before-hooks for the given event.
+// If no plugin manager is active, data is returned unmodified.
+func (ctx *MahresourcesContext) RunBeforePluginHooks(event string, data map[string]any) (map[string]any, error) {
+	if ctx.pluginManager == nil {
+		return data, nil
+	}
+	return ctx.pluginManager.RunBeforeHooks(event, data)
+}
+
+// RunAfterPluginHooks executes after-hooks for the given event (fire-and-forget).
+// If no plugin manager is active, this is a no-op.
+func (ctx *MahresourcesContext) RunAfterPluginHooks(event string, data map[string]any) {
+	if ctx.pluginManager == nil {
+		return
+	}
+	ctx.pluginManager.RunAfterHooks(event, data)
 }
 
 // DownloadManager returns the download queue manager for background remote downloads

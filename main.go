@@ -203,6 +203,11 @@ func main() {
 
 	context, db, mainFs := application_context.CreateContextWithConfig(cfg)
 
+	// Ensure plugin manager is cleaned up on shutdown
+	if context.PluginManager() != nil {
+		defer context.PluginManager().Close()
+	}
+
 	// Validate or auto-detect ffmpeg
 	if context.Config.FfmpegPath != "" {
 		if _, err := exec.LookPath(context.Config.FfmpegPath); err != nil {
