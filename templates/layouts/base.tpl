@@ -25,9 +25,11 @@
     <meta name="msapplication-TileImage" content="/public/favicon/ms-icon-144x144.png">
     <meta name="theme-color" content="#ffffff">
     {% block head %}{% endblock %}
+    {% plugin_slot "head" %}
 </head>
 <body class="site">
     <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:p-4 focus:bg-white focus:text-indigo-600">Skip to main content</a>
+    {% plugin_slot "page_top" %}
     <header class="header flex items-center justify-between gap-2 px-2">
         {% include "/partials/menu.tpl" %}
         <div class="flex items-center gap-1 flex-shrink-0">
@@ -52,7 +54,9 @@
             <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-600">Updated: </span>{{ mainEntity.UpdatedAt|date:"2006-01-02 15:04" }}</small>
             <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-600">Created: </span>{{ mainEntity.CreatedAt|date:"2006-01-02 15:04" }}</small>
             {% endif %}
+            {% plugin_slot "sidebar_top" %}
             {% block sidebar %}{% endblock %}
+            {% plugin_slot "sidebar_bottom" %}
         </aside>
         <main class="main">
             {% block prebody %}{% endblock %}
@@ -62,9 +66,11 @@
     <footer class="footer sticky bottom-0 bg-white">
         {% include "/partials/pagination.tpl" %}
         {% block footer %}{% endblock %}
+        {% plugin_slot "page_bottom" %}
     </footer>
     {% include "/partials/lightbox.tpl" %}
     {% include "/partials/pasteUpload.tpl" %}
     {% include "/partials/downloadCockpit.tpl" %}
+    {% plugin_slot "scripts" %}
 </body>
 </html>

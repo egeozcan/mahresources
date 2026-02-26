@@ -1,6 +1,7 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
+    {% plugin_slot "note_detail_before" %}
     <div x-data="{ entity: {{ note|json }} }" data-paste-context='{"type":"note","id":{{ note.ID }},"ownerId":{{ note.OwnerId }},"name":"{{ note.Name|escapejs }}"}'>
         {% autoescape off %}
             {{ note.NoteType.CustomHeader }}
@@ -19,7 +20,7 @@
 
     {% include "/partials/seeAll.tpl" with entities=note.Groups subtitle="Groups" formAction="/groups" formID=note.ID formParamName="notes" templateName="group" %}
     {% include "/partials/seeAll.tpl" with entities=note.Resources subtitle="Resources" formAction="/resources" addAction="/resource/new" addFormSecondParamName="ownerId" addFormSecondParamValue=note.OwnerId formID=note.ID formParamName="notes" templateName="resource" %}
-
+    {% plugin_slot "note_detail_after" %}
 {% endblock %}
 
 {% block sidebar %}
@@ -51,4 +52,5 @@
     {% include "/partials/json.tpl" with jsonData=note.Meta %}
 
     {% include "/partials/noteShare.tpl" with note=note shareEnabled=shareEnabled shareBaseUrl=shareBaseUrl %}
+    {% plugin_slot "note_detail_sidebar" %}
 {% endblock %}

@@ -1,6 +1,7 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
+    {% plugin_slot "resource_detail_before" %}
     <div x-data="{ entity: {{ resource|json }} }">
         {% autoescape off %}
             {{ resource.ResourceCategory.CustomHeader }}
@@ -188,6 +189,7 @@
     {% endif %}
 
     {% include "/partials/versionPanel.tpl" with versions=versions currentVersionId=resource.CurrentVersionID resourceId=resource.ID %}
+    {% plugin_slot "resource_detail_after" %}
 {% endblock %}
 
 {% block sidebar %}
@@ -229,4 +231,5 @@
 
     {% include "/partials/sideTitle.tpl" with title="Meta Data" %}
     {% include "/partials/json.tpl" with jsonData=resource.Meta %}
+    {% plugin_slot "resource_detail_sidebar" %}
 {% endblock %}

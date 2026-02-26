@@ -1,6 +1,7 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
+    {% plugin_slot "group_detail_before" %}
     <div x-data="{ entity: {{ group|json }} }" data-paste-context='{"type":"group","id":{{ group.ID }},"name":"{{ group.Name|escapejs }}"}'>
         {% autoescape off %}
             {{ group.Category.CustomHeader }}
@@ -30,7 +31,6 @@
     </details>
 
     {% endwith %}
-
     <details class="mb-6"{% if group.Relationships || group.BackRelations %}open{% endif %}>
         <summary class="bg-gray-100 shadow rounded-lg block w-full p-4 text-left cursor-pointer select-none">Relations</summary>
         <div class="p-4 border-dashed border-4 border-gray-100 border-t-0">
@@ -38,6 +38,7 @@
             {% include "/partials/seeAll.tpl" with entities=group.BackRelations subtitle="Reverse Relations" formID=group.ID formAction="/relations" formParamName="ToGroupId" addAction="/relation/new" templateName="relation_reverse" %}
         </div>
     </details>
+    {% plugin_slot "group_detail_after" %}
 {% endblock %}
 
 {% block sidebar %}
@@ -82,4 +83,5 @@
         <p>Clone group?</p>
         <div class="mt-2">{% include "/partials/form/searchButton.tpl" with text="Clone" %}</div>
     </form>
+    {% plugin_slot "group_detail_sidebar" %}
 {% endblock %}
