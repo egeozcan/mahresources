@@ -7,6 +7,7 @@ toolchain go1.24.1
 require (
 	github.com/Nr90/imgsim v0.0.0-20180202144352-5caa057144b0
 	github.com/anthonynsimon/bild v0.14.0
+	github.com/arran4/golang-ical v0.3.2
 	github.com/c2h5oh/datasize v0.0.0-20200825124411-48ed595a09d2
 	github.com/disintegration/imaging v1.6.2
 	github.com/flosch/pongo2-addons v0.0.0-20210526150811-f969446c5b72
@@ -15,6 +16,7 @@ require (
 	github.com/getkin/kin-openapi v0.133.0
 	github.com/gorilla/mux v1.8.0
 	github.com/gorilla/schema v1.4.1
+	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/invopop/jsonschema v0.7.0
 	github.com/jmoiron/sqlx v1.3.4
 	github.com/joho/godotenv v1.4.0
@@ -34,13 +36,11 @@ require (
 )
 
 require (
-	github.com/arran4/golang-ical v0.3.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/extemporalgenome/slug v0.0.0-20150414033109-0320c85e32e0 // indirect
 	github.com/flosch/go-humanize v0.0.0-20140728123800-3ba51eabe506 // indirect
 	github.com/go-openapi/jsonpointer v0.21.0 // indirect
 	github.com/go-openapi/swag v0.23.0 // indirect
-	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/iancoleman/orderedmap v0.0.0-20190318233801-ac98e3ecb4b0 // indirect
 	github.com/jackc/chunkreader/v2 v2.0.1 // indirect
 	github.com/jackc/pgconn v1.14.3 // indirect
