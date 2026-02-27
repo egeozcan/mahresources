@@ -39,6 +39,7 @@ type PluginManager struct {
 	injections map[string][]injectionEntry
 	mu         sync.RWMutex
 	vmLocks    map[*lua.LState]*sync.Mutex
+	dbProvider EntityQuerier
 }
 
 // NewPluginManager scans dir for subdirectories containing plugin.lua,
@@ -175,6 +176,8 @@ func (pm *PluginManager) registerMahModule(L *lua.LState) {
 		L.RaiseError("PLUGIN_ABORT: %s", reason)
 		return 0
 	}))
+
+	pm.registerDbModule(L, mahMod)
 
 	L.SetGlobal("mah", mahMod)
 }

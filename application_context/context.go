@@ -218,6 +218,8 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 					log.Printf("[plugin]   - %s v%s", p.Name, p.Version)
 				}
 			}
+			// Wire database access into plugins (set after creation to break circular dep)
+			pm.SetEntityQuerier(NewPluginDBAdapter(ctx))
 		}
 	}
 
