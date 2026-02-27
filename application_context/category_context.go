@@ -141,11 +141,10 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 }
 
 func (ctx *MahresourcesContext) DeleteCategory(categoryId uint) error {
-	beforeData, hookErr := ctx.RunBeforePluginHooks("before_category_delete", map[string]any{"id": float64(categoryId)})
+	_, hookErr := ctx.RunBeforePluginHooks("before_category_delete", map[string]any{"id": float64(categoryId)})
 	if hookErr != nil {
 		return hookErr
 	}
-	_ = beforeData
 
 	// Load category name before deletion for audit log
 	var category models.Category

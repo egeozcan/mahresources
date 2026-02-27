@@ -20,11 +20,10 @@ import (
 )
 
 func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
-	beforeData, hookErr := ctx.RunBeforePluginHooks("before_resource_delete", map[string]any{"id": float64(resourceId)})
+	_, hookErr := ctx.RunBeforePluginHooks("before_resource_delete", map[string]any{"id": float64(resourceId)})
 	if hookErr != nil {
 		return hookErr
 	}
-	_ = beforeData
 
 	resource := models.Resource{ID: resourceId}
 

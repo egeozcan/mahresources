@@ -214,11 +214,10 @@ func (ctx *MahresourcesContext) GetPopularNoteTags(query *query_models.NoteQuery
 }
 
 func (ctx *MahresourcesContext) DeleteNote(noteId uint) error {
-	beforeData, hookErr := ctx.RunBeforePluginHooks("before_note_delete", map[string]any{"id": float64(noteId)})
+	_, hookErr := ctx.RunBeforePluginHooks("before_note_delete", map[string]any{"id": float64(noteId)})
 	if hookErr != nil {
 		return hookErr
 	}
-	_ = beforeData
 
 	// Load note name before deletion for audit log
 	var note models.Note

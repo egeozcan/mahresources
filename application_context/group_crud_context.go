@@ -270,11 +270,10 @@ func (ctx *MahresourcesContext) GetPopularGroupTags(query *query_models.GroupQue
 }
 
 func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {
-	beforeData, hookErr := ctx.RunBeforePluginHooks("before_group_delete", map[string]any{"id": float64(groupId)})
+	_, hookErr := ctx.RunBeforePluginHooks("before_group_delete", map[string]any{"id": float64(groupId)})
 	if hookErr != nil {
 		return hookErr
 	}
-	_ = beforeData
 
 	// Load group name before deletion for audit log
 	var group models.Group

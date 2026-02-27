@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -39,7 +40,7 @@ type PluginManager struct {
 	injections map[string][]injectionEntry
 	mu         sync.RWMutex
 	vmLocks    map[*lua.LState]*sync.Mutex
-	dbProvider EntityQuerier
+	dbProvider atomic.Value
 }
 
 // NewPluginManager scans dir for subdirectories containing plugin.lua,
@@ -88,7 +89,29 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 // loadPlugin creates a Lua VM, registers the mah module, executes plugin.lua,
 // reads metadata, and calls init() if present.
 func (pm *PluginManager) loadPlugin(pluginDir, scriptPath string) error {
-	L := lua.NewState()
+	L := lua.NewState(lua.Options{SkipOpenLibs: true})
+
+	// Open only safe libraries (excludes os, io, debug, package)
+	for _, pair := range []struct {
+		name string
+		fn   lua.LGFunction
+	}{
+		{lua.BaseLibName, lua.OpenBase},
+		{lua.TabLibName, lua.OpenTable},
+		{lua.StringLibName, lua.OpenString},
+		{lua.MathLibName, lua.OpenMath},
+		{lua.CoroutineLibName, lua.OpenCoroutine},
+	} {
+		L.Push(L.NewFunction(pair.fn))
+		L.Push(lua.LString(pair.name))
+		L.Call(1, 0)
+	}
+
+	// Remove dangerous base functions
+	for _, name := range []string{"dofile", "loadfile", "load"} {
+		L.SetGlobal(name, lua.LNil)
+	}
+
 	pm.vmLocks[L] = &sync.Mutex{}
 
 	// Register the mah module.
@@ -189,18 +212,24 @@ func (pm *PluginManager) Plugins() []PluginInfo {
 	return result
 }
 
-// GetHooks returns the hook entries registered for the given event name.
+// GetHooks returns a copy of the hook entries registered for the given event name.
 func (pm *PluginManager) GetHooks(event string) []hookEntry {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
-	return pm.hooks[event]
+	src := pm.hooks[event]
+	dst := make([]hookEntry, len(src))
+	copy(dst, src)
+	return dst
 }
 
-// GetInjections returns the injection entries registered for the given slot name.
+// GetInjections returns a copy of the injection entries registered for the given slot name.
 func (pm *PluginManager) GetInjections(slot string) []injectionEntry {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
-	return pm.injections[slot]
+	src := pm.injections[slot]
+	dst := make([]injectionEntry, len(src))
+	copy(dst, src)
+	return dst
 }
 
 // VMLock returns the mutex associated with the given Lua state.
@@ -214,4 +243,7 @@ func (pm *PluginManager) Close() {
 		L.Close()
 	}
 	pm.states = nil
+	pm.hooks = nil
+	pm.injections = nil
+	pm.vmLocks = nil
 }

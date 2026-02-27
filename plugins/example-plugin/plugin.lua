@@ -1,5 +1,6 @@
 -- Example plugin for mahresources
 -- Place plugin directories in the plugins/ folder (or your configured -plugin-path)
+-- Note: query results are capped at 100 (default limit: 20)
 
 plugin = {
     name = "example-plugin",

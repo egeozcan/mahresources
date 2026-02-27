@@ -138,11 +138,10 @@ func (ctx *MahresourcesContext) UpdateTag(tagQuery *query_models.TagCreator) (*m
 }
 
 func (ctx *MahresourcesContext) DeleteTag(tagId uint) error {
-	beforeData, hookErr := ctx.RunBeforePluginHooks("before_tag_delete", map[string]any{"id": float64(tagId)})
+	_, hookErr := ctx.RunBeforePluginHooks("before_tag_delete", map[string]any{"id": float64(tagId)})
 	if hookErr != nil {
 		return hookErr
 	}
-	_ = beforeData
 
 	// Load tag name before deletion for audit log
 	var tag models.Tag

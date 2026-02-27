@@ -1,12 +1,16 @@
 package plugin_system
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	lua "github.com/yuin/gopher-lua"
 )
+
+const luaExecTimeout = 5 * time.Second
 
 // PluginAbortError is returned when a plugin calls mah.abort().
 type PluginAbortError struct {
@@ -107,11 +111,17 @@ func (pm *PluginManager) RunBeforeHooks(event string, data map[string]any) (map[
 
 		tbl := goToLuaTable(L, data)
 
+		timeoutCtx, cancel := context.WithTimeout(context.Background(), luaExecTimeout)
+		L.SetContext(timeoutCtx)
+
 		err := L.CallByParam(lua.P{
 			Fn:      hook.fn,
 			NRet:    1,
 			Protect: true,
 		}, tbl)
+
+		L.RemoveContext()
+		cancel()
 
 		if err != nil {
 			mu.Unlock()
@@ -151,11 +161,17 @@ func (pm *PluginManager) RunAfterHooks(event string, data map[string]any) {
 
 		tbl := goToLuaTable(L, data)
 
+		timeoutCtx, cancel := context.WithTimeout(context.Background(), luaExecTimeout)
+		L.SetContext(timeoutCtx)
+
 		err := L.CallByParam(lua.P{
 			Fn:      hook.fn,
 			NRet:    0,
 			Protect: true,
 		}, tbl)
+
+		L.RemoveContext()
+		cancel()
 
 		mu.Unlock()
 

@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"log"
 	"strings"
 
@@ -24,11 +25,17 @@ func (pm *PluginManager) RenderSlot(slot string, ctx map[string]any) string {
 
 		tbl := goToLuaTable(L, ctx)
 
+		timeoutCtx, cancel := context.WithTimeout(context.Background(), luaExecTimeout)
+		L.SetContext(timeoutCtx)
+
 		err := L.CallByParam(lua.P{
 			Fn:      inj.fn,
 			NRet:    1,
 			Protect: true,
 		}, tbl)
+
+		L.RemoveContext()
+		cancel()
 
 		if err != nil {
 			mu.Unlock()

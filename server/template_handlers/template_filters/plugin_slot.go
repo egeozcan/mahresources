@@ -2,6 +2,7 @@ package template_filters
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/flosch/pongo2/v4"
 	"mahresources/plugin_system"
@@ -30,6 +31,15 @@ func (node *pluginSlotNode) Execute(ctx *pongo2.ExecutionContext, writer pongo2.
 	for _, key := range []string{"resource", "note", "group", "tag", "category"} {
 		if entity, ok := ctx.Public[key]; ok && entity != nil {
 			slotCtx["entity_key"] = key
+			v := reflect.ValueOf(entity)
+			if v.Kind() == reflect.Ptr {
+				v = v.Elem()
+			}
+			if v.Kind() == reflect.Struct {
+				if idField := v.FieldByName("ID"); idField.IsValid() {
+					slotCtx["entity_id"] = float64(idField.Uint())
+				}
+			}
 			break
 		}
 	}

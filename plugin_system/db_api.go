@@ -24,7 +24,16 @@ type EntityQuerier interface {
 // This is called after context creation to break the circular dependency
 // between plugin_system and application_context.
 func (pm *PluginManager) SetEntityQuerier(eq EntityQuerier) {
-	pm.dbProvider = eq
+	pm.dbProvider.Store(eq)
+}
+
+// getDbProvider returns the current EntityQuerier, or nil if not yet set.
+func (pm *PluginManager) getDbProvider() EntityQuerier {
+	v := pm.dbProvider.Load()
+	if v == nil {
+		return nil
+	}
+	return v.(EntityQuerier)
 }
 
 // registerDbModule registers the mah.db sub-table in the Lua VM.
@@ -35,12 +44,13 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 
 	// mah.db.get_note(id) -> table or nil
 	dbMod.RawSetString("get_note", L.NewFunction(func(L *lua.LState) int {
-		if pm.dbProvider == nil {
+		db := pm.getDbProvider()
+		if db == nil {
 			L.Push(lua.LNil)
 			return 1
 		}
 		id := uint(L.CheckNumber(1))
-		data, err := pm.dbProvider.GetNoteData(id)
+		data, err := db.GetNoteData(id)
 		if err != nil || data == nil {
 			L.Push(lua.LNil)
 			return 1
@@ -51,12 +61,13 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 
 	// mah.db.get_resource(id) -> table or nil
 	dbMod.RawSetString("get_resource", L.NewFunction(func(L *lua.LState) int {
-		if pm.dbProvider == nil {
+		db := pm.getDbProvider()
+		if db == nil {
 			L.Push(lua.LNil)
 			return 1
 		}
 		id := uint(L.CheckNumber(1))
-		data, err := pm.dbProvider.GetResourceData(id)
+		data, err := db.GetResourceData(id)
 		if err != nil || data == nil {
 			L.Push(lua.LNil)
 			return 1
@@ -67,12 +78,13 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 
 	// mah.db.get_group(id) -> table or nil
 	dbMod.RawSetString("get_group", L.NewFunction(func(L *lua.LState) int {
-		if pm.dbProvider == nil {
+		db := pm.getDbProvider()
+		if db == nil {
 			L.Push(lua.LNil)
 			return 1
 		}
 		id := uint(L.CheckNumber(1))
-		data, err := pm.dbProvider.GetGroupData(id)
+		data, err := db.GetGroupData(id)
 		if err != nil || data == nil {
 			L.Push(lua.LNil)
 			return 1
@@ -83,12 +95,13 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 
 	// mah.db.get_tag(id) -> table or nil
 	dbMod.RawSetString("get_tag", L.NewFunction(func(L *lua.LState) int {
-		if pm.dbProvider == nil {
+		db := pm.getDbProvider()
+		if db == nil {
 			L.Push(lua.LNil)
 			return 1
 		}
 		id := uint(L.CheckNumber(1))
-		data, err := pm.dbProvider.GetTagData(id)
+		data, err := db.GetTagData(id)
 		if err != nil || data == nil {
 			L.Push(lua.LNil)
 			return 1
@@ -99,12 +112,13 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 
 	// mah.db.get_category(id) -> table or nil
 	dbMod.RawSetString("get_category", L.NewFunction(func(L *lua.LState) int {
-		if pm.dbProvider == nil {
+		db := pm.getDbProvider()
+		if db == nil {
 			L.Push(lua.LNil)
 			return 1
 		}
 		id := uint(L.CheckNumber(1))
-		data, err := pm.dbProvider.GetCategoryData(id)
+		data, err := db.GetCategoryData(id)
 		if err != nil || data == nil {
 			L.Push(lua.LNil)
 			return 1
@@ -115,13 +129,14 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 
 	// mah.db.query_notes({name = "meeting%", limit = 10}) -> array of tables
 	dbMod.RawSetString("query_notes", L.NewFunction(func(L *lua.LState) int {
-		if pm.dbProvider == nil {
+		db := pm.getDbProvider()
+		if db == nil {
 			L.Push(lua.LNil)
 			return 1
 		}
 		filterTable := L.OptTable(1, L.NewTable())
 		filter := luaTableToGoMap(filterTable)
-		results, err := pm.dbProvider.QueryNotes(filter)
+		results, err := db.QueryNotes(filter)
 		if err != nil {
 			L.Push(lua.LNil)
 			return 1
@@ -136,13 +151,14 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 
 	// mah.db.query_resources({name = "photo%", content_type = "image/%", limit = 10}) -> array of tables
 	dbMod.RawSetString("query_resources", L.NewFunction(func(L *lua.LState) int {
-		if pm.dbProvider == nil {
+		db := pm.getDbProvider()
+		if db == nil {
 			L.Push(lua.LNil)
 			return 1
 		}
 		filterTable := L.OptTable(1, L.NewTable())
 		filter := luaTableToGoMap(filterTable)
-		results, err := pm.dbProvider.QueryResources(filter)
+		results, err := db.QueryResources(filter)
 		if err != nil {
 			L.Push(lua.LNil)
 			return 1
@@ -157,13 +173,14 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 
 	// mah.db.query_groups({name = "team%", limit = 10}) -> array of tables
 	dbMod.RawSetString("query_groups", L.NewFunction(func(L *lua.LState) int {
-		if pm.dbProvider == nil {
+		db := pm.getDbProvider()
+		if db == nil {
 			L.Push(lua.LNil)
 			return 1
 		}
 		filterTable := L.OptTable(1, L.NewTable())
 		filter := luaTableToGoMap(filterTable)
-		results, err := pm.dbProvider.QueryGroups(filter)
+		results, err := db.QueryGroups(filter)
 		if err != nil {
 			L.Push(lua.LNil)
 			return 1
