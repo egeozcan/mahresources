@@ -21,19 +21,16 @@ export const editPanelState = {
 
 export const editPanelMethods = {
   handleEscape() {
-    if (this.editPanelOpen) {
-      this.closeEditPanel();
-      return true;
-    }
-    if (this.isFullscreen) {
-      this.toggleFullscreen();
-      return true;
-    }
     this.close();
     return true;
   },
 
   async openEditPanel() {
+    // Responsive exclusivity: close quick tag panel on narrow viewports
+    if (window.innerWidth < 1024 && this.quickTagPanelOpen) {
+      this.closeQuickTagPanel();
+    }
+
     this.editPanelOpen = true;
     this.needsRefreshOnClose = false;
     this.announce('Edit panel opened');
@@ -210,6 +207,8 @@ export const editPanelMethods = {
         if (el) el.focus();
       });
     }
+
+    this.onQuickTagResourceChange();
   },
 
   async updateName(newName) {

@@ -170,6 +170,10 @@ export const navigationMethods = {
       this.closeEditPanel();
     }
 
+    if (this.quickTagPanelOpen) {
+      this.closeQuickTagPanel();
+    }
+
     this.isOpen = false;
     this.loading = false;
     this.resetZoom();
