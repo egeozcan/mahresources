@@ -641,7 +641,8 @@ test.describe('Lightbox Edit Panel', () => {
     const editPanel = lightbox.locator('[data-edit-panel]');
     await expect(editPanel).toBeVisible();
 
-    // Press 'e' to toggle edit panel closed (Escape would close the entire lightbox)
+    // Blur focused input, then press 'e' to toggle edit panel closed (canNavigate() requires no input focused)
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
     await page.keyboard.press('e');
 
     // Wait for animation to complete
@@ -848,7 +849,8 @@ test.describe('Lightbox Edit Panel', () => {
     const tagChip = editPanel.locator(`.flex.flex-wrap.gap-2 span.inline-flex:has-text("LightboxEditTag-${testRunId}")`);
     await expect(tagChip).toBeVisible();
 
-    // Press 'e' to toggle edit panel closed (Escape would close the entire lightbox)
+    // Blur focused input, then press 'e' to toggle edit panel closed (canNavigate() requires no input focused)
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
     await page.keyboard.press('e');
     await page.waitForTimeout(400);
     await expect(editPanel).toBeHidden();
