@@ -152,6 +152,11 @@ export const navigationMethods = {
     this.announce(`Opened ${mediaType}: ${item?.name || 'media'}. ${this.currentIndex + 1} of ${this.items.length}`);
 
     this.scheduleMediaCheck();
+
+    // Restore quick tag panel from localStorage if it was previously open
+    if (this.quickTagPanelOpen) {
+      this.fetchResourceDetails();
+    }
   },
 
   close() {
