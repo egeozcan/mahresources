@@ -186,7 +186,7 @@ test.describe('Lightbox Functionality', () => {
 
     // Click on empty space in the main content area (not on the image)
     // The main content area has @click.self to close the lightbox
-    const mainContent = lightbox.locator('div.flex-1.flex.items-center');
+    const mainContent = lightbox.locator('div.flex-1.flex.items-center.justify-center');
     await mainContent.click({ position: { x: 10, y: 10 } });
 
     // Verify lightbox closed
@@ -223,7 +223,7 @@ test.describe('Lightbox Functionality', () => {
     await expect(lightbox).toBeVisible();
 
     // Close lightbox by clicking the backdrop
-    const mainContent = lightbox.locator('div.flex-1.flex.items-center');
+    const mainContent = lightbox.locator('div.flex-1.flex.items-center.justify-center');
     await mainContent.click({ position: { x: 10, y: 10 } });
     await expect(lightbox).toBeHidden();
 

@@ -325,79 +325,75 @@
                         <kbd class="flex-none w-7 h-7 flex items-center justify-center bg-gray-800 border border-gray-600 rounded text-xs font-mono text-gray-300"
                              x-text="$store.lightbox.quickTagKeyLabel(index)"></kbd>
 
-                        <!-- Empty slot: autocomplete input -->
-                        <template x-if="!slot">
-                            <div class="flex-1"
-                                 x-data="autocompleter({
-                                     selectedResults: [],
-                                     url: '/v1/tags',
-                                     standalone: true,
-                                     sortBy: 'most_used_resource',
-                                     max: 1,
-                                     onSelect: (tag) => { $store.lightbox.setQuickTagSlot(index, tag); }
-                                 })">
-                                <div class="relative">
-                                    <input
-                                        x-ref="autocompleter"
-                                        type="text"
-                                        x-bind="inputEvents"
-                                        class="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                                        :placeholder="'Assign tag to ' + $store.lightbox.quickTagKeyLabel(index) + '...'"
-                                        autocomplete="off"
-                                        role="combobox"
-                                        aria-autocomplete="list"
-                                        :aria-expanded="dropdownActive && results.length > 0"
-                                    >
-                                    <!-- Dropdown results as popover -->
-                                    <div x-ref="dropdown" popover
-                                         class="bg-gray-800 border border-gray-700 rounded-md shadow-lg max-h-48 overflow-y-auto"
-                                         role="listbox">
-                                        <template x-for="(tag, rIndex) in results" :key="tag.ID">
-                                            <div
-                                                @mousedown.prevent="selectedIndex = rIndex; pushVal($event)"
-                                                @mouseover="selectedIndex = rIndex"
-                                                role="option"
-                                                :aria-selected="rIndex === selectedIndex"
-                                                class="px-3 py-2 cursor-pointer text-sm"
-                                                :class="rIndex === selectedIndex ? 'bg-indigo-600 text-white' : 'text-gray-300 hover:bg-gray-700'"
-                                            >
-                                                <span x-text="tag.Name"></span>
-                                            </div>
-                                        </template>
-                                    </div>
+                        <!-- Empty slot: autocomplete input (x-show to avoid x-if destruction race with popover) -->
+                        <div x-show="!slot" class="flex-1"
+                             x-data="autocompleter({
+                                 selectedResults: [],
+                                 url: '/v1/tags',
+                                 standalone: true,
+                                 sortBy: 'most_used_resource',
+                                 max: 1,
+                                 onSelect: (tag) => { $store.lightbox.setQuickTagSlot(index, tag); }
+                             })">
+                            <div class="relative">
+                                <input
+                                    x-ref="autocompleter"
+                                    type="text"
+                                    x-bind="inputEvents"
+                                    class="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                    :placeholder="'Assign tag to ' + $store.lightbox.quickTagKeyLabel(index) + '...'"
+                                    autocomplete="off"
+                                    role="combobox"
+                                    aria-autocomplete="list"
+                                    :aria-expanded="dropdownActive && results.length > 0"
+                                >
+                                <!-- Dropdown results as popover -->
+                                <div x-ref="dropdown" popover
+                                     class="bg-gray-800 border border-gray-700 rounded-md shadow-lg max-h-48 overflow-y-auto"
+                                     role="listbox">
+                                    <template x-for="(tag, rIndex) in results" :key="tag.ID">
+                                        <div
+                                            @mousedown.prevent="selectedIndex = rIndex; pushVal($event)"
+                                            @mouseover="selectedIndex = rIndex"
+                                            role="option"
+                                            :aria-selected="rIndex === selectedIndex"
+                                            class="px-3 py-2 cursor-pointer text-sm"
+                                            :class="rIndex === selectedIndex ? 'bg-indigo-600 text-white' : 'text-gray-300 hover:bg-gray-700'"
+                                        >
+                                            <span x-text="tag.Name"></span>
+                                        </div>
+                                    </template>
                                 </div>
                             </div>
-                        </template>
+                        </div>
 
                         <!-- Configured slot: tag name + toggle button + clear -->
-                        <template x-if="slot">
-                            <div class="flex-1 flex items-center gap-2">
-                                <button
-                                    @click="$store.lightbox.toggleQuickTag(index)"
-                                    class="flex-1 px-2 py-1.5 rounded text-sm text-left transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                    :class="$store.lightbox.isTagOnResource(slot.id)
-                                        ? 'bg-green-700/50 hover:bg-red-700/50 border border-green-600/50'
-                                        : 'bg-gray-800 hover:bg-indigo-700/50 border border-gray-700'"
-                                    :aria-label="($store.lightbox.isTagOnResource(slot.id) ? 'Remove ' : 'Add ') + slot.name"
-                                >
-                                    <span class="flex items-center gap-1.5">
-                                        <svg x-show="$store.lightbox.isTagOnResource(slot.id)" class="w-3.5 h-3.5 text-green-400 flex-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                                        </svg>
-                                        <span x-text="($store.lightbox.isTagOnResource(slot.id) ? 'Remove ' : 'Add ') + slot.name"></span>
-                                    </span>
-                                </button>
-                                <button
-                                    @click="$store.lightbox.clearQuickTagSlot(index)"
-                                    class="flex-none p-1 hover:bg-white/10 rounded-full transition-colors focus:outline-none focus:ring-1 focus:ring-white"
-                                    :aria-label="'Clear slot ' + $store.lightbox.quickTagKeyLabel(index)"
-                                >
-                                    <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        <div x-show="!!slot" class="flex-1 flex items-center gap-2">
+                            <button
+                                @click="$store.lightbox.toggleQuickTag(index)"
+                                class="flex-1 px-2 py-1.5 rounded text-sm text-left transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                :class="$store.lightbox.isTagOnResource(slot?.id)
+                                    ? 'bg-green-700/50 hover:bg-red-700/50 border border-green-600/50'
+                                    : 'bg-gray-800 hover:bg-indigo-700/50 border border-gray-700'"
+                                :aria-label="($store.lightbox.isTagOnResource(slot?.id) ? 'Remove ' : 'Add ') + slot?.name"
+                            >
+                                <span class="flex items-center gap-1.5">
+                                    <svg x-show="$store.lightbox.isTagOnResource(slot?.id)" class="w-3.5 h-3.5 text-green-400 flex-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                                     </svg>
-                                </button>
-                            </div>
-                        </template>
+                                    <span x-text="($store.lightbox.isTagOnResource(slot?.id) ? 'Remove ' : 'Add ') + slot?.name"></span>
+                                </span>
+                            </button>
+                            <button
+                                @click="$store.lightbox.clearQuickTagSlot(index)"
+                                class="flex-none p-1 hover:bg-white/10 rounded-full transition-colors focus:outline-none focus:ring-1 focus:ring-white"
+                                :aria-label="'Clear slot ' + $store.lightbox.quickTagKeyLabel(index)"
+                            >
+                                <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                </svg>
+                            </button>
+                        </div>
                     </div>
                 </template>
             </div>

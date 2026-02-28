@@ -71,6 +71,11 @@ export const quickTagPanelMethods = {
     // Force Alpine reactivity on array
     this.quickTagSlots = [...this.quickTagSlots];
     this._saveQuickTagsToStorage();
+
+    // Dismiss any open popovers in the quick-tag panel (autocompleter dropdowns)
+    document.querySelectorAll('[data-quick-tag-panel] [popover]').forEach(p => {
+      try { p.hidePopover(); } catch {}
+    });
   },
 
   clearQuickTagSlot(index) {
