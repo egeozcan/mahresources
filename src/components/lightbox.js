@@ -3,6 +3,7 @@ import { navigationState, navigationMethods } from './lightbox/navigation.js';
 import { zoomState, zoomMethods } from './lightbox/zoom.js';
 import { gestureState, gestureMethods } from './lightbox/gestures.js';
 import { editPanelState, editPanelMethods } from './lightbox/editPanel.js';
+import { quickTagPanelState, quickTagPanelMethods } from './lightbox/quickTagPanel.js';
 
 /**
  * Register the lightbox Alpine store
@@ -15,6 +16,7 @@ export function registerLightboxStore(Alpine) {
     ...zoomState,
     ...gestureState,
     ...editPanelState,
+    ...quickTagPanelState,
 
     // Live region for screen reader announcements
     _liveRegion: null,
@@ -23,6 +25,7 @@ export function registerLightboxStore(Alpine) {
     init() {
       // Guard against multiple initializations (prevents memory leak)
       if (this._liveRegion) return;
+      this._loadQuickTagsFromStorage();
 
       this._liveRegion = createLiveRegion();
       this.liveRegion = this._liveRegion.element;
@@ -40,6 +43,7 @@ export function registerLightboxStore(Alpine) {
         if (!this.isOpen) return;
         // Let edit panel handle its own scrolling
         if (event.target.closest('[data-edit-panel]')) return;
+        if (event.target.closest('[data-quick-tag-panel]')) return;
         this.handleWheel(event);
       };
       document.addEventListener('wheel', this._handleWheelEvent, { passive: false });
@@ -72,5 +76,6 @@ export function registerLightboxStore(Alpine) {
     ...zoomMethods,
     ...gestureMethods,
     ...editPanelMethods,
+    ...quickTagPanelMethods,
   });
 }
