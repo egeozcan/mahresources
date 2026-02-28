@@ -321,6 +321,26 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 	h.Write(fileBytes)
 	hash := hex.EncodeToString(h.Sum(nil))
 
+	hookData := map[string]any{
+		"id":          float64(0),
+		"name":        fileName,
+		"description": resourceQuery.Description,
+		"meta":        resourceQuery.Meta,
+	}
+	hookData, hookErr := ctx.RunBeforePluginHooks("before_resource_create", hookData)
+	if hookErr != nil {
+		return nil, hookErr
+	}
+	if hName, ok := hookData["name"].(string); ok {
+		fileName = hName
+	}
+	if hDesc, ok := hookData["description"].(string); ok {
+		resourceQuery.Description = hDesc
+	}
+	if hMeta, ok := hookData["meta"].(string); ok {
+		resourceQuery.Meta = hMeta
+	}
+
 	res := &models.Resource{
 		Name:               fileName,
 		Hash:               hash,
@@ -380,11 +400,38 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 
 	ctx.Logger().Info(models.LogActionCreate, "resource", &res.ID, res.Name, "Created resource from local path", nil)
 
+	ctx.RunAfterPluginHooks("after_resource_create", map[string]any{
+		"id":          float64(res.ID),
+		"name":        res.Name,
+		"description": res.Description,
+		"meta":        string(res.Meta),
+	})
+
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)
 	return res, nil
 }
 
 func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
+	hookData := map[string]any{
+		"id":          float64(0),
+		"name":        resourceQuery.Name,
+		"description": resourceQuery.Description,
+		"meta":        resourceQuery.Meta,
+	}
+	hookData, hookErr := ctx.RunBeforePluginHooks("before_resource_create", hookData)
+	if hookErr != nil {
+		return nil, hookErr
+	}
+	if hName, ok := hookData["name"].(string); ok {
+		resourceQuery.Name = hName
+	}
+	if hDesc, ok := hookData["description"].(string); ok {
+		resourceQuery.Description = hDesc
+	}
+	if hMeta, ok := hookData["meta"].(string); ok {
+		resourceQuery.Meta = hMeta
+	}
+
 	tx := ctx.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -554,23 +601,6 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 	}
 	fileSize := fileInfo.Size()
 
-	hookData := map[string]any{
-		"id":          float64(0),
-		"name":        name,
-		"description": resourceQuery.Description,
-	}
-	hookData, hookErr := ctx.RunBeforePluginHooks("before_resource_create", hookData)
-	if hookErr != nil {
-		tx.Rollback()
-		return nil, hookErr
-	}
-	if hName, ok := hookData["name"].(string); ok {
-		name = hName
-	}
-	if hDesc, ok := hookData["description"].(string); ok {
-		resourceQuery.Description = hDesc
-	}
-
 	res := &models.Resource{
 		Name:               name,
 		Hash:               hash,
@@ -682,6 +712,7 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 		"id":          float64(res.ID),
 		"name":        res.Name,
 		"description": res.Description,
+		"meta":        string(res.Meta),
 	})
 
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)

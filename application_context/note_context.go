@@ -30,6 +30,10 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 		noteTypeId = &noteQuery.NoteTypeId
 	}
 
+	// Determine hook event based on whether an ID was supplied.
+	// Note: ID != 0 is treated as an update, but if the caller passes a
+	// non-existent ID the DB lookup will fail later — the hook event may
+	// not reflect the actual outcome.
 	hookEvent := "before_note_create"
 	if noteQuery.ID != 0 {
 		hookEvent = "before_note_update"
@@ -38,6 +42,7 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 		"id":          float64(noteQuery.ID),
 		"name":        noteQuery.Name,
 		"description": noteQuery.Description,
+		"meta":        noteQuery.Meta,
 	}
 	hookData, hookErr := ctx.RunBeforePluginHooks(hookEvent, hookData)
 	if hookErr != nil {
@@ -48,6 +53,9 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 	}
 	if desc, ok := hookData["description"].(string); ok {
 		noteQuery.Description = desc
+	}
+	if hMeta, ok := hookData["meta"].(string); ok {
+		noteQuery.Meta = hMeta
 	}
 
 	tx := ctx.db.Begin()
@@ -158,6 +166,7 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 		"id":          float64(note.ID),
 		"name":        note.Name,
 		"description": note.Description,
+		"meta":        string(note.Meta),
 	})
 
 	ctx.InvalidateSearchCacheByType(EntityTypeNote)

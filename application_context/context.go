@@ -240,7 +240,8 @@ func (ctx *MahresourcesContext) RunBeforePluginHooks(event string, data map[stri
 	return ctx.pluginManager.RunBeforeHooks(event, data)
 }
 
-// RunAfterPluginHooks executes after-hooks for the given event (fire-and-forget).
+// RunAfterPluginHooks executes after-hooks for the given event.
+// Errors are logged and ignored; execution is synchronous.
 // If no plugin manager is active, this is a no-op.
 func (ctx *MahresourcesContext) RunAfterPluginHooks(event string, data map[string]any) {
 	if ctx.pluginManager == nil {

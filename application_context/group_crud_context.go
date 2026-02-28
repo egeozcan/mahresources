@@ -24,6 +24,7 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 		"id":          float64(0),
 		"name":        groupQuery.Name,
 		"description": groupQuery.Description,
+		"meta":        groupQuery.Meta,
 	}
 	hookData, hookErr := ctx.RunBeforePluginHooks("before_group_create", hookData)
 	if hookErr != nil {
@@ -34,6 +35,9 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 	}
 	if desc, ok := hookData["description"].(string); ok {
 		groupQuery.Description = desc
+	}
+	if hMeta, ok := hookData["meta"].(string); ok {
+		groupQuery.Meta = hMeta
 	}
 
 	tx := ctx.db.Begin()
@@ -96,6 +100,7 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 		"id":          float64(group.ID),
 		"name":        group.Name,
 		"description": group.Description,
+		"meta":        string(group.Meta),
 	})
 
 	ctx.InvalidateSearchCacheByType(EntityTypeGroup)
@@ -111,6 +116,7 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 		"id":          float64(groupQuery.ID),
 		"name":        groupQuery.Name,
 		"description": groupQuery.Description,
+		"meta":        groupQuery.Meta,
 	}
 	hookData, hookErr := ctx.RunBeforePluginHooks("before_group_update", hookData)
 	if hookErr != nil {
@@ -121,6 +127,9 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 	}
 	if desc, ok := hookData["description"].(string); ok {
 		groupQuery.Description = desc
+	}
+	if hMeta, ok := hookData["meta"].(string); ok {
+		groupQuery.Meta = hMeta
 	}
 
 	tx := ctx.db.Begin()
@@ -192,6 +201,7 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 		"id":          float64(group.ID),
 		"name":        group.Name,
 		"description": group.Description,
+		"meta":        string(group.Meta),
 	})
 
 	ctx.InvalidateSearchCacheByType(EntityTypeGroup)

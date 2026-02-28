@@ -148,6 +148,7 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 		"id":          float64(resourceQuery.ID),
 		"name":        resourceQuery.Name,
 		"description": resourceQuery.Description,
+		"meta":        resourceQuery.Meta,
 	}
 	hookData, hookErr := ctx.RunBeforePluginHooks("before_resource_update", hookData)
 	if hookErr != nil {
@@ -158,6 +159,9 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 	}
 	if desc, ok := hookData["description"].(string); ok {
 		resourceQuery.Description = desc
+	}
+	if hMeta, ok := hookData["meta"].(string); ok {
+		resourceQuery.Meta = hMeta
 	}
 
 	var resource models.Resource
@@ -294,6 +298,7 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 		"id":          float64(resource.ID),
 		"name":        resource.Name,
 		"description": resource.Description,
+		"meta":        string(resource.Meta),
 	})
 
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)

@@ -99,6 +99,9 @@ func luaValueToGo(v lua.LValue) any {
 // If a hook calls mah.abort(), a PluginAbortError is returned.
 // If a hook has a runtime error, it is logged and skipped.
 func (pm *PluginManager) RunBeforeHooks(event string, data map[string]any) (map[string]any, error) {
+	if pm.closed.Load() {
+		return data, nil
+	}
 	hooks := pm.GetHooks(event)
 	if len(hooks) == 0 {
 		return data, nil
@@ -147,8 +150,11 @@ func (pm *PluginManager) RunBeforeHooks(event string, data map[string]any) (map[
 }
 
 // RunAfterHooks executes all registered hooks for the given event.
-// Errors are logged and ignored (fire-and-forget).
+// Errors are logged and ignored; execution is synchronous.
 func (pm *PluginManager) RunAfterHooks(event string, data map[string]any) {
+	if pm.closed.Load() {
+		return
+	}
 	hooks := pm.GetHooks(event)
 	if len(hooks) == 0 {
 		return

@@ -36,7 +36,7 @@ func (node *pluginSlotNode) Execute(ctx *pongo2.ExecutionContext, writer pongo2.
 				v = v.Elem()
 			}
 			if v.Kind() == reflect.Struct {
-				if idField := v.FieldByName("ID"); idField.IsValid() {
+				if idField := v.FieldByName("ID"); idField.IsValid() && idField.Kind() == reflect.Uint {
 					slotCtx["entity_id"] = float64(idField.Uint())
 				}
 			}

@@ -38,14 +38,19 @@ type PluginManager struct {
 	states     []*lua.LState
 	hooks      map[string][]hookEntry
 	injections map[string][]injectionEntry
-	mu         sync.RWMutex
+	mu sync.RWMutex
+	// vmLocks is populated during single-threaded initialization (NewPluginManager/loadPlugin)
+	// and is read-only afterward, so concurrent reads without locking are safe.
 	vmLocks    map[*lua.LState]*sync.Mutex
 	dbProvider atomic.Value
+	closed     atomic.Bool
 }
 
 // NewPluginManager scans dir for subdirectories containing plugin.lua,
 // loads each in alphabetical order into an isolated Lua VM, and returns
 // the manager. If dir does not exist, an empty manager is returned.
+// Must be called from a single goroutine; after it returns the manager
+// is safe for concurrent use.
 func NewPluginManager(dir string) (*PluginManager, error) {
 	pm := &PluginManager{
 		hooks:      make(map[string][]hookEntry),
@@ -237,8 +242,10 @@ func (pm *PluginManager) VMLock(L *lua.LState) *sync.Mutex {
 	return pm.vmLocks[L]
 }
 
-// Close shuts down all Lua VMs.
+// Close shuts down all Lua VMs. After Close returns, hooks and injections
+// are no-ops.
 func (pm *PluginManager) Close() {
+	pm.closed.Store(true)
 	for _, L := range pm.states {
 		L.Close()
 	}

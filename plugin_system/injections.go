@@ -12,6 +12,9 @@ import (
 // concatenates their string outputs, and returns the combined HTML.
 // Errors in individual renderers are logged and skipped.
 func (pm *PluginManager) RenderSlot(slot string, ctx map[string]any) string {
+	if pm.closed.Load() {
+		return ""
+	}
 	injections := pm.GetInjections(slot)
 	if len(injections) == 0 {
 		return ""

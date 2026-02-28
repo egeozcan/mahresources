@@ -132,13 +132,27 @@ func queryLimit(filter map[string]any) int {
 	return limit
 }
 
+// queryOffset extracts a capped offset from the filter map.
+// Default is 0, maximum is 10000.
+func queryOffset(filter map[string]any) int {
+	offset := 0
+	if o, ok := filter["offset"].(float64); ok && o > 0 {
+		offset = int(o)
+		if offset > 10000 {
+			offset = 10000
+		}
+	}
+	return offset
+}
+
 func (a *pluginDBAdapter) QueryNotes(filter map[string]any) ([]map[string]any, error) {
 	limit := queryLimit(filter)
+	offset := queryOffset(filter)
 	query := &query_models.NoteQuery{}
 	if name, ok := filter["name"].(string); ok {
 		query.Name = name
 	}
-	notes, err := a.ctx.GetNotes(0, limit, query)
+	notes, err := a.ctx.GetNotes(offset, limit, query)
 	if err != nil {
 		return nil, err
 	}
@@ -155,6 +169,7 @@ func (a *pluginDBAdapter) QueryNotes(filter map[string]any) ([]map[string]any, e
 
 func (a *pluginDBAdapter) QueryResources(filter map[string]any) ([]map[string]any, error) {
 	limit := queryLimit(filter)
+	offset := queryOffset(filter)
 	query := &query_models.ResourceSearchQuery{}
 	if name, ok := filter["name"].(string); ok {
 		query.Name = name
@@ -162,7 +177,7 @@ func (a *pluginDBAdapter) QueryResources(filter map[string]any) ([]map[string]an
 	if ct, ok := filter["content_type"].(string); ok {
 		query.ContentType = ct
 	}
-	resources, err := a.ctx.GetResources(0, limit, query)
+	resources, err := a.ctx.GetResources(offset, limit, query)
 	if err != nil {
 		return nil, err
 	}
@@ -179,11 +194,12 @@ func (a *pluginDBAdapter) QueryResources(filter map[string]any) ([]map[string]an
 
 func (a *pluginDBAdapter) QueryGroups(filter map[string]any) ([]map[string]any, error) {
 	limit := queryLimit(filter)
+	offset := queryOffset(filter)
 	query := &query_models.GroupQuery{}
 	if name, ok := filter["name"].(string); ok {
 		query.Name = name
 	}
-	groups, err := a.ctx.GetGroups(0, limit, query)
+	groups, err := a.ctx.GetGroups(offset, limit, query)
 	if err != nil {
 		return nil, err
 	}

@@ -8,4 +8,9 @@ function init()
     mah.inject("page_top", function(ctx)
         return '<div data-testid="plugin-banner" style="background:yellow;padding:8px;text-align:center;">Plugin Banner Active</div>'
     end)
+
+    mah.on("before_note_create", function(data)
+        data.name = "[Plugin] " .. data.name
+        return data
+    end)
 end
