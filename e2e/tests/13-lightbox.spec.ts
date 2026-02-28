@@ -623,7 +623,7 @@ test.describe('Lightbox Edit Panel', () => {
     await expect(tagsLabel).toBeVisible();
   });
 
-  test('should close edit panel with Escape key (before closing lightbox)', async ({ page }) => {
+  test('should close edit panel with E key and close lightbox with Escape', async ({ page }) => {
     await page.goto('/resources');
     await page.waitForLoadState('load');
 
@@ -641,8 +641,8 @@ test.describe('Lightbox Edit Panel', () => {
     const editPanel = lightbox.locator('[data-edit-panel]');
     await expect(editPanel).toBeVisible();
 
-    // Press Escape - should close edit panel but not lightbox (even with input focused)
-    await page.keyboard.press('Escape');
+    // Press 'e' to toggle edit panel closed (Escape would close the entire lightbox)
+    await page.keyboard.press('e');
 
     // Wait for animation to complete
     await page.waitForTimeout(400);
@@ -651,7 +651,7 @@ test.describe('Lightbox Edit Panel', () => {
     await expect(editPanel).toBeHidden();
     await expect(lightbox).toBeVisible();
 
-    // Press Escape again - should close lightbox
+    // Press Escape - should close lightbox
     await page.keyboard.press('Escape');
     await page.waitForTimeout(300);
     await expect(lightbox).toBeHidden();
@@ -696,8 +696,7 @@ test.describe('Lightbox Edit Panel', () => {
     // Wait for save to complete
     await page.waitForTimeout(500);
 
-    // Close lightbox
-    await page.keyboard.press('Escape');
+    // Close lightbox (Escape closes the entire lightbox immediately, even with edit panel open)
     await page.keyboard.press('Escape');
     await expect(lightbox).toBeHidden();
 
@@ -777,11 +776,9 @@ test.describe('Lightbox Edit Panel', () => {
     // Count the number of tag chips on first resource
     const firstResourceTagCount = await editPanel.locator('.flex.flex-wrap.gap-2 span.inline-flex').count();
 
-    // Close lightbox completely
-    await page.keyboard.press('Escape'); // Close edit panel
+    // Close lightbox completely (Escape closes lightbox immediately)
+    await page.keyboard.press('Escape');
     await page.waitForTimeout(400);
-    await page.keyboard.press('Escape'); // Close lightbox
-    await page.waitForTimeout(300);
     await expect(lightbox).toBeHidden();
 
     // Open lightbox on a DIFFERENT resource (second one)
@@ -851,8 +848,8 @@ test.describe('Lightbox Edit Panel', () => {
     const tagChip = editPanel.locator(`.flex.flex-wrap.gap-2 span.inline-flex:has-text("LightboxEditTag-${testRunId}")`);
     await expect(tagChip).toBeVisible();
 
-    // Press Escape to close edit panel (NOT the lightbox)
-    await page.keyboard.press('Escape');
+    // Press 'e' to toggle edit panel closed (Escape would close the entire lightbox)
+    await page.keyboard.press('e');
     await page.waitForTimeout(400);
     await expect(editPanel).toBeHidden();
     await expect(lightbox).toBeVisible(); // lightbox should still be open
@@ -910,11 +907,9 @@ test.describe('Lightbox Edit Panel', () => {
     await descriptionInput.blur();
     await page.waitForTimeout(300);
 
-    // Close lightbox
-    await page.keyboard.press('Escape'); // Close edit panel
+    // Close lightbox (Escape closes lightbox immediately, even with edit panel open)
+    await page.keyboard.press('Escape');
     await page.waitForTimeout(400);
-    await page.keyboard.press('Escape'); // Close lightbox
-    await page.waitForTimeout(300);
     await expect(lightbox).toBeHidden();
 
     // Wait for background refresh to complete
@@ -1142,8 +1137,8 @@ test.describe('Lightbox Edit After Pagination', () => {
     await nameInput.blur();
     await page.waitForTimeout(500);
 
-    // Close edit panel — triggers refreshPageContent() + DOM morph
-    await page.keyboard.press('Escape');
+    // Toggle edit panel closed via 'e' key — triggers refreshPageContent() + DOM morph
+    await page.keyboard.press('e');
 
     // Wait for edit panel to close and background refresh to complete
     await expect(editPanel).toBeHidden();
@@ -1206,8 +1201,8 @@ test.describe('Lightbox Edit After Pagination', () => {
     await descInput.blur();
     await page.waitForTimeout(300);
 
-    // Close edit panel
-    await page.keyboard.press('Escape');
+    // Toggle edit panel closed via 'e' key (Escape would close the entire lightbox)
+    await page.keyboard.press('e');
     await expect(editPanel).toBeHidden();
     await page.waitForTimeout(1500);
 
