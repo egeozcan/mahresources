@@ -9,7 +9,7 @@ const STORAGE_KEY = 'mahresources_quickTags';
 export const quickTagPanelState = {
   quickTagPanelOpen: false,
   quickTagSlots: Array(10).fill(null), // [{id, name} | null] x 10
-  _quickTagTogglingIds: new Set(),
+  _quickTagTogglingIds: new Set(), // Not Alpine-reactive; used only as a guard in toggleQuickTag, not in templates
 };
 
 export const quickTagPanelMethods = {
@@ -129,7 +129,7 @@ export const quickTagPanelMethods = {
     const bothOpen = this.editPanelOpen && this.quickTagPanelOpen;
     const editOnly = this.editPanelOpen && !this.quickTagPanelOpen;
     const tagsOnly = !this.editPanelOpen && this.quickTagPanelOpen;
-    if (bothOpen) return 'lg:max-w-[calc(100vw-850px)] max-w-[90vw]';
+    if (bothOpen) return 'lg:max-w-[calc(100vw-690px)] max-w-[90vw]';
     if (editOnly || tagsOnly) return 'lg:max-w-[calc(100vw-450px)] max-w-[90vw]';
     return 'max-w-[90vw]';
   },

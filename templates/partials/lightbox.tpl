@@ -45,10 +45,10 @@
 
     <!-- Main content area (shrinks when edit panel opens on desktop) -->
     <div
-        class="relative flex-1 flex flex-col transition-all duration-300 ease-in-out"
+        class="relative flex-1 flex flex-col transition-all duration-300 ease-in-out overflow-hidden"
         :class="[
-            $store.lightbox.editPanelOpen ? 'lg:mr-[400px]' : '',
-            $store.lightbox.quickTagPanelOpen ? 'lg:ml-[400px]' : ''
+            $store.lightbox.editPanelOpen ? ($store.lightbox.quickTagPanelOpen ? 'lg:mr-[320px]' : 'lg:mr-[400px]') : '',
+            $store.lightbox.quickTagPanelOpen ? ($store.lightbox.editPanelOpen ? 'lg:ml-[320px]' : 'lg:ml-[400px]') : ''
         ]"
     >
     <!-- Media area (centered, fills available space) -->
@@ -172,7 +172,7 @@
     </div>
 
     <!-- Bottom bar with counter, resolution, and controls (in flow, does not cover media) -->
-    <div class="flex justify-between items-center px-4 py-2 text-white text-sm z-20">
+    <div class="flex flex-wrap justify-between items-center gap-1 px-4 py-2 text-white text-sm z-20">
         <!-- Counter -->
         <div class="bg-black/50 px-3 py-1 rounded">
             <span x-text="$store.lightbox.currentIndex + 1"></span>
@@ -231,32 +231,30 @@
             x-text="$store.lightbox.getCurrentItem()?.name"
         ></div>
 
-        <!-- Quick Tag button -->
+        <!-- Quick Tag button (hidden when panel is open — panel has its own close button) -->
         <button
-            @click.stop="$store.lightbox.quickTagPanelOpen ? $store.lightbox.closeQuickTagPanel() : $store.lightbox.openQuickTagPanel()"
+            x-show="!$store.lightbox.quickTagPanelOpen"
+            @click.stop="$store.lightbox.openQuickTagPanel()"
             class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
-            :class="$store.lightbox.quickTagPanelOpen ? 'bg-indigo-600/80 hover:bg-indigo-700/80' : ''"
-            :aria-pressed="$store.lightbox.quickTagPanelOpen"
-            :title="$store.lightbox.quickTagPanelOpen ? 'Close quick tags' : 'Quick tags'"
+            title="Quick tags"
         >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z"></path>
             </svg>
-            <span x-text="$store.lightbox.quickTagPanelOpen ? 'Close' : 'Tags'"></span>
+            <span>Tags</span>
         </button>
 
-        <!-- Edit button -->
+        <!-- Edit button (hidden when panel is open — panel has its own close button) -->
         <button
-            @click.stop="$store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel()"
+            x-show="!$store.lightbox.editPanelOpen"
+            @click.stop="$store.lightbox.openEditPanel()"
             class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
-            :class="$store.lightbox.editPanelOpen ? 'bg-indigo-600/80 hover:bg-indigo-700/80' : ''"
-            :aria-pressed="$store.lightbox.editPanelOpen"
-            :title="$store.lightbox.editPanelOpen ? 'Close edit panel' : 'Edit resource'"
+            title="Edit resource"
         >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
             </svg>
-            <span x-text="$store.lightbox.editPanelOpen ? 'Close' : 'Edit'"></span>
+            <span>Edit</span>
         </button>
     </div>
     </div>
@@ -271,7 +269,8 @@
         x-transition:leave-start="opacity-100 translate-x-0"
         x-transition:leave-end="opacity-0 -translate-x-full"
         data-quick-tag-panel
-        class="fixed md:absolute inset-0 md:inset-auto md:top-0 md:left-0 md:bottom-0 md:w-[400px] bg-gray-900 md:bg-gray-900/95 md:backdrop-blur-sm text-white overflow-y-auto z-30"
+        class="fixed md:absolute inset-0 md:inset-auto md:top-0 md:left-0 md:bottom-0 bg-gray-900 md:bg-gray-900/95 md:backdrop-blur-sm text-white overflow-y-auto z-30"
+        :class="$store.lightbox.editPanelOpen ? 'md:w-[320px]' : 'md:w-[400px]'"
         @click.stop
     >
         <!-- Panel header -->
@@ -342,6 +341,7 @@
                                     x-bind="inputEvents"
                                     class="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                                     :placeholder="'Assign tag to ' + $store.lightbox.quickTagKeyLabel(index) + '...'"
+                                    :aria-label="'Assign tag to slot ' + $store.lightbox.quickTagKeyLabel(index)"
                                     autocomplete="off"
                                     role="combobox"
                                     aria-autocomplete="list"
@@ -410,7 +410,8 @@
         x-transition:leave-start="opacity-100 translate-x-0"
         x-transition:leave-end="opacity-0 translate-x-full"
         data-edit-panel
-        class="fixed md:absolute inset-0 md:inset-auto md:top-0 md:right-0 md:bottom-0 md:w-[400px] bg-gray-900 md:bg-gray-900/95 md:backdrop-blur-sm text-white overflow-y-auto z-30"
+        class="fixed md:absolute inset-0 md:inset-auto md:top-0 md:right-0 md:bottom-0 bg-gray-900 md:bg-gray-900/95 md:backdrop-blur-sm text-white overflow-y-auto z-30"
+        :class="$store.lightbox.quickTagPanelOpen ? 'md:w-[320px]' : 'md:w-[400px]'"
         @click.stop
     >
         <!-- Panel header -->
@@ -504,6 +505,7 @@
                                 onRemove: (tag) => $store.lightbox.saveTagRemoval(tag)
                             })"
                             :key="$store.lightbox.resourceDetails?.ID"
+                            x-effect="selectedResults = [...($store.lightbox.resourceDetails?.Tags || [])]"
                             class="relative"
                         >
                         <label class="block text-sm font-medium text-gray-300 mb-1.5">Tags</label>

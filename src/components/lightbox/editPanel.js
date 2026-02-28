@@ -50,12 +50,13 @@ export const editPanelMethods = {
   closeEditPanel() {
     this.editPanelOpen = false;
 
-    if (this.detailsAborter) {
-      this.detailsAborter();
-      this.detailsAborter = null;
+    if (!this.quickTagPanelOpen) {
+      if (this.detailsAborter) {
+        this.detailsAborter();
+        this.detailsAborter = null;
+      }
+      this.resourceDetails = null;
     }
-
-    this.resourceDetails = null;
 
     if (this.needsRefreshOnClose) {
       this.needsRefreshOnClose = false;
@@ -181,7 +182,7 @@ export const editPanelMethods = {
   },
 
   async onResourceChange() {
-    if (!this.editPanelOpen) return;
+    if (!this.editPanelOpen && !this.quickTagPanelOpen) return;
 
     const focused = document.activeElement;
     const panel = document.querySelector('[data-edit-panel]');
