@@ -119,4 +119,13 @@ export const quickTagPanelMethods = {
     // index 0-8 → '1'-'9', index 9 → '0'
     return index < 9 ? String(index + 1) : '0';
   },
+
+  _mediaMaxWidthClass() {
+    const bothOpen = this.editPanelOpen && this.quickTagPanelOpen;
+    const editOnly = this.editPanelOpen && !this.quickTagPanelOpen;
+    const tagsOnly = !this.editPanelOpen && this.quickTagPanelOpen;
+    if (bothOpen) return 'lg:max-w-[calc(100vw-850px)] max-w-[90vw]';
+    if (editOnly || tagsOnly) return 'lg:max-w-[calc(100vw-450px)] max-w-[90vw]';
+    return 'max-w-[90vw]';
+  },
 };

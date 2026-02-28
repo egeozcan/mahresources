@@ -17,6 +17,17 @@
     @keydown.enter.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.toggleFullscreen()"
     @keydown.e.window="$store.lightbox.isOpen && canNavigate() && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
     @keydown.f2.window.prevent="$store.lightbox.isOpen && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
+    @keydown.t.window="$store.lightbox.isOpen && canNavigate() && ($store.lightbox.quickTagPanelOpen ? $store.lightbox.closeQuickTagPanel() : $store.lightbox.openQuickTagPanel())"
+    @keydown.1.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleQuickTag(0)"
+    @keydown.2.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleQuickTag(1)"
+    @keydown.3.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleQuickTag(2)"
+    @keydown.4.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleQuickTag(3)"
+    @keydown.5.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleQuickTag(4)"
+    @keydown.6.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleQuickTag(5)"
+    @keydown.7.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleQuickTag(6)"
+    @keydown.8.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleQuickTag(7)"
+    @keydown.9.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleQuickTag(8)"
+    @keydown.0.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleQuickTag(9)"
     @touchstart="$store.lightbox.handleTouchStart($event)"
     @touchmove="$store.lightbox.handleTouchMove($event)"
     @touchend="$store.lightbox.handleTouchEnd($event)"
@@ -29,19 +40,22 @@
     <!-- Backdrop -->
     <div
         class="absolute inset-0 h-full w-full bg-black/90"
-        @click="$store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.close()"
+        @click="$store.lightbox.close()"
     ></div>
 
     <!-- Main content area (shrinks when edit panel opens on desktop) -->
     <div
         class="relative flex-1 flex flex-col transition-all duration-300 ease-in-out"
-        :class="$store.lightbox.editPanelOpen ? 'md:mr-[400px]' : ''"
+        :class="[
+            $store.lightbox.editPanelOpen ? 'lg:mr-[400px]' : '',
+            $store.lightbox.quickTagPanelOpen ? 'lg:ml-[400px]' : ''
+        ]"
     >
     <!-- Media area (centered, fills available space) -->
     <div
         class="flex-1 flex items-center justify-center min-h-0 relative"
         :class="$store.lightbox.isDragging ? 'cursor-grabbing' : 'cursor-grab'"
-        @click.self="$store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.close()"
+        @click.self="$store.lightbox.close()"
         @mousedown="$store.lightbox.handleMouseDown($event)"
         @mousemove="$store.lightbox.handleMouseMove($event)"
         @mouseup="$store.lightbox.handleMouseUp($event)"
@@ -59,7 +73,7 @@
         </div>
 
         <!-- Media content -->
-        <div class="relative max-h-[90vh] max-w-[90vw] flex items-center justify-center" @click.self="$store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.close()" @dblclick="$store.lightbox.handleDoubleClick($event)">
+        <div class="relative max-h-[90vh] max-w-[90vw] flex items-center justify-center" @click.self="$store.lightbox.close()" @dblclick="$store.lightbox.handleDoubleClick($event)">
             <!-- Image display -->
             <template x-if="$store.lightbox.isImage($store.lightbox.getCurrentItem()?.contentType)">
                 <img
@@ -67,7 +81,7 @@
                     :alt="$store.lightbox.getCurrentItem()?.name || 'Image'"
                     tabindex="-1"
                     class="max-h-[90vh] object-contain"
-                    :class="[$store.lightbox.editPanelOpen ? 'md:max-w-[calc(100vw-450px)]' : 'max-w-[90vw]', $store.lightbox.animationsDisabled ? '' : 'transition-all duration-300']"
+                    :class="[$store.lightbox._mediaMaxWidthClass(), $store.lightbox.animationsDisabled ? '' : 'transition-all duration-300']"
                     :style="{ transform: `scale(${$store.lightbox.zoomLevel}) translate(${$store.lightbox.panX}px, ${$store.lightbox.panY}px)`, transformOrigin: 'center center' }"
                     x-init="$nextTick(() => $store.lightbox.checkIfMediaLoaded($el))"
                     @load="$store.lightbox.onMediaLoaded()"
@@ -85,7 +99,7 @@
                         :aria-label="$store.lightbox.getCurrentItem()?.name || 'SVG Image'"
                         tabindex="-1"
                         class="max-h-[90vh] max-w-[90vw] min-h-[50vh] min-w-[50vw] pointer-events-none"
-                        :class="[$store.lightbox.editPanelOpen ? 'md:max-w-[calc(100vw-450px)]' : '', $store.lightbox.animationsDisabled ? '' : 'transition-all duration-300']"
+                        :class="[$store.lightbox._mediaMaxWidthClass(), $store.lightbox.animationsDisabled ? '' : 'transition-all duration-300']"
                         :style="{ transform: `scale(${$store.lightbox.zoomLevel}) translate(${$store.lightbox.panX}px, ${$store.lightbox.panY}px)`, transformOrigin: 'center center' }"
                         x-init="$nextTick(() => $store.lightbox.checkIfMediaLoaded($el))"
                         @load="$store.lightbox.onMediaLoaded()"
@@ -111,7 +125,7 @@
                     :key="$store.lightbox.getCurrentItem()?.id"
                     controls
                     class="max-h-[90vh] transition-all duration-300"
-                    :class="$store.lightbox.editPanelOpen ? 'md:max-w-[calc(100vw-450px)]' : 'max-w-[90vw]'"
+                    :class="$store.lightbox._mediaMaxWidthClass()"
                     x-init="$nextTick(() => $store.lightbox.checkIfMediaLoaded($el))"
                     @loadeddata="$store.lightbox.onMediaLoaded()"
                     @error="$store.lightbox.onMediaLoaded()"
@@ -217,6 +231,20 @@
             x-text="$store.lightbox.getCurrentItem()?.name"
         ></div>
 
+        <!-- Quick Tag button -->
+        <button
+            @click.stop="$store.lightbox.quickTagPanelOpen ? $store.lightbox.closeQuickTagPanel() : $store.lightbox.openQuickTagPanel()"
+            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
+            :class="$store.lightbox.quickTagPanelOpen ? 'bg-indigo-600/80 hover:bg-indigo-700/80' : ''"
+            :aria-pressed="$store.lightbox.quickTagPanelOpen"
+            :title="$store.lightbox.quickTagPanelOpen ? 'Close quick tags' : 'Quick tags'"
+        >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z"></path>
+            </svg>
+            <span x-text="$store.lightbox.quickTagPanelOpen ? 'Close' : 'Tags'"></span>
+        </button>
+
         <!-- Edit button -->
         <button
             @click.stop="$store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel()"
@@ -231,6 +259,149 @@
             <span x-text="$store.lightbox.editPanelOpen ? 'Close' : 'Edit'"></span>
         </button>
     </div>
+    </div>
+
+    <!-- Quick Tag Panel (slides in from left) -->
+    <div
+        x-show="$store.lightbox.quickTagPanelOpen"
+        x-transition:enter="transition ease-out duration-300"
+        x-transition:enter-start="opacity-0 -translate-x-full"
+        x-transition:enter-end="opacity-100 translate-x-0"
+        x-transition:leave="transition ease-in duration-200"
+        x-transition:leave-start="opacity-100 translate-x-0"
+        x-transition:leave-end="opacity-0 -translate-x-full"
+        data-quick-tag-panel
+        class="fixed md:absolute inset-0 md:inset-auto md:top-0 md:left-0 md:bottom-0 md:w-[400px] bg-gray-900 md:bg-gray-900/95 md:backdrop-blur-sm text-white overflow-y-auto z-30"
+        @click.stop
+    >
+        <!-- Panel header -->
+        <div class="sticky top-0 bg-gray-900 md:bg-gray-900/95 border-b border-gray-700 p-4 flex items-center justify-between z-10">
+            <h2 class="text-lg font-semibold">Quick Tags</h2>
+            <button
+                @click="$store.lightbox.closeQuickTagPanel()"
+                class="p-1.5 hover:bg-white/10 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-white/50"
+                aria-label="Close quick tag panel"
+            >
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Panel content -->
+        <div class="p-4 space-y-4">
+            <!-- Current resource tags -->
+            <div>
+                <label class="block text-sm font-medium text-gray-300 mb-1.5">Resource Tags</label>
+                <div class="flex flex-wrap gap-2">
+                    <template x-for="tag in ($store.lightbox.resourceDetails?.Tags || [])" :key="tag.ID">
+                        <span class="inline-flex items-center gap-1 px-2.5 py-1 text-white text-sm">
+                            <span x-text="tag.Name"></span>
+                            <button
+                                @click="$store.lightbox.saveTagRemoval(tag)"
+                                type="button"
+                                class="hover:bg-white/20 rounded-full p-0.5 focus:outline-none focus:ring-1 focus:ring-white"
+                                :aria-label="'Remove tag ' + tag.Name"
+                            >
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                </svg>
+                            </button>
+                        </span>
+                    </template>
+                    <span x-show="!($store.lightbox.resourceDetails?.Tags || []).length" class="text-gray-500 text-sm italic">No tags</span>
+                </div>
+            </div>
+
+            <!-- Divider -->
+            <div class="border-t border-gray-700"></div>
+
+            <!-- Tag slots -->
+            <div class="space-y-2">
+                <label class="block text-sm font-medium text-gray-300 mb-1.5">Tag Slots</label>
+                <template x-for="(slot, index) in $store.lightbox.quickTagSlots" :key="index">
+                    <div class="flex items-center gap-2">
+                        <!-- Number key label -->
+                        <kbd class="flex-none w-7 h-7 flex items-center justify-center bg-gray-800 border border-gray-600 rounded text-xs font-mono text-gray-300"
+                             x-text="$store.lightbox.quickTagKeyLabel(index)"></kbd>
+
+                        <!-- Empty slot: autocomplete input -->
+                        <template x-if="!slot">
+                            <div class="flex-1"
+                                 x-data="autocompleter({
+                                     selectedResults: [],
+                                     url: '/v1/tags',
+                                     standalone: true,
+                                     sortBy: 'most_used_resource',
+                                     max: 1,
+                                     onSelect: (tag) => { $store.lightbox.setQuickTagSlot(index, tag); }
+                                 })">
+                                <div class="relative">
+                                    <input
+                                        x-ref="autocompleter"
+                                        type="text"
+                                        x-bind="inputEvents"
+                                        class="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                        :placeholder="'Assign tag to ' + $store.lightbox.quickTagKeyLabel(index) + '...'"
+                                        autocomplete="off"
+                                        role="combobox"
+                                        aria-autocomplete="list"
+                                        :aria-expanded="dropdownActive && results.length > 0"
+                                    >
+                                    <!-- Dropdown results as popover -->
+                                    <div x-ref="dropdown" popover
+                                         class="bg-gray-800 border border-gray-700 rounded-md shadow-lg max-h-48 overflow-y-auto"
+                                         role="listbox">
+                                        <template x-for="(tag, rIndex) in results" :key="tag.ID">
+                                            <div
+                                                @mousedown.prevent="selectedIndex = rIndex; pushVal($event)"
+                                                @mouseover="selectedIndex = rIndex"
+                                                role="option"
+                                                :aria-selected="rIndex === selectedIndex"
+                                                class="px-3 py-2 cursor-pointer text-sm"
+                                                :class="rIndex === selectedIndex ? 'bg-indigo-600 text-white' : 'text-gray-300 hover:bg-gray-700'"
+                                            >
+                                                <span x-text="tag.Name"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+
+                        <!-- Configured slot: tag name + toggle button + clear -->
+                        <template x-if="slot">
+                            <div class="flex-1 flex items-center gap-2">
+                                <button
+                                    @click="$store.lightbox.toggleQuickTag(index)"
+                                    class="flex-1 px-2 py-1.5 rounded text-sm text-left transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                    :class="$store.lightbox.isTagOnResource(slot.id)
+                                        ? 'bg-green-700/50 hover:bg-red-700/50 border border-green-600/50'
+                                        : 'bg-gray-800 hover:bg-indigo-700/50 border border-gray-700'"
+                                    :aria-label="($store.lightbox.isTagOnResource(slot.id) ? 'Remove ' : 'Add ') + slot.name"
+                                >
+                                    <span class="flex items-center gap-1.5">
+                                        <svg x-show="$store.lightbox.isTagOnResource(slot.id)" class="w-3.5 h-3.5 text-green-400 flex-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                                        </svg>
+                                        <span x-text="($store.lightbox.isTagOnResource(slot.id) ? 'Remove ' : 'Add ') + slot.name"></span>
+                                    </span>
+                                </button>
+                                <button
+                                    @click="$store.lightbox.clearQuickTagSlot(index)"
+                                    class="flex-none p-1 hover:bg-white/10 rounded-full transition-colors focus:outline-none focus:ring-1 focus:ring-white"
+                                    :aria-label="'Clear slot ' + $store.lightbox.quickTagKeyLabel(index)"
+                                >
+                                    <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+            </div>
+        </div>
     </div>
 
     <!-- Edit Panel (slides in from right) -->
@@ -491,7 +662,10 @@
         x-show="$store.lightbox.pageLoading"
         x-transition
         class="absolute bottom-20 left-1/2 -translate-x-1/2 px-4 py-2 bg-white/10 backdrop-blur rounded text-white text-sm z-20"
-        :class="$store.lightbox.editPanelOpen ? 'md:-translate-x-[calc(50%+200px)]' : ''"
+        :class="{
+            'lg:-translate-x-[calc(50%+200px)]': $store.lightbox.editPanelOpen && !$store.lightbox.quickTagPanelOpen,
+            'lg:translate-x-[calc(-50%+200px)]': !$store.lightbox.editPanelOpen && $store.lightbox.quickTagPanelOpen
+        }"
     >
         Loading more items...
     </div>
