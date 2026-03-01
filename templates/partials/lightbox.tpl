@@ -27,7 +27,7 @@
     @keydown.7.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleQuickTag(6)"
     @keydown.8.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleQuickTag(7)"
     @keydown.9.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleQuickTag(8)"
-    @keydown.0.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.focusTagEditor()"
+    @keyup.0.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.focusTagEditor()"
     @touchstart="$store.lightbox.handleTouchStart($event)"
     @touchmove="$store.lightbox.handleTouchMove($event)"
     @touchend="$store.lightbox.handleTouchEnd($event)"
