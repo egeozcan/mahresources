@@ -62,6 +62,22 @@ export const quickTagPanelMethods = {
   closeQuickTagPanel() {
     this.quickTagPanelOpen = false;
     this._saveQuickTagsToStorage();
+
+    // If both panels are closed and changes were made, refresh page content
+    if (!this.editPanelOpen && this.needsRefreshOnClose) {
+      this.needsRefreshOnClose = false;
+      this.refreshPageContent();
+    }
+
+    // Clear resource details if edit panel is also closed
+    if (!this.editPanelOpen) {
+      if (this.detailsAborter) {
+        this.detailsAborter();
+        this.detailsAborter = null;
+      }
+      this.resourceDetails = null;
+    }
+
     this.announce('Edit tags panel closed');
   },
 
