@@ -147,6 +147,11 @@ export const navigationMethods = {
     this.isOpen = true;
     this.loading = true;
 
+    // Blur the trigger element so x-trap can move focus into the lightbox
+    if (document.activeElement && document.activeElement !== document.body) {
+      document.activeElement.blur();
+    }
+
     const item = this.getCurrentItem();
     const mediaType = this.isVideo(item?.contentType) ? 'video' : this.isSvg(item?.contentType) ? 'SVG' : 'image';
     this.announce(`Opened ${mediaType}: ${item?.name || 'media'}. ${this.currentIndex + 1} of ${this.items.length}`);

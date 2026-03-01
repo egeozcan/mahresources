@@ -1,9 +1,9 @@
 <div
     x-data="{
         canNavigate() {
-            // Allow navigation unless focus is on an input or textarea
+            // Allow navigation unless focus is on an input, textarea, or select
             const activeEl = document.activeElement;
-            return !activeEl || !['INPUT', 'TEXTAREA'].includes(activeEl.tagName);
+            return !activeEl || !['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl.tagName);
         }
     }"
     x-show="$store.lightbox.isOpen"
@@ -14,7 +14,7 @@
     @keydown.arrow-right.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.next()"
     @keydown.page-up.window.prevent="$store.lightbox.isOpen && $store.lightbox.prev()"
     @keydown.page-down.window.prevent="$store.lightbox.isOpen && $store.lightbox.next()"
-    @keydown.enter.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.toggleFullscreen()"
+    @keydown.enter.window="$store.lightbox.isOpen && canNavigate() && !document.activeElement?.closest('[data-edit-panel], [data-quick-tag-panel]') && $store.lightbox.toggleFullscreen()"
     @keydown.e.window="$store.lightbox.isOpen && canNavigate() && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
     @keydown.f2.window.prevent="$store.lightbox.isOpen && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
     @keydown.t.window="$store.lightbox.isOpen && canNavigate() && ($store.lightbox.quickTagPanelOpen ? $store.lightbox.closeQuickTagPanel() : $store.lightbox.openQuickTagPanel())"
@@ -366,7 +366,7 @@
                             x-text="'Add ' + addModeForTag + '?'"
                             x-init="setTimeout(() => $el.focus(), 1)"
                             @keydown.escape.prevent="exitAdd"
-                            @keydown.enter.prevent="addVal"
+                            @keydown.enter.prevent.stop="addVal"
                             @click="addVal"
                         ></button>
                         <button
