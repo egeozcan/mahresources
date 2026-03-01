@@ -308,7 +308,7 @@
                 <label class="block text-sm font-medium text-gray-300 mb-1.5">Tags</label>
 
                 <!-- Add tag input -->
-                <template x-if="addModeForTag == ''">
+                <template x-if="!addModeForTag">
                     <div class="relative mb-3">
                         <input
                             x-ref="autocompleter"
@@ -320,17 +320,21 @@
                             autocomplete="off"
                             role="combobox"
                             aria-autocomplete="list"
+                            aria-controls="lightbox-tag-listbox"
+                            :aria-activedescendant="selectedIndex >= 0 && results[selectedIndex] ? 'lightbox-tag-result-' + selectedIndex : null"
                             :aria-expanded="dropdownActive && results.length > 0"
                         >
 
                         <!-- Tag search results dropdown (popover) -->
                         <div x-ref="dropdown" popover
+                             id="lightbox-tag-listbox"
                              class="bg-gray-800 border border-gray-700 rounded-md shadow-lg max-h-48 overflow-y-auto"
                              role="listbox">
                             <template x-for="(tag, rIndex) in results" :key="tag.ID">
                                 <div
                                     @mousedown.prevent="selectedIndex = rIndex; pushVal($event)"
                                     @mouseover="selectedIndex = rIndex"
+                                    :id="'lightbox-tag-result-' + rIndex"
                                     role="option"
                                     :aria-selected="rIndex === selectedIndex"
                                     class="px-3 py-2 cursor-pointer text-sm"

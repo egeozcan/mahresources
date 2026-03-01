@@ -367,7 +367,7 @@
                                                      onRemove: () => $dispatch('table-query-cleared')
                                                  })"
                                                  class="relative">
-                                                <template x-if="addModeForTag == ''">
+                                                <template x-if="!addModeForTag">
                                                     <div>
                                                         <input
                                                             x-ref="autocompleter"

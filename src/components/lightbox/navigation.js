@@ -191,8 +191,6 @@ export const navigationMethods = {
     document.body.style.overflow = '';
     window.scrollTo(0, savedY);
 
-    this.resourceDetails = null;
-
     if (this.requestAborter) {
       this.requestAborter();
       this.requestAborter = null;

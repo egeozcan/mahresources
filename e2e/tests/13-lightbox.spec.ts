@@ -827,8 +827,8 @@ test.describe('Lightbox Edit Panel', () => {
     const quickTagPanel = lightbox.locator('[data-quick-tag-panel]');
     await expect(quickTagPanel).toBeVisible();
 
-    // Wait for resource details to load
-    await page.waitForTimeout(1000);
+    // Wait for resource details to load (tag editor input appears when details are ready)
+    await expect(quickTagPanel.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });
 
     // Verify the tag is shown on the first resource
     const tagChip = quickTagPanel.locator(`.flex.flex-wrap.gap-2 span.inline-flex:has-text("LightboxEditTag-${testRunId}")`);
@@ -850,7 +850,7 @@ test.describe('Lightbox Edit Panel', () => {
     await expect(quickTagPanel).toBeVisible();
 
     // Wait for new resource details to load
-    await page.waitForTimeout(1000);
+    await expect(quickTagPanel.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });
 
     // The second resource should NOT have the test tag
     const staleTag = quickTagPanel.locator(`.flex.flex-wrap.gap-2 span.inline-flex:has-text("LightboxEditTag-${testRunId}")`);
@@ -930,8 +930,8 @@ test.describe('Lightbox Edit Panel', () => {
     const quickTagPanel = lightbox.locator('[data-quick-tag-panel]');
     await expect(quickTagPanel).toBeVisible();
 
-    // Wait for details to load
-    await page.waitForTimeout(500);
+    // Wait for details to load (tag editor input appears when details are ready)
+    await expect(quickTagPanel.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });
 
     // Count tags on first resource
     const initialTagCount = await quickTagPanel.locator('.flex.flex-wrap.gap-2 > span').count();
@@ -941,7 +941,7 @@ test.describe('Lightbox Edit Panel', () => {
     await page.keyboard.press('ArrowRight');
 
     // Wait for new resource details to load
-    await page.waitForTimeout(500);
+    await expect(quickTagPanel.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });
 
     // Verify the panel shows new resource's tags
     const newTagCount = await quickTagPanel.locator('.flex.flex-wrap.gap-2 > span').count();

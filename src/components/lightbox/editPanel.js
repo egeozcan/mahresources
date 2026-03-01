@@ -32,7 +32,6 @@ export const editPanelMethods = {
     }
 
     this.editPanelOpen = true;
-    this.needsRefreshOnClose = false;
     this.announce('Edit panel opened');
     await this.fetchResourceDetails();
 
@@ -58,7 +57,8 @@ export const editPanelMethods = {
       this.resourceDetails = null;
     }
 
-    if (this.needsRefreshOnClose) {
+    // Only refresh when both panels are closed — the last panel to close triggers the refresh
+    if (!this.quickTagPanelOpen && this.needsRefreshOnClose) {
       this.needsRefreshOnClose = false;
       this.refreshPageContent();
     }

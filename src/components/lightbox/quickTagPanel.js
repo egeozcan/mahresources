@@ -63,7 +63,7 @@ export const quickTagPanelMethods = {
     this.quickTagPanelOpen = false;
     this._saveQuickTagsToStorage();
 
-    // If both panels are closed and changes were made, refresh page content
+    // Only refresh when both panels are closed — the last panel to close triggers the refresh
     if (!this.editPanelOpen && this.needsRefreshOnClose) {
       this.needsRefreshOnClose = false;
       this.refreshPageContent();
@@ -142,12 +142,20 @@ export const quickTagPanelMethods = {
     }
     // Wait for resource details to load (input is inside x-if="resourceDetails")
     await this.fetchResourceDetails();
-    // Poll for the input element (Alpine needs a tick to render the template)
-    const poll = (attempts) => {
+    // Try immediately (e.g. details came from cache), otherwise poll for Alpine to render
+    const findAndFocus = () => {
       const panel = document.querySelector('[data-quick-tag-panel]');
-      const input = panel?.querySelector('[data-tag-editor-input]');
-      if (input) {
-        input.focus();
+      return panel?.querySelector('[data-tag-editor-input]');
+    };
+    const input = findAndFocus();
+    if (input) {
+      input.focus();
+      return;
+    }
+    const poll = (attempts) => {
+      const el = findAndFocus();
+      if (el) {
+        el.focus();
       } else if (attempts > 0) {
         requestAnimationFrame(() => poll(attempts - 1));
       }

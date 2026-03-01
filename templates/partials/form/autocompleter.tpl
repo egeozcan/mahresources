@@ -17,7 +17,7 @@
     <label class="block text-sm font-medium text-gray-700 mt-3" id="{{ id }}-label" for="{{ id }}">{{ title }}</label>
     {% endif %}
     {% include "/partials/form/formParts/errorMessage.tpl" %}
-    <template x-if="addModeForTag == ''">
+    <template x-if="!addModeForTag">
         <div>
             <input
                     id="{{ id }}"
