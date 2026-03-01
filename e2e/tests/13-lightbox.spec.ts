@@ -618,9 +618,6 @@ test.describe('Lightbox Edit Panel', () => {
     const descriptionInput = editPanel.locator('textarea#lightbox-edit-description');
     await expect(descriptionInput).toBeVisible();
 
-    // Verify tags section is visible
-    const tagsLabel = editPanel.locator('label:has-text("Tags")');
-    await expect(tagsLabel).toBeVisible();
   });
 
   test('should close edit panel with E key and close lightbox with Escape', async ({ page }) => {
@@ -708,7 +705,7 @@ test.describe('Lightbox Edit Panel', () => {
     await expect(page.locator('text=Updated Name From Lightbox').first()).toBeVisible();
   });
 
-  test('should add a tag from edit panel', async ({ page }) => {
+  test('should add a tag from edit tags panel', async ({ page }) => {
     await page.goto('/resources');
     await page.waitForLoadState('load');
 
@@ -719,18 +716,17 @@ test.describe('Lightbox Edit Panel', () => {
     const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
-    // Open edit panel
-    const editButton = lightbox.locator('button:has-text("Edit")');
-    await editButton.click();
+    // Open edit tags panel
+    await page.keyboard.press('t');
 
-    const editPanel = lightbox.locator('[data-edit-panel]');
-    await expect(editPanel).toBeVisible();
+    const quickTagPanel = lightbox.locator('[data-quick-tag-panel]');
+    await expect(quickTagPanel).toBeVisible();
 
     // Wait for resource details to load
     await page.waitForTimeout(500);
 
     // Find the tag input
-    const tagInput = editPanel.locator('input[placeholder="Search or add tags..."]');
+    const tagInput = quickTagPanel.locator('input[placeholder="Search or add tags..."]');
     await expect(tagInput).toBeVisible();
 
     // Type tag name to search
@@ -740,20 +736,18 @@ test.describe('Lightbox Edit Panel', () => {
     await page.waitForTimeout(300);
 
     // Click on the tag in dropdown
-    const tagOption = editPanel.locator(`div[role="option"]:has-text("LightboxEditTag-${testRunId}")`);
+    const tagOption = quickTagPanel.locator(`div[role="option"]:has-text("LightboxEditTag-${testRunId}")`);
     await tagOption.click();
 
     // Wait for tag to be added
     await page.waitForTimeout(500);
 
-    // Verify tag chip appears (use the chip container class to avoid matching dropdown text)
-    const tagChip = editPanel.locator(`.flex.flex-wrap.gap-2 span.inline-flex:has-text("LightboxEditTag-${testRunId}")`);
+    // Verify tag chip appears
+    const tagChip = quickTagPanel.locator(`.flex.flex-wrap.gap-2 span.inline-flex:has-text("LightboxEditTag-${testRunId}")`);
     await expect(tagChip).toBeVisible();
   });
 
   test('should not show stale tags when reopening lightbox on different resource', async ({ page }) => {
-    // This tests the bug fix for stale tags persisting between resources
-    // First, add a tag to the first resource, then close and reopen on another resource
     await page.goto('/resources');
     await page.waitForLoadState('load');
 
@@ -764,20 +758,20 @@ test.describe('Lightbox Edit Panel', () => {
     const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
-    // Open edit panel
-    const editButton = lightbox.locator('button:has-text("Edit")');
-    await editButton.click();
+    // Open edit tags panel
+    await page.keyboard.press('t');
 
-    const editPanel = lightbox.locator('[data-edit-panel]');
-    await expect(editPanel).toBeVisible();
+    const quickTagPanel = lightbox.locator('[data-quick-tag-panel]');
+    await expect(quickTagPanel).toBeVisible();
 
     // Wait for tags to load
     await page.waitForTimeout(500);
 
     // Count the number of tag chips on first resource
-    const firstResourceTagCount = await editPanel.locator('.flex.flex-wrap.gap-2 span.inline-flex').count();
+    const firstResourceTagCount = await quickTagPanel.locator('.flex.flex-wrap.gap-2 span.inline-flex').count();
 
-    // Close lightbox completely (Escape closes lightbox immediately)
+    // Close lightbox completely
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
     await page.keyboard.press('Escape');
     await page.waitForTimeout(400);
     await expect(lightbox).toBeHidden();
@@ -788,34 +782,28 @@ test.describe('Lightbox Edit Panel', () => {
     if (count > 1) {
       await imageLinks.nth(1).click();
     } else {
-      // If only one resource, navigate using arrow key after reopening
       await imageLinks.first().click();
     }
     await expect(lightbox).toBeVisible();
 
-    // Open edit panel on this new resource - need to re-query since DOM may have changed
-    const editButton2 = lightbox.locator('button:has-text("Edit")');
-    await editButton2.click();
-    const editPanel2 = lightbox.locator('[data-edit-panel]');
-    await expect(editPanel2).toBeVisible();
+    // Open edit tags panel on this new resource
+    await page.keyboard.press('t');
+    await expect(quickTagPanel).toBeVisible();
 
     // Wait for resource details to load
     await page.waitForTimeout(500);
 
-    // The key assertion: verify that the edit panel has loaded fresh data
-    // We can't assert specific tag counts since they may vary, but we verify
-    // the panel is functional and shows the tags section
-    const tagsSection = editPanel2.locator('label:has-text("Tags")');
+    // Verify the panel shows the tags section
+    const tagsSection = quickTagPanel.locator('label:has-text("Tags")');
     await expect(tagsSection).toBeVisible();
 
-    // Verify either tags are shown or "No tags yet" message - both are valid
-    // The bug would show stale tags from previous resource
-    const tagsOrNoTags = editPanel2.locator('.flex.flex-wrap.gap-2');
+    // Verify either tags are shown or "No tags yet" message
+    const tagsOrNoTags = quickTagPanel.locator('.flex.flex-wrap.gap-2');
     await expect(tagsOrNoTags).toBeVisible();
   });
 
-  test('should not show stale tags after closing edit panel and navigating to another resource', async ({ page, apiClient }) => {
-    // This tests the exact bug: open edit panel -> Escape -> arrow navigate -> press 'e'
+  test('should not show stale tags after closing edit tags panel and navigating to another resource', async ({ page, apiClient }) => {
+    // This tests: open edit tags panel -> close -> arrow navigate -> reopen
     // The second resource should NOT show the first resource's tags
 
     // Add tag to the last created resource only (shown first in default desc sort)
@@ -833,46 +821,39 @@ test.describe('Lightbox Edit Panel', () => {
     const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
-    // Press 'e' to open edit panel
-    await page.keyboard.press('e');
+    // Press 't' to open edit tags panel
+    await page.keyboard.press('t');
 
-    const editPanel = lightbox.locator('[data-edit-panel]');
-    await expect(editPanel).toBeVisible();
+    const quickTagPanel = lightbox.locator('[data-quick-tag-panel]');
+    await expect(quickTagPanel).toBeVisible();
 
     // Wait for resource details to load
-    await page.waitForFunction(() => {
-      const input = document.querySelector('#lightbox-edit-name') as HTMLInputElement;
-      return input && input.value.length > 0;
-    }, { timeout: 30000 });
+    await page.waitForTimeout(1000);
 
     // Verify the tag is shown on the first resource
-    const tagChip = editPanel.locator(`.flex.flex-wrap.gap-2 span.inline-flex:has-text("LightboxEditTag-${testRunId}")`);
+    const tagChip = quickTagPanel.locator(`.flex.flex-wrap.gap-2 span.inline-flex:has-text("LightboxEditTag-${testRunId}")`);
     await expect(tagChip).toBeVisible();
 
-    // Blur focused input, then press 'e' to toggle edit panel closed (canNavigate() requires no input focused)
+    // Blur focused input, then press 't' to toggle panel closed
     await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
-    await page.keyboard.press('e');
+    await page.keyboard.press('t');
     await page.waitForTimeout(400);
-    await expect(editPanel).toBeHidden();
-    await expect(lightbox).toBeVisible(); // lightbox should still be open
+    await expect(quickTagPanel).toBeHidden();
+    await expect(lightbox).toBeVisible();
 
     // Arrow navigate to the next resource
     await page.keyboard.press('ArrowRight');
     await page.waitForTimeout(500);
 
-    // Press 'e' to reopen edit panel on the second resource
-    await page.keyboard.press('e');
-    await expect(editPanel).toBeVisible();
+    // Press 't' to reopen edit tags panel on the second resource
+    await page.keyboard.press('t');
+    await expect(quickTagPanel).toBeVisible();
 
     // Wait for new resource details to load
-    await page.waitForFunction(() => {
-      const input = document.querySelector('#lightbox-edit-name') as HTMLInputElement;
-      return input && input.value.length > 0;
-    }, { timeout: 30000 });
+    await page.waitForTimeout(1000);
 
     // The second resource should NOT have the test tag
-    // (we only added it to the first resource)
-    const staleTag = editPanel.locator(`.flex.flex-wrap.gap-2 span.inline-flex:has-text("LightboxEditTag-${testRunId}")`);
+    const staleTag = quickTagPanel.locator(`.flex.flex-wrap.gap-2 span.inline-flex:has-text("LightboxEditTag-${testRunId}")`);
     await expect(staleTag).toHaveCount(0);
   });
 
@@ -932,7 +913,7 @@ test.describe('Lightbox Edit Panel', () => {
     expect(newDescription).toBe('Updated description via lightbox');
   });
 
-  test('should show correct tags when navigating between resources with edit panel open', async ({ page }) => {
+  test('should show correct tags when navigating between resources with edit tags panel open', async ({ page }) => {
     await page.goto('/resources');
     await page.waitForLoadState('load');
 
@@ -943,31 +924,27 @@ test.describe('Lightbox Edit Panel', () => {
     const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
-    // Open edit panel
-    const editButton = lightbox.locator('button:has-text("Edit")');
-    await editButton.click();
+    // Open edit tags panel
+    await page.keyboard.press('t');
 
-    const editPanel = lightbox.locator('[data-edit-panel]');
-    await expect(editPanel).toBeVisible();
+    const quickTagPanel = lightbox.locator('[data-quick-tag-panel]');
+    await expect(quickTagPanel).toBeVisible();
 
     // Wait for details to load
     await page.waitForTimeout(500);
 
     // Count tags on first resource
-    const initialTagCount = await editPanel.locator('.flex.flex-wrap.gap-2 > span').count();
+    const initialTagCount = await quickTagPanel.locator('.flex.flex-wrap.gap-2 > span').count();
 
     // Navigate to next resource with keyboard
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
     await page.keyboard.press('ArrowRight');
 
     // Wait for new resource details to load
     await page.waitForTimeout(500);
 
-    // Verify the edit panel shows new resource's tags (may be different count)
-    // The key is that we don't see stale data - just verify the panel updates
-    const newTagCount = await editPanel.locator('.flex.flex-wrap.gap-2 > span').count();
-
-    // As long as the panel updated (loading completed), we're good
-    // The actual tag count may vary
+    // Verify the panel shows new resource's tags
+    const newTagCount = await quickTagPanel.locator('.flex.flex-wrap.gap-2 > span').count();
     expect(typeof newTagCount).toBe('number');
   });
 
@@ -1032,6 +1009,66 @@ test.describe('Lightbox Edit Panel', () => {
     // Verify description textarea is still focused
     const focusedAfterDesc = await page.evaluate(() => document.activeElement?.id);
     expect(focusedAfterDesc).toBe('lightbox-edit-description');
+  });
+
+  test('should focus tag editor input when pressing 0', async ({ page }) => {
+    await page.goto('/resources');
+    await page.waitForLoadState('load');
+
+    const imageLink = page.locator('[data-lightbox-item]').first();
+    await imageLink.click();
+
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
+    await expect(lightbox).toBeVisible();
+
+    // Press 0 to open panel and focus tag editor
+    await page.keyboard.press('0');
+
+    // Panel should be open
+    const quickTagPanel = lightbox.locator('[data-quick-tag-panel]');
+    await expect(quickTagPanel).toBeVisible();
+
+    // Wait for panel animation and focus
+    await page.waitForTimeout(500);
+
+    // Tag editor input should be focused
+    const tagInput = quickTagPanel.locator('[data-tag-editor-input]');
+    await expect(tagInput).toBeFocused();
+  });
+
+  test('should blur tag editor on Escape without closing lightbox', async ({ page }) => {
+    await page.goto('/resources');
+    await page.waitForLoadState('load');
+
+    const imageLink = page.locator('[data-lightbox-item]').first();
+    await imageLink.click();
+
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
+    await expect(lightbox).toBeVisible();
+
+    // Press 0 to focus tag editor
+    await page.keyboard.press('0');
+
+    const quickTagPanel = lightbox.locator('[data-quick-tag-panel]');
+    await expect(quickTagPanel).toBeVisible();
+
+    await page.waitForTimeout(500);
+
+    const tagInput = quickTagPanel.locator('[data-tag-editor-input]');
+    await expect(tagInput).toBeFocused();
+
+    // Press Escape — should blur input, NOT close lightbox
+    await page.keyboard.press('Escape');
+
+    // Input should no longer be focused
+    await expect(tagInput).not.toBeFocused();
+
+    // Lightbox should still be open
+    await expect(lightbox).toBeVisible();
+
+    // Now press Escape again — should close lightbox
+    await page.keyboard.press('Escape');
+    await expect(lightbox).toBeHidden();
   });
 });
 
