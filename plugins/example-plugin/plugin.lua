@@ -23,4 +23,23 @@ function init()
     mah.on("after_resource_create", function(resource)
         mah.log("info", "Resource created: " .. (resource.name or "unknown"))
     end)
+
+    -- Example: fetch data from an external API (async, non-blocking)
+    -- mah.http.get("https://api.example.com/status", function(resp)
+    --     if resp.error then
+    --         mah.log("error", "HTTP request failed: " .. resp.error)
+    --         return
+    --     end
+    --     mah.log("info", "API status: " .. resp.status_code .. " body: " .. resp.body)
+    -- end)
+
+    -- Example: POST with custom headers
+    -- mah.http.post("https://api.example.com/notify", '{"event":"init"}', {
+    --     headers = { ["Content-Type"] = "application/json", ["Authorization"] = "Bearer token" },
+    --     timeout = 15
+    -- }, function(resp)
+    --     if resp.error then
+    --         mah.log("error", "Notification failed: " .. resp.error)
+    --     end
+    -- end)
 end

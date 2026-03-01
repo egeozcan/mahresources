@@ -3,6 +3,7 @@ package plugin_system
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -44,6 +45,13 @@ type PluginManager struct {
 	vmLocks    map[*lua.LState]*sync.Mutex
 	dbProvider atomic.Value
 	closed     atomic.Bool
+
+	// HTTP async callback support
+	httpClient  *http.Client
+	httpMu      sync.Mutex
+	httpPending []httpCallback
+	httpNotify  chan struct{} // buffered(1), signals new callbacks
+	httpStop    chan struct{} // closed to stop drain goroutine
 }
 
 // NewPluginManager scans dir for subdirectories containing plugin.lua,
@@ -56,7 +64,12 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 		hooks:      make(map[string][]hookEntry),
 		injections: make(map[string][]injectionEntry),
 		vmLocks:    make(map[*lua.LState]*sync.Mutex),
+		httpClient: newHttpClient(),
+		httpNotify: make(chan struct{}, 1),
+		httpStop:   make(chan struct{}),
 	}
+
+	go pm.drainHttpCallbacks()
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -206,6 +219,7 @@ func (pm *PluginManager) registerMahModule(L *lua.LState) {
 	}))
 
 	pm.registerDbModule(L, mahMod)
+	pm.registerHttpModule(L, mahMod)
 
 	L.SetGlobal("mah", mahMod)
 }
@@ -246,6 +260,7 @@ func (pm *PluginManager) VMLock(L *lua.LState) *sync.Mutex {
 // are no-ops.
 func (pm *PluginManager) Close() {
 	pm.closed.Store(true)
+	close(pm.httpStop)
 	for _, L := range pm.states {
 		L.Close()
 	}
