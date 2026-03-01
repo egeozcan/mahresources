@@ -13,11 +13,12 @@ import (
 )
 
 const (
-	defaultHttpTimeout   = 10 * time.Second
-	maxHttpTimeout       = 30 * time.Second
-	maxHttpResponseBody  = 5 * 1024 * 1024 // 5MB
-	maxHttpRedirects     = 10
-	httpUserAgent        = "mahresources-plugin/1.0"
+	defaultHttpTimeout      = 10 * time.Second
+	maxHttpTimeout          = 30 * time.Second
+	maxHttpResponseBody     = 5 * 1024 * 1024 // 5MB
+	maxHttpRedirects        = 10
+	maxConcurrentHttpReqs   = 16
+	httpUserAgent           = "mahresources-plugin/1.0"
 )
 
 // httpCallback holds a pending callback to be executed on the Lua VM thread.
@@ -28,9 +29,10 @@ type httpCallback struct {
 }
 
 // newHttpClient creates the shared HTTP client used for all plugin HTTP requests.
+// Per-request timeouts are enforced via context.WithTimeout, so no client-level
+// Timeout is set here to avoid redundant/conflicting deadline behavior.
 func newHttpClient() *http.Client {
 	return &http.Client{
-		Timeout: maxHttpTimeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= maxHttpRedirects {
 				return fmt.Errorf("stopped after %d redirects", maxHttpRedirects)
@@ -58,6 +60,7 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable) {
 			return 0
 		}
 
+		pm.httpWg.Add(1)
 		go pm.executeHttpRequest("GET", url, "", headers, timeout, L, callback)
 		return 0
 	}))
@@ -77,6 +80,7 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable) {
 			return 0
 		}
 
+		pm.httpWg.Add(1)
 		go pm.executeHttpRequest("POST", url, body, headers, timeout, L, callback)
 		return 0
 	}))
@@ -95,6 +99,7 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable) {
 			return 0
 		}
 
+		pm.httpWg.Add(1)
 		go pm.executeHttpRequest(method, url, body, headers, timeout, L, callback)
 		return 0
 	}))
@@ -165,6 +170,12 @@ func validateScheme(url string) error {
 
 // executeHttpRequest performs the HTTP request in a goroutine and queues the callback.
 func (pm *PluginManager) executeHttpRequest(method, url, body string, headers map[string]string, timeout time.Duration, vm *lua.LState, callback *lua.LFunction) {
+	defer pm.httpWg.Done()
+
+	// Acquire concurrency semaphore
+	pm.httpSem <- struct{}{}
+	defer func() { <-pm.httpSem }()
+
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -232,11 +243,11 @@ func (pm *PluginManager) executeHttpRequest(method, url, body string, headers ma
 		log.Printf("[plugin] warning: HTTP response body truncated at %d bytes for %s %s", maxHttpResponseBody, method, url)
 	}
 
-	// Build response headers (lowercase keys, first value only)
+	// Build response headers (lowercase keys, comma-joined per RFC 7230)
 	respHeaders := make(map[string]any)
 	for k, vals := range resp.Header {
 		if len(vals) > 0 {
-			respHeaders[strings.ToLower(k)] = vals[0]
+			respHeaders[strings.ToLower(k)] = strings.Join(vals, ", ")
 		}
 	}
 
@@ -254,19 +265,18 @@ func (pm *PluginManager) executeHttpRequest(method, url, body string, headers ma
 	})
 }
 
-// queueErrorCallback is a convenience for queuing an error response without spawning a goroutine.
+// queueErrorCallback is a convenience for queuing an error response.
+// queueHttpCallback is non-blocking, so no goroutine is needed.
 func (pm *PluginManager) queueErrorCallback(vm *lua.LState, callback *lua.LFunction, method, url, errMsg string) {
-	go func() {
-		pm.queueHttpCallback(httpCallback{
-			vm: vm,
-			fn: callback,
-			response: map[string]any{
-				"error":  errMsg,
-				"url":    url,
-				"method": method,
-			},
-		})
-	}()
+	pm.queueHttpCallback(httpCallback{
+		vm: vm,
+		fn: callback,
+		response: map[string]any{
+			"error":  errMsg,
+			"url":    url,
+			"method": method,
+		},
+	})
 }
 
 // queueHttpCallback appends a callback to the pending list and signals the drain goroutine.

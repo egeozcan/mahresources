@@ -50,8 +50,10 @@ type PluginManager struct {
 	httpClient  *http.Client
 	httpMu      sync.Mutex
 	httpPending []httpCallback
-	httpNotify  chan struct{} // buffered(1), signals new callbacks
-	httpStop    chan struct{} // closed to stop drain goroutine
+	httpNotify  chan struct{}          // buffered(1), signals new callbacks
+	httpStop    chan struct{}          // closed to stop drain goroutine
+	httpWg      sync.WaitGroup        // tracks in-flight HTTP goroutines
+	httpSem     chan struct{}          // concurrency semaphore
 }
 
 // NewPluginManager scans dir for subdirectories containing plugin.lua,
@@ -67,6 +69,7 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 		httpClient: newHttpClient(),
 		httpNotify: make(chan struct{}, 1),
 		httpStop:   make(chan struct{}),
+		httpSem:    make(chan struct{}, maxConcurrentHttpReqs),
 	}
 
 	go pm.drainHttpCallbacks()
@@ -260,6 +263,7 @@ func (pm *PluginManager) VMLock(L *lua.LState) *sync.Mutex {
 // are no-ops.
 func (pm *PluginManager) Close() {
 	pm.closed.Store(true)
+	pm.httpWg.Wait() // wait for in-flight HTTP goroutines to finish
 	close(pm.httpStop)
 	for _, L := range pm.states {
 		L.Close()

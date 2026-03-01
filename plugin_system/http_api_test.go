@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -534,5 +535,144 @@ end
 	}
 	if receivedUA != "CustomAgent/2.0" {
 		t.Errorf("expected 'CustomAgent/2.0', got %q", receivedUA)
+	}
+}
+
+func TestHttpApi_RequestDelete(t *testing.T) {
+	var receivedMethod string
+	var receivedBodyLen int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedMethod = r.Method
+		body, _ := io.ReadAll(r.Body)
+		receivedBodyLen = len(body)
+		w.WriteHeader(204)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	writePlugin(t, dir, "http-test", fmt.Sprintf(`
+plugin = { name = "http-test", version = "1.0", description = "http test" }
+http_result = ""
+
+function init()
+    mah.http.request("DELETE", %q, {}, function(resp)
+        if resp.error then
+            http_result = "ERR:" .. resp.error
+        else
+            http_result = resp.method .. ":" .. resp.status_code
+        end
+    end)
+    mah.inject("test", function(ctx)
+        return http_result
+    end)
+end
+`, srv.URL))
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pm.Close()
+
+	result := pollSlot(t, pm, "test", 5*time.Second)
+	if result != "DELETE:204" {
+		t.Errorf("expected 'DELETE:204', got %q", result)
+	}
+	if receivedMethod != "DELETE" {
+		t.Errorf("expected server to receive DELETE, got %q", receivedMethod)
+	}
+	if receivedBodyLen != 0 {
+		t.Errorf("expected empty body for DELETE, got %d bytes", receivedBodyLen)
+	}
+}
+
+func TestHttpApi_ConcurrentRequests(t *testing.T) {
+	var mu sync.Mutex
+	var requestCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requestCount++
+		mu.Unlock()
+		w.WriteHeader(200)
+		fmt.Fprintf(w, "resp-%s", r.URL.Path)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	writePlugin(t, dir, "http-test", fmt.Sprintf(`
+plugin = { name = "http-test", version = "1.0", description = "http test" }
+done_count = 0
+http_result = ""
+
+function init()
+    for i = 1, 5 do
+        mah.http.get(%q .. "/" .. tostring(i), function(resp)
+            done_count = done_count + 1
+            if done_count == 5 then
+                http_result = "ALL_DONE"
+            end
+        end)
+    end
+    mah.inject("test", function(ctx)
+        return http_result
+    end)
+end
+`, srv.URL))
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pm.Close()
+
+	result := pollSlot(t, pm, "test", 5*time.Second)
+	if result != "ALL_DONE" {
+		t.Errorf("expected 'ALL_DONE', got %q", result)
+	}
+	mu.Lock()
+	if requestCount != 5 {
+		t.Errorf("expected server to receive 5 requests, got %d", requestCount)
+	}
+	mu.Unlock()
+}
+
+func TestHttpApi_MultiValueHeaders(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("X-Multi", "val1")
+		w.Header().Add("X-Multi", "val2")
+		w.WriteHeader(200)
+		fmt.Fprint(w, "ok")
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	writePlugin(t, dir, "http-test", fmt.Sprintf(`
+plugin = { name = "http-test", version = "1.0", description = "http test" }
+http_result = ""
+
+function init()
+    mah.http.get(%q, function(resp)
+        local h = resp.headers["x-multi"]
+        if h then
+            http_result = h
+        else
+            http_result = "NO_HEADER"
+        end
+    end)
+    mah.inject("test", function(ctx)
+        return http_result
+    end)
+end
+`, srv.URL))
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pm.Close()
+
+	result := pollSlot(t, pm, "test", 5*time.Second)
+	if result != "val1, val2" {
+		t.Errorf("expected 'val1, val2', got %q", result)
 	}
 }
