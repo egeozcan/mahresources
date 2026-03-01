@@ -136,18 +136,23 @@ export const quickTagPanelMethods = {
     this.fetchResourceDetails();
   },
 
-  focusTagEditor() {
+  async focusTagEditor() {
     if (!this.quickTagPanelOpen) {
       this.openQuickTagPanel();
     }
-    // Focus the tag editor input after panel animation
-    requestAnimationFrame(() => {
+    // Wait for resource details to load (input is inside x-if="resourceDetails")
+    await this.fetchResourceDetails();
+    // Poll for the input element (Alpine needs a tick to render the template)
+    const poll = (attempts) => {
       const panel = document.querySelector('[data-quick-tag-panel]');
-      if (panel) {
-        const input = panel.querySelector('[data-tag-editor-input]');
-        if (input) input.focus();
+      const input = panel?.querySelector('[data-tag-editor-input]');
+      if (input) {
+        input.focus();
+      } else if (attempts > 0) {
+        requestAnimationFrame(() => poll(attempts - 1));
       }
-    });
+    };
+    requestAnimationFrame(() => poll(10));
   },
 
   // ==================== Keyboard Shortcut Label ====================

@@ -320,18 +320,16 @@ export function autocompleter({
 
         inputEvents: {
             ['@keydown.escape'](e) {
+                e.preventDefault();
+                e.stopPropagation();
+
                 if (this.dropdownActive) {
-                    e.preventDefault();
-                    e.stopPropagation();
                     this.dropdownActive = false;
-                    return;
                 }
 
-                // When dropdown is already closed, blur the input and stop propagation
-                // so the lightbox doesn't close — user can keep browsing
+                // In standalone mode (lightbox), always blur on Escape
+                // so focus returns to the lightbox for keyboard navigation
                 if (standalone) {
-                    e.preventDefault();
-                    e.stopPropagation();
                     e.target.blur();
                 }
             },
