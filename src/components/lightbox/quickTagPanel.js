@@ -8,7 +8,7 @@ const STORAGE_KEY = 'mahresources_quickTags';
  */
 export const quickTagPanelState = {
   quickTagPanelOpen: false,
-  quickTagSlots: Array(10).fill(null), // [{id, name} | null] x 10
+  quickTagSlots: Array(9).fill(null), // [{id, name} | null] x 9
   _quickTagTogglingIds: new Set(), // Not Alpine-reactive; used only as a guard in toggleQuickTag, not in templates
 };
 
@@ -20,8 +20,10 @@ export const quickTagPanelMethods = {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
       const data = JSON.parse(raw);
-      if (Array.isArray(data.slots) && data.slots.length === 10) {
-        this.quickTagSlots = data.slots;
+      if (Array.isArray(data.slots)) {
+        const slots = data.slots.slice(0, 9);
+        while (slots.length < 9) slots.push(null);
+        this.quickTagSlots = slots;
       }
       if (typeof data.drawerOpen === 'boolean') {
         this.quickTagPanelOpen = data.drawerOpen;
@@ -51,7 +53,7 @@ export const quickTagPanelMethods = {
     }
     this.quickTagPanelOpen = true;
     this._saveQuickTagsToStorage();
-    this.announce('Quick tag panel opened');
+    this.announce('Edit tags panel opened');
 
     // Ensure resource details are loaded (reuses editPanel cache)
     this.fetchResourceDetails();
@@ -60,7 +62,7 @@ export const quickTagPanelMethods = {
   closeQuickTagPanel() {
     this.quickTagPanelOpen = false;
     this._saveQuickTagsToStorage();
-    this.announce('Quick tag panel closed');
+    this.announce('Edit tags panel closed');
   },
 
   // ==================== Slot Management ====================
@@ -118,11 +120,25 @@ export const quickTagPanelMethods = {
     this.fetchResourceDetails();
   },
 
+  focusTagEditor() {
+    if (!this.quickTagPanelOpen) {
+      this.openQuickTagPanel();
+    }
+    // Focus the tag editor input after panel animation
+    requestAnimationFrame(() => {
+      const panel = document.querySelector('[data-quick-tag-panel]');
+      if (panel) {
+        const input = panel.querySelector('[data-tag-editor-input]');
+        if (input) input.focus();
+      }
+    });
+  },
+
   // ==================== Keyboard Shortcut Label ====================
 
   quickTagKeyLabel(index) {
-    // index 0-8 → '1'-'9', index 9 → '0'
-    return index < 9 ? String(index + 1) : '0';
+    // index 0-8 → '1'-'9'
+    return String(index + 1);
   },
 
   _mediaMaxWidthClass() {
