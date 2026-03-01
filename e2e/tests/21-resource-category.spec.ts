@@ -185,8 +185,8 @@ test.describe('Resource Category Custom Template Rendering', () => {
     const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
-    // Open edit panel
-    const editButton = lightbox.locator('button:has-text("Edit")');
+    // Open edit panel (use exact text to avoid matching "Edit Tags" button)
+    const editButton = lightbox.locator('button[title="Edit resource"]');
     await editButton.click();
 
     const editPanel = lightbox.locator('[data-edit-panel]');
@@ -233,8 +233,8 @@ test.describe('Resource Category Custom Template Rendering', () => {
       const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
       await expect(lightbox).toBeVisible();
 
-      // Open edit panel
-      const editButton = lightbox.locator('button:has-text("Edit")');
+      // Open edit panel (use exact text to avoid matching "Edit Tags" button)
+      const editButton = lightbox.locator('button[title="Edit resource"]');
       await editButton.click();
 
       const editPanel = lightbox.locator('[data-edit-panel]');

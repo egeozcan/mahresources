@@ -244,7 +244,7 @@ test.describe('Lightbox Functionality', () => {
     await expect(lightbox).toBeVisible();
 
     // Open the edit panel first
-    const editButton = lightbox.locator('button:has-text("Edit")');
+    const editButton = lightbox.locator('button[title="Edit resource"]');
     await expect(editButton).toBeVisible();
     await editButton.click();
 
@@ -603,7 +603,7 @@ test.describe('Lightbox Edit Panel', () => {
     await expect(lightbox).toBeVisible();
 
     // Click the Edit button
-    const editButton = lightbox.locator('button:has-text("Edit")');
+    const editButton = lightbox.locator('button[title="Edit resource"]');
     await editButton.click();
 
     // Verify edit panel is visible
@@ -632,7 +632,7 @@ test.describe('Lightbox Edit Panel', () => {
     await expect(lightbox).toBeVisible();
 
     // Open edit panel
-    const editButton = lightbox.locator('button:has-text("Edit")');
+    const editButton = lightbox.locator('button[title="Edit resource"]');
     await editButton.click();
 
     const editPanel = lightbox.locator('[data-edit-panel]');
@@ -671,7 +671,7 @@ test.describe('Lightbox Edit Panel', () => {
     await expect(lightbox).toBeVisible();
 
     // Open edit panel
-    const editButton = lightbox.locator('button:has-text("Edit")');
+    const editButton = lightbox.locator('button[title="Edit resource"]');
     await editButton.click();
 
     // Wait for resource details to load
@@ -874,7 +874,7 @@ test.describe('Lightbox Edit Panel', () => {
     await expect(lightbox).toBeVisible();
 
     // Open edit panel and make a change
-    const editButton = lightbox.locator('button:has-text("Edit")');
+    const editButton = lightbox.locator('button[title="Edit resource"]');
     await editButton.click();
 
     const editPanel = lightbox.locator('[data-edit-panel]');
@@ -960,7 +960,7 @@ test.describe('Lightbox Edit Panel', () => {
     await expect(lightbox).toBeVisible();
 
     // Open edit panel
-    const editButton = lightbox.locator('button:has-text("Edit")');
+    const editButton = lightbox.locator('button[title="Edit resource"]');
     await editButton.click();
 
     const editPanel = lightbox.locator('[data-edit-panel]');
@@ -1157,7 +1157,7 @@ test.describe('Lightbox Edit After Pagination', () => {
     await expect(lightboxImage).toBeVisible();
 
     // Open edit panel on this page-2 resource
-    const editButton = lightbox.locator('button:has-text("Edit")');
+    const editButton = lightbox.locator('button[title="Edit resource"]');
     await editButton.click();
 
     const editPanel = lightbox.locator('[data-edit-panel]');
@@ -1226,7 +1226,7 @@ test.describe('Lightbox Edit After Pagination', () => {
     await expect(counter).toContainText('3 / 4', { timeout: 10000 });
 
     // Edit the resource
-    const editButton = lightbox.locator('button:has-text("Edit")');
+    const editButton = lightbox.locator('button[title="Edit resource"]');
     await editButton.click();
 
     const editPanel = lightbox.locator('[data-edit-panel]');
