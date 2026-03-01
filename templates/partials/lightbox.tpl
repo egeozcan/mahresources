@@ -564,7 +564,7 @@
                             :value="$store.lightbox.resourceDetails?.Name || ''"
                             @blur="$store.lightbox.updateName($event.target.value)"
                             @keydown.enter="$event.target.blur()"
-                            @keydown.escape.stop="$event.target.blur(); $store.lightbox.close()"
+                            @keydown.escape.stop="$event.target.blur()"
                             class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                             placeholder="Resource name"
                         >
@@ -577,7 +577,7 @@
                             id="lightbox-edit-description"
                             :value="$store.lightbox.resourceDetails?.Description || ''"
                             @blur="$store.lightbox.updateDescription($event.target.value)"
-                            @keydown.escape.stop="$event.target.blur(); $store.lightbox.close()"
+                            @keydown.escape.stop="$event.target.blur()"
                             rows="4"
                             class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-y"
                             placeholder="Add a description..."
