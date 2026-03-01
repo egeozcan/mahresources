@@ -320,13 +320,20 @@ export function autocompleter({
 
         inputEvents: {
             ['@keydown.escape'](e) {
-                if (!this.dropdownActive) {
+                if (this.dropdownActive) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this.dropdownActive = false;
                     return;
                 }
 
-                e.preventDefault();
-                e.stopPropagation();
-                this.dropdownActive = false;
+                // When dropdown is already closed, blur the input and stop propagation
+                // so the lightbox doesn't close — user can keep browsing
+                if (standalone) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.target.blur();
+                }
             },
 
             ['@keydown.arrow-up.prevent']() {
