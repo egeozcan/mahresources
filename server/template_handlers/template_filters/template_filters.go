@@ -53,4 +53,10 @@ func init() {
 	if lookupErr != nil {
 		fmt.Println("error when registering lookup filter", lookupErr)
 	}
+
+	timeagoErr := pongo2.RegisterFilter("timeago", timeagoFilter)
+
+	if timeagoErr != nil {
+		fmt.Println("error when registering timeago filter", timeagoErr)
+	}
 }
