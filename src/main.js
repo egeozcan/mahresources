@@ -42,6 +42,7 @@ import { sharedTodos } from './components/sharedTodos.js';
 import { sharedCalendar } from './components/sharedCalendar.js';
 import { codeEditor } from './components/codeEditor.js';
 import { groupTree } from './components/groupTree.js';
+import { pluginSettings } from './components/pluginSettings.js';
 
 // Import web components
 import './webcomponents/expandabletext.js';
@@ -101,6 +102,7 @@ Alpine.data('sharedTodos', sharedTodos);
 Alpine.data('sharedCalendar', sharedCalendar);
 Alpine.data('codeEditor', codeEditor);
 Alpine.data('groupTree', groupTree);
+Alpine.data('pluginSettings', pluginSettings);
 
 // Expose Alpine globally for debugging and morph usage
 window.Alpine = Alpine;
