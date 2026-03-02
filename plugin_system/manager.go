@@ -33,13 +33,29 @@ type injectionEntry struct {
 	fn    *lua.LFunction
 }
 
+// pageEntry stores a Lua page handler and its parent VM.
+type pageEntry struct {
+	state *lua.LState
+	fn    *lua.LFunction
+}
+
+// MenuRegistration represents a plugin-contributed menu item.
+type MenuRegistration struct {
+	PluginName string
+	Label      string
+	FullPath   string
+}
+
 // PluginManager loads and manages Lua plugins.
 type PluginManager struct {
-	plugins    []PluginInfo
-	states     []*lua.LState
-	hooks      map[string][]hookEntry
-	injections map[string][]injectionEntry
-	mu sync.RWMutex
+	plugins           []PluginInfo
+	states            []*lua.LState
+	hooks             map[string][]hookEntry
+	injections        map[string][]injectionEntry
+	pages             map[string]map[string]pageEntry // pluginName -> path -> handler
+	menuItems         []MenuRegistration
+	mu                sync.RWMutex
+	currentPluginName string // set during loadPlugin, used by mah.page/mah.menu
 	// vmLocks is populated during single-threaded initialization (NewPluginManager/loadPlugin)
 	// and is read-only afterward, so concurrent reads without locking are safe.
 	vmLocks    map[*lua.LState]*sync.Mutex
@@ -50,10 +66,10 @@ type PluginManager struct {
 	httpClient  *http.Client
 	httpMu      sync.Mutex
 	httpPending []httpCallback
-	httpNotify  chan struct{}          // buffered(1), signals new callbacks
-	httpStop    chan struct{}          // closed to stop drain goroutine
-	httpWg      sync.WaitGroup        // tracks in-flight HTTP goroutines
-	httpSem     chan struct{}          // concurrency semaphore
+	httpNotify  chan struct{}  // buffered(1), signals new callbacks
+	httpStop    chan struct{}  // closed to stop drain goroutine
+	httpWg      sync.WaitGroup // tracks in-flight HTTP goroutines
+	httpSem     chan struct{}  // concurrency semaphore
 }
 
 // NewPluginManager scans dir for subdirectories containing plugin.lua,
@@ -65,6 +81,7 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 	pm := &PluginManager{
 		hooks:      make(map[string][]hookEntry),
 		injections: make(map[string][]injectionEntry),
+		pages:      make(map[string]map[string]pageEntry),
 		vmLocks:    make(map[*lua.LState]*sync.Mutex),
 		httpClient: newHttpClient(),
 		httpNotify: make(chan struct{}, 1),
@@ -159,6 +176,8 @@ func (pm *PluginManager) loadPlugin(pluginDir, scriptPath string) error {
 		}
 	}
 
+	pm.currentPluginName = info.Name
+
 	// Call init() if it exists.
 	initFn := L.GetGlobal("init")
 	if initFn != lua.LNil {
@@ -221,6 +240,37 @@ func (pm *PluginManager) registerMahModule(L *lua.LState) {
 		return 0
 	}))
 
+	mahMod.RawSetString("page", L.NewFunction(func(L *lua.LState) int {
+		path := L.CheckString(1)
+		handler := L.CheckFunction(2)
+
+		pluginName := pm.currentPluginName
+		pm.mu.Lock()
+		if pm.pages[pluginName] == nil {
+			pm.pages[pluginName] = make(map[string]pageEntry)
+		}
+		pm.pages[pluginName][path] = pageEntry{state: L, fn: handler}
+		pm.mu.Unlock()
+		return 0
+	}))
+
+	mahMod.RawSetString("menu", L.NewFunction(func(L *lua.LState) int {
+		label := L.CheckString(1)
+		path := L.CheckString(2)
+
+		pluginName := pm.currentPluginName
+		fullPath := "/plugins/" + pluginName + "/" + path
+
+		pm.mu.Lock()
+		pm.menuItems = append(pm.menuItems, MenuRegistration{
+			PluginName: pluginName,
+			Label:      label,
+			FullPath:   fullPath,
+		})
+		pm.mu.Unlock()
+		return 0
+	}))
+
 	pm.registerDbModule(L, mahMod)
 	pm.registerHttpModule(L, mahMod)
 
@@ -254,6 +304,39 @@ func (pm *PluginManager) GetInjections(slot string) []injectionEntry {
 	return dst
 }
 
+// GetPages returns a flat list of all registered page paths (for diagnostics).
+func (pm *PluginManager) GetPages() []struct{ PluginName, Path string } {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	var result []struct{ PluginName, Path string }
+	for pluginName, pages := range pm.pages {
+		for path := range pages {
+			result = append(result, struct{ PluginName, Path string }{pluginName, path})
+		}
+	}
+	return result
+}
+
+// HasPage checks if a plugin has registered a page at the given path.
+func (pm *PluginManager) HasPage(pluginName, path string) bool {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	if pages, ok := pm.pages[pluginName]; ok {
+		_, exists := pages[path]
+		return exists
+	}
+	return false
+}
+
+// GetMenuItems returns a copy of all registered menu items.
+func (pm *PluginManager) GetMenuItems() []MenuRegistration {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	result := make([]MenuRegistration, len(pm.menuItems))
+	copy(result, pm.menuItems)
+	return result
+}
+
 // VMLock returns the mutex associated with the given Lua state.
 func (pm *PluginManager) VMLock(L *lua.LState) *sync.Mutex {
 	return pm.vmLocks[L]
@@ -271,5 +354,7 @@ func (pm *PluginManager) Close() {
 	pm.states = nil
 	pm.hooks = nil
 	pm.injections = nil
+	pm.pages = nil
+	pm.menuItems = nil
 	pm.vmLocks = nil
 }
