@@ -38,6 +38,10 @@ var baseTemplateContext = pongo2.Context{
 	"title": "mahresources",
 	"menu": []template_entities.Entry{
 		{
+			Name: "Dashboard",
+			Url:  "/dashboard",
+		},
+		{
 			Name: "Notes",
 			Url:  "/notes",
 		},

@@ -18,6 +18,8 @@ type templateInformation struct {
 }
 
 var templates = map[string]templateInformation{
+	"/dashboard": {template_context_providers.DashboardContextProvider, "dashboard.tpl", http.MethodGet},
+
 	"/note/new":      {template_context_providers.NoteCreateContextProvider, "createNote.tpl", http.MethodGet},
 	"/notes":         {template_context_providers.NoteListContextProvider, "listNotes.tpl", http.MethodGet},
 	"/note":          {template_context_providers.NoteContextProvider, "displayNote.tpl", http.MethodGet},
@@ -116,7 +118,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 			RenderTemplate("partials/form/autocompleter.tpl", wrapContextWithPlugins(appContext, template_context_providers.PartialContextProvider(appContext))))
 
 	router.Methods(http.MethodGet).Path("/").HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		http.Redirect(writer, request, "/notes", http.StatusMovedPermanently)
+		http.Redirect(writer, request, "/dashboard", http.StatusMovedPermanently)
 	})
 
 	basicGroupWriter := application_context.NewEntityWriter[models.Group](appContext)
