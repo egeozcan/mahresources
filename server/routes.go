@@ -296,4 +296,13 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/logs").HandlerFunc(api_handlers.GetLogEntriesHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/log").HandlerFunc(api_handlers.GetLogEntryHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/logs/entity").HandlerFunc(api_handlers.GetEntityHistoryHandler(appContext))
+
+	// Plugin pages
+	pm := appContext.PluginManager()
+	if pm != nil {
+		pluginCtxFn := wrapContextWithPlugins(appContext, template_context_providers.PluginPageContextProvider(pm))
+		router.Methods(http.MethodGet, http.MethodPost).
+			PathPrefix("/plugins/").
+			HandlerFunc(template_handlers.RenderTemplate("pluginPage.tpl", pluginCtxFn))
+	}
 }
