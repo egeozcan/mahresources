@@ -5,13 +5,20 @@
 plugin = {
     name = "example-plugin",
     version = "1.0",
-    description = "Demonstrates the plugin API -- inject HTML and hook into entity events"
+    description = "Demonstrates the plugin API -- inject HTML, hook events, and use settings",
+    settings = {
+        { name = "greeting", type = "string", label = "Greeting Message", default = "Hello from Example Plugin!" },
+        { name = "show_footer", type = "boolean", label = "Show Footer Banner", default = true },
+    }
 }
 
 function init()
-    -- Inject a small footer note on every page
+    -- Inject a small footer note on every page (controlled by settings)
     mah.inject("page_bottom", function(ctx)
-        return '<div style="text-align:center;padding:4px;font-size:12px;color:#999;">Powered by mahresources plugins</div>'
+        local show = mah.get_setting("show_footer")
+        if show == false then return "" end
+        local greeting = mah.get_setting("greeting") or "Powered by plugins"
+        return '<div style="text-align:center;padding:4px;color:#888;font-size:12px;">' .. greeting .. '</div>'
     end)
 
     -- Log when a note is created
@@ -43,9 +50,10 @@ function init()
     --     end
     -- end)
 
-    -- Register a custom plugin page
+    -- Register a custom plugin page that uses settings
     mah.page("info", function(ctx)
-        return "<h2>Example Plugin</h2><p>This page is rendered by the example plugin.</p>"
+        local greeting = mah.get_setting("greeting") or "Hello!"
+        return "<h2>Example Plugin</h2><p>" .. greeting .. "</p><p>This page is rendered by Lua.</p>"
     end)
 
     -- Add a menu item for the page (appears in the Plugins dropdown)
