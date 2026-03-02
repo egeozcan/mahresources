@@ -25,6 +25,10 @@ end
 	}
 	defer pm.Close()
 
+	if err := pm.EnablePlugin("dashboard"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	pages := pm.GetPages()
 	if len(pages) != 2 {
 		t.Fatalf("expected 2 pages, got %d", len(pages))
@@ -63,6 +67,10 @@ end
 	}
 	defer pm.Close()
 
+	if err := pm.EnablePlugin("myapp"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	html, err := pm.HandlePage("myapp", "hello", PageContext{
 		Path:   "/plugins/myapp/hello",
 		Method: "GET",
@@ -95,6 +103,10 @@ end
 		t.Fatalf("unexpected error: %v", err)
 	}
 	defer pm.Close()
+
+	if err := pm.EnablePlugin("search"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
 
 	html, err := pm.HandlePage("search", "results", PageContext{
 		Path:   "/plugins/search/results",
@@ -142,6 +154,10 @@ end
 	}
 	defer pm.Close()
 
+	if err := pm.EnablePlugin("broken"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	_, err = pm.HandlePage("broken", "crash", PageContext{})
 	if err == nil {
 		t.Fatal("expected error from crashing handler")
@@ -165,6 +181,10 @@ end
 		t.Fatalf("unexpected error: %v", err)
 	}
 	defer pm.Close()
+
+	if err := pm.EnablePlugin("analytics"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
 
 	items := pm.GetMenuItems()
 	if len(items) != 2 {

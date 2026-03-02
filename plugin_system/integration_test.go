@@ -30,6 +30,10 @@ end
 	}
 	defer mgr.Close()
 
+	if err := mgr.EnablePlugin("e2e"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	// Test hook modifies data
 	data := map[string]any{"name": "Test Note", "description": "desc"}
 	result, err := mgr.RunBeforeHooks("before_note_create", data)

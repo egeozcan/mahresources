@@ -58,6 +58,10 @@ end
 	}
 	defer pm.Close()
 
+	if err := pm.EnablePlugin("http-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	result := pollSlot(t, pm, "test", 5*time.Second)
 	if result != "200:hello world" {
 		t.Errorf("expected '200:hello world', got %q", result)
@@ -98,6 +102,10 @@ end
 		t.Fatal(err)
 	}
 	defer pm.Close()
+
+	if err := pm.EnablePlugin("http-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
 
 	result := pollSlot(t, pm, "test", 5*time.Second)
 	if result != "201:created" {
@@ -146,6 +154,10 @@ end
 	}
 	defer pm.Close()
 
+	if err := pm.EnablePlugin("http-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	result := pollSlot(t, pm, "test", 5*time.Second)
 	if result != "PUT:updated" {
 		t.Errorf("expected 'PUT:updated', got %q", result)
@@ -190,6 +202,10 @@ end
 	}
 	defer pm.Close()
 
+	if err := pm.EnablePlugin("http-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	result := pollSlot(t, pm, "test", 5*time.Second)
 	if result != "ok" {
 		t.Errorf("expected 'ok', got %q", result)
@@ -233,6 +249,10 @@ end
 	}
 	defer pm.Close()
 
+	if err := pm.EnablePlugin("http-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	result := pollSlot(t, pm, "test", 5*time.Second)
 	if result != "custom-value" {
 		t.Errorf("expected 'custom-value', got %q", result)
@@ -265,6 +285,10 @@ end
 	}
 	defer pm.Close()
 
+	if err := pm.EnablePlugin("http-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	result := pollSlot(t, pm, "test", 5*time.Second)
 	if result != "ERROR" {
 		t.Errorf("expected 'ERROR', got %q", result)
@@ -296,6 +320,10 @@ end
 		t.Fatal(err)
 	}
 	defer pm.Close()
+
+	if err := pm.EnablePlugin("http-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
 
 	result := pollSlot(t, pm, "test", 5*time.Second)
 	if result != "SCHEME_ERROR" {
@@ -336,6 +364,10 @@ end
 		t.Fatal(err)
 	}
 	defer pm.Close()
+
+	if err := pm.EnablePlugin("http-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
 
 	result := pollSlot(t, pm, "test", 5*time.Second)
 	expected := fmt.Sprintf("%d", maxHttpResponseBody)
@@ -379,6 +411,10 @@ end
 	}
 	defer pm.Close()
 
+	if err := pm.EnablePlugin("http-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	result := pollSlot(t, pm, "test", 5*time.Second)
 	if result != "TIMEOUT" {
 		t.Errorf("expected 'TIMEOUT', got %q", result)
@@ -420,6 +456,10 @@ end
 	}
 	defer pm.Close()
 
+	if err := pm.EnablePlugin("http-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	result := pollSlot(t, pm, "test", 5*time.Second)
 	if result != "ok" {
 		t.Errorf("expected 'ok', got %q", result)
@@ -458,6 +498,10 @@ end
 	}
 	defer pm.Close()
 
+	if err := pm.EnablePlugin("http-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	result := pollSlot(t, pm, "test", 5*time.Second)
 	if result != "404:not found" {
 		t.Errorf("expected '404:not found', got %q", result)
@@ -495,6 +539,10 @@ end
 		t.Fatal(err)
 	}
 
+	if err := pm.EnablePlugin("http-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	result := pollSlot(t, pm, "test", 5*time.Second)
 	if result != "done" {
 		t.Errorf("expected 'done', got %q", result)
@@ -528,6 +576,10 @@ end
 		t.Fatal(err)
 	}
 	defer pm2.Close()
+
+	if err := pm2.EnablePlugin("http-test2"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
 
 	result = pollSlot(t, pm2, "test", 5*time.Second)
 	if result != "done" {
@@ -573,6 +625,10 @@ end
 		t.Fatal(err)
 	}
 	defer pm.Close()
+
+	if err := pm.EnablePlugin("http-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
 
 	result := pollSlot(t, pm, "test", 5*time.Second)
 	if result != "DELETE:204" {
@@ -625,6 +681,10 @@ end
 	}
 	defer pm.Close()
 
+	if err := pm.EnablePlugin("http-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	result := pollSlot(t, pm, "test", 5*time.Second)
 	if result != "ALL_DONE" {
 		t.Errorf("expected 'ALL_DONE', got %q", result)
@@ -670,6 +730,10 @@ end
 		t.Fatal(err)
 	}
 	defer pm.Close()
+
+	if err := pm.EnablePlugin("http-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
 
 	result := pollSlot(t, pm, "test", 5*time.Second)
 	if result != "val1, val2" {

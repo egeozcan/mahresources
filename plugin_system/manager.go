@@ -24,6 +24,15 @@ type PluginInfo struct {
 	Dir         string
 }
 
+// DiscoveredPlugin holds metadata about a discovered (but not necessarily loaded) plugin.
+type DiscoveredPlugin struct {
+	Name        string
+	Version     string
+	Description string
+	Dir         string
+	Settings    []SettingDefinition
+}
+
 // hookEntry stores a Lua hook handler and its parent VM.
 type hookEntry struct {
 	state *lua.LState
@@ -57,44 +66,47 @@ type MenuRegistration struct {
 
 // PluginManager loads and manages Lua plugins.
 type PluginManager struct {
-	plugins           []PluginInfo
-	states            []*lua.LState
-	hooks             map[string][]hookEntry
-	injections        map[string][]injectionEntry
-	pages     map[string]map[string]pageEntry // pluginName -> path -> handler
-	menuItems []MenuRegistration
-	mu        sync.RWMutex
-	// vmLocks is populated during single-threaded initialization (NewPluginManager/loadPlugin)
-	// and is read-only afterward, so concurrent reads without locking are safe.
+	plugins    []PluginInfo
+	states     []*lua.LState
+	hooks      map[string][]hookEntry
+	injections map[string][]injectionEntry
+	pages      map[string]map[string]pageEntry // pluginName -> path -> handler
+	menuItems  []MenuRegistration
+	mu         sync.RWMutex
 	vmLocks    map[*lua.LState]*sync.Mutex
 	dbProvider atomic.Value
 	closed     atomic.Bool
+
+	// Discovery-phase data (immutable after construction).
+	discovered     []DiscoveredPlugin
+	pluginSettings map[string]map[string]any // pluginName -> key -> value
 
 	// HTTP async callback support
 	httpClient  *http.Client
 	httpMu      sync.Mutex
 	httpPending []httpCallback
-	httpNotify  chan struct{}  // buffered(1), signals new callbacks
-	httpStop    chan struct{}  // closed to stop drain goroutine
+	httpNotify  chan struct{}   // buffered(1), signals new callbacks
+	httpStop    chan struct{}   // closed to stop drain goroutine
 	httpWg      sync.WaitGroup // tracks in-flight HTTP goroutines
-	httpSem     chan struct{}  // concurrency semaphore
+	httpSem     chan struct{}   // concurrency semaphore
 }
 
 // NewPluginManager scans dir for subdirectories containing plugin.lua,
-// loads each in alphabetical order into an isolated Lua VM, and returns
-// the manager. If dir does not exist, an empty manager is returned.
-// Must be called from a single goroutine; after it returns the manager
-// is safe for concurrent use.
+// discovers each plugin's metadata and settings (without calling init()),
+// and returns the manager. Plugins must be explicitly enabled via
+// EnablePlugin to create Lua VMs and register hooks/injections/pages.
+// If dir does not exist, an empty manager is returned.
 func NewPluginManager(dir string) (*PluginManager, error) {
 	pm := &PluginManager{
-		hooks:      make(map[string][]hookEntry),
-		injections: make(map[string][]injectionEntry),
-		pages:      make(map[string]map[string]pageEntry),
-		vmLocks:    make(map[*lua.LState]*sync.Mutex),
-		httpClient: newHttpClient(),
-		httpNotify: make(chan struct{}, 1),
-		httpStop:   make(chan struct{}),
-		httpSem:    make(chan struct{}, maxConcurrentHttpReqs),
+		hooks:          make(map[string][]hookEntry),
+		injections:     make(map[string][]injectionEntry),
+		pages:          make(map[string]map[string]pageEntry),
+		vmLocks:        make(map[*lua.LState]*sync.Mutex),
+		pluginSettings: make(map[string]map[string]any),
+		httpClient:     newHttpClient(),
+		httpNotify:     make(chan struct{}, 1),
+		httpStop:       make(chan struct{}),
+		httpSem:        make(chan struct{}, maxConcurrentHttpReqs),
 	}
 
 	go pm.drainHttpCallbacks()
@@ -123,13 +135,62 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 	for _, name := range pluginDirs {
 		pluginDir := filepath.Join(dir, name)
 		scriptPath := filepath.Join(pluginDir, "plugin.lua")
-
-		if err := pm.loadPlugin(pluginDir, scriptPath); err != nil {
+		dp, err := pm.discoverPlugin(pluginDir, scriptPath)
+		if err != nil {
 			log.Printf("[plugin] warning: skipping %q: %v", name, err)
+			continue
 		}
+		pm.discovered = append(pm.discovered, dp)
 	}
 
 	return pm, nil
+}
+
+// discoverPlugin creates a temporary Lua VM, executes plugin.lua (top-level
+// code only, NOT init()), reads metadata and settings, then closes the VM.
+func (pm *PluginManager) discoverPlugin(pluginDir, scriptPath string) (DiscoveredPlugin, error) {
+	code, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return DiscoveredPlugin{}, fmt.Errorf("reading plugin.lua: %w", err)
+	}
+
+	L := lua.NewState(lua.Options{SkipOpenLibs: true})
+	defer L.Close()
+
+	for _, pair := range []struct {
+		name string
+		fn   lua.LGFunction
+	}{
+		{lua.BaseLibName, lua.OpenBase},
+		{lua.TabLibName, lua.OpenTable},
+		{lua.StringLibName, lua.OpenString},
+		{lua.MathLibName, lua.OpenMath},
+	} {
+		L.Push(L.NewFunction(pair.fn))
+		L.Push(lua.LString(pair.name))
+		L.Call(1, 0)
+	}
+
+	if err := L.DoString(string(code)); err != nil {
+		return DiscoveredPlugin{}, fmt.Errorf("parsing plugin.lua: %w", err)
+	}
+
+	dp := DiscoveredPlugin{Dir: pluginDir}
+	pluginTable := L.GetGlobal("plugin")
+	if tbl, ok := pluginTable.(*lua.LTable); ok {
+		if v := tbl.RawGetString("name"); v != lua.LNil {
+			dp.Name = v.String()
+		}
+		if v := tbl.RawGetString("version"); v != lua.LNil {
+			dp.Version = v.String()
+		}
+		if v := tbl.RawGetString("description"); v != lua.LNil {
+			dp.Description = v.String()
+		}
+	}
+
+	dp.Settings = extractSettingsFromState(L)
+	return dp, nil
 }
 
 // loadPlugin creates a Lua VM, registers the mah module, executes plugin.lua,
@@ -299,6 +360,125 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 	pm.registerHttpModule(L, mahMod)
 
 	L.SetGlobal("mah", mahMod)
+}
+
+// DiscoveredPlugins returns a copy of all discovered plugin metadata.
+func (pm *PluginManager) DiscoveredPlugins() []DiscoveredPlugin {
+	result := make([]DiscoveredPlugin, len(pm.discovered))
+	copy(result, pm.discovered)
+	return result
+}
+
+// EnablePlugin activates a discovered plugin by creating a Lua VM and calling init().
+// The discovered list is immutable after construction, so no lock is needed to read it.
+// loadPlugin handles its own locking for hook/injection/page/menu registration.
+func (pm *PluginManager) EnablePlugin(name string) error {
+	pm.mu.RLock()
+	for _, p := range pm.plugins {
+		if p.Name == name {
+			pm.mu.RUnlock()
+			return fmt.Errorf("plugin %q is already enabled", name)
+		}
+	}
+	pm.mu.RUnlock()
+
+	// Find in discovered (immutable after construction, no lock needed).
+	var dp *DiscoveredPlugin
+	for i := range pm.discovered {
+		if pm.discovered[i].Name == name {
+			dp = &pm.discovered[i]
+			break
+		}
+	}
+	if dp == nil {
+		return fmt.Errorf("plugin %q not found", name)
+	}
+
+	scriptPath := filepath.Join(dp.Dir, "plugin.lua")
+	if err := pm.loadPlugin(dp.Dir, scriptPath); err != nil {
+		return fmt.Errorf("loading plugin %q: %w", name, err)
+	}
+
+	return nil
+}
+
+// DisablePlugin deactivates a running plugin: removes all hooks, injections,
+// pages, menu items, and closes the Lua VM.
+func (pm *PluginManager) DisablePlugin(name string) error {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	var targetState *lua.LState
+	var pluginIdx int = -1
+	for i, p := range pm.plugins {
+		if p.Name == name {
+			targetState = pm.states[i]
+			pluginIdx = i
+			break
+		}
+	}
+	if targetState == nil {
+		return fmt.Errorf("plugin %q is not enabled", name)
+	}
+
+	// Remove hooks belonging to this state.
+	for event, entries := range pm.hooks {
+		var filtered []hookEntry
+		for _, e := range entries {
+			if e.state != targetState {
+				filtered = append(filtered, e)
+			}
+		}
+		pm.hooks[event] = filtered
+	}
+
+	// Remove injections belonging to this state.
+	for slot, entries := range pm.injections {
+		var filtered []injectionEntry
+		for _, e := range entries {
+			if e.state != targetState {
+				filtered = append(filtered, e)
+			}
+		}
+		pm.injections[slot] = filtered
+	}
+
+	// Remove pages for this plugin.
+	delete(pm.pages, name)
+
+	// Remove menu items for this plugin.
+	var filteredMenus []MenuRegistration
+	for _, m := range pm.menuItems {
+		if m.PluginName != name {
+			filteredMenus = append(filteredMenus, m)
+		}
+	}
+	pm.menuItems = filteredMenus
+
+	// Remove from active lists.
+	pm.plugins = append(pm.plugins[:pluginIdx], pm.plugins[pluginIdx+1:]...)
+	pm.states = append(pm.states[:pluginIdx], pm.states[pluginIdx+1:]...)
+
+	// Remove VM lock and close state.
+	delete(pm.vmLocks, targetState)
+	targetState.Close()
+
+	// Remove in-memory settings.
+	delete(pm.pluginSettings, name)
+
+	return nil
+}
+
+// IsEnabled returns whether a plugin is currently active.
+func (pm *PluginManager) IsEnabled(name string) bool {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	for _, p := range pm.plugins {
+		if p.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // Plugins returns a copy of the loaded plugin info list.

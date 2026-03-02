@@ -26,6 +26,10 @@ end
 	}
 	defer pm.Close()
 
+	if err := pm.EnablePlugin("modifier"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	data := map[string]any{
 		"name": "original",
 	}
@@ -59,6 +63,10 @@ end
 		t.Fatalf("unexpected error: %v", err)
 	}
 	defer pm.Close()
+
+	if err := pm.EnablePlugin("aborter"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
 
 	data := map[string]any{
 		"name": "test",
@@ -99,6 +107,10 @@ end
 	}
 	defer pm.Close()
 
+	if err := pm.EnablePlugin("broken"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	data := map[string]any{
 		"name": "unchanged",
 	}
@@ -132,6 +144,10 @@ end
 		t.Fatalf("unexpected error: %v", err)
 	}
 	defer pm.Close()
+
+	if err := pm.EnablePlugin("logger"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
 
 	data := map[string]any{
 		"name": "test-note",
@@ -174,6 +190,13 @@ end
 		t.Fatalf("unexpected error: %v", err)
 	}
 	defer pm.Close()
+
+	if err := pm.EnablePlugin("first"); err != nil {
+		t.Fatalf("EnablePlugin(first): %v", err)
+	}
+	if err := pm.EnablePlugin("second"); err != nil {
+		t.Fatalf("EnablePlugin(second): %v", err)
+	}
 
 	data := map[string]any{
 		"name": "base",

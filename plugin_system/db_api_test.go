@@ -82,6 +82,10 @@ end
 	defer mgr.Close()
 	mgr.SetEntityQuerier(&mockQuerier{})
 
+	if err := mgr.EnablePlugin("db-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	html := mgr.RenderSlot("test", map[string]any{})
 	if html != "Test Note" {
 		t.Errorf("expected 'Test Note', got %q", html)
@@ -108,6 +112,10 @@ end
 	}
 	defer mgr.Close()
 	mgr.SetEntityQuerier(&mockQuerier{})
+
+	if err := mgr.EnablePlugin("db-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
 
 	html := mgr.RenderSlot("test", map[string]any{})
 	if html != "nil" {
@@ -136,6 +144,10 @@ end
 	defer mgr.Close()
 	mgr.SetEntityQuerier(&mockQuerier{})
 
+	if err := mgr.EnablePlugin("db-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	html := mgr.RenderSlot("test", map[string]any{})
 	if html != "test.jpg|image/jpeg" {
 		t.Errorf("expected 'test.jpg|image/jpeg', got %q", html)
@@ -162,6 +174,10 @@ end
 	}
 	defer mgr.Close()
 	mgr.SetEntityQuerier(&mockQuerier{})
+
+	if err := mgr.EnablePlugin("db-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
 
 	html := mgr.RenderSlot("test", map[string]any{})
 	if html != "Test Group" {
@@ -190,6 +206,10 @@ end
 	defer mgr.Close()
 	mgr.SetEntityQuerier(&mockQuerier{})
 
+	if err := mgr.EnablePlugin("db-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	html := mgr.RenderSlot("test", map[string]any{})
 	if html != "test-tag" {
 		t.Errorf("expected 'test-tag', got %q", html)
@@ -216,6 +236,10 @@ end
 	}
 	defer mgr.Close()
 	mgr.SetEntityQuerier(&mockQuerier{})
+
+	if err := mgr.EnablePlugin("db-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
 
 	html := mgr.RenderSlot("test", map[string]any{})
 	if html != "Test Category" {
@@ -244,6 +268,10 @@ end
 	defer mgr.Close()
 	mgr.SetEntityQuerier(&mockQuerier{})
 
+	if err := mgr.EnablePlugin("db-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	html := mgr.RenderSlot("test", map[string]any{})
 	if html != "2" {
 		t.Errorf("expected '2', got %q", html)
@@ -270,6 +298,10 @@ end
 	}
 	defer mgr.Close()
 	mgr.SetEntityQuerier(&mockQuerier{})
+
+	if err := mgr.EnablePlugin("db-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
 
 	html := mgr.RenderSlot("test", map[string]any{})
 	if html != "file.jpg" {
@@ -298,6 +330,10 @@ end
 	defer mgr.Close()
 	mgr.SetEntityQuerier(&mockQuerier{})
 
+	if err := mgr.EnablePlugin("db-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	html := mgr.RenderSlot("test", map[string]any{})
 	if html != "Group A" {
 		t.Errorf("expected 'Group A', got %q", html)
@@ -325,6 +361,10 @@ end
 	defer mgr.Close()
 	// Don't set entity querier — should return nil gracefully
 
+	if err := mgr.EnablePlugin("db-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	html := mgr.RenderSlot("test", map[string]any{})
 	if html != "nil" {
 		t.Errorf("expected 'nil' when no provider set, got %q", html)
@@ -350,6 +390,10 @@ end
 		t.Fatal(err)
 	}
 	defer mgr.Close()
+
+	if err := mgr.EnablePlugin("db-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
 
 	html := mgr.RenderSlot("test", map[string]any{})
 	if html != "nil" {

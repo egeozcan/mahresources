@@ -25,6 +25,10 @@ end
 	}
 	defer pm.Close()
 
+	if err := pm.EnablePlugin("banner"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
 	result := pm.RenderSlot("resource_header", map[string]any{
 		"path": "/resource",
 	})
@@ -66,6 +70,13 @@ end
 	}
 	defer pm.Close()
 
+	if err := pm.EnablePlugin("alpha"); err != nil {
+		t.Fatalf("EnablePlugin(alpha): %v", err)
+	}
+	if err := pm.EnablePlugin("bravo"); err != nil {
+		t.Fatalf("EnablePlugin(bravo): %v", err)
+	}
+
 	result := pm.RenderSlot("page_top", map[string]any{})
 
 	if result != "<header>Alpha</header><header>Bravo</header>" {
@@ -103,6 +114,13 @@ end
 		t.Fatalf("unexpected error: %v", err)
 	}
 	defer pm.Close()
+
+	if err := pm.EnablePlugin("alpha_bad"); err != nil {
+		t.Fatalf("EnablePlugin(alpha_bad): %v", err)
+	}
+	if err := pm.EnablePlugin("bravo_good"); err != nil {
+		t.Fatalf("EnablePlugin(bravo_good): %v", err)
+	}
 
 	result := pm.RenderSlot("sidebar", map[string]any{})
 
@@ -145,6 +163,10 @@ end
 		t.Fatalf("unexpected error: %v", err)
 	}
 	defer pm.Close()
+
+	if err := pm.EnablePlugin("entity_display"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
 
 	result := pm.RenderSlot("entity_info", map[string]any{
 		"entity": map[string]any{
