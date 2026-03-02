@@ -315,19 +315,33 @@ func (dm *DownloadManager) downloadWithProgress(job *DownloadJob) (*models.Resou
 	}
 
 	// Use existing AddResource logic
+	originalName := job.creator.OriginalName
+	if originalName == "" {
+		originalName = job.URL
+	}
+	originalLocation := job.creator.OriginalLocation
+	if originalLocation == "" {
+		originalLocation = job.URL
+	}
+
 	return dm.resourceCtx.AddResource(progressBody, name, &query_models.ResourceCreator{
 		ResourceQueryBase: query_models.ResourceQueryBase{
-			Name:             name,
-			Description:      job.creator.Description,
-			OwnerId:          job.creator.OwnerId,
-			Groups:           job.creator.Groups,
-			Tags:             job.creator.Tags,
-			Notes:            job.creator.Notes,
-			Meta:             job.creator.Meta,
-			ContentCategory:  job.creator.ContentCategory,
-			Category:         job.creator.Category,
-			OriginalName:     job.URL,
-			OriginalLocation: job.URL,
+			Name:               name,
+			Description:        job.creator.Description,
+			OwnerId:            job.creator.OwnerId,
+			Groups:             job.creator.Groups,
+			Tags:               job.creator.Tags,
+			Notes:              job.creator.Notes,
+			Meta:               job.creator.Meta,
+			ContentCategory:    job.creator.ContentCategory,
+			Category:           job.creator.Category,
+			ResourceCategoryId: job.creator.ResourceCategoryId,
+			OriginalName:       originalName,
+			OriginalLocation:   originalLocation,
+			Width:              job.creator.Width,
+			Height:             job.creator.Height,
+			SeriesSlug:         job.creator.SeriesSlug,
+			SeriesId:           job.creator.SeriesId,
 		},
 	})
 }
