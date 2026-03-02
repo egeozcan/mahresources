@@ -2,6 +2,7 @@ package template_context_providers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/flosch/pongo2/v4"
@@ -30,7 +31,10 @@ func PluginManageContextProvider(appCtx *application_context.MahresourcesContext
 		}
 
 		discovered := pm.DiscoveredPlugins()
-		states, _ := appCtx.GetPluginStates()
+		states, err := appCtx.GetPluginStates()
+		if err != nil {
+			log.Printf("[plugin] warning: failed to load plugin states: %v", err)
+		}
 
 		stateMap := make(map[string]struct {
 			enabled  bool

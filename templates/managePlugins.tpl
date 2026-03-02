@@ -87,6 +87,8 @@
                            value="{% if plugin.Values %}{% with val=plugin.Values|lookup:setting.Name %}{{ val }}{% endwith %}{% elif setting.DefaultValue %}{{ setting.DefaultValue }}{% endif %}"
                            class="form-input"
                            step="any"
+                           {% if setting.Required %}required{% endif %}
+                           placeholder="{{ setting.Label }}"
                            data-testid="setting-{{ setting.Name }}">
 
                     {% else %}
@@ -105,8 +107,8 @@
                 <button type="submit" class="btn btn-primary" data-testid="save-settings-{{ plugin.Name }}">
                     Save Settings
                 </button>
-                <span x-show="saved" x-transition class="text-green-600 text-sm ml-2">Saved!</span>
-                <span x-show="error" x-transition class="text-red-600 text-sm ml-2" x-text="error"></span>
+                <span x-show="saved" x-transition role="status" class="text-green-600 text-sm ml-2">Saved!</span>
+                <span x-show="error" x-transition role="alert" class="text-red-600 text-sm ml-2" x-text="error"></span>
             </form>
         </div>
         {% else %}

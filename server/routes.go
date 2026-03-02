@@ -86,7 +86,7 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 	return func(request *http.Request) pongo2.Context {
 		ctx := ctxFn(request)
 		ctx["_pluginManager"] = pm
-		ctx["currentPath"] = request.URL.String()
+		ctx["currentPath"] = request.URL.Path
 		ctx["pluginMenuItems"] = pm.GetMenuItems()
 		ctx["hasPluginManager"] = true
 		return ctx
