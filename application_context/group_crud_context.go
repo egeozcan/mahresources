@@ -213,6 +213,7 @@ func (ctx *MahresourcesContext) GetGroup(id uint) (*models.Group, error) {
 
 	err := ctx.db.
 		Preload("OwnGroups", pageLimit).
+		Preload("OwnGroups.Category").
 		Preload("OwnResources", pageLimitCustom(5)).
 		Preload("OwnNotes", pageLimit).
 		Preload("RelatedResources", pageLimitCustom(5)).

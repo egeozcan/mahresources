@@ -77,3 +77,83 @@ test.describe('Category Validation', () => {
     await expect(page).toHaveURL(/\/category\/new/);
   });
 });
+
+test.describe('Group Category Custom Template Rendering', () => {
+  const testRunId = Date.now() + Math.floor(Math.random() * 100000);
+  let categoryId: number;
+  let parentGroupId: number;
+  let groupId: number;
+
+  const customHeader = '<div data-testid="gc-custom-header">Group Custom Header</div>';
+  const customSidebar = '<div data-testid="gc-custom-sidebar">Group Custom Sidebar</div>';
+  const customSummary = '<div data-testid="gc-custom-summary">Group Custom Summary</div>';
+
+  test.beforeAll(async ({ apiClient }) => {
+    const category = await apiClient.createCategory(
+      `GC Template Test ${testRunId}`,
+      'Group category for custom template rendering tests',
+      {
+        CustomHeader: customHeader,
+        CustomSidebar: customSidebar,
+        CustomSummary: customSummary,
+      }
+    );
+    categoryId = category.ID;
+
+    // Create a parent group to own the child group (for sub-groups list test)
+    const parentGroup = await apiClient.createGroup({
+      name: `GC Template Parent ${testRunId}`,
+      categoryId: categoryId,
+    });
+    parentGroupId = parentGroup.ID;
+
+    const group = await apiClient.createGroup({
+      name: `GC Template Test Group ${testRunId}`,
+      categoryId: categoryId,
+      ownerId: parentGroupId,
+    });
+    groupId = group.ID;
+  });
+
+  test.afterAll(async ({ apiClient }) => {
+    if (groupId) await apiClient.deleteGroup(groupId).catch(() => {});
+    if (parentGroupId) await apiClient.deleteGroup(parentGroupId).catch(() => {});
+    if (categoryId) await apiClient.deleteCategory(categoryId).catch(() => {});
+  });
+
+  test('should render CustomHeader on group detail page', async ({ page }) => {
+    await page.goto(`/group?id=${groupId}`);
+    await page.waitForLoadState('load');
+
+    const header = page.locator('[data-testid="gc-custom-header"]');
+    await expect(header).toBeVisible();
+    await expect(header).toContainText('Group Custom Header');
+  });
+
+  test('should render CustomSidebar on group detail page', async ({ page }) => {
+    await page.goto(`/group?id=${groupId}`);
+    await page.waitForLoadState('load');
+
+    const sidebar = page.locator('[data-testid="gc-custom-sidebar"]');
+    await expect(sidebar).toBeVisible();
+    await expect(sidebar).toContainText('Group Custom Sidebar');
+  });
+
+  test('should render CustomSummary on group card in list', async ({ page }) => {
+    await page.goto(`/groups?categories=${categoryId}`);
+    await page.waitForLoadState('load');
+
+    const summary = page.locator('[data-testid="gc-custom-summary"]').first();
+    await expect(summary).toBeVisible();
+    await expect(summary).toContainText('Group Custom Summary');
+  });
+
+  test('should render CustomSummary on sub-group card in parent detail page', async ({ page }) => {
+    await page.goto(`/group?id=${parentGroupId}`);
+    await page.waitForLoadState('load');
+
+    const summary = page.locator('[data-testid="gc-custom-summary"]');
+    await expect(summary).toBeVisible();
+    await expect(summary).toContainText('Group Custom Summary');
+  });
+});
