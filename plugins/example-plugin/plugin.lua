@@ -42,4 +42,12 @@ function init()
     --         mah.log("error", "Notification failed: " .. resp.error)
     --     end
     -- end)
+
+    -- Register a custom plugin page
+    mah.page("info", function(ctx)
+        return "<h2>Example Plugin</h2><p>This page is rendered by the example plugin.</p>"
+    end)
+
+    -- Add a menu item for the page (appears in the Plugins dropdown)
+    mah.menu("Plugin Info", "info")
 end
