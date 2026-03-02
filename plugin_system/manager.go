@@ -315,6 +315,38 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		return 0
 	}))
 
+	mahMod.RawSetString("get_setting", L.NewFunction(func(L *lua.LState) int {
+		key := L.CheckString(1)
+		name := *pluginNamePtr
+
+		pm.mu.RLock()
+		settings := pm.pluginSettings[name]
+		pm.mu.RUnlock()
+
+		if settings == nil {
+			L.Push(lua.LNil)
+			return 1
+		}
+
+		val, ok := settings[key]
+		if !ok || val == nil {
+			L.Push(lua.LNil)
+			return 1
+		}
+
+		switch v := val.(type) {
+		case string:
+			L.Push(lua.LString(v))
+		case float64:
+			L.Push(lua.LNumber(v))
+		case bool:
+			L.Push(lua.LBool(v))
+		default:
+			L.Push(lua.LString(fmt.Sprintf("%v", v)))
+		}
+		return 1
+	}))
+
 	mahMod.RawSetString("page", L.NewFunction(func(L *lua.LState) int {
 		path := L.CheckString(1)
 		handler := L.CheckFunction(2)
@@ -539,6 +571,20 @@ func (pm *PluginManager) GetMenuItems() []MenuRegistration {
 	result := make([]MenuRegistration, len(pm.menuItems))
 	copy(result, pm.menuItems)
 	return result
+}
+
+// SetPluginSettings stores settings for a plugin in memory.
+func (pm *PluginManager) SetPluginSettings(pluginName string, settings map[string]any) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.pluginSettings[pluginName] = settings
+}
+
+// GetPluginSettings returns the in-memory settings for a plugin.
+func (pm *PluginManager) GetPluginSettings(pluginName string) map[string]any {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	return pm.pluginSettings[pluginName]
 }
 
 // VMLock returns the mutex associated with the given Lua state.

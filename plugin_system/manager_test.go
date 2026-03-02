@@ -565,3 +565,83 @@ func TestDisableNotEnabled(t *testing.T) {
 		t.Errorf("expected 'not enabled' error, got: %v", err)
 	}
 }
+
+func TestGetSettingAPI(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "settings-test", `
+plugin = {
+    name = "settings-test",
+    version = "1.0",
+    description = "settings access test",
+    settings = {
+        { name = "api_key", type = "password", label = "API Key", required = true },
+    }
+}
+function init()
+    mah.page("show-key", function(ctx)
+        local key = mah.get_setting("api_key")
+        if key then
+            return "key:" .. key
+        end
+        return "key:nil"
+    end)
+end
+`)
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pm.Close()
+
+	// Set settings before enabling
+	pm.SetPluginSettings("settings-test", map[string]any{"api_key": "secret123"})
+
+	if err := pm.EnablePlugin("settings-test"); err != nil {
+		t.Fatal(err)
+	}
+
+	html, err := pm.HandlePage("settings-test", "show-key", PageContext{
+		Path: "/plugins/settings-test/show-key", Method: "GET",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if html != "key:secret123" {
+		t.Errorf("expected 'key:secret123', got %q", html)
+	}
+}
+
+func TestGetSettingUnknownKey(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "unknown-key", `
+plugin = { name = "unknown-key", version = "1.0", description = "test" }
+function init()
+    mah.page("test", function(ctx)
+        local v = mah.get_setting("nonexistent")
+        if v == nil then return "nil" end
+        return tostring(v)
+    end)
+end
+`)
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pm.Close()
+
+	if err := pm.EnablePlugin("unknown-key"); err != nil {
+		t.Fatal(err)
+	}
+
+	html, err := pm.HandlePage("unknown-key", "test", PageContext{
+		Path: "/plugins/unknown-key/test", Method: "GET",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if html != "nil" {
+		t.Errorf("expected 'nil', got %q", html)
+	}
+}
