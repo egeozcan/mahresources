@@ -1,4 +1,4 @@
-<nav x-data="{ mobileOpen: false, adminOpen: false }" class="navbar flex items-center gap-1">
+<nav x-data="{ mobileOpen: false, adminOpen: false, pluginsOpen: false }" class="navbar flex items-center gap-1">
     <!-- Mobile hamburger -->
     <button @click="mobileOpen = !mobileOpen" class="navbar-toggle" aria-label="Toggle menu">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -44,6 +44,36 @@
                 {% endfor %}
             </div>
         </div>
+
+        {% if pluginMenuItems %}
+        <div class="navbar-dropdown" @click.outside="pluginsOpen = false">
+            <button @click="pluginsOpen = !pluginsOpen"
+                    class="navbar-link navbar-link--dropdown"
+                    :class="{ 'navbar-link--active': pluginsOpen {% for pi in pluginMenuItems %}|| '{{ pi.FullPath }}' == '{{ path }}'{% endfor %} }">
+                <span>Plugins</span>
+                <svg class="navbar-dropdown-arrow" :class="{ 'rotate-180': pluginsOpen }" width="10" height="10" viewBox="0 0 10 10" fill="none">
+                    <path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </button>
+            <div x-show="pluginsOpen"
+                 x-cloak
+                 x-transition:enter="transition ease-out duration-150"
+                 x-transition:enter-start="opacity-0 -translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0"
+                 x-transition:leave="transition ease-in duration-100"
+                 x-transition:leave-start="opacity-100 translate-y-0"
+                 x-transition:leave-end="opacity-0 -translate-y-1"
+                 class="navbar-dropdown-menu">
+                {% for pi in pluginMenuItems %}
+                <a href="{{ pi.FullPath }}"
+                   class="navbar-dropdown-item {% if pi.FullPath == path %}navbar-dropdown-item--active{% endif %}"
+                   @click="pluginsOpen = false">
+                    {{ pi.Label }}
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
     </div>
 
     <!-- Mobile navigation -->
@@ -80,5 +110,20 @@
             </a>
             {% endfor %}
         </div>
+
+        {% if pluginMenuItems %}
+        <div class="navbar-mobile-divider"></div>
+
+        <div class="navbar-mobile-section">
+            <span class="navbar-mobile-label">Plugins</span>
+            {% for pi in pluginMenuItems %}
+            <a href="{{ pi.FullPath }}"
+               class="navbar-mobile-link {% if pi.FullPath == path %}navbar-mobile-link--active{% endif %}"
+               @click="mobileOpen = false">
+                {{ pi.Label }}
+            </a>
+            {% endfor %}
+        </div>
+        {% endif %}
     </div>
 </nav>

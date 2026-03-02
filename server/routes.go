@@ -87,6 +87,7 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		ctx := ctxFn(request)
 		ctx["_pluginManager"] = pm
 		ctx["currentPath"] = request.URL.String()
+		ctx["pluginMenuItems"] = pm.GetMenuItems()
 		return ctx
 	}
 }
