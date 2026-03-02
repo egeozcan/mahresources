@@ -248,6 +248,7 @@ func main() {
 		&models.ImageHash{},
 		&models.ResourceSimilarity{},
 		&models.LogEntry{},
+		&models.PluginState{},
 	); err != nil {
 		log.Fatalf("failed to migrate: %v", err)
 	}
