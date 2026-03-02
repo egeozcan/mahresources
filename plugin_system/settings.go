@@ -181,6 +181,12 @@ func ValidateSettings(defs []SettingDefinition, values map[string]any) []Validat
 
 		case "string", "password":
 			// No type validation beyond the required check above.
+
+		default:
+			errs = append(errs, ValidationError{
+				Field:   def.Name,
+				Message: fmt.Sprintf("%s has unknown setting type %q", def.Label, def.Type),
+			})
 		}
 	}
 

@@ -38,12 +38,15 @@ export function pluginSettings(pluginName) {
                 });
 
                 if (!response.ok) {
-                    const data = await response.json();
-                    if (data.errors) {
-                        this.error = data.errors.map(e => e.message).join(', ');
-                    } else {
-                        this.error = 'Failed to save settings';
+                    const contentType = response.headers.get('Content-Type') || '';
+                    if (contentType.includes('application/json')) {
+                        const data = await response.json();
+                        if (data.errors) {
+                            this.error = data.errors.map(e => e.message).join(', ');
+                            return;
+                        }
                     }
+                    this.error = `Failed to save settings (${response.status})`;
                     return;
                 }
 

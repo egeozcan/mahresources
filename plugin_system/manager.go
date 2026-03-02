@@ -80,6 +80,7 @@ type PluginManager struct {
 	// Discovery-phase data (immutable after construction).
 	discovered     []DiscoveredPlugin
 	pluginSettings map[string]map[string]any // pluginName -> key -> value
+	enabling       sync.Map                  // pluginName -> struct{}, prevents concurrent EnablePlugin
 
 	// HTTP async callback support
 	httpClient  *http.Client
@@ -219,7 +220,9 @@ func (pm *PluginManager) loadPlugin(pluginDir, scriptPath string) error {
 		L.SetGlobal(name, lua.LNil)
 	}
 
+	pm.mu.Lock()
 	pm.vmLocks[L] = &sync.Mutex{}
+	pm.mu.Unlock()
 
 	// pluginName is populated after DoFile reads the plugin table, but before
 	// init() is called. Closures in registerMahModule capture the pointer so
@@ -265,8 +268,11 @@ func (pm *PluginManager) loadPlugin(pluginDir, scriptPath string) error {
 		}
 	}
 
+	pm.mu.Lock()
 	pm.plugins = append(pm.plugins, info)
 	pm.states = append(pm.states, L)
+	pm.mu.Unlock()
+
 	return nil
 }
 
@@ -401,10 +407,27 @@ func (pm *PluginManager) DiscoveredPlugins() []DiscoveredPlugin {
 	return result
 }
 
+// GetDiscoveredPlugin returns a pointer to a discovered plugin by name,
+// or nil if not found. The discovered list is immutable after construction.
+func (pm *PluginManager) GetDiscoveredPlugin(name string) *DiscoveredPlugin {
+	for i := range pm.discovered {
+		if pm.discovered[i].Name == name {
+			return &pm.discovered[i]
+		}
+	}
+	return nil
+}
+
 // EnablePlugin activates a discovered plugin by creating a Lua VM and calling init().
 // The discovered list is immutable after construction, so no lock is needed to read it.
 // loadPlugin handles its own locking for hook/injection/page/menu registration.
 func (pm *PluginManager) EnablePlugin(name string) error {
+	// Prevent concurrent enable attempts for the same plugin.
+	if _, loaded := pm.enabling.LoadOrStore(name, struct{}{}); loaded {
+		return fmt.Errorf("plugin %q is already being enabled", name)
+	}
+	defer pm.enabling.Delete(name)
+
 	pm.mu.RLock()
 	for _, p := range pm.plugins {
 		if p.Name == name {
@@ -580,11 +603,19 @@ func (pm *PluginManager) SetPluginSettings(pluginName string, settings map[strin
 	pm.pluginSettings[pluginName] = settings
 }
 
-// GetPluginSettings returns the in-memory settings for a plugin.
+// GetPluginSettings returns a shallow copy of the in-memory settings for a plugin.
 func (pm *PluginManager) GetPluginSettings(pluginName string) map[string]any {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
-	return pm.pluginSettings[pluginName]
+	orig := pm.pluginSettings[pluginName]
+	if orig == nil {
+		return nil
+	}
+	result := make(map[string]any, len(orig))
+	for k, v := range orig {
+		result[k] = v
+	}
+	return result
 }
 
 // VMLock returns the mutex associated with the given Lua state.

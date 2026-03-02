@@ -76,7 +76,7 @@
                            name="{{ setting.Name }}"
                            value="{% with val=plugin.Values|lookup:setting.Name %}{{ val }}{% endwith %}"
                            class="form-input"
-                           {% if setting.Required %}required{% endif %}
+                           {% if setting.Required %}required aria-required="true"{% endif %}
                            placeholder="{{ setting.Label }}"
                            data-testid="setting-{{ setting.Name }}">
 
@@ -87,7 +87,7 @@
                            value="{% if plugin.Values %}{% with val=plugin.Values|lookup:setting.Name %}{{ val }}{% endwith %}{% elif setting.DefaultValue %}{{ setting.DefaultValue }}{% endif %}"
                            class="form-input"
                            step="any"
-                           {% if setting.Required %}required{% endif %}
+                           {% if setting.Required %}required aria-required="true"{% endif %}
                            placeholder="{{ setting.Label }}"
                            data-testid="setting-{{ setting.Name }}">
 
@@ -97,7 +97,7 @@
                            name="{{ setting.Name }}"
                            value="{% if plugin.Values %}{% with val=plugin.Values|lookup:setting.Name %}{{ val }}{% endwith %}{% elif setting.DefaultValue %}{{ setting.DefaultValue }}{% endif %}"
                            class="form-input"
-                           {% if setting.Required %}required{% endif %}
+                           {% if setting.Required %}required aria-required="true"{% endif %}
                            placeholder="{{ setting.Label }}"
                            data-testid="setting-{{ setting.Name }}">
                     {% endif %}

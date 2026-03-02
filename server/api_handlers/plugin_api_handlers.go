@@ -3,6 +3,7 @@ package api_handlers
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"mahresources/constants"
 	"mahresources/server/http_utils"
 	"net/http"
@@ -133,7 +134,8 @@ func GetPluginSettingsHandler(ctx *application_context.MahresourcesContext) func
 		}
 
 		var values map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&values); err != nil {
+		limitedBody := io.LimitReader(r.Body, 64*1024) // 64KB limit for plugin settings
+		if err := json.NewDecoder(limitedBody).Decode(&values); err != nil {
 			http_utils.HandleError(err, w, r, http.StatusBadRequest)
 			return
 		}

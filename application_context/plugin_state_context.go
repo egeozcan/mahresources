@@ -72,21 +72,47 @@ func (ctx *MahresourcesContext) SetPluginEnabled(pluginName string, enabled bool
 			return fmt.Errorf("missing required settings: %v", missing)
 		}
 
+		// Persist DB state first, then enable in memory. If the in-memory
+		// step fails we revert the DB so the two stay consistent.
+		if err := ctx.db.Model(&models.PluginState{}).
+			Where("plugin_name = ?", pluginName).
+			Update("enabled", true).Error; err != nil {
+			return err
+		}
+
 		// Load settings into plugin manager memory
 		ctx.pluginManager.SetPluginSettings(pluginName, settings)
 
 		if err := ctx.pluginManager.EnablePlugin(pluginName); err != nil {
+			// Revert DB state on failure
+			_ = ctx.db.Model(&models.PluginState{}).
+				Where("plugin_name = ?", pluginName).
+				Update("enabled", false).Error
 			return err
 		}
 	} else {
+		// Persist DB state first, then disable in memory.
+		if err := ctx.db.Model(&models.PluginState{}).
+			Where("plugin_name = ?", pluginName).
+			Update("enabled", false).Error; err != nil {
+			return err
+		}
+
 		if err := ctx.pluginManager.DisablePlugin(pluginName); err != nil {
+			// If the plugin wasn't loaded in memory, the desired state
+			// (disabled) is already achieved — don't revert the DB.
+			if !ctx.pluginManager.IsEnabled(pluginName) {
+				return nil
+			}
+			// Revert DB state on unexpected failure
+			_ = ctx.db.Model(&models.PluginState{}).
+				Where("plugin_name = ?", pluginName).
+				Update("enabled", true).Error
 			return err
 		}
 	}
 
-	return ctx.db.Model(&models.PluginState{}).
-		Where("plugin_name = ?", pluginName).
-		Update("enabled", enabled).Error
+	return nil
 }
 
 // SavePluginSettings validates and saves settings for a plugin.
@@ -104,6 +130,19 @@ func (ctx *MahresourcesContext) SavePluginSettings(pluginName string, values map
 	if errs := plugin_system.ValidateSettings(dp.Settings, values); len(errs) > 0 {
 		return errs, nil
 	}
+
+	// Filter to declared keys only
+	declared := make(map[string]struct{}, len(dp.Settings))
+	for _, s := range dp.Settings {
+		declared[s.Name] = struct{}{}
+	}
+	filtered := make(map[string]any, len(declared))
+	for k, v := range values {
+		if _, ok := declared[k]; ok {
+			filtered[k] = v
+		}
+	}
+	values = filtered
 
 	// Serialize to JSON
 	jsonBytes, err := json.Marshal(values)
@@ -134,6 +173,9 @@ func (ctx *MahresourcesContext) ActivateEnabledPlugins() {
 
 	states, err := ctx.GetPluginStates()
 	if err != nil {
+		ctx.Logger().Error("system", "plugin", nil, "", "failed to load plugin states at startup", map[string]interface{}{
+			"error": err.Error(),
+		})
 		return
 	}
 
@@ -142,22 +184,24 @@ func (ctx *MahresourcesContext) ActivateEnabledPlugins() {
 			continue
 		}
 
-		settings, _ := ctx.loadPluginSettingsMap(state.PluginName)
+		settings, err := ctx.loadPluginSettingsMap(state.PluginName)
+		if err != nil {
+			ctx.Logger().Warning("system", "plugin", nil, state.PluginName, "failed to load settings at startup", map[string]interface{}{
+				"error": err.Error(),
+			})
+		}
 		ctx.pluginManager.SetPluginSettings(state.PluginName, settings)
 
 		if err := ctx.pluginManager.EnablePlugin(state.PluginName); err != nil {
-			fmt.Printf("[plugin] warning: failed to enable %q at startup: %v\n", state.PluginName, err)
+			ctx.Logger().Warning("system", "plugin", nil, state.PluginName, "failed to enable plugin at startup", map[string]interface{}{
+				"error": err.Error(),
+			})
 		}
 	}
 }
 
 func (ctx *MahresourcesContext) findDiscoveredPlugin(name string) *plugin_system.DiscoveredPlugin {
-	for _, dp := range ctx.pluginManager.DiscoveredPlugins() {
-		if dp.Name == name {
-			return &dp
-		}
-	}
-	return nil
+	return ctx.pluginManager.GetDiscoveredPlugin(name)
 }
 
 func (ctx *MahresourcesContext) loadPluginSettingsMap(pluginName string) (map[string]any, error) {
