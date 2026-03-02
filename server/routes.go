@@ -88,6 +88,7 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		ctx["_pluginManager"] = pm
 		ctx["currentPath"] = request.URL.String()
 		ctx["pluginMenuItems"] = pm.GetMenuItems()
+		ctx["hasPluginManager"] = true
 		return ctx
 	}
 }
@@ -303,6 +304,11 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/plugin/enable").HandlerFunc(api_handlers.GetPluginEnableHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/plugin/disable").HandlerFunc(api_handlers.GetPluginDisableHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/plugin/settings").HandlerFunc(api_handlers.GetPluginSettingsHandler(appContext))
+
+	// Plugin management page
+	manageCtxFn := wrapContextWithPlugins(appContext, template_context_providers.PluginManageContextProvider(appContext))
+	router.Methods(http.MethodGet).Path("/plugins/manage").
+		HandlerFunc(template_handlers.RenderTemplate("managePlugins.tpl", manageCtxFn))
 
 	// Plugin pages
 	pm := appContext.PluginManager()
