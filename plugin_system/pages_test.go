@@ -45,6 +45,109 @@ end
 	}
 }
 
+func TestHandlePage_Success(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "myapp", `
+plugin = { name = "myapp", version = "1.0", description = "test app" }
+
+function init()
+    mah.page("hello", function(ctx)
+        return "<h1>Hello from " .. ctx.method .. " " .. ctx.path .. "</h1>"
+    end)
+end
+`)
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer pm.Close()
+
+	html, err := pm.HandlePage("myapp", "hello", PageContext{
+		Path:   "/plugins/myapp/hello",
+		Method: "GET",
+		Query:  map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expected := "<h1>Hello from GET /plugins/myapp/hello</h1>"
+	if html != expected {
+		t.Errorf("expected %q, got %q", expected, html)
+	}
+}
+
+func TestHandlePage_WithQueryParams(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "search", `
+plugin = { name = "search", version = "1.0", description = "search" }
+
+function init()
+    mah.page("results", function(ctx)
+        return "<p>Query: " .. (ctx.query.q or "none") .. "</p>"
+    end)
+end
+`)
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer pm.Close()
+
+	html, err := pm.HandlePage("search", "results", PageContext{
+		Path:   "/plugins/search/results",
+		Method: "GET",
+		Query:  map[string]any{"q": "test"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if html != "<p>Query: test</p>" {
+		t.Errorf("expected '<p>Query: test</p>', got %q", html)
+	}
+}
+
+func TestHandlePage_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer pm.Close()
+
+	_, err = pm.HandlePage("nonexistent", "page", PageContext{})
+	if err == nil {
+		t.Fatal("expected error for nonexistent plugin page")
+	}
+}
+
+func TestHandlePage_LuaError(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "broken", `
+plugin = { name = "broken", version = "1.0", description = "broken" }
+
+function init()
+    mah.page("crash", function(ctx)
+        error("intentional crash")
+    end)
+end
+`)
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer pm.Close()
+
+	_, err = pm.HandlePage("broken", "crash", PageContext{})
+	if err == nil {
+		t.Fatal("expected error from crashing handler")
+	}
+}
+
 func TestMenuRegistration(t *testing.T) {
 	dir := t.TempDir()
 	writePlugin(t, dir, "analytics", `
