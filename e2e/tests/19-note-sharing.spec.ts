@@ -36,7 +36,7 @@ test.describe('Note Sharing', () => {
     const sharedNotes = await apiClient.getSharedNotes();
     const foundNote = sharedNotes.find(n => n.ID === noteId);
     expect(foundNote).toBeDefined();
-    expect(foundNote?.Name).toBe('[Plugin] Shareable Test Note');
+    expect(foundNote?.Name).toBe('Shareable Test Note');
   });
 
   test('should return same token when sharing already shared note', async ({ apiClient }) => {
@@ -230,9 +230,8 @@ test.describe('Shared Notes Filter', () => {
     await page.goto('/notes');
 
     // Both notes should be visible initially (use exact matching to avoid substring conflicts)
-    // Note names are prefixed by the test plugin's before_note_create hook
-    await expect(page.getByRole('link', { name: '[Plugin] Shared Filter Test Note', exact: true })).toBeVisible();
-    await expect(page.getByRole('link', { name: '[Plugin] Unshared Filter Test Note', exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Shared Filter Test Note', exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Unshared Filter Test Note', exact: true })).toBeVisible();
 
     // Click the Shared Only checkbox
     const sharedCheckbox = page.getByRole('checkbox', { name: 'Shared Only' });
@@ -245,8 +244,8 @@ test.describe('Shared Notes Filter', () => {
     await page.waitForURL(/Shared=1/);
 
     // Only shared note should be visible
-    await expect(page.getByRole('link', { name: '[Plugin] Shared Filter Test Note', exact: true })).toBeVisible();
-    await expect(page.getByRole('link', { name: '[Plugin] Unshared Filter Test Note', exact: true })).not.toBeVisible();
+    await expect(page.getByRole('link', { name: 'Shared Filter Test Note', exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Unshared Filter Test Note', exact: true })).not.toBeVisible();
   });
 
   test.afterAll(async ({ apiClient }) => {
