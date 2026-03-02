@@ -1,4 +1,7 @@
-<nav x-data="{ mobileOpen: false, adminOpen: false, pluginsOpen: false }" class="navbar flex items-center gap-1">
+<nav x-data="{ mobileOpen: false, adminOpen: false, pluginsOpen: false, currentPath: '' }"
+     x-init="currentPath = $el.dataset.currentPath"
+     data-current-path="{{ path }}"
+     class="navbar flex items-center gap-1">
     <!-- Mobile hamburger -->
     <button @click="mobileOpen = !mobileOpen" class="navbar-toggle" aria-label="Toggle menu">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -20,7 +23,7 @@
         <div class="navbar-dropdown" @click.outside="adminOpen = false">
             <button @click="adminOpen = !adminOpen"
                     class="navbar-link navbar-link--dropdown"
-                    :class="{ 'navbar-link--active': adminOpen {% for adminEntry in adminMenu %}|| '{{ adminEntry.Url }}' == '{{ path }}'{% endfor %} }">
+                    :class="{ 'navbar-link--active': adminOpen {% for adminEntry in adminMenu %}|| '{{ adminEntry.Url }}' == currentPath{% endfor %} }">
                 <span>Admin</span>
                 <svg class="navbar-dropdown-arrow" :class="{ 'rotate-180': adminOpen }" width="10" height="10" viewBox="0 0 10 10" fill="none">
                     <path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -49,7 +52,7 @@
         <div class="navbar-dropdown" @click.outside="pluginsOpen = false">
             <button @click="pluginsOpen = !pluginsOpen"
                     class="navbar-link navbar-link--dropdown"
-                    :class="{ 'navbar-link--active': pluginsOpen {% for pi in pluginMenuItems %}|| '{{ pi.FullPath }}' == '{{ path }}'{% endfor %} }">
+                    :class="{ 'navbar-link--active': pluginsOpen {% for pi in pluginMenuItems %}|| '{{ pi.FullPath }}' == currentPath{% endfor %} }">
                 <span>Plugins</span>
                 <svg class="navbar-dropdown-arrow" :class="{ 'rotate-180': pluginsOpen }" width="10" height="10" viewBox="0 0 10 10" fill="none">
                     <path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>

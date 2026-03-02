@@ -6,12 +6,15 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"sync"
 	"sync/atomic"
 
 	lua "github.com/yuin/gopher-lua"
 )
+
+var validPagePath = regexp.MustCompile(`^[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)*$`)
 
 // PluginInfo holds metadata about a loaded plugin.
 type PluginInfo struct {
@@ -39,6 +42,12 @@ type pageEntry struct {
 	fn    *lua.LFunction
 }
 
+// PageRegistration represents a plugin-contributed page.
+type PageRegistration struct {
+	PluginName string
+	Path       string
+}
+
 // MenuRegistration represents a plugin-contributed menu item.
 type MenuRegistration struct {
 	PluginName string
@@ -52,10 +61,9 @@ type PluginManager struct {
 	states            []*lua.LState
 	hooks             map[string][]hookEntry
 	injections        map[string][]injectionEntry
-	pages             map[string]map[string]pageEntry // pluginName -> path -> handler
-	menuItems         []MenuRegistration
-	mu                sync.RWMutex
-	currentPluginName string // set during loadPlugin, used by mah.page/mah.menu
+	pages     map[string]map[string]pageEntry // pluginName -> path -> handler
+	menuItems []MenuRegistration
+	mu        sync.RWMutex
 	// vmLocks is populated during single-threaded initialization (NewPluginManager/loadPlugin)
 	// and is read-only afterward, so concurrent reads without locking are safe.
 	vmLocks    map[*lua.LState]*sync.Mutex
@@ -152,8 +160,13 @@ func (pm *PluginManager) loadPlugin(pluginDir, scriptPath string) error {
 
 	pm.vmLocks[L] = &sync.Mutex{}
 
+	// pluginName is populated after DoFile reads the plugin table, but before
+	// init() is called. Closures in registerMahModule capture the pointer so
+	// they see the final value when invoked during init().
+	var pluginName string
+
 	// Register the mah module.
-	pm.registerMahModule(L)
+	pm.registerMahModule(L, &pluginName)
 
 	// Execute plugin.lua.
 	if err := L.DoFile(scriptPath); err != nil {
@@ -176,7 +189,7 @@ func (pm *PluginManager) loadPlugin(pluginDir, scriptPath string) error {
 		}
 	}
 
-	pm.currentPluginName = info.Name
+	pluginName = info.Name
 
 	// Call init() if it exists.
 	initFn := L.GetGlobal("init")
@@ -196,9 +209,10 @@ func (pm *PluginManager) loadPlugin(pluginDir, scriptPath string) error {
 	return nil
 }
 
-// registerMahModule sets up the mah.on, mah.inject, mah.log, and mah.abort
-// functions in the given Lua state.
-func (pm *PluginManager) registerMahModule(L *lua.LState) {
+// registerMahModule sets up the mah.on, mah.inject, mah.log, mah.page, mah.menu,
+// and mah.abort functions in the given Lua state. pluginNamePtr is populated by
+// loadPlugin after reading the plugin table, before init() is called.
+func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string) {
 	mahMod := L.NewTable()
 
 	mahMod.RawSetString("on", L.NewFunction(func(L *lua.LState) int {
@@ -244,12 +258,17 @@ func (pm *PluginManager) registerMahModule(L *lua.LState) {
 		path := L.CheckString(1)
 		handler := L.CheckFunction(2)
 
-		pluginName := pm.currentPluginName
-		pm.mu.Lock()
-		if pm.pages[pluginName] == nil {
-			pm.pages[pluginName] = make(map[string]pageEntry)
+		if !validPagePath.MatchString(path) {
+			L.ArgError(1, "invalid page path: must contain only alphanumeric characters, hyphens, underscores, and slashes")
+			return 0
 		}
-		pm.pages[pluginName][path] = pageEntry{state: L, fn: handler}
+
+		name := *pluginNamePtr
+		pm.mu.Lock()
+		if pm.pages[name] == nil {
+			pm.pages[name] = make(map[string]pageEntry)
+		}
+		pm.pages[name][path] = pageEntry{state: L, fn: handler}
 		pm.mu.Unlock()
 		return 0
 	}))
@@ -258,12 +277,17 @@ func (pm *PluginManager) registerMahModule(L *lua.LState) {
 		label := L.CheckString(1)
 		path := L.CheckString(2)
 
-		pluginName := pm.currentPluginName
-		fullPath := "/plugins/" + pluginName + "/" + path
+		if !validPagePath.MatchString(path) {
+			L.ArgError(2, "invalid menu path: must contain only alphanumeric characters, hyphens, underscores, and slashes")
+			return 0
+		}
+
+		name := *pluginNamePtr
+		fullPath := "/plugins/" + name + "/" + path
 
 		pm.mu.Lock()
 		pm.menuItems = append(pm.menuItems, MenuRegistration{
-			PluginName: pluginName,
+			PluginName: name,
 			Label:      label,
 			FullPath:   fullPath,
 		})
@@ -305,13 +329,13 @@ func (pm *PluginManager) GetInjections(slot string) []injectionEntry {
 }
 
 // GetPages returns a flat list of all registered page paths (for diagnostics).
-func (pm *PluginManager) GetPages() []struct{ PluginName, Path string } {
+func (pm *PluginManager) GetPages() []PageRegistration {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
-	var result []struct{ PluginName, Path string }
+	var result []PageRegistration
 	for pluginName, pages := range pm.pages {
 		for path := range pages {
-			result = append(result, struct{ PluginName, Path string }{pluginName, path})
+			result = append(result, PageRegistration{PluginName: pluginName, Path: path})
 		}
 	}
 	return result

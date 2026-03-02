@@ -48,16 +48,26 @@ func PluginPageContextProvider(pm *plugin_system.PluginManager) func(request *ht
 			}
 		}
 
-		// Build headers map
+		// Build headers map (array when multiple values, like query params)
 		headerMap := make(map[string]any)
 		for k, v := range request.Header {
-			headerMap[strings.ToLower(k)] = v[0]
+			if len(v) == 1 {
+				headerMap[strings.ToLower(k)] = v[0]
+			} else {
+				items := make([]any, len(v))
+				for i, val := range v {
+					items[i] = val
+				}
+				headerMap[strings.ToLower(k)] = items
+			}
 		}
 
-		// Read body for POST requests
+		// Read body for POST requests (limited to 50MB)
 		var body string
 		if request.Method == http.MethodPost && request.Body != nil {
-			bodyBytes, err := io.ReadAll(request.Body)
+			const maxBodySize = 50 << 20 // 50MB
+			limited := io.LimitReader(request.Body, maxBodySize)
+			bodyBytes, err := io.ReadAll(limited)
 			if err == nil {
 				body = string(bodyBytes)
 			}

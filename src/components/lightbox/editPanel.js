@@ -21,12 +21,7 @@ export const editPanelState = {
 
 export const editPanelMethods = {
   handleEscape() {
-    if (this.editPanelOpen || this.quickTagPanelOpen) {
-      if (this.editPanelOpen) this.closeEditPanel();
-      if (this.quickTagPanelOpen) this.closeQuickTagPanel();
-    } else {
-      this.close();
-    }
+    this.close();
     return true;
   },
 
