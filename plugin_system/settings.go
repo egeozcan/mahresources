@@ -2,6 +2,7 @@ package plugin_system
 
 import (
 	"fmt"
+	"slices"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -171,14 +172,7 @@ func ValidateSettings(defs []SettingDefinition, values map[string]any) []Validat
 				})
 				continue
 			}
-			found := false
-			for _, opt := range def.Options {
-				if opt == strVal {
-					found = true
-					break
-				}
-			}
-			if !found {
+			if !slices.Contains(def.Options, strVal) {
 				errs = append(errs, ValidationError{
 					Field:   def.Name,
 					Message: fmt.Sprintf("%s must be one of the available options", def.Label),
