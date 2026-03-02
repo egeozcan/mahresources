@@ -56,8 +56,9 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 				"stringId":       true,
 				"getNextId":      true,
 				"dereference":    true,
-				"_pluginManager": true,
-				"currentPath":    true,
+				"_pluginManager":  true,
+				"currentPath":     true,
+				"pluginMenuItems": true,
 			}, context)); err != nil {
 				fmt.Println(err)
 			}
