@@ -9,6 +9,6 @@
         <p class="text-red-700 text-sm">{{ pluginError }}</p>
     </div>
     {% else %}
-    {{ pluginContent }}
+    {{ pluginContent | safe }}
     {% endif %}
 {% endblock %}

@@ -13,4 +13,16 @@ function init()
         data.name = "[Plugin] " .. data.name
         return data
     end)
+
+    mah.page("test-page", function(ctx)
+        return '<div data-testid="plugin-page-content"><h2>Test Plugin Page</h2><p>Method: ' .. ctx.method .. '</p><p>Path: ' .. ctx.path .. '</p></div>'
+    end)
+
+    mah.page("echo-query", function(ctx)
+        local q = ctx.query.msg or "no message"
+        return '<div data-testid="plugin-echo">' .. q .. '</div>'
+    end)
+
+    mah.menu("Test Page", "test-page")
+    mah.menu("Echo Query", "echo-query")
 end
