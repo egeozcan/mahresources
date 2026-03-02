@@ -7,6 +7,8 @@
  * These pages either show empty states or are forms
  */
 export const STATIC_PAGES = [
+  // Dashboard
+  { path: '/dashboard', name: 'Dashboard' },
   // List pages (show empty state if no data)
   { path: '/notes', name: 'Notes list' },
   { path: '/groups', name: 'Groups list' },
