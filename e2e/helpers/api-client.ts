@@ -763,6 +763,39 @@ export class ApiClient {
     return this.postVoidRetry(`${this.baseUrl}/v1/resource/removeSeries?Id=${resourceId}`);
   }
 
+  // Plugin management
+  async getPlugins(): Promise<any[]> {
+    const response = await this.withRetry(() =>
+      this.request.get(`${this.baseUrl}/v1/plugins/manage`)
+    );
+    return response.json();
+  }
+
+  async enablePlugin(name: string): Promise<void> {
+    await this.withRetry(() =>
+      this.request.post(`${this.baseUrl}/v1/plugin/enable`, {
+        form: { name },
+      })
+    );
+  }
+
+  async disablePlugin(name: string): Promise<void> {
+    await this.withRetry(() =>
+      this.request.post(`${this.baseUrl}/v1/plugin/disable`, {
+        form: { name },
+      })
+    );
+  }
+
+  async savePluginSettings(name: string, values: Record<string, any>): Promise<any> {
+    const response = await this.withRetry(() =>
+      this.request.post(`${this.baseUrl}/v1/plugin/settings?name=${encodeURIComponent(name)}`, {
+        data: values,
+      })
+    );
+    return response.json();
+  }
+
   // Get resource details including hash and series
   async getResource(id: number): Promise<Resource> {
     const response = await this.request.get(`${this.baseUrl}/v1/resource?Id=${id}`);
