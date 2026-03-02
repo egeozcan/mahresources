@@ -298,6 +298,12 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/log").HandlerFunc(api_handlers.GetLogEntryHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/logs/entity").HandlerFunc(api_handlers.GetEntityHistoryHandler(appContext))
 
+	// Plugin management API
+	router.Methods(http.MethodGet).Path("/v1/plugins/manage").HandlerFunc(api_handlers.GetPluginsManageHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/plugin/enable").HandlerFunc(api_handlers.GetPluginEnableHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/plugin/disable").HandlerFunc(api_handlers.GetPluginDisableHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/plugin/settings").HandlerFunc(api_handlers.GetPluginSettingsHandler(appContext))
+
 	// Plugin pages
 	pm := appContext.PluginManager()
 	if pm != nil {
