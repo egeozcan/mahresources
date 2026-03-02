@@ -212,20 +212,13 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 			log.Printf("[plugin] WARNING: failed to initialize plugin system: %v", pmErr)
 		} else {
 			ctx.pluginManager = pm
-			// Wire database access into plugins (set before enabling so init() can use it)
-			pm.SetEntityQuerier(NewPluginDBAdapter(ctx))
-			// Auto-enable all discovered plugins
-			for _, dp := range pm.DiscoveredPlugins() {
-				if err := pm.EnablePlugin(dp.Name); err != nil {
-					log.Printf("[plugin] WARNING: failed to enable %q: %v", dp.Name, err)
-				}
-			}
-			if plugins := pm.Plugins(); len(plugins) > 0 {
-				log.Printf("[plugin] Loaded %d plugin(s)", len(plugins))
-				for _, p := range plugins {
+			if discovered := pm.DiscoveredPlugins(); len(discovered) > 0 {
+				log.Printf("[plugin] Discovered %d plugin(s)", len(discovered))
+				for _, p := range discovered {
 					log.Printf("[plugin]   - %s v%s", p.Name, p.Version)
 				}
 			}
+			pm.SetEntityQuerier(NewPluginDBAdapter(ctx))
 		}
 	}
 

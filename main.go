@@ -274,6 +274,17 @@ func main() {
 
 	util.AddInitialData(db)
 
+	// Initialize plugin states in DB and activate enabled plugins
+	if context.PluginManager() != nil {
+		if _, err := context.EnsurePluginStates(); err != nil {
+			log.Printf("[plugin] WARNING: failed to initialize plugin states: %v", err)
+		}
+		context.ActivateEnabledPlugins()
+		if plugins := context.PluginManager().Plugins(); len(plugins) > 0 {
+			log.Printf("[plugin] Activated %d plugin(s)", len(plugins))
+		}
+	}
+
 	indexQueries := [...]string{
 		"CREATE INDEX IF NOT EXISTS idx__resource_notes__note_id ON resource_notes(note_id)",
 		"CREATE INDEX IF NOT EXISTS idx__resource_notes__resource_id ON resource_notes(resource_id)",
