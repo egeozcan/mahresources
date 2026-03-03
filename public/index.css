@@ -510,6 +510,60 @@
     background: var(--nav-hover);
 }
 
+/* Plugin action sidebar section */
+.sidebar-section {
+    margin-top: 1rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--nav-border);
+}
+
+.sidebar-section-title {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--nav-text-muted);
+    margin-bottom: 0.5rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.sidebar-action-btn {
+    display: block;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 0.25rem;
+    font-size: 0.8125rem;
+    text-align: left;
+    border: 1px solid var(--nav-border);
+    border-radius: var(--radius-sm);
+    background: white;
+    color: var(--nav-text);
+    cursor: pointer;
+    transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.sidebar-action-btn:hover {
+    background: var(--bg-accent);
+    border-color: var(--nav-hover);
+}
+
+.sidebar-action-btn:focus-visible {
+    outline: 2px solid var(--nav-hover);
+    outline-offset: 1px;
+}
+
+.sidebar-action-btn.plugin-action-btn {
+    border-left: 3px solid var(--nav-active);
+}
+
+/* Plugin action modal */
+.plugin-action-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--nav-border);
+}
+
 .card-description {
     font-size: 0.8125rem;
     color: #4b5563;
