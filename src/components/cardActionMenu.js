@@ -7,15 +7,15 @@ export function cardActionMenu() {
             this.close();
             window.dispatchEvent(new CustomEvent('plugin-action-open', {
                 detail: {
-                    plugin: action.PluginName,
-                    action: action.ID,
-                    label: action.Label,
-                    description: action.Description,
+                    plugin: action.plugin_name,
+                    action: action.id,
+                    label: action.label,
+                    description: action.description,
                     entityIds: [entityId],
                     entityType: entityType,
-                    async: action.Async,
-                    params: action.Params,
-                    confirm: action.Confirm,
+                    async: action.async,
+                    params: action.params,
+                    confirm: action.confirm,
                 }
             }));
         }
