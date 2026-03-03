@@ -46,7 +46,7 @@
 
                 {% if entity.Category && !fullText %}
                 <div class="card-badges">
-                    <a href="{{ withQuery("categories", stringId(entity.CategoryId), true) }}" class="card-badge card-badge--category{% if hasQuery("categories", stringId(entity.CategoryId)) %} card-badge--tag-active{% endif %}">
+                    <a href="{% if tagBaseUrl %}{{ tagBaseUrl }}?categories={{ entity.CategoryId }}{% else %}{{ withQuery("categories", stringId(entity.CategoryId), true) }}{% endif %}" title="{{ entity.Category.Name }}" class="card-badge card-badge--category{% if !tagBaseUrl && hasQuery("categories", stringId(entity.CategoryId)) %} card-badge--tag-active{% endif %}">
                         {{ entity.Category.Name }}
                     </a>
                 </div>
@@ -77,7 +77,7 @@
         {% if !noTag && entity.Tags %}
             <div class="tags card-tags">
                 {% for tag in entity.Tags %}
-                <a class="card-badge{% if hasQuery("tags", stringId(tag.ID)) %} card-badge--tag-active{% else %} card-badge--tag{% endif %}" href='{{ withQuery("tags", stringId(tag.ID), true) }}'>
+                <a class="card-badge{% if !tagBaseUrl && hasQuery("tags", stringId(tag.ID)) %} card-badge--tag-active{% else %} card-badge--tag{% endif %}" href='{% if tagBaseUrl %}{{ tagBaseUrl }}?tags={{ tag.ID }}{% else %}{{ withQuery("tags", stringId(tag.ID), true) }}{% endif %}'>
                     {{ tag.Name }}
                 </a>
                 {% endfor %}

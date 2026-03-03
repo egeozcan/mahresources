@@ -11,7 +11,7 @@
         {% if recentResources %}
         <div class="dashboard-grid">
             {% for entity in recentResources %}
-                {% include "partials/resource.tpl" %}
+                {% include "partials/resource.tpl" with tagBaseUrl="/resources" %}
             {% endfor %}
         </div>
         {% else %}
@@ -28,7 +28,7 @@
         {% if recentNotes %}
         <div class="dashboard-grid">
             {% for entity in recentNotes %}
-                {% include "partials/note.tpl" %}
+                {% include "partials/note.tpl" with tagBaseUrl="/notes" %}
             {% endfor %}
         </div>
         {% else %}
@@ -45,7 +45,7 @@
         {% if recentGroups %}
         <div class="dashboard-grid">
             {% for entity in recentGroups %}
-                {% include "partials/group.tpl" %}
+                {% include "partials/group.tpl" with tagBaseUrl="/groups" %}
             {% endfor %}
         </div>
         {% else %}

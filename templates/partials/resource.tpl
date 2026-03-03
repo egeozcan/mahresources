@@ -54,7 +54,7 @@
 
         <div class="tags card-tags">
             {% for tag in entity.Tags %}
-            <a class="card-badge{% if hasQuery("tags", stringId(tag.ID)) %} card-badge--tag-active{% else %} card-badge--tag{% endif %}" href='{{ withQuery("tags", stringId(tag.ID), true) }}'>
+            <a class="card-badge{% if !tagBaseUrl && hasQuery("tags", stringId(tag.ID)) %} card-badge--tag-active{% else %} card-badge--tag{% endif %}" href='{% if tagBaseUrl %}{{ tagBaseUrl }}?tags={{ tag.ID }}{% else %}{{ withQuery("tags", stringId(tag.ID), true) }}{% endif %}'>
                 {{ tag.Name }}
             </a>
             {% endfor %}
