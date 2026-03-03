@@ -1,6 +1,8 @@
 package server
 
 import (
+	"reflect"
+
 	"github.com/flosch/pongo2/v4"
 	"github.com/gorilla/mux"
 	"mahresources/application_context"
@@ -91,8 +93,49 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		ctx["currentPath"] = request.URL.Path
 		ctx["pluginMenuItems"] = pm.GetMenuItems()
 		ctx["hasPluginManager"] = true
+
+		// Compute plugin actions for detail pages
+		if mainEntity := ctx["mainEntity"]; mainEntity != nil {
+			if entityType, ok := ctx["mainEntityType"].(string); ok && entityType != "" {
+				entityData := buildEntityDataFromEntity(mainEntity, entityType)
+				ctx["pluginDetailActions"] = pm.GetActionsForPlacement(entityType, "detail", entityData)
+			}
+		}
+
 		return ctx
 	}
+}
+
+// buildEntityDataFromEntity extracts filter-relevant fields from an entity for action matching.
+func buildEntityDataFromEntity(entity any, entityType string) map[string]any {
+	data := map[string]any{}
+	switch entityType {
+	case "resource":
+		v := reflect.ValueOf(entity)
+		if v.Kind() == reflect.Ptr {
+			v = v.Elem()
+		}
+		if ct := v.FieldByName("ContentType"); ct.IsValid() {
+			data["content_type"] = ct.String()
+		}
+	case "group":
+		v := reflect.ValueOf(entity)
+		if v.Kind() == reflect.Ptr {
+			v = v.Elem()
+		}
+		if catID := v.FieldByName("CategoryId"); catID.IsValid() && !catID.IsNil() {
+			data["category_id"] = uint(catID.Elem().Uint())
+		}
+	case "note":
+		v := reflect.ValueOf(entity)
+		if v.Kind() == reflect.Ptr {
+			v = v.Elem()
+		}
+		if ntID := v.FieldByName("NoteTypeId"); ntID.IsValid() && !ntID.IsNil() {
+			data["note_type_id"] = uint(ntID.Elem().Uint())
+		}
+	}
+	return data
 }
 
 func registerRoutes(router *mux.Router, appContext *application_context.MahresourcesContext) {

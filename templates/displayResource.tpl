@@ -231,5 +231,26 @@
 
     {% include "/partials/sideTitle.tpl" with title="Meta Data" %}
     {% include "/partials/json.tpl" with jsonData=resource.Meta %}
+    {% if pluginDetailActions %}
+    <div class="sidebar-section" role="group" aria-label="Plugin actions">
+        <h4 class="sidebar-section-title">Plugin Actions</h4>
+        {% for action in pluginDetailActions %}
+        <button class="sidebar-action-btn plugin-action-btn"
+                @click="$dispatch('plugin-action-open', {
+                    plugin: '{{ action.PluginName }}',
+                    action: '{{ action.ID }}',
+                    label: '{{ action.Label }}',
+                    description: '{{ action.Description }}',
+                    entityIds: [{{ resource.ID }}],
+                    entityType: 'resource',
+                    async: {% if action.Async %}true{% else %}false{% endif %},
+                    params: {{ action.Params|json }},
+                    confirm: '{{ action.Confirm }}'
+                })">
+            {{ action.Label }}
+        </button>
+        {% endfor %}
+    </div>
+    {% endif %}
     {% plugin_slot "resource_detail_sidebar" %}
 {% endblock %}
