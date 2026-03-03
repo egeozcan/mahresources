@@ -43,7 +43,7 @@ type ActionJobEvent struct {
 }
 
 // Snapshot returns a copy of the ActionJob safe for serialization.
-func (j *ActionJob) Snapshot() ActionJob {
+func (j *ActionJob) Snapshot() ActionJob { //nolint:govet // returns a field-by-field copy; mu is intentionally zero-valued
 	j.mu.RLock()
 	defer j.mu.RUnlock()
 

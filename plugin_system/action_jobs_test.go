@@ -363,8 +363,8 @@ end
 	for {
 		jobs := pm.GetAllActionJobs()
 		allDone := true
-		for _, j := range jobs {
-			if j.Status != "completed" && j.Status != "failed" {
+		for i := range jobs {
+			if jobs[i].Status != "completed" && jobs[i].Status != "failed" {
 				allDone = false
 				break
 			}
