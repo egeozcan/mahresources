@@ -263,4 +263,151 @@ test.describe.serial('Plugin Actions', () => {
     const groupButton = page.getByRole('button', { name: 'Group Action' });
     await expect(groupButton).not.toBeVisible();
   });
+
+  test('modal validation prevents submit without required field', async ({ page }) => {
+    await page.goto(`/resource?id=${resourceId}`);
+    await page.waitForLoadState('load');
+
+    await page.getByRole('button', { name: 'Greet Resource' }).click();
+
+    const modal = page.getByRole('dialog');
+    await expect(modal).toBeVisible();
+
+    // Clear the required greeting field
+    const greetingInput = modal.locator('#plugin-param-greeting');
+    await greetingInput.clear();
+
+    // Submit with empty required field — browser native validation or Alpine
+    // validation will block the submission
+    await modal.getByRole('button', { name: 'Run' }).click();
+
+    // Modal should still be visible (submission was blocked)
+    await expect(modal).toBeVisible();
+
+    // The result area should NOT appear (action was not executed)
+    const resultArea = modal.locator('[role="status"]');
+    await expect(resultArea).not.toBeVisible();
+  });
+
+  test('card kebab menu appears on resources list page', async ({ page }) => {
+    await page.goto('/resources');
+    await page.waitForLoadState('load');
+
+    // "sync-greet" has placement "card" — should produce a kebab menu button
+    const kebabButton = page.locator('button[aria-label="More actions"]').first();
+    await expect(kebabButton).toBeVisible();
+
+    // Click to open the dropdown
+    await kebabButton.click();
+
+    // Should see "Greet Resource" in the dropdown menu
+    const menuItem = page.getByRole('menuitem', { name: 'Greet Resource' });
+    await expect(menuItem).toBeVisible();
+  });
+
+  test('card kebab menu triggers action modal', async ({ page }) => {
+    await page.goto('/resources');
+    await page.waitForLoadState('load');
+
+    // Open the kebab menu
+    const kebabButton = page.locator('button[aria-label="More actions"]').first();
+    await kebabButton.click();
+
+    // Click the action menu item
+    await page.getByRole('menuitem', { name: 'Greet Resource' }).click();
+
+    // Modal should open
+    const modal = page.getByRole('dialog');
+    await expect(modal).toBeVisible();
+    await expect(modal).toContainText('Greet Resource');
+  });
+
+  test('async action submission opens jobs panel', async ({ page }) => {
+    await page.goto(`/resource?id=${resourceId}`);
+    await page.waitForLoadState('load');
+
+    // Click the async action button
+    await page.getByRole('button', { name: 'Async Demo' }).click();
+
+    const modal = page.getByRole('dialog');
+    await expect(modal).toBeVisible();
+
+    // Submit the async action
+    await modal.getByRole('button', { name: 'Run' }).click();
+
+    // Modal should close
+    await expect(modal).not.toBeVisible({ timeout: 5000 });
+
+    // Jobs panel should auto-open (it opens when async action completes)
+    // The panel contains a heading "Jobs"
+    const jobsPanel = page.locator('text=Jobs').first();
+    await expect(jobsPanel).toBeVisible({ timeout: 5000 });
+  });
+
+  test('API: bulk sync action runs on multiple entities', async ({ apiClient }) => {
+    const response = await apiClient.request.post('/v1/jobs/action/run', {
+      headers: { 'Content-Type': 'application/json' },
+      data: JSON.stringify({
+        plugin: 'test-actions',
+        action: 'sync-greet',
+        entity_ids: [1, 2, 3],
+        params: { greeting: 'Bulk hello' },
+      }),
+    });
+    expect(response.ok()).toBeTruthy();
+    const data = await response.json();
+    // Bulk sync returns {results: [...]}
+    expect(data.results).toBeDefined();
+    expect(data.results).toHaveLength(3);
+    for (const result of data.results) {
+      expect(result.success).toBeTruthy();
+      expect(result.message).toContain('Bulk hello');
+    }
+  });
+
+  test('API: bulk async action returns multiple job IDs', async ({ apiClient }) => {
+    const response = await apiClient.request.post('/v1/jobs/action/run', {
+      headers: { 'Content-Type': 'application/json' },
+      data: JSON.stringify({
+        plugin: 'test-actions',
+        action: 'async-demo',
+        entity_ids: [1, 2],
+        params: { steps: 1 },
+      }),
+    });
+    expect(response.status()).toBe(202);
+    const data = await response.json();
+    expect(data.job_ids).toBeDefined();
+    expect(data.job_ids).toHaveLength(2);
+
+    // Both jobs should complete
+    for (const jobId of data.job_ids) {
+      let job: any;
+      for (let i = 0; i < 20; i++) {
+        const jobResp = await apiClient.request.get(`/v1/jobs/action/job?id=${jobId}`);
+        job = await jobResp.json();
+        if (job.status === 'completed' || job.status === 'failed') break;
+        await new Promise(r => setTimeout(r, 200));
+      }
+      expect(job.status).toBe('completed');
+    }
+  });
+
+  test('disabling plugin removes actions from detail page', async ({ page, apiClient }) => {
+    // Verify action is visible first
+    await page.goto(`/resource?id=${resourceId}`);
+    await page.waitForLoadState('load');
+    await expect(page.getByRole('button', { name: 'Greet Resource' })).toBeVisible();
+
+    // Disable the plugin
+    await apiClient.disablePlugin('test-actions');
+
+    // Reload and verify action is gone
+    await page.goto(`/resource?id=${resourceId}`);
+    await page.waitForLoadState('load');
+    await expect(page.getByRole('button', { name: 'Greet Resource' })).not.toBeVisible();
+
+    // Re-enable for any remaining tests
+    await apiClient.enablePlugin('test-actions');
+  });
 });
