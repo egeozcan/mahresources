@@ -44,6 +44,7 @@ import { codeEditor } from './components/codeEditor.js';
 import { groupTree } from './components/groupTree.js';
 import { pluginSettings } from './components/pluginSettings.js';
 import { pluginActionModal } from './components/pluginActionModal.js';
+import { cardActionMenu } from './components/cardActionMenu.js';
 
 // Import web components
 import './webcomponents/expandabletext.js';
@@ -105,6 +106,7 @@ Alpine.data('codeEditor', codeEditor);
 Alpine.data('groupTree', groupTree);
 Alpine.data('pluginSettings', pluginSettings);
 Alpine.data('pluginActionModal', pluginActionModal);
+Alpine.data('cardActionMenu', cardActionMenu);
 
 // Expose Alpine globally for debugging and morph usage
 window.Alpine = Alpine;

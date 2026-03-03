@@ -1,6 +1,9 @@
 package server
 
 import (
+	"net/http"
+	"strings"
+
 	"github.com/flosch/pongo2/v4"
 	"github.com/gorilla/mux"
 	"mahresources/application_context"
@@ -8,7 +11,6 @@ import (
 	"mahresources/server/api_handlers"
 	"mahresources/server/template_handlers"
 	"mahresources/server/template_handlers/template_context_providers"
-	"net/http"
 )
 
 type templateInformation struct {
@@ -98,6 +100,19 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 				entityData := buildEntityDataFromEntity(mainEntity, entityType)
 				ctx["pluginDetailActions"] = pm.GetActionsForPlacement(entityType, "detail", entityData)
 			}
+		}
+
+		// Compute plugin card/bulk actions for list pages (unfiltered)
+		path := request.URL.Path
+		switch {
+		case strings.HasPrefix(path, "/resources"):
+			ctx["pluginCardActions"] = pm.GetActionsForPlacement("resource", "card", nil)
+			ctx["pluginBulkActions"] = pm.GetActionsForPlacement("resource", "bulk", nil)
+		case strings.HasPrefix(path, "/notes"):
+			ctx["pluginCardActions"] = pm.GetActionsForPlacement("note", "card", nil)
+		case strings.HasPrefix(path, "/groups"):
+			ctx["pluginCardActions"] = pm.GetActionsForPlacement("group", "card", nil)
+			ctx["pluginBulkActions"] = pm.GetActionsForPlacement("group", "bulk", nil)
 		}
 
 		return ctx
