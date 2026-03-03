@@ -71,6 +71,7 @@
     {% include "/partials/lightbox.tpl" %}
     {% include "/partials/pasteUpload.tpl" %}
     {% include "/partials/downloadCockpit.tpl" %}
+    {% include "/partials/pluginActionModal.tpl" %}
     {% plugin_slot "scripts" %}
 </body>
 </html>
