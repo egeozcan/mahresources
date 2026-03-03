@@ -772,19 +772,21 @@ export class ApiClient {
   }
 
   async enablePlugin(name: string): Promise<void> {
-    await this.withRetry(() =>
-      this.request.post(`${this.baseUrl}/v1/plugin/enable`, {
+    await this.withRetry(async () => {
+      const response = await this.request.post(`${this.baseUrl}/v1/plugin/enable`, {
         form: { name },
-      })
-    );
+      });
+      await this.handleVoidResponse(response);
+    });
   }
 
   async disablePlugin(name: string): Promise<void> {
-    await this.withRetry(() =>
-      this.request.post(`${this.baseUrl}/v1/plugin/disable`, {
+    await this.withRetry(async () => {
+      const response = await this.request.post(`${this.baseUrl}/v1/plugin/disable`, {
         form: { name },
-      })
-    );
+      });
+      await this.handleVoidResponse(response);
+    });
   }
 
   async savePluginSettings(name: string, values: Record<string, any>): Promise<any> {

@@ -1,9 +1,5 @@
 {% extends "/layouts/base.tpl" %}
 
-{% block head %}
-<style>.content { grid-template-columns: minmax(0, 1fr) !important; } .sidebar { display: none !important; }</style>
-{% endblock %}
-
 {% block body %}
 <div class="dashboard">
     {# Recent Resources #}

@@ -51,7 +51,10 @@ test.describe('Plugin Management', () => {
     await expect(disableButton).toContainText('Disable');
   });
 
-  test('disabled plugin does not inject banner', async ({ page }) => {
+  test('disabled plugin does not inject banner', async ({ page, apiClient }) => {
+    // Disable right before navigating to minimize the race window with parallel
+    // plugin test files that may re-enable the plugin between beforeEach and here.
+    await apiClient.disablePlugin('test-banner');
     await page.goto('/notes');
     await page.waitForLoadState('load');
     await expect(page.getByTestId('plugin-banner')).not.toBeVisible();

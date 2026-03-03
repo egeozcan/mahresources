@@ -34,14 +34,11 @@ test.describe('Dashboard', () => {
   test('should show View All links that navigate correctly', async ({ page, baseURL }) => {
     await page.goto(`${baseURL}/dashboard`);
 
-    const viewAllLinks = page.locator('.dashboard-view-all');
-    await expect(viewAllLinks).toHaveCount(4);
-
-    // Check href attributes
-    await expect(viewAllLinks.nth(0)).toHaveAttribute('href', '/resources');
-    await expect(viewAllLinks.nth(1)).toHaveAttribute('href', '/notes');
-    await expect(viewAllLinks.nth(2)).toHaveAttribute('href', '/groups');
-    await expect(viewAllLinks.nth(3)).toHaveAttribute('href', '/tags');
+    // Verify all expected "View All" links exist (order-independent)
+    await expect(page.locator('.dashboard-view-all[href="/resources"]')).toBeVisible();
+    await expect(page.locator('.dashboard-view-all[href="/notes"]')).toBeVisible();
+    await expect(page.locator('.dashboard-view-all[href="/groups"]')).toBeVisible();
+    await expect(page.locator('.dashboard-view-all[href="/tags"]')).toBeVisible();
   });
 });
 
@@ -52,8 +49,8 @@ test.describe('Dashboard with data', () => {
     try {
       await page.goto(`${baseURL}/dashboard`);
       await expect(page.locator('.dashboard-tag-pill:has-text("Dashboard Test Tag")')).toBeVisible();
-      // Activity feed should show the created tag
-      await expect(page.locator('.dashboard-activity-name:has-text("Dashboard Test Tag")')).toBeVisible();
+      // Activity feed should show the created tag (may appear multiple times for created/updated)
+      await expect(page.locator('.dashboard-activity-name:has-text("Dashboard Test Tag")').first()).toBeVisible();
     } finally {
       try { await apiClient.deleteTag(tag.ID); } catch { /* cleanup best-effort */ }
     }

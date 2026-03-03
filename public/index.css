@@ -776,6 +776,14 @@
 
 /* ── Dashboard ────────────────────────────────────────────────── */
 
+.content:has(.dashboard) {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.content:has(.dashboard) .sidebar {
+    display: none;
+}
+
 .dashboard {
     max-width: 1400px;
     margin: 0 auto;
