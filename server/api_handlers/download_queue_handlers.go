@@ -40,7 +40,7 @@ func GetDownloadSubmitHandler(ctx DownloadQueueReader) func(writer http.Response
 
 		writer.Header().Set("Content-Type", constants.JSON)
 		writer.WriteHeader(http.StatusAccepted)
-		_ = json.NewEncoder(writer).Encode(map[string]interface{}{
+		_ = json.NewEncoder(writer).Encode(map[string]any{
 			"queued": true,
 			"jobs":   jobs,
 		})
@@ -54,7 +54,7 @@ func GetDownloadQueueHandler(ctx DownloadQueueReader) func(writer http.ResponseW
 		jobs := ctx.DownloadManager().GetJobs()
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(map[string]interface{}{
+		_ = json.NewEncoder(writer).Encode(map[string]any{
 			"jobs": jobs,
 		})
 	}
@@ -191,7 +191,7 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 		}
 
 		// Send initial state with both download jobs and action jobs
-		initData := map[string]interface{}{
+		initData := map[string]any{
 			"jobs": ctx.DownloadManager().GetJobs(),
 		}
 		if pm != nil {
@@ -220,7 +220,7 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 					actionEvents = nil
 					continue
 				}
-				data, _ := json.Marshal(map[string]interface{}{"job": event.Job})
+				data, _ := json.Marshal(map[string]any{"job": event.Job})
 				fmt.Fprintf(writer, "event: action_%s\ndata: %s\n\n", event.Type, data)
 				flusher.Flush()
 
