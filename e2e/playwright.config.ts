@@ -36,11 +36,21 @@ export default defineConfig({
       ],
     },
     {
+      // Plugin tests share global server-side plugin state (enabled/disabled),
+      // so they must run serially to avoid race conditions.
+      name: 'plugins',
+      use: { ...devices['Desktop Chrome'] },
+      testMatch: ['**/plugins/**'],
+      workers: 1,
+      dependencies: ['heavy-io'],
+    },
+    {
       name: 'default',
       use: { ...devices['Desktop Chrome'] },
       testIgnore: [
         '**/19-note-sharing*',
         '**/21-resource-category*',
+        '**/plugins/**',
       ],
       dependencies: ['heavy-io'],
     },
