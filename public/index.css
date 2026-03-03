@@ -556,12 +556,149 @@
 }
 
 /* Plugin action modal */
+.plugin-action-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(2px);
+}
+
+.plugin-action-modal {
+    background: white;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    width: 90%;
+    max-width: 480px;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
 .plugin-action-modal-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 1rem 1.25rem;
     border-bottom: 1px solid var(--nav-border);
+}
+
+.plugin-action-modal-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--nav-text);
+    margin: 0;
+}
+
+.plugin-action-modal-close {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: var(--nav-text-muted);
+    padding: 0.25rem;
+    line-height: 1;
+    border-radius: var(--radius-sm);
+}
+
+.plugin-action-modal-close:hover {
+    color: var(--nav-text);
+}
+
+.plugin-action-modal-close:focus-visible {
+    outline: 2px solid var(--nav-hover);
+    outline-offset: 1px;
+}
+
+.plugin-action-modal-desc {
+    padding: 0.75rem 1.25rem 0;
+    color: var(--nav-text-muted);
+    font-size: 0.875rem;
+}
+
+.plugin-action-modal-confirm {
+    padding: 0.75rem 1.25rem;
+    color: #b45309;
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.plugin-action-modal-result {
+    padding: 1rem 1.25rem;
+    color: #047857;
+    font-weight: 500;
+}
+
+.plugin-action-modal-error {
+    margin: 0.75rem 1.25rem 0;
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--radius-sm);
+    background: #fef2f2;
+    color: #dc2626;
+    font-size: 0.8125rem;
+}
+
+.plugin-action-modal-field {
+    padding: 0.5rem 1.25rem;
+}
+
+.plugin-action-modal-label {
+    display: block;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--nav-text);
+    margin-bottom: 0.25rem;
+}
+
+.plugin-action-modal-required {
+    color: #dc2626;
+}
+
+.plugin-action-modal-input,
+.plugin-action-modal-textarea,
+.plugin-action-modal-select {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: var(--radius-sm);
+    font-size: 0.875rem;
+    color: var(--nav-text);
+    transition: border-color var(--transition-fast);
+}
+
+.plugin-action-modal-input:focus,
+.plugin-action-modal-textarea:focus,
+.plugin-action-modal-select:focus {
+    outline: none;
+    border-color: var(--nav-hover);
+    box-shadow: 0 0 0 2px rgba(13, 148, 136, 0.2);
+}
+
+.plugin-action-modal-input[aria-invalid="true"],
+.plugin-action-modal-textarea[aria-invalid="true"],
+.plugin-action-modal-select[aria-invalid="true"] {
+    border-color: #dc2626;
+}
+
+.plugin-action-modal-checkbox-wrap {
+    padding-top: 0.25rem;
+}
+
+.plugin-action-modal-field-error {
+    display: block;
+    margin-top: 0.25rem;
+    color: #dc2626;
+    font-size: 0.75rem;
+}
+
+.plugin-action-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    padding: 1rem 1.25rem;
+    border-top: 1px solid var(--nav-border);
 }
 
 .card-description {
