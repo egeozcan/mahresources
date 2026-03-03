@@ -83,26 +83,6 @@
         <p>Clone group?</p>
         <div class="mt-2">{% include "/partials/form/searchButton.tpl" with text="Clone" %}</div>
     </form>
-    {% if pluginDetailActions %}
-    <div x-data class="sidebar-section" role="group" aria-label="Plugin actions">
-        <h4 class="sidebar-section-title">Plugin Actions</h4>
-        {% for action in pluginDetailActions %}
-        <button class="sidebar-action-btn plugin-action-btn"
-                @click="$dispatch('plugin-action-open', {
-                    plugin: '{{ action.PluginName }}',
-                    action: '{{ action.ID }}',
-                    label: '{{ action.Label }}',
-                    description: '{{ action.Description }}',
-                    entityIds: [{{ group.ID }}],
-                    entityType: 'group',
-                    async: {% if action.Async %}true{% else %}false{% endif %},
-                    params: {{ action.Params|json }},
-                    confirm: '{{ action.Confirm }}'
-                })">
-            {{ action.Label }}
-        </button>
-        {% endfor %}
-    </div>
-    {% endif %}
+    {% include "partials/pluginActionsSidebar.tpl" with entityId=group.ID entityType="group" %}
     {% plugin_slot "group_detail_sidebar" %}
 {% endblock %}

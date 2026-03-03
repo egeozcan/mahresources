@@ -3,63 +3,53 @@ import { request as pwRequest } from '@playwright/test';
 import { ApiClient } from '../../helpers/api-client';
 import path from 'path';
 
-test.describe.serial('Plugin Actions', () => {
-  const testRunId = Date.now() + Math.floor(Math.random() * 100000);
+// Helper to ensure plugin is enabled (tolerates already-enabled state)
+async function ensurePluginEnabled(baseURL: string, name: string) {
+  const ctx = await pwRequest.newContext({ baseURL });
+  const client = new ApiClient(ctx, baseURL);
+  try {
+    await client.enablePlugin(name);
+  } catch {
+    // Already enabled — ignore
+  }
+  await ctx.dispose();
+}
 
-  // Shared entity IDs created in beforeAll for UI tests
-  let resourceId: number;
-  let groupId: number;
+// Helper to create test entities via API
+async function createTestEntities(baseURL: string) {
+  const ctx = await pwRequest.newContext({ baseURL });
+  const client = new ApiClient(ctx, baseURL);
+  const runId = Date.now() + Math.floor(Math.random() * 100000);
 
+  const category = await client.createCategory(`Action Test Category ${runId}`);
+  const group = await client.createGroup({
+    name: `Action Test Group ${runId}`,
+    categoryId: category.ID,
+  });
+  const resource = await client.createResource({
+    filePath: path.join(__dirname, '../../test-assets/sample-image-34.png'),
+    name: `Action Resource ${runId}`,
+    ownerId: group.ID,
+  });
+
+  await ctx.dispose();
+  return { resourceId: resource.ID, groupId: group.ID };
+}
+
+// ── API Tests (no shared state, use hardcoded/throwaway entity IDs) ──
+
+test.describe('Plugin Actions API', () => {
   test.beforeAll(async () => {
     const baseURL = process.env.BASE_URL || 'http://localhost:8181';
-    const ctx = await pwRequest.newContext({ baseURL });
-    const client = new ApiClient(ctx, baseURL);
-
-    // Enable the test-actions plugin
-    await client.enablePlugin('test-actions');
-
-    // Pre-create entities for UI tests.
-    // Plugin tests run after all other projects complete (via dependency chain),
-    // so there is no SQLite write lock contention from parallel workers.
-    const category = await client.createCategory(
-      `Action Test Category ${testRunId}`
-    );
-    const group = await client.createGroup({
-      name: `Action Test Group ${testRunId}`,
-      categoryId: category.ID,
-    });
-    groupId = group.ID;
-
-    // Create resource with ownerId to ensure proper FK handling in SQLite
-    const resource = await client.createResource({
-      filePath: path.join(__dirname, '../../test-assets/sample-image-34.png'),
-      name: `Action Resource ${testRunId}`,
-      ownerId: groupId,
-    });
-    resourceId = resource.ID;
-
-    await ctx.dispose();
+    await ensurePluginEnabled(baseURL, 'test-actions');
   });
 
-  test.afterAll(async () => {
-    const baseURL = process.env.BASE_URL || 'http://localhost:8181';
-    const ctx = await pwRequest.newContext({ baseURL });
-    const client = new ApiClient(ctx, baseURL);
-    try {
-      await client.disablePlugin('test-actions');
-    } catch {
-      // Ignore if already disabled
-    }
-    await ctx.dispose();
-  });
-
-  test('API: list actions for resource entity type', async ({ apiClient }) => {
+  test('list actions for resource entity type', async ({ apiClient }) => {
     const response = await apiClient.request.get('/v1/plugin/actions?entity=resource');
     expect(response.ok()).toBeTruthy();
     const data = await response.json();
-    // Response is a flat array of ActionRegistration
     expect(Array.isArray(data)).toBeTruthy();
-    expect(data.length).toBeGreaterThanOrEqual(2); // sync-greet and async-demo
+    expect(data.length).toBeGreaterThanOrEqual(2);
 
     const greetAction = data.find((a: any) => a.id === 'sync-greet');
     expect(greetAction).toBeDefined();
@@ -76,7 +66,7 @@ test.describe.serial('Plugin Actions', () => {
     expect(asyncAction.async).toBe(true);
   });
 
-  test('API: list actions for group entity type', async ({ apiClient }) => {
+  test('list actions for group entity type', async ({ apiClient }) => {
     const response = await apiClient.request.get('/v1/plugin/actions?entity=group');
     expect(response.ok()).toBeTruthy();
     const data = await response.json();
@@ -90,7 +80,7 @@ test.describe.serial('Plugin Actions', () => {
     expect(groupAction.placement).toContain('bulk');
   });
 
-  test('API: resource actions do not appear in group entity listing', async ({ apiClient }) => {
+  test('resource actions do not appear in group entity listing', async ({ apiClient }) => {
     const response = await apiClient.request.get('/v1/plugin/actions?entity=group');
     expect(response.ok()).toBeTruthy();
     const data = await response.json();
@@ -99,8 +89,7 @@ test.describe.serial('Plugin Actions', () => {
     expect(greetAction).toBeUndefined();
   });
 
-  test('API: run sync action with valid params', async ({ apiClient }) => {
-    // Action handler does not verify entity existence, so any ID works
+  test('run sync action with valid params', async ({ apiClient }) => {
     const response = await apiClient.request.post('/v1/jobs/action/run', {
       headers: { 'Content-Type': 'application/json' },
       data: JSON.stringify({
@@ -111,21 +100,20 @@ test.describe.serial('Plugin Actions', () => {
       }),
     });
     expect(response.ok()).toBeTruthy();
-    // Single entity sync returns ActionResult directly
     const data = await response.json();
     expect(data.success).toBeTruthy();
     expect(data.message).toContain('Hi there');
     expect(data.message).toContain('99999');
   });
 
-  test('API: run sync action with missing required param returns error', async ({ apiClient }) => {
+  test('run sync action with missing required param returns error', async ({ apiClient }) => {
     const response = await apiClient.request.post('/v1/jobs/action/run', {
       headers: { 'Content-Type': 'application/json' },
       data: JSON.stringify({
         plugin: 'test-actions',
         action: 'sync-greet',
         entity_ids: [99999],
-        params: {}, // missing required "greeting"
+        params: {},
       }),
     });
     expect(response.ok()).toBeFalsy();
@@ -136,7 +124,7 @@ test.describe.serial('Plugin Actions', () => {
     expect(data.errors[0].field).toBe('greeting');
   });
 
-  test('API: run async action returns job ID and completes', async ({ apiClient }) => {
+  test('run async action returns job ID and completes', async ({ apiClient }) => {
     const response = await apiClient.request.post('/v1/jobs/action/run', {
       headers: { 'Content-Type': 'application/json' },
       data: JSON.stringify({
@@ -148,11 +136,9 @@ test.describe.serial('Plugin Actions', () => {
     });
     expect(response.status()).toBe(202);
     const data = await response.json();
-    // Single entity async returns {job_id: "..."}
     expect(data.job_id).toBeDefined();
     expect(typeof data.job_id).toBe('string');
 
-    // Poll for job completion
     const jobId = data.job_id;
     let job: any;
     for (let i = 0; i < 20; i++) {
@@ -168,7 +154,7 @@ test.describe.serial('Plugin Actions', () => {
     expect(job.result.message).toBe('Done!');
   });
 
-  test('API: run action on non-existent plugin returns error', async ({ apiClient }) => {
+  test('run action on non-existent plugin returns error', async ({ apiClient }) => {
     const response = await apiClient.request.post('/v1/jobs/action/run', {
       headers: { 'Content-Type': 'application/json' },
       data: JSON.stringify({
@@ -182,15 +168,76 @@ test.describe.serial('Plugin Actions', () => {
     expect(response.status()).toBe(404);
   });
 
+  test('bulk sync action runs on multiple entities', async ({ apiClient }) => {
+    const response = await apiClient.request.post('/v1/jobs/action/run', {
+      headers: { 'Content-Type': 'application/json' },
+      data: JSON.stringify({
+        plugin: 'test-actions',
+        action: 'sync-greet',
+        entity_ids: [1, 2, 3],
+        params: { greeting: 'Bulk hello' },
+      }),
+    });
+    expect(response.ok()).toBeTruthy();
+    const data = await response.json();
+    expect(data.results).toBeDefined();
+    expect(data.results).toHaveLength(3);
+    for (const result of data.results) {
+      expect(result.success).toBeTruthy();
+      expect(result.message).toContain('Bulk hello');
+    }
+  });
+
+  test('bulk async action returns multiple job IDs', async ({ apiClient }) => {
+    const response = await apiClient.request.post('/v1/jobs/action/run', {
+      headers: { 'Content-Type': 'application/json' },
+      data: JSON.stringify({
+        plugin: 'test-actions',
+        action: 'async-demo',
+        entity_ids: [1, 2],
+        params: { steps: 1 },
+      }),
+    });
+    expect(response.status()).toBe(202);
+    const data = await response.json();
+    expect(data.job_ids).toBeDefined();
+    expect(data.job_ids).toHaveLength(2);
+
+    for (const jobId of data.job_ids) {
+      let job: any;
+      for (let i = 0; i < 20; i++) {
+        const jobResp = await apiClient.request.get(`/v1/jobs/action/job?id=${jobId}`);
+        job = await jobResp.json();
+        if (job.status === 'completed' || job.status === 'failed') break;
+        await new Promise(r => setTimeout(r, 200));
+      }
+      expect(job.status).toBe('completed');
+    }
+  });
+});
+
+// ── UI Tests (each describe block creates its own entities) ──
+
+test.describe('Plugin Actions UI - Detail Pages', () => {
+  let resourceId: number;
+  let groupId: number;
+
+  test.beforeAll(async () => {
+    const baseURL = process.env.BASE_URL || 'http://localhost:8181';
+    await ensurePluginEnabled(baseURL, 'test-actions');
+
+    const entities = await createTestEntities(baseURL);
+    resourceId = entities.resourceId;
+    groupId = entities.groupId;
+  });
+
   test('detail page shows plugin action buttons for resource', async ({ page }) => {
     await page.goto(`/resource?id=${resourceId}`);
     await page.waitForLoadState('load');
 
-    // Should see "Greet Resource" button in sidebar
     const greetButton = page.getByRole('button', { name: 'Greet Resource' });
     await expect(greetButton).toBeVisible();
 
-    // Should see "Async Demo" button too
     const asyncButton = page.getByRole('button', { name: 'Async Demo' });
     await expect(asyncButton).toBeVisible();
   });
@@ -199,17 +246,12 @@ test.describe.serial('Plugin Actions', () => {
     await page.goto(`/resource?id=${resourceId}`);
     await page.waitForLoadState('load');
 
-    // Click "Greet Resource" button
     await page.getByRole('button', { name: 'Greet Resource' }).click();
 
-    // Modal should open
     const modal = page.getByRole('dialog');
     await expect(modal).toBeVisible();
-
-    // Should show the action label
     await expect(modal).toContainText('Greet Resource');
 
-    // Should have a "Greeting" input with default value "Hello"
     const greetingInput = modal.locator('#plugin-param-greeting');
     await expect(greetingInput).toBeVisible();
     await expect(greetingInput).toHaveValue('Hello');
@@ -224,15 +266,12 @@ test.describe.serial('Plugin Actions', () => {
     const modal = page.getByRole('dialog');
     await expect(modal).toBeVisible();
 
-    // Fill in the greeting
     const greetingInput = modal.locator('#plugin-param-greeting');
     await greetingInput.clear();
     await greetingInput.fill('Hello World');
 
-    // Submit using the "Run" button
     await modal.getByRole('button', { name: 'Run' }).click();
 
-    // Should show success result in the modal
     const resultArea = modal.locator('[role="status"]');
     await expect(resultArea).toBeVisible({ timeout: 5000 });
     await expect(resultArea).toContainText('Hello World');
@@ -250,7 +289,6 @@ test.describe.serial('Plugin Actions', () => {
     await page.goto(`/group?id=${groupId}`);
     await page.waitForLoadState('load');
 
-    // "Greet Resource" is a resource-only action, should not appear on group page
     const greetButton = page.getByRole('button', { name: 'Greet Resource' });
     await expect(greetButton).not.toBeVisible();
   });
@@ -259,7 +297,6 @@ test.describe.serial('Plugin Actions', () => {
     await page.goto(`/resource?id=${resourceId}`);
     await page.waitForLoadState('load');
 
-    // "Group Action" is a group-only action, should not appear on resource page
     const groupButton = page.getByRole('button', { name: 'Group Action' });
     await expect(groupButton).not.toBeVisible();
   });
@@ -273,34 +310,50 @@ test.describe.serial('Plugin Actions', () => {
     const modal = page.getByRole('dialog');
     await expect(modal).toBeVisible();
 
-    // Clear the required greeting field
     const greetingInput = modal.locator('#plugin-param-greeting');
     await greetingInput.clear();
 
-    // Submit with empty required field — browser native validation or Alpine
-    // validation will block the submission
     await modal.getByRole('button', { name: 'Run' }).click();
 
-    // Modal should still be visible (submission was blocked)
     await expect(modal).toBeVisible();
 
-    // The result area should NOT appear (action was not executed)
     const resultArea = modal.locator('[role="status"]');
     await expect(resultArea).not.toBeVisible();
+  });
+
+  test('async action submission opens jobs panel', async ({ page }) => {
+    await page.goto(`/resource?id=${resourceId}`);
+    await page.waitForLoadState('load');
+
+    await page.getByRole('button', { name: 'Async Demo' }).click();
+
+    const modal = page.getByRole('dialog');
+    await expect(modal).toBeVisible();
+
+    await modal.getByRole('button', { name: 'Run' }).click();
+
+    await expect(modal).not.toBeVisible({ timeout: 5000 });
+
+    const jobsPanel = page.locator('text=Jobs').first();
+    await expect(jobsPanel).toBeVisible({ timeout: 5000 });
+  });
+});
+
+test.describe('Plugin Actions UI - Card Menu', () => {
+  test.beforeAll(async () => {
+    const baseURL = process.env.BASE_URL || 'http://localhost:8181';
+    await ensurePluginEnabled(baseURL, 'test-actions');
   });
 
   test('card kebab menu appears on resources list page', async ({ page }) => {
     await page.goto('/resources');
     await page.waitForLoadState('load');
 
-    // "sync-greet" has placement "card" — should produce a kebab menu button
     const kebabButton = page.locator('button[aria-label="More actions"]').first();
     await expect(kebabButton).toBeVisible();
 
-    // Click to open the dropdown
     await kebabButton.click();
 
-    // Should see "Greet Resource" in the dropdown menu
     const menuItem = page.getByRole('menuitem', { name: 'Greet Resource' });
     await expect(menuItem).toBeVisible();
   });
@@ -309,88 +362,33 @@ test.describe.serial('Plugin Actions', () => {
     await page.goto('/resources');
     await page.waitForLoadState('load');
 
-    // Open the kebab menu
     const kebabButton = page.locator('button[aria-label="More actions"]').first();
     await kebabButton.click();
 
-    // Click the action menu item
     await page.getByRole('menuitem', { name: 'Greet Resource' }).click();
 
-    // Modal should open
     const modal = page.getByRole('dialog');
     await expect(modal).toBeVisible();
     await expect(modal).toContainText('Greet Resource');
   });
+});
 
-  test('async action submission opens jobs panel', async ({ page }) => {
-    await page.goto(`/resource?id=${resourceId}`);
-    await page.waitForLoadState('load');
+// ── Plugin Disable/Enable Test (isolated, creates its own entities) ──
 
-    // Click the async action button
-    await page.getByRole('button', { name: 'Async Demo' }).click();
+test.describe('Plugin Actions - Disable/Enable', () => {
+  let resourceId: number;
 
-    const modal = page.getByRole('dialog');
-    await expect(modal).toBeVisible();
+  test.beforeAll(async () => {
+    const baseURL = process.env.BASE_URL || 'http://localhost:8181';
+    await ensurePluginEnabled(baseURL, 'test-actions');
 
-    // Submit the async action
-    await modal.getByRole('button', { name: 'Run' }).click();
-
-    // Modal should close
-    await expect(modal).not.toBeVisible({ timeout: 5000 });
-
-    // Jobs panel should auto-open (it opens when async action completes)
-    // The panel contains a heading "Jobs"
-    const jobsPanel = page.locator('text=Jobs').first();
-    await expect(jobsPanel).toBeVisible({ timeout: 5000 });
+    const entities = await createTestEntities(baseURL);
+    resourceId = entities.resourceId;
   });
 
-  test('API: bulk sync action runs on multiple entities', async ({ apiClient }) => {
-    const response = await apiClient.request.post('/v1/jobs/action/run', {
-      headers: { 'Content-Type': 'application/json' },
-      data: JSON.stringify({
-        plugin: 'test-actions',
-        action: 'sync-greet',
-        entity_ids: [1, 2, 3],
-        params: { greeting: 'Bulk hello' },
-      }),
-    });
-    expect(response.ok()).toBeTruthy();
-    const data = await response.json();
-    // Bulk sync returns {results: [...]}
-    expect(data.results).toBeDefined();
-    expect(data.results).toHaveLength(3);
-    for (const result of data.results) {
-      expect(result.success).toBeTruthy();
-      expect(result.message).toContain('Bulk hello');
-    }
-  });
-
-  test('API: bulk async action returns multiple job IDs', async ({ apiClient }) => {
-    const response = await apiClient.request.post('/v1/jobs/action/run', {
-      headers: { 'Content-Type': 'application/json' },
-      data: JSON.stringify({
-        plugin: 'test-actions',
-        action: 'async-demo',
-        entity_ids: [1, 2],
-        params: { steps: 1 },
-      }),
-    });
-    expect(response.status()).toBe(202);
-    const data = await response.json();
-    expect(data.job_ids).toBeDefined();
-    expect(data.job_ids).toHaveLength(2);
-
-    // Both jobs should complete
-    for (const jobId of data.job_ids) {
-      let job: any;
-      for (let i = 0; i < 20; i++) {
-        const jobResp = await apiClient.request.get(`/v1/jobs/action/job?id=${jobId}`);
-        job = await jobResp.json();
-        if (job.status === 'completed' || job.status === 'failed') break;
-        await new Promise(r => setTimeout(r, 200));
-      }
-      expect(job.status).toBe('completed');
-    }
+  test.afterAll(async () => {
+    const baseURL = process.env.BASE_URL || 'http://localhost:8181';
+    await ensurePluginEnabled(baseURL, 'test-actions');
   });
 
   test('disabling plugin removes actions from detail page', async ({ page, apiClient }) => {
@@ -407,7 +405,7 @@ test.describe.serial('Plugin Actions', () => {
     await page.waitForLoadState('load');
     await expect(page.getByRole('button', { name: 'Greet Resource' })).not.toBeVisible();
 
-    // Re-enable for any remaining tests
+    // Re-enable for other test suites
     await apiClient.enablePlugin('test-actions');
   });
 });

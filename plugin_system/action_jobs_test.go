@@ -144,8 +144,7 @@ end
 		select {
 		case event := <-ch:
 			events = append(events, event)
-			snap := event.Job.Snapshot()
-			if snap.Status == "completed" || snap.Status == "failed" {
+			if event.Job.Status == "completed" || event.Job.Status == "failed" {
 				goto done
 			}
 		case <-deadline:
@@ -169,9 +168,8 @@ done:
 	if lastEvent.Type != "updated" {
 		t.Errorf("expected last event type 'updated', got %q", lastEvent.Type)
 	}
-	lastSnap := lastEvent.Job.Snapshot()
-	if lastSnap.Status != "completed" {
-		t.Errorf("expected last event job status 'completed', got %q", lastSnap.Status)
+	if lastEvent.Job.Status != "completed" {
+		t.Errorf("expected last event job status 'completed', got %q", lastEvent.Job.Status)
 	}
 
 	// Verify there is at least one "updated" event (could be progress, running, or completed)

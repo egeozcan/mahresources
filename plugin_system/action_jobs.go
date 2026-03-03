@@ -37,6 +37,7 @@ type ActionJob struct {
 }
 
 // ActionJobEvent represents a change in action job state for SSE broadcasting.
+// Job points to a snapshot copy, safe for concurrent reads without locking.
 type ActionJobEvent struct {
 	Type string     `json:"type"` // "added", "updated", "removed"
 	Job  *ActionJob `json:"job"`
@@ -115,13 +116,20 @@ func (pm *PluginManager) RunActionAsync(pluginName, actionID string, entityID ui
 	pm.actionJobs[jobID] = job
 	pm.actionJobsMu.Unlock()
 
-	pm.notifyActionJobSubscribers(ActionJobEvent{Type: "added", Job: job})
+	pm.notifyActionJobSubscribers("added", job)
 
 	// Capture the handler and settings before spawning goroutine.
 	handler := action.Handler
 	settings := pm.GetPluginSettings(pluginName)
 
-	go pm.runAsyncActionGoroutine(job, L, handler, entityID, params, settings)
+	// Track in-flight async actions so DisablePlugin can wait for completion.
+	wg := pm.actionWaitGroup(pluginName)
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+		pm.runAsyncActionGoroutine(job, L, handler, entityID, params, settings)
+	}()
 
 	return jobID, nil
 }
@@ -135,7 +143,7 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, L *lua.LState, 
 			job.Status = "failed"
 			job.Message = fmt.Sprintf("panic: %v", r)
 			job.mu.Unlock()
-			pm.notifyActionJobSubscribers(ActionJobEvent{Type: "updated", Job: job})
+			pm.notifyActionJobSubscribers("updated", job)
 			log.Printf("[plugin] panic in async action %q/%q: %v", job.PluginName, job.ActionID, r)
 		}
 	}()
@@ -149,7 +157,7 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, L *lua.LState, 
 	job.Status = "running"
 	job.Message = "Running..."
 	job.mu.Unlock()
-	pm.notifyActionJobSubscribers(ActionJobEvent{Type: "updated", Job: job})
+	pm.notifyActionJobSubscribers("updated", job)
 
 	// Build context table: { entity_id = N, params = {...}, settings = {...}, job_id = "..." }
 	ctxData := map[string]any{
@@ -205,7 +213,7 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, L *lua.LState, 
 		job.Status = "failed"
 		job.Message = errMsg
 		job.mu.Unlock()
-		pm.notifyActionJobSubscribers(ActionJobEvent{Type: "updated", Job: job})
+		pm.notifyActionJobSubscribers("updated", job)
 		log.Printf("[plugin] async action %q/%q failed: %v", job.PluginName, job.ActionID, err)
 		return
 	}
@@ -245,7 +253,7 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, L *lua.LState, 
 		job.mu.Unlock()
 	}
 
-	pm.notifyActionJobSubscribers(ActionJobEvent{Type: "updated", Job: job})
+	pm.notifyActionJobSubscribers("updated", job)
 }
 
 // GetActionJob returns a snapshot of the action job with the given ID, or nil if not found.
@@ -260,6 +268,19 @@ func (pm *PluginManager) GetActionJob(jobID string) *ActionJob {
 
 	snap := job.Snapshot()
 	return &snap
+}
+
+// actionWaitGroup returns (or creates) the WaitGroup for tracking in-flight async actions of a plugin.
+func (pm *PluginManager) actionWaitGroup(pluginName string) *sync.WaitGroup {
+	pm.actionJobsMu.Lock()
+	defer pm.actionJobsMu.Unlock()
+
+	wg, ok := pm.actionInFlight[pluginName]
+	if !ok {
+		wg = &sync.WaitGroup{}
+		pm.actionInFlight[pluginName] = wg
+	}
+	return wg
 }
 
 // GetAllActionJobs returns snapshots of all action jobs.
@@ -293,8 +314,11 @@ func (pm *PluginManager) UnsubscribeActionJobs(ch chan ActionJobEvent) {
 	close(ch)
 }
 
-// notifyActionJobSubscribers sends an event to all action job subscribers (non-blocking).
-func (pm *PluginManager) notifyActionJobSubscribers(event ActionJobEvent) {
+// notifyActionJobSubscribers snapshots the job and sends the event to all subscribers (non-blocking).
+func (pm *PluginManager) notifyActionJobSubscribers(eventType string, job *ActionJob) {
+	snap := job.Snapshot() //nolint:govet // snapshot intentionally copies with zero-valued mutex
+	event := ActionJobEvent{Type: eventType, Job: &snap}
+
 	pm.actionSubsMu.RLock()
 	defer pm.actionSubsMu.RUnlock()
 
@@ -321,7 +345,7 @@ func (pm *PluginManager) cleanupOldActionJobs() {
 
 		if (status == "completed" || status == "failed") && created.Before(cutoff) {
 			delete(pm.actionJobs, id)
-			pm.notifyActionJobSubscribers(ActionJobEvent{Type: "removed", Job: job})
+			pm.notifyActionJobSubscribers("removed", job)
 		}
 	}
 }

@@ -52,26 +52,6 @@
     {% include "/partials/json.tpl" with jsonData=note.Meta %}
 
     {% include "/partials/noteShare.tpl" with note=note shareEnabled=shareEnabled shareBaseUrl=shareBaseUrl %}
-    {% if pluginDetailActions %}
-    <div x-data class="sidebar-section" role="group" aria-label="Plugin actions">
-        <h4 class="sidebar-section-title">Plugin Actions</h4>
-        {% for action in pluginDetailActions %}
-        <button class="sidebar-action-btn plugin-action-btn"
-                @click="$dispatch('plugin-action-open', {
-                    plugin: '{{ action.PluginName }}',
-                    action: '{{ action.ID }}',
-                    label: '{{ action.Label }}',
-                    description: '{{ action.Description }}',
-                    entityIds: [{{ note.ID }}],
-                    entityType: 'note',
-                    async: {% if action.Async %}true{% else %}false{% endif %},
-                    params: {{ action.Params|json }},
-                    confirm: '{{ action.Confirm }}'
-                })">
-            {{ action.Label }}
-        </button>
-        {% endfor %}
-    </div>
-    {% endif %}
+    {% include "partials/pluginActionsSidebar.tpl" with entityId=note.ID entityType="note" %}
     {% plugin_slot "note_detail_sidebar" %}
 {% endblock %}

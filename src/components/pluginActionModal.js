@@ -11,7 +11,19 @@ export function pluginActionModal() {
             window.addEventListener('plugin-action-open', (e) => this.open(e.detail));
         },
 
-        open(action) {
+        open(detail) {
+            // Accept both raw JSON (plugin_name/id) and mapped (plugin/action) field names.
+            const action = {
+                plugin: detail.plugin ?? detail.plugin_name,
+                action: detail.action ?? detail.id,
+                label: detail.label,
+                description: detail.description,
+                entityIds: detail.entityIds,
+                entityType: detail.entityType,
+                async: detail.async,
+                params: detail.params,
+                confirm: detail.confirm,
+            };
             this.action = action;
             this.errors = {};
             this.result = null;

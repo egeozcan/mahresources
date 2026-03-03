@@ -324,7 +324,9 @@ export function downloadCockpit() {
         },
 
         get displayJobs() {
-            return [...this.jobs, ...this.retainedCompletedJobs];
+            const jobIds = new Set(this.jobs.map(j => j.id));
+            const unique = this.retainedCompletedJobs.filter(j => !jobIds.has(j.id));
+            return [...this.jobs, ...unique];
         },
 
         truncateUrl(url, maxLength = 40) {

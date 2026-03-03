@@ -297,7 +297,7 @@ func (pm *PluginManager) queueHttpCallback(cb httpCallback) {
 func (pm *PluginManager) drainHttpCallbacks() {
 	for {
 		select {
-		case <-pm.httpStop:
+		case <-pm.done:
 			return
 		case <-pm.httpNotify:
 			pm.processPendingCallbacks()

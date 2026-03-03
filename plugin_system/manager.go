@@ -90,13 +90,14 @@ type PluginManager struct {
 	actionSemaphore chan struct{} // buffered(maxConcurrentActions)
 	actionSubs      map[chan ActionJobEvent]struct{}
 	actionSubsMu    sync.RWMutex
+	actionInFlight  map[string]*sync.WaitGroup // pluginName -> in-flight async action count
 
 	// HTTP async callback support
 	httpClient  *http.Client
 	httpMu      sync.Mutex
 	httpPending []httpCallback
 	httpNotify  chan struct{}   // buffered(1), signals new callbacks
-	httpStop    chan struct{}   // closed to stop drain goroutine
+	done    chan struct{}   // closed to stop background goroutines (HTTP drain, job cleanup)
 	httpWg      sync.WaitGroup // tracks in-flight HTTP goroutines
 	httpSem     chan struct{}   // concurrency semaphore
 }
@@ -117,9 +118,10 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 		actionJobs:      make(map[string]*ActionJob),
 		actionSemaphore: make(chan struct{}, maxConcurrentActions),
 		actionSubs:      make(map[chan ActionJobEvent]struct{}),
+		actionInFlight:  make(map[string]*sync.WaitGroup),
 		httpClient:      newHttpClient(),
 		httpNotify:      make(chan struct{}, 1),
-		httpStop:        make(chan struct{}),
+		done:        make(chan struct{}),
 		httpSem:         make(chan struct{}, maxConcurrentHttpReqs),
 	}
 
@@ -133,7 +135,7 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 			select {
 			case <-ticker.C:
 				pm.cleanupOldActionJobs()
-			case <-pm.httpStop:
+			case <-pm.done:
 				return
 			}
 		}
@@ -429,6 +431,13 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 			return 0
 		}
 		pm.mu.Lock()
+		for _, existing := range pm.actions[*pluginNamePtr] {
+			if existing.ID == action.ID {
+				pm.mu.Unlock()
+				L.ArgError(1, fmt.Sprintf("duplicate action id %q", action.ID))
+				return 0
+			}
+		}
 		pm.actions[*pluginNamePtr] = append(pm.actions[*pluginNamePtr], *action)
 		pm.mu.Unlock()
 		return 0
@@ -438,6 +447,12 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		jobID := L.CheckString(1)
 		percent := L.CheckInt(2)
 		message := L.CheckString(3)
+
+		if percent < 0 {
+			percent = 0
+		} else if percent > 100 {
+			percent = 100
+		}
 
 		pm.actionJobsMu.RLock()
 		job, ok := pm.actionJobs[jobID]
@@ -453,7 +468,7 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		job.Message = message
 		job.mu.Unlock()
 
-		pm.notifyActionJobSubscribers(ActionJobEvent{Type: "updated", Job: job})
+		pm.notifyActionJobSubscribers("updated", job)
 		return 0
 	}))
 
@@ -487,7 +502,7 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		}
 		job.mu.Unlock()
 
-		pm.notifyActionJobSubscribers(ActionJobEvent{Type: "updated", Job: job})
+		pm.notifyActionJobSubscribers("updated", job)
 		return 0
 	}))
 
@@ -509,7 +524,7 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		job.Message = errMsg
 		job.mu.Unlock()
 
-		pm.notifyActionJobSubscribers(ActionJobEvent{Type: "updated", Job: job})
+		pm.notifyActionJobSubscribers("updated", job)
 		return 0
 	}))
 
@@ -580,7 +595,6 @@ func (pm *PluginManager) EnablePlugin(name string) error {
 // pages, menu items, and closes the Lua VM.
 func (pm *PluginManager) DisablePlugin(name string) error {
 	pm.mu.Lock()
-	defer pm.mu.Unlock()
 
 	var targetState *lua.LState
 	var pluginIdx int = -1
@@ -592,6 +606,7 @@ func (pm *PluginManager) DisablePlugin(name string) error {
 		}
 	}
 	if targetState == nil {
+		pm.mu.Unlock()
 		return fmt.Errorf("plugin %q is not enabled", name)
 	}
 
@@ -636,12 +651,27 @@ func (pm *PluginManager) DisablePlugin(name string) error {
 	pm.plugins = append(pm.plugins[:pluginIdx], pm.plugins[pluginIdx+1:]...)
 	pm.states = append(pm.states[:pluginIdx], pm.states[pluginIdx+1:]...)
 
-	// Remove VM lock and close state.
-	delete(pm.vmLocks, targetState)
-	targetState.Close()
-
 	// Remove in-memory settings.
 	delete(pm.pluginSettings, name)
+
+	// Grab the in-flight WaitGroup before releasing the lock.
+	pm.actionJobsMu.Lock()
+	wg := pm.actionInFlight[name]
+	delete(pm.actionInFlight, name)
+	pm.actionJobsMu.Unlock()
+
+	// Release pm.mu so in-flight goroutines can finish (they need VMLock).
+	pm.mu.Unlock()
+
+	if wg != nil {
+		wg.Wait()
+	}
+
+	// Re-acquire to close state safely, then release.
+	pm.mu.Lock()
+	delete(pm.vmLocks, targetState)
+	targetState.Close()
+	pm.mu.Unlock()
 
 	return nil
 }
@@ -750,7 +780,7 @@ func (pm *PluginManager) VMLock(L *lua.LState) *sync.Mutex {
 func (pm *PluginManager) Close() {
 	pm.closed.Store(true)
 	pm.httpWg.Wait() // wait for in-flight HTTP goroutines to finish
-	close(pm.httpStop)
+	close(pm.done)
 	for _, L := range pm.states {
 		L.Close()
 	}

@@ -106,6 +106,15 @@ func GetActionRunHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http
 			return
 		}
 
+		// Enforce BulkMax limit if the action defines one.
+		if action.BulkMax > 0 && len(req.EntityIDs) > action.BulkMax {
+			http_utils.HandleError(
+				fmt.Errorf("action allows at most %d entities per request, got %d", action.BulkMax, len(req.EntityIDs)),
+				w, r, http.StatusBadRequest,
+			)
+			return
+		}
+
 		// Validate params upfront.
 		if validationErrs := plugin_system.ValidateActionParams(action, req.Params); len(validationErrs) > 0 {
 			w.Header().Set("Content-Type", constants.JSON)
