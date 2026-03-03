@@ -52,7 +52,7 @@ export const navigationMethods = {
   },
 
   initFromDOM() {
-    const containers = document.querySelectorAll('.list-container, .gallery');
+    const containers = document.querySelectorAll('.list-container, .gallery, .dashboard-grid');
     if (containers.length === 0) return;
 
     const allItems = [];
