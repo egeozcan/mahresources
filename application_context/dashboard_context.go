@@ -57,6 +57,11 @@ func (ctx *MahresourcesContext) GetRecentActivity(limit int) ([]ActivityEntry, e
 		LIMIT ?
 	`, updatedFilter)
 
-	err := ctx.db.Raw(query, limit, limit, limit, limit, limit, limit, limit, limit, limit).Scan(&entries).Error
+	// 8 sub-selects + 1 final LIMIT = 9 parameters, all the same value.
+	params := make([]any, 9)
+	for i := range params {
+		params[i] = limit
+	}
+	err := ctx.db.Raw(query, params...).Scan(&entries).Error
 	return entries, err
 }

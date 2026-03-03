@@ -17,7 +17,7 @@ func timeagoFilter(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *pongo
 	duration := time.Since(t)
 
 	switch {
-	case duration < time.Minute:
+	case duration < time.Minute: // Also covers future timestamps (negative duration) — intentionally returns "just now".
 		return pongo2.AsValue("just now"), nil
 	case duration < time.Hour:
 		mins := int(duration.Minutes())

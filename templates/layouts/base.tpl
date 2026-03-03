@@ -48,7 +48,7 @@
         {% block header %}{% endblock %}
     </header>
     {% include "/partials/title.tpl" %}
-    <div class="content pb-16" id="main-content">
+    <div class="content pb-16{% if dashboardPage %} content--no-sidebar{% endif %}" id="main-content">
         <aside class="sidebar">
             {% if mainEntity %}
             <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-600">Updated: </span>{{ mainEntity.UpdatedAt|date:"2006-01-02 15:04" }}</small>

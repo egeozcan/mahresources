@@ -776,11 +776,11 @@
 
 /* ── Dashboard ────────────────────────────────────────────────── */
 
-.content:has(.dashboard) {
+.content--no-sidebar {
     grid-template-columns: minmax(0, 1fr);
 }
 
-.content:has(.dashboard) .sidebar {
+.content--no-sidebar .sidebar {
     display: none;
 }
 
@@ -875,6 +875,9 @@
 /* Activity Timeline */
 
 .dashboard-activity {
+    list-style: none;
+    padding: 0;
+    margin: 0;
     display: flex;
     flex-direction: column;
     gap: 0;

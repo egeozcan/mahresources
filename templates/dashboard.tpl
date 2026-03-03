@@ -78,27 +78,19 @@
             <h2 class="dashboard-section-title">Recent Activity</h2>
         </header>
         {% if activityFeed %}
-        <div class="dashboard-activity">
+        <ol class="dashboard-activity">
             {% for entry in activityFeed %}
-            <div class="dashboard-activity-item">
-                <span class="dashboard-activity-dot dashboard-activity-dot--{{ entry.EntityType }}"></span>
+            <li class="dashboard-activity-item">
+                <span class="dashboard-activity-dot dashboard-activity-dot--{{ entry.EntityType }}" role="img" aria-label="{{ entry.EntityType }}"></span>
                 <span class="dashboard-activity-type">{{ entry.EntityType }}</span>
-                {% if entry.EntityType == "resource" %}
-                <a href="/resource?id={{ entry.EntityID }}" class="dashboard-activity-name">{{ entry.Name }}</a>
-                {% elif entry.EntityType == "note" %}
-                <a href="/note?id={{ entry.EntityID }}" class="dashboard-activity-name">{{ entry.Name }}</a>
-                {% elif entry.EntityType == "group" %}
-                <a href="/group?id={{ entry.EntityID }}" class="dashboard-activity-name">{{ entry.Name }}</a>
-                {% elif entry.EntityType == "tag" %}
-                <a href="/tag?id={{ entry.EntityID }}" class="dashboard-activity-name">{{ entry.Name }}</a>
-                {% endif %}
+                <a href="{{ entry.EntityType|entityPath }}?id={{ entry.EntityID }}" class="dashboard-activity-name">{{ entry.Name }}</a>
                 <span class="dashboard-activity-action">{{ entry.Action }}</span>
                 <time class="dashboard-activity-time" datetime="{{ entry.Timestamp|date:"2006-01-02T15:04:05Z" }}">
                     {{ entry.Timestamp|timeago }}
                 </time>
-            </div>
+            </li>
             {% endfor %}
-        </div>
+        </ol>
         {% else %}
         <p class="dashboard-empty">No activity yet. Start by creating some content!</p>
         {% endif %}

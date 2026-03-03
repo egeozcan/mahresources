@@ -59,4 +59,10 @@ func init() {
 	if timeagoErr != nil {
 		fmt.Println("error when registering timeago filter", timeagoErr)
 	}
+
+	entityPathErr := pongo2.RegisterFilter("entityPath", entityPathFilter)
+
+	if entityPathErr != nil {
+		fmt.Println("error when registering entityPath filter", entityPathErr)
+	}
 }
