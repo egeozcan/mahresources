@@ -84,7 +84,7 @@
         <div class="mt-2">{% include "/partials/form/searchButton.tpl" with text="Clone" %}</div>
     </form>
     {% if pluginDetailActions %}
-    <div class="sidebar-section" role="group" aria-label="Plugin actions">
+    <div x-data class="sidebar-section" role="group" aria-label="Plugin actions">
         <h4 class="sidebar-section-title">Plugin Actions</h4>
         {% for action in pluginDetailActions %}
         <button class="sidebar-action-btn plugin-action-btn"

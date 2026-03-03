@@ -53,7 +53,7 @@
 
     {% include "/partials/noteShare.tpl" with note=note shareEnabled=shareEnabled shareBaseUrl=shareBaseUrl %}
     {% if pluginDetailActions %}
-    <div class="sidebar-section" role="group" aria-label="Plugin actions">
+    <div x-data class="sidebar-section" role="group" aria-label="Plugin actions">
         <h4 class="sidebar-section-title">Plugin Actions</h4>
         {% for action in pluginDetailActions %}
         <button class="sidebar-action-btn plugin-action-btn"

@@ -38,11 +38,14 @@ export default defineConfig({
     {
       // Plugin tests share global server-side plugin state (enabled/disabled),
       // so they must run serially to avoid race conditions.
+      // Depends on 'default' (which depends on 'heavy-io') so plugin tests
+      // run AFTER all other write-heavy tests complete, avoiding SQLite lock
+      // contention from parallel workers.
       name: 'plugins',
       use: { ...devices['Desktop Chrome'] },
       testMatch: ['**/plugins/**'],
       workers: 1,
-      dependencies: ['heavy-io'],
+      dependencies: ['default'],
     },
     {
       name: 'default',

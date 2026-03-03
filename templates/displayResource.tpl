@@ -232,7 +232,7 @@
     {% include "/partials/sideTitle.tpl" with title="Meta Data" %}
     {% include "/partials/json.tpl" with jsonData=resource.Meta %}
     {% if pluginDetailActions %}
-    <div class="sidebar-section" role="group" aria-label="Plugin actions">
+    <div x-data class="sidebar-section" role="group" aria-label="Plugin actions">
         <h4 class="sidebar-section-title">Plugin Actions</h4>
         {% for action in pluginDetailActions %}
         <button class="sidebar-action-btn plugin-action-btn"
