@@ -808,13 +808,13 @@
 .dashboard-view-all {
     font-size: 0.875rem;
     font-weight: 500;
-    color: #0d9488;
+    color: #0f766e;
     text-decoration: none;
     transition: color var(--transition-fast, 120ms) ease;
 }
 
 .dashboard-view-all:hover {
-    color: #0f766e;
+    color: #0c5e56;
 }
 
 .dashboard-grid {
@@ -860,7 +860,7 @@
 }
 
 .dashboard-empty a {
-    color: #0d9488;
+    color: #0f766e;
     text-decoration: underline;
 }
 

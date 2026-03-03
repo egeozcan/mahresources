@@ -30,6 +30,11 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 		noteTypeId = &noteQuery.NoteTypeId
 	}
 
+	var ownerId *uint
+	if noteQuery.OwnerId != 0 {
+		ownerId = &noteQuery.OwnerId
+	}
+
 	// Determine hook event based on whether an ID was supplied.
 	// Note: ID != 0 is treated as an update, but if the caller passes a
 	// non-existent ID the DB lookup will fail later — the hook event may
@@ -71,7 +76,7 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 			Name:        noteQuery.Name,
 			Description: noteQuery.Description,
 			Meta:        []byte(noteQuery.Meta),
-			OwnerId:     &noteQuery.OwnerId,
+			OwnerId:     ownerId,
 			StartDate:   parseHTMLTime(noteQuery.StartDate),
 			EndDate:     parseHTMLTime(noteQuery.EndDate),
 			NoteTypeId:  noteTypeId,
@@ -91,7 +96,7 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 		note.Name = noteQuery.Name
 		note.Description = noteQuery.Description
 		note.Meta = []byte(noteQuery.Meta)
-		note.OwnerId = &noteQuery.OwnerId
+		note.OwnerId = ownerId
 		note.StartDate = parseHTMLTime(noteQuery.StartDate)
 		note.EndDate = parseHTMLTime(noteQuery.EndDate)
 		note.NoteTypeId = noteTypeId
