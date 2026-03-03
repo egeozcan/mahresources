@@ -1,8 +1,6 @@
 package server
 
 import (
-	"reflect"
-
 	"github.com/flosch/pongo2/v4"
 	"github.com/gorilla/mux"
 	"mahresources/application_context"
@@ -111,28 +109,16 @@ func buildEntityDataFromEntity(entity any, entityType string) map[string]any {
 	data := map[string]any{}
 	switch entityType {
 	case "resource":
-		v := reflect.ValueOf(entity)
-		if v.Kind() == reflect.Ptr {
-			v = v.Elem()
-		}
-		if ct := v.FieldByName("ContentType"); ct.IsValid() {
-			data["content_type"] = ct.String()
+		if r, ok := entity.(*models.Resource); ok {
+			data["content_type"] = r.ContentType
 		}
 	case "group":
-		v := reflect.ValueOf(entity)
-		if v.Kind() == reflect.Ptr {
-			v = v.Elem()
-		}
-		if catID := v.FieldByName("CategoryId"); catID.IsValid() && !catID.IsNil() {
-			data["category_id"] = uint(catID.Elem().Uint())
+		if g, ok := entity.(*models.Group); ok && g.CategoryId != nil {
+			data["category_id"] = *g.CategoryId
 		}
 	case "note":
-		v := reflect.ValueOf(entity)
-		if v.Kind() == reflect.Ptr {
-			v = v.Elem()
-		}
-		if ntID := v.FieldByName("NoteTypeId"); ntID.IsValid() && !ntID.IsNil() {
-			data["note_type_id"] = uint(ntID.Elem().Uint())
+		if n, ok := entity.(*models.Note); ok && n.NoteTypeId != nil {
+			data["note_type_id"] = *n.NoteTypeId
 		}
 	}
 	return data
