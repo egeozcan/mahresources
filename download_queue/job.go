@@ -33,6 +33,7 @@ type DownloadJob struct {
 	CreatedAt       time.Time `json:"createdAt"`
 	StartedAt       *time.Time `json:"startedAt,omitempty"`
 	CompletedAt     *time.Time `json:"completedAt,omitempty"`
+	Source          string     `json:"source"` // "download" or "plugin"
 
 	// Internal fields (not serialized to JSON)
 	creator *query_models.ResourceFromRemoteCreator

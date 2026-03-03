@@ -296,6 +296,15 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/download/retry").HandlerFunc(api_handlers.GetDownloadRetryHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/download/events").HandlerFunc(api_handlers.GetDownloadEventsHandler(appContext))
 
+	// Jobs routes (new canonical paths — download routes above kept as aliases)
+	router.Methods(http.MethodPost).Path("/v1/jobs/download/submit").HandlerFunc(api_handlers.GetDownloadSubmitHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/jobs/queue").HandlerFunc(api_handlers.GetDownloadQueueHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/jobs/cancel").HandlerFunc(api_handlers.GetDownloadCancelHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/jobs/pause").HandlerFunc(api_handlers.GetDownloadPauseHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/jobs/resume").HandlerFunc(api_handlers.GetDownloadResumeHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/jobs/retry").HandlerFunc(api_handlers.GetDownloadRetryHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/jobs/events").HandlerFunc(api_handlers.GetDownloadEventsHandler(appContext))
+
 	// Logs (read-only)
 	router.Methods(http.MethodGet).Path("/v1/logs").HandlerFunc(api_handlers.GetLogEntriesHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/log").HandlerFunc(api_handlers.GetLogEntryHandler(appContext))

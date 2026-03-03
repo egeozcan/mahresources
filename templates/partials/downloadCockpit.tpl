@@ -9,8 +9,8 @@
         @click="toggle()"
         class="fixed bottom-4 right-4 z-40 flex items-center gap-2 px-3 py-2 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-all"
         :class="{ 'animate-pulse': hasActiveJobs }"
-        title="Download Cockpit (Ctrl+Shift+D / Cmd+Shift+D)"
-        aria-label="Open download cockpit"
+        title="Jobs (Ctrl+Shift+D / Cmd+Shift+D)"
+        aria-label="Open jobs panel"
     >
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -36,7 +36,7 @@
                 <!-- Header -->
                 <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50">
                     <div class="flex items-center gap-2">
-                        <h2 class="text-lg font-semibold text-gray-900">Downloads</h2>
+                        <h2 class="text-lg font-semibold text-gray-900">Jobs</h2>
                         <span class="w-2 h-2 rounded-full"
                               :class="{
                                   'bg-green-500': connectionStatus === 'connected',
@@ -59,7 +59,7 @@
                             <svg class="w-16 h-16 mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
                             </svg>
-                            <p class="text-center">No downloads in queue</p>
+                            <p class="text-center">No jobs in queue</p>
                             <p class="text-sm text-gray-400 mt-1 text-center">Submit remote URLs with "Download in background" to see them here</p>
                         </div>
                     </template>

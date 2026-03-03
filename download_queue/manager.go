@@ -146,6 +146,7 @@ func (dm *DownloadManager) Submit(creator *query_models.ResourceFromRemoteCreato
 		TotalSize:       -1,
 		ProgressPercent: -1,
 		CreatedAt:       time.Now(),
+		Source:          "download",
 		creator:         creator,
 		ctx:             ctx,
 		cancel:          cancel,

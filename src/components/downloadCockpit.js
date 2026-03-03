@@ -52,7 +52,7 @@ export function downloadCockpit() {
 
             this.$watch('isOpen', (value) => {
                 if (value) {
-                    this.announce('Download cockpit opened. Shows background download progress.');
+                    this.announce('Jobs panel opened. Shows background job progress.');
                 }
             });
         },
@@ -81,7 +81,7 @@ export function downloadCockpit() {
             if (this.eventSource) return;
 
             this.connectionStatus = 'connecting';
-            this.eventSource = new EventSource('/v1/download/events');
+            this.eventSource = new EventSource('/v1/jobs/events');
 
             this.eventSource.addEventListener('init', (e) => {
                 const data = JSON.parse(e.data);
@@ -184,7 +184,7 @@ export function downloadCockpit() {
         },
 
         cancelJob(jobId) {
-            fetch('/v1/download/cancel', {
+            fetch('/v1/jobs/cancel', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: `id=${encodeURIComponent(jobId)}`
@@ -192,7 +192,7 @@ export function downloadCockpit() {
         },
 
         pauseJob(jobId) {
-            fetch('/v1/download/pause', {
+            fetch('/v1/jobs/pause', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: `id=${encodeURIComponent(jobId)}`
@@ -200,7 +200,7 @@ export function downloadCockpit() {
         },
 
         resumeJob(jobId) {
-            fetch('/v1/download/resume', {
+            fetch('/v1/jobs/resume', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: `id=${encodeURIComponent(jobId)}`
@@ -208,7 +208,7 @@ export function downloadCockpit() {
         },
 
         retryJob(jobId) {
-            fetch('/v1/download/retry', {
+            fetch('/v1/jobs/retry', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: `id=${encodeURIComponent(jobId)}`
