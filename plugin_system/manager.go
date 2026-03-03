@@ -10,6 +10,7 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -83,6 +84,13 @@ type PluginManager struct {
 	pluginSettings map[string]map[string]any // pluginName -> key -> value
 	enabling       sync.Map                  // pluginName -> struct{}, prevents concurrent EnablePlugin
 
+	// Async action job support
+	actionJobs      map[string]*ActionJob
+	actionJobsMu    sync.RWMutex
+	actionSemaphore chan struct{} // buffered(maxConcurrentActions)
+	actionSubs      map[chan ActionJobEvent]struct{}
+	actionSubsMu    sync.RWMutex
+
 	// HTTP async callback support
 	httpClient  *http.Client
 	httpMu      sync.Mutex
@@ -100,19 +108,36 @@ type PluginManager struct {
 // If dir does not exist, an empty manager is returned.
 func NewPluginManager(dir string) (*PluginManager, error) {
 	pm := &PluginManager{
-		hooks:          make(map[string][]hookEntry),
-		injections:     make(map[string][]injectionEntry),
-		pages:          make(map[string]map[string]pageEntry),
-		actions:        make(map[string][]ActionRegistration),
-		vmLocks:        make(map[*lua.LState]*sync.Mutex),
-		pluginSettings: make(map[string]map[string]any),
-		httpClient:     newHttpClient(),
-		httpNotify:     make(chan struct{}, 1),
-		httpStop:       make(chan struct{}),
-		httpSem:        make(chan struct{}, maxConcurrentHttpReqs),
+		hooks:           make(map[string][]hookEntry),
+		injections:      make(map[string][]injectionEntry),
+		pages:           make(map[string]map[string]pageEntry),
+		actions:         make(map[string][]ActionRegistration),
+		vmLocks:         make(map[*lua.LState]*sync.Mutex),
+		pluginSettings:  make(map[string]map[string]any),
+		actionJobs:      make(map[string]*ActionJob),
+		actionSemaphore: make(chan struct{}, maxConcurrentActions),
+		actionSubs:      make(map[chan ActionJobEvent]struct{}),
+		httpClient:      newHttpClient(),
+		httpNotify:      make(chan struct{}, 1),
+		httpStop:        make(chan struct{}),
+		httpSem:         make(chan struct{}, maxConcurrentHttpReqs),
 	}
 
 	go pm.drainHttpCallbacks()
+
+	// Start action job cleanup ticker.
+	go func() {
+		ticker := time.NewTicker(actionJobCleanInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				pm.cleanupOldActionJobs()
+			case <-pm.httpStop:
+				return
+			}
+		}
+	}()
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -406,6 +431,85 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		pm.mu.Lock()
 		pm.actions[*pluginNamePtr] = append(pm.actions[*pluginNamePtr], *action)
 		pm.mu.Unlock()
+		return 0
+	}))
+
+	mahMod.RawSetString("job_progress", L.NewFunction(func(L *lua.LState) int {
+		jobID := L.CheckString(1)
+		percent := L.CheckInt(2)
+		message := L.CheckString(3)
+
+		pm.actionJobsMu.RLock()
+		job, ok := pm.actionJobs[jobID]
+		pm.actionJobsMu.RUnlock()
+
+		if !ok {
+			L.ArgError(1, "unknown job_id")
+			return 0
+		}
+
+		job.mu.Lock()
+		job.Progress = percent
+		job.Message = message
+		job.mu.Unlock()
+
+		pm.notifyActionJobSubscribers(ActionJobEvent{Type: "updated", Job: job})
+		return 0
+	}))
+
+	mahMod.RawSetString("job_complete", L.NewFunction(func(L *lua.LState) int {
+		jobID := L.CheckString(1)
+		resultTbl := L.OptTable(2, nil)
+
+		pm.actionJobsMu.RLock()
+		job, ok := pm.actionJobs[jobID]
+		pm.actionJobsMu.RUnlock()
+
+		if !ok {
+			L.ArgError(1, "unknown job_id")
+			return 0
+		}
+
+		job.mu.Lock()
+		job.Status = "completed"
+		job.Progress = 100
+
+		if resultTbl != nil {
+			parsed := luaTableToGoMap(resultTbl)
+			if msg, hasMsg := parsed["message"].(string); hasMsg {
+				job.Message = msg
+			} else {
+				job.Message = "Completed"
+			}
+			job.Result = parsed
+		} else {
+			job.Message = "Completed"
+		}
+		job.mu.Unlock()
+
+		pm.notifyActionJobSubscribers(ActionJobEvent{Type: "updated", Job: job})
+		return 0
+	}))
+
+	mahMod.RawSetString("job_fail", L.NewFunction(func(L *lua.LState) int {
+		jobID := L.CheckString(1)
+		errMsg := L.CheckString(2)
+
+		pm.actionJobsMu.RLock()
+		job, ok := pm.actionJobs[jobID]
+		pm.actionJobsMu.RUnlock()
+
+		if !ok {
+			L.ArgError(1, "unknown job_id")
+			return 0
+		}
+
+		job.mu.Lock()
+		job.Status = "failed"
+		job.Message = errMsg
+		job.mu.Unlock()
+
+		pm.notifyActionJobSubscribers(ActionJobEvent{Type: "updated", Job: job})
 		return 0
 	}))
 
