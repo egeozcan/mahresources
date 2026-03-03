@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -166,5 +167,300 @@ end
 	listActions := pm.GetActionsForPlacement("resource", "list", nil)
 	if len(listActions) != 0 {
 		t.Errorf("expected 0 actions for list placement, got %d", len(listActions))
+	}
+}
+
+func TestGetActions_FiltersByContentType(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "ct-filter", `
+plugin = { name = "ct-filter", version = "1.0", description = "content type filter test" }
+
+function handler(ctx) return { success = true } end
+
+function init()
+    mah.action({
+        id = "image-only",
+        label = "Image Only Action",
+        entity = "resource",
+        filters = {
+            content_types = { "image/png", "image/jpeg" },
+        },
+        handler = handler,
+    })
+    mah.action({
+        id = "any-resource",
+        label = "Any Resource Action",
+        entity = "resource",
+        handler = handler,
+    })
+end
+`)
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer pm.Close()
+
+	if err := pm.EnablePlugin("ct-filter"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	// image/png matches both (filtered action matches, unfiltered always matches)
+	actions := pm.GetActions("resource", map[string]any{"content_type": "image/png"})
+	if len(actions) != 2 {
+		t.Errorf("expected 2 actions for image/png, got %d", len(actions))
+	}
+
+	// application/pdf matches only the unfiltered action
+	actions = pm.GetActions("resource", map[string]any{"content_type": "application/pdf"})
+	if len(actions) != 1 {
+		t.Errorf("expected 1 action for application/pdf, got %d", len(actions))
+	}
+	if len(actions) == 1 && actions[0].ID != "any-resource" {
+		t.Errorf("expected 'any-resource' action, got %q", actions[0].ID)
+	}
+
+	// nil entityData skips filtering, both actions returned
+	actions = pm.GetActions("resource", nil)
+	if len(actions) != 2 {
+		t.Errorf("expected 2 actions for nil entityData, got %d", len(actions))
+	}
+
+	// wrong entity type returns 0
+	actions = pm.GetActions("note", nil)
+	if len(actions) != 0 {
+		t.Errorf("expected 0 actions for note entity, got %d", len(actions))
+	}
+}
+
+func TestGetActions_FiltersByCategoryID(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "cat-filter", `
+plugin = { name = "cat-filter", version = "1.0", description = "category filter test" }
+
+function handler(ctx) return { success = true } end
+
+function init()
+    mah.action({
+        id = "cat-action",
+        label = "Category Action",
+        entity = "group",
+        filters = {
+            category_ids = { 1, 2 },
+        },
+        handler = handler,
+    })
+end
+`)
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer pm.Close()
+
+	if err := pm.EnablePlugin("cat-filter"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	// category_id 1 matches
+	actions := pm.GetActions("group", map[string]any{"category_id": uint(1)})
+	if len(actions) != 1 {
+		t.Errorf("expected 1 action for category_id=1, got %d", len(actions))
+	}
+
+	// category_id 99 does not match
+	actions = pm.GetActions("group", map[string]any{"category_id": uint(99)})
+	if len(actions) != 0 {
+		t.Errorf("expected 0 actions for category_id=99, got %d", len(actions))
+	}
+
+	// nil entityData skips filtering, action returned
+	actions = pm.GetActions("group", nil)
+	if len(actions) != 1 {
+		t.Errorf("expected 1 action for nil entityData, got %d", len(actions))
+	}
+}
+
+func TestGetActions_FiltersByNoteTypeID(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "nt-filter", `
+plugin = { name = "nt-filter", version = "1.0", description = "note type filter test" }
+
+function handler(ctx) return { success = true } end
+
+function init()
+    mah.action({
+        id = "nt-action",
+        label = "Note Type Action",
+        entity = "note",
+        filters = {
+            note_type_ids = { 3 },
+        },
+        handler = handler,
+    })
+end
+`)
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer pm.Close()
+
+	if err := pm.EnablePlugin("nt-filter"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	// note_type_id 3 matches
+	actions := pm.GetActions("note", map[string]any{"note_type_id": uint(3)})
+	if len(actions) != 1 {
+		t.Errorf("expected 1 action for note_type_id=3, got %d", len(actions))
+	}
+
+	// note_type_id 99 does not match
+	actions = pm.GetActions("note", map[string]any{"note_type_id": uint(99)})
+	if len(actions) != 0 {
+		t.Errorf("expected 0 actions for note_type_id=99, got %d", len(actions))
+	}
+}
+
+func TestGetActionsForPlacement_MultipleActions(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "place-multi", `
+plugin = { name = "place-multi", version = "1.0", description = "placement multi test" }
+
+function handler(ctx) return { success = true } end
+
+function init()
+    mah.action({
+        id = "detail-only",
+        label = "Detail Only",
+        entity = "resource",
+        placement = { "detail" },
+        handler = handler,
+    })
+    mah.action({
+        id = "multi-place",
+        label = "Multi Place",
+        entity = "resource",
+        placement = { "detail", "card", "bulk" },
+        handler = handler,
+    })
+end
+`)
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer pm.Close()
+
+	if err := pm.EnablePlugin("place-multi"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	// detail: both actions
+	actions := pm.GetActionsForPlacement("resource", "detail", nil)
+	if len(actions) != 2 {
+		t.Errorf("expected 2 actions for detail placement, got %d", len(actions))
+	}
+
+	// card: only multi-place
+	actions = pm.GetActionsForPlacement("resource", "card", nil)
+	if len(actions) != 1 {
+		t.Errorf("expected 1 action for card placement, got %d", len(actions))
+	}
+	if len(actions) == 1 && actions[0].ID != "multi-place" {
+		t.Errorf("expected 'multi-place' for card, got %q", actions[0].ID)
+	}
+
+	// bulk: only multi-place
+	actions = pm.GetActionsForPlacement("resource", "bulk", nil)
+	if len(actions) != 1 {
+		t.Errorf("expected 1 action for bulk placement, got %d", len(actions))
+	}
+	if len(actions) == 1 && actions[0].ID != "multi-place" {
+		t.Errorf("expected 'multi-place' for bulk, got %q", actions[0].ID)
+	}
+
+	// list: no actions
+	actions = pm.GetActionsForPlacement("resource", "list", nil)
+	if len(actions) != 0 {
+		t.Errorf("expected 0 actions for list placement, got %d", len(actions))
+	}
+}
+
+func TestActionRegistration_CleanedUpOnDisable(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "cleanup-test", `
+plugin = { name = "cleanup-test", version = "1.0", description = "cleanup test" }
+
+function handler(ctx) return { success = true } end
+
+function init()
+    mah.action({
+        id = "cleanup-action",
+        label = "Cleanup Action",
+        entity = "resource",
+        handler = handler,
+    })
+end
+`)
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer pm.Close()
+
+	// Enable and verify action exists
+	if err := pm.EnablePlugin("cleanup-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	actions := pm.GetActions("resource", nil)
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action after enable, got %d", len(actions))
+	}
+
+	// Disable and verify action is removed
+	if err := pm.DisablePlugin("cleanup-test"); err != nil {
+		t.Fatalf("DisablePlugin: %v", err)
+	}
+
+	actions = pm.GetActions("resource", nil)
+	if len(actions) != 0 {
+		t.Errorf("expected 0 actions after disable, got %d", len(actions))
+	}
+}
+
+func TestActionRegistration_Validation(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "bad-action", `
+plugin = { name = "bad-action", version = "1.0", description = "missing handler test" }
+
+function init()
+    mah.action({
+        id = "no-handler",
+        label = "No Handler",
+        entity = "resource",
+    })
+end
+`)
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer pm.Close()
+
+	err = pm.EnablePlugin("bad-action")
+	if err == nil {
+		t.Fatal("expected error when enabling plugin with action missing handler")
+	}
+	if !strings.Contains(err.Error(), "handler") {
+		t.Errorf("expected error about missing handler, got: %v", err)
 	}
 }
