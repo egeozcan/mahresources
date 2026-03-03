@@ -6,6 +6,7 @@ import (
 	"mahresources/constants"
 	"mahresources/download_queue"
 	"mahresources/models/query_models"
+	"mahresources/plugin_system"
 	"mahresources/server/http_utils"
 	"net/http"
 )
@@ -155,9 +156,15 @@ func GetDownloadRetryHandler(ctx DownloadQueueReader) func(writer http.ResponseW
 	}
 }
 
-// GetDownloadEventsHandler handles GET /v1/download/events
-// Server-Sent Events stream for real-time updates
-func GetDownloadEventsHandler(ctx DownloadQueueReader) func(writer http.ResponseWriter, request *http.Request) {
+// JobEventsContext combines download and plugin action capabilities for the SSE stream.
+type JobEventsContext interface {
+	DownloadQueueReader
+	PluginManager() *plugin_system.PluginManager
+}
+
+// GetDownloadEventsHandler handles GET /v1/download/events and GET /v1/jobs/events
+// Server-Sent Events stream for real-time updates on both download and action jobs.
+func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Set SSE headers
 		writer.Header().Set("Content-Type", "text/event-stream")
@@ -171,25 +178,50 @@ func GetDownloadEventsHandler(ctx DownloadQueueReader) func(writer http.Response
 			return
 		}
 
-		// Subscribe to events
-		events, unsubscribe := ctx.DownloadManager().Subscribe()
-		defer unsubscribe()
+		// Subscribe to download events
+		downloadEvents, unsubscribeDownload := ctx.DownloadManager().Subscribe()
+		defer unsubscribeDownload()
 
-		// Send initial state
-		jobs := ctx.DownloadManager().GetJobs()
-		initialData, _ := json.Marshal(map[string]interface{}{"jobs": jobs})
+		// Subscribe to action job events (if plugin manager is available)
+		var actionEvents chan plugin_system.ActionJobEvent
+		pm := ctx.PluginManager()
+		if pm != nil {
+			actionEvents = pm.SubscribeActionJobs()
+			defer pm.UnsubscribeActionJobs(actionEvents)
+		}
+
+		// Send initial state with both download jobs and action jobs
+		initData := map[string]interface{}{
+			"jobs": ctx.DownloadManager().GetJobs(),
+		}
+		if pm != nil {
+			initData["actionJobs"] = pm.GetAllActionJobs()
+		} else {
+			initData["actionJobs"] = []plugin_system.ActionJob{}
+		}
+		initialData, _ := json.Marshal(initData)
 		fmt.Fprintf(writer, "event: init\ndata: %s\n\n", initialData)
 		flusher.Flush()
 
-		// Stream events
+		// Stream events from both sources
 		for {
 			select {
-			case event, ok := <-events:
+			case event, ok := <-downloadEvents:
 				if !ok {
 					return
 				}
 				data, _ := json.Marshal(event)
 				fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", event.Type, data)
+				flusher.Flush()
+
+			case event, ok := <-actionEvents:
+				if !ok {
+					// Action events channel closed; continue with download-only
+					actionEvents = nil
+					continue
+				}
+				data, _ := json.Marshal(map[string]interface{}{"job": event.Job})
+				fmt.Fprintf(writer, "event: action_%s\ndata: %s\n\n", event.Type, data)
 				flusher.Flush()
 
 			case <-request.Context().Done():
