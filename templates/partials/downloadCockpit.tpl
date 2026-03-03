@@ -72,7 +72,7 @@
                                     <span class="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-lg"
                                           :class="{
                                               'bg-gray-100': job.status === 'pending',
-                                              'bg-blue-100': job.status === 'downloading' || job.status === 'processing',
+                                              'bg-blue-100': job.status === 'downloading' || job.status === 'processing' || job.status === 'running',
                                               'bg-green-100': job.status === 'completed',
                                               'bg-red-100': job.status === 'failed' || job.status === 'cancelled',
                                               'bg-yellow-100': job.status === 'paused'
@@ -84,12 +84,12 @@
                                     <div class="flex-1 min-w-0">
                                         <div class="flex items-center justify-between gap-2">
                                             <p class="text-sm font-medium text-gray-900 truncate"
-                                               x-text="getFilename(job.url)"
-                                               :title="job.url"></p>
+                                               x-text="getJobTitle(job)"
+                                               :title="job._isAction ? job.label : job.url"></p>
                                             <span class="flex-shrink-0 text-xs px-2 py-0.5 rounded-full"
                                                   :class="{
                                                       'bg-gray-100 text-gray-600': job.status === 'pending',
-                                                      'bg-blue-100 text-blue-700': job.status === 'downloading' || job.status === 'processing',
+                                                      'bg-blue-100 text-blue-700': job.status === 'downloading' || job.status === 'processing' || job.status === 'running',
                                                       'bg-green-100 text-green-700': job.status === 'completed',
                                                       'bg-red-100 text-red-700': job.status === 'failed' || job.status === 'cancelled',
                                                       'bg-yellow-100 text-yellow-700': job.status === 'paused'
@@ -97,8 +97,8 @@
                                                   x-text="statusLabels[job.status]"></span>
                                         </div>
 
-                                        <!-- URL preview -->
-                                        <p class="text-xs text-gray-400 truncate mt-0.5" x-text="truncateUrl(job.url, 50)"></p>
+                                        <!-- URL preview / action subtitle -->
+                                        <p class="text-xs text-gray-400 truncate mt-0.5" x-text="getJobSubtitle(job)"></p>
 
                                         <!-- Progress bar (for downloading) -->
                                         <template x-if="job.status === 'downloading'">
@@ -127,9 +127,29 @@
                                             </div>
                                         </template>
 
+                                        <!-- Plugin action progress -->
+                                        <template x-if="job._isAction && job.status === 'running' && job.progress > 0">
+                                            <div class="mt-2">
+                                                <div class="flex justify-between text-xs text-gray-500 mb-1">
+                                                    <span x-text="job.progress + '%'"></span>
+                                                </div>
+                                                <div class="w-full bg-gray-200 rounded-full h-2">
+                                                    <div class="bg-purple-600 h-2 rounded-full transition-all duration-300"
+                                                         :style="'width: ' + job.progress + '%'"></div>
+                                                </div>
+                                            </div>
+                                        </template>
+
                                         <!-- Error message -->
                                         <template x-if="job.error">
                                             <p class="mt-1 text-xs text-red-600 truncate" x-text="job.error" :title="job.error"></p>
+                                        </template>
+
+                                        <!-- Plugin job message -->
+                                        <template x-if="job._isAction && job.message">
+                                            <p class="mt-1 text-xs truncate"
+                                               :class="job.status === 'failed' ? 'text-red-600' : 'text-gray-500'"
+                                               x-text="job.message"></p>
                                         </template>
 
                                         <!-- Resource link on completion -->
@@ -140,7 +160,16 @@
                                             </a>
                                         </template>
 
-                                        <!-- Action buttons -->
+                                        <!-- Plugin action result link -->
+                                        <template x-if="job._isAction && job.status === 'completed' && job.result?.redirect">
+                                            <a :href="job.result.redirect"
+                                               class="mt-1 inline-block text-xs text-purple-600 hover:text-purple-800 hover:underline">
+                                                View result &rarr;
+                                            </a>
+                                        </template>
+
+                                        <!-- Action buttons (download jobs only) -->
+                                        <template x-if="!job._isAction">
                                         <div class="mt-2 flex gap-3">
                                             <!-- Pause button (for pending/downloading) -->
                                             <template x-if="canPause(job)">
@@ -174,6 +203,7 @@
                                                 </button>
                                             </template>
                                         </div>
+                                        </template>
                                     </div>
                                 </div>
                             </li>

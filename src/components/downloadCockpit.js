@@ -19,6 +19,7 @@ export function downloadCockpit() {
             pending: '\u23F3',      // Hourglass
             downloading: '\u2B07',  // Down arrow
             processing: '\u2699',   // Gear
+            running: '\u2699',      // Gear (same as processing)
             completed: '\u2705',    // Check mark
             failed: '\u274C',       // X mark
             cancelled: '\u26D4',    // No entry
@@ -29,6 +30,7 @@ export function downloadCockpit() {
             pending: 'Pending',
             downloading: 'Downloading',
             processing: 'Processing',
+            running: 'Running',
             completed: 'Completed',
             failed: 'Failed',
             cancelled: 'Cancelled',
@@ -37,6 +39,9 @@ export function downloadCockpit() {
 
         init() {
             this._liveRegion = createLiveRegion();
+
+            // Listen for jobs-panel-open event (e.g., from pluginActionModal)
+            window.addEventListener('jobs-panel-open', () => { this.isOpen = true; });
 
             // Listen for keyboard shortcut: Cmd/Ctrl+Shift+D
             this._keydownHandler = (e) => {
@@ -86,6 +91,9 @@ export function downloadCockpit() {
             this.eventSource.addEventListener('init', (e) => {
                 const data = JSON.parse(e.data);
                 this.jobs = data.jobs || [];
+                // Load action jobs into the same array with source marker
+                const actionJobs = (data.actionJobs || []).map(j => ({ ...j, _isAction: true }));
+                this.jobs = [...this.jobs, ...actionJobs];
                 this.retainedCompletedJobs = [];  // Clear retained on reconnect
                 this.connectionStatus = 'connected';
                 // Reset backoff on successful connection
@@ -158,6 +166,44 @@ export function downloadCockpit() {
                 }
 
                 // Remove from main jobs array
+                this.jobs = this.jobs.filter(j => j.id !== job.id);
+            });
+
+            this.eventSource.addEventListener('action_added', (e) => {
+                const { job } = JSON.parse(e.data);
+                job._isAction = true;
+                this.jobs.push(job);
+                this.isOpen = true;
+                this.announce(`Action started: ${job.label}`);
+            });
+
+            this.eventSource.addEventListener('action_updated', (e) => {
+                const { job } = JSON.parse(e.data);
+                job._isAction = true;
+                const index = this.jobs.findIndex(j => j.id === job.id);
+                if (index !== -1) {
+                    this.jobs[index] = job;
+                }
+                if (job.status === 'completed') {
+                    this.announce(`Action completed: ${job.label}`);
+                    window.dispatchEvent(new CustomEvent('plugin-action-completed', { detail: job }));
+                } else if (job.status === 'failed') {
+                    this.announce(`Action failed: ${job.label}`);
+                }
+            });
+
+            this.eventSource.addEventListener('action_removed', (e) => {
+                const { job } = JSON.parse(e.data);
+                const existingJob = this.jobs.find(j => j.id === job.id);
+                if (existingJob && (existingJob.status === 'completed' || existingJob.status === 'failed')) {
+                    if (!this.retainedCompletedJobs.some(j => j.id === existingJob.id)) {
+                        existingJob._isAction = true;
+                        this.retainedCompletedJobs.unshift(existingJob);
+                        if (this.retainedCompletedJobs.length > 5) {
+                            this.retainedCompletedJobs = this.retainedCompletedJobs.slice(0, 5);
+                        }
+                    }
+                }
                 this.jobs = this.jobs.filter(j => j.id !== job.id);
             });
 
@@ -254,7 +300,7 @@ export function downloadCockpit() {
         },
 
         isActive(job) {
-            return ['pending', 'downloading', 'processing'].includes(job.status);
+            return ['pending', 'downloading', 'processing', 'running'].includes(job.status);
         },
 
         canPause(job) {
@@ -285,6 +331,20 @@ export function downloadCockpit() {
             if (!url) return '';
             if (url.length <= maxLength) return url;
             return url.substring(0, maxLength - 3) + '...';
+        },
+
+        getJobTitle(job) {
+            if (job._isAction) {
+                return job.label || job.actionId;
+            }
+            return this.getFilename(job.url);
+        },
+
+        getJobSubtitle(job) {
+            if (job._isAction) {
+                return job.message || '';
+            }
+            return this.truncateUrl(job.url, 50);
         },
 
         getFilename(url) {
