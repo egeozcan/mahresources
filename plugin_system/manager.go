@@ -72,6 +72,7 @@ type PluginManager struct {
 	injections map[string][]injectionEntry
 	pages      map[string]map[string]pageEntry // pluginName -> path -> handler
 	menuItems  []MenuRegistration
+	actions    map[string][]ActionRegistration // pluginName -> actions
 	mu         sync.RWMutex
 	vmLocks    map[*lua.LState]*sync.Mutex
 	dbProvider atomic.Value
@@ -102,6 +103,7 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 		hooks:          make(map[string][]hookEntry),
 		injections:     make(map[string][]injectionEntry),
 		pages:          make(map[string]map[string]pageEntry),
+		actions:        make(map[string][]ActionRegistration),
 		vmLocks:        make(map[*lua.LState]*sync.Mutex),
 		pluginSettings: make(map[string]map[string]any),
 		httpClient:     newHttpClient(),
@@ -394,6 +396,19 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		return 0
 	}))
 
+	mahMod.RawSetString("action", L.NewFunction(func(L *lua.LState) int {
+		tbl := L.CheckTable(1)
+		action, err := parseActionTable(L, tbl, *pluginNamePtr)
+		if err != nil {
+			L.ArgError(1, err.Error())
+			return 0
+		}
+		pm.mu.Lock()
+		pm.actions[*pluginNamePtr] = append(pm.actions[*pluginNamePtr], *action)
+		pm.mu.Unlock()
+		return 0
+	}))
+
 	pm.registerDbModule(L, mahMod)
 	pm.registerHttpModule(L, mahMod)
 
@@ -509,6 +524,9 @@ func (pm *PluginManager) DisablePlugin(name string) error {
 		}
 	}
 	pm.menuItems = filteredMenus
+
+	// Remove actions for this plugin.
+	delete(pm.actions, name)
 
 	// Remove from active lists.
 	pm.plugins = append(pm.plugins[:pluginIdx], pm.plugins[pluginIdx+1:]...)
@@ -637,5 +655,6 @@ func (pm *PluginManager) Close() {
 	pm.injections = nil
 	pm.pages = nil
 	pm.menuItems = nil
+	pm.actions = nil
 	pm.vmLocks = nil
 }
