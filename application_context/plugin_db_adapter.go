@@ -263,6 +263,13 @@ func (a *pluginDBAdapter) CreateResourceFromURL(url string, options map[string]a
 	}
 	applyResourceOptions(&creator.ResourceQueryBase, options)
 
+	// AddRemoteResource uses FileName (not ResourceQueryBase.Name) for naming.
+	// Propagate the Name option so the plugin-specified name is used instead of
+	// falling back to path.Base(url).
+	if name, ok := options["name"].(string); ok && name != "" {
+		creator.FileName = name
+	}
+
 	resource, err := a.ctx.AddRemoteResource(creator)
 	if err != nil {
 		return nil, err

@@ -252,13 +252,13 @@ func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.Re
 				},
 			})
 
-			if firstResource == nil {
-				firstResource = res
-			}
-
 			if err != nil {
 				setError(err)
 				return
+			}
+
+			if firstResource == nil {
+				firstResource = res
 			}
 		})(strings.TrimSpace(url))
 	}
@@ -353,7 +353,7 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		ContentCategory:    resourceQuery.ContentCategory,
 		ResourceCategoryId: uintPtrOrNil(resourceQuery.ResourceCategoryId),
 		FileSize:           int64(len(fileBytes)),
-		OwnerId:            &resourceQuery.OwnerId,
+		OwnerId:            uintPtrOrNil(resourceQuery.OwnerId),
 		StorageLocation:    &resourceQuery.PathName,
 		Description:        resourceQuery.Description,
 		OriginalLocation:   resourceQuery.OriginalLocation,
@@ -506,6 +506,11 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 			return nil, &ResourceExistsError{ResourceID: existingResource.ID, Reason: ReasonSameParent}
 		}
 
+		if resourceQuery.OwnerId == 0 {
+			tx.Rollback()
+			return nil, &ResourceExistsError{ResourceID: existingResource.ID, Reason: ReasonSameParent}
+		}
+
 		for _, group := range existingResource.Groups {
 			if resourceQuery.OwnerId == group.ID {
 				tx.Rollback()
@@ -613,7 +618,7 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 		ContentCategory:    resourceQuery.ContentCategory,
 		ResourceCategoryId: uintPtrOrNil(resourceQuery.ResourceCategoryId),
 		FileSize:           fileSize,
-		OwnerId:            &resourceQuery.OwnerId,
+		OwnerId:            uintPtrOrNil(resourceQuery.OwnerId),
 		Description:        resourceQuery.Description,
 		OriginalLocation:   resourceQuery.OriginalLocation,
 		OriginalName:       resourceQuery.OriginalName,
