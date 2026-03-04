@@ -4,7 +4,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-// EntityQuerier provides read-only access to entities for plugins.
+// EntityQuerier provides database access to entities for plugins.
 // All methods return map[string]any to avoid importing models into the plugin_system package.
 // Numeric values must be float64 for Lua compatibility.
 type EntityQuerier interface {
@@ -18,6 +18,11 @@ type EntityQuerier interface {
 	QueryNotes(filter map[string]any) ([]map[string]any, error)
 	QueryResources(filter map[string]any) ([]map[string]any, error)
 	QueryGroups(filter map[string]any) ([]map[string]any, error)
+	// Resource file data — returns base64 content and MIME type
+	GetResourceFileData(id uint) (string, string, error)
+	// Resource creation
+	CreateResourceFromURL(url string, options map[string]any) (map[string]any, error)
+	CreateResourceFromData(base64Data string, options map[string]any) (map[string]any, error)
 }
 
 // SetEntityQuerier sets the database provider for plugin DB access.
@@ -190,6 +195,70 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			tbl.RawSetInt(i+1, goToLuaTable(L, item))
 		}
 		L.Push(tbl)
+		return 1
+	}))
+
+	// mah.db.get_resource_data(id) -> base64_string, mime_type or nil
+	dbMod.RawSetString("get_resource_data", L.NewFunction(func(L *lua.LState) int {
+		db := pm.getDbProvider()
+		if db == nil {
+			L.Push(lua.LNil)
+			return 1
+		}
+		id := uint(L.CheckNumber(1))
+		base64Data, mimeType, err := db.GetResourceFileData(id)
+		if err != nil {
+			L.Push(lua.LNil)
+			return 1
+		}
+		L.Push(lua.LString(base64Data))
+		L.Push(lua.LString(mimeType))
+		return 2
+	}))
+
+	// mah.db.create_resource_from_url(url, options) -> table or (nil, error)
+	dbMod.RawSetString("create_resource_from_url", L.NewFunction(func(L *lua.LState) int {
+		db := pm.getDbProvider()
+		if db == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("database not available"))
+			return 2
+		}
+		url := L.CheckString(1)
+		opts := make(map[string]any)
+		if optTbl := L.OptTable(2, nil); optTbl != nil {
+			opts = luaTableToGoMap(optTbl)
+		}
+		result, err := db.CreateResourceFromURL(url, opts)
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+		L.Push(goToLuaTable(L, result))
+		return 1
+	}))
+
+	// mah.db.create_resource_from_data(base64, options) -> table or (nil, error)
+	dbMod.RawSetString("create_resource_from_data", L.NewFunction(func(L *lua.LState) int {
+		db := pm.getDbProvider()
+		if db == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("database not available"))
+			return 2
+		}
+		base64Data := L.CheckString(1)
+		opts := make(map[string]any)
+		if optTbl := L.OptTable(2, nil); optTbl != nil {
+			opts = luaTableToGoMap(optTbl)
+		}
+		result, err := db.CreateResourceFromData(base64Data, opts)
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+		L.Push(goToLuaTable(L, result))
 		return 1
 	}))
 

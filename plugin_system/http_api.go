@@ -14,7 +14,7 @@ import (
 
 const (
 	defaultHttpTimeout      = 10 * time.Second
-	maxHttpTimeout          = 30 * time.Second
+	maxHttpTimeout          = 120 * time.Second
 	maxHttpResponseBody     = 5 * 1024 * 1024 // 5MB
 	maxHttpRedirects        = 10
 	maxConcurrentHttpReqs   = 16
@@ -104,7 +104,113 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable) {
 		return 0
 	}))
 
+	// mah.http.get_sync(url, [options]) -> response table
+	// Synchronous HTTP GET — blocks until response. Use inside action handlers
+	// where async callbacks can't fire due to the VM lock being held.
+	httpMod.RawSetString("get_sync", L.NewFunction(func(L *lua.LState) int {
+		url := L.CheckString(1)
+		var headers map[string]string
+		timeout := defaultHttpTimeout
+		if optTbl := L.OptTable(2, nil); optTbl != nil {
+			headers, timeout, _ = extractRequestOptions(L, optTbl)
+		}
+		if err := validateScheme(url); err != nil {
+			L.Push(buildSyncErrorResponse(L, "GET", url, err.Error()))
+			return 1
+		}
+		L.Push(pm.executeSyncHttpRequest("GET", url, "", headers, timeout, L))
+		return 1
+	}))
+
+	// mah.http.post_sync(url, body, [options]) -> response table
+	// Synchronous HTTP POST — blocks until response.
+	httpMod.RawSetString("post_sync", L.NewFunction(func(L *lua.LState) int {
+		url := L.CheckString(1)
+		body := L.CheckString(2)
+		var headers map[string]string
+		timeout := defaultHttpTimeout
+		if optTbl := L.OptTable(3, nil); optTbl != nil {
+			headers, timeout, _ = extractRequestOptions(L, optTbl)
+		}
+		if err := validateScheme(url); err != nil {
+			L.Push(buildSyncErrorResponse(L, "POST", url, err.Error()))
+			return 1
+		}
+		L.Push(pm.executeSyncHttpRequest("POST", url, body, headers, timeout, L))
+		return 1
+	}))
+
 	mahMod.RawSetString("http", httpMod)
+}
+
+// executeSyncHttpRequest performs a blocking HTTP request and returns the response as a Lua table.
+func (pm *PluginManager) executeSyncHttpRequest(method, url, body string, headers map[string]string, timeout time.Duration, L *lua.LState) *lua.LTable {
+	// Remove Lua context during blocking HTTP call to avoid premature timeout.
+	L.RemoveContext()
+	defer func() {
+		// Caller is responsible for restoring its own context if needed.
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	var bodyReader io.Reader
+	if body != "" {
+		bodyReader = strings.NewReader(body)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	if err != nil {
+		return buildSyncErrorResponse(L, method, url, err.Error())
+	}
+
+	req.Header.Set("User-Agent", httpUserAgent)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := pm.httpClient.Do(req)
+	if err != nil {
+		return buildSyncErrorResponse(L, method, url, err.Error())
+	}
+	defer resp.Body.Close()
+
+	limitedReader := io.LimitReader(resp.Body, maxHttpResponseBody+1)
+	bodyBytes, err := io.ReadAll(limitedReader)
+	if err != nil {
+		return buildSyncErrorResponse(L, method, url, fmt.Sprintf("reading response body: %v", err))
+	}
+
+	bodyStr := string(bodyBytes)
+	if len(bodyBytes) > maxHttpResponseBody {
+		bodyStr = bodyStr[:maxHttpResponseBody]
+		log.Printf("[plugin] warning: HTTP response body truncated at %d bytes for %s %s", maxHttpResponseBody, method, url)
+	}
+
+	respHeaders := make(map[string]any)
+	for k, vals := range resp.Header {
+		if len(vals) > 0 {
+			respHeaders[strings.ToLower(k)] = strings.Join(vals, ", ")
+		}
+	}
+
+	return goToLuaTable(L, map[string]any{
+		"status_code": float64(resp.StatusCode),
+		"status":      resp.Status,
+		"body":        bodyStr,
+		"headers":     respHeaders,
+		"url":         url,
+		"method":      method,
+	})
+}
+
+// buildSyncErrorResponse builds a Lua table for a sync HTTP error.
+func buildSyncErrorResponse(L *lua.LState, method, url, errMsg string) *lua.LTable {
+	return goToLuaTable(L, map[string]any{
+		"error":  errMsg,
+		"url":    url,
+		"method": method,
+	})
 }
 
 // parseOptionsAndCallback extracts optional options table and required callback

@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"encoding/base64"
 	"fmt"
 	"testing"
 )
@@ -58,6 +59,40 @@ func (m *mockQuerier) QueryResources(filter map[string]any) ([]map[string]any, e
 func (m *mockQuerier) QueryGroups(filter map[string]any) ([]map[string]any, error) {
 	return []map[string]any{
 		{"id": float64(1), "name": "Group A"},
+	}, nil
+}
+
+func (m *mockQuerier) GetResourceFileData(id uint) (string, string, error) {
+	if id == 1 {
+		return base64.StdEncoding.EncodeToString([]byte("fake-image-data")), "image/jpeg", nil
+	}
+	return "", "", fmt.Errorf("not found")
+}
+
+func (m *mockQuerier) CreateResourceFromURL(url string, options map[string]any) (map[string]any, error) {
+	name := "downloaded.jpg"
+	if n, ok := options["name"].(string); ok {
+		name = n
+	}
+	return map[string]any{
+		"id":           float64(42),
+		"name":         name,
+		"content_type": "image/jpeg",
+	}, nil
+}
+
+func (m *mockQuerier) CreateResourceFromData(base64Data string, options map[string]any) (map[string]any, error) {
+	if base64Data == "" {
+		return nil, fmt.Errorf("empty data")
+	}
+	name := "uploaded.bin"
+	if n, ok := options["name"].(string); ok {
+		name = n
+	}
+	return map[string]any{
+		"id":           float64(43),
+		"name":         name,
+		"content_type": "application/octet-stream",
 	}, nil
 }
 
@@ -398,5 +433,189 @@ end
 	html := mgr.RenderSlot("test", map[string]any{})
 	if html != "nil" {
 		t.Errorf("expected 'nil' when no provider set, got %q", html)
+	}
+}
+
+func TestDbApi_GetResourceData(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "db-test", `
+plugin = { name = "db-test", version = "1.0", description = "db api test" }
+function init()
+    mah.inject("test", function(ctx)
+        local data, mime = mah.db.get_resource_data(1)
+        if data then
+            return mime .. "|" .. tostring(#data > 0)
+        end
+        return "nil"
+    end)
+end
+`)
+	mgr, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+	mgr.SetEntityQuerier(&mockQuerier{})
+
+	if err := mgr.EnablePlugin("db-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	html := mgr.RenderSlot("test", map[string]any{})
+	if html != "image/jpeg|true" {
+		t.Errorf("expected 'image/jpeg|true', got %q", html)
+	}
+}
+
+func TestDbApi_GetResourceDataNotFound(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "db-test", `
+plugin = { name = "db-test", version = "1.0", description = "db api test" }
+function init()
+    mah.inject("test", function(ctx)
+        local data = mah.db.get_resource_data(999)
+        if data then
+            return "found"
+        end
+        return "nil"
+    end)
+end
+`)
+	mgr, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+	mgr.SetEntityQuerier(&mockQuerier{})
+
+	if err := mgr.EnablePlugin("db-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	html := mgr.RenderSlot("test", map[string]any{})
+	if html != "nil" {
+		t.Errorf("expected 'nil', got %q", html)
+	}
+}
+
+func TestDbApi_GetResourceDataNoProvider(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "db-test", `
+plugin = { name = "db-test", version = "1.0", description = "db api test" }
+function init()
+    mah.inject("test", function(ctx)
+        local data = mah.db.get_resource_data(1)
+        if data then
+            return "found"
+        end
+        return "nil"
+    end)
+end
+`)
+	mgr, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	if err := mgr.EnablePlugin("db-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	html := mgr.RenderSlot("test", map[string]any{})
+	if html != "nil" {
+		t.Errorf("expected 'nil' when no provider set, got %q", html)
+	}
+}
+
+func TestDbApi_CreateResourceFromURL(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "db-test", `
+plugin = { name = "db-test", version = "1.0", description = "db api test" }
+function init()
+    mah.inject("test", function(ctx)
+        local res, err = mah.db.create_resource_from_url("https://example.com/image.jpg", {name = "my-image.jpg"})
+        if res then
+            return tostring(res.id) .. "|" .. res.name
+        end
+        return "error:" .. (err or "unknown")
+    end)
+end
+`)
+	mgr, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+	mgr.SetEntityQuerier(&mockQuerier{})
+
+	if err := mgr.EnablePlugin("db-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	html := mgr.RenderSlot("test", map[string]any{})
+	if html != "42|my-image.jpg" {
+		t.Errorf("expected '42|my-image.jpg', got %q", html)
+	}
+}
+
+func TestDbApi_CreateResourceFromData(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "db-test", `
+plugin = { name = "db-test", version = "1.0", description = "db api test" }
+function init()
+    mah.inject("test", function(ctx)
+        local res, err = mah.db.create_resource_from_data("aGVsbG8=", {name = "test-upload.bin"})
+        if res then
+            return tostring(res.id) .. "|" .. res.name
+        end
+        return "error:" .. (err or "unknown")
+    end)
+end
+`)
+	mgr, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+	mgr.SetEntityQuerier(&mockQuerier{})
+
+	if err := mgr.EnablePlugin("db-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	html := mgr.RenderSlot("test", map[string]any{})
+	if html != "43|test-upload.bin" {
+		t.Errorf("expected '43|test-upload.bin', got %q", html)
+	}
+}
+
+func TestDbApi_CreateResourceFromURLNoProvider(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "db-test", `
+plugin = { name = "db-test", version = "1.0", description = "db api test" }
+function init()
+    mah.inject("test", function(ctx)
+        local res, err = mah.db.create_resource_from_url("https://example.com/img.jpg")
+        if res then
+            return "ok"
+        end
+        return "error:" .. (err or "unknown")
+    end)
+end
+`)
+	mgr, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	if err := mgr.EnablePlugin("db-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	html := mgr.RenderSlot("test", map[string]any{})
+	if html != "error:database not available" {
+		t.Errorf("expected 'error:database not available', got %q", html)
 	}
 }

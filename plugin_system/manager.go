@@ -466,9 +466,15 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		job.mu.Lock()
 		job.Progress = percent
 		job.Message = message
+		shouldNotify := time.Since(job.lastNotified) >= 200*time.Millisecond || percent >= 100
+		if shouldNotify {
+			job.lastNotified = time.Now()
+		}
 		job.mu.Unlock()
 
-		pm.notifyActionJobSubscribers("updated", job)
+		if shouldNotify {
+			pm.notifyActionJobSubscribers("updated", job)
+		}
 		return 0
 	}))
 
@@ -530,6 +536,7 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 
 	pm.registerDbModule(L, mahMod)
 	pm.registerHttpModule(L, mahMod)
+	pm.registerJsonModule(L, mahMod)
 
 	L.SetGlobal("mah", mahMod)
 }
