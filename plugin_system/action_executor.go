@@ -19,26 +19,28 @@ type ActionResult struct {
 }
 
 // FindAction locates a registered action by plugin name and action ID.
-// It returns the action registration, the Lua state that owns the handler,
-// and an error if not found.
-func (pm *PluginManager) FindAction(pluginName, actionID string) (*ActionRegistration, *lua.LState, error) {
+// It returns a copy of the action registration, the Lua state that owns the
+// handler, and an error if not found.
+func (pm *PluginManager) FindAction(pluginName, actionID string) (ActionRegistration, *lua.LState, error) {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 
 	actions, ok := pm.actions[pluginName]
 	if !ok {
-		return nil, nil, fmt.Errorf("no plugin %q registered", pluginName)
+		return ActionRegistration{}, nil, fmt.Errorf("no plugin %q registered", pluginName)
 	}
 
-	var action *ActionRegistration
-	for i := range actions {
-		if actions[i].ID == actionID {
-			action = &actions[i]
+	var found bool
+	var action ActionRegistration
+	for _, a := range actions {
+		if a.ID == actionID {
+			action = a
+			found = true
 			break
 		}
 	}
-	if action == nil {
-		return nil, nil, fmt.Errorf("no action %q registered for plugin %q", actionID, pluginName)
+	if !found {
+		return ActionRegistration{}, nil, fmt.Errorf("no action %q registered for plugin %q", actionID, pluginName)
 	}
 
 	// Find the LState for this plugin by matching pluginName in pm.plugins.
@@ -50,7 +52,7 @@ func (pm *PluginManager) FindAction(pluginName, actionID string) (*ActionRegistr
 		}
 	}
 	if state == nil {
-		return nil, nil, fmt.Errorf("no Lua state found for plugin %q", pluginName)
+		return ActionRegistration{}, nil, fmt.Errorf("no Lua state found for plugin %q", pluginName)
 	}
 
 	return action, state, nil
@@ -59,7 +61,7 @@ func (pm *PluginManager) FindAction(pluginName, actionID string) (*ActionRegistr
 // ValidateActionParams validates the provided params against the action's
 // parameter definitions. It checks required fields, select option validity,
 // and number range constraints.
-func ValidateActionParams(action *ActionRegistration, params map[string]any) []ValidationError {
+func ValidateActionParams(action ActionRegistration, params map[string]any) []ValidationError {
 	var errs []ValidationError
 
 	for _, p := range action.Params {

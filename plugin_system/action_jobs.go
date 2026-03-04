@@ -32,8 +32,9 @@ type ActionJob struct {
 	Progress   int            `json:"progress"`           // 0-100
 	Message    string         `json:"message"`
 	Result     map[string]any `json:"result,omitempty"`
-	CreatedAt  time.Time      `json:"createdAt"`
-	mu         sync.RWMutex
+	CreatedAt    time.Time      `json:"createdAt"`
+	mu           sync.RWMutex
+	lastNotified time.Time // tracks when the last SSE notification was sent for throttling
 }
 
 // ActionJobEvent represents a change in action job state for SSE broadcasting.
@@ -62,6 +63,8 @@ func (j *ActionJob) Snapshot() ActionJob { //nolint:govet // returns a field-by-
 		CreatedAt:  j.CreatedAt,
 	}
 
+	// Shallow copy of Result is safe because results are write-once:
+	// set exactly once when the job completes, never mutated afterward.
 	if j.Result != nil {
 		snap.Result = make(map[string]any, len(j.Result))
 		for k, v := range j.Result {
@@ -333,9 +336,9 @@ func (pm *PluginManager) notifyActionJobSubscribers(eventType string, job *Actio
 
 // cleanupOldActionJobs removes completed/failed action jobs older than actionJobRetention.
 func (pm *PluginManager) cleanupOldActionJobs() {
-	pm.actionJobsMu.Lock()
-	defer pm.actionJobsMu.Unlock()
+	var removed []*ActionJob
 
+	pm.actionJobsMu.Lock()
 	cutoff := time.Now().Add(-actionJobRetention)
 	for id, job := range pm.actionJobs {
 		job.mu.RLock()
@@ -345,7 +348,12 @@ func (pm *PluginManager) cleanupOldActionJobs() {
 
 		if (status == "completed" || status == "failed") && created.Before(cutoff) {
 			delete(pm.actionJobs, id)
-			pm.notifyActionJobSubscribers("removed", job)
+			removed = append(removed, job)
 		}
+	}
+	pm.actionJobsMu.Unlock()
+
+	for _, job := range removed {
+		pm.notifyActionJobSubscribers("removed", job)
 	}
 }

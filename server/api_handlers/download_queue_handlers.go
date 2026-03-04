@@ -214,6 +214,8 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 				fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", event.Type, data)
 				flusher.Flush()
 
+			// actionEvents is nil when the plugin system is unavailable.
+			// A nil channel is never selected in Go, so this case is simply skipped.
 			case event, ok := <-actionEvents:
 				if !ok {
 					// Action events channel closed; continue with download-only

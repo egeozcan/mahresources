@@ -146,6 +146,10 @@ func GetActionRunHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http
 			// Sync execution: run for each entity ID and collect results.
 			results := make([]*plugin_system.ActionResult, 0, len(req.EntityIDs))
 			for _, eid := range req.EntityIDs {
+				if r.Context().Err() != nil {
+					http_utils.HandleError(fmt.Errorf("request cancelled"), w, r, http.StatusRequestTimeout)
+					return
+				}
 				result, err := pm.RunAction(req.Plugin, req.Action, eid, req.Params)
 				if err != nil {
 					http_utils.HandleError(fmt.Errorf("action failed for entity %d: %w", eid, err), w, r, http.StatusInternalServerError)

@@ -70,6 +70,9 @@
                                             class="plugin-action-modal-select"
                                             :aria-invalid="errors[param.name] ? 'true' : null"
                                             :aria-describedby="errors[param.name] ? 'plugin-param-error-' + param.name : null">
+                                        <template x-if="!param.default">
+                                            <option value="" disabled selected>-- Select --</option>
+                                        </template>
                                         <template x-for="opt in (param.options || [])" :key="opt">
                                             <option :value="opt" x-text="opt"></option>
                                         </template>

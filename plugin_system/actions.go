@@ -2,6 +2,7 @@ package plugin_system
 
 import (
 	"fmt"
+	"strings"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -35,7 +36,7 @@ type ActionRegistration struct {
 	Icon        string         `json:"icon,omitempty"`
 	Entity      string         `json:"entity"` // resource, note, group
 	Placement   []string       `json:"placement"`
-	Filters     ActionFilter   `json:"filters,omitempty"`
+	Filters     ActionFilter   `json:"filters,omitempty"` // omitempty works because nil slices keep ActionFilter at zero value; avoid initializing empty slices
 	Params      []ActionParam  `json:"params,omitempty"`
 	Async       bool           `json:"async,omitempty"`
 	Confirm     string         `json:"confirm,omitempty"`
@@ -51,11 +52,11 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 		PluginName: pluginName,
 	}
 
-	// Required: id
+	// Required: id (normalized to lowercase to avoid case-sensitive collisions)
 	if v := tbl.RawGetString("id"); v == lua.LNil {
 		return nil, fmt.Errorf("missing required field 'id'")
 	} else {
-		a.ID = v.String()
+		a.ID = strings.ToLower(v.String())
 	}
 
 	// Required: label
@@ -257,49 +258,55 @@ func (pm *PluginManager) GetActionsForPlacement(entity string, placement string,
 func actionMatchesFilters(a ActionRegistration, entityData map[string]any) bool {
 	// Check content_type filter
 	if len(a.Filters.ContentTypes) > 0 {
-		if ct, ok := entityData["content_type"].(string); ok {
-			found := false
-			for _, allowed := range a.Filters.ContentTypes {
-				if ct == allowed {
-					found = true
-					break
-				}
+		ct, ok := entityData["content_type"].(string)
+		if !ok || ct == "" {
+			return false
+		}
+		found := false
+		for _, allowed := range a.Filters.ContentTypes {
+			if ct == allowed {
+				found = true
+				break
 			}
-			if !found {
-				return false
-			}
+		}
+		if !found {
+			return false
 		}
 	}
 
 	// Check category_id filter
 	if len(a.Filters.CategoryIDs) > 0 {
-		if cid, ok := entityData["category_id"].(uint); ok {
-			found := false
-			for _, allowed := range a.Filters.CategoryIDs {
-				if cid == allowed {
-					found = true
-					break
-				}
+		cid, ok := entityData["category_id"].(uint)
+		if !ok {
+			return false
+		}
+		found := false
+		for _, allowed := range a.Filters.CategoryIDs {
+			if cid == allowed {
+				found = true
+				break
 			}
-			if !found {
-				return false
-			}
+		}
+		if !found {
+			return false
 		}
 	}
 
 	// Check note_type_id filter
 	if len(a.Filters.NoteTypeIDs) > 0 {
-		if nid, ok := entityData["note_type_id"].(uint); ok {
-			found := false
-			for _, allowed := range a.Filters.NoteTypeIDs {
-				if nid == allowed {
-					found = true
-					break
-				}
+		nid, ok := entityData["note_type_id"].(uint)
+		if !ok {
+			return false
+		}
+		found := false
+		for _, allowed := range a.Filters.NoteTypeIDs {
+			if nid == allowed {
+				found = true
+				break
 			}
-			if !found {
-				return false
-			}
+		}
+		if !found {
+			return false
 		}
 	}
 

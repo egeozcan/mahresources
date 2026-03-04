@@ -12,10 +12,9 @@ export function pluginActionModal() {
         },
 
         open(detail) {
-            // Accept both raw JSON (plugin_name/id) and mapped (plugin/action) field names.
             const action = {
-                plugin: detail.plugin ?? detail.plugin_name,
-                action: detail.action ?? detail.id,
+                plugin: detail.plugin,
+                action: detail.action,
                 label: detail.label,
                 description: detail.description,
                 entityIds: detail.entityIds,

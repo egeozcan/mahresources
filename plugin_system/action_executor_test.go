@@ -382,7 +382,7 @@ func TestValidateActionParams_Standalone(t *testing.T) {
 	minVal := float64(1)
 	maxVal := float64(100)
 
-	action := &ActionRegistration{
+	action := ActionRegistration{
 		Params: []ActionParam{
 			{Name: "required_field", Type: "text", Label: "Required Field", Required: true},
 			{Name: "color", Type: "select", Label: "Color", Options: []string{"red", "green", "blue"}},
