@@ -77,6 +77,7 @@ type PluginManager struct {
 	mu         sync.RWMutex
 	vmLocks    map[*lua.LState]*sync.Mutex
 	dbProvider atomic.Value
+	dbWriter   atomic.Value
 	closed     atomic.Bool
 
 	// Discovery-phase data (immutable after construction).

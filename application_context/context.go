@@ -218,7 +218,9 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 					log.Printf("[plugin]   - %s v%s", p.Name, p.Version)
 				}
 			}
-			pm.SetEntityQuerier(NewPluginDBAdapter(ctx))
+			adapter := &pluginDBAdapter{ctx: ctx}
+			pm.SetEntityQuerier(adapter)
+			pm.SetEntityWriter(adapter)
 		}
 	}
 

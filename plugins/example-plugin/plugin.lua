@@ -58,4 +58,93 @@ function init()
 
     -- Add a menu item for the page (appears in the Plugins dropdown)
     mah.menu("Plugin Info", "info")
+
+    -- =========================================================================
+    -- Entity CRUD API Examples (mah.db.*)
+    -- =========================================================================
+    -- All write functions return (result, nil) on success or (nil, error_string)
+    -- on failure. Always check for errors in production plugins.
+
+    -- ---- Creating entities ----
+
+    -- Create a tag
+    -- local tag, err = mah.db.create_tag({ name = "auto-tagged" })
+    -- if err then mah.log("error", "create_tag failed: " .. err) end
+
+    -- Create a category (for groups / note types)
+    -- local cat, err = mah.db.create_category({ name = "Automation" })
+
+    -- Create a resource category
+    -- local rcat, err = mah.db.create_resource_category({ name = "Generated" })
+
+    -- Create a note type
+    -- local ntype, err = mah.db.create_note_type({ name = "Plugin Log" })
+
+    -- Create a group (owner_id is optional)
+    -- local group, err = mah.db.create_group({
+    --     name        = "Plugin Workspace",
+    --     description = "Created by example-plugin",
+    --     category_id = cat.id,   -- reference a category created above
+    -- })
+
+    -- Create a note (note_type_id is optional)
+    -- local note, err = mah.db.create_note({
+    --     name         = "Auto-generated note",
+    --     description  = "Created during plugin init",
+    --     note_type_id = ntype.id,
+    -- })
+
+    -- ---- Updating entities ----
+    -- NOTE: updates replace ALL fields; omitted fields revert to defaults.
+
+    -- Update a tag by ID (first arg = id, second arg = fields to set)
+    -- local updated_tag, err = mah.db.update_tag(tag.id, { name = "renamed-tag" })
+
+    -- Update a group
+    -- local updated_group, err = mah.db.update_group(group.id, {
+    --     description = "Updated description",
+    -- })
+
+    -- Update a note
+    -- local updated_note, err = mah.db.update_note(note.id, {
+    --     name = "Revised note title",
+    -- })
+
+    -- ---- Deleting entities ----
+
+    -- Delete returns true on success or (nil, error_string) on failure
+    -- local ok, err = mah.db.delete_tag(tag.id)
+    -- local ok, err = mah.db.delete_note(note.id)
+    -- local ok, err = mah.db.delete_group(group.id)
+    -- local ok, err = mah.db.delete_resource(42)
+    -- local ok, err = mah.db.delete_category(cat.id)
+    -- local ok, err = mah.db.delete_resource_category(rcat.id)
+    -- local ok, err = mah.db.delete_note_type(ntype.id)
+
+    -- ---- Managing relationships ----
+
+    -- Add/remove tags: mah.db.add_tags(entity_type, entity_id, {tag_id, ...})
+    -- entity_type is "note", "resource", or "group"
+    -- local ok, err = mah.db.add_tags("note", note.id, {tag.id})
+    -- local ok, err = mah.db.remove_tags("note", note.id, {tag.id})
+
+    -- Add/remove groups: mah.db.add_groups(entity_type, entity_id, {group_id, ...})
+    -- entity_type is "note" or "resource"
+    -- local ok, err = mah.db.add_groups("resource", 1, {group.id})
+    -- local ok, err = mah.db.remove_groups("resource", 1, {group.id})
+
+    -- Attach/detach resources to/from a note
+    -- local ok, err = mah.db.add_resources_to_note(note.id, {1, 2, 3})
+    -- local ok, err = mah.db.remove_resources_from_note(note.id, {3})
+
+    -- ---- Group relations & relation types ----
+
+    -- local rtype, err = mah.db.create_relation_type({ name = "depends-on" })
+    -- local rel, err = mah.db.create_group_relation({
+    --     from_group_id     = group.id,
+    --     to_group_id       = 42,
+    --     relation_type_id  = rtype.id,
+    -- })
+    -- local ok, err = mah.db.delete_group_relation(rel.id)
+    -- local ok, err = mah.db.delete_relation_type(rtype.id)
 end

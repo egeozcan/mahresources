@@ -381,3 +381,45 @@ func (ctx *MahresourcesContext) DeleteNoteType(noteTypeId uint) error {
 	}
 	return err
 }
+
+// AddTagsToNote appends tags to a note by ID.
+func (ctx *MahresourcesContext) AddTagsToNote(noteId uint, tagIds []uint) error {
+	note := models.Note{ID: noteId}
+	tags := BuildAssociationSlice(tagIds, TagFromID)
+	return ctx.db.Model(&note).Association("Tags").Append(&tags)
+}
+
+// RemoveTagsFromNote removes tags from a note by ID.
+func (ctx *MahresourcesContext) RemoveTagsFromNote(noteId uint, tagIds []uint) error {
+	note := models.Note{ID: noteId}
+	tags := BuildAssociationSlice(tagIds, TagFromID)
+	return ctx.db.Model(&note).Association("Tags").Delete(&tags)
+}
+
+// AddGroupsToNote appends groups to a note by ID.
+func (ctx *MahresourcesContext) AddGroupsToNote(noteId uint, groupIds []uint) error {
+	note := models.Note{ID: noteId}
+	groups := BuildAssociationSlice(groupIds, GroupFromID)
+	return ctx.db.Model(&note).Association("Groups").Append(&groups)
+}
+
+// RemoveGroupsFromNote removes groups from a note by ID.
+func (ctx *MahresourcesContext) RemoveGroupsFromNote(noteId uint, groupIds []uint) error {
+	note := models.Note{ID: noteId}
+	groups := BuildAssociationSlice(groupIds, GroupFromID)
+	return ctx.db.Model(&note).Association("Groups").Delete(&groups)
+}
+
+// AddResourcesToNote appends resources to a note by ID.
+func (ctx *MahresourcesContext) AddResourcesToNote(noteId uint, resourceIds []uint) error {
+	note := models.Note{ID: noteId}
+	resources := BuildAssociationSlice(resourceIds, ResourceFromID)
+	return ctx.db.Model(&note).Association("Resources").Append(&resources)
+}
+
+// RemoveResourcesFromNote removes resources from a note by ID.
+func (ctx *MahresourcesContext) RemoveResourcesFromNote(noteId uint, resourceIds []uint) error {
+	note := models.Note{ID: noteId}
+	resources := BuildAssociationSlice(resourceIds, ResourceFromID)
+	return ctx.db.Model(&note).Association("Resources").Delete(&resources)
+}

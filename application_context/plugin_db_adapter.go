@@ -316,6 +316,593 @@ func resourceToMap(r *models.Resource) map[string]any {
 	return result
 }
 
+// Compile-time interface compliance check for EntityWriter.
+var _ plugin_system.EntityWriter = (*pluginDBAdapter)(nil)
+
+// --- Helper functions for extracting typed values from option maps ---
+
+// getStringOpt extracts a string value from an options map.
+func getStringOpt(opts map[string]any, key string) string {
+	if v, ok := opts[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+// getUintOpt extracts a uint value from an options map (expects float64 from Lua).
+func getUintOpt(opts map[string]any, key string) uint {
+	if v, ok := opts[key].(float64); ok && v > 0 {
+		return uint(v)
+	}
+	return 0
+}
+
+// getUintSliceOpt extracts a []uint from an options map.
+// Handles both []any (proper arrays) and map[string]any (Lua tables with
+// integer keys that luaTableToGoMap parses as maps).
+func getUintSliceOpt(opts map[string]any, key string) []uint {
+	switch v := opts[key].(type) {
+	case []any:
+		result := make([]uint, 0, len(v))
+		for _, item := range v {
+			if id, ok := item.(float64); ok && id > 0 {
+				result = append(result, uint(id))
+			}
+		}
+		return result
+	case map[string]any:
+		result := make([]uint, 0, len(v))
+		for _, item := range v {
+			if id, ok := item.(float64); ok && id > 0 {
+				result = append(result, uint(id))
+			}
+		}
+		return result
+	}
+	return nil
+}
+
+// --- Converter functions: model -> map[string]any (float64 for Lua) ---
+
+func groupToMap(g *models.Group) map[string]any {
+	result := map[string]any{
+		"id":          float64(g.ID),
+		"name":        g.Name,
+		"description": g.Description,
+		"meta":        string(g.Meta),
+	}
+	if g.OwnerId != nil {
+		result["owner_id"] = float64(*g.OwnerId)
+	}
+	if g.CategoryId != nil {
+		result["category_id"] = float64(*g.CategoryId)
+	}
+	return result
+}
+
+func noteToMap(n *models.Note) map[string]any {
+	result := map[string]any{
+		"id":          float64(n.ID),
+		"name":        n.Name,
+		"description": n.Description,
+		"meta":        string(n.Meta),
+	}
+	if n.OwnerId != nil {
+		result["owner_id"] = float64(*n.OwnerId)
+	}
+	if n.NoteTypeId != nil {
+		result["note_type_id"] = float64(*n.NoteTypeId)
+	}
+	return result
+}
+
+func tagToMap(t *models.Tag) map[string]any {
+	return map[string]any{
+		"id":          float64(t.ID),
+		"name":        t.Name,
+		"description": t.Description,
+	}
+}
+
+func categoryToMap(c *models.Category) map[string]any {
+	return map[string]any{
+		"id":          float64(c.ID),
+		"name":        c.Name,
+		"description": c.Description,
+	}
+}
+
+func resourceCategoryToMap(rc *models.ResourceCategory) map[string]any {
+	return map[string]any{
+		"id":          float64(rc.ID),
+		"name":        rc.Name,
+		"description": rc.Description,
+	}
+}
+
+func noteTypeToMap(nt *models.NoteType) map[string]any {
+	return map[string]any{
+		"id":          float64(nt.ID),
+		"name":        nt.Name,
+		"description": nt.Description,
+	}
+}
+
+func groupRelationToMap(r *models.GroupRelation) map[string]any {
+	result := map[string]any{
+		"id":          float64(r.ID),
+		"name":        r.Name,
+		"description": r.Description,
+	}
+	if r.FromGroupId != nil {
+		result["from_group_id"] = float64(*r.FromGroupId)
+	}
+	if r.ToGroupId != nil {
+		result["to_group_id"] = float64(*r.ToGroupId)
+	}
+	if r.RelationTypeId != nil {
+		result["relation_type_id"] = float64(*r.RelationTypeId)
+	}
+	return result
+}
+
+func relationTypeToMap(rt *models.GroupRelationType) map[string]any {
+	result := map[string]any{
+		"id":          float64(rt.ID),
+		"name":        rt.Name,
+		"description": rt.Description,
+	}
+	if rt.FromCategoryId != nil {
+		result["from_category_id"] = float64(*rt.FromCategoryId)
+	}
+	if rt.ToCategoryId != nil {
+		result["to_category_id"] = float64(*rt.ToCategoryId)
+	}
+	if rt.BackRelationId != nil {
+		result["back_relation_id"] = float64(*rt.BackRelationId)
+	}
+	return result
+}
+
+// --- EntityWriter: Group CRUD ---
+
+func (a *pluginDBAdapter) CreateGroup(opts map[string]any) (map[string]any, error) {
+	creator := &query_models.GroupCreator{
+		Name:        getStringOpt(opts, "name"),
+		Description: getStringOpt(opts, "description"),
+		Meta:        getStringOpt(opts, "meta"),
+		URL:         getStringOpt(opts, "url"),
+		CategoryId:  getUintOpt(opts, "category_id"),
+		OwnerId:     getUintOpt(opts, "owner_id"),
+		Tags:        getUintSliceOpt(opts, "tags"),
+		Groups:      getUintSliceOpt(opts, "groups"),
+	}
+	group, err := a.ctx.CreateGroup(creator)
+	if err != nil {
+		return nil, err
+	}
+	return groupToMap(group), nil
+}
+
+func (a *pluginDBAdapter) UpdateGroup(id uint, opts map[string]any) (map[string]any, error) {
+	editor := &query_models.GroupEditor{
+		GroupCreator: query_models.GroupCreator{
+			Name:        getStringOpt(opts, "name"),
+			Description: getStringOpt(opts, "description"),
+			Meta:        getStringOpt(opts, "meta"),
+			URL:         getStringOpt(opts, "url"),
+			CategoryId:  getUintOpt(opts, "category_id"),
+			OwnerId:     getUintOpt(opts, "owner_id"),
+			Tags:        getUintSliceOpt(opts, "tags"),
+			Groups:      getUintSliceOpt(opts, "groups"),
+		},
+		ID: id,
+	}
+	group, err := a.ctx.UpdateGroup(editor)
+	if err != nil {
+		return nil, err
+	}
+	return groupToMap(group), nil
+}
+
+func (a *pluginDBAdapter) DeleteGroup(id uint) error {
+	return a.ctx.DeleteGroup(id)
+}
+
+// --- EntityWriter: Note CRUD ---
+
+func (a *pluginDBAdapter) CreateNote(opts map[string]any) (map[string]any, error) {
+	editor := &query_models.NoteEditor{
+		ID: 0, // ID=0 means create
+	}
+	editor.Name = getStringOpt(opts, "name")
+	editor.Description = getStringOpt(opts, "description")
+	editor.Meta = getStringOpt(opts, "meta")
+	editor.StartDate = getStringOpt(opts, "start_date")
+	editor.EndDate = getStringOpt(opts, "end_date")
+	editor.OwnerId = getUintOpt(opts, "owner_id")
+	editor.NoteTypeId = getUintOpt(opts, "note_type_id")
+	editor.Tags = getUintSliceOpt(opts, "tags")
+	editor.Groups = getUintSliceOpt(opts, "groups")
+	editor.Resources = getUintSliceOpt(opts, "resources")
+
+	note, err := a.ctx.CreateOrUpdateNote(editor)
+	if err != nil {
+		return nil, err
+	}
+	return noteToMap(note), nil
+}
+
+func (a *pluginDBAdapter) UpdateNote(id uint, opts map[string]any) (map[string]any, error) {
+	editor := &query_models.NoteEditor{
+		ID: id, // ID!=0 means update
+	}
+	editor.Name = getStringOpt(opts, "name")
+	editor.Description = getStringOpt(opts, "description")
+	editor.Meta = getStringOpt(opts, "meta")
+	editor.StartDate = getStringOpt(opts, "start_date")
+	editor.EndDate = getStringOpt(opts, "end_date")
+	editor.OwnerId = getUintOpt(opts, "owner_id")
+	editor.NoteTypeId = getUintOpt(opts, "note_type_id")
+	editor.Tags = getUintSliceOpt(opts, "tags")
+	editor.Groups = getUintSliceOpt(opts, "groups")
+	editor.Resources = getUintSliceOpt(opts, "resources")
+
+	note, err := a.ctx.CreateOrUpdateNote(editor)
+	if err != nil {
+		return nil, err
+	}
+	return noteToMap(note), nil
+}
+
+func (a *pluginDBAdapter) DeleteNote(id uint) error {
+	return a.ctx.DeleteNote(id)
+}
+
+// --- EntityWriter: Tag CRUD ---
+
+func (a *pluginDBAdapter) CreateTag(opts map[string]any) (map[string]any, error) {
+	creator := &query_models.TagCreator{
+		Name:        getStringOpt(opts, "name"),
+		Description: getStringOpt(opts, "description"),
+	}
+	tag, err := a.ctx.CreateTag(creator)
+	if err != nil {
+		return nil, err
+	}
+	return tagToMap(tag), nil
+}
+
+func (a *pluginDBAdapter) UpdateTag(id uint, opts map[string]any) (map[string]any, error) {
+	creator := &query_models.TagCreator{
+		ID:          id,
+		Name:        getStringOpt(opts, "name"),
+		Description: getStringOpt(opts, "description"),
+	}
+	tag, err := a.ctx.UpdateTag(creator)
+	if err != nil {
+		return nil, err
+	}
+	return tagToMap(tag), nil
+}
+
+func (a *pluginDBAdapter) DeleteTag(id uint) error {
+	return a.ctx.DeleteTag(id)
+}
+
+// --- EntityWriter: Category CRUD ---
+
+func (a *pluginDBAdapter) CreateCategory(opts map[string]any) (map[string]any, error) {
+	creator := &query_models.CategoryCreator{
+		Name:          getStringOpt(opts, "name"),
+		Description:   getStringOpt(opts, "description"),
+		CustomHeader:  getStringOpt(opts, "custom_header"),
+		CustomSidebar: getStringOpt(opts, "custom_sidebar"),
+		CustomSummary: getStringOpt(opts, "custom_summary"),
+		CustomAvatar:  getStringOpt(opts, "custom_avatar"),
+		MetaSchema:    getStringOpt(opts, "meta_schema"),
+	}
+	cat, err := a.ctx.CreateCategory(creator)
+	if err != nil {
+		return nil, err
+	}
+	return categoryToMap(cat), nil
+}
+
+func (a *pluginDBAdapter) UpdateCategory(id uint, opts map[string]any) (map[string]any, error) {
+	editor := &query_models.CategoryEditor{
+		CategoryCreator: query_models.CategoryCreator{
+			Name:          getStringOpt(opts, "name"),
+			Description:   getStringOpt(opts, "description"),
+			CustomHeader:  getStringOpt(opts, "custom_header"),
+			CustomSidebar: getStringOpt(opts, "custom_sidebar"),
+			CustomSummary: getStringOpt(opts, "custom_summary"),
+			CustomAvatar:  getStringOpt(opts, "custom_avatar"),
+			MetaSchema:    getStringOpt(opts, "meta_schema"),
+		},
+		ID: id,
+	}
+	cat, err := a.ctx.UpdateCategory(editor)
+	if err != nil {
+		return nil, err
+	}
+	return categoryToMap(cat), nil
+}
+
+func (a *pluginDBAdapter) DeleteCategory(id uint) error {
+	return a.ctx.DeleteCategory(id)
+}
+
+// --- EntityWriter: ResourceCategory CRUD ---
+
+func (a *pluginDBAdapter) CreateResourceCategory(opts map[string]any) (map[string]any, error) {
+	creator := &query_models.ResourceCategoryCreator{
+		Name:          getStringOpt(opts, "name"),
+		Description:   getStringOpt(opts, "description"),
+		CustomHeader:  getStringOpt(opts, "custom_header"),
+		CustomSidebar: getStringOpt(opts, "custom_sidebar"),
+		CustomSummary: getStringOpt(opts, "custom_summary"),
+		CustomAvatar:  getStringOpt(opts, "custom_avatar"),
+		MetaSchema:    getStringOpt(opts, "meta_schema"),
+	}
+	rc, err := a.ctx.CreateResourceCategory(creator)
+	if err != nil {
+		return nil, err
+	}
+	return resourceCategoryToMap(rc), nil
+}
+
+func (a *pluginDBAdapter) UpdateResourceCategory(id uint, opts map[string]any) (map[string]any, error) {
+	editor := &query_models.ResourceCategoryEditor{
+		ResourceCategoryCreator: query_models.ResourceCategoryCreator{
+			Name:          getStringOpt(opts, "name"),
+			Description:   getStringOpt(opts, "description"),
+			CustomHeader:  getStringOpt(opts, "custom_header"),
+			CustomSidebar: getStringOpt(opts, "custom_sidebar"),
+			CustomSummary: getStringOpt(opts, "custom_summary"),
+			CustomAvatar:  getStringOpt(opts, "custom_avatar"),
+			MetaSchema:    getStringOpt(opts, "meta_schema"),
+		},
+		ID: id,
+	}
+	rc, err := a.ctx.UpdateResourceCategory(editor)
+	if err != nil {
+		return nil, err
+	}
+	return resourceCategoryToMap(rc), nil
+}
+
+func (a *pluginDBAdapter) DeleteResourceCategory(id uint) error {
+	return a.ctx.DeleteResourceCategory(id)
+}
+
+// --- EntityWriter: NoteType CRUD ---
+
+func (a *pluginDBAdapter) CreateNoteType(opts map[string]any) (map[string]any, error) {
+	editor := &query_models.NoteTypeEditor{
+		ID:            0, // ID=0 means create
+		Name:          getStringOpt(opts, "name"),
+		Description:   getStringOpt(opts, "description"),
+		CustomHeader:  getStringOpt(opts, "custom_header"),
+		CustomSidebar: getStringOpt(opts, "custom_sidebar"),
+		CustomSummary: getStringOpt(opts, "custom_summary"),
+		CustomAvatar:  getStringOpt(opts, "custom_avatar"),
+	}
+	nt, err := a.ctx.CreateOrUpdateNoteType(editor)
+	if err != nil {
+		return nil, err
+	}
+	return noteTypeToMap(nt), nil
+}
+
+func (a *pluginDBAdapter) UpdateNoteType(id uint, opts map[string]any) (map[string]any, error) {
+	editor := &query_models.NoteTypeEditor{
+		ID:            id,
+		Name:          getStringOpt(opts, "name"),
+		Description:   getStringOpt(opts, "description"),
+		CustomHeader:  getStringOpt(opts, "custom_header"),
+		CustomSidebar: getStringOpt(opts, "custom_sidebar"),
+		CustomSummary: getStringOpt(opts, "custom_summary"),
+		CustomAvatar:  getStringOpt(opts, "custom_avatar"),
+	}
+	nt, err := a.ctx.CreateOrUpdateNoteType(editor)
+	if err != nil {
+		return nil, err
+	}
+	return noteTypeToMap(nt), nil
+}
+
+func (a *pluginDBAdapter) DeleteNoteType(id uint) error {
+	return a.ctx.DeleteNoteType(id)
+}
+
+// --- EntityWriter: GroupRelation CRUD ---
+
+func (a *pluginDBAdapter) CreateGroupRelation(opts map[string]any) (map[string]any, error) {
+	fromGroupId := getUintOpt(opts, "from_group_id")
+	toGroupId := getUintOpt(opts, "to_group_id")
+	relationTypeId := getUintOpt(opts, "relation_type_id")
+
+	if fromGroupId == 0 || toGroupId == 0 || relationTypeId == 0 {
+		return nil, fmt.Errorf("from_group_id, to_group_id, and relation_type_id are required")
+	}
+
+	relation, err := a.ctx.AddRelation(fromGroupId, toGroupId, relationTypeId)
+	if err != nil {
+		return nil, err
+	}
+
+	// Optionally set name and description via EditRelation
+	name := getStringOpt(opts, "name")
+	description := getStringOpt(opts, "description")
+	if name != "" || description != "" {
+		relation, err = a.ctx.EditRelation(query_models.GroupRelationshipQuery{
+			Id:          relation.ID,
+			Name:        name,
+			Description: description,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return groupRelationToMap(relation), nil
+}
+
+func (a *pluginDBAdapter) UpdateGroupRelation(opts map[string]any) (map[string]any, error) {
+	query := query_models.GroupRelationshipQuery{
+		Id:          getUintOpt(opts, "id"),
+		Name:        getStringOpt(opts, "name"),
+		Description: getStringOpt(opts, "description"),
+	}
+	if query.Id == 0 {
+		return nil, fmt.Errorf("id is required for updating a group relation")
+	}
+	relation, err := a.ctx.EditRelation(query)
+	if err != nil {
+		return nil, err
+	}
+	return groupRelationToMap(relation), nil
+}
+
+func (a *pluginDBAdapter) DeleteGroupRelation(id uint) error {
+	return a.ctx.DeleteRelationship(id)
+}
+
+// --- EntityWriter: RelationType CRUD ---
+
+func (a *pluginDBAdapter) CreateRelationType(opts map[string]any) (map[string]any, error) {
+	query := &query_models.RelationshipTypeEditorQuery{
+		Name:         getStringOpt(opts, "name"),
+		Description:  getStringOpt(opts, "description"),
+		FromCategory: getUintOpt(opts, "from_category"),
+		ToCategory:   getUintOpt(opts, "to_category"),
+		ReverseName:  getStringOpt(opts, "reverse_name"),
+	}
+	rt, err := a.ctx.AddRelationType(query)
+	if err != nil {
+		return nil, err
+	}
+	return relationTypeToMap(rt), nil
+}
+
+func (a *pluginDBAdapter) UpdateRelationType(opts map[string]any) (map[string]any, error) {
+	query := &query_models.RelationshipTypeEditorQuery{
+		Id:          getUintOpt(opts, "id"),
+		Name:        getStringOpt(opts, "name"),
+		Description: getStringOpt(opts, "description"),
+	}
+	if query.Id == 0 {
+		return nil, fmt.Errorf("id is required for updating a relation type")
+	}
+	rt, err := a.ctx.EditRelationType(query)
+	if err != nil {
+		return nil, err
+	}
+	return relationTypeToMap(rt), nil
+}
+
+func (a *pluginDBAdapter) DeleteRelationType(id uint) error {
+	return a.ctx.DeleteRelationshipType(id)
+}
+
+// --- EntityWriter: Resource deletion ---
+
+func (a *pluginDBAdapter) DeleteResource(id uint) error {
+	return a.ctx.DeleteResource(id)
+}
+
+// --- EntityWriter: Relationship management ---
+
+func (a *pluginDBAdapter) AddTagsToEntity(entityType string, id uint, tagIds []uint) error {
+	if len(tagIds) == 0 {
+		return nil
+	}
+	switch entityType {
+	case "group":
+		return a.ctx.BulkAddTagsToGroups(&query_models.BulkEditQuery{
+			BulkQuery: query_models.BulkQuery{ID: []uint{id}},
+			EditedId:  tagIds,
+		})
+	case "resource":
+		return a.ctx.BulkAddTagsToResources(&query_models.BulkEditQuery{
+			BulkQuery: query_models.BulkQuery{ID: []uint{id}},
+			EditedId:  tagIds,
+		})
+	case "note":
+		return a.ctx.AddTagsToNote(id, tagIds)
+	default:
+		return fmt.Errorf("unsupported entity type for AddTagsToEntity: %s", entityType)
+	}
+}
+
+func (a *pluginDBAdapter) RemoveTagsFromEntity(entityType string, id uint, tagIds []uint) error {
+	if len(tagIds) == 0 {
+		return nil
+	}
+	switch entityType {
+	case "group":
+		return a.ctx.BulkRemoveTagsFromGroups(&query_models.BulkEditQuery{
+			BulkQuery: query_models.BulkQuery{ID: []uint{id}},
+			EditedId:  tagIds,
+		})
+	case "resource":
+		return a.ctx.BulkRemoveTagsFromResources(&query_models.BulkEditQuery{
+			BulkQuery: query_models.BulkQuery{ID: []uint{id}},
+			EditedId:  tagIds,
+		})
+	case "note":
+		return a.ctx.RemoveTagsFromNote(id, tagIds)
+	default:
+		return fmt.Errorf("unsupported entity type for RemoveTagsFromEntity: %s", entityType)
+	}
+}
+
+func (a *pluginDBAdapter) AddGroupsToEntity(entityType string, id uint, groupIds []uint) error {
+	if len(groupIds) == 0 {
+		return nil
+	}
+	switch entityType {
+	case "resource":
+		return a.ctx.BulkAddGroupsToResources(&query_models.BulkEditQuery{
+			BulkQuery: query_models.BulkQuery{ID: []uint{id}},
+			EditedId:  groupIds,
+		})
+	case "note":
+		return a.ctx.AddGroupsToNote(id, groupIds)
+	default:
+		return fmt.Errorf("unsupported entity type for AddGroupsToEntity: %s", entityType)
+	}
+}
+
+func (a *pluginDBAdapter) RemoveGroupsFromEntity(entityType string, id uint, groupIds []uint) error {
+	if len(groupIds) == 0 {
+		return nil
+	}
+	switch entityType {
+	case "resource":
+		return a.ctx.RemoveGroupsFromResource(id, groupIds)
+	case "note":
+		return a.ctx.RemoveGroupsFromNote(id, groupIds)
+	default:
+		return fmt.Errorf("unsupported entity type for RemoveGroupsFromEntity: %s", entityType)
+	}
+}
+
+func (a *pluginDBAdapter) AddResourcesToNote(noteId uint, resourceIds []uint) error {
+	if len(resourceIds) == 0 {
+		return nil
+	}
+	return a.ctx.AddResourcesToNote(noteId, resourceIds)
+}
+
+func (a *pluginDBAdapter) RemoveResourcesFromNote(noteId uint, resourceIds []uint) error {
+	if len(resourceIds) == 0 {
+		return nil
+	}
+	return a.ctx.RemoveResourcesFromNote(noteId, resourceIds)
+}
+
 // applyResourceOptions sets common fields from plugin options map.
 func applyResourceOptions(base *query_models.ResourceQueryBase, options map[string]any) {
 	if name, ok := options["name"].(string); ok {

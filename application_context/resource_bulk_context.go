@@ -574,3 +574,14 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 
 	return nil
 }
+
+// RemoveGroupsFromResource removes group associations from a single resource.
+func (ctx *MahresourcesContext) RemoveGroupsFromResource(resourceId uint, groupIds []uint) error {
+	if len(groupIds) == 0 {
+		return nil
+	}
+	return ctx.db.Exec(
+		"DELETE FROM groups_related_resources WHERE resource_id = ? AND group_id IN ?",
+		resourceId, groupIds,
+	).Error
+}
