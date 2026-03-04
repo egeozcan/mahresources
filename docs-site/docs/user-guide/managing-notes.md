@@ -4,7 +4,7 @@ sidebar_position: 3
 
 # Managing Notes
 
-Notes are text entries that link to resources, groups, and tags. They support date ranges, custom metadata, and note types for specialized formatting.
+Create, edit, and organize text content with date ranges, block-based editing, metadata, and type-specific templates.
 
 ## Creating Notes
 
@@ -91,13 +91,15 @@ Click the note title in the header to edit it directly. Changes save automatical
 
 Note types add custom templates and styling to notes.
 
-### What Note Types Provide
+### Note Type Properties
 
-- **Name** - Identifier for the type
-- **Custom Header** - HTML template displayed above note content
-- **Custom Sidebar** - HTML template displayed in the sidebar
-- **Custom Summary** - HTML template for list views
-- **Custom Avatar** - HTML template for note avatars
+| Property | Description |
+|----------|-------------|
+| `name` | Identifier for the type |
+| `customHeader` | HTML template displayed above Note content |
+| `customSidebar` | HTML template displayed in the sidebar |
+| `customSummary` | HTML template for list views |
+| `customAvatar` | HTML template for Note avatars |
 
 ### Using Note Types
 
@@ -132,7 +134,7 @@ The `entity` object contains all note fields including custom metadata.
 
 ## Wide Display Mode
 
-Wide display mode shows just the note text in a full-width layout, hiding the sidebar:
+Wide display mode shows the Note text in a full-width layout, hiding the sidebar:
 
 1. Navigate to a note detail page
 2. Click **Wide display** link below the title
@@ -231,17 +233,18 @@ The block editor appears below the main content area on note detail pages. It le
 
 ### Block Types
 
-The block editor supports seven block types:
+The block editor supports eight block types:
 
 | Block Type | Description |
 |------------|-------------|
 | **Text** | Rich text content with Markdown support |
-| **Heading** | Section headers with H1, H2, or H3 levels |
+| **Heading** | Section headers with levels 1-6 |
 | **Divider** | Horizontal line to separate content sections |
-| **Gallery** | Grid display of resource thumbnails by ID |
-| **References** | Links to groups by ID |
+| **Gallery** | Grid display of Resource thumbnails by ID |
+| **References** | Links to entities by type and ID |
 | **Todos** | Checklist with interactive checkboxes |
-| **Table** | Data table with sortable columns |
+| **Table** | Data table driven by a saved Query |
+| **Calendar** | Calendar view from iCal sources or custom events |
 
 ### Adding Blocks
 

@@ -53,7 +53,7 @@ Type at least 2 characters. Results appear grouped by type (Resources, Notes, Gr
 | Enter | Open selected result |
 | Escape | Close search dialog |
 
-Results cache for 30 seconds and are limited to 15 items per search.
+Results cache for 60 seconds and are limited to 20 items per search (max 50).
 
 ## List Views
 

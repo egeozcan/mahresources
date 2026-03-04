@@ -54,6 +54,7 @@ services:
     volumes:
       - app-data:/app/data       # SQLite database
       - app-files:/app/files     # uploaded files
+      - ./plugins:/app/plugins   # plugin scripts (optional)
     environment:
       - DB_TYPE=SQLITE
       - DB_DSN=/app/data/mahresources.db
@@ -85,6 +86,7 @@ services:
       - "8181:8181"
     volumes:
       - ./data/files:/data/files    # uploaded files (bind mount)
+      - ./plugins:/app/plugins      # plugin scripts (optional)
     environment:
       - DB_TYPE=POSTGRES
       - DB_DSN=host=postgres user=mahresources password=secretpassword dbname=mahresources sslmode=disable
@@ -124,7 +126,7 @@ All configuration options can be set via environment variables. The most common 
 | `DB_DSN` | Database connection string | `/data/db/mahresources.db` |
 | `FILE_SAVE_PATH` | File storage directory | `/data/files` |
 | `BIND_ADDRESS` | Server bind address | `:8181` |
-| `FFMPEG_PATH` | Path to ffmpeg binary | `/usr/bin/ffmpeg` |
+| `FFMPEG_PATH` | Path to FFmpeg binary | `/usr/bin/ffmpeg` |
 | `LIBREOFFICE_PATH` | Path to LibreOffice | `/usr/bin/soffice` |
 | `SKIP_FTS` | Skip full-text search init | `1` |
 | `HASH_WORKER_DISABLED` | Disable hash worker | `1` |
@@ -138,6 +140,10 @@ Two volumes must persist across container restarts:
 
 Use named volumes (as shown above) or bind mounts.
 
+If using plugins, mount the plugin directory as well:
+
+3. **Plugins volume** (`/app/plugins`) -- Lua plugin scripts (optional, bind mount recommended so you can edit plugins on the host)
+
 ## Updating
 
 Pull the latest source and rebuild:
@@ -150,7 +156,7 @@ docker compose up -d
 
 ## Template Dockerfile
 
-The repository includes a Dockerfile. Note that the repository Dockerfile is configured for development/testing (it uses `test.db` as the default database name and sets `SKIP_FTS=1`, which disables full-text search). The template below is a production-ready alternative:
+The repository includes a Dockerfile. The repository Dockerfile is configured for development/testing (it uses `test.db` as the default database name and sets `SKIP_FTS=1`, which disables full-text search). The template below is a production-ready alternative:
 
 ```dockerfile
 # Stage 1: Build frontend assets

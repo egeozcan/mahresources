@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # Resource Versioning
 
-Every resource keeps a full version history. You can upload new versions, compare changes side-by-side, and restore previous versions at any time.
+Resources track file changes through content-addressable versioning. Each upload creates a new version record while deduplicating storage by SHA1 hash.
 
 ## How Versioning Works
 
@@ -26,7 +26,7 @@ Files are stored by hash, meaning identical files are only stored once regardles
 
 ## Version History Panel
 
-On each resource's detail page, you will find a **Versions** panel that displays all versions of the file.
+The resource detail page includes a **Versions** panel listing all versions of the file.
 
 For each version, you can see:
 
@@ -42,7 +42,7 @@ For each version, you can see:
 |--------|-------------|
 | **Download** | Download that specific version's file |
 | **Restore** | Create a new version from an older one, making it current |
-| **Delete** | Remove a version (cannot delete the current version) |
+| **Delete** | Remove a version (cannot delete the current version or the last remaining version) |
 | **Upload New** | Add a new version with an optional comment |
 
 ## Comparing Versions
@@ -130,16 +130,13 @@ To upload a new version:
 4. Optionally add a comment describing the changes
 5. Click **Upload New Version**
 
-Comments help you remember why changes were made:
-- "Fixed typo in title"
-- "Cropped to remove border"
-- "Higher resolution scan"
+Add a comment describing the change (e.g., "Fixed typo in title", "Higher resolution scan").
 
 ## Storage Implications
 
 ### Disk Space
 
-Each unique file is stored once. Version records are lightweight database entries (~200 bytes each). The main storage cost is the actual file content.
+Each unique file is stored once. Version records are ~200 bytes each in the database. The main storage cost is the actual file content.
 
 To estimate storage needs:
 - Count unique file content (not versions)
@@ -167,19 +164,31 @@ Two cleanup modes are available:
 Version deletion is permanent. Always use dry-run mode first to verify what will be deleted.
 :::
 
+## API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/v1/resource/versions?id={resourceId}` | List all versions for a Resource |
+| `POST` | `/v1/resource/versions` | Upload a new version (multipart: `id`, `file`, `comment`) |
+| `POST` | `/v1/resource/version/restore` | Restore a previous version (`id`, `versionId`, `comment`) |
+| `DELETE` | `/v1/resource/version` | Delete a version (`id`, `versionId`) |
+| `POST` | `/v1/resource/versions/cleanup` | Cleanup old versions (JSON body) |
+| `POST` | `/v1/resource/versions/bulk-cleanup` | Bulk cleanup across Resources |
+| `GET` | `/v1/resource/versions/compare` | Compare two versions side-by-side |
+
 ## Migration from Older Databases
 
-If you have resources that were created before versioning was added:
+Resources created before versioning receive a **virtual v1** when their versions are listed. This virtual version (ID = 0) represents the Resource's current state and is not persisted until a real version operation occurs.
 
-1. On startup, existing resources are automatically migrated
-2. Each resource gets a "v1" representing its current state
-3. The migration runs in the background and does not block startup
-4. Progress is logged to the console and activity log
+On startup, a background migration creates actual v1 records:
 
-For very large databases (millions of resources), you can skip the migration at startup:
+1. Finds Resources with no `current_version_id`
+2. Processes in batches of 500 (with 10ms sleep between batches)
+3. Creates a v1 record from the current Resource state
+4. Logs progress every 10,000 Resources
+
+The migration does not block startup. For databases with millions of Resources, skip it and run during a maintenance window:
 
 ```bash
 ./mahresources -skip-version-migration ...
 ```
-
-Then run the migration during a maintenance window.

@@ -10,7 +10,7 @@ Perceptual hashing finds visually similar images -- duplicates, near-duplicates,
 
 ### Perceptual Hashing
 
-Unlike cryptographic hashes (SHA1, MD5) which produce completely different outputs for any change, perceptual hashes (pHash) produce similar outputs for visually similar images.
+Unlike cryptographic hashes (SHA1, MD5) which produce completely different outputs for any change, perceptual hashes produce similar outputs for visually similar images.
 
 Two types of perceptual hashes are computed:
 
@@ -66,6 +66,7 @@ Configure the hash worker using command-line flags or environment variables:
 | `-hash-poll-interval` | `HASH_POLL_INTERVAL` | `1m` | Time between batches |
 | `-hash-similarity-threshold` | `HASH_SIMILARITY_THRESHOLD` | `10` | Max Hamming distance |
 | `-hash-worker-disabled` | `HASH_WORKER_DISABLED=1` | `false` | Disable entirely |
+| `-hash-cache-size` | `HASH_CACHE_SIZE` | `100000` | Maximum entries in the LRU similarity cache |
 
 ### Tuning Examples
 
@@ -147,9 +148,19 @@ Merging:
 Merging is permanent. The merged resources are deleted. Make sure you have selected the correct resource to keep.
 :::
 
+## Cache Warming
+
+At startup, the hash worker loads existing hashes into the LRU cache in pages of up to 50,000 entries. This pre-populates the cache so similarity detection is effective immediately without waiting for a full batch cycle.
+
+The cache size is controlled by `-hash-cache-size` (default: 100,000 entries). If your collection exceeds this limit, older entries are evicted and may not participate in similarity comparisons until they cycle back through batch processing.
+
+## Failed Hash Handling
+
+If hashing fails for a Resource (corrupt image, unsupported encoding), the worker stores an empty hash record. This prevents the Resource from being retried on every batch cycle.
+
 ## Memory Considerations
 
-The hash worker maintains an in-memory cache of all image hashes for fast similarity lookups. Memory usage depends on your image count:
+The hash worker maintains an in-memory LRU cache of image hashes for fast similarity lookups. Memory usage depends on your image count and the `-hash-cache-size` setting:
 
 | Image Count | Estimated Cache Size |
 |-------------|---------------------|
@@ -158,7 +169,7 @@ The hash worker maintains an in-memory cache of all image hashes for fast simila
 | 1,000,000 | ~24 MB |
 | 10,000,000 | ~240 MB |
 
-For very large collections, this is generally acceptable on modern systems. The cache is loaded at startup and updated incrementally.
+For collections with millions of images, memory usage stays under 250 MB. The cache is loaded at startup and updated incrementally.
 
 ## On-Upload Processing
 
@@ -203,6 +214,6 @@ Raise the similarity threshold:
 ### High memory usage
 
 If the hash cache is too large:
-1. Consider if all images need similarity detection
+1. Reduce the cache size: `-hash-cache-size=50000`
 2. Disable the worker if not needed: `-hash-worker-disabled`
 3. Add more system memory

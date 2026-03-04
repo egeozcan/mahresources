@@ -89,10 +89,16 @@ Shared notes are accessed on the share server:
 http://your-share-server:8383/s/{token}
 ```
 
-The share server:
-- Runs on a separate port from your main application
-- Only serves shared notes (no access to other content)
-- Supports interactive blocks with global state
+### Share Server Routes
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/s/{token}` | View the shared Note |
+| `POST` | `/s/{token}/block/{blockId}/state` | Update block state (toggle operations only) |
+| `GET` | `/s/{token}/block/{blockId}/calendar/events` | Get calendar events for a calendar block |
+| `GET` | `/s/{token}/resource/{hash}` | Access a Resource file by its hash |
+
+The share server runs on a separate port and only serves these routes. Resource access is validated -- the server checks that the requested Resource belongs to the shared Note (either through direct associations or gallery block references).
 
 ## Interactive Blocks on Shared Notes
 
@@ -152,24 +158,6 @@ Before sharing a note, review its content carefully:
 - The note's full text will be publicly visible
 - Any embedded resources (images, files) will be accessible
 - Block content (including todo items) will be visible
-
-## Use Cases
-
-### Public Documentation
-
-Share technical notes or documentation with collaborators or the public without giving them access to your entire Mahresources instance.
-
-### Shared Todo Lists
-
-Use todo blocks in shared notes for simple collaborative task tracking. All viewers see the same state and can toggle items.
-
-### Content Publishing
-
-Share selected notes publicly. Each shared note gets a stable URL that persists until you unshare it.
-
-### Temporary Sharing
-
-Share a note for a meeting or collaboration, then unshare when done. The URL immediately stops working.
 
 ## API Reference
 

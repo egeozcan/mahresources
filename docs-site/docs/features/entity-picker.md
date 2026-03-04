@@ -114,7 +114,7 @@ templates/partials/
 └── entityPicker.tpl    # Modal template
 ```
 
-The picker is entity-agnostic. All entity-specific behavior comes from configuration objects, making it easy to extend without modifying core logic.
+The picker is entity-agnostic. All entity-specific behavior comes from configuration objects.
 
 ## Configuration Reference
 
@@ -164,6 +164,11 @@ window.dispatchEvent(new CustomEvent('entity-picker-closed'));
 
 Filter autocompleters listen for this event to reset their state.
 
+## Search Behavior
+
+- **Debouncing**: Search input is debounced by 200ms to reduce API calls during typing
+- **Request aborting**: Each new search cancels the previous in-flight request, preventing stale results from overwriting newer ones
+
 ## Metadata Caching
 
 Entity metadata fetched for display in blocks is cached in memory to avoid redundant API requests. The cache has a 5-minute TTL and is automatically managed.
@@ -172,7 +177,9 @@ Entity metadata fetched for display in blocks is cached in memory to avoid redun
 
 - Metadata is cached per entity (keyed by `entityType:id`)
 - Cache entries expire after 5 minutes
-- Failed requests retry up to 2 times with exponential backoff
+- Batched concurrency: maximum 5 concurrent metadata requests per batch
+- Failed requests retry up to 2 times with 500ms exponential backoff
+- 4xx errors (client errors) are not retried
 - Cache is cleared on page reload
 
 ### Clearing the Cache

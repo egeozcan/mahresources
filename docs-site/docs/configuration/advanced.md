@@ -4,7 +4,7 @@ sidebar_position: 4
 
 # Advanced Configuration
 
-This page covers external tool integration, hash worker settings, network timeouts, and startup optimizations.
+External tool integration, hash worker settings, network timeouts, and startup optimizations.
 
 ## External Tools
 
@@ -12,7 +12,7 @@ External tools generate thumbnails for videos and office documents.
 
 ### FFmpeg (Video Thumbnails)
 
-FFmpeg is used to generate thumbnails from video files.
+FFmpeg generates thumbnails from video files.
 
 ```bash
 ./mahresources -ffmpeg-path=/usr/bin/ffmpeg -db-type=SQLITE -db-dsn=./db.sqlite -file-save-path=./files
@@ -24,7 +24,7 @@ Or with environment variables:
 FFMPEG_PATH=/usr/bin/ffmpeg
 ```
 
-If not specified, `ffmpeg` is auto-detected from your PATH.
+If not specified, FFmpeg is auto-detected from your PATH.
 
 ### LibreOffice (Office Document Thumbnails)
 
@@ -99,7 +99,7 @@ The `-hash-similarity-threshold` controls how similar images must be to be consi
 
 ## Thumbnail Worker Configuration
 
-A background worker generates thumbnails for video files using ffmpeg. It runs in batch cycles, similar to the hash worker.
+A background worker generates thumbnails for video files using FFmpeg. It runs in batch cycles, similar to the hash worker.
 
 | Flag | Env Variable | Default | Description |
 |------|--------------|---------|-------------|
@@ -109,7 +109,7 @@ A background worker generates thumbnails for video files using ffmpeg. It runs i
 | `-thumb-poll-interval` | `THUMB_POLL_INTERVAL` | `1m` | Time between backfill cycles |
 | `-thumb-backfill` | `THUMB_BACKFILL=1` | `false` | Backfill thumbnails for existing videos |
 
-Enable backfill to generate thumbnails for videos that were uploaded before ffmpeg was configured:
+Enable backfill to generate thumbnails for videos that were uploaded before FFmpeg was configured:
 
 ```bash
 ./mahresources \
@@ -125,7 +125,7 @@ Fine-tune individual video thumbnail generation:
 
 | Flag | Env Variable | Default | Description |
 |------|--------------|---------|-------------|
-| `-video-thumb-timeout` | `VIDEO_THUMB_TIMEOUT` | `30s` | Timeout for a single ffmpeg thumbnail job |
+| `-video-thumb-timeout` | `VIDEO_THUMB_TIMEOUT` | `30s` | Timeout for a single FFmpeg thumbnail job |
 | `-video-thumb-lock-timeout` | `VIDEO_THUMB_LOCK_TIMEOUT` | `60s` | Timeout waiting for a thumbnail lock |
 | `-video-thumb-concurrency` | `VIDEO_THUMB_CONCURRENCY` | `4` | Max concurrent video thumbnail jobs |
 
@@ -178,7 +178,7 @@ On large databases, certain startup operations can be slow. These flags reduce s
 
 ### Skip Full-Text Search
 
-Disables FTS index initialization:
+Disables full-text search index initialization:
 
 ```bash
 ./mahresources -skip-fts ...
@@ -244,12 +244,31 @@ Automatically delete old log entries on startup:
 ./mahresources -cleanup-logs-days=90 ...
 ```
 
+## Plugin Configuration
+
+Plugins extend Mahresources through sandboxed Lua scripts. See [Plugin System](../features/plugin-system.md) for full details.
+
+| Flag | Env Variable | Default | Description |
+|------|--------------|---------|-------------|
+| `-plugin-path` | `PLUGIN_PATH` | `./plugins` | Directory to scan for plugin subdirectories |
+| `-plugins-disabled` | `PLUGINS_DISABLED=1` | `false` | Disable the plugin system entirely |
+
+Each plugin lives in a subdirectory of the plugin path and must contain a `plugin.lua` file. Plugins are discovered at startup but must be explicitly enabled through the management UI or API.
+
+```bash
+# Custom plugin directory
+./mahresources -plugin-path=/opt/mahresources/plugins ...
+
+# Disable all plugins
+./mahresources -plugins-disabled ...
+```
+
 ## Configuration Reference
 
 | Flag | Env Variable | Default | Description |
 |------|--------------|---------|-------------|
 | `-bind-address` | `BIND_ADDRESS` | - | Server address:port |
-| `-ffmpeg-path` | `FFMPEG_PATH` | auto-detect | Path to ffmpeg binary |
+| `-ffmpeg-path` | `FFMPEG_PATH` | auto-detect | Path to FFmpeg binary |
 | `-libreoffice-path` | `LIBREOFFICE_PATH` | auto-detect | Path to LibreOffice binary |
 | `-hash-worker-count` | `HASH_WORKER_COUNT` | `4` | Concurrent hash workers |
 | `-hash-batch-size` | `HASH_BATCH_SIZE` | `500` | Resources per batch |
@@ -262,15 +281,17 @@ Automatically delete old log entries on startup:
 | `-thumb-batch-size` | `THUMB_BATCH_SIZE` | `10` | Videos per backfill cycle |
 | `-thumb-poll-interval` | `THUMB_POLL_INTERVAL` | `1m` | Time between backfill cycles |
 | `-thumb-backfill` | `THUMB_BACKFILL=1` | `false` | Backfill thumbnails for existing videos |
-| `-video-thumb-timeout` | `VIDEO_THUMB_TIMEOUT` | `30s` | Timeout per ffmpeg thumbnail job |
+| `-video-thumb-timeout` | `VIDEO_THUMB_TIMEOUT` | `30s` | Timeout per FFmpeg thumbnail job |
 | `-video-thumb-lock-timeout` | `VIDEO_THUMB_LOCK_TIMEOUT` | `60s` | Thumbnail lock timeout |
 | `-video-thumb-concurrency` | `VIDEO_THUMB_CONCURRENCY` | `4` | Max concurrent video thumbnail jobs |
 | `-remote-connect-timeout` | `REMOTE_CONNECT_TIMEOUT` | `30s` | Connection timeout |
 | `-remote-idle-timeout` | `REMOTE_IDLE_TIMEOUT` | `60s` | Idle timeout |
 | `-remote-overall-timeout` | `REMOTE_OVERALL_TIMEOUT` | `30m` | Total download timeout |
-| `-skip-fts` | `SKIP_FTS=1` | `false` | Skip FTS initialization |
+| `-skip-fts` | `SKIP_FTS=1` | `false` | Skip full-text search initialization |
 | `-skip-version-migration` | `SKIP_VERSION_MIGRATION=1` | `false` | Skip version migration |
 | `-max-db-connections` | `MAX_DB_CONNECTIONS` | - | Connection pool limit |
 | `-share-port` | `SHARE_PORT` | (disabled) | Share server port |
 | `-share-bind-address` | `SHARE_BIND_ADDRESS` | `0.0.0.0` | Share server bind address |
 | `-cleanup-logs-days` | `CLEANUP_LOGS_DAYS` | `0` (disabled) | Delete old logs on startup |
+| `-plugin-path` | `PLUGIN_PATH` | `./plugins` | Plugin directory |
+| `-plugins-disabled` | `PLUGINS_DISABLED=1` | `false` | Disable plugin system |

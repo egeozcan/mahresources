@@ -1,54 +1,55 @@
 ---
 sidebar_position: 5
+title: Search
 ---
 
 # Search
 
-Four ways to find content: global search for quick lookups, list view filters for detailed queries, full-text search for content matching, and saved queries for complex SQL.
+Four ways to find content: global search for quick lookups, list view filters for detailed queries, full-text search for content matching, and saved Queries for raw SQL.
 
 ## Global Search
 
-### Accessing Global Search
-
-- Click the **Search** button in the header
-- Press **Cmd+K** (macOS) or **Ctrl+K** (Windows/Linux)
+Open with **Cmd+K** (macOS) or **Ctrl+K** (Windows/Linux), or click the **Search** button in the header.
 
 ### How It Works
 
 1. Type at least 2 characters
-2. Results appear instantly, grouped by type
-3. Use arrow keys to navigate
-4. Press Enter to open the selected result
+2. Results appear grouped by type
+3. Use arrow keys to navigate, Enter to open, Escape to close
 
 ### What Gets Searched
 
-Global search queries across:
-
 | Entity Type | Searched Fields |
 |-------------|-----------------|
-| Resources | Name, Description |
-| Notes | Title, Text |
+| Resources | Name, Description, Original Name |
+| Notes | Name, Description |
 | Groups | Name, Description |
-| Tags | Name |
+| Tags | Name, Description |
 | Categories | Name |
 | Resource Categories | Name |
 | Queries | Name |
 | Note Types | Name |
 | Relation Types | Name |
 
-### Search Results
+### Relevance Scoring
 
-Each result displays:
-- Type icon
-- Name (with matches highlighted)
-- Description preview
-- Type label badge
+When full-text search is unavailable, results are ranked by LIKE-based scoring:
 
-### Performance
+| Condition | Score |
+|-----------|-------|
+| Exact name match | 100 |
+| Name starts with search term | 80 |
+| Name contains search term | 60 |
+| Description contains search term | 40 |
+| Other match | 20 |
 
-- Results cache for 30 seconds
-- Maximum 15 results returned
-- Debounced input (150-300ms delay)
+### Caching
+
+- Server-side LRU cache with 60-second TTL
+- Caches up to 50 results per query
+- Default result limit: 20 (max: 50)
+- Cache invalidates on entity create, update, or delete
+- Frontend performs additional client-side caching (5-minute threshold)
 
 ## List View Filters
 
@@ -56,19 +57,15 @@ Each entity list page has filtering controls in the sidebar.
 
 ### Common Filters
 
-These filters appear on most list pages:
-
 | Filter | Description |
 |--------|-------------|
 | **Name** | Text search in name field |
 | **Description** | Text search in description |
-| **Tags** | Filter by assigned tags |
-| **Owner** | Filter by owning group |
+| **Tags** | Filter by assigned Tags (AND logic) |
+| **Owner** | Filter by owning Group |
 | **Created Before/After** | Date range filters |
 
 ### Resource-Specific Filters
-
-The resources list includes additional filters:
 
 | Filter | Description |
 |--------|-------------|
@@ -78,87 +75,100 @@ The resources list includes additional filters:
 | **Hash** | Find by content hash |
 | **Min/Max Width** | Image dimension filters |
 | **Min/Max Height** | Image dimension filters |
-| **Notes** | Filter by attached notes |
-| **Groups** | Filter by related groups |
-| **Show With Similar** | Only show images with similar images found |
+| **Show Without Owner** | Only Resources with no owner |
+| **Show With Similar** | Only images with perceptual hash matches |
 
-### Metadata Filters
+### MetaQuery Filters
 
-Filter by custom metadata using the **Meta Query** fields:
+Filter by JSON metadata fields using `key:value` or `key:OPERATOR:value` syntax.
 
-1. Enter a metadata key
-2. Enter a value to match
-3. Add multiple key-value pairs for complex queries
+#### Operators
+
+| Code | Meaning |
+|------|---------|
+| `LI` | LIKE (default when no operator specified) |
+| `EQ` | Equals |
+| `NE` | Not equals |
+| `NL` | Not like |
+| `GT` | Greater than |
+| `GE` | Greater than or equal |
+| `LT` | Less than |
+| `LE` | Less than or equal |
+
+#### Value Type Detection
+
+| Input | Parsed As |
+|-------|-----------|
+| `true` / `false` | Boolean |
+| `null` | Null |
+| `"quoted text"` | Exact string |
+| `42`, `3.14` | Number |
+| anything else | String (for LIKE matching) |
+
+#### Examples
+
+```
+MetaQuery=author:Jane
+MetaQuery=priority:EQ:high
+MetaQuery=score:GT:80
+MetaQuery=status:NE:archived
+```
+
+Group MetaQuery supports `parent.key` and `child.key` prefixes to search parent or child Group metadata.
 
 ### Popular Tags Quick Filter
 
-At the top of filter sections, frequently-used tags appear as clickable buttons. Click a tag to toggle it as a filter.
+The top of filter sections shows the 20 most-used Tags for the current query. Click a Tag to toggle it as a filter.
 
 ### Applying Filters
 
 1. Fill in desired filter fields
-2. Click the **Search** button
-3. The URL updates to reflect your filters
-
-Filter URLs are bookmarkable and shareable.
-
-### Clearing Filters
-
-Navigate to the list page without query parameters, or manually remove filter values and search again.
+2. Click **Search**
+3. The URL updates to reflect your filters (bookmarkable and shareable)
 
 ## Sorting
 
-### Sort Options
+### Sort Syntax
 
-List views support sorting by multiple fields:
+Sort columns use space-separated direction:
 
-| Sort Field | Description |
-|------------|-------------|
-| **ID** | Entity identifier |
-| **Name** | Alphabetical by name |
-| **Created** | Creation timestamp |
-| **Updated** | Modification timestamp |
-| **Size** | File size (resources only) |
+```
+SortBy=name desc
+SortBy=created_at asc
+```
 
-### Sort Direction
+Default sort for all entities: `created_at desc`.
 
-Each sort field can be:
-- **Ascending** - A-Z, oldest first, smallest first
-- **Descending** - Z-A, newest first, largest first
+### Sort by Metadata
+
+Sort by JSON metadata values using the `meta->>'key'` syntax:
+
+```
+SortBy=meta->>'priority' desc
+```
 
 ### Multi-Field Sorting
 
-Sort by multiple fields in priority order:
+Pass multiple `SortBy` parameters. The first is primary; others break ties:
 
-1. In the **Sort** section, add a sort field
-2. Click **+** to add additional sort fields
-3. Drag to reorder priority
-4. The first field is primary, others break ties
+```
+GET /v1/resources?SortBy=content_type asc&SortBy=created_at desc
+```
 
 ## Full-Text Search
 
-Full-text search uses SQLite FTS5.
+Full-text search indexes Resource names, descriptions, and original names; Note names and descriptions; and Group names and descriptions.
 
-### What It Searches
+### Database Engines
 
-Full-text search indexes:
-- Resource names and descriptions
-- Note titles and full text
-- Group names and descriptions
+| Database | Engine | Details |
+|----------|--------|---------|
+| SQLite | FTS5 | Requires `fts5` build tag |
+| PostgreSQL | tsvector | Uses `ts_rank` for relevance |
 
-### Search Syntax
+Full-text search supports prefix matching (queries ending in `*`). Both engines fall back to LIKE-based search when full-text search is disabled.
 
-Standard search terms work naturally:
-- `meeting notes` - Finds items containing both words
-- `"meeting notes"` - Finds exact phrase
-
-### Performance
-
-Full-text search handles millions of items with substring matching and relevance ranking.
-
-### Enabling FTS
-
-Full-text search is enabled by default. To disable it (for testing or specific use cases):
+### Disabling Full-Text Search
 
 ```bash
 ./mahresources -skip-fts
@@ -166,67 +176,49 @@ Full-text search is enabled by default. To disable it (for testing or specific u
 
 ## Saved Queries
 
-Saved queries let you store and rerun complex database queries.
-
-### What Queries Can Do
-
-Saved queries execute raw SQL against the database, enabling:
-- Complex joins across tables
-- Aggregate statistics
-- Custom reports
-- Data exports
+Queries execute raw SQL against a read-only database connection, preventing accidental data modification.
 
 ### Creating a Query
 
 1. Navigate to **Queries** > **New Query**
-2. Enter a **Name** for the query
-3. Write the SQL in the **Query** field
+2. Enter a **Name** (unique)
+3. Write SQL in the **Text** field
 4. Optionally add a **Template** for result display
 5. Click **Save**
 
-### Query Parameters
+### Named Parameters
 
-Queries can accept parameters using the `@paramName` syntax:
+Queries use `:param` syntax for named parameters:
 
 ```sql
-SELECT * FROM resources WHERE name LIKE @searchTerm
+SELECT * FROM resources WHERE name LIKE :searchTerm
 ```
 
-When running the query, a form appears for each parameter.
+When running the Query, a form appears for each parameter.
 
-### Running a Query
+:::warning PostgreSQL type casts
 
-1. Navigate to the query detail page
-2. Fill in any parameters
-3. Click **Run**
-4. Results display in a table format
+PostgreSQL `::` type cast syntax conflicts with the `:param` named parameter syntax. Use `::::` in your SQL to produce a `::` in the executed query.
 
-### Query Templates
-
-Custom templates format query results using JavaScript and HTML:
-
-```html
-<template x-for="row in results">
-  <div>
-    <h3 x-text="row.name"></h3>
-    <p x-text="row.description"></p>
-  </div>
-</template>
+```sql
+SELECT meta::::::jsonb FROM resources WHERE id = :id
 ```
 
-The `results` array contains all query result rows.
+This executes as `SELECT meta::jsonb FROM resources WHERE id = ?`.
+
+:::
 
 ### Query Examples
 
-**Find Large Resources:**
+**Find large Resources:**
 ```sql
 SELECT id, name, file_size
 FROM resources
-WHERE file_size > @minSize
+WHERE file_size > :minSize
 ORDER BY file_size DESC
 ```
 
-**Count Resources by Content Type:**
+**Count Resources by content type:**
 ```sql
 SELECT content_type, COUNT(*) as count
 FROM resources
@@ -240,40 +232,19 @@ SELECT n.id, n.name, GROUP_CONCAT(t.name) as tags
 FROM notes n
 LEFT JOIN note_tags nt ON n.id = nt.note_id
 LEFT JOIN tags t ON nt.tag_id = t.id
-WHERE n.created_at > @since
+WHERE n.created_at > :since
 GROUP BY n.id
 ORDER BY n.created_at DESC
 ```
+
+### Database Schema
+
+Use `GET /v1/query/schema` to retrieve all table names and column names for writing Queries.
 
 ### Query Security
 
 :::warning
 
-Queries execute with full database access. Only trusted users should create queries. This is acceptable because Mahresources is designed for single-user or trusted-user deployments.
+Queries execute with full database read access. Only trusted users should create Queries. This is acceptable because Mahresources is designed for private network deployments.
 
 :::
-
-## Search Tips
-
-### Finding Content Quickly
-
-1. **Know the name?** Use global search
-2. **Know the type?** Go to that list and filter
-3. **Complex criteria?** Create a saved query
-4. **By metadata?** Use the Meta Query filter
-
-### Combining Approaches
-
-- Use global search to find a starting point
-- Navigate to related items from detail pages
-- Use "See All" links to explore collections
-- Save frequently-used filter combinations as browser bookmarks
-
-### Bookmarking Searches
-
-Filter URLs contain all query parameters:
-```
-/resources?tags=123&CreatedAfter=2024-01-01&SortBy=created_at&SortDir=desc
-```
-
-Bookmark these URLs for quick access to common views.

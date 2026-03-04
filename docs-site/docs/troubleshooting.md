@@ -20,17 +20,17 @@ This error occurs when multiple processes or connections attempt to write to the
 
 ### Thumbnails Not Generating
 
-Thumbnails may fail to generate for videos or office documents if external tools are not properly configured.
+Video and office document thumbnails require external tools to be configured.
 
-**For video files (ffmpeg):**
-- Verify ffmpeg is installed: `ffmpeg -version`
+**For video files (FFmpeg):**
+- Verify FFmpeg is installed: `ffmpeg -version`
 - Set the path explicitly: `-ffmpeg-path=/usr/bin/ffmpeg` or `FFMPEG_PATH=/usr/bin/ffmpeg`
-- Check file permissions on the ffmpeg binary
+- Check file permissions on the FFmpeg binary
 
 **For office documents (LibreOffice):**
 - Verify LibreOffice is installed: `libreoffice --version` or `soffice --version`
 - Set the path explicitly: `-libreoffice-path=/usr/bin/libreoffice` or `LIBREOFFICE_PATH=/usr/bin/libreoffice`
-- `soffice` or `libreoffice` in PATH is auto-detected, but explicit configuration may be needed
+- `soffice` or `libreoffice` in PATH is auto-detected; use explicit paths when auto-detection fails
 
 **General checks:**
 - Ensure the file storage directory has write permissions
@@ -38,16 +38,16 @@ Thumbnails may fail to generate for videos or office documents if external tools
 
 ### Slow Startup
 
-Large databases may cause slow startup times due to Full-Text Search initialization and version migration.
+Large databases slow startup due to full-text search initialization and version migration.
 
 **Solutions:**
-- Skip FTS initialization: `-skip-fts` or `SKIP_FTS=1` (note: disables full-text search functionality)
+- Skip full-text search initialization: `-skip-fts` or `SKIP_FTS=1` (disables full-text search)
 - Skip version migration: `-skip-version-migration` or `SKIP_VERSION_MIGRATION=1` (for databases with millions of resources)
 - Use PostgreSQL instead of SQLite for better performance with large datasets
 
 ### Upload Failures
 
-File uploads may fail for several reasons:
+Common causes of upload failure:
 
 **Disk space:**
 - Check available disk space on the storage volume
@@ -69,9 +69,9 @@ File uploads may fail for several reasons:
 
 If search returns no results or behaves unexpectedly:
 
-- **FTS may be skipped:** Check if the application was started with `-skip-fts`. Full-text search requires FTS to be enabled.
+- **Full-text search disabled:** Check if the application was started with `-skip-fts`.
 - **SQLite build flags:** Ensure the binary was built with `--tags 'json1 fts5'` for full search support
-- **Index not populated:** For new databases, the FTS index builds automatically. Large imports may take time to index.
+- **Index not populated:** For new databases, the full-text search index builds automatically. Large imports take time to index.
 
 ### Similar Images Not Appearing
 
@@ -112,22 +112,18 @@ Consider using third-party tools like `pgloader` for the data migration.
 Any file type can be stored. Special handling is provided for:
 
 - **Images:** JPEG, PNG, GIF, WebP, BMP - thumbnails generated automatically
-- **Videos:** MP4, WebM, MOV, AVI, MKV - thumbnails via ffmpeg
+- **Videos:** MP4, WebM, MOV, AVI, MKV - thumbnails via FFmpeg
 - **Documents:** PDF, DOCX, XLSX, PPTX, ODT, ODS, ODP - thumbnails via LibreOffice
 
 Files without special handling are stored and served without processing.
 
 ### How much disk space do versions use?
 
-Resource versioning stores complete copies of each file version. Disk usage depends on:
+Resource versioning uses content-addressable storage with deduplication. Files with identical SHA1 hashes are stored once, regardless of how many versions reference them. Restoring a previous version creates a new version record but does not duplicate the file on disk.
 
-- How frequently files are updated
-- The size of updated files
-- Number of versions retained
-
-To manage disk usage:
-- Periodically review and delete old versions
-- Consider the trade-off between version history and storage costs
+Disk usage depends on the number of *unique* file contents across all versions. To manage storage:
+- Use version cleanup to remove old versions (per-Resource or bulk)
+- Run cleanup in dry-run mode first to preview what would be deleted
 
 ### Can I run multiple instances?
 
@@ -159,6 +155,36 @@ rm -rf /path/to/your/files/*
 DROP DATABASE mahresources;
 CREATE DATABASE mahresources;
 ```
+
+### Plugin Not Loading
+
+If a plugin does not appear in the management UI:
+
+- Verify the plugin directory path: `-plugin-path=./plugins` (default)
+- Check that the plugin subdirectory contains a `plugin.lua` file
+- Check the application logs for Lua parse errors during discovery
+- Confirm plugins are not disabled: remove `-plugins-disabled` flag or `PLUGINS_DISABLED=1`
+
+### Plugin Errors
+
+If an enabled plugin fails to run:
+
+- Check application logs for Lua runtime errors
+- Verify plugin settings are configured (required settings block enabling)
+- For HTTP-related errors, check that target URLs are reachable from the server
+- Each Lua VM is single-threaded; long-running operations in hooks (over 5 seconds) will time out
+
+### Download Queue Issues
+
+**Stuck downloads:**
+- Check network connectivity to the target URL
+- Review timeout settings: `-remote-connect-timeout`, `-remote-idle-timeout`, `-remote-overall-timeout`
+- Cancel and retry the stuck job
+
+**Queue full (100 jobs):**
+- Completed and failed jobs are evicted automatically (oldest first)
+- Active and paused jobs are never evicted
+- Cancel or remove paused jobs to free queue slots
 
 ## Getting Help
 

@@ -1,215 +1,178 @@
 ---
 sidebar_position: 4
+title: Groups
 ---
 
 # Groups
 
-Groups are folders that form a tree. Each Group can own other Groups, Notes, and Resources, creating a hierarchy for organizing content.
+Groups are hierarchical containers that organize Resources, Notes, and other Groups. Each Group can own entities (parent-child), relate to entities (many-to-many), and form typed relationships with other Groups via the Relations system.
 
 ## Group Properties
 
-| Property | Description |
-|----------|-------------|
-| `name` | Display name |
-| `description` | Free-text description |
-| `url` | Optional external URL |
-| `meta` | Arbitrary JSON metadata |
-| `ownerId` | Parent group (for hierarchy) |
-| `categoryId` | Optional Category for typing |
+| Property | Type | Description |
+|----------|------|-------------|
+| `name` | string | Display name (required, non-empty) |
+| `description` | string | Free-text description |
+| `url` | URL | Optional external URL |
+| `meta` | JSON | Arbitrary key-value metadata (defaults to `{}`) |
+| `ownerId` | integer | FK to parent Group |
+| `categoryId` | integer | FK to Category for typing |
 
 ## Hierarchical Organization
 
-Groups form a tree structure through ownership:
+Groups form a tree through ownership:
 
 ```
 Company (Group)
-├── Engineering (Group) [owned]
-│   ├── Backend Team (Group) [owned]
-│   └── Frontend Team (Group) [owned]
-├── Marketing (Group) [owned]
-└── Sales (Group) [owned]
++-- Engineering (Group) [owned]
+|   +-- Backend Team (Group) [owned]
+|   +-- Frontend Team (Group) [owned]
++-- Marketing (Group) [owned]
++-- Sales (Group) [owned]
 ```
 
 ### Ownership Rules
 
 - Each Group can have one owner (parent)
-- Deleting a parent cascades to owned children
-- Circular ownership is prevented
-- Root groups have no owner
+- Root Groups have no owner
+- Deleting a parent Group sets children's `ownerId` to NULL -- children become root Groups
 
-### Ancestor chain
+:::warning Group deletion does NOT cascade to child Groups
 
-Mahresources can resolve the full parent chain of a group (e.g., `Company > Engineering > Backend Team`). The UI uses this for breadcrumb navigation.
+Group-to-Group ownership uses SET NULL, not CASCADE. When you delete a parent Group, its child Groups are preserved as root Groups. Owned Notes ARE cascade-deleted. Owned Resources have their owner set to NULL.
+
+:::
+
+### Ancestor Chain
+
+The `GET /v1/group/parents` endpoint resolves the full parent chain (recursive CTE, max depth 20). The UI uses this for breadcrumb navigation.
+
+### Group Tree
+
+The `GET /v1/group/tree/children` endpoint returns child Groups with counts, supporting lazy-loaded tree views. Parameters: `parentId` (Group ID, 0 for roots), `limit` (default 50, max 100).
 
 ## Owned vs Related Entities
 
-Groups have two ways to contain entities:
-
-### Owned Entities
-
-Direct children in the hierarchy:
-
-- **OwnGroups** - Child groups
-- **OwnNotes** - Notes created within this group
-- **OwnResources** - Resources uploaded to this group
-
-Ownership implies:
-- Single parent relationship
-- Hierarchical organization
-- Cascade behavior on deletion
-
-### Related Entities
-
-Many-to-many connections:
-
-- **RelatedGroups** - Peer groups with connections
-- **RelatedNotes** - Notes referenced from this group
-- **RelatedResources** - Resources linked to this group
-
-Relationships imply:
-- Multiple connections possible
-- Cross-referencing organization
-- Independent lifecycle
+| Connection | Cardinality | Deletion Behavior |
+|------------|-------------|-------------------|
+| Owned Groups | one-to-many | SET NULL (become root Groups) |
+| Owned Notes | one-to-many | CASCADE (Notes are deleted) |
+| Owned Resources | one-to-many | SET NULL (Resources preserved) |
+| Related Groups | many-to-many | Independent lifecycle |
+| Related Notes | many-to-many | Independent lifecycle |
+| Related Resources | many-to-many | Independent lifecycle |
 
 ## Categories
 
-Categories define types of Groups with custom presentation:
+Categories define types of Groups with custom presentation. See [Tags and Categories](./tags-categories.md) for details.
 
-### Category Properties
+Categories support:
+- Custom HTML templates (header, sidebar, summary, avatar)
+- JSON Schema metadata validation via `metaSchema`
+- Category-based filtering in queries
 
-| Property | Description |
-|----------|-------------|
-| `name` | Category name (e.g., "Person", "Company") |
-| `description` | Explanation of the category |
-| `customHeader` | HTML template for group headers |
-| `customSidebar` | HTML template for group sidebars |
-| `customSummary` | HTML template for list views |
-| `customAvatar` | HTML template for group avatars |
-| `metaSchema` | JSON Schema for metadata validation |
+:::warning Deleting a Category
 
-### Use Cases
+Deleting a Category sets `categoryId` to NULL on affected Groups (ON DELETE SET NULL). Groups are preserved but lose their category assignment.
 
-| Category | Purpose |
-|----------|---------|
-| Person | Contact information, profiles |
-| Company | Organizations, businesses |
-| Project | Work initiatives, deliverables |
-| Event | Conferences, meetings, occasions |
-| Location | Places, venues, addresses |
+:::
 
-### Meta Schema
+## Name Search
 
-Categories can define a JSON Schema to validate group metadata:
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "email": { "type": "string", "format": "email" },
-    "phone": { "type": "string" },
-    "birthday": { "type": "string", "format": "date" }
-  }
-}
-```
-
-This schema drives structured data entry in the UI for groups of that category.
-
-## Group Operations
-
-### Cloning (Duplicating)
-
-Create a copy of a group:
-
-- Copies name, description, URL, and metadata
-- Preserves category and owner
-- Copies relationship references
-- Does not copy owned entities (creates references)
-
-Use cases:
-- Templates for similar groups
-- Quick creation of related entries
-- Copying structure without content
-
-### Merging
-
-Combine multiple groups into one:
+Group name search supports exact matching when the query is wrapped in double quotes:
 
 ```
-Winner Group + Loser Groups = Combined Group
+GET /v1/groups?Name="Exact Group Name"
 ```
 
-Merge behavior:
-1. All tags from losers are added to winner
-2. Owned groups transferred to winner
-3. Owned notes transferred to winner
-4. Owned resources transferred to winner
-5. Related entities linked to winner
-6. Relationships transferred to winner
-7. Metadata merged (loser values added to winner)
-8. Loser groups are deleted
-9. Backup of losers stored in winner's metadata
+Without quotes, `Name` performs a LIKE (partial) match.
 
-Use cases:
-- Deduplicating entries
-- Consolidating information
-- Cleaning up organization
+## Cloning
 
-### Bulk Operations
+`POST /v1/group/clone` creates a new Group with identical name, description, meta, URL, owner, and Category. It also copies all association references: related Resources, Notes, Groups, and Tags.
 
-Perform actions on multiple groups:
+## Merging
 
-- `POST /v1/groups/addTags` - Add tags to groups
-- `POST /v1/groups/removeTags` - Remove tags from groups
-- `POST /v1/groups/addMeta` - Merge metadata into groups
-- `POST /v1/groups/delete` - Delete multiple groups
-- `POST /v1/groups/merge` - Merge groups into one
+`POST /v1/groups/merge` combines multiple Groups into one:
+
+1. All Tags from losers transfer to the winner
+2. Owned Groups, Notes, and Resources transfer to the winner
+3. Related entities link to the winner
+4. Typed Relations transfer to the winner
+5. Metadata merges (loser values added)
+6. Loser data is backed up in the winner's meta
+7. Loser Groups are deleted
+
+## Query Parameters
+
+Filter Groups with these parameters on `GET /v1/groups`:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `Name` | string | LIKE search (exact match with `"quotes"`) |
+| `Description` | string | LIKE search |
+| `OwnerId` | integer | Filter by parent Group |
+| `Tags` | integer[] | Filter by Tag IDs (AND logic) |
+| `Groups` | integer[] | Filter by related Groups or parent |
+| `Notes` | integer[] | Filter by related/owned Notes |
+| `Resources` | integer[] | Filter by related/owned Resources |
+| `Categories` | integer[] | Filter by multiple Category IDs |
+| `CategoryId` | integer | Filter by single Category ID |
+| `Ids` | integer[] | Filter by specific Group IDs |
+| `URL` | string | LIKE search on URL |
+| `CreatedBefore` | string | Date upper bound |
+| `CreatedAfter` | string | Date lower bound |
+| `RelationTypeId` | integer | Filter Groups matching a Relation Type's category |
+| `RelationSide` | integer | 0 = from side, non-zero = to side |
+| `SearchParentsForName` | boolean | Also search parent Group names |
+| `SearchChildrenForName` | boolean | Also search child Group names |
+| `SearchParentsForTags` | boolean | Also check parent Group Tags |
+| `SearchChildrenForTags` | boolean | Also check child Group Tags |
+| `MetaQuery` | string[] | JSON meta queries (supports `parent.key` and `child.key` prefixes) |
+| `SortBy` | string[] | Sort columns (prefixed with `groups.`, supports `meta->>'key'`) |
+
+### MetaQuery Prefixes
+
+Group MetaQuery supports special key prefixes:
+
+- `parent.keyname` -- searches the parent Group's meta
+- `child.keyname` -- searches child Groups' meta
+
+```
+GET /v1/groups?MetaQuery=parent.status:active
+```
 
 ## Relationships
 
-Groups connect to other entities:
-
-### Ownership (Parent)
-- A Group can be **owned by** one parent Group
-- Creates hierarchical structure
-- Deletion cascades to children
+### Ownership
+- A Group can be owned by one parent Group
+- Creates the hierarchical tree structure
 
 ### Owned Entities
-- A Group can **own** multiple Groups, Notes, and Resources
-- One-to-many relationships
-- Owned entities have the group as their parent
+- A Group can own multiple Groups, Notes, and Resources
+- Each entity type has different deletion behavior (see table above)
 
 ### Related Entities
-- A Group can be **related to** multiple Groups, Notes, and Resources
-- Many-to-many relationships
-- Enables cross-referencing
+- Many-to-many connections to Groups, Notes, and Resources
+- Independent lifecycles
 
-### Group Relations
-- Typed relationships between groups (see [Relationships](./relationships.md))
-- Graph-like navigation between groups
+### Typed Relations
+- Directed, typed connections between Groups via the Relations system
+- See [Relationships](./relationships.md)
 
 ### Tags
-- A Group can have multiple Tags
-- Many-to-many relationship
-- Enables cross-cutting organization
+- Many-to-many via `group_tags`
 
-## Searching Groups
+## Bulk Operations
 
-Groups are included in global search:
-
-- Searches `name` and `description` fields
-- Full-text search when FTS is enabled
-- Filter by Category in advanced search
-
-### Query Parameters
-
-| Parameter | Description |
-|-----------|-------------|
-| `name` | Filter by name (partial match) |
-| `categoryId` | Filter by Category |
-| `ownerId` | Filter by owner Group |
-| `tags` | Filter by tag IDs |
-| `url` | Filter by URL (partial match) |
+| Endpoint | Description |
+|----------|-------------|
+| `POST /v1/groups/addTags` | Add Tags to multiple Groups |
+| `POST /v1/groups/removeTags` | Remove Tags from multiple Groups |
+| `POST /v1/groups/addMeta` | Merge metadata into multiple Groups |
+| `POST /v1/groups/delete` | Delete multiple Groups |
+| `POST /v1/groups/merge` | Merge Groups into one |
 
 ## API Operations
 
-For full API details -- creating, querying, duplicating, merging, and bulk operations on Groups -- see [API: Groups](../api/groups.md).
+For full API details, see [API: Groups](../api/groups.md).

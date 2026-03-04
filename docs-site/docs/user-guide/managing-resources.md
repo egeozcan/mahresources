@@ -50,7 +50,14 @@ For large files or slow connections, enable **Download in background**:
 
 ### Resource List
 
-Resources display as cards. Each card shows a thumbnail preview (click to open the lightbox), the resource name (click for the detail page), file size, owner, category with avatar, an expandable description, and tags with an inline "Edit Tags" button. A checkbox appears for bulk selection.
+Resources display as cards. Each card shows:
+
+- Thumbnail preview (click to open in lightbox)
+- Resource name (click for detail page)
+- File size, owner, category with avatar
+- Expandable description
+- Tags with inline edit button
+- Checkbox for bulk selection
 
 ### Resource Detail Page
 
@@ -61,7 +68,7 @@ Click a resource name to view its detail page, showing:
 - Technical metadata (ID, hash, location, dimensions for images)
 - Related notes
 - Related groups
-- Similar resources (if image similarity is enabled)
+- Similar resources (when the [hash worker](/features/image-similarity) is running)
 
 **Sidebar**
 - File size
@@ -110,13 +117,13 @@ Image resources have additional operations available in the sidebar:
 
 ### Rotate
 
-Rotate an image 90 degrees clockwise:
+Rotate an image by a specified number of degrees (90, 180, or 270):
 
-1. Navigate to the image resource
-2. In the sidebar, find **Rotate 90 Degrees**
+1. Navigate to the image Resource
+2. In the sidebar, find the rotate option
 3. Click **Rotate**
 
-The image is permanently modified and saved.
+Rotation creates a new version with the rotated content and clears cached thumbnails.
 
 ### Recalculate Dimensions
 
@@ -150,7 +157,7 @@ This requires the background hash worker (enabled by default).
 
 :::warning
 
-Resource deletion is permanent. The file is removed from storage and cannot be recovered without backups.
+Deleted files are backed up to the `/deleted/` directory before the database record is removed. Files are only physically deleted from primary storage if no other Resources or versions reference the same hash. The backup naming format is `{hash}__{id}__{ownerId}___{basename}`.
 
 :::
 
@@ -190,10 +197,10 @@ Thumbnails are generated automatically for supported file types:
 
 | File Type | Requirements |
 |-----------|--------------|
-| Images | Built-in support |
-| Videos | Requires ffmpeg |
-| Documents | Requires LibreOffice |
-| PDFs | Built-in support |
+| Images | Built-in (HEIC/AVIF require ImageMagick) |
+| SVGs | Built-in (oksvg rasterizer) |
+| Videos | Requires FFmpeg |
+| Office documents and PDFs | Requires LibreOffice |
 
 Thumbnails are generated at upload time and cached for fast display.
 

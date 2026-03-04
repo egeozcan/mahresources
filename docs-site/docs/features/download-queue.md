@@ -4,7 +4,7 @@ sidebar_position: 6
 
 # Download Queue
 
-The download queue manages background URL downloads, allowing you to queue multiple remote files for download without blocking the UI.
+Queue up to 100 URLs for background download. Three run concurrently, with real-time progress via Server-Sent Events.
 
 ## How It Works
 
@@ -67,20 +67,6 @@ Content-Type: application/json
 
 Submit multiple URLs separated by newlines in the `url` field. Each URL becomes a separate job in the queue.
 
-## Progress Tracking
-
-Subscribe to real-time progress updates via SSE:
-
-```
-GET /v1/download/events
-```
-
-Events are JSON objects with:
-- `type` -- `"added"`, `"updated"`, or `"removed"`
-- `job` -- The full job object with current status, progress, and metadata
-
-Progress updates are throttled to one event per 500ms per job to avoid flooding clients.
-
 ## Timeout Configuration
 
 Remote download timeouts are configurable via command-line flags or environment variables:
@@ -91,10 +77,45 @@ Remote download timeouts are configurable via command-line flags or environment 
 | `-remote-idle-timeout` | `REMOTE_IDLE_TIMEOUT` | 60s | Timeout when the remote server stops sending data |
 | `-remote-overall-timeout` | `REMOTE_OVERALL_TIMEOUT` | 30m | Maximum total time for a download |
 
-## Listing Jobs
+## API Endpoints
+
+### Download-Specific Routes
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/download/submit` | Submit download URL(s) |
+| `GET` | `/v1/download/queue` | List all download jobs |
+| `POST` | `/v1/download/cancel` | Cancel a download (`id`) |
+| `POST` | `/v1/download/pause` | Pause a download (`id`) |
+| `POST` | `/v1/download/resume` | Resume a paused download (`id`) |
+| `POST` | `/v1/download/retry` | Retry a failed download (`id`) |
+| `GET` | `/v1/download/events` | SSE event stream (downloads only) |
+
+### Unified Job Routes
+
+These routes serve the same handlers but are prefixed under `/v1/jobs/` and include both download and plugin action jobs where applicable.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/jobs/download/submit` | Submit download URL(s) |
+| `GET` | `/v1/jobs/queue` | List all jobs (downloads + plugin actions) |
+| `POST` | `/v1/jobs/cancel` | Cancel a download |
+| `POST` | `/v1/jobs/pause` | Pause a download |
+| `POST` | `/v1/jobs/resume` | Resume a download |
+| `POST` | `/v1/jobs/retry` | Retry a download |
+| `GET` | `/v1/jobs/events` | SSE event stream (all job types) |
+
+## SSE Event Format
+
+Events use SSE event names (`added`, `updated`, `removed`) with JSON data:
 
 ```
-GET /v1/download/queue
+event: updated
+data: {"type":"updated","job":{"id":"abcd1234","status":"downloading","progress":45}}
 ```
 
-Returns all jobs in order, including their current status and progress.
+Each event data contains:
+- `type` -- `"added"`, `"updated"`, or `"removed"`
+- `job` -- The full job object with current status, progress, and metadata
+
+Download progress updates are throttled to one event per 500ms per job.

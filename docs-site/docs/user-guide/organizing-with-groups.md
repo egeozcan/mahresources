@@ -6,25 +6,7 @@ sidebar_position: 4
 
 Groups are the primary organizational structure. They support hierarchical nesting, own other entities, and form typed relationships with each other.
 
-## Understanding Groups
-
-Groups serve multiple purposes:
-
-- **Containers** - Hold collections of resources, notes, and sub-groups
-- **Categories** - Organize items by topic, project, or any classification
-- **Ownership** - Define who/what owns a piece of content
-- **Relationships** - Connect to other groups with typed relations
-
-### Owned vs Related
-
-Every entity (resource, note, sub-group) can have two types of connections to a group:
-
-| Connection Type | Description | Use Case |
-|-----------------|-------------|----------|
-| **Owned** | The group is the owner of the entity | Primary location, authorship, responsibility |
-| **Related** | The group is associated with the entity | Cross-references, topics, secondary classifications |
-
-An entity can have one owner but many relations.
+For an overview of Group concepts (ownership vs relationships, deletion behavior, query parameters), see [Concepts: Groups](../concepts/groups.md).
 
 ## Creating Groups
 
@@ -90,29 +72,9 @@ The group detail page shows content in expandable sections:
 
 ## Categories
 
-Categories define the type of a group and can provide:
+Categories define the type of a Group and can provide custom metadata schemas and templates. See [Tags and Categories](../concepts/tags-categories.md) for details.
 
-- A classification system for groups
-- Custom metadata schemas
-- Custom header/sidebar templates
-
-### Using Categories
-
-The create form requires a category. Categories help organize groups themselves:
-
-```
-Category: Person
-  - John Smith
-  - Jane Doe
-
-Category: Project
-  - Website Redesign
-  - Mobile App
-```
-
-### Category Metadata Schemas
-
-Categories can define JSON schemas for group metadata. When a category has a schema, the group edit form shows a structured form instead of free-form fields.
+When a Category has a metadata schema defined, the Group edit form shows structured fields matching the schema instead of free-form inputs.
 
 ## Group Relations
 
@@ -187,12 +149,12 @@ Create a copy of a group:
 2. In the sidebar, find **Clone group?**
 3. Click **Clone**
 
-Cloning creates a new group with:
-- The same name, description, and metadata
-- The same category
-- New unique ID
+Cloning creates a new Group with:
+- The same name, description, metadata, URL, owner, and Category
+- Copies of all association references (related Resources, Notes, Groups, and Tags)
+- A new unique ID
 
-Note: Cloning does not copy owned content or relations.
+Cloning does not copy owned entities -- only relationship references.
 
 ## Group Metadata
 

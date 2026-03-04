@@ -44,6 +44,7 @@ When you select one or more items, the bulk editor appears inline above the list
 |-----------|:---------:|:------:|
 | Add Tags | Yes | Yes |
 | Remove Tags | Yes | Yes |
+| Replace Tags | Yes | - |
 | Add Metadata | Yes | Yes |
 | Add Groups | Yes | - |
 | Update Dimensions | Yes | - |
@@ -64,7 +65,17 @@ Tags are added immediately. Existing tags on items are preserved. If a tag doesn
 2. In the **Remove Tag** form, search for and select tags to remove
 3. Click **Remove**
 
-Only the specified tags are removed. Other tags remain.
+Only the specified Tags are removed. Other Tags remain.
+
+## Replacing Tags
+
+Replace all Tags on selected Resources with a new set:
+
+1. Select Resources in the list
+2. In the **Replace Tags** form, search for and select the new Tags
+3. Click **Replace**
+
+All existing Tags on the selected Resources are removed and replaced with the specified set. Available for Resources only.
 
 ## Adding Metadata
 
@@ -96,11 +107,7 @@ Compare two resources side-by-side:
 3. Click **Compare**
 4. A comparison view opens
 
-The comparison view varies by content type:
-- **Images** - Side-by-side or overlay comparison
-- **Text** - Diff view highlighting changes
-- **PDFs** - Page-by-page comparison
-- **Other** - Binary file information
+The comparison view shows metadata differences between the two Resources: size delta, whether they share the same hash, content type match, and dimension differences.
 
 ## Bulk Deletion
 
@@ -110,9 +117,9 @@ Delete multiple items at once:
 2. Click **Delete Selected** in the bulk editor
 3. Confirm the deletion in the popup
 
-:::danger
+:::warning
 
-Bulk deletion is permanent and cannot be undone. For resources, files are removed from storage.
+Bulk deletion removes database records. For Resources, files are backed up to the `/deleted/` directory before removal. Files are only physically deleted if no other Resources or versions reference the same hash.
 
 :::
 

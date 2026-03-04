@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # Configuration Overview
 
-Configuration uses environment variables or command-line flags. This section covers all available options.
+Configuration uses environment variables or command-line flags. Command-line flags take precedence over environment variables.
 
 :::danger Security Reminder
 Mahresources has **no built-in authentication or authorization**. It is designed for private, trusted networks only. Do not expose it to the public internet without a reverse proxy with proper authentication.
@@ -51,7 +51,7 @@ Command-line flags take precedence over environment variables. This allows you t
 | `-seed-db` | `SEED_DB` | SQLite file to seed memory-db | - |
 | `-seed-fs` | `SEED_FS` | Directory for copy-on-write base | - |
 | `-alt-fs` | `FILE_ALT_*` | Alternative file systems | - |
-| `-ffmpeg-path` | `FFMPEG_PATH` | Path to ffmpeg binary | auto-detect |
+| `-ffmpeg-path` | `FFMPEG_PATH` | Path to FFmpeg binary | auto-detect |
 | `-libreoffice-path` | `LIBREOFFICE_PATH` | Path to LibreOffice binary | auto-detect |
 | `-skip-fts` | `SKIP_FTS=1` | Skip Full-Text Search initialization | `false` |
 | `-skip-version-migration` | `SKIP_VERSION_MIGRATION=1` | Skip resource version migration | `false` |
@@ -67,7 +67,7 @@ Command-line flags take precedence over environment variables. This allows you t
 | `-thumb-batch-size` | `THUMB_BATCH_SIZE` | Videos per backfill cycle | `10` |
 | `-thumb-poll-interval` | `THUMB_POLL_INTERVAL` | Time between backfill cycles | `1m` |
 | `-thumb-backfill` | `THUMB_BACKFILL=1` | Backfill thumbnails for existing videos | `false` |
-| `-video-thumb-timeout` | `VIDEO_THUMB_TIMEOUT` | Timeout for ffmpeg thumbnail generation | `30s` |
+| `-video-thumb-timeout` | `VIDEO_THUMB_TIMEOUT` | Timeout for FFmpeg thumbnail generation | `30s` |
 | `-video-thumb-lock-timeout` | `VIDEO_THUMB_LOCK_TIMEOUT` | Timeout waiting for thumbnail lock | `60s` |
 | `-video-thumb-concurrency` | `VIDEO_THUMB_CONCURRENCY` | Max concurrent video thumbnail jobs | `4` |
 | `-remote-connect-timeout` | `REMOTE_CONNECT_TIMEOUT` | Timeout for remote connections | `30s` |
@@ -76,6 +76,8 @@ Command-line flags take precedence over environment variables. This allows you t
 | `-share-port` | `SHARE_PORT` | Port for public share server | (disabled) |
 | `-share-bind-address` | `SHARE_BIND_ADDRESS` | Share server bind address | `0.0.0.0` |
 | `-cleanup-logs-days` | `CLEANUP_LOGS_DAYS` | Delete log entries older than N days on startup | `0` (disabled) |
+| `-plugin-path` | `PLUGIN_PATH` | Directory to scan for plugins | `./plugins` |
+| `-plugins-disabled` | `PLUGINS_DISABLED=1` | Disable the plugin system entirely | `false` |
 
 ## Common Configurations
 

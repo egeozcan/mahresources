@@ -1,0 +1,156 @@
+---
+sidebar_position: 14
+title: Job System
+---
+
+# Job System
+
+The job system provides a unified view of all background operations -- download queue jobs and async plugin action jobs -- through a single API and SSE event stream.
+
+## Job Sources
+
+| Source | Origin | ID Format | Max Concurrent |
+|--------|--------|-----------|---------------|
+| `download` | Download queue | 4-byte random hex (8 chars) | 3 |
+| `plugin` | Async plugin actions | 8-byte random hex (16 chars) | 3 |
+
+Both job types share the same SSE infrastructure and unified listing endpoint.
+
+## Download Jobs
+
+Download jobs are created when URLs are submitted to the download queue. See [Download Queue](./download-queue.md) for submission, pause/resume, and retry details.
+
+### Download Job Statuses
+
+| Status | Description |
+|--------|-------------|
+| `pending` | Queued, waiting for a download slot |
+| `downloading` | Actively transferring data |
+| `processing` | Download complete, creating a Resource |
+| `completed` | Resource created |
+| `failed` | Error occurred |
+| `cancelled` | Cancelled by user |
+| `paused` | Paused by user |
+
+## Plugin Action Jobs
+
+Plugin action jobs are created when an async action is triggered. See [Plugin Actions](./plugin-actions.md) for registration and handler details.
+
+### Action Job Structure
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Random hex ID |
+| `source` | string | Always `"plugin"` |
+| `pluginName` | string | Source plugin name |
+| `actionId` | string | Action identifier |
+| `label` | string | Action display label |
+| `entityId` | uint | Target entity ID |
+| `entityType` | string | `"resource"`, `"note"`, or `"group"` |
+| `status` | string | `"pending"`, `"running"`, `"completed"`, or `"failed"` |
+| `progress` | int | 0-100 |
+| `message` | string | Current status message |
+| `result` | object | Action result data (on completion) |
+| `createdAt` | timestamp | Job creation time |
+
+### Progress Control from Lua
+
+```lua
+mah.job_progress(job_id, 50, "Processing image...")
+mah.job_complete(job_id, { message = "Done", redirect = "/resource?id=42" })
+mah.job_fail(job_id, "API returned 500")
+```
+
+## SSE Event Stream
+
+Subscribe to real-time job updates from all sources:
+
+```
+GET /v1/jobs/events
+```
+
+The stream uses SSE event names to distinguish job types and lifecycle events.
+
+**Initialization**: On connect, an `init` event is sent with all current jobs:
+
+```
+event: init
+data: {"jobs":[...],"actionJobs":[...]}
+```
+
+**Download events** use event names `added`, `updated`, `removed`:
+
+```
+event: updated
+data: {"type":"updated","job":{"id":"abcd1234","status":"downloading","progress":50}}
+```
+
+**Plugin action events** use event names `action_added`, `action_updated`, `action_removed`:
+
+```
+event: action_updated
+data: {"job":{"id":"a1b2c3d4e5f6g7h8","source":"plugin","status":"running","progress":50}}
+```
+
+### Event Types
+
+| SSE Event Name | Source | Trigger |
+|---------------|--------|---------|
+| `added` | Download | New download job created |
+| `updated` | Download | Download status, progress, or message changed |
+| `removed` | Download | Download job cleaned up after retention period |
+| `action_added` | Plugin | New action job created |
+| `action_updated` | Plugin | Action status, progress, or message changed |
+| `action_removed` | Plugin | Action job cleaned up after retention period |
+
+### Progress Throttling
+
+SSE notifications are rate-limited to prevent flooding clients:
+
+| Source | Throttle Interval |
+|--------|------------------|
+| Plugin actions | 200ms |
+| Downloads | 500ms |
+
+Progress updates at 100% are always sent immediately regardless of throttling.
+
+Subscribers receive events through a buffered channel (capacity 100). Slow subscribers that fall behind are skipped (non-blocking send).
+
+## Unified Job Listing
+
+```
+GET /v1/jobs/queue
+```
+
+Returns all active jobs from both sources in a single response.
+
+```bash
+curl http://localhost:8181/v1/jobs/queue.json
+```
+
+## Job Cleanup
+
+Completed and failed jobs are removed automatically:
+
+| Setting | Value |
+|---------|-------|
+| Cleanup interval | Every 5 minutes |
+| Action job retention | 1 hour |
+| Download job retention (completed) | 1 hour |
+| Download job retention (paused) | 24 hours |
+
+Removed jobs trigger `"removed"` SSE events, allowing clients to update their UI.
+
+## API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/v1/jobs/queue` | List all jobs (downloads + plugin actions) |
+| `GET` | `/v1/jobs/events` | SSE event stream (all job types) |
+| `POST` | `/v1/jobs/action/run` | Run a plugin action |
+| `GET` | `/v1/jobs/action/job?id={id}` | Get plugin action job status |
+| `POST` | `/v1/jobs/download/submit` | Submit download URL(s) |
+| `POST` | `/v1/jobs/cancel` | Cancel a download |
+| `POST` | `/v1/jobs/pause` | Pause a download |
+| `POST` | `/v1/jobs/resume` | Resume a download |
+| `POST` | `/v1/jobs/retry` | Retry a download |

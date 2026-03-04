@@ -32,7 +32,9 @@ GET /v1/notes
 | `StartDateAfter` | string | Notes starting after this date |
 | `EndDateBefore` | string | Notes ending before this date |
 | `EndDateAfter` | string | Notes ending after this date |
-| `SortBy` | string[] | Sort order |
+| `Shared` | boolean | Filter Notes that have a share token |
+| `MetaQuery` | string[] | Filter by metadata conditions (`key:value` or `key:OP:value`) |
+| `SortBy` | string[] | Sort order (e.g., `created_at desc`) |
 
 ### Example
 
@@ -232,10 +234,11 @@ curl -X POST "http://localhost:8181/v1/note/share?noteId=123"
 
 ```json
 {
-  "shareToken": "abc123def456",
-  "shareUrl": "/s/abc123def456"
+  "token": "abc123def456ghi789jkl012mno345pq"
 }
 ```
+
+The token is 32 characters. If the Note is already shared, the existing token is returned.
 
 ## Unshare a Note
 
@@ -451,27 +454,23 @@ Returns the created block with HTTP status 201.
 Update the content of an existing block. Use this in edit mode.
 
 ```
-PUT /v1/note/block?id={id}
+PUT /v1/note/block
 ```
-
-### Query Parameters
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `id` | integer | **Required.** The block ID |
 
 ### Request Body (JSON)
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `id` | integer | **Required.** The block ID |
 | `content` | object | **Required.** New content for the block |
 
 ### Example
 
 ```bash
-curl -X PUT "http://localhost:8181/v1/note/block?id=5" \
+curl -X PUT http://localhost:8181/v1/note/block \
   -H "Content-Type: application/json" \
   -d '{
+    "id": 5,
     "content": {"text": "Updated paragraph text"}
   }'
 ```
@@ -498,28 +497,24 @@ Returns the updated block.
 Update the state of a block. Use this while viewing (e.g., checking a todo item).
 
 ```
-PATCH /v1/note/block/state?id={id}
+PATCH /v1/note/block/state
 ```
-
-### Query Parameters
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `id` | integer | **Required.** The block ID |
 
 ### Request Body (JSON)
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `id` | integer | **Required.** The block ID |
 | `state` | object | **Required.** New state for the block |
 
 ### Example
 
 ```bash
 # Mark a todo item as checked
-curl -X PATCH "http://localhost:8181/v1/note/block/state?id=10" \
+curl -X PATCH http://localhost:8181/v1/note/block/state \
   -H "Content-Type: application/json" \
   -d '{
+    "id": 10,
     "state": {"checked": ["item-1", "item-2"]}
   }'
 ```
@@ -536,7 +531,7 @@ Returns the updated block.
   "noteId": 123,
   "type": "todos",
   "position": "a2",
-  "content": {"items": [{"id": "item-1", "label": "Task 1"}, {"id": "item-2", "label": "Task 2"}]},
+  "content": {"items": [{"id": "item-1", "text": "Task 1"}, {"id": "item-2", "text": "Task 2"}]},
   "state": {"checked": ["item-1", "item-2"]}
 }
 ```
@@ -628,21 +623,21 @@ Returns HTTP status 204 (No Content) on success.
 Execute the query associated with a table block and return the results in table format.
 
 ```
-GET /v1/note/block/table/query?blockId={id}
+GET /v1/note/block/table/query?id={id}
 ```
 
 ### Query Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `blockId` | integer | **Required.** The table block ID |
+| `id` | integer | **Required.** The table block ID |
 
 Additional query parameters are passed through to the query (merged with the block's stored `queryParams`).
 
 ### Example
 
 ```bash
-curl "http://localhost:8181/v1/note/block/table/query?blockId=10"
+curl "http://localhost:8181/v1/note/block/table/query?id=10"
 ```
 
 ### Response
@@ -662,21 +657,21 @@ curl "http://localhost:8181/v1/note/block/table/query?blockId=10"
 Get events for a calendar block within a date range.
 
 ```
-GET /v1/note/block/calendar/events?blockId={id}&start={date}&end={date}
+GET /v1/note/block/calendar/events?id={id}&start={date}&end={date}
 ```
 
 ### Query Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `blockId` | integer | **Required.** The calendar block ID |
-| `start` | string | **Required.** Start date (YYYY-MM-DD) |
-| `end` | string | **Required.** End date (YYYY-MM-DD) |
+| `id` | integer | **Required.** The calendar block ID |
+| `start` | string | **Required.** Start date (RFC 3339) |
+| `end` | string | **Required.** End date (RFC 3339) |
 
 ### Example
 
 ```bash
-curl "http://localhost:8181/v1/note/block/calendar/events?blockId=15&start=2024-01-01&end=2024-01-31"
+curl "http://localhost:8181/v1/note/block/calendar/events?id=15&start=2024-01-01T00:00:00Z&end=2024-01-31T23:59:59Z"
 ```
 
 ## Block Type Schemas
@@ -739,11 +734,15 @@ Each block type has its own content and state schema.
 **Content:**
 ```json
 {
-  "groupIds": [10, 20, 30]
+  "items": [
+    {"type": "group", "id": 10},
+    {"type": "note", "id": 5},
+    {"type": "resource", "id": 42}
+  ]
 }
 ```
 
-- `groupIds`: Array of group IDs to reference
+- `items`: Array of entity references, each with `type` and `id`
 
 **State:** Empty object `{}`
 
@@ -753,13 +752,13 @@ Each block type has its own content and state schema.
 ```json
 {
   "items": [
-    {"id": "item-1", "label": "First task"},
-    {"id": "item-2", "label": "Second task"}
+    {"id": "item-1", "text": "First task"},
+    {"id": "item-2", "text": "Second task"}
   ]
 }
 ```
 
-- `items`: Array of todo items, each with unique `id` and `label`
+- `items`: Array of todo items, each with unique `id` and `text`
 
 **State:**
 ```json
@@ -772,25 +771,16 @@ Each block type has its own content and state schema.
 
 ### Table Block
 
-**Content (manual data):**
+**Content:**
 ```json
 {
-  "columns": ["Name", "Value", "Description"],
-  "rows": [
-    ["Row 1", 100, "First row"],
-    ["Row 2", 200, "Second row"]
-  ]
+  "queryName": "resource-stats",
+  "params": {"minSize": "1000000"}
 }
 ```
 
-**Content (query-based):**
-```json
-{
-  "queryId": 5
-}
-```
-
-- Either provide `columns`/`rows` OR `queryId`, not both
+- `queryName`: Name of a saved Query to execute
+- `params`: Named parameters to pass to the Query
 
 **State:**
 ```json
@@ -838,7 +828,7 @@ curl http://localhost:8181/v1/note/noteTypes.json
     "ID": 1,
     "Name": "Meeting",
     "Description": "Meeting notes template",
-    "CustomHeader": "<h2>{{.Name}}</h2>",
+    "CustomHeader": "<h2>{{ note.Name }}</h2>",
     "CustomSidebar": "...",
     "CustomSummary": "...",
     "CustomAvatar": "..."
@@ -874,7 +864,7 @@ curl -X POST http://localhost:8181/v1/note/noteType \
   -d '{
     "Name": "Task",
     "Description": "Task tracking notes",
-    "CustomHeader": "<div class=\"task-header\">{{.Name}}</div>"
+    "CustomHeader": "<div class=\"task-header\">{{ note.Name }}</div>"
   }'
 ```
 

@@ -1,361 +1,124 @@
 ---
 sidebar_position: 3
+title: Notes
 ---
 
 # Notes
 
-A Note holds text content: meeting minutes, journal entries, research, or any written material. Notes render as Markdown, support optional date ranges, and can have Resources (files) attached.
+A Note stores text content with optional start and end dates, a type classification, and relationships to Resources, Groups, and Tags. Notes support a block-based content system for structured editing and public sharing via unique tokens.
 
 ## Note Properties
 
-| Property | Description |
-|----------|-------------|
-| `name` | Title of the note |
-| `description` | Main content (supports Markdown) |
-| `meta` | Arbitrary JSON metadata |
-| `startDate` | Optional start date |
-| `endDate` | Optional end date |
-| `noteTypeId` | Optional type for categorization |
-| `shareToken` | Token for public sharing (see [Note Sharing](../features/note-sharing.md)) |
-| `blocks` | Block-based content units (see [Block-Based Content](#block-based-content)) |
+| Property | Type | Description |
+|----------|------|-------------|
+| `name` | string | Title of the Note (required, non-empty) |
+| `description` | string | Main text content, syncs with first text block |
+| `meta` | JSON | Arbitrary key-value metadata (defaults to `{}`) |
+| `startDate` | datetime | Optional start date for temporal filtering |
+| `endDate` | datetime | Optional end date for temporal filtering |
+| `noteTypeId` | integer | Optional FK to a Note Type for categorization |
+| `shareToken` | string | 32-character token for public sharing (unique across all Notes) |
+| `ownerId` | integer | FK to owning Group |
 
-## Content Format
+## Ownership and Deletion
 
-The `description` field contains the main note content:
+A Note can be owned by one Group. The owner appears as the Note's parent in the UI.
 
-- Plain text is always supported
-- Markdown rendering is available in the UI
-- HTML is preserved if entered directly
-- No character limit (stored as TEXT)
+:::warning Cascade on owner deletion
 
-### Markdown Support
+Deleting the owner Group **deletes all Notes it owns**. This is a cascade delete (ON DELETE CASCADE), not a soft delete.
 
-Notes support standard Markdown formatting:
-
-```markdown
-# Heading 1
-## Heading 2
-
-**Bold** and *italic* text
-
-- Bullet lists
-- With multiple items
-
-1. Numbered lists
-2. Work too
-
-[Links](https://example.com)
-
-> Blockquotes for citations
-
-`inline code` and code blocks
-```
-
-## Block-Based Content
-
-Notes also support an optional block-based content structure for rich, interactive content.
-
-### What Are Blocks?
-
-Blocks are structured content units within a note. Each block has a specific type and stores its data as JSON -- enabling interactive elements like to-do lists, image galleries, and sortable tables that maintain state between sessions.
-
-### Block Properties
-
-| Property | Description |
-|----------|-------------|
-| `type` | Block type (text, heading, divider, gallery, references, todos, table, calendar) |
-| `content` | JSON data edited in edit mode |
-| `state` | JSON data modified while viewing |
-| `position` | Lexicographic string for ordering |
-
-### Content vs State
-
-Blocks separate **content** (what you edit) from **state** (runtime changes):
-
-- **Content**: Data changed in edit mode. Examples: todo item labels, heading text, table columns
-- **State**: Data modified while viewing. Examples: which todos are checked, table sort order
-
-Users can interact with blocks (checking items, sorting tables) without entering edit mode.
-
-### Block Types
-
-#### Text Block
-
-Basic text content, supports Markdown.
-
-```json
-{
-  "type": "text",
-  "content": { "text": "This is a paragraph of text." }
-}
-```
-
-#### Heading Block
-
-Section headings with configurable level.
-
-```json
-{
-  "type": "heading",
-  "content": { "text": "Section Title", "level": 2 }
-}
-```
-
-Supported levels: 1 through 6.
-
-#### Divider Block
-
-Visual separator between content sections.
-
-```json
-{
-  "type": "divider",
-  "content": {}
-}
-```
-
-#### Gallery Block
-
-Displays attached resources as an image gallery.
-
-```json
-{
-  "type": "gallery",
-  "content": { "resourceIds": [101, 102, 103] }
-}
-```
-
-#### References Block
-
-Links to related groups.
-
-```json
-{
-  "type": "references",
-  "content": { "groupIds": [5, 12, 27] }
-}
-```
-
-#### Todos Block
-
-Interactive to-do list with checkable items.
-
-```json
-{
-  "type": "todos",
-  "content": {
-    "items": [
-      { "id": "a1b2", "label": "First task" },
-      { "id": "c3d4", "label": "Second task" }
-    ]
-  },
-  "state": {
-    "checked": ["a1b2"]
-  }
-}
-```
-
-- `content.items`: The to-do items (edited in edit mode)
-- `state.checked`: IDs of checked items (toggled while viewing)
-
-#### Table Block
-
-Sortable data table.
-
-```json
-{
-  "type": "table",
-  "content": {
-    "columns": [
-      { "id": "name", "label": "Name" },
-      { "id": "status", "label": "Status" }
-    ],
-    "rows": [
-      { "id": "r1", "name": "Item A", "status": "Active" },
-      { "id": "r2", "name": "Item B", "status": "Pending" }
-    ]
-  },
-  "state": {
-    "sortColumn": "name",
-    "sortDir": "asc"
-  }
-}
-```
-
-- `content.columns` and `content.rows`: Table structure (edited in edit mode)
-- `state.sortColumn` and `state.sortDir`: Current sort settings (changed by clicking headers)
-
-#### Calendar Block
-
-Displays calendar events from iCal sources or custom entries.
-
-```json
-{
-  "type": "calendar",
-  "content": {
-    "calendars": [
-      {
-        "id": "work",
-        "name": "Work Calendar",
-        "color": "#3b82f6",
-        "source": { "type": "url", "url": "https://example.com/cal.ics" }
-      },
-      {
-        "id": "local",
-        "name": "Local File",
-        "color": "#10b981",
-        "source": { "type": "resource", "resourceId": 42 }
-      }
-    ]
-  },
-  "state": {
-    "view": "month",
-    "currentDate": "2024-06-15",
-    "customEvents": [
-      {
-        "id": "evt1",
-        "title": "Team Meeting",
-        "start": "2024-06-20T10:00:00Z",
-        "end": "2024-06-20T11:00:00Z",
-        "allDay": false,
-        "calendarId": "custom"
-      }
-    ]
-  }
-}
-```
-
-- `content.calendars`: Calendar sources -- each with an `id`, `name`, optional hex `color`, and a `source` (either `url` or `resource` with a `resourceId` pointing to an iCal file)
-- `state.view`: Current view mode (`month`, `week`, or `agenda`)
-- `state.customEvents`: User-created events (max 500 per block). Each event must have `calendarId` set to `"custom"`
-
-### Position Ordering
-
-Blocks use lexicographic position strings (e.g., "a", "b", "c" or "aaa", "aab") for ordering. Blocks can be inserted between existing ones without renumbering:
-
-| Position | Block |
-|----------|-------|
-| `a` | First block |
-| `b` | Second block |
-| `am` | Inserted between first and second |
-
-### Backward Compatibility
-
-Blocks are backward compatible with existing notes:
-
-- A note's `description` field syncs bidirectionally with its first text block
-- Notes without blocks render the `description` field as before
-- Adding blocks to an existing note preserves the description as the first text block
-- Editing the first text block updates the description field
-
-Older clients and integrations continue to work while new features use the block system.
+:::
 
 ## Date Ranges
 
-Notes can have optional date fields for temporal organization:
-
-### Start Date
-- When the note's subject began
-- Useful for events, projects, or time-bound topics
-
-### End Date
-- When the note's subject ended
-- Can be left empty for ongoing items
-
-### Use Cases
-
-| Scenario | Start Date | End Date |
-|----------|------------|----------|
-| Single event | Event date | Same as start |
-| Date range | Begin date | End date |
-| Ongoing | Begin date | Empty |
-| Point in time | Date | Empty |
-
-Dates enable filtering and sorting notes chronologically.
+Notes have optional `startDate` and `endDate` fields for temporal filtering and chronological organization. Both fields are independent -- set one, both, or neither.
 
 ## Note Types
 
-Note Types group similar notes and apply consistent styling, enabling type-specific filtering and custom presentation.
-
-### Note Type Properties
+Note Types classify Notes and apply consistent styling. Each Note Type has custom HTML templates (header, sidebar, summary, avatar) rendered with Pongo2 syntax. Deleting a Note Type sets `noteTypeId` to NULL on associated Notes.
 
 | Property | Description |
 |----------|-------------|
-| `name` | Type name (e.g., "Meeting Notes") |
-| `description` | Explanation of the type |
-| `customHeader` | HTML template for note headers |
-| `customSidebar` | HTML template for note sidebars |
+| `name` | Type identifier (e.g., "Meeting Notes") |
+| `customHeader` | HTML template for the Note display header |
+| `customSidebar` | HTML template for the sidebar |
 | `customSummary` | HTML template for list views |
-| `customAvatar` | HTML template for note avatars |
+| `customAvatar` | HTML template for Note avatars |
 
-### Custom Templates
-
-Note Types can include custom HTML templates rendered with Pongo2 (Django-like) syntax:
+Templates have access to the `note` object and its metadata via Pongo2 (Django-like) syntax:
 
 ```html
-<!-- customHeader example -->
 <div class="meeting-header">
   <span class="date">{{ note.startDate }}</span>
   <span class="type-badge">Meeting</span>
 </div>
 ```
 
-Templates have access to:
-- `note` - The current note object
-- `meta` - The note's metadata
-- Standard template functions
+## Block-Based Content
 
-## Attachments
+Notes support an optional block-based content structure. Each block has a type, position, content (JSON), and state (JSON). For full details on block types, schemas, and the block API, see [Note Blocks](./note-blocks.md).
 
-Mahresources links Resources to Notes through many-to-many relationships. A resource can be attached to multiple notes, and each note can have multiple attachments -- reference documents for meeting minutes, images to illustrate content, or supporting files for research.
+### Content vs State
+
+Blocks separate **content** (edited in edit mode) from **state** (modified while viewing):
+
+- **Content**: Todo item text, heading text, query configuration
+- **State**: Which todos are checked, calendar view mode
+
+### Description Synchronization
+
+The Note's `description` field syncs bidirectionally with the first text block:
+
+- Editing the first text block updates `description`
+- Editing `description` updates the first text block
+- Notes without blocks render `description` directly
 
 ## Relationships
 
-Notes connect to other entities:
-
 ### Ownership
-- A Note can be **owned by** one Group
-- Appears in the owner's "Owned Notes" section
-- Deleting the owner cascades to owned notes
+- One Group can own a Note (appears in the owner's "Owned Notes")
+- Deleting the owner cascades to the Note
 
 ### Related Groups
-- A Note can be **related to** multiple Groups
-- Many-to-many relationship
-- Appears in each group's "Related Notes" section
+- Many-to-many via `groups_related_notes`
+- A Note appears in each related Group's "Related Notes" section
 
 ### Attached Resources
-- A Note can have multiple Resources attached
-- Many-to-many relationship
-- Resources appear as attachments
+- Many-to-many via `resource_notes`
+- Resources appear as attachments on the Note
 
 ### Tags
-- A Note can have multiple Tags
-- Enables topic-based organization
-- Many-to-many relationship
+- Many-to-many via `note_tags`
+- Tags enable cross-cutting organization and filtering
 
-## Searching Notes
+## Sharing
 
-Notes are included in global search:
+Generate a 32-character share token to make a Note publicly accessible. Shared Notes are served on the share server without authentication. See [Note Sharing](../features/note-sharing.md).
 
-- Searches `name` and `description` fields
-- Full-text search when FTS is enabled
-- Filter by Note Type in advanced search
+## Query Parameters
 
-### Query Parameters
+Filter Notes with these parameters on `GET /v1/notes`:
 
-Filter notes with these parameters:
-
-| Parameter | Description |
-|-----------|-------------|
-| `name` | Filter by name (partial match) |
-| `noteTypeId` | Filter by Note Type |
-| `ownerId` | Filter by owner Group |
-| `tags` | Filter by tag IDs |
-| `startDateAfter` | Notes starting after date |
-| `startDateBefore` | Notes starting before date |
-| `endDateAfter` | Notes ending after date |
-| `endDateBefore` | Notes ending before date |
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `Name` | string | LIKE search on name |
+| `Description` | string | LIKE search on description |
+| `OwnerId` | integer | Filter by owner Group |
+| `Groups` | integer[] | Filter by Group IDs (AND logic, includes owned + related) |
+| `Tags` | integer[] | Filter by Tag IDs (AND logic) |
+| `Ids` | integer[] | Filter by specific Note IDs |
+| `NoteTypeId` | integer | Filter by Note Type |
+| `Shared` | boolean | Filter Notes that have a share token |
+| `CreatedBefore` | string | Date upper bound |
+| `CreatedAfter` | string | Date lower bound |
+| `StartDateBefore` | string | Filter on start date |
+| `StartDateAfter` | string | Filter on start date |
+| `EndDateBefore` | string | Filter on end date |
+| `EndDateAfter` | string | Filter on end date |
+| `MetaQuery` | string[] | JSON metadata queries (`key:value` or `key:OP:value`) |
+| `SortBy` | string[] | Sort columns (e.g., `created_at desc`, `meta->>'key'`) |
 
 ## API Operations
 
-For full API details -- creating, querying, and bulk operations on Notes -- see [API: Notes](../api/notes.md).
+For full API details, see [API: Notes](../api/notes.md).

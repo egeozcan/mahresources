@@ -4,7 +4,7 @@ sidebar_position: 4
 
 # Custom Templates
 
-Categories (for Groups), Note Types (for Notes), and Resource Categories (for Resources) support custom HTML templates that let you create specialized views for different types of content. Templates can display entity data dynamically and include interactive elements using Alpine.js.
+Categories (for Groups), Note Types (for Notes), and Resource Categories (for Resources) support custom HTML templates that create specialized views for different content types.
 
 :::warning Security Notice
 
@@ -108,46 +108,9 @@ Create links using entity data:
 
 ## Advanced Examples
 
-### Image Gallery from Metadata
+### Iterating Over Metadata Arrays
 
-Display images stored in metadata:
-
-```html
-<div x-data="{ entity: {{ group|json }} }">
-  <template x-if="entity.Meta?.images && entity.Meta.images.length > 0">
-    <div class="grid grid-cols-3 gap-2">
-      <template x-for="img in entity.Meta.images" :key="img">
-        <img :src="img" class="w-full h-32 object-cover rounded">
-      </template>
-    </div>
-  </template>
-</div>
-```
-
-### Progress Bar
-
-Display a progress indicator:
-
-```html
-<div x-data="{ entity: {{ group|json }} }">
-  <template x-if="entity.Meta?.progress !== undefined">
-    <div class="mt-4">
-      <div class="flex justify-between text-sm mb-1">
-        <span>Progress</span>
-        <span x-text="entity.Meta.progress + '%'"></span>
-      </div>
-      <div class="w-full bg-gray-200 rounded-full h-2">
-        <div class="bg-blue-600 h-2 rounded-full"
-             :style="'width: ' + entity.Meta.progress + '%'"></div>
-      </div>
-    </div>
-  </template>
-</div>
-```
-
-### Custom Data Table
-
-Render a table from array metadata:
+Use `x-for` to render lists, tables, or grids from array metadata. This pattern works for image galleries, badge lists, data tables, and any repeating content.
 
 ```html
 <div x-data="{ entity: {{ group|json }} }">
@@ -174,18 +137,22 @@ Render a table from array metadata:
 </div>
 ```
 
-### Styled Badge List
+### Dynamic Styling from Metadata
 
-Display tags or categories from metadata:
+Combine `:class` bindings with metadata values for status badges, progress bars, or conditional formatting.
 
 ```html
 <div x-data="{ entity: {{ group|json }} }">
-  <template x-if="entity.Meta?.labels && entity.Meta.labels.length > 0">
-    <div class="flex flex-wrap gap-2 mt-2">
-      <template x-for="label in entity.Meta.labels" :key="label">
-        <span class="px-2 py-1 text-xs bg-indigo-100 text-indigo-800 rounded-full"
-              x-text="label"></span>
-      </template>
+  <template x-if="entity.Meta?.progress !== undefined">
+    <div class="mt-4">
+      <div class="flex justify-between text-sm mb-1">
+        <span>Progress</span>
+        <span x-text="entity.Meta.progress + '%'"></span>
+      </div>
+      <div class="w-full bg-gray-200 rounded-full h-2">
+        <div class="bg-blue-600 h-2 rounded-full"
+             :style="'width: ' + entity.Meta.progress + '%'"></div>
+      </div>
     </div>
   </template>
 </div>
@@ -284,16 +251,6 @@ Use Tailwind responsive prefixes:
 ```html
 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
   <!-- Content adapts to screen size -->
-</div>
-```
-
-### Dark Mode Compatibility
-
-If you plan to add dark mode support later, use semantic color classes:
-
-```html
-<div class="bg-white text-gray-900">
-  <!-- Later can be: bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 -->
 </div>
 ```
 

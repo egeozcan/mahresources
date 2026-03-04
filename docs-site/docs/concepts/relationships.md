@@ -52,14 +52,11 @@ RelationTypes can specify their inverse:
 "parent of" <-> "child of"
 ```
 
-When creating a relation with a back relation defined:
-- The forward relation is created (A "works at" B)
-- The inverse can be navigated from the other direction (B "employs" A)
+When creating a Relation with a back Relation Type defined, both directions are physically created:
+- The forward Relation is created (A "works at" B)
+- The inverse Relation is automatically created (B "employs" A)
 
-Benefits:
-- Bidirectional navigation
-- Consistent semantics
-- Reduced data duplication
+When the `ReverseName` parameter equals the `Name` (e.g., "sibling of"), the Relation Type becomes its own inverse -- a single self-referencing back relation.
 
 ## Relations
 
@@ -126,10 +123,10 @@ On a group page, relations are displayed in both directions:
 
 ### Querying Relations
 
-Find groups by their relationships:
+Find Groups by their Relation Type. Use `RelationSide` to specify the direction (0 = from side, non-zero = to side):
 
 ```
-GET /v1/groups?relationTypeId=1&relatedToGroup=2
+GET /v1/groups?RelationTypeId=1&RelationSide=0
 ```
 
 ## Use Cases
@@ -178,35 +175,8 @@ Event "held at" Venue
 
 For full API details -- creating relation types, setting up inverse pairs, creating relations, and querying -- see [API: Other Endpoints](../api/other-endpoints.md).
 
-## Best Practices
+## Tips
 
-### Naming Conventions
-
-Use verb phrases for relation types:
-- "works at" not "employment"
-- "parent of" not "parenthood"
-- "member of" not "membership"
-
-This makes relations read naturally:
-> John Smith **works at** Acme Corp
-
-### Always Define Inverses
-
-Create back relations for bidirectional navigation:
-- Easier to query from both directions
-- Consistent semantics
-- Better UI navigation
-
-### Use Category Constraints
-
-Constrain relations to appropriate categories:
-- Prevents nonsensical relations
-- Documents domain model
-- Enables validation
-
-### Keep Relations Simple
-
-Each relation should represent one concept:
-- Avoid overloading relation types
-- Create specific types for specific meanings
-- Use metadata for additional context
+- Use verb phrases for Relation Type names ("works at", not "employment") so Relations read naturally: "John Smith works at Acme Corp"
+- Define inverses for bidirectional navigation
+- Use Category constraints to prevent nonsensical Relations

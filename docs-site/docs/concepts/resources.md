@@ -21,7 +21,10 @@ Every file in Mahresources is a Resource: images, documents, videos, or anything
 | `width`, `height` | Dimensions for images and videos |
 | `hash` | Content hash for deduplication |
 | `hashType` | Hash algorithm used (SHA1) |
-| `resourceCategoryId` | Optional ResourceCategory for typed presentation |
+| `storageLocation` | Which alternative filesystem contains the file (nil = default) |
+| `resourceCategoryId` | Optional Resource Category for typed presentation |
+| `seriesId` | FK to Series for shared metadata grouping |
+| `ownMeta` | Resource-specific metadata when in a Series (diff from Series meta) |
 | `currentVersionId` | ID of the active version (see [Versioning](#resource-versioning)) |
 
 ## File Storage
@@ -105,12 +108,19 @@ Mahresources tracks version history for each Resource. For details, see [Version
 3. New content becomes the current version
 4. Access any version through the version history
 
-### Use Cases
+## Series Membership
 
-- Document revisions
-- Image edits
-- Iterative improvements
-- Audit trails
+A Resource can belong to a Series -- a grouping of Resources that share common metadata (e.g., pages of a scanned document). The Series holds shared metadata, and each Resource stores only its unique differences in `ownMeta`. The effective `meta` is the merge of Series meta plus `ownMeta` (Resource wins on conflict). See [Series](./series.md).
+
+## Duplicate Detection
+
+Upload deduplication is hash-based (SHA1). If a file with the same hash already exists:
+- **Same owner**: Returns a `ResourceExistsError` with the existing Resource ID
+- **Different owner**: Attaches the new owner as a related Group on the existing Resource
+
+## Deletion Behavior
+
+Deleted files are backed up to the `/deleted/` directory before the database record is removed. Files are only physically deleted from primary storage if no other Resources or versions reference the same hash.
 
 ## Relationships
 

@@ -44,7 +44,7 @@ curl http://localhost:8181/v1/resources.json
 curl -H "Accept: application/json" http://localhost:8181/v1/resources
 ```
 
-**3. Add `.body` suffix to get just the HTML body (no layout wrapper):**
+**3. Add `.body` suffix to get the HTML body without the layout wrapper:**
 
 ```bash
 curl http://localhost:8181/v1/resources.body
@@ -87,7 +87,7 @@ curl http://localhost:8181/v1/resources.json?page=2
 curl http://localhost:8181/v1/resources.json?page=3
 ```
 
-The default page size is 50 results per page. This is not configurable via the API.
+The default page size depends on the endpoint. The `MaxResults` parameter on Resource queries can override the page size.
 
 ## Common Query Parameters
 
@@ -100,22 +100,27 @@ Most list endpoints support these common filtering parameters:
 | `Description` | string | Filter by description (partial match) |
 | `CreatedBefore` | string | Filter items created before this date (ISO 8601) |
 | `CreatedAfter` | string | Filter items created after this date (ISO 8601) |
-| `SortBy` | string[] | Sort order (e.g., `SortBy=Name`, `SortBy=-CreatedAt`) |
+| `SortBy` | string[] | Sort order (e.g., `SortBy=name`, `SortBy=created_at desc`) |
 
 ### Sorting
 
-Use the `SortBy` parameter to control result ordering:
+Use the `SortBy` parameter to control result ordering. Append `asc` or `desc` (space-separated) for direction. Default is ascending.
 
 ```bash
 # Sort by name ascending
-curl "http://localhost:8181/v1/resources.json?SortBy=Name"
+curl "http://localhost:8181/v1/resources.json?SortBy=name"
 
-# Sort by creation date descending (prefix with -)
-curl "http://localhost:8181/v1/resources.json?SortBy=-CreatedAt"
+# Sort by creation date descending
+curl "http://localhost:8181/v1/resources.json?SortBy=created_at desc"
 
 # Multiple sort fields
-curl "http://localhost:8181/v1/resources.json?SortBy=Name&SortBy=-CreatedAt"
+curl "http://localhost:8181/v1/resources.json?SortBy=name&SortBy=created_at desc"
+
+# Sort by metadata field
+curl "http://localhost:8181/v1/resources.json?SortBy=meta->>'priority' desc"
 ```
+
+Sort columns are validated against: `^(meta->>?'[a-z_]+'|[a-z_]+)(\s(desc|asc))?$`
 
 ## Error Responses
 

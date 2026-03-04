@@ -81,8 +81,9 @@ curl "http://localhost:8181/v1/resources.json?MinWidth=1920&MinHeight=1080"
     "CreatedAt": "2024-01-15T10:30:00Z",
     "UpdatedAt": "2024-01-15T10:30:00Z",
     "Tags": [...],
-    "Groups": [...],
-    "Notes": [...]
+    "Owner": {...},
+    "ResourceCategory": {...},
+    "Series": {...}
   }
 ]
 ```
@@ -122,7 +123,15 @@ Content-Type: multipart/form-data
 | `Tags` | integer[] | Tag IDs to apply |
 | `Notes` | integer[] | Note IDs to associate |
 | `Meta` | string | JSON metadata object |
-| `Category` | string | Category name |
+| `Category` | string | Legacy category string |
+| `ContentCategory` | string | High-level content category label |
+| `ResourceCategoryId` | integer | Resource Category ID |
+| `OriginalName` | string | Original filename |
+| `OriginalLocation` | string | Original URL/path |
+| `Width` | integer | Manual width override |
+| `Height` | integer | Manual height override |
+| `SeriesSlug` | string | Assign to Series by slug (creates if needed) |
+| `SeriesId` | integer | Assign to Series by ID |
 
 ### Example
 
@@ -187,7 +196,6 @@ POST /v1/resource/remote
 | `GroupCategoryName` | string | Auto-create owner group with this category |
 | `GroupName` | string | Auto-create owner group with this name |
 | `GroupMeta` | string | Metadata for auto-created group |
-| `background` | boolean | Queue for background download |
 
 ### Example
 
@@ -202,34 +210,9 @@ curl -X POST http://localhost:8181/v1/resource/remote \
     "OwnerId": 5,
     "Tags": [1, 2]
   }'
-
-# Queue for background download
-curl -X POST http://localhost:8181/v1/resource/remote \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json" \
-  -d '{
-    "URL": "https://example.com/large-file.zip",
-    "OwnerId": 5,
-    "background": true
-  }'
 ```
 
-### Background Download Response
-
-When `background=true`:
-
-```json
-{
-  "queued": true,
-  "jobs": [
-    {
-      "id": "job-123",
-      "url": "https://example.com/large-file.zip",
-      "status": "pending"
-    }
-  ]
-}
-```
+For background downloads, use `POST /v1/download/submit` instead. The URL field accepts multiple URLs separated by newlines for batch imports.
 
 ## Add Local Resource
 
@@ -243,7 +226,7 @@ POST /v1/resource/local
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `LocalPath` | string | **Required.** Absolute path on server |
+| `LocalPath` | string | **Required.** Path within an alternative filesystem |
 | `PathName` | string | Storage location key (for alt filesystems) |
 | `Name` | string | Display name |
 | `Description` | string | Description text |
@@ -318,7 +301,7 @@ curl -X POST "http://localhost:8181/v1/resource/delete?Id=123" \
 
 ## View Resource Content
 
-Get the actual file content (redirects to file URL).
+Streams the actual file content with the proper Content-Type header.
 
 ```
 GET /v1/resource/view?id={id}
@@ -327,8 +310,7 @@ GET /v1/resource/view?id={id}
 ### Example
 
 ```bash
-# This redirects to the file's storage location
-curl -L http://localhost:8181/v1/resource/view?id=123 -o downloaded-file.jpg
+curl http://localhost:8181/v1/resource/view?id=123 -o downloaded-file.jpg
 ```
 
 ## Get Resource Preview
@@ -513,7 +495,7 @@ POST /v1/resource/recalculateDimensions
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `ID` | integer[] | Resource IDs to recalculate |
+| `ID` | integer | Resource ID to recalculate |
 
 ### Set Dimensions
 
@@ -748,7 +730,7 @@ Compare two versions of a resource.
 GET /v1/resource/versions/compare?resourceId={id}&v1={versionId1}&v2={versionId2}
 ```
 
-#### Query Parameters
+#### Same-Resource Comparison
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -756,8 +738,31 @@ GET /v1/resource/versions/compare?resourceId={id}&v1={versionId1}&v2={versionId2
 | `v1` | integer | **Required.** First version ID |
 | `v2` | integer | **Required.** Second version ID |
 
-#### Example
-
 ```bash
 curl "http://localhost:8181/v1/resource/versions/compare?resourceId=123&v1=1&v2=5"
+```
+
+#### Cross-Resource Comparison
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `r1` | integer | **Required.** First resource ID |
+| `v1` | integer | **Required.** First version number |
+| `r2` | integer | **Required.** Second resource ID |
+| `v2` | integer | **Required.** Second version number |
+
+```bash
+curl "http://localhost:8181/v1/resource/versions/compare?r1=123&v1=1&r2=456&v2=1"
+```
+
+#### Response
+
+```json
+{
+  "sizeDelta": -1024,
+  "sameHash": false,
+  "sameType": true,
+  "dimensionsDiff": {"widthDelta": 0, "heightDelta": -100},
+  "crossResource": true
+}
 ```

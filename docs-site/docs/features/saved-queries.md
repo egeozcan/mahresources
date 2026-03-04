@@ -1,43 +1,42 @@
 ---
 sidebar_position: 3
+title: Saved Queries
 ---
 
 # Saved Queries
 
-Saved queries let you store and reuse database queries. They are useful for creating custom reports, complex searches, and reusable data views.
+Queries execute raw SQL against a read-only database connection and display results in a table or custom template.
 
-## What Are Saved Queries?
-
-A saved query consists of:
+## Query Properties
 
 | Property | Description |
 |----------|-------------|
-| **Name** | A unique identifier for the query |
-| **Description** | Optional explanation of what the query does |
-| **Text** | The SQL query to execute |
-| **Template** | Optional HTML template for custom result display |
+| `name` | Unique identifier for the Query (used in the UI and URL) |
+| `text` | SQL statement to execute |
+| `template` | Optional HTML template for custom result rendering |
+| `description` | Optional explanation of purpose |
 
-Queries run against a read-only database connection, so they cannot modify data.
+Names must be unique across all Queries.
+
+## How Queries Execute
+
+1. The SQL in `text` is sent to a read-only connection via `sqlx`
+2. Named parameters (`:paramName` syntax) are substituted from user input
+3. Results are returned as a JSON array of row objects
+4. If a `template` is defined, results render through it; otherwise a default table is used
+
+The read-only connection prevents INSERT, UPDATE, DELETE, and other modification statements.
 
 ## Creating a Query
 
 1. Navigate to **Queries** in the navigation menu
-2. Click **Create** to open the query editor
-3. Fill in the fields:
-   - **Name**: A descriptive name (must be unique)
-   - **Query**: Your SQL query text
-   - **Template**: Optional HTML template for results
+2. Click **Create**
+3. Fill in the Name, Query text, and optionally a Template and Description
+4. Click **Submit**
 
-### Example: Recent Resources
+## Named Parameters
 
-```sql
-SELECT id, name, created_at, content_type, file_size
-FROM resources
-ORDER BY created_at DESC
-LIMIT 50
-```
-
-### Example: Resources by Tag
+Use `:paramName` syntax in SQL. When a Query is run, input fields appear for each parameter.
 
 ```sql
 SELECT r.id, r.name, r.content_type
@@ -48,52 +47,38 @@ WHERE t.name = :tagName
 ORDER BY r.created_at DESC
 ```
 
-## Query Parameters
-
-Queries support named parameters using the `:paramName` syntax. When you run a query with parameters, input fields appear for each parameter.
-
-### Parameter Example
-
-Query text:
-```sql
-SELECT * FROM groups
-WHERE category_id = :categoryId
-AND created_at > :afterDate
-LIMIT :maxResults
-```
-
-When you run this query, you will see input fields for:
-- `categoryId`
-- `afterDate`
-- `maxResults`
-
-### Parameter Type Inference
-
-The UI attempts to parse parameter values as JSON. This means:
-- Numbers: enter `123` (no quotes)
-- Strings: enter `"my value"` (with quotes) or just the text
-- Booleans: enter `true` or `false`
-- Null: enter `null`
+Running this Query prompts for a `tagName` value. The UI parses input as JSON, so:
+- Numbers: `123`
+- Strings: `"my value"` (with quotes) or bare text
+- Booleans: `true` / `false`
+- Null: `null`
 
 ## Running Queries
 
-1. Navigate to the query's detail page
-2. Fill in any required parameters
-3. Click **Run**
-4. Results appear in a table below
+1. Navigate to the Query detail page
+2. Fill in parameter values
+3. Click **Run** (or press Enter in any parameter field)
 
-You can also press **Enter** in any parameter field to run the query.
+Results display as a sortable table with clickable ID links and JSON formatting for complex fields. Results are also available as `window.results` in the browser console.
 
-Results are displayed as an interactive table with:
-- Sortable columns
-- Clickable links for ID fields
-- JSON formatting for complex data
+## Custom Result Templates
 
-## Common Query Examples
+The `template` field accepts HTML with Alpine.js. The `results` variable contains the row array.
+
+```html
+<div class="grid grid-cols-3 gap-4">
+  <template x-for="item in results" :key="item.id">
+    <div class="p-4 border rounded">
+      <a :href="'/resource?id=' + item.id" class="text-blue-600" x-text="item.name"></a>
+      <p class="text-sm text-gray-500" x-text="item.content_type"></p>
+    </div>
+  </template>
+</div>
+```
+
+## Example Queries
 
 ### Resources Without Tags
-
-Find resources that have no tags assigned:
 
 ```sql
 SELECT r.id, r.name, r.created_at
@@ -103,33 +88,7 @@ WHERE rt.resource_id IS NULL
 ORDER BY r.created_at DESC
 ```
 
-### Groups by Category
-
-List all groups in a specific category:
-
-```sql
-SELECT g.id, g.name, g.description, c.name as category_name
-FROM groups g
-JOIN categories c ON g.category_id = c.id
-WHERE c.name = :categoryName
-ORDER BY g.name
-```
-
-### Notes in Date Range
-
-Find notes created within a date range:
-
-```sql
-SELECT n.id, n.name, n.created_at, nt.name as note_type
-FROM notes n
-LEFT JOIN note_types nt ON n.note_type_id = nt.id
-WHERE n.created_at BETWEEN :startDate AND :endDate
-ORDER BY n.created_at DESC
-```
-
 ### Resource Statistics by Content Type
-
-Get statistics grouped by content type:
 
 ```sql
 SELECT
@@ -142,22 +101,7 @@ GROUP BY content_type
 ORDER BY count DESC
 ```
 
-### Orphaned Resources
-
-Find resources with no owner and no groups:
-
-```sql
-SELECT r.id, r.name, r.created_at
-FROM resources r
-LEFT JOIN resource_groups rg ON r.id = rg.resource_id
-WHERE r.owner_id IS NULL
-AND rg.group_id IS NULL
-ORDER BY r.created_at DESC
-```
-
-### Tag Usage Count
-
-See how often each tag is used:
+### Tag Usage Counts
 
 ```sql
 SELECT
@@ -174,81 +118,72 @@ GROUP BY t.id, t.name
 ORDER BY resource_count DESC
 ```
 
-## Custom Result Templates
+## Database Schema Endpoint
 
-You can add a custom HTML template to control how results are displayed. The template has access to:
+Retrieve the database schema to help build Queries:
 
-- `results` - The query result array
-- Standard Alpine.js features
-
-### Template Example
-
-```html
-<div class="grid grid-cols-3 gap-4">
-  <template x-for="item in results" :key="item.id">
-    <div class="p-4 border rounded">
-      <a :href="'/resource?id=' + item.id" class="text-blue-600" x-text="item.name"></a>
-      <p class="text-sm text-gray-500" x-text="item.content_type"></p>
-    </div>
-  </template>
-</div>
 ```
-
-This template displays results as a grid of cards instead of a table.
-
-### Accessing Results in JavaScript
-
-Query results are also available as `window.results` after running, allowing you to work with them in the browser console:
-
-```javascript
-// In browser console after running a query
-console.log(window.results.length);
-window.results.filter(r => r.file_size > 1000000);
+GET /v1/query/schema
 ```
-
-## Editing and Deleting Queries
-
-### Edit a Query
-
-1. Navigate to the query's detail page
-2. Click **Edit** in the page header
-3. Modify the name, text, or template
-4. Click **Submit**
-
-### Delete a Query
-
-1. Navigate to the query's detail page
-2. Click **Delete** in the page header
-3. Confirm the deletion
-
-## API Access
-
-Queries can be run via the API:
 
 ```bash
-# Run by ID
-curl -X POST "http://localhost:8181/v1/query/run?id=1" \
-  -H "Content-Type: application/json" \
-  -d '{"paramName": "paramValue"}'
-
-# Run by name
-curl -X POST "http://localhost:8181/v1/query/run?name=MyQuery" \
-  -H "Content-Type: application/json" \
-  -d '{"paramName": "paramValue"}'
+curl http://localhost:8181/v1/query/schema.json
 ```
 
-Response is a JSON array of result objects.
+This returns table and column definitions for the database.
 
-## Security Considerations
+## API Endpoints
 
-- Queries run on a read-only connection (cannot INSERT, UPDATE, DELETE)
-- All queries are logged
-- Results may expose sensitive data - be mindful of who has access to the Mahresources instance
+### List Queries
 
-:::tip Query Design
-Write queries with performance in mind:
-- Use LIMIT to cap result counts
-- Add WHERE clauses to filter data
-- Create indexes if queries are slow
-- Test with small datasets first
-:::
+```
+GET /v1/queries
+```
+
+```bash
+curl http://localhost:8181/v1/queries.json
+```
+
+### Create or Update a Query
+
+```
+POST /v1/query
+```
+
+```bash
+curl -X POST http://localhost:8181/v1/query \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "Name=Recent+Resources&Text=SELECT+id,name+FROM+resources+ORDER+BY+created_at+DESC+LIMIT+50"
+```
+
+### Run a Query
+
+```
+POST /v1/query/run
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | uint | Query ID to execute |
+| (body) | JSON | Named parameter values |
+
+```bash
+curl -X POST "http://localhost:8181/v1/query/run?id=3" \
+  -H "Content-Type: application/json" \
+  -d '{"tagName": "photography"}'
+```
+
+Response is a JSON array of row objects.
+
+### Get Database Schema
+
+```
+GET /v1/query/schema
+```
+
+Returns table and column definitions for constructing Queries.
+
+## Security
+
+- All Queries execute on a read-only connection -- data modification is not possible
+- Results may expose any data in the database; restrict access to the Mahresources instance accordingly

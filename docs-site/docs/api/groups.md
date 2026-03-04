@@ -22,7 +22,7 @@ GET /v1/groups
 | `Name` | string | Filter by name (partial match) |
 | `Description` | string | Filter by description (partial match) |
 | `Tags` | integer[] | Filter by tag IDs |
-| `Groups` | integer[] | Filter by parent group IDs |
+| `Groups` | integer[] | Filter by related Groups or parent (checks both `group_related_groups` and `owner_id`) |
 | `Notes` | integer[] | Filter by associated note IDs |
 | `Resources` | integer[] | Filter by associated resource IDs |
 | `Categories` | integer[] | Filter by category IDs |
@@ -33,7 +33,8 @@ GET /v1/groups
 | `CreatedBefore` | string | Filter by creation date (ISO 8601) |
 | `CreatedAfter` | string | Filter by creation date (ISO 8601) |
 | `RelationTypeId` | integer | Filter by groups having this relation type |
-| `RelationSide` | integer | Which side of the relation (1=from, 2=to) |
+| `RelationSide` | integer | Which side of the relation (0=from, non-zero=to) |
+| `MetaQuery` | string[] | Filter by metadata conditions (supports `parent.key` and `child.key` prefixes) |
 | `SearchParentsForName` | boolean | Search parent groups for name match |
 | `SearchChildrenForName` | boolean | Search child groups for name match |
 | `SearchParentsForTags` | boolean | Include parent groups when filtering by tags |
@@ -111,6 +112,33 @@ curl http://localhost:8181/v1/group/parents.json?id=123
 [
   {"ID": 1, "Name": "Parent Group 1", ...},
   {"ID": 2, "Name": "Grandparent Group", ...}
+]
+```
+
+## Get Group Tree Children
+
+Get child Groups for a tree view with counts.
+
+```
+GET /v1/group/tree/children?id={id}
+```
+
+### Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | integer | **Required.** Parent Group ID |
+| `limit` | integer | Max children to return (default: 50, max: 100) |
+
+### Response
+
+```json
+[
+  {
+    "ID": 10,
+    "Name": "Sub-Group",
+    "child_count": 3
+  }
 ]
 ```
 
@@ -209,10 +237,12 @@ Returns the newly created group:
 ```json
 {
   "ID": 456,
-  "Name": "New Project (copy)",
+  "Name": "New Project",
   ...
 }
 ```
+
+The clone has identical name, description, meta, URL, owner, Category, and copies all related entity associations (Resources, Notes, Groups, Tags).
 
 ## Get Group Meta Keys
 

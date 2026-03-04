@@ -89,7 +89,39 @@ Deleting a tag removes it from all associated Resources, Notes, and Groups. This
 :::
 
 ```
-DELETE /v1/tag?id=123
+POST /v1/tag/delete
+```
+
+With form parameter `ID`.
+
+### Tag Merge
+
+Combine duplicate Tags into one, transferring all associations:
+
+```
+POST /v1/tags/merge
+```
+
+Parameters: `Winner` (Tag ID to keep), `Losers` (Tag IDs to merge and delete).
+
+### Bulk Delete Tags
+
+Delete multiple Tags at once:
+
+```
+POST /v1/tags/delete
+```
+
+Parameter: `ID` (array of Tag IDs).
+
+### Sorting by Usage
+
+Tags support a special `most_used_{entity}` sort prefix to sort by usage count:
+
+```
+GET /v1/tags?SortBy=most_used_resource
+GET /v1/tags?SortBy=most_used_note
+GET /v1/tags?SortBy=most_used_group
 ```
 
 ### Searching by Tags
@@ -101,14 +133,6 @@ GET /v1/resources?tags=1,2,3
 ```
 
 Multiple tags are AND-ed (items must have all specified tags).
-
-### Tag Management Best Practices
-
-1. **Use consistent naming**: Choose a convention (lowercase, hyphens)
-2. **Avoid duplicates**: Check existing tags before creating
-3. **Keep descriptions**: Document tag purposes
-4. **Review periodically**: Remove unused tags
-5. **Limit quantity**: Too many tags reduce usefulness
 
 ---
 
@@ -244,11 +268,7 @@ Define a JSON Schema to validate and structure metadata for groups in a category
 }
 ```
 
-Benefits:
-- Form generation from schema
-- Validation on save
-- Consistent data structure
-- Documentation of expected fields
+The schema drives structured form generation in the UI for Groups of that Category.
 
 ### Category Operations
 
@@ -289,8 +309,10 @@ Deleting a category **deletes all Groups** assigned to it. This cannot be undone
 :::
 
 ```
-DELETE /v1/category?id=123
+POST /v1/category/delete
 ```
+
+With form parameter `ID`.
 
 ### Filtering by Category
 
