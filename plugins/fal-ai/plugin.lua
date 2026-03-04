@@ -28,6 +28,11 @@ local FAL_ENDPOINTS = {
     imagen4_ultra = "fal-ai/imagen4/preview/ultra",
 }
 
+-- HTML-escape user input to prevent XSS
+local function html_escape(s)
+    return s:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"):gsub('"', "&quot;"):gsub("'", "&#39;")
+end
+
 -- Supported raster image content types
 local SUPPORTED_TYPES = {
     ["image/png"] = true,
@@ -182,7 +187,7 @@ local function process_image(resource_id, action_id, params, api_key, job_id)
         error("HTTP request failed: " .. resp.error)
     end
     if resp.status_code ~= 200 then
-        error("API error (status " .. tostring(resp.status_code) .. "): " .. (resp.body or ""))
+        error("API error (status " .. tostring(resp.status_code) .. "): " .. (resp.body or ""):sub(1, 500))
     end
 
     if job_id then
@@ -242,7 +247,7 @@ local function make_handler(action_id)
 
         if ok then
             if job_id then
-                mah.job_complete(job_id, "Done! Created resource #" .. tostring(result.id))
+                mah.job_complete(job_id, {message = "Done! Created resource #" .. tostring(result.id)})
             end
             return {
                 success = true,
@@ -264,6 +269,39 @@ local IMAGE_CONTENT_TYPES = {
     "image/jpeg", "image/png", "image/webp", "image/gif",
     "image/tiff", "image/bmp", "image/svg+xml",
 }
+
+local function generate_form()
+    return '<form method="POST" class="space-y-4 max-w-lg">'
+        .. '<div><label class="block font-medium mb-1" for="prompt">Prompt</label>'
+        .. '<textarea id="prompt" name="prompt" required class="w-full border rounded p-2" rows="3" '
+        .. 'placeholder="Describe the image you want to generate..."></textarea></div>'
+        .. '<div><label class="block font-medium mb-1" for="model">Model</label>'
+        .. '<select id="model" name="model" class="w-full border rounded p-2">'
+        .. '<option value="nanobanana2">Nano Banana 2</option>'
+        .. '<option value="imagen4">Imagen 4</option>'
+        .. '<option value="imagen4_fast">Imagen 4 Fast</option>'
+        .. '<option value="imagen4_ultra">Imagen 4 Ultra</option>'
+        .. '</select></div>'
+        .. '<div><label class="block font-medium mb-1" for="resolution">Resolution</label>'
+        .. '<select id="resolution" name="resolution" class="w-full border rounded p-2">'
+        .. '<option value="0.5K">0.5K</option>'
+        .. '<option value="1K" selected>1K</option>'
+        .. '<option value="2K">2K</option>'
+        .. '<option value="4K">4K</option>'
+        .. '</select></div>'
+        .. '<div><label class="block font-medium mb-1" for="aspect_ratio">Aspect Ratio</label>'
+        .. '<select id="aspect_ratio" name="aspect_ratio" class="w-full border rounded p-2">'
+        .. '<option value="1:1" selected>1:1</option>'
+        .. '<option value="16:9">16:9</option>'
+        .. '<option value="9:16">9:16</option>'
+        .. '<option value="4:3">4:3</option>'
+        .. '<option value="3:4">3:4</option>'
+        .. '<option value="3:2">3:2</option>'
+        .. '<option value="2:3">2:3</option>'
+        .. '</select></div>'
+        .. '<button type="submit" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700">Generate</button>'
+        .. '</form>'
+end
 
 function init()
     -- Colorize: detail + card
@@ -401,11 +439,12 @@ function init()
 
             if resp.error then
                 return '<div class="p-8"><h2 class="text-xl font-bold mb-4">Generate Image</h2>'
-                    .. '<p class="text-red-600">HTTP error: ' .. resp.error .. '</p></div>'
+                    .. '<p class="text-red-600">HTTP error: ' .. html_escape(resp.error) .. '</p></div>'
             end
             if resp.status_code ~= 200 then
+                local body_preview = (resp.body or ""):sub(1, 500)
                 return '<div class="p-8"><h2 class="text-xl font-bold mb-4">Generate Image</h2>'
-                    .. '<p class="text-red-600">API error (status ' .. tostring(resp.status_code) .. '): ' .. (resp.body or "") .. '</p></div>'
+                    .. '<p class="text-red-600">API error (status ' .. tostring(resp.status_code) .. '): ' .. html_escape(body_preview) .. '</p></div>'
             end
 
             local result = mah.json.decode(resp.body)
@@ -431,7 +470,7 @@ function init()
 
             if not new_resource then
                 return '<div class="p-8"><h2 class="text-xl font-bold mb-4">Generate Image</h2>'
-                    .. '<p class="text-red-600">Failed to save: ' .. (create_err or "unknown") .. '</p></div>'
+                    .. '<p class="text-red-600">Failed to save: ' .. html_escape(create_err or "unknown") .. '</p></div>'
             end
 
             return '<div class="p-8"><h2 class="text-xl font-bold mb-4">Image Generated</h2>'
@@ -439,7 +478,7 @@ function init()
                 .. 'alt="Generated image" class="max-w-lg rounded shadow" /></div>'
                 .. '<p class="mb-2">Saved as resource <a href="/v1/resource?id=' .. tostring(new_resource.id)
                 .. '" class="text-blue-600 underline">#' .. tostring(new_resource.id) .. ' - ' .. filename .. '</a></p>'
-                .. '<p class="text-gray-500 text-sm">Prompt: ' .. prompt .. '</p>'
+                .. '<p class="text-gray-500 text-sm">Prompt: ' .. html_escape(prompt) .. '</p>'
                 .. '<hr class="my-6" /><h3 class="text-lg font-bold mb-4">Generate Another</h3>'
                 .. generate_form()
                 .. '</div>'
@@ -451,37 +490,4 @@ function init()
     end)
 
     mah.menu("Generate Image", "generate")
-end
-
-function generate_form()
-    return '<form method="POST" class="space-y-4 max-w-lg">'
-        .. '<div><label class="block font-medium mb-1" for="prompt">Prompt</label>'
-        .. '<textarea id="prompt" name="prompt" required class="w-full border rounded p-2" rows="3" '
-        .. 'placeholder="Describe the image you want to generate..."></textarea></div>'
-        .. '<div><label class="block font-medium mb-1" for="model">Model</label>'
-        .. '<select id="model" name="model" class="w-full border rounded p-2">'
-        .. '<option value="nanobanana2">Nano Banana 2</option>'
-        .. '<option value="imagen4">Imagen 4</option>'
-        .. '<option value="imagen4_fast">Imagen 4 Fast</option>'
-        .. '<option value="imagen4_ultra">Imagen 4 Ultra</option>'
-        .. '</select></div>'
-        .. '<div><label class="block font-medium mb-1" for="resolution">Resolution</label>'
-        .. '<select id="resolution" name="resolution" class="w-full border rounded p-2">'
-        .. '<option value="0.5K">0.5K</option>'
-        .. '<option value="1K" selected>1K</option>'
-        .. '<option value="2K">2K</option>'
-        .. '<option value="4K">4K</option>'
-        .. '</select></div>'
-        .. '<div><label class="block font-medium mb-1" for="aspect_ratio">Aspect Ratio</label>'
-        .. '<select id="aspect_ratio" name="aspect_ratio" class="w-full border rounded p-2">'
-        .. '<option value="1:1" selected>1:1</option>'
-        .. '<option value="16:9">16:9</option>'
-        .. '<option value="9:16">9:16</option>'
-        .. '<option value="4:3">4:3</option>'
-        .. '<option value="3:4">3:4</option>'
-        .. '<option value="3:2">3:2</option>'
-        .. '<option value="2:3">2:3</option>'
-        .. '</select></div>'
-        .. '<button type="submit" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700">Generate</button>'
-        .. '</form>'
 end

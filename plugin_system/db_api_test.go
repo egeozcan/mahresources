@@ -85,6 +85,9 @@ func (m *mockQuerier) CreateResourceFromData(base64Data string, options map[stri
 	if base64Data == "" {
 		return nil, fmt.Errorf("empty data")
 	}
+	if _, err := base64.StdEncoding.DecodeString(base64Data); err != nil {
+		return nil, fmt.Errorf("invalid base64 data: %w", err)
+	}
 	name := "uploaded.bin"
 	if n, ok := options["name"].(string); ok {
 		name = n
@@ -617,5 +620,39 @@ end
 	html := mgr.RenderSlot("test", map[string]any{})
 	if html != "error:database not available" {
 		t.Errorf("expected 'error:database not available', got %q", html)
+	}
+}
+
+func TestDbApi_CreateResourceFromDataInvalidBase64(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "db-test", `
+plugin = { name = "db-test", version = "1.0", description = "db api test" }
+function init()
+    mah.inject("test", function(ctx)
+        local res, err = mah.db.create_resource_from_data("!!!not-base64!!!", {name = "bad.bin"})
+        if res then
+            return "ok"
+        end
+        if err and err:find("base64") then
+            return "base64_error"
+        end
+        return "error:" .. (err or "unknown")
+    end)
+end
+`)
+	mgr, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+	mgr.SetEntityQuerier(&mockQuerier{})
+
+	if err := mgr.EnablePlugin("db-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	html := mgr.RenderSlot("test", map[string]any{})
+	if html != "base64_error" {
+		t.Errorf("expected 'base64_error', got %q", html)
 	}
 }

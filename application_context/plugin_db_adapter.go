@@ -8,6 +8,7 @@ import (
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/plugin_system"
+	"strings"
 )
 
 // pluginDBAdapter implements plugin_system.EntityQuerier using MahresourcesContext.
@@ -222,6 +223,8 @@ func (a *pluginDBAdapter) QueryGroups(filter map[string]any) ([]map[string]any, 
 const maxResourceFileSize = 50 * 1024 * 1024 // 50MB
 
 func (a *pluginDBAdapter) GetResourceFileData(id uint) (string, string, error) {
+	// Use GetResourceByID (no association preloading) since we only need
+	// StorageLocation, Location, and ContentType — not tags or relations.
 	resource, err := a.ctx.GetResourceByID(id)
 	if err != nil {
 		return "", "", err
@@ -250,6 +253,11 @@ func (a *pluginDBAdapter) GetResourceFileData(id uint) (string, string, error) {
 }
 
 func (a *pluginDBAdapter) CreateResourceFromURL(url string, options map[string]any) (map[string]any, error) {
+	lower := strings.ToLower(url)
+	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
+		return nil, fmt.Errorf("unsupported URL scheme (only http and https are allowed)")
+	}
+
 	creator := &query_models.ResourceFromRemoteCreator{
 		URL: url,
 	}
@@ -284,6 +292,8 @@ func (a *pluginDBAdapter) CreateResourceFromData(base64Data string, options map[
 }
 
 // resourceToMap converts a Resource model to a map suitable for Lua.
+// Note: this intentionally omits description, meta, and tags (unlike GetResourceData)
+// because newly-created resources may not have those fields populated yet.
 func resourceToMap(r *models.Resource) map[string]any {
 	result := map[string]any{
 		"id":                float64(r.ID),

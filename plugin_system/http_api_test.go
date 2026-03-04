@@ -740,3 +740,230 @@ end
 		t.Errorf("expected 'val1, val2', got %q", result)
 	}
 }
+
+// ── Sync HTTP API tests ──
+
+func TestHttpApi_GetSyncSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		fmt.Fprint(w, "sync hello")
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	writePlugin(t, dir, "http-test", fmt.Sprintf(`
+plugin = { name = "http-test", version = "1.0", description = "http test" }
+function init()
+    mah.inject("test", function(ctx)
+        local resp = mah.http.get_sync(%q)
+        if resp.error then
+            return "ERR:" .. resp.error
+        end
+        return resp.status_code .. ":" .. resp.body
+    end)
+end
+`, srv.URL))
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pm.Close()
+
+	if err := pm.EnablePlugin("http-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	result := pm.RenderSlot("test", map[string]any{})
+	if result != "200:sync hello" {
+		t.Errorf("expected '200:sync hello', got %q", result)
+	}
+}
+
+func TestHttpApi_PostSyncSuccess(t *testing.T) {
+	var receivedBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		receivedBody = string(body)
+		w.WriteHeader(201)
+		fmt.Fprint(w, "sync created")
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	writePlugin(t, dir, "http-test", fmt.Sprintf(`
+plugin = { name = "http-test", version = "1.0", description = "http test" }
+function init()
+    mah.inject("test", function(ctx)
+        local resp = mah.http.post_sync(%q, "sync-body")
+        if resp.error then
+            return "ERR:" .. resp.error
+        end
+        return resp.status_code .. ":" .. resp.body
+    end)
+end
+`, srv.URL))
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pm.Close()
+
+	if err := pm.EnablePlugin("http-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	result := pm.RenderSlot("test", map[string]any{})
+	if result != "201:sync created" {
+		t.Errorf("expected '201:sync created', got %q", result)
+	}
+	if receivedBody != "sync-body" {
+		t.Errorf("expected server to receive 'sync-body', got %q", receivedBody)
+	}
+}
+
+func TestHttpApi_GetSyncNetworkError(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "http-test", `
+plugin = { name = "http-test", version = "1.0", description = "http test" }
+function init()
+    mah.inject("test", function(ctx)
+        local resp = mah.http.get_sync("http://127.0.0.1:1")
+        if resp.error then
+            return "ERROR"
+        end
+        return "OK"
+    end)
+end
+`)
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pm.Close()
+
+	if err := pm.EnablePlugin("http-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	result := pm.RenderSlot("test", map[string]any{})
+	if result != "ERROR" {
+		t.Errorf("expected 'ERROR', got %q", result)
+	}
+}
+
+func TestHttpApi_GetSyncInvalidScheme(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "http-test", `
+plugin = { name = "http-test", version = "1.0", description = "http test" }
+function init()
+    mah.inject("test", function(ctx)
+        local resp = mah.http.get_sync("ftp://example.com/file")
+        if resp.error then
+            return "SCHEME_ERROR"
+        end
+        return "OK"
+    end)
+end
+`)
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pm.Close()
+
+	if err := pm.EnablePlugin("http-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	result := pm.RenderSlot("test", map[string]any{})
+	if result != "SCHEME_ERROR" {
+		t.Errorf("expected 'SCHEME_ERROR', got %q", result)
+	}
+}
+
+func TestHttpApi_PostSyncWithHeaders(t *testing.T) {
+	var receivedAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuth = r.Header.Get("Authorization")
+		w.WriteHeader(200)
+		fmt.Fprint(w, "authed")
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	writePlugin(t, dir, "http-test", fmt.Sprintf(`
+plugin = { name = "http-test", version = "1.0", description = "http test" }
+function init()
+    mah.inject("test", function(ctx)
+        local resp = mah.http.post_sync(%q, "{}", {
+            headers = { Authorization = "Key abc123" }
+        })
+        if resp.error then
+            return "ERR:" .. resp.error
+        end
+        return resp.body
+    end)
+end
+`, srv.URL))
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pm.Close()
+
+	if err := pm.EnablePlugin("http-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	result := pm.RenderSlot("test", map[string]any{})
+	if result != "authed" {
+		t.Errorf("expected 'authed', got %q", result)
+	}
+	if receivedAuth != "Key abc123" {
+		t.Errorf("expected 'Key abc123', got %q", receivedAuth)
+	}
+}
+
+func TestHttpApi_GetSyncBodySizeLimit(t *testing.T) {
+	bigBody := strings.Repeat("B", maxHttpResponseBody+1000)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		fmt.Fprint(w, bigBody)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	writePlugin(t, dir, "http-test", fmt.Sprintf(`
+plugin = { name = "http-test", version = "1.0", description = "http test" }
+function init()
+    mah.inject("test", function(ctx)
+        local resp = mah.http.get_sync(%q)
+        if resp.error then
+            return "ERR:" .. resp.error
+        end
+        return tostring(#resp.body)
+    end)
+end
+`, srv.URL))
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pm.Close()
+
+	if err := pm.EnablePlugin("http-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	result := pm.RenderSlot("test", map[string]any{})
+	expected := fmt.Sprintf("%d", maxHttpResponseBody)
+	if result != expected {
+		t.Errorf("expected body length %s, got %q", expected, result)
+	}
+}

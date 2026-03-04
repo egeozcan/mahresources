@@ -146,9 +146,14 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable) {
 // executeSyncHttpRequest performs a blocking HTTP request and returns the response as a Lua table.
 func (pm *PluginManager) executeSyncHttpRequest(method, url, body string, headers map[string]string, timeout time.Duration, L *lua.LState) *lua.LTable {
 	// Remove Lua context during blocking HTTP call to avoid premature timeout.
+	// The saved context is restored afterward so subsequent Lua code retains
+	// its original deadline/cancellation behavior.
+	savedCtx := L.Context()
 	L.RemoveContext()
 	defer func() {
-		// Caller is responsible for restoring its own context if needed.
+		if savedCtx != nil {
+			L.SetContext(savedCtx)
+		}
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
