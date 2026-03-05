@@ -23,15 +23,27 @@
                 <p class="text-sm text-gray-600">{{ plugin.Description }}</p>
                 {% endif %}
             </div>
-            <form method="POST"
-                  action="{% if plugin.Enabled %}/v1/plugin/disable{% else %}/v1/plugin/enable{% endif %}">
-                <input type="hidden" name="name" value="{{ plugin.Name }}">
-                <button type="submit"
-                        class="btn {% if plugin.Enabled %}btn-danger{% else %}btn-primary{% endif %}"
-                        data-testid="plugin-toggle-{{ plugin.Name }}">
-                    {% if plugin.Enabled %}Disable{% else %}Enable{% endif %}
-                </button>
-            </form>
+            <div class="flex gap-2">
+                <form method="POST"
+                      action="{% if plugin.Enabled %}/v1/plugin/disable{% else %}/v1/plugin/enable{% endif %}">
+                    <input type="hidden" name="name" value="{{ plugin.Name }}">
+                    <button type="submit"
+                            class="btn {% if plugin.Enabled %}btn-danger{% else %}btn-primary{% endif %}"
+                            data-testid="plugin-toggle-{{ plugin.Name }}">
+                        {% if plugin.Enabled %}Disable{% else %}Enable{% endif %}
+                    </button>
+                </form>
+                {% if not plugin.Enabled %}
+                <form method="POST" action="/v1/plugin/purge-data"
+                      onsubmit="return confirm('Purge all stored data for {{ plugin.Name }}? This cannot be undone.')">
+                    <input type="hidden" name="name" value="{{ plugin.Name }}">
+                    <button type="submit" class="btn btn-outline text-sm"
+                            data-testid="plugin-purge-{{ plugin.Name }}">
+                        Purge Data
+                    </button>
+                </form>
+                {% endif %}
+            </div>
         </div>
 
         {% if plugin.Settings %}

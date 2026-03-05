@@ -119,6 +119,34 @@ func GetPluginDisableHandler(ctx *application_context.MahresourcesContext) func(
 	}
 }
 
+// GetPluginPurgeDataHandler deletes all KV data for a disabled plugin.
+func GetPluginPurgeDataHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimSpace(r.FormValue("name"))
+		if name == "" {
+			http_utils.HandleError(fmt.Errorf("missing plugin name"), w, r, http.StatusBadRequest)
+			return
+		}
+
+		pm := ctx.PluginManager()
+		if pm != nil && pm.IsEnabled(name) {
+			http_utils.HandleError(fmt.Errorf("cannot purge data for enabled plugin — disable it first"), w, r, http.StatusBadRequest)
+			return
+		}
+
+		if err := ctx.PluginKVPurge(name); err != nil {
+			http_utils.HandleError(err, w, r, http.StatusInternalServerError)
+			return
+		}
+
+		if http_utils.RedirectIfHTMLAccepted(w, r, "/plugins/manage") {
+			return
+		}
+		w.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "name": name})
+	}
+}
+
 func GetPluginSettingsHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimSpace(r.URL.Query().Get("name"))
