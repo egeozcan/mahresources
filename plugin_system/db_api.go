@@ -28,30 +28,39 @@ type EntityQuerier interface {
 // EntityWriter provides write access to entities for plugins.
 // Note: Update methods replace ALL fields; omitted fields revert to zero values.
 // This includes associations — updating a note without specifying tags will clear its tags.
+// Use Patch methods for partial updates that preserve unspecified fields.
 type EntityWriter interface {
 	CreateGroup(opts map[string]any) (map[string]any, error)
 	UpdateGroup(id uint, opts map[string]any) (map[string]any, error)
+	PatchGroup(id uint, opts map[string]any) (map[string]any, error)
 	DeleteGroup(id uint) error
 	CreateNote(opts map[string]any) (map[string]any, error)
 	UpdateNote(id uint, opts map[string]any) (map[string]any, error)
+	PatchNote(id uint, opts map[string]any) (map[string]any, error)
 	DeleteNote(id uint) error
 	CreateTag(opts map[string]any) (map[string]any, error)
 	UpdateTag(id uint, opts map[string]any) (map[string]any, error)
+	PatchTag(id uint, opts map[string]any) (map[string]any, error)
 	DeleteTag(id uint) error
 	CreateCategory(opts map[string]any) (map[string]any, error)
 	UpdateCategory(id uint, opts map[string]any) (map[string]any, error)
+	PatchCategory(id uint, opts map[string]any) (map[string]any, error)
 	DeleteCategory(id uint) error
 	CreateResourceCategory(opts map[string]any) (map[string]any, error)
 	UpdateResourceCategory(id uint, opts map[string]any) (map[string]any, error)
+	PatchResourceCategory(id uint, opts map[string]any) (map[string]any, error)
 	DeleteResourceCategory(id uint) error
 	CreateNoteType(opts map[string]any) (map[string]any, error)
 	UpdateNoteType(id uint, opts map[string]any) (map[string]any, error)
+	PatchNoteType(id uint, opts map[string]any) (map[string]any, error)
 	DeleteNoteType(id uint) error
 	CreateGroupRelation(opts map[string]any) (map[string]any, error)
 	UpdateGroupRelation(opts map[string]any) (map[string]any, error)
+	PatchGroupRelation(opts map[string]any) (map[string]any, error)
 	DeleteGroupRelation(id uint) error
 	CreateRelationType(opts map[string]any) (map[string]any, error)
 	UpdateRelationType(opts map[string]any) (map[string]any, error)
+	PatchRelationType(opts map[string]any) (map[string]any, error)
 	DeleteRelationType(id uint) error
 	AddTagsToEntity(entityType string, id uint, tagIds []uint) error
 	RemoveTagsFromEntity(entityType string, id uint, tagIds []uint) error
@@ -60,6 +69,27 @@ type EntityWriter interface {
 	AddResourcesToNote(noteId uint, resourceIds []uint) error
 	RemoveResourcesFromNote(noteId uint, resourceIds []uint) error
 	DeleteResource(id uint) error
+}
+
+// PluginLogger persists plugin log messages to the application log store.
+type PluginLogger interface {
+	PluginLog(pluginName, level, message string, details map[string]any)
+}
+
+// SetPluginLogger sets the logger for plugin log messages.
+// This is called after context creation to break the circular dependency
+// between plugin_system and application_context.
+func (pm *PluginManager) SetPluginLogger(pl PluginLogger) {
+	pm.logger.Store(pl)
+}
+
+// getPluginLogger returns the current PluginLogger, or nil if not yet set.
+func (pm *PluginManager) getPluginLogger() PluginLogger {
+	v := pm.logger.Load()
+	if v == nil {
+		return nil
+	}
+	return v.(PluginLogger)
 }
 
 // SetEntityQuerier sets the database provider for plugin DB access.
@@ -315,479 +345,129 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		return 1
 	}))
 
-	// --- Entity CRUD ---
+	// --- Entity CRUD + Patch ---
+	// Helper-based registration to avoid boilerplate.
 
-	// mah.db.create_group(opts) -> table or (nil, error)
-	dbMod.RawSetString("create_group", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		opts := luaTableToGoMap(L.CheckTable(1))
-		result, err := w.CreateGroup(opts)
-		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(goToLuaTable(L, result))
-		return 1
-	}))
+	// Entities with (id, opts) signature for update/patch
+	type idOptsFunc = func(EntityWriter, uint, map[string]any) (map[string]any, error)
+	// Entities with (opts) signature for create/update/patch (id embedded in opts)
+	type optsFunc = func(EntityWriter, map[string]any) (map[string]any, error)
+	// Delete functions
+	type deleteFunc = func(EntityWriter, uint) error
 
-	// mah.db.update_group(id, opts) -> table or (nil, error)
-	dbMod.RawSetString("update_group", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		id := uint(L.CheckNumber(1))
-		opts := luaTableToGoMap(L.CheckTable(2))
-		result, err := w.UpdateGroup(id, opts)
-		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(goToLuaTable(L, result))
-		return 1
-	}))
+	// registerOptsWriter: mah.db.X(opts) -> table or (nil, error)
+	registerOptsWriter := func(name string, fn optsFunc) {
+		dbMod.RawSetString(name, L.NewFunction(func(L *lua.LState) int {
+			w := pm.getDbWriter()
+			if w == nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString("database writer not available"))
+				return 2
+			}
+			opts := luaTableToGoMap(L.CheckTable(1))
+			result, err := fn(w, opts)
+			if err != nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+			L.Push(goToLuaTable(L, result))
+			return 1
+		}))
+	}
 
-	// mah.db.delete_group(id) -> true or (nil, error)
-	dbMod.RawSetString("delete_group", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		id := uint(L.CheckNumber(1))
-		if err := w.DeleteGroup(id); err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(lua.LTrue)
-		return 1
-	}))
+	// registerIdOptsWriter: mah.db.X(id, opts) -> table or (nil, error)
+	registerIdOptsWriter := func(name string, fn idOptsFunc) {
+		dbMod.RawSetString(name, L.NewFunction(func(L *lua.LState) int {
+			w := pm.getDbWriter()
+			if w == nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString("database writer not available"))
+				return 2
+			}
+			id := uint(L.CheckNumber(1))
+			opts := luaTableToGoMap(L.CheckTable(2))
+			result, err := fn(w, id, opts)
+			if err != nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+			L.Push(goToLuaTable(L, result))
+			return 1
+		}))
+	}
 
-	// mah.db.create_note(opts) -> table or (nil, error)
-	dbMod.RawSetString("create_note", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		opts := luaTableToGoMap(L.CheckTable(1))
-		result, err := w.CreateNote(opts)
-		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(goToLuaTable(L, result))
-		return 1
-	}))
+	// registerDelete: mah.db.X(id) -> true or (nil, error)
+	registerDelete := func(name string, fn deleteFunc) {
+		dbMod.RawSetString(name, L.NewFunction(func(L *lua.LState) int {
+			w := pm.getDbWriter()
+			if w == nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString("database writer not available"))
+				return 2
+			}
+			id := uint(L.CheckNumber(1))
+			if err := fn(w, id); err != nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+			L.Push(lua.LTrue)
+			return 1
+		}))
+	}
 
-	// mah.db.update_note(id, opts) -> table or (nil, error)
-	dbMod.RawSetString("update_note", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		id := uint(L.CheckNumber(1))
-		opts := luaTableToGoMap(L.CheckTable(2))
-		result, err := w.UpdateNote(id, opts)
-		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(goToLuaTable(L, result))
-		return 1
-	}))
+	// Group
+	registerOptsWriter("create_group", func(w EntityWriter, o map[string]any) (map[string]any, error) { return w.CreateGroup(o) })
+	registerIdOptsWriter("update_group", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) { return w.UpdateGroup(id, o) })
+	registerIdOptsWriter("patch_group", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) { return w.PatchGroup(id, o) })
+	registerDelete("delete_group", func(w EntityWriter, id uint) error { return w.DeleteGroup(id) })
 
-	// mah.db.delete_note(id) -> true or (nil, error)
-	dbMod.RawSetString("delete_note", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		id := uint(L.CheckNumber(1))
-		if err := w.DeleteNote(id); err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(lua.LTrue)
-		return 1
-	}))
+	// Note
+	registerOptsWriter("create_note", func(w EntityWriter, o map[string]any) (map[string]any, error) { return w.CreateNote(o) })
+	registerIdOptsWriter("update_note", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) { return w.UpdateNote(id, o) })
+	registerIdOptsWriter("patch_note", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) { return w.PatchNote(id, o) })
+	registerDelete("delete_note", func(w EntityWriter, id uint) error { return w.DeleteNote(id) })
 
-	// mah.db.create_tag(opts) -> table or (nil, error)
-	dbMod.RawSetString("create_tag", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		opts := luaTableToGoMap(L.CheckTable(1))
-		result, err := w.CreateTag(opts)
-		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(goToLuaTable(L, result))
-		return 1
-	}))
+	// Tag
+	registerOptsWriter("create_tag", func(w EntityWriter, o map[string]any) (map[string]any, error) { return w.CreateTag(o) })
+	registerIdOptsWriter("update_tag", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) { return w.UpdateTag(id, o) })
+	registerIdOptsWriter("patch_tag", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) { return w.PatchTag(id, o) })
+	registerDelete("delete_tag", func(w EntityWriter, id uint) error { return w.DeleteTag(id) })
 
-	// mah.db.update_tag(id, opts) -> table or (nil, error)
-	dbMod.RawSetString("update_tag", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		id := uint(L.CheckNumber(1))
-		opts := luaTableToGoMap(L.CheckTable(2))
-		result, err := w.UpdateTag(id, opts)
-		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(goToLuaTable(L, result))
-		return 1
-	}))
+	// Category
+	registerOptsWriter("create_category", func(w EntityWriter, o map[string]any) (map[string]any, error) { return w.CreateCategory(o) })
+	registerIdOptsWriter("update_category", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) { return w.UpdateCategory(id, o) })
+	registerIdOptsWriter("patch_category", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) { return w.PatchCategory(id, o) })
+	registerDelete("delete_category", func(w EntityWriter, id uint) error { return w.DeleteCategory(id) })
 
-	// mah.db.delete_tag(id) -> true or (nil, error)
-	dbMod.RawSetString("delete_tag", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		id := uint(L.CheckNumber(1))
-		if err := w.DeleteTag(id); err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(lua.LTrue)
-		return 1
-	}))
+	// ResourceCategory
+	registerOptsWriter("create_resource_category", func(w EntityWriter, o map[string]any) (map[string]any, error) { return w.CreateResourceCategory(o) })
+	registerIdOptsWriter("update_resource_category", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) { return w.UpdateResourceCategory(id, o) })
+	registerIdOptsWriter("patch_resource_category", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) { return w.PatchResourceCategory(id, o) })
+	registerDelete("delete_resource_category", func(w EntityWriter, id uint) error { return w.DeleteResourceCategory(id) })
 
-	// mah.db.create_category(opts) -> table or (nil, error)
-	dbMod.RawSetString("create_category", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		opts := luaTableToGoMap(L.CheckTable(1))
-		result, err := w.CreateCategory(opts)
-		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(goToLuaTable(L, result))
-		return 1
-	}))
+	// NoteType
+	registerOptsWriter("create_note_type", func(w EntityWriter, o map[string]any) (map[string]any, error) { return w.CreateNoteType(o) })
+	registerIdOptsWriter("update_note_type", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) { return w.UpdateNoteType(id, o) })
+	registerIdOptsWriter("patch_note_type", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) { return w.PatchNoteType(id, o) })
+	registerDelete("delete_note_type", func(w EntityWriter, id uint) error { return w.DeleteNoteType(id) })
 
-	// mah.db.update_category(id, opts) -> table or (nil, error)
-	dbMod.RawSetString("update_category", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		id := uint(L.CheckNumber(1))
-		opts := luaTableToGoMap(L.CheckTable(2))
-		result, err := w.UpdateCategory(id, opts)
-		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(goToLuaTable(L, result))
-		return 1
-	}))
+	// GroupRelation (id embedded in opts for update/patch)
+	registerOptsWriter("create_group_relation", func(w EntityWriter, o map[string]any) (map[string]any, error) { return w.CreateGroupRelation(o) })
+	registerOptsWriter("update_group_relation", func(w EntityWriter, o map[string]any) (map[string]any, error) { return w.UpdateGroupRelation(o) })
+	registerOptsWriter("patch_group_relation", func(w EntityWriter, o map[string]any) (map[string]any, error) { return w.PatchGroupRelation(o) })
+	registerDelete("delete_group_relation", func(w EntityWriter, id uint) error { return w.DeleteGroupRelation(id) })
 
-	// mah.db.delete_category(id) -> true or (nil, error)
-	dbMod.RawSetString("delete_category", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		id := uint(L.CheckNumber(1))
-		if err := w.DeleteCategory(id); err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(lua.LTrue)
-		return 1
-	}))
+	// RelationType (id embedded in opts for update/patch)
+	registerOptsWriter("create_relation_type", func(w EntityWriter, o map[string]any) (map[string]any, error) { return w.CreateRelationType(o) })
+	registerOptsWriter("update_relation_type", func(w EntityWriter, o map[string]any) (map[string]any, error) { return w.UpdateRelationType(o) })
+	registerOptsWriter("patch_relation_type", func(w EntityWriter, o map[string]any) (map[string]any, error) { return w.PatchRelationType(o) })
+	registerDelete("delete_relation_type", func(w EntityWriter, id uint) error { return w.DeleteRelationType(id) })
 
-	// mah.db.create_resource_category(opts) -> table or (nil, error)
-	dbMod.RawSetString("create_resource_category", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		opts := luaTableToGoMap(L.CheckTable(1))
-		result, err := w.CreateResourceCategory(opts)
-		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(goToLuaTable(L, result))
-		return 1
-	}))
-
-	// mah.db.update_resource_category(id, opts) -> table or (nil, error)
-	dbMod.RawSetString("update_resource_category", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		id := uint(L.CheckNumber(1))
-		opts := luaTableToGoMap(L.CheckTable(2))
-		result, err := w.UpdateResourceCategory(id, opts)
-		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(goToLuaTable(L, result))
-		return 1
-	}))
-
-	// mah.db.delete_resource_category(id) -> true or (nil, error)
-	dbMod.RawSetString("delete_resource_category", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		id := uint(L.CheckNumber(1))
-		if err := w.DeleteResourceCategory(id); err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(lua.LTrue)
-		return 1
-	}))
-
-	// mah.db.create_note_type(opts) -> table or (nil, error)
-	dbMod.RawSetString("create_note_type", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		opts := luaTableToGoMap(L.CheckTable(1))
-		result, err := w.CreateNoteType(opts)
-		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(goToLuaTable(L, result))
-		return 1
-	}))
-
-	// mah.db.update_note_type(id, opts) -> table or (nil, error)
-	dbMod.RawSetString("update_note_type", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		id := uint(L.CheckNumber(1))
-		opts := luaTableToGoMap(L.CheckTable(2))
-		result, err := w.UpdateNoteType(id, opts)
-		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(goToLuaTable(L, result))
-		return 1
-	}))
-
-	// mah.db.delete_note_type(id) -> true or (nil, error)
-	dbMod.RawSetString("delete_note_type", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		id := uint(L.CheckNumber(1))
-		if err := w.DeleteNoteType(id); err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(lua.LTrue)
-		return 1
-	}))
-
-	// mah.db.create_group_relation(opts) -> table or (nil, error)
-	dbMod.RawSetString("create_group_relation", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		opts := luaTableToGoMap(L.CheckTable(1))
-		result, err := w.CreateGroupRelation(opts)
-		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(goToLuaTable(L, result))
-		return 1
-	}))
-
-	// mah.db.update_group_relation(opts) -> table or (nil, error)
-	dbMod.RawSetString("update_group_relation", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		opts := luaTableToGoMap(L.CheckTable(1))
-		result, err := w.UpdateGroupRelation(opts)
-		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(goToLuaTable(L, result))
-		return 1
-	}))
-
-	// mah.db.delete_group_relation(id) -> true or (nil, error)
-	dbMod.RawSetString("delete_group_relation", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		id := uint(L.CheckNumber(1))
-		if err := w.DeleteGroupRelation(id); err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(lua.LTrue)
-		return 1
-	}))
-
-	// mah.db.create_relation_type(opts) -> table or (nil, error)
-	dbMod.RawSetString("create_relation_type", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		opts := luaTableToGoMap(L.CheckTable(1))
-		result, err := w.CreateRelationType(opts)
-		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(goToLuaTable(L, result))
-		return 1
-	}))
-
-	// mah.db.update_relation_type(opts) -> table or (nil, error)
-	dbMod.RawSetString("update_relation_type", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		opts := luaTableToGoMap(L.CheckTable(1))
-		result, err := w.UpdateRelationType(opts)
-		if err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(goToLuaTable(L, result))
-		return 1
-	}))
-
-	// mah.db.delete_relation_type(id) -> true or (nil, error)
-	dbMod.RawSetString("delete_relation_type", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		id := uint(L.CheckNumber(1))
-		if err := w.DeleteRelationType(id); err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(lua.LTrue)
-		return 1
-	}))
-
-	// mah.db.delete_resource(id) -> true or (nil, error)
-	dbMod.RawSetString("delete_resource", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
-		if w == nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString("database writer not available"))
-			return 2
-		}
-		id := uint(L.CheckNumber(1))
-		if err := w.DeleteResource(id); err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
-		L.Push(lua.LTrue)
-		return 1
-	}))
+	// Resource (delete only)
+	registerDelete("delete_resource", func(w EntityWriter, id uint) error { return w.DeleteResource(id) })
 
 	// --- Relationship management ---
 

@@ -78,6 +78,7 @@ type PluginManager struct {
 	vmLocks    map[*lua.LState]*sync.Mutex
 	dbProvider atomic.Value
 	dbWriter   atomic.Value
+	logger     atomic.Value
 	closed     atomic.Bool
 
 	// Discovery-phase data (immutable after construction).
@@ -341,7 +342,17 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 	mahMod.RawSetString("log", L.NewFunction(func(L *lua.LState) int {
 		level := L.CheckString(1)
 		message := L.CheckString(2)
-		log.Printf("[plugin][%s] %s", level, message)
+
+		var details map[string]any
+		if detailsTbl := L.OptTable(3, nil); detailsTbl != nil {
+			details = luaTableToGoMap(detailsTbl)
+		}
+
+		if pl := pm.getPluginLogger(); pl != nil {
+			pl.PluginLog(*pluginNamePtr, level, message, details)
+		} else {
+			log.Printf("[plugin][%s] %s", level, message)
+		}
 		return 0
 	}))
 

@@ -35,4 +35,5 @@ const (
 	LogActionDelete   = "delete"
 	LogActionSystem   = "system"
 	LogActionProgress = "progress"
+	LogActionPlugin   = "plugin"
 )

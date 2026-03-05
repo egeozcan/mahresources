@@ -28,6 +28,7 @@ var logActions = []SelectOption{
 	{Link: models.LogActionDelete, Title: "Delete"},
 	{Link: models.LogActionSystem, Title: "System"},
 	{Link: models.LogActionProgress, Title: "Progress"},
+	{Link: models.LogActionPlugin, Title: "Plugin"},
 }
 
 var entityTypes = []SelectOption{
@@ -41,6 +42,7 @@ var entityTypes = []SelectOption{
 	{Link: "query", Title: "Query"},
 	{Link: "relation", Title: "Relation"},
 	{Link: "relationType", Title: "Relation Type"},
+	{Link: "plugin", Title: "Plugin"},
 }
 
 // LogListContextProvider provides context for the log list template.

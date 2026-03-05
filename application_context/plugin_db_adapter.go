@@ -8,17 +8,13 @@ import (
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/plugin_system"
+	"net/url"
 	"strings"
 )
 
 // pluginDBAdapter implements plugin_system.EntityQuerier using MahresourcesContext.
 type pluginDBAdapter struct {
 	ctx *MahresourcesContext
-}
-
-// NewPluginDBAdapter creates an adapter for plugin DB access.
-func NewPluginDBAdapter(ctx *MahresourcesContext) plugin_system.EntityQuerier {
-	return &pluginDBAdapter{ctx: ctx}
 }
 
 func (a *pluginDBAdapter) GetNoteData(id uint) (map[string]any, error) {
@@ -316,8 +312,21 @@ func resourceToMap(r *models.Resource) map[string]any {
 	return result
 }
 
-// Compile-time interface compliance check for EntityWriter.
+// Compile-time interface compliance checks.
 var _ plugin_system.EntityWriter = (*pluginDBAdapter)(nil)
+var _ plugin_system.PluginLogger = (*pluginDBAdapter)(nil)
+
+// PluginLog persists a plugin log message to the application log store.
+func (a *pluginDBAdapter) PluginLog(pluginName, level, message string, details map[string]any) {
+	switch level {
+	case "warning":
+		a.ctx.Logger().Warning("plugin", "plugin", nil, pluginName, message, details)
+	case "error":
+		a.ctx.Logger().Error("plugin", "plugin", nil, pluginName, message, details)
+	default:
+		a.ctx.Logger().Info("plugin", "plugin", nil, pluginName, message, details)
+	}
+}
 
 // --- Helper functions for extracting typed values from option maps ---
 
@@ -360,6 +369,63 @@ func getUintSliceOpt(opts map[string]any, key string) []uint {
 		return result
 	}
 	return nil
+}
+
+// --- Patch helpers: use current value when key is absent from opts ---
+
+// patchString returns opts[key] if present, otherwise current.
+func patchString(opts map[string]any, key, current string) string {
+	if _, exists := opts[key]; exists {
+		return getStringOpt(opts, key)
+	}
+	return current
+}
+
+// patchUint returns opts[key] if present, otherwise current.
+func patchUint(opts map[string]any, key string, current uint) uint {
+	if _, exists := opts[key]; exists {
+		return getUintOpt(opts, key)
+	}
+	return current
+}
+
+// patchUintSlice returns opts[key] if present, otherwise current.
+func patchUintSlice(opts map[string]any, key string, current []uint) []uint {
+	if _, exists := opts[key]; exists {
+		return getUintSliceOpt(opts, key)
+	}
+	return current
+}
+
+func uintPtrVal(p *uint) uint {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+func extractTagIDs(tags []*models.Tag) []uint {
+	ids := make([]uint, len(tags))
+	for i, t := range tags {
+		ids[i] = t.ID
+	}
+	return ids
+}
+
+func extractGroupIDs(groups []*models.Group) []uint {
+	ids := make([]uint, len(groups))
+	for i, g := range groups {
+		ids[i] = g.ID
+	}
+	return ids
+}
+
+func extractResourceIDs(resources []*models.Resource) []uint {
+	ids := make([]uint, len(resources))
+	for i, r := range resources {
+		ids[i] = r.ID
+	}
+	return ids
 }
 
 // --- Converter functions: model -> map[string]any (float64 for Lua) ---
@@ -406,25 +472,39 @@ func tagToMap(t *models.Tag) map[string]any {
 
 func categoryToMap(c *models.Category) map[string]any {
 	return map[string]any{
-		"id":          float64(c.ID),
-		"name":        c.Name,
-		"description": c.Description,
+		"id":             float64(c.ID),
+		"name":           c.Name,
+		"description":    c.Description,
+		"custom_header":  c.CustomHeader,
+		"custom_sidebar": c.CustomSidebar,
+		"custom_summary": c.CustomSummary,
+		"custom_avatar":  c.CustomAvatar,
+		"meta_schema":    c.MetaSchema,
 	}
 }
 
 func resourceCategoryToMap(rc *models.ResourceCategory) map[string]any {
 	return map[string]any{
-		"id":          float64(rc.ID),
-		"name":        rc.Name,
-		"description": rc.Description,
+		"id":             float64(rc.ID),
+		"name":           rc.Name,
+		"description":    rc.Description,
+		"custom_header":  rc.CustomHeader,
+		"custom_sidebar": rc.CustomSidebar,
+		"custom_summary": rc.CustomSummary,
+		"custom_avatar":  rc.CustomAvatar,
+		"meta_schema":    rc.MetaSchema,
 	}
 }
 
 func noteTypeToMap(nt *models.NoteType) map[string]any {
 	return map[string]any{
-		"id":          float64(nt.ID),
-		"name":        nt.Name,
-		"description": nt.Description,
+		"id":             float64(nt.ID),
+		"name":           nt.Name,
+		"description":    nt.Description,
+		"custom_header":  nt.CustomHeader,
+		"custom_sidebar": nt.CustomSidebar,
+		"custom_summary": nt.CustomSummary,
+		"custom_avatar":  nt.CustomAvatar,
 	}
 }
 
@@ -509,22 +589,54 @@ func (a *pluginDBAdapter) DeleteGroup(id uint) error {
 	return a.ctx.DeleteGroup(id)
 }
 
+func (a *pluginDBAdapter) PatchGroup(id uint, opts map[string]any) (map[string]any, error) {
+	group, err := a.ctx.GetGroup(id)
+	if err != nil {
+		return nil, err
+	}
+	var urlStr string
+	if group.URL != nil {
+		u := url.URL(*group.URL)
+		urlStr = u.String()
+	}
+	editor := &query_models.GroupEditor{
+		ID: id,
+		GroupCreator: query_models.GroupCreator{
+			Name:        patchString(opts, "name", group.Name),
+			Description: patchString(opts, "description", group.Description),
+			Meta:        patchString(opts, "meta", string(group.Meta)),
+			URL:         patchString(opts, "url", urlStr),
+			CategoryId:  patchUint(opts, "category_id", uintPtrVal(group.CategoryId)),
+			OwnerId:     patchUint(opts, "owner_id", uintPtrVal(group.OwnerId)),
+			Tags:        patchUintSlice(opts, "tags", extractTagIDs(group.Tags)),
+			Groups:      patchUintSlice(opts, "groups", extractGroupIDs(group.RelatedGroups)),
+		},
+	}
+	result, err := a.ctx.UpdateGroup(editor)
+	if err != nil {
+		return nil, err
+	}
+	return groupToMap(result), nil
+}
+
 // --- EntityWriter: Note CRUD ---
 
 func (a *pluginDBAdapter) CreateNote(opts map[string]any) (map[string]any, error) {
 	editor := &query_models.NoteEditor{
+		NoteCreator: query_models.NoteCreator{
+			Name:        getStringOpt(opts, "name"),
+			Description: getStringOpt(opts, "description"),
+			Meta:        getStringOpt(opts, "meta"),
+			StartDate:   getStringOpt(opts, "start_date"),
+			EndDate:     getStringOpt(opts, "end_date"),
+			OwnerId:     getUintOpt(opts, "owner_id"),
+			NoteTypeId:  getUintOpt(opts, "note_type_id"),
+			Tags:        getUintSliceOpt(opts, "tags"),
+			Groups:      getUintSliceOpt(opts, "groups"),
+			Resources:   getUintSliceOpt(opts, "resources"),
+		},
 		ID: 0, // ID=0 means create
 	}
-	editor.Name = getStringOpt(opts, "name")
-	editor.Description = getStringOpt(opts, "description")
-	editor.Meta = getStringOpt(opts, "meta")
-	editor.StartDate = getStringOpt(opts, "start_date")
-	editor.EndDate = getStringOpt(opts, "end_date")
-	editor.OwnerId = getUintOpt(opts, "owner_id")
-	editor.NoteTypeId = getUintOpt(opts, "note_type_id")
-	editor.Tags = getUintSliceOpt(opts, "tags")
-	editor.Groups = getUintSliceOpt(opts, "groups")
-	editor.Resources = getUintSliceOpt(opts, "resources")
 
 	note, err := a.ctx.CreateOrUpdateNote(editor)
 	if err != nil {
@@ -535,18 +647,20 @@ func (a *pluginDBAdapter) CreateNote(opts map[string]any) (map[string]any, error
 
 func (a *pluginDBAdapter) UpdateNote(id uint, opts map[string]any) (map[string]any, error) {
 	editor := &query_models.NoteEditor{
+		NoteCreator: query_models.NoteCreator{
+			Name:        getStringOpt(opts, "name"),
+			Description: getStringOpt(opts, "description"),
+			Meta:        getStringOpt(opts, "meta"),
+			StartDate:   getStringOpt(opts, "start_date"),
+			EndDate:     getStringOpt(opts, "end_date"),
+			OwnerId:     getUintOpt(opts, "owner_id"),
+			NoteTypeId:  getUintOpt(opts, "note_type_id"),
+			Tags:        getUintSliceOpt(opts, "tags"),
+			Groups:      getUintSliceOpt(opts, "groups"),
+			Resources:   getUintSliceOpt(opts, "resources"),
+		},
 		ID: id, // ID!=0 means update
 	}
-	editor.Name = getStringOpt(opts, "name")
-	editor.Description = getStringOpt(opts, "description")
-	editor.Meta = getStringOpt(opts, "meta")
-	editor.StartDate = getStringOpt(opts, "start_date")
-	editor.EndDate = getStringOpt(opts, "end_date")
-	editor.OwnerId = getUintOpt(opts, "owner_id")
-	editor.NoteTypeId = getUintOpt(opts, "note_type_id")
-	editor.Tags = getUintSliceOpt(opts, "tags")
-	editor.Groups = getUintSliceOpt(opts, "groups")
-	editor.Resources = getUintSliceOpt(opts, "resources")
 
 	note, err := a.ctx.CreateOrUpdateNote(editor)
 	if err != nil {
@@ -557,6 +671,41 @@ func (a *pluginDBAdapter) UpdateNote(id uint, opts map[string]any) (map[string]a
 
 func (a *pluginDBAdapter) DeleteNote(id uint) error {
 	return a.ctx.DeleteNote(id)
+}
+
+func (a *pluginDBAdapter) PatchNote(id uint, opts map[string]any) (map[string]any, error) {
+	note, err := a.ctx.GetNote(id)
+	if err != nil {
+		return nil, err
+	}
+	var startDate, endDate string
+	if note.StartDate != nil {
+		startDate = note.StartDate.Format("2006-01-02T03:04")
+	}
+	if note.EndDate != nil {
+		endDate = note.EndDate.Format("2006-01-02T03:04")
+	}
+	editor := &query_models.NoteEditor{
+		NoteCreator: query_models.NoteCreator{
+			Name:        patchString(opts, "name", note.Name),
+			Description: patchString(opts, "description", note.Description),
+			Meta:        patchString(opts, "meta", string(note.Meta)),
+			StartDate:   patchString(opts, "start_date", startDate),
+			EndDate:     patchString(opts, "end_date", endDate),
+			OwnerId:     patchUint(opts, "owner_id", uintPtrVal(note.OwnerId)),
+			NoteTypeId:  patchUint(opts, "note_type_id", uintPtrVal(note.NoteTypeId)),
+			Tags:        patchUintSlice(opts, "tags", extractTagIDs(note.Tags)),
+			Groups:      patchUintSlice(opts, "groups", extractGroupIDs(note.Groups)),
+			Resources:   patchUintSlice(opts, "resources", extractResourceIDs(note.Resources)),
+		},
+		ID: id,
+	}
+
+	result, err := a.ctx.CreateOrUpdateNote(editor)
+	if err != nil {
+		return nil, err
+	}
+	return noteToMap(result), nil
 }
 
 // --- EntityWriter: Tag CRUD ---
@@ -588,6 +737,23 @@ func (a *pluginDBAdapter) UpdateTag(id uint, opts map[string]any) (map[string]an
 
 func (a *pluginDBAdapter) DeleteTag(id uint) error {
 	return a.ctx.DeleteTag(id)
+}
+
+func (a *pluginDBAdapter) PatchTag(id uint, opts map[string]any) (map[string]any, error) {
+	tag, err := a.ctx.GetTag(id)
+	if err != nil {
+		return nil, err
+	}
+	creator := &query_models.TagCreator{
+		ID:          id,
+		Name:        patchString(opts, "name", tag.Name),
+		Description: patchString(opts, "description", tag.Description),
+	}
+	result, err := a.ctx.UpdateTag(creator)
+	if err != nil {
+		return nil, err
+	}
+	return tagToMap(result), nil
 }
 
 // --- EntityWriter: Category CRUD ---
@@ -633,6 +799,30 @@ func (a *pluginDBAdapter) DeleteCategory(id uint) error {
 	return a.ctx.DeleteCategory(id)
 }
 
+func (a *pluginDBAdapter) PatchCategory(id uint, opts map[string]any) (map[string]any, error) {
+	cat, err := a.ctx.GetCategory(id)
+	if err != nil {
+		return nil, err
+	}
+	editor := &query_models.CategoryEditor{
+		CategoryCreator: query_models.CategoryCreator{
+			Name:          patchString(opts, "name", cat.Name),
+			Description:   patchString(opts, "description", cat.Description),
+			CustomHeader:  patchString(opts, "custom_header", cat.CustomHeader),
+			CustomSidebar: patchString(opts, "custom_sidebar", cat.CustomSidebar),
+			CustomSummary: patchString(opts, "custom_summary", cat.CustomSummary),
+			CustomAvatar:  patchString(opts, "custom_avatar", cat.CustomAvatar),
+			MetaSchema:    patchString(opts, "meta_schema", cat.MetaSchema),
+		},
+		ID: id,
+	}
+	result, err := a.ctx.UpdateCategory(editor)
+	if err != nil {
+		return nil, err
+	}
+	return categoryToMap(result), nil
+}
+
 // --- EntityWriter: ResourceCategory CRUD ---
 
 func (a *pluginDBAdapter) CreateResourceCategory(opts map[string]any) (map[string]any, error) {
@@ -676,6 +866,30 @@ func (a *pluginDBAdapter) DeleteResourceCategory(id uint) error {
 	return a.ctx.DeleteResourceCategory(id)
 }
 
+func (a *pluginDBAdapter) PatchResourceCategory(id uint, opts map[string]any) (map[string]any, error) {
+	rc, err := a.ctx.GetResourceCategory(id)
+	if err != nil {
+		return nil, err
+	}
+	editor := &query_models.ResourceCategoryEditor{
+		ResourceCategoryCreator: query_models.ResourceCategoryCreator{
+			Name:          patchString(opts, "name", rc.Name),
+			Description:   patchString(opts, "description", rc.Description),
+			CustomHeader:  patchString(opts, "custom_header", rc.CustomHeader),
+			CustomSidebar: patchString(opts, "custom_sidebar", rc.CustomSidebar),
+			CustomSummary: patchString(opts, "custom_summary", rc.CustomSummary),
+			CustomAvatar:  patchString(opts, "custom_avatar", rc.CustomAvatar),
+			MetaSchema:    patchString(opts, "meta_schema", rc.MetaSchema),
+		},
+		ID: id,
+	}
+	result, err := a.ctx.UpdateResourceCategory(editor)
+	if err != nil {
+		return nil, err
+	}
+	return resourceCategoryToMap(result), nil
+}
+
 // --- EntityWriter: NoteType CRUD ---
 
 func (a *pluginDBAdapter) CreateNoteType(opts map[string]any) (map[string]any, error) {
@@ -714,6 +928,27 @@ func (a *pluginDBAdapter) UpdateNoteType(id uint, opts map[string]any) (map[stri
 
 func (a *pluginDBAdapter) DeleteNoteType(id uint) error {
 	return a.ctx.DeleteNoteType(id)
+}
+
+func (a *pluginDBAdapter) PatchNoteType(id uint, opts map[string]any) (map[string]any, error) {
+	nt, err := a.ctx.GetNoteType(id)
+	if err != nil {
+		return nil, err
+	}
+	editor := &query_models.NoteTypeEditor{
+		ID:            id,
+		Name:          patchString(opts, "name", nt.Name),
+		Description:   patchString(opts, "description", nt.Description),
+		CustomHeader:  patchString(opts, "custom_header", nt.CustomHeader),
+		CustomSidebar: patchString(opts, "custom_sidebar", nt.CustomSidebar),
+		CustomSummary: patchString(opts, "custom_summary", nt.CustomSummary),
+		CustomAvatar:  patchString(opts, "custom_avatar", nt.CustomAvatar),
+	}
+	result, err := a.ctx.CreateOrUpdateNoteType(editor)
+	if err != nil {
+		return nil, err
+	}
+	return noteTypeToMap(result), nil
 }
 
 // --- EntityWriter: GroupRelation CRUD ---
@@ -769,6 +1004,27 @@ func (a *pluginDBAdapter) DeleteGroupRelation(id uint) error {
 	return a.ctx.DeleteRelationship(id)
 }
 
+func (a *pluginDBAdapter) PatchGroupRelation(opts map[string]any) (map[string]any, error) {
+	id := getUintOpt(opts, "id")
+	if id == 0 {
+		return nil, fmt.Errorf("id is required for patching a group relation")
+	}
+	rel, err := a.ctx.GetRelation(id)
+	if err != nil {
+		return nil, err
+	}
+	query := query_models.GroupRelationshipQuery{
+		Id:          id,
+		Name:        patchString(opts, "name", rel.Name),
+		Description: patchString(opts, "description", rel.Description),
+	}
+	result, err := a.ctx.EditRelation(query)
+	if err != nil {
+		return nil, err
+	}
+	return groupRelationToMap(result), nil
+}
+
 // --- EntityWriter: RelationType CRUD ---
 
 func (a *pluginDBAdapter) CreateRelationType(opts map[string]any) (map[string]any, error) {
@@ -788,9 +1044,11 @@ func (a *pluginDBAdapter) CreateRelationType(opts map[string]any) (map[string]an
 
 func (a *pluginDBAdapter) UpdateRelationType(opts map[string]any) (map[string]any, error) {
 	query := &query_models.RelationshipTypeEditorQuery{
-		Id:          getUintOpt(opts, "id"),
-		Name:        getStringOpt(opts, "name"),
-		Description: getStringOpt(opts, "description"),
+		Id:           getUintOpt(opts, "id"),
+		Name:         getStringOpt(opts, "name"),
+		Description:  getStringOpt(opts, "description"),
+		FromCategory: getUintOpt(opts, "from_category"),
+		ToCategory:   getUintOpt(opts, "to_category"),
 	}
 	if query.Id == 0 {
 		return nil, fmt.Errorf("id is required for updating a relation type")
@@ -804,6 +1062,29 @@ func (a *pluginDBAdapter) UpdateRelationType(opts map[string]any) (map[string]an
 
 func (a *pluginDBAdapter) DeleteRelationType(id uint) error {
 	return a.ctx.DeleteRelationshipType(id)
+}
+
+func (a *pluginDBAdapter) PatchRelationType(opts map[string]any) (map[string]any, error) {
+	id := getUintOpt(opts, "id")
+	if id == 0 {
+		return nil, fmt.Errorf("id is required for patching a relation type")
+	}
+	rt, err := a.ctx.GetRelationType(id)
+	if err != nil {
+		return nil, err
+	}
+	query := &query_models.RelationshipTypeEditorQuery{
+		Id:           id,
+		Name:         patchString(opts, "name", rt.Name),
+		Description:  patchString(opts, "description", rt.Description),
+		FromCategory: patchUint(opts, "from_category", uintPtrVal(rt.FromCategoryId)),
+		ToCategory:   patchUint(opts, "to_category", uintPtrVal(rt.ToCategoryId)),
+	}
+	result, err := a.ctx.EditRelationType(query)
+	if err != nil {
+		return nil, err
+	}
+	return relationTypeToMap(result), nil
 }
 
 // --- EntityWriter: Resource deletion ---
