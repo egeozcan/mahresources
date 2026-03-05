@@ -259,6 +259,79 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, L *lua.LState, 
 	pm.notifyActionJobSubscribers("updated", job)
 }
 
+// runStartJobGoroutine executes a Lua callback from mah.start_job() in a background goroutine.
+func (pm *PluginManager) runStartJobGoroutine(job *ActionJob, L *lua.LState, fn *lua.LFunction, jobID string) {
+	defer func() {
+		if r := recover(); r != nil {
+			job.mu.Lock()
+			job.Status = "failed"
+			job.Message = fmt.Sprintf("panic: %v", r)
+			job.mu.Unlock()
+			pm.notifyActionJobSubscribers("updated", job)
+			log.Printf("[plugin] panic in start_job %q: %v", job.PluginName, r)
+		}
+	}()
+
+	pm.actionSemaphore <- struct{}{}
+	defer func() { <-pm.actionSemaphore }()
+
+	job.mu.Lock()
+	job.Status = "running"
+	job.Message = "Running..."
+	job.mu.Unlock()
+	pm.notifyActionJobSubscribers("updated", job)
+
+	mu := pm.VMLock(L)
+	mu.Lock()
+
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), asyncActionTimeout)
+	L.SetContext(timeoutCtx)
+
+	err := L.CallByParam(lua.P{
+		Fn:      fn,
+		NRet:    0,
+		Protect: true,
+	}, lua.LString(jobID))
+
+	L.RemoveContext()
+	cancel()
+	mu.Unlock()
+
+	if err != nil {
+		job.mu.RLock()
+		alreadyDone := job.Status == "completed" || job.Status == "failed"
+		job.mu.RUnlock()
+		if alreadyDone {
+			return
+		}
+
+		errMsg := err.Error()
+		if isAbort, reason := parseAbortError(err); isAbort {
+			errMsg = reason
+		}
+
+		job.mu.Lock()
+		job.Status = "failed"
+		job.Message = errMsg
+		job.mu.Unlock()
+		pm.notifyActionJobSubscribers("updated", job)
+		log.Printf("[plugin] start_job %q failed: %v", job.PluginName, err)
+		return
+	}
+
+	job.mu.RLock()
+	alreadyDone := job.Status == "completed" || job.Status == "failed"
+	job.mu.RUnlock()
+	if !alreadyDone {
+		job.mu.Lock()
+		job.Status = "completed"
+		job.Progress = 100
+		job.Message = "Completed"
+		job.mu.Unlock()
+		pm.notifyActionJobSubscribers("updated", job)
+	}
+}
+
 // GetActionJob returns a snapshot of the action job with the given ID, or nil if not found.
 func (pm *PluginManager) GetActionJob(jobID string) *ActionJob {
 	pm.actionJobsMu.RLock()

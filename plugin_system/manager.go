@@ -546,6 +546,45 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		return 0
 	}))
 
+	// mah.start_job(label, fn) — create an async job and run fn(job_id) in a background goroutine.
+	// Returns the job ID immediately. The callback receives the job_id as its argument and can use
+	// mah.job_progress, mah.job_complete, mah.job_fail to report status.
+	mahMod.RawSetString("start_job", L.NewFunction(func(L *lua.LState) int {
+		label := L.CheckString(1)
+		fn := L.CheckFunction(2)
+
+		jobID := generateActionJobID()
+		job := &ActionJob{
+			ID:         jobID,
+			Source:     "plugin",
+			PluginName: *pluginNamePtr,
+			ActionID:   "start_job",
+			Label:      label,
+			EntityType: "custom",
+			Status:     "pending",
+			Progress:   0,
+			Message:    "Waiting to start...",
+			CreatedAt:  time.Now(),
+		}
+
+		pm.actionJobsMu.Lock()
+		pm.actionJobs[jobID] = job
+		pm.actionJobsMu.Unlock()
+
+		pm.notifyActionJobSubscribers("added", job)
+
+		wg := pm.actionWaitGroup(*pluginNamePtr)
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+			pm.runStartJobGoroutine(job, L, fn, jobID)
+		}()
+
+		L.Push(lua.LString(jobID))
+		return 1
+	}))
+
 	pm.registerDbModule(L, mahMod)
 	pm.registerHttpModule(L, mahMod)
 	pm.registerJsonModule(L, mahMod)

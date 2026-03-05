@@ -459,107 +459,106 @@ function init()
         local prompt = params.prompt
 
         if prompt and prompt ~= "" then
-            -- Process generation
             local model = params.model or "nanobanana2"
-            local endpoint = FAL_ENDPOINTS[model] or FAL_ENDPOINTS.nanobanana2_generate
+            local aspect_ratio = params.aspect_ratio or "1:1"
+            local resolution = params.resolution or "1K"
 
-            -- Map model to endpoint
-            if model == "nanobanana2" then
-                endpoint = FAL_ENDPOINTS.nanobanana2_generate
-            end
+            mah.log("info", "[fal.ai] generate page: starting async job, model=" .. model .. ", prompt=" .. prompt:sub(1, 100))
 
-            mah.log("info", "[fal.ai] generate page: model=" .. model .. ", prompt=" .. prompt:sub(1, 100) .. ", aspect_ratio=" .. tostring(params.aspect_ratio) .. ", resolution=" .. tostring(params.resolution))
+            -- Start async job and return immediately
+            local job_id = mah.start_job("Generate: " .. prompt:sub(1, 40), function(jid)
+                mah.job_progress(jid, 10, "Preparing request...")
 
-            local payload = {
-                prompt = prompt,
-                aspect_ratio = params.aspect_ratio or "1:1",
-                output_format = "jpeg",
-                safety_tolerance = 6,
-            }
-
-            -- Resolution handling per model
-            if model == "nanobanana2" then
-                payload.resolution = params.resolution or "1K"
-            elseif model ~= "imagen4_fast" then
-                local res = params.resolution or "1K"
-                if res == "1K" or res == "2K" then
-                    payload.resolution = res
-                else
-                    mah.log("info", "[fal.ai] generate page: resolution " .. res .. " not supported for " .. model .. ", falling back to 1K")
-                    payload.resolution = "1K"
+                local endpoint = FAL_ENDPOINTS[model] or FAL_ENDPOINTS.nanobanana2_generate
+                if model == "nanobanana2" then
+                    endpoint = FAL_ENDPOINTS.nanobanana2_generate
                 end
-            end
 
-            local api_url = "https://fal.run/" .. endpoint
-            mah.log("info", "[fal.ai] generate page: POST " .. api_url)
-            local payload_json = mah.json.encode(payload)
-            mah.log("info", "[fal.ai] generate page: payload size=" .. #payload_json .. " bytes")
-
-            local resp = mah.http.post_sync(
-                api_url,
-                payload_json,
-                {
-                    headers = {
-                        Authorization = "Key " .. api_key,
-                        ["Content-Type"] = "application/json",
-                    },
-                    timeout = 120,
+                local payload = {
+                    prompt = prompt,
+                    aspect_ratio = aspect_ratio,
+                    output_format = "jpeg",
+                    safety_tolerance = 6,
                 }
-            )
 
-            if resp.error then
-                mah.log("error", "[fal.ai] generate page: HTTP error: " .. resp.error)
-                return '<div class="p-8"><h2 class="text-xl font-bold mb-4">Generate Image</h2>'
-                    .. '<p class="text-red-600">HTTP error: ' .. html_escape(resp.error) .. '</p></div>'
-            end
+                if model == "nanobanana2" then
+                    payload.resolution = resolution
+                elseif model ~= "imagen4_fast" then
+                    if resolution == "1K" or resolution == "2K" then
+                        payload.resolution = resolution
+                    else
+                        payload.resolution = "1K"
+                    end
+                end
 
-            mah.log("info", "[fal.ai] generate page: response status=" .. tostring(resp.status_code) .. ", body_length=" .. tostring(resp.body and #resp.body or 0))
+                mah.job_progress(jid, 20, "Calling fal.ai API...")
 
-            if resp.status_code ~= 200 then
-                local body_preview = (resp.body or ""):sub(1, 500)
-                mah.log("error", "[fal.ai] generate page: API error: status=" .. tostring(resp.status_code) .. ", body=" .. body_preview)
-                return '<div class="p-8"><h2 class="text-xl font-bold mb-4">Generate Image</h2>'
-                    .. '<p class="text-red-600">API error (status ' .. tostring(resp.status_code) .. '): ' .. html_escape(body_preview) .. '</p></div>'
-            end
+                local api_url = "https://fal.run/" .. endpoint
+                mah.log("info", "[fal.ai] generate job: POST " .. api_url)
+                local payload_json = mah.json.encode(payload)
 
-            local result = mah.json.decode(resp.body)
-            if not result then
-                mah.log("error", "[fal.ai] generate page: failed to parse API response")
-                return '<div class="p-8"><h2 class="text-xl font-bold mb-4">Generate Image</h2>'
-                    .. '<p class="text-red-600">Failed to parse API response</p></div>'
-            end
+                local resp = mah.http.post_sync(
+                    api_url,
+                    payload_json,
+                    {
+                        headers = {
+                            Authorization = "Key " .. api_key,
+                            ["Content-Type"] = "application/json",
+                        },
+                        timeout = 120,
+                    }
+                )
 
-            local result_url = get_result_url(result)
-            if not result_url then
-                mah.log("error", "[fal.ai] generate page: no image URL in API response")
-                return '<div class="p-8"><h2 class="text-xl font-bold mb-4">Generate Image</h2>'
-                    .. '<p class="text-red-600">No image URL in API response</p></div>'
-            end
+                if resp.error then
+                    mah.job_fail(jid, "HTTP error: " .. resp.error)
+                    return
+                end
 
-            -- Save as resource
-            local safe_prompt = prompt:gsub("[^%w%s_-]", ""):gsub("%s+", "_"):sub(1, 40)
-            local filename = "generated_" .. safe_prompt .. ".jpg"
-            mah.log("info", "[fal.ai] generate page: downloading result as " .. filename)
+                if resp.status_code ~= 200 then
+                    mah.job_fail(jid, "API error (status " .. tostring(resp.status_code) .. "): " .. (resp.body or ""):sub(1, 200))
+                    return
+                end
 
-            local new_resource, create_err = mah.db.create_resource_from_url(result_url, {
-                name = filename,
-                description = "Generated by fal.ai: " .. prompt,
-            })
+                mah.job_progress(jid, 70, "Processing result...")
 
-            if not new_resource then
-                mah.log("error", "[fal.ai] generate page: failed to save resource: " .. (create_err or "unknown"))
-                return '<div class="p-8"><h2 class="text-xl font-bold mb-4">Generate Image</h2>'
-                    .. '<p class="text-red-600">Failed to save: ' .. html_escape(create_err or "unknown") .. '</p></div>'
-            end
+                local result = mah.json.decode(resp.body)
+                if not result then
+                    mah.job_fail(jid, "Failed to parse API response")
+                    return
+                end
 
-            mah.log("info", "[fal.ai] generate page: created resource #" .. tostring(new_resource.id) .. " (" .. filename .. ")")
+                local result_url = get_result_url(result)
+                if not result_url then
+                    mah.job_fail(jid, "No image URL in API response")
+                    return
+                end
 
-            return '<div class="p-8"><h2 class="text-xl font-bold mb-4">Image Generated</h2>'
-                .. '<div class="mb-4"><img src="/v1/resource_file/' .. tostring(new_resource.id) .. '" '
-                .. 'alt="Generated image" class="max-w-lg rounded shadow" /></div>'
-                .. '<p class="mb-2">Saved as resource <a href="/v1/resource?id=' .. tostring(new_resource.id)
-                .. '" class="text-blue-600 underline">#' .. tostring(new_resource.id) .. ' - ' .. filename .. '</a></p>'
-                .. '<p class="text-gray-500 text-sm">Prompt: ' .. html_escape(prompt) .. '</p>'
+                mah.job_progress(jid, 85, "Saving result...")
+
+                local safe_prompt = prompt:gsub("[^%w%s_-]", ""):gsub("%s+", "_"):sub(1, 40)
+                local filename = "generated_" .. safe_prompt .. ".jpg"
+
+                local new_resource, create_err = mah.db.create_resource_from_url(result_url, {
+                    name = filename,
+                    description = "Generated by fal.ai: " .. prompt,
+                })
+
+                if not new_resource then
+                    mah.job_fail(jid, "Failed to save: " .. (create_err or "unknown"))
+                    return
+                end
+
+                mah.log("info", "[fal.ai] generate job: created resource #" .. tostring(new_resource.id))
+                mah.job_complete(jid, {
+                    message = "Created resource #" .. tostring(new_resource.id),
+                    redirect = "/v1/resource?id=" .. tostring(new_resource.id),
+                })
+            end)
+
+            return '<div class="p-8"><h2 class="text-xl font-bold mb-4">Generate Image</h2>'
+                .. '<p class="text-green-600 mb-4">Generation started! Track progress in the Jobs panel '
+                .. '(<kbd>Ctrl+Shift+D</kbd>).</p>'
+                .. '<p class="text-gray-500 text-sm mb-6">Prompt: ' .. html_escape(prompt) .. '</p>'
                 .. '<hr class="my-6" /><h3 class="text-lg font-bold mb-4">Generate Another</h3>'
                 .. generate_form()
                 .. '</div>'
