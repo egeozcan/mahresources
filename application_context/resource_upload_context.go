@@ -432,16 +432,8 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 		resourceQuery.Meta = hMeta
 	}
 
-	tx := ctx.db.Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
-
 	tempFile, err := os.CreateTemp("", "upload-")
 	if err != nil {
-		tx.Rollback()
 		return nil, err
 	}
 	defer func() {
@@ -452,31 +444,26 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 	// Copy the contents of the uploaded file to the temporary file
 	_, err = io.Copy(tempFile, file)
 	if err != nil {
-		tx.Rollback()
 		return nil, err
 	}
 
 	fileMime, err := mimetype.DetectFile(tempFile.Name())
 	if err != nil {
-		tx.Rollback()
 		return nil, err
 	}
 
 	_, err = tempFile.Seek(0, io.SeekStart)
 	if err != nil {
-		tx.Rollback()
 		return nil, err
 	}
 
 	// Calculate the SHA1 hash of the uploaded file
 	h := sha1.New()
 	if _, err = io.Copy(h, tempFile); err != nil {
-		tx.Rollback()
 		return nil, err
 	}
 
 	if _, err = tempFile.Seek(0, io.SeekStart); err != nil {
-		tx.Rollback()
 		return nil, err
 	}
 
@@ -486,6 +473,16 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 	// with the same hash both pass the "existing resource" check before either commits
 	ctx.locks.ResourceHashLock.Acquire(hash)
 	defer ctx.locks.ResourceHashLock.Release(hash)
+
+	// Begin transaction AFTER acquiring the lock to avoid TOCTOU: if the transaction
+	// started before the lock, its snapshot could miss rows committed by another
+	// goroutine that held the lock and committed between our BEGIN and our check.
+	tx := ctx.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
 
 	var existingResource models.Resource
 

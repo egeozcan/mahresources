@@ -111,34 +111,9 @@ func newBytesFile(data []byte) *bytesFile {
 
 // TestAddResource_ConcurrentSameHash verifies that concurrent uploads of the
 // same file content produce exactly one resource in the database.
-//
-// Known race condition (TOCTOU):
-// AddResource starts a DB transaction (tx := ctx.db.Begin()) at line 435, then
-// computes the file hash, and only THEN acquires the per-hash Go lock (line 487)
-// before checking for an existing resource with that hash (line 492).
-//
-// When multiple goroutines upload the same content concurrently:
-//  1. All goroutines call tx.Begin() — each gets its own DB connection and issues BEGIN.
-//  2. All goroutines compute the same SHA1 hash.
-//  3. They serialize on ResourceHashLock.Acquire(hash).
-//  4. Goroutine A holds the lock, queries tx_A for the hash (not found), inserts, commits, releases.
-//  5. Goroutine B acquires the lock, queries tx_B for the hash.
-//
-// At step 5, tx_B was opened (BEGIN issued) before tx_A committed. With SQLite's
-// DEFERRED transactions the first read should see committed state, but in practice
-// — particularly with mattn/go-sqlite3, shared-cache in-memory mode, and GORM's
-// connection pool — tx_B's read can miss tx_A's committed row, allowing a second
-// insert to succeed. This produces 2 resources instead of 1.
-//
-// Fix options:
-//   - Move tx.Begin() after ResourceHashLock.Acquire so the transaction starts
-//     with a guaranteed up-to-date view.
-//   - Add a UNIQUE constraint on resources.hash (with owner_id) so the DB rejects
-//     the duplicate even if the Go-level check misses it.
-//   - Use BEGIN IMMEDIATE to force a write lock at transaction start.
 func TestAddResource_ConcurrentSameHash(t *testing.T) {
-	// Create an in-memory SQLite database for this test
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	// Use a unique DSN to isolate this test from other tests sharing file::memory:?cache=shared
+	db, err := gorm.Open(sqlite.Open("file:concurrent_hash_test?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("Failed to open test database: %v", err)
 	}
