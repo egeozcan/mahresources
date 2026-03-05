@@ -76,6 +76,37 @@ func luaTableToGoMap(tbl *lua.LTable) map[string]any {
 	return result
 }
 
+// luaTableToGo converts a Lua table to either []any (if array-like) or map[string]any.
+// A table is array-like if it has only consecutive integer keys starting from 1 with no gaps.
+func luaTableToGo(tbl *lua.LTable) any {
+	maxN := tbl.MaxN()
+	if maxN > 0 {
+		totalKeys := 0
+		tbl.ForEach(func(_, _ lua.LValue) {
+			totalKeys++
+		})
+		if totalKeys == maxN {
+			arr := make([]any, maxN)
+			for i := 1; i <= maxN; i++ {
+				arr[i-1] = luaValueToGo(tbl.RawGetInt(i))
+			}
+			return arr
+		}
+	}
+
+	// Mixed or string-keyed table → map
+	result := make(map[string]any)
+	tbl.ForEach(func(key, value lua.LValue) {
+		switch k := key.(type) {
+		case lua.LString:
+			result[string(k)] = luaValueToGo(value)
+		case lua.LNumber:
+			result[lua.LVAsString(key)] = luaValueToGo(value)
+		}
+	})
+	return result
+}
+
 // luaValueToGo converts a Lua value to its Go equivalent.
 func luaValueToGo(v lua.LValue) any {
 	switch val := v.(type) {
@@ -86,7 +117,7 @@ func luaValueToGo(v lua.LValue) any {
 	case lua.LString:
 		return string(val)
 	case *lua.LTable:
-		return luaTableToGoMap(val)
+		return luaTableToGo(val)
 	case *lua.LNilType:
 		return nil
 	default:

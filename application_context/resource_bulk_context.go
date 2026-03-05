@@ -580,8 +580,7 @@ func (ctx *MahresourcesContext) RemoveGroupsFromResource(resourceId uint, groupI
 	if len(groupIds) == 0 {
 		return nil
 	}
-	return ctx.db.Exec(
-		"DELETE FROM groups_related_resources WHERE resource_id = ? AND group_id IN ?",
-		resourceId, groupIds,
-	).Error
+	resource := models.Resource{ID: resourceId}
+	groups := BuildAssociationSlice(groupIds, GroupFromID)
+	return ctx.db.Model(&resource).Association("Groups").Delete(&groups)
 }

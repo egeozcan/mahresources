@@ -157,7 +157,7 @@ func (ctx *MahresourcesContext) EditRelationType(query *query_models.Relationshi
 	var relationType = models.GroupRelationType{}
 
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
-		if err := ctx.db.First(&relationType, query.Id).Error; err != nil {
+		if err := tx.First(&relationType, query.Id).Error; err != nil {
 			return err
 		}
 
@@ -165,8 +165,10 @@ func (ctx *MahresourcesContext) EditRelationType(query *query_models.Relationshi
 			relationType.Name = query.Name
 		}
 		relationType.Description = query.Description
+		relationType.FromCategoryId = uintPtrOrNil(query.FromCategory)
+		relationType.ToCategoryId = uintPtrOrNil(query.ToCategory)
 
-		return ctx.db.Save(&relationType).Error
+		return tx.Save(&relationType).Error
 	})
 
 	if err == nil {

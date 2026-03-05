@@ -1,6 +1,6 @@
 package query_models
 
-type noteCreator struct {
+type NoteCreator struct {
 	Name        string
 	Description string
 	Tags        []uint
@@ -14,7 +14,7 @@ type noteCreator struct {
 }
 
 type NoteEditor struct {
-	noteCreator
+	NoteCreator
 	ID uint
 }
 
