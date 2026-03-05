@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	lua "github.com/yuin/gopher-lua"
 )
+
+const luaPageTimeout = 5 * time.Minute
 
 // PageContext holds the request data passed to a plugin page handler.
 type PageContext struct {
@@ -69,7 +72,7 @@ func (pm *PluginManager) HandlePage(pluginName, path string, ctx PageContext) (s
 
 	tbl := goToLuaTable(L, ctxData)
 
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), luaExecTimeout)
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), luaPageTimeout)
 	L.SetContext(timeoutCtx)
 
 	err := L.CallByParam(lua.P{
