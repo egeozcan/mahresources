@@ -222,6 +222,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 			pm.SetEntityQuerier(adapter)
 			pm.SetEntityWriter(adapter)
 			pm.SetPluginLogger(adapter)
+			pm.SetKVStore(adapter)
 		}
 	}
 

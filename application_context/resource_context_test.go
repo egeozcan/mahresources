@@ -47,6 +47,7 @@ func createTestContext(t *testing.T) *MahresourcesContext {
 		&models.ResourceCategory{},
 		&models.Series{},
 		&models.NoteBlock{},
+		&models.PluginKV{},
 	)
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)
@@ -135,6 +136,7 @@ func TestAddResource_ConcurrentSameHash(t *testing.T) {
 		&models.ResourceCategory{},
 		&models.Series{},
 		&models.NoteBlock{},
+		&models.PluginKV{},
 	)
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)

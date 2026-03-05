@@ -76,6 +76,31 @@ type PluginLogger interface {
 	PluginLog(pluginName, level, message string, details map[string]any)
 }
 
+// KVStore provides per-plugin key-value storage for plugins.
+type KVStore interface {
+	KVGet(pluginName, key string) (string, bool, error)
+	KVSet(pluginName, key, value string) error
+	KVDelete(pluginName, key string) error
+	KVList(pluginName, prefix string) ([]string, error)
+	KVPurge(pluginName string) error
+}
+
+// SetKVStore sets the key-value store for plugin data persistence.
+// This is called after context creation to break the circular dependency
+// between plugin_system and application_context.
+func (pm *PluginManager) SetKVStore(kv KVStore) {
+	pm.kvStore.Store(kv)
+}
+
+// getKVStore returns the current KVStore, or nil if not yet set.
+func (pm *PluginManager) getKVStore() KVStore {
+	v := pm.kvStore.Load()
+	if v == nil {
+		return nil
+	}
+	return v.(KVStore)
+}
+
 // SetPluginLogger sets the logger for plugin log messages.
 // This is called after context creation to break the circular dependency
 // between plugin_system and application_context.

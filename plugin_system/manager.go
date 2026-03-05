@@ -79,6 +79,7 @@ type PluginManager struct {
 	dbProvider atomic.Value
 	dbWriter   atomic.Value
 	logger     atomic.Value
+	kvStore    atomic.Value
 	closed     atomic.Bool
 
 	// Discovery-phase data (immutable after construction).

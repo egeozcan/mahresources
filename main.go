@@ -249,6 +249,7 @@ func main() {
 		&models.ResourceSimilarity{},
 		&models.LogEntry{},
 		&models.PluginState{},
+		&models.PluginKV{},
 	); err != nil {
 		log.Fatalf("failed to migrate: %v", err)
 	}

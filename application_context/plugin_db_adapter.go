@@ -315,6 +315,23 @@ func resourceToMap(r *models.Resource) map[string]any {
 // Compile-time interface compliance checks.
 var _ plugin_system.EntityWriter = (*pluginDBAdapter)(nil)
 var _ plugin_system.PluginLogger = (*pluginDBAdapter)(nil)
+var _ plugin_system.KVStore = (*pluginDBAdapter)(nil)
+
+func (a *pluginDBAdapter) KVGet(pluginName, key string) (string, bool, error) {
+	return a.ctx.PluginKVGet(pluginName, key)
+}
+func (a *pluginDBAdapter) KVSet(pluginName, key, value string) error {
+	return a.ctx.PluginKVSet(pluginName, key, value)
+}
+func (a *pluginDBAdapter) KVDelete(pluginName, key string) error {
+	return a.ctx.PluginKVDelete(pluginName, key)
+}
+func (a *pluginDBAdapter) KVList(pluginName, prefix string) ([]string, error) {
+	return a.ctx.PluginKVList(pluginName, prefix)
+}
+func (a *pluginDBAdapter) KVPurge(pluginName string) error {
+	return a.ctx.PluginKVPurge(pluginName)
+}
 
 // PluginLog persists a plugin log message to the application log store.
 func (a *pluginDBAdapter) PluginLog(pluginName, level, message string, details map[string]any) {
