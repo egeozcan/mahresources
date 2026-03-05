@@ -13,6 +13,7 @@ type PageContext struct {
 	Path    string
 	Method  string
 	Query   map[string]any
+	Params  map[string]any
 	Headers map[string]any
 	Body    string
 }
@@ -51,6 +52,11 @@ func (pm *PluginManager) HandlePage(pluginName, path string, ctx PageContext) (s
 		ctxData["query"] = ctx.Query
 	} else {
 		ctxData["query"] = map[string]any{}
+	}
+	if ctx.Params != nil {
+		ctxData["params"] = ctx.Params
+	} else {
+		ctxData["params"] = map[string]any{}
 	}
 	if ctx.Headers != nil {
 		ctxData["headers"] = ctx.Headers

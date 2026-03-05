@@ -3,6 +3,7 @@ package template_context_providers
 import (
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/flosch/pongo2/v4"
@@ -64,12 +65,30 @@ func PluginPageContextProvider(pm *plugin_system.PluginManager) func(request *ht
 
 		// Read body for POST requests (limited to 50MB)
 		var body string
+		paramsMap := make(map[string]any)
 		if request.Method == http.MethodPost && request.Body != nil {
 			const maxBodySize = 50 << 20 // 50MB
 			limited := io.LimitReader(request.Body, maxBodySize)
 			bodyBytes, err := io.ReadAll(limited)
 			if err == nil {
 				body = string(bodyBytes)
+				// Parse URL-encoded form data into params
+				ct := request.Header.Get("Content-Type")
+				if strings.HasPrefix(ct, "application/x-www-form-urlencoded") || (ct == "" && len(bodyBytes) > 0) {
+					if formValues, parseErr := url.ParseQuery(body); parseErr == nil {
+						for k, v := range formValues {
+							if len(v) == 1 {
+								paramsMap[k] = v[0]
+							} else {
+								items := make([]any, len(v))
+								for i, val := range v {
+									items[i] = val
+								}
+								paramsMap[k] = items
+							}
+						}
+					}
+				}
 			}
 		}
 
@@ -77,6 +96,7 @@ func PluginPageContextProvider(pm *plugin_system.PluginManager) func(request *ht
 			Path:    request.URL.String(),
 			Method:  request.Method,
 			Query:   queryMap,
+			Params:  paramsMap,
 			Headers: headerMap,
 			Body:    body,
 		}
