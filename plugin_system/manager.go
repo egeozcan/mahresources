@@ -589,6 +589,7 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 	pm.registerDbModule(L, mahMod)
 	pm.registerHttpModule(L, mahMod)
 	pm.registerJsonModule(L, mahMod)
+	pm.registerKvModule(L, mahMod, pluginNamePtr)
 
 	L.SetGlobal("mah", mahMod)
 }
