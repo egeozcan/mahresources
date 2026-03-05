@@ -58,11 +58,11 @@ func NoteQuery(query *query_models.NoteQuery, ignoreSort bool, originalDB *gorm.
 		}
 
 		if query.Name != "" {
-			dbQuery = dbQuery.Where("name "+likeOperator+" ?", "%"+query.Name+"%")
+			dbQuery = dbQuery.Where("notes.name "+likeOperator+" ?", "%"+query.Name+"%")
 		}
 
 		if query.Description != "" {
-			dbQuery = dbQuery.Where("description "+likeOperator+" ?", "%"+query.Description+"%")
+			dbQuery = dbQuery.Where("notes.description "+likeOperator+" ?", "%"+query.Description+"%")
 		}
 
 		if query.OwnerId != 0 {

@@ -16,7 +16,6 @@ const (
 	actionJobRetention     = 1 * time.Hour
 	actionJobCleanInterval = 5 * time.Minute
 	maxConcurrentActions   = 3
-	asyncActionTimeout     = 5 * time.Minute
 )
 
 // ActionJob represents an asynchronous plugin action execution.
@@ -137,9 +136,10 @@ func (pm *PluginManager) RunActionAsync(pluginName, actionID string, entityID ui
 	return jobID, nil
 }
 
-// runAsyncActionGoroutine executes the Lua handler in a background goroutine.
-func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, L *lua.LState, handler *lua.LFunction, entityID uint, params map[string]any, settings map[string]any) {
-	// Panic recovery: mark job as failed on any panic.
+// executeAsyncJob is the common scaffold for running an async job goroutine.
+// It handles panic recovery, semaphore, status transitions, error handling, and default completion.
+// The work function performs the actual Lua call and returns its error.
+func (pm *PluginManager) executeAsyncJob(job *ActionJob, logLabel string, work func() error) {
 	defer func() {
 		if r := recover(); r != nil {
 			job.mu.Lock()
@@ -147,7 +147,7 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, L *lua.LState, 
 			job.Message = fmt.Sprintf("panic: %v", r)
 			job.mu.Unlock()
 			pm.notifyActionJobSubscribers("updated", job)
-			log.Printf("[plugin] panic in async action %q/%q: %v", job.PluginName, job.ActionID, r)
+			log.Printf("[plugin] panic in %s: %v", logLabel, r)
 		}
 	}()
 
@@ -162,43 +162,9 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, L *lua.LState, 
 	job.mu.Unlock()
 	pm.notifyActionJobSubscribers("updated", job)
 
-	// Build context table: { entity_id = N, params = {...}, settings = {...}, job_id = "..." }
-	ctxData := map[string]any{
-		"entity_id": entityID,
-		"job_id":    job.ID,
-	}
-	if params != nil {
-		ctxData["params"] = params
-	} else {
-		ctxData["params"] = map[string]any{}
-	}
-	if settings != nil {
-		ctxData["settings"] = settings
-	} else {
-		ctxData["settings"] = map[string]any{}
-	}
-
-	// Acquire the VM lock for the Lua call.
-	mu := pm.VMLock(L)
-	mu.Lock()
-
-	tbl := goToLuaTable(L, ctxData)
-
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), asyncActionTimeout)
-	L.SetContext(timeoutCtx)
-
-	err := L.CallByParam(lua.P{
-		Fn:      handler,
-		NRet:    1,
-		Protect: true,
-	}, tbl)
-
-	L.RemoveContext()
-	cancel()
+	err := work()
 
 	if err != nil {
-		mu.Unlock()
-
 		// Check if the Lua code already set the job to completed/failed via mah.job_complete/mah.job_fail.
 		job.mu.RLock()
 		alreadyDone := job.Status == "completed" || job.Status == "failed"
@@ -217,108 +183,11 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, L *lua.LState, 
 		job.Message = errMsg
 		job.mu.Unlock()
 		pm.notifyActionJobSubscribers("updated", job)
-		log.Printf("[plugin] async action %q/%q failed: %v", job.PluginName, job.ActionID, err)
+		log.Printf("[plugin] %s failed: %v", logLabel, err)
 		return
 	}
 
-	// Parse the return value.
-	ret := L.Get(-1)
-	L.Pop(1)
-	mu.Unlock()
-
-	// Check if the Lua code already set the job to completed/failed via mah.job_complete/mah.job_fail.
-	job.mu.RLock()
-	alreadyDone := job.Status == "completed" || job.Status == "failed"
-	job.mu.RUnlock()
-	if alreadyDone {
-		return
-	}
-
-	// If the handler returned a table, treat it as the result.
-	if retTbl, ok := ret.(*lua.LTable); ok {
-		parsed := luaTableToGoMap(retTbl)
-
-		job.mu.Lock()
-		job.Status = "completed"
-		job.Progress = 100
-		if msg, ok := parsed["message"].(string); ok {
-			job.Message = msg
-		} else {
-			job.Message = "Completed"
-		}
-		job.Result = parsed
-		job.mu.Unlock()
-	} else {
-		job.mu.Lock()
-		job.Status = "completed"
-		job.Progress = 100
-		job.Message = "Completed"
-		job.mu.Unlock()
-	}
-
-	pm.notifyActionJobSubscribers("updated", job)
-}
-
-// runStartJobGoroutine executes a Lua callback from mah.start_job() in a background goroutine.
-func (pm *PluginManager) runStartJobGoroutine(job *ActionJob, L *lua.LState, fn *lua.LFunction, jobID string) {
-	defer func() {
-		if r := recover(); r != nil {
-			job.mu.Lock()
-			job.Status = "failed"
-			job.Message = fmt.Sprintf("panic: %v", r)
-			job.mu.Unlock()
-			pm.notifyActionJobSubscribers("updated", job)
-			log.Printf("[plugin] panic in start_job %q: %v", job.PluginName, r)
-		}
-	}()
-
-	pm.actionSemaphore <- struct{}{}
-	defer func() { <-pm.actionSemaphore }()
-
-	job.mu.Lock()
-	job.Status = "running"
-	job.Message = "Running..."
-	job.mu.Unlock()
-	pm.notifyActionJobSubscribers("updated", job)
-
-	mu := pm.VMLock(L)
-	mu.Lock()
-
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), asyncActionTimeout)
-	L.SetContext(timeoutCtx)
-
-	err := L.CallByParam(lua.P{
-		Fn:      fn,
-		NRet:    0,
-		Protect: true,
-	}, lua.LString(jobID))
-
-	L.RemoveContext()
-	cancel()
-	mu.Unlock()
-
-	if err != nil {
-		job.mu.RLock()
-		alreadyDone := job.Status == "completed" || job.Status == "failed"
-		job.mu.RUnlock()
-		if alreadyDone {
-			return
-		}
-
-		errMsg := err.Error()
-		if isAbort, reason := parseAbortError(err); isAbort {
-			errMsg = reason
-		}
-
-		job.mu.Lock()
-		job.Status = "failed"
-		job.Message = errMsg
-		job.mu.Unlock()
-		pm.notifyActionJobSubscribers("updated", job)
-		log.Printf("[plugin] start_job %q failed: %v", job.PluginName, err)
-		return
-	}
-
+	// If the work function didn't already set a terminal status, mark completed.
 	job.mu.RLock()
 	alreadyDone := job.Status == "completed" || job.Status == "failed"
 	job.mu.RUnlock()
@@ -330,6 +199,94 @@ func (pm *PluginManager) runStartJobGoroutine(job *ActionJob, L *lua.LState, fn 
 		job.mu.Unlock()
 		pm.notifyActionJobSubscribers("updated", job)
 	}
+}
+
+// runAsyncActionGoroutine executes the Lua handler in a background goroutine.
+func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, L *lua.LState, handler *lua.LFunction, entityID uint, params map[string]any, settings map[string]any) {
+	pm.executeAsyncJob(job, fmt.Sprintf("async action %q/%q", job.PluginName, job.ActionID), func() error {
+		// Build context table: { entity_id = N, params = {...}, settings = {...}, job_id = "..." }
+		ctxData := map[string]any{
+			"entity_id": entityID,
+			"job_id":    job.ID,
+		}
+		if params != nil {
+			ctxData["params"] = params
+		} else {
+			ctxData["params"] = map[string]any{}
+		}
+		if settings != nil {
+			ctxData["settings"] = settings
+		} else {
+			ctxData["settings"] = map[string]any{}
+		}
+
+		mu := pm.VMLock(L)
+		mu.Lock()
+
+		tbl := goToLuaTable(L, ctxData)
+
+		timeoutCtx, cancel := context.WithTimeout(context.Background(), asyncActionTimeout)
+		L.SetContext(timeoutCtx)
+
+		err := L.CallByParam(lua.P{
+			Fn:      handler,
+			NRet:    1,
+			Protect: true,
+		}, tbl)
+
+		L.RemoveContext()
+		cancel()
+
+		if err != nil {
+			mu.Unlock()
+			return err
+		}
+
+		// Parse the return value while VM is still locked.
+		ret := L.Get(-1)
+		L.Pop(1)
+		mu.Unlock()
+
+		// If the handler returned a table, treat it as the result and mark completed.
+		if retTbl, ok := ret.(*lua.LTable); ok {
+			parsed := luaTableToGoMap(retTbl)
+			job.mu.Lock()
+			job.Status = "completed"
+			job.Progress = 100
+			if msg, ok := parsed["message"].(string); ok {
+				job.Message = msg
+			} else {
+				job.Message = "Completed"
+			}
+			job.Result = parsed
+			job.mu.Unlock()
+			pm.notifyActionJobSubscribers("updated", job)
+		}
+
+		return nil
+	})
+}
+
+// runStartJobGoroutine executes a Lua callback from mah.start_job() in a background goroutine.
+func (pm *PluginManager) runStartJobGoroutine(job *ActionJob, L *lua.LState, fn *lua.LFunction, jobID string) {
+	pm.executeAsyncJob(job, fmt.Sprintf("start_job %q", job.PluginName), func() error {
+		mu := pm.VMLock(L)
+		mu.Lock()
+		defer mu.Unlock()
+
+		timeoutCtx, cancel := context.WithTimeout(context.Background(), asyncActionTimeout)
+		L.SetContext(timeoutCtx)
+		defer func() {
+			L.RemoveContext()
+			cancel()
+		}()
+
+		return L.CallByParam(lua.P{
+			Fn:      fn,
+			NRet:    0,
+			Protect: true,
+		}, lua.LString(jobID))
+	})
 }
 
 // GetActionJob returns a snapshot of the action job with the given ID, or nil if not found.

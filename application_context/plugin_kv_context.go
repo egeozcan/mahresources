@@ -1,16 +1,22 @@
 package application_context
 
 import (
+	"errors"
+	"fmt"
 	"mahresources/models"
+	"strings"
 
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+const maxKVValueSize = 8 * 1024 * 1024 // 8MB
 
 func (ctx *MahresourcesContext) PluginKVGet(pluginName, key string) (string, bool, error) {
 	var kv models.PluginKV
 	err := ctx.db.Where("plugin_name = ? AND key = ?", pluginName, key).First(&kv).Error
 	if err != nil {
-		if err.Error() == "record not found" {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return "", false, nil
 		}
 		return "", false, err
@@ -19,6 +25,9 @@ func (ctx *MahresourcesContext) PluginKVGet(pluginName, key string) (string, boo
 }
 
 func (ctx *MahresourcesContext) PluginKVSet(pluginName, key, value string) error {
+	if len(value) > maxKVValueSize {
+		return fmt.Errorf("value size %d bytes exceeds maximum of %d bytes", len(value), maxKVValueSize)
+	}
 	kv := models.PluginKV{
 		PluginName: pluginName,
 		Key:        key,
@@ -39,7 +48,8 @@ func (ctx *MahresourcesContext) PluginKVList(pluginName, prefix string) ([]strin
 	var keys []string
 	q := ctx.db.Model(&models.PluginKV{}).Where("plugin_name = ?", pluginName)
 	if prefix != "" {
-		q = q.Where("key LIKE ?", prefix+"%")
+		escaped := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(prefix)
+		q = q.Where("key LIKE ? ESCAPE '\\'", escaped+"%")
 	}
 	if err := q.Order("key").Pluck("key", &keys).Error; err != nil {
 		return nil, err

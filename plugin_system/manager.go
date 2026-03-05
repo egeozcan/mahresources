@@ -15,6 +15,13 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
+// Lua execution timeouts.
+const (
+	luaExecTimeout     = 5 * time.Second  // hooks, injections, sync calls
+	luaPageTimeout     = 30 * time.Second // plugin page handlers
+	asyncActionTimeout = 5 * time.Minute  // async actions and start_job
+)
+
 var validPagePath = regexp.MustCompile(`^[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)*$`)
 
 // PluginInfo holds metadata about a loaded plugin.

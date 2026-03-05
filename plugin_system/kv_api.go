@@ -19,14 +19,18 @@ func (pm *PluginManager) registerKvModule(L *lua.LState, mahMod *lua.LTable, plu
 			return 1
 		}
 		val, found, err := kv.KVGet(*pluginNamePtr, key)
-		if err != nil || !found {
+		if err != nil {
+			L.RaiseError("kv get failed: %s", err.Error())
+			return 0
+		}
+		if !found {
 			L.Push(lua.LNil)
 			return 1
 		}
 		var goVal any
 		if err := json.Unmarshal([]byte(val), &goVal); err != nil {
-			L.Push(lua.LNil)
-			return 1
+			L.RaiseError("kv get: failed to deserialize value: %s", err.Error())
+			return 0
 		}
 		L.Push(goToLuaValue(L, goVal))
 		return 1
@@ -82,8 +86,8 @@ func (pm *PluginManager) registerKvModule(L *lua.LState, mahMod *lua.LTable, plu
 		}
 		keys, err := kv.KVList(*pluginNamePtr, prefix)
 		if err != nil {
-			L.Push(L.NewTable())
-			return 1
+			L.RaiseError("kv list failed: %s", err.Error())
+			return 0
 		}
 		tbl := L.NewTable()
 		for _, k := range keys {

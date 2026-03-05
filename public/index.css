@@ -529,30 +529,31 @@
 .sidebar-action-btn {
     display: block;
     width: 100%;
-    padding: 0.5rem 0.75rem;
-    margin-bottom: 0.25rem;
+    padding: 0.375rem 0.5rem;
+    margin-bottom: 1px;
     font-size: 0.8125rem;
+    font-weight: 500;
     text-align: left;
-    border: 1px solid var(--nav-border);
+    border: none;
     border-radius: var(--radius-sm);
-    background: white;
+    background: transparent;
     color: var(--nav-text);
     cursor: pointer;
-    transition: background var(--transition-fast), border-color var(--transition-fast);
+    transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .sidebar-action-btn:hover {
-    background: var(--bg-accent);
-    border-color: var(--nav-hover);
+    background: rgba(13, 148, 136, 0.08);
+    color: var(--nav-hover);
+}
+
+.sidebar-action-btn:active {
+    background: rgba(13, 148, 136, 0.14);
 }
 
 .sidebar-action-btn:focus-visible {
     outline: 2px solid var(--nav-hover);
     outline-offset: 1px;
-}
-
-.sidebar-action-btn.plugin-action-btn {
-    border-left: 3px solid var(--nav-active);
 }
 
 /* Plugin action modal */

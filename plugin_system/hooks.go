@@ -5,12 +5,9 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"time"
 
 	lua "github.com/yuin/gopher-lua"
 )
-
-const luaExecTimeout = 5 * time.Second
 
 // PluginAbortError is returned when a plugin calls mah.abort().
 type PluginAbortError struct {
