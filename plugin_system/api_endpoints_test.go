@@ -491,6 +491,48 @@ end
 	}
 }
 
+func TestHandleAPI_DoubleJsonLastWins(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "doublejson", `
+plugin = { name = "doublejson", version = "1.0", description = "double json test" }
+
+function init()
+    mah.api("GET", "data", function(ctx)
+        ctx.json({ first = true })
+        ctx.json({ second = true })
+    end)
+end
+`)
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer pm.Close()
+
+	if err := pm.EnablePlugin("doublejson"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	resp := pm.HandleAPI("doublejson", "GET", "data", PageContext{
+		Path: "/v1/plugins/doublejson/data", Method: "GET",
+	})
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected status 200, got %d (error: %s)", resp.StatusCode, resp.Error)
+	}
+
+	body, ok := resp.Body.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map body, got %T", resp.Body)
+	}
+	// Last ctx.json() call wins
+	if body["second"] != true {
+		t.Errorf("expected second=true, got %v", body["second"])
+	}
+	if _, hasFirst := body["first"]; hasFirst {
+		t.Errorf("expected first key to be absent (overwritten), but it exists")
+	}
+}
+
 func TestHandleAPI_DisabledPluginCleansUp(t *testing.T) {
 	dir := t.TempDir()
 	writePlugin(t, dir, "ephemeral", `

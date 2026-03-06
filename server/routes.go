@@ -366,10 +366,8 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/plugin/settings").HandlerFunc(api_handlers.GetPluginSettingsHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/plugin/purge-data").HandlerFunc(api_handlers.GetPluginPurgeDataHandler(appContext))
 
-	// Plugin JSON API endpoints
-	if appContext.PluginManager() != nil {
-		router.PathPrefix("/v1/plugins/").HandlerFunc(api_handlers.PluginAPIHandler(appContext))
-	}
+	// Plugin JSON API endpoints (handler validates methods and returns JSON errors)
+	router.PathPrefix("/v1/plugins/").HandlerFunc(api_handlers.PluginAPIHandler(appContext))
 
 	// Plugin management page
 	manageCtxFn := wrapContextWithPlugins(appContext, template_context_providers.PluginManageContextProvider(appContext))

@@ -110,6 +110,18 @@ test.describe('Plugin JSON API Endpoints', () => {
     expect(body.number).toBe(123);
   });
 
+  test('oversized request body returns 413', async ({ request, baseURL }) => {
+    // 1MB + 1 byte should exceed the limit
+    const largeBody = 'x'.repeat(1024 * 1024 + 1);
+    const response = await request.post(`${baseURL}/v1/plugins/test-api/echo`, {
+      data: largeBody,
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(response.status()).toBe(413);
+    const body = await response.json();
+    expect(body.error).toContain('too large');
+  });
+
   test('disabled plugin returns 404', async ({ apiClient, request, baseURL }) => {
     await apiClient.disablePlugin('test-api');
     const response = await request.get(`${baseURL}/v1/plugins/test-api/echo`);

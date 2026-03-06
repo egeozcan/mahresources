@@ -190,10 +190,31 @@ func GetPluginSettingsHandler(ctx *application_context.MahresourcesContext) func
 	}
 }
 
+// pluginAPIMaxBodySize is the maximum request body size for plugin API endpoints.
+const pluginAPIMaxBodySize = 1 << 20 // 1MB
+
 // PluginAPIHandler handles JSON API requests to plugin-registered endpoints.
 // Routes: GET/POST/PUT/DELETE /v1/plugins/{pluginName}/{path...}
 func PluginAPIHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Reject unsupported HTTP methods early
+		switch r.Method {
+		case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete:
+		default:
+			w.Header().Set("Content-Type", constants.JSON)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
+			return
+		}
+
+		// Reject requests with declared Content-Length exceeding the limit
+		if r.ContentLength > pluginAPIMaxBodySize {
+			w.Header().Set("Content-Type", constants.JSON)
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "request body too large"})
+			return
+		}
+
 		pm := ctx.PluginManager()
 		if pm == nil {
 			w.Header().Set("Content-Type", constants.JSON)
@@ -252,12 +273,21 @@ func PluginAPIHandler(ctx *application_context.MahresourcesContext) func(http.Re
 		// Read body
 		var body string
 		if r.Body != nil {
-			const maxBodySize = 50 << 20 // 50MB
-			limited := io.LimitReader(r.Body, maxBodySize)
+			limited := io.LimitReader(r.Body, pluginAPIMaxBodySize+1)
 			bodyBytes, err := io.ReadAll(limited)
-			if err == nil {
-				body = string(bodyBytes)
+			if err != nil {
+				w.Header().Set("Content-Type", constants.JSON)
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to read request body"})
+				return
 			}
+			if int64(len(bodyBytes)) > pluginAPIMaxBodySize {
+				w.Header().Set("Content-Type", constants.JSON)
+				w.WriteHeader(http.StatusRequestEntityTooLarge)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "request body too large"})
+				return
+			}
+			body = string(bodyBytes)
 		}
 
 		pageCtx := plugin_system.PageContext{
