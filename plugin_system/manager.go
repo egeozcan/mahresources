@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -80,7 +81,8 @@ type PluginManager struct {
 	injections map[string][]injectionEntry
 	pages      map[string]map[string]pageEntry // pluginName -> path -> handler
 	menuItems  []MenuRegistration
-	actions    map[string][]ActionRegistration // pluginName -> actions
+	actions      map[string][]ActionRegistration // pluginName -> actions
+	apiEndpoints map[string]map[string]*APIEndpoint // pluginName -> "METHOD:path" -> handler
 	mu         sync.RWMutex
 	vmLocks    map[*lua.LState]*sync.Mutex
 	dbProvider atomic.Value
@@ -123,6 +125,7 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 		injections:      make(map[string][]injectionEntry),
 		pages:           make(map[string]map[string]pageEntry),
 		actions:         make(map[string][]ActionRegistration),
+		apiEndpoints:    make(map[string]map[string]*APIEndpoint),
 		vmLocks:         make(map[*lua.LState]*sync.Mutex),
 		pluginSettings:  make(map[string]map[string]any),
 		actionJobs:      make(map[string]*ActionJob),
@@ -463,6 +466,52 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		return 0
 	}))
 
+	mahMod.RawSetString("api", L.NewFunction(func(L *lua.LState) int {
+		method := strings.ToUpper(L.CheckString(1))
+		path := L.CheckString(2)
+		handler := L.CheckFunction(3)
+
+		switch method {
+		case "GET", "POST", "PUT", "DELETE":
+		default:
+			L.ArgError(1, "method must be GET, POST, PUT, or DELETE")
+			return 0
+		}
+
+		if !validPagePath.MatchString(path) {
+			L.ArgError(2, "invalid api path: must contain only alphanumeric characters, hyphens, underscores, and slashes")
+			return 0
+		}
+
+		timeout := defaultAPITimeout
+		if optsTbl := L.OptTable(4, nil); optsTbl != nil {
+			if t, ok := optsTbl.RawGetString("timeout").(lua.LNumber); ok {
+				d := time.Duration(float64(t)) * time.Second
+				if d > maxAPITimeout {
+					d = maxAPITimeout
+				}
+				if d > 0 {
+					timeout = d
+				}
+			}
+		}
+
+		name := *pluginNamePtr
+		key := method + ":" + path
+
+		pm.mu.Lock()
+		if pm.apiEndpoints[name] == nil {
+			pm.apiEndpoints[name] = make(map[string]*APIEndpoint)
+		}
+		pm.apiEndpoints[name][key] = &APIEndpoint{
+			state:   L,
+			fn:      handler,
+			timeout: timeout,
+		}
+		pm.mu.Unlock()
+		return 0
+	}))
+
 	mahMod.RawSetString("job_progress", L.NewFunction(func(L *lua.LState) int {
 		jobID := L.CheckString(1)
 		percent := L.CheckInt(2)
@@ -714,6 +763,9 @@ func (pm *PluginManager) DisablePlugin(name string) error {
 	// Remove actions for this plugin.
 	delete(pm.actions, name)
 
+	// Remove API endpoints for this plugin.
+	delete(pm.apiEndpoints, name)
+
 	// Remove from active lists.
 	pm.plugins = append(pm.plugins[:pluginIdx], pm.plugins[pluginIdx+1:]...)
 	pm.states = append(pm.states[:pluginIdx], pm.states[pluginIdx+1:]...)
@@ -857,5 +909,6 @@ func (pm *PluginManager) Close() {
 	pm.pages = nil
 	pm.menuItems = nil
 	pm.actions = nil
+	pm.apiEndpoints = nil
 	pm.vmLocks = nil
 }
