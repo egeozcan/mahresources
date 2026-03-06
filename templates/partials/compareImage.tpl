@@ -3,37 +3,49 @@
     rightUrl: '/v1/resource/version/file?versionId={{ comparison.Version2.ID }}'
 })">
     <!-- Mode selector -->
-    <div class="flex space-x-2 mb-4 border-b pb-4">
-        <button @click="mode = 'side-by-side'"
-                :class="mode === 'side-by-side' ? 'bg-indigo-600 text-white' : 'bg-gray-200'"
-                class="px-4 py-2 rounded">Side-by-side</button>
-        <button @click="mode = 'slider'"
-                :class="mode === 'slider' ? 'bg-indigo-600 text-white' : 'bg-gray-200'"
-                class="px-4 py-2 rounded">Slider</button>
-        <button @click="mode = 'onion'"
-                :class="mode === 'onion' ? 'bg-indigo-600 text-white' : 'bg-gray-200'"
-                class="px-4 py-2 rounded">Onion skin</button>
-        <button @click="mode = 'toggle'"
-                :class="mode === 'toggle' ? 'bg-indigo-600 text-white' : 'bg-gray-200'"
-                class="px-4 py-2 rounded">Toggle</button>
-        <div class="flex-grow"></div>
-        <button @click="swapSides()" class="px-4 py-2 bg-gray-200 rounded">Swap sides</button>
+    <div class="flex flex-wrap items-center gap-3 mb-4 border-b pb-4">
+        <div class="compare-segmented-control" role="radiogroup" aria-label="Comparison mode">
+            <button @click="mode = 'side-by-side'" role="radio" :aria-checked="mode === 'side-by-side'"
+                    class="compare-seg-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="8" height="18" rx="1"/><rect x="14" y="3" width="8" height="18" rx="1"/></svg>
+                <span class="compare-seg-label">Side by side</span>
+            </button>
+            <button @click="mode = 'slider'" role="radio" :aria-checked="mode === 'slider'"
+                    class="compare-seg-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="2" x2="12" y2="22"/><polyline points="8 6 12 2 16 6"/><polyline points="8 18 12 22 16 18"/></svg>
+                <span class="compare-seg-label">Slider</span>
+            </button>
+            <button @click="mode = 'onion'" role="radio" :aria-checked="mode === 'onion'"
+                    class="compare-seg-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="12" r="7"/><circle cx="15" cy="12" r="7"/></svg>
+                <span class="compare-seg-label">Onion skin</span>
+            </button>
+            <button @click="mode = 'toggle'" role="radio" :aria-checked="mode === 'toggle'"
+                    class="compare-seg-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1" y="5" width="22" height="14" rx="7"/><circle cx="16" cy="12" r="4"/></svg>
+                <span class="compare-seg-label">Toggle</span>
+            </button>
+        </div>
+        <button @click="swapSides()" class="compare-swap-btn-sm" aria-label="Swap sides">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4"/></svg>
+            Swap
+        </button>
     </div>
 
     <!-- Side-by-side mode -->
     <div x-show="mode === 'side-by-side'" class="grid grid-cols-2 gap-4">
         <div class="border rounded overflow-hidden">
-            <div class="bg-gray-100 px-2 py-1 text-sm text-gray-600">v{{ comparison.Version1.VersionNumber }}</div>
+            <div class="compare-panel-header--old">OLD — v{{ comparison.Version1.VersionNumber }}</div>
             <img :src="leftUrl" class="max-w-full h-auto" alt="Version {{ comparison.Version1.VersionNumber }}">
         </div>
         <div class="border rounded overflow-hidden">
-            <div class="bg-gray-100 px-2 py-1 text-sm text-gray-600">v{{ comparison.Version2.VersionNumber }}</div>
+            <div class="compare-panel-header--new">NEW — v{{ comparison.Version2.VersionNumber }}</div>
             <img :src="rightUrl" class="max-w-full h-auto" alt="Version {{ comparison.Version2.VersionNumber }}">
         </div>
     </div>
 
     <!-- Slider mode -->
-    <div x-show="mode === 'slider'" class="relative border rounded overflow-hidden select-none" style="max-height: 600px;" x-ref="sliderContainer">
+    <div x-show="mode === 'slider'" class="relative border rounded overflow-hidden select-none" x-ref="sliderContainer">
         <img :src="rightUrl" class="w-full h-auto pointer-events-none" alt="Version {{ comparison.Version2.VersionNumber }}">
         <div class="absolute inset-0 overflow-hidden pointer-events-none" :style="'clip-path: inset(0 ' + (100 - sliderPos) + '% 0 0)'">
             <img :src="leftUrl" class="w-full h-auto"
@@ -47,28 +59,32 @@
                 <span class="text-gray-400">&#x22EE;</span>
             </div>
         </div>
+        <div class="absolute top-2 left-2"><span class="compare-side-label--old">OLD</span></div>
+        <div class="absolute top-2 right-2"><span class="compare-side-label--new">NEW</span></div>
     </div>
 
     <!-- Onion skin mode -->
-    <div x-show="mode === 'onion'" class="relative border rounded overflow-hidden">
-        <img :src="leftUrl" class="w-full h-auto" alt="Version {{ comparison.Version1.VersionNumber }}">
-        <img :src="rightUrl" class="absolute inset-0 w-full h-auto"
-             :style="'opacity: ' + (opacity / 100)"
-             alt="Version {{ comparison.Version2.VersionNumber }}">
-        <div class="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/80 rounded px-4 py-2 flex items-center space-x-3">
-            <span class="text-sm">v{{ comparison.Version1.VersionNumber }}</span>
-            <input type="range" min="0" max="100" x-model="opacity" class="w-48">
-            <span class="text-sm">v{{ comparison.Version2.VersionNumber }}</span>
+    <div x-show="mode === 'onion'">
+        <div class="relative border rounded overflow-hidden">
+            <img :src="leftUrl" class="w-full h-auto" alt="Version {{ comparison.Version1.VersionNumber }}">
+            <img :src="rightUrl" class="absolute inset-0 w-full h-auto"
+                 :style="'opacity: ' + (opacity / 100)"
+                 alt="Version {{ comparison.Version2.VersionNumber }}">
+        </div>
+        <div class="sticky bottom-0 z-20 flex items-center justify-center gap-3 py-2 px-4 bg-white/90 backdrop-blur border-t border-gray-200">
+            <span class="compare-side-label--old">OLD</span>
+            <input type="range" min="0" max="100" x-model="opacity" class="w-48" aria-label="Onion skin opacity">
+            <span class="compare-side-label--new">NEW</span>
         </div>
     </div>
 
     <!-- Toggle mode -->
     <div x-show="mode === 'toggle'" class="relative border rounded overflow-hidden cursor-pointer" tabindex="0" role="button" @click="toggleSide()" @keydown.space.prevent="toggleSide()">
-        <div class="absolute top-2 right-2 bg-white/80 rounded px-2 py-1 text-sm font-medium" x-text="showLeft ? 'v{{ comparison.Version1.VersionNumber }}' : 'v{{ comparison.Version2.VersionNumber }}'"></div>
+        <div class="absolute top-2 right-2 z-10">
+            <span x-show="showLeft" class="compare-side-label--old">OLD — v{{ comparison.Version1.VersionNumber }}</span>
+            <span x-show="!showLeft" class="compare-side-label--new">NEW — v{{ comparison.Version2.VersionNumber }}</span>
+        </div>
         <img x-show="showLeft" :src="leftUrl" class="w-full h-auto" alt="Version {{ comparison.Version1.VersionNumber }}">
         <img x-show="!showLeft" :src="rightUrl" class="w-full h-auto" alt="Version {{ comparison.Version2.VersionNumber }}">
-        <div class="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/80 rounded px-4 py-2 text-sm">
-            Click or press Space to toggle
-        </div>
     </div>
 </div>

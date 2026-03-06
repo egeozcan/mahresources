@@ -7,6 +7,26 @@ export function imageCompare({ leftUrl, rightUrl }) {
     opacity: 50,
     showLeft: true,
     isDragging: false,
+    _keyHandler: null,
+
+    init() {
+      this._keyHandler = (e) => {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+        const step = e.shiftKey ? 10 : 2;
+        if (this.mode === 'slider') {
+          if (e.key === 'ArrowLeft') { this.sliderPos = Math.max(1, this.sliderPos - step); e.preventDefault(); }
+          else if (e.key === 'ArrowRight') { this.sliderPos = Math.min(99, this.sliderPos + step); e.preventDefault(); }
+        } else if (this.mode === 'onion') {
+          if (e.key === 'ArrowLeft') { this.opacity = Math.max(0, this.opacity - step); e.preventDefault(); }
+          else if (e.key === 'ArrowRight') { this.opacity = Math.min(100, this.opacity + step); e.preventDefault(); }
+        }
+      };
+      document.addEventListener('keydown', this._keyHandler);
+    },
+
+    destroy() {
+      if (this._keyHandler) document.removeEventListener('keydown', this._keyHandler);
+    },
 
     swapSides() {
       const temp = this.leftUrl;

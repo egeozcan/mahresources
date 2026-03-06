@@ -156,7 +156,7 @@ test.describe.serial('Version Compare UI', () => {
     expect(href).toContain('r2=');
   });
 
-  test('should load compare page with metadata table', async ({ page, apiClient }) => {
+  test('should load compare page with metadata section', async ({ page, apiClient }) => {
     // Verify resources were created
     expect(resource1Id, 'resource1Id should be set from beforeAll').toBeGreaterThan(0);
     expect(resource2Id, 'resource2Id should be set from beforeAll').toBeGreaterThan(0);
@@ -172,17 +172,17 @@ test.describe.serial('Version Compare UI', () => {
     await page.goto(`/resource/compare?r1=${resource1Id}&v1=1&r2=${resource2Id}&v2=1`);
     await page.waitForLoadState('load');
 
-    // Page should load with metadata comparison table
-    await expect(page.locator('text=Metadata Comparison')).toBeVisible({ timeout: 10000 });
+    // Page should load with metadata section (collapsible details)
+    await expect(page.locator('summary:has-text("Metadata")')).toBeVisible({ timeout: 10000 });
 
-    // Metadata table should have required rows (use first() for strict mode)
-    await expect(page.locator('td:has-text("Content Type")').first()).toBeVisible();
-    await expect(page.locator('td:has-text("File Size")').first()).toBeVisible();
-    await expect(page.locator('td:has-text("Hash Match")').first()).toBeVisible();
-    await expect(page.locator('td:has-text("Dimensions")').first()).toBeVisible();
-    await expect(page.locator('td:has-text("Created")').first()).toBeVisible();
-    // Resource row label specifically
-    await expect(page.locator('td.text-gray-600:has-text("Resource")')).toBeVisible();
+    // Metadata cards should have required labels
+    await expect(page.locator('.compare-meta-card-label:has-text("Content Type")').first()).toBeVisible();
+    await expect(page.locator('.compare-meta-card-label:has-text("File Size")').first()).toBeVisible();
+    await expect(page.locator('.compare-meta-card-label:has-text("Hash")').first()).toBeVisible();
+    await expect(page.locator('.compare-meta-card-label:has-text("Dimensions")').first()).toBeVisible();
+    await expect(page.locator('.compare-meta-card-label:has-text("Created")').first()).toBeVisible();
+    // Resource card shown for cross-resource compare
+    await expect(page.locator('.compare-meta-card-label:has-text("Resource")')).toBeVisible();
   });
 
   test('should show image comparison modes for image resources', async ({ page }) => {
@@ -190,42 +190,45 @@ test.describe.serial('Version Compare UI', () => {
     await page.goto(`/resource/compare?r1=${resource1Id}&v1=1&r2=${resource1Id}&v2=2`);
     await page.waitForLoadState('load');
 
-    // Mode buttons should be visible
-    await expect(page.locator('button:has-text("Side-by-side")')).toBeVisible({ timeout: 10000 });
-    await expect(page.locator('button:has-text("Slider")')).toBeVisible();
-    await expect(page.locator('button:has-text("Onion skin")')).toBeVisible();
-    await expect(page.locator('button:has-text("Toggle")')).toBeVisible();
-    await expect(page.locator('button:has-text("Swap sides")')).toBeVisible();
+    // Segmented control mode buttons should be visible
+    const segControl = page.locator('.compare-segmented-control').first();
+    await expect(segControl).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('.compare-seg-btn:has-text("Side by side")')).toBeVisible();
+    await expect(page.locator('.compare-seg-btn:has-text("Slider")')).toBeVisible();
+    await expect(page.locator('.compare-seg-btn:has-text("Onion skin")')).toBeVisible();
+    await expect(page.locator('.compare-seg-btn:has-text("Toggle")')).toBeVisible();
+    await expect(page.locator('.compare-swap-btn-sm')).toBeVisible();
 
-    // Click different modes and verify they activate
-    await page.locator('button:has-text("Slider")').click();
-    await expect(page.locator('button:has-text("Slider")')).toHaveClass(/bg-indigo-600/);
+    // Click different modes and verify they activate via aria-checked
+    await page.locator('.compare-seg-btn:has-text("Slider")').click();
+    await expect(page.locator('.compare-seg-btn:has-text("Slider")')).toHaveAttribute('aria-checked', 'true');
 
-    await page.locator('button:has-text("Onion skin")').click();
-    await expect(page.locator('button:has-text("Onion skin")')).toHaveClass(/bg-indigo-600/);
+    await page.locator('.compare-seg-btn:has-text("Onion skin")').click();
+    await expect(page.locator('.compare-seg-btn:has-text("Onion skin")')).toHaveAttribute('aria-checked', 'true');
 
     // Onion skin mode should show opacity slider
     await expect(page.locator('input[type="range"]')).toBeVisible();
 
-    await page.locator('button:has-text("Toggle")').click();
-    await expect(page.locator('button:has-text("Toggle")')).toHaveClass(/bg-indigo-600/);
-
-    // Toggle mode should show click instruction
-    await expect(page.locator('text=Click or press Space to toggle')).toBeVisible();
+    await page.locator('.compare-seg-btn:has-text("Toggle")').click();
+    await expect(page.locator('.compare-seg-btn:has-text("Toggle")')).toHaveAttribute('aria-checked', 'true');
 
     // Toggle mode container should be focusable and respond to space key
-    const toggleContainer = page.locator('[role="button"]:has-text("Click or press Space to toggle")');
-    await expect(toggleContainer).toHaveAttribute('tabindex', '0');
+    const toggleContainer = page.locator('[role="button"][tabindex="0"]');
+    await expect(toggleContainer).toBeVisible();
 
     // Focus the toggle container and verify space key works
     await toggleContainer.focus();
-    const versionLabel = toggleContainer.locator('.absolute.top-2.right-2');
-    const initialVersion = await versionLabel.textContent();
+    const oldLabel = toggleContainer.locator('.compare-side-label--old');
+    const newLabel = toggleContainer.locator('.compare-side-label--new');
+    // Initially showLeft is true, so OLD label should be visible
+    await expect(oldLabel).toBeVisible();
     await page.keyboard.press('Space');
-    await expect(versionLabel).not.toHaveText(initialVersion!);
+    // After toggle, NEW label should be visible and OLD hidden
+    await expect(newLabel).toBeVisible();
+    await expect(oldLabel).not.toBeVisible();
 
-    await page.locator('button:has-text("Side-by-side")').click();
-    await expect(page.locator('button:has-text("Side-by-side")')).toHaveClass(/bg-indigo-600/);
+    await page.locator('.compare-seg-btn:has-text("Side by side")').click();
+    await expect(page.locator('.compare-seg-btn:has-text("Side by side")')).toHaveAttribute('aria-checked', 'true');
   });
 
   test('should compare versions of the same resource', async ({ page }) => {
@@ -233,16 +236,11 @@ test.describe.serial('Version Compare UI', () => {
     await page.goto(`/resource/compare?r1=${resource1Id}&v1=1&r2=${resource1Id}&v2=2`);
     await page.waitForLoadState('load');
 
-    // Metadata comparison should show
-    await expect(page.locator('text=Metadata Comparison')).toBeVisible({ timeout: 10000 });
+    // Metadata section should show
+    await expect(page.locator('summary:has-text("Metadata")')).toBeVisible({ timeout: 10000 });
 
-    // Both resources should show as the same in the Resource row
-    const resourceRow = page.locator('tr:has(td:text("Resource"))');
-    await expect(resourceRow).toBeVisible();
-
-    // Same resource indicator - should be green (=)
-    const sameResourceIndicator = resourceRow.locator('span.text-green-600');
-    await expect(sameResourceIndicator).toBeVisible();
+    // Same resource compare should NOT show the Resource metadata card
+    await expect(page.locator('.compare-meta-card-label:has-text("Resource")')).not.toBeVisible();
   });
 
   test('should update URL when changing version via dropdown', async ({ page }) => {
@@ -273,19 +271,18 @@ test.describe.serial('Version Compare UI', () => {
     await page.goto(`/resource/compare?r1=${resource1Id}&v1=1&r2=${resource2Id}&v2=1`);
     await page.waitForLoadState('load');
 
-    // Wait for image compare component to load
-    await expect(page.locator('button:has-text("Swap sides")')).toBeVisible({ timeout: 10000 });
+    // Wait for image compare component to load — swap in toolbar (circular) or inline
+    await expect(page.locator('.compare-swap-btn').first()).toBeVisible({ timeout: 10000 });
 
     // Note which image is on which side by checking the img src attributes
     const images = page.locator('img[alt^="Version"]');
     await expect(images.first()).toBeVisible();
 
-    // Click swap sides
-    await page.locator('button:has-text("Swap sides")').click();
+    // Click swap sides (the circular toolbar button)
+    await page.locator('.compare-swap-btn').first().click();
 
-    // The swap should happen client-side (Alpine.js handles this)
-    // We can verify the button is still functional
-    await expect(page.locator('button:has-text("Swap sides")')).toBeVisible();
+    // The swap triggers navigation via updateUrl(), verify the swap button is still visible after reload
+    await expect(page.locator('.compare-swap-btn').first()).toBeVisible({ timeout: 10000 });
   });
 
   test('should show different resource indicator for cross-resource compare', async ({ page }) => {
@@ -293,15 +290,13 @@ test.describe.serial('Version Compare UI', () => {
     await page.goto(`/resource/compare?r1=${resource1Id}&v1=1&r2=${resource2Id}&v2=1`);
     await page.waitForLoadState('load');
 
-    await expect(page.locator('text=Metadata Comparison')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('summary:has-text("Metadata")')).toBeVisible({ timeout: 10000 });
 
-    // Resource row should show different indicator (orange not equal sign)
-    const resourceRow = page.locator('tr:has(td:text("Resource"))');
-    await expect(resourceRow).toBeVisible();
+    // Resource metadata card should be visible for cross-resource compare
+    await expect(page.locator('.compare-meta-card-label:has-text("Resource")')).toBeVisible();
 
-    // Different resource indicator should be orange
-    const diffResourceIndicator = resourceRow.locator('span.text-orange-600');
-    await expect(diffResourceIndicator).toBeVisible();
+    // Summary banner should show cross-resource stat pill
+    await expect(page.locator('.compare-stat:has-text("Cross-resource")')).toBeVisible();
   });
 
   test('should show autocompleter dropdown with search results', async ({ page }) => {
@@ -309,19 +304,18 @@ test.describe.serial('Version Compare UI', () => {
     await page.goto(`/resource/compare?r1=${resource1Id}&v1=1&r2=${resource1Id}&v2=1`);
     await page.waitForLoadState('load');
 
-    await expect(page.locator('text=Metadata Comparison')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('summary:has-text("Metadata")')).toBeVisible({ timeout: 10000 });
 
-    // Find the right side autocompleter input (second picker card in the grid)
-    const pickerGrid = page.locator('.grid.grid-cols-2');
-    const rightPickerCard = pickerGrid.locator('> div').nth(1);
-    const rightAutocompleter = rightPickerCard.locator('input[placeholder*="Search"]');
+    // Find the right side (NEW) autocompleter input — second input in the picker toolbar
+    const searchInputs = page.locator('input[placeholder*="Search"]');
+    const rightAutocompleter = searchInputs.nth(1);
     await expect(rightAutocompleter).toBeVisible({ timeout: 5000 });
 
     // Click to focus - this should trigger the autocompleter to fetch and display results
     await rightAutocompleter.click();
 
     // Wait for dropdown to appear
-    const dropdown = rightPickerCard.locator('div.absolute.z-10.bg-white');
+    const dropdown = rightAutocompleter.locator('..').locator('div.absolute.z-10.bg-white');
     await expect(dropdown).toBeVisible({ timeout: 10000 });
 
     // Dropdown should contain at least one item with cursor-pointer class
@@ -338,12 +332,11 @@ test.describe.serial('Version Compare UI', () => {
     await page.goto(`/resource/compare?r1=${resource1Id}&v1=1&r2=${resource2Id}&v2=1`);
     await page.waitForLoadState('load');
 
-    await expect(page.locator('text=Metadata Comparison')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('summary:has-text("Metadata")')).toBeVisible({ timeout: 10000 });
 
-    // Find the left side autocompleter input
-    const pickerGrid = page.locator('.grid.grid-cols-2');
-    const leftPickerCard = pickerGrid.locator('> div').first();
-    const leftAutocompleter = leftPickerCard.locator('input[placeholder*="Search"]');
+    // Find the left side (OLD) autocompleter input — first input in the picker toolbar
+    const searchInputs = page.locator('input[placeholder*="Search"]');
+    const leftAutocompleter = searchInputs.first();
     await expect(leftAutocompleter).toBeVisible({ timeout: 5000 });
 
     // Click and type to search for resource2
@@ -351,7 +344,7 @@ test.describe.serial('Version Compare UI', () => {
     await leftAutocompleter.pressSequentially(`Compare Resource 2`, { delay: 30 });
 
     // Wait for dropdown to appear with filtered results
-    const dropdown = leftPickerCard.locator('div.absolute.z-10.bg-white');
+    const dropdown = leftAutocompleter.locator('..').locator('div.absolute.z-10.bg-white');
     await expect(dropdown).toBeVisible({ timeout: 10000 });
 
     // Verify the specific suggestion is visible
@@ -516,8 +509,8 @@ test.describe.serial('Version Compare API', () => {
     expect(url.searchParams.get('r1')).toBe(resource1Id.toString());
     expect(url.searchParams.get('r2')).toBe(resource2Id.toString());
 
-    // Page should load with metadata comparison
-    await expect(page.locator('text=Metadata Comparison')).toBeVisible({ timeout: 10000 });
+    // Page should load with metadata section
+    await expect(page.locator('summary:has-text("Metadata")')).toBeVisible({ timeout: 10000 });
   });
 
   test('should load cross-resource compare page', async ({ page }) => {
@@ -528,16 +521,14 @@ test.describe.serial('Version Compare API', () => {
     await page.goto(`/resource/compare?r1=${resource1Id}&v1=1&r2=${resource2Id}&v2=1`);
     await page.waitForLoadState('load');
 
-    // Page should load with metadata comparison
-    await expect(page.locator('text=Metadata Comparison')).toBeVisible({ timeout: 10000 });
+    // Page should load with metadata section
+    await expect(page.locator('summary:has-text("Metadata")')).toBeVisible({ timeout: 10000 });
 
-    // Resource row should show different resources
-    const resourceRow = page.locator('tr:has(td:text("Resource"))');
-    await expect(resourceRow).toBeVisible();
+    // Resource metadata card should be visible for cross-resource compare
+    await expect(page.locator('.compare-meta-card-label:has-text("Resource")')).toBeVisible();
 
-    // Different resource indicator (orange)
-    const diffIndicator = resourceRow.locator('span.text-orange-600');
-    await expect(diffIndicator).toBeVisible();
+    // Summary banner should show cross-resource indicator
+    await expect(page.locator('.compare-stat:has-text("Cross-resource")')).toBeVisible();
   });
 
   test.afterAll(async ({ apiClient }) => {

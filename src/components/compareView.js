@@ -84,6 +84,12 @@ export function compareView(initialState) {
     onVersion2Change(versionNumber) {
       this.v2 = versionNumber;
       this.updateUrl();
+    },
+
+    swapSides() {
+      [this.r1, this.r2] = [this.r2, this.r1];
+      [this.v1, this.v2] = [this.v2, this.v1];
+      this.updateUrl();
     }
   };
 }

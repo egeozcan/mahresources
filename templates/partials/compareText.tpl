@@ -3,13 +3,19 @@
     rightUrl: '/v1/resource/version/file?versionId={{ comparison.Version2.ID }}'
 })">
     <!-- Mode selector -->
-    <div class="flex items-center space-x-4 mb-4 border-b pb-4">
-        <button @click="mode = 'unified'"
-                :class="mode === 'unified' ? 'bg-indigo-600 text-white' : 'bg-gray-200'"
-                class="px-4 py-2 rounded">Unified</button>
-        <button @click="mode = 'split'"
-                :class="mode === 'split' ? 'bg-indigo-600 text-white' : 'bg-gray-200'"
-                class="px-4 py-2 rounded">Side-by-side</button>
+    <div class="flex flex-wrap items-center gap-3 mb-4 border-b pb-4">
+        <div class="compare-segmented-control" role="radiogroup" aria-label="Diff mode">
+            <button @click="mode = 'unified'" role="radio" :aria-checked="mode === 'unified'"
+                    class="compare-seg-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="7" y1="8" x2="17" y2="8"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="7" y1="16" x2="13" y2="16"/></svg>
+                <span class="compare-seg-label">Unified</span>
+            </button>
+            <button @click="mode = 'split'" role="radio" :aria-checked="mode === 'split'"
+                    class="compare-seg-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="8" height="18" rx="1"/><rect x="14" y="3" width="8" height="18" rx="1"/></svg>
+                <span class="compare-seg-label">Side by side</span>
+            </button>
+        </div>
         <div class="flex-grow"></div>
         <span class="text-sm text-gray-600" x-show="stats.added || stats.removed">
             <span class="text-green-600">+<span x-text="stats.added"></span></span>
@@ -20,7 +26,7 @@
 
     <!-- Loading state -->
     <div x-show="loading" class="text-center py-8">
-        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div>
+        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-teal-600 mx-auto"></div>
         <p class="mt-2 text-gray-600">Loading files...</p>
     </div>
 
@@ -53,7 +59,7 @@
     <!-- Split diff view -->
     <div x-show="!loading && !error && mode === 'split'" class="grid grid-cols-2 gap-0 font-mono text-sm overflow-x-auto">
         <div class="border-r">
-            <div class="bg-gray-100 px-2 py-1 text-gray-600 sticky top-0">v{{ comparison.Version1.VersionNumber }}</div>
+            <div class="compare-panel-header--old sticky top-0 z-10">OLD — v{{ comparison.Version1.VersionNumber }}</div>
             <table class="w-full">
                 <template x-for="(line, index) in splitLeft" :key="index">
                     <tr :class="{'bg-red-50': line.changed}">
@@ -64,7 +70,7 @@
             </table>
         </div>
         <div>
-            <div class="bg-gray-100 px-2 py-1 text-gray-600 sticky top-0">v{{ comparison.Version2.VersionNumber }}</div>
+            <div class="compare-panel-header--new sticky top-0 z-10">NEW — v{{ comparison.Version2.VersionNumber }}</div>
             <table class="w-full">
                 <template x-for="(line, index) in splitRight" :key="index">
                     <tr :class="{'bg-green-50': line.changed}">

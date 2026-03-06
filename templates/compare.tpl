@@ -7,162 +7,205 @@
     r2: {{ query.Resource2ID }},
     v2: {{ query.Version2|default:0 }}
 })" @resource1-selected.window="onResource1Change($event.detail.item.ID)" @resource2-selected.window="onResource2Change($event.detail.item.ID)">
-    <!-- Resource/Version Pickers -->
-    <div class="grid grid-cols-2 gap-6 mb-6">
-        <!-- Left Side Picker -->
-        <div class="bg-white shadow rounded-lg p-4">
-            <label class="block text-sm font-medium text-gray-700 mb-2">Resource</label>
-            <div x-data="autocompleter({
-                url: '/v1/resources',
-                selectedResults: [{{ resource1|json }}],
-                elName: 'r1',
-                max: 1,
-                standalone: true,
-                dispatchOnSelect: 'resource1-selected'
-            })" class="mb-3 relative">
-                <input type="text" x-ref="autocompleter" x-bind="inputEvents"
-                       class="w-full border rounded px-3 py-2"
-                       placeholder="Search resources...">
-                <div x-show="dropdownActive" x-ref="list" class="absolute z-10 bg-white border rounded shadow-lg mt-1 max-h-60 overflow-auto w-full">
-                    <template x-for="(item, index) in results" :key="item.ID">
-                        <div @mousedown.prevent="selectedIndex = index; pushVal($event)"
-                             class="px-3 py-2 hover:bg-gray-100 cursor-pointer"
-                             :class="{ 'bg-indigo-100': selectedIndex === index }"
-                             x-text="item.Name"></div>
-                    </template>
+    <!-- Picker Toolbar -->
+    <div class="bg-white shadow rounded-lg p-3 mb-4">
+        <div class="flex flex-col md:flex-row items-stretch md:items-center gap-3">
+            <!-- Left (OLD) side -->
+            <div class="flex flex-wrap items-center gap-2 flex-1 min-w-0">
+                <span class="compare-side-label--old" aria-label="Old version">OLD</span>
+                <div x-data="autocompleter({
+                    url: '/v1/resources',
+                    selectedResults: [{{ resource1|json }}],
+                    elName: 'r1',
+                    max: 1,
+                    standalone: true,
+                    dispatchOnSelect: 'resource1-selected'
+                })" class="relative flex-1 min-w-[140px]">
+                    <input type="text" x-ref="autocompleter" x-bind="inputEvents"
+                           class="w-full border rounded px-3 py-1.5 text-sm"
+                           placeholder="Search resources...">
+                    <div x-show="dropdownActive" x-ref="list" class="absolute z-10 bg-white border rounded shadow-lg mt-1 max-h-60 overflow-auto w-full">
+                        <template x-for="(item, index) in results" :key="item.ID">
+                            <div @mousedown.prevent="selectedIndex = index; pushVal($event)"
+                                 class="px-3 py-2 hover:bg-gray-100 cursor-pointer"
+                                 :class="{ 'bg-indigo-100': selectedIndex === index }"
+                                 x-text="item.Name"></div>
+                        </template>
+                    </div>
                 </div>
+                <select x-model="v1" @change="updateUrl()" class="border rounded px-2 py-1.5 text-sm">
+                    {% for v in versions1 %}
+                    <option value="{{ v.VersionNumber }}" {% if v.VersionNumber == query.Version1 %}selected{% endif %}>
+                        v{{ v.VersionNumber }} - {{ v.CreatedAt|date:"Jan 02, 2006" }}
+                    </option>
+                    {% endfor %}
+                </select>
             </div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">Version</label>
-            <select x-model="v1" @change="updateUrl()" class="w-full border rounded px-3 py-2">
-                {% for v in versions1 %}
-                <option value="{{ v.VersionNumber }}" {% if v.VersionNumber == query.Version1 %}selected{% endif %}>
-                    v{{ v.VersionNumber }} - {{ v.CreatedAt|date:"Jan 02, 2006" }}
-                </option>
-                {% endfor %}
-            </select>
-        </div>
 
-        <!-- Right Side Picker -->
-        <div class="bg-white shadow rounded-lg p-4">
-            <label class="block text-sm font-medium text-gray-700 mb-2">Resource</label>
-            <div x-data="autocompleter({
-                url: '/v1/resources',
-                selectedResults: [{{ resource2|json }}],
-                elName: 'r2',
-                max: 1,
-                standalone: true,
-                dispatchOnSelect: 'resource2-selected'
-            })" class="mb-3 relative">
-                <input type="text" x-ref="autocompleter" x-bind="inputEvents"
-                       class="w-full border rounded px-3 py-2"
-                       placeholder="Search resources...">
-                <div x-show="dropdownActive" x-ref="list" class="absolute z-10 bg-white border rounded shadow-lg mt-1 max-h-60 overflow-auto w-full">
-                    <template x-for="(item, index) in results" :key="item.ID">
-                        <div @mousedown.prevent="selectedIndex = index; pushVal($event)"
-                             class="px-3 py-2 hover:bg-gray-100 cursor-pointer"
-                             :class="{ 'bg-indigo-100': selectedIndex === index }"
-                             x-text="item.Name"></div>
-                    </template>
+            <!-- Swap button -->
+            <button class="compare-swap-btn self-center" @click="swapSides()" aria-label="Swap sides">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4"/></svg>
+            </button>
+
+            <!-- Right (NEW) side -->
+            <div class="flex flex-wrap items-center gap-2 flex-1 min-w-0">
+                <span class="compare-side-label--new" aria-label="New version">NEW</span>
+                <div x-data="autocompleter({
+                    url: '/v1/resources',
+                    selectedResults: [{{ resource2|json }}],
+                    elName: 'r2',
+                    max: 1,
+                    standalone: true,
+                    dispatchOnSelect: 'resource2-selected'
+                })" class="relative flex-1 min-w-[140px]">
+                    <input type="text" x-ref="autocompleter" x-bind="inputEvents"
+                           class="w-full border rounded px-3 py-1.5 text-sm"
+                           placeholder="Search resources...">
+                    <div x-show="dropdownActive" x-ref="list" class="absolute z-10 bg-white border rounded shadow-lg mt-1 max-h-60 overflow-auto w-full">
+                        <template x-for="(item, index) in results" :key="item.ID">
+                            <div @mousedown.prevent="selectedIndex = index; pushVal($event)"
+                                 class="px-3 py-2 hover:bg-gray-100 cursor-pointer"
+                                 :class="{ 'bg-indigo-100': selectedIndex === index }"
+                                 x-text="item.Name"></div>
+                        </template>
+                    </div>
                 </div>
+                <select x-model="v2" @change="updateUrl()" class="border rounded px-2 py-1.5 text-sm">
+                    {% for v in versions2 %}
+                    <option value="{{ v.VersionNumber }}" {% if v.VersionNumber == query.Version2 %}selected{% endif %}>
+                        v{{ v.VersionNumber }} - {{ v.CreatedAt|date:"Jan 02, 2006" }}
+                    </option>
+                    {% endfor %}
+                </select>
             </div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">Version</label>
-            <select x-model="v2" @change="updateUrl()" class="w-full border rounded px-3 py-2">
-                {% for v in versions2 %}
-                <option value="{{ v.VersionNumber }}" {% if v.VersionNumber == query.Version2 %}selected{% endif %}>
-                    v{{ v.VersionNumber }} - {{ v.CreatedAt|date:"Jan 02, 2006" }}
-                </option>
-                {% endfor %}
-            </select>
         </div>
     </div>
 
     {% if comparison %}
-    <!-- Metadata Comparison Table -->
-    <div class="bg-white shadow rounded-lg p-4 mb-6">
-        <h3 class="text-lg font-medium mb-4">Metadata Comparison</h3>
-        <table class="w-full">
-            <thead>
-                <tr class="text-left text-gray-600 border-b">
-                    <th class="py-2">Property</th>
-                    <th class="py-2">Left</th>
-                    <th class="py-2">Right</th>
-                    <th class="py-2 text-center">Status</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr class="border-b">
-                    <td class="py-2 text-gray-600">Content Type</td>
-                    <td class="py-2">{{ comparison.Version1.ContentType }}</td>
-                    <td class="py-2">{{ comparison.Version2.ContentType }}</td>
-                    <td class="py-2 text-center">
-                        {% if comparison.SameType %}
-                        <span class="text-green-600">=</span>
-                        {% else %}
-                        <span class="text-red-600">≠</span>
-                        {% endif %}
-                    </td>
-                </tr>
-                <tr class="border-b">
-                    <td class="py-2 text-gray-600">File Size</td>
-                    <td class="py-2">{{ comparison.Version1.FileSize|humanReadableSize }}</td>
-                    <td class="py-2">{{ comparison.Version2.FileSize|humanReadableSize }}</td>
-                    <td class="py-2 text-center">
-                        {% if comparison.SizeDelta == 0 %}
-                        <span class="text-green-600">=</span>
-                        {% elif comparison.SizeDelta > 0 %}
-                        <span class="text-blue-600">+{{ comparison.SizeDelta|humanReadableSize }}</span>
-                        {% else %}
-                        <span class="text-orange-600">{{ comparison.SizeDelta|humanReadableSize }}</span>
-                        {% endif %}
-                    </td>
-                </tr>
-                <tr class="border-b">
-                    <td class="py-2 text-gray-600">Dimensions</td>
-                    <td class="py-2">{{ comparison.Version1.Width }}×{{ comparison.Version1.Height }}</td>
-                    <td class="py-2">{{ comparison.Version2.Width }}×{{ comparison.Version2.Height }}</td>
-                    <td class="py-2 text-center">
-                        {% if comparison.DimensionsDiff %}
-                        <span class="text-red-600">≠</span>
-                        {% else %}
-                        <span class="text-green-600">=</span>
-                        {% endif %}
-                    </td>
-                </tr>
-                <tr class="border-b">
-                    <td class="py-2 text-gray-600">Hash Match</td>
-                    <td class="py-2 font-mono text-xs">{{ comparison.Version1.Hash|truncatechars:16 }}...</td>
-                    <td class="py-2 font-mono text-xs">{{ comparison.Version2.Hash|truncatechars:16 }}...</td>
-                    <td class="py-2 text-center">
-                        {% if comparison.SameHash %}
-                        <span class="text-green-600 text-xl">✓</span>
-                        {% else %}
-                        <span class="text-red-600 text-xl">✗</span>
-                        {% endif %}
-                    </td>
-                </tr>
-                <tr class="border-b">
-                    <td class="py-2 text-gray-600">Created</td>
-                    <td class="py-2">{{ comparison.Version1.CreatedAt|date:"Jan 02, 2006 15:04" }}</td>
-                    <td class="py-2">{{ comparison.Version2.CreatedAt|date:"Jan 02, 2006 15:04" }}</td>
-                    <td class="py-2"></td>
-                </tr>
-                <tr class="border-b">
-                    <td class="py-2 text-gray-600">Comment</td>
-                    <td class="py-2 italic text-gray-500">"{{ comparison.Version1.Comment }}"</td>
-                    <td class="py-2 italic text-gray-500">"{{ comparison.Version2.Comment }}"</td>
-                    <td class="py-2"></td>
-                </tr>
-                <tr class="border-b">
-                    <td class="py-2 text-gray-600">Resource</td>
-                    <td class="py-2"><a href="/resource?id={{ resource1.ID }}" class="text-indigo-600 hover:underline">{{ resource1.Name }}</a></td>
-                    <td class="py-2"><a href="/resource?id={{ resource2.ID }}" class="text-indigo-600 hover:underline">{{ resource2.Name }}</a></td>
-                    <td class="py-2 text-center">
-                        {% if crossResource %}<span class="text-orange-600">≠</span>{% else %}<span class="text-green-600">=</span>{% endif %}
-                    </td>
-                </tr>
-            </tbody>
-        </table>
+    <!-- Summary Banner -->
+    <div class="compare-summary mb-4">
+        {% if comparison.SameHash %}
+        <span class="compare-verdict--identical">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+            Files are identical
+        </span>
+        {% else %}
+        <span class="compare-verdict--different">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            Files differ
+        </span>
+        {% endif %}
+        <span class="compare-stat">
+            <span class="compare-stat-label">Type</span>
+            {% if comparison.SameType %}Match{% else %}Changed{% endif %}
+        </span>
+        <span class="compare-stat">
+            <span class="compare-stat-label">Size</span>
+            {% if comparison.SizeDelta == 0 %}Match
+            {% elif comparison.SizeDelta > 0 %}+{{ comparison.SizeDelta|humanReadableSize }}
+            {% else %}{{ comparison.SizeDelta|humanReadableSize }}{% endif %}
+        </span>
+        {% if comparison.DimensionsDiff %}
+        <span class="compare-stat">
+            <span class="compare-stat-label">Dimensions</span>
+            {{ comparison.Version1.Width }}&times;{{ comparison.Version1.Height }} &rarr; {{ comparison.Version2.Width }}&times;{{ comparison.Version2.Height }}
+        </span>
+        {% endif %}
+        {% if crossResource %}
+        <span class="compare-stat" style="background: #fef3c7; color: #92400e;">
+            <span class="compare-stat-label">Cross-resource</span>
+        </span>
+        {% endif %}
     </div>
+
+    <!-- Metadata -->
+    <details open class="mb-6">
+        <summary class="cursor-pointer text-sm font-medium text-gray-600 mb-3 select-none">Metadata</summary>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <!-- Content Type -->
+            <div class="compare-meta-card{% if not comparison.SameType %} compare-meta-card--diff{% endif %}">
+                <div class="compare-meta-card-label">Content Type</div>
+                <div class="compare-meta-card-value">
+                    {% if comparison.SameType %}
+                        {{ comparison.Version1.ContentType }}
+                    {% else %}
+                        {{ comparison.Version1.ContentType }} <span class="text-gray-400" aria-hidden="true">&rarr;</span> {{ comparison.Version2.ContentType }}
+                    {% endif %}
+                </div>
+            </div>
+            <!-- File Size -->
+            <div class="compare-meta-card{% if comparison.SizeDelta != 0 %} compare-meta-card--diff{% endif %}">
+                <div class="compare-meta-card-label">File Size</div>
+                <div class="compare-meta-card-value">
+                    {% if comparison.SizeDelta == 0 %}
+                        {{ comparison.Version1.FileSize|humanReadableSize }}
+                    {% else %}
+                        {{ comparison.Version1.FileSize|humanReadableSize }} <span class="text-gray-400" aria-hidden="true">&rarr;</span> {{ comparison.Version2.FileSize|humanReadableSize }}
+                        <span class="text-xs {% if comparison.SizeDelta > 0 %}text-blue-600{% else %}text-orange-600{% endif %}">
+                            ({% if comparison.SizeDelta > 0 %}+{% endif %}{{ comparison.SizeDelta|humanReadableSize }})
+                        </span>
+                    {% endif %}
+                </div>
+            </div>
+            <!-- Dimensions -->
+            <div class="compare-meta-card{% if comparison.DimensionsDiff %} compare-meta-card--diff{% endif %}">
+                <div class="compare-meta-card-label">Dimensions</div>
+                <div class="compare-meta-card-value">
+                    {% if comparison.DimensionsDiff %}
+                        {{ comparison.Version1.Width }}&times;{{ comparison.Version1.Height }} <span class="text-gray-400" aria-hidden="true">&rarr;</span> {{ comparison.Version2.Width }}&times;{{ comparison.Version2.Height }}
+                    {% else %}
+                        {{ comparison.Version1.Width }}&times;{{ comparison.Version1.Height }}
+                    {% endif %}
+                </div>
+            </div>
+            <!-- Hash -->
+            <div class="compare-meta-card{% if not comparison.SameHash %} compare-meta-card--diff{% endif %}">
+                <div class="compare-meta-card-label">Hash</div>
+                <div class="compare-meta-card-value">
+                    {% if comparison.SameHash %}
+                        <span class="text-green-700 font-medium">Match</span>
+                        <span class="text-xs font-mono text-gray-500 ml-1">{{ comparison.Version1.Hash|truncatechars:16 }}...</span>
+                    {% else %}
+                        <span class="text-red-700 font-medium">Different</span>
+                    {% endif %}
+                </div>
+            </div>
+            <!-- Created -->
+            <div class="compare-meta-card">
+                <div class="compare-meta-card-label">Created</div>
+                <div class="compare-meta-card-value">
+                    {{ comparison.Version1.CreatedAt|date:"Jan 02, 2006 15:04" }}
+                    {% if comparison.Version1.CreatedAt != comparison.Version2.CreatedAt %}
+                        <span class="text-gray-400" aria-hidden="true">&rarr;</span> {{ comparison.Version2.CreatedAt|date:"Jan 02, 2006 15:04" }}
+                    {% endif %}
+                </div>
+            </div>
+            <!-- Resource (cross-resource only) -->
+            {% if crossResource %}
+            <div class="compare-meta-card compare-meta-card--diff">
+                <div class="compare-meta-card-label">Resource</div>
+                <div class="compare-meta-card-value">
+                    <a href="/resource?id={{ resource1.ID }}" class="text-teal-700 hover:underline">{{ resource1.Name }}</a>
+                    <span class="text-gray-400" aria-hidden="true">&rarr;</span>
+                    <a href="/resource?id={{ resource2.ID }}" class="text-teal-700 hover:underline">{{ resource2.Name }}</a>
+                </div>
+            </div>
+            {% endif %}
+            <!-- Comment (only if either has one) -->
+            {% if comparison.Version1.Comment or comparison.Version2.Comment %}
+            <div class="compare-meta-card sm:col-span-2 lg:col-span-3{% if comparison.Version1.Comment != comparison.Version2.Comment %} compare-meta-card--diff{% endif %}">
+                <div class="compare-meta-card-label">Comment</div>
+                <div class="compare-meta-card-value italic text-gray-600">
+                    {% if comparison.Version1.Comment == comparison.Version2.Comment %}
+                        "{{ comparison.Version1.Comment }}"
+                    {% else %}
+                        "{{ comparison.Version1.Comment }}" <span class="text-gray-400 not-italic" aria-hidden="true">&rarr;</span> "{{ comparison.Version2.Comment }}"
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </details>
 
     <!-- Content Comparison Area -->
     {% if contentCategory == "image" %}
@@ -176,8 +219,20 @@
     {% endif %}
 
     {% else %}
-    <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-yellow-800">
-        Select versions to compare using the dropdowns above.
+    <!-- Empty State -->
+    <div class="compare-empty-state">
+        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="2" y="3" width="8" height="14" rx="1"/>
+            <rect x="14" y="7" width="8" height="14" rx="1"/>
+            <path d="M12 10l2-2m0 0l-2-2m2 2H8"/>
+        </svg>
+        <p class="text-lg font-medium text-gray-700">Ready to Compare</p>
+        <p class="text-sm max-w-xs">Select resources and versions above to see a detailed comparison.</p>
+        <div class="flex items-center gap-2 text-xs mt-1">
+            <span class="compare-side-label--old">OLD</span>
+            <span class="text-gray-400" aria-hidden="true">&harr;</span>
+            <span class="compare-side-label--new">NEW</span>
+        </div>
     </div>
     {% endif %}
 </div>
