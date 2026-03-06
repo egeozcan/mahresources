@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"mahresources/constants"
+	"mahresources/plugin_system"
 	"mahresources/server/http_utils"
 	"net/http"
 	"strings"
@@ -186,5 +187,100 @@ func GetPluginSettingsHandler(ctx *application_context.MahresourcesContext) func
 
 		w.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "name": name})
+	}
+}
+
+// PluginAPIHandler handles JSON API requests to plugin-registered endpoints.
+// Routes: GET/POST/PUT/DELETE /v1/plugins/{pluginName}/{path...}
+func PluginAPIHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		pm := ctx.PluginManager()
+		if pm == nil {
+			w.Header().Set("Content-Type", constants.JSON)
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "plugin system not available"})
+			return
+		}
+
+		// Parse /v1/plugins/{pluginName}/{path...}
+		trimmed := strings.TrimPrefix(r.URL.Path, "/v1/plugins/")
+		parts := strings.SplitN(trimmed, "/", 2)
+		pluginName := ""
+		apiPath := ""
+		if len(parts) >= 1 {
+			pluginName = parts[0]
+		}
+		if len(parts) >= 2 {
+			apiPath = parts[1]
+		}
+
+		if pluginName == "" || pluginName == "manage" {
+			w.Header().Set("Content-Type", constants.JSON)
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "plugin not found"})
+			return
+		}
+
+		// Build query map
+		queryMap := make(map[string]any)
+		for k, v := range r.URL.Query() {
+			if len(v) == 1 {
+				queryMap[k] = v[0]
+			} else {
+				items := make([]any, len(v))
+				for i, val := range v {
+					items[i] = val
+				}
+				queryMap[k] = items
+			}
+		}
+
+		// Build headers map
+		headerMap := make(map[string]any)
+		for k, v := range r.Header {
+			if len(v) == 1 {
+				headerMap[strings.ToLower(k)] = v[0]
+			} else {
+				items := make([]any, len(v))
+				for i, val := range v {
+					items[i] = val
+				}
+				headerMap[strings.ToLower(k)] = items
+			}
+		}
+
+		// Read body
+		var body string
+		if r.Body != nil {
+			const maxBodySize = 50 << 20 // 50MB
+			limited := io.LimitReader(r.Body, maxBodySize)
+			bodyBytes, err := io.ReadAll(limited)
+			if err == nil {
+				body = string(bodyBytes)
+			}
+		}
+
+		pageCtx := plugin_system.PageContext{
+			Path:    r.URL.String(),
+			Method:  r.Method,
+			Query:   queryMap,
+			Params:  make(map[string]any),
+			Headers: headerMap,
+			Body:    body,
+		}
+
+		resp := pm.HandleAPI(pluginName, r.Method, apiPath, pageCtx)
+
+		w.Header().Set("Content-Type", constants.JSON)
+		if resp.Error != "" {
+			w.WriteHeader(resp.StatusCode)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": resp.Error})
+			return
+		}
+
+		w.WriteHeader(resp.StatusCode)
+		if resp.Body != nil {
+			_ = json.NewEncoder(w).Encode(resp.Body)
+		}
 	}
 }
