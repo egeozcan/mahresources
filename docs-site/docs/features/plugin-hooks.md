@@ -102,6 +102,8 @@ function init()
 end
 ```
 
+Page handlers have a **30-second timeout**.
+
 ### Path Validation
 
 Paths must match `^[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)*$` -- alphanumeric characters, hyphens, underscores, and forward slashes. No leading or trailing slashes.

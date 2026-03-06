@@ -4,6 +4,8 @@ sidebar_position: 1
 
 # Navigation
 
+Mahresources uses a top navigation bar, sidebar filters, and keyboard shortcuts across all pages.
+
 ## Top Navigation Bar
 
 The navigation bar appears at the top of every page.
@@ -13,6 +15,7 @@ The navigation bar appears at the top of every page.
 On larger screens, the navigation displays as a two-tier horizontal menu:
 
 **Main menu links:**
+- **Dashboard** - Overview and recent activity
 - **Notes** - Text notes and documentation
 - **Resources** - File uploads and management
 - **Tags** - Labels for categorization
@@ -26,6 +29,10 @@ On larger screens, the navigation displays as a two-tier horizontal menu:
 - **Relation Types** - Relationship type definitions
 - **Note Types** - Note type definitions
 - **Logs** - System activity log viewer
+
+**Plugins dropdown** (appears when plugins are enabled):
+- **Manage Plugins** - Plugin enable/disable and settings
+- Plugin-registered menu items appear here
 
 The currently active section is highlighted in bold. If the current page belongs to the Admin dropdown, the dropdown button is also highlighted.
 
@@ -43,7 +50,7 @@ The gear icon in the top-right corner opens a settings dropdown with display pre
 
 Open the search dialog by clicking **Search** in the header or pressing **Cmd+K** (macOS) / **Ctrl+K** (Windows/Linux).
 
-Type at least 2 characters. Results appear grouped by type (Resources, Notes, Groups, Tags, etc.), each showing a type icon, the item name with matches highlighted, and a description preview.
+Type at least 2 characters. Results appear as a flat list ranked by relevance, each showing a type badge (Resource, Note, Group, Tag, etc.), the item name, and a description preview.
 
 ### Keyboard Navigation
 
@@ -53,7 +60,7 @@ Type at least 2 characters. Results appear grouped by type (Resources, Notes, Gr
 | Enter | Open selected result |
 | Escape | Close search dialog |
 
-Results cache for 60 seconds and are limited to 20 items per search (max 50).
+Results are cached server-side for 60 seconds. The default result limit is 20 (max 200).
 
 ## List Views
 
@@ -86,13 +93,26 @@ List views offer alternative display modes. Use the selector at the top of the l
 The sidebar on list pages contains filter controls:
 
 - **Popular Tags** - Quick-filter buttons for frequently-used tags
-- **Sort Options** - Sort by multiple fields with ascending/descending direction
+- **Sort Options** - Multi-column sort builder (see below)
 - **Text Filters** - Search within name, description, etc.
 - **Autocomplete Filters** - Filter by tags, groups, or owner
 - **Date Filters** - Filter by creation or modification date
 - **Dimension Filters** - Filter images by width/height (resources only)
 
 Click **Search** to apply. The URL updates to reflect your filters, so you can bookmark or share filtered views.
+
+### Multi-Sort Builder
+
+The sort options section in the sidebar contains a multi-column sort builder:
+
+1. Click **+ Add Sort** to add a sort criterion
+2. Select a column from the dropdown (available columns depend on the entity type)
+3. Choose ascending or descending direction
+4. Add more criteria -- the first criterion is primary; subsequent criteria break ties
+5. Reorder criteria with the up/down arrows
+6. Remove criteria with the remove button
+
+Sort by metadata values by selecting the metadata column and entering a JSON key name (e.g., `priority`). The sort builder initializes from URL query parameters, so bookmarked sorted views restore the sort criteria on page load.
 
 ### Pagination
 
@@ -148,14 +168,58 @@ Each section includes:
 
 ## Keyboard Shortcuts
 
+### Global
+
+| Shortcut | Context | Action |
+|----------|---------|--------|
+| Cmd/Ctrl + K | Any page | Open/close global search |
+| Cmd/Ctrl + Shift + D | Any page | Toggle Download Cockpit |
+| Cmd/Ctrl + V | Any page | Open paste upload modal (when clipboard has content) |
+| Escape | Any page | Close dialogs, dropdowns, modals, and inline editors |
+
+### Global Search
+
 | Shortcut | Action |
 |----------|--------|
-| Cmd/Ctrl + K | Open global search |
-| Cmd/Ctrl + Shift + D | Toggle Download Cockpit |
-| Escape | Close dialogs and dropdowns |
-| Space | Toggle selected checkbox (in lists) |
-| Shift + Click | Select range of items |
-| Right-click | Select range of items (alternative) |
+| Arrow Up / Arrow Down | Move through results |
+| Enter | Open selected result |
+| Escape | Close search dialog |
+
+### List Views (Bulk Selection)
+
+| Shortcut | Action |
+|----------|--------|
+| Click checkbox | Toggle single item selection |
+| Shift + Click | Select range from last-clicked to current item |
+| Right-click | Range select/deselect from last-selected to right-clicked item |
+| Space | Toggle selection on items within a text selection range |
+| Shift + Submit (on delete) | Bypass the confirmation dialog |
+
+### Lightbox
+
+| Shortcut | Action |
+|----------|--------|
+| Arrow Left / Arrow Right | Previous/next image |
+| Double-click | Toggle native resolution zoom |
+| Ctrl + Scroll | Zoom toward cursor position |
+| 1-9 | Toggle quick tag slots (see Quick Tag Panel below) |
+| Escape | Close lightbox |
+
+### Autocomplete Dropdowns
+
+| Shortcut | Action |
+|----------|--------|
+| Arrow Up / Arrow Down | Navigate suggestions |
+| Enter | Select highlighted item |
+| Tab | Accept highlighted item and advance |
+| Escape | Close dropdown |
+
+### Inline Editing
+
+| Shortcut | Action |
+|----------|--------|
+| Enter | Save changes (single-line fields) |
+| Escape | Cancel and revert |
 
 ## Lightbox
 
@@ -170,3 +234,21 @@ Click any image or media preview to open the lightbox viewer.
 - **Fullscreen** - Enter fullscreen mode to hide all other UI.
 - **Touch** - Pinch-to-zoom, swipe to navigate, two-finger pan.
 - **Close** - Press Escape or click outside the image.
+
+### Quick Tag Panel
+
+The Quick Tag Panel is a side panel in the lightbox for rapid tag assignment while browsing images.
+
+**Setup:**
+
+1. Open the lightbox on any image
+2. Open the Quick Tag Panel via its toggle button
+3. Assign tags to the 9 configurable slots -- each slot maps to a number key (1-9)
+4. Slot assignments persist in localStorage across sessions
+
+**Usage:**
+
+- Press **1** through **9** to toggle the corresponding tag on the current resource
+- Click a tag slot button to toggle the tag
+- Tags are applied or removed immediately via API calls
+- Browse to the next image with arrow keys and continue tagging

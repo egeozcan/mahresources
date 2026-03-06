@@ -4,7 +4,7 @@ sidebar_position: 5
 
 # Tags and Categories
 
-Tags and Categories organize content differently. Tags are flat labels that apply across Resources, Notes, and Groups. Categories define group types with custom presentation and metadata schemas.
+Tags are flat cross-entity labels, while Categories and Resource Categories define typed presentation and metadata schemas for Groups and Resources respectively.
 
 ## Tags
 
@@ -17,6 +17,8 @@ Tags are simple labels that can be applied to Resources, Notes, and Groups.
 | `name` | Unique tag name |
 | `description` | Optional explanation |
 | `meta` | Arbitrary JSON metadata |
+| `createdAt` | Creation timestamp |
+| `updatedAt` | Last update timestamp |
 
 ### Characteristics
 
@@ -151,6 +153,8 @@ Categories define types of Groups with custom presentation and optional metadata
 | `customSummary` | HTML template for list views |
 | `customAvatar` | HTML template for group avatars/icons |
 | `metaSchema` | JSON Schema for metadata validation |
+| `createdAt` | Creation timestamp |
+| `updatedAt` | Last update timestamp |
 
 ### Characteristics
 
@@ -302,11 +306,7 @@ Content-Type: application/json
 
 #### Deleting Categories
 
-:::danger Cascade delete
-
-Deleting a category **deletes all Groups** assigned to it. This cannot be undone.
-
-:::
+Deleting a Category sets `categoryId` to NULL on associated Groups. The Groups are preserved.
 
 ```
 POST /v1/category/delete
@@ -339,6 +339,8 @@ Resource Categories work like Categories but apply to Resources instead of Group
 | `customSummary` | HTML template for list views |
 | `customAvatar` | HTML template for resource avatars/icons |
 | `metaSchema` | JSON Schema for metadata validation |
+| `createdAt` | Creation timestamp |
+| `updatedAt` | Last update timestamp |
 
 ### Characteristics
 
@@ -391,11 +393,12 @@ GET /v1/resources?resourceCategoryId=1
 
 ## Comparison
 
-| Aspect | Tags | Categories | Resource Categories |
-|--------|------|------------|---------------------|
-| Applies to | Resources, Notes, Groups | Groups only | Resources only |
-| Cardinality | Many-to-many | One-to-many | One-to-many |
-| Structure | Flat | Single level | Single level |
-| Presentation | None | Custom templates | Custom templates |
-| Validation | None | JSON Schema | JSON Schema |
-| Purpose | Cross-cutting labels | Group type definition | Resource type definition |
+| Aspect | Tags | Categories | Resource Categories | Note Types |
+|--------|------|------------|---------------------|------------|
+| Applies to | Resources, Notes, Groups | Groups only | Resources only | Notes only |
+| Cardinality | Many-to-many | One-to-many | One-to-many | One-to-many |
+| Structure | Flat | Single level | Single level | Single level |
+| Presentation | None | Custom templates | Custom templates | Custom templates |
+| Validation | None | JSON Schema | JSON Schema | None |
+| Purpose | Cross-cutting labels | Group type definition | Resource type definition | Note type definition |
+| On delete | Removed from entities | SET NULL on Groups | SET NULL on Resources | SET NULL on Notes |

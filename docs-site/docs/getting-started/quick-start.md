@@ -11,10 +11,10 @@ Get up and running in under a minute.
 Ephemeral mode uses in-memory storage. Nothing is written to disk, and all data is lost when the server stops.
 
 ```bash
-./mahresources -ephemeral -bind-address=:8080
+./mahresources -ephemeral -bind-address=:8181
 ```
 
-Open [http://localhost:8080](http://localhost:8080) in your browser.
+Open [http://localhost:8181](http://localhost:8181) in your browser.
 
 ## Your First Upload
 
@@ -45,7 +45,7 @@ To keep data between restarts, configure a database and file path.
   -db-type=SQLITE \
   -db-dsn=./mahresources.db \
   -file-save-path=./files \
-  -bind-address=:8080
+  -bind-address=:8181
 ```
 
 This creates:
@@ -59,7 +59,7 @@ This creates:
   -db-type=POSTGRES \
   -db-dsn="host=localhost user=mah password=secret dbname=mahresources" \
   -file-save-path=/var/lib/mahresources/files \
-  -bind-address=:8080
+  -bind-address=:8181
 ```
 
 ## Environment Variables
@@ -71,7 +71,7 @@ All flags can also be set as environment variables in a `.env` file:
 DB_TYPE=SQLITE
 DB_DSN=./mahresources.db
 FILE_SAVE_PATH=./files
-BIND_ADDRESS=:8080
+BIND_ADDRESS=:8181
 ```
 
 Then run:

@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # Core Concepts Overview
 
-Mahresources has seven entity types. This page describes how they connect.
+Mahresources organizes data around eleven entity types connected by ownership and many-to-many relationships.
 
 ## Entity Types
 
@@ -19,6 +19,8 @@ Mahresources has seven entity types. This page describes how they connect.
 | **Note Type** | Types of Notes with custom templates | Meeting Notes, Task, Journal |
 | **Relation** | Typed connections between Groups | "works at", "parent of", "member of" |
 | **Query** | Stored SQL queries with custom templates | Reports, data exports |
+| **Series** | Groups Resources with shared metadata | Scanned document pages, photo sequences |
+| **Log Entry** | Activity log record for create/update/delete operations | Audit trail, change history |
 
 ## Ownership vs Relationships
 
@@ -30,7 +32,7 @@ Ownership creates a parent-child hierarchy. Each entity can have one owner:
 
 - A **Group** can own other Groups, Notes, and Resources
 - Owned entities appear in the owner's "Owned" section
-- Deleting an owner Group cascades to owned Notes, but owned Groups and Resources have their owner set to NULL (preserved as root Groups or unowned Resources)
+- Deleting an owner Group cascades to owned Notes and child Groups. Owned Resources have their owner set to NULL (preserved as unowned Resources)
 
 ```
 Project Alpha (Group)
@@ -83,7 +85,7 @@ Every Resource, Note, Group, and Tag has a `meta` field for storing arbitrary JS
 }
 ```
 
-Metadata is searchable via MetaQuery parameters and supports eight comparison operators (EQ, LI, NE, NL, GT, GE, LT, LE). Categories and Resource Categories can define a JSON Schema to validate metadata fields.
+Metadata is searchable via MetaQuery parameters and supports nine comparison operators (EQ, LI, NE, NL, GT, GE, LT, LE, HAS_KEYS). Categories and Resource Categories can define a JSON Schema to validate metadata fields.
 
 ### Full-Text Search
 
@@ -95,18 +97,14 @@ Mahresources searches across all entity types:
 - Falls back to LIKE-based search if full-text search is disabled
 
 Search syntax:
-- `term` - matches words containing "term"
-- `term*` - prefix matching (words starting with "term")
-- Multiple words are AND-ed together
+- `term` -- terms with 3+ characters default to prefix mode (matches words starting with "term")
+- `term*` -- explicit prefix matching
+- `~term` -- fuzzy matching (trigram-based in PostgreSQL, LIKE fallback in SQLite)
+- `=term` or `"term"` -- exact matching
 
-### Dual Response Format
+### Response Formats
 
-All API endpoints support both HTML and JSON responses:
-
-- HTML: Default browser response with full UI
-- JSON: Add `.json` suffix or use `Accept: application/json` header
-
-The web UI serves HTML by default; automation clients get JSON.
+API routes (`/v1/...`) return JSON directly. Template routes (without `/v1/` prefix) return HTML by default and support `.json` and `.body` suffixes for JSON and body-only HTML responses.
 
 ## Entity Lifecycle
 
@@ -127,18 +125,20 @@ After creation, connect entities by:
 ### Bulk Operations
 
 Mahresources supports bulk operations on multiple items:
-- `addTags` - Add tags to selected items
-- `removeTags` - Remove tags from selected items
-- `addMeta` - Merge metadata into selected items
-- `delete` - Delete selected items
-- `merge` - Combine multiple items into one (Groups, Resources, and Tags)
+- `addTags` -- Add tags to selected items
+- `removeTags` -- Remove tags from selected items
+- `replaceTags` -- Replace all tags on selected Resources
+- `addGroups` -- Add group associations to selected Resources
+- `addMeta` -- Merge metadata into selected items
+- `delete` -- Delete selected items
+- `merge` -- Combine multiple items into one (Groups, Resources, and Tags)
 
 ### Deletion
 
 | Entity | Deletion Behavior |
 |--------|-------------------|
 | **Tag** | Removed from all associated entities (cascade) |
-| **Group** | Cascades to owned Notes; owned Groups and Resources have their owner set to NULL (preserved) |
-| **Resource** | Deleted independently; file removed from storage |
+| **Group** | Cascades to owned Notes and child Groups; owned Resources have their owner set to NULL (preserved) |
+| **Resource** | Deleted independently; file removed from storage only if no other resources or versions reference the same hash |
 | **Note** | Deleted independently |
-| **Category** | Cascades: **deletes all Groups** in the category |
+| **Category** | Sets `categoryId` to NULL on associated Groups (Groups preserved) |

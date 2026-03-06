@@ -464,13 +464,13 @@ Run E2E tests:
 cd e2e && npm run test:with-server
 ```
 
-## Validation Best Practices
+## Validation Rules
 
-1. **Validate required fields** - Return clear error messages for missing data
-2. **Validate data types** - Ensure numbers are in valid ranges, strings are not too long
-3. **Validate relationships** - If referencing other entities, validate the references exist (if possible)
-4. **Allow empty state** - State should typically allow an empty object `{}`
-5. **Use meaningful error messages** - Help users understand what went wrong
+1. **Validate required fields.** Return clear error messages for missing data.
+2. **Validate data types.** Reject numbers outside valid ranges and strings that exceed length limits.
+3. **Validate relationships.** If referencing other entities, check that the references exist (if possible).
+4. **Allow empty state.** State should accept an empty object `{}`.
+5. **Use meaningful error messages.** Describe what failed and what the expected input is.
 
 ```go
 func (q QuoteBlockType) ValidateContent(content json.RawMessage) error {

@@ -32,10 +32,10 @@ GET /v1/tags
 #### Example
 
 ```bash
-curl http://localhost:8181/v1/tags.json
+curl http://localhost:8181/v1/tags
 
 # Search for tags
-curl "http://localhost:8181/v1/tags.json?Name=project"
+curl "http://localhost:8181/v1/tags?Name=project"
 ```
 
 #### Response
@@ -146,7 +146,7 @@ GET /v1/categories
 #### Example
 
 ```bash
-curl http://localhost:8181/v1/categories.json
+curl http://localhost:8181/v1/categories
 ```
 
 #### Response
@@ -233,7 +233,7 @@ GET /v1/resourceCategories
 #### Example
 
 ```bash
-curl http://localhost:8181/v1/resourceCategories.json
+curl http://localhost:8181/v1/resourceCategories
 ```
 
 #### Response
@@ -320,7 +320,7 @@ GET /v1/queries
 #### Example
 
 ```bash
-curl http://localhost:8181/v1/queries.json
+curl http://localhost:8181/v1/queries
 ```
 
 ### Get Single Query
@@ -416,7 +416,7 @@ POST /v1/query/editDescription?id={id}
 
 ## Global Search API
 
-Search across all entity types (resources, notes, groups, tags, categories).
+Search across entity types: resources, notes, groups, tags, categories, queries, relation types, note types, and resource categories.
 
 ### Search
 
@@ -429,20 +429,20 @@ GET /v1/search
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `q` | string | **Required.** Search query |
-| `limit` | integer | Maximum results (default: 20) |
-| `types` | string | Entity types to search (comma-separated, e.g. `types=resources,notes`) |
+| `limit` | integer | Maximum results (default: 20, max: 50) |
+| `types` | string | Entity types to search (comma-separated: `resource`, `note`, `group`, `tag`, `category`, `query`, `relationType`, `noteType`, `resourceCategory`) |
 
 #### Example
 
 ```bash
 # Search everything
-curl "http://localhost:8181/v1/search.json?q=project"
+curl "http://localhost:8181/v1/search?q=project"
 
 # Search with limit
-curl "http://localhost:8181/v1/search.json?q=project&limit=50"
+curl "http://localhost:8181/v1/search?q=project&limit=50"
 
 # Search specific types
-curl "http://localhost:8181/v1/search.json?q=project&types=resources,notes"
+curl "http://localhost:8181/v1/search?q=project&types=resource,note"
 ```
 
 #### Response
@@ -504,16 +504,16 @@ GET /v1/logs
 
 ```bash
 # List recent logs
-curl http://localhost:8181/v1/logs.json
+curl http://localhost:8181/v1/logs
 
 # Filter by action
-curl "http://localhost:8181/v1/logs.json?Action=create"
+curl "http://localhost:8181/v1/logs?Action=create"
 
 # Filter by entity type
-curl "http://localhost:8181/v1/logs.json?EntityType=resource"
+curl "http://localhost:8181/v1/logs?EntityType=resource"
 
 # Filter errors only
-curl "http://localhost:8181/v1/logs.json?Level=error"
+curl "http://localhost:8181/v1/logs?Level=error"
 ```
 
 #### Response
@@ -564,7 +564,7 @@ GET /v1/logs/entity
 
 ```bash
 # Get history for a specific resource
-curl "http://localhost:8181/v1/logs/entity.json?entityType=resource&entityId=123"
+curl "http://localhost:8181/v1/logs/entity?entityType=resource&entityId=123"
 ```
 
 ---
@@ -610,7 +610,7 @@ GET /v1/download/queue
 #### Example
 
 ```bash
-curl http://localhost:8181/v1/download/queue.json
+curl http://localhost:8181/v1/download/queue
 ```
 
 #### Response
@@ -666,7 +666,7 @@ A series groups related resources into an ordered sequence (e.g., pages of a sca
 ### List Series
 
 ```
-GET /v1/series/list
+GET /v1/seriesList
 ```
 
 #### Query Parameters

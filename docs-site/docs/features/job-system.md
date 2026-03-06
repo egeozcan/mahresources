@@ -5,7 +5,7 @@ title: Job System
 
 # Job System
 
-The job system provides a unified view of all background operations -- download queue jobs and async plugin action jobs -- through a single API and SSE event stream.
+The job system aggregates download queue jobs and async plugin action jobs into a single API and SSE event stream.
 
 ## Job Sources
 
@@ -125,7 +125,7 @@ GET /v1/jobs/queue
 Returns all active jobs from both sources in a single response.
 
 ```bash
-curl http://localhost:8181/v1/jobs/queue.json
+curl http://localhost:8181/v1/jobs/queue
 ```
 
 ## Job Cleanup
@@ -139,7 +139,7 @@ Completed and failed jobs are removed automatically:
 | Download job retention (completed) | 1 hour |
 | Download job retention (paused) | 24 hours |
 
-Removed jobs trigger `"removed"` SSE events, allowing clients to update their UI.
+Removed jobs trigger `"removed"` SSE events so clients can update their UI.
 
 ## API Endpoints
 
@@ -154,3 +154,9 @@ Removed jobs trigger `"removed"` SSE events, allowing clients to update their UI
 | `POST` | `/v1/jobs/pause` | Pause a download |
 | `POST` | `/v1/jobs/resume` | Resume a download |
 | `POST` | `/v1/jobs/retry` | Retry a download |
+
+## Related Pages
+
+- [Download Queue](./download-queue.md) -- URL submission, pause/resume, and retry details
+- [Plugin Actions](./plugin-actions.md) -- action registration, parameters, and async execution
+- [Plugin System](./plugin-system.md) -- plugin installation, configuration, and lifecycle

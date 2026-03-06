@@ -22,35 +22,34 @@ http://localhost:8181/v1/notes
 http://localhost:8181/v1/groups
 ```
 
-## Dual Response Format
+## Response Formats
 
-Every endpoint can return either HTML (for browser access) or JSON (for API access).
+API endpoints under `/v1/` always return JSON.
 
-### Getting JSON Responses
+Template routes (without the `/v1/` prefix) return HTML by default and support two suffixes:
 
-**1. Add `.json` suffix to the URL:**
+| Suffix | Effect |
+|--------|--------|
+| `.json` | Returns JSON instead of HTML |
+| `.body` | Returns the HTML body without the layout wrapper |
 
 ```bash
-# HTML response (default)
+# API route — always JSON
 curl http://localhost:8181/v1/resources
 
-# JSON response
-curl http://localhost:8181/v1/resources.json
+# Template route — HTML by default
+curl http://localhost:8181/resources
+
+# Template route — JSON via suffix
+curl http://localhost:8181/resources.json
+
+# Template route — body only (useful for HTMX-style updates)
+curl http://localhost:8181/resources.body
 ```
 
-**2. Use the `Accept` header:**
-
-```bash
-curl -H "Accept: application/json" http://localhost:8181/v1/resources
-```
-
-**3. Add `.body` suffix to get the HTML body without the layout wrapper:**
-
-```bash
-curl http://localhost:8181/v1/resources.body
-```
-
-This is useful for embedding partial HTML content or HTMX-style updates.
+:::note
+The `.json` and `.body` suffixes do **not** work on `/v1/` API routes. Use `/v1/` paths directly for JSON responses.
+:::
 
 ## Request Content Types
 
@@ -78,13 +77,13 @@ List endpoints support pagination using the `page` query parameter:
 
 ```bash
 # Get page 1 (default)
-curl http://localhost:8181/v1/resources.json
+curl http://localhost:8181/v1/resources
 
 # Get page 2
-curl http://localhost:8181/v1/resources.json?page=2
+curl http://localhost:8181/v1/resources?page=2
 
 # Get page 3
-curl http://localhost:8181/v1/resources.json?page=3
+curl http://localhost:8181/v1/resources?page=3
 ```
 
 The default page size depends on the endpoint. The `MaxResults` parameter on Resource queries can override the page size.
@@ -108,16 +107,16 @@ Use the `SortBy` parameter to control result ordering. Append `asc` or `desc` (s
 
 ```bash
 # Sort by name ascending
-curl "http://localhost:8181/v1/resources.json?SortBy=name"
+curl "http://localhost:8181/v1/resources?SortBy=name"
 
 # Sort by creation date descending
-curl "http://localhost:8181/v1/resources.json?SortBy=created_at desc"
+curl "http://localhost:8181/v1/resources?SortBy=created_at desc"
 
 # Multiple sort fields
-curl "http://localhost:8181/v1/resources.json?SortBy=name&SortBy=created_at desc"
+curl "http://localhost:8181/v1/resources?SortBy=name&SortBy=created_at desc"
 
 # Sort by metadata field
-curl "http://localhost:8181/v1/resources.json?SortBy=meta->>'priority' desc"
+curl "http://localhost:8181/v1/resources?SortBy=meta->>'priority' desc"
 ```
 
 Sort columns are validated against: `^(meta->>?'[a-z_]+'|[a-z_]+)(\s(desc|asc))?$`
@@ -137,8 +136,12 @@ Common HTTP status codes:
 | Status | Description |
 |--------|-------------|
 | 200 | Success |
+| 201 | Created (block creation) |
+| 202 | Accepted (async plugin actions, download submissions) |
+| 204 | No Content (block deletion, reorder, rebalance) |
 | 400 | Bad Request - Invalid parameters |
-| 404 | Not Found - Resource doesn't exist |
+| 404 | Not Found - Entity does not exist |
+| 409 | Conflict - Duplicate resource upload (returns `existingResourceId`) |
 | 500 | Internal Server Error |
 
 ## ID Parameters
@@ -147,7 +150,7 @@ For endpoints that operate on a single entity, pass the ID as a query parameter:
 
 ```bash
 # Get a specific resource
-curl http://localhost:8181/v1/resource.json?id=123
+curl http://localhost:8181/v1/resource?id=123
 
 # Delete a specific tag
 curl -X POST http://localhost:8181/v1/tag/delete?Id=456
@@ -174,6 +177,16 @@ go run ./cmd/openapi-gen -output api-spec.yaml
 go run ./cmd/openapi-gen -output api-spec.json -format json
 ```
 
+### Validate a Spec
+
+Validate a generated OpenAPI spec against the OpenAPI 3.0 schema:
+
+```bash
+go run ./cmd/openapi-gen/validate.go openapi.yaml
+```
+
+If validation succeeds, the command prints "Valid OpenAPI 3.0 spec" and exits with code 0. On failure, it prints the validation error and exits with code 1.
+
 The generated spec works with Swagger UI, Postman, or code generators.
 
 ## API Endpoint Categories
@@ -183,4 +196,5 @@ The API is organized into these categories:
 - **[Resources](./resources)** - File management (upload, download, metadata)
 - **[Notes](./notes)** - Text content and note types
 - **[Groups](./groups)** - Hierarchical organization and relations
+- **[Plugins](./plugins)** - Plugin management, actions, and job monitoring
 - **[Tags, Categories, Queries & More](./other-endpoints)** - Tags, Categories, Queries, Search, Logs, Download Queue

@@ -89,7 +89,7 @@ Remote download timeouts are configurable via command-line flags or environment 
 | `POST` | `/v1/download/pause` | Pause a download (`id`) |
 | `POST` | `/v1/download/resume` | Resume a paused download (`id`) |
 | `POST` | `/v1/download/retry` | Retry a failed download (`id`) |
-| `GET` | `/v1/download/events` | SSE event stream (downloads only) |
+| `GET` | `/v1/download/events` | SSE event stream (downloads and plugin action jobs) |
 
 ### Unified Job Routes
 
@@ -107,11 +107,24 @@ These routes serve the same handlers but are prefixed under `/v1/jobs/` and incl
 
 ## SSE Event Format
 
-Events use SSE event names (`added`, `updated`, `removed`) with JSON data:
+On connect, the server sends an `init` event with the full current state of all jobs:
 
 ```
+event: init
+data: {"jobs":[...],"actionJobs":[...]}
+```
+
+Subsequent events use SSE event names (`added`, `updated`, `removed`) with JSON data:
+
+```
+event: added
+data: {"type":"added","job":{"id":"abcd1234","status":"pending","url":"https://example.com/file.pdf"}}
+
 event: updated
 data: {"type":"updated","job":{"id":"abcd1234","status":"downloading","progress":45}}
+
+event: removed
+data: {"type":"removed","job":{"id":"abcd1234","status":"completed"}}
 ```
 
 Each event data contains:
@@ -119,3 +132,7 @@ Each event data contains:
 - `job` -- The full job object with current status, progress, and metadata
 
 Download progress updates are throttled to one event per 500ms per job.
+
+:::note
+The `/v1/download/events` and `/v1/jobs/events` endpoints serve identical streams. Both merge download job events and plugin action job events into a single SSE connection.
+:::

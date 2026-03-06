@@ -16,15 +16,18 @@ Every file in Mahresources is a Resource: images, documents, videos, or anything
 | `description` | Free-text description |
 | `meta` | Arbitrary JSON metadata |
 | `contentType` | MIME type (e.g., `image/jpeg`) |
-| `contentCategory` | User-specified category (e.g., image, video, document) |
+| `contentCategory` | Content category string (e.g., image, video, document) |
+| `category` | Legacy category string |
 | `fileSize` | Size in bytes |
 | `width`, `height` | Dimensions for images and videos |
 | `hash` | Content hash for deduplication |
 | `hashType` | Hash algorithm used (SHA1) |
+| `location` | Storage path relative to the storage root |
 | `storageLocation` | Which alternative filesystem contains the file (nil = default) |
 | `resourceCategoryId` | Optional Resource Category for typed presentation |
 | `seriesId` | FK to Series for shared metadata grouping |
 | `ownMeta` | Resource-specific metadata when in a Series (diff from Series meta) |
+| `ownerId` | FK to owner Group |
 | `currentVersionId` | ID of the active version (see [Versioning](#resource-versioning)) |
 
 ## File Storage
@@ -48,12 +51,14 @@ Configure multiple storage locations for:
 Mahresources generates thumbnails automatically for supported file types:
 
 ### Image Thumbnails
-- Generated on upload for all image types
-- Multiple sizes available for different UI contexts
+- Generated on-demand when first requested for a given size
+- Supports JPEG, PNG, GIF, WebP natively; HEIC/AVIF via ImageMagick fallback; SVG via built-in rasterizer (oksvg/rasterx)
+- Cached in the database as `Preview` records for subsequent requests
 
 ### Video Thumbnails
 - Requires FFmpeg to be installed and configured
-- Extracts a frame from the video for preview
+- Extracts a frame from the video at 1 second (with fallback to 0s)
+- A background ThumbnailWorker pre-generates thumbnails for video resources
 - Configure via `-ffmpeg-path` or `FFMPEG_PATH`
 
 ### Document Thumbnails
@@ -120,7 +125,7 @@ Upload deduplication is hash-based (SHA1). If a file with the same hash already 
 
 ## Deletion Behavior
 
-Deleted files are backed up to the `/deleted/` directory before the database record is removed. Files are only physically deleted from primary storage if no other Resources or versions reference the same hash.
+Deleted files are backed up to the `/deleted/` directory before the database record is removed. The backup file is named using the format `{hash}__{id}__{ownerId}___{basename}` to prevent collisions and preserve context. Files are only physically deleted from primary storage if no other Resources or versions reference the same hash.
 
 ## Relationships
 

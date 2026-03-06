@@ -142,7 +142,18 @@ When a Category has a schema defined, the Group create/edit form replaces free-f
 - `string` with `format: "date"` renders as a date picker
 - `string` with `enum` renders as a dropdown select
 - `number` properties render as numeric inputs
+- `integer` properties render as numeric inputs (whole numbers)
+- `boolean` properties render as checkboxes
+- `array` properties render as repeatable field groups
 - `object` properties render as nested fieldsets
 - `required` fields are marked as mandatory
 
-Groups without a Category (or with a Category that has no schema) continue to use free-form key-value metadata inputs.
+The form component also supports `$ref` for reusable schema definitions, `oneOf`/`anyOf`/`allOf` for schema composition, `if/then/else` for conditional fields, and `additionalProperties` for free-form key-value editing within an object.
+
+## Free-Form Metadata
+
+Groups without a Category (or with a Category that has no schema) display a free-form metadata editor. This editor renders dynamic key-value fields where you can add, remove, and edit metadata entries. Each field has a key name and a value. The editor handles type coercion for numeric, boolean, null, and date values automatically.
+
+When a schema defines `additionalProperties`, the form includes a free-form key-value section below the structured fields. This lets users add metadata beyond what the schema specifies.
+
+The free-form editor can also load field suggestions from a remote URL, providing autocomplete for key names based on existing metadata patterns in the database.

@@ -99,6 +99,23 @@ sudo apt install libreoffice
 ./mahresources -libreoffice-path=/usr/bin/libreoffice
 ```
 
+### ImageMagick (HEIC/AVIF Thumbnails)
+
+Install ImageMagick to generate thumbnails for HEIC and AVIF images. Mahresources falls back to ImageMagick's `convert` command when the standard Go image decoders cannot handle a format.
+
+```bash
+# macOS
+brew install imagemagick
+
+# Ubuntu/Debian
+sudo apt install imagemagick
+
+# Windows (via Chocolatey)
+choco install imagemagick
+```
+
+The `convert` command must be available in your PATH. No additional configuration flag is needed.
+
 ## Next Steps
 
 Next: [Quick Start](./quick-start) to run the application for the first time.

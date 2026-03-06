@@ -47,19 +47,19 @@ GET /v1/resources
 
 ```bash
 # List all resources
-curl http://localhost:8181/v1/resources.json
+curl http://localhost:8181/v1/resources
 
 # Filter by content type
-curl "http://localhost:8181/v1/resources.json?ContentType=image/jpeg"
+curl "http://localhost:8181/v1/resources?ContentType=image/jpeg"
 
 # Filter by owner group
-curl "http://localhost:8181/v1/resources.json?OwnerId=5"
+curl "http://localhost:8181/v1/resources?OwnerId=5"
 
 # Filter by tags (multiple)
-curl "http://localhost:8181/v1/resources.json?Tags=1&Tags=2"
+curl "http://localhost:8181/v1/resources?Tags=1&Tags=2"
 
 # Filter images by dimensions
-curl "http://localhost:8181/v1/resources.json?MinWidth=1920&MinHeight=1080"
+curl "http://localhost:8181/v1/resources?MinWidth=1920&MinHeight=1080"
 ```
 
 ### Response
@@ -99,7 +99,7 @@ GET /v1/resource?id={id}
 ### Example
 
 ```bash
-curl http://localhost:8181/v1/resource.json?id=123
+curl http://localhost:8181/v1/resource?id=123
 ```
 
 ## Upload Resource (File)
@@ -301,7 +301,7 @@ curl -X POST "http://localhost:8181/v1/resource/delete?Id=123" \
 
 ## View Resource Content
 
-Streams the actual file content with the proper Content-Type header.
+Returns a `302 Found` redirect to the file's storage location (e.g., `/files/ab/cd/abcdef1234...`). The browser or HTTP client follows the redirect to retrieve the file.
 
 ```
 GET /v1/resource/view?id={id}
@@ -310,7 +310,8 @@ GET /v1/resource/view?id={id}
 ### Example
 
 ```bash
-curl http://localhost:8181/v1/resource/view?id=123 -o downloaded-file.jpg
+# Follow the redirect to download the file
+curl -L http://localhost:8181/v1/resource/view?id=123 -o downloaded-file.jpg
 ```
 
 ## Get Resource Preview
@@ -350,7 +351,7 @@ GET /v1/resources/meta/keys
 ### Example
 
 ```bash
-curl http://localhost:8181/v1/resources/meta/keys.json
+curl http://localhost:8181/v1/resources/meta/keys
 ```
 
 ### Response
@@ -485,7 +486,7 @@ curl -X POST http://localhost:8181/v1/resources/rotate \
 
 ### Recalculate Dimensions
 
-Recalculate width/height for image/video resources.
+Recalculate width/height for one or more image/video resources.
 
 ```
 POST /v1/resource/recalculateDimensions
@@ -495,7 +496,15 @@ POST /v1/resource/recalculateDimensions
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `ID` | integer | Resource ID to recalculate |
+| `ID` | integer[] | Resource IDs to recalculate |
+
+#### Example
+
+```bash
+curl -X POST http://localhost:8181/v1/resource/recalculateDimensions \
+  -H "Content-Type: application/json" \
+  -d '{"ID": [123, 456]}'
+```
 
 ### Set Dimensions
 
@@ -744,15 +753,10 @@ curl "http://localhost:8181/v1/resource/versions/compare?resourceId=123&v1=1&v2=
 
 #### Cross-Resource Comparison
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `r1` | integer | **Required.** First resource ID |
-| `v1` | integer | **Required.** First version number |
-| `r2` | integer | **Required.** Second resource ID |
-| `v2` | integer | **Required.** Second version number |
+Cross-resource comparison is available through the UI at `/resource/compare`, not through the `/v1/` API:
 
-```bash
-curl "http://localhost:8181/v1/resource/versions/compare?r1=123&v1=1&r2=456&v2=1"
+```
+/resource/compare?r1=123&v1=1&r2=456&v2=1
 ```
 
 #### Response
@@ -762,7 +766,15 @@ curl "http://localhost:8181/v1/resource/versions/compare?r1=123&v1=1&r2=456&v2=1
   "sizeDelta": -1024,
   "sameHash": false,
   "sameType": true,
-  "dimensionsDiff": {"widthDelta": 0, "heightDelta": -100},
-  "crossResource": true
+  "dimensionsDiff": true,
+  "crossResource": false
 }
 ```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sizeDelta` | integer | Size difference in bytes (version2 - version1) |
+| `sameHash` | boolean | Whether file hashes match |
+| `sameType` | boolean | Whether content types match |
+| `dimensionsDiff` | boolean | Whether dimensions differ (width or height) |
+| `crossResource` | boolean | Whether versions belong to different resources |

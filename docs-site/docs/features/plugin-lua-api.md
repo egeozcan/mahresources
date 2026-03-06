@@ -5,7 +5,7 @@ title: Plugin Lua API Reference
 
 # Plugin Lua API Reference
 
-The `mah` module is available to all enabled plugins and provides database access, HTTP requests, JSON encoding, settings, and job control.
+The `mah` module is available to all enabled plugins and provides database read/write access, HTTP requests, JSON encoding, key-value storage, settings, logging, job control, and operation management.
 
 ## VM Sandboxing
 
@@ -21,7 +21,7 @@ Each VM has a mutex. All calls (hooks, actions, page handlers, HTTP callbacks) a
 
 ## mah.db -- Database API
 
-Read access to all entity types and write access for Resource creation.
+Full CRUD access to all entity types, plus relationship management and resource file operations.
 
 ### Single Entity Getters
 
@@ -147,6 +147,262 @@ local resource, err = mah.db.create_resource_from_data(base64_string, options)
 ```
 
 Same options and return format as `create_resource_from_url`. Default filename is `"plugin_upload"` if no `name` is provided.
+
+### Resource Deletion
+
+```lua
+local ok, err = mah.db.delete_resource(id)
+```
+
+Returns `true` on success, or `nil, error_string` on failure.
+
+### Group CRUD
+
+```lua
+-- Create
+local group, err = mah.db.create_group({
+    name = "My Group",
+    description = "A new group",
+    owner_id = 1,
+    category_id = 2
+})
+
+-- Full update (replaces all fields)
+local group, err = mah.db.update_group(group.id, {
+    name = "Updated Name",
+    description = "Updated description"
+})
+
+-- Partial update (preserves unspecified fields)
+local group, err = mah.db.patch_group(group.id, {
+    description = "Only this field changes"
+})
+
+-- Delete
+local ok, err = mah.db.delete_group(group.id)
+```
+
+All create/update/patch functions return a table on success or `nil, error_string` on failure. Delete returns `true` on success or `nil, error_string` on failure.
+
+### Note CRUD
+
+```lua
+local note, err = mah.db.create_note({ name = "Meeting Notes", description = "Q1 planning" })
+local note, err = mah.db.update_note(note.id, { name = "Updated Notes" })
+local note, err = mah.db.patch_note(note.id, { description = "Revised" })
+local ok, err = mah.db.delete_note(note.id)
+```
+
+### Tag CRUD
+
+```lua
+local tag, err = mah.db.create_tag({ name = "important" })
+local tag, err = mah.db.update_tag(tag.id, { name = "critical" })
+local tag, err = mah.db.patch_tag(tag.id, { name = "high-priority" })
+local ok, err = mah.db.delete_tag(tag.id)
+```
+
+### Category CRUD
+
+```lua
+local cat, err = mah.db.create_category({ name = "Project", description = "Project groups" })
+local cat, err = mah.db.update_category(cat.id, { name = "Active Project" })
+local cat, err = mah.db.patch_category(cat.id, { description = "Updated" })
+local ok, err = mah.db.delete_category(cat.id)
+```
+
+### Resource Category CRUD
+
+```lua
+local rc, err = mah.db.create_resource_category({ name = "Photo" })
+local rc, err = mah.db.update_resource_category(rc.id, { name = "Photograph" })
+local rc, err = mah.db.patch_resource_category(rc.id, { name = "Image" })
+local ok, err = mah.db.delete_resource_category(rc.id)
+```
+
+### Note Type CRUD
+
+```lua
+local nt, err = mah.db.create_note_type({ name = "Meeting" })
+local nt, err = mah.db.update_note_type(nt.id, { name = "Meeting Minutes" })
+local nt, err = mah.db.patch_note_type(nt.id, { name = "Minutes" })
+local ok, err = mah.db.delete_note_type(nt.id)
+```
+
+### Group Relation CRUD
+
+```lua
+local rel, err = mah.db.create_group_relation({
+    from_group_id = 1,
+    to_group_id = 2,
+    relation_type_id = 3
+})
+local rel, err = mah.db.update_group_relation({ id = rel.id, name = "updated" })
+local rel, err = mah.db.patch_group_relation({ id = rel.id, name = "patched" })
+local ok, err = mah.db.delete_group_relation(rel.id)
+```
+
+### Relation Type CRUD
+
+```lua
+local rt, err = mah.db.create_relation_type({ name = "depends-on" })
+local rt, err = mah.db.update_relation_type({ id = rt.id, name = "blocks" })
+local rt, err = mah.db.patch_relation_type({ id = rt.id, name = "blocked-by" })
+local ok, err = mah.db.delete_relation_type(rt.id)
+```
+
+### CRUD Summary
+
+Most entity types follow the `(id, opts)` pattern for update/patch:
+
+| Function Pattern | Returns | Description |
+|-----------------|---------|-------------|
+| `mah.db.create_{entity}(opts)` | table or `nil, error` | Create a new entity |
+| `mah.db.update_{entity}(id, opts)` | table or `nil, error` | Full update (replaces all fields) |
+| `mah.db.patch_{entity}(id, opts)` | table or `nil, error` | Partial update (preserves unspecified fields) |
+| `mah.db.delete_{entity}(id)` | `true` or `nil, error` | Delete an entity |
+
+**Exceptions:** `group_relation` and `relation_type` use `(opts)` for update/patch with `id` embedded in opts (e.g., `mah.db.update_group_relation({ id = 1, name = "new" })`).
+
+Supported entity types: `group`, `note`, `tag`, `category`, `resource_category`, `note_type`, `group_relation`, `relation_type`, `resource` (delete only).
+
+### Relationship Management
+
+#### Tag Operations
+
+Add or remove tags from resources, notes, or groups:
+
+```lua
+-- Add tags to a resource
+local ok, err = mah.db.add_tags("resource", 42, {1, 3, 5})
+
+-- Remove tags from a note
+local ok, err = mah.db.remove_tags("note", 10, {2, 4})
+
+-- Add tags to a group
+local ok, err = mah.db.add_tags("group", 7, {1})
+```
+
+| Function | Parameters | Returns |
+|----------|-----------|---------|
+| `mah.db.add_tags(entity_type, id, tag_ids)` | entity type string, entity ID, array of tag IDs | `true` or `nil, error` |
+| `mah.db.remove_tags(entity_type, id, tag_ids)` | entity type string, entity ID, array of tag IDs | `true` or `nil, error` |
+
+Valid `entity_type` values: `"resource"`, `"note"`, `"group"`.
+
+#### Group Operations
+
+Add or remove group associations from resources or notes:
+
+```lua
+-- Add groups to a resource
+local ok, err = mah.db.add_groups("resource", 42, {1, 2})
+
+-- Remove groups from a note
+local ok, err = mah.db.remove_groups("note", 10, {3})
+```
+
+| Function | Parameters | Returns |
+|----------|-----------|---------|
+| `mah.db.add_groups(entity_type, id, group_ids)` | entity type string, entity ID, array of group IDs | `true` or `nil, error` |
+| `mah.db.remove_groups(entity_type, id, group_ids)` | entity type string, entity ID, array of group IDs | `true` or `nil, error` |
+
+Valid `entity_type` values: `"resource"`, `"note"`.
+
+#### Resource-Note Associations
+
+Attach or detach resources from notes:
+
+```lua
+-- Attach resources to a note
+local ok, err = mah.db.add_resources_to_note(10, {42, 43, 44})
+
+-- Detach resources from a note
+local ok, err = mah.db.remove_resources_from_note(10, {42})
+```
+
+| Function | Parameters | Returns |
+|----------|-----------|---------|
+| `mah.db.add_resources_to_note(note_id, resource_ids)` | note ID, array of resource IDs | `true` or `nil, error` |
+| `mah.db.remove_resources_from_note(note_id, resource_ids)` | note ID, array of resource IDs | `true` or `nil, error` |
+
+## mah.kv -- Key-Value Storage
+
+Persistent key-value storage scoped to the calling plugin. Values are JSON-serialized before storage and JSON-deserialized on read, so Lua tables, strings, numbers, and booleans are all supported.
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `mah.kv.get(key)` | value or `nil` | Read a stored value |
+| `mah.kv.set(key, value)` | `nil` | Write a value (overwrites existing) |
+| `mah.kv.delete(key)` | `nil` | Delete a stored key |
+| `mah.kv.list([prefix])` | table of strings | List keys, optionally filtered by prefix |
+
+```lua
+-- Store a table
+mah.kv.set("config", { threshold = 0.8, model = "fast" })
+
+-- Read it back
+local config = mah.kv.get("config")
+print(config.threshold)  -- 0.8
+
+-- List keys with a prefix
+local keys = mah.kv.list("cache_")
+for _, key in ipairs(keys) do
+    print(key)
+end
+
+-- Delete a key
+mah.kv.delete("config")
+```
+
+Data is scoped by plugin name -- plugins cannot access another plugin's keys. To purge all KV data for a disabled plugin, use the `POST /v1/plugin/purge-data` endpoint.
+
+## mah.log -- Logging
+
+```lua
+mah.log(level, message, [details])
+```
+
+Writes a log entry to the application activity log.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `level` | string | `"info"`, `"warning"`, or `"error"` |
+| `message` | string | Log message |
+| `details` | table | Optional: additional context (JSON-serialized) |
+
+```lua
+mah.log("info", "Processing started", { resource_id = 42 })
+mah.log("warning", "Rate limit approaching")
+mah.log("error", "External API failed", { status = 500, url = "https://api.example.com" })
+```
+
+Log entries appear in the activity log with the plugin name as the entity name.
+
+## mah.start_job -- Background Jobs
+
+```lua
+local job_id = mah.start_job(label, fn)
+```
+
+Creates an async job and runs `fn(job_id)` in a background goroutine. Returns the job ID string immediately. Use this for long-running work outside of action handlers.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `label` | string | Display label for the job |
+| `fn` | function | Callback receiving `job_id` as its argument |
+
+```lua
+local job_id = mah.start_job("Import data", function(jid)
+    mah.job_progress(jid, 10, "Reading file...")
+    -- do work...
+    mah.job_progress(jid, 50, "Processing records...")
+    -- more work...
+    mah.job_complete(jid, { imported = 150 })
+end)
+```
+
+The job appears in the job system and is tracked via SSE events.
 
 ## mah.http -- HTTP API
 
@@ -309,10 +565,86 @@ In before hooks, this cancels the entity operation. In action handlers, this ret
 
 ## Job Progress Functions
 
-Available in async action handlers. See [Plugin Actions](./plugin-actions.md) for full details.
+Available in async action handlers and `mah.start_job` callbacks. See [Plugin Actions](./plugin-actions.md) for full details.
 
 | Function | Description |
 |----------|-------------|
-| `mah.job_progress(job_id, percent, message)` | Report progress (0-100) |
-| `mah.job_complete(job_id, result_table)` | Mark job completed |
-| `mah.job_fail(job_id, error_message)` | Mark job failed |
+| `mah.job_progress(job_id, percent, message)` | Report progress (0-100). SSE updates throttled to 200ms. |
+| `mah.job_complete(job_id, result_table)` | Mark job completed. Sets progress to 100. |
+| `mah.job_fail(job_id, error_message)` | Mark job failed. |
+
+## Complete Example
+
+A plugin that uses database CRUD, KV storage, logging, and HTTP:
+
+```lua
+plugin = {
+    name = "data-sync",
+    version = "1.0.0",
+    description = "Sync group data to an external service",
+    settings = {
+        { name = "api_url", type = "string", label = "API URL", required = true },
+        { name = "api_key", type = "password", label = "API Key", required = true }
+    }
+}
+
+function init()
+    mah.action({
+        id = "sync-group",
+        label = "Sync to External",
+        entity = "group",
+        async = true,
+        handler = function(ctx)
+            local group = mah.db.get_group(ctx.entity_id)
+            if not group then
+                mah.job_fail(ctx.job_id, "Group not found")
+                return
+            end
+
+            mah.job_progress(ctx.job_id, 20, "Preparing data...")
+
+            local api_url = mah.get_setting("api_url")
+            local api_key = mah.get_setting("api_key")
+            local payload = mah.json.encode({
+                name = group.name,
+                description = group.description,
+                meta = group.meta
+            })
+
+            mah.job_progress(ctx.job_id, 50, "Sending to API...")
+
+            local response = mah.http.post_sync(
+                api_url .. "/groups",
+                payload,
+                {
+                    headers = {
+                        ["Content-Type"] = "application/json",
+                        ["Authorization"] = "Bearer " .. api_key
+                    }
+                }
+            )
+
+            if response.status_code ~= 200 then
+                mah.log("error", "Sync failed", { status = response.status_code })
+                mah.job_fail(ctx.job_id, "API returned " .. response.status_code)
+                return
+            end
+
+            local result = mah.json.decode(response.body)
+            mah.kv.set("last_sync_" .. ctx.entity_id, {
+                synced = true,
+                external_id = result.id
+            })
+
+            mah.log("info", "Group synced", { group_id = ctx.entity_id })
+            mah.job_complete(ctx.job_id, { message = "Synced", external_id = result.id })
+        end
+    })
+end
+```
+
+## Related Pages
+
+- [Plugin System](./plugin-system.md) -- discovery, lifecycle, settings, and management
+- [Plugin Actions](./plugin-actions.md) -- action registration, parameters, filters, and execution
+- [Plugin Hooks, Injections, Pages & Menus](./plugin-hooks.md) -- hooks, HTML injections, custom pages, and menu items

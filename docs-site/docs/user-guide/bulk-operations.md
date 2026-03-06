@@ -40,16 +40,17 @@ When you select one or more items, the bulk editor appears inline above the list
 
 ### Available Operations by Entity Type
 
-| Operation | Resources | Groups |
-|-----------|:---------:|:------:|
-| Add Tags | Yes | Yes |
-| Remove Tags | Yes | Yes |
-| Replace Tags | Yes | - |
-| Add Metadata | Yes | Yes |
-| Add Groups | Yes | - |
-| Update Dimensions | Yes | - |
-| Compare | Yes (2 only) | - |
-| Delete | Yes | Yes |
+| Operation | Resources | Groups | Tags |
+|-----------|:---------:|:------:|:----:|
+| Add Tags | Yes | Yes | - |
+| Remove Tags | Yes | Yes | - |
+| Replace Tags | Yes | - | - |
+| Add Metadata | Yes | Yes | - |
+| Add Groups | Yes | - | - |
+| Update Dimensions | Yes | - | - |
+| Compare | Yes (2 only) | - | - |
+| Merge | Yes | - | Yes |
+| Delete | Yes | Yes | Yes |
 
 ## Adding Tags
 
@@ -109,6 +110,8 @@ Compare two resources side-by-side:
 
 The comparison view shows metadata differences between the two Resources: size delta, whether they share the same hash, content type match, and dimension differences.
 
+For image resources, four visual comparison modes are available: side-by-side, slider, overlay, and toggle. For text-based resources, a unified or split diff view highlights line-level changes. Cross-resource version comparison is also supported.
+
 ## Bulk Deletion
 
 Delete multiple items at once:
@@ -125,16 +128,34 @@ Bulk deletion removes database records. For Resources, files are backed up to th
 
 ## Merging Resources
 
-When viewing similar images on a resource detail page:
+Merge resources from two locations:
+
+**From the similar resources section** on a resource detail page:
 
 1. The similar resources section shows visually similar images
 2. Click **Merge Others To This**
 3. Confirm the merge
 
+**From bulk selection** in the resource list:
+
+1. Select the resources to merge
+2. Use the merge operation
+3. Select the winner resource (the one to keep)
+
 The merge operation:
-- Keeps the current resource
+- Keeps the winner resource
 - Transfers metadata from merged resources
-- Deletes the merged resources
+- Deletes the merged (loser) resources
+
+## Merging Tags
+
+Combine duplicate tags into one:
+
+1. Select tags in the tag list
+2. Use the merge operation
+3. Select the winner tag
+
+All entity associations from the loser tags transfer to the winner. The loser tags are deleted.
 
 ## Merging Groups
 

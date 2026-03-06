@@ -109,16 +109,20 @@ Note types add custom templates and styling to notes.
 
 ### Custom Templates
 
-Note type templates have access to the note data through JavaScript:
+Note type templates are rendered server-side using Pongo2 (Django-like syntax). The `note` variable holds all note fields:
+
+```html
+<h2>{{ note.Name }}</h2>
+<p>{{ note.Description }}</p>
+```
+
+Templates also have access to Alpine.js for client-side interactivity via the `entity` JavaScript object:
 
 ```html
 <div x-data>
-  <p x-text="entity.Name"></p>
-  <p x-text="entity.Description"></p>
+  <span x-text="entity.Meta.status"></span>
 </div>
 ```
-
-The `entity` object contains all note fields including custom metadata.
 
 ### Creating a Note Type
 
@@ -241,7 +245,7 @@ The block editor supports eight block types:
 | **Heading** | Section headers with levels 1-6 |
 | **Divider** | Horizontal line to separate content sections |
 | **Gallery** | Grid display of Resource thumbnails by ID |
-| **References** | Links to entities by type and ID |
+| **References** | Links to Groups by ID |
 | **Todos** | Checklist with interactive checkboxes |
 | **Table** | Data table driven by a saved Query |
 | **Calendar** | Calendar view from iCal sources or custom events |
@@ -263,9 +267,9 @@ Each block type has its own editing interface:
 
 **Divider blocks**: No content to edit - displays as a horizontal line.
 
-**Gallery blocks**: Enter comma-separated resource IDs (e.g., "1, 2, 3") to display those resources as thumbnails.
+**Gallery blocks**: Click the add button to open the entity picker, then browse or search for resources to include. Selected resources display as thumbnails.
 
-**References blocks**: Enter comma-separated group IDs (e.g., "1, 2, 3") to create links to those groups.
+**References blocks**: Click the add button to open the entity picker, then browse or search for groups to reference. Selected groups display as linked cards.
 
 **Todos blocks**:
 - Edit item labels in text inputs
@@ -306,7 +310,7 @@ Some blocks have interactive features available in view mode:
 
 **Tables**: Click column headers to sort the table by that column. Click again to toggle between ascending and descending order. Sort state is preserved during your session.
 
-**Gallery**: Click thumbnails to open the resource detail page.
+**Gallery**: Click thumbnails to open the lightbox viewer.
 
 **References**: Click group links to navigate to the group detail page.
 

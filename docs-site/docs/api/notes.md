@@ -40,16 +40,16 @@ GET /v1/notes
 
 ```bash
 # List all notes
-curl http://localhost:8181/v1/notes.json
+curl http://localhost:8181/v1/notes
 
 # Filter by note type
-curl "http://localhost:8181/v1/notes.json?NoteTypeId=1"
+curl "http://localhost:8181/v1/notes?NoteTypeId=1"
 
 # Filter by owner group
-curl "http://localhost:8181/v1/notes.json?OwnerId=5"
+curl "http://localhost:8181/v1/notes?OwnerId=5"
 
 # Filter by date range
-curl "http://localhost:8181/v1/notes.json?StartDateAfter=2024-01-01&StartDateBefore=2024-12-31"
+curl "http://localhost:8181/v1/notes?StartDateAfter=2024-01-01&StartDateBefore=2024-12-31"
 ```
 
 ### Response
@@ -86,7 +86,7 @@ GET /v1/note?id={id}
 ### Example
 
 ```bash
-curl http://localhost:8181/v1/note.json?id=123
+curl http://localhost:8181/v1/note?id=123
 ```
 
 ## Create or Update Note
@@ -179,7 +179,7 @@ GET /v1/notes/meta/keys
 ### Example
 
 ```bash
-curl http://localhost:8181/v1/notes/meta/keys.json
+curl http://localhost:8181/v1/notes/meta/keys
 ```
 
 ### Response
@@ -234,11 +234,12 @@ curl -X POST "http://localhost:8181/v1/note/share?noteId=123"
 
 ```json
 {
-  "token": "abc123def456ghi789jkl012mno345pq"
+  "shareToken": "abc123def456ghi789jkl012mno345pq",
+  "shareUrl": "/s/abc123def456ghi789jkl012mno345pq"
 }
 ```
 
-The token is 32 characters. If the Note is already shared, the existing token is returned.
+The token is 32 characters. If the note is already shared, the existing token is returned.
 
 ## Unshare a Note
 
@@ -284,10 +285,10 @@ Available block types:
 | `heading` | Heading with level 1-6 |
 | `divider` | Visual separator |
 | `gallery` | Collection of resource images |
-| `references` | Links to groups |
+| `references` | Links to groups, notes, and resources |
 | `todos` | Checklist with items |
 | `table` | Data table (manual data or query-based) |
-| `calendar` | Calendar view driven by a query |
+| `calendar` | Calendar view driven by ICS URLs, resources, and custom events |
 
 ## Get Block Types
 
@@ -623,21 +624,21 @@ Returns HTTP status 204 (No Content) on success.
 Execute the query associated with a table block and return the results in table format.
 
 ```
-GET /v1/note/block/table/query?id={id}
+GET /v1/note/block/table/query?blockId={blockId}
 ```
 
 ### Query Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `id` | integer | **Required.** The table block ID |
+| `blockId` | integer | **Required.** The table block ID |
 
 Additional query parameters are passed through to the query (merged with the block's stored `queryParams`).
 
 ### Example
 
 ```bash
-curl "http://localhost:8181/v1/note/block/table/query?id=10"
+curl "http://localhost:8181/v1/note/block/table/query?blockId=10"
 ```
 
 ### Response
@@ -657,21 +658,21 @@ curl "http://localhost:8181/v1/note/block/table/query?id=10"
 Get events for a calendar block within a date range.
 
 ```
-GET /v1/note/block/calendar/events?id={id}&start={date}&end={date}
+GET /v1/note/block/calendar/events?blockId={blockId}&start={date}&end={date}
 ```
 
 ### Query Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `id` | integer | **Required.** The calendar block ID |
-| `start` | string | **Required.** Start date (RFC 3339) |
-| `end` | string | **Required.** End date (RFC 3339) |
+| `blockId` | integer | **Required.** The calendar block ID |
+| `start` | string | **Required.** Start date (YYYY-MM-DD) |
+| `end` | string | **Required.** End date (YYYY-MM-DD) |
 
 ### Example
 
 ```bash
-curl "http://localhost:8181/v1/note/block/calendar/events?id=15&start=2024-01-01T00:00:00Z&end=2024-01-31T23:59:59Z"
+curl "http://localhost:8181/v1/note/block/calendar/events?blockId=15&start=2024-01-01&end=2024-01-31"
 ```
 
 ## Block Type Schemas
@@ -734,15 +735,11 @@ Each block type has its own content and state schema.
 **Content:**
 ```json
 {
-  "items": [
-    {"type": "group", "id": 10},
-    {"type": "note", "id": 5},
-    {"type": "resource", "id": 42}
-  ]
+  "groupIds": [10, 20, 30]
 }
 ```
 
-- `items`: Array of entity references, each with `type` and `id`
+- `groupIds`: Array of group IDs to display as references (required, can be empty)
 
 **State:** Empty object `{}`
 
@@ -752,13 +749,13 @@ Each block type has its own content and state schema.
 ```json
 {
   "items": [
-    {"id": "item-1", "text": "First task"},
-    {"id": "item-2", "text": "Second task"}
+    {"id": "item-1", "label": "First task"},
+    {"id": "item-2", "label": "Second task"}
   ]
 }
 ```
 
-- `items`: Array of todo items, each with unique `id` and `text`
+- `items`: Array of todo items, each with unique `id` and `label`
 
 **State:**
 ```json
@@ -771,16 +768,31 @@ Each block type has its own content and state schema.
 
 ### Table Block
 
-**Content:**
+A table block holds either static data (`columns`/`rows`) or a query reference (`queryId`). It cannot have both.
+
+**Content (query-driven):**
 ```json
 {
-  "queryName": "resource-stats",
-  "params": {"minSize": "1000000"}
+  "queryId": 5,
+  "queryParams": {"minSize": "1000000"},
+  "isStatic": false
 }
 ```
 
-- `queryName`: Name of a saved Query to execute
-- `params`: Named parameters to pass to the Query
+- `queryId`: ID of a saved Query to execute
+- `queryParams`: Named parameters to pass to the Query
+- `isStatic`: Set to `false` when using a query
+
+**Content (static data):**
+```json
+{
+  "columns": [{"id": "name", "label": "Name"}, {"id": "value", "label": "Value"}],
+  "rows": [{"name": "Example", "value": 42}]
+}
+```
+
+- `columns`: Array of column definitions (strings or objects with `id`/`label`)
+- `rows`: Array of row objects keyed by column IDs
 
 **State:**
 ```json
@@ -817,7 +829,7 @@ GET /v1/note/noteTypes
 ### Example
 
 ```bash
-curl http://localhost:8181/v1/note/noteTypes.json
+curl http://localhost:8181/v1/note/noteTypes
 ```
 
 ### Response

@@ -38,7 +38,14 @@ What remains private:
 
 Note sharing requires configuring the share server. See [Public Sharing Deployment](../deployment/public-sharing.md) for detailed setup instructions.
 
-Quick start with command-line flags:
+### Share Server Configuration
+
+| Flag | Env Variable | Default | Description |
+|------|-------------|---------|-------------|
+| `-share-port` | `SHARE_PORT` | (disabled) | Port for the share server |
+| `-share-bind-address` | `SHARE_BIND_ADDRESS` | `0.0.0.0` | Bind address for the share server |
+
+Start the share server by specifying a port:
 
 ```bash
 ./mahresources \
@@ -47,6 +54,13 @@ Quick start with command-line flags:
   -file-save-path=./data/files \
   -bind-address=:8181 \
   -share-port=8383
+```
+
+Or in `.env`:
+
+```bash
+SHARE_PORT=8383
+SHARE_BIND_ADDRESS=0.0.0.0
 ```
 
 ## Sharing a Note
@@ -94,7 +108,7 @@ http://your-share-server:8383/s/{token}
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/s/{token}` | View the shared Note |
-| `POST` | `/s/{token}/block/{blockId}/state` | Update block state (toggle operations only) |
+| `POST` | `/s/{token}/block/{blockId}/state` | Update block state (todo checkboxes, calendar view/events) |
 | `GET` | `/s/{token}/block/{blockId}/calendar/events` | Get calendar events for a calendar block |
 | `GET` | `/s/{token}/resource/{hash}` | Access a Resource file by its hash |
 
@@ -102,13 +116,28 @@ The share server runs on a separate port and only serves these routes. Resource 
 
 ## Interactive Blocks on Shared Notes
 
-Interactive blocks (like todo lists) work differently on shared notes:
+Two block types support interaction on shared notes: **todos** and **calendars**.
 
-- **State is global** - Changes are visible to all viewers
-- **Limited functionality** - Only toggle operations work (e.g., checking items)
-- **No add/remove** - Creating or deleting items is not allowed
+### Shared Todos
 
-Viewers can collaborate on shared content but cannot add or remove items, which prevents spam and vandalism.
+Visitors can check and uncheck todo items on shared notes. Changes are visible to all viewers because state is global. The shared todos component performs optimistic updates with rollback on server error, syncing state to `POST /s/{token}/block/{blockId}/state`.
+
+Adding, removing, or editing todo items is not allowed on shared views -- only toggling the checked state.
+
+### Shared Calendars
+
+Calendar blocks on shared notes display events from ICS sources and custom events. Visitors can browse month and agenda views, create custom events, and edit or delete custom events. Event changes are persisted to the share server via `POST /s/{token}/block/{blockId}/state` and `GET /s/{token}/block/{blockId}/calendar/events`.
+
+### Shared Block Constraints
+
+| Capability | Todos | Calendar |
+|-----------|-------|----------|
+| View content | Yes | Yes |
+| Toggle/check items | Yes | -- |
+| Create custom events | -- | Yes |
+| Edit/delete custom events | -- | Yes |
+| Add/remove items | No | -- |
+| Edit block content | No | No |
 
 ## Finding Shared Notes
 
@@ -143,12 +172,12 @@ When unshared:
 
 ### Network Architecture
 
-For public sharing, we recommend:
+For public sharing:
 
 1. Keep your main Mahresources instance on a private network
 2. Expose only the share server port through a reverse proxy
 3. Use HTTPS for the public share server
-4. Consider rate limiting on the share server
+4. Add rate limiting on the share server
 
 See [Public Sharing Deployment](../deployment/public-sharing.md) for detailed security guidance.
 

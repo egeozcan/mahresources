@@ -62,16 +62,10 @@ Displays Resources as an image gallery.
 
 ### References
 
-Links to entities by type and ID.
+Links to Groups by ID.
 
 ```json
-{
-  "items": [
-    {"type": "group", "id": 10},
-    {"type": "note", "id": 5},
-    {"type": "resource", "id": 42}
-  ]
-}
+{"groupIds": [10, 25, 42]}
 ```
 
 ### Todos
@@ -82,8 +76,8 @@ Interactive checklist. Content holds the items; state tracks which are checked.
 ```json
 {
   "items": [
-    {"id": "a1b2", "text": "First task"},
-    {"id": "c3d4", "text": "Second task"}
+    {"id": "a1b2", "label": "First task"},
+    {"id": "c3d4", "label": "Second task"}
   ]
 }
 ```
@@ -95,17 +89,31 @@ Interactive checklist. Content holds the items; state tracks which are checked.
 
 ### Table
 
-Data table driven by a saved Query.
+Data table with two modes: manual data (columns/rows) or query-driven.
 
-**Content:**
+**Manual mode:**
 ```json
 {
-  "queryName": "resource-stats",
-  "params": {"minSize": "1000000"}
+  "columns": ["Name", "Size", "Type"],
+  "rows": [["photo.jpg", "2.4 MB", "image/jpeg"]]
 }
 ```
 
-The `queryName` references a saved Query by name. The `params` object provides named parameters passed to the Query at execution time.
+**Query mode:**
+```json
+{
+  "queryId": 5,
+  "queryParams": {"minSize": "1000000"},
+  "isStatic": false
+}
+```
+
+The `queryId` references a saved Query by ID. The `queryParams` object provides named parameters passed to the Query at execution time. Set `isStatic` to `true` to prevent automatic refresh.
+
+**State:**
+```json
+{"sortColumn": "Name", "sortDir": "asc"}
+```
 
 ### Calendar
 
@@ -200,7 +208,7 @@ The Note's `description` field and the first text block stay in sync:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/v1/note/block/table/query?id={id}` | Execute table block's saved Query |
-| `GET` | `/v1/note/block/calendar/events?id={id}&start={date}&end={date}` | Fetch calendar events (RFC 3339 dates) |
+| `GET` | `/v1/note/block/table/query?blockId={id}` | Execute table block's saved Query |
+| `GET` | `/v1/note/block/calendar/events?blockId={id}&start={date}&end={date}` | Fetch calendar events (YYYY-MM-DD dates) |
 
 For full API examples and response formats, see [API: Notes](../api/notes.md).

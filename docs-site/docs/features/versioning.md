@@ -168,19 +168,20 @@ Version deletion is permanent. Always use dry-run mode first to verify what will
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/v1/resource/versions?id={resourceId}` | List all versions for a Resource |
-| `POST` | `/v1/resource/versions` | Upload a new version (multipart: `id`, `file`, `comment`) |
-| `POST` | `/v1/resource/version/restore` | Restore a previous version (`id`, `versionId`, `comment`) |
-| `DELETE` | `/v1/resource/version` | Delete a version (`id`, `versionId`) |
-| `POST` | `/v1/resource/versions/cleanup` | Cleanup old versions (JSON body) |
-| `POST` | `/v1/resource/versions/bulk-cleanup` | Bulk cleanup across Resources |
+| `GET` | `/v1/resource/versions?resourceId={resourceId}` | List all versions for a Resource |
+| `GET` | `/v1/resource/version?id={versionId}` | Get a single version by ID |
+| `GET` | `/v1/resource/version/file?versionId={versionId}` | Download a version's file |
+| `POST` | `/v1/resource/versions?resourceId={resourceId}` | Upload a new version (multipart: `file`, `comment`) |
+| `POST` | `/v1/resource/version/restore` | Restore a previous version (`resourceId`, `versionId`, `comment`) |
+| `DELETE` | `/v1/resource/version` | Delete a version (`resourceId`, `versionId`) |
+| `POST` | `/v1/resource/version/delete` | Delete a version (POST alias for DELETE) |
+| `POST` | `/v1/resource/versions/cleanup` | Cleanup old versions for a single Resource (JSON body) |
+| `POST` | `/v1/resources/versions/cleanup` | Bulk cleanup across Resources |
 | `GET` | `/v1/resource/versions/compare` | Compare two versions side-by-side |
 
 ## Migration from Older Databases
 
-Resources created before versioning receive a **virtual v1** when their versions are listed. This virtual version (ID = 0) represents the Resource's current state and is not persisted until a real version operation occurs.
-
-On startup, a background migration creates actual v1 records:
+On startup, a background migration automatically creates actual v1 records for Resources created before version was introduced:
 
 1. Finds Resources with no `current_version_id`
 2. Processes in batches of 500 (with 10ms sleep between batches)
@@ -189,6 +190,10 @@ On startup, a background migration creates actual v1 records:
 
 The migration does not block startup. For databases with millions of Resources, skip it and run during a maintenance window:
 
+| Flag | Env Variable | Default |
+|------|-------------|---------|
+| `-skip-version-migration` | `SKIP_VERSION_MIGRATION=1` | `false` |
+
 ```bash
-./mahresources -skip-version-migration ...
+./mahresources -skip-version-migration -db-type=SQLITE -db-dsn=./mahresources.db -file-save-path=./files
 ```

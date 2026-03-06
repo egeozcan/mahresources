@@ -48,6 +48,10 @@ Content type: `image/svg+xml`
 
 Content types: `video/*`
 
+| Flag | Env Variable | Default | Description |
+|------|-------------|---------|-------------|
+| `-ffmpeg-path` | `FFMPEG_PATH` | auto-detect | Path to FFmpeg binary |
+
 FFmpeg extracts a single frame using a three-tier fallback strategy:
 
 1. **Direct file path** -- Fast seeking with `-ss` flag (local filesystems only). Tries at 1 second, then falls back to 0 seconds.

@@ -9,7 +9,7 @@ description: Securely deploy the share server for public access
 Deploy the note sharing feature for public access while keeping the main instance private.
 
 :::danger Security Implications
-The share server makes shared notes accessible to **anyone with the URL** -- no authentication is required. Shared notes expose their full text, embedded resources, and metadata. Only share notes you are comfortable making fully public. The share URL contains an unguessable token, but anyone who obtains it can view the note.
+The share server makes shared notes accessible to **anyone with the URL** -- no authentication is required. Shared notes expose their name, description, and block content (including embedded resources). Metadata is **not** exposed. Only share notes you are comfortable making public. The share URL contains an unguessable token, but anyone who obtains it can view the note.
 :::
 
 ## Architecture Overview

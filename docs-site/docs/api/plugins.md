@@ -18,7 +18,7 @@ GET /v1/plugins/manage
 Returns all discovered plugins with their current state (enabled/disabled), metadata, and settings.
 
 ```bash
-curl http://localhost:8181/v1/plugins/manage.json
+curl http://localhost:8181/v1/plugins/manage
 ```
 
 ```json
@@ -94,6 +94,37 @@ curl -X POST "http://localhost:8181/v1/plugin/settings?name=image-processor" \
 ```
 
 Settings are validated against the plugin's declared setting definitions. Unknown keys are ignored. Boolean settings accept `"true"` and `"false"` strings. Number settings must be valid numeric strings.
+
+### Purge Plugin Data
+
+Delete all key-value store data for a plugin. The plugin must be disabled before purging.
+
+```
+POST /v1/plugin/purge-data
+Content-Type: application/x-www-form-urlencoded
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Plugin name to purge data for |
+
+```bash
+curl -X POST http://localhost:8181/v1/plugin/purge-data \
+  -d "name=image-processor"
+```
+
+**Response:**
+
+```json
+{
+  "ok": true,
+  "name": "image-processor"
+}
+```
+
+:::warning
+Purging deletes all KV store entries for the plugin. This action is irreversible. The plugin must be disabled first; attempting to purge an enabled plugin returns an error.
+:::
 
 ## Plugin Actions
 
@@ -221,7 +252,7 @@ GET /v1/jobs/queue
 ```
 
 ```bash
-curl http://localhost:8181/v1/jobs/queue.json
+curl http://localhost:8181/v1/jobs/queue
 ```
 
 Returns all active jobs from both the download queue and async plugin actions.

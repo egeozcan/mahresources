@@ -86,7 +86,7 @@ sudo systemctl reload nginx
 
 ## Caddy
 
-Caddy provides automatic HTTPS with simpler configuration.
+Caddy handles HTTPS certificates automatically.
 
 ### Caddyfile
 
@@ -176,6 +176,43 @@ sudo apt install apache2-utils
 htpasswd -nb yourusername yourpassword
 ```
 
+## SSE (Server-Sent Events) Configuration
+
+The download queue and plugin job system use Server-Sent Events at `/v1/jobs/events` and `/v1/download/events`. Reverse proxies must disable response buffering for these endpoints, or SSE messages will be delayed until the buffer fills.
+
+### Nginx
+
+Add a location block for the SSE endpoints:
+
+```nginx
+location ~ ^/v1/(jobs|download)/events$ {
+    proxy_pass http://127.0.0.1:8181;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # Disable buffering for SSE
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 86400s;
+    chunked_transfer_encoding off;
+}
+```
+
+### Caddy
+
+Caddy passes SSE events without buffering by default. No extra configuration is needed.
+
+### Traefik
+
+Add response buffering middleware to the SSE routes:
+
+```yaml
+labels:
+  - "traefik.http.middlewares.sse-buffering.buffering.maxResponseBodyBytes=0"
+```
+
 ## Alternative Authentication Methods
 
 ### OAuth2 Proxy
@@ -188,8 +225,8 @@ oauth2-proxy \
   --upstream=http://127.0.0.1:8181 \
   --http-address=0.0.0.0:4180 \
   --provider=google \
-  --client-id=your-client-id \
-  --client-secret=your-client-secret \
+  --client-id=123456789-abcdef.apps.googleusercontent.com \
+  --client-secret=GOCSPX-abc123def456ghi789 \
   --email-domain=yourdomain.com
 ```
 

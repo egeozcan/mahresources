@@ -32,7 +32,7 @@ Pass flags directly when starting the server:
 ```
 
 :::tip Precedence
-Command-line flags take precedence over environment variables. This allows you to override `.env` settings for specific runs.
+Command-line flags take precedence over environment variables, so a flag overrides the same setting from `.env`.
 :::
 
 ## Quick Reference

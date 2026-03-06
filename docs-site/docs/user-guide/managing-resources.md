@@ -46,6 +46,23 @@ For large files or slow connections, enable **Download in background**:
 - Progress is tracked in the **Download Cockpit** (a floating button in the bottom-right corner of the screen)
 - Failed downloads can be retried from the cockpit
 
+### Paste Upload
+
+Paste images or files from the clipboard to create resources:
+
+1. Copy an image or file to the clipboard (e.g., screenshot, copied image from a webpage)
+2. Press **Ctrl+V** / **Cmd+V** anywhere in the application
+3. A modal appears showing a preview of the pasted content
+4. Set optional fields: tags, resource category, series
+5. Click **Upload**
+
+The paste upload modal supports:
+
+- **Batch uploads** -- paste multiple items and upload them together
+- **Duplicate detection** -- if a file with the same hash already exists, the modal shows the existing resource ID
+- **Context awareness** -- when pasting on a group page, the uploaded resource is associated with that group automatically
+- **Auto-close** -- the modal closes and the page refreshes after a successful upload
+
 ## Viewing Resources
 
 ### Resource List
@@ -177,7 +194,7 @@ Automatically captured on upload:
 
 ### Custom Metadata
 
-Add custom key-value pairs using the **Meta** field:
+Add custom key-value pairs using the **Meta Data** section:
 
 1. In the create/edit form, find the **Meta Data** section
 2. Enter a key name
@@ -187,9 +204,20 @@ Add custom key-value pairs using the **Meta** field:
 
 Custom metadata is searchable and can be used in filters.
 
-### Metadata Keys Autocomplete
+### Free-Form Metadata Fields
 
-When adding metadata, existing keys from other resources appear as autocomplete suggestions to help maintain consistent naming.
+The metadata editor renders dynamic key-value input rows. Each row has a key name field and a value field. Values are automatically coerced to typed JSON values:
+
+| Input | Stored As |
+|-------|-----------|
+| `true` / `false` | Boolean |
+| `null` | Null |
+| `42`, `3.14` | Number |
+| `2026-03-05` | Date string |
+| `{"key": "val"}` | JSON object |
+| anything else | String |
+
+Existing keys from other entities of the same type appear as autocomplete suggestions in the key name field, helping maintain consistent naming across resources.
 
 ## Thumbnails
 
@@ -202,14 +230,15 @@ Thumbnails are generated automatically for supported file types:
 | Videos | Requires FFmpeg |
 | Office documents and PDFs | Requires LibreOffice |
 
-Thumbnails are generated at upload time and cached for fast display.
+Thumbnails are generated on demand when first requested and cached in the database. For video files, the background thumbnail worker can pre-generate thumbnails.
 
 ## Download Cockpit
 
-The Download Cockpit manages background URL downloads:
+The Download Cockpit manages background URL downloads and plugin action jobs:
 
 - Access it via the floating button in the bottom-right corner, or press **Cmd/Ctrl+Shift+D**
 - View active, pending, and completed downloads
+- Pause and resume active downloads
 - Retry failed downloads
 - Cancel pending downloads
 

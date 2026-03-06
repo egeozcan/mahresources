@@ -14,7 +14,7 @@ Relationship Types define the kinds of connections that can exist between groups
 
 | Property | Description |
 |----------|-------------|
-| `name` | Unique name for the relationship type |
+| `name` | Name for the relationship type (unique per `fromCategoryId`/`toCategoryId` pair) |
 | `description` | Explanation of what this relationship means |
 | `fromCategoryId` | Optional: restrict source to this Category |
 | `toCategoryId` | Optional: restrict target to this Category |

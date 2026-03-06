@@ -58,7 +58,11 @@ Filter log entries by combining any of these parameters:
 | `action` | string | Filter by action: `create`, `update`, `delete`, `system`, `progress` |
 | `entityType` | string | Filter by entity kind |
 | `entityId` | uint | Filter by specific entity ID |
-| `name` | string | Search by entity name |
+| `Message` | string | Search by log message |
+| `RequestPath` | string | Filter by HTTP request path |
+| `CreatedBefore` | timestamp | Entries created before this time |
+| `CreatedAfter` | timestamp | Entries created after this time |
+| `SortBy` | string | Sort field |
 
 ## Configuration
 
@@ -90,28 +94,37 @@ GET /v1/logs
 | `action` | string | Filter by action type |
 | `entityType` | string | Filter by entity kind |
 | `entityId` | uint | Filter by entity ID |
-| `name` | string | Search by entity name |
+| `Message` | string | Search by log message |
+| `RequestPath` | string | Filter by HTTP request path |
+| `CreatedBefore` | timestamp | Entries before this time |
+| `CreatedAfter` | timestamp | Entries after this time |
+| `SortBy` | string | Sort field |
 
 ```bash
-curl "http://localhost:8181/v1/logs.json?level=error"
+curl "http://localhost:8181/v1/logs?level=error"
 ```
 
 ```json
-[
-  {
-    "ID": 42,
-    "level": "error",
-    "action": "system",
-    "entityType": "",
-    "entityName": "",
-    "message": "Failed to generate thumbnail",
-    "details": "{\"resourceId\": 1234}",
-    "requestPath": "/v1/resource/preview",
-    "userAgent": "Mozilla/5.0",
-    "ipAddress": "127.0.0.1",
-    "CreatedAt": "2025-03-01T10:30:00Z"
-  }
-]
+{
+  "logs": [
+    {
+      "ID": 42,
+      "level": "error",
+      "action": "system",
+      "entityType": "",
+      "entityName": "",
+      "message": "Failed to generate thumbnail",
+      "details": "{\"resourceId\": 1234}",
+      "requestPath": "/v1/resource/preview",
+      "userAgent": "Mozilla/5.0",
+      "ipAddress": "127.0.0.1",
+      "CreatedAt": "2025-03-01T10:30:00Z"
+    }
+  ],
+  "totalCount": 1,
+  "page": 1,
+  "perPage": 20
+}
 ```
 
 ### Get Single Log Entry
@@ -125,7 +138,7 @@ GET /v1/log
 | `id` | uint | Log entry ID |
 
 ```bash
-curl "http://localhost:8181/v1/log.json?id=42"
+curl "http://localhost:8181/v1/log?id=42"
 ```
 
 ### Get Logs for a Specific Entity
@@ -140,7 +153,7 @@ GET /v1/logs/entity
 | `entityId` | uint | Entity ID |
 
 ```bash
-curl "http://localhost:8181/v1/logs/entity.json?entityType=resource&entityId=123"
+curl "http://localhost:8181/v1/logs/entity?entityType=resource&entityId=123"
 ```
 
 Returns all log entries related to the specified entity, ordered by most recent first.

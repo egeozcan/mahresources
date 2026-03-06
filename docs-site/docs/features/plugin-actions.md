@@ -5,7 +5,7 @@ title: Plugin Actions
 
 # Plugin Actions
 
-Actions let plugins contribute operations that appear in the UI alongside Resources, Notes, and Groups. Actions can collect user input through typed parameters, run synchronously or asynchronously, and target specific entity types or content types.
+Actions are plugin-contributed operations that appear in the UI alongside Resources, Notes, and Groups, collecting user input through typed parameters and running synchronously or asynchronously against specific entity types or content types.
 
 ## Registering an Action
 
@@ -243,3 +243,10 @@ curl "http://localhost:8181/v1/jobs/action/job?id=abc123def456"
 ```
 
 Returns the current job state including status, progress, message, and result.
+
+## Related Pages
+
+- [Plugin System](./plugin-system.md) -- plugin installation, configuration, and lifecycle
+- [Plugin Hooks](./plugin-hooks.md) -- hook registration, injections, custom pages, and menus
+- [Job System](./job-system.md) -- unified job listing, SSE events, and cleanup behavior
+- [Plugin Lua API](./plugin-lua-api.md) -- full Lua API reference for the `mah` module

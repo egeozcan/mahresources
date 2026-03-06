@@ -145,7 +145,7 @@ Merging:
 - Preserves the winner's version history
 
 :::warning
-Merging is permanent. The merged resources are deleted. Make sure you have selected the correct resource to keep.
+Merging is permanent -- the merged resources are deleted. Verify that the winner resource is the one you intend to keep.
 :::
 
 ## Cache Warming

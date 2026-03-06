@@ -24,8 +24,16 @@ The file storage directory contains all uploaded resources (images, documents, v
 - Default location: configured via `FILE_SAVE_PATH`
 - Contains the original uploaded files (thumbnails are stored in the database, not on disk)
 
+### 3. Plugin Directory
+
+If you use plugins, back up the plugin directory (default: `./plugins`, configured via `-plugin-path` / `PLUGIN_PATH`). This directory contains `plugin.lua` files and any plugin-specific data files. Plugin KV store data is stored in the database, so it is included in database backups.
+
+### 4. Alternative Filesystem Paths
+
+If you configured alternative file systems via `-alt-fs` flags or `FILE_ALT_*` environment variables, back up those directories as well. Each alternative filesystem stores resources at its configured path.
+
 :::warning
-Both the database AND files must be backed up together. Restoring only one will result in orphaned records or missing files.
+The database, primary file storage, plugin directory, and any alternative filesystem paths must all be backed up together. Restoring only a subset will result in orphaned records or missing files.
 :::
 
 ## SQLite Backup
@@ -65,6 +73,7 @@ BACKUP_DIR="/backup/mahresources"
 DATE=$(date +%Y%m%d_%H%M%S)
 DB_PATH="/opt/mahresources/data/mahresources.db"
 FILES_PATH="/opt/mahresources/files"
+PLUGINS_PATH="/opt/mahresources/plugins"
 RETENTION_DAYS=30
 
 # Create backup directory
@@ -78,6 +87,11 @@ gzip "$BACKUP_DIR/db-$DATE.db"
 
 # Backup files (incremental with rsync)
 rsync -a --delete "$FILES_PATH/" "$BACKUP_DIR/files/"
+
+# Backup plugins (if present)
+if [ -d "$PLUGINS_PATH" ]; then
+  rsync -a --delete "$PLUGINS_PATH/" "$BACKUP_DIR/plugins/"
+fi
 
 # Remove old database backups
 find "$BACKUP_DIR" -name "db-*.db.gz" -mtime +$RETENTION_DAYS -delete

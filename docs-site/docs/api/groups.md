@@ -45,16 +45,16 @@ GET /v1/groups
 
 ```bash
 # List all groups
-curl http://localhost:8181/v1/groups.json
+curl http://localhost:8181/v1/groups
 
 # Filter by category
-curl "http://localhost:8181/v1/groups.json?CategoryId=1"
+curl "http://localhost:8181/v1/groups?CategoryId=1"
 
 # Filter by tags
-curl "http://localhost:8181/v1/groups.json?Tags=1&Tags=2"
+curl "http://localhost:8181/v1/groups?Tags=1&Tags=2"
 
 # Find groups by relation
-curl "http://localhost:8181/v1/groups.json?RelationTypeId=1&RelationSide=1"
+curl "http://localhost:8181/v1/groups?RelationTypeId=1&RelationSide=1"
 ```
 
 ### Response
@@ -89,7 +89,7 @@ GET /v1/group?id={id}
 ### Example
 
 ```bash
-curl http://localhost:8181/v1/group.json?id=123
+curl http://localhost:8181/v1/group?id=123
 ```
 
 ## Get Group Parents
@@ -103,7 +103,7 @@ GET /v1/group/parents?id={id}
 ### Example
 
 ```bash
-curl http://localhost:8181/v1/group/parents.json?id=123
+curl http://localhost:8181/v1/group/parents?id=123
 ```
 
 ### Response
@@ -117,27 +117,39 @@ curl http://localhost:8181/v1/group/parents.json?id=123
 
 ## Get Group Tree Children
 
-Get child Groups for a tree view with counts.
+Get child groups for a tree view with counts.
 
 ```
-GET /v1/group/tree/children?id={id}
+GET /v1/group/tree/children?parentId={parentId}
 ```
 
 ### Query Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `id` | integer | **Required.** Parent Group ID |
+| `parentId` | integer | **Required.** Parent group ID (use `0` for root groups) |
 | `limit` | integer | Max children to return (default: 50, max: 100) |
+
+### Example
+
+```bash
+# Get root-level groups
+curl "http://localhost:8181/v1/group/tree/children?parentId=0"
+
+# Get children of group 10
+curl "http://localhost:8181/v1/group/tree/children?parentId=10&limit=25"
+```
 
 ### Response
 
 ```json
 [
   {
-    "ID": 10,
-    "Name": "Sub-Group",
-    "child_count": 3
+    "id": 10,
+    "name": "Sub-Group",
+    "categoryName": "Project",
+    "childCount": 3,
+    "ownerId": 1
   }
 ]
 ```
@@ -255,7 +267,7 @@ GET /v1/groups/meta/keys
 ### Example
 
 ```bash
-curl http://localhost:8181/v1/groups/meta/keys.json
+curl http://localhost:8181/v1/groups/meta/keys
 ```
 
 ### Response
@@ -399,10 +411,10 @@ GET /v1/relationTypes
 
 ```bash
 # List all relation types
-curl http://localhost:8181/v1/relationTypes.json
+curl http://localhost:8181/v1/relationTypes
 
 # Filter by category constraints
-curl "http://localhost:8181/v1/relationTypes.json?FromCategory=1&ToCategory=2"
+curl "http://localhost:8181/v1/relationTypes?FromCategory=1&ToCategory=2"
 ```
 
 ### Response

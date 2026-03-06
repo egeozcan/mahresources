@@ -290,3 +290,9 @@ Example MetaSchema:
   }
 }
 ```
+
+## Related Pages
+
+- [Meta Schemas](./meta-schemas.md) -- JSON Schema validation for entity metadata
+- [Custom Block Types](./custom-block-types.md) -- structured content blocks within Notes
+- [Entity Picker](./entity-picker.md) -- modal for selecting entities in block and form contexts

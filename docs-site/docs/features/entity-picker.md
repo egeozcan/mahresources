@@ -57,7 +57,7 @@ export const entityConfigs = {
       return params;
     },
     filters: [
-      { key: 'noteType', label: 'Note Type', endpoint: '/v1/noteTypes', multi: false }
+      { key: 'noteType', label: 'Note Type', endpoint: '/v1/note/noteTypes', multi: false }
     ],
     tabs: null,
     renderItem: 'noteCard',  // Add new render mode

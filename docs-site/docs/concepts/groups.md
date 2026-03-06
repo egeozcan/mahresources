@@ -35,11 +35,11 @@ Company (Group)
 
 - Each Group can have one owner (parent)
 - Root Groups have no owner
-- Deleting a parent Group sets children's `ownerId` to NULL -- children become root Groups
+- Deleting a parent Group deletes its child Groups and owned Notes. Owned Resources are preserved with `ownerId` set to NULL.
 
-:::warning Group deletion does NOT cascade to child Groups
+:::danger Group deletion cascades to child Groups and owned Notes
 
-Group-to-Group ownership uses SET NULL, not CASCADE. When you delete a parent Group, its child Groups are preserved as root Groups. Owned Notes ARE cascade-deleted. Owned Resources have their owner set to NULL.
+When you delete a Group, its child Groups and owned Notes are cascade-deleted. Owned Resources survive with their owner set to NULL.
 
 :::
 
@@ -55,8 +55,8 @@ The `GET /v1/group/tree/children` endpoint returns child Groups with counts, sup
 
 | Connection | Cardinality | Deletion Behavior |
 |------------|-------------|-------------------|
-| Owned Groups | one-to-many | SET NULL (become root Groups) |
-| Owned Notes | one-to-many | CASCADE (Notes are deleted) |
+| Owned Groups | one-to-many | CASCADE (deleted with parent) |
+| Owned Notes | one-to-many | CASCADE (deleted with parent) |
 | Owned Resources | one-to-many | SET NULL (Resources preserved) |
 | Related Groups | many-to-many | Independent lifecycle |
 | Related Notes | many-to-many | Independent lifecycle |
@@ -73,7 +73,7 @@ Categories support:
 
 :::warning Deleting a Category
 
-Deleting a Category sets `categoryId` to NULL on affected Groups (ON DELETE SET NULL). Groups are preserved but lose their category assignment.
+Deleting a Category sets `categoryId` to NULL on associated Groups (the Groups are preserved).
 
 :::
 

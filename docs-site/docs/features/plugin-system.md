@@ -116,6 +116,7 @@ Navigate to the plugin management page to see all discovered plugins with their 
 | `POST` | `/v1/plugin/enable` | Enable a plugin (form: `name`) |
 | `POST` | `/v1/plugin/disable` | Disable a plugin (form: `name`) |
 | `POST` | `/v1/plugin/settings` | Save settings (query: `name`, JSON body: key-value pairs) |
+| `POST` | `/v1/plugin/purge-data` | Purge all KV store data for a disabled plugin (form: `name`) |
 
 ### Enable a Plugin
 
@@ -138,6 +139,30 @@ curl -X POST "http://localhost:8181/v1/plugin/settings?name=image-processor" \
 ```
 
 Only keys declared in `plugin.settings` are persisted; unknown keys are ignored.
+
+## Key-Value Storage
+
+Plugins have access to a persistent key-value store via the `mah.kv` module. Each plugin's data is scoped by plugin name -- plugins cannot read or write another plugin's keys.
+
+```lua
+mah.kv.set("last_run", "completed")
+local last = mah.kv.get("last_run")
+mah.kv.delete("last_run")
+local keys = mah.kv.list("prefix_")
+```
+
+Values are JSON-serialized before storage and deserialized on read.
+
+### Purging Plugin Data
+
+To purge all KV data for a plugin, disable the plugin first, then call the purge endpoint:
+
+```bash
+curl -X POST http://localhost:8181/v1/plugin/purge-data \
+  -d "name=image-processor"
+```
+
+The plugin must be disabled before purging. The management UI also provides a **Purge Data** button on the plugin detail view for disabled plugins.
 
 ## Lua VM Sandboxing
 

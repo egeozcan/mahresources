@@ -12,9 +12,9 @@ Common issues and how to resolve them.
 
 This error occurs when multiple processes or connections attempt to write to the SQLite database simultaneously.
 
-**Solutions:**
-- Reduce the number of database connections using `-max-db-connections=2`
-- Check for hung processes that may be holding database locks: `lsof | grep your-database.db`
+**Fix:**
+- Set `-max-db-connections=2` to limit concurrent writes
+- Check for hung processes that may be holding database locks: `lsof | grep mahresources.db`
 - Ensure only one instance is running against the SQLite database
 - If running E2E tests, use ephemeral mode to avoid conflicts with a production database
 
@@ -32,6 +32,15 @@ Video and office document thumbnails require external tools to be configured.
 - Set the path explicitly: `-libreoffice-path=/usr/bin/libreoffice` or `LIBREOFFICE_PATH=/usr/bin/libreoffice`
 - `soffice` or `libreoffice` in PATH is auto-detected; use explicit paths when auto-detection fails
 
+**Video thumbnail timeouts:**
+- If video thumbnails fail silently, increase the FFmpeg timeout: `-video-thumb-timeout=60s` (default: `30s`)
+- Reduce concurrent video thumbnail generation if the server is resource-constrained: `-video-thumb-concurrency=2` (default: `4`)
+- Check the lock timeout for queued video thumbnails: `-video-thumb-lock-timeout=120s` (default: `60s`)
+
+**Thumbnail worker:**
+- Verify the thumbnail worker is not disabled: remove `-thumb-worker-disabled` or `THUMB_WORKER_DISABLED=1` if set
+- To backfill thumbnails for existing videos that were uploaded before FFmpeg was configured, set `-thumb-backfill` or `THUMB_BACKFILL=1`
+
 **General checks:**
 - Ensure the file storage directory has write permissions
 - Check application logs for specific error messages
@@ -44,6 +53,14 @@ Large databases slow startup due to full-text search initialization and version 
 - Skip full-text search initialization: `-skip-fts` or `SKIP_FTS=1` (disables full-text search)
 - Skip version migration: `-skip-version-migration` or `SKIP_VERSION_MIGRATION=1` (for databases with millions of resources)
 - Use PostgreSQL instead of SQLite for better performance with large datasets
+
+### Database Growing Too Large
+
+Activity log entries accumulate over time and can increase database size.
+
+**Fix:**
+- Set `-cleanup-logs-days=90` or `CLEANUP_LOGS_DAYS=90` to delete log entries older than 90 days on startup
+- Adjust the value based on your retention needs (0 disables cleanup)
 
 ### Upload Failures
 
@@ -146,8 +163,8 @@ A factory reset permanently deletes all data. This action cannot be undone. Alwa
 
 **For SQLite:**
 ```bash
-rm /path/to/your/database.db
-rm -rf /path/to/your/files/*
+rm /opt/mahresources/data/mahresources.db
+rm -rf /opt/mahresources/files/*
 ```
 
 **For PostgreSQL:**

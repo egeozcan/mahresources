@@ -14,22 +14,22 @@ Open with **Cmd+K** (macOS) or **Ctrl+K** (Windows/Linux), or click the **Search
 ### How It Works
 
 1. Type at least 2 characters
-2. Results appear grouped by type
+2. Results appear as a flat list ranked by relevance, each with a type badge
 3. Use arrow keys to navigate, Enter to open, Escape to close
 
 ### What Gets Searched
 
 | Entity Type | Searched Fields |
 |-------------|-----------------|
-| Resources | Name, Description, Original Name |
+| Resources | Name, Description, OriginalName |
 | Notes | Name, Description |
 | Groups | Name, Description |
 | Tags | Name, Description |
-| Categories | Name |
-| Resource Categories | Name |
-| Queries | Name |
-| Note Types | Name |
-| Relation Types | Name |
+| Categories | Name, Description |
+| Resource Categories | Name, Description |
+| Queries | Name, Description |
+| Note Types | Name, Description |
+| Relation Types | Name, Description |
 
 ### Relevance Scoring
 
@@ -46,10 +46,9 @@ When full-text search is unavailable, results are ranked by LIKE-based scoring:
 ### Caching
 
 - Server-side LRU cache with 60-second TTL
-- Caches up to 50 results per query
-- Default result limit: 20 (max: 50)
+- Default result limit: 20 (max: 200)
 - Cache invalidates on entity create, update, or delete
-- Frontend performs additional client-side caching (5-minute threshold)
+- Frontend performs additional client-side caching (30-second threshold)
 
 ## List View Filters
 
@@ -94,6 +93,7 @@ Filter by JSON metadata fields using `key:value` or `key:OPERATOR:value` syntax.
 | `GE` | Greater than or equal |
 | `LT` | Less than |
 | `LE` | Less than or equal |
+| `HAS_KEYS` | Key exists (value is ignored) |
 
 #### Value Type Detection
 
@@ -166,7 +166,16 @@ Full-text search indexes Resource names, descriptions, and original names; Note 
 | SQLite | FTS5 | Requires `fts5` build tag |
 | PostgreSQL | tsvector | Uses `ts_rank` for relevance |
 
-Full-text search supports prefix matching (queries ending in `*`). Both engines fall back to LIKE-based search when full-text search is disabled.
+### Search Modes
+
+| Syntax | Mode | Behavior |
+|--------|------|----------|
+| `word` | Prefix (default for terms with 3+ characters) | Matches words starting with the term |
+| `word*` | Explicit prefix | Matches words starting with the term |
+| `~word` | Fuzzy | Trigram matching in PostgreSQL, LIKE fallback in SQLite |
+| `=word` or `"word"` | Exact | Matches the exact term only |
+
+Both engines fall back to LIKE-based search when full-text search is disabled.
 
 ### Disabling Full-Text Search
 

@@ -118,6 +118,12 @@ GROUP BY t.id, t.name
 ORDER BY resource_count DESC
 ```
 
+## Code Editor
+
+The Query create and edit pages use a CodeMirror 6 editor with SQL syntax highlighting, bracket matching, and auto-closing brackets. The editor loads autocompletion data from the database schema endpoint (`/v1/query/schema`), providing table and column name suggestions as you type. Line numbers and undo history are included.
+
+The editor syncs its content to a hidden form input on every change, so the SQL text is submitted with the form.
+
 ## Database Schema Endpoint
 
 Retrieve the database schema to help build Queries:
@@ -127,7 +133,7 @@ GET /v1/query/schema
 ```
 
 ```bash
-curl http://localhost:8181/v1/query/schema.json
+curl http://localhost:8181/v1/query/schema
 ```
 
 This returns table and column definitions for the database.
@@ -141,7 +147,7 @@ GET /v1/queries
 ```
 
 ```bash
-curl http://localhost:8181/v1/queries.json
+curl http://localhost:8181/v1/queries
 ```
 
 ### Create or Update a Query
@@ -156,6 +162,33 @@ curl -X POST http://localhost:8181/v1/query \
   -d "Name=Recent+Resources&Text=SELECT+id,name+FROM+resources+ORDER+BY+created_at+DESC+LIMIT+50"
 ```
 
+### Delete a Query
+
+```
+POST /v1/query/delete
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | uint | Query ID to delete |
+
+```bash
+curl -X POST "http://localhost:8181/v1/query/delete" \
+  -d "id=3"
+```
+
+### Edit Query Name or Description Inline
+
+```
+POST /v1/query/editName
+POST /v1/query/editDescription
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | uint | Query ID |
+| `Name` or `Description` | string | New value |
+
 ### Run a Query
 
 ```
@@ -165,6 +198,7 @@ POST /v1/query/run
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `id` | uint | Query ID to execute |
+| `name` | string | Alternative: run by Query name instead of ID |
 | (body) | JSON | Named parameter values |
 
 ```bash
