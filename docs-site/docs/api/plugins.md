@@ -241,6 +241,45 @@ Plugin-registered pages are served at this path. The response is HTML generated 
 curl http://localhost:8181/plugins/image-processor/dashboard
 ```
 
+## Plugin JSON API Endpoints
+
+```
+GET|POST|PUT|DELETE /v1/plugins/{pluginName}/{path}
+```
+
+Plugin-registered JSON API endpoints. Unlike plugin pages (which return HTML), these return `application/json` responses.
+
+```bash
+# GET endpoint
+curl http://localhost:8181/v1/plugins/my-plugin/stats
+
+# POST with JSON body
+curl -X POST http://localhost:8181/v1/plugins/my-plugin/webhook \
+  -H "Content-Type: application/json" \
+  -d '{"event": "test"}'
+```
+
+**Success Response:**
+
+```json
+{
+  "total_notes": 42,
+  "query": { "page": "1" }
+}
+```
+
+**Error Responses:**
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| 400 | Handler called `mah.abort()` | `{"error": "reason"}` |
+| 404 | Plugin not found or path not registered | `{"error": "plugin not found"}` or `{"error": "endpoint not found"}` |
+| 405 | Path exists but method not registered | `{"error": "method not allowed"}` |
+| 500 | Handler runtime error | `{"error": "internal plugin error"}` |
+| 504 | Handler exceeded timeout | `{"error": "handler timed out"}` |
+
+See [Plugin Lua API Reference](../features/plugin-lua-api.md) for the `mah.api()` registration function.
+
 ## Unified Job Endpoints
 
 These endpoints combine download queue jobs and plugin action jobs.

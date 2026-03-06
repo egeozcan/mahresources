@@ -541,6 +541,74 @@ if data then
 end
 ```
 
+## mah.api -- JSON API Endpoints
+
+Register custom JSON API endpoints accessible at `/v1/plugins/{pluginName}/{path}`.
+
+### mah.api(method, path, handler, [opts])
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `method` | string | HTTP method: `"GET"`, `"POST"`, `"PUT"`, or `"DELETE"` |
+| `path` | string | Endpoint path (alphanumeric, hyphens, underscores, slashes) |
+| `handler` | function | Receives a context table with request data and response helpers |
+| `opts` | table | Optional. `{ timeout = 30 }` -- seconds (default 30, max 120) |
+
+### Handler Context
+
+The handler receives a single `ctx` table:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ctx.path` | string | Full request URL path |
+| `ctx.method` | string | HTTP method |
+| `ctx.query` | table | URL query parameters |
+| `ctx.params` | table | Form-decoded parameters (empty for non-form requests) |
+| `ctx.headers` | table | Request headers (lowercase keys) |
+| `ctx.body` | string | Raw request body |
+| `ctx.json(data)` | function | Set the JSON response body |
+| `ctx.status(code)` | function | Set the HTTP status code (default: 200) |
+
+### Response Behavior
+
+| Scenario | Status | Body |
+|----------|--------|------|
+| `ctx.json()` called | 200 (or custom via `ctx.status()`) | JSON-encoded data |
+| `ctx.json()` not called | 204 No Content | Empty |
+| Handler error | 500 | `{"error": "internal plugin error"}` |
+| Handler timeout | 504 | `{"error": "handler timed out"}` |
+| `mah.abort()` called | 400 | `{"error": "reason"}` |
+| Path not found | 404 | `{"error": "endpoint not found"}` |
+| Wrong HTTP method | 405 | `{"error": "method not allowed"}` |
+
+### Example
+
+```lua
+function init()
+    -- GET endpoint returning JSON
+    mah.api("GET", "stats", function(ctx)
+        local notes = mah.db.query_notes({ limit = 0 })
+        ctx.json({ total_notes = #notes, query = ctx.query })
+    end)
+
+    -- POST endpoint with custom status
+    mah.api("POST", "webhook", function(ctx)
+        local payload = mah.json.decode(ctx.body)
+        mah.kv.set("last_webhook", payload)
+        ctx.status(201)
+        ctx.json({ received = true })
+    end, { timeout = 60 })
+
+    -- DELETE with no body
+    mah.api("DELETE", "cache", function(ctx)
+        mah.kv.delete("cached_data")
+        ctx.status(204)
+    end)
+end
+```
+
+Duplicate registrations for the same method + path overwrite the previous handler.
+
 ## mah.get_setting(key)
 
 Returns the value of a plugin setting, or `nil` if not set.

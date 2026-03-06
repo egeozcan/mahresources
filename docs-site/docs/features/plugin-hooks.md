@@ -201,3 +201,7 @@ function init()
     mah.menu("Project Status", "status")
 end
 ```
+
+## Related Pages
+
+- [Plugin Lua API Reference](./plugin-lua-api.md) -- includes `mah.api()` for JSON API endpoints

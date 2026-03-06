@@ -5,7 +5,7 @@ title: Plugin System
 
 # Plugin System
 
-Lua-based plugins extend Mahresources with custom actions, hooks, pages, and menu items. Plugins run in sandboxed VMs, are discovered automatically from a configurable directory, and can be enabled or disabled at runtime.
+Lua-based plugins extend Mahresources with custom actions, hooks, pages, JSON API endpoints, and menu items. Plugins run in sandboxed VMs, are discovered automatically from a configurable directory, and can be enabled or disabled at runtime.
 
 ## Configuration
 
@@ -51,9 +51,9 @@ plugin = {
 
 1. **Discovery** -- Plugin directory is scanned at startup. Metadata and settings are read from each `plugin.lua`.
 2. **State check** -- The database is queried for previously enabled plugins. Those plugins are enabled automatically.
-3. **Enable** -- A full Lua VM is created with safe libraries. `plugin.lua` is executed, then `init()` is called (if defined). Hooks, actions, injections, pages, and menus registered during `init()` become active.
+3. **Enable** -- A full Lua VM is created with safe libraries. `plugin.lua` is executed, then `init()` is called (if defined). Hooks, actions, injections, pages, menus, and API endpoints registered during `init()` become active.
 4. **Run** -- The plugin responds to hooks, serves pages, and executes actions.
-5. **Disable** -- All hooks, injections, pages, menus, and actions are removed. In-flight async actions are awaited. The Lua VM is closed.
+5. **Disable** -- All hooks, injections, pages, menus, actions, and API endpoints are removed. In-flight async actions are awaited. The Lua VM is closed.
 
 ## Plugin Settings
 
