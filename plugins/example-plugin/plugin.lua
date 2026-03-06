@@ -147,4 +147,28 @@ function init()
     -- })
     -- local ok, err = mah.db.delete_group_relation(rel.id)
     -- local ok, err = mah.db.delete_relation_type(rtype.id)
+
+    -- =========================================================================
+    -- JSON API Endpoint Example (mah.api)
+    -- =========================================================================
+    -- Register a JSON API endpoint at /v1/plugins/example-plugin/status
+    -- mah.api("GET", "status", function(ctx)
+    --     local notes = mah.db.query_notes({ limit = 0 })
+    --     local resources = mah.db.query_resources({ limit = 0 })
+    --     ctx.json({
+    --         plugin = "example-plugin",
+    --         notes = #notes,
+    --         resources = #resources,
+    --         greeting = mah.get_setting("greeting")
+    --     })
+    -- end)
+
+    -- POST endpoint with custom status and body parsing
+    -- mah.api("POST", "webhook", function(ctx)
+    --     local payload = mah.json.decode(ctx.body)
+    --     mah.kv.set("last_webhook", payload)
+    --     mah.log("info", "Webhook received", payload)
+    --     ctx.status(201)
+    --     ctx.json({ received = true })
+    -- end, { timeout = 60 })
 end
