@@ -10,7 +10,7 @@ export const quickTagPanelState = {
   quickTagPanelOpen: false,
   quickTagSlots: Array(9).fill(null), // [{id, name} | null] x 9
   _quickTagTogglingIds: new Set(), // Not Alpine-reactive; used only as a guard in toggleQuickTag, not in templates
-  recentTags: Array(5).fill(null), // [{id, name, ts} | null] x 5
+  recentTags: Array(9).fill(null), // [{id, name, ts} | null] x 9
 };
 
 export const quickTagPanelMethods = {
@@ -30,8 +30,8 @@ export const quickTagPanelMethods = {
         this.quickTagPanelOpen = data.drawerOpen;
       }
       if (Array.isArray(data.recentTags)) {
-        const recent = data.recentTags.slice(0, 5);
-        while (recent.length < 5) recent.push(null);
+        const recent = data.recentTags.slice(0, 9);
+        while (recent.length < 9) recent.push(null);
         this.recentTags = recent;
       }
     } catch {

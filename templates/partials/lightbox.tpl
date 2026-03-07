@@ -28,7 +28,7 @@
     @keydown.8.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleQuickTag(7)"
     @keydown.9.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleQuickTag(8)"
     @keyup.0.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.focusTagEditor()"
-    @keydown.window="if ($store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $event.shiftKey) { const m = $event.code.match(/^Digit([1-5])$/); if (m) { $event.preventDefault(); $store.lightbox.toggleRecentTag(parseInt(m[1], 10) - 1); } }"
+    @keydown.window="if ($store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $event.shiftKey) { const m = $event.code.match(/^Digit([1-9])$/); if (m) { $event.preventDefault(); $store.lightbox.toggleRecentTag(parseInt(m[1], 10) - 1); } }"
     @touchstart="$store.lightbox.handleTouchStart($event)"
     @touchmove="$store.lightbox.handleTouchMove($event)"
     @touchend="$store.lightbox.handleTouchEnd($event)"
@@ -442,14 +442,15 @@
             <!-- Tag slots -->
             <div class="space-y-2">
                 <label class="block text-sm font-medium text-gray-300 mb-1.5">Tag Slots</label>
+                <div class="grid grid-cols-3 gap-1.5">
                 <template x-for="(slot, index) in $store.lightbox.quickTagSlots" :key="index">
-                    <div class="flex items-center gap-2">
+                    <div class="flex items-center gap-1">
                         <!-- Number key label -->
-                        <kbd class="flex-none w-7 h-7 flex items-center justify-center bg-gray-800 border border-gray-600 rounded text-xs font-mono text-gray-300"
+                        <kbd class="flex-none w-5 h-5 flex items-center justify-center bg-gray-800 border border-gray-600 rounded text-[10px] font-mono text-gray-300"
                              x-text="$store.lightbox.quickTagKeyLabel(index)"></kbd>
 
                         <!-- Empty slot: autocomplete input (x-show to avoid x-if destruction race with popover) -->
-                        <div x-show="!slot" class="flex-1"
+                        <div x-show="!slot" class="flex-1 min-w-0"
                              x-data="autocompleter({
                                  selectedResults: [],
                                  url: '/v1/tags',
@@ -463,8 +464,8 @@
                                     x-ref="autocompleter"
                                     type="text"
                                     x-bind="inputEvents"
-                                    class="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                                    :placeholder="'Assign tag to ' + $store.lightbox.quickTagKeyLabel(index) + '...'"
+                                    class="w-full px-1.5 py-1 bg-gray-800 border border-gray-700 rounded text-xs text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                    :placeholder="'Assign to ' + $store.lightbox.quickTagKeyLabel(index) + '...'"
                                     :aria-label="'Assign tag to slot ' + $store.lightbox.quickTagKeyLabel(index)"
                                     autocomplete="off"
                                     role="combobox"
@@ -492,34 +493,31 @@
                         </div>
 
                         <!-- Configured slot: tag name + toggle button + clear -->
-                        <div x-show="!!slot" class="flex-1 flex items-center gap-2">
+                        <div x-show="!!slot" class="flex-1 min-w-0 flex items-center gap-1">
                             <button
                                 @click="$store.lightbox.toggleQuickTag(index)"
-                                class="flex-1 px-2 py-1.5 rounded text-sm text-left transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                class="flex-1 min-w-0 px-1.5 py-1 rounded text-xs text-left truncate transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500"
                                 :class="$store.lightbox.isTagOnResource(slot?.id)
                                     ? 'bg-green-700/50 hover:bg-red-700/50 border border-green-600/50'
                                     : 'bg-gray-800 hover:bg-indigo-700/50 border border-gray-700'"
                                 :aria-label="($store.lightbox.isTagOnResource(slot?.id) ? 'Remove ' : 'Add ') + slot?.name"
+                                :title="slot?.name"
+                                x-text="slot?.name"
                             >
-                                <span class="flex items-center gap-1.5">
-                                    <svg x-show="$store.lightbox.isTagOnResource(slot?.id)" class="w-3.5 h-3.5 text-green-400 flex-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                                    </svg>
-                                    <span x-text="($store.lightbox.isTagOnResource(slot?.id) ? 'Remove ' : 'Add ') + slot?.name"></span>
-                                </span>
                             </button>
                             <button
                                 @click="$store.lightbox.clearQuickTagSlot(index)"
-                                class="flex-none p-1 hover:bg-white/10 rounded-full transition-colors focus:outline-none focus:ring-1 focus:ring-white"
+                                class="flex-none p-0.5 hover:bg-white/10 rounded-full transition-colors focus:outline-none focus:ring-1 focus:ring-white"
                                 :aria-label="'Clear slot ' + $store.lightbox.quickTagKeyLabel(index)"
                             >
-                                <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                                 </svg>
                             </button>
                         </div>
                     </div>
                 </template>
+                </div>
             </div>
         </div>
     </div>

@@ -1482,7 +1482,7 @@ test.describe('Lightbox on Group Detail Page', () => {
     await expect(recentButton).toBeVisible();
 
     // Assign the tag to quick-add slot 1 via its autocompleter
-    const slotInput = quickTagPanel.locator('input[placeholder="Assign tag to 1..."]');
+    const slotInput = quickTagPanel.locator('input[placeholder="Assign to 1..."]');
     await slotInput.fill(`PromotedTag-${testRunId}`);
     await page.waitForTimeout(400);
     const slotOption = quickTagPanel.locator(`div[role="option"]:has-text("PromotedTag-${testRunId}")`);
