@@ -12,10 +12,14 @@ type NoteReader interface {
 
 type NoteWriter interface {
 	CreateOrUpdateNote(noteQuery *query_models.NoteEditor) (*models.Note, error)
+	BulkNoteTagEditor
+	BulkNoteGroupEditor
+	BulkNoteMetaEditor
 }
 
 type NoteDeleter interface {
 	DeleteNote(noteId uint) error
+	BulkDeleteNotes(query *query_models.BulkQuery) error
 }
 
 type NoteTypeWriter interface {
@@ -41,4 +45,20 @@ type NoteSharer interface {
 	ShareNote(noteId uint) (string, error)
 	UnshareNote(noteId uint) error
 	GetNoteByShareToken(token string) (*models.Note, error)
+}
+
+// BulkNoteTagEditor handles bulk tag operations on notes
+type BulkNoteTagEditor interface {
+	BulkAddTagsToNotes(query *query_models.BulkEditQuery) error
+	BulkRemoveTagsFromNotes(query *query_models.BulkEditQuery) error
+}
+
+// BulkNoteGroupEditor handles bulk group operations on notes
+type BulkNoteGroupEditor interface {
+	BulkAddGroupsToNotes(query *query_models.BulkEditQuery) error
+}
+
+// BulkNoteMetaEditor handles bulk meta operations on notes
+type BulkNoteMetaEditor interface {
+	BulkAddMetaToNotes(query *query_models.BulkEditMetaQuery) error
 }
