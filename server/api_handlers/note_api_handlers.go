@@ -196,3 +196,110 @@ func GetRemoveNoteTypeHandler(ctx interfaces.NoteTypeDeleter) func(writer http.R
 		_ = json.NewEncoder(writer).Encode(&models.NoteType{ID: id})
 	}
 }
+
+func GetAddTagsToNotesHandler(ctx interfaces.BulkNoteTagEditor) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var editor = query_models.BulkEditQuery{}
+		var err error
+
+		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		err = ctx.BulkAddTagsToNotes(&editor)
+
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		http_utils.RedirectIfHTMLAccepted(writer, request, "/notes")
+	}
+}
+
+func GetRemoveTagsFromNotesHandler(ctx interfaces.BulkNoteTagEditor) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var editor = query_models.BulkEditQuery{}
+		var err error
+
+		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		err = ctx.BulkRemoveTagsFromNotes(&editor)
+
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		http_utils.RedirectIfHTMLAccepted(writer, request, "/notes")
+	}
+}
+
+func GetAddGroupsToNotesHandler(ctx interfaces.BulkNoteGroupEditor) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var editor = query_models.BulkEditQuery{}
+		var err error
+
+		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		err = ctx.BulkAddGroupsToNotes(&editor)
+
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		http_utils.RedirectIfHTMLAccepted(writer, request, "/notes")
+	}
+}
+
+func GetAddMetaToNotesHandler(ctx interfaces.BulkNoteMetaEditor) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var editor = query_models.BulkEditMetaQuery{}
+		var err error
+
+		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		err = ctx.BulkAddMetaToNotes(&editor)
+
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		http_utils.RedirectIfHTMLAccepted(writer, request, "/notes")
+	}
+}
+
+func GetBulkDeleteNotesHandler(ctx interfaces.NoteDeleter) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.NoteDeleter)
+
+		var editor = query_models.BulkQuery{}
+		var err error
+
+		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		err = effectiveCtx.BulkDeleteNotes(&editor)
+
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		http_utils.RedirectIfHTMLAccepted(writer, request, "/notes")
+	}
+}

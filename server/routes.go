@@ -192,6 +192,13 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/note/share").HandlerFunc(api_handlers.GetShareNoteHandler(appContext))
 	router.Methods(http.MethodDelete).Path("/v1/note/share").HandlerFunc(api_handlers.GetUnshareNoteHandler(appContext))
 
+	// Note bulk operations
+	router.Methods(http.MethodPost).Path("/v1/notes/addTags").HandlerFunc(api_handlers.GetAddTagsToNotesHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/notes/removeTags").HandlerFunc(api_handlers.GetRemoveTagsFromNotesHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/notes/addGroups").HandlerFunc(api_handlers.GetAddGroupsToNotesHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/notes/addMeta").HandlerFunc(api_handlers.GetAddMetaToNotesHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/notes/delete").HandlerFunc(api_handlers.GetBulkDeleteNotesHandler(appContext))
+
 	// Block API routes
 	router.Methods(http.MethodGet).Path("/v1/note/blocks").HandlerFunc(api_handlers.GetBlocksHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/note/block").HandlerFunc(api_handlers.GetBlockHandler(appContext))

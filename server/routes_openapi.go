@@ -500,6 +500,61 @@ func registerNoteRoutes(r *openapi.Registry) {
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/note/editDescription", "editNoteDescription", "Edit a note's description", "notes").
 		WithIDParam("id", true))
+
+	// Bulk note operations
+	bulkQueryType := reflect.TypeOf(query_models.BulkQuery{})
+	bulkEditQueryType := reflect.TypeOf(query_models.BulkEditQuery{})
+	bulkEditMetaQueryType := reflect.TypeOf(query_models.BulkEditMetaQuery{})
+
+	r.Register(openapi.RouteInfo{
+		Method:              http.MethodPost,
+		Path:                "/v1/notes/addTags",
+		OperationID:         "bulkAddTagsToNotes",
+		Summary:             "Bulk add tags to notes",
+		Tags:                []string{"notes"},
+		RequestType:         bulkEditQueryType,
+		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:              http.MethodPost,
+		Path:                "/v1/notes/removeTags",
+		OperationID:         "bulkRemoveTagsFromNotes",
+		Summary:             "Bulk remove tags from notes",
+		Tags:                []string{"notes"},
+		RequestType:         bulkEditQueryType,
+		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:              http.MethodPost,
+		Path:                "/v1/notes/addGroups",
+		OperationID:         "bulkAddGroupsToNotes",
+		Summary:             "Bulk add groups to notes",
+		Tags:                []string{"notes"},
+		RequestType:         bulkEditQueryType,
+		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:              http.MethodPost,
+		Path:                "/v1/notes/addMeta",
+		OperationID:         "bulkAddMetaToNotes",
+		Summary:             "Bulk add/merge meta to notes",
+		Tags:                []string{"notes"},
+		RequestType:         bulkEditMetaQueryType,
+		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:              http.MethodPost,
+		Path:                "/v1/notes/delete",
+		OperationID:         "bulkDeleteNotes",
+		Summary:             "Bulk delete notes",
+		Tags:                []string{"notes"},
+		RequestType:         bulkQueryType,
+		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+	})
 }
 
 func registerNoteTypeRoutes(r *openapi.Registry) {
