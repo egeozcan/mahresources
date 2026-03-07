@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/gorilla/mux"
 	"mahresources/application_context"
 )
 
@@ -187,6 +188,98 @@ func GetPluginSettingsHandler(ctx *application_context.MahresourcesContext) func
 
 		w.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "name": name})
+	}
+}
+
+// GetPluginBlockRenderHandler renders a plugin block type's HTML.
+func GetPluginBlockRenderHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		pm := ctx.PluginManager()
+		if pm == nil {
+			http.Error(w, "plugins not available", http.StatusServiceUnavailable)
+			return
+		}
+
+		vars := mux.Vars(r)
+		pluginName := vars["pluginName"]
+		if pluginName == "" {
+			http.Error(w, "plugin name required", http.StatusBadRequest)
+			return
+		}
+
+		blockID := uint(http_utils.GetIntQueryParameter(r, "blockId", 0))
+		if blockID == 0 {
+			http.Error(w, "blockId required", http.StatusBadRequest)
+			return
+		}
+
+		mode := r.URL.Query().Get("mode")
+		if mode != "view" && mode != "edit" {
+			http.Error(w, "mode must be 'view' or 'edit'", http.StatusBadRequest)
+			return
+		}
+
+		block, err := ctx.GetBlock(blockID)
+		if err != nil {
+			http.Error(w, "block not found", http.StatusNotFound)
+			return
+		}
+
+		if !strings.HasPrefix(block.Type, "plugin:"+pluginName+":") {
+			http.Error(w, "block type does not belong to this plugin", http.StatusBadRequest)
+			return
+		}
+
+		note, err := ctx.GetNote(block.NoteID)
+		if err != nil {
+			http.Error(w, "note not found", http.StatusNotFound)
+			return
+		}
+
+		var contentMap map[string]any
+		if block.Content != nil {
+			_ = json.Unmarshal(block.Content, &contentMap)
+		}
+		if contentMap == nil {
+			contentMap = map[string]any{}
+		}
+
+		var stateMap map[string]any
+		if block.State != nil {
+			_ = json.Unmarshal(block.State, &stateMap)
+		}
+		if stateMap == nil {
+			stateMap = map[string]any{}
+		}
+
+		var noteTypeID uint
+		if note.NoteTypeId != nil {
+			noteTypeID = *note.NoteTypeId
+		}
+
+		renderCtx := plugin_system.BlockRenderContext{
+			Block: plugin_system.BlockRenderData{
+				ID:       block.ID,
+				Content:  contentMap,
+				State:    stateMap,
+				Position: block.Position,
+			},
+			Note: plugin_system.NoteRenderData{
+				ID:         note.ID,
+				Name:       note.Name,
+				NoteTypeID: noteTypeID,
+			},
+			Settings: pm.GetPluginSettings(pluginName),
+		}
+
+		html, err := pm.RenderBlock(pluginName, block.Type, mode, renderCtx)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(html))
 	}
 }
 

@@ -16,6 +16,14 @@ func RegisterBlockType(bt BlockType) {
 	registry[bt.Type()] = bt
 }
 
+// UnregisterBlockType removes a block type from the registry.
+// No-op if the type name is not registered.
+func UnregisterBlockType(typeName string) {
+	mu.Lock()
+	defer mu.Unlock()
+	delete(registry, typeName)
+}
+
 // GetBlockType returns a registered block type by its type name, or nil if not found.
 func GetBlockType(typeName string) BlockType {
 	mu.RLock()

@@ -59,6 +59,9 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 
 	// Downloads
 	registerDownloadRoutes(registry)
+
+	// Plugins
+	registerPluginRoutes(registry)
 }
 
 func registerNoteShareRoutes(r *openapi.Registry) {
@@ -1464,5 +1467,24 @@ func registerDownloadRoutes(r *openapi.Registry) {
 		Summary:     "Server-Sent Events stream for download updates",
 		Description: "Returns a Server-Sent Events stream with real-time updates about download job status changes.",
 		Tags:        []string{"downloads"},
+	})
+}
+
+func registerPluginRoutes(r *openapi.Registry) {
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodGet,
+		Path:        "/v1/plugins/{pluginName}/block/render",
+		OperationID: "renderPluginBlock",
+		Summary:     "Render a plugin block",
+		Description: "Renders a block using the plugin's block renderer, returning HTML content for the specified mode.",
+		Tags:        []string{"plugins", "blocks"},
+		PathParams: []openapi.PathParam{
+			{Name: "pluginName", Type: "string", Description: "The plugin name"},
+		},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "blockId", Type: "integer", Required: true, Description: "The ID of the block to render"},
+			{Name: "mode", Type: "string", Required: true, Description: "Render mode: 'view' or 'edit'"},
+		},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeHTML},
 	})
 }

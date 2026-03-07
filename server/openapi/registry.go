@@ -86,6 +86,7 @@ func (r *Registry) GenerateSpec() *openapi3.T {
 		"categories": "Operations related to categories",
 		"queries":    "Operations related to queries",
 		"relations":  "Operations related to relations",
+		"plugins":    "Operations related to plugins",
 		"search":     "Search operations",
 	}
 
@@ -149,6 +150,23 @@ func (r *Registry) generateOperation(route RouteInfo) *openapi3.Operation {
 		Description: route.Description,
 		Tags:        route.Tags,
 		Responses:   &openapi3.Responses{},
+	}
+
+	// Add path parameters
+	for _, param := range route.PathParams {
+		p := &openapi3.Parameter{
+			Name:        param.Name,
+			In:          "path",
+			Required:    true,
+			Description: param.Description,
+		}
+		switch param.Type {
+		case "integer":
+			p.Schema = openapi3.NewSchemaRef("", openapi3.NewIntegerSchema())
+		default:
+			p.Schema = openapi3.NewSchemaRef("", openapi3.NewStringSchema())
+		}
+		op.Parameters = append(op.Parameters, &openapi3.ParameterRef{Value: p})
 	}
 
 	// Add query parameters
@@ -289,6 +307,20 @@ func (r *Registry) generateSuccessResponse(route RouteInfo) *openapi3.ResponseRe
 		schema := r.generator.GenerateSchema(route.ResponseType)
 		resp.Content = openapi3.Content{
 			string(ContentTypeJSON): &openapi3.MediaType{Schema: schema},
+		}
+	} else if len(route.ResponseContentTypes) > 0 {
+		// Handle explicit response content types without a typed schema (e.g., text/html)
+		resp.Content = openapi3.Content{}
+		for _, ct := range route.ResponseContentTypes {
+			if ct == ContentTypeJSON {
+				// JSON without a schema - empty response
+				resp.Content[string(ct)] = &openapi3.MediaType{}
+			} else {
+				// Non-JSON (e.g., HTML) - string schema
+				resp.Content[string(ct)] = &openapi3.MediaType{
+					Schema: openapi3.NewSchemaRef("", openapi3.NewStringSchema()),
+				}
+			}
 		}
 	}
 

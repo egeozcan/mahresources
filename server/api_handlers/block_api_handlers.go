@@ -6,6 +6,7 @@ import (
 	"mahresources/constants"
 	"mahresources/models/block_types"
 	"mahresources/models/query_models"
+	"mahresources/plugin_system"
 	"mahresources/server/http_utils"
 	"mahresources/server/interfaces"
 	"net/http"
@@ -170,6 +171,13 @@ type BlockTypeInfo struct {
 	Type           string          `json:"type"`
 	DefaultContent json.RawMessage `json:"defaultContent"`
 	DefaultState   json.RawMessage `json:"defaultState"`
+	// Plugin metadata (omitted for built-in types)
+	Label       string                         `json:"label,omitempty"`
+	Icon        string                         `json:"icon,omitempty"`
+	Description string                         `json:"description,omitempty"`
+	Plugin      bool                           `json:"plugin,omitempty"`
+	PluginName  string                         `json:"pluginName,omitempty"`
+	Filters     *plugin_system.BlockTypeFilter `json:"filters,omitempty"`
 }
 
 // GetBlockTypesHandler returns all registered block types with their defaults.
@@ -181,11 +189,24 @@ func GetBlockTypesHandler() func(http.ResponseWriter, *http.Request) {
 		result := make([]BlockTypeInfo, 0, len(allTypes))
 
 		for _, bt := range allTypes {
-			result = append(result, BlockTypeInfo{
+			info := BlockTypeInfo{
 				Type:           bt.Type(),
 				DefaultContent: bt.DefaultContent(),
 				DefaultState:   bt.DefaultState(),
-			})
+			}
+
+			if pbt, ok := bt.(*plugin_system.PluginBlockType); ok {
+				info.Label = pbt.Label
+				info.Icon = pbt.Icon
+				info.Description = pbt.Description
+				info.Plugin = true
+				info.PluginName = pbt.PluginName
+				if len(pbt.Filters.NoteTypeIDs) > 0 || len(pbt.Filters.CategoryIDs) > 0 {
+					info.Filters = &pbt.Filters
+				}
+			}
+
+			result = append(result, info)
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)

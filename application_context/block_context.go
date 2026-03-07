@@ -16,6 +16,7 @@ import (
 	"mahresources/models/block_types"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
+	"mahresources/plugin_system"
 	"mahresources/server/interfaces"
 )
 
@@ -29,6 +30,26 @@ func (ctx *MahresourcesContext) CreateBlock(editor *query_models.NoteBlockEditor
 	bt := block_types.GetBlockType(editor.Type)
 	if bt == nil {
 		return nil, errors.New("unknown block type: " + editor.Type)
+	}
+
+	// Enforce plugin block type filters
+	if pbt, ok := bt.(*plugin_system.PluginBlockType); ok {
+		if len(pbt.Filters.NoteTypeIDs) > 0 {
+			note, err := ctx.GetNote(editor.NoteID)
+			if err != nil {
+				return nil, fmt.Errorf("cannot verify block type filters: %w", err)
+			}
+			found := false
+			for _, id := range pbt.Filters.NoteTypeIDs {
+				if note.NoteTypeId != nil && *note.NoteTypeId == id {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("block type %q is not available for this note type", editor.Type)
+			}
+		}
 	}
 
 	// Validate content or use default

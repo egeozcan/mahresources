@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"mahresources/models/block_types"
+
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -83,6 +85,7 @@ type PluginManager struct {
 	menuItems  []MenuRegistration
 	actions      map[string][]ActionRegistration // pluginName -> actions
 	apiEndpoints map[string]map[string]*APIEndpoint // pluginName -> "METHOD:path" -> handler
+	blockTypes   map[string][]*PluginBlockType      // pluginName -> block types
 	mu         sync.RWMutex
 	vmLocks    map[*lua.LState]*sync.Mutex
 	dbProvider atomic.Value
@@ -126,6 +129,7 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 		pages:           make(map[string]map[string]pageEntry),
 		actions:         make(map[string][]ActionRegistration),
 		apiEndpoints:    make(map[string]map[string]*APIEndpoint),
+		blockTypes:      make(map[string][]*PluginBlockType),
 		vmLocks:         make(map[*lua.LState]*sync.Mutex),
 		pluginSettings:  make(map[string]map[string]any),
 		actionJobs:      make(map[string]*ActionJob),
@@ -466,6 +470,30 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		return 0
 	}))
 
+	mahMod.RawSetString("block_type", L.NewFunction(func(L *lua.LState) int {
+		tbl := L.CheckTable(1)
+		pbt, err := parseBlockTypeTable(L, tbl, *pluginNamePtr)
+		if err != nil {
+			L.ArgError(1, err.Error())
+			return 0
+		}
+		pbt.State = L
+
+		pm.mu.Lock()
+		for _, existing := range pm.blockTypes[*pluginNamePtr] {
+			if existing.TypeName == pbt.TypeName {
+				pm.mu.Unlock()
+				L.ArgError(1, fmt.Sprintf("duplicate block type %q", pbt.TypeName))
+				return 0
+			}
+		}
+		pm.blockTypes[*pluginNamePtr] = append(pm.blockTypes[*pluginNamePtr], pbt)
+		pm.mu.Unlock()
+
+		block_types.RegisterBlockType(pbt)
+		return 0
+	}))
+
 	mahMod.RawSetString("api", L.NewFunction(func(L *lua.LState) int {
 		method := strings.ToUpper(L.CheckString(1))
 		path := L.CheckString(2)
@@ -763,6 +791,12 @@ func (pm *PluginManager) DisablePlugin(name string) error {
 	// Remove actions for this plugin.
 	delete(pm.actions, name)
 
+	// Unregister plugin block types from global registry.
+	for _, pbt := range pm.blockTypes[name] {
+		block_types.UnregisterBlockType(pbt.TypeName)
+	}
+	delete(pm.blockTypes, name)
+
 	// Remove API endpoints for this plugin.
 	delete(pm.apiEndpoints, name)
 
@@ -858,6 +892,31 @@ func (pm *PluginManager) HasPage(pluginName, path string) bool {
 	return false
 }
 
+// GetBlockTypes returns all plugin-registered block types.
+func (pm *PluginManager) GetBlockTypes() []*PluginBlockType {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	var result []*PluginBlockType
+	for _, types := range pm.blockTypes {
+		result = append(result, types...)
+	}
+	return result
+}
+
+// GetPluginBlockType returns a specific plugin block type by full name, or nil.
+func (pm *PluginManager) GetPluginBlockType(fullTypeName string) *PluginBlockType {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	for _, types := range pm.blockTypes {
+		for _, pbt := range types {
+			if pbt.TypeName == fullTypeName {
+				return pbt
+			}
+		}
+	}
+	return nil
+}
+
 // GetMenuItems returns a copy of all registered menu items.
 func (pm *PluginManager) GetMenuItems() []MenuRegistration {
 	pm.mu.RLock()
@@ -909,6 +968,7 @@ func (pm *PluginManager) Close() {
 	pm.pages = nil
 	pm.menuItems = nil
 	pm.actions = nil
+	pm.blockTypes = nil
 	pm.apiEndpoints = nil
 	pm.vmLocks = nil
 }

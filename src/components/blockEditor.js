@@ -62,6 +62,20 @@ export function blockEditor(noteId, initialBlocks = []) {
       if (this.blocks.length === 0 && this.noteId) {
         await this.loadBlocks();
       }
+
+      // Set up JS bridge for plugin blocks
+      const self = this;
+      window.mahBlock = {
+        saveContent(blockId, content) {
+          return self.updateBlockContent(blockId, content);
+        },
+        updateState(blockId, state) {
+          return self.updateBlockState(blockId, state);
+        },
+        getBlock(blockId) {
+          return self.blocks.find(b => b.id === blockId) || null;
+        }
+      };
     },
 
     async loadBlockTypes() {
@@ -72,9 +86,12 @@ export function blockEditor(noteId, initialBlocks = []) {
           // Update blockTypes with data from server
           this.blockTypes = types.map(bt => ({
             type: bt.type,
-            label: this._formatLabel(bt.type),
-            icon: this._getIconForType(bt.type),
-            defaultContent: bt.defaultContent
+            label: bt.label || this._formatLabel(bt.type),
+            icon: bt.icon || this._getIconForType(bt.type),
+            defaultContent: bt.defaultContent,
+            plugin: bt.plugin || false,
+            pluginName: bt.pluginName || null,
+            filters: bt.filters || null
           }));
           this._blockTypesLoaded = true;
         }

@@ -10,6 +10,7 @@ type ContentType string
 
 const (
 	ContentTypeJSON      ContentType = "application/json"
+	ContentTypeHTML      ContentType = "text/html"
 	ContentTypeForm      ContentType = "application/x-www-form-urlencoded"
 	ContentTypeMultipart ContentType = "multipart/form-data"
 )
@@ -64,6 +65,9 @@ type RouteInfo struct {
 	// Whether ID is required in query params
 	IDRequired bool
 
+	// Path parameters (e.g., {pluginName} in /v1/plugins/{pluginName}/block/render)
+	PathParams []PathParam
+
 	// Additional query parameters not derived from QueryType
 	ExtraQueryParams []QueryParam
 
@@ -82,6 +86,13 @@ type QueryParam struct {
 	ItemType    string // For arrays, the type of items
 	Required    bool
 	Default     interface{}
+}
+
+// PathParam represents a single path parameter.
+type PathParam struct {
+	Name        string
+	Description string
+	Type        string // "string", "integer"
 }
 
 // NewRoute creates a RouteInfo with sensible defaults.
@@ -133,6 +144,16 @@ func (r RouteInfo) WithFileUpload(fieldName string, multiple bool) RouteInfo {
 func (r RouteInfo) WithIDParam(paramName string, required bool) RouteInfo {
 	r.IDQueryParam = paramName
 	r.IDRequired = required
+	return r
+}
+
+// WithPathParam adds a path parameter.
+func (r RouteInfo) WithPathParam(name, paramType, description string) RouteInfo {
+	r.PathParams = append(r.PathParams, PathParam{
+		Name:        name,
+		Description: description,
+		Type:        paramType,
+	})
 	return r
 }
 

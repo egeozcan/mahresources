@@ -580,8 +580,34 @@ components:
             type: object
         NoteEditor:
             properties:
+                Description:
+                    type: string
+                EndDate:
+                    type: string
+                Groups:
+                    items:
+                        type: integer
+                    type: array
                 ID:
                     type: integer
+                Meta:
+                    type: string
+                Name:
+                    type: string
+                NoteTypeId:
+                    type: integer
+                OwnerId:
+                    type: integer
+                Resources:
+                    items:
+                        type: integer
+                    type: array
+                StartDate:
+                    type: string
+                Tags:
+                    items:
+                        type: integer
+                    type: array
             type: object
         NotePartial:
             properties:
@@ -1424,6 +1450,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
                 "400":
                     description: Invalid input
@@ -1445,6 +1473,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
                 "400":
                     description: Invalid input
@@ -1503,6 +1533,8 @@ paths:
             operationId: getDownloadQueue
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
             summary: Get all download jobs
             tags:
@@ -1554,6 +1586,8 @@ paths:
                 required: true
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
             summary: Submit a URL for background download
             tags:
@@ -1646,6 +1680,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
                 "400":
                     description: Invalid input
@@ -1667,6 +1703,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
                 "400":
                     description: Invalid input
@@ -1913,6 +1951,8 @@ paths:
             operationId: getGroupMetaKeys
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
             summary: Get all unique meta keys used in groups
             tags:
@@ -2184,6 +2224,8 @@ paths:
                     type: string
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
             summary: Get events for a calendar block
             tags:
@@ -2233,6 +2275,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
             summary: Get query data for a table block
             tags:
@@ -2242,6 +2286,8 @@ paths:
             operationId: getBlockTypes
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
             summary: Get all available block types
             tags:
@@ -2323,6 +2369,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
                 "400":
                     description: Invalid input
@@ -2344,6 +2392,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
                 "400":
                     description: Invalid input
@@ -2454,6 +2504,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
             summary: Remove public sharing for a note
             tags:
@@ -2468,6 +2520,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
             summary: Share a note via public link
             tags:
@@ -2483,6 +2537,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
                 "400":
                     description: Invalid input
@@ -2504,6 +2560,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
                 "400":
                     description: Invalid input
@@ -2622,15 +2680,141 @@ paths:
             summary: List notes
             tags:
                 - notes
+    /v1/notes/addGroups:
+        post:
+            operationId: bulkAddGroupsToNotes
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BulkEditQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BulkEditQuery'
+                required: true
+            responses:
+                "200":
+                    description: Successful response
+            summary: Bulk add groups to notes
+            tags:
+                - notes
+    /v1/notes/addMeta:
+        post:
+            operationId: bulkAddMetaToNotes
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BulkEditMetaQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BulkEditMetaQuery'
+                required: true
+            responses:
+                "200":
+                    description: Successful response
+            summary: Bulk add/merge meta to notes
+            tags:
+                - notes
+    /v1/notes/addTags:
+        post:
+            operationId: bulkAddTagsToNotes
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BulkEditQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BulkEditQuery'
+                required: true
+            responses:
+                "200":
+                    description: Successful response
+            summary: Bulk add tags to notes
+            tags:
+                - notes
+    /v1/notes/delete:
+        post:
+            operationId: bulkDeleteNotes
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BulkQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BulkQuery'
+                required: true
+            responses:
+                "200":
+                    description: Successful response
+            summary: Bulk delete notes
+            tags:
+                - notes
     /v1/notes/meta/keys:
         get:
             operationId: getNoteMetaKeys
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
             summary: Get all unique meta keys used in notes
             tags:
                 - notes
+    /v1/notes/removeTags:
+        post:
+            operationId: bulkRemoveTagsFromNotes
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BulkEditQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BulkEditQuery'
+                required: true
+            responses:
+                "200":
+                    description: Successful response
+            summary: Bulk remove tags from notes
+            tags:
+                - notes
+    /v1/plugins/{pluginName}/block/render:
+        get:
+            description: Renders a block using the plugin's block renderer, returning HTML content for the specified mode.
+            operationId: renderPluginBlock
+            parameters:
+                - description: The plugin name
+                  in: path
+                  name: pluginName
+                  required: true
+                  schema:
+                    type: string
+                - description: The ID of the block to render
+                  in: query
+                  name: blockId
+                  required: true
+                  schema:
+                    type: integer
+                - description: 'Render mode: ''view'' or ''edit'''
+                  in: query
+                  name: mode
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        text/html:
+                            schema:
+                                type: string
+                    description: Successful response
+            summary: Render a plugin block
+            tags:
+                - plugins
+                - blocks
     /v1/queries:
         get:
             operationId: listQueries
@@ -2727,6 +2911,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
                 "400":
                     description: Invalid input
@@ -2748,6 +2934,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
                 "400":
                     description: Invalid input
@@ -2783,6 +2971,8 @@ paths:
             operationId: getDatabaseSchema
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
             summary: Get database table and column names
             tags:
@@ -2835,6 +3025,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
                 "400":
                     description: Invalid input
@@ -2856,6 +3048,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
                 "400":
                     description: Invalid input
@@ -3062,6 +3256,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
                 "400":
                     description: Invalid input
@@ -3083,6 +3279,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
                 "400":
                     description: Invalid input
@@ -3211,6 +3409,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
             summary: Delete a version
             tags:
@@ -3251,6 +3451,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
             summary: Delete a version (POST alternative)
             tags:
@@ -3356,6 +3558,8 @@ paths:
                 required: true
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
             summary: Clean up old versions for a resource
             tags:
@@ -3384,6 +3588,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
             summary: Compare two versions of a resource
             tags:
@@ -3480,6 +3686,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
                 "400":
                     description: Invalid input
@@ -3501,6 +3709,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
                 "400":
                     description: Invalid input
@@ -3744,6 +3954,8 @@ paths:
             operationId: getResourceMetaKeys
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
             summary: Get all unique meta keys used in resources
             tags:
@@ -3834,6 +4046,8 @@ paths:
                 required: true
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
             summary: Bulk clean up old versions
             tags:
@@ -4045,6 +4259,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
                 "400":
                     description: Invalid input
@@ -4066,6 +4282,8 @@ paths:
                     type: integer
             responses:
                 "200":
+                    content:
+                        application/json: {}
                     description: Successful response
                 "400":
                     description: Invalid input
@@ -4174,6 +4392,8 @@ tags:
       name: logs
     - description: Operations related to notes
       name: notes
+    - description: Operations related to plugins
+      name: plugins
     - description: Operations related to queries
       name: queries
     - description: Operations related to relations

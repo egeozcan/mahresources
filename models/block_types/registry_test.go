@@ -257,6 +257,24 @@ func TestRegistry_ValidateState_Table_InvalidSortDir(t *testing.T) {
 	assert.Contains(t, err.Error(), "sortDir must be 'asc' or 'desc'")
 }
 
+func TestUnregisterBlockType(t *testing.T) {
+	// Register a test type
+	RegisterBlockType(TextBlockType{})
+	assert.NotNil(t, GetBlockType("text"))
+
+	// Unregister it
+	UnregisterBlockType("text")
+	assert.Nil(t, GetBlockType("text"))
+
+	// Re-register for other tests
+	RegisterBlockType(TextBlockType{})
+}
+
+func TestUnregisterBlockType_NonExistent(t *testing.T) {
+	// Should not panic
+	UnregisterBlockType("nonexistent_type_xyz")
+}
+
 func TestRegistry_GetAllBlockTypes(t *testing.T) {
 	types := GetAllBlockTypes()
 	// Should have at least text, heading, divider, gallery, references, todos, table

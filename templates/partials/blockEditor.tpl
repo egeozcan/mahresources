@@ -814,6 +814,29 @@
                             </template>
                         </div>
                     </template>
+
+                    {# Plugin block (enabled) #}
+                    <template x-if="block.type.startsWith('plugin:') && blockTypes.find(bt => bt.type === block.type)">
+                        <div x-data="blockPlugin(block, () => editMode)"
+                             x-effect="loadRender()">
+                            <template x-if="renderLoading && !renderedHtml">
+                                <div class="text-gray-400 text-sm py-4 text-center">Loading plugin block...</div>
+                            </template>
+                            <template x-if="renderError">
+                                <div class="p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm" x-text="renderError"></div>
+                            </template>
+                            <template x-if="renderedHtml">
+                                <div x-html="renderedHtml" class="plugin-block-content"></div>
+                            </template>
+                        </div>
+                    </template>
+
+                    {# Plugin block (unavailable - plugin disabled) #}
+                    <template x-if="block.type.startsWith('plugin:') && !blockTypes.find(bt => bt.type === block.type)">
+                        <div class="p-4 bg-gray-50 border border-gray-200 rounded text-gray-500 text-sm">
+                            This block requires the "<span x-text="block.type.split(':')[1]"></span>" plugin which is not currently enabled.
+                        </div>
+                    </template>
                 </div>
             </div>
         </template>
