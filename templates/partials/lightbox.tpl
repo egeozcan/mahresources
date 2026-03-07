@@ -411,24 +411,24 @@
             <!-- Divider -->
             <div class="border-t border-gray-700"></div>
 
-            <!-- Recent tags -->
+            <!-- Recent tags (numpad order) -->
             <template x-if="$store.lightbox.hasRecentTags()">
                 <div class="space-y-1.5">
                     <label class="block text-xs font-medium text-gray-500 uppercase tracking-wide">Recent</label>
-                    <div class="flex flex-wrap gap-1.5">
-                        <template x-for="(recent, rIdx) in $store.lightbox.recentTags" :key="rIdx">
-                            <template x-if="recent">
+                    <div class="grid grid-cols-3 gap-1.5">
+                        <template x-for="(_, vIdx) in $store.lightbox._numpadOrder" :key="vIdx">
+                            <template x-if="$store.lightbox.recentTags[$store.lightbox.numpadIndex(vIdx)]">
                                 <button
-                                    @click="$store.lightbox.toggleRecentTag(rIdx)"
+                                    @click="$store.lightbox.toggleRecentTag($store.lightbox.numpadIndex(vIdx))"
                                     class="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                    :class="$store.lightbox.isTagOnResource(recent?.id)
+                                    :class="$store.lightbox.isTagOnResource($store.lightbox.recentTags[$store.lightbox.numpadIndex(vIdx)]?.id)
                                         ? 'border border-green-600/60 bg-green-900/20 text-green-300 hover:bg-red-900/20 hover:border-red-600/60 hover:text-red-300'
                                         : 'border border-dashed border-gray-600 text-gray-400 hover:border-indigo-500 hover:text-indigo-300 hover:bg-indigo-900/20'"
-                                    :aria-label="($store.lightbox.isTagOnResource(recent?.id) ? 'Remove ' : 'Add ') + recent?.name"
+                                    :aria-label="($store.lightbox.isTagOnResource($store.lightbox.recentTags[$store.lightbox.numpadIndex(vIdx)]?.id) ? 'Remove ' : 'Add ') + $store.lightbox.recentTags[$store.lightbox.numpadIndex(vIdx)]?.name"
                                 >
                                     <kbd class="text-[10px] font-mono text-gray-500 bg-gray-800/50 px-1 rounded"
-                                         x-text="$store.lightbox.recentTagKeyLabel(rIdx)"></kbd>
-                                    <span x-text="recent?.name"></span>
+                                         x-text="$store.lightbox.recentTagKeyLabel($store.lightbox.numpadIndex(vIdx))"></kbd>
+                                    <span x-text="$store.lightbox.recentTags[$store.lightbox.numpadIndex(vIdx)]?.name"></span>
                                 </button>
                             </template>
                         </template>
@@ -443,11 +443,11 @@
             <div class="space-y-2">
                 <label class="block text-sm font-medium text-gray-300 mb-1.5">Tag Slots</label>
                 <div class="grid grid-cols-3 gap-1.5">
-                <template x-for="(slot, index) in $store.lightbox.quickTagSlots" :key="index">
-                    <div class="flex items-center gap-1">
+                <template x-for="(_, vIdx) in $store.lightbox._numpadOrder" :key="vIdx">
+                    <div class="flex items-center gap-1" x-data="{ get idx() { return $store.lightbox.numpadIndex(vIdx) }, get slot() { return $store.lightbox.quickTagSlots[this.idx] } }">
                         <!-- Number key label -->
                         <kbd class="flex-none w-5 h-5 flex items-center justify-center bg-gray-800 border border-gray-600 rounded text-[10px] font-mono text-gray-300"
-                             x-text="$store.lightbox.quickTagKeyLabel(index)"></kbd>
+                             x-text="$store.lightbox.quickTagKeyLabel(idx)"></kbd>
 
                         <!-- Empty slot: autocomplete input (x-show to avoid x-if destruction race with popover) -->
                         <div x-show="!slot" class="flex-1 min-w-0"
@@ -457,7 +457,7 @@
                                  standalone: true,
                                  sortBy: 'most_used_resource',
                                  max: 1,
-                                 onSelect: (tag) => { $store.lightbox.setQuickTagSlot(index, tag); }
+                                 onSelect: (tag) => { $store.lightbox.setQuickTagSlot(idx, tag); }
                              })">
                             <div class="relative">
                                 <input
@@ -465,8 +465,8 @@
                                     type="text"
                                     x-bind="inputEvents"
                                     class="w-full px-1.5 py-1 bg-gray-800 border border-gray-700 rounded text-xs text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                                    :placeholder="'Assign to ' + $store.lightbox.quickTagKeyLabel(index) + '...'"
-                                    :aria-label="'Assign tag to slot ' + $store.lightbox.quickTagKeyLabel(index)"
+                                    :placeholder="'Assign to ' + $store.lightbox.quickTagKeyLabel(idx) + '...'"
+                                    :aria-label="'Assign tag to slot ' + $store.lightbox.quickTagKeyLabel(idx)"
                                     autocomplete="off"
                                     role="combobox"
                                     aria-autocomplete="list"
@@ -495,7 +495,7 @@
                         <!-- Configured slot: tag name + toggle button + clear -->
                         <div x-show="!!slot" class="flex-1 min-w-0 flex items-center gap-1">
                             <button
-                                @click="$store.lightbox.toggleQuickTag(index)"
+                                @click="$store.lightbox.toggleQuickTag(idx)"
                                 class="flex-1 min-w-0 px-1.5 py-1 rounded text-xs text-left truncate transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500"
                                 :class="$store.lightbox.isTagOnResource(slot?.id)
                                     ? 'bg-green-700/50 hover:bg-red-700/50 border border-green-600/50'
@@ -506,9 +506,9 @@
                             >
                             </button>
                             <button
-                                @click="$store.lightbox.clearQuickTagSlot(index)"
+                                @click="$store.lightbox.clearQuickTagSlot(idx)"
                                 class="flex-none p-0.5 hover:bg-white/10 rounded-full transition-colors focus:outline-none focus:ring-1 focus:ring-white"
-                                :aria-label="'Clear slot ' + $store.lightbox.quickTagKeyLabel(index)"
+                                :aria-label="'Clear slot ' + $store.lightbox.quickTagKeyLabel(idx)"
                             >
                                 <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>

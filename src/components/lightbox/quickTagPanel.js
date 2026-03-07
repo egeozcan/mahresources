@@ -242,7 +242,14 @@ export const quickTagPanelMethods = {
     requestAnimationFrame(() => poll(10));
   },
 
-  // ==================== Keyboard Shortcut Label ====================
+  // ==================== Numpad Layout ====================
+
+  // Numpad visual order: top row = 7,8,9 → mid = 4,5,6 → bottom = 1,2,3
+  _numpadOrder: [6, 7, 8, 3, 4, 5, 0, 1, 2],
+
+  numpadIndex(visualIndex) {
+    return this._numpadOrder[visualIndex];
+  },
 
   quickTagKeyLabel(index) {
     // index 0-8 → '1'-'9'
