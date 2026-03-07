@@ -6,11 +6,11 @@
 
 {% block body %}
     {% plugin_slot "note_list_before" %}
-    <div style="display:contents"{% if owners && owners|length == 1 %} data-paste-context='{"type":"group","id":{{ owners.0.ID }},"name":"{{ owners.0.Name|escapejs }}"}'{% endif %}>
+    <section class="list-container"{% if owners && owners|length == 1 %} data-paste-context='{"type":"group","id":{{ owners.0.ID }},"name":"{{ owners.0.Name|escapejs }}"}'{% endif %}>
     {% for entity in notes %}
         {% include "/partials/note.tpl" with selectable=true %}
     {% endfor %}
-    </div>
+    </section>
     {% plugin_slot "note_list_after" %}
 {% endblock %}
 
