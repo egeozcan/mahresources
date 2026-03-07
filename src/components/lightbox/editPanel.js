@@ -323,6 +323,9 @@ export const editPanelMethods = {
       }
       this.needsRefreshOnClose = true;
       this.announce(`Added tag: ${tag.Name}`);
+
+      // Record as recent tag (skips if in a quick-add slot)
+      this.recordRecentTag(tag);
     } catch (err) {
       console.error('Failed to add tag:', err);
       if (this.resourceDetails?.Tags) {

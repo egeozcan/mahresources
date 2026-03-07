@@ -10,6 +10,7 @@ export const quickTagPanelState = {
   quickTagPanelOpen: false,
   quickTagSlots: Array(9).fill(null), // [{id, name} | null] x 9
   _quickTagTogglingIds: new Set(), // Not Alpine-reactive; used only as a guard in toggleQuickTag, not in templates
+  recentTags: Array(5).fill(null), // [{id, name, ts} | null] x 5
 };
 
 export const quickTagPanelMethods = {
@@ -28,6 +29,11 @@ export const quickTagPanelMethods = {
       if (typeof data.drawerOpen === 'boolean') {
         this.quickTagPanelOpen = data.drawerOpen;
       }
+      if (Array.isArray(data.recentTags)) {
+        const recent = data.recentTags.slice(0, 5);
+        while (recent.length < 5) recent.push(null);
+        this.recentTags = recent;
+      }
     } catch {
       // Corrupted data — ignore
     }
@@ -38,6 +44,7 @@ export const quickTagPanelMethods = {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         slots: this.quickTagSlots,
         drawerOpen: this.quickTagPanelOpen,
+        recentTags: this.recentTags,
       }));
     } catch {
       // Storage full or unavailable — ignore
@@ -88,6 +95,14 @@ export const quickTagPanelMethods = {
     this.quickTagSlots[index] = tag ? { id: tag.ID, name: tag.Name } : null;
     // Force Alpine reactivity on array
     this.quickTagSlots = [...this.quickTagSlots];
+    // Remove from recents if this tag was there
+    if (tag) {
+      const recentIdx = this.recentTags.findIndex(r => r && r.id === tag.ID);
+      if (recentIdx !== -1) {
+        this.recentTags[recentIdx] = null;
+        this.recentTags = [...this.recentTags];
+      }
+    }
     this._saveQuickTagsToStorage();
 
     // Dismiss any open popovers in the quick-tag panel (autocompleter dropdowns)
@@ -98,6 +113,70 @@ export const quickTagPanelMethods = {
 
   clearQuickTagSlot(index) {
     this.setQuickTagSlot(index, null);
+  },
+
+  // ==================== Recent Tags ====================
+
+  recordRecentTag(tag) {
+    // tag = { ID: number, Name: string }
+    // Skip if this tag is in a quick-add slot
+    if (this.quickTagSlots.some(s => s && s.id === tag.ID)) return;
+
+    const now = Date.now();
+
+    // If already in recents, update ts in place
+    const existingIdx = this.recentTags.findIndex(r => r && r.id === tag.ID);
+    if (existingIdx !== -1) {
+      this.recentTags[existingIdx] = { id: tag.ID, name: tag.Name, ts: now };
+      this.recentTags = [...this.recentTags];
+      this._saveQuickTagsToStorage();
+      return;
+    }
+
+    // Find the position to replace: first null, or oldest ts
+    let targetIdx = this.recentTags.indexOf(null);
+    if (targetIdx === -1) {
+      // All filled — find oldest (smallest ts)
+      targetIdx = 0;
+      for (let i = 1; i < this.recentTags.length; i++) {
+        if (this.recentTags[i].ts < this.recentTags[targetIdx].ts) {
+          targetIdx = i;
+        }
+      }
+    }
+
+    this.recentTags[targetIdx] = { id: tag.ID, name: tag.Name, ts: now };
+    this.recentTags = [...this.recentTags];
+    this._saveQuickTagsToStorage();
+  },
+
+  async toggleRecentTag(index) {
+    const recent = this.recentTags[index];
+    if (!recent) return;
+
+    const tagId = recent.id;
+    if (this._quickTagTogglingIds.has(tagId)) return;
+
+    this._quickTagTogglingIds.add(tagId);
+    try {
+      const tag = { ID: tagId, Name: recent.name };
+
+      if (this.isTagOnResource(tagId)) {
+        await this.saveTagRemoval(tag);
+      } else {
+        await this.saveTagAddition(tag);
+      }
+    } finally {
+      this._quickTagTogglingIds.delete(tagId);
+    }
+  },
+
+  hasRecentTags() {
+    return this.recentTags.some(r => r !== null);
+  },
+
+  recentTagKeyLabel(index) {
+    return 'Shift+' + String(index + 1);
   },
 
   // ==================== Tag Toggle ====================

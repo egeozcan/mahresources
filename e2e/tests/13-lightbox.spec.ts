@@ -1353,4 +1353,151 @@ test.describe('Lightbox on Group Detail Page', () => {
 
     await expect(counter).toContainText('1 /');
   });
+
+  test('should show recently added tags in Recent section', async ({ page, apiClient }) => {
+    const recentTag = await apiClient.createTag(`RecentTag-${testRunId}`);
+
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    // Clear localStorage to start fresh (must be after navigation for same-origin access)
+    await page.evaluate(() => localStorage.removeItem('mahresources_quickTags'));
+
+    // Open lightbox
+    const firstImage = page.locator('[data-lightbox-item]').first();
+    await expect(firstImage).toBeVisible();
+    await firstImage.click();
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
+    await expect(lightbox).toBeVisible();
+
+    // Open quick tag panel
+    await page.keyboard.press('t');
+    const quickTagPanel = lightbox.locator('[data-quick-tag-panel]');
+    await expect(quickTagPanel).toBeVisible();
+    await expect(quickTagPanel.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });
+
+    // Add tag via autocompleter
+    const tagInput = quickTagPanel.locator('[data-tag-editor-input]');
+    await tagInput.fill(`RecentTag-${testRunId}`);
+    await page.waitForTimeout(400);
+    const tagOption = quickTagPanel.locator(`div[role="option"]:has-text("RecentTag-${testRunId}")`);
+    await tagOption.click();
+    await page.waitForTimeout(500);
+
+    // Verify "Recent" section appears with the tag
+    const recentLabel = quickTagPanel.locator('label:has-text("Recent")');
+    await expect(recentLabel).toBeVisible();
+
+    // Verify recent tag button exists with a kbd element (distinguishes from other tag displays)
+    const recentButton = quickTagPanel.locator(`button:has(kbd):has-text("RecentTag-${testRunId}")`);
+    await expect(recentButton).toBeVisible();
+  });
+
+  test('should toggle recent tag via Shift+Digit shortcut', async ({ page, apiClient }) => {
+    const shortcutTag = await apiClient.createTag(`ShortcutRecentTag-${testRunId}`);
+
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    // Seed localStorage with a recent tag (must be after navigation for same-origin access)
+    await page.evaluate((tag) => {
+      const data = JSON.parse(localStorage.getItem('mahresources_quickTags') || '{}');
+      data.recentTags = [
+        { id: tag.id, name: tag.name, ts: Date.now() },
+        null, null, null, null,
+      ];
+      localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
+    }, { id: shortcutTag.ID, name: shortcutTag.Name });
+
+    // Reload so Alpine picks up the seeded localStorage
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    // Open lightbox
+    const firstImage = page.locator('[data-lightbox-item]').first();
+    await expect(firstImage).toBeVisible();
+    await firstImage.click();
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
+    await expect(lightbox).toBeVisible();
+
+    // Open quick tag panel
+    await page.keyboard.press('t');
+    const quickTagPanel = lightbox.locator('[data-quick-tag-panel]');
+    await expect(quickTagPanel).toBeVisible();
+    await expect(quickTagPanel.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });
+
+    // Verify the recent tag button is visible
+    const recentButton = quickTagPanel.locator(`button:has(kbd):has-text("ShortcutRecentTag-${testRunId}")`);
+    await expect(recentButton).toBeVisible();
+
+    // Blur any focused input so canNavigate() returns true
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+
+    // Press Shift+Digit1 to toggle the recent tag
+    await page.keyboard.press('Shift+Digit1');
+    await page.waitForTimeout(500);
+
+    // Verify the tag was added to the resource (check tag pills area)
+    const tagChip = quickTagPanel.locator(`.flex.flex-wrap.gap-2 span.inline-flex:has-text("ShortcutRecentTag-${testRunId}")`);
+    await expect(tagChip).toBeVisible();
+  });
+
+  test('should remove recent tag when promoted to quick-add slot', async ({ page, apiClient }) => {
+    const promotedTag = await apiClient.createTag(`PromotedTag-${testRunId}`);
+
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    // Seed localStorage with a recent tag (must be after navigation for same-origin access)
+    await page.evaluate((tag) => {
+      const data = JSON.parse(localStorage.getItem('mahresources_quickTags') || '{}');
+      data.recentTags = [
+        { id: tag.id, name: tag.name, ts: Date.now() },
+        null, null, null, null,
+      ];
+      // Ensure all quick-add slots are empty
+      data.slots = Array(9).fill(null);
+      localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
+    }, { id: promotedTag.ID, name: promotedTag.Name });
+
+    // Reload so Alpine picks up the seeded localStorage
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    // Open lightbox
+    const firstImage = page.locator('[data-lightbox-item]').first();
+    await expect(firstImage).toBeVisible();
+    await firstImage.click();
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
+    await expect(lightbox).toBeVisible();
+
+    // Open quick tag panel
+    await page.keyboard.press('t');
+    const quickTagPanel = lightbox.locator('[data-quick-tag-panel]');
+    await expect(quickTagPanel).toBeVisible();
+    await expect(quickTagPanel.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });
+
+    // Verify the recent tag is shown
+    const recentButton = quickTagPanel.locator(`button:has(kbd):has-text("PromotedTag-${testRunId}")`);
+    await expect(recentButton).toBeVisible();
+
+    // Assign the tag to quick-add slot 1 via its autocompleter
+    const slotInput = quickTagPanel.locator('input[placeholder="Assign tag to 1..."]');
+    await slotInput.fill(`PromotedTag-${testRunId}`);
+    await page.waitForTimeout(400);
+    const slotOption = quickTagPanel.locator(`div[role="option"]:has-text("PromotedTag-${testRunId}")`);
+    await slotOption.click();
+    await page.waitForTimeout(500);
+
+    // Verify the tag is no longer in the Recent section
+    // The button with kbd and the tag name should be gone from recents
+    // But it should now appear as a quick-add slot toggle button (no kbd matching "Shift+")
+    await expect(recentButton).toBeHidden();
+
+    // Verify it's now in a quick-add slot (toggle button without "Shift+" kbd)
+    const slotButton = quickTagPanel.locator(`button:has-text("PromotedTag-${testRunId}")`).filter({
+      hasNot: page.locator('kbd'),
+    });
+    await expect(slotButton).toBeVisible();
+  });
 });

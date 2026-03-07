@@ -28,6 +28,7 @@
     @keydown.8.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleQuickTag(7)"
     @keydown.9.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleQuickTag(8)"
     @keyup.0.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.focusTagEditor()"
+    @keydown.window="if ($store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $event.shiftKey) { const m = $event.code.match(/^Digit([1-5])$/); if (m) { $event.preventDefault(); $store.lightbox.toggleRecentTag(parseInt(m[1], 10) - 1); } }"
     @touchstart="$store.lightbox.handleTouchStart($event)"
     @touchmove="$store.lightbox.handleTouchMove($event)"
     @touchend="$store.lightbox.handleTouchEnd($event)"
@@ -404,6 +405,34 @@
                 <div class="relative">
                     <label class="block text-sm font-medium text-gray-300 mb-1.5">Tags</label>
                     <div class="text-gray-500 text-sm italic">Loading tags...</div>
+                </div>
+            </template>
+
+            <!-- Divider -->
+            <div class="border-t border-gray-700"></div>
+
+            <!-- Recent tags -->
+            <template x-if="$store.lightbox.hasRecentTags()">
+                <div class="space-y-1.5">
+                    <label class="block text-xs font-medium text-gray-500 uppercase tracking-wide">Recent</label>
+                    <div class="flex flex-wrap gap-1.5">
+                        <template x-for="(recent, rIdx) in $store.lightbox.recentTags" :key="rIdx">
+                            <template x-if="recent">
+                                <button
+                                    @click="$store.lightbox.toggleRecentTag(rIdx)"
+                                    class="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                    :class="$store.lightbox.isTagOnResource(recent?.id)
+                                        ? 'border border-green-600/60 bg-green-900/20 text-green-300 hover:bg-red-900/20 hover:border-red-600/60 hover:text-red-300'
+                                        : 'border border-dashed border-gray-600 text-gray-400 hover:border-indigo-500 hover:text-indigo-300 hover:bg-indigo-900/20'"
+                                    :aria-label="($store.lightbox.isTagOnResource(recent?.id) ? 'Remove ' : 'Add ') + recent?.name"
+                                >
+                                    <kbd class="text-[10px] font-mono text-gray-500 bg-gray-800/50 px-1 rounded"
+                                         x-text="$store.lightbox.recentTagKeyLabel(rIdx)"></kbd>
+                                    <span x-text="recent?.name"></span>
+                                </button>
+                            </template>
+                        </template>
+                    </div>
                 </div>
             </template>
 
