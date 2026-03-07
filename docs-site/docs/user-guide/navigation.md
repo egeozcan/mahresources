@@ -50,6 +50,8 @@ The gear icon in the top-right corner opens a settings dropdown with display pre
 
 Open the search dialog by clicking **Search** in the header or pressing **Cmd+K** (macOS) / **Ctrl+K** (Windows/Linux).
 
+![Global search modal showing results](/img/global-search.png)
+
 Type at least 2 characters. Results appear as a flat list ranked by relevance, each showing a type badge (Resource, Note, Group, Tag, etc.), the item name, and a description preview.
 
 ### Keyboard Navigation
@@ -63,6 +65,8 @@ Type at least 2 characters. Results appear as a flat list ranked by relevance, e
 Results are cached server-side for 60 seconds. The default result limit is 20 (max 200).
 
 ## List Views
+
+![Resource grid view with thumbnails and tag filters](/img/grid-view.png)
 
 ### Table Layout
 

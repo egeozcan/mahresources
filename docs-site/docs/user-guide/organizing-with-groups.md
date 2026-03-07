@@ -38,6 +38,8 @@ Create groups nested under a parent:
 
 ## Group Hierarchy
 
+![Hierarchical group tree view](/img/group-tree.png)
+
 Groups form a hierarchical tree through ownership:
 
 ```
@@ -57,6 +59,8 @@ Project Alpha (Group)
 - **Owner** - Shows the parent group in the sidebar
 
 ### Viewing Group Contents
+
+![Group detail page with owned resources and notes](/img/group-detail.png)
 
 The group detail page shows content in expandable sections:
 

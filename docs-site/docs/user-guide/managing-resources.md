@@ -10,6 +10,8 @@ Resources are files of any type: images, documents, videos, or anything else you
 
 ### File Upload
 
+![Create resource upload form](/img/upload-form.png)
+
 1. Navigate to **Resources** in the top menu
 2. Click the **Create** button
 3. Use the file picker to select one or more files
@@ -77,6 +79,8 @@ Resources display as cards. Each card shows:
 - Checkbox for bulk selection
 
 ### Resource Detail Page
+
+![Resource detail page with tags, groups, and metadata](/img/resource-detail.png)
 
 Click a resource name to view its detail page, showing:
 

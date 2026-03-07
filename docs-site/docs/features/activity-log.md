@@ -7,6 +7,8 @@ title: Activity Log
 
 Every create, update, and delete operation is recorded with the HTTP request context that triggered it. Log entries are written asynchronously (fire-and-forget) so they do not slow down the operation itself.
 
+![Activity log showing recent entity changes](/img/activity-log.png)
+
 ## Log Entry Properties
 
 | Property | Type | Description |
@@ -39,6 +41,7 @@ Every create, update, and delete operation is recorded with the HTTP request con
 | `delete` | An entity was deleted |
 | `system` | System-level events (startup, migration, configuration) |
 | `progress` | Long-running operation progress updates |
+| `plugin` | Plugin hook or action execution events |
 
 ## Viewing Logs
 

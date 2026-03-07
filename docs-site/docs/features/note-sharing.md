@@ -126,7 +126,7 @@ Adding, removing, or editing todo items is not allowed on shared views -- only t
 
 ### Shared Calendars
 
-Calendar blocks on shared notes display events from ICS sources and custom events. Visitors can browse month and agenda views, create custom events, and edit or delete custom events. Event changes are persisted to the share server via `POST /s/{token}/block/{blockId}/state` and `GET /s/{token}/block/{blockId}/calendar/events`.
+Calendar blocks on shared notes support browsing month and agenda views, viewing ICS-sourced events, and creating, editing, or deleting custom events. Event changes are persisted to the share server via `POST /s/{token}/block/{blockId}/state` and `GET /s/{token}/block/{blockId}/calendar/events`.
 
 ### Shared Block Constraints
 
@@ -134,6 +134,8 @@ Calendar blocks on shared notes display events from ICS sources and custom event
 |-----------|-------|----------|
 | View content | Yes | Yes |
 | Toggle/check items | Yes | -- |
+| Browse month/agenda views | -- | Yes |
+| View ICS-sourced events | -- | Yes |
 | Create custom events | -- | Yes |
 | Edit/delete custom events | -- | Yes |
 | Add/remove items | No | -- |

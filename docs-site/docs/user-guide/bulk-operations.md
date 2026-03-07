@@ -8,6 +8,8 @@ Bulk operations let you modify multiple resources or groups at once: add/remove 
 
 ## Selecting Items
 
+![Bulk selection toolbar with tag and group operations](/img/bulk-selection.png)
+
 Click the checkbox next to any item in a list view to select it.
 
 | Action | Method |

@@ -226,6 +226,8 @@ Note deletion is permanent. Related resources are not deleted but the link to th
 
 ## Using the Block Editor
 
+![Note with heading, text, and todo blocks](/img/note-blocks.png)
+
 The block editor appears below the main content area on note detail pages. It lets you organize note content using different block types.
 
 ### Entering and Exiting Edit Mode

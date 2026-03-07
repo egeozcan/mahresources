@@ -60,6 +60,20 @@ end)
 
 `mah.abort(reason)` raises a special Lua error that the hook runner intercepts. The operation is cancelled and the reason is returned to the client. This works in both before hooks and action handlers.
 
+### Complete Hook Reference
+
+All 28 lifecycle hooks, organized by entity type:
+
+| Entity | Before Create | After Create | Before Update | After Update | Before Delete | After Delete |
+|--------|--------------|-------------|---------------|-------------|---------------|-------------|
+| Resource | `before_resource_create` | `after_resource_create` | `before_resource_update` | `after_resource_update` | `before_resource_delete` | `after_resource_delete` |
+| Note | `before_note_create` | `after_note_create` | `before_note_update` | `after_note_update` | `before_note_delete` | `after_note_delete` |
+| Group | `before_group_create` | `after_group_create` | `before_group_update` | `after_group_update` | `before_group_delete` | `after_group_delete` |
+| Tag | `before_tag_create` | `after_tag_create` | `before_tag_update` | `after_tag_update` | `before_tag_delete` | `after_tag_delete` |
+| Category | `before_category_create` | `after_category_create` | `before_category_update` | `after_category_update` | `before_category_delete` | `after_category_delete` |
+
+Note hooks are also type-aware. If a note has a NoteType with ID `X`, the hook `before_note_type_X_create` fires in addition to `before_note_create`. The same pattern applies to all note lifecycle hooks.
+
 ## Injections
 
 Injections render HTML into named slots on existing pages. Register them during `init()` using `mah.inject(slot_name, render_function)`.

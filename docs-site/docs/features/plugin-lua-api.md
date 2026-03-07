@@ -485,7 +485,9 @@ Callbacks are queued and executed on the plugin's VM thread with a 5-second dead
 
 ### Sync Functions
 
-Sync functions block the Lua execution until the response arrives. Use these inside action handlers where async callbacks cannot fire (the VM lock is held).
+Action handlers MUST use sync HTTP functions. Async callbacks cannot fire while the VM lock is held by the handler, so async requests will silently never complete.
+
+Sync functions block the Lua execution until the response arrives.
 
 #### mah.http.get_sync(url, [options])
 

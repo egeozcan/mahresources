@@ -804,6 +804,41 @@ A table block holds either static data (`columns`/`rows`) or a query reference (
 
 - `sortDir`: Either `"asc"` or `"desc"`
 
+### Calendar Block
+
+**Content:**
+```json
+{
+  "calendars": [
+    {
+      "url": "https://example.com/calendar.ics",
+      "name": "Team Calendar"
+    }
+  ]
+}
+```
+
+**State:**
+```json
+{
+  "customEvents": [
+    {
+      "title": "Team Meeting",
+      "start": "2026-03-07T10:00:00Z",
+      "end": "2026-03-07T11:00:00Z"
+    }
+  ]
+}
+```
+
+- `calendars`: Array of ICS calendar sources with `url` and `name`
+- `customEvents`: User-created events stored in block state
+
+Limitations:
+- ICS responses are cached with a 30-minute TTL
+- Maximum ICS file size: 10 MB
+- No RRULE (recurring event) support -- only the first occurrence of recurring events is shown
+
 ---
 
 # Note Types API

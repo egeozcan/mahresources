@@ -109,7 +109,7 @@ A background worker pre-generates thumbnails for video Resources so they are ava
 
 The worker operates in two modes:
 - **Queue-based** -- Newly uploaded videos are queued for immediate thumbnail generation
-- **Backfill** -- When enabled, scans for existing videos without thumbnails and processes them in batches
+- **Backfill** -- When enabled, scans at server startup for existing videos without thumbnails and processes them in batches. This is a one-time startup scan, not a continuous process.
 
 The worker creates null thumbnails (width=0, height=0) so any size can be derived from the cached frame.
 

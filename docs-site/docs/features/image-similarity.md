@@ -186,7 +186,7 @@ If the queue is full (1000 items), new uploads fall back to batch processing on 
 
 If you have images that were uploaded before hash calculation was available, the hash worker automatically processes them during its batch cycles. No manual intervention is required.
 
-The worker also handles migration of hash format changes (string to integer representation) transparently.
+The worker also handles migration of hash format changes transparently. The current storage format uses int64 for efficient Hamming distance calculation. Legacy string-format hashes are still supported and migrated automatically. No action needed from you.
 
 ## Troubleshooting
 

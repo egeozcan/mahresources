@@ -122,6 +122,8 @@ The top of filter sections shows the 20 most-used Tags for the current query. Cl
 
 ### Applying Filters
 
+![Filtered resource search results](/img/search-results.png)
+
 1. Fill in desired filter fields
 2. Click **Search**
 3. The URL updates to reflect your filters (bookmarkable and shareable)

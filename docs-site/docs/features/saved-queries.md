@@ -118,6 +118,8 @@ GROUP BY t.id, t.name
 ORDER BY resource_count DESC
 ```
 
+![Saved query editor with SQL and results](/img/query-editor.png)
+
 ## Code Editor
 
 The Query create and edit pages use a CodeMirror 6 editor with SQL syntax highlighting, bracket matching, and auto-closing brackets. The editor loads autocompletion data from the database schema endpoint (`/v1/query/schema`), providing table and column name suggestions as you type. Line numbers and undo history are included.

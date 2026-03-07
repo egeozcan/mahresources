@@ -7,6 +7,8 @@ sidebar_position: 1
 
 Mahresources is a self-hosted system for storing files, writing notes, and linking them together. It runs as a single Go binary with SQLite or PostgreSQL, and serves a web UI for browsing, searching, and editing everything.
 
+![Mahresources dashboard showing recent resources and notes](/img/dashboard.png)
+
 ## What is Mahresources?
 
 Files (called Resources), Notes, and Groups are stored in a database with tracked relationships and full-text search. Groups nest inside each other and contain any mix of Resources and Notes. Tags and Categories provide additional ways to classify items across Groups.
