@@ -170,11 +170,13 @@ func parseBlockTypeTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Pl
 		PluginName: pluginName,
 	}
 
-	// Required: type
+	// Required: type (must be a string)
 	if v := tbl.RawGetString("type"); v == lua.LNil {
 		return nil, fmt.Errorf("missing required field 'type'")
+	} else if str, ok := v.(lua.LString); !ok {
+		return nil, fmt.Errorf("'type' must be a string, got %s", v.Type())
 	} else {
-		raw := v.String()
+		raw := string(str)
 		if !validBlockTypeName.MatchString(raw) {
 			return nil, fmt.Errorf("invalid type name %q: must match [a-z][a-z0-9-]{0,49}", raw)
 		}

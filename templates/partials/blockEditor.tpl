@@ -866,9 +866,11 @@
                         <button
                             @click="addBlock(bt.type); addBlockPickerOpen = false"
                             class="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center gap-2"
+                            :title="bt.description || ''"
                         >
                             <span x-text="bt.icon"></span>
                             <span x-text="bt.label"></span>
+                            <span x-show="bt.description" x-text="bt.description" class="text-xs text-gray-400 ml-auto truncate max-w-[200px]"></span>
                         </button>
                     </template>
                 </div>

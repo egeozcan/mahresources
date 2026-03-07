@@ -88,6 +88,7 @@ export function blockEditor(noteId, initialBlocks = []) {
             type: bt.type,
             label: bt.label || this._formatLabel(bt.type),
             icon: bt.icon || this._getIconForType(bt.type),
+            description: bt.description || '',
             defaultContent: bt.defaultContent,
             plugin: bt.plugin || false,
             pluginName: bt.pluginName || null,

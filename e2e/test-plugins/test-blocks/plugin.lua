@@ -1,10 +1,8 @@
 plugin = {
-    name = "example-blocks",
+    name = "test-blocks",
     version = "1.0",
-    description = "Example plugin demonstrating custom block types"
+    description = "Test plugin for block type E2E tests"
 }
-
-plugin.settings = {}
 
 function init()
     mah.block_type({
@@ -37,9 +35,9 @@ function init()
             local blockId = ctx.block.id
 
             return string.format([[
-                <div style="text-align:center; padding:20px;">
-                    <h3 style="margin:0 0 10px 0;">%s</h3>
-                    <div style="font-size:2em; font-weight:bold; margin:10px 0;">%d</div>
+                <div data-testid="counter-view" style="text-align:center; padding:20px;">
+                    <h3 data-testid="counter-label" style="margin:0 0 10px 0;">%s</h3>
+                    <div data-testid="counter-value" style="font-size:2em; font-weight:bold; margin:10px 0;">%d</div>
                     <button onclick="mahBlock.updateState(%d, {count: %d})"
                             style="padding:8px 16px; background:#3b82f6; color:white; border:none; border-radius:4px; cursor:pointer;">
                         +1
@@ -53,7 +51,7 @@ function init()
             local blockId = ctx.block.id
 
             return string.format([[
-                <div style="padding:10px;">
+                <div data-testid="counter-edit" style="padding:10px;">
                     <label style="display:block; margin-bottom:4px; font-weight:500;">Counter Label</label>
                     <input type="text" value="%s"
                            onchange="mahBlock.saveContent(%d, {label: this.value})"

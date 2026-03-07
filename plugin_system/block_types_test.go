@@ -438,6 +438,33 @@ end
 		assert.True(t, strings.Contains(err.Error(), "type"))
 	})
 
+	t.Run("type field is a number not string", func(t *testing.T) {
+		dir := t.TempDir()
+		writePlugin(t, dir, "num-type", `
+plugin = { name = "num-type", version = "1.0", description = "test" }
+
+function view_render(ctx) return "" end
+function edit_render(ctx) return "" end
+
+function init()
+    mah.block_type({
+        type = 42,
+        label = "My Block",
+        render_view = view_render,
+        render_edit = edit_render,
+    })
+end
+`)
+
+		pm, err := NewPluginManager(dir)
+		require.NoError(t, err)
+		defer pm.Close()
+
+		err = pm.EnablePlugin("num-type")
+		assert.Error(t, err)
+		assert.True(t, strings.Contains(err.Error(), "must be a string"))
+	})
+
 	t.Run("invalid type name", func(t *testing.T) {
 		dir := t.TempDir()
 		writePlugin(t, dir, "bad-type-name", `

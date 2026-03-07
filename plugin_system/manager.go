@@ -670,6 +670,17 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		return 1
 	}))
 
+	mahMod.RawSetString("html_escape", L.NewFunction(func(L *lua.LState) int {
+		s := L.CheckString(1)
+		s = strings.ReplaceAll(s, "&", "&amp;")
+		s = strings.ReplaceAll(s, "<", "&lt;")
+		s = strings.ReplaceAll(s, ">", "&gt;")
+		s = strings.ReplaceAll(s, "\"", "&quot;")
+		s = strings.ReplaceAll(s, "'", "&#39;")
+		L.Push(lua.LString(s))
+		return 1
+	}))
+
 	pm.registerDbModule(L, mahMod)
 	pm.registerHttpModule(L, mahMod)
 	pm.registerJsonModule(L, mahMod)
