@@ -1,4 +1,7 @@
-<article class="card note-card" x-data='{ "entity": {{ entity|json }} }'>
+<article class="card note-card{% if selectable %} card--selectable{% endif %}" {% if selectable %}x-data="selectableItem({ itemId: {{ entity.ID }} })"{% else %}x-data='{ "entity": {{ entity|json }} }'{% endif %}>
+    {% if selectable %}
+    <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" aria-label="Select {{ entity.Name }}" class="card-checkbox focus:ring-indigo-500 h-6 w-6 text-indigo-600 border-gray-300 rounded">
+    {% endif %}
     <header class="card-header">
         <div class="card-avatar">
             {% autoescape off %}{{ entity.NoteType.CustomAvatar }}{% endautoescape %}
