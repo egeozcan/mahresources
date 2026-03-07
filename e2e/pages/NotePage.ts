@@ -135,6 +135,10 @@ export class NotePage extends BasePage {
     await expect(this.page.locator(`a:has-text("${name}")`)).not.toBeVisible();
   }
 
+  async selectNoteCheckbox(noteId: number) {
+    await this.page.locator(`[x-data*="itemId: ${noteId}"] input[type="checkbox"]`).check();
+  }
+
   async verifyHasTag(tagName: string) {
     await expect(this.page.locator(`a:has-text("${tagName}")`)).toBeVisible();
   }

@@ -172,3 +172,98 @@ test.describe('Bulk Operations UI Elements', () => {
     }
   });
 });
+
+test.describe('Bulk Operations on Notes', () => {
+  let categoryId: number;
+  let groupId: number;
+  let noteIds: number[] = [];
+  let tagId: number;
+  let secondTagId: number;
+  let testRunId: string;
+
+  test.beforeAll(async ({ apiClient }) => {
+    testRunId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
+    const category = await apiClient.createCategory(`Note Bulk Category ${testRunId}`, 'Category for note bulk tests');
+    categoryId = category.ID;
+
+    const group = await apiClient.createGroup({
+      name: `Note Bulk Group ${testRunId}`,
+      categoryId: categoryId,
+    });
+    groupId = group.ID;
+
+    const tag = await apiClient.createTag(`Note Bulk Tag 1 ${testRunId}`, 'First note bulk tag');
+    tagId = tag.ID;
+
+    const secondTag = await apiClient.createTag(`Note Bulk Tag 2 ${testRunId}`, 'Second note bulk tag');
+    secondTagId = secondTag.ID;
+
+    noteIds = [];
+    for (let i = 1; i <= 5; i++) {
+      const note = await apiClient.createNote({
+        name: `Bulk Test Note ${i} ${testRunId}`,
+        description: `Note ${i} for bulk testing`,
+      });
+      noteIds.push(note.ID);
+    }
+  });
+
+  test('should select multiple notes', async ({ notePage, page }) => {
+    await notePage.gotoList();
+
+    for (let i = 0; i < 3; i++) {
+      await notePage.selectNoteCheckbox(noteIds[i]);
+    }
+
+    await expect(page.locator('button:has-text("Deselect All"), button:has-text("Deselect")')).toBeVisible();
+  });
+
+  test('should bulk add tags to notes', async ({ notePage, apiClient, page }) => {
+    await apiClient.addTagsToNotes([noteIds[0], noteIds[1]], [tagId]);
+
+    await notePage.gotoDisplay(noteIds[0]);
+    await expect(page.locator(`a:has-text("Note Bulk Tag 1 ${testRunId}")`).first()).toBeVisible();
+
+    await notePage.gotoDisplay(noteIds[1]);
+    await expect(page.locator(`a:has-text("Note Bulk Tag 1 ${testRunId}")`).first()).toBeVisible();
+  });
+
+  test('should bulk remove tags from notes', async ({ notePage, apiClient, page }) => {
+    await apiClient.addTagsToNotes([noteIds[0], noteIds[1]], [secondTagId]);
+    await apiClient.removeTagsFromNotes([noteIds[0], noteIds[1]], [secondTagId]);
+
+    await notePage.gotoDisplay(noteIds[0]);
+    await expect(page.locator(`a:has-text("Note Bulk Tag 2 ${testRunId}")`)).not.toBeVisible();
+  });
+
+  test('should bulk add groups to notes', async ({ notePage, apiClient, page }) => {
+    await apiClient.addGroupsToNotes([noteIds[0], noteIds[1]], [groupId]);
+
+    await notePage.gotoDisplay(noteIds[0]);
+    await expect(page.locator(`a:has-text("Note Bulk Group ${testRunId}")`).first()).toBeVisible();
+  });
+
+  test('should bulk delete notes', async ({ notePage, apiClient }) => {
+    await apiClient.bulkDeleteNotes([noteIds[3], noteIds[4]]);
+
+    await notePage.verifyNoteNotInList(`Bulk Test Note 4 ${testRunId}`);
+    await notePage.verifyNoteNotInList(`Bulk Test Note 5 ${testRunId}`);
+
+    noteIds = noteIds.slice(0, 3);
+  });
+
+  test.afterAll(async ({ apiClient }) => {
+    for (const noteId of noteIds) {
+      try {
+        await apiClient.deleteNote(noteId);
+      } catch (error) {
+        console.warn(`Cleanup: Failed to delete note ${noteId}:`, error);
+      }
+    }
+    if (tagId) await apiClient.deleteTag(tagId);
+    if (secondTagId) await apiClient.deleteTag(secondTagId);
+    if (groupId) await apiClient.deleteGroup(groupId);
+    if (categoryId) await apiClient.deleteCategory(categoryId);
+  });
+});

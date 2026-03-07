@@ -391,6 +391,49 @@ export class ApiClient {
     return this.handleResponse<Note>(response);
   }
 
+  async addTagsToNotes(noteIds: number[], tagIds: number[]): Promise<void> {
+    const formData = new URLSearchParams();
+    noteIds.forEach(id => formData.append('ID', id.toString()));
+    tagIds.forEach(id => formData.append('EditedId', id.toString()));
+
+    return this.postVoidRetry(`${this.baseUrl}/v1/notes/addTags`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+  }
+
+  async removeTagsFromNotes(noteIds: number[], tagIds: number[]): Promise<void> {
+    const formData = new URLSearchParams();
+    noteIds.forEach(id => formData.append('ID', id.toString()));
+    tagIds.forEach(id => formData.append('EditedId', id.toString()));
+
+    return this.postVoidRetry(`${this.baseUrl}/v1/notes/removeTags`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+  }
+
+  async addGroupsToNotes(noteIds: number[], groupIds: number[]): Promise<void> {
+    const formData = new URLSearchParams();
+    noteIds.forEach(id => formData.append('ID', id.toString()));
+    groupIds.forEach(id => formData.append('EditedId', id.toString()));
+
+    return this.postVoidRetry(`${this.baseUrl}/v1/notes/addGroups`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+  }
+
+  async bulkDeleteNotes(noteIds: number[]): Promise<void> {
+    const formData = new URLSearchParams();
+    noteIds.forEach(id => formData.append('ID', id.toString()));
+
+    return this.postVoidRetry(`${this.baseUrl}/v1/notes/delete`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+  }
+
   async updateNote(id: number, data: {
     name?: string;
     description?: string;
