@@ -95,12 +95,12 @@ Remote download timeouts are configurable via command-line flags or environment 
 
 ### Unified Job Routes
 
-These routes serve the same handlers but are prefixed under `/v1/jobs/` and include both download and plugin action jobs where applicable.
+These routes serve the same handlers but are prefixed under `/v1/jobs/`. Plugin action jobs appear only in the SSE event stream, not in the queue endpoint.
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/v1/jobs/download/submit` | Submit download URL(s) |
-| `GET` | `/v1/jobs/queue` | List all jobs (downloads + plugin actions) |
+| `GET` | `/v1/jobs/queue` | List download jobs |
 | `POST` | `/v1/jobs/cancel` | Cancel a download |
 | `POST` | `/v1/jobs/pause` | Pause a download |
 | `POST` | `/v1/jobs/resume` | Resume a download |

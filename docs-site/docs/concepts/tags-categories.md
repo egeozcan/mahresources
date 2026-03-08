@@ -306,7 +306,7 @@ Content-Type: application/json
 
 #### Deleting Categories
 
-Deleting a Category sets `categoryId` to NULL on associated Groups. The Groups are preserved.
+Deleting a Category cascade-deletes all Groups assigned to that Category.
 
 ```
 POST /v1/category/delete
@@ -401,4 +401,4 @@ GET /v1/resources?resourceCategoryId=1
 | Presentation | None | Custom templates | Custom templates | Custom templates |
 | Validation | None | JSON Schema | JSON Schema | None |
 | Purpose | Cross-cutting labels | Group type definition | Resource type definition | Note type definition |
-| On delete | Removed from entities | SET NULL on Groups | SET NULL on Resources | SET NULL on Notes |
+| On delete | Removed from entities | CASCADE (deletes Groups) | SET NULL on Resources | SET NULL on Notes |

@@ -282,9 +282,9 @@ See [Plugin Lua API Reference](../features/plugin-lua-api.md) for the `mah.api()
 
 ## Unified Job Endpoints
 
-These endpoints combine download queue jobs and plugin action jobs.
+The queue endpoint returns download jobs only. Plugin action jobs appear in the SSE event stream alongside download events.
 
-### List All Jobs
+### List Download Jobs
 
 ```
 GET /v1/jobs/queue
@@ -294,7 +294,7 @@ GET /v1/jobs/queue
 curl http://localhost:8181/v1/jobs/queue
 ```
 
-Returns all active jobs from both the download queue and async plugin actions.
+Returns active download jobs. Plugin action jobs are not included here; they are available only via the SSE event stream below.
 
 ### SSE Event Stream
 

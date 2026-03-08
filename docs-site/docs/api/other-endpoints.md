@@ -429,7 +429,7 @@ GET /v1/search
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `q` | string | **Required.** Search query |
-| `limit` | integer | Maximum results (default: 20, max: 50) |
+| `limit` | integer | Maximum results (default: 20, max: 200) |
 | `types` | string | Entity types to search (comma-separated: `resource`, `note`, `group`, `tag`, `category`, `query`, `relationType`, `noteType`, `resourceCategory`) |
 
 #### Example
@@ -616,15 +616,20 @@ curl http://localhost:8181/v1/download/queue
 #### Response
 
 ```json
-[
-  {
-    "id": "job-123",
-    "url": "https://example.com/file.zip",
-    "status": "downloading",
-    "progress": 45,
-    "createdAt": "2024-01-15T10:00:00Z"
-  }
-]
+{
+  "jobs": [
+    {
+      "id": "job-123",
+      "url": "https://example.com/file.zip",
+      "status": "downloading",
+      "progress": 45,
+      "totalSize": 1048576,
+      "progressPercent": 4.29,
+      "createdAt": "2024-01-15T10:00:00Z",
+      "source": "download"
+    }
+  ]
+}
 ```
 
 ### Job Operations
@@ -648,13 +653,49 @@ GET /v1/download/events
 
 #### Example
 
+The server emits **named events**, so you must use `addEventListener` (not `onmessage`):
+
+| Event | Description |
+|-------|-------------|
+| `init` | Full initial state with all current jobs (`{ jobs: [...], actionJobs: [...] }`) |
+| `added` | A new download job was queued |
+| `updated` | A download job changed status or progress |
+| `removed` | A download job was removed from the queue |
+| `action_added` | A plugin action job was created |
+| `action_updated` | A plugin action job changed status |
+| `action_removed` | A plugin action job was removed |
+
 ```javascript
 const eventSource = new EventSource('http://localhost:8181/v1/download/events');
 
-eventSource.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  console.log('Download update:', data);
-};
+// Receive full initial state (all current jobs)
+eventSource.addEventListener('init', (event) => {
+  const { jobs, actionJobs } = JSON.parse(event.data);
+  console.log('Initial download jobs:', jobs);
+  console.log('Initial action jobs:', actionJobs);
+});
+
+// Download job updates
+eventSource.addEventListener('added', (event) => {
+  const { type, job } = JSON.parse(event.data);
+  console.log('New download job:', job);
+});
+
+eventSource.addEventListener('updated', (event) => {
+  const { type, job } = JSON.parse(event.data);
+  console.log('Download job updated:', job.id, job.status, job.progressPercent + '%');
+});
+
+eventSource.addEventListener('removed', (event) => {
+  const { type, job } = JSON.parse(event.data);
+  console.log('Download job removed:', job.id);
+});
+
+// Plugin action job updates (prefixed with "action_")
+eventSource.addEventListener('action_updated', (event) => {
+  const { job } = JSON.parse(event.data);
+  console.log('Action job updated:', job);
+});
 ```
 
 ---

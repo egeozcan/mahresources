@@ -143,4 +143,4 @@ These bulk operations apply to Resources, Groups, and Notes. The available opera
 | **Group** | Cascades to owned Notes and child Groups; owned Resources have their owner set to NULL (preserved) |
 | **Resource** | Deleted independently; file removed from storage only if no other resources or versions reference the same hash |
 | **Note** | Deleted independently |
-| **Category** | Sets `categoryId` to NULL on associated Groups (Groups preserved) |
+| **Category** | Cascade-deletes all Groups assigned to that Category |

@@ -71,9 +71,9 @@ Categories support:
 - JSON Schema metadata validation via `metaSchema`
 - Category-based filtering in queries
 
-:::warning Deleting a Category
+:::danger Deleting a Category cascades to Groups
 
-Deleting a Category sets `categoryId` to NULL on associated Groups (the Groups are preserved).
+Deleting a Category cascade-deletes all Groups assigned to that Category.
 
 :::
 
