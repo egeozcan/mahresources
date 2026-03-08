@@ -429,7 +429,7 @@ GET /v1/search
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `q` | string | **Required.** Search query |
-| `limit` | integer | Maximum results (default: 20, max: 200) |
+| `limit` | integer | Maximum results (default: 20, max: 50) |
 | `types` | string | Entity types to search (comma-separated: `resource`, `note`, `group`, `tag`, `category`, `query`, `relationType`, `noteType`, `resourceCategory`) |
 
 #### Example

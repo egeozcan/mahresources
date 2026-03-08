@@ -611,6 +611,85 @@ end
 
 Duplicate registrations for the same method + path overwrite the previous handler.
 
+## mah.block_type -- Plugin Block Types
+
+Register a custom block type for the note block editor. Call during `init()`.
+
+### mah.block_type(config)
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `config.type` | string | Yes | Block type name (lowercase, alphanumeric and hyphens, max 50 chars). Automatically prefixed as `plugin:<pluginName>:<type>` |
+| `config.label` | string | Yes | Display label in the block type picker |
+| `config.render_view` | function | Yes | Lua function that returns an HTML string for view mode |
+| `config.render_edit` | function | Yes | Lua function that returns an HTML string for edit mode |
+| `config.icon` | string | No | Icon for the block type picker |
+| `config.description` | string | No | Description of the block type |
+| `config.content_schema` | table | No | JSON Schema (as Lua table) for content validation |
+| `config.state_schema` | table | No | JSON Schema (as Lua table) for state validation |
+| `config.default_content` | table | No | Default content for new blocks |
+| `config.default_state` | table | No | Default state for new blocks |
+| `config.filters` | table | No | Restrict availability by `note_type_ids` and/or `category_ids` |
+
+### Render Functions
+
+Both `render_view` and `render_edit` receive a context table:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ctx.block.id` | number | Block ID |
+| `ctx.block.content` | table | Block content (parsed from JSON) |
+| `ctx.block.state` | table | Block state (parsed from JSON) |
+| `ctx.block.position` | string | Lexicographic ordering key |
+| `ctx.note.id` | number | Parent note ID |
+| `ctx.note.name` | string | Parent note name |
+| `ctx.note.note_type_id` | number | Parent note's note type ID |
+| `ctx.settings` | table | Plugin settings key-value pairs |
+
+Each function must return an HTML string. Use `mah.html_escape(str)` to escape user-provided content.
+
+The rendered HTML is served via `GET /v1/plugins/{pluginName}/block/render?blockId={id}&mode=view|edit` (see [Custom Block Types](./custom-block-types.md#plugin-block-render-endpoint)).
+
+### Example
+
+```lua
+function init()
+    mah.block_type({
+        type = "quote",
+        label = "Quote",
+        icon = "Q",
+        description = "A styled quotation block",
+        content_schema = {
+            type = "object",
+            properties = {
+                text = { type = "string" },
+                author = { type = "string" }
+            },
+            required = {"text"}
+        },
+        default_content = { text = "", author = "" },
+        default_state = {},
+        render_view = function(ctx)
+            local html = '<blockquote class="border-l-4 pl-4 italic">'
+            html = html .. '<p>' .. mah.html_escape(ctx.block.content.text or "") .. '</p>'
+            if ctx.block.content.author then
+                html = html .. '<footer>— ' .. mah.html_escape(ctx.block.content.author) .. '</footer>'
+            end
+            return html .. '</blockquote>'
+        end,
+        render_edit = function(ctx)
+            return '<div>'
+                .. '<textarea name="text">' .. mah.html_escape(ctx.block.content.text or "") .. '</textarea>'
+                .. '<input name="author" value="' .. mah.html_escape(ctx.block.content.author or "") .. '">'
+                .. '</div>'
+        end,
+        filters = {
+            note_type_ids = {1, 2}
+        }
+    })
+end
+```
+
 ## mah.get_setting(key)
 
 Returns the value of a plugin setting, or `nil` if not set.
@@ -718,3 +797,4 @@ end
 - [Plugin System](./plugin-system.md) -- discovery, lifecycle, settings, and management
 - [Plugin Actions](./plugin-actions.md) -- action registration, parameters, filters, and execution
 - [Plugin Hooks, Injections, Pages & Menus](./plugin-hooks.md) -- hooks, HTML injections, custom pages, and menu items
+- [Custom Block Types](./custom-block-types.md) -- adding new block types (built-in and plugin-based)

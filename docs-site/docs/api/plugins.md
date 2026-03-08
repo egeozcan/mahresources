@@ -93,7 +93,7 @@ curl -X POST "http://localhost:8181/v1/plugin/settings?name=image-processor" \
   }'
 ```
 
-Settings are validated against the plugin's declared setting definitions. Unknown keys are ignored. Boolean settings accept `"true"` and `"false"` strings. Number settings must be valid numeric strings.
+Settings are validated against the plugin's declared setting definitions. Unknown keys are ignored. Boolean settings must be native JSON booleans (`true`/`false`, not strings). Number settings must be native JSON numbers (`2048`, not `"2048"`).
 
 ### Purge Plugin Data
 
@@ -228,6 +228,28 @@ curl "http://localhost:8181/v1/jobs/action/job?id=a1b2c3d4e5f6g7h8"
     "createdAt": "2025-03-01T10:30:00Z"
 }
 ```
+
+## Plugin Block Rendering
+
+```
+GET /v1/plugins/{pluginName}/block/render
+```
+
+Renders a plugin-defined block type as an HTML fragment. The block editor's frontend calls this endpoint to display plugin blocks.
+
+| Parameter | Location | Type | Required | Description |
+|-----------|----------|------|----------|-------------|
+| `pluginName` | path | string | Yes | The plugin that registered the block type |
+| `blockId` | query | integer | Yes | The block to render |
+| `mode` | query | string | Yes | `"view"` or `"edit"` |
+
+```bash
+curl "http://localhost:8181/v1/plugins/my-plugin/block/render?blockId=42&mode=view"
+```
+
+Returns `text/html` content. The block's type must start with `plugin:<pluginName>:`, otherwise a `400` error is returned.
+
+See [Custom Block Types](../features/custom-block-types.md#plugin-block-render-endpoint) for details on how plugin block rendering works.
 
 ## Plugin Pages
 

@@ -20,7 +20,42 @@ Block types define how different types of content (text, headings, images, table
 - `table` - Tabular data (manual or query-driven)
 - `calendar` - Calendar with iCal sources and custom events
 
-Plugins can register additional block types via `mah.block_type()`. Plugin block types use the naming convention `plugin:<plugin-name>:<type>`.
+Plugins can register additional block types via `mah.block_type()` (see [Plugin Lua API Reference](./plugin-lua-api.md#mahblock_type----plugin-block-types)). Plugin block types use the naming convention `plugin:<plugin-name>:<type>`.
+
+### Plugin Block Render Endpoint
+
+When the block editor encounters a plugin block type, it fetches the rendered HTML from a dedicated endpoint:
+
+```
+GET /v1/plugins/{pluginName}/block/render?blockId={id}&mode={mode}
+```
+
+| Parameter | Location | Type | Required | Description |
+|-----------|----------|------|----------|-------------|
+| `pluginName` | path | string | Yes | The plugin that owns the block type |
+| `blockId` | query | integer | Yes | The ID of the block to render |
+| `mode` | query | string | Yes | `"view"` or `"edit"` |
+
+The server loads the block from the database, verifies it belongs to the specified plugin (block type must start with `plugin:<pluginName>:`), then calls the plugin's `render_view` or `render_edit` Lua function with a context table containing the block's content, state, the parent note's metadata, and the plugin's settings.
+
+**Response:** `text/html` -- the HTML fragment returned by the plugin's render function.
+
+**Error Responses:**
+
+| Status | Condition |
+|--------|-----------|
+| 400 | Missing `blockId`, invalid `mode`, or block type does not belong to the plugin |
+| 404 | Block or note not found |
+| 500 | Plugin render function returned an error |
+| 503 | Plugin system is not available |
+
+```bash
+# Render a plugin block in view mode
+curl "http://localhost:8181/v1/plugins/my-plugin/block/render?blockId=42&mode=view"
+
+# Render in edit mode
+curl "http://localhost:8181/v1/plugins/my-plugin/block/render?blockId=42&mode=edit"
+```
 
 ## Architecture
 
