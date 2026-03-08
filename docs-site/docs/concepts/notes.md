@@ -17,7 +17,7 @@ A Note stores text content with optional start and end dates, a type classificat
 | `startDate` | datetime | Optional start date for temporal filtering |
 | `endDate` | datetime | Optional end date for temporal filtering |
 | `noteTypeId` | integer | Optional FK to a Note Type for categorization |
-| `shareToken` | string | 32-character token for public sharing (unique across all Notes) |
+| `shareToken` | string (nullable) | Optional 32-character token for public sharing, generated on demand (unique across all Notes) |
 | `ownerId` | integer | FK to owning Group |
 
 ## Ownership and Deletion

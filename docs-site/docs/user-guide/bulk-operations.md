@@ -46,7 +46,7 @@ When you select one or more items, the bulk editor appears inline above the list
 |-----------|:---------:|:-----:|:------:|:----:|
 | Add Tags | Yes | Yes | Yes | - |
 | Remove Tags | Yes | Yes | Yes | - |
-| Replace Tags | Yes | - | - | - |
+| Replace Tags | API only | - | - | - |
 | Add Metadata | Yes | Yes | Yes | - |
 | Add Groups | Yes | Yes | - | - |
 | Update Dimensions | Yes | - | - | - |
@@ -70,15 +70,17 @@ Tags are added immediately. Existing tags on items are preserved. If a tag doesn
 
 Only the specified Tags are removed. Other Tags remain.
 
-## Replacing Tags
+## Replacing Tags (API Only)
 
-Replace all Tags on selected Resources with a new set:
+Replace all tags on selected resources with a new set. This operation is available via the API (`POST /v1/resources/replaceTags`) but is not exposed in the bulk editor UI.
 
-1. Select Resources in the list
-2. In the **Replace Tags** form, search for and select the new Tags
-3. Click **Replace**
+```bash
+curl -X POST http://localhost:8181/v1/resources/replaceTags \
+  -F "EditedId=1" -F "EditedId=2" \
+  -F "Tags=10" -F "Tags=20"
+```
 
-All existing Tags on the selected Resources are removed and replaced with the specified set. Available for Resources only.
+All existing tags on the specified resources are removed and replaced with the given set.
 
 ## Adding Metadata
 

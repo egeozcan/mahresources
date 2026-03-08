@@ -289,7 +289,7 @@ Each plugin lives in a subdirectory of the plugin path and must contain a `plugi
 | `-remote-overall-timeout` | `REMOTE_OVERALL_TIMEOUT` | `30m` | Total download timeout |
 | `-skip-fts` | `SKIP_FTS=1` | `false` | Skip full-text search initialization |
 | `-skip-version-migration` | `SKIP_VERSION_MIGRATION=1` | `false` | Skip version migration |
-| `-max-db-connections` | `MAX_DB_CONNECTIONS` | - | Connection pool limit |
+| `-max-db-connections` | `MAX_DB_CONNECTIONS` | `0` (no limit) | Connection pool limit |
 | `-share-port` | `SHARE_PORT` | (disabled) | Share server port |
 | `-share-bind-address` | `SHARE_BIND_ADDRESS` | `0.0.0.0` | Share server bind address |
 | `-cleanup-logs-days` | `CLEANUP_LOGS_DAYS` | `0` (disabled) | Delete old logs on startup |

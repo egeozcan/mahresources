@@ -55,7 +55,7 @@ Command-line flags take precedence over environment variables, so a flag overrid
 | `-libreoffice-path` | `LIBREOFFICE_PATH` | Path to LibreOffice binary | auto-detect |
 | `-skip-fts` | `SKIP_FTS=1` | Skip Full-Text Search initialization | `false` |
 | `-skip-version-migration` | `SKIP_VERSION_MIGRATION=1` | Skip resource version migration | `false` |
-| `-max-db-connections` | `MAX_DB_CONNECTIONS` | Database connection pool size | - |
+| `-max-db-connections` | `MAX_DB_CONNECTIONS` | Database connection pool size | `0` (no limit) |
 | `-hash-worker-count` | `HASH_WORKER_COUNT` | Concurrent hash workers | `4` |
 | `-hash-batch-size` | `HASH_BATCH_SIZE` | Resources per batch | `500` |
 | `-hash-poll-interval` | `HASH_POLL_INTERVAL` | Time between batch cycles | `1m` |

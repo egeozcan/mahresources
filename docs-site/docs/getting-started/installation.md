@@ -14,7 +14,7 @@ There is **no built-in authentication**. Never expose the server directly to the
 
 ### Building from Source
 - **Go 1.22+** - [Download Go](https://go.dev/dl/)
-- **Node.js 20.19+** - [Download Node.js](https://nodejs.org/)
+- **Node.js 20+** - [Download Node.js](https://nodejs.org/)
 
 ### Docker
 - **Docker 20+** - [Install Docker](https://docs.docker.com/get-docker/)
@@ -36,7 +36,7 @@ No pre-built image is published. Build it locally from the repository:
 
 :::caution Dockerfile Go version
 
-The Dockerfile currently uses `golang:1.21-alpine`, but the module requires Go 1.22+. You may need to update line 11 of the Dockerfile to `golang:1.22-alpine` or later before building.
+The Dockerfile currently uses `golang:1.21-alpine`, but the module requires Go 1.22+ (toolchain 1.24). You may need to update line 11 of the Dockerfile to `golang:1.24-alpine` before building.
 
 :::
 
