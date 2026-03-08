@@ -206,7 +206,7 @@ POST /v1/note/editDescription?id={id}
 
 ## Bulk Operations
 
-Bulk operations apply an action to multiple notes at once. Each endpoint accepts a form or JSON body with an `Ids` array of note IDs.
+Bulk operations apply an action to multiple notes at once. Each endpoint accepts a JSON or form-encoded body with `ID` (repeated) for the note IDs and `EditedId` (repeated) for the entity IDs to add or remove.
 
 ### Add Tags
 
@@ -216,14 +216,16 @@ POST /v1/notes/addTags
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `Ids` | integer[] | Note IDs to modify |
-| `Tags` | integer[] | Tag IDs to add |
+| `ID` | integer[] | Note IDs to modify |
+| `EditedId` | integer[] | Tag IDs to add |
 
 ```bash
 curl -X POST http://localhost:8181/v1/notes/addTags \
   -H "Content-Type: application/json" \
-  -H "Accept: application/json" \
-  -d '{"Ids": [1, 2, 3], "Tags": [10, 11]}'
+  -d '{
+    "ID": [1, 2, 3],
+    "EditedId": [10, 11]
+  }'
 ```
 
 ### Remove Tags
@@ -234,14 +236,16 @@ POST /v1/notes/removeTags
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `Ids` | integer[] | Note IDs to modify |
-| `Tags` | integer[] | Tag IDs to remove |
+| `ID` | integer[] | Note IDs to modify |
+| `EditedId` | integer[] | Tag IDs to remove |
 
 ```bash
 curl -X POST http://localhost:8181/v1/notes/removeTags \
   -H "Content-Type: application/json" \
-  -H "Accept: application/json" \
-  -d '{"Ids": [1, 2, 3], "Tags": [10]}'
+  -d '{
+    "ID": [1, 2, 3],
+    "EditedId": [10]
+  }'
 ```
 
 ### Add Groups
@@ -252,14 +256,16 @@ POST /v1/notes/addGroups
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `Ids` | integer[] | Note IDs to modify |
-| `Groups` | integer[] | Group IDs to associate |
+| `ID` | integer[] | Note IDs to modify |
+| `EditedId` | integer[] | Group IDs to associate |
 
 ```bash
 curl -X POST http://localhost:8181/v1/notes/addGroups \
   -H "Content-Type: application/json" \
-  -H "Accept: application/json" \
-  -d '{"Ids": [1, 2, 3], "Groups": [5]}'
+  -d '{
+    "ID": [1, 2, 3],
+    "EditedId": [5]
+  }'
 ```
 
 ### Add Metadata
@@ -270,14 +276,16 @@ POST /v1/notes/addMeta
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `Ids` | integer[] | Note IDs to modify |
-| `Meta` | object | Key-value pairs to merge into existing metadata |
+| `ID` | integer[] | Note IDs to modify |
+| `Meta` | string | JSON metadata to merge (as a string) |
 
 ```bash
 curl -X POST http://localhost:8181/v1/notes/addMeta \
   -H "Content-Type: application/json" \
-  -H "Accept: application/json" \
-  -d '{"Ids": [1, 2, 3], "Meta": {"status": "reviewed"}}'
+  -d '{
+    "ID": [1, 2, 3],
+    "Meta": "{\"status\": \"reviewed\"}"
+  }'
 ```
 
 ### Bulk Delete
@@ -288,13 +296,12 @@ POST /v1/notes/delete
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `Ids` | integer[] | Note IDs to delete |
+| `ID` | integer[] | Note IDs to delete |
 
 ```bash
 curl -X POST http://localhost:8181/v1/notes/delete \
   -H "Content-Type: application/json" \
-  -H "Accept: application/json" \
-  -d '{"Ids": [1, 2, 3]}'
+  -d '{"ID": [1, 2, 3]}'
 ```
 
 ---
@@ -375,11 +382,13 @@ Built-in block types:
 | Type | Description |
 |------|-------------|
 | `text` | Rich text content |
-| `markdown` | Markdown-formatted content rendered as HTML |
+| `heading` | Section heading (level 1-6) |
+| `divider` | Horizontal separator line |
+| `gallery` | Resource thumbnails in grid or list layout |
+| `references` | Linked group cards |
+| `todos` | Checklist with items |
 | `table` | Data table (manual data or query-based) |
 | `calendar` | Calendar view driven by ICS URLs, resources, and custom events |
-| `list` | Checklist with items |
-| `code` | Code blocks with syntax highlighting |
 
 Plugins can register additional block types with the prefix `plugin:<plugin-name>:<type>`.
 
@@ -904,28 +913,44 @@ A table block holds either static data (`columns`/`rows`) or a query reference (
 {
   "calendars": [
     {
-      "url": "https://example.com/calendar.ics",
-      "name": "Team Calendar"
+      "id": "work",
+      "name": "Work Calendar",
+      "color": "#3b82f6",
+      "source": {"type": "url", "url": "https://example.com/calendar.ics"}
+    },
+    {
+      "id": "local",
+      "name": "Stored Calendar",
+      "color": "#10b981",
+      "source": {"type": "resource", "resourceId": 42}
     }
   ]
 }
 ```
+
+- `calendars`: Array of calendar sources. Each entry has an `id`, `name`, optional `color` (hex), and a `source` object with `type` (`"url"` or `"resource"`) plus the corresponding `url` or `resourceId` field.
 
 **State:**
 ```json
 {
+  "view": "month",
+  "currentDate": "2024-06-15",
   "customEvents": [
     {
+      "id": "evt1",
       "title": "Team Meeting",
-      "start": "2026-03-07T10:00:00Z",
-      "end": "2026-03-07T11:00:00Z"
+      "start": "2024-06-20T10:00:00Z",
+      "end": "2024-06-20T11:00:00Z",
+      "allDay": false,
+      "calendarId": "custom"
     }
   ]
 }
 ```
 
-- `calendars`: Array of ICS calendar sources with `url` and `name`
-- `customEvents`: User-created events stored in block state
+- `view`: `"month"`, `"week"`, or `"agenda"`
+- `currentDate`: ISO date string for the current view position
+- `customEvents`: User-created events (max 500 per block, each with `calendarId` set to `"custom"`)
 
 Limitations:
 - ICS responses are cached with a 30-minute TTL

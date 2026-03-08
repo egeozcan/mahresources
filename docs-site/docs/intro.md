@@ -24,7 +24,7 @@ Files (called Resources), Notes, and Groups are stored in a database with tracke
 - **Resource versioning** -- Track versions of a Resource over time.
 - **Saved queries** -- Store and re-run raw SQL queries against a read-only database connection.
 - **Group relations** -- Define typed relationships between Groups (e.g., "works at", "belongs to").
-- **Note blocks** -- Structured content blocks within Notes: text, markdown, table, calendar, list, and code. Plugins can register additional block types.
+- **Note blocks** -- Structured content blocks within Notes: text, heading, divider, gallery, references, todos, table, and calendar. Plugins can register additional block types.
 - **Note sharing** -- Generate share tokens for individual Notes and serve them on a separate read-only HTTP server.
 - **Series** -- Group Resources with shared metadata (e.g., pages of a scanned document).
 - **Download queue** -- Queue remote URL downloads with progress tracking via the Download Cockpit UI.

@@ -12,11 +12,13 @@ Block types define how different types of content (text, headings, images, table
 
 **Built-in block types:**
 - `text` - Rich text content
-- `markdown` - Markdown-formatted content rendered as HTML
+- `heading` - Section heading (level 1-6)
+- `divider` - Horizontal separator line
+- `gallery` - Resource thumbnails in grid or list layout
+- `references` - Linked group cards
+- `todos` - Checklist items with interactive checkboxes
 - `table` - Tabular data (manual or query-driven)
 - `calendar` - Calendar with iCal sources and custom events
-- `list` - Checklist items with interactive checkboxes
-- `code` - Code blocks with syntax highlighting
 
 Plugins can register additional block types via `mah.block_type()`. Plugin block types use the naming convention `plugin:<plugin-name>:<type>`.
 

@@ -91,11 +91,11 @@ New keys are added to items. Existing keys are overwritten with the new value. O
 
 ## Adding to Groups
 
-1. Select resources in the list
+1. Select resources or notes in the list
 2. In the **Add Groups** form, search for and select target groups
 3. Click **Add**
 
-Resources are added as **related** to the selected groups (not owned). This operation is available for resources only.
+Resources and notes are added as **related** to the selected groups (not owned). This operation is available for resources and notes.
 
 ## Updating Dimensions
 

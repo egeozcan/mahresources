@@ -239,16 +239,18 @@ The block editor appears below the main content area on note detail pages. It le
 
 ### Block Types
 
-The block editor supports six built-in block types. Plugins can register additional types.
+The block editor supports eight built-in block types. Plugins can register additional types.
 
 | Block Type | Description |
 |------------|-------------|
 | **Text** | Rich text content |
-| **Markdown** | Markdown-formatted content rendered as HTML |
+| **Heading** | Section heading (level 1-6) |
+| **Divider** | Horizontal separator line |
+| **Gallery** | Resource thumbnails in grid or list layout |
+| **References** | Linked group cards |
+| **Todos** | Checklist with interactive checkboxes |
 | **Table** | Data table (manual data or driven by a saved Query) |
 | **Calendar** | Calendar view from iCal sources or custom events |
-| **List** | Checklist with interactive checkboxes |
-| **Code** | Code blocks with syntax highlighting |
 
 ### Adding Blocks
 

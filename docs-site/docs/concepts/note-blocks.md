@@ -28,7 +28,7 @@ This separation means users can interact with blocks (checking items, sorting ta
 
 ## Block Types
 
-Six built-in block types ship with Mahresources. Plugins can register additional types using `mah.block_type()` -- these appear with the prefix `plugin:<plugin-name>:<type>`.
+Eight built-in block types ship with Mahresources. Plugins can register additional types using `mah.block_type()` -- these appear with the prefix `plugin:<plugin-name>:<type>`.
 
 ### Text
 
@@ -38,17 +38,55 @@ Rich text content. The first text block syncs bidirectionally with the Note's `d
 {"text": "This is a paragraph of text."}
 ```
 
-### Markdown
+### Heading
 
-Markdown-formatted content rendered as HTML.
+Section heading with a configurable level (1-6, corresponding to h1-h6).
 
+**Content:**
 ```json
-{"text": "## Heading\n\nSome **bold** text."}
+{"text": "Section Title", "level": 2}
 ```
 
-### List
+**State:** Empty object `{}`
 
-Interactive checklist. Content holds the items; state tracks which are checked.
+### Divider
+
+A horizontal separator line. Has no content or state.
+
+**Content:** `{}`
+
+**State:** `{}`
+
+### Gallery
+
+A collection of Resources displayed as thumbnails. State controls the layout.
+
+**Content:**
+```json
+{"resourceIds": [1, 2, 3]}
+```
+
+**State:**
+```json
+{"layout": "grid"}
+```
+
+- `layout`: `"grid"` or `"list"`
+
+### References
+
+A list of linked Groups displayed as cards.
+
+**Content:**
+```json
+{"groupIds": [10, 20, 30]}
+```
+
+**State:** Empty object `{}`
+
+### Todos
+
+Interactive checklist. Content holds the items; state tracks which are checked. Each item needs a unique `id`.
 
 **Content:**
 ```json
@@ -63,14 +101,6 @@ Interactive checklist. Content holds the items; state tracks which are checked.
 **State:**
 ```json
 {"checked": ["a1b2"]}
-```
-
-### Code
-
-Code blocks with syntax highlighting.
-
-```json
-{"text": "SELECT * FROM resources", "language": "sql"}
 ```
 
 ### Table

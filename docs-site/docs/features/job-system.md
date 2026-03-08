@@ -5,17 +5,16 @@ title: Job System
 
 # Job System
 
-The job system aggregates download queue jobs, async plugin action jobs, and user jobs into a single API and SSE event stream.
+The job system aggregates download queue jobs and plugin action jobs into a single SSE event stream.
 
 ## Job Sources
 
 | Source | Origin | ID Format | Max Concurrent |
 |--------|--------|-----------|---------------|
 | `download` | Download queue | Random 16-char hex | 3 |
-| `plugin` | Async plugin actions | Random 16-char hex | 3 |
-| `user` | `mah.start_job(label, fn)` in Lua plugins | Random 16-char hex | -- |
+| `plugin` | Async plugin actions and `mah.start_job()` | Random 16-char hex | 3 |
 
-All three job types share the same SSE infrastructure and unified listing endpoint.
+Both job types share the same SSE infrastructure. Download jobs are also available via a dedicated listing endpoint (`/v1/jobs/queue`), while plugin action jobs appear only in the SSE event stream (via the `init` payload and subsequent `action_*` events).
 
 ## Download Jobs
 
@@ -47,7 +46,7 @@ Plugin action jobs are created when an async action is triggered. See [Plugin Ac
 | `actionId` | string | Action identifier |
 | `label` | string | Action display label |
 | `entityId` | uint | Target entity ID |
-| `entityType` | string | `"resource"`, `"note"`, or `"group"` |
+| `entityType` | string | `"resource"`, `"note"`, `"group"`, or `"custom"` (for `mah.start_job()`) |
 | `status` | string | `"pending"`, `"running"`, `"completed"`, or `"failed"` |
 | `progress` | int | 0-100 |
 | `message` | string | Current status message |
@@ -62,12 +61,12 @@ mah.job_complete(job_id, { message = "Done", redirect = "/resource?id=42" })
 mah.job_fail(job_id, "API returned 500")
 ```
 
-## User Jobs
+## Programmatic Action Jobs (`mah.start_job`)
 
-User jobs are created by plugins via `mah.start_job(label, fn)`. The function runs in a background goroutine with a 5-minute timeout. The returned job ID can be used with `mah.job_progress()`, `mah.job_complete()`, and `mah.job_fail()` to report status.
+Plugins can create action jobs programmatically using `mah.start_job(label, fn)`, without requiring a user to click an action button. The job is an `ActionJob` with `source: "plugin"`, `actionId: "start_job"`, and `entityType: "custom"`. The callback runs in a background goroutine with a 5-minute timeout and receives the `job_id` as its first argument.
 
 ```lua
-local job_id = mah.start_job("Import data", function()
+local job_id = mah.start_job("Import data", function(job_id)
     for i = 1, 100 do
         mah.job_progress(job_id, i, "Processing row " .. i)
     end
@@ -130,13 +129,13 @@ Progress updates at 100% are always sent immediately regardless of throttling.
 
 Subscribers receive events through a buffered channel (capacity 100). Slow subscribers that fall behind are skipped (non-blocking send).
 
-## Unified Job Listing
+## Download Job Listing
 
 ```
 GET /v1/jobs/queue
 ```
 
-Returns all active jobs from both sources in a single response.
+Returns active download jobs only. Plugin action jobs are not included in this endpoint; they are delivered through the SSE event stream (`/v1/jobs/events`).
 
 ```bash
 curl http://localhost:8181/v1/jobs/queue
@@ -159,7 +158,7 @@ Removed jobs trigger `"removed"` SSE events so clients can update their UI.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/v1/jobs/queue` | List all jobs (downloads + plugin actions) |
+| `GET` | `/v1/jobs/queue` | List download jobs |
 | `GET` | `/v1/jobs/events` | SSE event stream (all job types) |
 | `POST` | `/v1/jobs/action/run` | Run a plugin action |
 | `GET` | `/v1/jobs/action/job?id={id}` | Get plugin action job status |
