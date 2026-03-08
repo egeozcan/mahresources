@@ -20,7 +20,7 @@ GET /v1/notes
 |-----------|------|-------------|
 | `page` | integer | Page number (default: 1) |
 | `Name` | string | Filter by name (partial match) |
-| `Description` | string | Filter by description/content (partial match) |
+| `Description` | string | Filter by description (partial match) |
 | `OwnerId` | integer | Filter by owner group ID |
 | `Groups` | integer[] | Filter by associated group IDs |
 | `Tags` | integer[] | Filter by tag IDs |
@@ -32,7 +32,7 @@ GET /v1/notes
 | `StartDateAfter` | string | Notes starting after this date |
 | `EndDateBefore` | string | Notes ending before this date |
 | `EndDateAfter` | string | Notes ending after this date |
-| `Shared` | boolean | Filter Notes that have a share token |
+| `Shared` | boolean | Presence flag for shared notes. Include this parameter (for example `Shared=1`) to return only notes that have a share token. |
 | `MetaQuery` | string[] | Filter by metadata conditions (`key:value` or `key:OP:value`) |
 | `SortBy` | string[] | Sort order (e.g., `created_at desc`) |
 

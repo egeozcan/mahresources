@@ -28,7 +28,7 @@ If not specified, FFmpeg is auto-detected from your PATH.
 
 ### LibreOffice (Office Document Thumbnails)
 
-LibreOffice generates thumbnails for Word documents, spreadsheets, presentations, and PDFs.
+LibreOffice generates thumbnails for Word documents, spreadsheets, and presentations.
 
 ```bash
 ./mahresources -libreoffice-path=/usr/bin/soffice -db-type=SQLITE -db-dsn=./db.sqlite -file-save-path=./files

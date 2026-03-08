@@ -39,7 +39,7 @@ GET /v1/resources
 | `MinHeight` | integer | Minimum image height in pixels |
 | `MaxHeight` | integer | Maximum image height in pixels |
 | `ResourceCategoryId` | integer | Filter by resource category ID |
-| `MetaQuery` | object[] | Filter by metadata conditions (key/value/operator) |
+| `MetaQuery` | string[] | Filter by metadata conditions (`key:value` or `key:OP:value`) |
 | `MaxResults` | integer | Limit the number of results returned |
 | `SortBy` | string[] | Sort order |
 

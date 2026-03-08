@@ -234,7 +234,7 @@ Thumbnails are generated automatically for supported file types:
 | Images | Built-in (HEIC/AVIF require ImageMagick) |
 | SVGs | Built-in (oksvg rasterizer) |
 | Videos | Requires FFmpeg |
-| Office documents and PDFs | Requires LibreOffice |
+| Office documents | Requires LibreOffice |
 
 Thumbnails are generated on demand when first requested and cached in the database. For video files, the background thumbnail worker can pre-generate thumbnails.
 

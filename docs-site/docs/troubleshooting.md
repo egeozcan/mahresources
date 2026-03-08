@@ -130,7 +130,7 @@ Any file type can be stored. Special handling is provided for:
 
 - **Images:** JPEG, PNG, GIF, WebP, BMP - thumbnails generated automatically
 - **Videos:** MP4, WebM, MOV, AVI, MKV - thumbnails via FFmpeg
-- **Documents:** PDF, DOCX, XLSX, PPTX, ODT, ODS, ODP - thumbnails via LibreOffice
+- **Documents:** DOCX, XLSX, PPTX, ODT, ODS, ODP - thumbnails via LibreOffice
 
 Files without special handling are stored and served without processing.
 

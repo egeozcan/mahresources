@@ -230,7 +230,7 @@ Content-Type: application/json
 
 - **Sync actions**: Returns `200 OK` with `ActionResult`
 - **Async actions**: Returns `202 Accepted` with `{ "job_id": "abc123..." }`
-- **Bulk** (multiple `entity_ids`): Returns an array of results or job IDs. Respects `bulk_max`.
+- **Bulk** (multiple `entity_ids`): Returns `{ "results": [...] }` for sync actions or `{ "job_ids": [...] }` for async actions. Respects `bulk_max`.
 
 ### Get Action Job Status
 

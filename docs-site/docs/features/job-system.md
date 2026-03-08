@@ -135,7 +135,7 @@ Subscribers receive events through a buffered channel (capacity 100). Slow subsc
 GET /v1/jobs/queue
 ```
 
-Returns active download jobs only. Plugin action jobs are not included in this endpoint; they are delivered through the SSE event stream (`/v1/jobs/events`).
+Returns the retained download jobs currently held by the queue manager. Plugin action jobs are not included in this endpoint; they are delivered through the SSE event stream (`/v1/jobs/events`).
 
 ```bash
 curl http://localhost:8181/v1/jobs/queue

@@ -197,7 +197,12 @@ Content-Type: application/json
 }
 ```
 
-**Bulk execution** (multiple `entity_ids`) returns an array of results or job IDs. The `bulk_max` limit on the action registration is enforced.
+**Bulk execution** (multiple `entity_ids`) returns wrapped results:
+
+- Sync actions: `{ "results": [...] }`
+- Async actions: `{ "job_ids": [...] }`
+
+The `bulk_max` limit on the action registration is enforced.
 
 ### Get Action Job Status
 
@@ -316,7 +321,7 @@ GET /v1/jobs/queue
 curl http://localhost:8181/v1/jobs/queue
 ```
 
-Returns active download jobs. Plugin action jobs are not included here; they are available only via the SSE event stream below.
+Returns the retained download jobs currently held in the queue manager, including completed, failed, cancelled, or paused jobs until their retention window expires. Plugin action jobs are not included here; they are available only via the SSE event stream below.
 
 ### SSE Event Stream
 
