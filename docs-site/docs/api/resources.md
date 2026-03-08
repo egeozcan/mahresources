@@ -212,7 +212,7 @@ curl -X POST http://localhost:8181/v1/resource/remote \
   }'
 ```
 
-For background downloads, use `POST /v1/download/submit` instead. The URL field accepts multiple URLs separated by newlines for batch imports.
+For background downloads, use `POST /v1/jobs/download/submit` instead. The URL field accepts multiple URLs separated by newlines for batch imports. Legacy alias: `POST /v1/download/submit`.
 
 ## Add Local Resource
 

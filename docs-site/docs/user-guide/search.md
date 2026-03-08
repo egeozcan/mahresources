@@ -187,7 +187,7 @@ Both engines fall back to LIKE-based search when full-text search is disabled.
 
 ## Saved Queries
 
-Queries execute raw SQL against a read-only database connection, preventing accidental data modification.
+Saved Queries execute raw SQL through the query runner. For database-level write protection, configure `DB_READONLY_DSN` as a truly read-only connection.
 
 ### Creating a Query
 
@@ -207,15 +207,15 @@ SELECT * FROM resources WHERE name LIKE :searchTerm
 
 When running the Query, a form appears for each parameter.
 
-:::warning PostgreSQL type casts
+:::note PostgreSQL type casts
 
-PostgreSQL `::` type cast syntax conflicts with the `:param` named parameter syntax. Use `::::` in your SQL to produce a `::` in the executed query.
+Write PostgreSQL `::` casts normally in saved queries:
 
 ```sql
-SELECT meta::::::jsonb FROM resources WHERE id = :id
+SELECT meta::jsonb FROM resources WHERE id = :id
 ```
 
-This executes as `SELECT meta::jsonb FROM resources WHERE id = ?`.
+The query runner escapes casts automatically before named-parameter binding.
 
 :::
 

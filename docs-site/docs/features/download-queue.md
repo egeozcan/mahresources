@@ -53,8 +53,8 @@ Each download job goes through these statuses:
 
 ### Single URL
 
-```
-POST /v1/download/submit
+``` 
+POST /v1/jobs/download/submit
 Content-Type: application/json
 
 {
@@ -64,6 +64,8 @@ Content-Type: application/json
   "tags": [1, 2]
 }
 ```
+
+Legacy alias: `POST /v1/download/submit`
 
 ### Multiple URLs
 
@@ -81,7 +83,7 @@ Remote download timeouts are configurable via command-line flags or environment 
 
 ## API Endpoints
 
-### Download-Specific Routes
+### Legacy Download-Specific Aliases
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -95,7 +97,7 @@ Remote download timeouts are configurable via command-line flags or environment 
 
 ### Unified Job Routes
 
-These routes serve the same handlers but are prefixed under `/v1/jobs/`. Plugin action jobs appear only in the SSE event stream, not in the queue endpoint.
+These are the canonical routes. Plugin action jobs appear only in the SSE event stream, not in the queue endpoint.
 
 | Method | Path | Description |
 |--------|------|-------------|

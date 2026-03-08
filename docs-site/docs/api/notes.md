@@ -557,23 +557,27 @@ Returns the created block with HTTP status 201.
 Update the content of an existing block. Use this in edit mode.
 
 ```
-PUT /v1/note/block
+PUT /v1/note/block?id={id}
 ```
+
+### Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | integer | **Required.** The block ID |
 
 ### Request Body (JSON)
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | integer | **Required.** The block ID |
 | `content` | object | **Required.** New content for the block |
 
 ### Example
 
 ```bash
-curl -X PUT http://localhost:8181/v1/note/block \
+curl -X PUT "http://localhost:8181/v1/note/block?id=5" \
   -H "Content-Type: application/json" \
   -d '{
-    "id": 5,
     "content": {"text": "Updated paragraph text"}
   }'
 ```
@@ -600,24 +604,28 @@ Returns the updated block.
 Update the state of a block. Use this while viewing (e.g., checking a todo item).
 
 ```
-PATCH /v1/note/block/state
+PATCH /v1/note/block/state?id={id}
 ```
+
+### Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | integer | **Required.** The block ID |
 
 ### Request Body (JSON)
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | integer | **Required.** The block ID |
 | `state` | object | **Required.** New state for the block |
 
 ### Example
 
 ```bash
 # Mark a todo item as checked
-curl -X PATCH http://localhost:8181/v1/note/block/state \
+curl -X PATCH "http://localhost:8181/v1/note/block/state?id=10" \
   -H "Content-Type: application/json" \
   -d '{
-    "id": 10,
     "state": {"checked": ["item-1", "item-2"]}
   }'
 ```

@@ -8,7 +8,7 @@ Get up and running in under a minute.
 
 ## Ephemeral Mode (Try It Out)
 
-Ephemeral mode uses in-memory storage. Nothing is written to disk, and all data is lost when the server stops.
+Ephemeral mode uses transient storage. Uploaded files stay in memory, and the SQLite database is created as temporary scratch storage and discarded when the server stops.
 
 ```bash
 ./mahresources -ephemeral -bind-address=:8181

@@ -5,7 +5,7 @@ title: Saved Queries
 
 # Saved Queries
 
-Queries execute raw SQL against a read-only database connection and display results in a table or custom template.
+Saved Queries execute raw SQL through a dedicated query runner and display results in a table or custom template.
 
 ## Query Properties
 
@@ -20,12 +20,12 @@ Names must be unique across all Queries.
 
 ## How Queries Execute
 
-1. The SQL in `text` is sent to a read-only connection via `sqlx`
+1. The SQL in `text` is executed via `sqlx` using the configured query connection
 2. Named parameters (`:paramName` syntax) are substituted from user input
 3. Results are returned as a JSON array of row objects
 4. If a `template` is defined, results render through it; otherwise a default table is used
 
-The read-only connection prevents INSERT, UPDATE, DELETE, and other modification statements.
+If `DB_READONLY_DSN` points to a database-enforced read-only connection, writes are blocked at the database level. Without that, queries still run, but they are not database-enforced read-only.
 
 ## Creating a Query
 
@@ -52,6 +52,18 @@ Running this Query prompts for a `tagName` value. The UI parses input as JSON, s
 - Strings: `"my value"` (with quotes) or bare text
 - Booleans: `true` / `false`
 - Null: `null`
+
+### PostgreSQL Type Casts
+
+PostgreSQL `::` casts work normally in saved queries. Write them as usual:
+
+```sql
+SELECT meta::jsonb
+FROM resources
+WHERE id = :id
+```
+
+The query runner escapes casts automatically before named-parameter binding.
 
 ## Running Queries
 
@@ -141,6 +153,10 @@ curl http://localhost:8181/v1/query/schema
 This returns table and column definitions for the database.
 
 ## API Endpoints
+
+:::warning
+For database-level write protection, configure `DB_READONLY_DSN` as a truly read-only connection or user. Otherwise saved queries run through a secondary connection, but that connection is not inherently read-only.
+:::
 
 ### List Queries
 

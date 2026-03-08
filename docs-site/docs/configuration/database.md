@@ -54,6 +54,8 @@ Or use the combined ephemeral flag:
 ./mahresources -ephemeral
 ```
 
+`-memory-db` and `-ephemeral` use a temporary SQLite database file with WAL mode for better concurrency under test load. Treat it as transient scratch storage rather than durable persistence.
+
 ### Seeding from Existing Database
 
 Start with a copy of an existing database (useful for testing or demos):

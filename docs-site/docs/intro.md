@@ -22,7 +22,7 @@ Files (called Resources), Notes, and Groups are stored in a database with tracke
 - **Full-text search** -- FTS5 (SQLite) or tsvector (PostgreSQL) search across all content, accessible via Cmd/Ctrl+K.
 - **Image similarity** -- Perceptual hashing finds visually similar images automatically.
 - **Resource versioning** -- Track versions of a Resource over time.
-- **Saved queries** -- Store and re-run raw SQL queries against a read-only database connection.
+- **Saved queries** -- Store and re-run raw SQL queries. For database-level write protection, configure `DB_READONLY_DSN` as a read-only connection.
 - **Group relations** -- Define typed relationships between Groups (e.g., "works at", "belongs to").
 - **Note blocks** -- Structured content blocks within Notes: text, heading, divider, gallery, references, todos, table, and calendar. Plugins can register additional block types.
 - **Note sharing** -- Generate share tokens for individual Notes and serve them on a separate read-only HTTP server.

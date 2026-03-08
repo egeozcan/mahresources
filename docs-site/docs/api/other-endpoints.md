@@ -301,7 +301,7 @@ POST /v1/resourceCategory/editDescription?id={id}
 
 ## Queries API
 
-Queries are saved SQL queries that can be executed to generate custom reports.
+Queries are saved SQL queries that can be executed to generate custom reports. For database-level write protection, configure `DB_READONLY_DSN` as a truly read-only connection; otherwise query execution is not database-enforced read-only.
 
 ### List Queries
 
@@ -573,12 +573,14 @@ curl "http://localhost:8181/v1/logs/entity?entityType=resource&entityId=123"
 
 Queue background downloads for remote resources. The queue holds up to 100 jobs and runs up to 3 concurrently. Completed jobs are retained for 1 hour before eviction.
 
+The canonical route family is `/v1/jobs/*`. Legacy `/v1/download/*` aliases remain available for compatibility.
+
 ### Submit Download
 
 Add URLs to the download queue.
 
 ```
-POST /v1/download/submit
+POST /v1/jobs/download/submit
 ```
 
 #### Parameters
@@ -590,7 +592,7 @@ Submit multiple URLs by separating them with newlines in the `URL` field. Each U
 #### Example
 
 ```bash
-curl -X POST http://localhost:8181/v1/download/submit \
+curl -X POST http://localhost:8181/v1/jobs/download/submit \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
   -d '{
@@ -599,19 +601,23 @@ curl -X POST http://localhost:8181/v1/download/submit \
   }'
 ```
 
+Legacy alias: `POST /v1/download/submit`
+
 ### Get Download Queue
 
 Get all download jobs.
 
 ```
-GET /v1/download/queue
+GET /v1/jobs/queue
 ```
 
 #### Example
 
 ```bash
-curl http://localhost:8181/v1/download/queue
+curl http://localhost:8181/v1/jobs/queue
 ```
+
+Legacy alias: `GET /v1/download/queue`
 
 #### Response
 
@@ -636,19 +642,21 @@ curl http://localhost:8181/v1/download/queue
 
 | Endpoint | Description |
 |----------|-------------|
-| `POST /v1/download/cancel?id={job_id}` | Cancel a pending or in-progress download |
-| `POST /v1/download/pause?id={job_id}` | Pause a download job |
-| `POST /v1/download/resume?id={job_id}` | Resume a paused download (restarts from the beginning) |
-| `POST /v1/download/retry?id={job_id}` | Retry a failed or cancelled download |
+| `POST /v1/jobs/cancel?id={job_id}` | Cancel a pending or in-progress download |
+| `POST /v1/jobs/pause?id={job_id}` | Pause a download job |
+| `POST /v1/jobs/resume?id={job_id}` | Resume a paused download (restarts from the beginning) |
+| `POST /v1/jobs/retry?id={job_id}` | Retry a failed or cancelled download |
 
 Downloads can fail due to network errors, connection timeouts (default 30s), idle timeouts (default 60s), or exceeding the overall timeout (default 30m). Configure these with the `-remote-connect-timeout`, `-remote-idle-timeout`, and `-remote-overall-timeout` flags.
+
+Legacy aliases remain available under `/v1/download/cancel`, `/v1/download/pause`, `/v1/download/resume`, and `/v1/download/retry`.
 
 ### Download Events (SSE)
 
 Stream real-time download status updates via Server-Sent Events.
 
 ```
-GET /v1/download/events
+GET /v1/jobs/events
 ```
 
 #### Example
@@ -666,7 +674,7 @@ The server emits **named events**, so you must use `addEventListener` (not `onme
 | `action_removed` | A plugin action job was removed |
 
 ```javascript
-const eventSource = new EventSource('http://localhost:8181/v1/download/events');
+const eventSource = new EventSource('http://localhost:8181/v1/jobs/events');
 
 // Receive full initial state (all current jobs)
 eventSource.addEventListener('init', (event) => {
@@ -697,6 +705,8 @@ eventSource.addEventListener('action_updated', (event) => {
   console.log('Action job updated:', job);
 });
 ```
+
+Legacy alias: `GET /v1/download/events`
 
 ---
 

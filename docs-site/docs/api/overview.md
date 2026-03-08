@@ -172,7 +172,7 @@ Some endpoints use `id` (lowercase) and others use `Id` (capitalized). This is a
 
 ## OpenAPI Specification
 
-An OpenAPI 3.0 specification can be generated from the route definitions:
+An OpenAPI 3.0 specification can be generated from the routes registered with the OpenAPI generator:
 
 ```bash
 # Generate YAML spec (default)
@@ -196,6 +196,10 @@ go run ./cmd/openapi-gen/validate.go openapi.yaml
 If validation succeeds, the command prints "Valid OpenAPI 3.0 spec" and exits with code 0. On failure, it prints the validation error and exits with code 1.
 
 The generated spec works with Swagger UI, Postman, or code generators.
+
+:::note
+The generated spec currently focuses on the core documented API surface. Some newer aliases or convenience endpoints may exist in the server before they are added to the generated spec.
+:::
 
 ## API Endpoint Categories
 
