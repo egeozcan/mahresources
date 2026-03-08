@@ -7,6 +7,8 @@ title: Notes
 
 A Note stores text content with optional start and end dates, a type classification, and relationships to Resources, Groups, and Tags. Notes support a block-based content system for structured editing and public sharing via unique tokens.
 
+![Notes list](/img/note-list.png)
+
 ## Note Properties
 
 | Property | Type | Description |

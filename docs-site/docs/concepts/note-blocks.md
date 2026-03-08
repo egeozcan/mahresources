@@ -7,6 +7,8 @@ title: Note Blocks
 
 Note Blocks provide a structured content system within Notes. Each block has a type, a string-based position for ordering, JSON content (edited in edit mode), and JSON state (modified while viewing).
 
+![Note with blocks](/img/note-blocks.png)
+
 ## Block Properties
 
 | Property | Type | Description |

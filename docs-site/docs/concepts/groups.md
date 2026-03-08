@@ -7,6 +7,8 @@ title: Groups
 
 Groups are hierarchical containers that organize Resources, Notes, and other Groups. Each Group can own entities (parent-child), relate to entities (many-to-many), and form typed relationships with other Groups via the Relations system.
 
+![Groups list](/img/group-list.png)
+
 ## Group Properties
 
 | Property | Type | Description |

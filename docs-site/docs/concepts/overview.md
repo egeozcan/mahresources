@@ -6,6 +6,8 @@ sidebar_position: 1
 
 Mahresources organizes data around eleven entity types connected by ownership and many-to-many relationships.
 
+![Dashboard overview](/img/dashboard.png)
+
 ## Entity Types
 
 | Entity | Purpose | Example Uses |

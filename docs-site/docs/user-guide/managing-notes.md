@@ -6,6 +6,8 @@ sidebar_position: 3
 
 Create, edit, and organize text content with date ranges, block-based editing, metadata, and type-specific templates.
 
+![Notes list view](/img/note-list.png)
+
 ## Creating Notes
 
 ### Basic Note Creation

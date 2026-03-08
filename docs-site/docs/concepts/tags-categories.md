@@ -10,6 +10,8 @@ Tags are flat cross-entity labels, while Categories and Resource Categories defi
 
 Tags are simple labels that can be applied to Resources, Notes, and Groups.
 
+![Tags list](/img/tag-list.png)
+
 ### Tag Properties
 
 | Property | Description |
@@ -141,6 +143,8 @@ Multiple tags are AND-ed (items must have all specified tags).
 ## Categories
 
 Categories define types of Groups with custom presentation and optional metadata schemas.
+
+![Categories list](/img/category-list.png)
 
 ### Category Properties
 

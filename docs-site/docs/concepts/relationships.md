@@ -6,6 +6,8 @@ sidebar_position: 6
 
 Typed relationships add meaning to connections between Groups beyond ownership or many-to-many associations. Each relationship is a directed edge with a named type, forming a navigable graph.
 
+![Relations between groups](/img/relation-list.png)
+
 ## Relationship Types (RelationTypes)
 
 Relationship Types define the kinds of connections that can exist between groups.

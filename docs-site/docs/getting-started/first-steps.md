@@ -14,6 +14,8 @@ Five main entity types form the core data model:
 - **Tags** - Labels you attach to Resources, Notes, and Groups
 - **Categories** - Types for your Groups (e.g., Person, Project, Topic)
 
+![Dashboard after first setup](/img/dashboard.png)
+
 ## Step 1: Create a Category
 
 Categories define what kind of thing a Group represents (e.g., "Person", "Project", "Location"). Groups can optionally have a Category, but creating a few early helps keep things organized.

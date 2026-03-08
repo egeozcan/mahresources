@@ -6,6 +6,8 @@ sidebar_position: 2
 
 Every file in Mahresources is a Resource: images, documents, videos, or anything else. Each file is hashed for deduplication, gets automatic thumbnails where supported, and has version history.
 
+![Resource grid view](/img/grid-view.png)
+
 ## Resource Properties
 
 | Property | Description |

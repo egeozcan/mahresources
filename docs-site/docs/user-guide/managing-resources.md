@@ -6,6 +6,8 @@ sidebar_position: 2
 
 Resources are files of any type: images, documents, videos, or anything else you want to store and organize.
 
+![Resource detail view](/img/resource-detail-view.png)
+
 ## Uploading Resources
 
 ### File Upload
