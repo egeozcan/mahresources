@@ -10,15 +10,15 @@ The block editor uses an extensible block type system. Contributors can add new 
 
 Block types define how different types of content (text, headings, images, tables, etc.) are validated, stored, and displayed within notes. The system uses a registry pattern where block types auto-register themselves at startup.
 
-**Existing block types:**
-- `text` - Plain text content with Markdown support
-- `heading` - Section headings (H1-H6)
-- `divider` - Visual separator
-- `gallery` - Collection of resource images
-- `references` - Links to groups
-- `todos` - Checklist items
-- `table` - Tabular data
+**Built-in block types:**
+- `text` - Rich text content
+- `markdown` - Markdown-formatted content rendered as HTML
+- `table` - Tabular data (manual or query-driven)
 - `calendar` - Calendar with iCal sources and custom events
+- `list` - Checklist items with interactive checkboxes
+- `code` - Code blocks with syntax highlighting
+
+Plugins can register additional block types via `mah.block_type()`. Plugin block types use the naming convention `plugin:<plugin-name>:<type>`.
 
 ## Architecture
 

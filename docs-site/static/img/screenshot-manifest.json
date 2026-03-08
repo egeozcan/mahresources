@@ -1,0 +1,221 @@
+{
+  "version": 1,
+  "screenshots": {
+    "dashboard.png": {
+      "page": "/dashboard",
+      "description": "Dashboard showing recent resources and notes overview with thumbnail grid",
+      "seedDependencies": ["categories", "groups", "resources", "notes", "tags"],
+      "seedDetails": "6+ groups, 13+ resources with images, 4+ notes with tags",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": [],
+      "capturedDate": "2026-03-08"
+    },
+    "grid-view.png": {
+      "page": "/resources",
+      "description": "Resource grid view with thumbnails, tag filter pills, and sort/filter sidebar",
+      "seedDependencies": ["categories", "groups", "resources", "tags"],
+      "seedDetails": "Resources with thumbnails, tags assigned for filter pills",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": [],
+      "capturedDate": "2026-03-08"
+    },
+    "resource-detail.png": {
+      "page": "/resource?id=2",
+      "description": "Resource detail page showing metadata cards, tags, groups, and notes sections",
+      "seedDependencies": ["categories", "groups", "resources", "tags", "notes"],
+      "seedDetails": "Resource with owner group, tags, and linked notes",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": [],
+      "capturedDate": "2026-03-08"
+    },
+    "upload-form.png": {
+      "page": "/resource/new",
+      "description": "Create resource form with file upload, URL download, tags/groups/notes relation fields, and owner picker",
+      "seedDependencies": [],
+      "seedDetails": "Empty form, no data needed",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": [],
+      "capturedDate": "2026-03-08"
+    },
+    "note-blocks.png": {
+      "page": "/note?id=1",
+      "description": "Note detail page with heading block, text paragraph block, and todo list block with checkboxes",
+      "seedDependencies": ["notes", "note-blocks", "tags"],
+      "seedDetails": "Note with 3 blocks: heading, text, todos (3 items, 1 checked)",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": [],
+      "capturedDate": "2026-03-08"
+    },
+    "group-tree.png": {
+      "page": "/group/tree",
+      "description": "Hierarchical group tree view showing root groups with category labels and child count",
+      "seedDependencies": ["categories", "groups"],
+      "seedDetails": "3+ root groups with category assignments, at least 1 with children",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": [],
+      "capturedDate": "2026-03-08"
+    },
+    "group-detail.png": {
+      "page": "/group?id=1",
+      "description": "Group detail page showing description, sub-groups, owned resources/notes, tag management, and merge/clone tools",
+      "seedDependencies": ["categories", "groups", "resources", "notes"],
+      "seedDetails": "Parent group with child groups and owned resources",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": [],
+      "capturedDate": "2026-03-08"
+    },
+    "search-results.png": {
+      "page": "/resources?name=Sample",
+      "description": "Filtered resource search results with name filter applied showing matching thumbnails",
+      "seedDependencies": ["resources"],
+      "seedDetails": "Resources with 'Sample' in name for filter to match",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": [],
+      "capturedDate": "2026-03-08"
+    },
+    "query-editor.png": {
+      "page": "/query?id=1",
+      "description": "Saved query detail page with SQL query text and Run button",
+      "seedDependencies": ["queries"],
+      "seedDetails": "Saved query with SELECT statement",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": [],
+      "capturedDate": "2026-03-08"
+    },
+    "activity-log.png": {
+      "page": "/logs",
+      "description": "Activity log table showing time, level, action, entity, and message columns with filter sidebar",
+      "seedDependencies": ["resources", "notes", "groups", "tags"],
+      "seedDetails": "Any entity creation/modification generates log entries automatically",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": [],
+      "capturedDate": "2026-03-08"
+    },
+    "tag-list.png": {
+      "page": "/tags",
+      "description": "Tags listing page with card grid showing tag names and descriptions, plus filter sidebar",
+      "seedDependencies": ["tags"],
+      "seedDetails": "8 tags with descriptive names and descriptions",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": [],
+      "capturedDate": "2026-03-08"
+    },
+    "note-list.png": {
+      "page": "/notes",
+      "description": "Notes listing page with card view, tag filter pills, sort controls, and filter sidebar",
+      "seedDependencies": ["notes", "tags"],
+      "seedDetails": "4 notes with different tags and note types",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": [],
+      "capturedDate": "2026-03-08"
+    },
+    "group-list.png": {
+      "page": "/groups",
+      "description": "Groups listing page with List/Text/Tree view mode tabs, category labels, and filter sidebar",
+      "seedDependencies": ["categories", "groups"],
+      "seedDetails": "6 groups with category assignments and descriptions",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": [],
+      "capturedDate": "2026-03-08"
+    },
+    "resource-detail-view.png": {
+      "page": "/resources/details",
+      "description": "Resources in table/detail view mode showing ID, name, preview thumbnail, size, and creation date columns",
+      "seedDependencies": ["resources"],
+      "seedDetails": "Multiple resources with varied names and sizes",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": [],
+      "capturedDate": "2026-03-08"
+    },
+    "note-edit.png": {
+      "page": "/note/edit?id=1",
+      "description": "Note edit form with title, text textarea, date fields, tags/groups relation chips, owner picker, and note type selector",
+      "seedDependencies": ["notes", "tags", "groups"],
+      "seedDetails": "Note with existing tags and group assignments to show chip removals",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": [],
+      "capturedDate": "2026-03-08"
+    },
+    "group-edit.png": {
+      "page": "/group/edit?id=1",
+      "description": "Group edit form with name, description, URL, tags/groups relation fields, owner picker, meta editor, and category selector",
+      "seedDependencies": ["categories", "groups"],
+      "seedDetails": "Group with existing data to populate form fields",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": [],
+      "capturedDate": "2026-03-08"
+    },
+    "category-list.png": {
+      "page": "/categories",
+      "description": "Category management page with card grid showing category names and descriptions, plus filter sidebar",
+      "seedDependencies": ["categories"],
+      "seedDetails": "5 categories: Person, Location, Business, Media, Documents",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": [],
+      "capturedDate": "2026-03-08"
+    },
+    "global-search.png": {
+      "page": "/resources",
+      "description": "Global search modal (Cmd/Ctrl+K) showing search results across all entity types with keyboard navigation hints",
+      "seedDependencies": ["resources"],
+      "seedDetails": "Resources with 'Sample' in name for search results",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": ["Press Cmd+K to open search modal", "Type 'Sample' to filter results"],
+      "capturedDate": "2026-03-08"
+    },
+    "bulk-selection.png": {
+      "page": "/resources",
+      "description": "Bulk selection toolbar showing Add Tag, Remove Tag, Add Field, Add Groups, Update Dimensions, and Delete operations",
+      "seedDependencies": ["resources"],
+      "seedDetails": "Multiple resources available; click Select All to show toolbar",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": ["Click 'Select All' button to activate bulk toolbar"],
+      "capturedDate": "2026-03-08"
+    },
+    "plugin-management.png": {
+      "page": "/plugins/manage",
+      "description": "Plugin management page showing discovered plugins with version, description, enable/disable controls, settings forms, and purge data option",
+      "seedDependencies": ["plugins"],
+      "seedDetails": "3 plugins discovered: example-blocks (enabled), example-plugin (enabled, with settings), fal-ai (disabled, with API key setting)",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": [],
+      "capturedDate": "2026-03-08"
+    },
+    "version-compare.png": {
+      "page": "/resource/compare?r1=1&v1=1&r2=1&v2=3",
+      "description": "Version comparison page showing OLD/NEW resource pickers, diff summary banner (Files differ, Type Match, Size delta, Dimensions), metadata diff cards, and side-by-side image preview with compare modes (Slider, Onion skin, Toggle)",
+      "seedDependencies": ["resources", "versions"],
+      "seedDetails": "Resource with 3 versions (different sizes/dimensions) for comparison",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": [],
+      "capturedDate": "2026-03-08"
+    },
+    "download-queue.png": {
+      "page": "/dashboard",
+      "description": "Dashboard page showing the download queue FAB button in bottom-right corner for initiating background URL downloads",
+      "seedDependencies": ["resources", "groups"],
+      "seedDetails": "Dashboard with recent resources; download FAB is always visible",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": [],
+      "capturedDate": "2026-03-08"
+    },
+    "resource-versions.png": {
+      "page": "/resource?id=1",
+      "description": "Resource detail page scrolled to show Versions panel with version list (v1/v2/v3), download/restore/delete controls, compare button, and upload new version form",
+      "seedDependencies": ["resources", "versions"],
+      "seedDetails": "Resource with 3 versions including comments",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": ["Scroll down to Versions section"],
+      "capturedDate": "2026-03-08"
+    },
+    "note-sharing.png": {
+      "page": "/note?id=1",
+      "description": "Note detail page showing the Share Note button in the sidebar for generating public share URLs",
+      "seedDependencies": ["notes", "note-blocks"],
+      "seedDetails": "Note with blocks and Share Note button visible in sidebar",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": [],
+      "capturedDate": "2026-03-08"
+    }
+  }
+}

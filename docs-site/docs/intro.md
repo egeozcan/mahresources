@@ -24,14 +24,15 @@ Files (called Resources), Notes, and Groups are stored in a database with tracke
 - **Resource versioning** -- Track versions of a Resource over time.
 - **Saved queries** -- Store and re-run raw SQL queries against a read-only database connection.
 - **Group relations** -- Define typed relationships between Groups (e.g., "works at", "belongs to").
-- **Note blocks** -- Structured content blocks within Notes: text, headings, galleries, references, todos, tables, and calendars.
+- **Note blocks** -- Structured content blocks within Notes: text, markdown, table, calendar, list, and code. Plugins can register additional block types.
 - **Note sharing** -- Generate share tokens for individual Notes and serve them on a separate read-only HTTP server.
 - **Series** -- Group Resources with shared metadata (e.g., pages of a scanned document).
 - **Download queue** -- Queue remote URL downloads with progress tracking via the Download Cockpit UI.
 - **Activity log** -- Tracks create, update, delete, and plugin operations across all entities.
 - **Custom templates** -- Categories and Note Types support custom HTML templates (header, sidebar, summary, avatar) rendered with Pongo2.
 - **Meta schemas** -- Define JSON Schemas on Categories and Resource Categories to validate and generate structured metadata forms.
-- **Plugin system** -- Lua plugins that intercept create/update/delete operations, add custom pages, and run background jobs.
+- **Plugin system** -- Lua plugins that intercept create/update/delete operations, add custom pages, run background jobs, perform full entity CRUD (`mah.db.create_*`, `mah.db.update_*`, `mah.db.delete_*`), and store per-plugin data via a key-value store (`mah.kv.*`).
+- **Paste upload** -- Paste images or text from the clipboard (Cmd/Ctrl+V) to create Resources with a preview-and-tag modal workflow.
 - **JSON API** -- Every page has a JSON equivalent (`Accept: application/json` or `.json` suffix) for scripting and integration.
 
 :::danger No Authentication

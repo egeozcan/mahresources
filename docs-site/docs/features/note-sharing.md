@@ -67,6 +67,8 @@ SHARE_BIND_ADDRESS=0.0.0.0
 
 ### From the Note Display Page
 
+![Note with Share button](/img/note-sharing.png)
+
 1. Navigate to the note you want to share
 2. In the sidebar, find the **Sharing** section
 3. Click **Share Note**

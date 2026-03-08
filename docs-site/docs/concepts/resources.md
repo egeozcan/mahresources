@@ -77,12 +77,9 @@ Mahresources computes cryptographic hashes for integrity and deduplication:
 - Enables detection of duplicate uploads
 
 ### Perceptual Hashes (Images)
-For image files, Mahresources computes additional perceptual hashes:
+For image files, Mahresources computes a perceptual hash using the DHash (difference hash) algorithm from the imgsim library. DHash compares adjacent pixel differences to produce a compact fingerprint. The similarity between two images is measured by the Hamming distance between their hashes -- the number of differing bits.
 
-- **AHash** (Average Hash): Compares average luminance
-- **DHash** (Difference Hash): Compares adjacent pixel differences
-
-These detect visually similar images even across different resolutions, minor edits, format conversions, and color adjustments.
+Perceptual hashes detect visually similar images even across different resolutions, minor edits, format conversions, and color adjustments.
 
 ## Image Similarity
 

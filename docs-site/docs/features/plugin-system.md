@@ -102,6 +102,8 @@ Plugin enabled/disabled state and settings are stored in the database (`PluginSt
 
 ## Management UI
 
+![Plugin management page](/img/plugin-management.png)
+
 Navigate to the plugin management page to see all discovered plugins with their name, version, description, and current state (enabled/disabled). From this page:
 
 - Enable or disable individual plugins
@@ -162,7 +164,7 @@ curl -X POST http://localhost:8181/v1/plugin/purge-data \
   -d "name=image-processor"
 ```
 
-The plugin must be disabled before purging. The management UI also provides a **Purge Data** button on the plugin detail view for disabled plugins.
+The plugin must be disabled before purging. The management UI also has a **Purge Data** button on the plugin detail view for disabled plugins.
 
 ## Lua VM Sandboxing
 

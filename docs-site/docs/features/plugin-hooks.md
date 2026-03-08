@@ -62,7 +62,7 @@ end)
 
 ### Complete Hook Reference
 
-All 28 lifecycle hooks, organized by entity type:
+All 30 lifecycle hooks, organized by entity type:
 
 | Entity | Before Create | After Create | Before Update | After Update | Before Delete | After Delete |
 |--------|--------------|-------------|---------------|-------------|---------------|-------------|

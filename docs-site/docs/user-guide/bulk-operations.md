@@ -4,7 +4,7 @@ sidebar_position: 6
 
 # Bulk Operations
 
-Bulk operations let you modify multiple resources or groups at once: add/remove tags, update metadata, assign groups, or delete.
+Bulk operations let you modify multiple resources, notes, or groups at once: add/remove tags, update metadata, assign groups, or delete.
 
 ## Selecting Items
 
@@ -42,17 +42,17 @@ When you select one or more items, the bulk editor appears inline above the list
 
 ### Available Operations by Entity Type
 
-| Operation | Resources | Groups | Tags |
-|-----------|:---------:|:------:|:----:|
-| Add Tags | Yes | Yes | - |
-| Remove Tags | Yes | Yes | - |
-| Replace Tags | Yes | - | - |
-| Add Metadata | Yes | Yes | - |
-| Add Groups | Yes | - | - |
-| Update Dimensions | Yes | - | - |
-| Compare | Yes (2 only) | - | - |
-| Merge | Yes | - | Yes |
-| Delete | Yes | Yes | Yes |
+| Operation | Resources | Notes | Groups | Tags |
+|-----------|:---------:|:-----:|:------:|:----:|
+| Add Tags | Yes | Yes | Yes | - |
+| Remove Tags | Yes | Yes | Yes | - |
+| Replace Tags | Yes | - | - | - |
+| Add Metadata | Yes | Yes | Yes | - |
+| Add Groups | Yes | Yes | - | - |
+| Update Dimensions | Yes | - | - | - |
+| Compare | Yes (2 only) | - | - | - |
+| Merge | Yes | - | - | Yes |
+| Delete | Yes | Yes | Yes | Yes |
 
 ## Adding Tags
 

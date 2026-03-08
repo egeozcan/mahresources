@@ -6,6 +6,8 @@ sidebar_position: 6
 
 Queue up to 100 URLs for background download. Three run concurrently, with real-time progress via Server-Sent Events.
 
+![Download queue on dashboard](/img/download-queue.png)
+
 ## How It Works
 
 When you submit a URL for download:

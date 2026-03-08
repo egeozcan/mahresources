@@ -26,6 +26,8 @@ Files are stored by hash, meaning identical files are only stored once regardles
 
 ## Version History Panel
 
+![Resource version history panel](/img/resource-versions.png)
+
 The resource detail page includes a **Versions** panel listing all versions of the file.
 
 For each version, you can see:
@@ -48,6 +50,8 @@ For each version, you can see:
 ## Comparing Versions
 
 Select two versions to compare by clicking the **Compare** button in the version panel, then checking two versions and clicking **Compare Selected**.
+
+![Version comparison page](/img/version-compare.png)
 
 The comparison page shows:
 

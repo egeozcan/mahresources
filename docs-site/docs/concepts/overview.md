@@ -128,10 +128,12 @@ Mahresources supports bulk operations on multiple items:
 - `addTags` -- Add tags to selected items
 - `removeTags` -- Remove tags from selected items
 - `replaceTags` -- Replace all tags on selected Resources
-- `addGroups` -- Add group associations to selected Resources
+- `addGroups` -- Add group associations to selected Resources or Notes
 - `addMeta` -- Merge metadata into selected items
 - `delete` -- Delete selected items
 - `merge` -- Combine multiple items into one (Groups, Resources, and Tags)
+
+These bulk operations apply to Resources, Groups, and Notes. The available operations vary by entity type -- for example, `replaceTags` and `merge` apply only to Resources, while Notes support `addTags`, `removeTags`, `addGroups`, `addMeta`, and `delete`.
 
 ### Deletion
 

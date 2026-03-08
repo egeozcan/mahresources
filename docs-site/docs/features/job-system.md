@@ -5,16 +5,17 @@ title: Job System
 
 # Job System
 
-The job system aggregates download queue jobs and async plugin action jobs into a single API and SSE event stream.
+The job system aggregates download queue jobs, async plugin action jobs, and user jobs into a single API and SSE event stream.
 
 ## Job Sources
 
 | Source | Origin | ID Format | Max Concurrent |
 |--------|--------|-----------|---------------|
-| `download` | Download queue | 4-byte random hex (8 chars) | 3 |
-| `plugin` | Async plugin actions | 8-byte random hex (16 chars) | 3 |
+| `download` | Download queue | Random 16-char hex | 3 |
+| `plugin` | Async plugin actions | Random 16-char hex | 3 |
+| `user` | `mah.start_job(label, fn)` in Lua plugins | Random 16-char hex | -- |
 
-Both job types share the same SSE infrastructure and unified listing endpoint.
+All three job types share the same SSE infrastructure and unified listing endpoint.
 
 ## Download Jobs
 
@@ -59,6 +60,19 @@ Plugin action jobs are created when an async action is triggered. See [Plugin Ac
 mah.job_progress(job_id, 50, "Processing image...")
 mah.job_complete(job_id, { message = "Done", redirect = "/resource?id=42" })
 mah.job_fail(job_id, "API returned 500")
+```
+
+## User Jobs
+
+User jobs are created by plugins via `mah.start_job(label, fn)`. The function runs in a background goroutine with a 5-minute timeout. The returned job ID can be used with `mah.job_progress()`, `mah.job_complete()`, and `mah.job_fail()` to report status.
+
+```lua
+local job_id = mah.start_job("Import data", function()
+    for i = 1, 100 do
+        mah.job_progress(job_id, i, "Processing row " .. i)
+    end
+    mah.job_complete(job_id, { rows = 100 })
+end)
 ```
 
 ## SSE Event Stream

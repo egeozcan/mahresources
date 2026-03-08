@@ -204,6 +204,99 @@ POST /v1/note/editName?id={id}
 POST /v1/note/editDescription?id={id}
 ```
 
+## Bulk Operations
+
+Bulk operations apply an action to multiple notes at once. Each endpoint accepts a form or JSON body with an `Ids` array of note IDs.
+
+### Add Tags
+
+```
+POST /v1/notes/addTags
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `Ids` | integer[] | Note IDs to modify |
+| `Tags` | integer[] | Tag IDs to add |
+
+```bash
+curl -X POST http://localhost:8181/v1/notes/addTags \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{"Ids": [1, 2, 3], "Tags": [10, 11]}'
+```
+
+### Remove Tags
+
+```
+POST /v1/notes/removeTags
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `Ids` | integer[] | Note IDs to modify |
+| `Tags` | integer[] | Tag IDs to remove |
+
+```bash
+curl -X POST http://localhost:8181/v1/notes/removeTags \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{"Ids": [1, 2, 3], "Tags": [10]}'
+```
+
+### Add Groups
+
+```
+POST /v1/notes/addGroups
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `Ids` | integer[] | Note IDs to modify |
+| `Groups` | integer[] | Group IDs to associate |
+
+```bash
+curl -X POST http://localhost:8181/v1/notes/addGroups \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{"Ids": [1, 2, 3], "Groups": [5]}'
+```
+
+### Add Metadata
+
+```
+POST /v1/notes/addMeta
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `Ids` | integer[] | Note IDs to modify |
+| `Meta` | object | Key-value pairs to merge into existing metadata |
+
+```bash
+curl -X POST http://localhost:8181/v1/notes/addMeta \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{"Ids": [1, 2, 3], "Meta": {"status": "reviewed"}}'
+```
+
+### Bulk Delete
+
+```
+POST /v1/notes/delete
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `Ids` | integer[] | Note IDs to delete |
+
+```bash
+curl -X POST http://localhost:8181/v1/notes/delete \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{"Ids": [1, 2, 3]}'
+```
+
 ---
 
 # Note Sharing API
@@ -277,18 +370,18 @@ Blocks provide a structured editing system for note content. Each block has a ty
 
 ## Block Types
 
-Available block types:
+Built-in block types:
 
 | Type | Description |
 |------|-------------|
-| `text` | Plain text content |
-| `heading` | Heading with level 1-6 |
-| `divider` | Visual separator |
-| `gallery` | Collection of resource images |
-| `references` | Links to groups, notes, and resources |
-| `todos` | Checklist with items |
+| `text` | Rich text content |
+| `markdown` | Markdown-formatted content rendered as HTML |
 | `table` | Data table (manual data or query-based) |
 | `calendar` | Calendar view driven by ICS URLs, resources, and custom events |
+| `list` | Checklist with items |
+| `code` | Code blocks with syntax highlighting |
+
+Plugins can register additional block types with the prefix `plugin:<plugin-name>:<type>`.
 
 ## Get Block Types
 

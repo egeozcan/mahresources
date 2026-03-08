@@ -4,7 +4,7 @@ sidebar_position: 7
 
 # Entity Picker
 
-The entity picker is a reusable modal component for selecting entities (resources, groups, etc.) in the block editor. New entity types can be added through configuration objects without modifying core logic.
+The entity picker is a reusable modal component for selecting entities in the block editor and other UI contexts. It supports resources, notes, groups, tags, and categories. New entity types can be added through configuration objects without modifying core logic.
 
 ## Using the Picker
 
@@ -15,7 +15,7 @@ Open the picker from any block component using the Alpine store:
 ```javascript
 openPicker() {
   Alpine.store('entityPicker').open({
-    entityType: 'resource',      // or 'group'
+    entityType: 'resource',      // 'resource', 'note', 'group', 'tag', or 'category'
     noteId: this.noteId,         // optional, for resource context
     existingIds: this.selectedIds,
     onConfirm: (selectedIds) => {
@@ -29,10 +29,14 @@ openPicker() {
 
 | Option | Type | Description |
 |--------|------|-------------|
-| `entityType` | string | Required. Entity type key (`'resource'` or `'group'`) |
+| `entityType` | string | Required. Entity type key: `'resource'`, `'note'`, `'group'`, `'tag'`, or `'category'` |
 | `noteId` | number | Optional. Note ID for "Note's Resources" tab |
 | `existingIds` | number[] | IDs already selected (shown as "Added") |
 | `onConfirm` | function | Callback receiving array of selected IDs |
+
+### Batch Selection
+
+The picker supports batch selection mode for selecting multiple entities at once. Select items by clicking them, then confirm the entire batch with the confirm button.
 
 ## Adding New Entity Types
 

@@ -19,7 +19,7 @@ Every create, update, and delete operation is recorded with the HTTP request con
 | `entityId` | uint | ID of the affected entity (nullable) |
 | `entityName` | string | Name of the entity at the time of the action |
 | `message` | string | Human-readable description |
-| `details` | string | JSON with additional context |
+| `details` | JSON | Additional context as a JSON object |
 | `requestPath` | string | HTTP path that triggered the action |
 | `userAgent` | string | Client user agent |
 | `ipAddress` | string | Client IP address |
@@ -117,7 +117,7 @@ curl "http://localhost:8181/v1/logs?level=error"
       "entityType": "",
       "entityName": "",
       "message": "Failed to generate thumbnail",
-      "details": "{\"resourceId\": 1234}",
+      "details": {"resourceId": 1234},
       "requestPath": "/v1/resource/preview",
       "userAgent": "Mozilla/5.0",
       "ipAddress": "127.0.0.1",

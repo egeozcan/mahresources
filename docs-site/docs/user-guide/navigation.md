@@ -62,7 +62,7 @@ Type at least 2 characters. Results appear as a flat list ranked by relevance, e
 | Enter | Open selected result |
 | Escape | Close search dialog |
 
-Results are cached server-side for 60 seconds. The default result limit is 20 (max 200).
+Results are cached server-side for 60 seconds. The default result limit is 20 (max 50).
 
 ## List Views
 

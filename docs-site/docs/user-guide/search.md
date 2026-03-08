@@ -46,7 +46,7 @@ When full-text search is unavailable, results are ranked by LIKE-based scoring:
 ### Caching
 
 - Server-side LRU cache with 60-second TTL
-- Default result limit: 20 (max: 200)
+- Default result limit: 20 (max: 50)
 - Cache invalidates on entity create, update, or delete
 - Frontend performs additional client-side caching (30-second threshold)
 

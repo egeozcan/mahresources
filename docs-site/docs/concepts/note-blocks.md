@@ -28,6 +28,8 @@ This separation means users can interact with blocks (checking items, sorting ta
 
 ## Block Types
 
+Six built-in block types ship with Mahresources. Plugins can register additional types using `mah.block_type()` -- these appear with the prefix `plugin:<plugin-name>:<type>`.
+
 ### Text
 
 Rich text content. The first text block syncs bidirectionally with the Note's `description` field.
@@ -36,39 +38,15 @@ Rich text content. The first text block syncs bidirectionally with the Note's `d
 {"text": "This is a paragraph of text."}
 ```
 
-### Heading
+### Markdown
 
-Section heading with configurable level (1-6).
-
-```json
-{"text": "Section Title", "level": 2}
-```
-
-### Divider
-
-Visual separator. Empty content.
+Markdown-formatted content rendered as HTML.
 
 ```json
-{}
+{"text": "## Heading\n\nSome **bold** text."}
 ```
 
-### Gallery
-
-Displays Resources as an image gallery.
-
-```json
-{"resourceIds": [101, 102, 103]}
-```
-
-### References
-
-Links to Groups by ID.
-
-```json
-{"groupIds": [10, 25, 42]}
-```
-
-### Todos
+### List
 
 Interactive checklist. Content holds the items; state tracks which are checked.
 
@@ -85,6 +63,14 @@ Interactive checklist. Content holds the items; state tracks which are checked.
 **State:**
 ```json
 {"checked": ["a1b2"]}
+```
+
+### Code
+
+Code blocks with syntax highlighting.
+
+```json
+{"text": "SELECT * FROM resources", "language": "sql"}
 ```
 
 ### Table
