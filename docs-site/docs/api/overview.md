@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # API Overview
 
-All features are accessible via a REST API. The API supports both JSON and form-encoded requests, with responses available in JSON format.
+All features are accessible via a REST API. Most write endpoints accept either JSON or form-encoded requests, and most `/v1` endpoints return JSON.
 
 :::danger No Authentication
 
@@ -24,7 +24,11 @@ http://localhost:8181/v1/groups
 
 ## Response Formats
 
-API endpoints under `/v1/` always return JSON.
+Most API endpoints under `/v1/` return JSON, with a few important exceptions:
+
+- `GET /v1/resource/view` returns a `302` redirect to the stored file
+- `GET /v1/download/events` and `GET /v1/jobs/events` return Server-Sent Events streams
+- `GET /v1/plugins/{pluginName}/block/render` returns an HTML fragment
 
 Template routes (without the `/v1/` prefix) return HTML by default and support two suffixes:
 
@@ -53,7 +57,7 @@ The `.json` and `.body` suffixes do **not** work on `/v1/` API routes. Use `/v1/
 
 ## Request Content Types
 
-The API accepts requests in two formats:
+Many write endpoints accept requests in two formats:
 
 - **JSON**: `Content-Type: application/json`
 - **Form data**: `Content-Type: application/x-www-form-urlencoded` or `multipart/form-data`
@@ -110,13 +114,17 @@ Use the `SortBy` parameter to control result ordering. Append `asc` or `desc` (s
 curl "http://localhost:8181/v1/resources?SortBy=name"
 
 # Sort by creation date descending
-curl "http://localhost:8181/v1/resources?SortBy=created_at desc"
+curl -G http://localhost:8181/v1/resources \
+  --data-urlencode "SortBy=created_at desc"
 
 # Multiple sort fields
-curl "http://localhost:8181/v1/resources?SortBy=name&SortBy=created_at desc"
+curl -G http://localhost:8181/v1/resources \
+  --data-urlencode "SortBy=name" \
+  --data-urlencode "SortBy=created_at desc"
 
 # Sort by metadata field
-curl "http://localhost:8181/v1/resources?SortBy=meta->>'priority' desc"
+curl -G http://localhost:8181/v1/resources \
+  --data-urlencode "SortBy=meta->>'priority' desc"
 ```
 
 Sort columns are validated against: `^(meta->>?'[a-z_]+'|[a-z_]+)(\s(desc|asc))?$`

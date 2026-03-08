@@ -227,7 +227,7 @@ POST /v1/resource/local
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `LocalPath` | string | **Required.** Path within an alternative filesystem |
-| `PathName` | string | Storage location key (for alt filesystems) |
+| `PathName` | string | **Required.** Storage location key configured via `-alt-fs` or `FILE_ALT_NAME_N` |
 | `Name` | string | Display name |
 | `Description` | string | Description text |
 | `OwnerId` | integer | Owner group ID |
@@ -241,6 +241,7 @@ curl -X POST http://localhost:8181/v1/resource/local \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
   -d '{
+    "PathName": "archive",
     "LocalPath": "/data/existing-file.pdf",
     "Name": "Imported Document",
     "OwnerId": 5
