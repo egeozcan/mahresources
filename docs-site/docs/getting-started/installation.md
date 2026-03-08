@@ -14,7 +14,7 @@ There is **no built-in authentication**. Never expose the server directly to the
 
 ### Building from Source
 - **Go 1.22+** - [Download Go](https://go.dev/dl/)
-- **Node.js 20+** - [Download Node.js](https://nodejs.org/)
+- **Node.js 20.19+** - [Download Node.js](https://nodejs.org/)
 
 ### Docker
 - **Docker 20+** - [Install Docker](https://docs.docker.com/get-docker/)

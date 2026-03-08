@@ -76,8 +76,8 @@ Replace all tags on selected resources with a new set. This operation is availab
 
 ```bash
 curl -X POST http://localhost:8181/v1/resources/replaceTags \
-  -F "EditedId=1" -F "EditedId=2" \
-  -F "Tags=10" -F "Tags=20"
+  -F "ID=1" -F "ID=2" \
+  -F "EditedId=10" -F "EditedId=20"
 ```
 
 All existing tags on the specified resources are removed and replaced with the given set.
