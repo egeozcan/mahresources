@@ -36,7 +36,13 @@ Notes have optional `startDate` and `endDate` fields for temporal filtering and 
 
 ## Note Types
 
-Note Types classify Notes and apply consistent styling. Each Note Type has custom HTML templates (header, sidebar, summary, avatar) rendered with Pongo2 syntax. Deleting a Note Type sets `noteTypeId` to NULL on associated Notes.
+Note Types classify Notes and apply consistent styling. Each Note Type has custom HTML templates (header, sidebar, summary, avatar) rendered with Pongo2 syntax.
+
+:::danger Cascade on Note Type deletion
+
+Deleting a Note Type **cascade-deletes all Notes** of that type. This cannot be undone.
+
+:::
 
 | Property | Description |
 |----------|-------------|

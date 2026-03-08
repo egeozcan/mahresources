@@ -1,5 +1,5 @@
 ---
-sidebar_position: 5
+sidebar_position: 6
 title: Note Sharing
 description: Share notes publicly via secure, unguessable URLs
 ---

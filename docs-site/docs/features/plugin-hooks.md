@@ -72,8 +72,6 @@ All 30 lifecycle hooks, organized by entity type:
 | Tag | `before_tag_create` | `after_tag_create` | `before_tag_update` | `after_tag_update` | `before_tag_delete` | `after_tag_delete` |
 | Category | `before_category_create` | `after_category_create` | `before_category_update` | `after_category_update` | `before_category_delete` | `after_category_delete` |
 
-Note hooks are also type-aware. If a note has a NoteType with ID `X`, the hook `before_note_type_X_create` fires in addition to `before_note_create`. The same pattern applies to all note lifecycle hooks.
-
 ## Injections
 
 Injections render HTML into named slots on existing pages. Register them during `init()` using `mah.inject(slot_name, render_function)`.

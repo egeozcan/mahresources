@@ -204,9 +204,15 @@ Each section includes:
 | Shortcut | Action |
 |----------|--------|
 | Arrow Left / Arrow Right | Previous/next image |
+| Page Up / Page Down | Previous/next image |
+| Enter | Toggle fullscreen |
+| E or F2 | Toggle edit panel |
+| T | Toggle quick tag panel |
 | Double-click | Toggle native resolution zoom |
 | Ctrl + Scroll | Zoom toward cursor position |
-| 1-9 | Toggle quick tag slots (see Quick Tag Panel below) |
+| 1-9 | Toggle quick tag slots (requires quick tag panel open) |
+| Shift + 1-9 | Toggle recent tag slots (requires quick tag panel open) |
+| 0 | Focus tag editor |
 | Escape | Close lightbox |
 
 ### Autocomplete Dropdowns

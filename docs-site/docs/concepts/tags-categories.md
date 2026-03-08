@@ -348,7 +348,7 @@ Resource Categories work like Categories but apply to Resources instead of Group
 - **Unique names**: Each name must be unique
 - **One-to-many**: A resource category can have multiple resources, but each resource has at most one resource category
 - **Custom presentation**: Templates customize how resources appear (same system as Categories for Groups)
-- **Deletion behavior**: Deleting a resource category sets `resourceCategoryId` to NULL on associated resources
+- **Deletion behavior**: Deleting a resource category cascade-deletes all resources in that category
 
 ### Use Cases
 
@@ -401,4 +401,4 @@ GET /v1/resources?resourceCategoryId=1
 | Presentation | None | Custom templates | Custom templates | Custom templates |
 | Validation | None | JSON Schema | JSON Schema | None |
 | Purpose | Cross-cutting labels | Group type definition | Resource type definition | Note type definition |
-| On delete | Removed from entities | CASCADE (deletes Groups) | SET NULL on Resources | SET NULL on Notes |
+| On delete | Removed from entities | CASCADE (deletes Groups) | CASCADE (deletes Resources) | CASCADE (deletes Notes) |
