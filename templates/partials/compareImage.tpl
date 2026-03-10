@@ -71,7 +71,7 @@
                  :style="'opacity: ' + (opacity / 100)"
                  alt="Version {{ comparison.Version2.VersionNumber }}">
         </div>
-        <div class="sticky bottom-0 z-20 flex items-center justify-center gap-3 py-2 px-4 bg-white/90 backdrop-blur border-t border-gray-200">
+        <div class="sticky bottom-0 z-20 flex items-center justify-center gap-3 py-2 px-4 bg-white/90 backdrop-blur border-t border-stone-200">
             <span class="compare-side-label--old">OLD</span>
             <input type="range" min="0" max="100" x-model="opacity" class="w-48" aria-label="Onion skin opacity">
             <span class="compare-side-label--new">NEW</span>

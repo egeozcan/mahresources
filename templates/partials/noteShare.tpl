@@ -63,7 +63,7 @@
         <template x-if="shared">
             <div class="space-y-2">
                 <div class="flex items-center gap-1">
-                    <span class="inline-flex items-center px-2 py-0.5 bg-green-100 text-amber-700 text-xs font-mono font-medium rounded">
+                    <span class="inline-flex items-center px-2 py-0.5 bg-amber-100 text-amber-700 text-xs font-mono font-medium rounded">
                         Shared
                     </span>
                 </div>

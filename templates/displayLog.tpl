@@ -10,7 +10,7 @@
                 {% elif log.Level == "warning" %}
                     <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">warning</span>
                 {% else %}
-                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-amber-700">info</span>
+                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-amber-100 text-amber-700">info</span>
                 {% endif %}
                 {{ log.Action }} operation
             </p>
