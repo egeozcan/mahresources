@@ -17,12 +17,12 @@
              @click.stop
              x-trap.noscroll="$store.entityPicker.isOpen">
             {# Header #}
-            <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-                <h2 id="entity-picker-title" class="text-lg font-semibold text-gray-900">
+            <div class="flex items-center justify-between px-4 py-3 border-b border-stone-200">
+                <h2 id="entity-picker-title" class="text-lg font-semibold text-stone-900">
                     Select <span x-text="$store.entityPicker.config?.entityLabel || 'Items'"></span>
                 </h2>
                 <button @click="$store.entityPicker.close()"
-                        class="text-gray-400 hover:text-gray-600"
+                        class="text-stone-400 hover:text-stone-600"
                         aria-label="Close">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
@@ -32,12 +32,12 @@
 
             {# Tabs (if configured) #}
             <template x-if="$store.entityPicker.config?.tabs">
-                <div class="flex border-b border-gray-200 px-4" role="tablist">
+                <div class="flex border-b border-stone-200 px-4" role="tablist">
                     <template x-for="tab in $store.entityPicker.config.tabs" :key="tab.id">
                         <button @click="$store.entityPicker.setActiveTab(tab.id)"
                                 :class="{
-                                    'border-blue-500 text-blue-600': $store.entityPicker.activeTab === tab.id,
-                                    'border-transparent text-gray-500 hover:text-gray-700': $store.entityPicker.activeTab !== tab.id,
+                                    'border-amber-600 text-amber-700': $store.entityPicker.activeTab === tab.id,
+                                    'border-transparent text-stone-500 hover:text-stone-700': $store.entityPicker.activeTab !== tab.id,
                                     'opacity-50 cursor-not-allowed': tab.id === 'note' && !$store.entityPicker.noteId
                                 }"
                                 class="px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors"
@@ -46,7 +46,7 @@
                                 :aria-selected="$store.entityPicker.activeTab === tab.id">
                             <span x-text="tab.label"></span>
                             <span x-show="tab.id === 'note' && $store.entityPicker.hasTabResults"
-                                  class="ml-1 text-xs bg-gray-100 px-1.5 py-0.5 rounded"
+                                  class="ml-1 text-xs bg-stone-100 px-1.5 py-0.5 rounded"
                                   x-text="$store.entityPicker.tabResults.note?.length || 0"></span>
                         </button>
                     </template>
@@ -55,14 +55,14 @@
 
             {# Filters #}
             <div x-show="!$store.entityPicker.config?.tabs || $store.entityPicker.activeTab === 'all'"
-                 class="px-4 py-3 border-b border-gray-200 space-y-2">
+                 class="px-4 py-3 border-b border-stone-200 space-y-2">
                 {# Search #}
                 <div>
                     <input type="text"
                            x-model="$store.entityPicker.searchQuery"
                            @input="$store.entityPicker.onSearchInput()"
                            placeholder="Search by name..."
-                           class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500">
+                           class="w-full px-3 py-2 border border-stone-300 rounded-md text-sm focus:ring-amber-600 focus:border-amber-600">
                 </div>
                 {# Dynamic filters based on config #}
                 <template x-if="$store.entityPicker.config?.filters?.length > 0">
@@ -82,19 +82,19 @@
                                          : $store.entityPicker.setFilter(filter.key, null)
                                  })"
                                  @entity-picker-closed.window="selectedResults = []">
-                                <label class="block text-xs text-gray-500 mb-1" x-text="filter.label"></label>
+                                <label class="block text-xs text-stone-500 font-mono mb-1" x-text="filter.label"></label>
                                 <div class="relative">
                                     <input x-ref="autocompleter"
                                            type="text"
                                            x-bind="inputEvents"
-                                           class="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                                           class="w-full px-2 py-1.5 text-sm border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600"
                                            :placeholder="'Filter by ' + filter.label.toLowerCase() + '...'"
                                            autocomplete="off">
                                     <template x-if="dropdownActive && results.length > 0">
-                                        <div class="absolute z-30 mt-1 w-full bg-white border border-gray-200 rounded shadow-lg max-h-40 overflow-y-auto">
+                                        <div class="absolute z-30 mt-1 w-full bg-white border border-stone-200 rounded shadow-lg max-h-40 overflow-y-auto">
                                             <template x-for="(result, index) in results" :key="result.ID">
                                                 <div class="px-3 py-1.5 cursor-pointer text-sm"
-                                                     :class="{'bg-blue-500 text-white': index === selectedIndex, 'hover:bg-gray-50': index !== selectedIndex}"
+                                                     :class="{'bg-amber-700 text-white': index === selectedIndex, 'hover:bg-stone-50': index !== selectedIndex}"
                                                      @mousedown="pushVal"
                                                      @mouseover="selectedIndex = index"
                                                      x-text="result.Name"></div>
@@ -104,9 +104,9 @@
                                     <template x-if="selectedResults.length > 0">
                                         <div class="flex flex-wrap gap-1 mt-1">
                                             <template x-for="item in selectedResults" :key="item.ID">
-                                                <span class="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-800 rounded text-xs">
+                                                <span class="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-800 rounded text-xs">
                                                     <span x-text="item.Name" class="truncate max-w-[100px]"></span>
-                                                    <button type="button" @click="removeItem(item)" class="hover:text-blue-600">&times;</button>
+                                                    <button type="button" @click="removeItem(item)" class="hover:text-amber-700">&times;</button>
                                                 </span>
                                             </template>
                                         </div>
@@ -125,7 +125,7 @@
                       x-text="$store.entityPicker.loading ? 'Loading...' : $store.entityPicker.displayResults.length + ' items found'"></span>
 
                 {# Loading state #}
-                <div x-show="$store.entityPicker.loading" class="flex items-center justify-center py-12 text-gray-500">
+                <div x-show="$store.entityPicker.loading" class="flex items-center justify-center py-12 text-stone-500">
                     <svg class="animate-spin h-6 w-6 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
@@ -135,15 +135,15 @@
 
                 {# Error state #}
                 <div x-show="$store.entityPicker.error && !$store.entityPicker.loading"
-                     class="text-center py-12 text-red-600">
+                     class="text-center py-12 text-red-700">
                     <p x-text="$store.entityPicker.error"></p>
                     <button @click="$store.entityPicker.loadResults()"
-                            class="mt-2 text-sm text-blue-600 hover:underline">Try again</button>
+                            class="mt-2 text-sm text-amber-700 hover:underline">Try again</button>
                 </div>
 
                 {# Empty state #}
                 <div x-show="!$store.entityPicker.loading && !$store.entityPicker.error && $store.entityPicker.displayResults.length === 0"
-                     class="text-center py-12 text-gray-500">
+                     class="text-center py-12 text-stone-500">
                     <p>No <span x-text="$store.entityPicker.config?.entityLabel?.toLowerCase() || 'items'"></span> found</p>
                 </div>
 
@@ -158,11 +158,11 @@
                              @keydown.enter.prevent="$store.entityPicker.toggleSelection($store.entityPicker.config.getItemId(item))"
                              @keydown.space.prevent="$store.entityPicker.toggleSelection($store.entityPicker.config.getItemId(item))"
                              tabindex="0"
-                             class="relative aspect-square bg-gray-100 rounded-lg overflow-hidden cursor-pointer transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                             class="relative aspect-square bg-stone-100 rounded-lg overflow-hidden cursor-pointer transition-all focus:outline-none focus:ring-2 focus:ring-amber-600 focus:ring-offset-2"
                              :class="{
-                                 'ring-2 ring-blue-500 ring-offset-2': $store.entityPicker.isSelected($store.entityPicker.config.getItemId(item)),
+                                 'ring-2 ring-amber-600 ring-offset-2': $store.entityPicker.isSelected($store.entityPicker.config.getItemId(item)),
                                  'opacity-50 cursor-not-allowed': $store.entityPicker.isAlreadyAdded($store.entityPicker.config.getItemId(item)),
-                                 'hover:ring-2 hover:ring-gray-300': !$store.entityPicker.isSelected($store.entityPicker.config.getItemId(item)) && !$store.entityPicker.isAlreadyAdded($store.entityPicker.config.getItemId(item))
+                                 'hover:ring-2 hover:ring-stone-300': !$store.entityPicker.isSelected($store.entityPicker.config.getItemId(item)) && !$store.entityPicker.isAlreadyAdded($store.entityPicker.config.getItemId(item))
                              }"
                              role="option"
                              :aria-selected="$store.entityPicker.isSelected($store.entityPicker.config.getItemId(item))"
@@ -174,7 +174,7 @@
                                  loading="lazy">
                             {# Selection checkbox #}
                             <div x-show="$store.entityPicker.isSelected($store.entityPicker.config.getItemId(item))"
-                                 class="absolute top-2 right-2 w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center">
+                                 class="absolute top-2 right-2 w-6 h-6 bg-amber-700 rounded-full flex items-center justify-center">
                                 <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
                                 </svg>
@@ -203,25 +203,25 @@
                              @keydown.enter.prevent="$store.entityPicker.toggleSelection($store.entityPicker.config.getItemId(item))"
                              @keydown.space.prevent="$store.entityPicker.toggleSelection($store.entityPicker.config.getItemId(item))"
                              tabindex="0"
-                             class="flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
+                             class="flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-all focus:outline-none focus:ring-2 focus:ring-amber-600"
                              :class="{
-                                 'ring-2 ring-blue-500 border-blue-500 bg-blue-50': $store.entityPicker.isSelected($store.entityPicker.config.getItemId(item)),
-                                 'opacity-50 cursor-not-allowed bg-gray-50': $store.entityPicker.isAlreadyAdded($store.entityPicker.config.getItemId(item)),
-                                 'border-gray-200 hover:border-gray-300 hover:bg-gray-50': !$store.entityPicker.isSelected($store.entityPicker.config.getItemId(item)) && !$store.entityPicker.isAlreadyAdded($store.entityPicker.config.getItemId(item))
+                                 'ring-2 ring-amber-600 border-amber-600 bg-amber-50': $store.entityPicker.isSelected($store.entityPicker.config.getItemId(item)),
+                                 'opacity-50 cursor-not-allowed bg-stone-50': $store.entityPicker.isAlreadyAdded($store.entityPicker.config.getItemId(item)),
+                                 'border-stone-200 hover:border-stone-300 hover:bg-stone-50': !$store.entityPicker.isSelected($store.entityPicker.config.getItemId(item)) && !$store.entityPicker.isAlreadyAdded($store.entityPicker.config.getItemId(item))
                              }"
                              role="option"
                              :aria-selected="$store.entityPicker.isSelected($store.entityPicker.config.getItemId(item))"
                              :aria-disabled="$store.entityPicker.isAlreadyAdded($store.entityPicker.config.getItemId(item))"
                              :aria-label="(item.Name || 'Unnamed Group') + ($store.entityPicker.isAlreadyAdded($store.entityPicker.config.getItemId(item)) ? ' (already added)' : '')">
                             {# Thumbnail or icon #}
-                            <div class="w-14 h-14 flex-shrink-0 bg-gray-100 rounded overflow-hidden">
+                            <div class="w-14 h-14 flex-shrink-0 bg-stone-100 rounded overflow-hidden">
                                 <template x-if="item.MainResource?.ID">
                                     <img :src="'/v1/resource/preview?id=' + item.MainResource.ID"
                                          class="w-full h-full object-cover"
                                          loading="lazy">
                                 </template>
                                 <template x-if="!item.MainResource?.ID">
-                                    <div class="w-full h-full flex items-center justify-center text-gray-400">
+                                    <div class="w-full h-full flex items-center justify-center text-stone-400">
                                         <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
                                         </svg>
@@ -231,25 +231,25 @@
                             {# Content #}
                             <div class="flex-1 min-w-0">
                                 <div class="flex items-start justify-between">
-                                    <p class="font-medium text-gray-900 truncate" x-text="item.Name || 'Unnamed Group'"></p>
+                                    <p class="font-medium text-stone-900 truncate" x-text="item.Name || 'Unnamed Group'"></p>
                                     {# Selection indicator #}
                                     <div x-show="$store.entityPicker.isSelected($store.entityPicker.config.getItemId(item))"
-                                         class="ml-2 w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
+                                         class="ml-2 w-5 h-5 bg-amber-700 rounded-full flex items-center justify-center flex-shrink-0">
                                         <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
                                         </svg>
                                     </div>
                                     {# Already added badge #}
                                     <span x-show="$store.entityPicker.isAlreadyAdded($store.entityPicker.config.getItemId(item))"
-                                          class="ml-2 text-xs bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded flex-shrink-0">Added</span>
+                                          class="ml-2 text-xs bg-stone-200 text-stone-600 px-1.5 py-0.5 rounded flex-shrink-0">Added</span>
                                 </div>
                                 {# Breadcrumb #}
-                                <p x-show="item.Owner?.Name" class="text-xs text-gray-500 truncate" x-text="item.Owner?.Name"></p>
+                                <p x-show="item.Owner?.Name" class="text-xs text-stone-500 truncate" x-text="item.Owner?.Name"></p>
                                 {# Metadata #}
-                                <div class="flex items-center gap-2 mt-1 text-xs text-gray-500 overflow-hidden">
+                                <div class="flex items-center gap-2 mt-1 text-xs text-stone-500 overflow-hidden">
                                     <span x-show="item.ResourceCount > 0" class="flex-shrink-0" x-text="item.ResourceCount + ' resources'"></span>
                                     <span x-show="item.NoteCount > 0" class="flex-shrink-0" x-text="item.NoteCount + ' notes'"></span>
-                                    <span x-show="item.Category?.Name" class="px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded truncate max-w-[120px]" x-text="item.Category?.Name"></span>
+                                    <span x-show="item.Category?.Name" class="px-1.5 py-0.5 bg-stone-100 text-stone-600 rounded truncate max-w-[120px]" x-text="item.Category?.Name"></span>
                                 </div>
                             </div>
                         </div>
@@ -258,20 +258,20 @@
             </div>
 
             {# Footer #}
-            <div class="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50">
-                <span class="text-sm text-gray-600">
+            <div class="flex items-center justify-between px-4 py-3 border-t border-stone-200 bg-stone-50">
+                <span class="text-sm text-stone-600">
                     <span x-text="$store.entityPicker.selectionCount"></span> selected
                 </span>
                 <div class="flex gap-2">
                     <button @click="$store.entityPicker.close()"
                             type="button"
-                            class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50">
+                            class="px-4 py-2 text-sm font-medium text-stone-700 bg-white border border-stone-300 rounded-md hover:bg-stone-50">
                         Cancel
                     </button>
                     <button @click="$store.entityPicker.confirm()"
                             type="button"
                             :disabled="$store.entityPicker.selectionCount === 0"
-                            class="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                            class="px-4 py-2 text-sm font-medium text-white bg-amber-700 rounded-md hover:bg-amber-800 disabled:opacity-50 disabled:cursor-not-allowed">
                         Confirm
                     </button>
                 </div>

@@ -16,9 +16,9 @@
                 <polyline points="14 2 14 8 20 8"/>
                 <line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><line x1="8" y1="21" x2="12" y2="21"/>
             </svg>
-            <p class="text-sm text-gray-500">{{ comparison.Version1.FileSize|humanReadableSize }}</p>
+            <p class="text-sm text-stone-500 font-mono">{{ comparison.Version1.FileSize|humanReadableSize }}</p>
             <a href="/v1/resource/version/file?versionId={{ comparison.Version1.ID }}"
-               class="inline-block mt-3 px-4 py-2 bg-gray-200 rounded hover:bg-gray-300 text-sm">
+               class="inline-block mt-3 px-4 py-2 bg-stone-200 rounded hover:bg-stone-300 text-sm">
                 Download
             </a>
         </div>
@@ -29,9 +29,9 @@
                 <polyline points="14 2 14 8 20 8"/>
                 <line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><line x1="8" y1="21" x2="12" y2="21"/>
             </svg>
-            <p class="text-sm text-gray-500">{{ comparison.Version2.FileSize|humanReadableSize }}</p>
+            <p class="text-sm text-stone-500 font-mono">{{ comparison.Version2.FileSize|humanReadableSize }}</p>
             <a href="/v1/resource/version/file?versionId={{ comparison.Version2.ID }}"
-               class="inline-block mt-3 px-4 py-2 bg-gray-200 rounded hover:bg-gray-300 text-sm">
+               class="inline-block mt-3 px-4 py-2 bg-stone-200 rounded hover:bg-stone-300 text-sm">
                 Download
             </a>
         </div>

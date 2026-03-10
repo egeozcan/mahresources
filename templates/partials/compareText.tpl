@@ -17,7 +17,7 @@
             </button>
         </div>
         <div class="flex-grow"></div>
-        <span class="text-sm text-gray-600" x-show="stats.added || stats.removed">
+        <span class="text-sm text-stone-600" x-show="stats.added || stats.removed">
             <span class="text-green-600">+<span x-text="stats.added"></span></span>
             <span class="text-red-600 ml-2">-<span x-text="stats.removed"></span></span>
             lines
@@ -27,7 +27,7 @@
     <!-- Loading state -->
     <div x-show="loading" class="text-center py-8">
         <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-teal-600 mx-auto"></div>
-        <p class="mt-2 text-gray-600">Loading files...</p>
+        <p class="mt-2 text-stone-600">Loading files...</p>
     </div>
 
     <!-- Error state -->
@@ -40,10 +40,10 @@
                 <tr :class="{
                     'bg-red-50': line.type === 'removed',
                     'bg-green-50': line.type === 'added',
-                    'bg-gray-50': line.type === 'context'
+                    'bg-stone-50': line.type === 'context'
                 }">
-                    <td class="text-gray-400 text-right pr-2 select-none w-12" x-text="line.leftNum || ''"></td>
-                    <td class="text-gray-400 text-right pr-2 select-none w-12 border-r" x-text="line.rightNum || ''"></td>
+                    <td class="text-stone-400 text-right pr-2 select-none w-12" x-text="line.leftNum || ''"></td>
+                    <td class="text-stone-400 text-right pr-2 select-none w-12 border-r" x-text="line.rightNum || ''"></td>
                     <td class="pl-2">
                         <span :class="{
                             'text-red-600': line.type === 'removed',
@@ -63,7 +63,7 @@
             <table class="w-full">
                 <template x-for="(line, index) in splitLeft" :key="index">
                     <tr :class="{'bg-red-50': line.changed}">
-                        <td class="text-gray-400 text-right pr-2 select-none w-12" x-text="line.num || ''"></td>
+                        <td class="text-stone-400 text-right pr-2 select-none w-12" x-text="line.num || ''"></td>
                         <td class="pl-2 whitespace-pre" x-text="line.content"></td>
                     </tr>
                 </template>
@@ -74,7 +74,7 @@
             <table class="w-full">
                 <template x-for="(line, index) in splitRight" :key="index">
                     <tr :class="{'bg-green-50': line.changed}">
-                        <td class="text-gray-400 text-right pr-2 select-none w-12" x-text="line.num || ''"></td>
+                        <td class="text-stone-400 text-right pr-2 select-none w-12" x-text="line.num || ''"></td>
                         <td class="pl-2 whitespace-pre" x-text="line.content"></td>
                     </tr>
                 </template>

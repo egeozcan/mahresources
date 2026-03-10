@@ -5,38 +5,38 @@
         <button
             @click="toggleEditMode()"
             class="px-3 py-1 text-sm rounded border"
-            :class="editMode ? 'bg-blue-500 text-white border-blue-500' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'"
+            :class="editMode ? 'bg-amber-700 text-white border-amber-700' : 'bg-white text-stone-700 border-stone-300 hover:bg-stone-50'"
         >
             <span x-text="editMode ? 'Done' : 'Edit Blocks'"></span>
         </button>
     </div>
 
     {# Loading state #}
-    <div x-show="loading" class="text-center py-8 text-gray-500">
+    <div x-show="loading" class="text-center py-8 text-stone-500">
         Loading blocks...
     </div>
 
     {# Error state #}
-    <div x-show="error" x-cloak class="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+    <div x-show="error" x-cloak class="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm font-sans">
         <div class="flex items-center justify-between">
             <span x-text="error"></span>
-            <button @click="error = null" class="text-red-500 hover:text-red-700">&times;</button>
+            <button @click="error = null" class="text-red-500 hover:text-red-800">&times;</button>
         </div>
     </div>
 
     {# Blocks list #}
     <div x-show="!loading" class="space-y-4">
         <template x-for="(block, index) in blocks" :key="block.id">
-            <div class="block-card bg-white border border-gray-200 rounded-lg overflow-hidden"
-                 :class="{ 'ring-2 ring-blue-200': editMode }">
+            <div class="block-card bg-white border border-stone-200 rounded-lg overflow-hidden"
+                 :class="{ 'ring-2 ring-amber-200': editMode }">
                 {# Block controls (edit mode only) #}
-                <div x-show="editMode" class="flex items-center justify-between px-3 py-2 bg-gray-50 border-b border-gray-200">
-                    <span class="text-xs font-medium text-gray-500 uppercase" x-text="block.type"></span>
+                <div x-show="editMode" class="flex items-center justify-between px-3 py-2 bg-stone-50 border-b border-stone-200">
+                    <span class="text-xs font-medium font-mono text-stone-500 uppercase" x-text="block.type"></span>
                     <div class="flex gap-1">
                         <button
                             @click="moveBlock(block.id, 'up')"
                             :disabled="index === 0"
-                            class="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-30 disabled:cursor-not-allowed"
+                            class="p-1 text-stone-400 hover:text-stone-600 disabled:opacity-30 disabled:cursor-not-allowed"
                             title="Move up"
                         >
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -46,7 +46,7 @@
                         <button
                             @click="moveBlock(block.id, 'down')"
                             :disabled="index === blocks.length - 1"
-                            class="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-30 disabled:cursor-not-allowed"
+                            class="p-1 text-stone-400 hover:text-stone-600 disabled:opacity-30 disabled:cursor-not-allowed"
                             title="Move down"
                         >
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -55,7 +55,7 @@
                         </button>
                         <button
                             @click="if(confirm('Delete this block?')) deleteBlock(block.id)"
-                            class="p-1 text-red-400 hover:text-red-600"
+                            class="p-1 text-red-400 hover:text-red-700"
                             title="Delete block"
                         >
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -71,7 +71,7 @@
                     <template x-if="block.type === 'text'">
                         <div>
                             <template x-if="!editMode">
-                                <div class="prose max-w-none" x-html="renderMarkdown(block.content?.text || '')"></div>
+                                <div class="prose max-w-none font-sans" x-html="renderMarkdown(block.content?.text || '')"></div>
                             </template>
                             <template x-if="editMode">
                                 <div x-data="blockText(block, (id, content) => updateBlockContent(id, content), (id, content) => updateBlockContentDebounced(id, content))">
@@ -79,7 +79,7 @@
                                         x-model="text"
                                         @input="onInput()"
                                         @blur="save()"
-                                        class="w-full min-h-[100px] p-2 border border-gray-300 rounded resize-y"
+                                        class="w-full min-h-[100px] p-2 border border-stone-300 rounded resize-y"
                                         placeholder="Enter text..."
                                     ></textarea>
                                 </div>
@@ -99,7 +99,7 @@
                             </template>
                             <template x-if="editMode">
                                 <div x-data="blockHeading(block, (id, content) => updateBlockContent(id, content), (id, content) => updateBlockContentDebounced(id, content))" class="flex gap-2">
-                                    <select x-model.number="level" @change="save()" class="border border-gray-300 rounded px-2 py-1">
+                                    <select x-model.number="level" @change="save()" class="border border-stone-300 rounded px-2 py-1">
                                         <option value="1">H1</option>
                                         <option value="2">H2</option>
                                         <option value="3">H3</option>
@@ -109,7 +109,7 @@
                                         x-model="text"
                                         @input="onInput()"
                                         @blur="save()"
-                                        class="flex-1 p-2 border border-gray-300 rounded"
+                                        class="flex-1 p-2 border border-stone-300 rounded"
                                         placeholder="Heading text..."
                                     >
                                 </div>
@@ -119,7 +119,7 @@
 
                     {# Divider block #}
                     <template x-if="block.type === 'divider'">
-                        <hr class="border-t-2 border-gray-300 my-2">
+                        <hr class="border-t-2 border-stone-300 my-2">
                     </template>
 
                     {# Todos block #}
@@ -133,9 +133,9 @@
                                                 type="checkbox"
                                                 :checked="isChecked(item.id)"
                                                 @change="toggleCheck(item.id)"
-                                                class="h-4 w-4 rounded border-gray-300"
+                                                class="h-4 w-4 rounded border-stone-300"
                                             >
-                                            <span :class="{ 'line-through text-gray-400': isChecked(item.id) }" x-text="item.label"></span>
+                                            <span :class="{ 'line-through text-stone-400': isChecked(item.id) }" x-text="item.label"></span>
                                         </li>
                                     </template>
                                 </ul>
@@ -148,12 +148,12 @@
                                                 type="text"
                                                 x-model="item.label"
                                                 @blur="saveContent()"
-                                                class="flex-1 p-1 border border-gray-300 rounded"
+                                                class="flex-1 p-1 border border-stone-300 rounded"
                                             >
-                                            <button @click="removeItem(idx)" class="text-red-500 hover:text-red-700">&times;</button>
+                                            <button @click="removeItem(idx)" class="text-red-700 hover:text-red-800">&times;</button>
                                         </div>
                                     </template>
-                                    <button @click="addItem()" class="text-sm text-blue-600 hover:underline">+ Add item</button>
+                                    <button @click="addItem()" class="text-sm text-amber-700 hover:underline">+ Add item</button>
                                 </div>
                             </template>
                         </div>
@@ -167,14 +167,14 @@
                                     <template x-for="(resId, idx) in resourceIds" :key="resId">
                                         <a :href="'/v1/resource/view?id=' + resId"
                                            @click.prevent="openGalleryLightbox(idx)"
-                                           class="block aspect-square bg-gray-100 rounded overflow-hidden cursor-pointer hover:opacity-90 transition-opacity">
+                                           class="block aspect-square bg-stone-100 rounded overflow-hidden cursor-pointer hover:opacity-90 transition-opacity">
                                             <img :src="'/v1/resource/preview?id=' + resId" class="w-full h-full object-cover" loading="lazy">
                                         </a>
                                     </template>
                                 </div>
                             </template>
                             <template x-if="!editMode && resourceIds.length === 0">
-                                <p class="text-gray-400 text-sm">No resources selected</p>
+                                <p class="text-stone-400 text-sm font-sans">No resources selected</p>
                             </template>
                             <template x-if="editMode">
                                 <div class="space-y-3">
@@ -182,11 +182,11 @@
                                     <template x-if="resourceIds.length > 0">
                                         <div class="grid grid-cols-4 md:grid-cols-6 gap-2">
                                             <template x-for="(resId, idx) in resourceIds" :key="resId">
-                                                <div class="relative group aspect-square bg-gray-100 rounded overflow-hidden">
+                                                <div class="relative group aspect-square bg-stone-100 rounded overflow-hidden">
                                                     <img :src="'/v1/resource/preview?id=' + resId" class="w-full h-full object-cover">
                                                     <button
                                                         @click="removeResource(resId)"
-                                                        class="absolute top-1 right-1 w-5 h-5 bg-red-500 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                                                        class="absolute top-1 right-1 w-5 h-5 bg-red-700 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
                                                         title="Remove"
                                                     >&times;</button>
                                                 </div>
@@ -197,7 +197,7 @@
                                     <button
                                         @click="openPicker()"
                                         type="button"
-                                        class="w-full py-2 px-4 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-blue-400 hover:text-blue-500 transition-colors text-sm"
+                                        class="w-full py-2 px-4 border-2 border-dashed border-stone-300 rounded-lg text-stone-500 hover:border-amber-400 hover:text-amber-700 transition-colors text-sm"
                                     >
                                         + Select Resources
                                     </button>
@@ -213,18 +213,18 @@
                                 <div class="flex flex-wrap gap-2">
                                     <template x-for="gId in groupIds" :key="gId">
                                         <a :href="'/group?id=' + gId"
-                                           class="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-sm hover:bg-blue-100 border border-blue-200">
-                                            <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                           class="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg text-sm hover:bg-amber-100 border border-amber-200">
+                                            <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
                                             </svg>
                                             <span class="font-medium" x-text="getGroupDisplay(gId).name"></span>
-                                            <span x-show="getGroupDisplay(gId).breadcrumb" class="text-blue-400 text-xs" x-text="'in ' + getGroupDisplay(gId).breadcrumb"></span>
+                                            <span x-show="getGroupDisplay(gId).breadcrumb" class="text-amber-400 text-xs" x-text="'in ' + getGroupDisplay(gId).breadcrumb"></span>
                                         </a>
                                     </template>
                                 </div>
                             </template>
                             <template x-if="!editMode && groupIds.length === 0">
-                                <p class="text-gray-400 text-sm">No groups selected</p>
+                                <p class="text-stone-400 text-sm font-sans">No groups selected</p>
                             </template>
                             <template x-if="editMode">
                                 <div class="space-y-3">
@@ -232,13 +232,13 @@
                                     <template x-if="groupIds.length > 0">
                                         <div class="flex flex-wrap gap-2">
                                             <template x-for="gId in groupIds" :key="gId">
-                                                <div class="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-sm border border-blue-200">
-                                                    <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <div class="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg text-sm border border-amber-200">
+                                                    <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
                                                     </svg>
                                                     <span class="font-medium" x-text="getGroupDisplay(gId).name"></span>
                                                     <button @click="removeGroup(gId)"
-                                                            class="ml-1 w-4 h-4 rounded-full bg-blue-200 text-blue-600 hover:bg-blue-300 flex items-center justify-center text-xs"
+                                                            class="ml-1 w-4 h-4 rounded-full bg-amber-200 text-amber-700 hover:bg-amber-300 flex items-center justify-center text-xs"
                                                             title="Remove">&times;</button>
                                                 </div>
                                             </template>
@@ -248,7 +248,7 @@
                                     <button
                                         @click="openPicker()"
                                         type="button"
-                                        class="w-full py-2 px-4 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-blue-400 hover:text-blue-500 transition-colors text-sm"
+                                        class="w-full py-2 px-4 border-2 border-dashed border-stone-300 rounded-lg text-stone-500 hover:border-amber-400 hover:text-amber-700 transition-colors text-sm"
                                     >
                                         + Select Groups
                                     </button>
@@ -265,7 +265,7 @@
                                 <div>
                                     {# Query mode loading state #}
                                     <template x-if="isQueryMode && queryLoading && !isRefreshing">
-                                        <div class="flex items-center justify-center py-8 text-gray-500">
+                                        <div class="flex items-center justify-center py-8 text-stone-500">
                                             <svg class="animate-spin h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                                                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
@@ -288,7 +288,7 @@
 
                                     {# Table header with refresh controls for query mode #}
                                     <template x-if="isQueryMode && !queryLoading && !queryError && displayColumns.length > 0">
-                                        <div class="flex items-center justify-between mb-2 text-xs text-gray-500">
+                                        <div class="flex items-center justify-between mb-2 text-xs text-stone-500">
                                             <div class="flex items-center gap-2">
                                                 <span x-show="lastFetchTime" x-text="'Updated ' + lastFetchTimeFormatted"></span>
                                                 <template x-if="isRefreshing">
@@ -300,9 +300,9 @@
                                                         Refreshing...
                                                     </span>
                                                 </template>
-                                                <span x-show="isStatic" class="px-1.5 py-0.5 bg-gray-100 rounded text-gray-600">Static</span>
+                                                <span x-show="isStatic" class="px-1.5 py-0.5 bg-stone-100 rounded text-stone-600">Static</span>
                                             </div>
-                                            <button @click="manualRefresh()" :disabled="queryLoading" class="px-2 py-1 text-blue-600 hover:text-blue-800 disabled:opacity-50" title="Refresh data">
+                                            <button @click="manualRefresh()" :disabled="queryLoading" class="px-2 py-1 text-amber-700 hover:text-amber-800 disabled:opacity-50" title="Refresh data">
                                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
                                                 </svg>
@@ -313,13 +313,13 @@
                                     {# Table display #}
                                     <template x-if="displayColumns.length > 0 && !queryLoading">
                                         <div class="overflow-x-auto">
-                                            <table class="min-w-full divide-y divide-gray-200">
-                                                <thead class="bg-gray-50">
+                                            <table class="min-w-full divide-y divide-stone-200">
+                                                <thead class="bg-stone-50">
                                                     <tr>
                                                         <template x-for="col in displayColumns" :key="col.id">
                                                             <th
                                                                 @click="toggleSort(col.id)"
-                                                                class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                                                                class="px-3 py-2 text-left text-xs font-medium text-stone-500 uppercase tracking-wider cursor-pointer hover:bg-stone-100"
                                                             >
                                                                 <span x-text="col.label"></span>
                                                                 <span x-show="sortColumn === col.id" x-text="sortDirection === 'asc' ? ' ▲' : ' ▼'"></span>
@@ -327,11 +327,11 @@
                                                         </template>
                                                     </tr>
                                                 </thead>
-                                                <tbody class="bg-white divide-y divide-gray-200">
+                                                <tbody class="bg-white divide-y divide-stone-200">
                                                     <template x-for="row in displayRows" :key="row.id">
                                                         <tr>
                                                             <template x-for="col in displayColumns" :key="col.id">
-                                                                <td class="px-3 py-2 text-sm text-gray-900" x-text="row[col.id] ?? ''"></td>
+                                                                <td class="px-3 py-2 text-sm text-stone-900" x-text="row[col.id] ?? ''"></td>
                                                             </template>
                                                         </tr>
                                                     </template>
@@ -342,7 +342,7 @@
 
                                     {# Empty state #}
                                     <template x-if="displayColumns.length === 0 && !queryLoading && !queryError">
-                                        <p class="text-gray-400 text-sm">No table data</p>
+                                        <p class="text-stone-400 text-sm">No table data</p>
                                     </template>
                                 </div>
                             </template>
@@ -351,11 +351,11 @@
                             <template x-if="editMode">
                                 <div class="space-y-4">
                                     {# Data Source Section #}
-                                    <div class="p-3 bg-gray-50 rounded-lg border border-gray-200"
+                                    <div class="p-3 bg-stone-50 rounded-lg border border-stone-200"
                                          @table-query-selected="selectQuery($event.detail)"
                                          @table-query-cleared="clearQuery()">
                                         <div class="flex items-center gap-3 flex-wrap">
-                                            <label class="text-sm font-medium text-gray-700">Data Source:</label>
+                                            <label class="text-sm font-medium text-stone-700">Data Source:</label>
                                             {# Query autocomplete or Manual indicator #}
                                             <div class="w-48"
                                                  x-data="autocompleter({
@@ -373,17 +373,17 @@
                                                             x-ref="autocompleter"
                                                             type="text"
                                                             x-bind="inputEvents"
-                                                            class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-indigo-500 focus:border-indigo-500"
+                                                            class="w-full px-2 py-1 text-sm border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600"
                                                             :placeholder="selectedResults.length ? '' : 'Search queries...'"
                                                             autocomplete="off"
                                                         >
                                                         {# Dropdown results #}
                                                         <template x-if="dropdownActive && results.length > 0">
-                                                            <div class="absolute z-20 mt-1 w-48 bg-white border border-gray-200 rounded shadow-lg max-h-48 overflow-y-auto">
+                                                            <div class="absolute z-20 mt-1 w-48 bg-white border border-stone-200 rounded shadow-lg max-h-48 overflow-y-auto">
                                                                 <template x-for="(result, index) in results" :key="result.ID">
                                                                     <div
                                                                         class="px-3 py-1.5 cursor-pointer text-sm truncate"
-                                                                        :class="{'bg-blue-500 text-white': index === selectedIndex, 'hover:bg-gray-50': index !== selectedIndex}"
+                                                                        :class="{'bg-amber-700 text-white': index === selectedIndex, 'hover:bg-stone-50': index !== selectedIndex}"
                                                                         @mousedown="pushVal"
                                                                         @mouseover="selectedIndex = index"
                                                                         x-text="result.Name"
@@ -395,9 +395,9 @@
                                                         <template x-if="selectedResults.length > 0">
                                                             <div class="flex flex-wrap gap-1 mt-1">
                                                                 <template x-for="item in selectedResults" :key="item.ID">
-                                                                    <span class="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-800 rounded text-xs">
+                                                                    <span class="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-800 rounded text-xs">
                                                                         <span x-text="item.Name" class="truncate max-w-[150px]"></span>
-                                                                        <button type="button" @click="removeItem(item)" class="hover:text-blue-600">&times;</button>
+                                                                        <button type="button" @click="removeItem(item)" class="hover:text-amber-700">&times;</button>
                                                                     </span>
                                                                 </template>
                                                             </div>
@@ -406,8 +406,8 @@
                                                 </template>
                                             </div>
                                             <template x-if="isQueryMode">
-                                                <label class="flex items-center gap-1.5 text-sm text-gray-600">
-                                                    <input type="checkbox" x-model="isStatic" @change="saveContent()" class="rounded border-gray-300">
+                                                <label class="flex items-center gap-1.5 text-sm text-stone-600">
+                                                    <input type="checkbox" x-model="isStatic" @change="saveContent()" class="rounded border-stone-300">
                                                     <span>Static</span>
                                                 </label>
                                             </template>
@@ -415,22 +415,22 @@
 
                                         {# Query mode: parameters and preview #}
                                         <template x-if="isQueryMode">
-                                            <div class="mt-3 pt-3 border-t border-gray-200 space-y-2">
+                                            <div class="mt-3 pt-3 border-t border-stone-200 space-y-2">
                                                 {# Query parameters #}
                                                 <div class="flex items-start gap-2 flex-wrap">
-                                                    <span class="text-xs text-gray-500 pt-1">Params:</span>
+                                                    <span class="text-xs text-stone-500 pt-1">Params:</span>
                                                     <template x-for="(value, key) in queryParams" :key="key">
-                                                        <span class="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-100 rounded text-xs">
+                                                        <span class="inline-flex items-center gap-1 px-2 py-0.5 bg-stone-100 rounded text-xs">
                                                             <span class="font-mono" x-text="key + '=' + value"></span>
-                                                            <button @click="removeQueryParam(key)" class="text-gray-400 hover:text-red-500">&times;</button>
+                                                            <button @click="removeQueryParam(key)" class="text-stone-400 hover:text-red-500">&times;</button>
                                                         </span>
                                                     </template>
-                                                    <button @click="addQueryParam()" class="text-xs text-blue-600 hover:underline">+ param</button>
+                                                    <button @click="addQueryParam()" class="text-xs text-amber-700 hover:underline">+ param</button>
                                                 </div>
                                                 {# Preview info #}
-                                                <div class="flex items-center gap-2 text-xs text-gray-500">
+                                                <div class="flex items-center gap-2 text-xs text-stone-500">
                                                     <span x-text="queryColumns.length + ' cols, ' + queryRows.length + ' rows'"></span>
-                                                    <button @click="manualRefresh()" :disabled="queryLoading" class="text-blue-600 hover:underline disabled:opacity-50">
+                                                    <button @click="manualRefresh()" :disabled="queryLoading" class="text-amber-700 hover:underline disabled:opacity-50">
                                                         <span x-show="!queryLoading">refresh</span>
                                                         <span x-show="queryLoading">...</span>
                                                     </button>
@@ -444,7 +444,7 @@
                                     <template x-if="!isQueryMode">
                                         <div class="space-y-3">
                                             <div>
-                                                <p class="text-sm font-medium text-gray-700 mb-1">Columns</p>
+                                                <p class="text-sm font-medium text-stone-700 mb-1">Columns</p>
                                                 <div class="space-y-1">
                                                     <template x-for="(col, idx) in columns" :key="col.id">
                                                         <div class="flex items-center gap-2">
@@ -452,17 +452,17 @@
                                                                 type="text"
                                                                 x-model="col.label"
                                                                 @blur="saveContent()"
-                                                                class="flex-1 p-1 border border-gray-300 rounded text-sm"
+                                                                class="flex-1 p-1 border border-stone-300 rounded text-sm"
                                                                 placeholder="Column label"
                                                             >
-                                                            <button @click="removeColumn(idx)" class="text-red-500 hover:text-red-700 text-sm">&times;</button>
+                                                            <button @click="removeColumn(idx)" class="text-red-700 hover:text-red-800 text-sm">&times;</button>
                                                         </div>
                                                     </template>
-                                                    <button @click="addColumn()" class="text-sm text-blue-600 hover:underline">+ Add column</button>
+                                                    <button @click="addColumn()" class="text-sm text-amber-700 hover:underline">+ Add column</button>
                                                 </div>
                                             </div>
                                             <div>
-                                                <p class="text-sm font-medium text-gray-700 mb-1">Rows</p>
+                                                <p class="text-sm font-medium text-stone-700 mb-1">Rows</p>
                                                 <div class="space-y-1">
                                                     <template x-for="(row, rowIdx) in rows" :key="row.id">
                                                         <div class="flex items-center gap-2">
@@ -471,14 +471,14 @@
                                                                     type="text"
                                                                     x-model="row[col.id]"
                                                                     @blur="saveContent()"
-                                                                    class="flex-1 p-1 border border-gray-300 rounded text-sm"
+                                                                    class="flex-1 p-1 border border-stone-300 rounded text-sm"
                                                                     :placeholder="col.label"
                                                                 >
                                                             </template>
-                                                            <button @click="removeRow(rowIdx)" class="text-red-500 hover:text-red-700 text-sm">&times;</button>
+                                                            <button @click="removeRow(rowIdx)" class="text-red-700 hover:text-red-800 text-sm">&times;</button>
                                                         </div>
                                                     </template>
-                                                    <button @click="addRow()" class="text-sm text-blue-600 hover:underline">+ Add row</button>
+                                                    <button @click="addRow()" class="text-sm text-amber-700 hover:underline">+ Add row</button>
                                                 </div>
                                             </div>
                                         </div>
@@ -501,13 +501,13 @@
                                             {# Month navigation - only shown in month view #}
                                             <template x-if="view === 'month'">
                                                 <div class="flex items-center gap-2">
-                                                    <button @click="prevMonth()" class="p-1 hover:bg-gray-100 rounded" title="Previous">
+                                                    <button @click="prevMonth()" class="p-1 hover:bg-stone-100 rounded" title="Previous">
                                                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
                                                         </svg>
                                                     </button>
                                                     <span class="text-lg font-semibold w-36 text-center" x-text="currentMonth + ' ' + currentYear"></span>
-                                                    <button @click="nextMonth()" class="p-1 hover:bg-gray-100 rounded" title="Next">
+                                                    <button @click="nextMonth()" class="p-1 hover:bg-stone-100 rounded" title="Next">
                                                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
                                                         </svg>
@@ -521,7 +521,7 @@
                                         </div>
                                         <div class="flex items-center gap-2">
                                             <template x-if="isRefreshing">
-                                                <span class="text-xs text-gray-400 flex items-center">
+                                                <span class="text-xs text-stone-400 flex items-center">
                                                     <svg class="animate-spin h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24">
                                                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                                                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
@@ -529,12 +529,12 @@
                                                 </span>
                                             </template>
                                             <button @click="openEventModalForDay(currentDate)"
-                                                    class="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600">
+                                                    class="px-3 py-1 text-sm bg-amber-700 text-white rounded hover:bg-amber-800">
                                                 + Add Event
                                             </button>
-                                            <div class="flex border border-gray-200 rounded overflow-hidden text-sm">
-                                                <button @click="setView('month')" class="px-3 py-1" :class="view === 'month' ? 'bg-blue-500 text-white' : 'bg-white hover:bg-gray-50'">Month</button>
-                                                <button @click="setView('agenda')" class="px-3 py-1" :class="view === 'agenda' ? 'bg-blue-500 text-white' : 'bg-white hover:bg-gray-50'">Agenda</button>
+                                            <div class="flex border border-stone-200 rounded overflow-hidden text-sm">
+                                                <button @click="setView('month')" class="px-3 py-1" :class="view === 'month' ? 'bg-amber-700 text-white' : 'bg-white hover:bg-stone-50'">Month</button>
+                                                <button @click="setView('agenda')" class="px-3 py-1" :class="view === 'agenda' ? 'bg-amber-700 text-white' : 'bg-white hover:bg-stone-50'">Agenda</button>
                                             </div>
                                         </div>
                                     </div>
@@ -550,15 +550,15 @@
                                     {# Month view - show even while loading to prevent layout jump #}
                                     <template x-if="view === 'month'">
                                         <div class="relative" :class="{ 'opacity-60': loading }">
-                                            <div class="grid grid-cols-7 gap-px bg-gray-200 rounded overflow-hidden">
+                                            <div class="grid grid-cols-7 gap-px bg-stone-200 rounded overflow-hidden">
                                                 <template x-for="day in ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']">
-                                                    <div class="bg-gray-50 py-2 text-center text-xs font-medium text-gray-500" x-text="day"></div>
+                                                    <div class="bg-stone-50 py-2 text-center text-xs font-medium text-stone-500" x-text="day"></div>
                                                 </template>
                                                 <template x-for="day in monthDays" :key="day.date.toISOString()">
-                                                    <div class="bg-white min-h-[80px] p-1 relative cursor-pointer hover:bg-blue-50 transition-colors"
+                                                    <div class="bg-white min-h-[80px] p-1 relative cursor-pointer hover:bg-amber-50 transition-colors"
                                                          @click="openEventModalForDay(day.date)"
-                                                         :class="{ 'bg-gray-50 hover:bg-gray-100': !day.isCurrentMonth, 'ring-2 ring-blue-500 ring-inset': isToday(day.date) }">
-                                                        <span class="text-xs" :class="day.isCurrentMonth ? 'text-gray-700' : 'text-gray-400'" x-text="day.date.getDate()"></span>
+                                                         :class="{ 'bg-stone-50 hover:bg-stone-100': !day.isCurrentMonth, 'ring-2 ring-amber-600 ring-inset': isToday(day.date) }">
+                                                        <span class="text-xs" :class="day.isCurrentMonth ? 'text-stone-700' : 'text-stone-400'" x-text="day.date.getDate()"></span>
                                                         <div class="mt-1 space-y-0.5">
                                                             <template x-for="event in getEventsForDay(day.date).slice(0, 3)" :key="event.id">
                                                                 <div @click.stop="isCustomEvent(event) ? openEventModalForEdit(event) : null"
@@ -571,18 +571,18 @@
                                                             </template>
                                                             <template x-if="getEventsForDay(day.date).length > 3">
                                                                 <div @click.stop="toggleExpandedDay(day.date)"
-                                                                     class="text-xs text-blue-500 hover:text-blue-700 px-1 cursor-pointer"
+                                                                     class="text-xs text-amber-700 hover:text-amber-800 px-1 cursor-pointer"
                                                                      x-text="'+' + (getEventsForDay(day.date).length - 3) + ' more'"></div>
                                                             </template>
                                                         </div>
                                                         {# Expanded events popover #}
                                                         <template x-if="isExpanded(day.date)">
-                                                            <div class="absolute z-20 left-0 top-full mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg p-2"
+                                                            <div class="absolute z-20 left-0 top-full mt-1 w-64 bg-white border border-stone-200 rounded-lg shadow-lg p-2"
                                                                  @click.stop
                                                                  @click.away="closeExpandedDay()">
                                                                 <div class="flex justify-between items-center mb-2 pb-1 border-b">
                                                                     <span class="text-sm font-medium" x-text="day.date.toLocaleDateString('default', { weekday: 'short', month: 'short', day: 'numeric' })"></span>
-                                                                    <button @click="closeExpandedDay()" class="text-gray-400 hover:text-gray-600">
+                                                                    <button @click="closeExpandedDay()" class="text-stone-400 hover:text-stone-600">
                                                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                                                                         </svg>
@@ -600,7 +600,7 @@
                                                                     </template>
                                                                 </div>
                                                                 <button @click="openEventModalForDay(day.date); closeExpandedDay()"
-                                                                        class="w-full mt-2 pt-1 border-t text-xs text-blue-500 hover:text-blue-700">
+                                                                        class="w-full mt-2 pt-1 border-t text-xs text-amber-700 hover:text-amber-800">
                                                                     + Add event
                                                                 </button>
                                                             </div>
@@ -615,31 +615,31 @@
                                     <template x-if="view === 'agenda'">
                                         <div class="space-y-4 relative" :class="{ 'opacity-60': loading }">
                                             <template x-if="agendaEvents.length === 0">
-                                                <div class="text-center py-8 text-gray-400">No upcoming events</div>
+                                                <div class="text-center py-8 text-stone-400">No upcoming events</div>
                                             </template>
                                             <template x-for="group in agendaEvents" :key="group.date.toISOString()">
                                                 <div>
-                                                    <div class="text-sm font-medium text-gray-600 mb-2" x-text="formatAgendaDate(group.date)"></div>
+                                                    <div class="text-sm font-medium text-stone-600 mb-2" x-text="formatAgendaDate(group.date)"></div>
                                                     <div class="space-y-2">
                                                         <template x-for="event in group.events" :key="event.id">
                                                             <div @click="isCustomEvent(event) ? openEventModalForEdit(event) : goToEventMonth(event)"
-                                                                 class="flex items-start gap-3 p-2 rounded hover:bg-gray-50 cursor-pointer"
+                                                                 class="flex items-start gap-3 p-2 rounded hover:bg-stone-50 cursor-pointer"
                                                                  :title="isCustomEvent(event) ? 'Click to edit' : 'Click to view in month'">
                                                                 <div class="w-1 h-full min-h-[40px] rounded" :style="'background-color: ' + getCalendarColor(event.calendarId)"></div>
                                                                 <div class="flex-1 min-w-0">
                                                                     <div class="font-medium text-sm flex items-center gap-1">
                                                                         <span x-text="event.title"></span>
                                                                         <template x-if="isCustomEvent(event)">
-                                                                            <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                            <svg class="w-3 h-3 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
                                                                             </svg>
                                                                         </template>
                                                                     </div>
-                                                                    <div class="text-xs text-gray-500">
+                                                                    <div class="text-xs text-stone-500">
                                                                         <span x-text="formatEventTime(event)"></span>
                                                                         <span x-show="event.location" class="ml-2">@ <span x-text="event.location"></span></span>
                                                                     </div>
-                                                                    <div x-show="event.description" class="text-xs text-gray-400 mt-1 line-clamp-2" x-text="event.description"></div>
+                                                                    <div x-show="event.description" class="text-xs text-stone-400 mt-1 line-clamp-2" x-text="event.description"></div>
                                                                 </div>
                                                                 <div class="text-xs px-2 py-0.5 rounded"
                                                                      :style="'background-color: ' + getCalendarColor(event.calendarId) + '20; color: ' + getCalendarColor(event.calendarId)"
@@ -655,7 +655,7 @@
 
                                     {# Empty state #}
                                     <template x-if="calendars.length === 0 && customEvents.length === 0 && !loading">
-                                        <div class="text-center py-8 text-gray-400">
+                                        <div class="text-center py-8 text-stone-400">
                                             <p>No calendars or events yet.</p>
                                             <p class="text-sm mt-1">Click "+ Add Event" to create an event or "Edit Blocks" to add calendars.</p>
                                         </div>
@@ -671,72 +671,72 @@
                                                 <form @submit.prevent="saveEvent()">
                                                     {# Title #}
                                                     <div class="mb-4">
-                                                        <label class="block text-sm font-medium text-gray-700 mb-1">Title</label>
+                                                        <label class="block text-sm font-medium font-mono text-stone-700 mb-1">Title</label>
                                                         <input type="text" x-model="eventForm.title" required
-                                                               class="w-full px-3 py-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500">
+                                                               class="w-full px-3 py-2 border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600">
                                                     </div>
 
                                                     {# All Day toggle #}
                                                     <label class="flex items-center gap-2 mb-4 cursor-pointer">
-                                                        <input type="checkbox" x-model="eventForm.allDay" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                                                        <input type="checkbox" x-model="eventForm.allDay" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
                                                         <span class="text-sm">All day event</span>
                                                     </label>
 
                                                     {# Start date/time #}
                                                     <div class="grid grid-cols-2 gap-3 mb-4">
                                                         <div>
-                                                            <label class="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
+                                                            <label class="block text-sm font-medium font-mono text-stone-700 mb-1">Start Date</label>
                                                             <input type="date" x-model="eventForm.startDate" required
-                                                                   class="w-full px-3 py-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500">
+                                                                   class="w-full px-3 py-2 border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600">
                                                         </div>
                                                         <div x-show="!eventForm.allDay">
-                                                            <label class="block text-sm font-medium text-gray-700 mb-1">Start Time</label>
+                                                            <label class="block text-sm font-medium font-mono text-stone-700 mb-1">Start Time</label>
                                                             <input type="time" x-model="eventForm.startTime"
-                                                                   class="w-full px-3 py-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500">
+                                                                   class="w-full px-3 py-2 border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600">
                                                         </div>
                                                     </div>
 
                                                     {# End date/time #}
                                                     <div class="grid grid-cols-2 gap-3 mb-4">
                                                         <div>
-                                                            <label class="block text-sm font-medium text-gray-700 mb-1">End Date</label>
+                                                            <label class="block text-sm font-medium font-mono text-stone-700 mb-1">End Date</label>
                                                             <input type="date" x-model="eventForm.endDate" required
-                                                                   class="w-full px-3 py-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500">
+                                                                   class="w-full px-3 py-2 border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600">
                                                         </div>
                                                         <div x-show="!eventForm.allDay">
-                                                            <label class="block text-sm font-medium text-gray-700 mb-1">End Time</label>
+                                                            <label class="block text-sm font-medium font-mono text-stone-700 mb-1">End Time</label>
                                                             <input type="time" x-model="eventForm.endTime"
-                                                                   class="w-full px-3 py-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500">
+                                                                   class="w-full px-3 py-2 border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600">
                                                         </div>
                                                     </div>
 
                                                     {# Location #}
                                                     <div class="mb-4">
-                                                        <label class="block text-sm font-medium text-gray-700 mb-1">Location (optional)</label>
+                                                        <label class="block text-sm font-medium font-mono text-stone-700 mb-1">Location (optional)</label>
                                                         <input type="text" x-model="eventForm.location"
-                                                               class="w-full px-3 py-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500">
+                                                               class="w-full px-3 py-2 border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600">
                                                     </div>
 
                                                     {# Description #}
                                                     <div class="mb-4">
-                                                        <label class="block text-sm font-medium text-gray-700 mb-1">Description (optional)</label>
+                                                        <label class="block text-sm font-medium font-mono text-stone-700 mb-1">Description (optional)</label>
                                                         <textarea x-model="eventForm.description" rows="2"
-                                                                  class="w-full px-3 py-2 border border-gray-300 rounded resize-none focus:ring-blue-500 focus:border-blue-500"></textarea>
+                                                                  class="w-full px-3 py-2 border border-stone-300 rounded resize-none focus:ring-amber-600 focus:border-amber-600"></textarea>
                                                     </div>
 
                                                     {# Actions #}
                                                     <div class="flex justify-between pt-2">
                                                         <div>
                                                             <button x-show="editingEvent" type="button" @click="deleteEvent()"
-                                                                    class="px-4 py-2 text-red-600 hover:text-red-800 text-sm">
+                                                                    class="px-4 py-2 text-red-700 hover:text-red-800 text-sm">
                                                                 Delete
                                                             </button>
                                                         </div>
                                                         <div class="flex gap-2">
                                                             <button type="button" @click="closeEventModal()"
-                                                                    class="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">Cancel</button>
+                                                                    class="px-4 py-2 border border-stone-300 rounded hover:bg-stone-50 text-sm">Cancel</button>
                                                             <button type="submit"
-                                                                    class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm">Save</button>
+                                                                    class="px-4 py-2 bg-amber-700 text-white rounded hover:bg-amber-800 text-sm">Save</button>
                                                         </div>
                                                     </div>
                                                 </form>
@@ -751,16 +751,16 @@
                                 <div class="space-y-4">
                                     {# Configured calendars #}
                                     <div>
-                                        <p class="text-sm font-medium text-gray-700 mb-2">Calendars</p>
+                                        <p class="text-sm font-medium text-stone-700 mb-2">Calendars</p>
                                         <template x-if="calendars.length === 0">
-                                            <p class="text-sm text-gray-400">No calendars configured</p>
+                                            <p class="text-sm text-stone-400">No calendars configured</p>
                                         </template>
                                         <div class="space-y-2">
                                             <template x-for="cal in calendars" :key="cal.id">
-                                                <div class="flex items-center gap-2 p-2 bg-gray-50 rounded">
+                                                <div class="flex items-center gap-2 p-2 bg-stone-50 rounded">
                                                     <div class="relative">
                                                         <button @click="showColorPicker = showColorPicker === cal.id ? null : cal.id"
-                                                                class="w-6 h-6 rounded border border-gray-300 cursor-pointer"
+                                                                class="w-6 h-6 rounded border border-stone-300 cursor-pointer"
                                                                 :style="'background-color: ' + cal.color">
                                                         </button>
                                                         <template x-if="showColorPicker === cal.id">
@@ -769,7 +769,7 @@
                                                                     <button @click="updateCalendarColor(cal.id, color)"
                                                                             class="w-6 h-6 rounded border"
                                                                             :style="'background-color: ' + color"
-                                                                            :class="cal.color === color ? 'ring-2 ring-offset-1 ring-gray-400' : ''">
+                                                                            :class="cal.color === color ? 'ring-2 ring-offset-1 ring-stone-400' : ''">
                                                                     </button>
                                                                 </template>
                                                             </div>
@@ -777,9 +777,9 @@
                                                     </div>
                                                     <input type="text" :value="cal.name"
                                                            @blur="updateCalendarName(cal.id, $event.target.value)"
-                                                           class="flex-1 px-2 py-1 text-sm border border-gray-300 rounded">
-                                                    <span class="text-xs text-gray-400" x-text="cal.source.type === 'url' ? 'URL' : 'File'"></span>
-                                                    <button @click="removeCalendar(cal.id)" class="text-red-500 hover:text-red-700 p-1" title="Remove">
+                                                           class="flex-1 px-2 py-1 text-sm border border-stone-300 rounded">
+                                                    <span class="text-xs text-stone-400" x-text="cal.source.type === 'url' ? 'URL' : 'File'"></span>
+                                                    <button @click="removeCalendar(cal.id)" class="text-red-700 hover:text-red-800 p-1" title="Remove">
                                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                                                         </svg>
@@ -790,22 +790,22 @@
                                     </div>
 
                                     {# Add calendar #}
-                                    <div class="pt-2 border-t border-gray-200">
-                                        <p class="text-sm font-medium text-gray-700 mb-2">Add Calendar</p>
+                                    <div class="pt-2 border-t border-stone-200">
+                                        <p class="text-sm font-medium text-stone-700 mb-2">Add Calendar</p>
                                         <div class="space-y-2">
                                             <div class="flex gap-2">
                                                 <input type="url" x-model="newUrl"
                                                        @keydown.enter="addCalendarFromUrl()"
                                                        placeholder="Paste ICS calendar URL..."
-                                                       class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded">
+                                                       class="flex-1 px-3 py-2 text-sm border border-stone-300 rounded">
                                                 <button @click="addCalendarFromUrl()"
                                                         :disabled="!newUrl.trim()"
-                                                        class="px-3 py-2 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed">
+                                                        class="px-3 py-2 bg-amber-700 text-white text-sm rounded hover:bg-amber-800 disabled:opacity-50 disabled:cursor-not-allowed">
                                                     Add URL
                                                 </button>
                                             </div>
                                             <button @click="openResourcePicker()"
-                                                    class="w-full py-2 px-4 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-blue-400 hover:text-blue-500 transition-colors text-sm">
+                                                    class="w-full py-2 px-4 border-2 border-dashed border-stone-300 rounded-lg text-stone-500 hover:border-amber-400 hover:text-amber-700 transition-colors text-sm">
                                                 + Select ICS File from Resources
                                             </button>
                                         </div>
@@ -820,7 +820,7 @@
                         <div x-data="blockPlugin(block, () => editMode)"
                              x-effect="loadRender()">
                             <template x-if="renderLoading && !renderedHtml">
-                                <div class="text-gray-400 text-sm py-4 text-center">Loading plugin block...</div>
+                                <div class="text-stone-400 text-sm py-4 text-center">Loading plugin block...</div>
                             </template>
                             <template x-if="renderError">
                                 <div class="p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm" x-text="renderError"></div>
@@ -833,7 +833,7 @@
 
                     {# Plugin block (unavailable - plugin disabled) #}
                     <template x-if="block.type.startsWith('plugin:') && !blockTypes.find(bt => bt.type === block.type)">
-                        <div class="p-4 bg-gray-50 border border-gray-200 rounded text-gray-500 text-sm">
+                        <div class="p-4 bg-stone-50 border border-stone-200 rounded text-stone-500 text-sm">
                             This block requires the "<span x-text="block.type.split(':')[1]"></span>" plugin which is not currently enabled.
                         </div>
                     </template>
@@ -842,7 +842,7 @@
         </template>
 
         {# Empty state #}
-        <div x-show="blocks.length === 0 && !loading" class="text-center py-8 text-gray-500">
+        <div x-show="blocks.length === 0 && !loading" class="text-center py-8 text-stone-500">
             <p>No blocks yet.</p>
             <p x-show="editMode" class="text-sm mt-2">Click "Add Block" below to get started.</p>
         </div>
@@ -852,7 +852,7 @@
             <div class="relative">
                 <button
                     @click="addBlockPickerOpen = !addBlockPickerOpen"
-                    class="w-full py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-blue-400 hover:text-blue-500 transition-colors"
+                    class="w-full py-2 border-2 border-dashed border-stone-300 rounded-lg text-stone-500 hover:border-amber-400 hover:text-amber-700 transition-colors"
                 >
                     + Add Block
                 </button>
@@ -860,17 +860,17 @@
                     x-show="addBlockPickerOpen"
                     @click.away="addBlockPickerOpen = false"
                     x-transition
-                    class="absolute z-10 mt-2 w-full bg-white border border-gray-200 rounded-lg shadow-lg py-2"
+                    class="absolute z-10 mt-2 w-full bg-white border border-stone-200 rounded-lg shadow-lg py-2"
                 >
                     <template x-for="bt in blockTypes" :key="bt.type">
                         <button
                             @click="addBlock(bt.type); addBlockPickerOpen = false"
-                            class="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center gap-2"
+                            class="w-full px-4 py-2 text-left hover:bg-stone-50 flex items-center gap-2"
                             :title="bt.description || ''"
                         >
                             <span x-text="bt.icon"></span>
                             <span x-text="bt.label"></span>
-                            <span x-show="bt.description" x-text="bt.description" class="text-xs text-gray-400 ml-auto truncate max-w-[200px]"></span>
+                            <span x-show="bt.description" x-text="bt.description" class="text-xs text-stone-400 ml-auto truncate max-w-[200px]"></span>
                         </button>
                     </template>
                 </div>

@@ -24,13 +24,13 @@
              @click.stop
              x-trap.noscroll="$store.pasteUpload.isOpen">
             {# Header #}
-            <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-                <h2 id="paste-upload-title" class="text-lg font-semibold text-gray-900">
+            <div class="flex items-center justify-between px-4 py-3 border-b border-stone-200">
+                <h2 id="paste-upload-title" class="text-lg font-semibold text-stone-900">
                     Upload to <span x-text="$store.pasteUpload.context?.name || 'Unknown'"></span>
                 </h2>
                 <button @click="$store.pasteUpload.state !== 'uploading' && $store.pasteUpload.close()"
                         :disabled="$store.pasteUpload.state === 'uploading'"
-                        class="text-gray-400 hover:text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                        class="text-stone-400 hover:text-stone-600 disabled:opacity-50 disabled:cursor-not-allowed"
                         aria-label="Close">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
@@ -49,7 +49,7 @@
                 {# Success banner #}
                 <div x-show="$store.pasteUpload.state === 'success'"
                      x-cloak
-                     class="p-3 bg-green-50 border border-green-200 rounded-md text-sm text-green-700 flex items-center gap-2"
+                     class="p-3 bg-green-50 border border-green-200 rounded-md text-sm text-amber-700 flex items-center gap-2"
                      role="status">
                     <svg class="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                         <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
@@ -71,20 +71,20 @@
                          :class="{
                              'border-red-300 bg-red-50': item.error && item.error !== 'done',
                              'border-green-300 bg-green-50': item.error === 'done',
-                             'border-gray-200': !item.error
+                             'border-stone-200': !item.error
                          }">
                         {# Preview column #}
-                        <div class="w-16 h-16 flex-shrink-0 bg-gray-100 rounded overflow-hidden flex items-center justify-center">
+                        <div class="w-16 h-16 flex-shrink-0 bg-stone-100 rounded overflow-hidden flex items-center justify-center">
                             <template x-if="item.type === 'image'">
                                 <img :src="item.previewUrl" :alt="item.name" class="w-full h-full object-cover">
                             </template>
                             <template x-if="item.type === 'file'">
-                                <svg class="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <svg class="w-8 h-8 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
                                 </svg>
                             </template>
                             <template x-if="item.type === 'text' || item.type === 'html'">
-                                <div class="w-full h-full p-1 text-xs text-gray-500 overflow-hidden leading-tight"
+                                <div class="w-full h-full p-1 text-xs text-stone-500 overflow-hidden leading-tight"
                                      x-text="(item._snippet || '').substring(0, 80)"></div>
                             </template>
                         </div>
@@ -95,15 +95,15 @@
                                    x-model="item.name"
                                    :disabled="$store.pasteUpload.state === 'uploading'"
                                    :aria-label="'Name for item ' + (index + 1)"
-                                   class="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed">
+                                   class="w-full px-2 py-1.5 text-sm border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600 disabled:bg-stone-100 disabled:cursor-not-allowed">
                             {# Per-item error text #}
                             <template x-if="item.error && item.error !== 'done'">
-                                <p class="mt-1 text-xs text-red-600">
+                                <p class="mt-1 text-xs text-red-700">
                                     <span x-text="item.error"></span>
                                     <template x-if="item.errorResourceId">
                                         <span> &mdash;
                                             <a :href="'/resource?id=' + item.errorResourceId"
-                                               class="text-blue-600 hover:text-blue-800 underline font-medium"
+                                               class="text-amber-700 hover:text-amber-800 underline font-medium"
                                                target="_blank"
                                                @click.stop>View existing resource</a>
                                         </span>
@@ -115,7 +115,7 @@
                         {# Remove button #}
                         <button @click="$store.pasteUpload.removeItem(index)"
                                 :disabled="$store.pasteUpload.state === 'uploading'"
-                                class="flex-shrink-0 p-1 text-gray-400 hover:text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                                class="flex-shrink-0 p-1 text-stone-400 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
                                 :aria-label="'Remove ' + item.name">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
@@ -126,8 +126,8 @@
 
                 {# Shared metadata section #}
                 <div x-show="$store.pasteUpload.state !== 'uploading' && $store.pasteUpload.state !== 'success' && $store.pasteUpload.items.length > 0"
-                     class="space-y-3 pt-2 border-t border-gray-200">
-                    <p class="text-sm font-medium text-gray-700">Shared metadata</p>
+                     class="space-y-3 pt-2 border-t border-stone-200">
+                    <p class="text-sm font-medium text-stone-700">Shared metadata</p>
 
                     {# Tags autocompleter #}
                     <div x-data="autocompleter({
@@ -138,27 +138,27 @@
                          })"
                          x-effect="$store.pasteUpload.tags = selectedResults.map(r => r.ID)"
                          class="relative w-full">
-                        <label class="block text-xs text-gray-500 mb-1">Tags</label>
+                        <label class="block text-xs text-stone-500 font-mono mb-1">Tags</label>
                         <div class="relative">
                             <template x-if="!addModeForTag">
                                 <input x-ref="autocompleter"
                                        type="text"
                                        x-bind="inputEvents"
-                                       class="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                                       class="w-full px-2 py-1.5 text-sm border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600"
                                        placeholder="Search tags..."
                                        autocomplete="off">
                             </template>
                             <template x-if="addModeForTag">
                                 <div class="flex gap-2 items-stretch">
                                     <button type="button"
-                                            class="flex-1 px-2 py-1.5 text-sm font-medium text-white bg-green-700 rounded hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-green-500"
+                                            class="flex-1 px-2 py-1.5 text-sm font-medium text-white bg-amber-700 rounded hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-600"
                                             x-text="'Add ' + addModeForTag + '?'"
                                             x-init="setTimeout(() => $el.focus(), 1)"
                                             @keydown.escape.prevent="exitAdd"
                                             @keydown.enter.prevent="addVal"
                                             @click="addVal"></button>
                                     <button type="button"
-                                            class="px-2 py-1.5 text-sm text-gray-600 bg-gray-100 rounded hover:bg-gray-200"
+                                            class="px-2 py-1.5 text-sm text-stone-600 bg-stone-100 rounded hover:bg-stone-200"
                                             @click="exitAdd">Cancel</button>
                                 </div>
                             </template>
@@ -176,12 +176,12 @@
                          })"
                          x-effect="$store.pasteUpload.categoryId = selectedResults[0]?.ID || null"
                          class="relative w-full">
-                        <label class="block text-xs text-gray-500 mb-1">Category</label>
+                        <label class="block text-xs text-stone-500 font-mono mb-1">Category</label>
                         <div class="relative">
                             <input x-ref="autocompleter"
                                    type="text"
                                    x-bind="inputEvents"
-                                   class="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                                   class="w-full px-2 py-1.5 text-sm border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600"
                                    placeholder="Search categories..."
                                    autocomplete="off">
                             {% include "/partials/form/formParts/dropDownResults.tpl" with action="pushVal" id="paste-upload-category" title="Category" %}
@@ -199,27 +199,27 @@
                          })"
                          x-effect="$store.pasteUpload.seriesId = selectedResults[0]?.ID || null"
                          class="relative w-full">
-                        <label class="block text-xs text-gray-500 mb-1">Series</label>
+                        <label class="block text-xs text-stone-500 font-mono mb-1">Series</label>
                         <div class="relative">
                             <template x-if="!addModeForTag">
                                 <input x-ref="autocompleter"
                                        type="text"
                                        x-bind="inputEvents"
-                                       class="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                                       class="w-full px-2 py-1.5 text-sm border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600"
                                        placeholder="Search or create series..."
                                        autocomplete="off">
                             </template>
                             <template x-if="addModeForTag">
                                 <div class="flex gap-2 items-stretch">
                                     <button type="button"
-                                            class="flex-1 px-2 py-1.5 text-sm font-medium text-white bg-green-700 rounded hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-green-500"
+                                            class="flex-1 px-2 py-1.5 text-sm font-medium text-white bg-amber-700 rounded hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-600"
                                             x-text="'Add ' + addModeForTag + '?'"
                                             x-init="setTimeout(() => $el.focus(), 1)"
                                             @keydown.escape.prevent="exitAdd"
                                             @keydown.enter.prevent="addVal"
                                             @click="addVal"></button>
                                     <button type="button"
-                                            class="px-2 py-1.5 text-sm text-gray-600 bg-gray-100 rounded hover:bg-gray-200"
+                                            class="px-2 py-1.5 text-sm text-stone-600 bg-stone-100 rounded hover:bg-stone-200"
                                             @click="exitAdd">Cancel</button>
                                 </div>
                             </template>
@@ -231,14 +231,14 @@
             </div>
 
             {# Footer #}
-            <div class="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50">
+            <div class="flex items-center justify-between px-4 py-3 border-t border-stone-200 bg-stone-50">
                 {# Left: status text #}
-                <span class="text-sm text-gray-600">
+                <span class="text-sm text-stone-600">
                     <template x-if="$store.pasteUpload.state === 'uploading'">
                         <span x-text="$store.pasteUpload.uploadProgress"></span>
                     </template>
                     <template x-if="$store.pasteUpload.state === 'success'">
-                        <span class="text-green-600" x-text="$store.pasteUpload.uploadProgress"></span>
+                        <span class="text-amber-700" x-text="$store.pasteUpload.uploadProgress"></span>
                     </template>
                     <template x-if="$store.pasteUpload.state !== 'uploading' && $store.pasteUpload.state !== 'success'">
                         <span x-text="$store.pasteUpload.items.length + ' item' + ($store.pasteUpload.items.length !== 1 ? 's' : '')"></span>
@@ -250,13 +250,13 @@
                     <button @click="$store.pasteUpload.state !== 'uploading' && $store.pasteUpload.close()"
                             :disabled="$store.pasteUpload.state === 'uploading'"
                             type="button"
-                            class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                            class="px-4 py-2 text-sm font-medium text-stone-700 bg-white border border-stone-300 rounded-md hover:bg-stone-50 disabled:opacity-50 disabled:cursor-not-allowed">
                         Cancel
                     </button>
                     <button @click="$store.pasteUpload.upload()"
                             :disabled="$store.pasteUpload.state === 'uploading' || $store.pasteUpload.items.length === 0"
                             type="button"
-                            class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                            class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-amber-700 rounded-md hover:bg-amber-800 disabled:opacity-50 disabled:cursor-not-allowed">
                         {# Spinner SVG during uploading #}
                         <svg x-show="$store.pasteUpload.state === 'uploading'"
                              x-cloak
@@ -282,7 +282,7 @@
      x-transition:leave="transition ease-in duration-200"
      x-transition:leave-start="opacity-100 translate-y-0"
      x-transition:leave-end="opacity-0 translate-y-2"
-     class="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-gray-800 text-white text-sm rounded-lg shadow-lg"
+     class="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-stone-800 text-white text-sm rounded-lg shadow-lg"
      role="status"
      aria-live="polite">
     <span x-text="$store.pasteUpload.infoMessage"></span>
