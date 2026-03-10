@@ -56,7 +56,7 @@
              @mousedown="startSliderDrag"
              @touchstart.prevent="startSliderDrag">
             <div class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-6 h-12 bg-white rounded shadow flex items-center justify-center">
-                <span class="text-gray-400">&#x22EE;</span>
+                <span class="text-stone-400">&#x22EE;</span>
             </div>
         </div>
         <div class="absolute top-2 left-2"><span class="compare-side-label--old">OLD</span></div>

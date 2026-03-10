@@ -1,9 +1,9 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
-    <a class="text-blue-600" href="/note?id={{ note.ID }}">Go back to the note</a>
+    <a class="text-amber-700" href="/note?id={{ note.ID }}">Go back to the note</a>
     {% autoescape off %}
-        <div class="prose lg:prose-xl max-w-full">
+        <div class="prose lg:prose-xl max-w-full font-sans">
         {{ note.Description|markdown2 }}
         </div>
     {% endautoescape %}

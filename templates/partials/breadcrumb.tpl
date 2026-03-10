@@ -2,7 +2,7 @@
   <ol role="list" class="bg-white rounded-md shadow px-6 flex flex-wrap flex-shrink space-x-4">
     <li class="flex">
       <div class="flex items-center">
-        <a href="{{ HomeUrl }}" class="text-gray-600 hover:text-gray-700">
+        <a href="{{ HomeUrl }}" class="text-stone-600 hover:text-stone-700">
           <!-- Heroicon name: solid/home -->
           {% include "/partials/svg/home.tpl" %}
           <span class="sr-only">{{ HomeName }}</span>
@@ -14,7 +14,7 @@
       <div class="flex items-center">
         {% include "/partials/svg/arrow.tpl" %}
         <a
-          class="ml-4 text-sm font-medium text-gray-500 hover:text-gray-700 overflow-ellipsis whitespace-nowrap overflow-hidden max-w-sm "
+          class="ml-4 text-sm font-mono font-medium text-stone-500 hover:text-stone-700 overflow-ellipsis whitespace-nowrap overflow-hidden max-w-sm "
           href="{{ entry.Url }}"
         >{{ entry.Name }}</a>
       </div>

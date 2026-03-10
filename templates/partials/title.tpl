@@ -4,8 +4,8 @@
         {% include "/partials/breadcrumb.tpl" with HomeName=breadcrumb.HomeName HomeUrl=breadcrumb.HomeUrl Entries=breadcrumb.Entries %}
     {% endif %}
     <div class="flex items-center flex-1 min-w-0 gap-3 {% if breadcrumb && breadcrumb.HomeUrl %}mt-3{% endif %}">
-        <h2 class="items-start gap-2 text-2xl font-bold leading-7 text-gray-900 sm:text-3xl flex-col">
-            {% if prefix %}<small class="break-words px-2 text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 ">{{ prefix }}</small>{% endif %}
+        <h2 class="items-start gap-2 text-2xl font-bold leading-7 text-stone-900 sm:text-3xl flex-col">
+            {% if prefix %}<small class="break-words px-2 text-xs leading-5 font-semibold font-mono rounded-full bg-green-100 text-amber-700 ">{{ prefix }}</small>{% endif %}
             {% if mainEntityType && mainEntity %}
                 <span class="break-all"><inline-edit post="/v1/{{ mainEntityType }}/editName?id={{ mainEntity.ID }}" name="name">{{ pageTitle }}</inline-edit></span>
             {% else %}
@@ -16,9 +16,9 @@
         <a href="{{ action.Url }}" class="
             ml-4 inline-flex items-center
             px-4 py-2
-            border border-gray-300 rounded-md
-            shadow-sm text-sm font-medium text-white bg-green-700 hover:bg-green-800
-            focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-900">
+            border border-stone-300 rounded-md
+            shadow-sm text-sm font-mono font-medium text-white bg-amber-700 hover:bg-amber-800
+            focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
             {{ action.Name }}
         </a>
         {% endif %}
@@ -27,9 +27,9 @@
            class="
             ml-4 inline-flex items-center
             px-4 py-2
-            border border-gray-300 rounded-md
-            shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50
-            focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+            border border-stone-300 rounded-md
+            shadow-sm text-sm font-mono font-medium text-stone-700 bg-white hover:bg-stone-50
+            focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
             {{ secondaryAction.Name }}
         </a>
         {% endif %}

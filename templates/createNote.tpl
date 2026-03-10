@@ -11,33 +11,33 @@
 
 
                 <div class="mt-6 sm:mt-5 space-y-6 sm:space-y-5">
-                    <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-start sm:border-gray-200">
-                        <label for="startDate" class="block text-sm font-medium text-gray-700 sm:mt-px sm:pt-2">
+                    <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-start sm:border-stone-200">
+                        <label for="startDate" class="block text-sm font-medium font-mono text-stone-700 sm:mt-px sm:pt-2">
                             Start Date
                         </label>
                         <div class="mt-1 sm:mt-0 sm:col-span-2">
                             <div class="max-w-lg flex rounded-md shadow-sm">
-                                <input type="datetime-local" name="startDate" id="startDate" value='{{ note.StartDate|datetime }}' class="flex-1 block w-full focus:ring-indigo-500 focus:border-indigo-500 min-w-0 rounded-md sm:text-sm border-gray-300">
+                                <input type="datetime-local" name="startDate" id="startDate" value='{{ note.StartDate|datetime }}' class="flex-1 block w-full focus:ring-amber-600 focus:border-amber-600 min-w-0 rounded-md sm:text-sm border-stone-300">
                             </div>
                         </div>
                     </div>
 
                     <div class="mt-6 sm:mt-5 space-y-6 sm:space-y-5">
-                        <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-start sm:border-gray-200">
-                            <label for="endDate" class="block text-sm font-medium text-gray-700 sm:mt-px sm:pt-2">
+                        <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-start sm:border-stone-200">
+                            <label for="endDate" class="block text-sm font-medium font-mono text-stone-700 sm:mt-px sm:pt-2">
                                 End Date
                             </label>
                             <div class="mt-1 sm:mt-0 sm:col-span-2">
                                 <div class="max-w-lg flex rounded-md shadow-sm">
-                                    <input type="datetime-local" name="endDate" id="endDate" value="{{ note.EndDate|datetime }}" class="flex-1 block w-full focus:ring-indigo-500 focus:border-indigo-500 min-w-0 rounded-md sm:text-sm border-gray-300">
+                                    <input type="datetime-local" name="endDate" id="endDate" value="{{ note.EndDate|datetime }}" class="flex-1 block w-full focus:ring-amber-600 focus:border-amber-600 min-w-0 rounded-md sm:text-sm border-stone-300">
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-gray-200 sm:pt-5">
-                    <span class="block text-sm font-medium text-gray-700">
+                <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-stone-200 sm:pt-5">
+                    <span class="block text-sm font-medium font-mono text-stone-700">
                         Relations
                     </span>
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
@@ -52,8 +52,8 @@
                     </div>
                 </div>
 
-                <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-gray-200 sm:pt-5">
-                    <span class="block text-sm font-medium text-gray-700">
+                <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-stone-200 sm:pt-5">
+                    <span class="block text-sm font-medium font-mono text-stone-700">
                         Owner
                     </span>
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
@@ -65,8 +65,8 @@
                     </div>
                 </div>
 
-                <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-gray-200 sm:pt-5">
-                    <span class="block text-sm font-medium text-gray-700">
+                <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-stone-200 sm:pt-5">
+                    <span class="block text-sm font-medium font-mono text-stone-700">
                         Note Type
                     </span>
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
@@ -85,7 +85,7 @@
 
     <div class="pt-5">
         <div class="flex justify-end">
-            <button type="submit" class="ml-3 inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+            <button type="submit" class="ml-3 inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
                 Save
             </button>
         </div>

@@ -8,7 +8,7 @@
     <div class="list-container">
         {% for tag in tags %}
             <article class="card tag-card card--selectable" x-data="selectableItem({ itemId: {{ tag.ID }} })">
-                <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" aria-label="Select {{ tag.Name }}" class="card-checkbox focus:ring-indigo-500 h-6 w-6 text-indigo-600 border-gray-300 rounded">
+                <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" aria-label="Select {{ tag.Name }}" class="card-checkbox focus:ring-amber-600 h-6 w-6 text-amber-700 border-stone-300 rounded">
                 <h3 class="card-title card-title--simple">
                     <a href="/tag?id={{ tag.ID }}">{{ tag.Name }}</a>
                 </h3>
@@ -19,7 +19,7 @@
                 {% endif %}
             </article>
         {% empty %}
-            <p class="text-gray-500 text-sm py-4">No tags found. <a href="/createTag" class="text-indigo-600 hover:text-indigo-800 underline">Create one</a>.</p>
+            <p class="text-stone-500 text-sm font-mono py-4">No tags found. <a href="/createTag" class="text-amber-700 hover:text-amber-900 underline font-mono">Create one</a>.</p>
         {% endfor %}
     </div>
 {% endblock %}

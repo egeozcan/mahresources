@@ -14,7 +14,7 @@
                 {% endif %}
             </article>
         {% empty %}
-            <p class="text-gray-500 text-sm py-4">No categories found. <a href="/createCategory" class="text-indigo-600 hover:text-indigo-800 underline">Create one</a>.</p>
+            <p class="text-stone-500 text-sm font-mono py-4">No categories found. <a href="/createCategory" class="text-amber-700 hover:text-amber-900 underline font-mono">Create one</a>.</p>
         {% endfor %}
     </div>
 {% endblock %}

@@ -12,7 +12,7 @@
     <meta name="theme-color" content="#ffffff">
     {% block head %}{% endblock %}
 </head>
-<body class="bg-gray-50 min-h-screen">
+<body class="bg-stone-50 min-h-screen">
     <div class="max-w-4xl mx-auto py-8 px-4">
         {% block content %}{% endblock %}
     </div>
@@ -20,9 +20,9 @@
     {# Simple lightbox for shared galleries #}
     <div id="shared-lightbox" class="fixed inset-0 z-[9999] hidden" style="background: rgba(0,0,0,0.95);">
         <div class="absolute inset-0 flex items-center justify-center" onclick="if(event.target === this) window.sharedLightbox.close()">
-            <button onclick="window.sharedLightbox.close()" class="absolute top-4 right-4 text-white text-4xl hover:text-gray-300 z-10" aria-label="Close">&times;</button>
-            <button onclick="window.sharedLightbox.prev()" class="absolute left-4 top-1/2 -translate-y-1/2 text-white text-5xl hover:text-gray-300 p-4 z-10" aria-label="Previous">&lsaquo;</button>
-            <button onclick="window.sharedLightbox.next()" class="absolute right-4 top-1/2 -translate-y-1/2 text-white text-5xl hover:text-gray-300 p-4 z-10" aria-label="Next">&rsaquo;</button>
+            <button onclick="window.sharedLightbox.close()" class="absolute top-4 right-4 text-white text-4xl hover:text-stone-300 z-10" aria-label="Close">&times;</button>
+            <button onclick="window.sharedLightbox.prev()" class="absolute left-4 top-1/2 -translate-y-1/2 text-white text-5xl hover:text-stone-300 p-4 z-10" aria-label="Previous">&lsaquo;</button>
+            <button onclick="window.sharedLightbox.next()" class="absolute right-4 top-1/2 -translate-y-1/2 text-white text-5xl hover:text-stone-300 p-4 z-10" aria-label="Next">&rsaquo;</button>
             <img id="lightbox-img" class="max-h-[90vh] max-w-[90vw] object-contain" src="" alt="Gallery image">
         </div>
         <div id="lightbox-counter" class="absolute bottom-4 left-1/2 -translate-x-1/2 text-white text-sm z-10"></div>

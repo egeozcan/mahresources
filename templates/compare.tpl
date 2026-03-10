@@ -27,8 +27,8 @@
                     <div x-show="dropdownActive" x-ref="list" class="absolute z-10 bg-white border rounded shadow-lg mt-1 max-h-60 overflow-auto w-full">
                         <template x-for="(item, index) in results" :key="item.ID">
                             <div @mousedown.prevent="selectedIndex = index; pushVal($event)"
-                                 class="px-3 py-2 hover:bg-gray-100 cursor-pointer"
-                                 :class="{ 'bg-indigo-100': selectedIndex === index }"
+                                 class="px-3 py-2 hover:bg-stone-100 cursor-pointer"
+                                 :class="{ 'bg-amber-100': selectedIndex === index }"
                                  x-text="item.Name"></div>
                         </template>
                     </div>
@@ -64,8 +64,8 @@
                     <div x-show="dropdownActive" x-ref="list" class="absolute z-10 bg-white border rounded shadow-lg mt-1 max-h-60 overflow-auto w-full">
                         <template x-for="(item, index) in results" :key="item.ID">
                             <div @mousedown.prevent="selectedIndex = index; pushVal($event)"
-                                 class="px-3 py-2 hover:bg-gray-100 cursor-pointer"
-                                 :class="{ 'bg-indigo-100': selectedIndex === index }"
+                                 class="px-3 py-2 hover:bg-stone-100 cursor-pointer"
+                                 :class="{ 'bg-amber-100': selectedIndex === index }"
                                  x-text="item.Name"></div>
                         </template>
                     </div>
@@ -120,7 +120,7 @@
 
     <!-- Metadata -->
     <details open class="mb-6">
-        <summary class="cursor-pointer text-sm font-medium text-gray-600 mb-3 select-none">Metadata</summary>
+        <summary class="cursor-pointer text-sm font-medium text-stone-600 mb-3 select-none font-mono">Metadata</summary>
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             <!-- Content Type -->
             <div class="compare-meta-card{% if not comparison.SameType %} compare-meta-card--diff{% endif %}">
@@ -129,7 +129,7 @@
                     {% if comparison.SameType %}
                         {{ comparison.Version1.ContentType }}
                     {% else %}
-                        {{ comparison.Version1.ContentType }} <span class="text-gray-400" aria-hidden="true">&rarr;</span> {{ comparison.Version2.ContentType }}
+                        {{ comparison.Version1.ContentType }} <span class="text-stone-400" aria-hidden="true">&rarr;</span> {{ comparison.Version2.ContentType }}
                     {% endif %}
                 </div>
             </div>
@@ -140,8 +140,8 @@
                     {% if comparison.SizeDelta == 0 %}
                         {{ comparison.Version1.FileSize|humanReadableSize }}
                     {% else %}
-                        {{ comparison.Version1.FileSize|humanReadableSize }} <span class="text-gray-400" aria-hidden="true">&rarr;</span> {{ comparison.Version2.FileSize|humanReadableSize }}
-                        <span class="text-xs {% if comparison.SizeDelta > 0 %}text-blue-600{% else %}text-orange-600{% endif %}">
+                        {{ comparison.Version1.FileSize|humanReadableSize }} <span class="text-stone-400" aria-hidden="true">&rarr;</span> {{ comparison.Version2.FileSize|humanReadableSize }}
+                        <span class="text-xs {% if comparison.SizeDelta > 0 %}text-amber-700{% else %}text-orange-600{% endif %}">
                             ({% if comparison.SizeDelta > 0 %}+{% endif %}{{ comparison.SizeDelta|humanReadableSize }})
                         </span>
                     {% endif %}
@@ -152,7 +152,7 @@
                 <div class="compare-meta-card-label">Dimensions</div>
                 <div class="compare-meta-card-value">
                     {% if comparison.DimensionsDiff %}
-                        {{ comparison.Version1.Width }}&times;{{ comparison.Version1.Height }} <span class="text-gray-400" aria-hidden="true">&rarr;</span> {{ comparison.Version2.Width }}&times;{{ comparison.Version2.Height }}
+                        {{ comparison.Version1.Width }}&times;{{ comparison.Version1.Height }} <span class="text-stone-400" aria-hidden="true">&rarr;</span> {{ comparison.Version2.Width }}&times;{{ comparison.Version2.Height }}
                     {% else %}
                         {{ comparison.Version1.Width }}&times;{{ comparison.Version1.Height }}
                     {% endif %}
@@ -163,8 +163,8 @@
                 <div class="compare-meta-card-label">Hash</div>
                 <div class="compare-meta-card-value">
                     {% if comparison.SameHash %}
-                        <span class="text-green-700 font-medium">Match</span>
-                        <span class="text-xs font-mono text-gray-500 ml-1">{{ comparison.Version1.Hash|truncatechars:16 }}...</span>
+                        <span class="text-amber-700 font-medium">Match</span>
+                        <span class="text-xs font-mono text-stone-500 ml-1">{{ comparison.Version1.Hash|truncatechars:16 }}...</span>
                     {% else %}
                         <span class="text-red-700 font-medium">Different</span>
                     {% endif %}
@@ -176,7 +176,7 @@
                 <div class="compare-meta-card-value">
                     {{ comparison.Version1.CreatedAt|date:"Jan 02, 2006 15:04" }}
                     {% if comparison.Version1.CreatedAt != comparison.Version2.CreatedAt %}
-                        <span class="text-gray-400" aria-hidden="true">&rarr;</span> {{ comparison.Version2.CreatedAt|date:"Jan 02, 2006 15:04" }}
+                        <span class="text-stone-400" aria-hidden="true">&rarr;</span> {{ comparison.Version2.CreatedAt|date:"Jan 02, 2006 15:04" }}
                     {% endif %}
                 </div>
             </div>
@@ -186,7 +186,7 @@
                 <div class="compare-meta-card-label">Resource</div>
                 <div class="compare-meta-card-value">
                     <a href="/resource?id={{ resource1.ID }}" class="text-teal-700 hover:underline">{{ resource1.Name }}</a>
-                    <span class="text-gray-400" aria-hidden="true">&rarr;</span>
+                    <span class="text-stone-400" aria-hidden="true">&rarr;</span>
                     <a href="/resource?id={{ resource2.ID }}" class="text-teal-700 hover:underline">{{ resource2.Name }}</a>
                 </div>
             </div>
@@ -195,11 +195,11 @@
             {% if comparison.Version1.Comment or comparison.Version2.Comment %}
             <div class="compare-meta-card sm:col-span-2 lg:col-span-3{% if comparison.Version1.Comment != comparison.Version2.Comment %} compare-meta-card--diff{% endif %}">
                 <div class="compare-meta-card-label">Comment</div>
-                <div class="compare-meta-card-value italic text-gray-600">
+                <div class="compare-meta-card-value italic text-stone-600">
                     {% if comparison.Version1.Comment == comparison.Version2.Comment %}
                         "{{ comparison.Version1.Comment }}"
                     {% else %}
-                        "{{ comparison.Version1.Comment }}" <span class="text-gray-400 not-italic" aria-hidden="true">&rarr;</span> "{{ comparison.Version2.Comment }}"
+                        "{{ comparison.Version1.Comment }}" <span class="text-stone-400 not-italic" aria-hidden="true">&rarr;</span> "{{ comparison.Version2.Comment }}"
                     {% endif %}
                 </div>
             </div>
@@ -226,11 +226,11 @@
             <rect x="14" y="7" width="8" height="14" rx="1"/>
             <path d="M12 10l2-2m0 0l-2-2m2 2H8"/>
         </svg>
-        <p class="text-lg font-medium text-gray-700">Ready to Compare</p>
+        <p class="text-lg font-medium text-stone-700">Ready to Compare</p>
         <p class="text-sm max-w-xs">Select resources and versions above to see a detailed comparison.</p>
         <div class="flex items-center gap-2 text-xs mt-1">
             <span class="compare-side-label--old">OLD</span>
-            <span class="text-gray-400" aria-hidden="true">&harr;</span>
+            <span class="text-stone-400" aria-hidden="true">&harr;</span>
             <span class="compare-side-label--new">NEW</span>
         </div>
     </div>

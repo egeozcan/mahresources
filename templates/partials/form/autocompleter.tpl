@@ -14,7 +14,7 @@
         class="relative w-full"
 >
     {% if title %}
-    <label class="block text-sm font-medium text-gray-700 mt-3" id="{{ id }}-label" for="{{ id }}">{{ title }}</label>
+    <label class="block text-sm font-mono font-medium text-stone-700 mt-3" id="{{ id }}-label" for="{{ id }}">{{ title }}</label>
     {% endif %}
     {% include "/partials/form/formParts/errorMessage.tpl" %}
     <template x-if="!addModeForTag">
@@ -23,7 +23,7 @@
                     id="{{ id }}"
                     x-ref="autocompleter"
                     type="text"
-                    class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md mt-2"
+                    class="shadow-sm focus:ring-amber-600 focus:border-amber-600 block w-full sm:text-sm border-stone-300 rounded-md mt-2"
                     x-bind="inputEvents"
                     x-init="setTimeout(() => { addModeForTag !== false && $el.focus(); }, 1)"
                     autocomplete="off"
@@ -45,8 +45,8 @@
             <button
                     type="button"
                     class="
-                    border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-700
-                    hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500
+                    border border-transparent shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700
+                    hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600
                     inline-flex justify-center items-center py-1 px-2"
                     x-text="'Add ' + addModeForTag + '?'"
                     x-init="setTimeout(() => $el.focus(), 1)"
@@ -57,8 +57,8 @@
             <button
                     type="button"
                     class="
-                    border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-red-600
-                    hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500
+                    border border-transparent shadow-sm text-sm font-mono font-medium rounded-md text-white bg-red-700
+                    hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600
                     inline-flex justify-center items-center py-1 px-2"
                     x-ref="cancelAdd"
                     @click="exitAdd"

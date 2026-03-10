@@ -5,9 +5,9 @@
     {% else %}py-2 px-4
     {% endif %}
     border border-transparent
-    shadow-sm text-sm font-medium rounded-md
-    text-white bg-red-600 hover:bg-red-700
-    focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+    shadow-sm text-sm font-mono font-medium rounded-md
+    text-white bg-red-700 hover:bg-red-800
+    focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600"
     value="{% if text %}{{ text }}{% else %}Delete{% endif %}"
     >
     {% if id %}

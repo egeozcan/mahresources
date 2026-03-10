@@ -18,8 +18,8 @@
                 inline-flex justify-center
                 py-2 px-4
                 border border-transparent
-                shadow-sm text-sm font-medium rounded-md text-white
-                bg-indigo-600 hover:bg-indigo-700"
+                shadow-sm text-sm font-mono font-medium rounded-md text-white
+                bg-amber-700 hover:bg-amber-800"
             @click.prevent="expanded = !expanded"
             x-text="expanded ? 'Minimize' : 'Fullscreen'">
     </button>

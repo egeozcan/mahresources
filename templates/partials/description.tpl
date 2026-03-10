@@ -2,7 +2,7 @@
 <div x-data="() => ({ editing: false, descriptionEditUrl: '{{ descriptionEditUrl }}' })"
     x-show="$store.savedSetting.localSettings.showDescriptions ?? true"
     class="description flex-1 relative"
-     :class="{ 'lg:prose-xl prose bg-gray-50 p-4 mb-2': !editing }"
+     :class="{ 'lg:prose-xl prose font-sans bg-stone-50 p-4 mb-2': !editing }"
 >
     <template x-if="!editing">
         <div class="contents" @dblclick="editing = !!descriptionEditUrl" title="Double-click to edit">

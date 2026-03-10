@@ -4,8 +4,8 @@
     {% else %}py-2 px-4
     {% endif %}
     border border-transparent
-    shadow-sm text-sm font-medium rounded-md
-    text-white bg-green-700 hover:bg-green-800
-    focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
+    shadow-sm text-sm font-mono font-medium rounded-md
+    text-white bg-amber-700 hover:bg-amber-800
+    focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
     {% if text %}{{ text }}{% else %}New{% endif %}
 </button>

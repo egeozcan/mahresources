@@ -30,8 +30,8 @@
     {% block head %}{% endblock %}
     {% plugin_slot "head" %}
 </head>
-<body class="site">
-    <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:p-4 focus:bg-white focus:text-indigo-600">Skip to main content</a>
+<body class="site bg-stone-50">
+    <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:p-4 focus:bg-white focus:text-amber-700">Skip to main content</a>
     {% plugin_slot "page_top" %}
     <header class="header flex items-center justify-between gap-2 px-2">
         {% include "/partials/menu.tpl" %}
@@ -40,7 +40,7 @@
             <div x-cloak x-data="{ active: false }" class="settings relative">
                 <button class="p-1 text-lg" @click="active = !active" @click.outside="setTimeout(() => active = false, 100)" title="Settings" aria-label="Settings"><span aria-hidden="true">⚙</span></button>
                 <div x-show="active" x-cloak class="absolute right-0 top-full mt-1 w-48 bg-white shadow-lg ring-1 ring-black/5 z-50 p-3 rounded">
-                    <label class="flex justify-between items-center text-sm">
+                    <label class="flex justify-between items-center text-sm font-mono">
                         Show Descriptions
                         <input type="checkbox" name="showDescriptions" x-data x-init="$store.savedSetting.registerEl($root)" />
                     </label>
@@ -54,8 +54,8 @@
     <div class="content pb-16{% if dashboardPage %} content--no-sidebar{% endif %}" id="main-content">
         <aside class="sidebar">
             {% if mainEntity %}
-            <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-600">Updated: </span>{{ mainEntity.UpdatedAt|date:"2006-01-02 15:04" }}</small>
-            <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-600">Created: </span>{{ mainEntity.CreatedAt|date:"2006-01-02 15:04" }}</small>
+            <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-stone-600 font-mono">Updated: </span>{{ mainEntity.UpdatedAt|date:"2006-01-02 15:04" }}</small>
+            <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-stone-600 font-mono">Created: </span>{{ mainEntity.CreatedAt|date:"2006-01-02 15:04" }}</small>
             {% endif %}
             {% plugin_slot "sidebar_top" %}
             {% block sidebar %}{% endblock %}

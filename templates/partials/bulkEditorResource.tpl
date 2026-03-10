@@ -35,13 +35,13 @@
     <form class="px-4" method="post" :action="'/v1/resource/recalculateDimensions?redirect=' + encodeURIComponent(window.location)">
         {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
         <div class="flex flex-col">
-            <span class="block text-sm font-medium text-gray-700 mt-3">Update Dimensions</span>
+            <span class="block text-sm font-mono font-medium text-stone-700 mt-3">Update Dimensions</span>
             {% include "/partials/form/searchButton.tpl" with text="Update Dimensions" %}
         </div>
     </form>
     <div class="px-4" x-show="[...$store.bulkSelection.selectedIds].length === 2">
         <a :href="'/resource/compare?r1=' + [...$store.bulkSelection.selectedIds][0] + '&r2=' + [...$store.bulkSelection.selectedIds][1]"
-           class="inline-flex justify-center py-2 px-4 mt-3 border border-transparent items-center shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+           class="inline-flex justify-center py-2 px-4 mt-3 border border-transparent items-center shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
             Compare
         </a>
     </div>
@@ -54,7 +54,7 @@
     >
         {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
         <div class="flex flex-col">
-            <span class="block text-sm font-medium text-gray-700 mt-3">Delete Selected</span>
+            <span class="block text-sm font-mono font-medium text-stone-700 mt-3">Delete Selected</span>
             {% include "/partials/form/searchButton.tpl" with text="Delete" danger=true %}
         </div>
     </form>

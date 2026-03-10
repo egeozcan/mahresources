@@ -225,13 +225,13 @@
         @click="handleClick($event)"
     >
         <div class="tree-chart" x-ref="treeContainer">
-            <p class="text-gray-400 p-4">Loading tree...</p>
+            <p class="text-stone-400 p-4">Loading tree...</p>
         </div>
     </div>
     {% else %}
     <div>
         {% if roots %}
-        <p class="text-sm text-gray-500 mb-4">Select a root group to view its tree:</p>
+        <p class="text-sm text-stone-500 mb-4">Select a root group to view its tree:</p>
         <ul class="tree-roots-list bg-white rounded-lg shadow overflow-hidden">
             {% for root in roots %}
             <li>
@@ -239,18 +239,18 @@
                     <span>
                         <span class="font-medium">{{ root.Name }}</span>
                         {% if root.CategoryName %}
-                        <span class="text-xs text-gray-400 ml-2">{{ root.CategoryName }}</span>
+                        <span class="text-xs text-stone-400 ml-2">{{ root.CategoryName }}</span>
                         {% endif %}
                     </span>
                     {% if root.ChildCount > 0 %}
-                    <span class="text-xs text-gray-400">{{ root.ChildCount }} children</span>
+                    <span class="text-xs text-stone-400">{{ root.ChildCount }} children</span>
                     {% endif %}
                 </a>
             </li>
             {% endfor %}
         </ul>
         {% else %}
-        <p class="text-gray-500 p-4">No root groups found.</p>
+        <p class="text-stone-500 p-4">No root groups found.</p>
         {% endif %}
     </div>
     {% endif %}
@@ -258,13 +258,13 @@
 
 {% block sidebar %}
     {% if rootGroup %}
-        <a href="/group?id={{ rootGroup.ID }}" class="block text-sm text-indigo-600 hover:text-indigo-800 mb-2">View Root Group</a>
+        <a href="/group?id={{ rootGroup.ID }}" class="block text-sm text-amber-700 hover:text-amber-900 mb-2">View Root Group</a>
     {% endif %}
 
     {% if containingId %}
         <div class="mb-4">
             {% include "/partials/sideTitle.tpl" with title="Highlighted Path" %}
-            <p class="text-xs text-gray-500">
+            <p class="text-xs text-stone-500">
                 Teal nodes show the path from root to the selected group.
             </p>
         </div>
@@ -272,7 +272,7 @@
 
     <div class="mb-4">
         {% include "/partials/sideTitle.tpl" with title="Navigation" %}
-        <p class="text-xs text-gray-500 mb-2">Click a node to view it. Click the arrow button to expand/collapse children.</p>
-        <a href="/groups" class="text-sm text-indigo-600 hover:text-indigo-800">Back to Groups List</a>
+        <p class="text-xs text-stone-500 mb-2">Click a node to view it. Click the arrow button to expand/collapse children.</p>
+        <a href="/groups" class="text-sm text-amber-700 hover:text-amber-900">Back to Groups List</a>
     </div>
 {% endblock %}

@@ -7,7 +7,7 @@
             {{ note.NoteType.CustomHeader }}
         {% endautoescape %}
     </div>
-    <a class="text-blue-600" href="/note/text?id={{ note.ID }}">Wide display</a>
+    <a class="text-amber-700" href="/note/text?id={{ note.ID }}">Wide display</a>
 
     {# Block Editor - shows blocks if available, otherwise falls back to description #}
     {% if note.Blocks && note.Blocks|length > 0 %}
@@ -34,16 +34,16 @@
         {% endautoescape %}
     </div>
     {% if note.StartDate %}
-        <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-600">Started: </span>{{ dereference(note.StartDate)|date:"2006-01-02 15:04" }}</small>
+        <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-stone-600 font-mono">Started: </span>{{ dereference(note.StartDate)|date:"2006-01-02 15:04" }}</small>
     {% endif %}
     {% if note.EndDate %}
-        <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-gray-600">Ended: </span>{{ dereference(note.EndDate)|date:"2006-01-02 15:04" }}</small>
+        <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-stone-600 font-mono">Ended: </span>{{ dereference(note.EndDate)|date:"2006-01-02 15:04" }}</small>
     {% endif %}
     {% include "/partials/ownerDisplay.tpl" with owner=note.Owner %}
 
     {% if note.NoteType %}
         {% include "/partials/sideTitle.tpl" with title="Note Type" %}
-        <a href="/noteType?id={{ note.NoteType.ID }}" class="text-blue-600 hover:underline">{{ note.NoteType.Name }}</a>
+        <a href="/noteType?id={{ note.NoteType.ID }}" class="text-amber-700 hover:underline">{{ note.NoteType.Name }}</a>
     {% endif %}
 
     {% include "/partials/tagList.tpl" with tags=note.Tags %}

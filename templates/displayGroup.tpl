@@ -13,8 +13,8 @@
     {% with hasOwn=(group.OwnNotes || group.OwnGroups || group.OwnResources) %}
 
     <details class="mb-6" {% if hasOwn %}open{% endif %}>
-        <summary class="bg-gray-100 shadow rounded-lg block w-full p-4 text-left cursor-pointer select-none">Own Entities</summary>
-        <div class="p-4 border-dashed border-4 border-gray-100 border-t-0">
+        <summary class="bg-stone-100 shadow rounded-lg block w-full p-4 text-left cursor-pointer select-none">Own Entities</summary>
+        <div class="p-4 border-dashed border-4 border-stone-100 border-t-0">
             {% include "/partials/seeAll.tpl" with entities=group.OwnNotes subtitle="Notes" formAction="/notes" addAction="/note/new" formID=group.ID formParamName="ownerId" templateName="note" %}
             {% include "/partials/seeAll.tpl" with entities=group.OwnGroups subtitle="Sub-Groups" formAction="/groups" addAction="/group/new" formID=group.ID formParamName="ownerId" templateName="group" %}
             {% include "/partials/seeAll.tpl" with entities=group.OwnResources subtitle="Resources" formAction="/resources" addAction="/resource/new" formID=group.ID formParamName="ownerId" templateName="resource" %}
@@ -22,8 +22,8 @@
     </details>
 
     <details class="mb-6" {% if !hasOwn %}open{% endif %}>
-        <summary class="bg-gray-100 shadow rounded-lg block w-full p-4 text-left cursor-pointer select-none">Related Entities</summary>
-        <div class="p-4 border-dashed border-4 border-gray-100 border-t-0">
+        <summary class="bg-stone-100 shadow rounded-lg block w-full p-4 text-left cursor-pointer select-none">Related Entities</summary>
+        <div class="p-4 border-dashed border-4 border-stone-100 border-t-0">
             {% include "/partials/seeAll.tpl" with entities=group.RelatedGroups subtitle="Related Groups" formAction="/groups" addAction="/group/new" formID=group.ID formParamName="groups" templateName="group" %}
             {% include "/partials/seeAll.tpl" with entities=group.RelatedResources subtitle="Related Resources" formAction="/resources" addAction="/resource/new" formID=group.ID formParamName="groups" addFormSecondParamName="ownerid" addFormSecondParamValue=group.OwnerId templateName="resource" %}
             {% include "/partials/seeAll.tpl" with entities=group.RelatedNotes subtitle="Related Notes" formAction="/notes" addAction="/note/new" formID=group.ID formParamName="ownerId" templateName="note" %}
@@ -32,8 +32,8 @@
 
     {% endwith %}
     <details class="mb-6"{% if group.Relationships || group.BackRelations %}open{% endif %}>
-        <summary class="bg-gray-100 shadow rounded-lg block w-full p-4 text-left cursor-pointer select-none">Relations</summary>
-        <div class="p-4 border-dashed border-4 border-gray-100 border-t-0">
+        <summary class="bg-stone-100 shadow rounded-lg block w-full p-4 text-left cursor-pointer select-none">Relations</summary>
+        <div class="p-4 border-dashed border-4 border-stone-100 border-t-0">
             {% include "/partials/seeAll.tpl" with entities=group.Relationships subtitle="Relations" formID=group.ID formAction="/relations" formParamName="FromGroupId" addAction="/relation/new" templateName="relation" %}
             {% include "/partials/seeAll.tpl" with entities=group.BackRelations subtitle="Reverse Relations" formID=group.ID formAction="/relations" formParamName="ToGroupId" addAction="/relation/new" templateName="relation_reverse" %}
         </div>
@@ -53,7 +53,7 @@
     </div>
 
     {% if group.Owner %}{% include "/partials/ownerDisplay.tpl" with owner=group.Owner %}{% endif %}
-    <a href="/group/tree?containing={{ group.ID }}" class="block text-sm text-indigo-600 hover:text-indigo-800 mb-2">Show in Tree</a>
+    <a href="/group/tree?containing={{ group.ID }}" class="block text-sm text-amber-700 hover:text-amber-900 mb-2">Show in Tree</a>
     {% include "/partials/tagList.tpl" with tags=group.Tags addTagUrl='/v1/groups/addTags' id=group.ID %}
 
     {% include "/partials/sideTitle.tpl" with title="Meta Data" %}

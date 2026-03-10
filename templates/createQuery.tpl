@@ -19,100 +19,100 @@
         <div></div>
         <div class="sm:col-span-2">
             <button type="button" @click="open = !open"
-                    class="text-sm text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
+                    class="text-sm text-amber-700 hover:text-amber-900 font-mono flex items-center gap-1">
                 <svg :class="open && 'rotate-90'" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
                 </svg>
                 SQL query reference
             </button>
-            <div x-show="open" x-collapse class="mt-2 text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-md p-4 space-y-3">
+            <div x-show="open" x-collapse class="mt-2 text-sm text-stone-600 bg-stone-50 border border-stone-200 rounded-md p-4 space-y-3 font-sans">
                 <div>
-                    <h4 class="font-semibold text-gray-700">Parameters</h4>
-                    <p>Use <code class="bg-gray-200 px-1 rounded">:paramName</code> for named parameters. When the query runs, each parameter gets an input field. Example:</p>
-                    <pre class="bg-gray-100 p-2 rounded mt-1 overflow-x-auto">SELECT * FROM resources WHERE name LIKE :search</pre>
+                    <h4 class="font-semibold text-stone-700">Parameters</h4>
+                    <p>Use <code class="bg-stone-200 px-1 rounded">:paramName</code> for named parameters. When the query runs, each parameter gets an input field. Example:</p>
+                    <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">SELECT * FROM resources WHERE name LIKE :search</pre>
                     {% if dbType == "POSTGRES" %}
-                    <p class="mt-1">PostgreSQL type casts (<code class="bg-gray-200 px-1 rounded">::</code>) work normally &mdash; they are handled automatically.</p>
+                    <p class="mt-1">PostgreSQL type casts (<code class="bg-stone-200 px-1 rounded">::</code>) work normally &mdash; they are handled automatically.</p>
                     {% endif %}
                 </div>
                 <div>
-                    <h4 class="font-semibold text-gray-700">Tables</h4>
+                    <h4 class="font-semibold text-stone-700">Tables</h4>
                     <p>Autocompletion (Ctrl+Space) suggests table and column names. Main tables:</p>
                     <div class="mt-1 grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1">
                         <div>
-                            <code class="text-indigo-700 font-semibold">resources</code>
-                            <span class="text-xs text-gray-500">&mdash; id, name, original_name, hash, location, description, content_type, content_category, file_size, width, height, owner_id, resource_category_id, meta, created_at, updated_at</span>
+                            <code class="text-amber-800 font-semibold">resources</code>
+                            <span class="text-xs text-stone-500">&mdash; id, name, original_name, hash, location, description, content_type, content_category, file_size, width, height, owner_id, resource_category_id, meta, created_at, updated_at</span>
                         </div>
                         <div>
-                            <code class="text-indigo-700 font-semibold">notes</code>
-                            <span class="text-xs text-gray-500">&mdash; id, name, description, meta, owner_id, note_type_id, start_date, end_date, created_at, updated_at</span>
+                            <code class="text-amber-800 font-semibold">notes</code>
+                            <span class="text-xs text-stone-500">&mdash; id, name, description, meta, owner_id, note_type_id, start_date, end_date, created_at, updated_at</span>
                         </div>
                         <div>
-                            <code class="text-indigo-700 font-semibold">groups</code>
-                            <span class="text-xs text-gray-500">&mdash; id, name, description, url, meta, owner_id, category_id, created_at, updated_at</span>
+                            <code class="text-amber-800 font-semibold">groups</code>
+                            <span class="text-xs text-stone-500">&mdash; id, name, description, url, meta, owner_id, category_id, created_at, updated_at</span>
                         </div>
                         <div>
-                            <code class="text-indigo-700 font-semibold">tags</code>
-                            <span class="text-xs text-gray-500">&mdash; id, name, description, created_at, updated_at</span>
+                            <code class="text-amber-800 font-semibold">tags</code>
+                            <span class="text-xs text-stone-500">&mdash; id, name, description, created_at, updated_at</span>
                         </div>
                         <div>
-                            <code class="text-indigo-700 font-semibold">categories</code>
-                            <span class="text-xs text-gray-500">&mdash; id, name, description</span>
+                            <code class="text-amber-800 font-semibold">categories</code>
+                            <span class="text-xs text-stone-500">&mdash; id, name, description</span>
                         </div>
                         <div>
-                            <code class="text-indigo-700 font-semibold">note_types</code>
-                            <span class="text-xs text-gray-500">&mdash; id, name, description</span>
+                            <code class="text-amber-800 font-semibold">note_types</code>
+                            <span class="text-xs text-stone-500">&mdash; id, name, description</span>
                         </div>
                         <div>
-                            <code class="text-indigo-700 font-semibold">resource_categories</code>
-                            <span class="text-xs text-gray-500">&mdash; id, name, description</span>
+                            <code class="text-amber-800 font-semibold">resource_categories</code>
+                            <span class="text-xs text-stone-500">&mdash; id, name, description</span>
                         </div>
                         <div>
-                            <code class="text-indigo-700 font-semibold">queries</code>
-                            <span class="text-xs text-gray-500">&mdash; id, name, text, template, created_at, updated_at</span>
+                            <code class="text-amber-800 font-semibold">queries</code>
+                            <span class="text-xs text-stone-500">&mdash; id, name, text, template, created_at, updated_at</span>
                         </div>
                         <div>
-                            <code class="text-indigo-700 font-semibold">group_relations</code>
-                            <span class="text-xs text-gray-500">&mdash; id, name, description, from_group_id, to_group_id, relation_type_id</span>
+                            <code class="text-amber-800 font-semibold">group_relations</code>
+                            <span class="text-xs text-stone-500">&mdash; id, name, description, from_group_id, to_group_id, relation_type_id</span>
                         </div>
                         <div>
-                            <code class="text-indigo-700 font-semibold">group_relation_types</code>
-                            <span class="text-xs text-gray-500">&mdash; id, name, description, from_category_id, to_category_id</span>
+                            <code class="text-amber-800 font-semibold">group_relation_types</code>
+                            <span class="text-xs text-stone-500">&mdash; id, name, description, from_category_id, to_category_id</span>
                         </div>
                     </div>
                 </div>
                 <div>
-                    <h4 class="font-semibold text-gray-700">Join tables (many-to-many)</h4>
+                    <h4 class="font-semibold text-stone-700">Join tables (many-to-many)</h4>
                     <p class="text-xs">
-                        <code class="bg-gray-200 px-1 rounded">resource_tags</code>,
-                        <code class="bg-gray-200 px-1 rounded">resource_notes</code>,
-                        <code class="bg-gray-200 px-1 rounded">groups_related_resources</code>,
-                        <code class="bg-gray-200 px-1 rounded">groups_related_notes</code>,
-                        <code class="bg-gray-200 px-1 rounded">group_related_groups</code>,
-                        <code class="bg-gray-200 px-1 rounded">note_tags</code>,
-                        <code class="bg-gray-200 px-1 rounded">group_tags</code>
+                        <code class="bg-stone-200 px-1 rounded">resource_tags</code>,
+                        <code class="bg-stone-200 px-1 rounded">resource_notes</code>,
+                        <code class="bg-stone-200 px-1 rounded">groups_related_resources</code>,
+                        <code class="bg-stone-200 px-1 rounded">groups_related_notes</code>,
+                        <code class="bg-stone-200 px-1 rounded">group_related_groups</code>,
+                        <code class="bg-stone-200 px-1 rounded">note_tags</code>,
+                        <code class="bg-stone-200 px-1 rounded">group_tags</code>
                     </p>
-                    <p class="text-xs mt-1">Each join table has two foreign key columns, e.g. <code class="bg-gray-200 px-1 rounded">resource_tags</code> has <code class="bg-gray-200 px-1 rounded">resource_id</code> and <code class="bg-gray-200 px-1 rounded">tag_id</code>.</p>
+                    <p class="text-xs mt-1">Each join table has two foreign key columns, e.g. <code class="bg-stone-200 px-1 rounded">resource_tags</code> has <code class="bg-stone-200 px-1 rounded">resource_id</code> and <code class="bg-stone-200 px-1 rounded">tag_id</code>.</p>
                 </div>
                 <div>
-                    <h4 class="font-semibold text-gray-700">Example queries</h4>
-                    <pre class="bg-gray-100 p-2 rounded overflow-x-auto">-- All resources with a specific tag
+                    <h4 class="font-semibold text-stone-700">Example queries</h4>
+                    <pre class="bg-stone-100 p-2 rounded overflow-x-auto">-- All resources with a specific tag
 SELECT r.* FROM resources r
 JOIN resource_tags rt ON rt.resource_id = r.id
 JOIN tags t ON t.id = rt.tag_id
 WHERE t.name = :tagName</pre>
-                    <pre class="bg-gray-100 p-2 rounded overflow-x-auto mt-1">-- Notes created in a date range
+                    <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">-- Notes created in a date range
 SELECT * FROM notes
 WHERE created_at >= :startDate
   AND created_at <= :endDate
 ORDER BY created_at DESC</pre>
-                    <pre class="bg-gray-100 p-2 rounded overflow-x-auto mt-1">-- Groups and their resource counts
+                    <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">-- Groups and their resource counts
 SELECT g.id, g.name, COUNT(gr.resource_id) AS resource_count
 FROM groups g
 LEFT JOIN groups_related_resources gr ON gr.group_id = g.id
 GROUP BY g.id, g.name
 ORDER BY resource_count DESC</pre>
                 </div>
-                <p class="text-xs text-gray-500">Queries are read-only &mdash; INSERT, UPDATE, and DELETE statements will be rejected.</p>
+                <p class="text-xs text-stone-500">Queries are read-only &mdash; INSERT, UPDATE, and DELETE statements will be rejected.</p>
             </div>
         </div>
     </div>
@@ -123,43 +123,43 @@ ORDER BY resource_count DESC</pre>
         <div></div>
         <div class="sm:col-span-2">
             <button type="button" @click="open = !open"
-                    class="text-sm text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
+                    class="text-sm text-amber-700 hover:text-amber-900 font-mono flex items-center gap-1">
                 <svg :class="open && 'rotate-90'" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
                 </svg>
                 Template reference
             </button>
-            <div x-show="open" x-collapse class="mt-2 text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-md p-4 space-y-3">
+            <div x-show="open" x-collapse class="mt-2 text-sm text-stone-600 bg-stone-50 border border-stone-200 rounded-md p-4 space-y-3 font-sans">
                 <div>
-                    <h4 class="font-semibold text-gray-700">Overview</h4>
+                    <h4 class="font-semibold text-stone-700">Overview</h4>
                     <p>The template is raw HTML rendered below the results table after the query runs. Use it to add custom visualizations, summaries, or actions based on the query results.</p>
                 </div>
                 <div>
-                    <h4 class="font-semibold text-gray-700">Accessing results</h4>
+                    <h4 class="font-semibold text-stone-700">Accessing results</h4>
                     <p>Query results are available in two ways:</p>
                     <ul class="list-disc list-inside mt-1 space-y-1">
-                        <li><code class="bg-gray-200 px-1 rounded">window.results</code> &mdash; the full JSON array of result rows (each row is an object with column names as keys)</li>
-                        <li><code class="bg-gray-200 px-1 rounded">results</code> &mdash; same array, also accessible as an Alpine.js reactive variable in the page scope</li>
+                        <li><code class="bg-stone-200 px-1 rounded">window.results</code> &mdash; the full JSON array of result rows (each row is an object with column names as keys)</li>
+                        <li><code class="bg-stone-200 px-1 rounded">results</code> &mdash; same array, also accessible as an Alpine.js reactive variable in the page scope</li>
                     </ul>
                 </div>
                 <div>
-                    <h4 class="font-semibold text-gray-700">Visibility</h4>
-                    <p>The template container is only shown when results are non-empty. It is wrapped in an Alpine.js <code class="bg-gray-200 px-1 rounded">x-if="!error && results && results.length > 0"</code> block.</p>
+                    <h4 class="font-semibold text-stone-700">Visibility</h4>
+                    <p>The template container is only shown when results are non-empty. It is wrapped in an Alpine.js <code class="bg-stone-200 px-1 rounded">x-if="!error && results && results.length > 0"</code> block.</p>
                 </div>
                 <div>
-                    <h4 class="font-semibold text-gray-700">Examples</h4>
-                    <pre class="bg-gray-100 p-2 rounded overflow-x-auto">&lt;!-- Show total count --&gt;
+                    <h4 class="font-semibold text-stone-700">Examples</h4>
+                    <pre class="bg-stone-100 p-2 rounded overflow-x-auto">&lt;!-- Show total count --&gt;
 &lt;p&gt;Total results: &lt;span x-text="results.length"&gt;&lt;/span&gt;&lt;/p&gt;</pre>
-                    <pre class="bg-gray-100 p-2 rounded overflow-x-auto mt-1">&lt;!-- Sum a numeric column --&gt;
+                    <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">&lt;!-- Sum a numeric column --&gt;
 &lt;p&gt;Total size:
   &lt;span x-text="results.reduce((s, r) =&gt; s + (r.file_size || 0), 0).toLocaleString()"&gt;&lt;/span&gt;
   bytes
 &lt;/p&gt;</pre>
-                    <pre class="bg-gray-100 p-2 rounded overflow-x-auto mt-1">&lt;!-- Link to each result --&gt;
+                    <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">&lt;!-- Link to each result --&gt;
 &lt;template x-for="row in results"&gt;
-  &lt;a :href="'/resource?id=' + row.id" x-text="row.name" class="block text-blue-600"&gt;&lt;/a&gt;
+  &lt;a :href="'/resource?id=' + row.id" x-text="row.name" class="block text-amber-700"&gt;&lt;/a&gt;
 &lt;/template&gt;</pre>
-                    <pre class="bg-gray-100 p-2 rounded overflow-x-auto mt-1">&lt;!-- Custom script using window.results --&gt;
+                    <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">&lt;!-- Custom script using window.results --&gt;
 &lt;canvas id="myChart" width="400" height="200"&gt;&lt;/canvas&gt;
 &lt;script&gt;
   // Use window.results to build charts, export data, etc.
@@ -167,7 +167,7 @@ ORDER BY resource_count DESC</pre>
   console.log('Got', data.length, 'rows');
 &lt;/script&gt;</pre>
                 </div>
-                <p class="text-xs text-gray-500">The template is rendered as-is (no server-side escaping). You can use any HTML, CSS, and JavaScript.</p>
+                <p class="text-xs text-stone-500">The template is rendered as-is (no server-side escaping). You can use any HTML, CSS, and JavaScript.</p>
             </div>
         </div>
     </div>

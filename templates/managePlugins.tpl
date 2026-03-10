@@ -9,7 +9,7 @@
     <h1 class="page-title">Manage Plugins</h1>
 
     {% if not plugins %}
-    <p class="text-gray-500 italic">No plugins discovered. Place plugin directories in the plugins folder.</p>
+    <p class="text-stone-500 italic">No plugins discovered. Place plugin directories in the plugins folder.</p>
     {% endif %}
 
     {% for plugin in plugins %}
@@ -17,10 +17,10 @@
         <div class="card-header flex items-center justify-between">
             <div>
                 <h2 class="text-lg font-semibold">{{ plugin.Name }}
-                    <span class="text-sm text-gray-500 font-normal">v{{ plugin.Version }}</span>
+                    <span class="text-sm text-stone-500 font-normal">v{{ plugin.Version }}</span>
                 </h2>
                 {% if plugin.Description %}
-                <p class="text-sm text-gray-600">{{ plugin.Description }}</p>
+                <p class="text-sm text-stone-600">{{ plugin.Description }}</p>
                 {% endif %}
             </div>
             <div class="flex gap-2">
@@ -48,7 +48,7 @@
 
         {% if plugin.Settings %}
         <div class="card-body">
-            <h3 class="text-sm font-semibold mb-2 text-gray-700">Settings</h3>
+            <h3 class="text-sm font-semibold mb-2 text-stone-700 font-mono">Settings</h3>
             <form method="POST" action="/v1/plugin/settings"
                   x-data="pluginSettings('{{ plugin.Name }}')"
                   @submit.prevent="saveSettings"
@@ -56,7 +56,7 @@
 
                 {% for setting in plugin.Settings %}
                 <div class="mb-3">
-                    <label class="form-label" for="setting-{{ plugin.Name }}-{{ setting.Name }}">
+                    <label class="form-label font-mono" for="setting-{{ plugin.Name }}-{{ setting.Name }}">
                         {{ setting.Label }}
                         {% if setting.Required %}<span class="text-red-500" title="Required">*</span>{% endif %}
                     </label>
@@ -119,13 +119,13 @@
                 <button type="submit" class="btn btn-primary" data-testid="save-settings-{{ plugin.Name }}">
                     Save Settings
                 </button>
-                <span x-show="saved" x-transition role="status" class="text-green-600 text-sm ml-2">Saved!</span>
-                <span x-show="error" x-transition role="alert" class="text-red-600 text-sm ml-2" x-text="error"></span>
+                <span x-show="saved" x-transition role="status" class="text-amber-700 text-sm ml-2">Saved!</span>
+                <span x-show="error" x-transition role="alert" class="text-red-700 text-sm ml-2" x-text="error"></span>
             </form>
         </div>
         {% else %}
         <div class="card-body">
-            <p class="text-sm text-gray-500 italic">No settings declared.</p>
+            <p class="text-sm text-stone-500 italic">No settings declared.</p>
         </div>
         {% endif %}
     </div>

@@ -1,7 +1,7 @@
 {% if entity %}
 <article class="card query-card{% if selectable %} card--selectable{% endif %}" {% if selectable %}x-data="selectableItem({ itemId: {{ entity.ID }} })"{% endif %}>
     {% if selectable %}
-        <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" aria-label="Select {{ entity.Name }}" class="card-checkbox focus:ring-indigo-500 h-5 w-5 text-indigo-600 border-gray-300 rounded">
+        <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" aria-label="Select {{ entity.Name }}" class="card-checkbox focus:ring-amber-600 h-5 w-5 text-amber-700 border-stone-300 rounded">
     {% endif %}
 
     <div x-data='{ "entity": {{ entity|json }} }'>

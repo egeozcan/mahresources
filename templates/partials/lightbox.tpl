@@ -179,7 +179,7 @@
             <span x-text="$store.lightbox.currentIndex + 1"></span>
             /
             <span x-text="$store.lightbox.items.length"></span>
-            <span x-show="$store.lightbox.hasNextPage" class="text-gray-400">+</span>
+            <span x-show="$store.lightbox.hasNextPage" class="text-stone-400">+</span>
         </div>
 
         <!-- Native resolution -->
@@ -270,12 +270,12 @@
         x-transition:leave-start="opacity-100 translate-x-0"
         x-transition:leave-end="opacity-0 -translate-x-full"
         data-quick-tag-panel
-        class="fixed md:absolute inset-0 md:inset-auto md:top-0 md:left-0 md:bottom-0 bg-gray-900 md:bg-gray-900/95 md:backdrop-blur-sm text-white overflow-y-auto z-30"
+        class="fixed md:absolute inset-0 md:inset-auto md:top-0 md:left-0 md:bottom-0 bg-stone-900 md:bg-stone-900/95 md:backdrop-blur-sm text-white overflow-y-auto z-30"
         :class="$store.lightbox.editPanelOpen ? 'md:w-[320px]' : 'md:w-[400px]'"
         @click.stop
     >
         <!-- Panel header -->
-        <div class="sticky top-0 bg-gray-900 md:bg-gray-900/95 border-b border-gray-700 p-4 flex items-center justify-between z-10">
+        <div class="sticky top-0 bg-stone-900 md:bg-stone-900/95 border-b border-stone-700 p-4 flex items-center justify-between z-10">
             <h2 class="text-lg font-semibold">Edit Tags</h2>
             <button
                 @click="$store.lightbox.closeQuickTagPanel()"
@@ -306,7 +306,7 @@
                     x-effect="selectedResults = [...($store.lightbox.resourceDetails?.Tags || [])]"
                     class="relative"
                 >
-                <label class="block text-sm font-medium text-gray-300 mb-1.5">Tags</label>
+                <label class="block text-sm font-medium font-mono text-stone-300 mb-1.5">Tags</label>
 
                 <!-- Add tag input -->
                 <template x-if="!addModeForTag">
@@ -316,7 +316,7 @@
                             data-tag-editor-input
                             type="text"
                             x-bind="inputEvents"
-                            class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                            class="w-full px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white placeholder-stone-500 focus:outline-none focus:ring-2 focus:ring-stone-400 focus:border-transparent"
                             placeholder="Search or add tags..."
                             autocomplete="off"
                             role="combobox"
@@ -329,7 +329,7 @@
                         <!-- Tag search results dropdown (popover) -->
                         <div x-ref="dropdown" popover
                              id="lightbox-tag-listbox"
-                             class="bg-gray-800 border border-gray-700 rounded-md shadow-lg max-h-48 overflow-y-auto"
+                             class="bg-stone-800 border border-stone-700 rounded-md shadow-lg max-h-48 overflow-y-auto"
                              role="listbox">
                             <template x-for="(tag, rIndex) in results" :key="tag.ID">
                                 <div
@@ -339,7 +339,7 @@
                                     role="option"
                                     :aria-selected="rIndex === selectedIndex"
                                     class="px-3 py-2 cursor-pointer text-sm"
-                                    :class="rIndex === selectedIndex ? 'bg-indigo-600 text-white' : 'text-gray-300 hover:bg-gray-700'"
+                                    :class="rIndex === selectedIndex ? 'bg-amber-700 text-white' : 'text-stone-300 hover:bg-stone-700'"
                                 >
                                     <span x-text="tag.Name"></span>
                                 </div>
@@ -349,7 +349,7 @@
                         <!-- Loading indicator -->
                         <template x-if="loading">
                             <div class="absolute right-3 top-1/2 -translate-y-1/2">
-                                <svg class="w-4 h-4 animate-spin text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <svg class="w-4 h-4 animate-spin text-stone-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                 </svg>
@@ -363,7 +363,7 @@
                     <div class="flex gap-2 items-stretch justify-between mb-3">
                         <button
                             type="button"
-                            class="flex-1 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-700 hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 py-2 px-3"
+                            class="flex-1 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 py-2 px-3"
                             x-text="'Add ' + addModeForTag + '?'"
                             x-init="setTimeout(() => $el.focus(), 1)"
                             @keydown.escape.prevent="exitAdd"
@@ -372,7 +372,7 @@
                         ></button>
                         <button
                             type="button"
-                            class="border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 py-2 px-3"
+                            class="border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-red-700 hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600 py-2 px-3"
                             @click="exitAdd"
                             @keydown.escape.prevent="exitAdd"
                         >Cancel</button>
@@ -382,12 +382,12 @@
                 <!-- Current tags as pills -->
                 <div class="flex flex-wrap gap-2">
                     <template x-for="tag in selectedResults" :key="tag.ID">
-                        <span class="inline-flex items-center gap-1 px-2.5 py-1 bg-indigo-600 text-white text-sm rounded-full">
+                        <span class="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-700 text-white text-sm rounded-full font-mono">
                             <span x-text="tag.Name"></span>
                             <button
                                 @click="removeItem(tag)"
                                 type="button"
-                                class="hover:bg-indigo-700 rounded-full p-0.5 focus:outline-none focus:ring-1 focus:ring-white"
+                                class="hover:bg-amber-800 rounded-full p-0.5 focus:outline-none focus:ring-1 focus:ring-white"
                                 :aria-label="'Remove tag ' + tag.Name"
                             >
                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -396,37 +396,37 @@
                             </button>
                         </span>
                     </template>
-                    <span x-show="!selectedResults?.length" x-cloak class="text-gray-500 text-sm italic">No tags yet</span>
+                    <span x-show="!selectedResults?.length" x-cloak class="text-stone-500 text-sm italic">No tags yet</span>
                 </div>
                 </div>
             </template>
             <!-- Tags loading state -->
             <template x-if="!$store.lightbox.resourceDetails">
                 <div class="relative">
-                    <label class="block text-sm font-medium text-gray-300 mb-1.5">Tags</label>
-                    <div class="text-gray-500 text-sm italic">Loading tags...</div>
+                    <label class="block text-sm font-medium font-mono text-stone-300 mb-1.5">Tags</label>
+                    <div class="text-stone-500 text-sm italic">Loading tags...</div>
                 </div>
             </template>
 
             <!-- Divider -->
-            <div class="border-t border-gray-700"></div>
+            <div class="border-t border-stone-700"></div>
 
             <!-- Recent tags (numpad order) -->
             <template x-if="$store.lightbox.hasRecentTags()">
                 <div class="space-y-1.5">
-                    <label class="block text-xs font-medium text-gray-500 uppercase tracking-wide">Recent</label>
+                    <label class="block text-xs font-medium font-mono text-stone-500 uppercase tracking-wide">Recent</label>
                     <div class="grid grid-cols-3 gap-1.5">
                         <template x-for="(_, vIdx) in $store.lightbox._numpadOrder" :key="vIdx">
                             <template x-if="$store.lightbox.recentTags[$store.lightbox.numpadIndex(vIdx)]">
                                 <button
                                     @click="$store.lightbox.toggleRecentTag($store.lightbox.numpadIndex(vIdx))"
-                                    class="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                    class="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors focus:outline-none focus:ring-2 focus:ring-stone-400"
                                     :class="$store.lightbox.isTagOnResource($store.lightbox.recentTags[$store.lightbox.numpadIndex(vIdx)]?.id)
                                         ? 'border border-green-600/60 bg-green-900/20 text-green-300 hover:bg-red-900/20 hover:border-red-600/60 hover:text-red-300'
-                                        : 'border border-dashed border-gray-600 text-gray-400 hover:border-indigo-500 hover:text-indigo-300 hover:bg-indigo-900/20'"
+                                        : 'border border-dashed border-stone-600 text-stone-400 hover:border-amber-700 hover:text-amber-300 hover:bg-amber-900/20'"
                                     :aria-label="($store.lightbox.isTagOnResource($store.lightbox.recentTags[$store.lightbox.numpadIndex(vIdx)]?.id) ? 'Remove ' : 'Add ') + $store.lightbox.recentTags[$store.lightbox.numpadIndex(vIdx)]?.name"
                                 >
-                                    <kbd class="text-[10px] font-mono text-gray-500 bg-gray-800/50 px-1 rounded"
+                                    <kbd class="text-[10px] font-mono text-stone-500 bg-stone-800/50 px-1 rounded"
                                          x-text="$store.lightbox.recentTagKeyLabel($store.lightbox.numpadIndex(vIdx))"></kbd>
                                     <span x-text="$store.lightbox.recentTags[$store.lightbox.numpadIndex(vIdx)]?.name"></span>
                                 </button>
@@ -437,16 +437,16 @@
             </template>
 
             <!-- Divider -->
-            <div class="border-t border-gray-700"></div>
+            <div class="border-t border-stone-700"></div>
 
             <!-- Tag slots -->
             <div class="space-y-2">
-                <label class="block text-sm font-medium text-gray-300 mb-1.5">Tag Slots</label>
+                <label class="block text-sm font-medium font-mono text-stone-300 mb-1.5">Tag Slots</label>
                 <div class="grid grid-cols-3 gap-1.5">
                 <template x-for="(_, vIdx) in $store.lightbox._numpadOrder" :key="vIdx">
                     <div class="flex items-center gap-1" x-data="{ get idx() { return $store.lightbox.numpadIndex(vIdx) }, get slot() { return $store.lightbox.quickTagSlots[this.idx] } }">
                         <!-- Number key label -->
-                        <kbd class="flex-none w-5 h-5 flex items-center justify-center bg-gray-800 border border-gray-600 rounded text-[10px] font-mono text-gray-300"
+                        <kbd class="flex-none w-5 h-5 flex items-center justify-center bg-stone-800 border border-stone-600 rounded text-[10px] font-mono text-stone-300"
                              x-text="$store.lightbox.quickTagKeyLabel(idx)"></kbd>
 
                         <!-- Empty slot: autocomplete input (x-show to avoid x-if destruction race with popover) -->
@@ -464,7 +464,7 @@
                                     x-ref="autocompleter"
                                     type="text"
                                     x-bind="inputEvents"
-                                    class="w-full px-1.5 py-1 bg-gray-800 border border-gray-700 rounded text-xs text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                    class="w-full px-1.5 py-1 bg-stone-800 border border-stone-700 rounded text-xs text-white placeholder-stone-500 focus:outline-none focus:ring-2 focus:ring-stone-400 focus:border-transparent"
                                     :placeholder="'Assign to ' + $store.lightbox.quickTagKeyLabel(idx) + '...'"
                                     :aria-label="'Assign tag to slot ' + $store.lightbox.quickTagKeyLabel(idx)"
                                     autocomplete="off"
@@ -474,7 +474,7 @@
                                 >
                                 <!-- Dropdown results as popover -->
                                 <div x-ref="dropdown" popover
-                                     class="bg-gray-800 border border-gray-700 rounded-md shadow-lg max-h-48 overflow-y-auto"
+                                     class="bg-stone-800 border border-stone-700 rounded-md shadow-lg max-h-48 overflow-y-auto"
                                      role="listbox">
                                     <template x-for="(tag, rIndex) in results" :key="tag.ID">
                                         <div
@@ -483,7 +483,7 @@
                                             role="option"
                                             :aria-selected="rIndex === selectedIndex"
                                             class="px-3 py-2 cursor-pointer text-sm"
-                                            :class="rIndex === selectedIndex ? 'bg-indigo-600 text-white' : 'text-gray-300 hover:bg-gray-700'"
+                                            :class="rIndex === selectedIndex ? 'bg-amber-700 text-white' : 'text-stone-300 hover:bg-stone-700'"
                                         >
                                             <span x-text="tag.Name"></span>
                                         </div>
@@ -496,10 +496,10 @@
                         <div x-show="!!slot" class="flex-1 min-w-0 flex items-center gap-1">
                             <button
                                 @click="$store.lightbox.toggleQuickTag(idx)"
-                                class="flex-1 min-w-0 px-1.5 py-1 rounded text-xs text-left truncate transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                class="flex-1 min-w-0 px-1.5 py-1 rounded text-xs text-left truncate transition-colors focus:outline-none focus:ring-2 focus:ring-stone-400"
                                 :class="$store.lightbox.isTagOnResource(slot?.id)
                                     ? 'bg-green-700/50 hover:bg-red-700/50 border border-green-600/50'
-                                    : 'bg-gray-800 hover:bg-indigo-700/50 border border-gray-700'"
+                                    : 'bg-stone-800 hover:bg-amber-800/50 border border-stone-700'"
                                 :aria-label="($store.lightbox.isTagOnResource(slot?.id) ? 'Remove ' : 'Add ') + slot?.name"
                                 :title="slot?.name"
                                 x-text="slot?.name"
@@ -510,7 +510,7 @@
                                 class="flex-none p-0.5 hover:bg-white/10 rounded-full transition-colors focus:outline-none focus:ring-1 focus:ring-white"
                                 :aria-label="'Clear slot ' + $store.lightbox.quickTagKeyLabel(idx)"
                             >
-                                <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <svg class="w-3 h-3 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                                 </svg>
                             </button>
@@ -532,12 +532,12 @@
         x-transition:leave-start="opacity-100 translate-x-0"
         x-transition:leave-end="opacity-0 translate-x-full"
         data-edit-panel
-        class="fixed md:absolute inset-0 md:inset-auto md:top-0 md:right-0 md:bottom-0 bg-gray-900 md:bg-gray-900/95 md:backdrop-blur-sm text-white overflow-y-auto z-30"
+        class="fixed md:absolute inset-0 md:inset-auto md:top-0 md:right-0 md:bottom-0 bg-stone-900 md:bg-stone-900/95 md:backdrop-blur-sm text-white overflow-y-auto z-30"
         :class="$store.lightbox.quickTagPanelOpen ? 'md:w-[320px]' : 'md:w-[400px]'"
         @click.stop
     >
         <!-- Panel header -->
-        <div class="sticky top-0 bg-gray-900 md:bg-gray-900/95 border-b border-gray-700 p-4 flex items-center justify-between z-10">
+        <div class="sticky top-0 bg-stone-900 md:bg-stone-900/95 border-b border-stone-700 p-4 flex items-center justify-between z-10">
             <h2 class="text-lg font-semibold">Edit Resource</h2>
             <button
                 @click="$store.lightbox.closeEditPanel()"
@@ -574,7 +574,7 @@
                         x-transition:leave="transition ease-in duration-75"
                         x-transition:leave-start="opacity-100"
                         x-transition:leave-end="opacity-0"
-                        class="absolute inset-0 bg-gray-900/50 flex items-center justify-center z-10 rounded"
+                        class="absolute inset-0 bg-stone-900/50 flex items-center justify-center z-10 rounded"
                     >
                         <svg class="w-6 h-6 animate-spin text-white/70" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -584,7 +584,7 @@
 
                     <!-- Name field -->
                     <div>
-                        <label for="lightbox-edit-name" class="block text-sm font-medium text-gray-300 mb-1.5">Name</label>
+                        <label for="lightbox-edit-name" class="block text-sm font-medium font-mono text-stone-300 mb-1.5">Name</label>
                         <input
                             type="text"
                             id="lightbox-edit-name"
@@ -592,21 +592,21 @@
                             @blur="$store.lightbox.updateName($event.target.value)"
                             @keydown.enter="$event.target.blur()"
                             @keydown.escape.stop="$event.target.blur()"
-                            class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                            class="w-full px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white placeholder-stone-500 focus:outline-none focus:ring-2 focus:ring-stone-400 focus:border-transparent"
                             placeholder="Resource name"
                         >
                     </div>
 
                     <!-- Description field -->
                     <div>
-                        <label for="lightbox-edit-description" class="block text-sm font-medium text-gray-300 mb-1.5">Description</label>
+                        <label for="lightbox-edit-description" class="block text-sm font-medium font-mono text-stone-300 mb-1.5">Description</label>
                         <textarea
                             id="lightbox-edit-description"
                             :value="$store.lightbox.resourceDetails?.Description || ''"
                             @blur="$store.lightbox.updateDescription($event.target.value)"
                             @keydown.escape.stop="$event.target.blur()"
                             rows="4"
-                            class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-y"
+                            class="w-full px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white font-sans placeholder-stone-500 focus:outline-none focus:ring-2 focus:ring-stone-400 focus:border-transparent resize-y"
                             placeholder="Add a description..."
                         ></textarea>
                     </div>
@@ -614,10 +614,10 @@
                     <!-- Resource Category section -->
                     <template x-if="$store.lightbox.resourceDetails?.resourceCategory">
                         <div class="space-y-2">
-                            <label class="block text-sm font-medium text-gray-300 mb-1.5">Category</label>
+                            <label class="block text-sm font-medium font-mono text-stone-300 mb-1.5">Category</label>
                             <a
                                 :href="'/resourceCategory?id=' + $store.lightbox.resourceDetails.resourceCategory.ID"
-                                class="text-indigo-400 hover:text-indigo-300 text-sm"
+                                class="text-amber-400 hover:text-amber-300 text-sm"
                                 x-text="$store.lightbox.resourceDetails.resourceCategory.Name"
                             ></a>
 
@@ -629,17 +629,17 @@
                                 <div
                                     x-data="{ entity: $store.lightbox.resourceDetails }"
                                     x-html="$store.lightbox.resourceDetails.resourceCategory.CustomSidebar"
-                                    class="text-sm text-gray-300"
+                                    class="text-sm text-stone-300 font-sans"
                                 ></div>
                             </template>
                         </div>
                     </template>
 
                     <!-- Link to full details page -->
-                    <div class="pt-4 border-t border-gray-700">
+                    <div class="pt-4 border-t border-stone-700">
                         <a
                             :href="'/resource?id=' + $store.lightbox.getCurrentItem()?.id"
-                            class="inline-flex items-center gap-2 text-indigo-400 hover:text-indigo-300 text-sm"
+                            class="inline-flex items-center gap-2 text-amber-400 hover:text-amber-300 text-sm"
                         >
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>

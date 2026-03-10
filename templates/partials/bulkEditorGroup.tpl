@@ -34,7 +34,7 @@
     >
         {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
         <div class="flex flex-col">
-            <span class="block text-sm font-medium text-gray-700 mt-3">Delete Selected</span>
+            <span class="block text-sm font-mono font-medium text-stone-700 mt-3">Delete Selected</span>
             {% include "/partials/form/searchButton.tpl" with text="Delete" danger=true %}
         </div>
     </form>

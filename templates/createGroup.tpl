@@ -9,8 +9,8 @@
         <div>
             <div class="mt-6 sm:mt-5 space-y-6 sm:space-y-5">
                 {% if !group.ID %}
-                <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-gray-200 sm:pt-5">
-                    <span class="block text-sm font-medium text-gray-700">
+                <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-stone-200 sm:pt-5">
+                    <span class="block text-sm font-medium font-mono text-stone-700">
                         Category
                     </span>
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
@@ -27,8 +27,8 @@
                 {% include "/partials/form/createFormTextareaInput.tpl" with title="Description" name="Description" value=group.Description %}
                 {% include "/partials/form/createFormTextInput.tpl" with type="url" title="URL" name="URL" value=group.URL|printUrl %}
 
-                <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-gray-200 sm:pt-5">
-                    <span class="block text-sm font-medium text-gray-700">
+                <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-stone-200 sm:pt-5">
+                    <span class="block text-sm font-medium font-mono text-stone-700">
                         Relations
                     </span>
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
@@ -43,8 +43,8 @@
                     </div>
                 </div>
 
-                <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-gray-200 sm:pt-5">
-                    <span class="block text-sm font-medium text-gray-700">
+                <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-stone-200 sm:pt-5">
+                    <span class="block text-sm font-medium font-mono text-stone-700">
                         Owner
                     </span>
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
@@ -77,8 +77,8 @@
                     class="w-full"
                 >
                     <template x-if="currentSchema">
-                        <div class="border p-4 rounded-md bg-gray-50 mt-5">
-                            <h3 class="text-sm font-medium text-gray-700 mb-3">Meta Data (Schema Enforced)</h3>
+                        <div class="border p-4 rounded-md bg-stone-50 mt-5">
+                            <h3 class="text-sm font-medium font-mono text-stone-700 mb-3">Meta Data (Schema Enforced)</h3>
                             <div x-data="schemaForm({
                                 schema: currentSchema,
                                 value: {{ group.Meta|json }} || {},
@@ -99,7 +99,7 @@
 
     <div class="pt-5">
         <div class="flex justify-end">
-            <button type="submit" class="ml-3 inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+            <button type="submit" class="ml-3 inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
                 Save
             </button>
         </div>
