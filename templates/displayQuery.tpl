@@ -35,7 +35,7 @@
                 .finally(() => this.loading = false)
             }
         }">
-        <code x-ref="query" class="bg-gray-100 mb-4 p-4 block">
+        <code x-ref="query" class="bg-stone-100 mb-4 p-4 block">
             {{ query.Text }}
         </code>
         <div x-init="queryParams = parseQueryParams($refs.query.innerHTML)">
@@ -55,9 +55,9 @@
                             inline-flex justify-center
                             py-2 px-4
                             border border-transparent
-                            shadow-sm text-sm font-medium rounded-md
-                            text-white bg-green-700 hover:bg-green-800
-                            focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500
+                            shadow-sm text-sm font-medium font-mono rounded-md
+                            text-white bg-amber-700 hover:bg-amber-800
+                            focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600
                         "
                     >
                         Run
@@ -65,7 +65,7 @@
                     <template x-if="updated">
                         <p class="mt-2">
                             Updated on
-                            <span class="text-green-800" x-text="updated"></span>
+                            <span class="text-amber-700" x-text="updated"></span>
                         </p>
                     </template>
                     <template x-if="!error && results && results.length > 0">
@@ -79,7 +79,7 @@
                     <template x-if="error">
                         <div>
                             <h3>Something went wrong.</h3>
-                            <p class="text-red-800" x-text="(error.message || 'unknown error')"></p>
+                            <p class="text-red-700" x-text="(error.message || 'unknown error')"></p>
                         </div>
                     </template>
                 </div>
@@ -88,9 +88,9 @@
 
         <template x-if="loading">
             <div class="flex items-center justify-start space-x-2 animate-pulse">
-                <div class="w-8 h-8 bg-blue-400 rounded-full"></div>
-                <div class="w-8 h-8 bg-blue-400 rounded-full"></div>
-                <div class="w-8 h-8 bg-blue-400 rounded-full"></div>
+                <div class="w-8 h-8 bg-amber-400 rounded-full"></div>
+                <div class="w-8 h-8 bg-amber-400 rounded-full"></div>
+                <div class="w-8 h-8 bg-amber-400 rounded-full"></div>
             </div>
         </template>
     </div>
