@@ -4,6 +4,11 @@
 @source "./templates/**/*.tpl";
 @source "./src/**/*.js";
 
+@theme {
+  --font-sans: 'IBM Plex Sans', sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+}
+
 /* Fix forms plugin styles overridden by preflight reset */
 @layer base {
   input[type='text'],
