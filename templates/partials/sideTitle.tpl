@@ -1,3 +1,3 @@
-<h3 class="font-regular text-base md:text-lg leading-snug truncate">
+<h3 class="sidebar-group-title">
     {{ title }}
 </h3>

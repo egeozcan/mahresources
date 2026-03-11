@@ -9,7 +9,7 @@ import path from 'path';
 async function ensureVersionPanelExpanded(page: Page) {
   // Target the details element containing "Versions" summary specifically
   const versionDetails = page.locator('details:has(summary:has-text("Versions"))');
-  const versionContent = versionDetails.locator('.p-4.border-dashed');
+  const versionContent = versionDetails.locator('.detail-panel-body');
 
   // Check if the details element is open
   const isOpen = await versionDetails.getAttribute('open');

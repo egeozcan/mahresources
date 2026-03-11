@@ -35,7 +35,7 @@
                 .finally(() => this.loading = false)
             }
         }">
-        <code x-ref="query" class="bg-stone-100 mb-4 p-4 block">
+        <code x-ref="query" class="query-code">
             {{ query.Text }}
         </code>
         <div x-init="queryParams = parseQueryParams($refs.query.innerHTML)">
@@ -75,7 +75,7 @@
                             {% endautoescape %}
                         </div>
                     </template>
-                    <div class="output mt-2" x-ref="output"></div>
+                    <div class="query-results output mt-2" x-ref="output"></div>
                     <template x-if="error">
                         <div>
                             <h3>Something went wrong.</h3>

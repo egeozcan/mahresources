@@ -119,9 +119,9 @@ test.describe('Resource Category Custom Template Rendering', () => {
     resourceCategoryId = rc.ID;
 
     // Create a resource assigned to the resource category
-    // Use sample-image-21.png which isn't used by other tests
+    // Use sample-image-30.png to avoid hash collision with note-sharing tests
     const resource = await apiClient.createResource({
-      filePath: path.join(__dirname, '../test-assets/sample-image-21.png'),
+      filePath: path.join(__dirname, '../test-assets/sample-image-30.png'),
       name: `RC Template Test Image ${testRunId}`,
       description: 'Resource for testing custom template rendering',
       ownerId: ownerGroupId,
@@ -210,7 +210,7 @@ test.describe('Resource Category Custom Template Rendering', () => {
   test('should not show category section in lightbox for resources without a category', async ({ apiClient, page }) => {
     // Create a resource without a category via apiClient - use the owner group so it's properly visible
     const noCatResource = await apiClient.createResource({
-      filePath: path.join(__dirname, '../test-assets/sample-image-22.png'),
+      filePath: path.join(__dirname, '../test-assets/sample-image-31.png'),
       name: `No Category Resource ${testRunId}`,
       ownerId: ownerGroupId,
     });

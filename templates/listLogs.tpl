@@ -65,33 +65,35 @@
 {% endblock %}
 
 {% block sidebar %}
-    {% include "/partials/sideTitle.tpl" with title="Filter" %}
-    <form class="flex gap-2 items-start flex-col">
-        <label for="Level" class="block text-sm font-medium font-mono text-stone-700 mt-2">Level</label>
-        <select name="Level" id="Level" class="mt-1 focus:ring-amber-600 focus:border-amber-600 block w-full shadow-sm sm:text-sm border-stone-300 rounded-md">
-            {% for level in logLevels %}
-            <option value="{{ level.Link }}" {% if level.Active %}selected{% endif %}>{{ level.Title }}</option>
-            {% endfor %}
-        </select>
+    <div class="sidebar-group">
+        {% include "/partials/sideTitle.tpl" with title="Filter" %}
+        <form class="flex gap-2 items-start flex-col">
+            <label for="Level" class="block text-sm font-medium font-mono text-stone-700 mt-2">Level</label>
+            <select name="Level" id="Level" class="mt-1 focus:ring-amber-600 focus:border-amber-600 block w-full shadow-sm sm:text-sm border-stone-300 rounded-md">
+                {% for level in logLevels %}
+                <option value="{{ level.Link }}" {% if level.Active %}selected{% endif %}>{{ level.Title }}</option>
+                {% endfor %}
+            </select>
 
-        <label for="Action" class="block text-sm font-medium font-mono text-stone-700 mt-2">Action</label>
-        <select name="Action" id="Action" class="mt-1 focus:ring-amber-600 focus:border-amber-600 block w-full shadow-sm sm:text-sm border-stone-300 rounded-md">
-            {% for action in logActions %}
-            <option value="{{ action.Link }}" {% if action.Active %}selected{% endif %}>{{ action.Title }}</option>
-            {% endfor %}
-        </select>
+            <label for="Action" class="block text-sm font-medium font-mono text-stone-700 mt-2">Action</label>
+            <select name="Action" id="Action" class="mt-1 focus:ring-amber-600 focus:border-amber-600 block w-full shadow-sm sm:text-sm border-stone-300 rounded-md">
+                {% for action in logActions %}
+                <option value="{{ action.Link }}" {% if action.Active %}selected{% endif %}>{{ action.Title }}</option>
+                {% endfor %}
+            </select>
 
-        <label for="EntityType" class="block text-sm font-medium font-mono text-stone-700 mt-2">Entity Type</label>
-        <select name="EntityType" id="EntityType" class="mt-1 focus:ring-amber-600 focus:border-amber-600 block w-full shadow-sm sm:text-sm border-stone-300 rounded-md">
-            {% for entityType in entityTypes %}
-            <option value="{{ entityType.Link }}" {% if entityType.Active %}selected{% endif %}>{{ entityType.Title }}</option>
-            {% endfor %}
-        </select>
+            <label for="EntityType" class="block text-sm font-medium font-mono text-stone-700 mt-2">Entity Type</label>
+            <select name="EntityType" id="EntityType" class="mt-1 focus:ring-amber-600 focus:border-amber-600 block w-full shadow-sm sm:text-sm border-stone-300 rounded-md">
+                {% for entityType in entityTypes %}
+                <option value="{{ entityType.Link }}" {% if entityType.Active %}selected{% endif %}>{{ entityType.Title }}</option>
+                {% endfor %}
+            </select>
 
-        {% include "/partials/form/textInput.tpl" with name='EntityID' label='Entity ID' value=queryValues.EntityID.0 type='number' %}
-        {% include "/partials/form/textInput.tpl" with name='Message' label='Message' value=queryValues.Message.0 %}
-        {% include "/partials/form/dateInput.tpl" with name='CreatedBefore' label='Before' value=queryValues.CreatedBefore.0 %}
-        {% include "/partials/form/dateInput.tpl" with name='CreatedAfter' label='After' value=queryValues.CreatedAfter.0 %}
-        {% include "/partials/form/searchButton.tpl" %}
-    </form>
+            {% include "/partials/form/textInput.tpl" with name='EntityID' label='Entity ID' value=queryValues.EntityID.0 type='number' %}
+            {% include "/partials/form/textInput.tpl" with name='Message' label='Message' value=queryValues.Message.0 %}
+            {% include "/partials/form/dateInput.tpl" with name='CreatedBefore' label='Before' value=queryValues.CreatedBefore.0 %}
+            {% include "/partials/form/dateInput.tpl" with name='CreatedAfter' label='After' value=queryValues.CreatedAfter.0 %}
+            {% include "/partials/form/searchButton.tpl" %}
+        </form>
+    </div>
 {% endblock %}

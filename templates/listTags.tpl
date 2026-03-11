@@ -19,18 +19,20 @@
                 {% endif %}
             </article>
         {% empty %}
-            <p class="text-stone-500 text-sm font-mono py-4">No tags found. <a href="/createTag" class="text-amber-700 hover:text-amber-900 underline font-mono">Create one</a>.</p>
+            <div class="detail-empty">No tags found. <a href="/createTag" class="text-amber-700 hover:text-amber-900 underline">Create one</a>.</div>
         {% endfor %}
     </div>
 {% endblock %}
 
 {% block sidebar %}
-    {% include "/partials/sideTitle.tpl" with title="Filter" %}
-    <form class="flex gap-2 items-start flex-col" aria-label="Filter tags">
-        {% include "/partials/form/textInput.tpl" with name='Name' label='Name' value=queryValues.Name.0 %}
-        {% include "/partials/form/textInput.tpl" with name='Description' label='Description' value=queryValues.Description.0 %}
-        {% include "/partials/form/dateInput.tpl" with name='CreatedBefore' label='Created Before' value=queryValues.CreatedBefore.0 %}
-        {% include "/partials/form/dateInput.tpl" with name='CreatedAfter' label='Created After' value=queryValues.CreatedAfter.0 %}
-        {% include "/partials/form/searchButton.tpl" %}
-    </form>
+    <div class="sidebar-group">
+        {% include "/partials/sideTitle.tpl" with title="Filter" %}
+        <form class="flex gap-2 items-start flex-col" aria-label="Filter tags">
+            {% include "/partials/form/textInput.tpl" with name='Name' label='Name' value=queryValues.Name.0 %}
+            {% include "/partials/form/textInput.tpl" with name='Description' label='Description' value=queryValues.Description.0 %}
+            {% include "/partials/form/dateInput.tpl" with name='CreatedBefore' label='Created Before' value=queryValues.CreatedBefore.0 %}
+            {% include "/partials/form/dateInput.tpl" with name='CreatedAfter' label='Created After' value=queryValues.CreatedAfter.0 %}
+            {% include "/partials/form/searchButton.tpl" %}
+        </form>
+    </div>
 {% endblock %}

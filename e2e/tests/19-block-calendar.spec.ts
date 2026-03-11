@@ -408,11 +408,11 @@ test.describe('Calendar Block', () => {
 
     // Should see the calendar listed in the newest block
     // The calendar name input appears after adding a calendar
-    const calendarNameInput = page.locator('.bg-gray-50 input[type="text"]').last();
+    const calendarNameInput = page.locator('main .bg-stone-50 input[type="text"]').last();
     await expect(calendarNameInput).toBeVisible({ timeout: 5000 });
     await expect(calendarNameInput).toHaveValue('Calendar 1');
     // The source type indicator shows "URL" for URL-sourced calendars
-    await expect(page.locator('.text-gray-400:has-text("URL")').last()).toBeVisible();
+    await expect(page.locator('main .text-stone-400:has-text("URL")').last()).toBeVisible();
   });
 
   test('Add URL button is disabled when input is empty', async ({ page, baseURL }) => {

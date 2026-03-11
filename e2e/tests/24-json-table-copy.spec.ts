@@ -68,9 +68,11 @@ test.describe.serial('JSON Table Copy on Click', () => {
     const jsonTable = page.locator('.jsonTable').first();
     await expect(jsonTable).toBeVisible();
 
-    // Find a value cell (td) that contains "blue" — this td has no title,
-    // but its parent tr has title="$.color"
-    const valueCell = jsonTable.locator('td', { hasText: 'blue' }).first();
+    // Use the numeric value cell (42) rather than the string cell (blue).
+    // String values are wrapped in <expandable-text> elements, which the
+    // click handler intentionally skips to avoid conflicting with the
+    // web component's own click behavior.
+    const valueCell = jsonTable.locator('td', { hasText: '42' }).first();
     await expect(valueCell).toBeVisible();
 
     // Verify the td itself has no title (the bug scenario)
@@ -79,14 +81,14 @@ test.describe.serial('JSON Table Copy on Click', () => {
 
     // The parent row should have the title
     const rowTitle = await valueCell.locator('..').getAttribute('title');
-    expect(rowTitle).toBe('$.color');
+    expect(rowTitle).toBe('$.count');
 
     // Click the value cell — should copy the path from the ancestor row
     await valueCell.click();
 
     // Verify clipboard contains the JSON path
     const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
-    expect(clipboardText).toBe('$.color');
+    expect(clipboardText).toBe('$.count');
   });
 
   test('should copy JSON path when clicking a header cell (th with title)', async ({ page, context }) => {

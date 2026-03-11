@@ -14,7 +14,7 @@ async function ensureVersionPanelExpanded(page: Page) {
     await page.locator('summary:has-text("Versions")').click();
     await page.waitForTimeout(300); // Wait for panel to expand
   }
-  return detailsPanel.locator('.p-4.border-dashed');
+  return detailsPanel.locator('.detail-panel-body');
 }
 
 test.describe.serial('Resource Versioning', () => {
@@ -74,21 +74,10 @@ test.describe.serial('Resource Versioning', () => {
 
     // Save
     await page.locator('button[type="submit"]:has-text("Save")').click();
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(1000);
 
-    // Extract resource ID
-    const url = page.url();
-    if (url.includes('/resource?id=')) {
-      resourceId = parseInt(new URL(url).searchParams.get('id') || '0');
-    } else if (url.includes('/resources')) {
-      const resourceLink = page.locator(`a:has-text("Versioned Resource ${testRunId}")`).first();
-      if (await resourceLink.isVisible()) {
-        await resourceLink.click();
-        await page.waitForLoadState('load');
-        resourceId = parseInt(new URL(page.url()).searchParams.get('id') || '0');
-      }
-    }
+    // Wait for redirect to resource detail page
+    await page.waitForURL(/\/resource\?id=\d+/, { timeout: 15000 });
+    resourceId = parseInt(new URL(page.url()).searchParams.get('id') || '0');
 
     expect(resourceId).toBeGreaterThan(0);
 
@@ -99,7 +88,7 @@ test.describe.serial('Resource Versioning', () => {
     await page.locator('summary:has-text("Versions")').click();
 
     await expect(page.locator('text=v1')).toBeVisible();
-    await expect(page.locator('span.bg-blue-100:has-text("current")')).toBeVisible();
+    await expect(page.locator('span.bg-amber-100:has-text("current")')).toBeVisible();
   });
 
   test('should show version panel collapsed when only 1 version', async ({ resourcePage, page }) => {
@@ -111,7 +100,7 @@ test.describe.serial('Resource Versioning', () => {
 
     // Verify v1 is visible and marked as current
     await expect(page.locator('text=v1')).toBeVisible();
-    await expect(page.locator('span.bg-blue-100:has-text("current")')).toBeVisible();
+    await expect(page.locator('span.bg-amber-100:has-text("current")')).toBeVisible();
   });
 
   test('should upload a new version', async ({ resourcePage, page }) => {
@@ -148,12 +137,12 @@ test.describe.serial('Resource Versioning', () => {
     await expect(page.locator(`text=Versions (${expectedCount})`)).toBeVisible({ timeout: 10000 });
 
     // Ensure version panel is expanded after reload
-    await ensureVersionPanelExpanded(page);
+    const versionContent = await ensureVersionPanelExpanded(page);
 
-    // The newest version should be current (marked with bg-blue-50 background and "current" badge)
-    const currentRow = page.locator('div.bg-blue-50');
+    // The newest version should be current (marked with bg-amber-50 background and "current" badge)
+    const currentRow = versionContent.locator('div.bg-amber-50');
     await expect(currentRow).toBeVisible();
-    await expect(currentRow.locator('span.bg-blue-100:has-text("current")')).toBeVisible();
+    await expect(currentRow.locator('span.bg-amber-100:has-text("current")')).toBeVisible();
   });
 
   test('should update preview URL hash when version changes', async ({ resourcePage, page }) => {
@@ -220,12 +209,12 @@ test.describe.serial('Resource Versioning', () => {
     await expect(page.locator(`text=Versions (${expectedCount})`)).toBeVisible({ timeout: 10000 });
 
     // Ensure version panel is expanded after reload
-    await ensureVersionPanelExpanded(page);
+    const versionContent2 = await ensureVersionPanelExpanded(page);
 
-    // The current row (bg-blue-50) should have the current badge
-    const currentRow = page.locator('div.bg-blue-50');
+    // The current row (bg-amber-50) should have the current badge
+    const currentRow = versionContent2.locator('div.bg-amber-50');
     await expect(currentRow).toBeVisible();
-    await expect(currentRow.locator('span.bg-blue-100:has-text("current")')).toBeVisible();
+    await expect(currentRow.locator('span.bg-amber-100:has-text("current")')).toBeVisible();
 
     // Should show "Restored from version 1" comment (use first() in case of multiple restores)
     await expect(page.locator('text=Restored from version 1').first()).toBeVisible();
@@ -267,7 +256,7 @@ test.describe.serial('Resource Versioning', () => {
     const versionContent = await ensureVersionPanelExpanded(page);
 
     // Find a non-current version (one without the "current" badge) and click Delete
-    const nonCurrentRow = versionContent.locator('div.p-4:not(:has(.bg-blue-100))').first();
+    const nonCurrentRow = versionContent.locator('div.p-4:not(:has(.bg-amber-100))').first();
     await expect(nonCurrentRow).toBeVisible({ timeout: 5000 });
 
     // Set up dialog handler for confirmation
@@ -289,10 +278,10 @@ test.describe.serial('Resource Versioning', () => {
     await resourcePage.gotoDisplay(resourceId);
 
     // Ensure version panel is expanded
-    await ensureVersionPanelExpanded(page);
+    const versionContent3 = await ensureVersionPanelExpanded(page);
 
-    // Find the current version row (has blue background)
-    const currentRow = page.locator('div.bg-blue-50');
+    // Find the current version row (has amber background)
+    const currentRow = versionContent3.locator('div.bg-amber-50');
     await expect(currentRow).toBeVisible();
 
     // Should not have delete button

@@ -1,7 +1,7 @@
 {% if versions %}
-<details class="mb-6" x-data="{ compareMode: false, selected: [] }" {% if versions|length > 1 %}open{% endif %}>
-    <summary class="bg-stone-100 shadow rounded-lg block w-full p-4 text-left cursor-pointer select-none">Versions ({{ versions|length }})</summary>
-    <div class="p-4 border-dashed border-4 border-stone-100 border-t-0">
+<details class="detail-collapsible mb-6" x-data="{ compareMode: false, selected: [] }" {% if versions|length > 1 %}open{% endif %}>
+    <summary>Versions ({{ versions|length }})</summary>
+    <div class="detail-panel-body">
         {% for version in versions %}
         <div class="p-4 {% if version.ID == currentVersionId %}bg-amber-50{% endif %}">
             <div class="flex items-center justify-between">

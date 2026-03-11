@@ -7,7 +7,24 @@
             {{ note.NoteType.CustomHeader }}
         {% endautoescape %}
     </div>
-    <a class="text-amber-700" href="/note/text?id={{ note.ID }}">Wide display</a>
+
+    <div class="meta-strip">
+        {% if note.StartDate %}
+        <div class="meta-strip-item">
+            <span class="meta-strip-label">Started</span>
+            <span class="meta-strip-value">{{ dereference(note.StartDate)|date:"2006-01-02 15:04" }}</span>
+        </div>
+        {% endif %}
+        {% if note.EndDate %}
+        <div class="meta-strip-item">
+            <span class="meta-strip-label">Ended</span>
+            <span class="meta-strip-value">{{ dereference(note.EndDate)|date:"2006-01-02 15:04" }}</span>
+        </div>
+        {% endif %}
+        <div class="meta-strip-item">
+            <a class="text-amber-700 hover:text-amber-800 text-sm font-medium" href="/note/text?id={{ note.ID }}">Wide display</a>
+        </div>
+    </div>
 
     {# Block Editor - shows blocks if available, otherwise falls back to description #}
     {% if note.Blocks && note.Blocks|length > 0 %}
@@ -28,30 +45,34 @@
     management application designed to run on private/internal networks with no authentication
     layer. All users are trusted, and CustomSidebar is an intentional extension point for
     admin-authored HTML templates.{% endcomment %}
-    <div x-data="{ entity: {{ note|json }} }">
-        {% autoescape off %} {# KAN-6: by design — internal network app, all users trusted #}
-            {{ note.NoteType.CustomSidebar }}
-        {% endautoescape %}
+    <div class="sidebar-group">
+        <div x-data="{ entity: {{ note|json }} }">
+            {% autoescape off %} {# KAN-6: by design — internal network app, all users trusted #}
+                {{ note.NoteType.CustomSidebar }}
+            {% endautoescape %}
+        </div>
+        {% include "/partials/ownerDisplay.tpl" with owner=note.Owner %}
     </div>
-    {% if note.StartDate %}
-        <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-stone-600 font-mono">Started: </span>{{ dereference(note.StartDate)|date:"2006-01-02 15:04" }}</small>
-    {% endif %}
-    {% if note.EndDate %}
-        <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-stone-600 font-mono">Ended: </span>{{ dereference(note.EndDate)|date:"2006-01-02 15:04" }}</small>
-    {% endif %}
-    {% include "/partials/ownerDisplay.tpl" with owner=note.Owner %}
 
     {% if note.NoteType %}
+    <div class="sidebar-group">
         {% include "/partials/sideTitle.tpl" with title="Note Type" %}
         <a href="/noteType?id={{ note.NoteType.ID }}" class="text-amber-700 hover:underline">{{ note.NoteType.Name }}</a>
+    </div>
     {% endif %}
 
-    {% include "/partials/tagList.tpl" with tags=note.Tags %}
+    <div class="sidebar-group">
+        {% include "/partials/tagList.tpl" with tags=note.Tags %}
+    </div>
 
-    {% include "/partials/sideTitle.tpl" with title="Meta Data" %}
-    {% include "/partials/json.tpl" with jsonData=note.Meta %}
+    <div class="sidebar-group">
+        {% include "/partials/sideTitle.tpl" with title="Meta Data" %}
+        {% include "/partials/json.tpl" with jsonData=note.Meta %}
+    </div>
 
-    {% include "/partials/noteShare.tpl" with note=note shareEnabled=shareEnabled shareBaseUrl=shareBaseUrl %}
-    {% include "partials/pluginActionsSidebar.tpl" with entityId=note.ID entityType="note" %}
-    {% plugin_slot "note_detail_sidebar" %}
+    <div class="sidebar-group">
+        {% include "/partials/noteShare.tpl" with note=note shareEnabled=shareEnabled shareBaseUrl=shareBaseUrl %}
+        {% include "partials/pluginActionsSidebar.tpl" with entityId=note.ID entityType="note" %}
+        {% plugin_slot "note_detail_sidebar" %}
+    </div>
 {% endblock %}
