@@ -1,4 +1,4 @@
-<form class="flex gap-2 items-start flex-col" aria-label="Filter resources">
+<form class="flex gap-2 items-start flex-col w-full" aria-label="Filter resources">
     {% if popularTags %}
     <div class="sidebar-group">
         {% include "/partials/sideTitle.tpl" with title="Tags" %}

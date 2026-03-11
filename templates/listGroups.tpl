@@ -17,7 +17,7 @@
 
 
 {% block sidebar %}
-    <form class="flex gap-2 items-start flex-col" aria-label="Filter groups">
+    <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter groups">
         {% if popularTags %}
         <div class="sidebar-group">
             {% include "/partials/sideTitle.tpl" with title="Tags" %}

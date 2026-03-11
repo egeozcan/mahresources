@@ -22,7 +22,7 @@
 {% block sidebar %}
     <div class="sidebar-group">
         {% include "/partials/sideTitle.tpl" with title="Filter" %}
-        <form class="flex gap-2 items-start flex-col">
+        <form class="flex gap-2 items-start flex-col w-full">
             {% include "/partials/form/textInput.tpl" with name='Name' label='Name' value=queryValues.Name.0 %}
             {% include "/partials/form/textInput.tpl" with name='Description' label='Description' value=queryValues.Description.0 %}
             {% include "/partials/form/autocompleter.tpl" with url='/v1/categories' elName='FromCategory' title='From Category' max=1 selectedItems=fromCategories id=getNextId("autocompleter") %}

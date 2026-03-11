@@ -21,7 +21,7 @@
 
 
 {% block sidebar %}
-    <form class="flex gap-2 items-start flex-col" aria-label="Filter queries">
+    <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter queries">
         <div class="sidebar-group">
             {% include "/partials/sideTitle.tpl" with title="Sort" %}
             {% include "/partials/form/selectInput.tpl" with name='SortBy' label='Sort' values=sortValues %}
