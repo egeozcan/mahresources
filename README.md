@@ -65,7 +65,7 @@ npm run build
 ./mahresources -db-type=SQLITE -db-dsn=mydb.db -file-save-path=./files
 ```
 
-See the [installation guide](https://egeozcan.github.io/mahresources/docs/getting-started/installation) for detailed setup instructions.
+See the [installation guide](https://egeozcan.github.io/mahresources/getting-started/installation) for detailed setup instructions.
 
 ## Configuration
 
@@ -77,7 +77,7 @@ See the [installation guide](https://egeozcan.github.io/mahresources/docs/gettin
 | `-bind-address` | Server address:port (default `:8181`) |
 | `-ephemeral` | Run fully in-memory (no persistence) |
 
-See the [full configuration reference](https://egeozcan.github.io/mahresources/docs/configuration/overview) for all options including ephemeral modes, seed databases, alternative filesystems, and remote timeouts.
+See the [full configuration reference](https://egeozcan.github.io/mahresources/configuration/overview) for all options including ephemeral modes, seed databases, alternative filesystems, and remote timeouts.
 
 ## Testing
 
@@ -89,25 +89,25 @@ go test ./...
 cd e2e && npm run test:with-server
 ```
 
-See the [docs](https://egeozcan.github.io/mahresources/docs/getting-started/installation#e2e-tests) for more test commands and options.
+See the [docs](https://egeozcan.github.io/mahresources/getting-started/installation#e2e-tests) for more test commands and options.
 
 ## Documentation
 
 The full documentation covers everything in detail:
 
-- [Getting Started](https://egeozcan.github.io/mahresources/docs/getting-started/installation) — Installation, first steps, quick start
-- [Concepts](https://egeozcan.github.io/mahresources/docs/concepts/overview) — Resources, notes, groups, tags, relationships
-- [User Guide](https://egeozcan.github.io/mahresources/docs/user-guide/navigation) — Navigation, search, bulk operations
-- [Features](https://egeozcan.github.io/mahresources/docs/features/thumbnail-generation) — Thumbnails, versioning, plugins, saved queries
-- [Configuration](https://egeozcan.github.io/mahresources/docs/configuration/overview) — All settings and deployment options
-- [API Reference](https://egeozcan.github.io/mahresources/docs/api/overview) — REST API documentation
+- [Getting Started](https://egeozcan.github.io/mahresources/getting-started/installation) — Installation, first steps, quick start
+- [Concepts](https://egeozcan.github.io/mahresources/concepts/overview) — Resources, notes, groups, tags, relationships
+- [User Guide](https://egeozcan.github.io/mahresources/user-guide/navigation) — Navigation, search, bulk operations
+- [Features](https://egeozcan.github.io/mahresources/features/thumbnail-generation) — Thumbnails, versioning, plugins, saved queries
+- [Configuration](https://egeozcan.github.io/mahresources/configuration/overview) — All settings and deployment options
+- [API Reference](https://egeozcan.github.io/mahresources/api/overview) — REST API documentation
 
 **[Browse the docs](https://egeozcan.github.io/mahresources/)**
 
 ## Security
 
-There is no built-in authentication or authorization. This application is designed to run on private networks or behind a reverse proxy that handles access control. See the [reverse proxy guide](https://egeozcan.github.io/mahresources/docs/deployment/reverse-proxy) for setup instructions.
+There is no built-in authentication or authorization. This application is designed to run on private networks or behind a reverse proxy that handles access control. See the [reverse proxy guide](https://egeozcan.github.io/mahresources/deployment/reverse-proxy) for setup instructions.
 
 ## Scripting & Import
 
-The HTTP API supports all CRUD operations, making it straightforward to script bulk imports. For an example of direct library usage, see `cmd/importExisting/main.go`. The [API documentation](https://egeozcan.github.io/mahresources/docs/api/overview) covers all available endpoints.
+The HTTP API supports all CRUD operations, making it straightforward to script bulk imports. For an example of direct library usage, see `cmd/importExisting/main.go`. The [API documentation](https://egeozcan.github.io/mahresources/api/overview) covers all available endpoints.
