@@ -71,10 +71,12 @@
         {% block footer %}{% endblock %}
         {% plugin_slot "page_bottom" %}
     </footer>
-    {% include "/partials/lightbox.tpl" %}
-    {% include "/partials/pasteUpload.tpl" %}
-    {% include "/partials/downloadCockpit.tpl" %}
-    {% include "/partials/pluginActionModal.tpl" %}
-    {% plugin_slot "scripts" %}
+    <div class="overlays">
+        {% include "/partials/lightbox.tpl" %}
+        {% include "/partials/pasteUpload.tpl" %}
+        {% include "/partials/downloadCockpit.tpl" %}
+        {% include "/partials/pluginActionModal.tpl" %}
+        {% plugin_slot "scripts" %}
+    </div>
 </body>
 </html>
