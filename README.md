@@ -1,167 +1,113 @@
 # mahresources
 
-Just a simple CRUD app written in golang to serve my personal information management needs. 
-It's surely an overkill for any imagination of my requirements but the thing is I like developing software more than
-using software.
+A personal information management system built in Go. Organize files, notes, and collections with rich metadata, full-text search, and a flexible tagging system — designed to scale to millions of resources.
 
-This thing has support for notes, resources (files), tags, groups (generic entity). Everything is taggable. 
-Notes, resources and groups can have json metadata that's editable and queryable via the web GUI.
-See the models folder for exact relation definitions.
+**[Read the full documentation](https://egeozcan.github.io/mahresources/)**
 
-It generates previews for videos and images, ffmpeg is needed for videos. Thumbnails are cached on the database. I
-currently have 1.5 Million resources saved through it without problems.
+## Screenshots
 
-It also has an API. The frontend routes also dump a JSON object will nearly all the data used to render it, when
-accepts header is json, or you type ".json" at the end of the path (like /groups.json instead of /groups).
+<table>
+  <tr>
+    <td align="center">
+      <img src="docs-site/static/img/dashboard.png" width="400" alt="Dashboard"><br>
+      <em>Dashboard</em>
+    </td>
+    <td align="center">
+      <img src="docs-site/static/img/grid-view.png" width="400" alt="Resource grid with filters"><br>
+      <em>Resource Grid</em>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs-site/static/img/note-blocks.png" width="400" alt="Note system with structured blocks"><br>
+      <em>Note Blocks</em>
+    </td>
+    <td align="center">
+      <img src="docs-site/static/img/group-tree.png" width="400" alt="Hierarchical group organization"><br>
+      <em>Group Tree</em>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs-site/static/img/global-search.png" width="400" alt="Global search"><br>
+      <em>Global Search (Cmd/Ctrl+K)</em>
+    </td>
+    <td align="center">
+      <img src="docs-site/static/img/bulk-selection.png" width="400" alt="Bulk operations toolbar"><br>
+      <em>Bulk Operations</em>
+    </td>
+  </tr>
+</table>
 
-Supports postgres and sqlite only. Mysql support should be fairly easy to add, I just personally don't need it.
+## Features
 
-Frontend uses Vite for bundling, Alpine.js for reactivity, and Tailwind CSS. Most things work without JS,
-but auto-completers and some forms need it. Global search is accessible via `Cmd/Ctrl+K`.
+- **Resources** — Store and manage files with automatic thumbnail generation, perceptual hashing for duplicate/similarity detection, and version tracking
+- **Notes** — Rich text content with structured block types and sharing capabilities
+- **Groups** — Hierarchical collections with typed relationships between them
+- **Tags & Categories** — Flexible labeling system across all entity types
+- **Full-Text Search** — Fast search across all content with saved queries
+- **JSON Metadata** — Attach queryable JSON metadata to any entity, with schema validation
+- **Bulk Operations** — Tag, merge, delete, or update many items at once
+- **Plugin System** — Extend functionality with Lua plugins, custom actions, and hooks
+- **Dual API** — Every route serves both HTML and JSON (append `.json` or set `Accept: application/json`)
+- **SQLite & Postgres** — Choose the database that fits your needs
 
-## Build
+## Quick Start
 
 ```bash
-# Full build (CSS + JS bundle + Go binary)
+# Build everything (CSS + JS + Go binary)
 npm run build
 
-# Or just the Go binary (requires json1 for SQLite JSON, fts5 for full-text search)
-go build --tags 'json1 fts5'
+# Run in ephemeral mode (in-memory, no persistence — great for trying it out)
+./mahresources -ephemeral
+
+# Or with persistent storage
+./mahresources -db-type=SQLITE -db-dsn=mydb.db -file-save-path=./files
 ```
 
-For development with hot reload:
-```bash
-npm run watch
-```
+See the [installation guide](https://egeozcan.github.io/mahresources/docs/getting-started/installation) for detailed setup instructions.
 
 ## Configuration
 
-All settings can be configured via environment variables (in `.env`) or command-line flags. Flags take precedence.
-
-```bash
-# Using environment variables
-cp .env.template .env
-# Edit .env with your values
-./mahresources
-
-# Using command-line flags
-./mahresources -db-type=SQLITE -db-dsn=mydb.db -file-save-path=./files -bind-address=:8080
-```
-
-Key flags:
 | Flag | Description |
 |------|-------------|
 | `-file-save-path` | Main file storage directory |
-| `-db-type` | Database type: SQLITE or POSTGRES |
+| `-db-type` | Database type: `SQLITE` or `POSTGRES` |
 | `-db-dsn` | Database connection string |
-| `-bind-address` | Server address:port (default :8181) |
-| `-ffmpeg-path` | Path to ffmpeg for video thumbnails |
+| `-bind-address` | Server address:port (default `:8181`) |
 | `-ephemeral` | Run fully in-memory (no persistence) |
-| `-memory-db` | Use in-memory SQLite database |
-| `-seed-db` | SQLite file to seed memory-db (for testing/demos) |
-| `-seed-fs` | Directory as read-only base for copy-on-write |
 
-### Ephemeral Mode
-
-Run without any persistence (useful for demos or testing):
-```bash
-./mahresources -ephemeral -bind-address=:8080
-```
-
-Test against a copy of your data without modifying the original:
-```bash
-./mahresources -memory-db -seed-db=./production.db -file-save-path=./files
-```
-
-Fully seeded ephemeral mode (both database and files):
-```bash
-./mahresources -ephemeral -seed-db=./production.db -seed-fs=./files
-```
-
-Copy-on-write with persistent overlay (writes saved to disk):
-```bash
-./mahresources -db-type=SQLITE -db-dsn=./mydb.db -seed-fs=./original-files -file-save-path=./changes
-```
-The `-seed-fs` option uses copy-on-write: reads come from the seed directory, writes go to the overlay (memory with `-memory-fs`, or disk with `-file-save-path`).
-
-### Frontend Assets
-
-To build CSS/JS, install node and run `npm ci` first. The generated assets are committed, so you only need this if
-you're modifying frontend code.
-
-### Scripting
-
-You probably need to import your own data, and you can do it via the HTTP API, or you can directly use the library
-functions. For an example, see /cmd/importExisting/main.go, which can be run like
-`go run ./cmd/importExisting/main.go -target "/some/folder" -ownerId 1234`.
-
-The structure is very modular. I'll make it even more so
-as I continue to develop.
+See the [full configuration reference](https://egeozcan.github.io/mahresources/docs/configuration/overview) for all options including ephemeral modes, seed databases, alternative filesystems, and remote timeouts.
 
 ## Testing
 
-### Go Unit Tests
 ```bash
+# Go unit tests
 go test ./...
+
+# E2E tests (starts ephemeral server automatically)
+cd e2e && npm run test:with-server
 ```
 
-### E2E Tests (Playwright)
+See the [docs](https://egeozcan.github.io/mahresources/docs/getting-started/installation#e2e-tests) for more test commands and options.
 
-The project includes a comprehensive Playwright test suite covering CRUD operations, bulk operations, global search, edge cases, and accessibility (WCAG compliance via axe-core).
+## Documentation
 
-**Recommended: Use the automatic server management scripts** which handle starting an ephemeral server, running tests, and cleanup:
+The full documentation covers everything in detail:
 
-```bash
-cd e2e
-npm run test:with-server         # Run all tests
-npm run test:with-server:headed  # Run with browser visible
-npm run test:with-server:debug   # Run in debug mode
-npm run test:with-server:a11y    # Run accessibility tests only
-```
+- [Getting Started](https://egeozcan.github.io/mahresources/docs/getting-started/installation) — Installation, first steps, quick start
+- [Concepts](https://egeozcan.github.io/mahresources/docs/concepts/overview) — Resources, notes, groups, tags, relationships
+- [User Guide](https://egeozcan.github.io/mahresources/docs/user-guide/navigation) — Navigation, search, bulk operations
+- [Features](https://egeozcan.github.io/mahresources/docs/features/thumbnail-generation) — Thumbnails, versioning, plugins, saved queries
+- [Configuration](https://egeozcan.github.io/mahresources/docs/configuration/overview) — All settings and deployment options
+- [API Reference](https://egeozcan.github.io/mahresources/docs/api/overview) — REST API documentation
 
-These scripts automatically find an available port, start an ephemeral server, run tests in parallel, and clean up.
-
-**Manual server management** (if you need more control):
-
-```bash
-# 1. Build the application
-npm run build
-
-# 2. Start server in ephemeral mode (separate terminal)
-./mahresources -ephemeral -bind-address=:8181 -max-db-connections=2
-
-# 3. Run tests
-cd e2e && npm test
-```
-
-Other test commands:
-```bash
-cd e2e
-npm run test:headed    # Run with browser visible
-npm run test:ui        # Playwright UI mode
-npm run test:a11y      # Accessibility tests only
-npm run report         # View HTML test report
-```
+**[Browse the docs](https://egeozcan.github.io/mahresources/)**
 
 ## Security
 
-There is zero security. No authorization or authentication, or even user accounts, really. This is thought to be run
-on private networks or behind some sort of security layer like a firewall. 
+There is no built-in authentication or authorization. This application is designed to run on private networks or behind a reverse proxy that handles access control. See the [reverse proxy guide](https://egeozcan.github.io/mahresources/docs/deployment/reverse-proxy) for setup instructions.
 
-# Help me
+## Scripting & Import
 
-If you have any experience on tagging photos automatically (tensorflow stuff), any help is appreciated. I'll also come 
-around to it eventually (probably), but I'm very open to help.
-
-## Random Screenshot
-
-![Screenshot of the app](img.png "I admit that I'm too lazy to add enough fake data for a better screenshot")
-
-See how it is possible to query via the Meta field (JSON). Currently, there are more fields, and you can actually sort
-and bulk edit the results. I'd rather keep developing than adding up-to-date screenshots though. Trust me, it looks OK.
-
-## maybe do
-
-- [ ] faster image previews with libvips?
-- [ ] importers like perkeep? maybe.
-- [ ] sync could be interesting
+The HTTP API supports all CRUD operations, making it straightforward to script bulk imports. For an example of direct library usage, see `cmd/importExisting/main.go`. The [API documentation](https://egeozcan.github.io/mahresources/docs/api/overview) covers all available endpoints.
