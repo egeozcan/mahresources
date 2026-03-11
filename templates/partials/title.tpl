@@ -3,8 +3,8 @@
     {% if breadcrumb && breadcrumb.HomeUrl %}
         {% include "/partials/breadcrumb.tpl" with HomeName=breadcrumb.HomeName HomeUrl=breadcrumb.HomeUrl Entries=breadcrumb.Entries %}
     {% endif %}
-    <div class="flex items-center flex-1 min-w-0 gap-3 {% if breadcrumb && breadcrumb.HomeUrl %}mt-3{% endif %}">
-        <h2 class="items-start gap-2 text-2xl font-bold leading-7 text-stone-900 sm:text-3xl flex-col">
+    <div class="flex items-end flex-1 min-w-0 gap-3 {% if breadcrumb && breadcrumb.HomeUrl %}mt-3{% endif %}">
+        <h2 class="flex flex-col items-start gap-1 flex-1 min-w-0 text-2xl font-bold leading-7 text-stone-900 sm:text-3xl">
             {% if prefix %}<small class="break-words px-2 text-xs leading-5 font-semibold font-mono rounded-full bg-amber-100 text-amber-700">{{ prefix }}</small>{% endif %}
             {% if mainEntityType && mainEntity %}
                 <span class="break-all"><inline-edit post="/v1/{{ mainEntityType }}/editName?id={{ mainEntity.ID }}" name="name">{{ pageTitle }}</inline-edit></span>

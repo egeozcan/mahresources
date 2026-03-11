@@ -98,9 +98,13 @@
 
 .emptyTable::after {
     display: block;
-    content: "empty";
-    background: red;
-    color: white;
+    content: "No data";
+    padding: 1rem 0;
+    text-align: center;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    letter-spacing: 0.025em;
+    color: #a8a29e;
 }
 
 .jsonTable th:hover, .jsonTable td:hover {

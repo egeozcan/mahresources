@@ -8,7 +8,7 @@
     aria-label="Sort options"
 >
     <template x-for="(sort, index) in sortColumns" :key="index">
-        <div class="flex gap-2 items-center mt-2 flex-wrap">
+        <div class="flex gap-1 items-center mt-1.5">
             <template x-if="sort.column && (sort.column !== '__meta__' || (sort.metaKey && isValidMetaKey(sort.metaKey)))">
                 <input type="hidden" :name="name" :value="formatSort(sort)">
             </template>
@@ -17,10 +17,10 @@
                 x-model="sort.column"
                 x-init="$nextTick(() => $el.value = sort.column)"
                 @change="if (sort.column !== '__meta__') sort.metaKey = ''"
-                class="flex-1 min-w-[150px] shadow-sm focus:ring-amber-600 focus:border-amber-600 sm:text-sm border-stone-300 rounded-md"
+                class="select-compact flex-1 min-w-0 text-xs py-1 pl-1.5 border-stone-300 rounded focus:ring-1 focus:ring-amber-600 focus:border-amber-600"
                 :aria-label="'Sort column ' + (index + 1)"
             >
-                <option value="">-- Select column --</option>
+                <option value="">-- Column --</option>
                 <template x-for="col in getAvailableColumnsForRow(index)" :key="col.Value">
                     <option :value="col.Value" x-text="col.Name"></option>
                 </template>
@@ -31,8 +31,8 @@
                 <input
                     type="text"
                     x-model="sort.metaKey"
-                    placeholder="property_name"
-                    class="w-32 shadow-sm focus:ring-amber-600 focus:border-amber-600 sm:text-sm border-stone-300 rounded-md"
+                    placeholder="meta key"
+                    class="flex-1 min-w-[72px] text-xs py-1 px-1.5 border-stone-300 rounded focus:ring-1 focus:ring-amber-600 focus:border-amber-600"
                     :class="sort.metaKey && !isValidMetaKey(sort.metaKey) ? 'border-red-500' : ''"
                     :aria-label="'Custom property name for sort ' + (index + 1)"
                     title="Property name (lowercase letters and underscores only)"
@@ -42,39 +42,40 @@
             <button
                 type="button"
                 @click="sort.direction = sort.direction === 'asc' ? 'desc' : 'asc'"
-                class="px-3 py-2 border border-stone-300 rounded-md shadow-sm text-sm font-mono font-medium bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600"
+                class="w-6 h-6 flex items-center justify-center border border-stone-300 rounded text-xs font-mono bg-white hover:bg-stone-50 focus:outline-none focus:ring-1 focus:ring-amber-600 shrink-0"
                 :aria-label="'Sort direction: ' + (sort.direction === 'asc' ? 'ascending' : 'descending')"
                 :title="sort.direction === 'asc' ? 'Ascending' : 'Descending'"
             >
                 <span x-text="sort.direction === 'asc' ? '\u2191' : '\u2193'"></span>
             </button>
 
-            <button
-                type="button"
-                @click="moveUp(index)"
-                :disabled="index === 0"
-                class="px-2 py-2 border border-stone-300 rounded-md shadow-sm text-xs bg-white hover:bg-stone-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                :aria-label="'Move sort ' + (index + 1) + ' up'"
-                title="Move up"
-            >
-                <span class="text-xs">&#9650;</span>
-            </button>
-
-            <button
-                type="button"
-                @click="moveDown(index)"
-                :disabled="index === sortColumns.length - 1"
-                class="px-2 py-2 border border-stone-300 rounded-md shadow-sm text-xs bg-white hover:bg-stone-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                :aria-label="'Move sort ' + (index + 1) + ' down'"
-                title="Move down"
-            >
-                <span class="text-xs">&#9660;</span>
-            </button>
+            <div class="flex flex-col shrink-0 w-[18px]">
+                <button
+                    type="button"
+                    @click="moveUp(index)"
+                    :disabled="index === 0"
+                    class="h-3 flex items-center justify-center text-stone-400 hover:text-stone-700 disabled:opacity-30 focus:outline-none focus:text-amber-700"
+                    :aria-label="'Move sort ' + (index + 1) + ' up'"
+                    title="Move up"
+                >
+                    <span class="text-[8px] leading-none">&#9650;</span>
+                </button>
+                <button
+                    type="button"
+                    @click="moveDown(index)"
+                    :disabled="index === sortColumns.length - 1"
+                    class="h-3 flex items-center justify-center text-stone-400 hover:text-stone-700 disabled:opacity-30 focus:outline-none focus:text-amber-700"
+                    :aria-label="'Move sort ' + (index + 1) + ' down'"
+                    title="Move down"
+                >
+                    <span class="text-[8px] leading-none">&#9660;</span>
+                </button>
+            </div>
 
             <button
                 type="button"
                 @click="removeSort(index)"
-                class="px-2 py-2 border border-red-300 rounded-md shadow-sm text-xs text-red-700 bg-white hover:bg-red-50"
+                class="w-[18px] h-6 flex items-center justify-center text-stone-300 hover:text-red-600 focus:outline-none focus:text-red-600 shrink-0 transition-colors duration-100"
                 :aria-label="'Remove sort ' + (index + 1)"
                 title="Remove"
             >
@@ -87,9 +88,9 @@
         type="button"
         @click="addSort()"
         :disabled="sortColumns.length >= availableColumns.length + 5"
-        class="mt-2 inline-flex items-center px-2 py-1 border border-stone-300 rounded-md shadow-sm text-xs font-mono font-medium text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed"
+        class="mt-1 inline-flex items-center gap-0.5 text-xs font-mono font-medium text-stone-500 hover:text-amber-700 focus:outline-none focus:text-amber-700 disabled:opacity-40 transition-colors duration-100"
         aria-label="Add another sort criteria"
     >
-        Add Sort
+        + Add Sort
     </button>
 </div>
