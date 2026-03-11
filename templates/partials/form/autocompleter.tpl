@@ -14,7 +14,7 @@
         class="relative w-full"
 >
     {% if title %}
-    <label class="block text-sm font-mono font-medium text-stone-700 mt-3" id="{{ id }}-label" for="{{ id }}">{{ title }}</label>
+    <label class="block text-xs font-mono font-medium text-stone-600 mt-2" id="{{ id }}-label" for="{{ id }}">{{ title }}</label>
     {% endif %}
     {% include "/partials/form/formParts/errorMessage.tpl" %}
     <template x-if="!addModeForTag">
@@ -23,7 +23,7 @@
                     id="{{ id }}"
                     x-ref="autocompleter"
                     type="text"
-                    class="shadow-sm focus:ring-amber-600 focus:border-amber-600 block w-full sm:text-sm border-stone-300 rounded-md mt-2"
+                    class="focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded mt-1"
                     x-bind="inputEvents"
                     x-init="setTimeout(() => { addModeForTag !== false && $el.focus(); }, 1)"
                     autocomplete="off"

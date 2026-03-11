@@ -12,7 +12,7 @@
         role="group"
         :aria-label="title"
 >
-    <p x-text="title" id="{{ id }}-title" class="block text-sm font-mono font-medium text-stone-700 mt-3"></p>
+    <p x-text="title" id="{{ id }}-title" class="block text-xs font-mono font-medium text-stone-600 mt-2"></p>
     <template x-if="jsonOutput">
         <input type="hidden" :name="name" :value="jsonText">
     </template>
@@ -35,14 +35,14 @@
                     type="text"
                     :aria-label="'Field ' + (index + 1) + ' name'"
                     :id="'{{ id }}-field-' + index + '-name'"
-                    class="flex-shrink w-full shadow-sm focus:ring-amber-600 focus:border-amber-600 sm:text-sm border-stone-300 rounded-md mt-2"
+                    class="flex-shrink w-full focus:ring-1 focus:ring-amber-600 focus:border-amber-600 text-sm border-stone-300 rounded mt-1"
                 >
                 <template x-if="!jsonOutput">
                     <select
                             x-model="field.operation"
                             :aria-label="'Field ' + (index + 1) + ' comparison operator'"
                             :id="'{{ id }}-field-' + index + '-op'"
-                            class="flex-shrink w-full shadow-sm focus:ring-amber-600 focus:border-amber-600 sm:text-sm border-stone-300 rounded-md mt-2"
+                            class="flex-shrink w-full focus:ring-1 focus:ring-amber-600 focus:border-amber-600 text-sm border-stone-300 rounded mt-1"
                     >
                         <option value="EQ" aria-label="equals">=</option>
                         <option value="LI" aria-label="like, contains">LIKE</option>
@@ -59,7 +59,7 @@
                     x-model="field.value"
                     :aria-label="'Field ' + (index + 1) + ' value'"
                     :id="'{{ id }}-field-' + index + '-value'"
-                    class="shadow-sm focus:ring-amber-600 focus:border-amber-600 block sm:text-sm border-stone-300 rounded-md mt-2"
+                    class="focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block text-sm border-stone-300 rounded mt-1"
                     :class="jsonOutput && 'w-full'"
                 >
             </div>
@@ -70,11 +70,9 @@
         @click.prevent="fields.push({name:'',operation:'', value:''})"
         aria-label="Add new field"
         class="
-            mt-2 inline-flex items-center
-            px-2 py-1
-            border border-stone-300 rounded-md
-            shadow-sm text-xs font-mono font-medium text-white bg-amber-700 hover:bg-amber-800
-            focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
-        Add Field
+            mt-1.5 inline-flex items-center gap-0.5
+            text-xs font-mono font-medium text-stone-500 hover:text-amber-700
+            focus:outline-none focus:text-amber-700 transition-colors duration-100">
+        + Add Field
     </button>
 </div>

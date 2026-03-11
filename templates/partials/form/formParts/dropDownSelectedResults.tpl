@@ -1,7 +1,7 @@
 <template x-for="(result, index) in selectedResults">
     <p class="
-            inline-flex rounded-md items-center py-0.5 pl-2.5 pr-1 text-sm font-mono font-medium bg-amber-100
-            text-amber-800 my-1 mr-1
+            inline-flex rounded items-center py-0.5 pl-2 pr-0.5 text-xs font-mono font-medium bg-amber-100
+            text-amber-800 my-0.5 mr-0.5
         ">
         <span class="break-all" x-text="getItemDisplayName(result)"></span>
         <button

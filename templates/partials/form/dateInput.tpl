@@ -1,6 +1,6 @@
 {% with id=getName(name) %}
 <label for="{{ name }}"
-       class="block text-sm font-mono font-medium text-stone-700 mt-2">
+       class="block text-xs font-mono font-medium text-stone-600 mt-2">
     {{ label }}
 </label>
 <input type="date"
@@ -8,5 +8,5 @@
        value="{{ value }}"
        id="{{ name }}"
        autocomplete="off"
-       class="mt-1 focus:ring-amber-600 focus:border-amber-600 block w-full shadow-sm sm:text-sm border-stone-300 rounded-md">
+       class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">
 {% endwith %}

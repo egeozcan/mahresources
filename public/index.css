@@ -255,42 +255,53 @@ html {
     grid-row: unset;
 }
 
-.simple :is(.description, h2, h3, h4, header, .title) {
+/* ========================================
+   Simple View: Contact Sheet Gallery
+   ======================================== */
+
+/* Hide page-level chrome (keep card-header for overlay) */
+.simple :is(.description, h2, h4, .title) {
     display: none;
 }
 
-.simple [alt='Preview'] {
-    max-height: 25vh;
-    object-fit: contain;
-    width: auto;
+/* Grid: uniform square cells, tight contact-sheet gaps */
+.simple .list-container {
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    grid-gap: 3px;
 }
 
-/* Simple view: strip card chrome for compact image-only grid */
+/* Card → chromeless square cell */
 .simple .card {
+    position: relative;
     padding: 0;
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: 0;
     overflow: hidden;
-    background: #f5f5f4;
+    background: var(--bg-accent-dark);
+    aspect-ratio: 1;
 }
 
 .simple .card:hover {
     box-shadow: none;
 }
 
+/* Image fills the entire square */
 .simple .card--with-image .card-image {
+    position: absolute;
+    inset: 0;
     margin: 0;
     border-radius: 0;
+    min-height: 0;
 }
 
 .simple .card--with-image .card-image img {
+    width: 100%;
+    height: 100%;
     max-height: none;
     object-fit: contain;
-    width: 100%;
-    height: auto;
 }
 
-.simple .card-header,
+/* Hide description, tags, meta — but NOT card-header/card-title */
 .simple .card-description,
 .simple .card-tags,
 .simple .card-meta,
@@ -298,9 +309,44 @@ html {
     display: none;
 }
 
-.simple .list-container {
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-    grid-gap: 0.5rem;
+/* Title overlay: gradient caption at bottom, visible on hover */
+.simple .card-header {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    margin: 0;
+    padding: 2rem 0.5rem 0.5rem;
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.7), transparent);
+    opacity: 0;
+    transition: opacity var(--transition-normal);
+    z-index: 1;
+}
+
+.simple .card:hover .card-header {
+    opacity: 1;
+}
+
+.simple .card-title {
+    font-size: 0.75rem;
+    line-height: 1.3;
+    color: #fff;
+    margin: 0;
+    -webkit-line-clamp: 2;
+}
+
+.simple .card-title a {
+    color: #fff;
+}
+
+.simple .card-title a:hover {
+    color: #fbbf24;
+}
+
+/* Focus indicator for keyboard navigation */
+.simple .card-image a:focus-visible {
+    outline: 2px solid #fbbf24;
+    outline-offset: -2px;
 }
 
 .content .sidebar {
@@ -736,7 +782,7 @@ html {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 0.5rem;
+    gap: 0.25rem;
 }
 
 .sidebar-group:first-child {
@@ -746,12 +792,12 @@ html {
 
 .sidebar-group-title {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.6875rem;
+    font-size: 0.625rem;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.06em;
     color: #78716c;
-    margin: 0 0 0.375rem 0;
+    margin: 0 0 0.25rem 0;
 }
 
 /* Compact select for tight sort rows */
@@ -759,6 +805,169 @@ html {
     background-size: 1em 1em;
     background-position: right 0.25rem center;
     padding-right: 1.25rem;
+}
+
+/* Detail table (resource list detail mode) */
+.detail-table-wrap {
+    overflow-x: auto;
+    border: 1px solid #e7e5e4;
+    border-radius: var(--radius-md);
+    background: #fff;
+}
+
+.detail-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    color: #57534e;
+}
+
+.detail-table thead {
+    background: #fafaf9;
+}
+
+.detail-table thead th {
+    padding: 0.375rem 0.75rem;
+    text-align: left;
+    font-size: 0.625rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #78716c;
+    white-space: nowrap;
+    border-bottom: 1px solid #e7e5e4;
+}
+
+.detail-table thead td:first-child {
+    width: 2rem;
+    padding: 0.375rem 0.5rem;
+    border-bottom: 1px solid #e7e5e4;
+}
+
+.detail-table tbody tr {
+    border-bottom: 1px solid #f5f5f4;
+    transition: background-color var(--transition-fast);
+}
+
+.detail-table tbody tr:last-child {
+    border-bottom: none;
+}
+
+.detail-table tbody tr:nth-child(even) {
+    background: #fafaf9;
+}
+
+.detail-table tbody tr:hover {
+    background: #f5f5f4;
+}
+
+.detail-table td {
+    padding: 0.375rem 0.75rem;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
+.detail-table td:first-child {
+    width: 2rem;
+    padding: 0.375rem 0.5rem;
+    text-align: center;
+}
+
+.detail-table .detail-table-checkbox {
+    width: 0.875rem;
+    height: 0.875rem;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.detail-table .detail-table-name {
+    font-weight: 500;
+    color: #292524;
+}
+
+.detail-table .detail-table-name a {
+    color: inherit;
+    text-decoration: none;
+}
+
+.detail-table .detail-table-name a:hover {
+    color: var(--nav-hover);
+}
+
+.detail-table .detail-table-secondary {
+    color: #78716c;
+}
+
+.detail-table .detail-table-secondary a {
+    color: inherit;
+    text-decoration: none;
+}
+
+.detail-table .detail-table-secondary a:hover {
+    color: var(--nav-hover);
+}
+
+.detail-table .detail-table-preview img {
+    display: block;
+    height: 2rem;
+    width: auto;
+    border-radius: 3px;
+    object-fit: contain;
+}
+
+.detail-table .detail-table-truncate {
+    max-width: 20ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* View switcher (segmented control for display modes) */
+.view-switcher {
+    display: inline-flex;
+    border: 1px solid #d6d3d1;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background: #f5f5f4;
+}
+
+.view-switcher-option {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.3125rem 0.875rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #57534e;
+    text-decoration: none;
+    border-right: 1px solid #d6d3d1;
+    transition: background-color var(--transition-fast), color var(--transition-fast);
+    white-space: nowrap;
+}
+
+.view-switcher-option:last-child {
+    border-right: none;
+}
+
+.view-switcher-option:hover {
+    background: #e7e5e4;
+    color: #44403c;
+}
+
+.view-switcher-option[aria-current="true"] {
+    background: var(--nav-active);
+    color: #fff;
+}
+
+.view-switcher-option[aria-current="true"]:hover {
+    background: var(--nav-hover);
+}
+
+.view-switcher-option:focus-visible {
+    outline: 2px solid var(--nav-hover);
+    outline-offset: -2px;
+    z-index: 1;
 }
 
 /* Meta strip */
