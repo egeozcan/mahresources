@@ -8,7 +8,7 @@
       "seedDetails": "12 groups with hierarchy, 13 resources with generated images, 8 notes with blocks, 12 tags",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "grid-view.png": {
       "page": "/resources",
@@ -17,7 +17,7 @@
       "seedDetails": "13 resources with generated gradient images, owner groups, and tags",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "resource-detail.png": {
       "page": "/resource?id=1",
@@ -26,7 +26,7 @@
       "seedDetails": "Sunset at Golden Gate Bridge resource with owner Landscapes, tags favorite/landscape, Photography group",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "upload-form.png": {
       "page": "/resource/new",
@@ -35,7 +35,7 @@
       "seedDetails": "Empty form, no data needed",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "note-blocks.png": {
       "page": "/note?id=1",
@@ -44,7 +44,7 @@
       "seedDetails": "Weekly Team Standup note with 3 blocks: heading, text, todos (3 items, 1 checked). Tags: important, in-progress. Group: Web App Redesign",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "group-tree.png": {
       "page": "/group/tree",
@@ -53,7 +53,7 @@
       "seedDetails": "5 root groups with categories, Photography/Research Papers/Work Projects have children",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "group-detail.png": {
       "page": "/group?id=1",
@@ -62,7 +62,7 @@
       "seedDetails": "Photography group (Media category) with note, tags, and Show in Tree link",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "search-results.png": {
       "page": "/resources?name=sunset",
@@ -71,7 +71,7 @@
       "seedDetails": "Resources with 'sunset' in name (Sunset at Golden Gate Bridge, Costa Rica Beach Sunset)",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "query-editor.png": {
       "page": "/query?id=1",
@@ -80,7 +80,7 @@
       "seedDetails": "3 saved queries: Recent Large Resources, Notes This Week, Resources by Content Type",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "activity-log.png": {
       "page": "/logs",
@@ -89,7 +89,7 @@
       "seedDetails": "Log entries auto-generated from seeding 13 resources, 8 notes, 12 groups",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "tag-list.png": {
       "page": "/tags",
@@ -98,7 +98,7 @@
       "seedDetails": "12 tags with descriptive names and descriptions",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "note-list.png": {
       "page": "/notes",
@@ -107,7 +107,7 @@
       "seedDetails": "8 notes: Weekly Team Standup, Photography Tips, Q1 Roadmap, ML Paper Review, Travel Planning, API Migration Spec, Sprint Retrospective, Object Detection Survey",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "group-list.png": {
       "page": "/groups",
@@ -116,7 +116,7 @@
       "seedDetails": "12 groups across 5 categories with parent-child hierarchy",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "resource-detail-view.png": {
       "page": "/resources/details",
@@ -125,7 +125,7 @@
       "seedDetails": "13 resources with varied names, sizes (74KB-241KB), and generated gradient images",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "note-edit.png": {
       "page": "/note/edit?id=1",
@@ -134,7 +134,7 @@
       "seedDetails": "Weekly Team Standup note with existing tags, group, and owner to show populated form",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "group-edit.png": {
       "page": "/group/edit?id=1",
@@ -143,7 +143,7 @@
       "seedDetails": "Photography group with tags, category, and description pre-filled",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "category-list.png": {
       "page": "/categories",
@@ -152,7 +152,7 @@
       "seedDetails": "6 categories: 3 default (Person, Location, Business) + 3 custom (Project, Media, Document)",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "global-search.png": {
       "page": "/resources",
@@ -161,7 +161,7 @@
       "seedDetails": "Search for 'arch' matches Architecture Diagram, ML Paper Review (Transformer Architecture), archived tag, Technical Spec",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": ["Press Cmd+K to open search modal", "Type 'arch' to filter results"],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "bulk-selection.png": {
       "page": "/resources",
@@ -170,7 +170,7 @@
       "seedDetails": "Resources selected via Select All button to show bulk operations toolbar",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": ["Click 'Select All' button to activate bulk toolbar"],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "plugin-management.png": {
       "page": "/plugins/manage",
@@ -179,7 +179,7 @@
       "seedDetails": "3 plugins: example-blocks (enabled), example-plugin (enabled, with settings), fal-ai (disabled, with API key)",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "version-compare.png": {
       "page": "/resource/compare?r1=1&v1=1&r2=1&v2=3",
@@ -188,7 +188,7 @@
       "seedDetails": "Sunset at Golden Gate resource with 3 versions (800x600, 800x600, 900x675) for comparison",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "download-queue.png": {
       "page": "/dashboard",
@@ -197,7 +197,7 @@
       "seedDetails": "Same as dashboard; download FAB is always visible",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "resource-versions.png": {
       "page": "/resource?id=1",
@@ -206,7 +206,7 @@
       "seedDetails": "Sunset at Golden Gate with 3 versions: initial, warmer color grading, final color correction",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": ["Scroll down to Versions section"],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "note-sharing.png": {
       "page": "/note?id=1",
@@ -215,7 +215,7 @@
       "seedDetails": "Weekly Team Standup note with blocks, Share Note button visible in sidebar",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "relation-list.png": {
       "page": "/relations",
@@ -224,7 +224,7 @@
       "seedDetails": "Relation between Family (Person) and Travel 2025 (Location) via Address relation type",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     },
     "relation-types.png": {
       "page": "/relationTypes",
@@ -233,7 +233,7 @@
       "seedDetails": "2 default relation types: Address (Person->Location), Employer (Person->Business)",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
-      "capturedDate": "2026-03-08"
+      "capturedDate": "2026-03-11"
     }
   }
 }
