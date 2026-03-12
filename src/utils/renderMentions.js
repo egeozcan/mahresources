@@ -6,6 +6,8 @@
  * - Inline resource mentions -> small inline thumbnail + name link
  * - Other types -> badge link
  *
+ * Each occurrence is checked individually for standalone-vs-inline context.
+ *
  * @param {string} text - Text containing @[type:id:name] markers
  * @returns {string} Text with markers replaced by HTML
  */
@@ -22,7 +24,9 @@ export function renderMentions(text) {
         tag: '/tag',
     };
 
-    return text.replace(mentionPattern, (match, type, id, name) => {
+    // Use replacer callback — regex .replace processes left-to-right, one at a time,
+    // and the offset parameter gives us the position of this specific occurrence.
+    return text.replace(mentionPattern, (match, type, id, name, offset) => {
         const lowerType = type.toLowerCase();
         const numId = parseInt(id, 10);
         if (!numId) return match;
@@ -31,8 +35,7 @@ export function renderMentions(text) {
         const path = entityPaths[lowerType] || ('/' + lowerType);
 
         if (lowerType === 'resource') {
-            // Check if this mention is the only content on its line
-            if (isMentionOnlyOnLine(text, match)) {
+            if (isMentionStandaloneAt(text, offset, match)) {
                 return `<a href="${path}?id=${numId}" class="mention-card">` +
                     `<img src="/v1/resource/preview?id=${numId}" alt="${escapedName}" class="mention-card-thumb">` +
                     `<span class="mention-card-name">${escapedName}</span></a>`;
@@ -48,28 +51,28 @@ export function renderMentions(text) {
 }
 
 /**
- * Check if a mention marker is the only non-whitespace, non-HTML content on its line.
- * Handles both plain text and HTML-wrapped text (e.g. after markdown wraps lines in <p> tags).
+ * Check if a mention at a specific position is the only non-whitespace,
+ * non-HTML content on its line.
  * @param {string} fullText - The full text
- * @param {string} marker - The exact marker string to check
+ * @param {number} pos - The character offset of the marker in fullText
+ * @param {string} marker - The exact marker string
  * @returns {boolean}
  */
-function isMentionOnlyOnLine(fullText, marker) {
-    const lines = fullText.split('\n');
-    for (const line of lines) {
-        if (line.includes(marker)) {
-            const trimmed = line.trim();
-            if (trimmed === marker) {
-                return true;
-            }
-            // After markdown, the line may be wrapped in HTML tags like <p>...</p>
-            const stripped = trimmed.replace(/<[^>]*>/g, '').trim();
-            if (stripped === marker) {
-                return true;
-            }
-        }
-    }
-    return false;
+function isMentionStandaloneAt(fullText, pos, marker) {
+    // Find the line containing this position
+    let lineStart = fullText.lastIndexOf('\n', pos - 1);
+    lineStart = lineStart === -1 ? 0 : lineStart + 1;
+
+    let lineEnd = fullText.indexOf('\n', pos + marker.length);
+    if (lineEnd === -1) lineEnd = fullText.length;
+
+    const line = fullText.substring(lineStart, lineEnd);
+    const trimmed = line.trim();
+    if (trimmed === marker) return true;
+
+    // After markdown, the line may be wrapped in HTML tags like <p>...</p>
+    const stripped = trimmed.replace(/<[^>]*>/g, '').trim();
+    return stripped === marker;
 }
 
 /**

@@ -144,7 +144,7 @@ func (ctx *MahresourcesContext) UpdateBlockContent(blockID uint, content json.Ra
 	if block.Type == "text" {
 		var note models.Note
 		if err := ctx.db.First(&note, block.NoteID).Error; err == nil {
-			ctx.syncMentionsForNoteReplace(&note, true)
+			ctx.syncMentionsForNote(&note)
 		}
 	}
 

@@ -10,16 +10,9 @@ import (
 )
 
 // syncMentionsForNote parses @-mentions from the note's description and block content,
-// then adds any referenced entities as relations (additive only, safe for form saves).
+// then adds any referenced entities as relations (additive only — never removes
+// manually-added relations).
 func (ctx *MahresourcesContext) syncMentionsForNote(note *models.Note) {
-	ctx.syncMentionsForNoteReplace(note, false)
-}
-
-// syncMentionsForNoteReplace parses @-mentions and syncs relations.
-// When replace is true, it replaces all tag/group/resource associations with exactly
-// the mentioned set (used by block saves to avoid stale relation accumulation).
-// When replace is false, it only appends (safe for form saves that manage their own relations).
-func (ctx *MahresourcesContext) syncMentionsForNoteReplace(note *models.Note, replace bool) {
 	// Gather all text: description + text blocks
 	var parts []string
 	parts = append(parts, note.Description)
@@ -39,40 +32,25 @@ func (ctx *MahresourcesContext) syncMentionsForNoteReplace(note *models.Note, re
 	text := strings.Join(parts, "\n")
 
 	mentions := lib.ParseMentions(text)
+	if len(mentions) == 0 {
+		return
+	}
+
 	grouped := lib.GroupMentionsByType(mentions)
 
-	if replace {
-		// Replace mode: set associations to exactly the mentioned set
-		tags := BuildAssociationSlice(grouped["tag"], TagFromID)
-		if err := ctx.db.Model(note).Association("Tags").Replace(&tags); err != nil {
-			log.Printf("mention sync: failed to replace tags on note %d: %v", note.ID, err)
+	if ids, ok := grouped["tag"]; ok {
+		if err := ctx.AddTagsToNote(note.ID, ids); err != nil {
+			log.Printf("mention sync: failed to add tags to note %d: %v", note.ID, err)
 		}
-
-		groups := BuildAssociationSlice(grouped["group"], GroupFromID)
-		if err := ctx.db.Model(note).Association("Groups").Replace(&groups); err != nil {
-			log.Printf("mention sync: failed to replace groups on note %d: %v", note.ID, err)
+	}
+	if ids, ok := grouped["group"]; ok {
+		if err := ctx.AddGroupsToNote(note.ID, ids); err != nil {
+			log.Printf("mention sync: failed to add groups to note %d: %v", note.ID, err)
 		}
-
-		resources := BuildAssociationSlice(grouped["resource"], ResourceFromID)
-		if err := ctx.db.Model(note).Association("Resources").Replace(&resources); err != nil {
-			log.Printf("mention sync: failed to replace resources on note %d: %v", note.ID, err)
-		}
-	} else {
-		// Append mode: only add, never remove (safe alongside form-set relations)
-		if ids, ok := grouped["tag"]; ok {
-			if err := ctx.AddTagsToNote(note.ID, ids); err != nil {
-				log.Printf("mention sync: failed to add tags to note %d: %v", note.ID, err)
-			}
-		}
-		if ids, ok := grouped["group"]; ok {
-			if err := ctx.AddGroupsToNote(note.ID, ids); err != nil {
-				log.Printf("mention sync: failed to add groups to note %d: %v", note.ID, err)
-			}
-		}
-		if ids, ok := grouped["resource"]; ok {
-			if err := ctx.AddResourcesToNote(note.ID, ids); err != nil {
-				log.Printf("mention sync: failed to add resources to note %d: %v", note.ID, err)
-			}
+	}
+	if ids, ok := grouped["resource"]; ok {
+		if err := ctx.AddResourcesToNote(note.ID, ids); err != nil {
+			log.Printf("mention sync: failed to add resources to note %d: %v", note.ID, err)
 		}
 	}
 }

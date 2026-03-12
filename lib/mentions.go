@@ -116,6 +116,35 @@ func IsMentionOnlyOnLine(fullText, marker string) bool {
 	return false
 }
 
+// IsMentionStandaloneAt checks if the marker occurrence at position pos in fullText
+// is the only non-whitespace, non-HTML content on its line.
+// Unlike IsMentionOnlyOnLine, this checks the specific occurrence rather than any line.
+func IsMentionStandaloneAt(fullText string, pos int, marker string) bool {
+	// Find the start of the line containing this position
+	lineStart := strings.LastIndex(fullText[:pos], "\n")
+	if lineStart == -1 {
+		lineStart = 0
+	} else {
+		lineStart++ // skip the newline character
+	}
+
+	// Find the end of the line
+	lineEnd := strings.Index(fullText[pos+len(marker):], "\n")
+	if lineEnd == -1 {
+		lineEnd = len(fullText)
+	} else {
+		lineEnd += pos + len(marker)
+	}
+
+	line := fullText[lineStart:lineEnd]
+	trimmed := strings.TrimSpace(line)
+	if trimmed == marker {
+		return true
+	}
+	stripped := strings.TrimSpace(htmlTagPattern.ReplaceAllString(trimmed, ""))
+	return stripped == marker
+}
+
 // GroupMentionsByType groups mention IDs by their entity type.
 // The returned map keys are type strings and values are slices of IDs
 // in the order they appear in the input.

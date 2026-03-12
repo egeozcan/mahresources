@@ -30,12 +30,16 @@ func renderMentionsFilter(in *pongo2.Value, _ *pongo2.Value) (*pongo2.Value, *po
 		return in, nil
 	}
 
+	// Process each mention occurrence individually so that the card-vs-inline
+	// decision is based on the specific position, not just any line in the text.
+	// Build the result by scanning left-to-right and replacing one marker at a time.
 	for _, m := range mentions {
 		marker := m.OriginalMatch
-		// Skip if this exact marker was already replaced by a previous iteration
-		if !strings.Contains(text, marker) {
+		pos := strings.Index(text, marker)
+		if pos == -1 {
 			continue
 		}
+
 		escapedName := html.EscapeString(m.Name)
 
 		path, ok := entityPaths[m.Type]
@@ -46,7 +50,7 @@ func renderMentionsFilter(in *pongo2.Value, _ *pongo2.Value) (*pongo2.Value, *po
 		var replacement string
 
 		if m.Type == "resource" {
-			if lib.IsMentionOnlyOnLine(text, marker) {
+			if lib.IsMentionStandaloneAt(text, pos, marker) {
 				replacement = fmt.Sprintf(
 					`<a href="%s?id=%d" class="mention-card">`+
 						`<img src="/v1/resource/preview?id=%d" alt="%s" class="mention-card-thumb">`+
@@ -68,7 +72,7 @@ func renderMentionsFilter(in *pongo2.Value, _ *pongo2.Value) (*pongo2.Value, *po
 			)
 		}
 
-		text = strings.ReplaceAll(text, marker, replacement)
+		text = text[:pos] + replacement + text[pos+len(marker):]
 	}
 
 	return pongo2.AsValue(text), nil
