@@ -1976,16 +1976,19 @@ html {
    ======================================== */
 
 .mention-inline {
+    display: inline;
     text-decoration: none;
     color: inherit;
+    white-space: nowrap;
 }
 
 .mention-inline-thumb {
-    display: inline;
-    height: 1.25rem;
+    display: inline-block;
+    height: 1.25em;
+    width: auto;
     vertical-align: text-bottom;
     border-radius: 0.25rem;
-    margin-right: 0.125rem;
+    margin-right: 0.2em;
 }
 
 .mention-card {
