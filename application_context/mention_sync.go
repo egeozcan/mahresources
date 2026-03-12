@@ -3,6 +3,7 @@ package application_context
 import (
 	"encoding/json"
 	"log"
+	"strings"
 
 	"mahresources/lib"
 	"mahresources/models"
@@ -11,9 +12,10 @@ import (
 // syncMentionsForNote parses @-mentions from the note's description and block content,
 // then adds any referenced entities as relations.
 func (ctx *MahresourcesContext) syncMentionsForNote(note *models.Note) {
-	text := note.Description
+	// Gather all text: description + text blocks
+	var parts []string
+	parts = append(parts, note.Description)
 
-	// Also gather text from note blocks
 	var blocks []models.NoteBlock
 	if err := ctx.db.Where("note_id = ? AND type = ?", note.ID, "text").Find(&blocks).Error; err == nil {
 		for _, block := range blocks {
@@ -21,10 +23,12 @@ func (ctx *MahresourcesContext) syncMentionsForNote(note *models.Note) {
 				Text string `json:"text"`
 			}
 			if json.Unmarshal(block.Content, &content) == nil {
-				text += "\n" + content.Text
+				parts = append(parts, content.Text)
 			}
 		}
 	}
+
+	text := strings.Join(parts, "\n")
 
 	mentions := lib.ParseMentions(text)
 	if len(mentions) == 0 {

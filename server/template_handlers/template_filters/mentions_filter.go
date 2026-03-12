@@ -9,8 +9,7 @@ import (
 	"mahresources/lib"
 )
 
-//goland:noinspection GoUnusedParameter
-func renderMentionsFilter(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *pongo2.Error) {
+func renderMentionsFilter(in *pongo2.Value, _ *pongo2.Value) (*pongo2.Value, *pongo2.Error) {
 	interfaceVal := in.Interface()
 	var text string
 
