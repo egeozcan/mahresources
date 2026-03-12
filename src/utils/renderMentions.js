@@ -34,11 +34,11 @@ export function renderMentions(text) {
             // Check if this mention is the only content on its line
             if (isMentionOnlyOnLine(text, match)) {
                 return `<a href="${path}?id=${numId}" class="mention-card">` +
-                    `<img src="/v1/resource/thumbnail?id=${numId}" alt="${escapedName}" class="mention-card-thumb">` +
+                    `<img src="/v1/resource/preview?id=${numId}" alt="${escapedName}" class="mention-card-thumb">` +
                     `<span class="mention-card-name">${escapedName}</span></a>`;
             } else {
                 return `<a href="${path}?id=${numId}" class="mention-inline">` +
-                    `<img src="/v1/resource/thumbnail?id=${numId}" alt="" class="mention-inline-thumb">` +
+                    `<img src="/v1/resource/preview?id=${numId}" alt="" class="mention-inline-thumb">` +
                     `${escapedName}</a>`;
             }
         } else {

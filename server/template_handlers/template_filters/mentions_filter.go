@@ -45,14 +45,14 @@ func renderMentionsFilter(in *pongo2.Value, _ *pongo2.Value) (*pongo2.Value, *po
 			if lib.IsMentionOnlyOnLine(text, marker) {
 				replacement = fmt.Sprintf(
 					`<a href="%s?id=%d" class="mention-card">`+
-						`<img src="/v1/resource/thumbnail?id=%d" alt="%s" class="mention-card-thumb">`+
+						`<img src="/v1/resource/preview?id=%d" alt="%s" class="mention-card-thumb">`+
 						`<span class="mention-card-name">%s</span></a>`,
 					path, m.ID, m.ID, escapedName, escapedName,
 				)
 			} else {
 				replacement = fmt.Sprintf(
 					`<a href="%s?id=%d" class="mention-inline">`+
-						`<img src="/v1/resource/thumbnail?id=%d" alt="" class="mention-inline-thumb">`+
+						`<img src="/v1/resource/preview?id=%d" alt="" class="mention-inline-thumb">`+
 						`%s</a>`,
 					path, m.ID, m.ID, escapedName,
 				)
