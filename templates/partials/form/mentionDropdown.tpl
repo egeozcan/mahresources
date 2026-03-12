@@ -7,6 +7,7 @@
      class="bg-white border border-stone-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
     <template x-for="(result, index) in mentionResults" :key="result.type + ':' + result.id">
         <button type="button"
+                :id="'mention-option-' + result.type + '-' + result.id"
                 @click.prevent="selectMention(result)"
                 @mouseenter="mentionSelectedIndex = index"
                 :data-mention-selected="index === mentionSelectedIndex"

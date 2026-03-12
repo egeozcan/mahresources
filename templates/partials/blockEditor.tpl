@@ -88,6 +88,7 @@
                                             aria-autocomplete="list"
                                             :aria-expanded="mentionActive && mentionResults.length > 0"
                                             aria-haspopup="listbox"
+                                            :aria-activedescendant="activeDescendantId"
                                         ></textarea>
                                         {% include "/partials/form/mentionDropdown.tpl" %}
                                     </div>

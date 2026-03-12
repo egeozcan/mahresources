@@ -31,7 +31,7 @@ func renderMentionsFilter(in *pongo2.Value, _ *pongo2.Value) (*pongo2.Value, *po
 	}
 
 	for _, m := range mentions {
-		marker := fmt.Sprintf("@[%s:%d:%s]", m.Type, m.ID, m.Name)
+		marker := m.OriginalMatch
 		escapedName := html.EscapeString(m.Name)
 
 		path, ok := entityPaths[m.Type]

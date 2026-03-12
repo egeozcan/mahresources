@@ -13,9 +13,10 @@ var mentionPattern = regexp.MustCompile(`@\[([a-zA-Z]+):(\d+):([^\]]+)\]`)
 
 // Mention represents a parsed @-mention marker extracted from text.
 type Mention struct {
-	Type string // Entity type, lowercased (e.g. "group", "note", "resource")
-	ID   uint   // Entity ID
-	Name string // Display name
+	Type          string // Entity type, lowercased (e.g. "group", "note", "resource")
+	ID            uint   // Entity ID
+	Name          string // Display name
+	OriginalMatch string // The full original marker text as found in the source
 }
 
 // ParseMentions extracts all unique @[type:id:name] markers from text.
@@ -47,9 +48,10 @@ func ParseMentions(text string) []Mention {
 		seen[key] = true
 
 		result = append(result, Mention{
-			Type: typ,
-			ID:   uint(id),
-			Name: name,
+			Type:          typ,
+			ID:            uint(id),
+			Name:          name,
+			OriginalMatch: match[0],
 		})
 	}
 

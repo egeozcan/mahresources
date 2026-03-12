@@ -97,8 +97,8 @@ export function mentionTextarea(allowedTypes = '') {
                     }
                     break;
                 }
-                // Stop searching if we hit whitespace (no @ in this "word")
-                if (/\s/.test(value[i])) {
+                // Stop searching if we hit a newline (mention doesn't span lines)
+                if (value[i] === '\n') {
                     break;
                 }
             }
@@ -112,8 +112,8 @@ export function mentionTextarea(allowedTypes = '') {
 
             const query = value.substring(atPos + 1, cursorPos);
 
-            // If the query contains whitespace, close (user moved past the mention)
-            if (/\s/.test(query)) {
+            // Close if query contains a newline
+            if (query.includes('\n')) {
                 if (this.mentionActive) {
                     this.closeMention();
                 }
@@ -188,6 +188,12 @@ export function mentionTextarea(allowedTypes = '') {
             const parentRect = textarea.offsetParent?.getBoundingClientRect() || { top: 0, left: 0 };
 
             return `position: absolute; top: ${textarea.offsetTop + textarea.offsetHeight}px; left: ${textarea.offsetLeft}px; z-index: 50; min-width: 300px; max-width: 400px;`;
+        },
+
+        get activeDescendantId() {
+            if (!this.mentionActive || this.mentionResults.length === 0) return '';
+            const r = this.mentionResults[this.mentionSelectedIndex];
+            return r ? `mention-option-${r.type}-${r.id}` : '';
         },
 
         getIcon(type) {

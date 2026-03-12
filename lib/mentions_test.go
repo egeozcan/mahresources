@@ -17,22 +17,22 @@ func TestParseMentions_NoMentions(t *testing.T) {
 func TestParseMentions_SingleMention(t *testing.T) {
 	result := ParseMentions("Hello @[group:42:My Group] world")
 	assert.Equal(t, []Mention{
-		{Type: "group", ID: 42, Name: "My Group"},
+		{Type: "group", ID: 42, Name: "My Group", OriginalMatch: "@[group:42:My Group]"},
 	}, result)
 }
 
 func TestParseMentions_MultipleMentions(t *testing.T) {
 	result := ParseMentions("See @[note:1:First Note] and @[resource:2:Some File]")
 	assert.Equal(t, []Mention{
-		{Type: "note", ID: 1, Name: "First Note"},
-		{Type: "resource", ID: 2, Name: "Some File"},
+		{Type: "note", ID: 1, Name: "First Note", OriginalMatch: "@[note:1:First Note]"},
+		{Type: "resource", ID: 2, Name: "Some File", OriginalMatch: "@[resource:2:Some File]"},
 	}, result)
 }
 
 func TestParseMentions_ColonsInDisplayName(t *testing.T) {
 	result := ParseMentions("Check @[group:5:Meeting: Monday: 9AM]")
 	assert.Equal(t, []Mention{
-		{Type: "group", ID: 5, Name: "Meeting: Monday: 9AM"},
+		{Type: "group", ID: 5, Name: "Meeting: Monday: 9AM", OriginalMatch: "@[group:5:Meeting: Monday: 9AM]"},
 	}, result)
 }
 
@@ -48,7 +48,7 @@ func TestParseMentions_InvalidID_Zero(t *testing.T) {
 func TestParseMentions_Deduplication(t *testing.T) {
 	result := ParseMentions("@[group:1:First] and again @[group:1:First]")
 	assert.Len(t, result, 1)
-	assert.Equal(t, Mention{Type: "group", ID: 1, Name: "First"}, result[0])
+	assert.Equal(t, Mention{Type: "group", ID: 1, Name: "First", OriginalMatch: "@[group:1:First]"}, result[0])
 }
 
 func TestParseMentions_DeduplicationKeepsFirst(t *testing.T) {
@@ -147,8 +147,8 @@ func TestGroupMentionsByType_Empty(t *testing.T) {
 
 func TestGroupMentionsByType_SingleType(t *testing.T) {
 	mentions := []Mention{
-		{Type: "group", ID: 1, Name: "A"},
-		{Type: "group", ID: 2, Name: "B"},
+		{Type: "group", ID: 1, Name: "A", OriginalMatch: "@[group:1:A]"},
+		{Type: "group", ID: 2, Name: "B", OriginalMatch: "@[group:2:B]"},
 	}
 	result := GroupMentionsByType(mentions)
 	assert.Equal(t, map[string][]uint{
@@ -158,11 +158,11 @@ func TestGroupMentionsByType_SingleType(t *testing.T) {
 
 func TestGroupMentionsByType_MultipleTypes(t *testing.T) {
 	mentions := []Mention{
-		{Type: "group", ID: 1, Name: "G1"},
-		{Type: "note", ID: 2, Name: "N1"},
-		{Type: "group", ID: 3, Name: "G2"},
-		{Type: "resource", ID: 4, Name: "R1"},
-		{Type: "note", ID: 5, Name: "N2"},
+		{Type: "group", ID: 1, Name: "G1", OriginalMatch: "@[group:1:G1]"},
+		{Type: "note", ID: 2, Name: "N1", OriginalMatch: "@[note:2:N1]"},
+		{Type: "group", ID: 3, Name: "G2", OriginalMatch: "@[group:3:G2]"},
+		{Type: "resource", ID: 4, Name: "R1", OriginalMatch: "@[resource:4:R1]"},
+		{Type: "note", ID: 5, Name: "N2", OriginalMatch: "@[note:5:N2]"},
 	}
 	result := GroupMentionsByType(mentions)
 	assert.Equal(t, map[string][]uint{

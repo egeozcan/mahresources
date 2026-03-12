@@ -398,6 +398,8 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		return nil, err
 	}
 
+	ctx.syncMentionsForResource(res)
+
 	ctx.Logger().Info(models.LogActionCreate, "resource", &res.ID, res.Name, "Created resource from local path", nil)
 
 	ctx.RunAfterPluginHooks("after_resource_create", map[string]any{
