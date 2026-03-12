@@ -38,7 +38,23 @@
                         Description
                     </label>
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
-                        <textarea id="description" name="Description" rows="3" class="max-w-lg shadow-sm block w-full focus:ring-amber-600 focus:border-amber-600 sm:text-sm border-stone-300 rounded-md font-sans">{{ resource.Description }}</textarea>
+                        <div class="relative" x-data="mentionTextarea('note,group,tag')">
+                            <textarea
+                                x-ref="mentionInput"
+                                id="description"
+                                name="Description"
+                                rows="3"
+                                @input="onInput($event)"
+                                @keydown="onKeydown($event)"
+                                role="combobox"
+                                aria-autocomplete="list"
+                                :aria-expanded="mentionActive && mentionResults.length > 0"
+                                aria-haspopup="listbox"
+                                :aria-activedescendant="activeDescendantId"
+                                class="max-w-lg shadow-sm block w-full focus:ring-amber-600 focus:border-amber-600 sm:text-sm border-stone-300 rounded-md font-sans"
+                            >{{ resource.Description }}</textarea>
+                            {% include "/partials/form/mentionDropdown.tpl" %}
+                        </div>
                         <p class="mt-2 text-sm text-stone-500 font-sans">Describe the resource.</p>
                     </div>
                 </div>

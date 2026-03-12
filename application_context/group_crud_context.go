@@ -94,6 +94,8 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 		return nil, err
 	}
 
+	ctx.syncMentionsForGroup(&group)
+
 	ctx.Logger().Info(models.LogActionCreate, "group", &group.ID, group.Name, "Created group", nil)
 
 	ctx.RunAfterPluginHooks("after_group_create", map[string]any{
@@ -194,6 +196,8 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 	if err := tx.Commit().Error; err != nil {
 		return nil, err
 	}
+
+	ctx.syncMentionsForGroup(group)
 
 	ctx.Logger().Info(models.LogActionUpdate, "group", &group.ID, group.Name, "Updated group", nil)
 

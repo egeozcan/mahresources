@@ -7,7 +7,7 @@
         <div>
             <div class="mt-6 sm:mt-5 space-y-6 sm:space-y-5">
                 {% include "/partials/form/createFormTextInput.tpl" with title="Title" name="Name" value=note.Name %}
-                {% include "/partials/form/createFormTextareaInput.tpl" with title="Text" name="Description" value=note.Description %}
+                {% include "/partials/form/createFormTextareaInput.tpl" with title="Text" name="Description" value=note.Description mentionTypes="resource,group,tag" %}
 
 
                 <div class="mt-6 sm:mt-5 space-y-6 sm:space-y-5">

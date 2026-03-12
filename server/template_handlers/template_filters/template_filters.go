@@ -65,4 +65,10 @@ func init() {
 	if entityPathErr != nil {
 		fmt.Println("error when registering entityPath filter", entityPathErr)
 	}
+
+	mentionsErr := pongo2.RegisterFilter("render_mentions", renderMentionsFilter)
+
+	if mentionsErr != nil {
+		fmt.Println("error when registering render_mentions filter", mentionsErr)
+	}
 }

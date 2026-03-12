@@ -7,8 +7,8 @@
     <template x-if="!editing">
         <div class="contents" @dblclick="editing = !!descriptionEditUrl" title="Double-click to edit">
             {% autoescape off %}
-                {% if !preview %}{{ description|markdown2 }}{% endif %}
-                {% if preview %}{{ description|markdown|truncatechars_html:250 }}{% endif %}
+                {% if !preview %}{{ description|markdown2|render_mentions }}{% endif %}
+                {% if preview %}{{ description|markdown|render_mentions|truncatechars_html:250 }}{% endif %}
             {% endautoescape %}
         </div>
     </template>

@@ -46,16 +46,18 @@ func (s *SQLiteFTS) setupTable(db *gorm.DB, config EntityFTSConfig) error {
 		if err := db.Exec(createSQL).Error; err != nil {
 			return fmt.Errorf("failed to create FTS table %s: %w", ftsTableName, err)
 		}
+	}
 
-		// Create triggers to keep FTS in sync
-		if err := s.createTriggers(db, config); err != nil {
-			return err
-		}
+	// Always ensure triggers exist (idempotent via IF NOT EXISTS)
+	if err := s.createTriggers(db, config); err != nil {
+		return err
+	}
 
-		// Initial population of FTS table
-		if err := s.populateFTS(db, config); err != nil {
-			return err
-		}
+	// Rebuild FTS index from source table to ensure it's in sync.
+	// FTS5 'rebuild' re-reads all rows from the external content table.
+	rebuildSQL := fmt.Sprintf("INSERT INTO %s(%s) VALUES('rebuild')", ftsTableName, ftsTableName)
+	if err := db.Exec(rebuildSQL).Error; err != nil {
+		return fmt.Errorf("failed to rebuild FTS table %s: %w", ftsTableName, err)
 	}
 
 	return nil
