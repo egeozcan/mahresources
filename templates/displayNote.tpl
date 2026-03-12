@@ -26,14 +26,8 @@
         </div>
     </div>
 
-    {# Block Editor - shows blocks if available, otherwise falls back to description #}
-    {% if note.Blocks && note.Blocks|length > 0 %}
-        {% include "/partials/blockEditor.tpl" with noteId=note.ID blocks=note.Blocks %}
-    {% else %}
-        {% include "/partials/description.tpl" with description=note.Description preview=false %}
-        {# Show empty block editor for adding blocks #}
-        {% include "/partials/blockEditor.tpl" with noteId=note.ID blocks=note.Blocks %}
-    {% endif %}
+    {% include "/partials/description.tpl" with description=note.Description preview=false %}
+    {% include "/partials/blockEditor.tpl" with noteId=note.ID blocks=note.Blocks %}
 
     {% include "/partials/seeAll.tpl" with entities=note.Groups subtitle="Groups" formAction="/groups" formID=note.ID formParamName="notes" templateName="group" %}
     {% include "/partials/seeAll.tpl" with entities=note.Resources subtitle="Resources" formAction="/resources" addAction="/resource/new" addFormSecondParamName="ownerId" addFormSecondParamValue=note.OwnerId formID=note.ID formParamName="notes" templateName="resource" %}
