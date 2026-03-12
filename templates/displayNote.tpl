@@ -26,7 +26,11 @@
         </div>
     </div>
 
-    {% include "/partials/description.tpl" with description=note.Description preview=false %}
+    {# Show description only when no blocks exist, because syncFirstTextBlockToDescription
+       copies the first text block into note.Description — rendering both would duplicate content. #}
+    {% if !note.Blocks || note.Blocks|length == 0 %}
+        {% include "/partials/description.tpl" with description=note.Description preview=false %}
+    {% endif %}
     {% include "/partials/blockEditor.tpl" with noteId=note.ID blocks=note.Blocks %}
 
     {% include "/partials/seeAll.tpl" with entities=note.Groups subtitle="Groups" formAction="/groups" formID=note.ID formParamName="notes" templateName="group" %}

@@ -25,13 +25,17 @@ func renderMentionsFilter(in *pongo2.Value, _ *pongo2.Value) (*pongo2.Value, *po
 		return in, nil
 	}
 
-	mentions := lib.ParseMentions(text)
+	mentions := lib.ParseAllMentions(text)
 	if len(mentions) == 0 {
 		return in, nil
 	}
 
 	for _, m := range mentions {
 		marker := m.OriginalMatch
+		// Skip if this exact marker was already replaced by a previous iteration
+		if !strings.Contains(text, marker) {
+			continue
+		}
 		escapedName := html.EscapeString(m.Name)
 
 		path, ok := entityPaths[m.Type]

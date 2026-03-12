@@ -58,6 +58,37 @@ func ParseMentions(text string) []Mention {
 	return result
 }
 
+// ParseAllMentions extracts every @[type:id:name] marker from text without deduplication.
+// This is used by the rendering filter where different name spellings of the same entity
+// (e.g. @[group:1:Old Name] and @[group:1:New Name]) each need their own replacement.
+func ParseAllMentions(text string) []Mention {
+	matches := mentionPattern.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	var result []Mention
+	for _, match := range matches {
+		typ := strings.ToLower(match[1])
+		idStr := match[2]
+		name := match[3]
+
+		id, err := strconv.ParseUint(idStr, 10, 64)
+		if err != nil || id == 0 {
+			continue
+		}
+
+		result = append(result, Mention{
+			Type:          typ,
+			ID:            uint(id),
+			Name:          name,
+			OriginalMatch: match[0],
+		})
+	}
+
+	return result
+}
+
 // htmlTagPattern matches HTML tags for stripping in line-only checks.
 var htmlTagPattern = regexp.MustCompile(`<[^>]*>`)
 
