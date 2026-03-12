@@ -45,6 +45,10 @@ import { groupTree } from './components/groupTree.js';
 import { pluginSettings } from './components/pluginSettings.js';
 import { pluginActionModal } from './components/pluginActionModal.js';
 import { cardActionMenu } from './components/cardActionMenu.js';
+import { mentionTextarea } from './components/mentionTextarea.js';
+
+// Import utility modules
+import { renderMentions } from './utils/renderMentions.js';
 
 // Import web components
 import './webcomponents/expandabletext.js';
@@ -62,6 +66,7 @@ window.addMetaToGroup = addMetaToGroup;
 window.addMetaToResource = addMetaToResource;
 window.renderJsonTable = renderJsonTable;
 window.generateParamNameForMeta = generateParamNameForMeta;
+window.renderMentions = renderMentions;
 window.getJSONValue = getJSONValue;
 window.getJSONOrObjValue = getJSONOrObjValue;
 
@@ -108,6 +113,7 @@ Alpine.data('groupTree', groupTree);
 Alpine.data('pluginSettings', pluginSettings);
 Alpine.data('pluginActionModal', pluginActionModal);
 Alpine.data('cardActionMenu', cardActionMenu);
+Alpine.data('mentionTextarea', mentionTextarea);
 
 // Expose Alpine globally for debugging and morph usage
 window.Alpine = Alpine;

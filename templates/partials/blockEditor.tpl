@@ -71,17 +71,26 @@
                     <template x-if="block.type === 'text'">
                         <div>
                             <template x-if="!editMode">
-                                <div class="prose max-w-none font-sans" x-html="renderMarkdown(block.content?.text || '')"></div>
+                                <div class="prose max-w-none font-sans" x-html="renderMarkdown(renderMentions(block.content?.text || ''))"></div>
                             </template>
                             <template x-if="editMode">
                                 <div x-data="blockText(block, (id, content) => updateBlockContent(id, content), (id, content) => updateBlockContentDebounced(id, content))">
-                                    <textarea
-                                        x-model="text"
-                                        @input="onInput()"
-                                        @blur="save()"
-                                        class="w-full min-h-[100px] p-2 border border-stone-300 rounded resize-y"
-                                        placeholder="Enter text..."
-                                    ></textarea>
+                                    <div class="relative" x-data="mentionTextarea('resource,group,tag')" @input="onInput($event)">
+                                        <textarea
+                                            x-ref="mentionInput"
+                                            x-model="text"
+                                            @input="$parent.onInput()"
+                                            @keydown="onKeydown($event)"
+                                            @blur="$parent.save()"
+                                            class="w-full min-h-[100px] p-2 border border-stone-300 rounded resize-y"
+                                            placeholder="Enter text..."
+                                            role="combobox"
+                                            aria-autocomplete="list"
+                                            :aria-expanded="mentionActive && mentionResults.length > 0"
+                                            aria-haspopup="listbox"
+                                        ></textarea>
+                                        {% include "/partials/form/mentionDropdown.tpl" %}
+                                    </div>
                                 </div>
                             </template>
                         </div>
