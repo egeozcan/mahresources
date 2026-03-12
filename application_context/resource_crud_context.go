@@ -292,6 +292,8 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 		return nil, err
 	}
 
+	ctx.syncMentionsForResource(&resource)
+
 	ctx.Logger().Info(models.LogActionUpdate, "resource", &resource.ID, resource.Name, "Updated resource", nil)
 
 	ctx.RunAfterPluginHooks("after_resource_update", map[string]any{

@@ -157,6 +157,8 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 		return nil, err
 	}
 
+	ctx.syncMentionsForNote(&note)
+
 	if noteQuery.ID == 0 {
 		ctx.Logger().Info(models.LogActionCreate, "note", &note.ID, note.Name, "Created note", nil)
 	} else {

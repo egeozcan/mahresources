@@ -1,0 +1,117 @@
+package application_context
+
+import (
+	"encoding/json"
+	"log"
+
+	"mahresources/lib"
+	"mahresources/models"
+)
+
+// syncMentionsForNote parses @-mentions from the note's description and block content,
+// then adds any referenced entities as relations.
+func (ctx *MahresourcesContext) syncMentionsForNote(note *models.Note) {
+	text := note.Description
+
+	// Also gather text from note blocks
+	var blocks []models.NoteBlock
+	if err := ctx.db.Where("note_id = ? AND type = ?", note.ID, "text").Find(&blocks).Error; err == nil {
+		for _, block := range blocks {
+			var content struct {
+				Text string `json:"text"`
+			}
+			if json.Unmarshal(block.Content, &content) == nil {
+				text += "\n" + content.Text
+			}
+		}
+	}
+
+	mentions := lib.ParseMentions(text)
+	if len(mentions) == 0 {
+		return
+	}
+
+	grouped := lib.GroupMentionsByType(mentions)
+
+	if ids, ok := grouped["tag"]; ok {
+		if err := ctx.AddTagsToNote(note.ID, ids); err != nil {
+			log.Printf("mention sync: failed to add tags to note %d: %v", note.ID, err)
+		}
+	}
+	if ids, ok := grouped["group"]; ok {
+		if err := ctx.AddGroupsToNote(note.ID, ids); err != nil {
+			log.Printf("mention sync: failed to add groups to note %d: %v", note.ID, err)
+		}
+	}
+	if ids, ok := grouped["resource"]; ok {
+		if err := ctx.AddResourcesToNote(note.ID, ids); err != nil {
+			log.Printf("mention sync: failed to add resources to note %d: %v", note.ID, err)
+		}
+	}
+}
+
+// syncMentionsForGroup parses @-mentions from the group's description
+// and adds any referenced entities as relations.
+func (ctx *MahresourcesContext) syncMentionsForGroup(group *models.Group) {
+	mentions := lib.ParseMentions(group.Description)
+	if len(mentions) == 0 {
+		return
+	}
+
+	grouped := lib.GroupMentionsByType(mentions)
+
+	if ids, ok := grouped["tag"]; ok {
+		tags := BuildAssociationSlice(ids, TagFromID)
+		if err := ctx.db.Model(group).Association("Tags").Append(&tags); err != nil {
+			log.Printf("mention sync: failed to add tags to group %d: %v", group.ID, err)
+		}
+	}
+	if ids, ok := grouped["note"]; ok {
+		notes := BuildAssociationSlice(ids, NoteFromID)
+		if err := ctx.db.Model(group).Association("RelatedNotes").Append(&notes); err != nil {
+			log.Printf("mention sync: failed to add notes to group %d: %v", group.ID, err)
+		}
+	}
+	if ids, ok := grouped["resource"]; ok {
+		resources := BuildAssociationSlice(ids, ResourceFromID)
+		if err := ctx.db.Model(group).Association("RelatedResources").Append(&resources); err != nil {
+			log.Printf("mention sync: failed to add resources to group %d: %v", group.ID, err)
+		}
+	}
+	if ids, ok := grouped["group"]; ok {
+		groups := BuildAssociationSlice(ids, GroupFromID)
+		if err := ctx.db.Model(group).Association("RelatedGroups").Append(&groups); err != nil {
+			log.Printf("mention sync: failed to add groups to group %d: %v", group.ID, err)
+		}
+	}
+}
+
+// syncMentionsForResource parses @-mentions from the resource's description
+// and adds any referenced entities as relations.
+func (ctx *MahresourcesContext) syncMentionsForResource(resource *models.Resource) {
+	mentions := lib.ParseMentions(resource.Description)
+	if len(mentions) == 0 {
+		return
+	}
+
+	grouped := lib.GroupMentionsByType(mentions)
+
+	if ids, ok := grouped["tag"]; ok {
+		tags := BuildAssociationSlice(ids, TagFromID)
+		if err := ctx.db.Model(resource).Association("Tags").Append(&tags); err != nil {
+			log.Printf("mention sync: failed to add tags to resource %d: %v", resource.ID, err)
+		}
+	}
+	if ids, ok := grouped["note"]; ok {
+		notes := BuildAssociationSlice(ids, NoteFromID)
+		if err := ctx.db.Model(resource).Association("Notes").Append(&notes); err != nil {
+			log.Printf("mention sync: failed to add notes to resource %d: %v", resource.ID, err)
+		}
+	}
+	if ids, ok := grouped["group"]; ok {
+		groups := BuildAssociationSlice(ids, GroupFromID)
+		if err := ctx.db.Model(resource).Association("Groups").Append(&groups); err != nil {
+			log.Printf("mention sync: failed to add groups to resource %d: %v", resource.ID, err)
+		}
+	}
+}

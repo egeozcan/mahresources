@@ -708,6 +708,8 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 		return nil, err
 	}
 
+	ctx.syncMentionsForResource(res)
+
 	ctx.Logger().Info(models.LogActionCreate, "resource", &res.ID, res.Name, "Created resource", nil)
 
 	ctx.RunAfterPluginHooks("after_resource_create", map[string]any{
