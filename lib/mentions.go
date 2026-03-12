@@ -58,16 +58,26 @@ func ParseMentions(text string) []Mention {
 	return result
 }
 
+// htmlTagPattern matches HTML tags for stripping in line-only checks.
+var htmlTagPattern = regexp.MustCompile(`<[^>]*>`)
+
 // IsMentionOnlyOnLine returns true if the given marker string is the only
-// non-whitespace content on its line within the full text.
+// non-whitespace, non-HTML content on its line within the full text.
 // This is used to determine whether a mention should render as a standalone
 // embed or as an inline link.
+// It handles both plain text and HTML-wrapped text (e.g. after markdown processing
+// wraps standalone lines in <p> tags).
 func IsMentionOnlyOnLine(fullText, marker string) bool {
 	lines := strings.Split(fullText, "\n")
 	for _, line := range lines {
 		if strings.Contains(line, marker) {
 			trimmed := strings.TrimSpace(line)
 			if trimmed == marker {
+				return true
+			}
+			// After markdown, the line may be wrapped in HTML tags like <p>...</p>
+			stripped := strings.TrimSpace(htmlTagPattern.ReplaceAllString(trimmed, ""))
+			if stripped == marker {
 				return true
 			}
 		}

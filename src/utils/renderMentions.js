@@ -48,7 +48,8 @@ export function renderMentions(text) {
 }
 
 /**
- * Check if a mention marker is the only non-whitespace content on its line.
+ * Check if a mention marker is the only non-whitespace, non-HTML content on its line.
+ * Handles both plain text and HTML-wrapped text (e.g. after markdown wraps lines in <p> tags).
  * @param {string} fullText - The full text
  * @param {string} marker - The exact marker string to check
  * @returns {boolean}
@@ -57,7 +58,13 @@ function isMentionOnlyOnLine(fullText, marker) {
     const lines = fullText.split('\n');
     for (const line of lines) {
         if (line.includes(marker)) {
-            if (line.trim() === marker) {
+            const trimmed = line.trim();
+            if (trimmed === marker) {
+                return true;
+            }
+            // After markdown, the line may be wrapped in HTML tags like <p>...</p>
+            const stripped = trimmed.replace(/<[^>]*>/g, '').trim();
+            if (stripped === marker) {
                 return true;
             }
         }

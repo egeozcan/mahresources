@@ -9,7 +9,8 @@ import (
 	"mahresources/lib"
 )
 
-func renderMentionsFilter(in *pongo2.Value, _ *pongo2.Value) (*pongo2.Value, *pongo2.Error) {
+func renderMentionsFilter(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *pongo2.Error) {
+	preview := param != nil && param.String() == "preview"
 	interfaceVal := in.Interface()
 	var text string
 
@@ -42,7 +43,7 @@ func renderMentionsFilter(in *pongo2.Value, _ *pongo2.Value) (*pongo2.Value, *po
 		var replacement string
 
 		if m.Type == "resource" {
-			if lib.IsMentionOnlyOnLine(text, marker) {
+			if !preview && lib.IsMentionOnlyOnLine(text, marker) {
 				replacement = fmt.Sprintf(
 					`<a href="%s?id=%d" class="mention-card">`+
 						`<img src="/v1/resource/preview?id=%d" alt="%s" class="mention-card-thumb">`+
