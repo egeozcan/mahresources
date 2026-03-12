@@ -71,7 +71,7 @@
                     <template x-if="block.type === 'text'">
                         <div>
                             <template x-if="!editMode">
-                                <div class="prose max-w-none font-sans" x-html="renderMarkdown(renderMentions(block.content?.text || ''))"></div>
+                                <div class="prose max-w-none font-sans" x-html="renderMentions(renderMarkdown(block.content?.text || ''))"></div>
                             </template>
                             <template x-if="editMode">
                                 <div x-data="blockText(block, (id, content) => updateBlockContent(id, content), (id, content) => updateBlockContentDebounced(id, content))">

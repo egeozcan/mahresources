@@ -1986,6 +1986,7 @@ html {
     display: inline-block !important;
     height: 1.25em;
     width: auto;
+    max-width: 4em;
     vertical-align: text-bottom;
     border-radius: 0.25rem;
     margin-right: 0.2em;
@@ -2026,6 +2027,27 @@ html {
     white-space: nowrap;
     padding: 0.375rem 0.5rem;
     border-top: 1px solid #e7e5e4;
+}
+
+/* Compact mention cards inside list view cards */
+.card-description .mention-card {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.375rem;
+}
+
+.card-description .mention-card-thumb {
+    max-width: 3rem;
+    max-height: 3rem;
+    object-fit: cover;
+    border-radius: 0.25rem;
+    flex-shrink: 0;
+}
+
+.card-description .mention-card-name {
+    border-top: none;
+    padding: 0.25rem 0.375rem 0.25rem 0;
+    font-size: 0.75rem;
 }
 
 .mention-badge {

@@ -140,6 +140,14 @@ func (ctx *MahresourcesContext) UpdateBlockContent(blockID uint, content json.Ra
 		return nil, err
 	}
 
+	// Sync mention relations after block content changes
+	if block.Type == "text" {
+		var note models.Note
+		if err := ctx.db.First(&note, block.NoteID).Error; err == nil {
+			ctx.syncMentionsForNote(&note)
+		}
+	}
+
 	return &block, nil
 }
 
