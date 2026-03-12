@@ -110,6 +110,18 @@ export function mentionTextarea(allowedTypes = '') {
                 return;
             }
 
+            // Skip if this @ is part of a completed marker (@[type:id:name])
+            if (value[atPos + 1] === '[') {
+                // Check if there's a closing ] between atPos and cursor
+                const closingBracket = value.indexOf(']', atPos);
+                if (closingBracket !== -1 && closingBracket < cursorPos) {
+                    if (this.mentionActive) {
+                        this.closeMention();
+                    }
+                    return;
+                }
+            }
+
             const query = value.substring(atPos + 1, cursorPos);
 
             // Close if query contains a newline
