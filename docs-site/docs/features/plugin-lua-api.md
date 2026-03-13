@@ -712,6 +712,23 @@ mah.abort("Invalid input: name is required")
 
 In before hooks, this cancels the entity operation. In action handlers, this returns `{ success = false, message = reason }`.
 
+## mah.html_escape(str)
+
+Escapes a string for safe HTML output. Replaces `&`, `<`, `>`, `"`, and `'` with their HTML entity equivalents.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `str` | string | The string to escape |
+
+Returns the escaped string.
+
+```lua
+local safe = mah.html_escape('<script>alert("xss")</script>')
+-- Result: &lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;
+```
+
+Use this in `render_view` and `render_edit` functions to prevent XSS when rendering user-provided content.
+
 ## Job Progress Functions
 
 Available in async action handlers and `mah.start_job` callbacks. See [Plugin Actions](./plugin-actions.md) for full details.

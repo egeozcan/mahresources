@@ -62,7 +62,7 @@ Type at least 2 characters. Results appear as a flat list ranked by relevance, e
 | Enter | Open selected result |
 | Escape | Close search dialog |
 
-Results are cached server-side for 60 seconds. The default result limit is 20 (max 50).
+Results are cached server-side for 60 seconds. The default result limit is 15 (server max: 50).
 
 ## List Views
 
@@ -178,7 +178,7 @@ Each section includes:
 |----------|---------|--------|
 | Cmd/Ctrl + K | Any page | Open/close global search |
 | Cmd/Ctrl + Shift + D | Any page | Toggle Download Cockpit |
-| Cmd/Ctrl + V | Any page | Open paste upload modal (when clipboard has content) |
+| Cmd/Ctrl + V | Group or note detail pages | Open paste upload modal (when clipboard has content) |
 | Escape | Any page | Close dialogs, dropdowns, modals, and inline editors |
 
 ### Global Search
@@ -214,6 +214,10 @@ Each section includes:
 | Shift + 1-9 | Toggle recent tag slots (requires quick tag panel open) |
 | 0 | Focus tag editor |
 | Escape | Close lightbox |
+
+### @-Mention Autocomplete
+
+Type `@` in description textareas (on note, group, and resource create/edit forms) to search and link entities. See [Mentions](../features/mentions.md).
 
 ### Autocomplete Dropdowns
 

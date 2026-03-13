@@ -18,7 +18,7 @@ For an overview of Group concepts (ownership vs relationships, deletion behavior
    - **Category** - The type of group (required in the create form; the API allows it to be empty)
    - **Name** - Display name (required)
 4. Optionally add:
-   - **Description** - Text describing the group
+   - **Description** - Text describing the group. Type `@` to mention and link to resources, notes, other groups, or tags (see [Mentions](../features/mentions.md))
    - **URL** - External link associated with the group
    - **Tags** - Labels for the group itself
    - **Groups** - Related groups
@@ -57,6 +57,7 @@ Project Alpha (Group)
 - **Breadcrumbs** - Show the path from root to current group
 - **Own Entities > Sub-Groups** - Lists direct children
 - **Owner** - Shows the parent group in the sidebar
+- **Tree View** - Navigate to `/group/tree` for a visual tree of the full group hierarchy
 
 ### Viewing Group Contents
 

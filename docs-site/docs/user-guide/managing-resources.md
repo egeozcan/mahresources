@@ -19,7 +19,7 @@ Resources are files of any type: images, documents, videos, or anything else you
 3. Use the file picker to select one or more files
 4. Fill in optional metadata:
    - **Name** - Display name (defaults to filename if left empty)
-   - **Description** - Text description of the resource
+   - **Description** - Text description of the resource. Type `@` to mention and link to notes, groups, or tags (see [Mentions](../features/mentions.md))
    - **Tags** - Labels for organization
    - **Groups** - Associate with groups
    - **Notes** - Link to existing notes
@@ -64,7 +64,7 @@ The paste upload modal supports:
 
 - **Batch uploads** -- paste multiple items and upload them together
 - **Duplicate detection** -- if a file with the same hash already exists, the modal shows the existing resource ID
-- **Context awareness** -- when pasting on a group page, the uploaded resource is associated with that group automatically
+- **Context awareness** -- when pasting on a group or note detail page, or a list view filtered by a single owner, the uploaded resource is associated with that entity automatically
 - **Auto-close** -- the modal closes and the page refreshes after a successful upload
 
 ## Viewing Resources

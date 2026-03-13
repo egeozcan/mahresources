@@ -11,7 +11,7 @@ The job system aggregates download queue jobs and plugin action jobs into a sing
 
 | Source | Origin | ID Format | Max Concurrent |
 |--------|--------|-----------|---------------|
-| `download` | Download queue | Random 16-char hex | 3 |
+| `download` | Download queue | Random 8-char hex | 3 |
 | `plugin` | Async plugin actions and `mah.start_job()` | Random 16-char hex | 3 |
 
 Both job types share the same SSE infrastructure. Download jobs are also available via a dedicated listing endpoint (`/v1/jobs/queue`), while plugin action jobs appear only in the SSE event stream (via the `init` payload and subsequent `action_*` events).

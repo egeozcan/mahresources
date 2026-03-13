@@ -58,7 +58,7 @@ Filter log entries by combining any of these parameters:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `level` | string | Filter by level: `info`, `warning`, `error` |
-| `action` | string | Filter by action: `create`, `update`, `delete`, `system`, `progress` |
+| `action` | string | Filter by action: `create`, `update`, `delete`, `system`, `progress`, `plugin` |
 | `entityType` | string | Filter by entity kind |
 | `entityId` | uint | Filter by specific entity ID |
 | `Message` | string | Search by log message |

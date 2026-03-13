@@ -60,6 +60,11 @@ services:
       - DB_DSN=/app/data/mahresources.db
       - FILE_SAVE_PATH=/app/files
       - BIND_ADDRESS=0.0.0.0:8181
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8181/notes"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
   app-data:    # persist database across restarts
@@ -156,7 +161,7 @@ docker compose up -d
 
 ## Template Dockerfile
 
-The repository includes a Dockerfile. The repository Dockerfile is configured for development/testing (it uses `test.db` as the default database name and sets `SKIP_FTS=1`, which disables full-text search). The template below is a production-ready alternative:
+The repository includes a Dockerfile. The repository Dockerfile is configured for development/testing (it uses `test.db` as the default database name and sets `SKIP_FTS=1`, which disables full-text search). The repository `docker-compose.yml` is also a test/CI setup (it includes a Playwright service for E2E tests) and is not a production deployment template. The template below is a production-ready alternative:
 
 ```dockerfile
 # Stage 1: Build frontend assets
@@ -169,7 +174,7 @@ COPY index.css vite.config.js postcss.config.js ./
 RUN npm run build-css && npm run build-js
 
 # Stage 2: Build Go binary
-FROM golang:1.24-alpine AS go-builder
+FROM golang:1.23-alpine AS go-builder
 RUN apk add --no-cache gcc musl-dev sqlite-dev
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -186,7 +191,9 @@ WORKDIR /app
 COPY --from=go-builder /app/mahresources .
 COPY --from=go-builder /app/templates ./templates
 COPY --from=go-builder /app/public ./public
-RUN mkdir -p /app/data /app/files
+RUN addgroup -S mahres && adduser -S mahres -G mahres
+RUN mkdir -p /app/data /app/files && chown -R mahres:mahres /app
+USER mahres
 ENV DB_TYPE=SQLITE
 ENV DB_DSN=/app/data/mahresources.db
 ENV FILE_SAVE_PATH=/app/files

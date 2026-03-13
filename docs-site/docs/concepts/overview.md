@@ -146,3 +146,5 @@ These bulk operations apply to Resources, Groups, and Notes. The available opera
 | **Resource** | Deleted independently; file removed from storage only if no other resources or versions reference the same hash |
 | **Note** | Deleted independently |
 | **Category** | Cascade-deletes all Groups assigned to that Category |
+| **Note Type** | Cascade-deletes all Notes of that type |
+| **Resource Category** | Cascade-deletes all Resources of that category |

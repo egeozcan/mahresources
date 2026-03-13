@@ -16,7 +16,7 @@ Create, edit, and organize text content with date ranges, block-based editing, m
 2. Click the **Create** button
 3. Fill in the note fields:
    - **Title** - The note's display name (required)
-   - **Text** - The main content of the note
+   - **Text** - The main content of the note. Type `@` to mention and link to resources, groups, or tags (see [Mentions](../features/mentions.md))
    - **Start Date** - Optional start date/time
    - **End Date** - Optional end date/time
 4. Click **Save**

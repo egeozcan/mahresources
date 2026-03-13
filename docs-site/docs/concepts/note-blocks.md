@@ -117,6 +117,15 @@ Data table with two modes: manual data (columns/rows) or query-driven.
 }
 ```
 
+Columns can also be objects with `id` and `label` fields. Rows can be arrays of values or objects keyed by column IDs:
+
+```json
+{
+  "columns": [{"id": "name", "label": "Name"}, {"id": "size", "label": "Size"}],
+  "rows": [{"name": "photo.jpg", "size": "2.4 MB"}]
+}
+```
+
 **Query mode:**
 ```json
 {
@@ -169,14 +178,16 @@ Calendar view from iCal sources (URL or stored Resource) with optional custom ev
       "start": "2024-06-20T10:00:00Z",
       "end": "2024-06-20T11:00:00Z",
       "allDay": false,
-      "calendarId": "custom"
+      "calendarId": "custom",
+      "location": "Room 301",
+      "description": "Quarterly sync"
     }
   ]
 }
 ```
 
 - `state.view`: `month`, `week`, or `agenda`
-- `state.customEvents`: User-created events (max 500 per block, each with `calendarId` set to `"custom"`)
+- `state.customEvents`: User-created events (max 500 per block, each with `calendarId` set to `"custom"`). Each event can include optional `location` (string) and `description` (string) fields.
 - ICS files are capped at 10MB. Recurring events (RRULE) are not supported.
 
 ## Position Ordering

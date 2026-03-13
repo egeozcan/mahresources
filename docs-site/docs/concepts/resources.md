@@ -31,6 +31,14 @@ Every file in Mahresources is a Resource: images, documents, videos, or anything
 | `ownMeta` | Resource-specific metadata when in a Series (diff from Series meta) |
 | `ownerId` | FK to owner Group |
 | `currentVersionId` | ID of the active version (see [Versioning](#resource-versioning)) |
+| `createdAt` | Creation timestamp |
+| `updatedAt` | Last update timestamp |
+
+:::tip @-Mentions in descriptions
+
+Resource descriptions support @-mentions — type `@` in the description field to search and link to notes, groups, and tags. Mentioned entities are automatically added as relations when you save. See [Mentions](../features/mentions.md).
+
+:::
 
 ## File Storage
 

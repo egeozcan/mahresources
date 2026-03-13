@@ -13,8 +13,8 @@ There is **no built-in authentication**. Never expose the server directly to the
 ## Prerequisites
 
 ### Building from Source
-- **Go 1.22+** - [Download Go](https://go.dev/dl/)
-- **Node.js 20.19+** - [Download Node.js](https://nodejs.org/)
+- **Go 1.22.5+** - [Download Go](https://go.dev/dl/)
+- **Node.js 20+** - [Download Node.js](https://nodejs.org/)
 
 ### Docker
 - **Docker 20+** - [Install Docker](https://docs.docker.com/get-docker/)
@@ -56,6 +56,10 @@ docker run -p 8181:8181 \
 ```
 
 The persistent storage example stores the database as `data/test.db` (the Dockerfile default). See the [Docker deployment guide](../deployment/docker) for compose files, custom database names, and production setup.
+
+:::note
+The default Docker image disables full-text search (`SKIP_FTS=1`). To enable search, add `-e SKIP_FTS=0` to your `docker run` command.
+:::
 
 ## Optional Dependencies
 

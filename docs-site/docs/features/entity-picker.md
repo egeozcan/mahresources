@@ -54,8 +54,8 @@ export const entityConfigs = {
     entityType: 'note',
     entityLabel: 'Notes',
     searchEndpoint: '/v1/notes',
-    searchParams: (query, filters) => {
-      const params = new URLSearchParams({ MaxResults: '50' });
+    searchParams: (query, filters, maxResults) => {
+      const params = new URLSearchParams({ MaxResults: String(maxResults) });
       if (query) params.set('name', query);
       if (filters.noteType) params.set('noteTypeId', filters.noteType);
       return params;

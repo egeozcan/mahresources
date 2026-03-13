@@ -51,7 +51,7 @@ When you select one or more items, the bulk editor appears inline above the list
 | Add Groups | Yes | Yes | - | - |
 | Update Dimensions | Yes | - | - | - |
 | Compare | Yes (2 only) | - | - | - |
-| Merge | Yes | - | - | Yes |
+| Merge | Detail page only | - | - | Yes |
 | Delete | Yes | Yes | Yes | Yes |
 
 ## Adding Tags
@@ -140,11 +140,7 @@ Merge resources from two locations:
 2. Click **Merge Others To This**
 3. Confirm the merge
 
-**From bulk selection** in the resource list:
-
-1. Select the resources to merge
-2. Use the merge operation
-3. Select the winner resource (the one to keep)
+Resource merge is only available from the similar resources section on a resource detail page, not from bulk selection.
 
 The merge operation:
 - Keeps the winner resource

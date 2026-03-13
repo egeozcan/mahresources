@@ -19,6 +19,14 @@ Groups are hierarchical containers that organize Resources, Notes, and other Gro
 | `meta` | JSON | Arbitrary key-value metadata (defaults to `{}`) |
 | `ownerId` | integer | FK to parent Group |
 | `categoryId` | integer | FK to Category for typing |
+| `createdAt` | datetime | Creation timestamp |
+| `updatedAt` | datetime | Last update timestamp |
+
+:::tip @-Mentions in descriptions
+
+Group descriptions support @-mentions — type `@` to search and link to resources, notes, other groups, and tags. For groups, removing a resource or note mention from the description removes that relation on save (unlike notes, where mentions are additive only). Tag and group mentions are always additive. See [Mentions](../features/mentions.md).
+
+:::
 
 ## Hierarchical Organization
 

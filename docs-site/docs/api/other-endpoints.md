@@ -724,6 +724,7 @@ GET /v1/seriesList
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
+| `page` | integer | Page number for pagination |
 | `Name` | string | Filter by name (partial match) |
 | `Slug` | string | Filter by slug |
 | `CreatedBefore` | string | Filter by creation date (ISO 8601) |

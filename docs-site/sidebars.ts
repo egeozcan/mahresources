@@ -69,6 +69,7 @@ const sidebars: SidebarsConfig = {
         'features/plugin-actions',
         'features/plugin-hooks',
         'features/plugin-lua-api',
+        'features/mentions',
       ],
     },
     {

@@ -142,6 +142,7 @@ The handler receives a context table:
 | `method` | string | HTTP method (`GET` or `POST`) |
 | `query` | table | URL query parameters as key-value pairs |
 | `headers` | table | HTTP request headers as key-value pairs |
+| `params` | table | Form-decoded parameters (for POST requests) |
 | `body` | string | Request body (for POST requests) |
 
 ```lua

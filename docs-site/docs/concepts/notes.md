@@ -52,6 +52,9 @@ Deleting a Note Type **cascade-deletes all Notes** of that type. This cannot be 
 | `customHeader` | HTML template for the Note display header |
 | `customSidebar` | HTML template for the sidebar |
 | `customSummary` | HTML template for list views |
+| `description` | Optional description of the note type |
+| `createdAt` | Creation timestamp |
+| `updatedAt` | Last update timestamp |
 | `customAvatar` | HTML template for Note avatars |
 
 Templates have access to the `note` object and its metadata via Pongo2 (Django-like) syntax:
@@ -62,6 +65,12 @@ Templates have access to the `note` object and its metadata via Pongo2 (Django-l
   <span class="type-badge">Meeting</span>
 </div>
 ```
+
+:::tip @-Mentions in descriptions
+
+Note descriptions and text blocks support @-mentions — type `@` to search and link to resources, groups, and tags. Mentioned entities are automatically added as relations when you save. Mentions in notes are additive only — removing a mention does not remove the relation. See [Mentions](../features/mentions.md).
+
+:::
 
 ## Block-Based Content
 
