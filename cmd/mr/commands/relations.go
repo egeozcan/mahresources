@@ -124,7 +124,7 @@ func newRelationEditNameCmd(c *client.Client, opts *output.Options) *cobra.Comma
 			q.Set("id", args[0])
 
 			form := url.Values{}
-			form.Set("value", args[1])
+			form.Set("Name", args[1])
 
 			var raw json.RawMessage
 			if err := c.PostForm("/v1/relation/editName", q, form, &raw); err != nil {
@@ -151,7 +151,7 @@ func newRelationEditDescriptionCmd(c *client.Client, opts *output.Options) *cobr
 			q.Set("id", args[0])
 
 			form := url.Values{}
-			form.Set("value", args[1])
+			form.Set("Description", args[1])
 
 			var raw json.RawMessage
 			if err := c.PostForm("/v1/relation/editDescription", q, form, &raw); err != nil {

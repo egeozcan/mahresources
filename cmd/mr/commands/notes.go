@@ -194,7 +194,7 @@ func newNoteEditNameCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			q.Set("id", args[0])
 
 			form := url.Values{}
-			form.Set("value", args[1])
+			form.Set("Name", args[1])
 
 			var raw json.RawMessage
 			if err := c.PostForm("/v1/note/editName", q, form, &raw); err != nil {
@@ -221,7 +221,7 @@ func newNoteEditDescriptionCmd(c *client.Client, opts *output.Options) *cobra.Co
 			q.Set("id", args[0])
 
 			form := url.Values{}
-			form.Set("value", args[1])
+			form.Set("Description", args[1])
 
 			var raw json.RawMessage
 			if err := c.PostForm("/v1/note/editDescription", q, form, &raw); err != nil {

@@ -171,7 +171,7 @@ func newResourceCategoryEditNameCmd(c *client.Client, opts *output.Options) *cob
 			q.Set("id", args[0])
 
 			form := url.Values{}
-			form.Set("value", args[1])
+			form.Set("Name", args[1])
 
 			var raw json.RawMessage
 			if err := c.PostForm("/v1/resourceCategory/editName", q, form, &raw); err != nil {
@@ -198,7 +198,7 @@ func newResourceCategoryEditDescriptionCmd(c *client.Client, opts *output.Option
 			q.Set("id", args[0])
 
 			form := url.Values{}
-			form.Set("value", args[1])
+			form.Set("Description", args[1])
 
 			var raw json.RawMessage
 			if err := c.PostForm("/v1/resourceCategory/editDescription", q, form, &raw); err != nil {

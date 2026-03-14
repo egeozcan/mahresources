@@ -152,7 +152,7 @@ func newTagEditNameCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			q.Set("id", args[0])
 
 			form := url.Values{}
-			form.Set("value", args[1])
+			form.Set("Name", args[1])
 
 			var raw json.RawMessage
 			if err := c.PostForm("/v1/tag/editName", q, form, &raw); err != nil {
@@ -179,7 +179,7 @@ func newTagEditDescriptionCmd(c *client.Client, opts *output.Options) *cobra.Com
 			q.Set("id", args[0])
 
 			form := url.Values{}
-			form.Set("value", args[1])
+			form.Set("Description", args[1])
 
 			var raw json.RawMessage
 			if err := c.PostForm("/v1/tag/editDescription", q, form, &raw); err != nil {

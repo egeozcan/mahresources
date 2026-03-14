@@ -222,7 +222,7 @@ func newNoteTypeEditNameCmd(c *client.Client, opts *output.Options) *cobra.Comma
 			q.Set("id", args[0])
 
 			form := url.Values{}
-			form.Set("value", args[1])
+			form.Set("Name", args[1])
 
 			var raw json.RawMessage
 			if err := c.PostForm("/v1/noteType/editName", q, form, &raw); err != nil {
@@ -249,7 +249,7 @@ func newNoteTypeEditDescriptionCmd(c *client.Client, opts *output.Options) *cobr
 			q.Set("id", args[0])
 
 			form := url.Values{}
-			form.Set("value", args[1])
+			form.Set("Description", args[1])
 
 			var raw json.RawMessage
 			if err := c.PostForm("/v1/noteType/editDescription", q, form, &raw); err != nil {
