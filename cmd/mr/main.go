@@ -63,6 +63,8 @@ func main() {
 	rootCmd.AddCommand(commands.NewNoteBlocksCmd(c, opts))
 	rootCmd.AddCommand(commands.NewGroupCmd(c, opts))
 	rootCmd.AddCommand(commands.NewGroupsCmd(c, opts, &page))
+	rootCmd.AddCommand(commands.NewResourceCmd(c, opts))
+	rootCmd.AddCommand(commands.NewResourcesCmd(c, opts, &page))
 	rootCmd.AddCommand(commands.NewRelationCmd(c, opts))
 	rootCmd.AddCommand(commands.NewRelationTypeCmd(c, opts))
 	rootCmd.AddCommand(commands.NewRelationTypesCmd(c, opts, &page))
