@@ -26,8 +26,7 @@
         </div>
     </div>
 
-    {# Show description only when no blocks exist, because syncFirstTextBlockToDescription
-       copies the first text block into note.Description — rendering both would duplicate content. #}
+    {# Show description only when no blocks exist (syncFirstTextBlockToDescription copies first text block into Description). #}
     {% if !note.Blocks || note.Blocks|length == 0 %}
         {% include "/partials/description.tpl" with description=note.Description preview=false %}
     {% endif %}
