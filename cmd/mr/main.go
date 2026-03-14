@@ -51,6 +51,16 @@ func main() {
 
 	rootCmd.AddCommand(commands.NewTagCmd(c, opts))
 	rootCmd.AddCommand(commands.NewTagsCmd(c, opts, &page))
+	rootCmd.AddCommand(commands.NewCategoryCmd(c, opts))
+	rootCmd.AddCommand(commands.NewCategoriesCmd(c, opts, &page))
+	rootCmd.AddCommand(commands.NewResourceCategoryCmd(c, opts))
+	rootCmd.AddCommand(commands.NewResourceCategoriesCmd(c, opts, &page))
+	rootCmd.AddCommand(commands.NewNoteCmd(c, opts))
+	rootCmd.AddCommand(commands.NewNotesCmd(c, opts, &page))
+	rootCmd.AddCommand(commands.NewNoteTypeCmd(c, opts))
+	rootCmd.AddCommand(commands.NewNoteTypesCmd(c, opts, &page))
+	rootCmd.AddCommand(commands.NewNoteBlockCmd(c, opts))
+	rootCmd.AddCommand(commands.NewNoteBlocksCmd(c, opts))
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
