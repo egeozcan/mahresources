@@ -10,6 +10,9 @@ interface RelationType {
   UpdatedAt: string;
 }
 
+// All relation type creates must pass --from-category and --to-category with valid IDs
+// to avoid FK violations with CategoryId=0 in ephemeral SQLite mode.
+
 test.describe('Relation Type create and verify via list', () => {
   const suffix = Date.now();
   const rtName = `test-rt-${suffix}`;
@@ -17,7 +20,7 @@ test.describe('Relation Type create and verify via list', () => {
   let rtId: number;
 
   test('create a relation type with name and description', async ({ cli }) => {
-    const rt = cli.runJson<RelationType>('relation-type', 'create', '--name', rtName, '--description', rtDesc);
+    const rt = cli.runJson<RelationType>('relation-type', 'create', '--name', rtName, '--description', rtDesc, '--from-category', '1', '--to-category', '1');
     expect(rt.ID).toBeGreaterThan(0);
     expect(rt.Name).toBe(rtName);
     expect(rt.Description).toBe(rtDesc);
@@ -65,7 +68,7 @@ test.describe('Relation Type with reverse name', () => {
   });
 
   test('create relation type with --reverse-name', async ({ cli }) => {
-    const rt = cli.runJson<RelationType>('relation-type', 'create', '--name', rtName, '--reverse-name', reverseName);
+    const rt = cli.runJson<RelationType>('relation-type', 'create', '--name', rtName, '--reverse-name', reverseName, '--from-category', '1', '--to-category', '1');
     expect(rt.ID).toBeGreaterThan(0);
     expect(rt.Name).toBe(rtName);
     rtId = rt.ID;
@@ -79,7 +82,7 @@ test.describe('Relation Types list', () => {
 
   test.beforeAll(() => {
     const cli = createCliRunner();
-    const rt = cli.runJson<RelationType>('relation-type', 'create', '--name', rtName);
+    const rt = cli.runJson<RelationType>('relation-type', 'create', '--name', rtName, '--from-category', '1', '--to-category', '1');
     rtId = rt.ID;
   });
 

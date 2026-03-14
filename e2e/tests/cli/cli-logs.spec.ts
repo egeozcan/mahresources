@@ -62,20 +62,22 @@ test.describe('Logs list and filtering', () => {
     }
   });
 
-  test('logs list --entity-type Tag returns results', async ({ cli }) => {
-    const result = cli.runOrFail('logs', 'list', '--entity-type', 'Tag', '--json');
+  test('logs list --entity-type tag returns results', async ({ cli }) => {
+    // The server stores entity types in lowercase
+    const result = cli.runOrFail('logs', 'list', '--entity-type', 'tag', '--json');
     const parsed: LogsListResponse = JSON.parse(result.stdout);
     expect(Array.isArray(parsed.logs)).toBe(true);
     expect(parsed.totalCount).toBeGreaterThan(0);
     for (const log of parsed.logs) {
-      expect(log.entityType).toBe('Tag');
+      expect(log.entityType).toBe('tag');
     }
   });
 
   test('logs list with non-matching filter returns empty or fewer results', async ({ cli }) => {
     const result = cli.runOrFail('logs', 'list', '--message', `nonexistent-filter-${suffix}`, '--json');
     const parsed: LogsListResponse = JSON.parse(result.stdout);
-    expect(Array.isArray(parsed.logs)).toBe(true);
+    // logs can be null or empty array when totalCount is 0
+    expect(parsed.logs === null || Array.isArray(parsed.logs)).toBe(true);
     expect(parsed.totalCount).toBe(0);
   });
 });
@@ -121,13 +123,14 @@ test.describe('Log entity', () => {
   });
 
   test('log entity returns logs for specific entity', async ({ cli }) => {
-    const result = cli.runOrFail('log', 'entity', '--entity-type', 'Tag', '--entity-id', String(tagId), '--json');
+    // The server stores entity types in lowercase
+    const result = cli.runOrFail('log', 'entity', '--entity-type', 'tag', '--entity-id', String(tagId), '--json');
     const parsed: LogsListResponse = JSON.parse(result.stdout);
     expect(Array.isArray(parsed.logs)).toBe(true);
     // Should have at least the create action log
     expect(parsed.logs.length).toBeGreaterThan(0);
     for (const log of parsed.logs) {
-      expect(log.entityType).toBe('Tag');
+      expect(log.entityType).toBe('tag');
       expect(log.entityId).toBe(tagId);
     }
   });
@@ -137,6 +140,6 @@ test.describe('Log entity', () => {
   });
 
   test('log entity without --entity-id fails', async ({ cli }) => {
-    cli.runExpectError('log', 'entity', '--entity-type', 'Tag');
+    cli.runExpectError('log', 'entity', '--entity-type', 'tag');
   });
 });
