@@ -66,10 +66,19 @@ class CliRunner {
 
 Key behaviors:
 - Automatically prepends `--server <serverUrl>` to every command
-- `runJson` appends `--json` and parses output — primary assertion method
+- `runJson` appends `--json` and parses output — primary assertion method. Wraps `JSON.parse` in a try-catch that includes raw stdout in the error message for debugging
 - `runExpectError` for error-case tests (invalid ID, missing entity)
 - 30s timeout per command
 - Captures stdout and stderr separately
+- CLI binary does not need `json1 fts5` build tags (no SQLite dependency)
+
+### Implementation Note: execSync Error Handling
+
+`child_process.execSync` throws on non-zero exit codes. The `run()` method must wrap `execSync` in a try-catch and extract `error.status` (exit code), `error.stderr`, and `error.stdout` from the thrown exception to construct the `CliResult`. This is critical — without it, every non-zero exit will throw instead of returning a result.
+
+### Retry Logic
+
+The CLI binary has no built-in retry for SQLite "database is locked" errors. When the ephemeral server returns HTTP 500 due to lock contention, the CLI command fails. The `CliRunner` includes retry logic: on specific error patterns in stderr/stdout (e.g., "database is locked", "SQLITE_BUSY"), re-run the command up to 3 times with exponential backoff (500ms, 1s, 2s). This mirrors the existing browser E2E `ApiClient.withRetry` pattern.
 
 ### Fixture
 
@@ -100,7 +109,7 @@ New project in `e2e/playwright.config.ts`:
 }
 ```
 
-Workers: same as default (4 local, 1 CI). No dependency on other projects.
+Workers: 2 locally (reduced from default 4 to avoid SQLite lock contention — CLI has no built-in retry), 1 in CI. No dependency on other projects — runs independently of browser test projects. Must explicitly set `use: {}` to avoid inheriting `devices['Desktop Chrome']` from the default project config.
 
 ## Test Organization
 
@@ -111,7 +120,7 @@ Workers: same as default (4 local, 1 CI). No dependency on other projects.
 | `cli-tags.spec.ts` | tag get/create/delete/edit-name/edit-description, tags list/merge/delete | 15 |
 | `cli-notes.spec.ts` | note get/create/delete/edit-name/edit-description/share/unshare, notes list/add-tags/remove-tags/add-groups/add-meta/delete/meta-keys | 22 |
 | `cli-groups.spec.ts` | group get/create/delete/edit-name/edit-description/parents/children/clone, groups list/add-tags/remove-tags/add-meta/delete/merge/meta-keys | 22 |
-| `cli-resources.spec.ts` | resource get/edit/delete/edit-name/edit-description/upload/download/preview/from-url/from-local/rotate/recalc-dims, resources list/add-tags/remove-tags/replace-tags/add-groups/add-meta/delete/merge/set-dimensions/meta-keys | 30 |
+| `cli-resources.spec.ts` | resource get/edit/delete/edit-name/edit-description/upload/download/preview/from-url/from-local/rotate/recalculate-dimensions, resources list/add-tags/remove-tags/replace-tags/add-groups/add-meta/delete/merge/set-dimensions/meta-keys | 30 |
 | `cli-resource-versions.spec.ts` | resource versions/version/version-upload/version-download/version-restore/version-delete/versions-cleanup/versions-compare, resources versions-cleanup | 12 |
 | `cli-categories.spec.ts` | category get/create/delete/edit-name/edit-description, categories list | 8 |
 | `cli-resource-categories.spec.ts` | resource-category get/create/delete/edit-name/edit-description, resource-categories list | 8 |
@@ -152,6 +161,7 @@ Most entity test files follow this structure:
 - Each test creates its own data with unique names (test title + suffix)
 - No shared state between tests — fully self-contained
 - Allows parallel execution within the `cli` project
+- List assertions must filter by the unique name prefix (e.g., `tags list --name "cli-test-xyz"`) rather than asserting on total list length, to avoid interference from parallel tests
 
 ### Assertion Strategy
 
@@ -173,6 +183,27 @@ Best-effort cleanup in `test.afterEach` / `test.afterAll`. Ephemeral server mean
 - Test files from existing `e2e/test-assets/` directory
 - Upload tests use a small text file and a small image
 - Download tests write to a temp directory, verify file contents match
+
+### Known Limitations
+
+- **`resource from-local`**: Requires a path accessible to the *server* process. In ephemeral mode with in-memory filesystem, the server has no pre-existing local files. This command is tested by first uploading a file (which gives it a server-side path), but if the server's filesystem is purely in-memory, there may be no path to reference. If untestable, skip with a comment explaining why.
+- **`resource from-url`**: Server needs to fetch from a URL. Tests use the server's own URL to download an already-uploaded resource (self-referential download), avoiding dependency on external URLs.
+- **`resource upload` response shape**: The upload API may return an array. The CLI currently unmarshals as a single object. Tests should verify the JSON output structure and expose any parsing issues.
+
+## List Filter Tests
+
+Each entity's test file includes tests for its list command's filter flags. These are tested within the entity file, not in a separate file.
+
+Representative filter tests:
+- `tags list --name "partial"` — verify only matching tags returned
+- `notes list --tags 1,2` — verify filtering by tag IDs
+- `notes list --owner-id X` — verify owner filter
+- `notes list --created-before / --created-after` — verify date range filters
+- `groups list --category-id X` — verify category filter
+- `resources list --content-type "text/plain"` — verify content type filter
+- `logs list --level error --action create` — verify log filters
+
+Each list filter test creates 2-3 entities, applies a filter that should match only one, and verifies the filtered results.
 
 ## Error Handling Tests
 
@@ -206,7 +237,8 @@ Best-effort cleanup in `test.afterEach` / `test.afterAll`. Ephemeral server mean
 - **`--json`:** Verify valid JSON with expected fields
 - **`--quiet`:** Verify only IDs printed (one per line)
 - **`--no-header`:** Verify table output without column header row
-- **`--page`:** Verify pagination works (create enough entities, check page 0 vs page 1)
+- **`--page`:** Verify pagination works (create enough entities, check page 0 vs page 1). Note: CLI defaults page to 1 (from main.go). Verify both `--page 0` and `--page 1` return results to validate the pagination interface.
+- **`--quiet` on single-entity commands:** Verify behavior of `--quiet` with `get` commands. `PrintSingle` does not handle `Quiet` mode — this tests and documents the current behavior.
 
 ## Global Flag Tests
 
