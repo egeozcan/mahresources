@@ -2,6 +2,7 @@ package commands
 
 import (
 	"encoding/json"
+	"net/url"
 
 	"mahresources/cmd/mr/client"
 	"mahresources/cmd/mr/output"
@@ -30,10 +31,12 @@ func newPluginEnableCmd(c *client.Client, opts *output.Options) *cobra.Command {
 		Short: "Enable a plugin",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			body := map[string]string{"Name": args[0]}
+			// Server reads name from r.FormValue("name")
+			formData := url.Values{}
+			formData.Set("name", args[0])
 
 			var raw json.RawMessage
-			if err := c.Post("/v1/plugin/enable", nil, body, &raw); err != nil {
+			if err := c.PostForm("/v1/plugin/enable", nil, formData, &raw); err != nil {
 				return err
 			}
 
@@ -53,10 +56,11 @@ func newPluginDisableCmd(c *client.Client, opts *output.Options) *cobra.Command 
 		Short: "Disable a plugin",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			body := map[string]string{"Name": args[0]}
+			formData := url.Values{}
+			formData.Set("name", args[0])
 
 			var raw json.RawMessage
-			if err := c.Post("/v1/plugin/disable", nil, body, &raw); err != nil {
+			if err := c.PostForm("/v1/plugin/disable", nil, formData, &raw); err != nil {
 				return err
 			}
 
@@ -78,13 +82,17 @@ func newPluginSettingsCmd(c *client.Client, opts *output.Options) *cobra.Command
 		Short: "Update plugin settings",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			body := map[string]any{
-				"Name":     args[0],
-				"Settings": json.RawMessage(data),
+			// Server reads name from query or form, then decodes body as settings map
+			q := url.Values{}
+			q.Set("name", args[0])
+
+			var settings map[string]any
+			if err := json.Unmarshal([]byte(data), &settings); err != nil {
+				return err
 			}
 
 			var raw json.RawMessage
-			if err := c.Post("/v1/plugin/settings", nil, body, &raw); err != nil {
+			if err := c.Post("/v1/plugin/settings", q, settings, &raw); err != nil {
 				return err
 			}
 
@@ -109,10 +117,11 @@ func newPluginPurgeDataCmd(c *client.Client, opts *output.Options) *cobra.Comman
 		Short: "Purge all data for a plugin",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			body := map[string]string{"Name": args[0]}
+			formData := url.Values{}
+			formData.Set("name", args[0])
 
 			var raw json.RawMessage
-			if err := c.Post("/v1/plugin/purge-data", nil, body, &raw); err != nil {
+			if err := c.PostForm("/v1/plugin/purge-data", nil, formData, &raw); err != nil {
 				return err
 			}
 
@@ -138,7 +147,7 @@ func NewPluginsCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	return pluginsCmd
 }
 
-func newPluginsListCmd(c *client.Client, opts *output.Options) *cobra.Command {
+func newPluginsListCmd(c *client.Client, _ *output.Options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List plugins and management info",
@@ -148,8 +157,8 @@ func newPluginsListCmd(c *client.Client, opts *output.Options) *cobra.Command {
 				return err
 			}
 
-			// Plugin management info has variable shape; print raw JSON
-			output.PrintSingle(*opts, nil, raw)
+			// Plugin management info has variable shape; always print as JSON
+			output.PrintRawJSON(raw)
 			return nil
 		},
 	}

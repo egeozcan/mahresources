@@ -45,6 +45,8 @@ func newJobSubmitCmd(c *client.Client, opts *output.Options) *cobra.Command {
 		Use:   "submit",
 		Short: "Submit URLs for download",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Server expects ResourceFromRemoteCreator with a single URL field.
+			// Multiple URLs are separated by newlines; the server splits them.
 			urlParts := strings.Split(urlsStr, ",")
 			var urls []string
 			for _, u := range urlParts {
@@ -55,7 +57,7 @@ func newJobSubmitCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			}
 
 			body := map[string]any{
-				"URLs": urls,
+				"URL": strings.Join(urls, "\n"),
 			}
 
 			if tagsStr != "" {
@@ -76,7 +78,7 @@ func newJobSubmitCmd(c *client.Client, opts *output.Options) *cobra.Command {
 				body["Name"] = name
 			}
 			if cmd.Flags().Changed("owner-id") {
-				body["OwnerID"] = ownerID
+				body["OwnerId"] = ownerID
 			}
 
 			var raw json.RawMessage

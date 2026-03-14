@@ -470,7 +470,7 @@ func newResourcePreviewCmd(c *client.Client, _ *output.Options) *cobra.Command {
 
 	cmd.Flags().StringVarP(&outFile, "output", "o", "", "Output file path (default: preview_<id>)")
 	cmd.Flags().UintVarP(&width, "width", "w", 0, "Preview width")
-	cmd.Flags().UintVarP(&height, "height", "h", 0, "Preview height")
+	cmd.Flags().UintVar(&height, "height", 0, "Preview height")
 
 	return cmd
 }
@@ -672,7 +672,7 @@ func newResourceRecalcDimsCmd(c *client.Client, opts *output.Options) *cobra.Com
 				return fmt.Errorf("invalid ID %q: %w", args[0], err)
 			}
 
-			body := map[string]any{"ID": uint(id)}
+			body := map[string]any{"ID": []uint{uint(id)}}
 
 			var raw json.RawMessage
 			if err := c.Post("/v1/resource/recalculateDimensions", nil, body, &raw); err != nil {

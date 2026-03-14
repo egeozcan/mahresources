@@ -54,8 +54,15 @@ func Print(opts Options, columns []string, rows [][]string, rawJSON json.RawMess
 
 // PrintSingle outputs a single entity as key-value pairs.
 // In JSON mode it pretty-prints rawJSON.
+// If no fields are provided but rawJSON is present, prints the JSON regardless of mode.
 func PrintSingle(opts Options, fields []KeyValue, rawJSON json.RawMessage) {
 	if opts.JSON && rawJSON != nil {
+		printJSON(rawJSON)
+		return
+	}
+
+	if len(fields) == 0 && rawJSON != nil {
+		// No structured fields — fall back to printing JSON
 		printJSON(rawJSON)
 		return
 	}
@@ -65,6 +72,12 @@ func PrintSingle(opts Options, fields []KeyValue, rawJSON json.RawMessage) {
 		fmt.Fprintf(w, "%s:\t%s\n", f.Key, f.Value)
 	}
 	w.Flush()
+}
+
+// PrintRawJSON always prints raw JSON, regardless of output mode.
+// Used for endpoints with variable/unknown response shapes.
+func PrintRawJSON(raw json.RawMessage) {
+	printJSON(raw)
 }
 
 // PrintMessage prints a simple message to stdout.

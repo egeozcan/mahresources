@@ -106,12 +106,13 @@ func newLogEntityCmd(c *client.Client, opts *output.Options) *cobra.Command {
 				return err
 			}
 
-			var entries []logEntryResponse
-			if err := json.Unmarshal(raw, &entries); err != nil {
+			// Response is a paginated wrapper like /v1/logs
+			var resp logsListResponse
+			if err := json.Unmarshal(raw, &resp); err != nil {
 				return fmt.Errorf("parsing response: %w", err)
 			}
 
-			printLogEntries(*opts, entries, raw)
+			printLogEntries(*opts, resp.Logs, raw)
 			return nil
 		},
 	}
