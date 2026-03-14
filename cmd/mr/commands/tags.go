@@ -45,28 +45,37 @@ func newTagGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
 		Short: "Get a tag by ID",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			q := url.Values{}
-			q.Set("id", args[0])
+			targetID, err := strconv.ParseUint(args[0], 10, 64)
+			if err != nil {
+				return fmt.Errorf("invalid ID %q: %w", args[0], err)
+			}
 
+			// Tags have no single-get endpoint; fetch list and filter
 			var raw json.RawMessage
-			if err := c.Get("/v1/tags", q, &raw); err != nil {
+			if err := c.Get("/v1/tags", nil, &raw); err != nil {
 				return err
 			}
 
-			var tag tagResponse
-			if err := json.Unmarshal(raw, &tag); err != nil {
+			var tags []tagResponse
+			if err := json.Unmarshal(raw, &tags); err != nil {
 				return fmt.Errorf("parsing response: %w", err)
 			}
 
-			output.PrintSingle(*opts, []output.KeyValue{
-				{Key: "ID", Value: strconv.FormatUint(uint64(tag.ID), 10)},
-				{Key: "Name", Value: tag.Name},
-				{Key: "Description", Value: tag.Description},
-				{Key: "Created", Value: tag.CreatedAt.Format(time.RFC3339)},
-				{Key: "Updated", Value: tag.UpdatedAt.Format(time.RFC3339)},
-			}, raw)
+			for _, tag := range tags {
+				if uint64(tag.ID) == targetID {
+					tagJSON, _ := json.Marshal(tag)
+					output.PrintSingle(*opts, []output.KeyValue{
+						{Key: "ID", Value: strconv.FormatUint(uint64(tag.ID), 10)},
+						{Key: "Name", Value: tag.Name},
+						{Key: "Description", Value: tag.Description},
+						{Key: "Created", Value: tag.CreatedAt.Format(time.RFC3339)},
+						{Key: "Updated", Value: tag.UpdatedAt.Format(time.RFC3339)},
+					}, json.RawMessage(tagJSON))
+					return nil
+				}
+			}
 
-			return nil
+			return fmt.Errorf("tag %s not found", args[0])
 		},
 	}
 }
@@ -91,7 +100,12 @@ func newTagCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			if opts.JSON {
 				output.PrintSingle(*opts, nil, raw)
 			} else {
-				output.PrintMessage("Tag created successfully.")
+				var tag tagResponse
+				if err := json.Unmarshal(raw, &tag); err == nil {
+					output.PrintMessage(fmt.Sprintf("Created tag %d: %s", tag.ID, tag.Name))
+				} else {
+					output.PrintMessage("Tag created successfully.")
+				}
 			}
 			return nil
 		},
@@ -245,7 +259,7 @@ func newTagsListCmd(c *client.Client, opts *output.Options, page *int) *cobra.Co
 }
 
 func newTagsMergeCmd(c *client.Client, opts *output.Options) *cobra.Command {
-	var winner int
+	var winner uint
 	var losersStr string
 
 	cmd := &cobra.Command{
@@ -253,17 +267,17 @@ func newTagsMergeCmd(c *client.Client, opts *output.Options) *cobra.Command {
 		Short: "Merge tags into a winner",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			loserParts := strings.Split(losersStr, ",")
-			var losers []int
+			var losers []uint
 			for _, s := range loserParts {
 				s = strings.TrimSpace(s)
 				if s == "" {
 					continue
 				}
-				n, err := strconv.Atoi(s)
+				n, err := strconv.ParseUint(s, 10, 64)
 				if err != nil {
 					return fmt.Errorf("invalid loser ID %q: %w", s, err)
 				}
-				losers = append(losers, n)
+				losers = append(losers, uint(n))
 			}
 
 			body := map[string]any{
@@ -285,7 +299,7 @@ func newTagsMergeCmd(c *client.Client, opts *output.Options) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().IntVar(&winner, "winner", 0, "Winning tag ID (required)")
+	cmd.Flags().UintVar(&winner, "winner", 0, "Winning tag ID (required)")
 	cmd.MarkFlagRequired("winner")
 	cmd.Flags().StringVar(&losersStr, "losers", "", "Comma-separated loser tag IDs (required)")
 	cmd.MarkFlagRequired("losers")
@@ -301,17 +315,17 @@ func newTagsDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
 		Short: "Delete multiple tags",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			parts := strings.Split(idsStr, ",")
-			var ids []int
+			var ids []uint
 			for _, s := range parts {
 				s = strings.TrimSpace(s)
 				if s == "" {
 					continue
 				}
-				n, err := strconv.Atoi(s)
+				n, err := strconv.ParseUint(s, 10, 64)
 				if err != nil {
 					return fmt.Errorf("invalid ID %q: %w", s, err)
 				}
-				ids = append(ids, n)
+				ids = append(ids, uint(n))
 			}
 
 			body := map[string]any{
