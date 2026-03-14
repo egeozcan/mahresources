@@ -199,7 +199,16 @@ cd e2e && npm run test:with-server
 npm run test:with-server:headed  # Run with browser visible
 npm run test:with-server:debug   # Run in debug mode
 npm run test:with-server:a11y    # Run accessibility tests only
+
+# CLI E2E tests (tests the `mr` CLI binary against an ephemeral server)
+npm run test:with-server:cli
 ```
+
+**After any significant change, run both browser and CLI E2E tests in parallel:**
+```bash
+cd e2e && npm run test:with-server:all
+```
+This launches two separate ephemeral servers and runs browser + CLI tests simultaneously.
 
 The `test:with-server` scripts automatically find an available port, start an ephemeral server with `-max-db-connections=2`, run tests in parallel, and clean up.
 
@@ -232,6 +241,9 @@ npm run report         # View HTML test report
 - `pages/` - Page Object Models for each entity type
 - `tests/` - Test specs organized by feature
 - `tests/accessibility/` - axe-core accessibility tests (WCAG compliance)
+- `tests/cli/` - CLI E2E tests (20 spec files, ~229 tests for the `mr` binary)
+- `fixtures/cli.fixture.ts` - CLI test fixture (`CliRunner` helper)
+- `helpers/cli-runner.ts` - CLI binary executor with retry logic for SQLite contention
 
 ## Important Notes
 

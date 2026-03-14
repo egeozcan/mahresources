@@ -15,7 +15,8 @@
     "test:with-server:debug": "node scripts/run-tests.js test --debug",
     "test:cli": "playwright test --project=cli",
     "test:with-server:cli": "node scripts/run-tests.js test --project=cli",
-    "test:with-server:a11y": "node scripts/run-tests.js test tests/accessibility/"
+    "test:with-server:a11y": "node scripts/run-tests.js test tests/accessibility/",
+    "test:with-server:all": "node scripts/run-all-tests.js"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.0",
