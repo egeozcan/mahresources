@@ -57,5 +57,12 @@ export default defineConfig({
       ],
       dependencies: ['heavy-io'],
     },
+    {
+      name: 'cli',
+      testDir: './tests/cli',
+      fullyParallel: false,
+      use: {},
+      workers: process.env.CI ? 1 : 2,
+    },
   ],
 });
