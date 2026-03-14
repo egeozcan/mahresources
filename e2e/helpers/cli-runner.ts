@@ -10,10 +10,11 @@ const RETRYABLE_PATTERNS = [
   'database is locked',
   'SQLITE_BUSY',
   'database table is locked',
+  'HTTP 500',
 ];
 
-const MAX_RETRIES = 3;
-const RETRY_DELAYS = [500, 1000, 2000];
+const MAX_RETRIES = 5;
+const RETRY_DELAYS = [500, 1000, 2000, 3000, 5000];
 
 function sleep(ms: number): void {
   const { execSync } = require('child_process');
