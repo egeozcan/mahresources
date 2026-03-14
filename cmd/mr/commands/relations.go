@@ -28,7 +28,7 @@ type relationResponse struct {
 func NewRelationCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "relation",
-		Short: "Operate on a single group relation",
+		Short: "Create, edit, or delete a group relation",
 	}
 
 	cmd.AddCommand(newRelationCreateCmd(c, opts))

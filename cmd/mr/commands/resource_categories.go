@@ -26,7 +26,7 @@ type resourceCategoryResponse struct {
 func NewResourceCategoryCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "resource-category",
-		Short: "Operate on a single resource category",
+		Short: "Get, create, edit, or delete a resource category",
 	}
 
 	cmd.AddCommand(newResourceCategoryGetCmd(c, opts))
@@ -219,7 +219,7 @@ func newResourceCategoryEditDescriptionCmd(c *client.Client, opts *output.Option
 func NewResourceCategoriesCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "resource-categories",
-		Short: "Operate on multiple resource categories",
+		Short: "List resource categories",
 	}
 
 	cmd.AddCommand(newResourceCategoriesListCmd(c, opts, page))

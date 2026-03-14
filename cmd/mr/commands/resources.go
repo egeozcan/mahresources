@@ -77,7 +77,7 @@ func ptrUintStr(p *uint) string {
 func NewResourceCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "resource",
-		Short: "Operate on a single resource",
+		Short: "Upload, download, edit, or version a resource",
 	}
 
 	cmd.AddCommand(newResourceGetCmd(c, opts))
@@ -441,7 +441,7 @@ func newResourcePreviewCmd(c *client.Client, _ *output.Options) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "preview <id>",
-		Short: "Download a resource preview/thumbnail",
+		Short: "Download a scaled thumbnail of a resource",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
@@ -1008,7 +1008,7 @@ func newResourceVersionsCompareCmd(c *client.Client, opts *output.Options) *cobr
 func NewResourcesCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "resources",
-		Short: "Operate on multiple resources",
+		Short: "List, merge, or bulk-edit resources",
 	}
 
 	cmd.AddCommand(newResourcesListCmd(c, opts, page))
@@ -1552,7 +1552,7 @@ func newResourcesVersionsCleanupCmd(c *client.Client, opts *output.Options) *cob
 func newResourcesMetaKeysCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "meta-keys",
-		Short: "List available resource metadata keys",
+		Short: "List all unique metadata keys used across resources",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var raw json.RawMessage
 			if err := c.Get("/v1/resources/meta/keys", nil, &raw); err != nil {

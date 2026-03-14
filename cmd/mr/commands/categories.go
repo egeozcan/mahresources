@@ -26,7 +26,7 @@ type categoryResponse struct {
 func NewCategoryCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "category",
-		Short: "Operate on a single category",
+		Short: "Get, create, edit, or delete a group category",
 	}
 
 	cmd.AddCommand(newCategoryGetCmd(c, opts))
@@ -219,7 +219,7 @@ func newCategoryEditDescriptionCmd(c *client.Client, opts *output.Options) *cobr
 func NewCategoriesCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "categories",
-		Short: "Operate on multiple categories",
+		Short: "List group categories",
 	}
 
 	cmd.AddCommand(newCategoriesListCmd(c, opts, page))

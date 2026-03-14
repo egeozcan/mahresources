@@ -29,7 +29,7 @@ type noteResponse struct {
 func NewNoteCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "note",
-		Short: "Operate on a single note",
+		Short: "Get, create, edit, delete, or share a note",
 	}
 
 	cmd.AddCommand(newNoteGetCmd(c, opts))
@@ -290,7 +290,7 @@ func newNoteUnshareCmd(c *client.Client, opts *output.Options) *cobra.Command {
 func NewNotesCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "notes",
-		Short: "Operate on multiple notes",
+		Short: "List notes and bulk tag/group/meta operations",
 	}
 
 	cmd.AddCommand(newNotesListCmd(c, opts, page))
@@ -606,7 +606,7 @@ func newNotesDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
 func newNotesMetaKeysCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "meta-keys",
-		Short: "List available note metadata keys",
+		Short: "List all unique metadata keys used across notes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var raw json.RawMessage
 			if err := c.Get("/v1/notes/meta/keys", nil, &raw); err != nil {

@@ -39,7 +39,7 @@ type logsListResponse struct {
 func NewLogCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	logCmd := &cobra.Command{
 		Use:   "log",
-		Short: "Operate on a single log entry",
+		Short: "View a log entry or entity history",
 	}
 
 	logCmd.AddCommand(newLogGetCmd(c, opts))
@@ -129,7 +129,7 @@ func newLogEntityCmd(c *client.Client, opts *output.Options) *cobra.Command {
 func NewLogsCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
 	logsCmd := &cobra.Command{
 		Use:   "logs",
-		Short: "Operate on multiple log entries",
+		Short: "List and filter audit log entries",
 	}
 
 	logsCmd.AddCommand(newLogsListCmd(c, opts, page))

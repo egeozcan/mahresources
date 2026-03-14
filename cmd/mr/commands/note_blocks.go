@@ -29,7 +29,7 @@ type noteBlockResponse struct {
 func NewNoteBlockCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "note-block",
-		Short: "Operate on a single note block",
+		Short: "Get, create, update, or delete a note block",
 	}
 
 	cmd.AddCommand(newNoteBlockGetCmd(c, opts))
@@ -211,7 +211,7 @@ func newNoteBlockDeleteCmd(c *client.Client, opts *output.Options) *cobra.Comman
 func newNoteBlockTypesCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "types",
-		Short: "List available note block types",
+		Short: "Show available block types (text, table, calendar, etc.)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var raw json.RawMessage
 			if err := c.Get("/v1/note/block/types", nil, &raw); err != nil {
@@ -228,7 +228,7 @@ func newNoteBlockTypesCmd(c *client.Client, opts *output.Options) *cobra.Command
 func NewNoteBlocksCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "note-blocks",
-		Short: "Operate on multiple note blocks",
+		Short: "List, reorder, or rebalance note blocks",
 	}
 
 	cmd.AddCommand(newNoteBlocksListCmd(c, opts))

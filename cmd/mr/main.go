@@ -47,7 +47,7 @@ func main() {
 	rootCmd.PersistentFlags().BoolVar(&jsonOut, "json", false, "Output raw JSON")
 	rootCmd.PersistentFlags().BoolVar(&noHeader, "no-header", false, "Omit table headers")
 	rootCmd.PersistentFlags().BoolVar(&quiet, "quiet", false, "Only output IDs")
-	rootCmd.PersistentFlags().IntVar(&page, "page", 1, "Page number for list commands")
+	rootCmd.PersistentFlags().IntVar(&page, "page", 1, "Page number for list commands (default page size: 50)")
 
 	rootCmd.AddCommand(commands.NewTagCmd(c, opts))
 	rootCmd.AddCommand(commands.NewTagsCmd(c, opts, &page))

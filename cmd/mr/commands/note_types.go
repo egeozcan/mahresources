@@ -26,7 +26,7 @@ type noteTypeResponse struct {
 func NewNoteTypeCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "note-type",
-		Short: "Operate on a single note type",
+		Short: "Get, create, edit, or delete a note type",
 	}
 
 	cmd.AddCommand(newNoteTypeGetCmd(c, opts))
@@ -270,7 +270,7 @@ func newNoteTypeEditDescriptionCmd(c *client.Client, opts *output.Options) *cobr
 func NewNoteTypesCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "note-types",
-		Short: "Operate on multiple note types",
+		Short: "List note types",
 	}
 
 	cmd.AddCommand(newNoteTypesListCmd(c, opts, page))

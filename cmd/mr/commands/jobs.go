@@ -25,7 +25,7 @@ type jobResponse struct {
 func NewJobCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	jobCmd := &cobra.Command{
 		Use:   "job",
-		Short: "Operate on a single job",
+		Short: "Submit, cancel, pause, or retry a download job",
 	}
 
 	jobCmd.AddCommand(newJobSubmitCmd(c, opts))
@@ -205,7 +205,7 @@ func newJobRetryCmd(c *client.Client, opts *output.Options) *cobra.Command {
 func NewJobsCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	jobsCmd := &cobra.Command{
 		Use:   "jobs",
-		Short: "Operate on multiple jobs",
+		Short: "View the download job queue",
 	}
 
 	jobsCmd.AddCommand(newJobsListCmd(c, opts))

@@ -37,7 +37,7 @@ type treeNodeResponse struct {
 func NewGroupCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "group",
-		Short: "Operate on a single group",
+		Short: "Get, create, edit, delete, or clone a group",
 	}
 
 	cmd.AddCommand(newGroupGetCmd(c, opts))
@@ -354,7 +354,7 @@ func newGroupCloneCmd(c *client.Client, opts *output.Options) *cobra.Command {
 func NewGroupsCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "groups",
-		Short: "Operate on multiple groups",
+		Short: "List, merge, or bulk-edit groups",
 	}
 
 	cmd.AddCommand(newGroupsListCmd(c, opts, page))
@@ -671,7 +671,7 @@ func newGroupsMergeCmd(c *client.Client, opts *output.Options) *cobra.Command {
 func newGroupsMetaKeysCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "meta-keys",
-		Short: "List available group metadata keys",
+		Short: "List all unique metadata keys used across groups",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var raw json.RawMessage
 			if err := c.Get("/v1/groups/meta/keys", nil, &raw); err != nil {

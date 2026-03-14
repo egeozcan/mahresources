@@ -14,7 +14,7 @@ import (
 func NewPluginCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	pluginCmd := &cobra.Command{
 		Use:   "plugin",
-		Short: "Operate on a single plugin",
+		Short: "Enable, disable, or configure a plugin",
 	}
 
 	pluginCmd.AddCommand(newPluginEnableCmd(c, opts))
@@ -79,7 +79,7 @@ func newPluginSettingsCmd(c *client.Client, opts *output.Options) *cobra.Command
 
 	cmd := &cobra.Command{
 		Use:   "settings <name>",
-		Short: "Update plugin settings",
+		Short: "Update plugin settings (pass JSON via --data)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Server reads name from query or form, then decodes body as settings map
@@ -139,7 +139,7 @@ func newPluginPurgeDataCmd(c *client.Client, opts *output.Options) *cobra.Comman
 func NewPluginsCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	pluginsCmd := &cobra.Command{
 		Use:   "plugins",
-		Short: "Operate on multiple plugins",
+		Short: "List installed plugins",
 	}
 
 	pluginsCmd.AddCommand(newPluginsListCmd(c, opts))

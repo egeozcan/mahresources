@@ -28,7 +28,7 @@ type queryResponse struct {
 func NewQueryCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	queryCmd := &cobra.Command{
 		Use:   "query",
-		Short: "Operate on a single query",
+		Short: "Get, create, run, or delete a saved query",
 	}
 
 	queryCmd.AddCommand(newQueryGetCmd(c, opts))
@@ -246,7 +246,7 @@ func newQueryRunByNameCmd(c *client.Client, opts *output.Options) *cobra.Command
 func newQuerySchemaCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "schema",
-		Short: "Get the database schema",
+		Short: "Show database table and column names for query building",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var raw json.RawMessage
 			if err := c.Get("/v1/query/schema", nil, &raw); err != nil {
@@ -263,7 +263,7 @@ func newQuerySchemaCmd(c *client.Client, opts *output.Options) *cobra.Command {
 func NewQueriesCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
 	queriesCmd := &cobra.Command{
 		Use:   "queries",
-		Short: "Operate on multiple queries",
+		Short: "List saved queries",
 	}
 
 	queriesCmd.AddCommand(newQueriesListCmd(c, opts, page))

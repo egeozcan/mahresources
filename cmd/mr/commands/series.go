@@ -27,7 +27,7 @@ type seriesResponse struct {
 func NewSeriesCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
 	seriesCmd := &cobra.Command{
 		Use:   "series",
-		Short: "Operate on series",
+		Short: "Manage resource series (list, create, edit, delete)",
 	}
 
 	seriesCmd.AddCommand(newSeriesGetCmd(c, opts))

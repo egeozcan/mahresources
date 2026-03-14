@@ -27,7 +27,7 @@ type tagResponse struct {
 func NewTagCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	tagCmd := &cobra.Command{
 		Use:   "tag",
-		Short: "Operate on a single tag",
+		Short: "Get, create, edit, or delete a tag",
 	}
 
 	tagCmd.AddCommand(newTagGetCmd(c, opts))
@@ -200,7 +200,7 @@ func newTagEditDescriptionCmd(c *client.Client, opts *output.Options) *cobra.Com
 func NewTagsCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
 	tagsCmd := &cobra.Command{
 		Use:   "tags",
-		Short: "Operate on multiple tags",
+		Short: "List, merge, or bulk-delete tags",
 	}
 
 	tagsCmd.AddCommand(newTagsListCmd(c, opts, page))

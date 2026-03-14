@@ -28,7 +28,7 @@ type relationTypeResponse struct {
 func NewRelationTypeCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "relation-type",
-		Short: "Operate on a single relation type",
+		Short: "Create, edit, or delete a relation type",
 	}
 
 	cmd.AddCommand(newRelationTypeCreateCmd(c, opts))
@@ -171,7 +171,7 @@ func newRelationTypeDeleteCmd(c *client.Client, opts *output.Options) *cobra.Com
 func NewRelationTypesCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "relation-types",
-		Short: "Operate on multiple relation types",
+		Short: "List relation types",
 	}
 
 	cmd.AddCommand(newRelationTypesListCmd(c, opts, page))
