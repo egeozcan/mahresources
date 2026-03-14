@@ -13,18 +13,26 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// logEntryResponse is a lightweight struct matching the API's LogEntry JSON shape.
+// logEntryResponse matches the API's LogEntry JSON shape (lowercase keys).
 type logEntryResponse struct {
-	ID          uint            `json:"ID"`
-	Level       string          `json:"Level"`
-	Action      string          `json:"Action"`
-	EntityType  string          `json:"EntityType"`
-	EntityID    *uint           `json:"EntityID"`
-	EntityName  string          `json:"EntityName"`
-	Message     string          `json:"Message"`
-	Details     json.RawMessage `json:"Details"`
-	RequestPath string          `json:"RequestPath"`
-	CreatedAt   time.Time       `json:"CreatedAt"`
+	ID          uint            `json:"id"`
+	Level       string          `json:"level"`
+	Action      string          `json:"action"`
+	EntityType  string          `json:"entityType"`
+	EntityID    *uint           `json:"entityId"`
+	EntityName  string          `json:"entityName"`
+	Message     string          `json:"message"`
+	Details     json.RawMessage `json:"details"`
+	RequestPath string          `json:"requestPath"`
+	CreatedAt   time.Time       `json:"createdAt"`
+}
+
+// logsListResponse wraps the paginated logs response.
+type logsListResponse struct {
+	Logs       []logEntryResponse `json:"logs"`
+	TotalCount int                `json:"totalCount"`
+	Page       int                `json:"page"`
+	PerPage    int                `json:"perPage"`
 }
 
 // NewLogCmd returns the singular "log" command with get/entity subcommands.
@@ -103,19 +111,7 @@ func newLogEntityCmd(c *client.Client, opts *output.Options) *cobra.Command {
 				return fmt.Errorf("parsing response: %w", err)
 			}
 
-			columns := []string{"ID", "LEVEL", "ACTION", "MESSAGE", "CREATED"}
-			var rows [][]string
-			for _, e := range entries {
-				rows = append(rows, []string{
-					strconv.FormatUint(uint64(e.ID), 10),
-					e.Level,
-					e.Action,
-					output.Truncate(e.Message, 60),
-					e.CreatedAt.Format(time.RFC3339),
-				})
-			}
-
-			output.Print(*opts, columns, rows, raw)
+			printLogEntries(*opts, entries, raw)
 			return nil
 		},
 	}
@@ -177,30 +173,12 @@ func newLogsListCmd(c *client.Client, opts *output.Options, page *int) *cobra.Co
 				return err
 			}
 
-			var entries []logEntryResponse
-			if err := json.Unmarshal(raw, &entries); err != nil {
+			var resp logsListResponse
+			if err := json.Unmarshal(raw, &resp); err != nil {
 				return fmt.Errorf("parsing response: %w", err)
 			}
 
-			columns := []string{"ID", "LEVEL", "ACTION", "ENTITY_TYPE", "ENTITY_ID", "MESSAGE", "CREATED"}
-			var rows [][]string
-			for _, e := range entries {
-				eid := ""
-				if e.EntityID != nil {
-					eid = strconv.FormatUint(uint64(*e.EntityID), 10)
-				}
-				rows = append(rows, []string{
-					strconv.FormatUint(uint64(e.ID), 10),
-					e.Level,
-					e.Action,
-					e.EntityType,
-					eid,
-					output.Truncate(e.Message, 50),
-					e.CreatedAt.Format(time.RFC3339),
-				})
-			}
-
-			output.Print(*opts, columns, rows, raw)
+			printLogEntries(*opts, resp.Logs, raw)
 			return nil
 		},
 	}
@@ -214,4 +192,26 @@ func newLogsListCmd(c *client.Client, opts *output.Options, page *int) *cobra.Co
 	cmd.Flags().StringVar(&createdAfter, "created-after", "", "Filter by created after (RFC3339)")
 
 	return cmd
+}
+
+func printLogEntries(opts output.Options, entries []logEntryResponse, raw json.RawMessage) {
+	columns := []string{"ID", "LEVEL", "ACTION", "ENTITY_TYPE", "ENTITY_ID", "MESSAGE", "CREATED"}
+	var rows [][]string
+	for _, e := range entries {
+		eid := ""
+		if e.EntityID != nil {
+			eid = strconv.FormatUint(uint64(*e.EntityID), 10)
+		}
+		rows = append(rows, []string{
+			strconv.FormatUint(uint64(e.ID), 10),
+			e.Level,
+			e.Action,
+			e.EntityType,
+			eid,
+			output.Truncate(e.Message, 50),
+			e.CreatedAt.Format(time.RFC3339),
+		})
+	}
+
+	output.Print(opts, columns, rows, raw)
 }

@@ -66,7 +66,14 @@ func decodeResponse(resp *http.Response, result any) error {
 	if result == nil {
 		return nil
 	}
-	return json.NewDecoder(resp.Body).Decode(result)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("reading response: %w", err)
+	}
+	if len(body) == 0 {
+		return nil
+	}
+	return json.Unmarshal(body, result)
 }
 
 // Get performs a GET request and decodes the JSON response into result.

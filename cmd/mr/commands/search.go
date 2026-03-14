@@ -3,6 +3,7 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -14,18 +15,20 @@ import (
 
 // searchResult represents a single result from the global search API.
 type searchResult struct {
-	ID          uint              `json:"ID"`
-	Type        string            `json:"Type"`
-	Name        string            `json:"Name"`
-	Description string            `json:"Description"`
-	Score       int               `json:"Score"`
-	URL         string            `json:"URL"`
-	Extra       map[string]string `json:"Extra"`
+	ID          uint              `json:"id"`
+	Type        string            `json:"type"`
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	Score       int               `json:"score"`
+	URL         string            `json:"url"`
+	Extra       map[string]string `json:"extra"`
 }
 
 // globalSearchResponse wraps the search results array.
 type globalSearchResponse struct {
-	Results []searchResult `json:"Results"`
+	Query   string         `json:"query"`
+	Total   int            `json:"total"`
+	Results []searchResult `json:"results"`
 }
 
 // NewSearchCmd returns the top-level "search" command.
@@ -38,27 +41,22 @@ func NewSearchCmd(c *client.Client, opts *output.Options) *cobra.Command {
 		Short: "Search across all entities",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			body := map[string]any{
-				"q":     args[0],
-				"limit": limit,
-			}
+			q := url.Values{}
+			q.Set("q", args[0])
+			q.Set("limit", strconv.Itoa(limit))
 
 			if typesStr != "" {
 				parts := strings.Split(typesStr, ",")
-				var types []string
 				for _, p := range parts {
 					p = strings.TrimSpace(p)
 					if p != "" {
-						types = append(types, p)
+						q.Add("types", p)
 					}
-				}
-				if len(types) > 0 {
-					body["types"] = types
 				}
 			}
 
 			var raw json.RawMessage
-			if err := c.Post("/v1/search", nil, body, &raw); err != nil {
+			if err := c.Get("/v1/search", q, &raw); err != nil {
 				return err
 			}
 
