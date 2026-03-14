@@ -402,7 +402,7 @@ func newResourceUploadCmd(c *client.Client, opts *output.Options) *cobra.Command
 	return cmd
 }
 
-func newResourceDownloadCmd(c *client.Client, opts *output.Options) *cobra.Command {
+func newResourceDownloadCmd(c *client.Client, _ *output.Options) *cobra.Command {
 	var outFile string
 
 	cmd := &cobra.Command{
@@ -433,7 +433,7 @@ func newResourceDownloadCmd(c *client.Client, opts *output.Options) *cobra.Comma
 	return cmd
 }
 
-func newResourcePreviewCmd(c *client.Client, opts *output.Options) *cobra.Command {
+func newResourcePreviewCmd(c *client.Client, _ *output.Options) *cobra.Command {
 	var (
 		outFile        string
 		width, height  uint
@@ -803,7 +803,7 @@ func newResourceVersionUploadCmd(c *client.Client, opts *output.Options) *cobra.
 	return cmd
 }
 
-func newResourceVersionDownloadCmd(c *client.Client, opts *output.Options) *cobra.Command {
+func newResourceVersionDownloadCmd(c *client.Client, _ *output.Options) *cobra.Command {
 	var outFile string
 
 	cmd := &cobra.Command{
