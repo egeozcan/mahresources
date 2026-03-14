@@ -68,6 +68,16 @@ func main() {
 	rootCmd.AddCommand(commands.NewRelationCmd(c, opts))
 	rootCmd.AddCommand(commands.NewRelationTypeCmd(c, opts))
 	rootCmd.AddCommand(commands.NewRelationTypesCmd(c, opts, &page))
+	rootCmd.AddCommand(commands.NewSeriesCmd(c, opts, &page))
+	rootCmd.AddCommand(commands.NewQueryCmd(c, opts))
+	rootCmd.AddCommand(commands.NewQueriesCmd(c, opts, &page))
+	rootCmd.AddCommand(commands.NewSearchCmd(c, opts))
+	rootCmd.AddCommand(commands.NewLogCmd(c, opts))
+	rootCmd.AddCommand(commands.NewLogsCmd(c, opts, &page))
+	rootCmd.AddCommand(commands.NewJobCmd(c, opts))
+	rootCmd.AddCommand(commands.NewJobsCmd(c, opts))
+	rootCmd.AddCommand(commands.NewPluginCmd(c, opts))
+	rootCmd.AddCommand(commands.NewPluginsCmd(c, opts))
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
