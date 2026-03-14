@@ -13,6 +13,8 @@
     "test:with-server": "node scripts/run-tests.js test",
     "test:with-server:headed": "node scripts/run-tests.js test --headed --workers=1",
     "test:with-server:debug": "node scripts/run-tests.js test --debug",
+    "test:cli": "playwright test --project=cli",
+    "test:with-server:cli": "node scripts/run-tests.js test --project=cli",
     "test:with-server:a11y": "node scripts/run-tests.js test tests/accessibility/"
   },
   "devDependencies": {

@@ -127,6 +127,13 @@ function ensureServerBuilt() {
     console.log('Building server binary...');
     execSync('npm run build', { cwd: PROJECT_ROOT, stdio: 'inherit' });
   }
+
+  // Build CLI binary if it doesn't exist
+  const CLI_BINARY = path.join(PROJECT_ROOT, 'mr');
+  if (!fs.existsSync(CLI_BINARY)) {
+    console.log('Building CLI binary...');
+    execSync('go build -o mr ./cmd/mr/', { cwd: PROJECT_ROOT, stdio: 'inherit' });
+  }
 }
 
 /**
@@ -223,7 +230,8 @@ async function main() {
       env: {
         ...process.env,
         BASE_URL: `http://localhost:${port}`,
-        SHARE_BASE_URL: `http://127.0.0.1:${sharePort}`
+        SHARE_BASE_URL: `http://127.0.0.1:${sharePort}`,
+        CLI_PATH: path.join(PROJECT_ROOT, 'mr'),
       }
     });
 
