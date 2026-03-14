@@ -118,7 +118,7 @@ sudo apt install imagemagick
 choco install imagemagick
 ```
 
-The `convert` command must be available in your PATH. No additional configuration flag is needed.
+Either the `magick` command (ImageMagick 7) or the `convert` command (ImageMagick 6) must be available in your PATH. No additional configuration flag is needed.
 
 ## Next Steps
 

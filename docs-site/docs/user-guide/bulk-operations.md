@@ -114,7 +114,7 @@ Compare two resources side-by-side:
 
 The comparison view shows metadata differences between the two Resources: size delta, whether they share the same hash, content type match, and dimension differences.
 
-For image resources, four visual comparison modes are available: side-by-side, slider, overlay, and toggle. For text-based resources, a unified or split diff view highlights line-level changes. Cross-resource version comparison is also supported.
+For image resources, four visual comparison modes are available: side-by-side, slider, onion skin, and toggle. For text-based resources, a unified or split diff view highlights line-level changes. Cross-resource version comparison is also supported.
 
 ## Bulk Deletion
 

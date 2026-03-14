@@ -5,7 +5,7 @@ title: Activity Log
 
 # Activity Log
 
-Every create, update, and delete operation is recorded with the HTTP request context that triggered it. Log entries are written asynchronously (fire-and-forget) so they do not slow down the operation itself.
+Every create, update, and delete operation is recorded with the HTTP request context that triggered it. Log entries are written synchronously but with fire-and-forget error handling -- errors during log writes are printed to stdout but never propagate to break the original operation.
 
 ![Activity log showing recent entity changes](/img/activity-log.png)
 
@@ -14,7 +14,7 @@ Every create, update, and delete operation is recorded with the HTTP request con
 | Property | Type | Description |
 |----------|------|-------------|
 | `level` | string | `info`, `warning`, or `error` |
-| `action` | string | `create`, `update`, `delete`, `system`, or `progress` |
+| `action` | string | `create`, `update`, `delete`, `system`, `progress`, or `plugin` |
 | `entityType` | string | Entity kind: `resource`, `note`, `group`, etc. |
 | `entityId` | uint | ID of the affected entity (nullable) |
 | `entityName` | string | Name of the entity at the time of the action |
@@ -65,7 +65,7 @@ Filter log entries by combining any of these parameters:
 | `RequestPath` | string | Filter by HTTP request path |
 | `CreatedBefore` | timestamp | Entries created before this time |
 | `CreatedAfter` | timestamp | Entries created after this time |
-| `SortBy` | string | Sort field |
+| `SortBy` | string[] | Sort field(s) |
 
 ## Configuration
 
@@ -101,7 +101,7 @@ GET /v1/logs
 | `RequestPath` | string | Filter by HTTP request path |
 | `CreatedBefore` | timestamp | Entries before this time |
 | `CreatedAfter` | timestamp | Entries after this time |
-| `SortBy` | string | Sort field |
+| `SortBy` | string[] | Sort field(s) |
 
 ```bash
 curl "http://localhost:8181/v1/logs?level=error"
@@ -111,7 +111,8 @@ curl "http://localhost:8181/v1/logs?level=error"
 {
   "logs": [
     {
-      "ID": 42,
+      "id": 42,
+      "createdAt": "2025-03-01T10:30:00Z",
       "level": "error",
       "action": "system",
       "entityType": "",
@@ -120,13 +121,12 @@ curl "http://localhost:8181/v1/logs?level=error"
       "details": {"resourceId": 1234},
       "requestPath": "/v1/resource/preview",
       "userAgent": "Mozilla/5.0",
-      "ipAddress": "127.0.0.1",
-      "CreatedAt": "2025-03-01T10:30:00Z"
+      "ipAddress": "127.0.0.1"
     }
   ],
   "totalCount": 1,
   "page": 1,
-  "perPage": 20
+  "perPage": 50
 }
 ```
 
@@ -173,4 +173,4 @@ Enable automatic cleanup at startup:
 
 ### Missing log entries
 
-Log writes are fire-and-forget -- if the database insert fails (e.g., disk full, connection lost), the error is printed to stderr but the original operation still succeeds. Check stderr output for write failures.
+Log writes are fire-and-forget -- if the database insert fails (e.g., disk full, connection lost), the error is printed to stdout but the original operation still succeeds. Check stdout output for write failures.

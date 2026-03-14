@@ -62,7 +62,7 @@ Mahresources generates thumbnails automatically for supported file types:
 
 ### Image Thumbnails
 - Generated on-demand when first requested for a given size
-- Supports JPEG, PNG, GIF, WebP natively; HEIC/AVIF via ImageMagick fallback; SVG via built-in rasterizer (oksvg/rasterx)
+- Supports JPEG, PNG, GIF, WebP, BMP, TIFF natively; HEIC/AVIF via ImageMagick fallback; SVG via built-in rasterizer (oksvg/rasterx)
 - Cached in the database as `Preview` records for subsequent requests
 
 ### Video Thumbnails

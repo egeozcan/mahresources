@@ -34,7 +34,7 @@ Ownership creates a parent-child hierarchy. Each entity can have one owner:
 
 - A **Group** can own other Groups, Notes, and Resources
 - Owned entities appear in the owner's "Owned" section
-- Deleting an owner Group cascades to owned Notes and child Groups. Owned Resources have their owner set to NULL (preserved as unowned Resources)
+- Deleting an owner Group cascades to owned Notes. Owned Resources and child Groups have their owner set to NULL (preserved as unowned)
 
 ```
 Project Alpha (Group)
@@ -87,7 +87,7 @@ Every Resource, Note, Group, and Tag has a `meta` field for storing arbitrary JS
 }
 ```
 
-Metadata is searchable via MetaQuery parameters and supports nine comparison operators (EQ, LI, NE, NL, GT, GE, LT, LE, HAS_KEYS). Categories and Resource Categories can define a JSON Schema to validate metadata fields.
+Metadata is searchable via MetaQuery parameters and supports eight comparison operators (EQ, LI, NE, NL, GT, GE, LT, LE). Categories and Resource Categories can define a JSON Schema to validate metadata fields.
 
 ### Full-Text Search
 
@@ -135,16 +135,16 @@ Mahresources supports bulk operations on multiple items:
 - `delete` -- Delete selected items
 - `merge` -- Combine multiple items into one (Groups, Resources, and Tags)
 
-These bulk operations apply to Resources, Groups, and Notes. The available operations vary by entity type -- for example, `replaceTags` and `merge` apply only to Resources, while Notes support `addTags`, `removeTags`, `addGroups`, `addMeta`, and `delete`.
+These bulk operations apply to Resources, Groups, and Notes. The available operations vary by entity type -- for example, `replaceTags` applies only to Resources, while `merge` is available for Resources, Groups, and Tags. Notes support `addTags`, `removeTags`, `addGroups`, `addMeta`, and `delete`.
 
 ### Deletion
 
 | Entity | Deletion Behavior |
 |--------|-------------------|
 | **Tag** | Removed from all associated entities (cascade) |
-| **Group** | Cascades to owned Notes and child Groups; owned Resources have their owner set to NULL (preserved) |
+| **Group** | Cascades to owned Notes; owned Resources and child Groups have their owner set to NULL (preserved) |
 | **Resource** | Deleted independently; file removed from storage only if no other resources or versions reference the same hash |
 | **Note** | Deleted independently |
 | **Category** | Cascade-deletes all Groups assigned to that Category |
 | **Note Type** | Cascade-deletes all Notes of that type |
-| **Resource Category** | Cascade-deletes all Resources of that category |
+| **Resource Category** | Resources of that category have their category set to NULL (preserved) |

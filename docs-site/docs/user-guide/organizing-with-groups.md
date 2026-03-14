@@ -123,7 +123,10 @@ Define relation types before creating relations:
 1. Navigate to **Relation Types** > **New Relation Type**
 2. Enter:
    - **Name** - Describes the relationship (e.g., "works at", "parent of")
-   - **Category filters** - Restrict which categories can participate
+   - **Description** (optional) - Details about this relation type
+   - **From Category** - Restrict which category the source group must have
+   - **To Category** - Restrict which category the target group must have
+   - **Reverse Relation Name** (optional) - If provided, automatically creates a matching reverse relation type (e.g., "employed by" as the reverse of "works at")
 3. Click **Save**
 
 ## Merging Groups

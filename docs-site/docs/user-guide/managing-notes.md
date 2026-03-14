@@ -43,17 +43,13 @@ Create notes directly owned by a group:
 
 ### Notes List
 
-The notes list displays:
+The notes list displays cards for each note, showing:
 
-| Column | Description |
-|--------|-------------|
-| Checkbox | For bulk selection |
-| ID | Unique identifier |
-| Title | Note name (click to view details) |
-| Description | Text preview (truncated) |
-| Tags | Assigned tags |
-| Created | Creation timestamp |
-| Updated | Last modification timestamp |
+- **Checkbox** - For bulk selection
+- **Avatar** - Note type custom avatar or default initial
+- **Title** - Note name (click to view details)
+- **Description** - Text preview (truncated)
+- **Tags** - Assigned tags
 
 ### Note Detail Page
 
@@ -62,22 +58,23 @@ The detail page shows:
 **Header**
 - Note title (inline editable)
 - Edit and Delete buttons
-- Wide display link
 
 **Main Content**
 - Note type custom header (if configured)
+- Start/End dates (if set), shown in a meta strip
 - Wide display link for full-screen reading
 - Full text content with formatting preserved
+- Block editor (if blocks exist)
 - Related groups
 - Attached resources
 
 **Sidebar**
 - Note type custom sidebar (if configured)
-- Start/End dates (if set)
 - Owner group
 - Note type link
 - Tags
 - Custom metadata
+- Sharing controls (if sharing is enabled)
 
 ## Editing Notes
 
@@ -98,6 +95,7 @@ Note types add custom templates and styling to notes.
 | Property | Description |
 |----------|-------------|
 | `name` | Identifier for the type |
+| `description` | Description of the note type |
 | `customHeader` | HTML template displayed above Note content |
 | `customSidebar` | HTML template displayed in the sidebar |
 | `customSummary` | HTML template for list views |
@@ -105,7 +103,7 @@ Note types add custom templates and styling to notes.
 
 ### Using Note Types
 
-1. Create a note type in **Note Types** > **New Note Type**
+1. Create a note type in **Note Types** > **Add**
 2. Define the name and optional custom HTML
 3. When creating/editing notes, select the type from the **Note Type** field
 
@@ -129,9 +127,10 @@ Templates also have access to Alpine.js for client-side interactivity via the `e
 ### Creating a Note Type
 
 1. Navigate to **Note Types** in the menu
-2. Click **New Note Type**
+2. Click **Add**
 3. Enter a name
 4. Optionally add:
+   - **Description** - Description of the note type
    - **Custom Header** - HTML displayed above note content
    - **Custom Sidebar** - HTML displayed in the sidebar
    - **Custom Summary** - HTML for list views
@@ -140,7 +139,7 @@ Templates also have access to Alpine.js for client-side interactivity via the `e
 
 ## Wide Display Mode
 
-Wide display mode shows the Note text in a full-width layout, hiding the sidebar:
+Wide display mode shows the Note text in a full-width prose layout:
 
 1. Navigate to a note detail page
 2. Click **Wide display** link below the title
@@ -187,7 +186,7 @@ Notes support optional date ranges useful for:
 
 ### Date Display
 
-When set, dates appear in the sidebar:
+When set, dates appear in the meta strip above the note content:
 - **Started:** [date]
 - **Ended:** [date]
 
@@ -246,9 +245,9 @@ The block editor supports eight built-in block types. Plugins can register addit
 | Block Type | Description |
 |------------|-------------|
 | **Text** | Rich text content |
-| **Heading** | Section heading (level 1-6) |
+| **Heading** | Section heading (H1, H2, or H3) |
 | **Divider** | Horizontal separator line |
-| **Gallery** | Resource thumbnails in grid or list layout |
+| **Gallery** | Resource thumbnails in a grid layout |
 | **References** | Linked group cards |
 | **Todos** | Checklist with interactive checkboxes |
 | **Table** | Data table (manual data or driven by a saved Query) |

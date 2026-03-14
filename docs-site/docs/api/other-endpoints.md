@@ -429,7 +429,7 @@ GET /v1/search
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `q` | string | **Required.** Search query |
-| `limit` | integer | Maximum results (default: 20, max: 50) |
+| `limit` | integer | Maximum results (default: 20, max: 200) |
 | `types` | string | Entity types to search (comma-separated: `resource`, `note`, `group`, `tag`, `category`, `query`, `relationType`, `noteType`, `resourceCategory`) |
 
 #### Example
@@ -522,14 +522,15 @@ curl "http://localhost:8181/v1/logs?Level=error"
 {
   "logs": [
     {
-      "ID": 100,
-      "Level": "info",
-      "Action": "create",
-      "EntityType": "resource",
-      "EntityID": 456,
-      "Message": "Resource created: photo.jpg",
-      "RequestPath": "/v1/resource",
-      "CreatedAt": "2024-01-15T10:30:00Z"
+      "id": 100,
+      "createdAt": "2024-01-15T10:30:00Z",
+      "level": "info",
+      "action": "create",
+      "entityType": "resource",
+      "entityId": 456,
+      "entityName": "photo.jpg",
+      "message": "Resource created: photo.jpg",
+      "requestPath": "/v1/resource"
     }
   ],
   "totalCount": 1500,

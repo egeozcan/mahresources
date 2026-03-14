@@ -25,6 +25,7 @@ Resources are files of any type: images, documents, videos, or anything else you
    - **Notes** - Link to existing notes
    - **Owner** - The group that owns this resource
    - **Resource Category** - Classify the resource type
+   - **Series** - Group related resources into a series
    - **Meta** - Custom key-value metadata
 5. Click **Save** to upload
 
@@ -88,9 +89,10 @@ Click a resource name to view its detail page, showing:
 
 **Main Content**
 - Full description
-- Technical metadata (ID, hash, location, dimensions for images)
+- Metadata panel (name, original name, dimensions, timestamps) with collapsible technical details (ID, hash, location, storage location)
 - Related notes
 - Related groups
+- Series siblings (if the resource belongs to a series)
 - Similar resources (when the [hash worker](/features/image-similarity) is running)
 
 **Sidebar**
@@ -116,6 +118,8 @@ Click a resource thumbnail to open images in the lightbox, view PDFs in the brow
    - Groups
    - Notes
    - Owner
+   - Resource Category
+   - Series
    - Custom metadata
 3. Click **Save** to apply changes
 
@@ -140,10 +144,10 @@ Image resources have additional operations available in the sidebar:
 
 ### Rotate
 
-Rotate an image by a specified number of degrees (90, 180, or 270):
+Rotate an image by a specified number of degrees. The UI provides a **Rotate 90 Degrees** button in the sidebar; the API accepts any integer angle:
 
-1. Navigate to the image Resource
-2. In the sidebar, find the rotate option
+1. Navigate to the image resource
+2. In the sidebar, find **Rotate 90 Degrees**
 3. Click **Rotate**
 
 Rotation creates a new version with the rotated content and clears cached thumbnails.
@@ -160,7 +164,7 @@ This re-reads the image file and updates the stored width/height values.
 
 ## Finding Similar Resources
 
-Perceptual hashing finds visually similar images. On any image resource's detail page, the **Similar Resources** section shows matches with thumbnails and similarity scores. Click **Merge Others To This** to combine duplicates into one resource.
+Perceptual hashing finds visually similar images. On any image resource's detail page, the **Similar Resources** section shows matches as thumbnail cards sorted by similarity. Click **Merge Others To This** to combine duplicates into one resource.
 
 This requires the background hash worker (enabled by default).
 
@@ -252,4 +256,3 @@ Each download shows:
 - Source URL
 - Progress percentage
 - Download speed
-- Estimated time remaining

@@ -46,7 +46,7 @@ When full-text search is unavailable, results are ranked by LIKE-based scoring:
 ### Caching
 
 - Server-side LRU cache with 60-second TTL
-- Default result limit: 15 (server max: 50)
+- Default result limit: 20 (server max: 50). The frontend requests 15 by default.
 - Cache invalidates on entity create, update, or delete
 - Frontend performs additional client-side caching (30-second threshold)
 
@@ -159,7 +159,7 @@ GET /v1/resources?SortBy=content_type asc&SortBy=created_at desc
 
 ## Full-Text Search
 
-Full-text search indexes Resource names, descriptions, and original names; Note names and descriptions; and Group names and descriptions.
+Full-text search indexes all searchable entity types: Resource names, descriptions, and original names; Note names and descriptions; Group names and descriptions; and Tag, Category, Query, Relation Type, Note Type, and Resource Category names and descriptions.
 
 ### Database Engines
 

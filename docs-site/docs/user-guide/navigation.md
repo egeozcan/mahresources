@@ -62,7 +62,7 @@ Type at least 2 characters. Results appear as a flat list ranked by relevance, e
 | Enter | Open selected result |
 | Escape | Close search dialog |
 
-Results are cached server-side for 60 seconds. The default result limit is 15 (server max: 50).
+Results are cached server-side for 60 seconds. The default result limit is 15 (server max: 200).
 
 ## List Views
 
@@ -91,6 +91,7 @@ List views offer alternative display modes. Use the selector at the top of the l
 **Groups:**
 - **List** (default) - Standard list view
 - **Text** - Text-focused view
+- **Tree** - Hierarchical tree visualization
 
 ### Sidebar Filters
 
@@ -225,7 +226,7 @@ Type `@` in description textareas (on note, group, and resource create/edit form
 |----------|--------|
 | Arrow Up / Arrow Down | Navigate suggestions |
 | Enter | Select highlighted item |
-| Tab | Accept highlighted item and advance |
+| Tab | Close dropdown and advance to next field |
 | Escape | Close dropdown |
 
 ### Inline Editing
@@ -243,7 +244,7 @@ Click any image or media preview to open the lightbox viewer.
 - **Zoom** - Scroll wheel or pinch to zoom. Double-click to toggle native resolution.
 - **Zoom Presets** - Click the zoom percentage indicator for presets (Fit, Stretch, 25%-500%) calculated from the image's native resolution.
 - **Pan** - Drag or swipe to move around a zoomed image.
-- **Edit Panel** - Edit the resource name, description, and tags in a side panel without leaving the lightbox.
+- **Edit Panel** - Edit the resource name and description in a side panel without leaving the lightbox. Also shows the resource category if one is assigned.
 - **Video** - Play video files directly in the viewer.
 - **Fullscreen** - Enter fullscreen mode to hide all other UI.
 - **Touch** - Pinch-to-zoom, swipe to navigate, two-finger pan.

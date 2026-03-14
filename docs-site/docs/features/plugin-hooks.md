@@ -138,7 +138,7 @@ The handler receives a context table:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `path` | string | The matched path |
+| `path` | string | The full request URL (path + query string) |
 | `method` | string | HTTP method (`GET` or `POST`) |
 | `query` | table | URL query parameters as key-value pairs |
 | `headers` | table | HTTP request headers as key-value pairs |

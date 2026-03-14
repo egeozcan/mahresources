@@ -56,7 +56,8 @@ When you remove a `@[resource:...]` or `@[note:...]` mention from a group descri
 
 ## Rendering
 
-Mentions render differently based on position:
+Resource mentions render differently based on position. Other types always render the same way.
 
-- **Standalone** (alone on a line): Resource mentions render as cards with thumbnails. Other types render as badge-style links.
-- **Inline** (within other text): All mentions render as compact links with type-specific styling.
+- **Resource mentions (standalone)** — alone on a line: render as cards with thumbnails.
+- **Resource mentions (inline)** — within other text: render as compact links with small inline thumbnails.
+- **Other types** (groups, notes, tags): always render as badge-style links regardless of position.

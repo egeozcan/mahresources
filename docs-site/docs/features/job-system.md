@@ -149,7 +149,7 @@ Completed and failed jobs are removed automatically:
 |---------|-------|
 | Cleanup interval | Every 5 minutes |
 | Action job retention | 1 hour |
-| Download job retention (completed) | 1 hour |
+| Download job retention (completed/failed/cancelled) | 1 hour |
 | Download job retention (paused) | 24 hours |
 
 Removed jobs trigger `"removed"` SSE events so clients can update their UI.

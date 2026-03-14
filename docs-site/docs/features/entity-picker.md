@@ -182,7 +182,7 @@ Entity metadata fetched for display in blocks is cached in memory to avoid redun
 - Metadata is cached per entity (keyed by `entityType:id`)
 - Cache entries expire after 5 minutes
 - Batched concurrency: maximum 5 concurrent metadata requests per batch
-- Failed requests retry up to 2 times with 500ms exponential backoff
+- Failed requests retry up to 2 times with 500ms linear backoff
 - 4xx errors (client errors) are not retried
 - Cache is cleared on page reload
 
