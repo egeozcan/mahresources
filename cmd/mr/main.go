@@ -61,6 +61,8 @@ func main() {
 	rootCmd.AddCommand(commands.NewNoteTypesCmd(c, opts, &page))
 	rootCmd.AddCommand(commands.NewNoteBlockCmd(c, opts))
 	rootCmd.AddCommand(commands.NewNoteBlocksCmd(c, opts))
+	rootCmd.AddCommand(commands.NewGroupCmd(c, opts))
+	rootCmd.AddCommand(commands.NewGroupsCmd(c, opts, &page))
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
