@@ -61,21 +61,12 @@ test.describe('Resource version lifecycle', () => {
   });
 
   test('version-upload adds a new version', async ({ cli }) => {
-    // The CLI uses field name "resource" but the API expects "file",
-    // so this command currently fails. Verify it runs and handle the known error.
-    const result = cli.run('resource', 'version-upload', String(resourceId), SAMPLE_IMAGE);
-    if (result.exitCode === 0) {
-      const versions = cli.runJson<ResourceVersion[]>('resource', 'versions', String(resourceId));
-      expect(versions.length).toBeGreaterThanOrEqual(2);
-      const newVersion = versions.find(v => v.id !== firstVersionId);
-      expect(newVersion).toBeDefined();
-      secondVersionId = newVersion!.id;
-    } else {
-      // Known CLI bug: sends wrong multipart field name
-      expect(result.stderr).toContain('file required');
-      // Skip dependent tests by setting secondVersionId to a safe value
-      secondVersionId = 0;
-    }
+    cli.runOrFail('resource', 'version-upload', String(resourceId), SAMPLE_IMAGE);
+    const versions = cli.runJson<ResourceVersion[]>('resource', 'versions', String(resourceId));
+    expect(versions.length).toBeGreaterThanOrEqual(2);
+    const newVersion = versions.find(v => v.id !== firstVersionId);
+    expect(newVersion).toBeDefined();
+    secondVersionId = newVersion!.id;
   });
 
   test('version get returns correct fields', async ({ cli }) => {

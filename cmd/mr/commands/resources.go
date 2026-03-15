@@ -781,11 +781,11 @@ func newResourceVersionUploadCmd(c *client.Client, opts *output.Options) *cobra.
 
 			extra := map[string]string{}
 			if cmd.Flags().Changed("comment") {
-				extra["Comment"] = comment
+				extra["comment"] = comment
 			}
 
 			var raw json.RawMessage
-			if err := c.UploadFile("/v1/resource/versions", q, "resource", args[1], extra, &raw); err != nil {
+			if err := c.UploadFile("/v1/resource/versions", q, "file", args[1], extra, &raw); err != nil {
 				return err
 			}
 
