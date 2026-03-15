@@ -263,3 +263,29 @@ func TestShareNote(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, resp.Code)
 	})
 }
+
+func TestNoteGroupFilterIncludesUnownedNotes(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create a group
+	group := tc.CreateDummyGroup("Filter Group")
+
+	// Create a note WITHOUT an owner, then relate it to the group via the junction table
+	note := &models.Note{Name: "Unowned Note", Description: "has no owner"}
+	tc.DB.Create(note)
+	tc.DB.Exec("INSERT INTO groups_related_notes (group_id, note_id) VALUES (?, ?)", group.ID, note.ID)
+
+	// Query notes filtered by this group
+	url := fmt.Sprintf("/v1/notes?Groups=%d", group.ID)
+	resp := tc.MakeRequest(http.MethodGet, url, nil)
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	var notes []*models.Note
+	json.Unmarshal(resp.Body.Bytes(), &notes)
+
+	assert.Equal(t, 1, len(notes),
+		"Note with NULL owner_id related to group via junction table should be returned by group filter")
+	if len(notes) > 0 {
+		assert.Equal(t, note.ID, notes[0].ID)
+	}
+}

@@ -41,7 +41,7 @@ func NoteQuery(query *query_models.NoteQuery, ignoreSort bool, originalDB *gorm.
 						WHERE 
 							grn.group_id IN ? 
 							AND grn.note_id = notes.id
-							AND notes.owner_id <> grn.group_id
+							AND (notes.owner_id IS NULL OR notes.owner_id <> grn.group_id)
 					) + (
 						SELECT
 							CASE

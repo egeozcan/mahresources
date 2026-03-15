@@ -72,7 +72,7 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 				Joins("JOIN groups_related_notes grn on n.id = grn.note_id").
 				// filter out the ones of which the group is the owner
 				// prevents counting 2 times when we are both related AND the owner
-				Where("n.owner_id <> grn.group_id").
+				Where("(n.owner_id IS NULL OR n.owner_id <> grn.group_id)").
 				Where("n.id IN ?", query.Notes).
 				Where("grn.group_id = groups.id")
 
@@ -92,7 +92,7 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 				Joins("JOIN groups_related_resources grr on r.id = grr.resource_id").
 				// filter out the ones of which the group is the owner
 				// prevents counting 2 times when we are both related AND the owner
-				Where("grr.group_id <> r.owner_id").
+				Where("(r.owner_id IS NULL OR grr.group_id <> r.owner_id)").
 				Where("grr.group_id = groups.id").
 				Where("r.id IN ?", query.Resources)
 
