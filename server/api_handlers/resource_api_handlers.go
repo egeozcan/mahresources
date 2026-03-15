@@ -327,16 +327,48 @@ func GetResourceAddRemoteHandler(ctx interfaces.ResourceCreator) func(writer htt
 	}
 }
 
-func GetResourceEditHandler(ctx interfaces.ResourceEditor) func(writer http.ResponseWriter, request *http.Request) {
+func GetResourceEditHandler(ctx interfaces.ResourceEditReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.ResourceEditor)
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.ResourceEditReader)
 
 		var editor = query_models.ResourceEditor{}
 		err := tryFillStructValuesFromRequest(&editor, request)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
+		}
+
+		// For JSON requests (API clients), pre-populate unset string fields from
+		// the existing resource so partial updates don't clear them.
+		// Only string fields are handled: uint fields like OwnerId use 0 to mean
+		// "clear", so they can't be distinguished from "not sent" without schema changes.
+		// Form submissions always send all fields, so this only matters for JSON.
+		if strings.HasPrefix(request.Header.Get("Content-type"), constants.JSON) && editor.ID != 0 {
+			existing, getErr := effectiveCtx.GetResource(editor.ID)
+			if getErr == nil {
+				if editor.Name == "" {
+					editor.Name = existing.Name
+				}
+				if editor.Description == "" {
+					editor.Description = existing.Description
+				}
+				if editor.Meta == "" {
+					editor.Meta = string(existing.Meta)
+				}
+				if editor.OriginalName == "" {
+					editor.OriginalName = existing.OriginalName
+				}
+				if editor.OriginalLocation == "" {
+					editor.OriginalLocation = existing.OriginalLocation
+				}
+				if editor.Category == "" {
+					editor.Category = existing.Category
+				}
+				if editor.ContentCategory == "" {
+					editor.ContentCategory = existing.ContentCategory
+				}
+			}
 		}
 
 		res, err := effectiveCtx.EditResource(&editor)

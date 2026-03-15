@@ -568,6 +568,29 @@ func TestResourceEditOwnerIdZeroStoresNull(t *testing.T) {
 		"OwnerId should be NULL when edited with OwnerId=0, not a pointer to 0")
 }
 
+func TestResourceEditPartialJSONPreservesOtherFields(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create a resource with a name and description
+	res := &models.Resource{Name: "Original Name", Description: "Original Desc", Meta: []byte(`{"key":"value"}`)}
+	tc.DB.Create(res)
+
+	// Send a partial JSON body that only changes the description (simulates CLI: mr resource edit --description "New")
+	partialBody := map[string]any{
+		"ID":          res.ID,
+		"Description": "Updated Desc",
+	}
+	resp := tc.MakeRequest(http.MethodPost, "/v1/resource/edit", partialBody)
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	// The name should be preserved, not cleared to empty
+	var check models.Resource
+	tc.DB.First(&check, res.ID)
+	assert.Equal(t, "Updated Desc", check.Description)
+	assert.Equal(t, "Original Name", check.Name,
+		"Editing only description should not clear the name — partial JSON must preserve unset fields")
+}
+
 func TestResourceEditUpdatesWidthHeight(t *testing.T) {
 	tc := SetupTestEnv(t)
 

@@ -26,6 +26,12 @@ type ResourceEditor interface {
 	EditResource(resourceQuery *query_models.ResourceEditor) (*models.Resource, error)
 }
 
+// ResourceEditReader combines editing with reading for partial-update support
+type ResourceEditReader interface {
+	ResourceEditor
+	GetResource(id uint) (*models.Resource, error)
+}
+
 // BulkResourceTagEditor handles bulk tag operations on resources
 type BulkResourceTagEditor interface {
 	BulkAddTagsToResources(query *query_models.BulkEditQuery) error
