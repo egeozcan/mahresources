@@ -129,6 +129,55 @@ func TestMergeGroupsMetaWinnerTakesPrecedence(t *testing.T) {
 	assert.Equal(t, "yes", meta["only_loser"], "Loser's unique key should be preserved")
 }
 
+func TestMergeGroupsPreservesRelationTypeId(t *testing.T) {
+	tc := SetupTestEnv(t)
+	requireJsonPatch(t, tc.DB)
+
+	// Create category (needed for relation types)
+	cat := &models.Category{Name: "Rel Test Cat"}
+	tc.DB.Create(cat)
+
+	// Create winner, loser, and a target group
+	winner := &models.Group{Name: "Winner", CategoryId: &cat.ID}
+	tc.DB.Create(winner)
+	loser := &models.Group{Name: "Loser", CategoryId: &cat.ID}
+	tc.DB.Create(loser)
+	target := &models.Group{Name: "Target", CategoryId: &cat.ID}
+	tc.DB.Create(target)
+
+	// Create a relation type
+	relType := &models.GroupRelationType{
+		Name:           "depends-on",
+		FromCategoryId: &cat.ID,
+		ToCategoryId:   &cat.ID,
+	}
+	tc.DB.Create(relType)
+
+	// Create a relation from loser -> target with the relation type
+	rel := &models.GroupRelation{
+		FromGroupId:    &loser.ID,
+		ToGroupId:      &target.ID,
+		RelationTypeId: &relType.ID,
+		Name:           "test relation",
+	}
+	tc.DB.Create(rel)
+
+	// Merge loser into winner
+	err := tc.AppCtx.MergeGroups(winner.ID, []uint{loser.ID})
+	assert.NoError(t, err)
+
+	// The relation should have been transferred to the winner with relation_type_id preserved
+	var transferred models.GroupRelation
+	tc.DB.Where("from_group_id = ? AND to_group_id = ?", winner.ID, target.ID).First(&transferred)
+
+	assert.NotZero(t, transferred.ID, "Relation should have been transferred to winner")
+	assert.NotNil(t, transferred.RelationTypeId,
+		"RelationTypeId must be preserved when transferring relations during merge")
+	if transferred.RelationTypeId != nil {
+		assert.Equal(t, relType.ID, *transferred.RelationTypeId)
+	}
+}
+
 func TestGroupCreateWithoutURLStoresNull(t *testing.T) {
 	tc := SetupTestEnv(t)
 

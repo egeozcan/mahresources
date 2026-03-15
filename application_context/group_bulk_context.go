@@ -61,10 +61,11 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 		}
 
 		// Batch SQL transfers — group_relations (both directions)
-		if err := altCtx.db.Exec("INSERT INTO group_relations (from_group_id, to_group_id) SELECT ?, to_group_id FROM group_relations WHERE from_group_id IN ? ON CONFLICT DO NOTHING", winnerId, loserIds).Error; err != nil {
+		// group_relations is a full entity with relation_type_id, name, description — transfer all columns
+		if err := altCtx.db.Exec("INSERT INTO group_relations (from_group_id, to_group_id, relation_type_id, name, description, created_at, updated_at) SELECT ?, to_group_id, relation_type_id, name, description, created_at, updated_at FROM group_relations WHERE from_group_id IN ? AND to_group_id != ? ON CONFLICT DO NOTHING", winnerId, loserIds, winnerId).Error; err != nil {
 			return err
 		}
-		if err := altCtx.db.Exec("INSERT INTO group_relations (from_group_id, to_group_id) SELECT from_group_id, ? FROM group_relations WHERE to_group_id IN ? ON CONFLICT DO NOTHING", winnerId, loserIds).Error; err != nil {
+		if err := altCtx.db.Exec("INSERT INTO group_relations (from_group_id, to_group_id, relation_type_id, name, description, created_at, updated_at) SELECT from_group_id, ?, relation_type_id, name, description, created_at, updated_at FROM group_relations WHERE to_group_id IN ? AND from_group_id != ? ON CONFLICT DO NOTHING", winnerId, loserIds, winnerId).Error; err != nil {
 			return err
 		}
 
