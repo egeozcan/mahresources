@@ -114,8 +114,8 @@ func TestGenerateEvenPositions(t *testing.T) {
 					"position %d (%q) should be > position %d (%q)", i, positions[i], i-1, positions[i-1])
 			}
 
-			// Verify all positions are single characters for small n
-			if tt.n > 0 && tt.n <= 26 {
+			// Verify all positions are single characters for small n (up to 24)
+			if tt.n > 0 && tt.n <= 24 {
 				for _, pos := range positions {
 					assert.Len(t, pos, 1, "position %q should be single character", pos)
 				}
@@ -140,9 +140,9 @@ func TestGenerateEvenPositions_Spacing(t *testing.T) {
 }
 
 func TestGenerateEvenPositions_LargeN_NoDuplicates(t *testing.T) {
-	// With n > 26, the single-character alphabet is exhausted.
-	// Positions must still be strictly ascending (no duplicates).
-	for _, n := range []int{27, 50, 100} {
+	// Positions must be strictly ascending (no duplicates) at all sizes,
+	// including boundary values where single-char transitions to multi-char.
+	for _, n := range []int{25, 26, 27, 50, 100, 676, 677} {
 		t.Run(fmt.Sprintf("n=%d", n), func(t *testing.T) {
 			positions := GenerateEvenPositions(n)
 			assert.Len(t, positions, n)
@@ -152,6 +152,30 @@ func TestGenerateEvenPositions_LargeN_NoDuplicates(t *testing.T) {
 					"n=%d: position %d (%q) must be > position %d (%q)",
 					n, i, positions[i], i-1, positions[i-1])
 			}
+		})
+	}
+}
+
+func TestGenerateEvenPositions_BoundaryInsertion(t *testing.T) {
+	// After rebalance, it must be possible to insert before the first position
+	// and after the last position. This was a bug for n=25, 26, 676, etc.
+	for _, n := range []int{1, 5, 10, 24, 25, 26, 27, 50, 100, 676, 677} {
+		t.Run(fmt.Sprintf("n=%d", n), func(t *testing.T) {
+			positions := GenerateEvenPositions(n)
+			first := positions[0]
+			last := positions[len(positions)-1]
+
+			// Must be able to insert before the first position
+			beforeFirst := PositionBetween("", first)
+			assert.True(t, beforeFirst < first,
+				"n=%d: PositionBetween(\"\", %q) = %q should be < %q",
+				n, first, beforeFirst, first)
+
+			// Must be able to insert after the last position
+			afterLast := PositionBetween(last, "")
+			assert.True(t, afterLast > last,
+				"n=%d: PositionBetween(%q, \"\") = %q should be > %q",
+				n, last, afterLast, last)
 		})
 	}
 }

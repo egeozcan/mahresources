@@ -442,17 +442,20 @@
                     <div x-data="{ get idx() { return $store.lightbox.numpadIndex(vIdx) }, get tag() { return $store.lightbox.getActiveTabSlots()[this.idx] } }">
                         <!-- Card with tag assigned -->
                         <template x-if="tag">
-                            <button
-                                @click="$store.lightbox.toggleTabTag(idx)"
-                                class="group relative w-full aspect-[4/3] rounded-lg flex flex-col items-center justify-center gap-1 transition-colors focus:outline-none focus:ring-2 focus:ring-stone-400"
+                            <div class="group relative w-full aspect-[4/3] rounded-lg transition-colors"
                                 :class="$store.lightbox.isTagOnResource(tag?.id)
                                     ? 'bg-green-900/30 border-2 border-green-600/60 text-green-300 hover:bg-red-900/30 hover:border-red-600/60 hover:text-red-300'
                                     : 'bg-stone-800 border border-stone-700 text-stone-300 hover:bg-amber-900/20 hover:border-amber-700 hover:text-amber-300'"
-                                :aria-label="($store.lightbox.isTagOnResource(tag?.id) ? 'Remove ' : 'Add ') + tag?.name"
                             >
-                                <kbd class="text-sm font-mono text-stone-500" x-text="$store.lightbox.quickTagKeyLabel(idx)"></kbd>
-                                <span class="text-sm font-semibold truncate max-w-full px-2" x-text="tag?.name"></span>
-                                <!-- Clear button (only on QUICK tabs) -->
+                                <button
+                                    @click="$store.lightbox.toggleTabTag(idx)"
+                                    class="w-full h-full flex flex-col items-center justify-center gap-1 focus:outline-none focus:ring-2 focus:ring-stone-400 rounded-lg"
+                                    :aria-label="($store.lightbox.isTagOnResource(tag?.id) ? 'Remove ' : 'Add ') + tag?.name"
+                                >
+                                    <kbd class="text-sm font-mono text-stone-500" x-text="$store.lightbox.quickTagKeyLabel(idx)"></kbd>
+                                    <span class="text-sm font-semibold truncate max-w-full px-2" x-text="tag?.name"></span>
+                                </button>
+                                <!-- Clear button (only on QUICK tabs, sibling to avoid nested button) -->
                                 <template x-if="$store.lightbox.isQuickTab()">
                                     <button
                                         @click.stop="$store.lightbox.clearQuickTagSlot(idx)"
@@ -464,7 +467,7 @@
                                         </svg>
                                     </button>
                                 </template>
-                            </button>
+                            </div>
                         </template>
 
                         <!-- Empty card -->

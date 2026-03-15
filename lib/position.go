@@ -105,8 +105,10 @@ func GenerateEvenPositions(n int) []string {
 
 	positions := make([]string, n)
 
-	if n < alphabetSize {
-		// Single character positions with even spacing
+	if n < alphabetSize-1 {
+		// Single character positions with even spacing.
+		// n <= 24 ensures step >= 1.0, so the first position is at least 'b'
+		// and the last is at most 'y', leaving room for insertion at both ends.
 		step := float64(maxChar-minChar) / float64(n+1)
 		for i := 0; i < n; i++ {
 			charCode := minChar + byte(step*float64(i+1))
@@ -128,16 +130,19 @@ func GenerateEvenPositions(n int) []string {
 func indexToPosition(index, total int) string {
 	const alphabetSize = int(maxChar-minChar) + 1
 
-	// Determine how many characters we need
+	// Determine how many characters we need.
+	// Require capacity >= total+2 so that positions never land on the
+	// absolute min ("aa…a") or max ("zz…z"), leaving room for insertions
+	// before the first and after the last generated position.
 	digits := 1
 	capacity := alphabetSize
-	for capacity < total {
+	for capacity < total+2 {
 		digits++
 		capacity *= alphabetSize
 	}
 
-	// Map index to evenly spaced slot in the capacity
-	slot := int(float64(index+1) * float64(capacity) / float64(total+1))
+	// Map index into [1, capacity-2] to avoid boundaries
+	slot := 1 + int(float64(index+1)*float64(capacity-2)/float64(total+1))
 
 	// Convert slot to base-26 string of fixed width
 	result := make([]byte, digits)

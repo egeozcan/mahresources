@@ -29,8 +29,10 @@ export const quickTagPanelState = {
     Array(9).fill(null),
   ],
   _quickTagTogglingIds: new Set(),
+  _activeTagResourceId: null, // resource currently being tagged (not reactive)
+  _pendingLastTags: null, // latest snapshot of current resource's tags (not reactive)
   recentTags: Array(9).fill(null), // [{id, name, ts} | null] x 9
-  lastResourceTags: Array(9).fill(null), // [{id, name} | null] x 9
+  lastResourceTags: Array(9).fill(null), // [{id, name} | null] x 9 — frozen on resource switch
   tabLabels: TAB_LABELS,
 };
 
@@ -216,13 +218,24 @@ export const quickTagPanelMethods = {
   // ==================== Last Resource Tags ====================
 
   captureLastResourceTags() {
+    const currentId = this.getCurrentItem()?.id;
+    if (!currentId) return;
+
     const tags = (this.resourceDetails?.Tags || []).slice(0, 9);
-    const padded = Array(9).fill(null);
+    const snapshot = Array(9).fill(null);
     tags.forEach((t, i) => {
-      padded[i] = { id: t.ID, name: t.Name };
+      snapshot[i] = { id: t.ID, name: t.Name };
     });
-    this.lastResourceTags = padded;
-    this._saveQuickTagsToStorage();
+
+    // On resource switch: promote the pending buffer to LAST (freezes previous resource's tags)
+    if (this._activeTagResourceId && this._activeTagResourceId !== currentId && this._pendingLastTags) {
+      this.lastResourceTags = this._pendingLastTags;
+      this._saveQuickTagsToStorage();
+    }
+
+    // Always update the pending buffer with the current resource's latest tags
+    this._activeTagResourceId = currentId;
+    this._pendingLastTags = snapshot;
   },
 
   // ==================== Tag Toggle ====================
