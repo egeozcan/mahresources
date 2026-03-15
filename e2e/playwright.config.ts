@@ -63,6 +63,7 @@ export default defineConfig({
       fullyParallel: false,
       use: {},
       workers: process.env.CI ? 1 : 2,
+      dependencies: ['default'],
     },
   ],
 });
