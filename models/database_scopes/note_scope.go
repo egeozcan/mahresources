@@ -102,7 +102,11 @@ func NoteQuery(query *query_models.NoteQuery, ignoreSort bool, originalDB *gorm.
 		}
 
 		if query.Shared != nil {
-			dbQuery = dbQuery.Where("share_token IS NOT NULL")
+			if *query.Shared {
+				dbQuery = dbQuery.Where("share_token IS NOT NULL")
+			} else {
+				dbQuery = dbQuery.Where("share_token IS NULL")
+			}
 		}
 
 		return dbQuery

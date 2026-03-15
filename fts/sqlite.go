@@ -179,27 +179,42 @@ func (s *SQLiteFTS) BuildSearchScope(tableName string, columns []string, query P
 	}
 }
 
+// escapeLikeWildcards escapes SQL LIKE wildcard characters (% and _) so they
+// are treated as literals. The caller must add ESCAPE '\\' to the LIKE clause.
+func escapeLikeWildcards(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
+
 // fuzzyFallback provides basic fuzzy matching for SQLite using LIKE patterns
 func (s *SQLiteFTS) fuzzyFallback(db *gorm.DB, tableName, term string) *gorm.DB {
+	escaped := escapeLikeWildcards(term)
+	likeEscape := " ESCAPE '\\'"
+
 	if len(term) <= 2 {
 		// For very short terms, just use contains
-		return db.Where(tableName+".name LIKE ?", "%"+term+"%")
+		return db.Where(tableName+".name LIKE ?"+likeEscape, "%"+escaped+"%")
 	}
 
 	// Build OR conditions for single-char wildcards at each position
 	// For "test" -> match "t_st", "_est", "te_t", "tes_"
+	runes := []rune(term)
 	var conditions []string
 	var args []interface{}
 
-	for i := range term {
-		pattern := term[:i] + "_" + term[i+1:]
-		conditions = append(conditions, tableName+".name LIKE ?")
+	for i := range runes {
+		before := escapeLikeWildcards(string(runes[:i]))
+		after := escapeLikeWildcards(string(runes[i+1:]))
+		pattern := before + "_" + after // intentional single-char wildcard
+		conditions = append(conditions, tableName+".name LIKE ?"+likeEscape)
 		args = append(args, "%"+pattern+"%")
 	}
 
 	// Also include exact substring match
-	conditions = append(conditions, tableName+".name LIKE ?")
-	args = append(args, "%"+term+"%")
+	conditions = append(conditions, tableName+".name LIKE ?"+likeEscape)
+	args = append(args, "%"+escaped+"%")
 
 	return db.Where(strings.Join(conditions, " OR "), args...)
 }

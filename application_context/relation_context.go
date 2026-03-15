@@ -53,6 +53,11 @@ func (ctx *MahresourcesContext) AddRelation(fromGroupId, toGroupId, relationType
 			return err
 		}
 
+		if fromGroup.CategoryId == nil || toGroup.CategoryId == nil ||
+			relationType.FromCategoryId == nil || relationType.ToCategoryId == nil {
+			return errors.New("both groups and the relation type must have categories assigned")
+		}
+
 		if *toGroup.CategoryId != *relationType.ToCategoryId || *fromGroup.CategoryId != *relationType.FromCategoryId {
 			return errors.New("category mismatch")
 		}

@@ -8,5 +8,8 @@ import (
 //goland:noinspection GoUnusedParameter
 func humanReadableSize(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *pongo2.Error) {
 	input := in.Interface().(int64)
+	if input < 0 {
+		return pongo2.AsValue("-" + datasize.ByteSize(-input).HumanReadable()), nil
+	}
 	return pongo2.AsValue(datasize.ByteSize(input).HumanReadable()), nil
 }

@@ -92,6 +92,7 @@ func FirstPosition() string {
 // GenerateEvenPositions returns n evenly distributed position strings.
 // For n items, it divides the alphabet space evenly to maximize room for insertions.
 // For example, with 5 items: ["d", "h", "l", "p", "t"]
+// For n > 26, multi-character strings are generated to ensure uniqueness.
 func GenerateEvenPositions(n int) []string {
 	if n <= 0 {
 		return []string{}
@@ -100,17 +101,51 @@ func GenerateEvenPositions(n int) []string {
 		return []string{"n"} // middle of alphabet
 	}
 
-	positions := make([]string, n)
-	// Use the range from 'a' to 'z' (26 characters)
-	// Divide into n+1 segments to get n evenly spaced positions
-	step := float64(maxChar-minChar) / float64(n+1)
+	const alphabetSize = int(maxChar-minChar) + 1 // 26
 
-	for i := 0; i < n; i++ {
-		charCode := minChar + byte(step*float64(i+1))
-		positions[i] = string(charCode)
+	positions := make([]string, n)
+
+	if n < alphabetSize {
+		// Single character positions with even spacing
+		step := float64(maxChar-minChar) / float64(n+1)
+		for i := 0; i < n; i++ {
+			charCode := minChar + byte(step*float64(i+1))
+			positions[i] = string(charCode)
+		}
+	} else {
+		// Multi-character positions: treat indices as base-26 numbers
+		// to guarantee strictly ascending, unique strings
+		for i := 0; i < n; i++ {
+			positions[i] = indexToPosition(i, n)
+		}
 	}
 
 	return positions
+}
+
+// indexToPosition converts an index (0..n-1) to an evenly spaced position string.
+// It maps the index into a fixed-width base-26 representation using letters a-z.
+func indexToPosition(index, total int) string {
+	const alphabetSize = int(maxChar-minChar) + 1
+
+	// Determine how many characters we need
+	digits := 1
+	capacity := alphabetSize
+	for capacity < total {
+		digits++
+		capacity *= alphabetSize
+	}
+
+	// Map index to evenly spaced slot in the capacity
+	slot := int(float64(index+1) * float64(capacity) / float64(total+1))
+
+	// Convert slot to base-26 string of fixed width
+	result := make([]byte, digits)
+	for d := digits - 1; d >= 0; d-- {
+		result[d] = minChar + byte(slot%alphabetSize)
+		slot /= alphabetSize
+	}
+	return string(result)
 }
 
 // NeedsRebalancing checks if any position string exceeds the threshold length.

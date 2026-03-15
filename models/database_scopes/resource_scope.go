@@ -56,6 +56,7 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 				Table("resource_notes rn").
 				Where("rn.note_id IN ?", query.Notes).
 				Group("rn.resource_id").
+				Having("count(*) = ?", len(query.Notes)).
 				Select("rn.resource_id")
 
 			dbQuery = dbQuery.Where("resources.id IN (?)", subQuery)

@@ -218,6 +218,42 @@ func TestBlockEndpoints(t *testing.T) {
 	})
 }
 
+func TestDeleteLastTextBlockClearsDescription(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create a note with no initial description
+	note := tc.CreateDummyNote("Sync Test Note")
+
+	// Create a text block — this syncs "Hello" into the note's description
+	payload := map[string]interface{}{
+		"noteId":   note.ID,
+		"type":     "text",
+		"position": "n",
+		"content":  map[string]string{"text": "Hello from block"},
+	}
+	resp := tc.MakeRequest(http.MethodPost, "/v1/note/block", payload)
+	assert.Equal(t, http.StatusCreated, resp.Code)
+
+	var block models.NoteBlock
+	json.Unmarshal(resp.Body.Bytes(), &block)
+
+	// Verify description was synced
+	var check models.Note
+	tc.DB.First(&check, note.ID)
+	assert.Equal(t, "Hello from block", check.Description,
+		"description should be synced from the text block")
+
+	// Delete the only text block
+	delURL := fmt.Sprintf("/v1/note/block?id=%d", block.ID)
+	delResp := tc.MakeRequest(http.MethodDelete, delURL, nil)
+	assert.Equal(t, http.StatusNoContent, delResp.Code)
+
+	// Description should now be empty since there are no text blocks left
+	tc.DB.First(&check, note.ID)
+	assert.Equal(t, "", check.Description,
+		"description should be cleared when the last text block is deleted")
+}
+
 func TestTableBlockQueryEndpoint(t *testing.T) {
 	tc := SetupTestEnv(t)
 

@@ -2,6 +2,7 @@
 package lib
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -135,6 +136,23 @@ func TestGenerateEvenPositions_Spacing(t *testing.T) {
 		// Allow some variance due to integer division
 		assert.InDelta(t, float64(gap1), float64(gap2), 1.0,
 			"gaps should be roughly equal: %d vs %d", gap1, gap2)
+	}
+}
+
+func TestGenerateEvenPositions_LargeN_NoDuplicates(t *testing.T) {
+	// With n > 26, the single-character alphabet is exhausted.
+	// Positions must still be strictly ascending (no duplicates).
+	for _, n := range []int{27, 50, 100} {
+		t.Run(fmt.Sprintf("n=%d", n), func(t *testing.T) {
+			positions := GenerateEvenPositions(n)
+			assert.Len(t, positions, n)
+
+			for i := 1; i < len(positions); i++ {
+				assert.True(t, positions[i] > positions[i-1],
+					"n=%d: position %d (%q) must be > position %d (%q)",
+					n, i, positions[i], i-1, positions[i-1])
+			}
+		})
 	}
 }
 

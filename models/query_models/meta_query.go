@@ -11,41 +11,53 @@ type ColumnMeta struct {
 	Operation string `json:"operation"`
 }
 
+// validOperations is the set of recognized meta query operations.
+// Used to distinguish "key:OP:value" from "key:value-with-colon".
+var validOperations = map[string]bool{
+	"EQ": true, "LI": true, "NE": true, "NL": true,
+	"GT": true, "GE": true, "LT": true, "LE": true,
+}
+
 func ParseMeta(input string) ColumnMeta {
-	var ret ColumnMeta
-	parts := strings.Split(input, ":")
-	switch len(parts) {
-	case 2, 3:
-		var parsedValue any
-		value := parts[1]
-		operation := "LI"
+	// Split into at most 3 parts so colons inside the value are preserved.
+	parts := strings.SplitN(input, ":", 3)
 
-		if len(parts) == 3 {
-			value = parts[2]
-			operation = parts[1]
-		}
+	var key, value, operation string
 
-		if value == "true" || value == "false" {
-			parsedValue = value == "true"
-		} else if value == "null" {
-			parsedValue = nil
-		} else if strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"") && strings.Count(value, "\"") == 2 {
-			parsedValue = strings.Trim(value, "\"")
+	switch {
+	case len(parts) == 3 && validOperations[parts[1]]:
+		// key:OP:value (value may contain colons)
+		key = parts[0]
+		operation = parts[1]
+		value = parts[2]
+	case len(parts) >= 2:
+		// key:value (value may contain colons)
+		key = parts[0]
+		operation = "LI"
+		value = strings.Join(parts[1:], ":")
+	default:
+		return ColumnMeta{}
+	}
+
+	var parsedValue any
+	if value == "true" || value == "false" {
+		parsedValue = value == "true"
+	} else if value == "null" {
+		parsedValue = nil
+	} else if strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"") && strings.Count(value, "\"") == 2 {
+		parsedValue = strings.Trim(value, "\"")
+	} else {
+		float, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			parsedValue = value
 		} else {
-			float, err := strconv.ParseFloat(value, 64)
-
-			if err != nil {
-				parsedValue = value
-			} else {
-				parsedValue = float
-			}
-		}
-
-		ret = ColumnMeta{
-			Key:       parts[0],
-			Value:     parsedValue,
-			Operation: operation,
+			parsedValue = float
 		}
 	}
-	return ret
+
+	return ColumnMeta{
+		Key:       key,
+		Value:     parsedValue,
+		Operation: operation,
+	}
 }

@@ -239,7 +239,7 @@ func syncFirstTextBlockToDescriptionTx(tx *gorm.DB, noteID uint) error {
 	}
 
 	if len(blocks) == 0 {
-		return nil
+		return tx.Model(&models.Note{}).Where("id = ?", noteID).Update("description", "").Error
 	}
 
 	var content struct {

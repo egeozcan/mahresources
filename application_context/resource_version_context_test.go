@@ -1522,3 +1522,63 @@ func TestMigrateResourceVersions_MigratesResourcesWithoutVersions(t *testing.T) 
 		t.Error("Expected CurrentVersionID to be set after migration")
 	}
 }
+
+func TestRestoreVersionSyncsHashType(t *testing.T) {
+	ctx := createVersionTestContext(t)
+	db := ctx.db
+	if err := db.AutoMigrate(&models.ResourceVersion{}); err != nil {
+		t.Fatalf("Failed to migrate ResourceVersion: %v", err)
+	}
+
+	ownerGroup := &models.Group{Name: "hash-type-owner"}
+	db.Create(ownerGroup)
+
+	// Create resource with a DIFFERENT HashType than versions will have
+	resource := &models.Resource{
+		Name:     "hash-type-test",
+		Hash:     "old-hash",
+		HashType: "MD5",
+		OwnerId:  ptrUint(ownerGroup.ID),
+		Location: "/old/location",
+	}
+	db.Create(resource)
+
+	v1 := &models.ResourceVersion{
+		ResourceID:    resource.ID,
+		VersionNumber: 1,
+		Hash:          "v1-hash",
+		HashType:      "SHA1",
+		Location:      "/v1/location",
+		FileSize:      100,
+		ContentType:   "text/plain",
+	}
+	db.Create(v1)
+
+	v2 := &models.ResourceVersion{
+		ResourceID:    resource.ID,
+		VersionNumber: 2,
+		Hash:          "v2-hash",
+		HashType:      "SHA1",
+		Location:      "/v2/location",
+		FileSize:      200,
+		ContentType:   "text/html",
+	}
+	db.Create(v2)
+
+	// Restore v1 — this should sync ALL version fields to the resource,
+	// including HashType
+	_, err := ctx.RestoreVersion(resource.ID, v1.ID, "restore test")
+	if err != nil {
+		t.Fatalf("RestoreVersion() error = %v", err)
+	}
+
+	var updated models.Resource
+	db.First(&updated, resource.ID)
+
+	if updated.Hash != "v1-hash" {
+		t.Errorf("Hash = %q, want %q", updated.Hash, "v1-hash")
+	}
+	if updated.HashType != "SHA1" {
+		t.Errorf("HashType = %q, want %q — hash_type was not synced from version to resource", updated.HashType, "SHA1")
+	}
+}

@@ -100,7 +100,7 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 			case constants.DbTypePosgres:
 				err = altCtx.db.Exec(`UPDATE groups SET meta = coalesce((SELECT meta FROM groups WHERE id = ?), '{}'::jsonb) || meta WHERE id = ?`, loser.ID, winnerId).Error
 			case constants.DbTypeSqlite:
-				err = altCtx.db.Exec(`UPDATE groups SET meta = json_patch(meta, coalesce((SELECT meta FROM groups WHERE id = ?), '{}')) WHERE id = ?`, loser.ID, winnerId).Error
+				err = altCtx.db.Exec(`UPDATE groups SET meta = json_patch(coalesce((SELECT meta FROM groups WHERE id = ?), '{}'), meta) WHERE id = ?`, loser.ID, winnerId).Error
 			default:
 				err = errors.New("db doesn't support merging meta")
 			}

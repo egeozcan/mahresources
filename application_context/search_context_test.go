@@ -2,7 +2,9 @@ package application_context
 
 import (
 	"reflect"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestCalculateRelevanceScore(t *testing.T) {
@@ -170,6 +172,40 @@ func TestTruncateDescription(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTruncateDescription_MultiByteCharacters(t *testing.T) {
+	// "你好世界测试" is 6 characters but 18 bytes in UTF-8.
+	// With maxLen=10 (characters), a 6-char string should NOT be truncated.
+	t.Run("short CJK string not truncated", func(t *testing.T) {
+		desc := "你好世界测试" // 6 chars, 18 bytes
+		got := truncateDescription(desc, 10)
+		if got != desc {
+			t.Errorf("6-character CJK string was incorrectly truncated at maxLen=10: got %q", got)
+		}
+	})
+
+	// When truncation IS needed for multi-byte text, the result must be valid UTF-8.
+	t.Run("truncated CJK produces valid UTF-8", func(t *testing.T) {
+		desc := "你好世界测试这是一个很长的描述" // 14 chars
+		got := truncateDescription(desc, 10)
+		if !utf8.ValidString(got) {
+			t.Errorf("truncateDescription produced invalid UTF-8: %q (bytes: %x)", got, []byte(got))
+		}
+	})
+
+	// The truncated result should end with "..." and have at most maxLen runes total.
+	t.Run("truncated CJK respects character limit", func(t *testing.T) {
+		desc := "你好世界测试这是一个很长的描述" // 14 chars
+		got := truncateDescription(desc, 10)
+		runeCount := utf8.RuneCountInString(got)
+		if runeCount > 10 {
+			t.Errorf("truncated result has %d characters, want at most 10: %q", runeCount, got)
+		}
+		if !strings.HasSuffix(got, "...") {
+			t.Errorf("truncated result should end with '...': got %q", got)
+		}
+	})
 }
 
 func TestGetTypesToSearch(t *testing.T) {

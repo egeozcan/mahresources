@@ -8,6 +8,9 @@ import (
 
 // formatFileSize formats a byte count as a human-readable string (e.g. "1.5 MB").
 func formatFileSize(bytes int64) string {
+	if bytes < 0 {
+		return "-" + formatFileSize(-bytes)
+	}
 	const unit = 1024
 	if bytes < unit {
 		return fmt.Sprintf("%d B", bytes)

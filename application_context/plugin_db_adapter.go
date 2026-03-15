@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/plugin_system"
@@ -697,10 +698,10 @@ func (a *pluginDBAdapter) PatchNote(id uint, opts map[string]any) (map[string]an
 	}
 	var startDate, endDate string
 	if note.StartDate != nil {
-		startDate = note.StartDate.Format("2006-01-02T03:04")
+		startDate = note.StartDate.Format(constants.TimeFormat)
 	}
 	if note.EndDate != nil {
-		endDate = note.EndDate.Format("2006-01-02T03:04")
+		endDate = note.EndDate.Format(constants.TimeFormat)
 	}
 	editor := &query_models.NoteEditor{
 		NoteCreator: query_models.NoteCreator{

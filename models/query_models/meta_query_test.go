@@ -38,6 +38,34 @@ func TestParseMetaArray(t *testing.T) {
 				Operation: "LT",
 			},
 		},
+		// Values that contain colons (URLs, timestamps) must not be silently dropped
+		{
+			name:  "value with colon (URL) and explicit op",
+			input: "site:EQ:https://example.com:8080/path",
+			want: ColumnMeta{
+				Key:       "site",
+				Value:     "https://example.com:8080/path",
+				Operation: "EQ",
+			},
+		},
+		{
+			name:  "value with colon (URL) default op",
+			input: "site:https://example.com",
+			want: ColumnMeta{
+				Key:       "site",
+				Value:     "https://example.com",
+				Operation: "LI",
+			},
+		},
+		{
+			name:  "value with colon (timestamp)",
+			input: "time:EQ:14:30:00",
+			want: ColumnMeta{
+				Key:       "time",
+				Value:     "14:30:00",
+				Operation: "EQ",
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

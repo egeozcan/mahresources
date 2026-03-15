@@ -13,15 +13,15 @@ import (
 
 // Entity type constants
 const (
-	EntityTypeResource     = "resource"
-	EntityTypeNote         = "note"
-	EntityTypeGroup        = "group"
-	EntityTypeTag          = "tag"
-	EntityTypeCategory     = "category"
-	EntityTypeQuery        = "query"
-	EntityTypeRelationType = "relationType"
-	EntityTypeNoteType             = "noteType"
-	EntityTypeResourceCategory     = "resourceCategory"
+	EntityTypeResource         = "resource"
+	EntityTypeNote             = "note"
+	EntityTypeGroup            = "group"
+	EntityTypeTag              = "tag"
+	EntityTypeCategory         = "category"
+	EntityTypeQuery            = "query"
+	EntityTypeRelationType     = "relationType"
+	EntityTypeNoteType         = "noteType"
+	EntityTypeResourceCategory = "resourceCategory"
 )
 
 // InvalidateSearchCacheByType removes cached search results that contain the specified entity type.
@@ -83,14 +83,15 @@ func (ctx *MahresourcesContext) GlobalSearch(query *query_models.GlobalSearchQue
 	if ctx.searchCache != nil && len(query.Types) == 0 {
 		cacheKey := strings.ToLower(searchTerm)
 		if cached, ok := ctx.searchCache.Get(cacheKey); ok {
-			// Apply limit to cached results
+			// Total reflects all cached results; apply limit only for the returned slice
+			total := len(cached)
 			results := cached
 			if len(results) > query.Limit {
 				results = results[:query.Limit]
 			}
 			return &query_models.GlobalSearchResponse{
 				Query:   searchTerm,
-				Total:   len(results),
+				Total:   total,
 				Results: results,
 			}, nil
 		}
@@ -150,14 +151,15 @@ func (ctx *MahresourcesContext) GlobalSearch(query *query_models.GlobalSearchQue
 		ctx.searchCache.Set(strings.ToLower(searchTerm), allResults)
 	}
 
-	// Apply user's requested limit for response
+	// Total reflects all results found; apply limit only for the returned slice
+	total := len(allResults)
 	if len(allResults) > query.Limit {
 		allResults = allResults[:query.Limit]
 	}
 
 	return &query_models.GlobalSearchResponse{
 		Query:   searchTerm,
-		Total:   len(allResults),
+		Total:   total,
 		Results: allResults,
 	}, nil
 }
@@ -287,10 +289,11 @@ func calculateRelevanceScore(name, description, searchTerm string) int {
 }
 
 func truncateDescription(desc string, maxLen int) string {
-	if len(desc) <= maxLen {
+	runes := []rune(desc)
+	if len(runes) <= maxLen {
 		return desc
 	}
-	return desc[:maxLen-3] + "..."
+	return string(runes[:maxLen-3]) + "..."
 }
 
 // entityFields extracts the common search fields (id, name, description) from any searchable model.

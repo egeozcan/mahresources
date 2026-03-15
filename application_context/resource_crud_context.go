@@ -226,6 +226,8 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 		resource.Category = resourceQuery.Category
 		resource.ContentCategory = resourceQuery.ContentCategory
 		resource.ResourceCategoryId = uintPtrOrNil(resourceQuery.ResourceCategoryId)
+		resource.Width = resourceQuery.Width
+		resource.Height = resourceQuery.Height
 		resource.OwnerId = &resourceQuery.OwnerId
 		resource.Owner = &models.Group{ID: resourceQuery.OwnerId}
 

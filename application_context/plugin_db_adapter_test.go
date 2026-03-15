@@ -372,15 +372,20 @@ func TestPluginDBAdapter_GroupRelationCRUD(t *testing.T) {
 	ctx := createTestContext(t)
 	adapter := &pluginDBAdapter{ctx: ctx}
 
-	// Create prerequisite entities
-	group1, _ := adapter.CreateGroup(map[string]any{"name": "Rel Group 1"})
+	// Create prerequisite entities: category is required for relation type matching
+	cat, _ := adapter.CreateCategory(map[string]any{"name": "Rel Category"})
+	catId := cat["id"].(float64)
+
+	group1, _ := adapter.CreateGroup(map[string]any{"name": "Rel Group 1", "category_id": catId})
 	group1Id := uint(group1["id"].(float64))
-	group2, _ := adapter.CreateGroup(map[string]any{"name": "Rel Group 2"})
+	group2, _ := adapter.CreateGroup(map[string]any{"name": "Rel Group 2", "category_id": catId})
 	group2Id := uint(group2["id"].(float64))
 
 	rt, err := adapter.CreateRelationType(map[string]any{
-		"name":        "parent-of",
-		"description": "Parent relationship",
+		"name":          "parent-of",
+		"description":   "Parent relationship",
+		"from_category": catId,
+		"to_category":   catId,
 	})
 	if err != nil {
 		t.Fatalf("CreateRelationType failed: %v", err)

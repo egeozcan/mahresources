@@ -6,10 +6,56 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/spf13/afero"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/spf13/afero"
 	"mahresources/storage"
 )
+
+func TestParseHTMLTime_PMHoursNotDropped(t *testing.T) {
+	// HTML <input type="datetime-local"> sends 24-hour format: "2025-06-15T15:30"
+	// parseHTMLTime must handle PM hours (13-23), not silently return nil.
+	result := parseHTMLTime("2025-06-15T15:30")
+	if result == nil {
+		t.Fatal("parseHTMLTime(\"2025-06-15T15:30\") returned nil — PM times are being silently dropped")
+	}
+
+	if result.Hour() != 15 {
+		t.Errorf("expected hour 15, got %d", result.Hour())
+	}
+	if result.Minute() != 30 {
+		t.Errorf("expected minute 30, got %d", result.Minute())
+	}
+}
+
+func TestParseHTMLTime_AMHoursWork(t *testing.T) {
+	result := parseHTMLTime("2025-06-15T08:45")
+	if result == nil {
+		t.Fatal("parseHTMLTime returned nil for AM time")
+	}
+	if result.Hour() != 8 || result.Minute() != 45 {
+		t.Errorf("expected 08:45, got %02d:%02d", result.Hour(), result.Minute())
+	}
+}
+
+func TestParseHTMLTime_Midnight(t *testing.T) {
+	result := parseHTMLTime("2025-12-31T00:00")
+	if result == nil {
+		t.Fatal("parseHTMLTime returned nil for midnight")
+	}
+	if result.Hour() != 0 {
+		t.Errorf("expected hour 0, got %d", result.Hour())
+	}
+}
+
+func TestParseHTMLTime_2359(t *testing.T) {
+	result := parseHTMLTime("2025-12-31T23:59")
+	if result == nil {
+		t.Fatal("parseHTMLTime returned nil for 23:59")
+	}
+	if result.Hour() != 23 || result.Minute() != 59 {
+		t.Errorf("expected 23:59, got %02d:%02d", result.Hour(), result.Minute())
+	}
+}
 
 func TestCopySeedDatabase(t *testing.T) {
 	// Create a temporary directory for test files

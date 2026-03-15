@@ -175,6 +175,7 @@ func (ctx *MahresourcesContext) UploadNewVersion(resourceID uint, file multipart
 	resourceUpdates := map[string]interface{}{
 		"current_version_id": version.ID,
 		"hash":               version.Hash,
+		"hash_type":          version.HashType,
 		"location":           version.Location,
 		"storage_location":   version.StorageLocation,
 		"content_type":       version.ContentType,
@@ -339,6 +340,7 @@ func (ctx *MahresourcesContext) RestoreVersion(resourceID, versionID uint, comme
 	resourceUpdates := map[string]interface{}{
 		"current_version_id": version.ID,
 		"hash":               version.Hash,
+		"hash_type":          version.HashType,
 		"location":           version.Location,
 		"storage_location":   version.StorageLocation,
 		"content_type":       version.ContentType,
@@ -599,14 +601,14 @@ func (ctx *MahresourcesContext) SyncResourcesFromCurrentVersion() error {
 	// Use a single query to find resources that are out of sync with their current version
 	// This is much faster than loading all resources and checking each one
 	type outOfSyncResource struct {
-		ResourceID       uint
-		VersionHash      string
-		VersionLocation  string
-		StorageLocation  *string
-		VersionType      string
-		VersionWidth     uint
-		VersionHeight    uint
-		VersionFileSize  int64
+		ResourceID      uint
+		VersionHash     string
+		VersionLocation string
+		StorageLocation *string
+		VersionType     string
+		VersionWidth    uint
+		VersionHeight   uint
+		VersionFileSize int64
 	}
 
 	// Use silent DB session to suppress GORM logging during migration

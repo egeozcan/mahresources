@@ -248,7 +248,7 @@ func GetMergeGroupsHandler(ctx interfaces.GroupMerger) func(writer http.Response
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", editor.Winner))
+		http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/group?id=%v", editor.Winner))
 	}
 }
 

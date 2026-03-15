@@ -11,6 +11,41 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestAddRelationWithNilCategoryDoesNotPanic(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	category := &models.Category{Name: "Test Category"}
+	tc.DB.Create(category)
+
+	// Group WITHOUT a category (CategoryId is nil)
+	groupNoCat := &models.Group{Name: "No Category Group", Description: "test"}
+	tc.DB.Create(groupNoCat)
+
+	// Group WITH a category
+	groupWithCat := &models.Group{Name: "Has Category Group", Description: "test", CategoryId: &category.ID}
+	tc.DB.Create(groupWithCat)
+
+	relType := &models.GroupRelationType{
+		Name:           "TestRel",
+		FromCategoryId: &category.ID,
+		ToCategoryId:   &category.ID,
+	}
+	tc.DB.Create(relType)
+
+	// Adding a relation where the "from" group has no category should return
+	// an error, not panic with a nil pointer dereference
+	payload := query_models.GroupRelationshipQuery{
+		FromGroupId:         groupNoCat.ID,
+		ToGroupId:           groupWithCat.ID,
+		GroupRelationTypeId: relType.ID,
+	}
+
+	resp := tc.MakeRequest(http.MethodPost, "/v1/relation", payload)
+	// Should get an error response (400), not a 500 panic recovery
+	assert.NotEqual(t, http.StatusOK, resp.Code,
+		"creating a relation with a nil-category group should fail gracefully")
+}
+
 func TestRelationEndpoints(t *testing.T) {
 	tc := SetupTestEnv(t)
 
@@ -20,10 +55,10 @@ func TestRelationEndpoints(t *testing.T) {
 
 	group1 := &models.Group{Name: "Group A", Description: "Test Group", CategoryId: &category.ID}
 	tc.DB.Create(group1)
-	
+
 	group2 := &models.Group{Name: "Group B", Description: "Test Group", CategoryId: &category.ID}
 	tc.DB.Create(group2)
-	
+
 	relType := &models.GroupRelationType{Name: "Dependson", FromCategoryId: &category.ID, ToCategoryId: &category.ID}
 	tc.DB.Create(relType)
 
@@ -57,7 +92,7 @@ func TestRelationEndpoints(t *testing.T) {
 		payload := map[string]string{"Name": newName}
 
 		resp := tc.MakeRequest(http.MethodPost, url, payload)
-		
+
 		// If the fix wasn't applied (still GET), this POST would likely fail with 404 or 405 depending on router strictness
 		// With strict router, wrong method = 405 Method Not Allowed
 		assert.Equal(t, http.StatusOK, resp.Code, "Expected POST to succeed")
@@ -80,7 +115,7 @@ func TestRelationEndpoints(t *testing.T) {
 		tc.DB.First(&updatedRel, relation.ID)
 		assert.Equal(t, newDesc, updatedRel.Description)
 	})
-	
+
 	t.Run("Delete Relation", func(t *testing.T) {
 		url := fmt.Sprintf("/v1/relation/delete?Id=%d", relation.ID)
 		resp := tc.MakeRequest(http.MethodPost, url, nil)

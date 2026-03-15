@@ -58,7 +58,7 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 	group := models.Group{
 		Name:        groupQuery.Name,
 		Description: groupQuery.Description,
-		CategoryId:  &groupQuery.CategoryId,
+		CategoryId:  uintPtrOrNil(groupQuery.CategoryId),
 		Meta:        []byte(groupQuery.Meta),
 		URL:         groupUrl,
 	}
@@ -153,6 +153,7 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 		ID:          groupQuery.ID,
 		Name:        groupQuery.Name,
 		Description: groupQuery.Description,
+		CategoryId:  uintPtrOrNil(groupQuery.CategoryId),
 		Meta:        []byte(groupQuery.Meta),
 	}
 
@@ -178,7 +179,7 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 		return nil, err
 	}
 
-	if err := tx.Model(group).Select("Name", "Description", "Meta", "URL", "OwnerId", "Owner").Updates(group).Error; err != nil {
+	if err := tx.Model(group).Select("Name", "Description", "Meta", "URL", "OwnerId", "Owner", "CategoryId").Updates(group).Error; err != nil {
 		tx.Rollback()
 		return nil, err
 	}

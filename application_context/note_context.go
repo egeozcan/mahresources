@@ -115,6 +115,11 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 			tx.Rollback()
 			return nil, err
 		}
+
+		if err := tx.Model(&note).Association("Resources").Clear(); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
 	}
 
 	if len(noteQuery.Groups) > 0 {
