@@ -1629,4 +1629,54 @@ test.describe('Lightbox on Group Detail Page', () => {
     const lastButton = quickTagPanel.locator(`button:has(kbd):has-text("LastTag2-${testRunId}")`);
     await expect(lastButton).toBeVisible();
   });
+
+  test('should not update LAST tab when navigating past unmodified resources', async ({ page, apiClient }) => {
+    const stickyTag = await apiClient.createTag(`StickyTag-${testRunId}`);
+
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    // Clear localStorage to start fresh
+    await page.evaluate(() => localStorage.removeItem('mahresources_quickTags'));
+
+    // Open lightbox on first resource (A)
+    const firstImage = page.locator('[data-lightbox-item]').first();
+    await expect(firstImage).toBeVisible();
+    await firstImage.click();
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
+    await expect(lightbox).toBeVisible();
+
+    // Open quick tag panel and add tag to resource A
+    await page.keyboard.press('t');
+    const quickTagPanel = lightbox.locator('[data-quick-tag-panel]');
+    await expect(quickTagPanel).toBeVisible();
+    await expect(quickTagPanel.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });
+
+    const tagInput = quickTagPanel.locator('[data-tag-editor-input]');
+    await tagInput.fill(`StickyTag-${testRunId}`);
+    await page.waitForTimeout(400);
+    const tagOption = quickTagPanel.locator(`div[role="option"]:has-text("StickyTag-${testRunId}")`);
+    await tagOption.click();
+    await page.waitForTimeout(500);
+
+    // Blur and navigate to resource B (no tag modifications on B)
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(500);
+
+    // LAST tab should now show resource A's tags (StickyTag)
+    await page.keyboard.press('b');
+    await page.waitForTimeout(200);
+    const stickyButton = quickTagPanel.locator(`button:has(kbd):has-text("StickyTag-${testRunId}")`);
+    await expect(stickyButton).toBeVisible();
+
+    // Navigate to resource C without modifying B's tags
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(500);
+
+    // LAST tab should STILL show resource A's tags (not B's)
+    // because B's tags were never modified from the panel
+    await expect(stickyButton).toBeVisible();
+  });
 });
