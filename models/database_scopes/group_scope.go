@@ -107,19 +107,22 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 
 		if len(query.Groups) > 0 {
 			dbQuery = dbQuery.Where(
-				`
+				`(
 					(
-						SELECT 
-							Count(*) 
-						FROM 
+						SELECT
+							Count(*)
+						FROM
 							group_related_groups grg
-						WHERE 
+						WHERE
 							grg.related_group_id = groups.id
 							AND grg.group_id IN ?
-					) = ?`,
+					) = ?
+					OR groups.owner_id IN ?
+				)`,
 				query.Groups,
 				len(query.Groups),
-			).Or("groups.owner_id IN ?", query.Groups)
+				query.Groups,
+			)
 		}
 
 		if query.RelationTypeId != 0 {

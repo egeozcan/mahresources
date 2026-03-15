@@ -129,6 +129,36 @@ func TestMergeGroupsMetaWinnerTakesPrecedence(t *testing.T) {
 	assert.Equal(t, "yes", meta["only_loser"], "Loser's unique key should be preserved")
 }
 
+func TestGroupFilterByGroupsDoesNotBypassNameFilter(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create a parent group
+	parent := tc.CreateDummyGroup("Parent Group")
+
+	// Create two child groups: one related via junction table, one owned
+	junctionChild := &models.Group{Name: "Junction Child"}
+	tc.DB.Create(junctionChild)
+	tc.DB.Exec("INSERT INTO group_related_groups (group_id, related_group_id) VALUES (?, ?)", parent.ID, junctionChild.ID)
+
+	ownedChild := &models.Group{Name: "Owned Child", OwnerId: &parent.ID}
+	tc.DB.Create(ownedChild)
+
+	// Filter by parent group AND name="Owned" — should only return the owned child.
+	// The junction child ("Junction Child") should NOT appear because it doesn't match "Owned".
+	url := fmt.Sprintf("/v1/groups?Groups=%d&Name=Owned", parent.ID)
+	resp := tc.MakeRequest(http.MethodGet, url, nil)
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	var groups []models.Group
+	json.Unmarshal(resp.Body.Bytes(), &groups)
+
+	assert.Equal(t, 1, len(groups),
+		"Groups filter combined with Name filter should return only groups matching BOTH; junction-table matches must not bypass Name filter")
+	if len(groups) > 0 {
+		assert.Equal(t, ownedChild.ID, groups[0].ID)
+	}
+}
+
 func TestGroupEndpoints(t *testing.T) {
 	tc := SetupTestEnv(t)
 
