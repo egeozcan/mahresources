@@ -326,6 +326,7 @@ export const editPanelMethods = {
 
       // Record as recent tag (skips if in a quick-add slot)
       this.recordRecentTag(tag);
+      this.captureLastResourceTags();
     } catch (err) {
       console.error('Failed to add tag:', err);
       if (this.resourceDetails?.Tags) {
@@ -372,6 +373,7 @@ export const editPanelMethods = {
       }
       this.needsRefreshOnClose = true;
       this.announce(`Removed tag: ${tag.Name}`);
+      this.captureLastResourceTags();
     } catch (err) {
       console.error('Failed to remove tag:', err);
       if (this.resourceDetails?.Tags) {

@@ -1354,7 +1354,7 @@ test.describe('Lightbox on Group Detail Page', () => {
     await expect(counter).toContainText('1 /');
   });
 
-  test('should show recently added tags in Recent section', async ({ page, apiClient }) => {
+  test('should show recently added tags in Recent tab', async ({ page, apiClient }) => {
     const recentTag = await apiClient.createTag(`RecentTag-${testRunId}`);
 
     await page.goto(`/group?id=${ownerGroupId}`);
@@ -1384,28 +1384,39 @@ test.describe('Lightbox on Group Detail Page', () => {
     await tagOption.click();
     await page.waitForTimeout(500);
 
-    // Verify "Recent" section appears with the tag
-    const recentLabel = quickTagPanel.locator('label:has-text("Recent")');
-    await expect(recentLabel).toBeVisible();
+    // Blur any focused input so canNavigate() returns true
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
 
-    // Verify recent tag button exists with a kbd element (distinguishes from other tag displays)
+    // Switch to RECENT tab (V key)
+    await page.keyboard.press('v');
+    await page.waitForTimeout(200);
+
+    // Verify the RECENT tab is active
+    const recentTab = quickTagPanel.locator('button[role="tab"][aria-selected="true"]:has-text("RECENT")');
+    await expect(recentTab).toBeVisible();
+
+    // Verify recent tag button exists in the grid with a kbd element
     const recentButton = quickTagPanel.locator(`button:has(kbd):has-text("RecentTag-${testRunId}")`);
     await expect(recentButton).toBeVisible();
   });
 
-  test('should toggle recent tag via Shift+Digit shortcut', async ({ page, apiClient }) => {
+  test('should toggle recent tag via digit shortcut on RECENT tab', async ({ page, apiClient }) => {
     const shortcutTag = await apiClient.createTag(`ShortcutRecentTag-${testRunId}`);
 
     await page.goto(`/group?id=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
-    // Seed localStorage with a recent tag (must be after navigation for same-origin access)
+    // Seed localStorage with a recent tag in the new schema format
     await page.evaluate((tag) => {
       const data = JSON.parse(localStorage.getItem('mahresources_quickTags') || '{}');
       data.recentTags = [
         { id: tag.id, name: tag.name, ts: Date.now() },
-        null, null, null, null,
+        null, null, null, null, null, null, null, null,
       ];
+      data.activeTab = 3; // RECENT tab
+      if (!data.quickSlots) {
+        data.quickSlots = [Array(9).fill(null), Array(9).fill(null), Array(9).fill(null)];
+      }
       localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
     }, { id: shortcutTag.ID, name: shortcutTag.Name });
 
@@ -1426,6 +1437,10 @@ test.describe('Lightbox on Group Detail Page', () => {
     await expect(quickTagPanel).toBeVisible();
     await expect(quickTagPanel.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });
 
+    // Verify RECENT tab is active (seeded as activeTab=3)
+    const recentTab = quickTagPanel.locator('button[role="tab"][aria-selected="true"]:has-text("RECENT")');
+    await expect(recentTab).toBeVisible();
+
     // Verify the recent tag button is visible
     const recentButton = quickTagPanel.locator(`button:has(kbd):has-text("ShortcutRecentTag-${testRunId}")`);
     await expect(recentButton).toBeVisible();
@@ -1433,8 +1448,8 @@ test.describe('Lightbox on Group Detail Page', () => {
     // Blur any focused input so canNavigate() returns true
     await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
 
-    // Press Shift+Digit1 to toggle the recent tag
-    await page.keyboard.press('Shift+Digit1');
+    // Press Digit1 to toggle the recent tag (no Shift needed — unified shortcuts)
+    await page.keyboard.press('Digit1');
     await page.waitForTimeout(500);
 
     // Verify the tag was added to the resource (check tag pills area)
@@ -1448,15 +1463,16 @@ test.describe('Lightbox on Group Detail Page', () => {
     await page.goto(`/group?id=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
-    // Seed localStorage with a recent tag (must be after navigation for same-origin access)
+    // Seed localStorage with a recent tag in the new schema format
     await page.evaluate((tag) => {
       const data = JSON.parse(localStorage.getItem('mahresources_quickTags') || '{}');
       data.recentTags = [
         { id: tag.id, name: tag.name, ts: Date.now() },
-        null, null, null, null,
+        null, null, null, null, null, null, null, null,
       ];
-      // Ensure all quick-add slots are empty
-      data.slots = Array(9).fill(null);
+      // Ensure all quick-add slots are empty, start on QUICK 1 tab
+      data.quickSlots = [Array(9).fill(null), Array(9).fill(null), Array(9).fill(null)];
+      data.activeTab = 0;
       localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
     }, { id: promotedTag.ID, name: promotedTag.Name });
 
@@ -1477,27 +1493,30 @@ test.describe('Lightbox on Group Detail Page', () => {
     await expect(quickTagPanel).toBeVisible();
     await expect(quickTagPanel.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });
 
-    // Verify the recent tag is shown
-    const recentButton = quickTagPanel.locator(`button:has(kbd):has-text("PromotedTag-${testRunId}")`);
-    await expect(recentButton).toBeVisible();
-
-    // Assign the tag to quick-add slot 1 via its autocompleter
-    const slotInput = quickTagPanel.locator('input[placeholder="Assign to 1..."]');
+    // On QUICK 1 tab: assign the tag to slot 1 via autocompleter
+    const slotInput = quickTagPanel.locator('input[placeholder="Assign..."]').first();
     await slotInput.fill(`PromotedTag-${testRunId}`);
     await page.waitForTimeout(400);
     const slotOption = quickTagPanel.locator(`div[role="option"]:has-text("PromotedTag-${testRunId}")`);
     await slotOption.click();
     await page.waitForTimeout(500);
 
-    // Verify the tag is no longer in the Recent section
-    // The button with kbd and the tag name should be gone from recents
-    // But it should now appear as a quick-add slot toggle button (no kbd matching "Shift+")
+    // Blur any focused input so canNavigate() returns true
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+
+    // Switch to RECENT tab (V key) and verify the tag is no longer there
+    await page.keyboard.press('v');
+    await page.waitForTimeout(200);
+
+    // The tag should NOT appear in the RECENT tab grid
+    const recentButton = quickTagPanel.locator(`[role="tabpanel"] button:has-text("PromotedTag-${testRunId}")`);
     await expect(recentButton).toBeHidden();
 
-    // Verify it's now in a quick-add slot (toggle button without "Shift+" kbd)
-    const slotButton = quickTagPanel.locator(`button:has-text("PromotedTag-${testRunId}")`).filter({
-      hasNot: page.locator('kbd'),
-    });
+    // Switch back to QUICK 1 tab (Z key) and verify the tag is in the slot
+    await page.keyboard.press('z');
+    await page.waitForTimeout(200);
+
+    const slotButton = quickTagPanel.locator(`[role="tabpanel"] button:has-text("PromotedTag-${testRunId}")`);
     await expect(slotButton).toBeVisible();
   });
 });
