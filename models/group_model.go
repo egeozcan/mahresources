@@ -3,6 +3,7 @@ package models
 import (
 	"mahresources/models/types"
 	"time"
+	"unicode/utf8"
 )
 
 type Group struct {
@@ -46,19 +47,22 @@ func (g Group) GetName() string {
 func (g Group) GetDescription() string { return g.Description }
 
 func limit(str string, maxLen int) string {
-	if len(str) < maxLen {
+	runeCount := utf8.RuneCountInString(str)
+	if runeCount <= maxLen {
 		return str
 	}
 
 	res := ""
 	lenWithDots := maxLen - 3
+	runeIdx := 0
 
-	for i, s := range str {
-		if i >= lenWithDots {
+	for _, s := range str {
+		if runeIdx >= lenWithDots {
 			return res + "..."
 		}
 
 		res += string(s)
+		runeIdx++
 	}
 
 	return res

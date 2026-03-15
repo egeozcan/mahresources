@@ -20,8 +20,8 @@ npm run build-js
 # Watch mode for JS development
 npm run dev
 
-# Run Go unit tests
-go test ./...
+# Run Go unit tests (json1 and fts5 tags required for full coverage)
+go test --tags 'json1 fts5' ./...
 
 # Run specific test file
 go test ./server/api_tests/...

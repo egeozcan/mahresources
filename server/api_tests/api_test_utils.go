@@ -141,4 +141,11 @@ func (tc *TestContext) CreateDummyBlock(noteID uint, blockType, content, positio
 	return block
 }
 
-// Add more helpers as needed...
+// requireJsonPatch skips the test if SQLite json_patch is not available (needs json1 build tag).
+func requireJsonPatch(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	err := db.Exec(`SELECT json_patch('{}', '{}')`).Error
+	if err != nil {
+		t.Skip("json_patch not available (build with -tags json1)")
+	}
+}

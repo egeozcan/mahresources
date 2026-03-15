@@ -69,6 +69,7 @@ func TestGroupCategoryIdNullWhenZero(t *testing.T) {
 
 func TestMergeGroupsRedirectsToGroup(t *testing.T) {
 	tc := SetupTestEnv(t)
+	requireJsonPatch(t, tc.DB)
 
 	cat := &models.Category{Name: "Merge Cat"}
 	tc.DB.Create(cat)
@@ -100,6 +101,7 @@ func TestMergeGroupsRedirectsToGroup(t *testing.T) {
 
 func TestMergeGroupsMetaWinnerTakesPrecedence(t *testing.T) {
 	tc := SetupTestEnv(t)
+	requireJsonPatch(t, tc.DB)
 
 	// Create winner with meta key "color" = "blue"
 	winner := &models.Group{Name: "Winner", Meta: []byte(`{"color":"blue","only_winner":"yes"}`)}
