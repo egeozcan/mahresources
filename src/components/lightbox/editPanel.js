@@ -140,6 +140,7 @@ export const editPanelMethods = {
     const cached = this.detailsCache.get(resourceId);
     if (cached) {
       this.resourceDetails = cached;
+      this.captureLastResourceTags();
       return;
     }
 
@@ -169,6 +170,7 @@ export const editPanelMethods = {
       if (this.getCurrentItem()?.id === resourceId) {
         this.resourceDetails = fetchedDetails;
         this.detailsCache.set(resourceId, fetchedDetails);
+        this.captureLastResourceTags();
       }
       this.detailsAborter = null;
     } catch (err) {

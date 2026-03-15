@@ -1519,4 +1519,114 @@ test.describe('Lightbox on Group Detail Page', () => {
     const slotButton = quickTagPanel.locator(`[role="tabpanel"] button:has-text("PromotedTag-${testRunId}")`);
     await expect(slotButton).toBeVisible();
   });
+
+  test('should show previous resource tags in LAST tab after navigating away', async ({ page, apiClient }) => {
+    const lastTag = await apiClient.createTag(`LastTag-${testRunId}`);
+
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    // Clear localStorage to start fresh
+    await page.evaluate(() => localStorage.removeItem('mahresources_quickTags'));
+
+    // Open lightbox on first resource
+    const firstImage = page.locator('[data-lightbox-item]').first();
+    await expect(firstImage).toBeVisible();
+    await firstImage.click();
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
+    await expect(lightbox).toBeVisible();
+
+    // Open quick tag panel
+    await page.keyboard.press('t');
+    const quickTagPanel = lightbox.locator('[data-quick-tag-panel]');
+    await expect(quickTagPanel).toBeVisible();
+    await expect(quickTagPanel.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });
+
+    // Add tag via autocompleter
+    const tagInput = quickTagPanel.locator('[data-tag-editor-input]');
+    await tagInput.fill(`LastTag-${testRunId}`);
+    await page.waitForTimeout(400);
+    const tagOption = quickTagPanel.locator(`div[role="option"]:has-text("LastTag-${testRunId}")`);
+    await tagOption.click();
+    await page.waitForTimeout(500);
+
+    // Blur any focused input so canNavigate() returns true
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+
+    // Navigate to next resource
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(500);
+
+    // Switch to LAST tab (B key)
+    await page.keyboard.press('b');
+    await page.waitForTimeout(200);
+
+    // Verify the LAST tab is active
+    const lastTab = quickTagPanel.locator('button[role="tab"][aria-selected="true"]:has-text("LAST")');
+    await expect(lastTab).toBeVisible();
+
+    // Verify the tag from the previous resource appears in the LAST tab
+    const lastButton = quickTagPanel.locator(`button:has(kbd):has-text("LastTag-${testRunId}")`);
+    await expect(lastButton).toBeVisible();
+  });
+
+  test('should show LAST tab tags when panel was closed during navigation', async ({ page, apiClient }) => {
+    const lastTag2 = await apiClient.createTag(`LastTag2-${testRunId}`);
+
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    // Clear localStorage to start fresh
+    await page.evaluate(() => localStorage.removeItem('mahresources_quickTags'));
+
+    // Open lightbox on first resource
+    const firstImage = page.locator('[data-lightbox-item]').first();
+    await expect(firstImage).toBeVisible();
+    await firstImage.click();
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
+    await expect(lightbox).toBeVisible();
+
+    // Open quick tag panel and add a tag
+    await page.keyboard.press('t');
+    const quickTagPanel = lightbox.locator('[data-quick-tag-panel]');
+    await expect(quickTagPanel).toBeVisible();
+    await expect(quickTagPanel.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });
+
+    const tagInput = quickTagPanel.locator('[data-tag-editor-input]');
+    await tagInput.fill(`LastTag2-${testRunId}`);
+    await page.waitForTimeout(400);
+    const tagOption = quickTagPanel.locator(`div[role="option"]:has-text("LastTag2-${testRunId}")`);
+    await tagOption.click();
+    await page.waitForTimeout(500);
+
+    // Blur so keyboard shortcuts work (canNavigate() requires no input focused)
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+
+    // Close the quick tag panel
+    await page.keyboard.press('t');
+    await expect(quickTagPanel).toBeHidden();
+
+    // Navigate to next resource with panel closed
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(500);
+
+    // Reopen quick tag panel
+    await page.keyboard.press('t');
+    await expect(quickTagPanel).toBeVisible();
+    await expect(quickTagPanel.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });
+
+    // Blur input so tab switch shortcut works
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+
+    // Switch to LAST tab (B key)
+    await page.keyboard.press('b');
+    await page.waitForTimeout(200);
+
+    const lastTab = quickTagPanel.locator('button[role="tab"][aria-selected="true"]:has-text("LAST")');
+    await expect(lastTab).toBeVisible();
+
+    // Verify the tag from the previous resource appears in the LAST tab
+    const lastButton = quickTagPanel.locator(`button:has(kbd):has-text("LastTag2-${testRunId}")`);
+    await expect(lastButton).toBeVisible();
+  });
 });
