@@ -321,6 +321,32 @@ func TestResourceNotesFilterRequiresAllNotes(t *testing.T) {
 	}
 }
 
+func TestResourceGroupFilterDoesNotDoubleCount(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	group := tc.CreateDummyGroup("Owner Group")
+
+	// Create a resource that is BOTH owned by the group AND related via the junction table.
+	// This can happen when a user adds a group as both owner and related group.
+	res := &models.Resource{Name: "Double Linked", OwnerId: &group.ID}
+	tc.DB.Create(res)
+	tc.DB.Exec("INSERT INTO groups_related_resources (group_id, resource_id) VALUES (?, ?)", group.ID, res.ID)
+
+	// Filter resources by this group — should find the resource despite dual linkage
+	url := fmt.Sprintf("/v1/resources?Groups=%d", group.ID)
+	resp := tc.MakeRequest(http.MethodGet, url, nil)
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	var resources []models.Resource
+	json.Unmarshal(resp.Body.Bytes(), &resources)
+
+	assert.Equal(t, 1, len(resources),
+		"Resource both owned by and related to a group should appear in results, not be excluded by double-counting")
+	if len(resources) > 0 {
+		assert.Equal(t, res.ID, resources[0].ID)
+	}
+}
+
 func TestResourceEndpoints(t *testing.T) {
 	tc := SetupTestEnv(t)
 

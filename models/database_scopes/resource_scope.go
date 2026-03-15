@@ -37,13 +37,13 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 			dbQuery = dbQuery.Where(`
 				resources.id IN (
 					WITH cte AS (
-					  SELECT "grr".resource_id res_id
+					  SELECT "grr".resource_id res_id, "grr".group_id src_group
 					  FROM groups_related_resources grr
 					  WHERE grr.group_id IN ?
 					  UNION ALL
-					  SELECT id AS res_id FROM resources WHERE owner_id IN ?
+					  SELECT id AS res_id, owner_id AS src_group FROM resources WHERE owner_id IN ?
 					)
-					SELECT res_id FROM cte GROUP BY res_id HAVING count(*) = ?
+					SELECT res_id FROM cte GROUP BY res_id HAVING count(DISTINCT src_group) = ?
 				)`,
 				query.Groups,
 				query.Groups,
