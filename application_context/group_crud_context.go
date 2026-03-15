@@ -302,8 +302,14 @@ func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		ctx.EnsureForeignKeysActive(tx)
 
+		// Explicitly clear owned notes' owner_id (SET NULL) since SQLite PRAGMA
+		// foreign_keys is a no-op inside transactions, so FK constraints don't fire
+		if err := tx.Model(&models.Note{}).Where("owner_id = ?", groupId).Update("owner_id", nil).Error; err != nil {
+			return err
+		}
+
 		return tx.
-			Select("OwnGroups", "OwnNotes", "RelatedResources", "RelatedNotes", "RelatedGroups", "Relationships", "BackRelations", "Tags").
+			Select("OwnGroups", "RelatedResources", "RelatedNotes", "RelatedGroups", "Relationships", "BackRelations", "Tags").
 			Delete(&group).Error
 	})
 	if err == nil {

@@ -16,7 +16,7 @@ type Note struct {
 	Tags        []*Tag      `gorm:"many2many:note_tags;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	Resources   []*Resource `gorm:"many2many:resource_notes;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	Groups      []*Group    `gorm:"many2many:groups_related_notes;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
-	Owner       *Group      `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	Owner       *Group      `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 	OwnerId     *uint
 	StartDate   *time.Time
 	EndDate     *time.Time

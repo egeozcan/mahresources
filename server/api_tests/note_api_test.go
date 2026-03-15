@@ -264,6 +264,26 @@ func TestShareNote(t *testing.T) {
 	})
 }
 
+func TestDeleteGroupDoesNotDeleteOwnedNotes(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	group := tc.CreateDummyGroup("NoteOwnerGroup")
+	note := &models.Note{Name: "Owned Note", OwnerId: &group.ID}
+	tc.DB.Create(note)
+
+	// Delete the group
+	err := tc.AppCtx.DeleteGroup(group.ID)
+	assert.NoError(t, err)
+
+	// The note should still exist (owner set to NULL), NOT be cascade-deleted
+	var check models.Note
+	result := tc.DB.First(&check, note.ID)
+	assert.NoError(t, result.Error,
+		"Owned note should survive group deletion (SET NULL), not be cascade-deleted")
+	assert.Nil(t, check.OwnerId,
+		"Note's OwnerId should be NULL after owner group is deleted")
+}
+
 func TestNoteNameFilterTreatsUnderscoreLiterally(t *testing.T) {
 	tc := SetupTestEnv(t)
 
