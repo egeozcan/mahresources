@@ -9,6 +9,35 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestSearchDoesNotTreatUnderscoreAsWildcard(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	sqlDB, err := tc.DB.DB()
+	assert.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+
+	// Create tags: one with underscore, one similar but no underscore
+	tc.DB.Create(&models.Tag{Name: "data_point"})
+	tc.DB.Create(&models.Tag{Name: "dataXpoint"})
+
+	// Search for the literal underscore name
+	result, err := tc.AppCtx.GlobalSearch(&query_models.GlobalSearchQuery{
+		Query: "data_point",
+		Limit: 50,
+		Types: []string{"tag"},
+	})
+	assert.NoError(t, err)
+
+	// Should find only "data_point", not "dataXpoint"
+	// If underscore is treated as SQL LIKE wildcard, both would match
+	names := make([]string, 0, len(result.Results))
+	for _, r := range result.Results {
+		names = append(names, r.Name)
+	}
+	assert.Equal(t, 1, len(result.Results),
+		"search for 'data_point' should match only the literal underscore, not treat _ as wildcard; got: %v", names)
+}
+
 func TestSearchTotalReflectsAllResults(t *testing.T) {
 	tc := SetupTestEnv(t)
 

@@ -329,20 +329,30 @@ func entityExtra(v any) map[string]string {
 	return nil
 }
 
+// escapeLikeWildcards escapes SQL LIKE wildcard characters so they match literally.
+func escapeLikeWildcards(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
+
 // searchEntitiesLike performs a LIKE-based search for any searchable entity type.
 func searchEntitiesLike[T searchable](ctx *MahresourcesContext, entityType, searchTerm string, limit int) []query_models.SearchResultItem {
 	info := entitySearchInfo[entityType]
 	likeOp := ctx.getLikeOperator()
-	pattern := "%" + searchTerm + "%"
+	escaped := escapeLikeWildcards(searchTerm)
+	pattern := "%" + escaped + "%"
+	likeEscape := " ESCAPE '\\'"
 
 	// Build WHERE clause: always search name and description, plus any extra columns
 	whereParts := []string{
-		"name " + likeOp + " ?",
-		"description " + likeOp + " ?",
+		"name " + likeOp + " ?" + likeEscape,
+		"description " + likeOp + " ?" + likeEscape,
 	}
 	args := []any{pattern, pattern}
 	for _, col := range info.extraLikeCols {
-		whereParts = append(whereParts, col+" "+likeOp+" ?")
+		whereParts = append(whereParts, col+" "+likeOp+" ?"+likeEscape)
 		args = append(args, pattern)
 	}
 
