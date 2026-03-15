@@ -204,6 +204,25 @@ func TestMergeGroupsPreservesReverseRelatedGroups(t *testing.T) {
 		"Reverse relationships (other→loser) should be transferred to winner during merge")
 }
 
+func TestDeleteGroupDoesNotDeleteChildGroups(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	parent := tc.CreateDummyGroup("ParentToDelete")
+	child := &models.Group{Name: "ChildGroup", OwnerId: &parent.ID}
+	tc.DB.Create(child)
+
+	err := tc.AppCtx.DeleteGroup(parent.ID)
+	assert.NoError(t, err)
+
+	// Child should survive with OwnerId set to NULL, NOT be cascade-deleted
+	var check models.Group
+	result := tc.DB.First(&check, child.ID)
+	assert.NoError(t, result.Error,
+		"Child group should survive parent deletion (SET NULL), not be cascade-deleted")
+	assert.Nil(t, check.OwnerId,
+		"Child OwnerId should be NULL after parent is deleted")
+}
+
 func TestDeleteGroupNullsOwnedResourceOwner(t *testing.T) {
 	tc := SetupTestEnv(t)
 

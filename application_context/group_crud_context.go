@@ -303,7 +303,11 @@ func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {
 		ctx.EnsureForeignKeysActive(tx)
 
 		// Explicitly clear owned entities' owner_id (SET NULL) since SQLite
-		// PRAGMA foreign_keys is a no-op inside transactions, so FK constraints don't fire
+		// PRAGMA foreign_keys is a no-op inside transactions, so FK constraints don't fire.
+		// This covers groups, notes, and resources that have this group as owner.
+		if err := tx.Model(&models.Group{}).Where("owner_id = ?", groupId).Update("owner_id", nil).Error; err != nil {
+			return err
+		}
 		if err := tx.Model(&models.Note{}).Where("owner_id = ?", groupId).Update("owner_id", nil).Error; err != nil {
 			return err
 		}
@@ -312,7 +316,7 @@ func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {
 		}
 
 		return tx.
-			Select("OwnGroups", "RelatedResources", "RelatedNotes", "RelatedGroups", "Relationships", "BackRelations", "Tags").
+			Select("RelatedResources", "RelatedNotes", "RelatedGroups", "Relationships", "BackRelations", "Tags").
 			Delete(&group).Error
 	})
 	if err == nil {
