@@ -182,12 +182,9 @@ test.describe('Block Backward Compatibility - Description Sync', () => {
     // Delete the text block
     await apiClient.deleteBlock(textBlock.id);
 
-    // Note: The sync function only updates if there's a text block
-    // After deletion, description should remain as the last synced value or empty
+    // When the last text block is deleted, description is cleared to empty
     note = await apiClient.getNote(noteId);
-    // The sync doesn't clear description, it just doesn't update when no text blocks exist
-    // So description keeps its last value
-    expect(note.Description).toBe('Only text block');
+    expect(note.Description).toBe('');
   });
 });
 

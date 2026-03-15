@@ -441,8 +441,10 @@ test.describe('Entity Picker - Group Selection', () => {
     await page.waitForLoadState('load');
 
     await page.locator('button:has-text("Edit Blocks")').click();
-    // Use .first() because there are now two references blocks
-    await page.locator('button:has-text("Select Groups")').first().click();
+    // Click "Select Groups" for a block that contains our selectable group
+    // Multiple blocks may have this group (from prior tests), any will show "Added" badge
+    const blockWithGroup = page.locator('.block-card').filter({ hasText: 'Selectable Test Group' }).first();
+    await blockWithGroup.locator('button:has-text("Select Groups")').click();
 
     // Wait for modal
     const pickerModal = page.locator('[aria-labelledby="entity-picker-title"]');
