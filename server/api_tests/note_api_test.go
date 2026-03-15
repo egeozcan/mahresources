@@ -264,6 +264,24 @@ func TestShareNote(t *testing.T) {
 	})
 }
 
+func TestNoteNameFilterTreatsUnderscoreLiterally(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create notes: one with underscore, one similar but no underscore
+	tc.DB.Create(&models.Note{Name: "report_final"})
+	tc.DB.Create(&models.Note{Name: "reportXfinal"})
+
+	// Filter notes by name containing the literal underscore
+	resp := tc.MakeRequest(http.MethodGet, "/v1/notes?Name=report_final", nil)
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	var notes []*models.Note
+	json.Unmarshal(resp.Body.Bytes(), &notes)
+
+	assert.Equal(t, 1, len(notes),
+		"Name filter should treat _ as literal character, not LIKE wildcard; both report_final and reportXfinal were returned")
+}
+
 func TestNoteGroupFilterIncludesUnownedNotes(t *testing.T) {
 	tc := SetupTestEnv(t)
 

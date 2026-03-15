@@ -58,11 +58,13 @@ func NoteQuery(query *query_models.NoteQuery, ignoreSort bool, originalDB *gorm.
 		}
 
 		if query.Name != "" {
-			dbQuery = dbQuery.Where("notes.name "+likeOperator+" ?", "%"+query.Name+"%")
+			p, esc := LikePattern(query.Name)
+			dbQuery = dbQuery.Where("notes.name "+likeOperator+" ?"+esc, p)
 		}
 
 		if query.Description != "" {
-			dbQuery = dbQuery.Where("notes.description "+likeOperator+" ?", "%"+query.Description+"%")
+			p, esc := LikePattern(query.Description)
+			dbQuery = dbQuery.Where("notes.description "+likeOperator+" ?"+esc, p)
 		}
 
 		if query.OwnerId != 0 {
@@ -118,10 +120,12 @@ func NoteTypeQuery(query *query_models.NoteTypeQuery) func(db *gorm.DB) *gorm.DB
 		dbQuery := db
 		likeOperator := GetLikeOperator(db)
 		if query.Name != "" {
-			dbQuery = dbQuery.Where("name "+likeOperator+" ?", "%"+query.Name+"%")
+			p, esc := LikePattern(query.Name)
+			dbQuery = dbQuery.Where("name "+likeOperator+" ?"+esc, p)
 		}
 		if query.Description != "" {
-			dbQuery = dbQuery.Where("description "+likeOperator+" ?", "%"+query.Description+"%")
+			p, esc := LikePattern(query.Description)
+			dbQuery = dbQuery.Where("description "+likeOperator+" ?"+esc, p)
 		}
 		return dbQuery
 	}

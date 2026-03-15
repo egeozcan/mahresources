@@ -119,27 +119,28 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 
 		if query.Name != "" {
 			var operator = likeOperator
-			var name = "%" + query.Name + "%"
+			name, likeEsc := LikePattern(query.Name)
 
 			if strings.HasPrefix(query.Name, "\"") && strings.HasSuffix(query.Name, "\"") {
 				operator = "="
+				likeEsc = ""
 				name = strings.ReplaceAll(query.Name[1:len(query.Name)-1], "\\\"", "\"")
 			}
 
-			conditions := []string{"groups.name " + operator + " ?"}
+			conditions := []string{"groups.name " + operator + " ?" + likeEsc}
 			params := []interface{}{name}
 
 			// Use EXISTS subqueries instead of JOINs to avoid row multiplication
 			// and the need for DISTINCT (which breaks .Count())
 			if query.SearchParentsForName {
 				conditions = append(conditions,
-					"EXISTS (SELECT 1 FROM groups p WHERE p.id = groups.owner_id AND p.name "+operator+" ?)")
+					"EXISTS (SELECT 1 FROM groups p WHERE p.id = groups.owner_id AND p.name "+operator+" ?"+likeEsc+")")
 				params = append(params, name)
 			}
 
 			if query.SearchChildrenForName {
 				conditions = append(conditions,
-					"EXISTS (SELECT 1 FROM groups c WHERE c.owner_id = groups.id AND c.name "+operator+" ?)")
+					"EXISTS (SELECT 1 FROM groups c WHERE c.owner_id = groups.id AND c.name "+operator+" ?"+likeEsc+")")
 				params = append(params, name)
 			}
 
@@ -149,11 +150,13 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 		}
 
 		if query.Description != "" {
-			dbQuery = dbQuery.Where("groups.description "+likeOperator+" ?", "%"+query.Description+"%")
+			p, esc := LikePattern(query.Description)
+			dbQuery = dbQuery.Where("groups.description "+likeOperator+" ?"+esc, p)
 		}
 
 		if query.URL != "" {
-			dbQuery = dbQuery.Where("groups.url "+likeOperator+" ?", "%"+query.URL+"%")
+			p, esc := LikePattern(query.URL)
+			dbQuery = dbQuery.Where("groups.url "+likeOperator+" ?"+esc, p)
 		}
 
 		dbQuery = ApplyDateRange(dbQuery, "groups.", query.CreatedBefore, query.CreatedAfter)

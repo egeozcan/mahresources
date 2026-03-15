@@ -45,6 +45,15 @@ func convertMetaSortForSQLite(sort, tablePrefix string) string {
 	return result
 }
 
+// LikePattern builds a LIKE pattern with proper escaping of wildcard characters.
+// Returns the escaped pattern and the ESCAPE clause suffix to append to the LIKE expression.
+func LikePattern(term string) (pattern string, escapeClause string) {
+	escaped := strings.ReplaceAll(term, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `%`, `\%`)
+	escaped = strings.ReplaceAll(escaped, `_`, `\_`)
+	return "%" + escaped + "%", ` ESCAPE '\'`
+}
+
 // ApplyDateRange adds created_at filters for the given column prefix if provided.
 // The prefix should be empty string for simple table queries, or "tablename." for joined queries.
 func ApplyDateRange(db *gorm.DB, prefix, before, after string) *gorm.DB {

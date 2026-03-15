@@ -79,23 +79,28 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 		}
 
 		if query.Name != "" {
-			dbQuery = dbQuery.Where("resources.name "+likeOperator+" ?", "%"+query.Name+"%")
+			p, esc := LikePattern(query.Name)
+			dbQuery = dbQuery.Where("resources.name "+likeOperator+" ?"+esc, p)
 		}
 
 		if query.Description != "" {
-			dbQuery = dbQuery.Where("resources.description "+likeOperator+" ?", "%"+query.Description+"%")
+			p, esc := LikePattern(query.Description)
+			dbQuery = dbQuery.Where("resources.description "+likeOperator+" ?"+esc, p)
 		}
 
 		if query.ContentType != "" {
-			dbQuery = dbQuery.Where("resources.content_type "+likeOperator+" ?", "%"+query.ContentType+"%")
+			p, esc := LikePattern(query.ContentType)
+			dbQuery = dbQuery.Where("resources.content_type "+likeOperator+" ?"+esc, p)
 		}
 
 		if query.OriginalName != "" {
-			dbQuery = dbQuery.Where("resources.original_name "+likeOperator+" ?", "%"+query.OriginalName+"%")
+			p, esc := LikePattern(query.OriginalName)
+			dbQuery = dbQuery.Where("resources.original_name "+likeOperator+" ?"+esc, p)
 		}
 
 		if query.OriginalLocation != "" {
-			dbQuery = dbQuery.Where("resources.original_location "+likeOperator+" ?", "%"+query.OriginalLocation+"%")
+			p, esc := LikePattern(query.OriginalLocation)
+			dbQuery = dbQuery.Where("resources.original_location "+likeOperator+" ?"+esc, p)
 		}
 
 		if query.OwnerId != 0 {

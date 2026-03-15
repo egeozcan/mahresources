@@ -20,7 +20,8 @@ func SeriesQuery(query *query_models.SeriesQuery, ignoreSort bool) func(db *gorm
 		}
 
 		if query.Name != "" {
-			dbQuery = dbQuery.Where("name "+likeOperator+" ?", "%"+query.Name+"%")
+			p, esc := LikePattern(query.Name)
+			dbQuery = dbQuery.Where("name "+likeOperator+" ?"+esc, p)
 		}
 
 		if query.Slug != "" {

@@ -11,11 +11,13 @@ func QueryQuery(query *query_models.QueryQuery) func(db *gorm.DB) *gorm.DB {
 		likeOperator := GetLikeOperator(db)
 
 		if query.Name != "" {
-			dbQuery = dbQuery.Where("name "+likeOperator+" ?", "%"+query.Name+"%")
+			p, esc := LikePattern(query.Name)
+			dbQuery = dbQuery.Where("name "+likeOperator+" ?"+esc, p)
 		}
 
 		if query.Text != "" {
-			dbQuery = dbQuery.Where("text "+likeOperator+" ?", "%"+query.Text+"%")
+			p, esc := LikePattern(query.Text)
+			dbQuery = dbQuery.Where("text "+likeOperator+" ?"+esc, p)
 		}
 
 		return dbQuery

@@ -32,11 +32,13 @@ func LogEntryQuery(query *query_models.LogEntryQuery, ignoreSort bool) func(db *
 		}
 
 		if query.Message != "" {
-			dbQuery = dbQuery.Where("message "+likeOperator+" ?", "%"+query.Message+"%")
+			p, esc := LikePattern(query.Message)
+			dbQuery = dbQuery.Where("message "+likeOperator+" ?"+esc, p)
 		}
 
 		if query.RequestPath != "" {
-			dbQuery = dbQuery.Where("request_path "+likeOperator+" ?", "%"+query.RequestPath+"%")
+			p, esc := LikePattern(query.RequestPath)
+			dbQuery = dbQuery.Where("request_path "+likeOperator+" ?"+esc, p)
 		}
 
 		dbQuery = ApplyDateRange(dbQuery, "", query.CreatedBefore, query.CreatedAfter)

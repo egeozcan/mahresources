@@ -11,11 +11,13 @@ func ResourceCategoryQuery(query *query_models.ResourceCategoryQuery) func(db *g
 		likeOperator := GetLikeOperator(db)
 
 		if query.Name != "" {
-			dbQuery = dbQuery.Where("name "+likeOperator+" ?", "%"+query.Name+"%")
+			p, esc := LikePattern(query.Name)
+			dbQuery = dbQuery.Where("name "+likeOperator+" ?"+esc, p)
 		}
 
 		if query.Description != "" {
-			dbQuery = dbQuery.Where("description "+likeOperator+" ?", "%"+query.Description+"%")
+			p, esc := LikePattern(query.Description)
+			dbQuery = dbQuery.Where("description "+likeOperator+" ?"+esc, p)
 		}
 
 		return dbQuery
