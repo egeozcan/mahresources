@@ -29,7 +29,8 @@ func ValidateSortColumn(sort string) bool {
 
 // convertMetaSortForSQLite converts meta->>'key' to json_extract(meta, '$.key') for SQLite.
 // SQLite 3.38+ supports ->> but older versions (like the one bundled with go-sqlite3) don't.
-func convertMetaSortForSQLite(sort string) string {
+// tablePrefix (e.g., "groups.") is prepended to disambiguate the meta column in JOINed queries.
+func convertMetaSortForSQLite(sort, tablePrefix string) string {
 	matches := metaSortMatcher.FindStringSubmatch(sort)
 	if matches == nil {
 		return sort
@@ -37,7 +38,7 @@ func convertMetaSortForSQLite(sort string) string {
 	// matches[1] is the key name, matches[2] is the direction (with leading space) or empty
 	key := matches[1]
 	direction := strings.TrimSpace(matches[2])
-	result := "json_extract(meta, '$." + key + "')"
+	result := "json_extract(" + tablePrefix + "meta, '$." + key + "')"
 	if direction != "" {
 		result += " " + direction
 	}
@@ -68,8 +69,17 @@ func ApplySortColumns(db *gorm.DB, sortBy []string, tablePrefix, defaultSort str
 			continue
 		}
 
-		// Add table prefix for non-meta columns
-		if tablePrefix != "" && !strings.HasPrefix(sort, "meta") {
+		if strings.HasPrefix(sort, "meta") {
+			// Meta sort: convert for SQLite and add table prefix to disambiguate
+			if isSQLite {
+				sort = convertMetaSortForSQLite(sort, tablePrefix)
+			} else if tablePrefix != "" {
+				// Postgres: prefix meta column directly (e.g., groups.meta->>'key')
+				sort = tablePrefix + sort
+			}
+			db = db.Order(sort)
+		} else if tablePrefix != "" {
+			// Regular column: add table prefix
 			parts := strings.SplitN(sort, " ", 2)
 			prefixedSort := tablePrefix + parts[0]
 			if len(parts) > 1 {
@@ -77,10 +87,6 @@ func ApplySortColumns(db *gorm.DB, sortBy []string, tablePrefix, defaultSort str
 			}
 			db = db.Order(prefixedSort)
 		} else {
-			// Convert meta->>'key' to json_extract(meta, '$.key') for SQLite
-			if isSQLite && strings.HasPrefix(sort, "meta") {
-				sort = convertMetaSortForSQLite(sort)
-			}
 			db = db.Order(sort)
 		}
 	}

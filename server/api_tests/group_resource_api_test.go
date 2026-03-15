@@ -231,6 +231,31 @@ func TestGroupSearchChildrenNoDuplicates(t *testing.T) {
 		"Parent group should appear at most once when multiple children match, not be duplicated per child")
 }
 
+func TestGroupMetaSortWithChildJoinUsesCorrectTable(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create parent with meta rank=2
+	parent := &models.Group{Name: "SortParent", Meta: []byte(`{"rank":"2"}`)}
+	tc.DB.Create(parent)
+
+	// Create child with a matching name so the child join activates
+	child := &models.Group{Name: "SortChild", OwnerId: &parent.ID, Meta: []byte(`{"rank":"1"}`)}
+	tc.DB.Create(child)
+
+	// Search with SearchChildrenForName + meta sort — this activates the child JOIN.
+	// The meta sort must reference the main table (groups.meta), not the ambiguous bare "meta".
+	url := "/v1/groups?Name=Sort&SearchChildrenForName=true&SortBy=meta->>'rank'"
+	resp := tc.MakeRequest(http.MethodGet, url, nil)
+	assert.Equal(t, http.StatusOK, resp.Code,
+		"meta sort with child join should not cause ambiguous column error")
+
+	var groups []models.Group
+	json.Unmarshal(resp.Body.Bytes(), &groups)
+
+	// Both parent (matched via child name) and child (matched directly) should be returned
+	assert.GreaterOrEqual(t, len(groups), 1, "should return results when sorting by meta with child join")
+}
+
 func TestGroupFilterByGroupsDoesNotBypassNameFilter(t *testing.T) {
 	tc := SetupTestEnv(t)
 
