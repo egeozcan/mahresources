@@ -282,6 +282,40 @@ func TestGroupMetaSortWithChildJoinUsesCorrectTable(t *testing.T) {
 	assert.GreaterOrEqual(t, len(groups), 1, "should return results when sorting by meta with child join")
 }
 
+func TestGroupChildMetaFilterWithMultipleMatchingChildren(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create a parent group
+	parent := &models.Group{Name: "MetaParent", Meta: []byte(`{}`)}
+	tc.DB.Create(parent)
+
+	// Create two children that BOTH match the meta filter
+	child1 := &models.Group{Name: "Child1", OwnerId: &parent.ID, Meta: []byte(`{"color":"red"}`)}
+	tc.DB.Create(child1)
+	child2 := &models.Group{Name: "Child2", OwnerId: &parent.ID, Meta: []byte(`{"color":"red"}`)}
+	tc.DB.Create(child2)
+
+	// Query groups using app context with child meta filter directly
+	query := &query_models.GroupQuery{
+		MetaQuery: []query_models.ColumnMeta{
+			{Key: "child.color", Value: "red", Operation: "EQ"},
+		},
+	}
+	groups, err := tc.AppCtx.GetGroups(0, 50, query)
+	assert.NoError(t, err)
+
+	// Parent should be included even though MULTIPLE children match
+	found := false
+	for _, g := range groups {
+		if g.ID == parent.ID {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found,
+		"Parent should be found when multiple children match child.meta filter, not excluded by count(*) = 1")
+}
+
 func TestGroupFilterByGroupsDoesNotBypassNameFilter(t *testing.T) {
 	tc := SetupTestEnv(t)
 

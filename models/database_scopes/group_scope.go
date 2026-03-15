@@ -218,7 +218,7 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 						Where(types.JSONQuery("p.meta").Operation(getOperationType(v.Operation), v.Value, key)).
 						Where("groups.id = p.owner_id")
 
-					dbQuery = dbQuery.Where("(?) = 1", subSelect)
+					dbQuery = dbQuery.Where("(?) >= 1", subSelect)
 				} else {
 					dbQuery = dbQuery.Where(types.JSONQuery("groups.meta").Operation(getOperationType(v.Operation), v.Value, v.Key))
 				}
