@@ -178,6 +178,32 @@ func TestMergeGroupsPreservesRelationTypeId(t *testing.T) {
 	}
 }
 
+func TestMergeGroupsPreservesReverseRelatedGroups(t *testing.T) {
+	tc := SetupTestEnv(t)
+	requireJsonPatch(t, tc.DB)
+
+	// Create winner, loser, and an observer group
+	winner := &models.Group{Name: "Winner"}
+	tc.DB.Create(winner)
+	loser := &models.Group{Name: "Loser"}
+	tc.DB.Create(loser)
+	observer := &models.Group{Name: "Observer"}
+	tc.DB.Create(observer)
+
+	// Observer has loser as a related group (observer → loser)
+	tc.DB.Exec("INSERT INTO group_related_groups (group_id, related_group_id) VALUES (?, ?)", observer.ID, loser.ID)
+
+	// Merge loser into winner
+	err := tc.AppCtx.MergeGroups(winner.ID, []uint{loser.ID})
+	assert.NoError(t, err)
+
+	// Observer should now have winner as a related group (observer → winner)
+	var count int64
+	tc.DB.Raw("SELECT COUNT(*) FROM group_related_groups WHERE group_id = ? AND related_group_id = ?", observer.ID, winner.ID).Scan(&count)
+	assert.Equal(t, int64(1), count,
+		"Reverse relationships (other→loser) should be transferred to winner during merge")
+}
+
 func TestGroupCreateWithoutURLStoresNull(t *testing.T) {
 	tc := SetupTestEnv(t)
 

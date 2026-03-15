@@ -45,8 +45,11 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 			return err
 		}
 
-		// Batch SQL transfers — related groups (exclude self-references)
+		// Batch SQL transfers — related groups (both directions, exclude self-references)
 		if err := altCtx.db.Exec("INSERT INTO group_related_groups (group_id, related_group_id) SELECT ?, related_group_id FROM group_related_groups WHERE group_id IN ? AND related_group_id != ? ON CONFLICT DO NOTHING", winnerId, loserIds, winnerId).Error; err != nil {
+			return err
+		}
+		if err := altCtx.db.Exec("INSERT INTO group_related_groups (group_id, related_group_id) SELECT group_id, ? FROM group_related_groups WHERE related_group_id IN ? AND group_id != ? ON CONFLICT DO NOTHING", winnerId, loserIds, winnerId).Error; err != nil {
 			return err
 		}
 
