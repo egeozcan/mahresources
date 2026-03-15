@@ -36,8 +36,12 @@ func TagQuery(query *query_models.TagQuery, ignoreSort bool) func(db *gorm.DB) *
 					if !validEntityName.MatchString(entityName) {
 						continue
 					}
+					direction := "desc"
+					if len(parts) > 1 && parts[1] == "asc" {
+						direction = "asc"
+					}
 					tableName := fmt.Sprintf("%v_tags", entityName)
-					dbQuery = dbQuery.Order(fmt.Sprintf("(SELECT count(*) FROM %v jt WHERE jt.tag_id = tags.id) desc", tableName))
+					dbQuery = dbQuery.Order(fmt.Sprintf("(SELECT count(*) FROM %v jt WHERE jt.tag_id = tags.id) %s", tableName, direction))
 					continue
 				}
 
