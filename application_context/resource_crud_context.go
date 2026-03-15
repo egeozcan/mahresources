@@ -228,8 +228,12 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 		resource.ResourceCategoryId = uintPtrOrNil(resourceQuery.ResourceCategoryId)
 		resource.Width = resourceQuery.Width
 		resource.Height = resourceQuery.Height
-		resource.OwnerId = &resourceQuery.OwnerId
-		resource.Owner = &models.Group{ID: resourceQuery.OwnerId}
+		resource.OwnerId = uintPtrOrNil(resourceQuery.OwnerId)
+		if resourceQuery.OwnerId != 0 {
+			resource.Owner = &models.Group{ID: resourceQuery.OwnerId}
+		} else {
+			resource.Owner = nil
+		}
 
 		// Handle series assignment changes
 		newSeriesID := resourceQuery.SeriesId

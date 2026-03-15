@@ -254,6 +254,38 @@ func TestGroupUpdateCategoryId(t *testing.T) {
 	assert.Equal(t, catB.ID, *check.CategoryId, "group category should be updated to Cat B")
 }
 
+func TestResourceEditOwnerIdZeroStoresNull(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create a group to use as initial owner
+	group := tc.CreateDummyGroup("Owner")
+
+	// Create a resource owned by the group
+	res := &models.Resource{Name: "Owned Resource", OwnerId: &group.ID}
+	tc.DB.Create(res)
+
+	// Verify initial owner is set
+	var check models.Resource
+	tc.DB.First(&check, res.ID)
+	assert.NotNil(t, check.OwnerId)
+	assert.Equal(t, group.ID, *check.OwnerId)
+
+	// Edit the resource with OwnerId=0 (removing owner)
+	editPayload := query_models.ResourceEditor{
+		ID: res.ID,
+		ResourceQueryBase: query_models.ResourceQueryBase{
+			Name: "Owned Resource",
+		},
+	}
+	resp := tc.MakeRequest(http.MethodPost, "/v1/resource/edit", editPayload)
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	// Verify OwnerId is NULL, not a pointer to 0
+	tc.DB.First(&check, res.ID)
+	assert.Nil(t, check.OwnerId,
+		"OwnerId should be NULL when edited with OwnerId=0, not a pointer to 0")
+}
+
 func TestResourceEditUpdatesWidthHeight(t *testing.T) {
 	tc := SetupTestEnv(t)
 
