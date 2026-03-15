@@ -129,6 +129,27 @@ func TestMergeGroupsMetaWinnerTakesPrecedence(t *testing.T) {
 	assert.Equal(t, "yes", meta["only_loser"], "Loser's unique key should be preserved")
 }
 
+func TestGroupCreateWithoutURLStoresNull(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create a group without specifying a URL
+	payload := query_models.GroupCreator{
+		Name: "No URL Group",
+	}
+	resp := tc.MakeRequest(http.MethodPost, "/v1/group", payload)
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	var created models.Group
+	json.Unmarshal(resp.Body.Bytes(), &created)
+
+	// Check the database directly — URL should be NULL, not empty string
+	var dbValue *string
+	tc.DB.Raw("SELECT url FROM groups WHERE id = ?", created.ID).Scan(&dbValue)
+
+	assert.Nil(t, dbValue,
+		"URL should be NULL when not specified, not an empty string")
+}
+
 func TestGroupSearchChildrenNoDuplicates(t *testing.T) {
 	tc := SetupTestEnv(t)
 

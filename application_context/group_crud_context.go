@@ -47,13 +47,14 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 		}
 	}()
 
-	parsedURL, err := url.Parse(groupQuery.URL)
-
-	if groupQuery.URL != "" && err != nil {
-		return nil, err
+	var groupUrl *types.URL
+	if groupQuery.URL != "" {
+		parsedURL, err := url.Parse(groupQuery.URL)
+		if err != nil {
+			return nil, err
+		}
+		groupUrl = (*types.URL)(parsedURL)
 	}
-
-	groupUrl := (*types.URL)(parsedURL)
 
 	group := models.Group{
 		Name:        groupQuery.Name,
