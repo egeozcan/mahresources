@@ -17,50 +17,28 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 			dbQuery = ApplySortColumns(dbQuery, query.SortBy, "groups.", "groups.created_at desc")
 		}
 
-		var parentAdded = false
-		var childAdded = false
-
-		var addParentSubquery = func() {
-			if parentAdded {
-				return
-			}
-			dbQuery = dbQuery.
-				Joins("LEFT JOIN groups parent ON parent.id = groups.owner_id")
-			parentAdded = true
-		}
-
-		var addChildSubquery = func() {
-			if childAdded {
-				return
-			}
-			dbQuery = dbQuery.
-				Joins("LEFT JOIN groups child ON child.owner_id = groups.id")
-			childAdded = true
-		}
-
 		if len(query.Ids) > 0 {
 			dbQuery = dbQuery.Where("groups.id IN (?)", query.Ids)
 		}
 
 		if len(query.Tags) > 0 {
-			subSelectCondition := originalDB.
-				Where("groups.id = gt.group_id")
+			// Build group_id match conditions using subqueries (no JOINs needed)
+			groupIDConditions := []string{"gt.group_id = groups.id"}
 
 			if query.SearchParentsForTags {
-				addParentSubquery()
-				subSelectCondition = subSelectCondition.Or("parent.id = gt.group_id")
+				groupIDConditions = append(groupIDConditions, "gt.group_id = groups.owner_id")
 			}
 
 			if query.SearchChildrenForTags {
-				addChildSubquery()
-				subSelectCondition = subSelectCondition.Or("child.id = gt.group_id")
+				groupIDConditions = append(groupIDConditions,
+					"gt.group_id IN (SELECT c.id FROM groups c WHERE c.owner_id = groups.id)")
 			}
 
 			subSelect := originalDB.
 				Table("group_tags gt").
 				Select("count(distinct tag_id)").
 				Where("gt.tag_id IN ?", query.Tags).
-				Where(subSelectCondition)
+				Where(strings.Join(groupIDConditions, " OR "))
 
 			dbQuery = dbQuery.Where("(?) = ?", subSelect, len(query.Tags))
 		}
@@ -151,15 +129,17 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 			conditions := []string{"groups.name " + operator + " ?"}
 			params := []interface{}{name}
 
+			// Use EXISTS subqueries instead of JOINs to avoid row multiplication
+			// and the need for DISTINCT (which breaks .Count())
 			if query.SearchParentsForName {
-				addParentSubquery()
-				conditions = append(conditions, "parent.name "+operator+" ?")
+				conditions = append(conditions,
+					"EXISTS (SELECT 1 FROM groups p WHERE p.id = groups.owner_id AND p.name "+operator+" ?)")
 				params = append(params, name)
 			}
 
 			if query.SearchChildrenForName {
-				addChildSubquery()
-				conditions = append(conditions, "child.name "+operator+" ?")
+				conditions = append(conditions,
+					"EXISTS (SELECT 1 FROM groups c WHERE c.owner_id = groups.id AND c.name "+operator+" ?)")
 				params = append(params, name)
 			}
 
@@ -223,11 +203,6 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 					dbQuery = dbQuery.Where(types.JSONQuery("groups.meta").Operation(getOperationType(v.Operation), v.Value, v.Key))
 				}
 			}
-		}
-
-		// Deduplicate when child/parent joins can produce multiple rows per group
-		if childAdded || parentAdded {
-			dbQuery = dbQuery.Distinct("groups.*")
 		}
 
 		return dbQuery

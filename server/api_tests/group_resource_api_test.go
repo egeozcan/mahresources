@@ -225,6 +225,33 @@ func TestGroupCreateWithoutURLStoresNull(t *testing.T) {
 		"URL should be NULL when not specified, not an empty string")
 }
 
+func TestGroupSearchChildrenCountMatchesList(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	parent := tc.CreateDummyGroup("CountParent")
+
+	child1 := &models.Group{Name: "CountMatch A", OwnerId: &parent.ID}
+	tc.DB.Create(child1)
+	child2 := &models.Group{Name: "CountMatch B", OwnerId: &parent.ID}
+	tc.DB.Create(child2)
+
+	// The count from GetGroupsCount should match the actual number of unique groups
+	// returned by GetGroups when SearchChildrenForName is enabled
+	query := &query_models.GroupQuery{
+		Name:                  "CountMatch",
+		SearchChildrenForName: true,
+	}
+
+	groups, err := tc.AppCtx.GetGroups(0, 50, query)
+	assert.NoError(t, err)
+
+	count, err := tc.AppCtx.GetGroupsCount(query)
+	assert.NoError(t, err)
+
+	assert.Equal(t, int64(len(groups)), count,
+		"GetGroupsCount should return the same number as len(GetGroups) when child joins produce duplicates")
+}
+
 func TestGroupSearchChildrenNoDuplicates(t *testing.T) {
 	tc := SetupTestEnv(t)
 
