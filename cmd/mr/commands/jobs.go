@@ -11,16 +11,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// jobResponse is a flexible struct for the download queue job shape.
-type jobResponse struct {
-	ID        string `json:"ID"`
-	URL       string `json:"URL"`
-	Status    string `json:"Status"`
-	Progress  int    `json:"Progress"`
-	Error     string `json:"Error"`
-	CreatedAt string `json:"CreatedAt"`
-}
-
 // NewJobCmd returns the singular "job" command with submit/cancel/pause/resume/retry subcommands.
 func NewJobCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	jobCmd := &cobra.Command{

@@ -110,24 +110,6 @@ func (s *SQLiteFTS) createTriggers(db *gorm.DB, config EntityFTSConfig) error {
 	return nil
 }
 
-func (s *SQLiteFTS) populateFTS(db *gorm.DB, config EntityFTSConfig) error {
-	ftsTableName := config.TableName + "_fts"
-	columns := strings.Join(config.Columns, ", ")
-
-	// Populate FTS table with existing data
-	populateSQL := fmt.Sprintf(`
-		INSERT INTO %s(rowid, %s)
-		SELECT id, %s FROM %s`,
-		ftsTableName, columns,
-		columns, config.TableName,
-	)
-	if err := db.Exec(populateSQL).Error; err != nil {
-		return fmt.Errorf("failed to populate FTS table %s: %w", ftsTableName, err)
-	}
-
-	return nil
-}
-
 func (s *SQLiteFTS) buildPrefixedColumns(columns []string, prefix string) string {
 	var result []string
 	for _, col := range columns {
