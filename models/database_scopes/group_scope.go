@@ -225,6 +225,11 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 			}
 		}
 
+		// Deduplicate when child/parent joins can produce multiple rows per group
+		if childAdded || parentAdded {
+			dbQuery = dbQuery.Distinct("groups.*")
+		}
+
 		return dbQuery
 	}
 }

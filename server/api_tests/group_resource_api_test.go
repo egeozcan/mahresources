@@ -129,6 +129,38 @@ func TestMergeGroupsMetaWinnerTakesPrecedence(t *testing.T) {
 	assert.Equal(t, "yes", meta["only_loser"], "Loser's unique key should be preserved")
 }
 
+func TestGroupSearchChildrenNoDuplicates(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create a parent group
+	parent := tc.CreateDummyGroup("Parent")
+
+	// Create two children whose names match the search term
+	child1 := &models.Group{Name: "Matching Child A", OwnerId: &parent.ID}
+	tc.DB.Create(child1)
+	child2 := &models.Group{Name: "Matching Child B", OwnerId: &parent.ID}
+	tc.DB.Create(child2)
+
+	// Search for "Matching" with SearchChildrenForName enabled.
+	// The parent should appear at most once (found via its children), not duplicated.
+	resp := tc.MakeRequest(http.MethodGet, "/v1/groups?Name=Matching&SearchChildrenForName=true", nil)
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	var groups []models.Group
+	json.Unmarshal(resp.Body.Bytes(), &groups)
+
+	// Count how many times the parent appears
+	parentCount := 0
+	for _, g := range groups {
+		if g.ID == parent.ID {
+			parentCount++
+		}
+	}
+
+	assert.LessOrEqual(t, parentCount, 1,
+		"Parent group should appear at most once when multiple children match, not be duplicated per child")
+}
+
 func TestGroupFilterByGroupsDoesNotBypassNameFilter(t *testing.T) {
 	tc := SetupTestEnv(t)
 
