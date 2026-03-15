@@ -4,7 +4,7 @@ import * as path from 'path';
 
 export function createCliRunner(): CliRunner {
   const binaryPath = process.env.CLI_PATH || path.resolve(__dirname, '../../mr');
-  const serverUrl = process.env.BASE_URL || 'http://localhost:8181';
+  const serverUrl = process.env.CLI_BASE_URL || process.env.BASE_URL || 'http://localhost:8181';
   return new CliRunner(binaryPath, serverUrl);
 }
 

@@ -22,31 +22,21 @@ const MAX_PORT = 8200;
 const HEALTH_CHECK_TIMEOUT = 30000; // 30 seconds
 const HEALTH_CHECK_INTERVAL = 500; // 500ms
 
-let serverProcess = null;
+const serverProcesses = [];
 
 /**
- * Clean up server process
+ * Clean up all server processes
  */
 async function cleanup() {
-  if (serverProcess && !serverProcess.killed) {
-    console.log('Stopping server...');
-    serverProcess.kill('SIGTERM');
-
-    // Wait for process to exit (up to 5 seconds)
-    const exitPromise = new Promise((resolve) => {
-      serverProcess.once('exit', resolve);
-      setTimeout(() => resolve(), 5000);
-    });
-
-    await exitPromise;
-
-    // Force kill if still running
-    try {
-      if (!serverProcess.killed) {
-        serverProcess.kill('SIGKILL');
-      }
-    } catch {
-      // Process may already be dead
+  for (const proc of serverProcesses) {
+    if (proc && !proc.killed) {
+      console.log('Stopping server...');
+      proc.kill('SIGTERM');
+      await new Promise((resolve) => {
+        proc.once('exit', resolve);
+        setTimeout(() => resolve(), 5000);
+      });
+      try { if (!proc.killed) proc.kill('SIGKILL'); } catch {}
     }
   }
 }
@@ -118,6 +108,46 @@ async function waitForServer(port, timeout = HEALTH_CHECK_TIMEOUT) {
 }
 
 /**
+ * Start an ephemeral server on the given ports
+ */
+function startServer(port, sharePort) {
+  const proc = spawn(SERVER_BINARY, [
+    '-ephemeral',
+    `-bind-address=:${port}`,
+    '-max-db-connections=2',
+    `-share-port=${sharePort}`,
+    '-share-bind-address=127.0.0.1',
+    '-hash-worker-disabled',
+    '-thumb-worker-disabled',
+    '-plugin-path=./e2e/test-plugins',
+  ], {
+    cwd: PROJECT_ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: false,
+  });
+
+  proc.stdout.on('data', () => {});
+  proc.stderr.on('data', (data) => {
+    const msg = data.toString();
+    if (!msg.includes('Using ephemeral') &&
+        !msg.includes('Using in-memory') &&
+        !msg.includes('connection pool limited')) {
+      console.error(`Server:${port}: ${msg.trim()}`);
+    }
+  });
+  proc.on('error', (err) => {
+    console.error(`Failed to start server on port ${port}:`, err);
+  });
+  proc.on('exit', (code) => {
+    if (code !== null && code !== 0) {
+      console.error(`Server on port ${port} exited with code ${code}`);
+    }
+  });
+
+  return proc;
+}
+
+/**
  * Build the server binary if it doesn't exist
  */
 function ensureServerBuilt() {
@@ -162,65 +192,30 @@ async function main() {
     const sharePort = await findAvailablePort(port + 1, MAX_PORT + 100);
     console.log(`Using share port ${sharePort}`);
 
-    // Start server
+    // Start primary server
     // Use max-db-connections=2 to reduce SQLite lock contention while avoiding deadlocks
     // (1 connection can deadlock when multiple concurrent requests need DB access)
     console.log('Starting ephemeral server...');
-    serverProcess = spawn(SERVER_BINARY, [
-      '-ephemeral',
-      `-bind-address=:${port}`,
-      '-max-db-connections=2',
-      `-share-port=${sharePort}`,
-      '-share-bind-address=127.0.0.1',
-      '-hash-worker-disabled',
-      '-thumb-worker-disabled',
-      '-plugin-path=./e2e/test-plugins'
-    ], {
-      cwd: PROJECT_ROOT,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: false
-    });
-
-    // Track if we've reported server starting
-    let serverStarted = false;
-
-    serverProcess.stdout.on('data', (data) => {
-      if (!serverStarted) {
-        const output = data.toString();
-        if (output.includes('Starting server') || output.includes('Listening')) {
-          console.log('Server starting...');
-          serverStarted = true;
-        }
-      }
-    });
-
-    // Only log actual errors, not info messages
-    serverProcess.stderr.on('data', (data) => {
-      const msg = data.toString();
-      // Skip info-level log messages that go to stderr
-      if (!msg.includes('Using ephemeral') &&
-          !msg.includes('Using in-memory') &&
-          !msg.includes('connection pool limited')) {
-        console.error(`Server: ${msg.trim()}`);
-      }
-    });
-
-    serverProcess.on('error', (err) => {
-      console.error('Failed to start server:', err);
-      process.exit(1);
-    });
-
-    // Fail fast if server exits unexpectedly
-    serverProcess.on('exit', (code, signal) => {
-      if (code !== null && code !== 0) {
-        console.error(`Server exited with code ${code}`);
-      }
-    });
+    const primaryServer = startServer(port, sharePort);
+    serverProcesses.push(primaryServer);
 
     // Wait for server to be ready
     console.log('Waiting for server to be ready...');
     await waitForServer(port);
     console.log('Server is ready!');
+
+    // Start a second server for CLI tests (avoids hash conflicts from shared test assets)
+    const cliOnlyMode = args.some(arg => arg === '--project=cli');
+    const cliPort = cliOnlyMode ? port : await findAvailablePort(sharePort + 1, MAX_PORT + 100);
+    const cliSharePort = cliOnlyMode ? sharePort : await findAvailablePort(cliPort + 1, MAX_PORT + 200);
+
+    if (!cliOnlyMode) {
+      console.log(`Starting CLI server on port ${cliPort}...`);
+      const cliServer = startServer(cliPort, cliSharePort);
+      serverProcesses.push(cliServer);
+      await waitForServer(cliPort);
+      console.log('CLI server is ready!');
+    }
 
     // Run Playwright tests
     console.log(`Running: npx playwright ${playwrightArgs.join(' ')}`);
@@ -231,6 +226,7 @@ async function main() {
         ...process.env,
         BASE_URL: `http://localhost:${port}`,
         SHARE_BASE_URL: `http://127.0.0.1:${sharePort}`,
+        CLI_BASE_URL: `http://localhost:${cliPort}`,
         CLI_PATH: path.join(PROJECT_ROOT, 'mr'),
       }
     });
