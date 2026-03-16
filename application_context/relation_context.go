@@ -19,7 +19,9 @@ func (ctx *MahresourcesContext) EditRelation(query query_models.GroupRelationshi
 	if query.Name != "" {
 		relation.Name = query.Name
 	}
-	relation.Description = query.Description
+	if query.Description != "" {
+		relation.Description = query.Description
+	}
 
 	if err := ctx.db.Save(relation).Error; err != nil {
 		return nil, err

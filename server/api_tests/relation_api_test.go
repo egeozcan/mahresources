@@ -46,6 +46,62 @@ func TestAddRelationWithNilCategoryDoesNotPanic(t *testing.T) {
 		"creating a relation with a nil-category group should fail gracefully")
 }
 
+func TestRelationEditPreservesDescription(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	catA := &models.Category{Name: "Rel From Cat"}
+	catB := &models.Category{Name: "Rel To Cat"}
+	tc.DB.Create(catA)
+	tc.DB.Create(catB)
+
+	relType := &models.GroupRelationType{
+		Name:           "Test Rel Type",
+		FromCategoryId: &catA.ID,
+		ToCategoryId:   &catB.ID,
+	}
+	tc.DB.Create(relType)
+
+	groupA := &models.Group{Name: "From Group", CategoryId: &catA.ID}
+	groupB := &models.Group{Name: "To Group", CategoryId: &catB.ID}
+	tc.DB.Create(groupA)
+	tc.DB.Create(groupB)
+
+	// Create a relation
+	createResp := tc.MakeRequest(http.MethodPost, "/v1/relation", map[string]any{
+		"FromGroupId":         groupA.ID,
+		"ToGroupId":           groupB.ID,
+		"GroupRelationTypeId": relType.ID,
+	})
+	assert.Equal(t, http.StatusOK, createResp.Code)
+	var created models.GroupRelation
+	json.Unmarshal(createResp.Body.Bytes(), &created)
+
+	// Edit to add both name and description
+	tc.MakeRequest(http.MethodPost, "/v1/relation", map[string]any{
+		"Id":          created.ID,
+		"Name":        "Named Relation",
+		"Description": "Important description",
+	})
+
+	// Verify
+	var check models.GroupRelation
+	tc.DB.First(&check, created.ID)
+	assert.Equal(t, "Important description", check.Description)
+
+	// Now edit only the name — Description should be preserved
+	resp := tc.MakeRequest(http.MethodPost, "/v1/relation", map[string]any{
+		"Id":   created.ID,
+		"Name": "Renamed Relation",
+	})
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	var after models.GroupRelation
+	tc.DB.First(&after, created.ID)
+	assert.Equal(t, "Renamed Relation", after.Name)
+	assert.Equal(t, "Important description", after.Description,
+		"Editing only name should not clear description")
+}
+
 func TestRelationEndpoints(t *testing.T) {
 	tc := SetupTestEnv(t)
 
