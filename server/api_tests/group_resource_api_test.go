@@ -695,6 +695,41 @@ func TestResourceEditPartialJSONPreservesOtherFields(t *testing.T) {
 		"Editing only description should not clear the name — partial JSON must preserve unset fields")
 }
 
+func TestResourceEditPartialJSONPreservesResourceCategoryId(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create a resource category
+	rc := &models.ResourceCategory{Name: "Photo"}
+	tc.DB.Create(rc)
+
+	// Create a resource and assign the category via direct SQL to avoid GORM association issues
+	res := &models.Resource{Name: "Categorized Resource", Meta: []byte(`{}`), OwnMeta: []byte(`{}`)}
+	tc.DB.Create(res)
+	tc.DB.Model(res).Update("resource_category_id", rc.ID)
+
+	// Verify category is set
+	var before models.Resource
+	tc.DB.First(&before, res.ID)
+	if !assert.NotNil(t, before.ResourceCategoryId, "setup: resource should have ResourceCategoryId") {
+		return
+	}
+
+	// Partial JSON edit — only change description
+	resp := tc.MakeRequest(http.MethodPost, "/v1/resource/edit", map[string]any{
+		"ID":          res.ID,
+		"Description": "Updated",
+	})
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	var after models.Resource
+	tc.DB.First(&after, res.ID)
+	assert.Equal(t, "Updated", after.Description)
+	if assert.NotNil(t, after.ResourceCategoryId,
+		"Editing only description should not clear ResourceCategoryId") {
+		assert.Equal(t, rc.ID, *after.ResourceCategoryId)
+	}
+}
+
 func TestResourceEditPartialJSONPreservesDimensions(t *testing.T) {
 	tc := SetupTestEnv(t)
 
