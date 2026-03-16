@@ -11,12 +11,7 @@ func SeriesQuery(query *query_models.SeriesQuery, ignoreSort bool) func(db *gorm
 		dbQuery := db
 
 		if !ignoreSort {
-			for _, sort := range query.SortBy {
-				if ValidateSortColumn(sort) {
-					dbQuery = dbQuery.Order(sort)
-				}
-			}
-			dbQuery = dbQuery.Order("created_at desc")
+			dbQuery = ApplySortColumns(dbQuery, query.SortBy, "", "created_at desc")
 		}
 
 		if query.Name != "" {
