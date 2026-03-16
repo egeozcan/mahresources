@@ -536,6 +536,34 @@ func TestGroupUpdateCategoryId(t *testing.T) {
 	assert.Equal(t, catB.ID, *check.CategoryId, "group category should be updated to Cat B")
 }
 
+func TestGroupUpdatePartialJSONPreservesOtherFields(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create a group with both name and description populated
+	group := tc.CreateDummyGroup("Original Name")
+	group.Description = "Original Desc"
+	group.Meta = []byte(`{"key":"value"}`)
+	tc.DB.Save(group)
+
+	// Send a partial JSON body that only changes the description
+	// (simulates CLI: mr group edit ID --description "New")
+	partialBody := map[string]any{
+		"ID":          group.ID,
+		"Description": "Updated Desc",
+	}
+	resp := tc.MakeRequest(http.MethodPost, "/v1/group", partialBody)
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	// The name should be preserved, not cleared to empty
+	var check models.Group
+	tc.DB.First(&check, group.ID)
+	assert.Equal(t, "Updated Desc", check.Description)
+	assert.Equal(t, "Original Name", check.Name,
+		"Editing only description should not clear the name — partial JSON must preserve unset fields")
+	assert.JSONEq(t, `{"key":"value"}`, string(check.Meta),
+		"Editing only description should not reset meta to default")
+}
+
 func TestResourceEditOwnerIdZeroStoresNull(t *testing.T) {
 	tc := SetupTestEnv(t)
 

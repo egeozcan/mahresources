@@ -57,6 +57,12 @@ type GroupCRUD interface {
 	GroupUpdater
 }
 
+// GroupCRUDReader combines CRUD with reading for partial-update support
+type GroupCRUDReader interface {
+	GroupCRUD
+	GetGroup(id uint) (*models.Group, error)
+}
+
 // --- Composite Interface (backward compatibility) ---
 
 // GroupWriter combines all group write operations

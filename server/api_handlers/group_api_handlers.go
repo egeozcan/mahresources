@@ -9,6 +9,8 @@ import (
 	"mahresources/server/http_utils"
 	"mahresources/server/interfaces"
 	"net/http"
+	"net/url"
+	"strings"
 )
 
 func GetGroupsHandler(ctx interfaces.GroupReader) func(writer http.ResponseWriter, request *http.Request) {
@@ -66,10 +68,10 @@ func GetGroupsParentsHandler(ctx interfaces.GroupReader) func(writer http.Respon
 	}
 }
 
-func GetAddGroupHandler(ctx interfaces.GroupCRUD) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddGroupHandler(ctx interfaces.GroupCRUDReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.GroupCRUD)
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.GroupCRUDReader)
 
 		var editor = query_models.GroupEditor{}
 		var group *models.Group
@@ -83,6 +85,26 @@ func GetAddGroupHandler(ctx interfaces.GroupCRUD) func(writer http.ResponseWrite
 
 			group, err = effectiveCtx.CreateGroup(&editor.GroupCreator)
 		} else if err == nil {
+			// For JSON requests, pre-populate unset string fields from the
+			// existing group so partial updates don't clear them.
+			if strings.HasPrefix(request.Header.Get("Content-type"), constants.JSON) {
+				existing, getErr := effectiveCtx.GetGroup(editor.ID)
+				if getErr == nil {
+					if editor.Name == "" {
+						editor.Name = existing.Name
+					}
+					if editor.Description == "" {
+						editor.Description = existing.Description
+					}
+					if editor.Meta == "" {
+						editor.Meta = string(existing.Meta)
+					}
+					if editor.URL == "" && existing.URL != nil {
+						editor.URL = (*url.URL)(existing.URL).String()
+					}
+				}
+			}
+
 			group, err = effectiveCtx.UpdateGroup(&editor)
 		}
 
