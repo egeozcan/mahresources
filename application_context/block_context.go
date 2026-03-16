@@ -87,6 +87,14 @@ func (ctx *MahresourcesContext) CreateBlock(editor *query_models.NoteBlockEditor
 		return nil, err
 	}
 
+	// Sync mention relations after block creation
+	if editor.Type == "text" {
+		var note models.Note
+		if err := ctx.db.First(&note, editor.NoteID).Error; err == nil {
+			ctx.syncMentionsForNote(&note)
+		}
+	}
+
 	return &block, nil
 }
 

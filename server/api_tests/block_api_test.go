@@ -540,3 +540,30 @@ func TestReorderBlocksSyncsDescription(t *testing.T) {
 	assert.Equal(t, "Block B content", check.Description,
 		"description should be synced to the new first text block after reorder")
 }
+
+func TestCreateBlockSyncsMentions(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create a group that will be mentioned
+	group := &models.Group{Name: "Mentioned Group", Meta: []byte(`{}`)}
+	tc.DB.Create(group)
+
+	// Create a note
+	note := tc.CreateDummyNote("Mention Test Note")
+
+	// Create a text block that @-mentions the group
+	mentionText := fmt.Sprintf("Check out @[group:%d:%s] for details", group.ID, group.Name)
+	resp := tc.MakeRequest(http.MethodPost, "/v1/note/block", map[string]any{
+		"noteId":   note.ID,
+		"type":     "text",
+		"position": "n",
+		"content":  map[string]string{"text": mentionText},
+	})
+	assert.Equal(t, http.StatusCreated, resp.Code)
+
+	// The mention should have created a note-group association
+	var count int64
+	tc.DB.Table("groups_related_notes").Where("group_id = ? AND note_id = ?", group.ID, note.ID).Count(&count)
+	assert.Equal(t, int64(1), count,
+		"Creating a text block with @[group:ID:Name] should sync the mention as a note-group association")
+}
