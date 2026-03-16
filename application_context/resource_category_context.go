@@ -79,12 +79,24 @@ func (ctx *MahresourcesContext) UpdateResourceCategory(query *query_models.Resou
 	if strings.TrimSpace(query.Name) != "" {
 		resourceCategory.Name = query.Name
 	}
-	resourceCategory.Description = query.Description
-	resourceCategory.CustomHeader = query.CustomHeader
-	resourceCategory.CustomSidebar = query.CustomSidebar
-	resourceCategory.CustomSummary = query.CustomSummary
-	resourceCategory.CustomAvatar = query.CustomAvatar
-	resourceCategory.MetaSchema = query.MetaSchema
+	if query.Description != "" {
+		resourceCategory.Description = query.Description
+	}
+	if query.CustomHeader != "" {
+		resourceCategory.CustomHeader = query.CustomHeader
+	}
+	if query.CustomSidebar != "" {
+		resourceCategory.CustomSidebar = query.CustomSidebar
+	}
+	if query.CustomSummary != "" {
+		resourceCategory.CustomSummary = query.CustomSummary
+	}
+	if query.CustomAvatar != "" {
+		resourceCategory.CustomAvatar = query.CustomAvatar
+	}
+	if query.MetaSchema != "" {
+		resourceCategory.MetaSchema = query.MetaSchema
+	}
 
 	if err := ctx.db.Save(&resourceCategory).Error; err != nil {
 		return nil, err
