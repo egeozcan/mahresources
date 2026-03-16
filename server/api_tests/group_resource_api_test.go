@@ -604,6 +604,42 @@ func TestGroupUpdatePartialJSONPreservesTagAssociations(t *testing.T) {
 		"Editing only description should not clear tag associations — partial JSON must preserve unset arrays")
 }
 
+func TestResourceEditPartialJSONPreservesTagAssociations(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create tags
+	tag1 := &models.Tag{Name: "Res Tag A"}
+	tag2 := &models.Tag{Name: "Res Tag B"}
+	tc.DB.Create(tag1)
+	tc.DB.Create(tag2)
+
+	// Create a resource and attach tags directly in DB
+	res := &models.Resource{Name: "Tagged Resource", Meta: []byte(`{}`), OwnMeta: []byte(`{}`)}
+	tc.DB.Create(res)
+	tc.DB.Exec("INSERT INTO resource_tags (resource_id, tag_id) VALUES (?, ?)", res.ID, tag1.ID)
+	tc.DB.Exec("INSERT INTO resource_tags (resource_id, tag_id) VALUES (?, ?)", res.ID, tag2.ID)
+
+	// Verify tags exist
+	var checkBefore models.Resource
+	tc.DB.Preload("Tags").First(&checkBefore, res.ID)
+	assert.Equal(t, 2, len(checkBefore.Tags), "resource should start with 2 tags")
+
+	// Send a partial JSON edit that only changes the description
+	partialBody := map[string]any{
+		"ID":          res.ID,
+		"Description": "Updated description",
+	}
+	resp := tc.MakeRequest(http.MethodPost, "/v1/resource/edit", partialBody)
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	// The tags should be preserved, not cleared
+	var checkAfter models.Resource
+	tc.DB.Preload("Tags").First(&checkAfter, res.ID)
+	assert.Equal(t, "Updated description", checkAfter.Description)
+	assert.Equal(t, 2, len(checkAfter.Tags),
+		"Editing only description should not clear tag associations — partial JSON must preserve unset arrays")
+}
+
 func TestResourceEditOwnerIdZeroStoresNull(t *testing.T) {
 	tc := SetupTestEnv(t)
 
