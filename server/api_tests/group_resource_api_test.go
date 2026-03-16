@@ -35,13 +35,15 @@ func TestGroupCategoryIdNullWhenZero(t *testing.T) {
 			"CategoryId should be NULL when no category is specified, not a pointer to 0")
 	})
 
-	t.Run("Update group to remove category stores NULL not zero", func(t *testing.T) {
-		// First create a group WITH a category
+	t.Run("Update group via JSON with CategoryId=0 preserves existing category", func(t *testing.T) {
+		// JSON requests can't distinguish "not sent" from "sent as 0" for uint fields.
+		// Partial JSON updates must preserve existing CategoryId when 0 is received,
+		// consistent with how notes preserve OwnerId (commit 4d58a0a).
 		cat := &models.Category{Name: "Temp Cat"}
 		tc.DB.Create(cat)
 
 		createPayload := query_models.GroupCreator{
-			Name:       "Will Remove Category",
+			Name:       "Will Keep Category",
 			CategoryId: cat.ID,
 		}
 		createResp := tc.MakeRequest(http.MethodPost, "/v1/group", createPayload)
@@ -49,11 +51,11 @@ func TestGroupCategoryIdNullWhenZero(t *testing.T) {
 		var group models.Group
 		json.Unmarshal(createResp.Body.Bytes(), &group)
 
-		// Now update with CategoryId=0 to remove the category
+		// Update via JSON with CategoryId=0 — should preserve existing category
 		updatePayload := query_models.GroupEditor{
 			ID: group.ID,
 			GroupCreator: query_models.GroupCreator{
-				Name:       "Will Remove Category",
+				Name:       "Will Keep Category",
 				CategoryId: 0,
 			},
 		}
@@ -62,8 +64,11 @@ func TestGroupCategoryIdNullWhenZero(t *testing.T) {
 
 		var check models.Group
 		tc.DB.First(&check, group.ID)
-		assert.Nil(t, check.CategoryId,
-			"CategoryId should be NULL after update with CategoryId=0, not a pointer to 0")
+		assert.NotNil(t, check.CategoryId,
+			"CategoryId should be preserved when JSON update sends CategoryId=0 (partial update safety)")
+		if check.CategoryId != nil {
+			assert.Equal(t, cat.ID, *check.CategoryId)
+		}
 	})
 }
 
@@ -562,6 +567,51 @@ func TestGroupUpdatePartialJSONPreservesOtherFields(t *testing.T) {
 		"Editing only description should not clear the name — partial JSON must preserve unset fields")
 	assert.JSONEq(t, `{"key":"value"}`, string(check.Meta),
 		"Editing only description should not reset meta to default")
+}
+
+func TestGroupUpdatePartialJSONPreservesCategoryAndOwner(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create a category and an owner group
+	cat := &models.Category{Name: "Preserved Cat"}
+	tc.DB.Create(cat)
+	owner := tc.CreateDummyGroup("Owner Group")
+
+	// Create a group with category and owner set
+	group := &models.Group{
+		Name:       "Group With Relations",
+		CategoryId: &cat.ID,
+		OwnerId:    &owner.ID,
+		Meta:       []byte(`{}`),
+	}
+	tc.DB.Create(group)
+
+	// Verify initial state
+	var before models.Group
+	tc.DB.First(&before, group.ID)
+	assert.NotNil(t, before.CategoryId, "setup: group should have CategoryId")
+	assert.NotNil(t, before.OwnerId, "setup: group should have OwnerId")
+
+	// Send a partial JSON update that only changes the description
+	partialBody := map[string]any{
+		"ID":          group.ID,
+		"Description": "Updated description",
+	}
+	resp := tc.MakeRequest(http.MethodPost, "/v1/group", partialBody)
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	// CategoryId and OwnerId should be preserved
+	var after models.Group
+	tc.DB.First(&after, group.ID)
+	assert.Equal(t, "Updated description", after.Description)
+	if assert.NotNil(t, after.CategoryId,
+		"Editing only description should not clear CategoryId — partial JSON must preserve unset uint fields") {
+		assert.Equal(t, cat.ID, *after.CategoryId)
+	}
+	if assert.NotNil(t, after.OwnerId,
+		"Editing only description should not clear OwnerId — partial JSON must preserve unset uint fields") {
+		assert.Equal(t, owner.ID, *after.OwnerId)
+	}
 }
 
 func TestGroupUpdatePartialJSONPreservesTagAssociations(t *testing.T) {

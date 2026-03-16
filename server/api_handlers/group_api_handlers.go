@@ -102,6 +102,12 @@ func GetAddGroupHandler(ctx interfaces.GroupCRUDReader) func(writer http.Respons
 					if editor.URL == "" && existing.URL != nil {
 						editor.URL = (*url.URL)(existing.URL).String()
 					}
+					if editor.OwnerId == 0 && existing.OwnerId != nil {
+						editor.OwnerId = *existing.OwnerId
+					}
+					if editor.CategoryId == 0 && existing.CategoryId != nil {
+						editor.CategoryId = *existing.CategoryId
+					}
 					if editor.Tags == nil && len(existing.Tags) > 0 {
 						editor.Tags = make([]uint, len(existing.Tags))
 						for i, t := range existing.Tags {
