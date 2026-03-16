@@ -102,6 +102,47 @@ func TestRelationEditPreservesDescription(t *testing.T) {
 		"Editing only name should not clear description")
 }
 
+func TestCreateRelationPreservesNameAndDescription(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	cat := &models.Category{Name: "Rel Create Cat"}
+	tc.DB.Create(cat)
+
+	groupA := &models.Group{Name: "From", CategoryId: &cat.ID}
+	groupB := &models.Group{Name: "To", CategoryId: &cat.ID}
+	tc.DB.Create(groupA)
+	tc.DB.Create(groupB)
+
+	relType := &models.GroupRelationType{
+		Name:           "depends-on",
+		FromCategoryId: &cat.ID,
+		ToCategoryId:   &cat.ID,
+	}
+	tc.DB.Create(relType)
+
+	// Create a relation WITH Name and Description
+	resp := tc.MakeRequest(http.MethodPost, "/v1/relation", map[string]any{
+		"FromGroupId":         groupA.ID,
+		"ToGroupId":           groupB.ID,
+		"GroupRelationTypeId": relType.ID,
+		"Name":                "Critical dependency",
+		"Description":         "Must be resolved before launch",
+	})
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	var created models.GroupRelation
+	json.Unmarshal(resp.Body.Bytes(), &created)
+	assert.NotZero(t, created.ID)
+
+	// Verify the Name and Description were saved
+	var check models.GroupRelation
+	tc.DB.First(&check, created.ID)
+	assert.Equal(t, "Critical dependency", check.Name,
+		"Name provided during relation creation should be saved, not silently discarded")
+	assert.Equal(t, "Must be resolved before launch", check.Description,
+		"Description provided during relation creation should be saved, not silently discarded")
+}
+
 func TestRelationEndpoints(t *testing.T) {
 	tc := SetupTestEnv(t)
 

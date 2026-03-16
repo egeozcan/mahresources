@@ -7,7 +7,7 @@ import (
 
 type RelationshipWriter interface {
 	EditRelation(query query_models.GroupRelationshipQuery) (*models.GroupRelation, error)
-	AddRelation(fromGroupId, toGroupId, relationTypeId uint) (*models.GroupRelation, error)
+	AddRelation(fromGroupId, toGroupId, relationTypeId uint, name, description string) (*models.GroupRelation, error)
 	AddRelationType(query *query_models.RelationshipTypeEditorQuery) (*models.GroupRelationType, error)
 	EditRelationType(query *query_models.RelationshipTypeEditorQuery) (*models.GroupRelationType, error)
 }

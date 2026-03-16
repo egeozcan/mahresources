@@ -88,7 +88,7 @@ func GetAddRelationHandler(ctx interfaces.RelationshipWriter) func(writer http.R
 		if editor.Id != 0 {
 			relation, err = effectiveCtx.EditRelation(editor)
 		} else {
-			relation, err = effectiveCtx.AddRelation(editor.FromGroupId, editor.ToGroupId, editor.GroupRelationTypeId)
+			relation, err = effectiveCtx.AddRelation(editor.FromGroupId, editor.ToGroupId, editor.GroupRelationTypeId, editor.Name, editor.Description)
 		}
 
 		if err != nil {

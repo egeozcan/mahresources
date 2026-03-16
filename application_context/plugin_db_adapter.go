@@ -980,23 +980,11 @@ func (a *pluginDBAdapter) CreateGroupRelation(opts map[string]any) (map[string]a
 		return nil, fmt.Errorf("from_group_id, to_group_id, and relation_type_id are required")
 	}
 
-	relation, err := a.ctx.AddRelation(fromGroupId, toGroupId, relationTypeId)
-	if err != nil {
-		return nil, err
-	}
-
-	// Optionally set name and description via EditRelation
 	name := getStringOpt(opts, "name")
 	description := getStringOpt(opts, "description")
-	if name != "" || description != "" {
-		relation, err = a.ctx.EditRelation(query_models.GroupRelationshipQuery{
-			Id:          relation.ID,
-			Name:        name,
-			Description: description,
-		})
-		if err != nil {
-			return nil, err
-		}
+	relation, err := a.ctx.AddRelation(fromGroupId, toGroupId, relationTypeId, name, description)
+	if err != nil {
+		return nil, err
 	}
 
 	return groupRelationToMap(relation), nil

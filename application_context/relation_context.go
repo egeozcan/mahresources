@@ -32,7 +32,7 @@ func (ctx *MahresourcesContext) EditRelation(query query_models.GroupRelationshi
 	return relation, nil
 }
 
-func (ctx *MahresourcesContext) AddRelation(fromGroupId, toGroupId, relationTypeId uint) (*models.GroupRelation, error) {
+func (ctx *MahresourcesContext) AddRelation(fromGroupId, toGroupId, relationTypeId uint, name, description string) (*models.GroupRelation, error) {
 	var relationType models.GroupRelationType
 	var fromGroup models.Group
 	var toGroup models.Group
@@ -68,6 +68,8 @@ func (ctx *MahresourcesContext) AddRelation(fromGroupId, toGroupId, relationType
 			FromGroupId:    &fromGroup.ID,
 			ToGroupId:      &toGroup.ID,
 			RelationTypeId: &relationType.ID,
+			Name:           name,
+			Description:    description,
 		}
 
 		if err := tx.Save(&relation).Error; err != nil {
