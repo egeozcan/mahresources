@@ -253,6 +253,21 @@ func (ctx *MahresourcesContext) DeleteRelationshipType(relationshipTypeId uint) 
 	}
 	relationTypeName := relationType.Name
 
+	// Clear BackRelationId on any relation type that references this one,
+	// since SQLite FK constraints (OnDelete:SET NULL) don't fire reliably.
+	if err := ctx.db.Model(&models.GroupRelationType{}).
+		Where("back_relation_id = ?", relationshipTypeId).
+		Update("back_relation_id", nil).Error; err != nil {
+		return err
+	}
+
+	// Clear our own BackRelationId to avoid circular FK issues during deletion
+	if relationType.BackRelationId != nil {
+		if err := ctx.db.Model(&relationType).Update("back_relation_id", nil).Error; err != nil {
+			return err
+		}
+	}
+
 	err := ctx.db.Select(clause.Associations).Delete(&relationType).Error
 	if err == nil {
 		ctx.Logger().Info(models.LogActionDelete, "relationType", &relationshipTypeId, relationTypeName, "Deleted relation type", nil)

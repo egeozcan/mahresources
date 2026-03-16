@@ -14,7 +14,7 @@ type GroupRelationType struct {
 	FromCategoryId *uint              `gorm:"uniqueIndex:unique_rel_type"`
 	ToCategory     *Category          `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	ToCategoryId   *uint              `gorm:"uniqueIndex:unique_rel_type"`
-	BackRelation   *GroupRelationType `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	BackRelation   *GroupRelationType `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 	BackRelationId *uint
 }
 
