@@ -115,7 +115,14 @@ func (ctx *MahresourcesContext) DeleteResourceCategory(resourceCategoryId uint) 
 	}
 	resourceCategoryName := resourceCategory.Name
 
-	err := ctx.db.Select(clause.Associations).Delete(&resourceCategory).Error
+	// Do NOT use Select(clause.Associations) — ResourceCategory's only association
+	// is Resources, and deleting a category must SET NULL (not cascade-delete them).
+	// Explicitly clear ResourceCategoryId since SQLite FK constraints don't fire reliably.
+	if err := ctx.db.Model(&models.Resource{}).Where("resource_category_id = ?", resourceCategoryId).Update("resource_category_id", nil).Error; err != nil {
+		return err
+	}
+
+	err := ctx.db.Delete(&resourceCategory).Error
 	if err == nil {
 		ctx.Logger().Info(models.LogActionDelete, "resourceCategory", &resourceCategoryId, resourceCategoryName, "Deleted resource category", nil)
 		ctx.InvalidateSearchCacheByType(EntityTypeResourceCategory)

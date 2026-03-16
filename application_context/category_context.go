@@ -165,7 +165,14 @@ func (ctx *MahresourcesContext) DeleteCategory(categoryId uint) error {
 	}
 	categoryName := category.Name
 
-	err := ctx.db.Select(clause.Associations).Delete(&category).Error
+	// Do NOT use Select(clause.Associations) — Category's only association is
+	// Groups, and deleting a category must SET NULL on groups (not cascade-delete them).
+	// Explicitly clear CategoryId since SQLite FK constraints don't fire reliably.
+	if err := ctx.db.Model(&models.Group{}).Where("category_id = ?", categoryId).Update("category_id", nil).Error; err != nil {
+		return err
+	}
+
+	err := ctx.db.Delete(&category).Error
 	if err == nil {
 		ctx.Logger().Info(models.LogActionDelete, "category", &categoryId, categoryName, "Deleted category", nil)
 		ctx.RunAfterPluginHooks("after_category_delete", map[string]any{"id": float64(categoryId), "name": categoryName})

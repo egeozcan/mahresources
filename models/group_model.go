@@ -33,7 +33,7 @@ type Group struct {
 
 	Tags       []*Tag `gorm:"many2many:group_tags;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	CategoryId *uint
-	Category   *Category `gorm:"foreignKey:CategoryId;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	Category   *Category `gorm:"foreignKey:CategoryId;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 }
 
 func (g Group) GetId() uint {
