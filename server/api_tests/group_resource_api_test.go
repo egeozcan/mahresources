@@ -1072,3 +1072,27 @@ func TestResourceEndpoints(t *testing.T) {
 		assert.Equal(t, "New Res Name", updated.Name)
 	})
 }
+
+func TestResourcePaginationWithMaxResultsOverride(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create 15 resources with sequential names for deterministic ordering
+	for i := 1; i <= 15; i++ {
+		tc.DB.Create(&models.Resource{Name: fmt.Sprintf("PagRes %02d", i), Meta: []byte(`{}`)})
+	}
+
+	// Request page 2 with MaxResults=5 and sorted by name asc
+	// Expected: records 6-10 (skip first 5, take next 5)
+	resp := tc.MakeRequest(http.MethodGet, "/v1/resources?page=2&MaxResults=5&SortBy=name", nil)
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	var resources []models.Resource
+	json.Unmarshal(resp.Body.Bytes(), &resources)
+
+	assert.Equal(t, 5, len(resources), "should return 5 resources (MaxResults=5)")
+
+	if len(resources) > 0 {
+		assert.Equal(t, "PagRes 06", resources[0].Name,
+			"page 2 with MaxResults=5 should start at record 6, not record 51 — offset must respect MaxResults override")
+	}
+}

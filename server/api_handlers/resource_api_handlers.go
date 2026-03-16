@@ -25,13 +25,18 @@ type uploadErrorDetail struct {
 func GetResourcesHandler(ctx interfaces.ResourceReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		page := http_utils.GetIntQueryParameter(request, "page", 1)
-		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.ResourceSearchQuery
 
 		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
+
+		perPage := int64(constants.MaxResultsPerPage)
+		if query.MaxResults > 0 {
+			perPage = int64(query.MaxResults)
+		}
+		offset := (page - 1) * perPage
 
 		resources, err := ctx.GetResources(int(offset), constants.MaxResultsPerPage, &query)
 
@@ -40,7 +45,7 @@ func GetResourcesHandler(ctx interfaces.ResourceReader) func(writer http.Respons
 			return
 		}
 
-		http_utils.SetPaginationHeaders(writer, int(page), constants.MaxResultsPerPage, -1)
+		http_utils.SetPaginationHeaders(writer, int(page), int(perPage), -1)
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(resources)
 	}
