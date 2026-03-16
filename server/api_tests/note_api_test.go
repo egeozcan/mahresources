@@ -534,3 +534,40 @@ func TestNoteUpdatePartialJSONPreservesOtherFields(t *testing.T) {
 	assert.JSONEq(t, `{"key":"value"}`, string(check.Meta),
 		"Editing only name should not reset meta to default")
 }
+
+func TestGroupUpdateDoesNotClearNoteGroupAssociation(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create a group with NO mentions in its description
+	group := &models.Group{Name: "Plain Group", Description: "No mentions here", Meta: []byte(`{}`)}
+	tc.DB.Create(group)
+
+	// Create a note and associate it with the group via the note editor
+	note := tc.CreateDummyNote("Associated Note")
+	resp := tc.MakeRequest(http.MethodPost, "/v1/note", map[string]any{
+		"ID":     note.ID,
+		"Name":   note.Name,
+		"Groups": []uint{group.ID},
+	})
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	// Verify the note-group association exists
+	var countBefore int64
+	tc.DB.Table("groups_related_notes").Where("group_id = ? AND note_id = ?", group.ID, note.ID).Count(&countBefore)
+	if !assert.Equal(t, int64(1), countBefore, "setup: note should be associated with group") {
+		return
+	}
+
+	// Now edit the group's name — this triggers syncMentionsForGroup
+	updateResp := tc.MakeRequest(http.MethodPost, "/v1/group", map[string]any{
+		"ID":   group.ID,
+		"Name": "Renamed Group",
+	})
+	assert.Equal(t, http.StatusOK, updateResp.Code)
+
+	// The note-group association should still exist
+	var countAfter int64
+	tc.DB.Table("groups_related_notes").Where("group_id = ? AND note_id = ?", group.ID, note.ID).Count(&countAfter)
+	assert.Equal(t, int64(1), countAfter,
+		"Editing a group's name should not clear note associations — syncMentionsForGroup must not Replace RelatedNotes with empty set")
+}

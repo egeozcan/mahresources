@@ -71,16 +71,20 @@ func (ctx *MahresourcesContext) syncMentionsForGroup(group *models.Group) {
 		}
 	}
 
-	// RelatedNotes: Replace (solely mention-managed for groups)
-	notes := BuildAssociationSlice(grouped["note"], NoteFromID)
-	if err := ctx.db.Model(group).Association("RelatedNotes").Replace(&notes); err != nil {
-		log.Printf("mention sync: failed to replace notes on group %d: %v", group.ID, err)
+	// RelatedNotes: Append (notes can also be added via the note editor's Groups field)
+	if ids, ok := grouped["note"]; ok {
+		notes := BuildAssociationSlice(ids, NoteFromID)
+		if err := ctx.db.Model(group).Association("RelatedNotes").Append(&notes); err != nil {
+			log.Printf("mention sync: failed to add notes to group %d: %v", group.ID, err)
+		}
 	}
 
-	// RelatedResources: Replace (solely mention-managed for groups)
-	resources := BuildAssociationSlice(grouped["resource"], ResourceFromID)
-	if err := ctx.db.Model(group).Association("RelatedResources").Replace(&resources); err != nil {
-		log.Printf("mention sync: failed to replace resources on group %d: %v", group.ID, err)
+	// RelatedResources: Append (resources can also be added via the resource editor's Groups field)
+	if ids, ok := grouped["resource"]; ok {
+		resources := BuildAssociationSlice(ids, ResourceFromID)
+		if err := ctx.db.Model(group).Association("RelatedResources").Append(&resources); err != nil {
+			log.Printf("mention sync: failed to add resources to group %d: %v", group.ID, err)
+		}
 	}
 
 	// RelatedGroups: Append (form also manages these)
