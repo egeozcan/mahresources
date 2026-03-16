@@ -240,6 +240,10 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 		}
 
 		// Handle series assignment changes
+		// Capture old series ID before any mutations so auto-delete logic can
+		// clean up the previous series when the resource moves to a new one.
+		oldSeriesID := resource.SeriesID
+
 		// Resolve SeriesSlug to SeriesId if provided (matches create-path behavior)
 		newSeriesID := resourceQuery.SeriesId
 		if newSeriesID == 0 && resourceQuery.SeriesSlug != "" {
@@ -255,7 +259,6 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 				}
 			}
 		}
-		oldSeriesID := resource.SeriesID
 		seriesChanged := false
 
 		if newSeriesID > 0 {
@@ -281,11 +284,18 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 				}
 				resource.OwnMeta = ownMeta
 				resource.SeriesID = &newSeries.ID
+				resource.Series = &newSeries
 			} else {
 				// Removing from series - Meta already has effective value
 				resource.OwnMeta = types.JSON("{}")
 				resource.SeriesID = nil
+				resource.Series = nil
 			}
+		} else if resource.SeriesID != nil && resource.Series != nil &&
+			resource.Series.ID != *resource.SeriesID {
+			// AssignResourceToSeries may have changed SeriesID without updating
+			// the loaded Series association — clear it so Save doesn't revert the FK.
+			resource.Series = nil
 		}
 
 		if err := tx.Save(resource).Error; err != nil {
