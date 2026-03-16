@@ -119,7 +119,9 @@ func (ctx *MahresourcesContext) UpdateTag(tagQuery *query_models.TagCreator) (*m
 	if strings.TrimSpace(tagQuery.Name) != "" {
 		tag.Name = tagQuery.Name
 	}
-	tag.Description = tagQuery.Description
+	if tagQuery.Description != "" {
+		tag.Description = tagQuery.Description
+	}
 
 	if err := ctx.db.Save(&tag).Error; err != nil {
 		return nil, err
