@@ -117,12 +117,24 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 	if strings.TrimSpace(categoryQuery.Name) != "" {
 		category.Name = categoryQuery.Name
 	}
-	category.Description = categoryQuery.Description
-	category.CustomHeader = categoryQuery.CustomHeader
-	category.CustomSidebar = categoryQuery.CustomSidebar
-	category.CustomSummary = categoryQuery.CustomSummary
-	category.CustomAvatar = categoryQuery.CustomAvatar
-	category.MetaSchema = categoryQuery.MetaSchema
+	if categoryQuery.Description != "" {
+		category.Description = categoryQuery.Description
+	}
+	if categoryQuery.CustomHeader != "" {
+		category.CustomHeader = categoryQuery.CustomHeader
+	}
+	if categoryQuery.CustomSidebar != "" {
+		category.CustomSidebar = categoryQuery.CustomSidebar
+	}
+	if categoryQuery.CustomSummary != "" {
+		category.CustomSummary = categoryQuery.CustomSummary
+	}
+	if categoryQuery.CustomAvatar != "" {
+		category.CustomAvatar = categoryQuery.CustomAvatar
+	}
+	if categoryQuery.MetaSchema != "" {
+		category.MetaSchema = categoryQuery.MetaSchema
+	}
 
 	if err := ctx.db.Save(&category).Error; err != nil {
 		return nil, err
