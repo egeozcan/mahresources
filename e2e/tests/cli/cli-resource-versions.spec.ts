@@ -26,10 +26,10 @@ interface ResourceVersion {
 }
 
 interface VersionComparison {
-  SizeDelta: number;
-  SameHash: boolean;
-  SameType: boolean;
-  DimensionsDiff: boolean;
+  sizeDelta: number;
+  sameHash: boolean;
+  sameType: boolean;
+  dimensionsDiff: boolean;
 }
 
 const SAMPLE_DOC = path.resolve(__dirname, '../../test-assets/sample-document.txt');
@@ -101,10 +101,10 @@ test.describe('Resource version lifecycle', () => {
       '--v1', String(firstVersionId),
       '--v2', String(secondVersionId),
     );
-    expect(typeof comparison.SameHash).toBe('boolean');
-    expect(typeof comparison.SameType).toBe('boolean');
-    expect(typeof comparison.SizeDelta).toBe('number');
-    expect(typeof comparison.DimensionsDiff).toBe('boolean');
+    expect(typeof comparison.sameHash).toBe('boolean');
+    expect(typeof comparison.sameType).toBe('boolean');
+    expect(typeof comparison.sizeDelta).toBe('number');
+    expect(typeof comparison.dimensionsDiff).toBe('boolean');
   });
 
   test('version-restore restores a previous version', async ({ cli }) => {

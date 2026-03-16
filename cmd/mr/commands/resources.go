@@ -49,10 +49,10 @@ type resourceVersionResponse struct {
 
 // versionComparisonResponse matches the API's version comparison JSON shape.
 type versionComparisonResponse struct {
-	SizeDelta      int64 `json:"SizeDelta"`
-	SameHash       bool  `json:"SameHash"`
-	SameType       bool  `json:"SameType"`
-	DimensionsDiff bool  `json:"DimensionsDiff"`
+	SizeDelta      int64 `json:"sizeDelta"`
+	SameHash       bool  `json:"sameHash"`
+	SameType       bool  `json:"sameType"`
+	DimensionsDiff bool  `json:"dimensionsDiff"`
 }
 
 func formatDimensions(w, h uint) string {

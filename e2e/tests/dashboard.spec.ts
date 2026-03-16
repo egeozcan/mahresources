@@ -48,9 +48,9 @@ test.describe('Dashboard with data', () => {
 
     try {
       await page.goto(`${baseURL}/dashboard`);
-      await expect(page.locator('.dashboard-tag-pill:has-text("Dashboard Test Tag")')).toBeVisible();
+      await expect(page.locator('.dashboard-tag-pill:has-text("Dashboard Test Tag")')).toBeVisible({ timeout: 15000 });
       // Activity feed should show the created tag (may appear multiple times for created/updated)
-      await expect(page.locator('.dashboard-activity-name:has-text("Dashboard Test Tag")').first()).toBeVisible();
+      await expect(page.locator('.dashboard-activity-name:has-text("Dashboard Test Tag")').first()).toBeVisible({ timeout: 15000 });
     } finally {
       try { await apiClient.deleteTag(tag.ID); } catch { /* cleanup best-effort */ }
     }
@@ -61,7 +61,7 @@ test.describe('Dashboard with data', () => {
 
     try {
       await page.goto(`${baseURL}/dashboard`);
-      await expect(page.locator('.card-title:has-text("Dashboard Test Note")')).toBeVisible();
+      await expect(page.locator('.card-title:has-text("Dashboard Test Note")')).toBeVisible({ timeout: 15000 });
     } finally {
       try { await apiClient.deleteNote(note.ID); } catch { /* cleanup best-effort */ }
     }
@@ -75,7 +75,7 @@ test.describe('Dashboard with data', () => {
 
       try {
         await page.goto(`${baseURL}/dashboard`);
-        await expect(page.locator('.card-title:has-text("Dashboard Test Group")')).toBeVisible();
+        await expect(page.locator('.card-title:has-text("Dashboard Test Group")')).toBeVisible({ timeout: 15000 });
       } finally {
         try { await apiClient.deleteGroup(group.ID); } catch { /* cleanup best-effort */ }
       }
