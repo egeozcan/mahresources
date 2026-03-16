@@ -169,9 +169,15 @@ func (ctx *MahresourcesContext) EditRelationType(query *query_models.Relationshi
 		if query.Name != "" {
 			relationType.Name = query.Name
 		}
-		relationType.Description = query.Description
-		relationType.FromCategoryId = uintPtrOrNil(query.FromCategory)
-		relationType.ToCategoryId = uintPtrOrNil(query.ToCategory)
+		if query.Description != "" {
+			relationType.Description = query.Description
+		}
+		if query.FromCategory != 0 {
+			relationType.FromCategoryId = &query.FromCategory
+		}
+		if query.ToCategory != 0 {
+			relationType.ToCategoryId = &query.ToCategory
+		}
 
 		return tx.Save(&relationType).Error
 	})
