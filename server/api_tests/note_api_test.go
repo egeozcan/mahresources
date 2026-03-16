@@ -328,6 +328,40 @@ func TestNoteGroupFilterIncludesUnownedNotes(t *testing.T) {
 	}
 }
 
+func TestNoteUpdateExplicitEmptyTagsClears(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	tag := &models.Tag{Name: "Removable Tag"}
+	tc.DB.Create(tag)
+
+	// Create a note with a tag
+	createResp := tc.MakeRequest(http.MethodPost, "/v1/note", map[string]any{
+		"Name": "Note With Tag",
+		"Tags": []uint{tag.ID},
+	})
+	assert.Equal(t, http.StatusOK, createResp.Code)
+	var created models.Note
+	json.Unmarshal(createResp.Body.Bytes(), &created)
+
+	var before models.Note
+	tc.DB.Preload("Tags").First(&before, created.ID)
+	assert.Equal(t, 1, len(before.Tags), "note should start with 1 tag")
+
+	// Send a JSON update with an explicit empty Tags array — should CLEAR tags
+	clearBody := map[string]any{
+		"ID":   created.ID,
+		"Name": "Note With Tag",
+		"Tags": []uint{},
+	}
+	resp := tc.MakeRequest(http.MethodPost, "/v1/note", clearBody)
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	var after models.Note
+	tc.DB.Preload("Tags").First(&after, created.ID)
+	assert.Equal(t, 0, len(after.Tags),
+		"Sending explicit empty Tags array should clear all tags")
+}
+
 func TestNoteUpdatePartialJSONPreservesTagAssociations(t *testing.T) {
 	tc := SetupTestEnv(t)
 

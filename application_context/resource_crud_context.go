@@ -173,34 +173,31 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 			return err
 		}
 
-		if len(resourceQuery.Groups) > 0 {
-			if err := tx.Model(&resource).Association("Groups").Clear(); err != nil {
-				return err
-			}
-			groups := BuildAssociationSlice(resourceQuery.Groups, GroupFromID)
-			if err := tx.Model(&resource).Association("Groups").Append(&groups); err != nil {
-				return err
-			}
+		if err := tx.Model(&resource).Association("Groups").Clear(); err != nil {
+			return err
 		}
 
-		if len(resourceQuery.Tags) > 0 {
-			if err := tx.Model(&resource).Association("Tags").Clear(); err != nil {
-				return err
-			}
-			tags := BuildAssociationSlice(resourceQuery.Tags, TagFromID)
-			if err := tx.Model(&resource).Association("Tags").Append(&tags); err != nil {
-				return err
-			}
+		if err := tx.Model(&resource).Association("Tags").Clear(); err != nil {
+			return err
 		}
 
-		if len(resourceQuery.Notes) > 0 {
-			if err := tx.Model(&resource).Association("Notes").Clear(); err != nil {
-				return err
-			}
-			notes := BuildAssociationSlice(resourceQuery.Notes, NoteFromID)
-			if err := tx.Model(&resource).Association("Notes").Append(&notes); err != nil {
-				return err
-			}
+		if err := tx.Model(&resource).Association("Notes").Clear(); err != nil {
+			return err
+		}
+
+		groups := BuildAssociationSlice(resourceQuery.Groups, GroupFromID)
+		if err := tx.Model(&resource).Association("Groups").Append(&groups); err != nil {
+			return err
+		}
+
+		notes := BuildAssociationSlice(resourceQuery.Notes, NoteFromID)
+		if err := tx.Model(&resource).Association("Notes").Append(&notes); err != nil {
+			return err
+		}
+
+		tags := BuildAssociationSlice(resourceQuery.Tags, TagFromID)
+		if err := tx.Model(&resource).Association("Tags").Append(&tags); err != nil {
+			return err
 		}
 
 		// Ensure Series is loaded if SeriesID is set (clause.Associations with pageLimit may not load it)
