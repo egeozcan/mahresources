@@ -690,13 +690,14 @@ func TestResourceEditPartialJSONPreservesTagAssociations(t *testing.T) {
 		"Editing only description should not clear tag associations — partial JSON must preserve unset arrays")
 }
 
-func TestResourceEditOwnerIdZeroStoresNull(t *testing.T) {
+func TestResourceEditPartialJSONWithOwnerIdZeroPreservesExisting(t *testing.T) {
 	tc := SetupTestEnv(t)
 
-	// Create a group to use as initial owner
+	// JSON requests can't distinguish "not sent" from "sent as 0" for uint fields.
+	// Partial JSON updates must preserve existing OwnerId when 0 is received,
+	// consistent with how notes preserve OwnerId (commit 4d58a0a).
 	group := tc.CreateDummyGroup("Owner")
 
-	// Create a resource owned by the group
 	res := &models.Resource{Name: "Owned Resource", OwnerId: &group.ID}
 	tc.DB.Create(res)
 
@@ -706,7 +707,7 @@ func TestResourceEditOwnerIdZeroStoresNull(t *testing.T) {
 	assert.NotNil(t, check.OwnerId)
 	assert.Equal(t, group.ID, *check.OwnerId)
 
-	// Edit the resource with OwnerId=0 (removing owner)
+	// Edit via JSON with OwnerId=0 — should preserve existing owner
 	editPayload := query_models.ResourceEditor{
 		ID: res.ID,
 		ResourceQueryBase: query_models.ResourceQueryBase{
@@ -716,10 +717,12 @@ func TestResourceEditOwnerIdZeroStoresNull(t *testing.T) {
 	resp := tc.MakeRequest(http.MethodPost, "/v1/resource/edit", editPayload)
 	assert.Equal(t, http.StatusOK, resp.Code)
 
-	// Verify OwnerId is NULL, not a pointer to 0
 	tc.DB.First(&check, res.ID)
-	assert.Nil(t, check.OwnerId,
-		"OwnerId should be NULL when edited with OwnerId=0, not a pointer to 0")
+	assert.NotNil(t, check.OwnerId,
+		"OwnerId should be preserved when JSON update sends OwnerId=0 (partial update safety)")
+	if check.OwnerId != nil {
+		assert.Equal(t, group.ID, *check.OwnerId)
+	}
 }
 
 func TestResourceEditPartialJSONPreservesOtherFields(t *testing.T) {
@@ -773,6 +776,44 @@ func TestResourceEditPartialJSONPreservesSeriesAssignment(t *testing.T) {
 	assert.Equal(t, "Updated", after.Description)
 	assert.NotNil(t, after.SeriesID,
 		"Editing only description should not remove the resource from its series")
+}
+
+func TestResourceEditPartialJSONPreservesOwnerId(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create a group to use as owner
+	owner := tc.CreateDummyGroup("Resource Owner")
+
+	// Create a resource with an owner
+	res := &models.Resource{
+		Name:    "Owned Resource",
+		OwnerId: &owner.ID,
+		Meta:    []byte(`{}`),
+		OwnMeta: []byte(`{}`),
+	}
+	tc.DB.Create(res)
+
+	// Verify initial owner
+	var before models.Resource
+	tc.DB.First(&before, res.ID)
+	if !assert.NotNil(t, before.OwnerId, "setup: resource should have OwnerId") {
+		return
+	}
+
+	// Partial JSON edit — only change description
+	resp := tc.MakeRequest(http.MethodPost, "/v1/resource/edit", map[string]any{
+		"ID":          res.ID,
+		"Description": "Updated",
+	})
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	var after models.Resource
+	tc.DB.First(&after, res.ID)
+	assert.Equal(t, "Updated", after.Description)
+	if assert.NotNil(t, after.OwnerId,
+		"Editing only description should not clear OwnerId — partial JSON must preserve unset uint fields") {
+		assert.Equal(t, owner.ID, *after.OwnerId)
+	}
 }
 
 func TestResourceEditWithSeriesSlugAssignsToSeries(t *testing.T) {

@@ -343,10 +343,8 @@ func GetResourceEditHandler(ctx interfaces.ResourceEditReader) func(writer http.
 			return
 		}
 
-		// For JSON requests (API clients), pre-populate unset string fields from
+		// For JSON requests (API clients), pre-populate unset fields from
 		// the existing resource so partial updates don't clear them.
-		// Only string fields are handled: uint fields like OwnerId use 0 to mean
-		// "clear", so they can't be distinguished from "not sent" without schema changes.
 		// Form submissions always send all fields, so this only matters for JSON.
 		if strings.HasPrefix(request.Header.Get("Content-type"), constants.JSON) && editor.ID != 0 {
 			existing, getErr := effectiveCtx.GetResource(editor.ID)
@@ -371,6 +369,9 @@ func GetResourceEditHandler(ctx interfaces.ResourceEditReader) func(writer http.
 				}
 				if editor.ContentCategory == "" {
 					editor.ContentCategory = existing.ContentCategory
+				}
+				if editor.OwnerId == 0 && existing.OwnerId != nil {
+					editor.OwnerId = *existing.OwnerId
 				}
 				if editor.ResourceCategoryId == 0 && existing.ResourceCategoryId != nil {
 					editor.ResourceCategoryId = *existing.ResourceCategoryId
