@@ -173,6 +173,10 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 	}
 
 	if groupQuery.OwnerId != 0 {
+		if groupQuery.OwnerId == groupQuery.ID {
+			tx.Rollback()
+			return nil, errors.New("a group cannot be its own owner")
+		}
 		group.OwnerId = &groupQuery.OwnerId
 		group.Owner = &models.Group{ID: groupQuery.OwnerId}
 	} else if err := tx.Model(group).Association("Owner").Clear(); err != nil {
