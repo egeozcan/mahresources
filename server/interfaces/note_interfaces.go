@@ -17,6 +17,12 @@ type NoteWriter interface {
 	BulkNoteMetaEditor
 }
 
+// NoteWriteReader combines writing with reading for partial-update support
+type NoteWriteReader interface {
+	NoteWriter
+	GetNote(id uint) (*models.Note, error)
+}
+
 type NoteDeleter interface {
 	DeleteNote(noteId uint) error
 	BulkDeleteNotes(query *query_models.BulkQuery) error

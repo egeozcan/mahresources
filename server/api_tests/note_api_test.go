@@ -327,3 +327,31 @@ func TestNoteGroupFilterIncludesUnownedNotes(t *testing.T) {
 		assert.Equal(t, note.ID, notes[0].ID)
 	}
 }
+
+func TestNoteUpdatePartialJSONPreservesOtherFields(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create a note with name, description, and meta populated
+	note := tc.CreateDummyNote("Original Name")
+	note.Description = "Original Desc"
+	note.Meta = []byte(`{"key":"value"}`)
+	tc.DB.Save(note)
+
+	// Send a partial JSON body that only changes the name
+	// (simulates CLI: mr note edit ID --name "New Name")
+	partialBody := map[string]any{
+		"ID":   note.ID,
+		"Name": "Updated Name",
+	}
+	resp := tc.MakeRequest(http.MethodPost, "/v1/note", partialBody)
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	// The description and meta should be preserved, not cleared
+	var check models.Note
+	tc.DB.First(&check, note.ID)
+	assert.Equal(t, "Updated Name", check.Name)
+	assert.Equal(t, "Original Desc", check.Description,
+		"Editing only name should not clear the description — partial JSON must preserve unset fields")
+	assert.JSONEq(t, `{"key":"value"}`, string(check.Meta),
+		"Editing only name should not reset meta to default")
+}

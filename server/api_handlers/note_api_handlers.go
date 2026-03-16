@@ -10,6 +10,7 @@ import (
 	"mahresources/server/interfaces"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 func GetNotesHandler(ctx interfaces.NoteReader) func(writer http.ResponseWriter, request *http.Request) {
@@ -49,16 +50,39 @@ func GetNoteHandler(ctx interfaces.NoteReader) func(writer http.ResponseWriter, 
 	}
 }
 
-func GetAddNoteHandler(ctx interfaces.NoteWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddNoteHandler(ctx interfaces.NoteWriteReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.NoteWriter)
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.NoteWriteReader)
 
 		var queryVars = query_models.NoteEditor{}
 
 		if err := tryFillStructValuesFromRequest(&queryVars, request); err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
+		}
+
+		// For JSON requests (API clients), pre-populate unset string fields from
+		// the existing note so partial updates don't clear them.
+		if strings.HasPrefix(request.Header.Get("Content-type"), constants.JSON) && queryVars.ID != 0 {
+			existing, getErr := effectiveCtx.GetNote(queryVars.ID)
+			if getErr == nil {
+				if queryVars.Name == "" {
+					queryVars.Name = existing.Name
+				}
+				if queryVars.Description == "" {
+					queryVars.Description = existing.Description
+				}
+				if queryVars.Meta == "" {
+					queryVars.Meta = string(existing.Meta)
+				}
+				if queryVars.StartDate == "" && existing.StartDate != nil {
+					queryVars.StartDate = existing.StartDate.Format("2006-01-02T15:04")
+				}
+				if queryVars.EndDate == "" && existing.EndDate != nil {
+					queryVars.EndDate = existing.EndDate.Format("2006-01-02T15:04")
+				}
+			}
 		}
 
 		note, err := effectiveCtx.CreateOrUpdateNote(&queryVars)
