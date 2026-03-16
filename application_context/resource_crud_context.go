@@ -226,8 +226,12 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 		resource.Category = resourceQuery.Category
 		resource.ContentCategory = resourceQuery.ContentCategory
 		resource.ResourceCategoryId = uintPtrOrNil(resourceQuery.ResourceCategoryId)
-		resource.Width = resourceQuery.Width
-		resource.Height = resourceQuery.Height
+		if resourceQuery.Width != 0 {
+			resource.Width = resourceQuery.Width
+		}
+		if resourceQuery.Height != 0 {
+			resource.Height = resourceQuery.Height
+		}
 		resource.OwnerId = uintPtrOrNil(resourceQuery.OwnerId)
 		if resourceQuery.OwnerId != 0 {
 			resource.Owner = &models.Group{ID: resourceQuery.OwnerId}

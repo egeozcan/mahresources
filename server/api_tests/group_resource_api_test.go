@@ -695,6 +695,35 @@ func TestResourceEditPartialJSONPreservesOtherFields(t *testing.T) {
 		"Editing only description should not clear the name — partial JSON must preserve unset fields")
 }
 
+func TestResourceEditPartialJSONPreservesDimensions(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create a resource with known dimensions
+	res := &models.Resource{
+		Name:   "Image with dimensions",
+		Width:  1920,
+		Height: 1080,
+		Meta:   []byte(`{}`),
+	}
+	tc.DB.Create(res)
+
+	// Send a partial JSON edit that only changes the description
+	partialBody := map[string]any{
+		"ID":          res.ID,
+		"Description": "Updated",
+	}
+	resp := tc.MakeRequest(http.MethodPost, "/v1/resource/edit", partialBody)
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	var check models.Resource
+	tc.DB.First(&check, res.ID)
+	assert.Equal(t, "Updated", check.Description)
+	assert.Equal(t, uint(1920), check.Width,
+		"Editing only description should not clear Width")
+	assert.Equal(t, uint(1080), check.Height,
+		"Editing only description should not clear Height")
+}
+
 func TestResourceEditUpdatesWidthHeight(t *testing.T) {
 	tc := SetupTestEnv(t)
 
