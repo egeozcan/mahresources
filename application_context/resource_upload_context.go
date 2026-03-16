@@ -490,12 +490,32 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 
 	if existingNotFoundErr := tx.Where("hash = ?", hash).Preload("Groups").First(&existingResource).Error; existingNotFoundErr == nil {
 		if existingResource.OwnerId != nil && resourceQuery.OwnerId == *existingResource.OwnerId {
+			needsCommit := false
 			if len(resourceQuery.Groups) > 0 {
 				groups := BuildAssociationSlice(resourceQuery.Groups, GroupFromID)
 				if appendErr := tx.Model(&existingResource).Association("Groups").Append(&groups); appendErr != nil {
 					tx.Rollback()
 					return nil, appendErr
 				}
+				needsCommit = true
+			}
+			if len(resourceQuery.Tags) > 0 {
+				tags := BuildAssociationSlice(resourceQuery.Tags, TagFromID)
+				if appendErr := tx.Model(&existingResource).Association("Tags").Append(&tags); appendErr != nil {
+					tx.Rollback()
+					return nil, appendErr
+				}
+				needsCommit = true
+			}
+			if len(resourceQuery.Notes) > 0 {
+				notes := BuildAssociationSlice(resourceQuery.Notes, NoteFromID)
+				if appendErr := tx.Model(&existingResource).Association("Notes").Append(&notes); appendErr != nil {
+					tx.Rollback()
+					return nil, appendErr
+				}
+				needsCommit = true
+			}
+			if needsCommit {
 				if commitErr := tx.Commit().Error; commitErr != nil {
 					return nil, commitErr
 				}
