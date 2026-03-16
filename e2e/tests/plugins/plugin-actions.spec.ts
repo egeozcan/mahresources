@@ -1,4 +1,4 @@
-import { test, expect } from '../../fixtures/base.fixture';
+import { test, expect, getWorkerBaseUrl } from '../../fixtures/base.fixture';
 import { request as pwRequest } from '@playwright/test';
 import { ApiClient } from '../../helpers/api-client';
 import path from 'path';
@@ -40,7 +40,7 @@ async function createTestEntities(baseURL: string) {
 
 test.describe('Plugin Actions API', () => {
   test.beforeAll(async () => {
-    const baseURL = process.env.BASE_URL || 'http://localhost:8181';
+    const baseURL = getWorkerBaseUrl();
     await ensurePluginEnabled(baseURL, 'test-actions');
   });
 
@@ -223,7 +223,7 @@ test.describe('Plugin Actions UI - Detail Pages', () => {
   let groupId: number;
 
   test.beforeAll(async () => {
-    const baseURL = process.env.BASE_URL || 'http://localhost:8181';
+    const baseURL = getWorkerBaseUrl();
     await ensurePluginEnabled(baseURL, 'test-actions');
 
     const entities = await createTestEntities(baseURL);
@@ -341,7 +341,7 @@ test.describe('Plugin Actions UI - Detail Pages', () => {
 
 test.describe('Plugin Actions UI - Card Menu', () => {
   test.beforeAll(async () => {
-    const baseURL = process.env.BASE_URL || 'http://localhost:8181';
+    const baseURL = getWorkerBaseUrl();
     await ensurePluginEnabled(baseURL, 'test-actions');
   });
 
@@ -379,7 +379,7 @@ test.describe('Plugin Actions - Disable/Enable', () => {
   let resourceId: number;
 
   test.beforeAll(async () => {
-    const baseURL = process.env.BASE_URL || 'http://localhost:8181';
+    const baseURL = getWorkerBaseUrl();
     await ensurePluginEnabled(baseURL, 'test-actions');
 
     const entities = await createTestEntities(baseURL);
@@ -387,7 +387,7 @@ test.describe('Plugin Actions - Disable/Enable', () => {
   });
 
   test.afterAll(async () => {
-    const baseURL = process.env.BASE_URL || 'http://localhost:8181';
+    const baseURL = getWorkerBaseUrl();
     await ensurePluginEnabled(baseURL, 'test-actions');
   });
 

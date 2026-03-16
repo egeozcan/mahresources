@@ -2,6 +2,11 @@ import { test as base, request as playwrightRequest } from '@playwright/test';
 import { ApiClient } from '../helpers/api-client';
 import { expectNoViolations, expectComponentNoViolations, A11yCheckOptions } from '../helpers/accessibility/axe-helper';
 import { A11yTestData } from '../helpers/accessibility/a11y-config';
+import {
+  ServerInfo,
+  startServer,
+  stopServer,
+} from './server-manager';
 
 /**
  * Cache for test data to avoid recreating for each test
@@ -18,6 +23,10 @@ type A11yFixtures = {
   a11yTestData: A11yTestData;
   checkA11y: (options?: A11yCheckOptions) => Promise<void>;
   checkComponentA11y: (selector: string, options?: Omit<A11yCheckOptions, 'include'>) => Promise<void>;
+};
+
+type A11yWorkerFixtures = {
+  workerServer: ServerInfo;
 };
 
 /**
@@ -162,7 +171,31 @@ async function performCleanup(): Promise<void> {
   }
 }
 
-export const test = base.extend<A11yFixtures>({
+export const test = base.extend<A11yFixtures, A11yWorkerFixtures>({
+  // ---- Worker-scoped: one ephemeral server per a11y worker ----
+  // auto:true ensures it runs before any beforeAll hooks.
+  workerServer: [async ({}, use) => {
+    const externalUrl = process.env.BASE_URL;
+    if (externalUrl) {
+      const url = new URL(externalUrl);
+      const shareUrl = process.env.SHARE_BASE_URL;
+      await use({
+        port: parseInt(url.port) || 8181,
+        sharePort: shareUrl ? parseInt(new URL(shareUrl).port) || 8183 : 8183,
+        proc: null,
+      });
+      return;
+    }
+
+    const server = await startServer();
+    await use(server);
+    await stopServer(server.proc);
+  }, { scope: 'worker', auto: true }],
+
+  baseURL: async ({ workerServer }, use) => {
+    await use(`http://127.0.0.1:${workerServer.port}`);
+  },
+
   /**
    * API client for creating test data
    */

@@ -5,57 +5,32 @@ export default defineConfig({
   fullyParallel: false, // Tests within a file run sequentially (they share state)
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 4 : 2,
-  workers: process.env.CI ? 1 : 4, // Run different test files in parallel locally
-  timeout: 60000, // 60s test timeout to accommodate SQLite busy retries under load
+  workers: process.env.CI ? 1 : 4,
+  timeout: 60000,
   reporter: [
     ['list'],
     ['html', { outputFolder: 'playwright-report' }],
     ['json', { outputFile: 'test-results/results.json' }],
   ],
   use: {
+    // Fallback only — each worker overrides baseURL via the workerServer fixture
     baseURL: process.env.BASE_URL || 'http://localhost:8181',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
-    // Increase timeouts for better reliability in ephemeral mode with concurrent access
     actionTimeout: 10000,
     navigationTimeout: 15000,
   },
   expect: {
-    timeout: 10000, // Increase assertion timeout from default 5s
+    timeout: 10000,
   },
   projects: [
     {
-      // Heavy I/O tests run FIRST on a fresh server to avoid SQLite write lock
-      // issues caused by accumulated state from 300+ prior tests.
-      name: 'heavy-io',
-      use: { ...devices['Desktop Chrome'] },
-      testMatch: [
-        '**/19-note-sharing*',
-        '**/21-resource-category*',
-      ],
-    },
-    {
-      // Plugin tests share global server-side plugin state (enabled/disabled),
-      // so they must run serially to avoid race conditions.
-      // Depends on 'default' (which depends on 'heavy-io') so plugin tests
-      // run AFTER all other write-heavy tests complete, avoiding SQLite lock
-      // contention from parallel workers.
-      name: 'plugins',
-      use: { ...devices['Desktop Chrome'] },
-      testMatch: ['**/plugins/**'],
-      workers: 1,
-      dependencies: ['default'],
-    },
-    {
+      // All browser tests — no project dependencies needed because each worker
+      // gets its own ephemeral server (zero cross-worker DB contention).
       name: 'default',
       use: { ...devices['Desktop Chrome'] },
-      testIgnore: [
-        '**/19-note-sharing*',
-        '**/21-resource-category*',
-        '**/plugins/**',
-      ],
-      dependencies: ['heavy-io'],
+      testIgnore: ['**/cli/**'],
     },
     {
       name: 'cli',
