@@ -13,6 +13,13 @@ import (
 // Only allows lowercase letters to prevent SQL injection.
 var validEntityName = regexp.MustCompile(`^[a-z]+$`)
 
+// validMostUsedEntities are the entity types that have _tags junction tables.
+var validMostUsedEntities = map[string]bool{
+	"resource": true,
+	"note":     true,
+	"group":    true,
+}
+
 func TagQuery(query *query_models.TagQuery, ignoreSort bool) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
 		likeOperator := GetLikeOperator(db)
@@ -32,8 +39,8 @@ func TagQuery(query *query_models.TagQuery, ignoreSort bool) func(db *gorm.DB) *
 						continue
 					}
 					entityName := parts[0]
-					// Validate entity name to prevent SQL injection
-					if !validEntityName.MatchString(entityName) {
+					// Validate against known junction tables (also prevents SQL injection)
+					if !validMostUsedEntities[entityName] {
 						continue
 					}
 					direction := "desc"
