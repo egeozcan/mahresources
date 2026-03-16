@@ -375,6 +375,9 @@ test.describe('Share Server Content', () => {
 });
 
 test.describe('Shared Note Block Rendering', () => {
+  // Mark slow — beforeAll creates category + groups + resources (file uploads) + note + blocks + share
+  test.slow();
+
   let categoryId: number;
   let ownerGroupId: number;
   let refGroupIds: number[] = [];

@@ -436,12 +436,13 @@ test.describe('Calendar Block', () => {
     // Wait for the new block to appear
     await expect(page.locator('text=No calendars configured').last()).toBeVisible({ timeout: 10000 });
 
-    // Get the Add URL button from the newest block
+    // Get the Add URL button from the newest block — wait for it to render
     const addButton = page.locator('button:has-text("Add URL")').last();
     const urlInput = page.locator('input[placeholder*="ICS calendar URL"]').last();
+    await expect(addButton).toBeVisible({ timeout: 10000 });
 
     // Add URL button should be disabled when input is empty
-    await expect(addButton).toBeDisabled();
+    await expect(addButton).toBeDisabled({ timeout: 5000 });
 
     // Type something and verify it becomes enabled
     // Use click + fill + dispatchEvent to ensure Alpine.js picks up the change

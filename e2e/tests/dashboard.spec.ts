@@ -44,13 +44,14 @@ test.describe('Dashboard', () => {
 
 test.describe('Dashboard with data', () => {
   test('should display recently created tag', async ({ page, baseURL, apiClient }) => {
-    const tag = await apiClient.createTag('Dashboard Test Tag', 'Test description');
+    // Use a unique name to avoid collision with other test runs
+    const tagName = `Dashboard Tag ${Date.now()}`;
+    const tag = await apiClient.createTag(tagName, 'Test description');
 
     try {
       await page.goto(`${baseURL}/dashboard`);
-      await expect(page.locator('.dashboard-tag-pill:has-text("Dashboard Test Tag")')).toBeVisible({ timeout: 15000 });
-      // Activity feed should show the created tag (may appear multiple times for created/updated)
-      await expect(page.locator('.dashboard-activity-name:has-text("Dashboard Test Tag")').first()).toBeVisible({ timeout: 15000 });
+      await expect(page.locator(`.dashboard-tag-pill:has-text("${tagName}")`)).toBeVisible({ timeout: 15000 });
+      await expect(page.locator(`.dashboard-activity-name:has-text("${tagName}")`).first()).toBeVisible({ timeout: 15000 });
     } finally {
       try { await apiClient.deleteTag(tag.ID); } catch { /* cleanup best-effort */ }
     }
