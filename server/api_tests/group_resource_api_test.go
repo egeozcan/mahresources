@@ -564,6 +564,46 @@ func TestGroupUpdatePartialJSONPreservesOtherFields(t *testing.T) {
 		"Editing only description should not reset meta to default")
 }
 
+func TestGroupUpdatePartialJSONPreservesTagAssociations(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create tags
+	tag1 := &models.Tag{Name: "Tag Alpha"}
+	tag2 := &models.Tag{Name: "Tag Beta"}
+	tc.DB.Create(tag1)
+	tc.DB.Create(tag2)
+
+	// Create a group with tags via API (full update with all fields)
+	createResp := tc.MakeRequest(http.MethodPost, "/v1/group", map[string]any{
+		"Name": "Tagged Group",
+		"Tags": []uint{tag1.ID, tag2.ID},
+	})
+	assert.Equal(t, http.StatusOK, createResp.Code)
+	var created models.Group
+	json.Unmarshal(createResp.Body.Bytes(), &created)
+
+	// Verify tags were assigned
+	var checkBefore models.Group
+	tc.DB.Preload("Tags").First(&checkBefore, created.ID)
+	assert.Equal(t, 2, len(checkBefore.Tags), "group should start with 2 tags")
+
+	// Send a partial JSON update that only changes the description
+	// Tags field is NOT included in the request body
+	partialBody := map[string]any{
+		"ID":          created.ID,
+		"Description": "Updated description",
+	}
+	resp := tc.MakeRequest(http.MethodPost, "/v1/group", partialBody)
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	// The tags should be preserved, not cleared
+	var checkAfter models.Group
+	tc.DB.Preload("Tags").First(&checkAfter, created.ID)
+	assert.Equal(t, "Updated description", checkAfter.Description)
+	assert.Equal(t, 2, len(checkAfter.Tags),
+		"Editing only description should not clear tag associations — partial JSON must preserve unset arrays")
+}
+
 func TestResourceEditOwnerIdZeroStoresNull(t *testing.T) {
 	tc := SetupTestEnv(t)
 

@@ -185,14 +185,18 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 		return nil, err
 	}
 
-	if err := tx.Model(group).Association("Tags").Replace(tags); err != nil {
-		tx.Rollback()
-		return nil, err
+	if len(groupQuery.Tags) > 0 {
+		if err := tx.Model(group).Association("Tags").Replace(tags); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
 	}
 
-	if err := tx.Model(group).Association("RelatedGroups").Replace(groups); err != nil {
-		tx.Rollback()
-		return nil, err
+	if len(groupQuery.Groups) > 0 {
+		if err := tx.Model(group).Association("RelatedGroups").Replace(groups); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
 	}
 
 	if err := tx.Commit().Error; err != nil {
