@@ -166,7 +166,11 @@ func GetResourceUploadHandler(ctx interfaces.ResourceCreator) func(writer http.R
 
 				name := files[i].Filename
 
-				res, err := effectiveCtx.AddResource(file, name, &creator)
+				// Copy the creator for each file so AddResource's mutations
+				// (plugin hooks, OriginalName defaulting) don't leak between files
+				fileCreator := creator
+
+				res, err := effectiveCtx.AddResource(file, name, &fileCreator)
 				resources[i] = res
 
 				if err != nil {
