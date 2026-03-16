@@ -85,6 +85,9 @@ func GetAddNoteHandler(ctx interfaces.NoteWriteReader) func(writer http.Response
 				if queryVars.NoteTypeId == 0 && existing.NoteTypeId != nil {
 					queryVars.NoteTypeId = *existing.NoteTypeId
 				}
+				if queryVars.OwnerId == 0 && existing.OwnerId != nil {
+					queryVars.OwnerId = *existing.OwnerId
+				}
 				// Pre-populate nil association arrays so partial JSON updates
 				// don't clear them. Explicit empty arrays ([]uint{}) are left
 				// as-is, allowing intentional clearing.

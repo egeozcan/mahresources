@@ -475,6 +475,38 @@ func TestNoteUpdatePartialJSONPreservesNoteTypeId(t *testing.T) {
 	}
 }
 
+func TestNoteUpdatePartialJSONPreservesOwnerId(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create a group to act as owner
+	owner := tc.CreateDummyGroup("Note Owner")
+
+	// Create a note owned by the group
+	note := tc.CreateDummyNote("Owned Note")
+	note.OwnerId = &owner.ID
+	tc.DB.Save(note)
+
+	var before models.Note
+	tc.DB.First(&before, note.ID)
+	assert.NotNil(t, before.OwnerId, "note should start with an OwnerId")
+
+	// Send a partial JSON edit that only changes the description
+	resp := tc.MakeRequest(http.MethodPost, "/v1/note", map[string]any{
+		"ID":          note.ID,
+		"Name":        "Owned Note",
+		"Description": "Updated desc",
+	})
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	var after models.Note
+	tc.DB.First(&after, note.ID)
+	assert.Equal(t, "Updated desc", after.Description)
+	if assert.NotNil(t, after.OwnerId,
+		"Editing only description should not clear OwnerId") {
+		assert.Equal(t, owner.ID, *after.OwnerId)
+	}
+}
+
 func TestNoteUpdatePartialJSONPreservesOtherFields(t *testing.T) {
 	tc := SetupTestEnv(t)
 
