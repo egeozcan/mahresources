@@ -328,6 +328,46 @@ func TestNoteGroupFilterIncludesUnownedNotes(t *testing.T) {
 	}
 }
 
+func TestNoteUpdatePartialJSONPreservesTagAssociations(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create tags
+	tag1 := &models.Tag{Name: "Note Tag A"}
+	tag2 := &models.Tag{Name: "Note Tag B"}
+	tc.DB.Create(tag1)
+	tc.DB.Create(tag2)
+
+	// Create a note with tags via API
+	createResp := tc.MakeRequest(http.MethodPost, "/v1/note", map[string]any{
+		"Name": "Tagged Note",
+		"Tags": []uint{tag1.ID, tag2.ID},
+	})
+	assert.Equal(t, http.StatusOK, createResp.Code)
+	var created models.Note
+	json.Unmarshal(createResp.Body.Bytes(), &created)
+
+	// Verify tags were assigned
+	var checkBefore models.Note
+	tc.DB.Preload("Tags").First(&checkBefore, created.ID)
+	assert.Equal(t, 2, len(checkBefore.Tags), "note should start with 2 tags")
+
+	// Send a partial JSON update that only changes the description
+	partialBody := map[string]any{
+		"ID":          created.ID,
+		"Name":        "Tagged Note",
+		"Description": "Updated description",
+	}
+	resp := tc.MakeRequest(http.MethodPost, "/v1/note", partialBody)
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	// The tags should be preserved, not cleared
+	var checkAfter models.Note
+	tc.DB.Preload("Tags").First(&checkAfter, created.ID)
+	assert.Equal(t, "Updated description", checkAfter.Description)
+	assert.Equal(t, 2, len(checkAfter.Tags),
+		"Editing only description should not clear tag associations — partial JSON must preserve unset arrays")
+}
+
 func TestNoteUpdatePartialJSONPreservesOtherFields(t *testing.T) {
 	tc := SetupTestEnv(t)
 
