@@ -20,7 +20,7 @@ type Note struct {
 	OwnerId     *uint
 	StartDate   *time.Time
 	EndDate     *time.Time
-	NoteType    *NoteType `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	NoteType    *NoteType `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 	NoteTypeId  *uint
 	ShareToken  *string      `gorm:"uniqueIndex;size:32" json:"shareToken,omitempty"`
 	Blocks      []*NoteBlock `gorm:"foreignKey:NoteID" json:"blocks,omitempty"`

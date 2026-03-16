@@ -391,7 +391,15 @@ func (ctx *MahresourcesContext) DeleteNoteType(noteTypeId uint) error {
 	}
 	noteTypeName := noteType.Name
 
-	err := ctx.db.Select(clause.Associations).Delete(&noteType).Error
+	// Do NOT use Select(clause.Associations) here — NoteType's only association
+	// is Notes, and deleting a type must SET NULL on notes (not cascade-delete them).
+	// Explicitly clear NoteTypeId since SQLite's PRAGMA foreign_keys is a no-op
+	// inside transactions, so FK constraints (OnDelete:SET NULL) don't fire reliably.
+	if err := ctx.db.Model(&models.Note{}).Where("note_type_id = ?", noteTypeId).Update("note_type_id", nil).Error; err != nil {
+		return err
+	}
+
+	err := ctx.db.Delete(&noteType).Error
 	if err == nil {
 		ctx.Logger().Info(models.LogActionDelete, "noteType", &noteTypeId, noteTypeName, "Deleted note type", nil)
 		ctx.InvalidateSearchCacheByType(EntityTypeNoteType)
