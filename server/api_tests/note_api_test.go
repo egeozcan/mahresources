@@ -439,6 +439,42 @@ func TestNoteTypeUpdatePreservesCustomFields(t *testing.T) {
 		"Editing only name should not clear CustomAvatar")
 }
 
+func TestNoteUpdatePartialJSONPreservesNoteTypeId(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create a note type
+	nt := &models.NoteType{Name: "Meeting Notes"}
+	tc.DB.Create(nt)
+
+	// Create a note with that note type
+	note := tc.CreateDummyNote("Typed Note")
+	note.NoteTypeId = &nt.ID
+	tc.DB.Save(note)
+
+	// Verify note type is set
+	var before models.Note
+	tc.DB.First(&before, note.ID)
+	assert.NotNil(t, before.NoteTypeId, "note should start with a NoteTypeId")
+
+	// Send a partial JSON edit that only changes the description
+	partialBody := map[string]any{
+		"ID":          note.ID,
+		"Name":        "Typed Note",
+		"Description": "Updated desc",
+	}
+	resp := tc.MakeRequest(http.MethodPost, "/v1/note", partialBody)
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	// NoteTypeId should be preserved, not cleared to nil
+	var after models.Note
+	tc.DB.First(&after, note.ID)
+	assert.Equal(t, "Updated desc", after.Description)
+	if assert.NotNil(t, after.NoteTypeId,
+		"Editing only description should not clear NoteTypeId") {
+		assert.Equal(t, nt.ID, *after.NoteTypeId)
+	}
+}
+
 func TestNoteUpdatePartialJSONPreservesOtherFields(t *testing.T) {
 	tc := SetupTestEnv(t)
 
