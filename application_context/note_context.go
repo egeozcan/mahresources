@@ -354,11 +354,21 @@ func (ctx *MahresourcesContext) CreateOrUpdateNoteType(query *query_models.NoteT
 	} else if isNew {
 		return nil, errors.New("note type name must be non-empty")
 	}
-	noteType.Description = query.Description
-	noteType.CustomHeader = query.CustomHeader
-	noteType.CustomSidebar = query.CustomSidebar
-	noteType.CustomSummary = query.CustomSummary
-	noteType.CustomAvatar = query.CustomAvatar
+	if query.Description != "" {
+		noteType.Description = query.Description
+	}
+	if query.CustomHeader != "" {
+		noteType.CustomHeader = query.CustomHeader
+	}
+	if query.CustomSidebar != "" {
+		noteType.CustomSidebar = query.CustomSidebar
+	}
+	if query.CustomSummary != "" {
+		noteType.CustomSummary = query.CustomSummary
+	}
+	if query.CustomAvatar != "" {
+		noteType.CustomAvatar = query.CustomAvatar
+	}
 	if err := ctx.db.Save(&noteType).Error; err != nil {
 		return nil, err
 	}

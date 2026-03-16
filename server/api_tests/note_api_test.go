@@ -402,6 +402,43 @@ func TestNoteUpdatePartialJSONPreservesTagAssociations(t *testing.T) {
 		"Editing only description should not clear tag associations — partial JSON must preserve unset arrays")
 }
 
+func TestNoteTypeUpdatePreservesCustomFields(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create a note type with custom HTML fields
+	nt := &models.NoteType{
+		Name:          "Original NoteType",
+		Description:   "Original desc",
+		CustomHeader:  "<h2>NT Header</h2>",
+		CustomSidebar: "<div>NT Sidebar</div>",
+		CustomSummary: "<p>NT Summary</p>",
+		CustomAvatar:  "<img src='nt.png'>",
+	}
+	tc.DB.Create(nt)
+
+	// Send a partial JSON edit that only changes the name
+	partialBody := map[string]any{
+		"ID":   nt.ID,
+		"Name": "Renamed NoteType",
+	}
+	resp := tc.MakeRequest(http.MethodPost, "/v1/note/noteType/edit", partialBody)
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	var check models.NoteType
+	tc.DB.First(&check, nt.ID)
+	assert.Equal(t, "Renamed NoteType", check.Name)
+	assert.Equal(t, "Original desc", check.Description,
+		"Editing only name should not clear Description")
+	assert.Equal(t, "<h2>NT Header</h2>", check.CustomHeader,
+		"Editing only name should not clear CustomHeader")
+	assert.Equal(t, "<div>NT Sidebar</div>", check.CustomSidebar,
+		"Editing only name should not clear CustomSidebar")
+	assert.Equal(t, "<p>NT Summary</p>", check.CustomSummary,
+		"Editing only name should not clear CustomSummary")
+	assert.Equal(t, "<img src='nt.png'>", check.CustomAvatar,
+		"Editing only name should not clear CustomAvatar")
+}
+
 func TestNoteUpdatePartialJSONPreservesOtherFields(t *testing.T) {
 	tc := SetupTestEnv(t)
 
