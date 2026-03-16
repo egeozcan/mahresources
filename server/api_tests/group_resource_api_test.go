@@ -695,6 +695,43 @@ func TestResourceEditPartialJSONPreservesOtherFields(t *testing.T) {
 		"Editing only description should not clear the name — partial JSON must preserve unset fields")
 }
 
+func TestResourceEditPartialJSONPreservesAllTagsBeyondPageLimit(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create 55 tags (more than MaxResultsPerPage=50)
+	tagIDs := make([]uint, 55)
+	for i := 0; i < 55; i++ {
+		tag := &models.Tag{Name: fmt.Sprintf("Tag %03d", i)}
+		tc.DB.Create(tag)
+		tagIDs[i] = tag.ID
+	}
+
+	// Create a resource and attach all 55 tags via junction table
+	res := &models.Resource{Name: "Many Tags Resource", Meta: []byte(`{}`), OwnMeta: []byte(`{}`)}
+	tc.DB.Create(res)
+	for _, tagID := range tagIDs {
+		tc.DB.Exec("INSERT INTO resource_tags (resource_id, tag_id) VALUES (?, ?)", res.ID, tagID)
+	}
+
+	// Verify all 55 tags are attached
+	var countBefore int64
+	tc.DB.Table("resource_tags").Where("resource_id = ?", res.ID).Count(&countBefore)
+	assert.Equal(t, int64(55), countBefore, "resource should start with 55 tags")
+
+	// Partial JSON edit — only change description
+	resp := tc.MakeRequest(http.MethodPost, "/v1/resource/edit", map[string]any{
+		"ID":          res.ID,
+		"Description": "Updated",
+	})
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	// ALL 55 tags should be preserved, not truncated to 50
+	var countAfter int64
+	tc.DB.Table("resource_tags").Where("resource_id = ?", res.ID).Count(&countAfter)
+	assert.Equal(t, int64(55), countAfter,
+		"Partial update should preserve ALL tags, not just the first 50 (pageLimit truncation)")
+}
+
 func TestResourceEditPartialJSONPreservesResourceCategoryId(t *testing.T) {
 	tc := SetupTestEnv(t)
 

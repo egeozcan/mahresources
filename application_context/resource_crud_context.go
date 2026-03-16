@@ -14,7 +14,7 @@ import (
 func (ctx *MahresourcesContext) GetResource(id uint) (*models.Resource, error) {
 	var resource models.Resource
 
-	return &resource, ctx.db.Preload(clause.Associations, pageLimit).First(&resource, id).Error
+	return &resource, ctx.db.Preload(clause.Associations).First(&resource, id).Error
 }
 
 // GetResourceByID returns a resource without preloading associations.
