@@ -494,3 +494,49 @@ func TestCalendarBlockEventsEndpoint(t *testing.T) {
 		assert.Contains(t, result.Errors[0].Error, "resourceId")
 	})
 }
+
+func TestReorderBlocksSyncsDescription(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	note := tc.CreateDummyNote("Reorder Sync Test")
+
+	// Create two text blocks: block A first (position "d"), block B second (position "h")
+	respA := tc.MakeRequest(http.MethodPost, "/v1/note/block", map[string]any{
+		"noteId":   note.ID,
+		"type":     "text",
+		"position": "d",
+		"content":  map[string]string{"text": "Block A content"},
+	})
+	assert.Equal(t, http.StatusCreated, respA.Code)
+	var blockA models.NoteBlock
+	json.Unmarshal(respA.Body.Bytes(), &blockA)
+
+	respB := tc.MakeRequest(http.MethodPost, "/v1/note/block", map[string]any{
+		"noteId":   note.ID,
+		"type":     "text",
+		"position": "h",
+		"content":  map[string]string{"text": "Block B content"},
+	})
+	assert.Equal(t, http.StatusCreated, respB.Code)
+	var blockB models.NoteBlock
+	json.Unmarshal(respB.Body.Bytes(), &blockB)
+
+	// Verify description is "Block A content" (block A is first by position)
+	var check models.Note
+	tc.DB.First(&check, note.ID)
+	assert.Equal(t, "Block A content", check.Description,
+		"description should match the first text block (block A at position 'd')")
+
+	// Reorder: move block B before block A (give B position "c", A stays at "d")
+	reorderResp := tc.MakeRequest(http.MethodPost, "/v1/note/blocks/reorder", map[string]any{
+		"noteId":    note.ID,
+		"positions": map[string]string{fmt.Sprintf("%d", blockB.ID): "c"},
+	})
+	assert.Equal(t, http.StatusNoContent, reorderResp.Code)
+
+	// After reorder, block B (position "c") is now before block A (position "d")
+	// The description should update to "Block B content"
+	tc.DB.First(&check, note.ID)
+	assert.Equal(t, "Block B content", check.Description,
+		"description should be synced to the new first text block after reorder")
+}

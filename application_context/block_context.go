@@ -219,12 +219,27 @@ func (ctx *MahresourcesContext) ReorderBlocks(noteID uint, positions map[uint]st
 	}
 
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		hasTextBlock := false
 		for blockID, position := range positions {
 			if err := tx.Model(&models.NoteBlock{}).Where("id = ? AND note_id = ?", blockID, noteID).
 				Update("position", position).Error; err != nil {
 				return err
 			}
+			if !hasTextBlock {
+				var block models.NoteBlock
+				if err := tx.Select("type").First(&block, blockID).Error; err == nil && block.Type == "text" {
+					hasTextBlock = true
+				}
+			}
 		}
+
+		// Sync description if any text blocks were reordered (the first text block may have changed)
+		if hasTextBlock {
+			if err := syncFirstTextBlockToDescriptionTx(tx, noteID); err != nil {
+				log.Printf("Warning: failed to sync description for note %d after reorder: %v", noteID, err)
+			}
+		}
+
 		return nil
 	})
 }
