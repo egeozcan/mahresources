@@ -375,6 +375,9 @@ func GetResourceEditHandler(ctx interfaces.ResourceEditReader) func(writer http.
 				if editor.ResourceCategoryId == 0 && existing.ResourceCategoryId != nil {
 					editor.ResourceCategoryId = *existing.ResourceCategoryId
 				}
+				if editor.SeriesId == 0 && editor.SeriesSlug == "" && existing.SeriesID != nil {
+					editor.SeriesId = *existing.SeriesID
+				}
 				if editor.Tags == nil && len(existing.Tags) > 0 {
 					editor.Tags = make([]uint, len(existing.Tags))
 					for i, t := range existing.Tags {
