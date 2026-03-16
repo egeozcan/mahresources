@@ -695,6 +695,32 @@ func TestResourceEditPartialJSONPreservesOtherFields(t *testing.T) {
 		"Editing only description should not clear the name — partial JSON must preserve unset fields")
 }
 
+func TestResourceEditWithSeriesSlugAssignsToSeries(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// Create a resource without a series
+	res := &models.Resource{Name: "Standalone Resource", Meta: []byte(`{}`), OwnMeta: []byte(`{}`)}
+	tc.DB.Create(res)
+
+	// Verify no series initially
+	var before models.Resource
+	tc.DB.First(&before, res.ID)
+	assert.Nil(t, before.SeriesID, "resource should start without a series")
+
+	// Edit the resource with a SeriesSlug — should create or find the series and assign
+	resp := tc.MakeRequest(http.MethodPost, "/v1/resource/edit", map[string]any{
+		"ID":         res.ID,
+		"Name":       "Standalone Resource",
+		"SeriesSlug": "test-series",
+	})
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	var after models.Resource
+	tc.DB.First(&after, res.ID)
+	assert.NotNil(t, after.SeriesID,
+		"Editing a resource with SeriesSlug should assign it to a series")
+}
+
 func TestResourceEditPartialJSONPreservesAllTagsBeyondPageLimit(t *testing.T) {
 	tc := SetupTestEnv(t)
 

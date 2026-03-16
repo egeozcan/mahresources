@@ -240,7 +240,21 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 		}
 
 		// Handle series assignment changes
+		// Resolve SeriesSlug to SeriesId if provided (matches create-path behavior)
 		newSeriesID := resourceQuery.SeriesId
+		if newSeriesID == 0 && resourceQuery.SeriesSlug != "" {
+			series, isCreator, err := ctx.GetOrCreateSeriesForResource(tx, resourceQuery.SeriesSlug)
+			if err != nil {
+				return fmt.Errorf("series slug %q: %w", resourceQuery.SeriesSlug, err)
+			}
+			newSeriesID = series.ID
+			// If this resource is the series creator, donate meta to series
+			if isCreator {
+				if err := ctx.AssignResourceToSeries(tx, &resource, series, true); err != nil {
+					return err
+				}
+			}
+		}
 		oldSeriesID := resource.SeriesID
 		seriesChanged := false
 
@@ -248,7 +262,9 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 			if oldSeriesID == nil || *oldSeriesID != newSeriesID {
 				seriesChanged = true
 			}
-		} else if oldSeriesID != nil {
+		} else if oldSeriesID != nil && resourceQuery.SeriesSlug == "" {
+			// Only remove from series if SeriesSlug wasn't provided
+			// (SeriesSlug="" + SeriesId=0 means "not provided" for partial updates)
 			seriesChanged = true
 		}
 
