@@ -486,6 +486,33 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 			return err
 		}
 
+		// Transfer versions: re-assign loser versions to winner with renumbered version_number
+		// to avoid conflicts, starting from the winner's current max version number + 1.
+		var maxVersion int
+		if err := tx.Model(&models.ResourceVersion{}).
+			Where("resource_id = ?", winnerId).
+			Select("COALESCE(MAX(version_number), 0)").
+			Scan(&maxVersion).Error; err != nil {
+			return err
+		}
+		// Use a subquery with ROW_NUMBER to assign sequential numbers to loser versions.
+		// SQLite and Postgres both support window functions.
+		if err := tx.Exec(`
+			UPDATE resource_versions
+			SET resource_id = ?,
+			    version_number = ? + (
+			        SELECT COUNT(*)
+			        FROM resource_versions rv2
+			        WHERE rv2.resource_id = resource_versions.resource_id
+			          AND rv2.id <= resource_versions.id
+			          AND rv2.resource_id IN ?
+			    )
+			WHERE resource_id IN ?`,
+			winnerId, maxVersion, loserIds, loserIds,
+		).Error; err != nil {
+			return err
+		}
+
 		deletedResBackups := make(map[string]types.JSON)
 
 		for _, loser := range losers {
