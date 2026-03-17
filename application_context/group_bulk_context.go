@@ -83,16 +83,34 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 			return err
 		}
 
+		// Re-read the winner — its owner_id may have changed if it was owned by a loser
+		if err := altCtx.db.First(&winner, winnerId).Error; err != nil {
+			return err
+		}
+
+		// Walk up the winner's ancestry chain to detect indirect ownership cycles
+		// introduced by the batch ownership transfer above.
+		visited := map[uint]bool{winnerId: true}
+		current := winner.OwnerId
+		for i := 0; i < 100 && current != nil; i++ {
+			if visited[*current] {
+				// Found a cycle — break it by NULLing this group's owner_id
+				if err := altCtx.db.Exec("UPDATE groups SET owner_id = NULL WHERE id = ?", *current).Error; err != nil {
+					return err
+				}
+				break
+			}
+			visited[*current] = true
+			var g models.Group
+			if err := altCtx.db.Select("id", "owner_id").First(&g, *current).Error; err != nil {
+				break
+			}
+			current = g.OwnerId
+		}
+
 		backups := make(map[string]types.JSON)
 
 		for _, loser := range losers {
-			// Handle owner_id self-reference: if winner is owned by a loser, clear it
-			if winner.OwnerId != nil && loser.ID == *winner.OwnerId {
-				if err := altCtx.db.Exec(`UPDATE groups SET owner_id = NULL WHERE id = ?`, winnerId).Error; err != nil {
-					return err
-				}
-			}
-
 			backupData, err := json.Marshal(loser)
 			if err != nil {
 				return err
