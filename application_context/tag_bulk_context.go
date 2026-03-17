@@ -72,14 +72,14 @@ func (ctx *MahresourcesContext) MergeTags(winnerId uint, loserIds []uint) error 
 			switch altCtx.Config.DbType {
 			case constants.DbTypePosgres:
 				if err := altCtx.db.Exec(
-					`UPDATE tags SET meta = coalesce((SELECT meta FROM tags WHERE id = ?), '{}'::jsonb) || meta WHERE id = ?`,
+					`UPDATE tags SET meta = coalesce(nullif((SELECT meta FROM tags WHERE id = ?), 'null'::jsonb), '{}'::jsonb) || coalesce(nullif(meta, 'null'::jsonb), '{}'::jsonb) WHERE id = ?`,
 					loser.ID, winnerId,
 				).Error; err != nil {
 					return err
 				}
 			case constants.DbTypeSqlite:
 				if err := altCtx.db.Exec(
-					`UPDATE tags SET meta = json_patch(coalesce((SELECT meta FROM tags WHERE id = ?), '{}'), meta) WHERE id = ?`,
+					`UPDATE tags SET meta = json_patch(coalesce(nullif((SELECT meta FROM tags WHERE id = ?), 'null'), '{}'), coalesce(nullif(meta, 'null'), '{}')) WHERE id = ?`,
 					loser.ID, winnerId,
 				).Error; err != nil {
 					return err
@@ -109,14 +109,14 @@ func (ctx *MahresourcesContext) MergeTags(winnerId uint, loserIds []uint) error 
 		switch altCtx.Config.DbType {
 		case constants.DbTypePosgres:
 			if err := altCtx.db.Exec(
-				"UPDATE tags SET meta = COALESCE(meta, '{}'::jsonb) || ? WHERE id = ?",
+				"UPDATE tags SET meta = COALESCE(nullif(meta, 'null'::jsonb), '{}'::jsonb) || ? WHERE id = ?",
 				backupsBytes, winner.ID,
 			).Error; err != nil {
 				return err
 			}
 		case constants.DbTypeSqlite:
 			if err := altCtx.db.Exec(
-				"UPDATE tags SET meta = json_patch(COALESCE(meta, '{}'), ?) WHERE id = ?",
+				"UPDATE tags SET meta = json_patch(COALESCE(nullif(meta, 'null'), '{}'), ?) WHERE id = ?",
 				string(backupsBytes), winner.ID,
 			).Error; err != nil {
 				return err
