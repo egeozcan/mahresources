@@ -245,12 +245,24 @@ func (ctx *MahresourcesContext) GetRelationTypesWithIds(ids *[]uint) ([]*models.
 }
 
 func (ctx *MahresourcesContext) DeleteRelationship(relationshipId uint) error {
-	// Load relation name before deletion for audit log
 	var relation models.GroupRelation
 	if err := ctx.db.First(&relation, relationshipId).Error; err != nil {
 		return err
 	}
 	relationName := relation.Name
+
+	// Check if the relation type has a back-relation type
+	var relationType models.GroupRelationType
+	if relation.RelationTypeId != nil {
+		if err := ctx.db.First(&relationType, *relation.RelationTypeId).Error; err == nil {
+			if relationType.BackRelationId != nil && relation.FromGroupId != nil && relation.ToGroupId != nil {
+				// Delete the auto-created back-relation (swapped groups, back-relation type)
+				ctx.db.Where("from_group_id = ? AND to_group_id = ? AND relation_type_id = ?",
+					*relation.ToGroupId, *relation.FromGroupId, *relationType.BackRelationId).
+					Delete(&models.GroupRelation{})
+			}
+		}
+	}
 
 	err := ctx.db.Select(clause.Associations).Delete(&relation).Error
 	if err == nil {
