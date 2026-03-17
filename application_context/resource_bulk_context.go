@@ -503,22 +503,26 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) e
 			Scan(&maxVersion).Error; err != nil {
 			return err
 		}
-		// Use a subquery with ROW_NUMBER to assign sequential numbers to loser versions.
-		// SQLite and Postgres both support window functions.
-		if err := tx.Exec(`
-			UPDATE resource_versions
-			SET resource_id = ?,
-			    version_number = ? + (
-			        SELECT COUNT(*)
-			        FROM resource_versions rv2
-			        WHERE rv2.resource_id = resource_versions.resource_id
-			          AND rv2.id <= resource_versions.id
-			          AND rv2.resource_id IN ?
-			    )
-			WHERE resource_id IN ?`,
-			winnerId, maxVersion, loserIds, loserIds,
-		).Error; err != nil {
+		// Fetch loser version IDs in deterministic order, then update each with a
+		// unique sequential version_number.  A single correlated-subquery UPDATE
+		// is unreliable across SQLite / Postgres when the subquery reads from the
+		// same table being modified, so we use an explicit loop instead.
+		var loserVersionIDs []uint
+		if err := tx.Model(&models.ResourceVersion{}).
+			Where("resource_id IN ?", loserIds).
+			Order("id ASC").
+			Pluck("id", &loserVersionIDs).Error; err != nil {
 			return err
+		}
+		for i, vid := range loserVersionIDs {
+			if err := tx.Model(&models.ResourceVersion{}).
+				Where("id = ?", vid).
+				Updates(map[string]interface{}{
+					"resource_id":    winnerId,
+					"version_number": maxVersion + i + 1,
+				}).Error; err != nil {
+				return err
+			}
 		}
 
 		deletedResBackups := make(map[string]types.JSON)
