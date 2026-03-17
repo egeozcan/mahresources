@@ -294,6 +294,13 @@ func (ctx *MahresourcesContext) DeleteRelationshipType(relationshipTypeId uint) 
 		}
 	}
 
+	// Explicitly delete GroupRelation records that reference this type,
+	// since SQLite FK cascades (OnDelete:CASCADE) don't fire reliably.
+	if err := ctx.db.Where("relation_type_id = ?", relationshipTypeId).
+		Delete(&models.GroupRelation{}).Error; err != nil {
+		return err
+	}
+
 	err := ctx.db.Select(clause.Associations).Delete(&relationType).Error
 	if err == nil {
 		ctx.Logger().Info(models.LogActionDelete, "relationType", &relationshipTypeId, relationTypeName, "Deleted relation type", nil)
