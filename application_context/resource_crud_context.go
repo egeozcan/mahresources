@@ -283,6 +283,11 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 					return err
 				}
 				resource.OwnMeta = ownMeta
+				effectiveMeta, err := mergeMeta(newSeries.Meta, ownMeta)
+				if err != nil {
+					return err
+				}
+				resource.Meta = effectiveMeta
 				resource.SeriesID = &newSeries.ID
 				resource.Series = &newSeries
 			} else {
