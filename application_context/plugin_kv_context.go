@@ -48,7 +48,7 @@ func (ctx *MahresourcesContext) PluginKVList(pluginName, prefix string) ([]strin
 	var keys []string
 	q := ctx.db.Model(&models.PluginKV{}).Where("plugin_name = ?", pluginName)
 	if prefix != "" {
-		escaped := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(prefix)
+		escaped := strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(prefix)
 		q = q.Where("key LIKE ? ESCAPE '\\'", escaped+"%")
 	}
 	if err := q.Order("key").Pluck("key", &keys).Error; err != nil {
