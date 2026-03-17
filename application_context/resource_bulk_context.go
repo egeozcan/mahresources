@@ -209,18 +209,23 @@ func (ctx *MahresourcesContext) BulkAddMetaToResources(query *query_models.BulkE
 
 	var resource models.Resource
 
-	var expr clause.Expr
+	var metaExpr, ownMetaExpr clause.Expr
 
 	if ctx.Config.DbType == constants.DbTypePosgres {
-		expr = gorm.Expr("meta || ?", query.Meta)
+		metaExpr = gorm.Expr("meta || ?", query.Meta)
+		ownMetaExpr = gorm.Expr("COALESCE(own_meta, '{}'::jsonb) || ?", query.Meta)
 	} else {
-		expr = gorm.Expr("json_patch(meta, ?)", query.Meta)
+		metaExpr = gorm.Expr("json_patch(meta, ?)", query.Meta)
+		ownMetaExpr = gorm.Expr("json_patch(COALESCE(own_meta, '{}'), ?)", query.Meta)
 	}
 
 	err := ctx.db.
 		Model(&resource).
 		Where("id in ?", query.ID).
-		Update("Meta", expr).Error
+		Updates(map[string]interface{}{
+			"Meta":    metaExpr,
+			"OwnMeta": ownMetaExpr,
+		}).Error
 
 	if err == nil {
 		ctx.Logger().Info(models.LogActionUpdate, "resource", nil, "", "Bulk added meta to resources", map[string]interface{}{
