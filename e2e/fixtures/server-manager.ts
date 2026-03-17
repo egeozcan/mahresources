@@ -66,6 +66,8 @@ export function startServerProcess(port: number, sharePort: number): ChildProces
     '-share-bind-address=127.0.0.1',
     '-hash-worker-disabled',
     '-thumb-worker-disabled',
+    '-skip-version-migration',
+    '-max-db-connections=1',
     '-plugin-path=./e2e/test-plugins',
   ], {
     cwd: PROJECT_ROOT,

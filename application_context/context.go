@@ -470,19 +470,20 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 
 	if cfg.MemoryDB {
 		dbType = "SQLITE"
-		// Use a temp file with WAL mode for better concurrent write handling
-		// The file is auto-deleted when all connections close
-		dbDsn = "file:/tmp/mahresources_ephemeral.db?_journal_mode=WAL&_busy_timeout=10000&_synchronous=NORMAL"
-		readOnlyDsn = "file:/tmp/mahresources_ephemeral.db?_journal_mode=WAL&_busy_timeout=10000&mode=ro"
+		// Use a per-process temp file with WAL mode for better concurrent write handling.
+		// Including the PID ensures multiple ephemeral instances don't share the same file.
+		ephemeralPath := fmt.Sprintf("/tmp/mahresources_ephemeral_%d.db", os.Getpid())
+		dbDsn = fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=10000&_synchronous=NORMAL", ephemeralPath)
+		readOnlyDsn = fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=10000&mode=ro", ephemeralPath)
 
-		// Remove any existing temp database files
-		os.Remove("/tmp/mahresources_ephemeral.db")
-		os.Remove("/tmp/mahresources_ephemeral.db-wal")
-		os.Remove("/tmp/mahresources_ephemeral.db-shm")
+		// Remove any existing temp database files for this PID
+		os.Remove(ephemeralPath)
+		os.Remove(ephemeralPath + "-wal")
+		os.Remove(ephemeralPath + "-shm")
 
 		if cfg.SeedDB != "" {
 			// Copy seed database to temp location
-			if err := copySeedDatabase(cfg.SeedDB, "/tmp/mahresources_ephemeral.db"); err != nil {
+			if err := copySeedDatabase(cfg.SeedDB, ephemeralPath); err != nil {
 				log.Fatalf("Failed to copy seed database: %v", err)
 			}
 			log.Printf("Using ephemeral SQLite database seeded from %s", cfg.SeedDB)

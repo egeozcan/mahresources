@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"log"
 	"mahresources/hash_worker"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -564,7 +565,7 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 
 	if statError == nil && stat != nil {
 		savedFile, err = ctx.fs.Open(filePath)
-		ctx.Logger().Info(models.LogActionCreate, "resource", nil, "", "Reusing stale file at "+filePath, nil)
+		log.Printf("Reusing stale file at %s", filePath)
 		fileExists = true
 	} else {
 		savedFile, err = ctx.fs.Create(filePath)

@@ -22,7 +22,8 @@ export class BasePage {
   }
 
   async save() {
-    await this.saveButton.click();
+    // Use extended timeout for form submission + server processing + redirect
+    await this.saveButton.click({ timeout: 30000 });
     await this.page.waitForLoadState('load');
   }
 

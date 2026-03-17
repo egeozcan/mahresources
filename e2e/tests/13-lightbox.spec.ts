@@ -722,29 +722,21 @@ test.describe('Lightbox Edit Panel', () => {
     const quickTagPanel = lightbox.locator('[data-quick-tag-panel]');
     await expect(quickTagPanel).toBeVisible();
 
-    // Wait for resource details to load
-    await page.waitForTimeout(500);
-
-    // Find the tag input
+    // Wait for tag input to be visible (indicates resource details have loaded)
     const tagInput = quickTagPanel.locator('input[placeholder="Search or add tags..."]');
-    await expect(tagInput).toBeVisible();
+    await expect(tagInput).toBeVisible({ timeout: 10000 });
 
     // Type tag name to search
     await tagInput.fill(`LightboxEditTag-${testRunId}`);
 
-    // Wait for dropdown
-    await page.waitForTimeout(300);
-
-    // Click on the tag in dropdown
+    // Wait for dropdown option to appear (condition-based, no fixed timeout)
     const tagOption = quickTagPanel.locator(`div[role="option"]:has-text("LightboxEditTag-${testRunId}")`);
+    await tagOption.waitFor({ state: 'visible', timeout: 10000 });
     await tagOption.click();
 
-    // Wait for tag to be added
-    await page.waitForTimeout(500);
-
-    // Verify tag chip appears
+    // Verify tag chip appears (condition-based, no fixed timeout)
     const tagChip = quickTagPanel.locator(`.flex.flex-wrap.gap-2 span.inline-flex:has-text("LightboxEditTag-${testRunId}")`);
-    await expect(tagChip).toBeVisible();
+    await expect(tagChip).toBeVisible({ timeout: 10000 });
   });
 
   test('should not show stale tags when reopening lightbox on different resource', async ({ page }) => {
@@ -1379,19 +1371,22 @@ test.describe('Lightbox on Group Detail Page', () => {
     // Add tag via autocompleter
     const tagInput = quickTagPanel.locator('[data-tag-editor-input]');
     await tagInput.fill(`RecentTag-${testRunId}`);
-    await page.waitForTimeout(400);
+
+    // Wait for dropdown option to appear (condition-based, no fixed timeout)
     const tagOption = quickTagPanel.locator(`div[role="option"]:has-text("RecentTag-${testRunId}")`);
+    await tagOption.waitFor({ state: 'visible', timeout: 10000 });
     await tagOption.click();
-    await page.waitForTimeout(500);
+
+    // Wait for tag to be applied (option disappears from dropdown)
+    await tagOption.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
 
     // Blur any focused input so canNavigate() returns true
     await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
 
     // Switch to RECENT tab (V key)
     await page.keyboard.press('v');
-    await page.waitForTimeout(200);
 
-    // Verify the RECENT tab is active
+    // Verify the RECENT tab is active (condition-based, no fixed timeout)
     const recentTab = quickTagPanel.locator('button[role="tab"][aria-selected="true"]:has-text("RECENT")');
     await expect(recentTab).toBeVisible();
 

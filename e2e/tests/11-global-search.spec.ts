@@ -111,35 +111,17 @@ test.describe('Global Search', () => {
     // Use a partial search term that's more likely to match via LIKE
     await searchInput.fill('UniqueSearchGroup');
 
-    // Wait for search debounce (150ms) plus API response time
-    await page.waitForTimeout(500);
-
-    // Wait for search results to appear in the listbox
+    // Wait for either results or "no results" message (condition-based, no fixed timeout)
     const resultOption = page.locator('li[role="option"]').first();
-
-    // Check if "No results found" message is shown - search worked but didn't find anything
-    // Use a race between finding results and seeing "No results"
     const noResults = page.locator('text=No results found');
 
-    // Wait for either results or "no results" message
-    try {
-      await Promise.race([
-        expect(resultOption).toBeVisible({ timeout: 10000 }),
-        expect(noResults).toBeVisible({ timeout: 10000 })
-      ]);
-    } catch {
-      // Neither appeared, fail with a clear message
-      await expect(resultOption).toBeVisible({ timeout: 1000 });
-    }
+    await expect(resultOption.or(noResults)).toBeVisible({ timeout: 10000 });
 
     // If "No results found" is showing, skip the navigation test
     if (await noResults.isVisible()) {
       console.log('Search returned no results - FTS may not be working in ephemeral mode');
       return;
     }
-
-    // Wait a bit for Alpine.js to finish updating
-    await page.waitForTimeout(200);
 
     // Press Enter to navigate to first result
     await page.keyboard.press('Enter');
@@ -158,22 +140,11 @@ test.describe('Global Search', () => {
     // Use a partial search term
     await searchInput.fill('UniqueSearchGroup');
 
-    // Wait for search debounce (150ms) plus API response time
-    await page.waitForTimeout(500);
-
-    // Wait for search results to appear before navigating
+    // Wait for either results or "no results" message (condition-based, no fixed timeout)
     const resultItem = page.locator('li[role="option"]').first();
     const noResults = page.locator('text=No results found');
 
-    // Wait for either results or "no results" message
-    try {
-      await Promise.race([
-        expect(resultItem).toBeVisible({ timeout: 10000 }),
-        expect(noResults).toBeVisible({ timeout: 10000 })
-      ]);
-    } catch {
-      await expect(resultItem).toBeVisible({ timeout: 1000 });
-    }
+    await expect(resultItem.or(noResults)).toBeVisible({ timeout: 10000 });
 
     // If "No results found" is showing, skip the navigation test
     if (await noResults.isVisible()) {
@@ -183,9 +154,6 @@ test.describe('Global Search', () => {
 
     // Navigate down with arrow key - this should change the selected index
     await page.keyboard.press('ArrowDown');
-
-    // Wait for Alpine.js to update the DOM
-    await page.waitForTimeout(100);
 
     // Check that the second item now has bg-indigo-50 class (indicating selection)
     // Or check that any list item has the selected styling

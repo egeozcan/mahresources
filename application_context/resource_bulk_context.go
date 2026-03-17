@@ -77,44 +77,52 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 		_ = file.Close()
 	}
 
-	// Clear CurrentVersionID to break circular reference before deletion
-	// This prevents foreign key constraint errors when deleting resources with versions
-	if resource.CurrentVersionID != nil {
-		if err := ctx.db.Model(&resource).Update("current_version_id", nil).Error; err != nil {
+	// Wrap all DB writes in a single transaction to avoid multiple short write locks
+	// that cause SQLite "database is locked" errors under concurrent access
+	var refCount int64
+	err := ctx.WithTransaction(func(txCtx *MahresourcesContext) error {
+		// Clear CurrentVersionID to break circular reference before deletion
+		if resource.CurrentVersionID != nil {
+			if err := txCtx.db.Model(&resource).Update("current_version_id", nil).Error; err != nil {
+				return err
+			}
+		}
+
+		if err := txCtx.db.Select(clause.Associations).Delete(&resource).Error; err != nil {
 			return err
 		}
-	}
 
-	if err := ctx.db.Select(clause.Associations).Delete(&resource).Error; err != nil {
+		// Auto-delete empty series if this resource was in one
+		if resource.SeriesID != nil {
+			seriesID := *resource.SeriesID
+			result := txCtx.db.Where("id = ? AND NOT EXISTS (SELECT 1 FROM resources WHERE series_id = ?)", seriesID, seriesID).Delete(&models.Series{})
+			if result.Error != nil {
+				txCtx.Logger().Warning(models.LogActionDelete, "series", &seriesID, "Failed to auto-delete empty series", result.Error.Error(), nil)
+			} else if result.RowsAffected > 0 {
+				txCtx.Logger().Info(models.LogActionDelete, "series", &seriesID, "", "Auto-deleted empty series", nil)
+			}
+		}
+
+		// Check if any other resources or versions reference this hash
+		var countErr error
+		refCount, countErr = txCtx.CountHashReferences(resource.Hash)
+		if countErr != nil {
+			txCtx.Logger().Warning(models.LogActionDelete, "resource", &resourceId, "Failed to count hash references", countErr.Error(), nil)
+			refCount = 1 // Assume referenced to be safe
+		}
+
+		txCtx.Logger().Info(models.LogActionDelete, "resource", &resourceId, resource.Name, "Deleted resource", nil)
+		return nil
+	})
+
+	if err != nil {
 		return err
 	}
 
-	// Auto-delete empty series if this resource was in one.
-	// Uses a conditional delete to avoid race conditions: only deletes the series
-	// if no other resources reference it at the time of deletion.
-	if resource.SeriesID != nil {
-		seriesID := *resource.SeriesID
-		result := ctx.db.Where("id = ? AND NOT EXISTS (SELECT 1 FROM resources WHERE series_id = ?)", seriesID, seriesID).Delete(&models.Series{})
-		if result.Error != nil {
-			ctx.Logger().Warning(models.LogActionDelete, "series", &seriesID, "Failed to auto-delete empty series", result.Error.Error(), nil)
-		} else if result.RowsAffected > 0 {
-			ctx.Logger().Info(models.LogActionDelete, "series", &seriesID, "", "Auto-deleted empty series", nil)
-		}
-	}
-
-	// Check if any other resources or versions reference this hash
-	refCount, countErr := ctx.CountHashReferences(resource.Hash)
-	if countErr != nil {
-		ctx.Logger().Warning(models.LogActionDelete, "resource", &resourceId, "Failed to count hash references", countErr.Error(), nil)
-		refCount = 1 // Assume referenced to be safe
-	}
-
-	// Only delete file if no other references exist
+	// File operations after successful commit (no DB lock held)
 	if refCount == 0 {
 		_ = fs.Remove(resource.GetCleanLocation())
 	}
-
-	ctx.Logger().Info(models.LogActionDelete, "resource", &resourceId, resource.Name, "Deleted resource", nil)
 
 	ctx.RunAfterPluginHooks("after_resource_delete", map[string]any{"id": float64(resourceId), "name": resource.Name})
 

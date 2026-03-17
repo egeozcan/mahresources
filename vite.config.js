@@ -13,15 +13,9 @@ export default defineConfig({
         // Content hashes on dynamic chunks for cache busting
         chunkFileNames: 'assets/[name]-[hash].js',
         assetFileNames: 'assets/[name]-[hash][extname]',
-        manualChunks: {
-          codemirror: [
-            '@codemirror/view',
-            '@codemirror/state',
-            '@codemirror/commands',
-            '@codemirror/language',
-            '@codemirror/autocomplete',
-          ],
-          diff: ['diff'],
+        manualChunks(id) {
+          if (id.includes('@codemirror/')) return 'codemirror';
+          if (id.includes('/diff/')) return 'diff';
         },
       },
     },
