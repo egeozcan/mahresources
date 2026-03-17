@@ -319,6 +319,13 @@ func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {
 			return err
 		}
 
+		// Explicitly clean reverse side of group_related_groups join table
+		// since SQLite FK cascades don't fire in transactions and GORM's
+		// Select("RelatedGroups").Delete() only handles the owning side (group_id).
+		if err := tx.Exec("DELETE FROM group_related_groups WHERE related_group_id = ?", groupId).Error; err != nil {
+			return err
+		}
+
 		return tx.
 			Select("RelatedResources", "RelatedNotes", "RelatedGroups", "Relationships", "BackRelations", "Tags").
 			Delete(&group).Error
