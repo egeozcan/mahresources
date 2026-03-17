@@ -180,6 +180,60 @@ func TestGenerateEvenPositions_BoundaryInsertion(t *testing.T) {
 	}
 }
 
+// TestPositionBetween_PrefixInputs tests that PositionBetween produces correct
+// results when 'before' is a proper prefix of 'after'. This is a valid scenario
+// that can arise when block positions have been manipulated via the reorder API
+// or when repeated insertions squeeze positions together.
+//
+// Some prefix pairs are "solvable" (e.g. "ab"/"abc" — "abn" fits between them),
+// while others are "adjacent" (e.g. "a"/"aa" — there is NO string that sorts
+// strictly between them using 'a'-'z', because any extension of "a" with a
+// second char >= 'a' is already >= "aa"). For adjacent inputs the algorithm
+// returns 'after' itself as the closest possible value (result <= after).
+func TestPositionBetween_PrefixInputs(t *testing.T) {
+	// Solvable cases: there exists a string strictly between before and after.
+	solvable := []struct {
+		name   string
+		before string
+		after  string
+	}{
+		{"ab_abc", "ab", "abc"},
+		{"m_mn", "m", "mn"},
+	}
+	for _, tt := range solvable {
+		t.Run(tt.name, func(t *testing.T) {
+			result := PositionBetween(tt.before, tt.after)
+			assert.True(t, result > tt.before,
+				"result %q should be > before %q", result, tt.before)
+			assert.True(t, result < tt.after,
+				"result %q should be < after %q", result, tt.after)
+		})
+	}
+
+	// Adjacent / impossible cases: before and after are lexicographically
+	// adjacent — no string can sort strictly between them. The algorithm must
+	// still never return a value that sorts AFTER 'after'. Best effort is
+	// result == after.
+	adjacent := []struct {
+		name   string
+		before string
+		after  string
+	}{
+		{"a_aa", "a", "aa"},
+		{"b_ba", "b", "ba"},
+		{"n_na", "n", "na"},
+	}
+	for _, tt := range adjacent {
+		t.Run(tt.name, func(t *testing.T) {
+			result := PositionBetween(tt.before, tt.after)
+			assert.True(t, result > tt.before,
+				"result %q should be > before %q", result, tt.before)
+			assert.True(t, result <= tt.after,
+				"result %q should be <= after %q (adjacent inputs, no strict between exists)", result, tt.after)
+		})
+	}
+}
+
 func TestNeedsRebalancing(t *testing.T) {
 	tests := []struct {
 		name      string

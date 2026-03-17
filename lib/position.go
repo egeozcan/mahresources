@@ -38,6 +38,37 @@ func generateBetween(before, after string) string {
 			nextChar = maxChar + 1
 		}
 
+		// When past the end of 'before', we're already guaranteed > before.
+		// We just need something < after[i:]. If after[i] > minChar, we can
+		// pick a character in [minChar, after[i]). If after[i] == minChar,
+		// there's no room — append minChar and continue deeper.
+		if i >= len(before) && i < len(after) {
+			if after[i] > minChar {
+				midChar := midpoint(minChar, after[i])
+				if midChar >= after[i] {
+					midChar = after[i] - 1
+				}
+				if midChar >= minChar {
+					result = append(result, midChar)
+					return string(result)
+				}
+			}
+			// after[i] == minChar: no room, append 'a' and go deeper
+			result = append(result, minChar)
+			i++
+			continue
+		}
+
+		// When past BOTH strings, we've built a prefix that equals 'after'.
+		// Any extension would be > after. Return what we have (equals after,
+		// which is the closest we can get for adjacent inputs).
+		if i >= len(before) && i >= len(after) {
+			if len(result) == 0 {
+				return string(minChar)
+			}
+			return string(result)
+		}
+
 		if prevChar == nextChar {
 			// Characters are equal, add to result and continue
 			result = append(result, prevChar)
