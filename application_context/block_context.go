@@ -59,6 +59,21 @@ func (ctx *MahresourcesContext) CreateBlock(editor *query_models.NoteBlockEditor
 		return nil, err
 	}
 
+	// Auto-assign position after all existing blocks if none provided
+	if editor.Position == "" {
+		var lastPos string
+		ctx.db.Model(&models.NoteBlock{}).
+			Where("note_id = ?", editor.NoteID).
+			Order("position DESC").
+			Limit(1).
+			Pluck("position", &lastPos)
+		if lastPos == "" {
+			editor.Position = "n" // middle of alphabet for first block
+		} else {
+			editor.Position = lib.PositionBetween(lastPos, "")
+		}
+	}
+
 	block := models.NoteBlock{
 		NoteID:   editor.NoteID,
 		Type:     editor.Type,
