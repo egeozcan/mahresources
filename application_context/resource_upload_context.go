@@ -373,6 +373,30 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		return nil, err
 	}
 
+	if len(resourceQuery.Groups) > 0 {
+		groups := BuildAssociationSlice(resourceQuery.Groups, GroupFromID)
+		if err := tx.Model(&res).Association("Groups").Append(&groups); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+
+	if len(resourceQuery.Notes) > 0 {
+		notes := BuildAssociationSlice(resourceQuery.Notes, NoteFromID)
+		if err := tx.Model(&res).Association("Notes").Append(&notes); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+
+	if len(resourceQuery.Tags) > 0 {
+		tags := BuildAssociationSlice(resourceQuery.Tags, TagFromID)
+		if err := tx.Model(&res).Association("Tags").Append(&tags); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+
 	if resourceQuery.SeriesId != 0 {
 		var series models.Series
 		if err := tx.First(&series, resourceQuery.SeriesId).Error; err != nil {
