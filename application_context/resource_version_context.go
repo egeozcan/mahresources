@@ -461,6 +461,18 @@ func (ctx *MahresourcesContext) CleanupVersions(query *query_models.VersionClean
 		for _, v := range versions {
 			deletedIDs = append(deletedIDs, v.ID)
 		}
+		// Match the actual-deletion behavior: DeleteVersion refuses to
+		// delete the last remaining version for a resource. If deleting
+		// all eligible versions would leave zero, exclude the last one.
+		if len(deletedIDs) > 0 {
+			var totalVersions int64
+			ctx.db.Model(&models.ResourceVersion{}).
+				Where("resource_id = ?", query.ResourceID).
+				Count(&totalVersions)
+			if int64(len(deletedIDs)) >= totalVersions {
+				deletedIDs = deletedIDs[:len(deletedIDs)-1]
+			}
+		}
 		return deletedIDs, nil
 	}
 
