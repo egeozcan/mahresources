@@ -120,9 +120,9 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 			// Merge meta
 			switch altCtx.Config.DbType {
 			case constants.DbTypePosgres:
-				err = altCtx.db.Exec(`UPDATE groups SET meta = coalesce((SELECT meta FROM groups WHERE id = ?), '{}'::jsonb) || meta WHERE id = ?`, loser.ID, winnerId).Error
+				err = altCtx.db.Exec(`UPDATE groups SET meta = coalesce(nullif((SELECT meta FROM groups WHERE id = ?), 'null'::jsonb), '{}'::jsonb) || coalesce(nullif(meta, 'null'::jsonb), '{}'::jsonb) WHERE id = ?`, loser.ID, winnerId).Error
 			case constants.DbTypeSqlite:
-				err = altCtx.db.Exec(`UPDATE groups SET meta = json_patch(coalesce((SELECT meta FROM groups WHERE id = ?), '{}'), meta) WHERE id = ?`, loser.ID, winnerId).Error
+				err = altCtx.db.Exec(`UPDATE groups SET meta = json_patch(coalesce(nullif((SELECT meta FROM groups WHERE id = ?), 'null'), '{}'), coalesce(nullif(meta, 'null'), '{}')) WHERE id = ?`, loser.ID, winnerId).Error
 			default:
 				err = errors.New("db doesn't support merging meta")
 			}
@@ -144,11 +144,11 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 		}
 
 		if ctx.Config.DbType == constants.DbTypePosgres {
-			if err := altCtx.db.Exec("update groups set meta = meta || ? where id = ?", backupsBytes, winner.ID).Error; err != nil {
+			if err := altCtx.db.Exec("update groups set meta = COALESCE(nullif(meta, 'null'::jsonb), '{}'::jsonb) || ? where id = ?", backupsBytes, winner.ID).Error; err != nil {
 				return err
 			}
 		} else if ctx.Config.DbType == constants.DbTypeSqlite {
-			if err := altCtx.db.Exec("update groups set meta = json_patch(meta, ?) where id = ?", backupsBytes, winner.ID).Error; err != nil {
+			if err := altCtx.db.Exec("update groups set meta = json_patch(COALESCE(nullif(meta, 'null'), '{}'), ?) where id = ?", string(backupsBytes), winner.ID).Error; err != nil {
 				return err
 			}
 		}
