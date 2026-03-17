@@ -197,6 +197,26 @@ func (ctx *MahresourcesContext) EditRelationType(query *query_models.Relationshi
 			}
 		}
 
+		// Also clean up back-relation records if this type has a back-relation
+		if relationType.BackRelationId != nil {
+			if query.FromCategory != 0 {
+				// Forward relations with wrong from_group category were deleted.
+				// Their back-relations have those same groups as to_group.
+				if err := tx.Where("relation_type_id = ? AND to_group_id IN (SELECT id FROM groups WHERE category_id IS NULL OR category_id != ?)",
+					*relationType.BackRelationId, query.FromCategory).Delete(&models.GroupRelation{}).Error; err != nil {
+					return err
+				}
+			}
+			if query.ToCategory != 0 {
+				// Forward relations with wrong to_group category were deleted.
+				// Their back-relations have those same groups as from_group.
+				if err := tx.Where("relation_type_id = ? AND from_group_id IN (SELECT id FROM groups WHERE category_id IS NULL OR category_id != ?)",
+					*relationType.BackRelationId, query.ToCategory).Delete(&models.GroupRelation{}).Error; err != nil {
+					return err
+				}
+			}
+		}
+
 		return tx.Save(&relationType).Error
 	})
 
