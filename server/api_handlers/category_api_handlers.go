@@ -83,7 +83,7 @@ func GetRemoveCategoryHandler(ctx interfaces.CategoryDeleter) func(writer http.R
 		// Enable request-aware logging if the context supports it
 		effectiveCtx := withRequestContext(ctx, request).(interfaces.CategoryDeleter)
 
-		id := http_utils.GetUIntQueryParameter(request, "Id", 0)
+		id := getEntityID(request)
 
 		if id == 0 {
 			http_utils.HandleError(errors.New("category id is needed"), writer, request, http.StatusBadRequest)
@@ -102,5 +102,32 @@ func GetRemoveCategoryHandler(ctx interfaces.CategoryDeleter) func(writer http.R
 
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(&models.Category{ID: id})
+	}
+}
+
+func GetRemoveResourceCategoryHandler(ctx interfaces.ResourceCategoryDeleter) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		// Enable request-aware logging if the context supports it
+		effectiveCtx := withRequestContext(ctx, request).(interfaces.ResourceCategoryDeleter)
+
+		id := getEntityID(request)
+
+		if id == 0 {
+			http_utils.HandleError(errors.New("resource category id is needed"), writer, request, http.StatusBadRequest)
+			return
+		}
+
+		err := effectiveCtx.DeleteResourceCategory(id)
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/resourceCategories") {
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(&models.ResourceCategory{ID: id})
 	}
 }

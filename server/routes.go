@@ -309,7 +309,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	categoryFactory := api_handlers.NewCRUDHandlerFactory("category", "categories", categoryReader, categoryWriter)
 	router.Methods(http.MethodGet).Path("/v1/categories").HandlerFunc(categoryFactory.ListHandler())
 	router.Methods(http.MethodPost).Path("/v1/category").HandlerFunc(api_handlers.CreateCategoryHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/category/delete").HandlerFunc(categoryFactory.DeleteHandler())
+	router.Methods(http.MethodPost).Path("/v1/category/delete").HandlerFunc(api_handlers.GetRemoveCategoryHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/category/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Category](basicCategoryWriter, "category"))
 	router.Methods(http.MethodPost).Path("/v1/category/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.Category](basicCategoryWriter, "category"))
 
@@ -319,7 +319,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	basicResourceCategoryWriter := application_context.NewEntityWriter[models.ResourceCategory](appContext)
 	router.Methods(http.MethodGet).Path("/v1/resourceCategories").HandlerFunc(resourceCategoryFactory.ListHandler())
 	router.Methods(http.MethodPost).Path("/v1/resourceCategory").HandlerFunc(api_handlers.CreateResourceCategoryHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/resourceCategory/delete").HandlerFunc(resourceCategoryFactory.DeleteHandler())
+	router.Methods(http.MethodPost).Path("/v1/resourceCategory/delete").HandlerFunc(api_handlers.GetRemoveResourceCategoryHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resourceCategory/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.ResourceCategory](basicResourceCategoryWriter, "resourceCategory"))
 	router.Methods(http.MethodPost).Path("/v1/resourceCategory/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.ResourceCategory](basicResourceCategoryWriter, "resourceCategory"))
 
