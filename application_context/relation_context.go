@@ -183,6 +183,20 @@ func (ctx *MahresourcesContext) EditRelationType(query *query_models.Relationshi
 			relationType.ToCategoryId = &query.ToCategory
 		}
 
+		// Delete GroupRelation records whose groups no longer match the updated category constraints
+		if query.FromCategory != 0 {
+			if err := tx.Where("relation_type_id = ? AND from_group_id IN (SELECT id FROM groups WHERE category_id IS NULL OR category_id != ?)",
+				relationType.ID, query.FromCategory).Delete(&models.GroupRelation{}).Error; err != nil {
+				return err
+			}
+		}
+		if query.ToCategory != 0 {
+			if err := tx.Where("relation_type_id = ? AND to_group_id IN (SELECT id FROM groups WHERE category_id IS NULL OR category_id != ?)",
+				relationType.ID, query.ToCategory).Delete(&models.GroupRelation{}).Error; err != nil {
+				return err
+			}
+		}
+
 		return tx.Save(&relationType).Error
 	})
 
