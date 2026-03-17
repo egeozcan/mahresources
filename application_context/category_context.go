@@ -172,6 +172,33 @@ func (ctx *MahresourcesContext) DeleteCategory(categoryId uint) error {
 		return err
 	}
 
+	// Cascade-delete GroupRelationType records that reference this category
+	// (FromCategoryId or ToCategoryId). SQLite FK cascades don't fire reliably.
+	var relTypeIDs []uint
+	if err := ctx.db.Model(&models.GroupRelationType{}).
+		Where("from_category_id = ? OR to_category_id = ?", categoryId, categoryId).
+		Pluck("id", &relTypeIDs).Error; err != nil {
+		return err
+	}
+	if len(relTypeIDs) > 0 {
+		// Delete GroupRelation records whose RelationTypeId references these types
+		if err := ctx.db.Where("relation_type_id IN ?", relTypeIDs).
+			Delete(&models.GroupRelation{}).Error; err != nil {
+			return err
+		}
+		// Clear BackRelationId on any GroupRelationType that points to one of these
+		if err := ctx.db.Model(&models.GroupRelationType{}).
+			Where("back_relation_id IN ?", relTypeIDs).
+			Update("back_relation_id", nil).Error; err != nil {
+			return err
+		}
+		// Delete the GroupRelationType records themselves
+		if err := ctx.db.Where("id IN ?", relTypeIDs).
+			Delete(&models.GroupRelationType{}).Error; err != nil {
+			return err
+		}
+	}
+
 	err := ctx.db.Delete(&category).Error
 	if err == nil {
 		ctx.Logger().Info(models.LogActionDelete, "category", &categoryId, categoryName, "Deleted category", nil)
