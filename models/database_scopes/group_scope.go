@@ -84,22 +84,20 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 		}
 
 		if len(query.Groups) > 0 {
-			dbQuery = dbQuery.Where(
-				`(
-					(
-						SELECT
-							Count(*)
-						FROM
-							group_related_groups grg
-						WHERE
-							grg.related_group_id = groups.id
-							AND grg.group_id IN ?
-					) = ?
-					OR groups.owner_id IN ?
+			dbQuery = dbQuery.Where(`
+				groups.id IN (
+					WITH cte AS (
+					  SELECT grg.related_group_id AS grp_id, grg.group_id AS src_group
+					  FROM group_related_groups grg
+					  WHERE grg.group_id IN ?
+					  UNION ALL
+					  SELECT id AS grp_id, owner_id AS src_group FROM groups WHERE owner_id IN ?
+					)
+					SELECT grp_id FROM cte GROUP BY grp_id HAVING count(DISTINCT src_group) = ?
 				)`,
 				query.Groups,
-				len(query.Groups),
 				query.Groups,
+				len(query.Groups),
 			)
 		}
 
