@@ -306,5 +306,34 @@ func (ctx *MahresourcesContext) DuplicateGroup(id uint) (*models.Group, error) {
 		CategoryId:       original.CategoryId,
 	}
 
-	return result, ctx.db.Save(result).Error
+	if err := ctx.db.Save(result).Error; err != nil {
+		return nil, err
+	}
+
+	// Copy outgoing relationships (original is FromGroup)
+	for _, rel := range original.Relationships {
+		newRel := models.GroupRelation{
+			FromGroupId:    &result.ID,
+			ToGroupId:      rel.ToGroupId,
+			RelationTypeId: rel.RelationTypeId,
+			Name:           rel.Name,
+			Description:    rel.Description,
+		}
+		// Ignore conflicts (unique index on from_group_id, to_group_id, relation_type_id)
+		ctx.db.Create(&newRel)
+	}
+
+	// Copy incoming relationships (original is ToGroup)
+	for _, rel := range original.BackRelations {
+		newRel := models.GroupRelation{
+			FromGroupId:    rel.FromGroupId,
+			ToGroupId:      &result.ID,
+			RelationTypeId: rel.RelationTypeId,
+			Name:           rel.Name,
+			Description:    rel.Description,
+		}
+		ctx.db.Create(&newRel)
+	}
+
+	return result, nil
 }
