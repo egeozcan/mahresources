@@ -67,6 +67,28 @@ func (ctx *MahresourcesContext) MergeTags(winnerId uint, loserIds []uint) error 
 			return err
 		}
 
+		// Merge each loser's meta into winner (winner keys take precedence on conflict)
+		for _, loser := range losers {
+			switch altCtx.Config.DbType {
+			case constants.DbTypePosgres:
+				if err := altCtx.db.Exec(
+					`UPDATE tags SET meta = coalesce((SELECT meta FROM tags WHERE id = ?), '{}'::jsonb) || meta WHERE id = ?`,
+					loser.ID, winnerId,
+				).Error; err != nil {
+					return err
+				}
+			case constants.DbTypeSqlite:
+				if err := altCtx.db.Exec(
+					`UPDATE tags SET meta = json_patch(coalesce((SELECT meta FROM tags WHERE id = ?), '{}'), meta) WHERE id = ?`,
+					loser.ID, winnerId,
+				).Error; err != nil {
+					return err
+				}
+			default:
+				return errors.New("db doesn't support merging meta")
+			}
+		}
+
 		// Build backup data
 		backups := make(map[string]types.JSON)
 		for _, loser := range losers {
