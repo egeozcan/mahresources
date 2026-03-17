@@ -189,6 +189,46 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 		return nil, err
 	}
 
+	// Clean up GroupRelation records that become invalid after category change.
+	// A relation is invalid if the group's new category doesn't match what
+	// the relation type requires for that position (from or to).
+	newCategoryId := groupQuery.CategoryId
+	if newCategoryId == 0 {
+		// Category cleared: delete all relations where this group occupies a position
+		// that has a non-NULL category constraint on the relation type.
+		if err := tx.Where(
+			"from_group_id = ? AND relation_type_id IN (SELECT id FROM group_relation_types WHERE from_category_id IS NOT NULL)",
+			group.ID,
+		).Delete(&models.GroupRelation{}).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		if err := tx.Where(
+			"to_group_id = ? AND relation_type_id IN (SELECT id FROM group_relation_types WHERE to_category_id IS NOT NULL)",
+			group.ID,
+		).Delete(&models.GroupRelation{}).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	} else {
+		// Category changed to a specific value: delete relations where the relation
+		// type's category constraint for this group's position doesn't match.
+		if err := tx.Where(
+			"from_group_id = ? AND relation_type_id IN (SELECT id FROM group_relation_types WHERE from_category_id IS NOT NULL AND from_category_id != ?)",
+			group.ID, newCategoryId,
+		).Delete(&models.GroupRelation{}).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		if err := tx.Where(
+			"to_group_id = ? AND relation_type_id IN (SELECT id FROM group_relation_types WHERE to_category_id IS NOT NULL AND to_category_id != ?)",
+			group.ID, newCategoryId,
+		).Delete(&models.GroupRelation{}).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+
 	if err := tx.Model(group).Association("Tags").Replace(tags); err != nil {
 		tx.Rollback()
 		return nil, err
