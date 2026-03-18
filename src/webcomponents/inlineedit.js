@@ -136,6 +136,10 @@ class InlineEdit extends HTMLElement {
                 resize: this.multiline ? 'vertical' : 'none',
             });
 
+            this.inputElement.addEventListener('click', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+            });
             this.inputElement.addEventListener('blur', () => this.exitEditMode());
             this.inputElement.addEventListener('keydown', (e) => {
                 if (e.key === 'Escape') {
