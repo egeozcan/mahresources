@@ -205,7 +205,7 @@ func (ctx *MahresourcesContext) DeleteBlock(blockID uint) error {
 	isText := block.Type == "text"
 
 	// Use transaction to ensure atomicity of deletion and description sync
-	return ctx.db.Transaction(func(tx *gorm.DB) error {
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Delete(&block).Error; err != nil {
 			return err
 		}
@@ -218,6 +218,20 @@ func (ctx *MahresourcesContext) DeleteBlock(blockID uint) error {
 		}
 		return nil
 	})
+
+	if err != nil {
+		return err
+	}
+
+	// Sync mention relations after block deletion
+	if isText {
+		var note models.Note
+		if e := ctx.db.First(&note, noteID).Error; e == nil {
+			ctx.syncMentionsForNote(&note)
+		}
+	}
+
+	return nil
 }
 
 // ReorderBlocks updates positions for multiple blocks in a single transaction
