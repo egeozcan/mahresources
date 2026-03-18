@@ -105,7 +105,7 @@ class InlineEdit extends HTMLElement {
         this.multiline = this.hasAttribute('multiline');
         this.postUrl = this.getAttribute('post');
         this.name = this.getAttribute('name') || 'value';
-        this.label = this.getAttribute('label') || 'Edit value';
+        this.label = this.getAttribute('label') || this.name || 'value';
 
         // Update edit button aria-label
         if (this.editButton) {
