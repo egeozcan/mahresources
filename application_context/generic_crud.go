@@ -133,6 +133,8 @@ func (w *CRUDWriter[T, C]) Create(creator C) (*T, error) {
 // Delete removes an entity by ID, including its associations.
 func (w *CRUDWriter[T, C]) Delete(id uint) error {
 	var entity T
-	// Use reflection to set ID - all our entities have an ID field
-	return w.db.Select(clause.Associations).Delete(&entity, id).Error
+	if err := w.db.First(&entity, id).Error; err != nil {
+		return err
+	}
+	return w.db.Select(clause.Associations).Delete(&entity).Error
 }
