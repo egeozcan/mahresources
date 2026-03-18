@@ -92,10 +92,14 @@ func GetAddRelationHandler(ctx interfaces.RelationshipWriter) func(writer http.R
 		}
 
 		if err != nil {
-			// For HTML requests, redirect back to the form with error
-			// For API requests (Accept: application/json), return error as JSON
+			// Detect API clients by Accept header OR Content-Type header
 			accepts := request.Header.Get("Accept")
-			if accepts == "" || (accepts != "application/json" && !strings.Contains(accepts, "application/json")) {
+			contentType := request.Header.Get("Content-Type")
+			isAPIRequest := strings.Contains(accepts, "application/json") ||
+				strings.HasPrefix(contentType, "application/json")
+
+			if !isAPIRequest {
+				// For HTML requests, redirect back to the form with error
 				backUrl := fmt.Sprintf(
 					"/relation/new?FromGroupId=%v&ToGroupId=%v&GroupRelationTypeId=%v&Error=%v",
 					editor.FromGroupId, editor.ToGroupId, editor.GroupRelationTypeId,
