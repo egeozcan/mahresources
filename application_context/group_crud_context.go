@@ -188,14 +188,17 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 			tx.Rollback()
 			return nil, errors.New("a group cannot be its own owner")
 		}
-		// Walk up the proposed owner's ancestry to detect cycles.
-		// If we encounter groupQuery.ID in the chain, setting this
-		// owner would create a cycle.
+		// Verify the proposed owner exists, then walk up its ancestry to detect cycles.
 		currentAncestor := groupQuery.OwnerId
 		for i := 0; i < 100; i++ { // depth limit to prevent infinite loops
 			var ancestor models.Group
 			if err := tx.Select("id", "owner_id").First(&ancestor, currentAncestor).Error; err != nil {
-				break // ancestor not found, no cycle
+				if i == 0 {
+					// First iteration: the proposed owner itself doesn't exist
+					tx.Rollback()
+					return nil, errors.New("owner group not found")
+				}
+				break // further ancestor not found, no cycle
 			}
 			if ancestor.OwnerId == nil {
 				break // reached a root group, no cycle
