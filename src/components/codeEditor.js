@@ -1,13 +1,7 @@
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from '@codemirror/view';
-import { EditorState, Compartment } from '@codemirror/state';
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
-import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, indentOnInput } from '@codemirror/language';
-import { autocompletion, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
-
 export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '' } = {}) {
   return {
     view: null,
-    langCompartment: new Compartment(),
+    langCompartment: null,
 
     async init() {
       const hiddenInput = this.$refs.hiddenInput;
@@ -15,6 +9,23 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '' } = {})
       const initialValue = hiddenInput.value || '';
       const fieldName = hiddenInput.getAttribute('name') || '';
       const ariaLabel = label || fieldName;
+
+      // Lazy-load CodeMirror core modules
+      const [
+        { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection },
+        { EditorState, Compartment },
+        { defaultKeymap, history, historyKeymap, indentWithTab },
+        { syntaxHighlighting, defaultHighlightStyle, bracketMatching, indentOnInput },
+        { autocompletion, closeBrackets, closeBracketsKeymap },
+      ] = await Promise.all([
+        import('@codemirror/view'),
+        import('@codemirror/state'),
+        import('@codemirror/commands'),
+        import('@codemirror/language'),
+        import('@codemirror/autocomplete'),
+      ]);
+
+      this.langCompartment = new Compartment();
 
       // Start with an empty language compartment — will be filled async
       const extensions = [

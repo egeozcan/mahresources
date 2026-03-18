@@ -14,7 +14,7 @@ test.describe('NoteType CRUD Operations', () => {
   test('should display the created note type', async ({ noteTypePage, page }) => {
     expect(createdNoteTypeId, 'NoteType must be created first').toBeGreaterThan(0);
     await noteTypePage.gotoDisplay(createdNoteTypeId);
-    await expect(page.locator('h1, .title')).toContainText('E2E Meeting Notes');
+    await expect(page.locator('h1')).toContainText('E2E Meeting Notes');
   });
 
   test('should update the note type', async ({ noteTypePage, page }) => {
@@ -23,7 +23,7 @@ test.describe('NoteType CRUD Operations', () => {
       name: 'Updated Meeting Notes',
       description: 'Updated description for meetings',
     });
-    await expect(page.locator('h1, .title')).toContainText('Updated Meeting Notes');
+    await expect(page.locator('h1')).toContainText('Updated Meeting Notes');
   });
 
   test('should list the note type', async ({ noteTypePage }) => {

@@ -14,7 +14,6 @@ export default defineConfig({
         chunkFileNames: 'assets/[name]-[hash].js',
         assetFileNames: 'assets/[name]-[hash][extname]',
         manualChunks(id) {
-          if (id.includes('@codemirror/')) return 'codemirror';
           if (id.includes('/diff/')) return 'diff';
         },
       },

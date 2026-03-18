@@ -14,7 +14,7 @@ test.describe('Query CRUD Operations', () => {
   test('should display the created query', async ({ queryPage, page }) => {
     expect(createdQueryId, 'Query must be created first').toBeGreaterThan(0);
     await queryPage.gotoDisplay(createdQueryId);
-    await expect(page.locator('h1, .title')).toContainText('E2E Test Query');
+    await expect(page.locator('h1')).toContainText('E2E Test Query');
     await expect(page.locator('text=SELECT * FROM tags LIMIT 10')).toBeVisible();
   });
 
@@ -24,7 +24,7 @@ test.describe('Query CRUD Operations', () => {
       name: 'Updated E2E Query',
       text: 'SELECT * FROM categories LIMIT 5',
     });
-    await expect(page.locator('h1, .title')).toContainText('Updated E2E Query');
+    await expect(page.locator('h1')).toContainText('Updated E2E Query');
   });
 
   test('should list the query', async ({ queryPage }) => {

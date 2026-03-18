@@ -30,7 +30,7 @@ test.describe('RelationType CRUD Operations', () => {
   test('should display the created relation type', async ({ relationTypePage, page }) => {
     expect(createdRelationTypeId, 'RelationType must be created first').toBeGreaterThan(0);
     await relationTypePage.gotoDisplay(createdRelationTypeId);
-    await expect(page.locator('h1, .title')).toContainText(`Works At ${testRunId}`);
+    await expect(page.locator('h1')).toContainText(`Works At ${testRunId}`);
   });
 
   test('should update the relation type', async ({ relationTypePage, page }) => {
@@ -39,7 +39,7 @@ test.describe('RelationType CRUD Operations', () => {
       name: `Employed By ${testRunId}`,
       description: 'Updated employment relationship',
     });
-    await expect(page.locator('h1, .title')).toContainText(`Employed By ${testRunId}`);
+    await expect(page.locator('h1')).toContainText(`Employed By ${testRunId}`);
   });
 
   test('should list the relation type', async ({ relationTypePage }) => {

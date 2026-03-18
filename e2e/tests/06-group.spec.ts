@@ -39,7 +39,7 @@ test.describe.serial('Group CRUD Operations', () => {
     await groupPage.gotoDisplay(createdGroupId);
 
     // Verify basic info
-    await expect(page.locator('h1, .title')).toContainText('E2E Test Group');
+    await expect(page.locator('h1')).toContainText('E2E Test Group');
 
     // Verify tag is shown
     await groupPage.verifyHasTag('Group Test Tag');
@@ -54,7 +54,7 @@ test.describe.serial('Group CRUD Operations', () => {
       description: 'Updated group description',
       url: 'https://updated-example.com',
     });
-    await expect(page.locator('h1, .title')).toContainText('Updated E2E Group');
+    await expect(page.locator('h1')).toContainText('Updated E2E Group');
   });
 
   test('should list the group', async ({ groupPage }) => {

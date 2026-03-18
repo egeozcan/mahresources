@@ -11,7 +11,7 @@ test.describe.serial('Tag CRUD Operations', () => {
   test('should display the created tag', async ({ tagPage, page }) => {
     expect(createdTagId, 'Tag must be created first').toBeGreaterThan(0);
     await tagPage.gotoDisplay(createdTagId);
-    await expect(page.locator('h1, .title')).toContainText('E2E Test Tag');
+    await expect(page.locator('h1')).toContainText('E2E Test Tag');
     await expect(page.locator('text=Created by E2E tests')).toBeVisible();
   });
 
@@ -21,7 +21,7 @@ test.describe.serial('Tag CRUD Operations', () => {
       name: 'Updated E2E Tag',
       description: 'Updated description',
     });
-    await expect(page.locator('h1, .title')).toContainText('Updated E2E Tag');
+    await expect(page.locator('h1')).toContainText('Updated E2E Tag');
   });
 
   test('should list the tag on tags page', async ({ tagPage }) => {

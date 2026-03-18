@@ -43,7 +43,7 @@ test.describe('Note CRUD Operations', () => {
     await notePage.gotoDisplay(createdNoteId);
 
     // Verify basic info
-    await expect(page.locator('h1, .title')).toContainText('E2E Test Note');
+    await expect(page.locator('h1')).toContainText('E2E Test Note');
 
     // Verify tag is shown
     await notePage.verifyHasTag('Note Test Tag');
@@ -57,7 +57,7 @@ test.describe('Note CRUD Operations', () => {
       name: 'Updated E2E Note',
       description: 'Updated note content',
     });
-    await expect(page.locator('h1, .title')).toContainText('Updated E2E Note');
+    await expect(page.locator('h1')).toContainText('Updated E2E Note');
   });
 
   test('should list the note', async ({ notePage }) => {

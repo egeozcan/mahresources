@@ -348,6 +348,9 @@
   .end {
     inset-inline-end: var(--spacing);
   }
+  .end\! {
+    inset-inline-end: var(--spacing) !important;
+  }
   .top-0 {
     top: calc(var(--spacing) * 0);
   }
@@ -451,6 +454,24 @@
     }
     @media (width >= 96rem) {
       max-width: 96rem;
+    }
+  }
+  .container\! {
+    width: 100% !important;
+    @media (width >= 40rem) {
+      max-width: 40rem !important;
+    }
+    @media (width >= 48rem) {
+      max-width: 48rem !important;
+    }
+    @media (width >= 64rem) {
+      max-width: 64rem !important;
+    }
+    @media (width >= 80rem) {
+      max-width: 80rem !important;
+    }
+    @media (width >= 96rem) {
+      max-width: 96rem !important;
     }
   }
   .m-0 {

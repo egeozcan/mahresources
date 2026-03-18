@@ -14,7 +14,7 @@ test.describe.serial('Category CRUD Operations', () => {
   test('should display the created category', async ({ categoryPage, page }) => {
     expect(createdCategoryId, 'Category must be created first').toBeGreaterThan(0);
     await categoryPage.gotoDisplay(createdCategoryId);
-    await expect(page.locator('h1, .title')).toContainText('E2E Test Category');
+    await expect(page.locator('h1')).toContainText('E2E Test Category');
   });
 
   test('should update the category', async ({ categoryPage, page }) => {
@@ -23,7 +23,7 @@ test.describe.serial('Category CRUD Operations', () => {
       name: 'Updated E2E Category',
       description: 'Updated category description',
     });
-    await expect(page.locator('h1, .title')).toContainText('Updated E2E Category');
+    await expect(page.locator('h1')).toContainText('Updated E2E Category');
   });
 
   test('should list the category', async ({ categoryPage }) => {

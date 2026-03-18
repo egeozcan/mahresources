@@ -113,7 +113,7 @@ test.describe.serial('Resource CRUD Operations', () => {
     // Check that we're on the resource display page by verifying the URL contains the resource ID
     await expect(page).toHaveURL(new RegExp(`/resource\\?id=${createdResourceId}`));
     // Verify the resource heading is visible (contains "Resource" prefix)
-    await expect(page.locator('h2:has-text("Resource")').first()).toBeVisible();
+    await expect(page.locator('h1')).toContainText('E2E Test Image');
   });
 
   test('should update the resource', async ({ resourcePage, page }) => {
