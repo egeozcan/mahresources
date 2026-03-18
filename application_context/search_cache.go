@@ -114,7 +114,7 @@ func (c *SearchCache) InvalidateByType(entityType string) {
 
 	for elem := c.lruList.Front(); elem != nil; elem = elem.Next() {
 		entry := elem.Value.(*searchCacheEntry)
-		if entry.types[entityType] {
+		if len(entry.types) == 0 || entry.types[entityType] {
 			toRemove = append(toRemove, elem)
 		}
 	}
