@@ -33,7 +33,7 @@
         <form
             x-data="confirmAction({ message: `Selected tags will be deleted and merged to {{ tag.Name|json }}. Are you sure?` })"
             action="/v1/tags/merge"
-            :action="'/v1/tags/merge?redirect=' + encodeURIComponent(window.location)"
+            :action="'/v1/tags/merge?redirect=' + encodeURIComponent(window.location.pathname + window.location.search)"
             method="post"
             x-bind="events"
         >

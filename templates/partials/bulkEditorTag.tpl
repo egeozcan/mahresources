@@ -7,7 +7,7 @@
     <form
         class="px-4"
         method="post"
-        :action="'/v1/tags/merge?redirect=' + encodeURIComponent(window.location)"
+        :action="'/v1/tags/merge?redirect=' + encodeURIComponent(window.location.pathname + window.location.search)"
         x-data="confirmAction('Selected tags will be merged. Are you sure?')"
         x-bind="events"
     >
@@ -22,7 +22,7 @@
     <form
         class="px-4 no-ajax"
         method="post"
-        :action="'/v1/tags/delete?redirect=' + encodeURIComponent(window.location)"
+        :action="'/v1/tags/delete?redirect=' + encodeURIComponent(window.location.pathname + window.location.search)"
         x-data="confirmAction('Are you sure you want to delete the selected tags?')"
         x-bind="events"
     >

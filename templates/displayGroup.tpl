@@ -69,7 +69,7 @@
         <form
             x-data="confirmAction({ message: `Selected groups will be deleted and merged to {{ group.Name|json }}. Are you sure?` })"
             action="/v1/groups/merge"
-            :action="'/v1/groups/merge?redirect=' + encodeURIComponent(window.location)"
+            :action="'/v1/groups/merge?redirect=' + encodeURIComponent(window.location.pathname + window.location.search)"
             method="post"
             x-bind="events"
         >
@@ -84,7 +84,7 @@
         <form
             x-data="confirmAction({ message: 'Clone this group and all its associations?' })"
             action="/v1/group/clone"
-            :action="'/v1/group/clone?redirect=' + encodeURIComponent(window.location)"
+            :action="'/v1/group/clone?redirect=' + encodeURIComponent(window.location.pathname + window.location.search)"
             method="post"
             x-bind="events"
         >

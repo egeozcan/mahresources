@@ -187,7 +187,7 @@
         <form
             x-data="confirmAction({ message: 'All the similar resources will be deleted. Are you sure?' })"
             action="/v1/resources/merge"
-            method="post" :action="'/v1/resources/merge?redirect=' + encodeURIComponent(window.location)"
+            method="post" :action="'/v1/resources/merge?redirect=' + encodeURIComponent(window.location.pathname + window.location.search)"
             x-bind="events"
         >
             <input type="hidden" name="winner" value="{{ resource.ID }}">
