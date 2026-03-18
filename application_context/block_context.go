@@ -26,6 +26,12 @@ const maxICSFileSize = 10 * 1024 * 1024
 
 // CreateBlock creates a new block in a note
 func (ctx *MahresourcesContext) CreateBlock(editor *query_models.NoteBlockEditor) (*models.NoteBlock, error) {
+	// Validate note exists
+	var noteCheck models.Note
+	if err := ctx.db.Select("id").First(&noteCheck, editor.NoteID).Error; err != nil {
+		return nil, fmt.Errorf("note %d not found: %w", editor.NoteID, err)
+	}
+
 	// Validate block type
 	bt := block_types.GetBlockType(editor.Type)
 	if bt == nil {
