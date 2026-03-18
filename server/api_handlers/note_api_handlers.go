@@ -3,6 +3,7 @@ package api_handlers
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -200,9 +201,44 @@ func GetAddNoteTypeHandler(ctx interfaces.NoteTypeWriter) func(writer http.Respo
 
 		var editor = query_models.NoteTypeEditor{}
 
-		if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
-			return
+		if strings.HasPrefix(request.Header.Get("Content-type"), constants.JSON) {
+			bodyBytes, readErr := io.ReadAll(request.Body)
+			if readErr != nil {
+				http_utils.HandleError(readErr, writer, request, http.StatusBadRequest)
+				return
+			}
+			if err := json.Unmarshal(bodyBytes, &editor); err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+				return
+			}
+			// For JSON partial updates, pre-fill absent fields from existing entity
+			if editor.ID != 0 {
+				var raw map[string]json.RawMessage
+				_ = json.Unmarshal(bodyBytes, &raw)
+				existing, getErr := effectiveCtx.GetNoteType(editor.ID)
+				if getErr == nil {
+					if _, sent := raw["Description"]; !sent {
+						editor.Description = existing.Description
+					}
+					if _, sent := raw["CustomHeader"]; !sent {
+						editor.CustomHeader = existing.CustomHeader
+					}
+					if _, sent := raw["CustomSidebar"]; !sent {
+						editor.CustomSidebar = existing.CustomSidebar
+					}
+					if _, sent := raw["CustomSummary"]; !sent {
+						editor.CustomSummary = existing.CustomSummary
+					}
+					if _, sent := raw["CustomAvatar"]; !sent {
+						editor.CustomAvatar = existing.CustomAvatar
+					}
+				}
+			}
+		} else {
+			if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+				return
+			}
 		}
 
 		noteType, err := effectiveCtx.CreateOrUpdateNoteType(&editor)

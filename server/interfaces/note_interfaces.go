@@ -30,6 +30,7 @@ type NoteDeleter interface {
 
 type NoteTypeWriter interface {
 	CreateOrUpdateNoteType(query *query_models.NoteTypeEditor) (*models.NoteType, error)
+	GetNoteType(id uint) (*models.NoteType, error)
 }
 
 type NoteTypeDeleter interface {
