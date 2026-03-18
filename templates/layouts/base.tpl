@@ -38,7 +38,7 @@
         <div class="flex items-center gap-1 flex-shrink-0">
             {% include "/partials/globalSearch.tpl" %}
             <div x-cloak x-data="{ active: false }" class="settings relative">
-                <button class="p-1 text-lg" @click="active = !active" @click.outside="setTimeout(() => active = false, 100)" title="Settings" aria-label="Settings"><span aria-hidden="true">⚙</span></button>
+                <button class="p-1 text-lg" @click="active = !active" @click.outside="setTimeout(() => active = false, 100)" title="Settings" aria-label="Settings" :aria-expanded="active.toString()" aria-haspopup="true"><span aria-hidden="true">⚙</span></button>
                 <div x-show="active" x-cloak class="absolute right-0 top-full mt-1 w-48 bg-white shadow-lg ring-1 ring-black/5 z-50 p-3 rounded">
                     <label class="flex justify-between items-center text-sm font-mono">
                         Show Descriptions

@@ -23,7 +23,9 @@
         <div class="navbar-dropdown" @click.outside="adminOpen = false">
             <button @click="adminOpen = !adminOpen"
                     class="navbar-link navbar-link--dropdown"
-                    :class="{ 'navbar-link--active': adminOpen {% for adminEntry in adminMenu %}|| '{{ adminEntry.Url }}' == currentPath{% endfor %} }">
+                    :class="{ 'navbar-link--active': adminOpen {% for adminEntry in adminMenu %}|| '{{ adminEntry.Url }}' == currentPath{% endfor %} }"
+                    :aria-expanded="adminOpen.toString()"
+                    aria-haspopup="true">
                 <span>Admin</span>
                 <svg class="navbar-dropdown-arrow" :class="{ 'rotate-180': adminOpen }" width="10" height="10" viewBox="0 0 10 10" fill="none">
                     <path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -52,7 +54,9 @@
         <div class="navbar-dropdown" @click.outside="pluginsOpen = false">
             <button @click="pluginsOpen = !pluginsOpen"
                     class="navbar-link navbar-link--dropdown"
-                    :class="{ 'navbar-link--active': pluginsOpen || '/plugins/manage' == currentPath {% for pi in pluginMenuItems %}|| '{{ pi.FullPath }}' == currentPath{% endfor %} }">
+                    :class="{ 'navbar-link--active': pluginsOpen || '/plugins/manage' == currentPath {% for pi in pluginMenuItems %}|| '{{ pi.FullPath }}' == currentPath{% endfor %} }"
+                    :aria-expanded="pluginsOpen.toString()"
+                    aria-haspopup="true">
                 <span>Plugins</span>
                 <svg class="navbar-dropdown-arrow" :class="{ 'rotate-180': pluginsOpen }" width="10" height="10" viewBox="0 0 10 10" fill="none">
                     <path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
