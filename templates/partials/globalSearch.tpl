@@ -31,6 +31,9 @@
                 <div
                     class="relative bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden ring-1 ring-black/5"
                     @click.stop
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="Search"
                 >
                     <div class="flex items-center gap-3 px-4 py-3 border-b border-stone-100">
                         <svg class="w-5 h-5 text-stone-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
