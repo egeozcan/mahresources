@@ -311,6 +311,16 @@ func (ctx *MahresourcesContext) DeleteRelationshipType(relationshipTypeId uint) 
 	}
 	relationTypeName := relationType.Name
 
+	// Delete GroupRelation records of the back-relation type (orphaned mirrors
+	// whose forward relations will be deleted). Must happen before clearing
+	// BackRelationId so we still know which type to clean up.
+	if relationType.BackRelationId != nil && *relationType.BackRelationId != relationshipTypeId {
+		if err := ctx.db.Where("relation_type_id = ?", *relationType.BackRelationId).
+			Delete(&models.GroupRelation{}).Error; err != nil {
+			return err
+		}
+	}
+
 	// Clear BackRelationId on any relation type that references this one,
 	// since SQLite FK constraints (OnDelete:SET NULL) don't fire reliably.
 	if err := ctx.db.Model(&models.GroupRelationType{}).
