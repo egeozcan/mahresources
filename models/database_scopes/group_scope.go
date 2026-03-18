@@ -22,6 +22,7 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 		}
 
 		if len(query.Tags) > 0 {
+			tags := deduplicateUints(query.Tags)
 			// Build group_id match conditions using subqueries (no JOINs needed)
 			groupIDConditions := []string{"gt.group_id = groups.id"}
 
@@ -37,13 +38,14 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 			subSelect := originalDB.
 				Table("group_tags gt").
 				Select("count(distinct tag_id)").
-				Where("gt.tag_id IN ?", query.Tags).
+				Where("gt.tag_id IN ?", tags).
 				Where(strings.Join(groupIDConditions, " OR "))
 
-			dbQuery = dbQuery.Where("(?) = ?", subSelect, len(query.Tags))
+			dbQuery = dbQuery.Where("(?) = ?", subSelect, len(tags))
 		}
 
 		if len(query.Notes) > 0 {
+			notes := deduplicateUints(query.Notes)
 			justRelatedNotesSubQuery := originalDB.
 				Table("notes n").
 				Select("count(*)").
@@ -51,19 +53,20 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 				// filter out the ones of which the group is the owner
 				// prevents counting 2 times when we are both related AND the owner
 				Where("(n.owner_id IS NULL OR n.owner_id <> grn.group_id)").
-				Where("n.id IN ?", query.Notes).
+				Where("n.id IN ?", notes).
 				Where("grn.group_id = groups.id")
 
 			justOwnedNotesSubquery := originalDB.
 				Table("notes n").
 				Select("count(*)").
-				Where("n.id IN ?", query.Notes).
+				Where("n.id IN ?", notes).
 				Where("n.owner_id = groups.id")
 
-			dbQuery = dbQuery.Where("(?) + (?) = ?", justRelatedNotesSubQuery, justOwnedNotesSubquery, len(query.Notes))
+			dbQuery = dbQuery.Where("(?) + (?) = ?", justRelatedNotesSubQuery, justOwnedNotesSubquery, len(notes))
 		}
 
 		if len(query.Resources) > 0 {
+			resources := deduplicateUints(query.Resources)
 			justRelatedResourcesQuery := originalDB.
 				Table("resources r").
 				Select("count(*)").
@@ -72,18 +75,19 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 				// prevents counting 2 times when we are both related AND the owner
 				Where("(r.owner_id IS NULL OR grr.group_id <> r.owner_id)").
 				Where("grr.group_id = groups.id").
-				Where("r.id IN ?", query.Resources)
+				Where("r.id IN ?", resources)
 
 			justOwnedResourcesQuery := originalDB.
 				Table("resources r").
 				Select("count(*)").
 				Where("r.owner_id = groups.id").
-				Where("r.id IN ?", query.Resources)
+				Where("r.id IN ?", resources)
 
-			dbQuery = dbQuery.Where("(?) + (?) = ?", justRelatedResourcesQuery, justOwnedResourcesQuery, len(query.Resources))
+			dbQuery = dbQuery.Where("(?) + (?) = ?", justRelatedResourcesQuery, justOwnedResourcesQuery, len(resources))
 		}
 
 		if len(query.Groups) > 0 {
+			groups := deduplicateUints(query.Groups)
 			dbQuery = dbQuery.Where(`
 				groups.id IN (
 					WITH cte AS (
@@ -95,9 +99,9 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 					)
 					SELECT grp_id FROM cte GROUP BY grp_id HAVING count(DISTINCT src_group) = ?
 				)`,
-				query.Groups,
-				query.Groups,
-				len(query.Groups),
+				groups,
+				groups,
+				len(groups),
 			)
 		}
 

@@ -20,11 +20,12 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 		}
 
 		if len(query.Tags) > 0 {
+			tags := deduplicateUints(query.Tags)
 			subQuery := originalDb.
 				Table("resource_tags rt").
-				Where("rt.tag_id IN ?", query.Tags).
+				Where("rt.tag_id IN ?", tags).
 				Group("rt.resource_id").
-				Having("count(*) = ?", len(query.Tags)).
+				Having("count(*) = ?", len(tags)).
 				Select("rt.resource_id")
 
 			dbQuery = dbQuery.Where(
@@ -34,6 +35,7 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 		}
 
 		if len(query.Groups) > 0 {
+			groups := deduplicateUints(query.Groups)
 			dbQuery = dbQuery.Where(`
 				resources.id IN (
 					WITH cte AS (
@@ -45,18 +47,19 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 					)
 					SELECT res_id FROM cte GROUP BY res_id HAVING count(DISTINCT src_group) = ?
 				)`,
-				query.Groups,
-				query.Groups,
-				len(query.Groups),
+				groups,
+				groups,
+				len(groups),
 			)
 		}
 
 		if len(query.Notes) > 0 {
+			notes := deduplicateUints(query.Notes)
 			subQuery := originalDb.
 				Table("resource_notes rn").
-				Where("rn.note_id IN ?", query.Notes).
+				Where("rn.note_id IN ?", notes).
 				Group("rn.resource_id").
-				Having("count(*) = ?", len(query.Notes)).
+				Having("count(*) = ?", len(notes)).
 				Select("rn.resource_id")
 
 			dbQuery = dbQuery.Where("resources.id IN (?)", subQuery)

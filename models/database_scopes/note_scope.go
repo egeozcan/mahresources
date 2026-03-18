@@ -16,11 +16,12 @@ func NoteQuery(query *query_models.NoteQuery, ignoreSort bool, originalDB *gorm.
 		}
 
 		if len(query.Tags) > 0 {
+			tags := deduplicateUints(query.Tags)
 			subQuery := originalDB.
 				Table("note_tags nt").
-				Where("nt.tag_id IN ?", query.Tags).
+				Where("nt.tag_id IN ?", tags).
 				Group("nt.note_id").
-				Having("count(*) = ?", len(query.Tags)).
+				Having("count(*) = ?", len(tags)).
 				Select("nt.note_id")
 
 			dbQuery = dbQuery.Where("notes.id IN (?)", subQuery)
@@ -31,29 +32,30 @@ func NoteQuery(query *query_models.NoteQuery, ignoreSort bool, originalDB *gorm.
 		}
 
 		if len(query.Groups) > 0 {
+			groups := deduplicateUints(query.Groups)
 			dbQuery = dbQuery.Where(
 				`
 					(
-						SELECT 
-							Count(*) 
-						FROM 
-							groups_related_notes grn 
-						WHERE 
-							grn.group_id IN ? 
+						SELECT
+							Count(*)
+						FROM
+							groups_related_notes grn
+						WHERE
+							grn.group_id IN ?
 							AND grn.note_id = notes.id
 							AND (notes.owner_id IS NULL OR notes.owner_id <> grn.group_id)
 					) + (
 						SELECT
 							CASE
-								WHEN 
+								WHEN
 									notes.owner_id IN ?
 								THEN 1
 								ELSE 0
 							END
 					) = ?`,
-				query.Groups,
-				query.Groups,
-				len(query.Groups),
+				groups,
+				groups,
+				len(groups),
 			)
 		}
 

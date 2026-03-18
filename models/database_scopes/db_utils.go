@@ -54,6 +54,19 @@ func LikePattern(term string) (pattern string, escapeClause string) {
 	return "%" + escaped + "%", ` ESCAPE '\'`
 }
 
+// deduplicateUints returns a new slice with duplicate values removed, preserving order.
+func deduplicateUints(ids []uint) []uint {
+	seen := make(map[uint]bool, len(ids))
+	result := make([]uint, 0, len(ids))
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			result = append(result, id)
+		}
+	}
+	return result
+}
+
 // ApplyDateRange adds created_at filters for the given column prefix if provided.
 // The prefix should be empty string for simple table queries, or "tablename." for joined queries.
 func ApplyDateRange(db *gorm.DB, prefix, before, after string) *gorm.DB {
