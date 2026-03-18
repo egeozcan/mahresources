@@ -251,9 +251,14 @@ func mergeMeta(base, overlay types.JSON) (types.JSON, error) {
 		}
 	}
 
-	// Merge: start with base, overlay wins
+	// Merge: start with base, overlay wins.
+	// A nil value in overlay means "remove this key" (explicit null override).
 	for k, v := range overlayMap {
-		baseMap[k] = v
+		if v == nil {
+			delete(baseMap, k)
+		} else {
+			baseMap[k] = v
+		}
 	}
 
 	result, err := json.Marshal(baseMap)

@@ -227,13 +227,63 @@ func (ctx *MahresourcesContext) BulkAddMetaToResources(query *query_models.BulkE
 			"OwnMeta": ownMetaExpr,
 		}).Error
 
-	if err == nil {
-		ctx.Logger().Info(models.LogActionUpdate, "resource", nil, "", "Bulk added meta to resources", map[string]interface{}{
-			"resourceIds": query.ID,
-		})
+	if err != nil {
+		return err
 	}
 
-	return err
+	// For resources in a series, json_patch (SQLite) / jsonb || (Postgres) removes
+	// null-valued keys from OwnMeta instead of storing them. We need explicit null
+	// entries in OwnMeta so that mergeMeta knows to suppress series-inherited keys.
+	var patchMap map[string]interface{}
+	if err := json.Unmarshal([]byte(query.Meta), &patchMap); err == nil {
+		var nullKeys []string
+		for k, v := range patchMap {
+			if v == nil {
+				nullKeys = append(nullKeys, k)
+			}
+		}
+
+		if len(nullKeys) > 0 {
+			// Find affected resources that are in a series
+			var seriesResources []models.Resource
+			ctx.db.Preload("Series").Where("id IN ? AND series_id IS NOT NULL", query.ID).Find(&seriesResources)
+
+			for _, res := range seriesResources {
+				if res.Series == nil {
+					continue
+				}
+
+				var seriesMeta map[string]interface{}
+				if err := json.Unmarshal(res.Series.Meta, &seriesMeta); err != nil {
+					continue
+				}
+
+				var ownMap map[string]interface{}
+				if err := json.Unmarshal(res.OwnMeta, &ownMap); err != nil {
+					ownMap = make(map[string]interface{})
+				}
+
+				changed := false
+				for _, k := range nullKeys {
+					if _, inSeries := seriesMeta[k]; inSeries {
+						ownMap[k] = nil // explicit null override
+						changed = true
+					}
+				}
+
+				if changed {
+					newOwnMeta, _ := json.Marshal(ownMap)
+					ctx.db.Model(&models.Resource{}).Where("id = ?", res.ID).Update("own_meta", newOwnMeta)
+				}
+			}
+		}
+	}
+
+	ctx.Logger().Info(models.LogActionUpdate, "resource", nil, "", "Bulk added meta to resources", map[string]interface{}{
+		"resourceIds": query.ID,
+	})
+
+	return nil
 }
 
 func (ctx *MahresourcesContext) BulkAddTagsToResources(query *query_models.BulkEditQuery) error {
