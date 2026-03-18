@@ -130,7 +130,7 @@
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="flex gap-2">
                             <div class="flex-1">
-                                {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='ownerId' title='Owner' selectedItems=owner min=1 max=1 id=getNextId("autocompleter") extraInfo="Category" %}
+                                {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='ownerId' title='Owner' selectedItems=owner max=1 id=getNextId("autocompleter") extraInfo="Category" %}
                             </div>
                         </div>
                     </div>
