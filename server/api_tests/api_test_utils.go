@@ -51,6 +51,7 @@ func SetupTestEnv(t *testing.T) *TestContext {
 		&models.GroupRelation{},
 		&models.GroupRelationType{},
 		&models.ImageHash{},
+		&models.ResourceSimilarity{},
 		&models.LogEntry{},
 		&models.NoteBlock{},
 	)

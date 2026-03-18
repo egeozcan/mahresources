@@ -88,6 +88,19 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 			}
 		}
 
+		// Explicitly clean up resource_similarities (not a GORM association on Resource,
+		// and SQLite FK cascades don't fire reliably inside transactions).
+		if err := txCtx.db.Where("resource_id1 = ? OR resource_id2 = ?", resourceId, resourceId).
+			Delete(&models.ResourceSimilarity{}).Error; err != nil {
+			return err
+		}
+
+		// Explicitly clean up image_hashes (same reason).
+		if err := txCtx.db.Where("resource_id = ?", resourceId).
+			Delete(&models.ImageHash{}).Error; err != nil {
+			return err
+		}
+
 		if err := txCtx.db.Select(clause.Associations).Delete(&resource).Error; err != nil {
 			return err
 		}
@@ -404,6 +417,19 @@ func (ctx *MahresourcesContext) deleteResourceDBOnly(resourceId uint) (*FileClea
 		if err := ctx.db.Model(&resource).Update("current_version_id", nil).Error; err != nil {
 			return nil, err
 		}
+	}
+
+	// Explicitly clean up resource_similarities (not a GORM association on Resource,
+	// and SQLite FK cascades don't fire reliably inside transactions).
+	if err := ctx.db.Where("resource_id1 = ? OR resource_id2 = ?", resourceId, resourceId).
+		Delete(&models.ResourceSimilarity{}).Error; err != nil {
+		return nil, err
+	}
+
+	// Explicitly clean up image_hashes (same reason).
+	if err := ctx.db.Where("resource_id = ?", resourceId).
+		Delete(&models.ImageHash{}).Error; err != nil {
+		return nil, err
 	}
 
 	if err := ctx.db.Select(clause.Associations).Delete(&resource).Error; err != nil {
