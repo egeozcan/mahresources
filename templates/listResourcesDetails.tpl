@@ -10,7 +10,7 @@
         <table class="gallery detail-table">
             <thead>
                 <tr>
-                    <td></td>
+                    <th scope="col"><span class="sr-only">Select</span></th>
                     <th scope="col">ID</th>
                     <th scope="col">Name</th>
                     <th scope="col">Preview</th>
