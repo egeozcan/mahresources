@@ -73,6 +73,12 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 		return nil, err
 	}
 
+	// Reject self-ownership (can only check after Create assigns the ID)
+	if group.OwnerId != nil && *group.OwnerId == group.ID {
+		tx.Rollback()
+		return nil, errors.New("a group cannot be its own owner")
+	}
+
 	if len(groupQuery.Tags) > 0 {
 		tags := BuildAssociationSlice(groupQuery.Tags, TagFromID)
 
