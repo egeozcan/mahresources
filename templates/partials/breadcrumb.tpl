@@ -16,6 +16,7 @@
         <a
           class="ml-4 text-sm font-mono font-medium text-stone-500 hover:text-stone-700 overflow-ellipsis whitespace-nowrap overflow-hidden max-w-sm "
           href="{{ entry.Url }}"
+          {% if forloop.Last %}aria-current="page"{% endif %}
         >{{ entry.Name }}</a>
       </div>
     </li>
