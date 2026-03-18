@@ -97,8 +97,12 @@ func sanitizeSearchTerm(term string) string {
 	result.Grow(len(term))
 
 	for _, r := range term {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == ' ' || r == '-' || r == '_' || r == '.' {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == ' ' || r == '_' || r == '.' {
 			result.WriteRune(r)
+		} else if r == '-' {
+			// Replace hyphens with spaces — FTS5 interprets bare hyphens as
+			// the NOT operator (column-scope syntax), causing query errors.
+			result.WriteRune(' ')
 		}
 	}
 

@@ -130,9 +130,9 @@ func TestParseSearchQuery(t *testing.T) {
 			wantDist: 0,
 		},
 		{
-			name:     "allowed special chars preserved",
+			name:     "allowed special chars preserved (hyphens become spaces)",
 			input:    "hello-world_test.go",
-			wantTerm: "hello-world_test.go",
+			wantTerm: "hello world_test.go",
 			wantMode: ModePrefix,
 			wantDist: 0,
 		},
@@ -171,9 +171,9 @@ func TestSanitizeSearchTerm(t *testing.T) {
 			want:  "helloworld",
 		},
 		{
-			name:  "allowed characters preserved",
+			name:  "allowed characters preserved (hyphens become spaces)",
 			input: "hello-world_123.test",
-			want:  "hello-world_123.test",
+			want:  "hello world_123.test",
 		},
 		{
 			name:  "unicode letters preserved",
@@ -183,7 +183,7 @@ func TestSanitizeSearchTerm(t *testing.T) {
 		{
 			name:  "SQL injection attempt sanitized",
 			input: "'; DROP TABLE users;--",
-			want:  "DROP TABLE users--",
+			want:  "DROP TABLE users",
 		},
 		{
 			name:  "leading/trailing spaces trimmed",
