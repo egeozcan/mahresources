@@ -1,5 +1,5 @@
 {% if description %}
-<div x-data="() => ({ editing: false, descriptionEditUrl: '{{ descriptionEditUrl }}' })"
+<div x-data="() => ({ editing: false, descriptionEditUrl: '{{ descriptionEditUrl }}{% if descriptionEditId %}?id={{ descriptionEditId }}{% endif %}' })"
     x-show="$store.savedSetting.localSettings.showDescriptions ?? true"
     class="description flex-1 relative"
      :class="{ 'lg:prose-xl prose font-sans bg-stone-50 p-4 mb-2': !editing }"
@@ -15,8 +15,8 @@
     {% if descriptionEditUrl %}
     <template x-if="editing">
         <div class="contents">
-            <form x-ref="form" method="post" action="{{ descriptionEditUrl }}">
-                <textarea @click.away="editing = false" autofocus name="description" aria-label="Edit description" class="w-full">{{ description }}</textarea>
+            <form x-ref="form" method="post" :action="descriptionEditUrl">
+                <textarea @click.away="$refs.form.submit()" @keydown.escape="editing = false" autofocus name="description" aria-label="Edit description" class="w-full">{{ description }}</textarea>
             </form>
         </div>
     </template>
