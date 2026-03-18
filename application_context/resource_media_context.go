@@ -1257,6 +1257,7 @@ func (ctx *MahresourcesContext) RotateResource(resourceId uint, degrees int) err
 	resourceUpdates := map[string]interface{}{
 		"current_version_id": version.ID,
 		"hash":               version.Hash,
+		"hash_type":          version.HashType,
 		"location":           version.Location,
 		"storage_location":   version.StorageLocation,
 		"content_type":       version.ContentType,
