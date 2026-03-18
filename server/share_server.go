@@ -387,6 +387,7 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 	// Build resource hash map from gallery block resources
 	// Use float64 keys since JSON numbers come as float64
 	resourceHashMap := make(map[float64]string)
+	resourceNameMap := make(map[float64]string)
 	if len(resourceIdsSet) > 0 {
 		resourceIds := make([]uint, 0, len(resourceIdsSet))
 		for id := range resourceIdsSet {
@@ -395,6 +396,7 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 		if resources, err := s.appContext.GetResourcesWithIds(&resourceIds); err == nil {
 			for _, resource := range resources {
 				resourceHashMap[float64(resource.ID)] = resource.Hash
+				resourceNameMap[float64(resource.ID)] = resource.Name
 			}
 		}
 	}
@@ -427,6 +429,7 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 		"pageTitle":       note.Name,
 		"shareToken":      shareToken,
 		"resourceHashMap": resourceHashMap,
+		"resourceNameMap": resourceNameMap,
 		"groupDataMap":    groupDataMap,
 		"assetVersion":    template_context_providers.AssetVersion,
 	}

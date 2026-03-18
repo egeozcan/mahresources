@@ -36,7 +36,7 @@
            class="block aspect-square bg-stone-100 rounded-lg overflow-hidden cursor-pointer hover:opacity-90 transition-opacity gallery-item">
             <img
                 src="/s/{{ shareToken }}/resource/{{ resourceHashMap|lookup:resourceId }}"
-                alt="Gallery image"
+                alt="{{ resourceNameMap|lookup:resourceId|default:"Gallery image" }}"
                 class="w-full h-full object-cover"
                 loading="lazy"
             >
