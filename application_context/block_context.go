@@ -270,8 +270,9 @@ func (ctx *MahresourcesContext) ReorderBlocks(noteID uint, positions map[uint]st
 		return errors.New("one or more block IDs do not belong to the specified note")
 	}
 
-	return ctx.db.Transaction(func(tx *gorm.DB) error {
-		hasTextBlock := false
+	hasTextBlock := false
+
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		for blockID, position := range positions {
 			if err := tx.Model(&models.NoteBlock{}).Where("id = ? AND note_id = ?", blockID, noteID).
 				Update("position", position).Error; err != nil {
@@ -294,6 +295,20 @@ func (ctx *MahresourcesContext) ReorderBlocks(noteID uint, positions map[uint]st
 
 		return nil
 	})
+
+	if err != nil {
+		return err
+	}
+
+	// Sync mention relations after reorder
+	if hasTextBlock {
+		var note models.Note
+		if e := ctx.db.First(&note, noteID).Error; e == nil {
+			ctx.syncMentionsForNote(&note)
+		}
+	}
+
+	return nil
 }
 
 // syncFirstTextBlockToDescriptionTx syncs the first text block's content to the note's Description
