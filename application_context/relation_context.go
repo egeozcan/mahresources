@@ -187,6 +187,14 @@ func (ctx *MahresourcesContext) EditRelationType(query *query_models.Relationshi
 			relationType.ToCategoryId = &query.ToCategory
 		}
 
+		// Enforce self-referential invariant: FromCategory must equal ToCategory
+		if relationType.BackRelationId != nil && *relationType.BackRelationId == relationType.ID {
+			if relationType.FromCategoryId != nil && relationType.ToCategoryId != nil &&
+				*relationType.FromCategoryId != *relationType.ToCategoryId {
+				return errors.New("self-referential relation types require FromCategory == ToCategory")
+			}
+		}
+
 		// Delete GroupRelation records whose groups no longer match the updated category constraints
 		if query.FromCategory != 0 {
 			if err := tx.Where("relation_type_id = ? AND from_group_id IN (SELECT id FROM groups WHERE category_id IS NULL OR category_id != ?)",
