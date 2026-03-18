@@ -269,7 +269,7 @@ func (ctx *MahresourcesContext) getLikeOperator() string {
 	return "LIKE"
 }
 
-func calculateRelevanceScore(name, description, searchTerm string) int {
+func calculateRelevanceScore(name, description, searchTerm string, extraFields ...string) int {
 	nameLower := strings.ToLower(name)
 	termLower := strings.ToLower(searchTerm)
 
@@ -281,6 +281,18 @@ func calculateRelevanceScore(name, description, searchTerm string) int {
 	}
 	if strings.Contains(nameLower, termLower) {
 		return 60
+	}
+	// Check extra fields (e.g., original_name) before description
+	for _, extra := range extraFields {
+		if extra != "" {
+			extraLower := strings.ToLower(extra)
+			if extraLower == termLower {
+				return 90 // exact match on extra field
+			}
+			if strings.Contains(extraLower, termLower) {
+				return 55 // substring match on extra field
+			}
+		}
 	}
 	if strings.Contains(strings.ToLower(description), termLower) {
 		return 40
@@ -329,6 +341,16 @@ func entityExtra(v any) map[string]string {
 	return nil
 }
 
+// entityExtraText returns additional searchable text fields for relevance scoring.
+// For resources, this includes the original_name so that matches on the original
+// filename are scored appropriately (instead of falling through to the minimum score).
+func entityExtraText(v any) string {
+	if r, ok := v.(models.Resource); ok {
+		return r.OriginalName
+	}
+	return ""
+}
+
 // escapeLikeWildcards escapes SQL LIKE wildcard characters so they match literally.
 func escapeLikeWildcards(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
@@ -370,7 +392,7 @@ func searchEntitiesLike[T searchable](ctx *MahresourcesContext, entityType, sear
 			Type:        info.entityType,
 			Name:        name,
 			Description: truncateDescription(description, 100),
-			Score:       calculateRelevanceScore(name, description, searchTerm),
+			Score:       calculateRelevanceScore(name, description, searchTerm, entityExtraText(e)),
 			URL:         fmt.Sprintf(info.urlFormat, id),
 			Extra:       entityExtra(e),
 		})
