@@ -32,6 +32,10 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 
 	var ownerId *uint
 	if noteQuery.OwnerId != 0 {
+		var ownerCheck models.Group
+		if err := ctx.db.Select("id").First(&ownerCheck, noteQuery.OwnerId).Error; err != nil {
+			return nil, errors.New("owner group not found")
+		}
 		ownerId = &noteQuery.OwnerId
 	}
 
