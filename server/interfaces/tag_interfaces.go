@@ -8,6 +8,7 @@ import (
 type TagsWriter interface {
 	UpdateTag(t *query_models.TagCreator) (*models.Tag, error)
 	CreateTag(t *query_models.TagCreator) (*models.Tag, error)
+	GetTagByID(id uint) (*models.Tag, error)
 }
 
 type TagsReader interface {

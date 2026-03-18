@@ -238,14 +238,68 @@ func createOrUpdateHandler[T any](
 }
 
 // CreateTagHandler returns a handler that creates or updates tags based on ID presence.
-// Tags use TagCreator for both operations - ID=0 means create, ID>0 means update.
+// For JSON update requests, it pre-fills unset fields from the existing tag
+// so that partial JSON updates don't clear fields, while still allowing explicit clearing.
 func CreateTagHandler(writer interfaces.TagsWriter) http.HandlerFunc {
-	return createOrUpdateHandler(
-		"tag",
-		func(c *query_models.TagCreator) uint { return c.ID },
-		func(c *query_models.TagCreator) (any, error) { return writer.CreateTag(c) },
-		func(c *query_models.TagCreator) (any, error) { return writer.UpdateTag(c) },
-	)
+	return func(w http.ResponseWriter, r *http.Request) {
+		var creator query_models.TagCreator
+		var sentFields map[string]bool
+
+		if strings.HasPrefix(r.Header.Get("Content-type"), constants.JSON) {
+			bodyBytes, readErr := io.ReadAll(r.Body)
+			if readErr != nil {
+				http_utils.HandleError(readErr, w, r, http.StatusBadRequest)
+				return
+			}
+			if err := json.Unmarshal(bodyBytes, &creator); err != nil {
+				http_utils.HandleError(err, w, r, http.StatusBadRequest)
+				return
+			}
+			var raw map[string]json.RawMessage
+			_ = json.Unmarshal(bodyBytes, &raw)
+			sentFields = make(map[string]bool, len(raw))
+			for k := range raw {
+				sentFields[k] = true
+			}
+		} else {
+			if err := tryFillStructValuesFromRequest(&creator, r); err != nil {
+				http_utils.HandleError(err, w, r, http.StatusBadRequest)
+				return
+			}
+		}
+
+		var result any
+		var err error
+
+		if creator.ID != 0 {
+			if sentFields != nil {
+				existing, getErr := writer.GetTagByID(creator.ID)
+				if getErr == nil {
+					if !sentFields["Description"] {
+						creator.Description = existing.Description
+					}
+				}
+			}
+			result, err = writer.UpdateTag(&creator)
+		} else {
+			result, err = writer.CreateTag(&creator)
+		}
+
+		if err != nil {
+			http_utils.HandleError(err, w, r, http.StatusBadRequest)
+			return
+		}
+
+		type hasID interface{ GetId() uint }
+		if entity, ok := result.(hasID); ok {
+			if http_utils.RedirectIfHTMLAccepted(w, r, "/tag?id="+strconv.Itoa(int(entity.GetId()))) {
+				return
+			}
+		}
+
+		w.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(w).Encode(result)
+	}
 }
 
 // CreateCategoryHandler returns a handler that creates or updates categories.
