@@ -31,6 +31,7 @@ type ResourceCategoryReader interface {
 type ResourceCategoryWriter interface {
 	UpdateResourceCategory(query *query_models.ResourceCategoryEditor) (*models.ResourceCategory, error)
 	CreateResourceCategory(query *query_models.ResourceCategoryCreator) (*models.ResourceCategory, error)
+	GetResourceCategory(id uint) (*models.ResourceCategory, error)
 }
 
 type ResourceCategoryDeleter interface {

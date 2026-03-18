@@ -396,13 +396,85 @@ func CreateCategoryHandler(ctx interfaces.CategoryCRUDReader) http.HandlerFunc {
 }
 
 // CreateResourceCategoryHandler returns a handler that creates or updates resource categories.
+// For JSON update requests, pre-fills unset fields from the existing entity.
 func CreateResourceCategoryHandler(writer interfaces.ResourceCategoryWriter) http.HandlerFunc {
-	return createOrUpdateHandler(
-		"resourceCategory",
-		func(e *query_models.ResourceCategoryEditor) uint { return e.ID },
-		func(e *query_models.ResourceCategoryEditor) (any, error) { return writer.CreateResourceCategory(&e.ResourceCategoryCreator) },
-		func(e *query_models.ResourceCategoryEditor) (any, error) { return writer.UpdateResourceCategory(e) },
-	)
+	return func(w http.ResponseWriter, r *http.Request) {
+		var editor query_models.ResourceCategoryEditor
+		var sentFields map[string]bool
+
+		if strings.HasPrefix(r.Header.Get("Content-type"), constants.JSON) {
+			bodyBytes, readErr := io.ReadAll(r.Body)
+			if readErr != nil {
+				http_utils.HandleError(readErr, w, r, http.StatusBadRequest)
+				return
+			}
+			if err := json.Unmarshal(bodyBytes, &editor); err != nil {
+				http_utils.HandleError(err, w, r, http.StatusBadRequest)
+				return
+			}
+			var raw map[string]json.RawMessage
+			_ = json.Unmarshal(bodyBytes, &raw)
+			sentFields = make(map[string]bool, len(raw))
+			for k := range raw {
+				sentFields[k] = true
+			}
+		} else {
+			if err := tryFillStructValuesFromRequest(&editor, r); err != nil {
+				http_utils.HandleError(err, w, r, http.StatusBadRequest)
+				return
+			}
+		}
+
+		var result any
+		var err error
+
+		if editor.ID != 0 {
+			if sentFields != nil {
+				existing, getErr := writer.GetResourceCategory(editor.ID)
+				if getErr == nil {
+					if !sentFields["Name"] && existing.Name != "" {
+						editor.Name = existing.Name
+					}
+					if !sentFields["Description"] {
+						editor.Description = existing.Description
+					}
+					if !sentFields["CustomHeader"] {
+						editor.CustomHeader = existing.CustomHeader
+					}
+					if !sentFields["CustomSidebar"] {
+						editor.CustomSidebar = existing.CustomSidebar
+					}
+					if !sentFields["CustomSummary"] {
+						editor.CustomSummary = existing.CustomSummary
+					}
+					if !sentFields["CustomAvatar"] {
+						editor.CustomAvatar = existing.CustomAvatar
+					}
+					if !sentFields["MetaSchema"] {
+						editor.MetaSchema = existing.MetaSchema
+					}
+				}
+			}
+			result, err = writer.UpdateResourceCategory(&editor)
+		} else {
+			result, err = writer.CreateResourceCategory(&editor.ResourceCategoryCreator)
+		}
+
+		if err != nil {
+			http_utils.HandleError(err, w, r, http.StatusBadRequest)
+			return
+		}
+
+		type hasID interface{ GetId() uint }
+		if entity, ok := result.(hasID); ok {
+			if http_utils.RedirectIfHTMLAccepted(w, r, "/resourceCategory?id="+strconv.Itoa(int(entity.GetId()))) {
+				return
+			}
+		}
+
+		w.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(w).Encode(result)
+	}
 }
 
 // CreateQueryHandler returns a handler that creates or updates queries.
