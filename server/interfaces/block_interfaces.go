@@ -28,6 +28,7 @@ type BlockStateWriter interface {
 
 type BlockDeleter interface {
 	DeleteBlock(blockID uint) error
+	GetBlock(id uint) (*models.NoteBlock, error)
 }
 
 type BlockRebalancer interface {

@@ -163,6 +163,20 @@ func DeleteBlockHandler(ctx interfaces.BlockDeleter) func(http.ResponseWriter, *
 			return
 		}
 
+		// Validate note ownership if noteId is provided
+		noteId := uint(http_utils.GetIntQueryParameter(request, "noteId", 0))
+		if noteId != 0 {
+			existing, err := ctx.GetBlock(id)
+			if err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusNotFound)
+				return
+			}
+			if existing.NoteID != noteId {
+				http_utils.HandleError(errors.New("block does not belong to the specified note"), writer, request, http.StatusBadRequest)
+				return
+			}
+		}
+
 		if err := ctx.DeleteBlock(id); err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
