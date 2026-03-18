@@ -8,6 +8,7 @@ import (
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
+	"strings"
 
 	"gorm.io/gorm"
 )
@@ -38,7 +39,11 @@ func (ctx *MahresourcesContext) UpdateSeries(editor *query_models.SeriesEditor) 
 
 		oldMeta := series.Meta
 		if editor.Name != "" {
-			series.Name = editor.Name
+			trimmed := strings.TrimSpace(editor.Name)
+			if trimmed == "" {
+				return errors.New("series name must be non-empty")
+			}
+			series.Name = trimmed
 		}
 
 		metaChanged := false
