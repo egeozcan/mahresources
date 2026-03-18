@@ -271,7 +271,12 @@ func mergeMeta(base, overlay types.JSON) (types.JSON, error) {
 
 // computeOwnMeta computes the resource's own meta: keys where the resource
 // value differs from the series, plus keys not present in the series.
-func computeOwnMeta(resourceMeta, seriesMeta types.JSON) (types.JSON, error) {
+// When recordRemovals is true, series keys absent from the resource are
+// recorded as explicit nil (null) overrides so that mergeMeta will delete
+// them. This should only be set when the caller knows the resource meta
+// was explicitly authored by the user (e.g. an edit), not when computing
+// a delta during a series assignment or move.
+func computeOwnMeta(resourceMeta, seriesMeta types.JSON, recordRemovals ...bool) (types.JSON, error) {
 	resourceMap := make(map[string]interface{})
 	seriesMap := make(map[string]interface{})
 
@@ -305,6 +310,18 @@ func computeOwnMeta(resourceMeta, seriesMeta types.JSON) (types.JSON, error) {
 		}
 		if string(vJSON) != string(sJSON) {
 			ownMap[k] = v
+		}
+	}
+
+	// Record explicit null overrides for series keys that were
+	// intentionally removed from the resource (present in series but
+	// absent from resource). Only when the caller signals that the
+	// resource meta was explicitly authored by the user.
+	if len(recordRemovals) > 0 && recordRemovals[0] {
+		for k := range seriesMap {
+			if _, inResource := resourceMap[k]; !inResource {
+				ownMap[k] = nil
+			}
 		}
 	}
 

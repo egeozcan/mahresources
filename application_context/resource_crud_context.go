@@ -213,7 +213,7 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 			resource.Meta = []byte(resourceQuery.Meta)
 			// Recompute OwnMeta if the resource is in a series
 			if resource.SeriesID != nil && resource.Series != nil {
-				ownMeta, err := computeOwnMeta(resource.Meta, resource.Series.Meta)
+				ownMeta, err := computeOwnMeta(resource.Meta, resource.Series.Meta, true)
 				if err != nil {
 					return err
 				}
