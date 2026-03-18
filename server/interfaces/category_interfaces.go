@@ -14,6 +14,12 @@ type CategoryWriter interface {
 	CreateCategory(categoryCreator *query_models.CategoryCreator) (*models.Category, error)
 }
 
+// CategoryCRUDReader combines CRUD with reading for partial-update support
+type CategoryCRUDReader interface {
+	CategoryWriter
+	GetCategory(id uint) (*models.Category, error)
+}
+
 type CategoryDeleter interface {
 	DeleteCategory(categoryId uint) error
 }

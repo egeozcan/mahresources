@@ -3,9 +3,11 @@ package api_handlers
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"reflect"
 	"strconv"
+	"strings"
 
 	"mahresources/constants"
 	"mahresources/models/query_models"
@@ -247,14 +249,96 @@ func CreateTagHandler(writer interfaces.TagsWriter) http.HandlerFunc {
 }
 
 // CreateCategoryHandler returns a handler that creates or updates categories.
-// Categories use CategoryCreator for create and CategoryEditor (with ID) for update.
-func CreateCategoryHandler(writer interfaces.CategoryWriter) http.HandlerFunc {
-	return createOrUpdateHandler(
-		"category",
-		func(e *query_models.CategoryEditor) uint { return e.ID },
-		func(e *query_models.CategoryEditor) (any, error) { return writer.CreateCategory(&e.CategoryCreator) },
-		func(e *query_models.CategoryEditor) (any, error) { return writer.UpdateCategory(e) },
-	)
+// For JSON update requests, it pre-fills unset fields from the existing entity
+// so that partial JSON updates don't clear fields that were not included in
+// the request body, while still allowing explicit clearing (sending "").
+func CreateCategoryHandler(ctx interfaces.CategoryCRUDReader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var editor query_models.CategoryEditor
+		var sentFields map[string]bool
+
+		// For JSON requests, buffer the body so we can detect which fields
+		// were explicitly included (distinguishing absent vs. empty).
+		if strings.HasPrefix(r.Header.Get("Content-type"), constants.JSON) {
+			bodyBytes, readErr := io.ReadAll(r.Body)
+			if readErr != nil {
+				http_utils.HandleError(readErr, w, r, http.StatusBadRequest)
+				return
+			}
+
+			// Decode into the struct
+			if err := json.Unmarshal(bodyBytes, &editor); err != nil {
+				http_utils.HandleError(err, w, r, http.StatusBadRequest)
+				return
+			}
+
+			// Decode into a raw map to discover which keys were sent
+			var raw map[string]json.RawMessage
+			_ = json.Unmarshal(bodyBytes, &raw)
+			sentFields = make(map[string]bool, len(raw))
+			for k := range raw {
+				sentFields[k] = true
+			}
+		} else {
+			if err := tryFillStructValuesFromRequest(&editor, r); err != nil {
+				http_utils.HandleError(err, w, r, http.StatusBadRequest)
+				return
+			}
+		}
+
+		var result any
+		var err error
+
+		if editor.ID != 0 {
+			// For JSON requests, pre-populate unset string fields from the
+			// existing category so partial updates don't clear them.
+			if sentFields != nil {
+				existing, getErr := ctx.GetCategory(editor.ID)
+				if getErr == nil {
+					if !sentFields["Name"] && existing.Name != "" {
+						editor.Name = existing.Name
+					}
+					if !sentFields["Description"] {
+						editor.Description = existing.Description
+					}
+					if !sentFields["CustomHeader"] {
+						editor.CustomHeader = existing.CustomHeader
+					}
+					if !sentFields["CustomSidebar"] {
+						editor.CustomSidebar = existing.CustomSidebar
+					}
+					if !sentFields["CustomSummary"] {
+						editor.CustomSummary = existing.CustomSummary
+					}
+					if !sentFields["CustomAvatar"] {
+						editor.CustomAvatar = existing.CustomAvatar
+					}
+					if !sentFields["MetaSchema"] {
+						editor.MetaSchema = existing.MetaSchema
+					}
+				}
+			}
+			result, err = ctx.UpdateCategory(&editor)
+		} else {
+			result, err = ctx.CreateCategory(&editor.CategoryCreator)
+		}
+
+		if err != nil {
+			http_utils.HandleError(err, w, r, http.StatusBadRequest)
+			return
+		}
+
+		type hasID interface{ GetId() uint }
+		if entity, ok := result.(hasID); ok {
+			redirectURL := "/category?id=" + strconv.Itoa(int(entity.GetId()))
+			if http_utils.RedirectIfHTMLAccepted(w, r, redirectURL) {
+				return
+			}
+		}
+
+		w.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(w).Encode(result)
+	}
 }
 
 // CreateResourceCategoryHandler returns a handler that creates or updates resource categories.
