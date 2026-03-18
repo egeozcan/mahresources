@@ -8,7 +8,6 @@
     <div class="space-y-8 sm:space-y-5">
         <div>
             <div class="mt-6 sm:mt-5 space-y-6 sm:space-y-5">
-                {% if !group.ID %}
                 <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-stone-200 sm:pt-5">
                     <span class="block text-sm font-medium font-mono text-stone-700">
                         Category
@@ -21,7 +20,6 @@
                         </div>
                     </div>
                 </div>
-                {% endif %}
 
                 {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" value=group.Name required=true id="form-name" %}
                 {% include "/partials/form/createFormTextareaInput.tpl" with title="Description" name="Description" value=group.Description mentionTypes="resource,note,group,tag" %}

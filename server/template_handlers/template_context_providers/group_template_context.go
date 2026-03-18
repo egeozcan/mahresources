@@ -164,6 +164,10 @@ func GroupCreateContextProvider(context *application_context.MahresourcesContext
 		tplContext["tags"] = &group.Tags
 		tplContext["groups"] = &group.RelatedGroups
 
+		if group.CategoryId != nil {
+			tplContext["category"] = []*models.Category{group.Category}
+		}
+
 		if group.Owner != nil {
 			tplContext["owner"] = []*models.Group{group.Owner}
 		}
