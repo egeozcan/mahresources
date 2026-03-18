@@ -65,6 +65,11 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 	}
 
 	if groupQuery.OwnerId != 0 {
+		var ownerCheck models.Group
+		if err := tx.Select("id").First(&ownerCheck, groupQuery.OwnerId).Error; err != nil {
+			tx.Rollback()
+			return nil, errors.New("owner group not found")
+		}
 		group.OwnerId = &groupQuery.OwnerId
 	}
 
