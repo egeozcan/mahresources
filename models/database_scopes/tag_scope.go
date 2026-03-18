@@ -2,16 +2,11 @@ package database_scopes
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
 	"gorm.io/gorm"
 	"mahresources/models/query_models"
 )
-
-// validEntityName validates entity names used in most_used_ sort columns.
-// Only allows lowercase letters to prevent SQL injection.
-var validEntityName = regexp.MustCompile(`^[a-z]+$`)
 
 // validMostUsedEntities are the entity types that have _tags junction tables.
 var validMostUsedEntities = map[string]bool{
