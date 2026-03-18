@@ -240,6 +240,15 @@ func (ctx *MahresourcesContext) ReorderBlocks(noteID uint, positions map[uint]st
 		return nil
 	}
 
+	// Check for duplicate position values
+	seen := make(map[string]bool, len(positions))
+	for _, pos := range positions {
+		if seen[pos] {
+			return errors.New("duplicate position values are not allowed")
+		}
+		seen[pos] = true
+	}
+
 	// Collect block IDs for validation
 	blockIDs := make([]uint, 0, len(positions))
 	for blockID := range positions {
