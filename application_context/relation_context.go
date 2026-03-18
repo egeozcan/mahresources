@@ -124,6 +124,10 @@ func (ctx *MahresourcesContext) AddRelationType(query *query_models.Relationship
 
 		if query.ReverseName != "" {
 			if query.ReverseName == query.Name {
+				if query.FromCategory != query.ToCategory {
+					return errors.New("self-referential relation types require FromCategory == ToCategory")
+				}
+
 				relationType.BackRelationId = &relationType.ID
 
 				return tx.Save(&relationType).Error
