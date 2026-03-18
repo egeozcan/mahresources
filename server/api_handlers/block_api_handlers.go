@@ -81,6 +81,20 @@ func UpdateBlockContentHandler(ctx interfaces.BlockWriter) func(http.ResponseWri
 			return
 		}
 
+		// Validate note ownership if noteId is provided
+		noteId := uint(http_utils.GetIntQueryParameter(request, "noteId", 0))
+		if noteId != 0 {
+			existing, err := ctx.GetBlock(id)
+			if err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusNotFound)
+				return
+			}
+			if existing.NoteID != noteId {
+				http_utils.HandleError(errors.New("block does not belong to the specified note"), writer, request, http.StatusBadRequest)
+				return
+			}
+		}
+
 		var body struct {
 			Content json.RawMessage `json:"content"`
 		}
@@ -106,6 +120,20 @@ func UpdateBlockStateHandler(ctx interfaces.BlockStateWriter) func(http.Response
 		if id == 0 {
 			http_utils.HandleError(errors.New("id is required"), writer, request, http.StatusBadRequest)
 			return
+		}
+
+		// Validate note ownership if noteId is provided
+		noteId := uint(http_utils.GetIntQueryParameter(request, "noteId", 0))
+		if noteId != 0 {
+			existing, err := ctx.GetBlock(id)
+			if err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusNotFound)
+				return
+			}
+			if existing.NoteID != noteId {
+				http_utils.HandleError(errors.New("block does not belong to the specified note"), writer, request, http.StatusBadRequest)
+				return
+			}
 		}
 
 		var body struct {

@@ -18,10 +18,12 @@ type BlockWriter interface {
 	CreateBlock(editor *query_models.NoteBlockEditor) (*models.NoteBlock, error)
 	UpdateBlockContent(blockID uint, content json.RawMessage) (*models.NoteBlock, error)
 	ReorderBlocks(noteID uint, positions map[uint]string) error
+	GetBlock(id uint) (*models.NoteBlock, error)
 }
 
 type BlockStateWriter interface {
 	UpdateBlockState(blockID uint, state json.RawMessage) (*models.NoteBlock, error)
+	GetBlock(id uint) (*models.NoteBlock, error)
 }
 
 type BlockDeleter interface {
