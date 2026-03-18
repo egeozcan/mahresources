@@ -79,9 +79,9 @@
                                         <textarea
                                             x-ref="mentionInput"
                                             x-model="text"
-                                            @input="$parent.onInput()"
+                                            @input="onBlockInput()"
                                             @keydown="onKeydown($event)"
-                                            @blur="$parent.save()"
+                                            @blur="saveBlock()"
                                             class="w-full min-h-[100px] p-2 border border-stone-300 rounded resize-y"
                                             placeholder="Enter text..."
                                             role="combobox"
