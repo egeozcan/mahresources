@@ -374,13 +374,13 @@ func GetResourceEditHandler(ctx interfaces.ResourceEditReader) func(writer http.
 				if editor.ContentCategory == "" {
 					editor.ContentCategory = existing.ContentCategory
 				}
-				if editor.OwnerId == 0 && existing.OwnerId != nil {
+				if editor.OwnerId == 0 && existing.OwnerId != nil && !formHasField(request, "OwnerId") {
 					editor.OwnerId = *existing.OwnerId
 				}
-				if editor.ResourceCategoryId == 0 && existing.ResourceCategoryId != nil {
+				if editor.ResourceCategoryId == 0 && existing.ResourceCategoryId != nil && !formHasField(request, "ResourceCategoryId") {
 					editor.ResourceCategoryId = *existing.ResourceCategoryId
 				}
-				if editor.SeriesId == 0 && editor.SeriesSlug == "" && existing.SeriesID != nil {
+				if editor.SeriesId == 0 && editor.SeriesSlug == "" && existing.SeriesID != nil && !formHasField(request, "SeriesId") {
 					editor.SeriesId = *existing.SeriesID
 				}
 				if editor.Tags == nil && len(existing.Tags) > 0 {

@@ -69,4 +69,5 @@
     <template x-for="(result, index) in selectedResults">
         <input type="hidden" name="{{ elName }}" :value="result.ID">
     </template>
+    <input type="hidden" name="{{ elName }}" value="" :disabled="selectedResults.length > 0">
 </div>

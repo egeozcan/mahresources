@@ -35,6 +35,20 @@ func init() {
 	})
 }
 
+// formHasField reports whether a form-encoded request explicitly included the
+// named field.  For JSON requests it always returns false (JSON partial-update
+// semantics rely on zero-value checks instead).
+func formHasField(request *http.Request, field string) bool {
+	ct := request.Header.Get("Content-type")
+	if strings.HasPrefix(ct, constants.UrlEncodedForm) || strings.HasPrefix(ct, constants.MultiPartForm) {
+		if request.PostForm != nil {
+			_, ok := request.PostForm[field]
+			return ok
+		}
+	}
+	return false
+}
+
 func tryFillStructValuesFromRequest(dst any, request *http.Request) error {
 	contentTypeHeader := request.Header.Get("Content-type")
 
