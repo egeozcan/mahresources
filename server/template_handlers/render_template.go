@@ -37,7 +37,6 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 		}
 
 		template := pongo2.Must(renderer.FromFile(templateName))
-		errorTemplate := pongo2.Must(renderer.FromFile("error.tpl"))
 		context := templateContextGenerator(request)
 
 		// Check for redirect signal from context provider
@@ -66,13 +65,6 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 		}
 
 		writer.Header().Set("Content-Type", constants.HTML)
-		if errMessage := context["errorMessage"]; errMessage != nil && errMessage != "" {
-			if err := errorTemplate.ExecuteWriter(context, writer); err != nil {
-				http.Error(writer, err.Error(), http.StatusInternalServerError)
-			}
-			return
-		}
-
 		if err := template.ExecuteWriter(context, writer); err != nil {
 			http.Error(writer, err.Error(), http.StatusInternalServerError)
 		}

@@ -104,8 +104,8 @@ test.describe('RelationType description inline-edit uses correct endpoint', () =
     const response = await responsePromise;
     expect(response.status()).toBeLessThan(400);
 
-    // Reload the page and verify the description was actually persisted
-    await page.reload();
+    // The description template auto-reloads the page after save;
+    // wait for the reload to complete, then verify persistence
     await page.waitForLoadState('load');
 
     const updatedDescription = page.locator('.description').first();

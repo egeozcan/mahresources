@@ -19,7 +19,7 @@
                 {% endif %}
             </article>
         {% empty %}
-            <div class="detail-empty">No tags found. <a href="/createTag" class="text-amber-700 hover:text-amber-900 underline">Create one</a>.</div>
+            <div class="detail-empty">No tags found. <a href="/tag/new" class="text-amber-700 hover:text-amber-900 underline">Create one</a>.</div>
         {% endfor %}
     </div>
 {% endblock %}

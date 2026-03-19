@@ -20,7 +20,7 @@
                     const formData = new FormData();
                     formData.append('description', $el.value);
                     fetch(descriptionEditUrl, { method: 'POST', body: formData })
-                        .then(r => { if (r.ok) editing = false; })
+                        .then(r => { if (r.ok) location.reload(); })
                         .catch(e => console.error('Failed to save description:', e));
                 "
                 @keydown.escape="editing = false"

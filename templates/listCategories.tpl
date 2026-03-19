@@ -14,7 +14,7 @@
                 {% endif %}
             </article>
         {% empty %}
-            <div class="detail-empty">No categories found. <a href="/createCategory" class="text-amber-700 hover:text-amber-900 underline">Create one</a>.</div>
+            <div class="detail-empty">No categories found. <a href="/category/new" class="text-amber-700 hover:text-amber-900 underline">Create one</a>.</div>
         {% endfor %}
     </div>
 {% endblock %}

@@ -77,10 +77,10 @@ func GetAddNoteHandler(ctx interfaces.NoteWriteReader) func(writer http.Response
 				if queryVars.Meta == "" {
 					queryVars.Meta = string(existing.Meta)
 				}
-				if queryVars.StartDate == "" && existing.StartDate != nil {
+				if queryVars.StartDate == "" && existing.StartDate != nil && !formHasField(request, "startDate") {
 					queryVars.StartDate = existing.StartDate.Format("2006-01-02T15:04")
 				}
-				if queryVars.EndDate == "" && existing.EndDate != nil {
+				if queryVars.EndDate == "" && existing.EndDate != nil && !formHasField(request, "endDate") {
 					queryVars.EndDate = existing.EndDate.Format("2006-01-02T15:04")
 				}
 				if queryVars.NoteTypeId == 0 && existing.NoteTypeId != nil && !formHasField(request, "NoteTypeId") {
