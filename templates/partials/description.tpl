@@ -19,8 +19,9 @@
                 @click.away="
                     const formData = new FormData();
                     formData.append('description', $el.value);
+                    const clickedLink = $event && $event.target && $event.target.closest('a[href]');
                     fetch(descriptionEditUrl, { method: 'POST', body: formData })
-                        .then(r => { if (r.ok) location.reload(); })
+                        .then(r => { if (r.ok && !clickedLink) location.reload(); })
                         .catch(e => console.error('Failed to save description:', e));
                 "
                 @keydown.escape="editing = false"
