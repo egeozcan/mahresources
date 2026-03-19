@@ -488,12 +488,62 @@ func CreateResourceCategoryHandler(writer interfaces.ResourceCategoryWriter) htt
 }
 
 // CreateQueryHandler returns a handler that creates or updates queries.
-// Queries use QueryCreator for create and QueryEditor (with ID) for update.
-func CreateQueryHandler(writer interfaces.QueryWriter) http.HandlerFunc {
-	return createOrUpdateHandler(
-		"query",
-		func(e *query_models.QueryEditor) uint { return e.ID },
-		func(e *query_models.QueryEditor) (any, error) { return writer.CreateQuery(&e.QueryCreator) },
-		func(e *query_models.QueryEditor) (any, error) { return writer.UpdateQuery(e) },
-	)
+// For updates, it handles form-vs-JSON partial update semantics: form
+// submissions can clear the Template field, while partial JSON updates
+// (e.g. CLI --name only) preserve unset fields.
+func CreateQueryHandler(ctx interface {
+	interfaces.QueryWriter
+	interfaces.QueryReader
+}) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		effectiveCtx := withRequestContext(ctx, r).(interface {
+			interfaces.QueryWriter
+			interfaces.QueryReader
+		})
+
+		var editor query_models.QueryEditor
+		if err := tryFillStructValuesFromRequest(&editor, r); err != nil {
+			http_utils.HandleError(err, w, r, http.StatusBadRequest)
+			return
+		}
+
+		var result any
+		var err error
+
+		if editor.ID != 0 {
+			// Pre-populate unset fields from the existing query so partial
+			// JSON updates don't clear them.
+			existing, getErr := effectiveCtx.GetQuery(editor.ID)
+			if getErr == nil {
+				if strings.TrimSpace(editor.Name) == "" {
+					editor.Name = existing.Name
+				}
+				if editor.Text == "" {
+					editor.Text = existing.Text
+				}
+				if editor.Template == "" && !formHasField(r, "Template") {
+					editor.Template = existing.Template
+				}
+			}
+			result, err = effectiveCtx.UpdateQuery(&editor)
+		} else {
+			result, err = effectiveCtx.CreateQuery(&editor.QueryCreator)
+		}
+
+		if err != nil {
+			http_utils.HandleError(err, w, r, http.StatusBadRequest)
+			return
+		}
+
+		type hasID interface{ GetId() uint }
+		if entity, ok := result.(hasID); ok {
+			redirectURL := "/query?id=" + strconv.Itoa(int(entity.GetId()))
+			if http_utils.RedirectIfHTMLAccepted(w, r, redirectURL) {
+				return
+			}
+		}
+
+		w.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(w).Encode(result)
+	}
 }

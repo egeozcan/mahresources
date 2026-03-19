@@ -85,15 +85,9 @@ func (ctx *MahresourcesContext) UpdateQuery(queryQuery *query_models.QueryEditor
 		return nil, err
 	}
 
-	if strings.TrimSpace(queryQuery.Name) != "" {
-		query.Name = queryQuery.Name
-	}
-	if queryQuery.Text != "" {
-		query.Text = queryQuery.Text
-	}
-	if queryQuery.Template != "" {
-		query.Template = queryQuery.Template
-	}
+	query.Name = queryQuery.Name
+	query.Text = queryQuery.Text
+	query.Template = queryQuery.Template
 
 	if err := ctx.db.Save(&query).Error; err != nil {
 		return nil, err
