@@ -1,7 +1,7 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
-    {% include "/partials/description.tpl" with description=tag.Description preview=false %}
+    {% include "/partials/description.tpl" with description=tag.Description descriptionEditUrl="/v1/tag/editDescription" descriptionEditId=tag.ID preview=false %}
 
     <div class="meta-strip">
         <div class="meta-strip-item">

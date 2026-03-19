@@ -8,7 +8,7 @@
         {% endautoescape %}
     </div>
 
-    {% include "/partials/description.tpl" with description=resource.Description %}
+    {% include "/partials/description.tpl" with description=resource.Description descriptionEditUrl="/v1/resource/editDescription" descriptionEditId=resource.ID %}
 
     <div class="detail-panel" aria-label="Resource metadata">
         <div class="detail-panel-header">

@@ -8,7 +8,7 @@
         {% endautoescape %}
     </div>
 
-    {% include "/partials/description.tpl" with description=group.Description %}
+    {% include "/partials/description.tpl" with description=group.Description descriptionEditUrl="/v1/group/editDescription" descriptionEditId=group.ID %}
 
     {% with hasOwn=(group.OwnNotes || group.OwnGroups || group.OwnResources) %}
 
