@@ -162,13 +162,18 @@ export function autocompleter({
             this.loading = true;
 
             try {
-                const newVal = await fetch(this.addUrl, {
+                const response = await fetch(this.addUrl, {
                     method: 'POST',
                     body: JSON.stringify({ Name: this.addModeForTag, ...this.getAdditionalParams() }),
                     headers: {
                         "Content-Type": "application/json",
                     },
-                }).then(x => x.json());
+                });
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error || `Server error: ${response.status}`);
+                }
+                const newVal = await response.json();
                 this.selectedResults.push(newVal);
                 this.selectedIds.add(newVal.ID);
                 this.ensureMaxItems();
@@ -223,7 +228,7 @@ export function autocompleter({
                 /*
                     We have an add url, so maybe try adding the option if it wasn't in the list already
                 */
-                if (!this.results.find(x => x.name === value)) {
+                if (!this.results.find(x => x.Name === value)) {
                     this.addModeForTag = value;
                 } else {
                     this.addModeForTag = "";
