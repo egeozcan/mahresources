@@ -287,7 +287,7 @@ export function setupBulkSelectionListeners() {
     selection.empty();
   });
 
-  [...document.querySelectorAll(".list-container .tags")].forEach(async (container) => {
+  [...document.querySelectorAll(".tags")].forEach(async (container) => {
     container.addEventListener("click", async function (e) {
       if (!e.target.classList.contains("edit-in-list")) {
         return;
