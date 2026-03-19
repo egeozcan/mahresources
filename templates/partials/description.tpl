@@ -15,9 +15,20 @@
     {% if descriptionEditUrl %}
     <template x-if="editing">
         <div class="contents">
-            <form x-ref="form" method="post" :action="descriptionEditUrl">
-                <textarea @click.away="$refs.form.submit()" @keydown.escape="editing = false" autofocus name="description" aria-label="Edit description" class="w-full">{{ description }}</textarea>
-            </form>
+            <textarea
+                @click.away="
+                    const formData = new FormData();
+                    formData.append('description', $el.value);
+                    fetch(descriptionEditUrl, { method: 'POST', body: formData })
+                        .then(r => { if (r.ok) editing = false; })
+                        .catch(e => console.error('Failed to save description:', e));
+                "
+                @keydown.escape="editing = false"
+                autofocus
+                name="description"
+                aria-label="Edit description"
+                class="w-full"
+            >{{ description }}</textarea>
         </div>
     </template>
     {% endif %}
