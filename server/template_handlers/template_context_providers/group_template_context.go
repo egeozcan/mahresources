@@ -168,8 +168,11 @@ func GroupCreateContextProvider(context *application_context.MahresourcesContext
 			tplContext["category"] = []*models.Category{group.Category}
 		}
 
-		if group.Owner != nil {
-			tplContext["owner"] = []*models.Group{group.Owner}
+		if group.OwnerId != nil {
+			ownerEntity, err := context.GetGroup(*group.OwnerId)
+			if err == nil {
+				tplContext["owner"] = []*models.Group{ownerEntity}
+			}
 		}
 
 		return tplContext
