@@ -170,8 +170,18 @@ func (f *CRUDHandlerFactory[T, Q, C]) DeleteHandler() http.HandlerFunc {
 func (f *CRUDHandlerFactory[T, Q, C]) CreateHandler() http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var creator C
+		// When C is a pointer type (e.g., *SeriesCreator), allocate the
+		// underlying struct and pass the pointer directly to the decoder.
+		// This avoids passing a pointer-to-pointer which gorilla/schema rejects.
+		var dst any
+		if v := reflect.ValueOf(&creator).Elem(); v.Kind() == reflect.Ptr {
+			v.Set(reflect.New(v.Type().Elem()))
+			dst = creator // already a pointer — pass as-is
+		} else {
+			dst = &creator // value type — take address
+		}
 
-		if err := tryFillStructValuesFromRequest(&creator, request); err != nil {
+		if err := tryFillStructValuesFromRequest(dst, request); err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
