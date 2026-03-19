@@ -348,10 +348,9 @@ func GetResourceEditHandler(ctx interfaces.ResourceEditReader) func(writer http.
 			return
 		}
 
-		// For JSON requests (API clients), pre-populate unset fields from
-		// the existing resource so partial updates don't clear them.
-		// Form submissions always send all fields, so this only matters for JSON.
-		if strings.HasPrefix(request.Header.Get("Content-type"), constants.JSON) && editor.ID != 0 {
+		// Pre-populate unset fields from the existing resource so partial
+		// updates don't clear them. Applies to both JSON and form-encoded requests.
+		if editor.ID != 0 {
 			existing, getErr := effectiveCtx.GetResource(editor.ID)
 			if getErr == nil {
 				if editor.Name == "" {

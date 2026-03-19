@@ -10,7 +10,6 @@ import (
 	"mahresources/server/interfaces"
 	"net/http"
 	"net/url"
-	"strings"
 )
 
 func GetGroupsHandler(ctx interfaces.GroupReader) func(writer http.ResponseWriter, request *http.Request) {
@@ -85,9 +84,9 @@ func GetAddGroupHandler(ctx interfaces.GroupCRUDReader) func(writer http.Respons
 
 			group, err = effectiveCtx.CreateGroup(&editor.GroupCreator)
 		} else if err == nil {
-			// For JSON requests, pre-populate unset string fields from the
-			// existing group so partial updates don't clear them.
-			if strings.HasPrefix(request.Header.Get("Content-type"), constants.JSON) {
+			// Pre-populate unset fields from the existing group so partial
+			// updates don't clear them. Applies to both JSON and form-encoded requests.
+			{
 				existing, getErr := effectiveCtx.GetGroup(editor.ID)
 				if getErr == nil {
 					if editor.Name == "" {

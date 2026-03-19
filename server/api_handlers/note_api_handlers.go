@@ -63,9 +63,9 @@ func GetAddNoteHandler(ctx interfaces.NoteWriteReader) func(writer http.Response
 			return
 		}
 
-		// For JSON requests (API clients), pre-populate unset string fields from
-		// the existing note so partial updates don't clear them.
-		if strings.HasPrefix(request.Header.Get("Content-type"), constants.JSON) && queryVars.ID != 0 {
+		// Pre-populate unset fields from the existing note so partial updates
+		// don't clear them. Applies to both JSON and form-encoded requests.
+		if queryVars.ID != 0 {
 			existing, getErr := effectiveCtx.GetNote(queryVars.ID)
 			if getErr == nil {
 				if queryVars.Name == "" {

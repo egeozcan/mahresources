@@ -7,6 +7,8 @@ import (
 	"io"
 	"mahresources/application_context"
 	"mahresources/constants"
+	"net/url"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 	"mahresources/models"
@@ -105,6 +107,18 @@ func (tc *TestContext) MakeRequest(method, url string, body interface{}) *httpte
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+
+	rr := httptest.NewRecorder()
+	tc.Router.ServeHTTP(rr, req)
+	return rr
+}
+
+// MakeFormRequest sends a form-encoded request to the test server
+func (tc *TestContext) MakeFormRequest(method, reqUrl string, formData url.Values) *httptest.ResponseRecorder {
+	bodyReader := strings.NewReader(formData.Encode())
+	req, _ := http.NewRequest(method, reqUrl, bodyReader)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
 
 	rr := httptest.NewRecorder()
 	tc.Router.ServeHTTP(rr, req)
