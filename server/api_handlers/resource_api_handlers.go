@@ -374,7 +374,7 @@ func GetResourceEditHandler(ctx interfaces.ResourceEditReader) func(writer http.
 				if editor.ContentCategory == "" {
 					editor.ContentCategory = existing.ContentCategory
 				}
-				if editor.OwnerId == 0 && existing.OwnerId != nil && !formHasField(request, "OwnerId") {
+				if editor.OwnerId == 0 && existing.OwnerId != nil && !formHasField(request, "ownerId") {
 					editor.OwnerId = *existing.OwnerId
 				}
 				if editor.ResourceCategoryId == 0 && existing.ResourceCategoryId != nil && !formHasField(request, "ResourceCategoryId") {
