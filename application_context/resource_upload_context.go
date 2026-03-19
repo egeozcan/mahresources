@@ -228,7 +228,10 @@ func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.Re
 				resourceQuery.OwnerId = group.ID
 			}
 
-			name := resourceQuery.FileName
+			name := resourceQuery.Name
+			if name == "" {
+				name = resourceQuery.FileName
+			}
 
 			// if the name is an empty string, try to get the name from the URL
 			if name == "" {
