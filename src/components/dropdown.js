@@ -356,10 +356,10 @@ export function autocompleter({
             ['@keydown.enter.prevent'](e) {
                 e.stopPropagation();
 
-                if (e.target.value === '' && !this.dropdownActive) {
+                if (e.target.value === '' && this.results.length === 0) {
                     const form = e.target.closest('form');
                     if (form && !standalone) {
-                        form.dispatchEvent(new Event('submit'));
+                        form.requestSubmit();
                     }
                     return;
                 }
