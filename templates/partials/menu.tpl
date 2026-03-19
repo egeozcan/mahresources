@@ -20,7 +20,7 @@
         {% endfor %}
 
         <!-- Admin dropdown -->
-        <div class="navbar-dropdown" @click.outside="adminOpen = false">
+        <div class="navbar-dropdown" @click.outside="adminOpen = false" @keydown.escape="if (adminOpen) { adminOpen = false; $el.querySelector('button').focus(); }">
             <button @click="adminOpen = !adminOpen"
                     class="navbar-link navbar-link--dropdown"
                     :class="{ 'navbar-link--active': adminOpen {% for adminEntry in adminMenu %}|| '{{ adminEntry.Url }}' == currentPath{% endfor %} }"
@@ -51,7 +51,7 @@
         </div>
 
         {% if hasPluginManager %}
-        <div class="navbar-dropdown" @click.outside="pluginsOpen = false">
+        <div class="navbar-dropdown" @click.outside="pluginsOpen = false" @keydown.escape="if (pluginsOpen) { pluginsOpen = false; $el.querySelector('button').focus(); }">
             <button @click="pluginsOpen = !pluginsOpen"
                     class="navbar-link navbar-link--dropdown"
                     :class="{ 'navbar-link--active': pluginsOpen || '/plugins/manage' == currentPath {% for pi in pluginMenuItems %}|| '{{ pi.FullPath }}' == currentPath{% endfor %} }"
