@@ -259,6 +259,10 @@ func (ctx *MahresourcesContext) FindParentsOfGroup(id uint) ([]models.Group, err
 		return nil, findIdErr
 	}
 
+	if len(ids) == 0 {
+		return results, nil
+	}
+
 	findIdErr = ctx.db.Find(&results, ids).Error
 
 	if findIdErr != nil {
