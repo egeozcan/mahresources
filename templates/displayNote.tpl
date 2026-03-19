@@ -59,7 +59,7 @@
     {% endif %}
 
     <div class="sidebar-group">
-        {% include "/partials/tagList.tpl" with tags=note.Tags %}
+        {% include "/partials/tagList.tpl" with tags=note.Tags addTagUrl='/v1/notes/addTags' id=note.ID %}
     </div>
 
     <div class="sidebar-group">

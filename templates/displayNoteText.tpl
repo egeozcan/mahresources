@@ -20,7 +20,7 @@
         {% endautoescape %}
     </div>
     {% include "/partials/ownerDisplay.tpl" with owner=note.Owner %}
-    {% include "/partials/tagList.tpl" with tags=note.Tags %}
+    {% include "/partials/tagList.tpl" with tags=note.Tags addTagUrl='/v1/notes/addTags' id=note.ID %}
 
     {% include "/partials/sideTitle.tpl" with title="Meta Data" %}
     {% include "/partials/json.tpl" with jsonData=note.Meta %}
