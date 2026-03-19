@@ -98,7 +98,8 @@ func TagContextProvider(context *application_context.MahresourcesContext) func(r
 		}
 
 		return pongo2.Context{
-			"pageTitle": "Tag " + tag.Name,
+			"pageTitle": tag.Name,
+			"prefix":    "Tag",
 			"tag":       tag,
 			"action": template_entities.Entry{
 				Name: "Edit",

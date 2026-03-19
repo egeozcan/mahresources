@@ -221,7 +221,8 @@ func ResourceContextProvider(context *application_context.MahresourcesContext) f
 		}
 
 		result := pongo2.Context{
-			"pageTitle":        "Resource " + resource.Name,
+			"pageTitle":        resource.Name,
+			"prefix":           "Resource",
 			"resource":         resource,
 			"versions":         versions,
 			"seriesSiblings":   seriesSiblings,

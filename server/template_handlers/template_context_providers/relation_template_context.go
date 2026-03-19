@@ -84,7 +84,8 @@ func RelationTypeContextProvider(context *application_context.MahresourcesContex
 		}
 
 		return pongo2.Context{
-			"pageTitle":    "Relation " + relationType.Name,
+			"pageTitle":    relationType.Name,
+			"prefix":       "Relation",
 			"relationType": relationType,
 			"action": template_entities.Entry{
 				Name: "Edit",

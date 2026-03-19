@@ -98,7 +98,8 @@ func CategoryContextProvider(context *application_context.MahresourcesContext) f
 		}
 
 		return pongo2.Context{
-			"pageTitle": "Category " + category.Name,
+			"pageTitle": category.Name,
+			"prefix":    "Category",
 			"category":  category,
 			"action": template_entities.Entry{
 				Name: "Edit",

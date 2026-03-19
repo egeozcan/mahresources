@@ -101,7 +101,8 @@ func QueryContextProvider(context *application_context.MahresourcesContext) func
 		}
 
 		return pongo2.Context{
-			"pageTitle":        "Query " + query.Name,
+			"pageTitle":        query.Name,
+			"prefix":           "Query",
 			"query":            query,
 			"readOnlyEnforced": context.IsReadOnlyDBEnforced(),
 			"action": template_entities.Entry{

@@ -181,7 +181,8 @@ func NoteContextProvider(context *application_context.MahresourcesContext) func(
 		}
 
 		return pongo2.Context{
-			"pageTitle": "Note: " + note.GetName(),
+			"pageTitle": note.GetName(),
+			"prefix":    "Note",
 			"note":      note,
 			"action": template_entities.Entry{
 				Name: "Edit",
@@ -284,7 +285,8 @@ func NoteTypeContextProvider(context *application_context.MahresourcesContext) f
 		}
 
 		return pongo2.Context{
-			"pageTitle": "Note Type " + noteType.Name,
+			"pageTitle": noteType.Name,
+			"prefix":    "Note Type",
 			"noteType":  noteType,
 			"action": template_entities.Entry{
 				Name: "Edit",

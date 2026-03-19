@@ -110,7 +110,8 @@ func ResourceCategoryContextProvider(context *application_context.MahresourcesCo
 		}
 
 		return pongo2.Context{
-			"pageTitle":        "Resource Category: " + resourceCategory.Name,
+			"pageTitle":        resourceCategory.Name,
+			"prefix":           "Resource Category",
 			"resourceCategory": resourceCategory,
 			"resources":        resources,
 			"action": template_entities.Entry{
