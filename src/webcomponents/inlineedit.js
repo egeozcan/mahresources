@@ -180,6 +180,7 @@ class InlineEdit extends HTMLElement {
 
         const newValue = this.inputElement.value.trim();
         this.displayText.textContent = newValue;
+        this.textContent = newValue;
         this.shadowRoot.replaceChild(this.displayContainer, this.inputElement);
 
         // Only post if the value actually changed
