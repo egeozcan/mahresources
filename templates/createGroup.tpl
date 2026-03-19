@@ -15,7 +15,7 @@
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="flex gap-2">
                             <div class="flex-1">
-                                {% include "/partials/form/autocompleter.tpl" with url='/v1/categories' addUrl='/v1/category' elName='categoryId' title='Category' selectedItems=category min=1 max=1 id=getNextId("autocompleter") %}
+                                {% include "/partials/form/autocompleter.tpl" with url='/v1/categories' addUrl='/v1/category' elName='categoryId' title='Category' selectedItems=category max=1 id=getNextId("autocompleter") %}
                             </div>
                         </div>
                     </div>

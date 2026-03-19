@@ -88,18 +88,15 @@ test.describe('Group Validation', () => {
     categoryId = category.ID;
   });
 
-  test('should require category when creating group', async ({ groupPage, page }) => {
+  test('should allow creating a group without a category', async ({ groupPage, page }) => {
     await groupPage.gotoNew();
     await groupPage.fillName('Group Without Category');
     await groupPage.save();
 
-    // Category is required - form should not submit successfully
-    // Either we stay on the new group form or see an error
-    const stayedOnForm = page.url().includes('/group/new');
-    const hasError = await page.locator('.error, [class*="error"], [class*="Error"]').isVisible();
-
-    // Form should have been blocked from submission
-    expect(stayedOnForm || hasError).toBeTruthy();
+    // Category is optional — form should submit successfully
+    // and redirect to the group display page
+    await page.waitForURL(/\/group\?id=/, { timeout: 5000 });
+    await expect(page.locator('h1')).toContainText('Group Without Category');
   });
 
   test.afterAll(async ({ apiClient }) => {
