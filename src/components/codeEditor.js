@@ -98,7 +98,7 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '' } = {})
     async loadHTML() {
       const { html } = await import('@codemirror/lang-html');
       this.view.dispatch({
-        effects: this.langCompartment.reconfigure(html()),
+        effects: this.langCompartment.reconfigure(html({ autoCloseTags: false })),
       });
     },
 
