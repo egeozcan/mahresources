@@ -172,6 +172,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	basicCategoryWriter := application_context.NewEntityWriter[models.Category](appContext)
 	basicQueryWriter := application_context.NewEntityWriter[models.Query](appContext)
 	basicRelationWriter := application_context.NewEntityWriter[models.GroupRelation](appContext)
+	basicRelationTypeWriter := application_context.NewEntityWriter[models.GroupRelationType](appContext)
 	basicNoteTypeWriter := application_context.NewEntityWriter[models.NoteType](appContext)
 
 	router.Methods(http.MethodGet).Path("/v1/notes").HandlerFunc(api_handlers.GetNotesHandler(appContext))
@@ -237,6 +238,8 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/relationTypes").HandlerFunc(api_handlers.GetRelationTypesHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/relation/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.GroupRelation](basicRelationWriter, "relation"))
 	router.Methods(http.MethodPost).Path("/v1/relation/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.GroupRelation](basicRelationWriter, "relation"))
+	router.Methods(http.MethodPost).Path("/v1/relationType/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.GroupRelationType](basicRelationTypeWriter, "relationType"))
+	router.Methods(http.MethodPost).Path("/v1/relationType/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.GroupRelationType](basicRelationTypeWriter, "relationType"))
 
 	router.Methods(http.MethodGet).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/resources").HandlerFunc(api_handlers.GetResourcesHandler(appContext))

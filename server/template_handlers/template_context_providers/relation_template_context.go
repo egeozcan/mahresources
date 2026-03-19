@@ -85,7 +85,7 @@ func RelationTypeContextProvider(context *application_context.MahresourcesContex
 
 		return pongo2.Context{
 			"pageTitle":    relationType.Name,
-			"prefix":       "Relation",
+			"prefix":       "Relation Type",
 			"relationType": relationType,
 			"action": template_entities.Entry{
 				Name: "Edit",
@@ -96,7 +96,7 @@ func RelationTypeContextProvider(context *application_context.MahresourcesContex
 				Url:  fmt.Sprintf("/v1/relationType/delete?Id=%v", relationType.ID),
 			},
 			"mainEntity":     relationType,
-			"mainEntityType": "relation",
+			"mainEntityType": "relationType",
 		}.Update(baseContext)
 	}
 }
