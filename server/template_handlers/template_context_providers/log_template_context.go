@@ -107,8 +107,9 @@ func LogContextProvider(context *application_context.MahresourcesContext) func(r
 		}
 
 		return pongo2.Context{
-			"pageTitle": "Log Entry #" + strconv.Itoa(int(log.ID)),
-			"log":       log,
+			"pageTitle":  "Log Entry #" + strconv.Itoa(int(log.ID)),
+			"log":        log,
+			"hasDetails": len(log.Details) > 0 && string(log.Details) != "null",
 		}.Update(baseContext)
 	}
 }
