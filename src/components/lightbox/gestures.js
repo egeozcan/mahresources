@@ -32,6 +32,15 @@ export const gestureState = {
   lastDragTime: null,
   lastDragX: null,
   lastDragY: null,
+
+  // Shared navigation debounce — prevents touch→synthesized-mouse double-fire
+  _navDebounce: false,
+  // Wheel gesture tracking for momentum vs new-gesture detection
+  _wheelDebounceTimer: null,
+  _wheelNavDirection: 0,
+  _wheelNavTime: 0,
+  _prevWheelAbsDelta: 0,
+  _wheelIncreaseCount: 0,
 };
 
 export const gestureMethods = {
@@ -136,7 +145,9 @@ export const gestureMethods = {
 
       if (!this.isZoomed() && this.pinchStartCenterX !== null && this.pinchCenterX !== null) {
         const diffX = this.pinchStartCenterX - this.pinchCenterX;
-        if (Math.abs(diffX) > 50) {
+        if (Math.abs(diffX) > 50 && !this._navDebounce) {
+          this._navDebounce = true;
+          setTimeout(() => { this._navDebounce = false; }, 300);
           if (diffX > 0) {
             this.next();
           } else {
@@ -170,6 +181,10 @@ export const gestureMethods = {
       if (this.isZoomed()) {
         // Pan is handled by handleTouchMove, swipe ignored when zoomed
       } else {
+        if (this._navDebounce) return;
+        this._navDebounce = true;
+        setTimeout(() => { this._navDebounce = false; }, 300);
+
         if (diffX > 0) {
           this.next();
         } else {
@@ -182,6 +197,13 @@ export const gestureMethods = {
     this.touchStartY = null;
   },
 
+  /**
+   * Wheel navigation uses a momentum-aware debounce:
+   * - After navigating, blocks further nav while momentum events arrive.
+   * - Resets the expiry timer on each event (so momentum can't outlast it).
+   * - Detects a NEW gesture via direction reversal (instant) or sustained
+   *   acceleration after 150ms (skips same-swipe ramp-up).
+   */
   handleWheel(event) {
     if (this.isVideo(this.getCurrentItem()?.contentType)) return;
 
@@ -226,9 +248,53 @@ export const gestureMethods = {
         event.preventDefault();
 
         if (Math.abs(event.deltaX) > 10) {
-          if (this._wheelDebounce) return;
+          if (this._wheelDebounce) {
+            const absDelta = Math.abs(event.deltaX);
+            const dirChanged = Math.sign(event.deltaX) !== this._wheelNavDirection;
+            const timeSinceNav = performance.now() - this._wheelNavTime;
+
+            if (absDelta > this._prevWheelAbsDelta) {
+              this._wheelIncreaseCount++;
+            } else {
+              this._wheelIncreaseCount = 0;
+            }
+            this._prevWheelAbsDelta = absDelta;
+
+            // Direction reversal = always a new gesture (can't happen mid-swipe).
+            // Acceleration = new gesture only after 150ms (skip same-swipe ramp-up).
+            const newGesture = dirChanged || (timeSinceNav > 150 && this._wheelIncreaseCount >= 3);
+
+            if (newGesture) {
+              clearTimeout(this._wheelDebounceTimer);
+              this._wheelDebounce = false;
+              this._navDebounce = false;
+              // Fall through to navigate below
+            } else {
+              clearTimeout(this._wheelDebounceTimer);
+              this._wheelDebounceTimer = setTimeout(() => {
+                this._wheelDebounce = false;
+                this._navDebounce = false;
+                this._wheelIncreaseCount = 0;
+                this._prevWheelAbsDelta = 0;
+              }, 300);
+              return;
+            }
+          }
+
+          if (this._navDebounce) return;
+
           this._wheelDebounce = true;
-          setTimeout(() => { this._wheelDebounce = false; }, 300);
+          this._navDebounce = true;
+          this._wheelNavDirection = Math.sign(event.deltaX);
+          this._wheelNavTime = performance.now();
+          this._prevWheelAbsDelta = Math.abs(event.deltaX);
+          this._wheelIncreaseCount = 0;
+          this._wheelDebounceTimer = setTimeout(() => {
+            this._wheelDebounce = false;
+            this._navDebounce = false;
+            this._wheelIncreaseCount = 0;
+            this._prevWheelAbsDelta = 0;
+          }, 300);
 
           if (event.deltaX > 0) {
             this.next();
@@ -338,7 +404,9 @@ export const gestureMethods = {
       const minDistance = 30;
 
       if (Math.abs(this.dragVelocityX) > Math.abs(this.dragVelocityY)) {
-        if (speed > threshold || distance > minDistance) {
+        if ((speed > threshold || distance > minDistance) && !this._navDebounce) {
+          this._navDebounce = true;
+          setTimeout(() => { this._navDebounce = false; }, 300);
           if (dx < 0) {
             this.next();
           } else if (dx > 0) {
