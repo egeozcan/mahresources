@@ -20,6 +20,12 @@
         {% endautoescape %}
     </div>
     {% include "/partials/ownerDisplay.tpl" with owner=note.Owner %}
+    {% if note.NoteType %}
+    <div class="sidebar-group">
+        {% include "/partials/sideTitle.tpl" with title="Note Type" %}
+        <a href="/noteType?id={{ note.NoteType.ID }}" class="text-amber-700 hover:underline">{{ note.NoteType.Name }}</a>
+    </div>
+    {% endif %}
     {% include "/partials/tagList.tpl" with tags=note.Tags addTagUrl='/v1/notes/addTags' id=note.ID %}
 
     {% include "/partials/sideTitle.tpl" with title="Meta Data" %}
