@@ -20,9 +20,7 @@
                 {% endif %}
 
                 <h3 class="card-title">
-                    <a href="/group?id={{ entity.ID }}" title="{{ entity.GetName() }}">
-                        <inline-edit post="/v1/group/editName?id={{ entity.ID }}" name="name">{{ entity.GetName() }}</inline-edit>
-                    </a>
+                    <a href="/group?id={{ entity.ID }}" title="{{ entity.GetName() }}">{{ entity.GetName() }}</a>
                 </h3>
 
                 {% if relation && !reverse %}
