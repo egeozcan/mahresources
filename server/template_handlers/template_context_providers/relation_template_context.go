@@ -5,6 +5,7 @@ import (
 	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
 	"mahresources/constants"
+	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
 	"mahresources/server/template_handlers/template_entities"
@@ -293,6 +294,13 @@ func RelationCreateContextProvider(context *application_context.MahresourcesCont
 			}
 
 			tplContext["toGroup"] = toGroup
+		}
+
+		if query.Name != "" || query.Description != "" {
+			tplContext["relation"] = &models.GroupRelation{
+				Name:        query.Name,
+				Description: query.Description,
+			}
 		}
 
 		return tplContext

@@ -101,8 +101,9 @@ func GetAddRelationHandler(ctx interfaces.RelationshipWriter) func(writer http.R
 			if !isAPIRequest {
 				// For HTML requests, redirect back to the form with error
 				backUrl := fmt.Sprintf(
-					"/relation/new?FromGroupId=%v&ToGroupId=%v&GroupRelationTypeId=%v&Error=%v",
+					"/relation/new?FromGroupId=%v&ToGroupId=%v&GroupRelationTypeId=%v&Name=%v&Description=%v&Error=%v",
 					editor.FromGroupId, editor.ToGroupId, editor.GroupRelationTypeId,
+					url.QueryEscape(editor.Name), url.QueryEscape(editor.Description),
 					url.QueryEscape(err.Error()),
 				)
 				http.Redirect(writer, request, backUrl, http.StatusSeeOther)
