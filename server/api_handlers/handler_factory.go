@@ -202,51 +202,6 @@ func (f *CRUDHandlerFactory[T, Q, C]) CreateHandler() http.HandlerFunc {
 	}
 }
 
-// createOrUpdateHandler creates an HTTP handler for create-or-update operations.
-// getID extracts the ID from the decoded request struct.
-// create and update are the respective operations.
-// entityName is used for redirect URL construction (e.g., "tag", "category").
-func createOrUpdateHandler[T any](
-	entityName string,
-	getID func(*T) uint,
-	create func(*T) (any, error),
-	update func(*T) (any, error),
-) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var editor T
-
-		if err := tryFillStructValuesFromRequest(&editor, r); err != nil {
-			http_utils.HandleError(err, w, r, http.StatusBadRequest)
-			return
-		}
-
-		var result any
-		var err error
-
-		if getID(&editor) != 0 {
-			result, err = update(&editor)
-		} else {
-			result, err = create(&editor)
-		}
-
-		if err != nil {
-			http_utils.HandleError(err, w, r, http.StatusBadRequest)
-			return
-		}
-
-		type hasID interface{ GetId() uint }
-		if entity, ok := result.(hasID); ok {
-			redirectURL := "/" + entityName + "?id=" + strconv.Itoa(int(entity.GetId()))
-			if http_utils.RedirectIfHTMLAccepted(w, r, redirectURL) {
-				return
-			}
-		}
-
-		w.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(w).Encode(result)
-	}
-}
-
 // CreateTagHandler returns a handler that creates or updates tags based on ID presence.
 // For JSON update requests, it pre-fills unset fields from the existing tag
 // so that partial JSON updates don't clear fields, while still allowing explicit clearing.
