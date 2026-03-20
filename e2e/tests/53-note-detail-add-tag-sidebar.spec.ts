@@ -53,7 +53,7 @@ test.describe('Note detail page should have Add Tag form in sidebar', () => {
     await page.waitForLoadState('load');
 
     // Verify the "Tags" heading is visible in the sidebar
-    const tagsHeading = page.locator('aside h3, [role="complementary"] h3').filter({ hasText: 'Tags' });
+    const tagsHeading = page.locator('aside h2, [role="complementary"] h2').filter({ hasText: 'Tags' });
     await expect(tagsHeading).toBeVisible({ timeout: 5000 });
 
     // The "Add Tag" form should be present in the sidebar, just like on group and resource detail pages.
