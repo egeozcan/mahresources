@@ -1,3 +1,3 @@
-<h3 class="sidebar-group-title">
+<h2 class="sidebar-group-title">
     {{ title }}
-</h3>
+</h2>
