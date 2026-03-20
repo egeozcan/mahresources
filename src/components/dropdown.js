@@ -356,7 +356,7 @@ export function autocompleter({
             ['@keydown.enter.prevent'](e) {
                 e.stopPropagation();
 
-                if (e.target.value === '' && this.results.length === 0) {
+                if (e.target.value === '') {
                     const form = e.target.closest('form');
                     if (form && !standalone) {
                         form.requestSubmit();

@@ -263,8 +263,9 @@ test.describe('Resource from-url', () => {
     cli.run('resource', 'delete', String(sourceId));
   });
 
-  test('from-url creates a resource from an existing resource URL', async ({ cli }) => {
-    const url = `${BASE_URL}/v1/resource/content?id=${sourceId}`;
+  test('from-url creates a resource from an existing resource URL', async ({ cli, workerServer }) => {
+    const serverUrl = `http://127.0.0.1:${workerServer.port}`;
+    const url = `${serverUrl}/v1/resource/content?id=${sourceId}`;
     const result = cli.runJson<Resource | Resource[]>('resource', 'from-url', '--url', url);
     const res = Array.isArray(result) ? result[0] : result;
     expect(res.ID).toBeGreaterThan(0);

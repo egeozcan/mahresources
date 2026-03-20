@@ -1,19 +1,17 @@
-import { test, expect } from '../../fixtures/cli.fixture';
-import { CliRunner } from '../../helpers/cli-runner';
+import { test, expect, createCliRunner } from '../../fixtures/cli.fixture';
 import { execFileSync } from 'child_process';
 import * as path from 'path';
 
 const cliBinary = process.env.CLI_PATH || path.resolve(__dirname, '../../../mr');
-const serverUrl = process.env.BASE_URL || 'http://localhost:8181';
 
 test.describe('global flags', () => {
-  test('--server flag works', async () => {
-    const cli = new CliRunner(cliBinary, serverUrl);
+  test('--server flag works', async ({ cli }) => {
     const result = cli.run('tags', 'list');
     expect(result.exitCode).toBe(0);
   });
 
-  test('MAHRESOURCES_URL env var works', async () => {
+  test('MAHRESOURCES_URL env var works', async ({ workerServer }) => {
+    const serverUrl = `http://127.0.0.1:${workerServer.port}`;
     const stdout = execFileSync(cliBinary, ['tags', 'list', '--json'], {
       encoding: 'utf-8',
       timeout: 30000,
@@ -23,7 +21,8 @@ test.describe('global flags', () => {
     expect(Array.isArray(parsed)).toBe(true);
   });
 
-  test('--server takes precedence over MAHRESOURCES_URL', async () => {
+  test('--server takes precedence over MAHRESOURCES_URL', async ({ workerServer }) => {
+    const serverUrl = `http://127.0.0.1:${workerServer.port}`;
     const stdout = execFileSync(cliBinary, ['--server', serverUrl, 'tags', 'list', '--json'], {
       encoding: 'utf-8',
       timeout: 30000,
