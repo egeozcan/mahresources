@@ -66,7 +66,7 @@ test.describe('Text block content saves via UI', () => {
     const blocks = await apiClient.getBlocks(noteId);
     const textBlock = blocks.find((b: { type: string }) => b.type === 'text');
     expect(textBlock).toBeDefined();
-    expect(textBlock.content.text).toBe('This content should be saved');
+    expect(textBlock!.content.text).toBe('This content should be saved');
   });
 
   test.afterAll(async ({ apiClient }) => {

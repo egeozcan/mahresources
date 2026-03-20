@@ -217,13 +217,13 @@ test.describe('Calendar Block', () => {
     };
 
     const updated = await apiClient.updateBlockState(block.id, newState);
-    expect(updated.state.customEvents).toHaveLength(1);
-    expect(updated.state.customEvents[0].title).toBe('Test Event');
+    expect((updated.state as any).customEvents).toHaveLength(1);
+    expect((updated.state as any).customEvents[0].title).toBe('Test Event');
 
     // Verify persistence
     const fetched = await apiClient.getBlock(block.id);
-    expect(fetched.state.customEvents).toHaveLength(1);
-    expect(fetched.state.customEvents[0].id).toBe('test-event-1');
+    expect((fetched.state as any).customEvents).toHaveLength(1);
+    expect((fetched.state as any).customEvents[0].id).toBe('test-event-1');
 
     // Clean up
     await apiClient.deleteBlock(block.id);

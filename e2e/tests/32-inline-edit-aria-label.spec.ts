@@ -56,9 +56,7 @@ test.describe('Inline-edit aria-label specificity', () => {
     // and grammatically nonsensical.
     const ariaLabel = await editButton.getAttribute('aria-label');
 
-    expect(ariaLabel).not.toBe('Edit Edit value',
-      'inline-edit button should have a specific aria-label identifying the field, ' +
-      'not the generic default "Edit Edit value"');
+    expect(ariaLabel).not.toBe('Edit Edit value');
 
     // Clean up
     await apiClient.deleteNote(note.ID);

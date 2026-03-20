@@ -98,7 +98,7 @@ export interface NoteBlock {
 
 export class ApiClient {
   constructor(
-    private request: APIRequestContext,
+    public request: APIRequestContext,
     private baseUrl: string
   ) {}
 

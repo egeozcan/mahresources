@@ -106,7 +106,7 @@ test.describe('Note Sharing UI', () => {
     await notePage.gotoDisplay(noteId);
 
     // Wait for Alpine.js to initialize
-    await page.waitForFunction(() => window.Alpine !== undefined);
+    await page.waitForFunction(() => (window as any).Alpine !== undefined);
 
     // Share button should be visible in sidebar (wait for Alpine x-if to render)
     const shareButton = page.locator('button:has-text("Share Note")');
@@ -117,7 +117,7 @@ test.describe('Note Sharing UI', () => {
     await notePage.gotoDisplay(noteId);
 
     // Wait for Alpine.js to initialize
-    await page.waitForFunction(() => window.Alpine !== undefined);
+    await page.waitForFunction(() => (window as any).Alpine !== undefined);
 
     // Click share button (wait for it to appear first)
     const shareButton = page.locator('button:has-text("Share Note")');
@@ -141,7 +141,7 @@ test.describe('Note Sharing UI', () => {
     await notePage.gotoDisplay(noteId);
 
     // Wait for Alpine.js to initialize
-    await page.waitForFunction(() => window.Alpine !== undefined);
+    await page.waitForFunction(() => (window as any).Alpine !== undefined);
 
     // Note should already be shared from previous test
     // Wait for the copy button to appear (shared state)
@@ -163,7 +163,7 @@ test.describe('Note Sharing UI', () => {
     await notePage.gotoDisplay(noteId);
 
     // Wait for Alpine.js to initialize
-    await page.waitForFunction(() => window.Alpine !== undefined);
+    await page.waitForFunction(() => (window as any).Alpine !== undefined);
 
     // Wait for unshare button to appear (note should be shared from previous tests)
     const unshareButton = page.locator('button:has-text("Unshare")');

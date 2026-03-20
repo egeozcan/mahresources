@@ -21,7 +21,7 @@ test.describe('Plugin Hooks', () => {
   });
 
   test('before_note_create hook prepends [Plugin] to note name', async ({ apiClient }) => {
-    const category = await apiClient.createCategory({ name: 'Hook Test Category' });
+    const category = await apiClient.createCategory('Hook Test Category');
     const group = await apiClient.createGroup({
       name: 'Hook Test Group',
       categoryId: category.ID,
