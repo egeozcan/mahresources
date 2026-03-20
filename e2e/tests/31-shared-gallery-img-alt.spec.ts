@@ -50,7 +50,7 @@ test.describe('Shared gallery image alt text', () => {
 
     // Create two resources with distinct, descriptive names
     const path = await import('path');
-    const imageFiles = ['sample-image-31.png', 'sample-image-32.png'];
+    const imageFiles = ['sample-image-35.png', 'sample-image-36.png'];
     for (let i = 0; i < imageFiles.length; i++) {
       const resource = await apiClient.createResource({
         filePath: path.join(__dirname, '../test-assets', imageFiles[i]),
@@ -91,17 +91,13 @@ test.describe('Shared gallery image alt text', () => {
     const images = gallery.locator('img');
     await expect(images).toHaveCount(2);
 
-    // Each image should have a descriptive alt (not the generic "Gallery image")
-    // and alt texts should be unique (not all the same)
-    const altTexts: string[] = [];
-    for (let i = 0; i < 2; i++) {
-      const alt = await images.nth(i).getAttribute('alt');
-      expect(alt, `Image ${i} should have an alt attribute`).toBeTruthy();
+    // Each image should have a descriptive alt matching its resource name
+    for (let i = 0; i < resourceNames.length; i++) {
+      const img = images.nth(i);
+      const alt = await img.getAttribute('alt');
       expect(alt, `Image ${i} should not have generic alt text`).not.toBe('Gallery image');
-      altTexts.push(alt!);
+      expect(alt, `Image ${i} alt should contain resource name`).toContain(resourceNames[i]);
     }
-    // The two images should have different alt texts (unique descriptions)
-    expect(altTexts[0]).not.toBe(altTexts[1]);
   });
 
   test.afterAll(async ({ apiClient }) => {
