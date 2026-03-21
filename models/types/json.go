@@ -116,6 +116,8 @@ func JSONQuery(column string) *JSONQueryExpression {
 }
 
 // HasKey returns clause.Expression
+//
+//goland:noinspection GoUnnecessarilyExportedIdentifi
 //goland:noinspection GoUnnecessarilyExportedIdentifiers
 func (jsonQuery *JSONQueryExpression) HasKey(keys ...string) *JSONQueryExpression {
 	jsonQuery.keys = keys
@@ -135,6 +137,8 @@ func (jsonQuery *JSONQueryExpression) Operation(operation JsonOperation, value a
 	return jsonQuery
 }
 
+spection GoUnhandledErrorResult
+func 
 // Build implements clause.Expression
 //goland:noinspection GoUnhandledErrorResult
 func (jsonQuery *JSONQueryExpression) Build(builder clause.Builder) {
@@ -152,16 +156,23 @@ func (jsonQuery *JSONQueryExpression) Build(builder clause.Builder) {
 				if len(jsonQuery.keys) > 0 {
 					builder.WriteString("JSON_EXTRACT(" + stmt.Quote(jsonQuery.column) + ",")
 					builder.AddVar(stmt, "$."+strings.Join(jsonQuery.keys, "."))
-					str := fmt.Sprintf(") %v ", jsonQuery.operation)
-					builder.WriteString(str)
-					if _, ok := jsonQuery.value.(bool); ok {
-						builder.WriteString(fmt.Sprint(jsonQuery.value))
+					if jsonQuery.value == nil && jsonQuery.operation == OperatorEquals {
+						builder.WriteString(") IS NULL")
+					} else if jsonQuery.value == nil && jsonQuery.operation == OperatorNotEquals {
+						builder.WriteString(") IS NOT NULL")
 					} else {
-						if jsonQuery.operation == OperatorLike || jsonQuery.operation == OperatorNotLike {
-							jsonQuery.value = fmt.Sprintf("%%%v%%", jsonQuery.value)
-						}
+						str := fmt.Sprintf(") %v ", jsonQuery.operation)
+						builder.WriteString(str)
+						if _, ok := jsonQuery.value.(bool); ok {
+							builder.WriteString(fmt.Sprint(jsonQuery.value))
+						} else {
+							val := jsonQuery.value
+							if jsonQuery.operation == OperatorLike || jsonQuery.operation == OperatorNotLike {
+								val = fmt.Sprintf("%%%v%%", val)
+							}
 
-						stmt.AddVar(builder, jsonQuery.value)
+							stmt.AddVar(builder, val)
+						}
 					}
 				}
 			}
@@ -205,17 +216,18 @@ func (jsonQuery *JSONQueryExpression) Build(builder clause.Builder) {
 						builder.WriteString(fmt.Sprintf(" %v ", jsonQuery.operation))
 					}
 
+					pgVal := jsonQuery.value
 					if jsonQuery.operation == OperatorLike || jsonQuery.operation == OperatorNotLike {
-						jsonQuery.value = fmt.Sprintf("%%%v%%", jsonQuery.value)
+						pgVal = fmt.Sprintf("%%%v%%", pgVal)
 					}
 
-					switch jsonQuery.value.(type) {
+					switch pgVal.(type) {
 					case string:
 						if !isTextBased {
 							stmt.WriteString("to_jsonb")
 						}
 						stmt.WriteString("(")
-						stmt.AddVar(builder, jsonQuery.value)
+						stmt.AddVar(builder, pgVal)
 						stmt.WriteString("::text)")
 					case bool:
 						if !isTextBased {
@@ -223,7 +235,7 @@ func (jsonQuery *JSONQueryExpression) Build(builder clause.Builder) {
 						} else {
 							stmt.WriteString("(")
 						}
-						stmt.AddVar(builder, jsonQuery.value)
+						stmt.AddVar(builder, pgVal)
 						stmt.WriteString("::boolean)")
 					case float64:
 						if !isTextBased {
@@ -231,12 +243,12 @@ func (jsonQuery *JSONQueryExpression) Build(builder clause.Builder) {
 						} else {
 							stmt.WriteString("(")
 						}
-						stmt.AddVar(builder, jsonQuery.value)
+						stmt.AddVar(builder, pgVal)
 						stmt.WriteString("::numeric)")
 					case nil:
 						stmt.WriteString("NULL")
 					default:
-						stmt.AddVar(builder, fmt.Sprint(jsonQuery.value))
+						stmt.AddVar(builder, fmt.Sprint(pgVal))
 					}
 				}
 			}
