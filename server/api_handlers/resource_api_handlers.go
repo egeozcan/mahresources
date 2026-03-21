@@ -668,7 +668,7 @@ func GetMergeResourcesHandler(ctx interfaces.ResourceMerger) func(writer http.Re
 			return
 		}
 
-		err = effectiveCtx.MergeResources(editor.Winner, editor.Losers)
+		err = effectiveCtx.MergeResources(editor.Winner, editor.Losers, editor.KeepAsVersion)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)

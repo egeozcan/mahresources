@@ -527,7 +527,7 @@ func (ctx *MahresourcesContext) GetPopularResourceTags(query *query_models.Resou
 	return res, db.Scan(&res).Error
 }
 
-func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint) error {
+func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint, keepAsVersion bool) error {
 	if len(loserIds) == 0 || winnerId == 0 {
 		return errors.New("incorrect parameters")
 	}

@@ -50,7 +50,7 @@ func TestMergeResourcesTransfersVersions(t *testing.T) {
 	totalBefore := winnerVersionsBefore + loserVersionsBefore
 
 	// Merge loser into winner
-	err = tc.AppCtx.MergeResources(winner.ID, []uint{loser.ID})
+	err = tc.AppCtx.MergeResources(winner.ID, []uint{loser.ID}, false)
 	assert.NoError(t, err)
 
 	// The loser's versions should have been transferred to the winner, not deleted

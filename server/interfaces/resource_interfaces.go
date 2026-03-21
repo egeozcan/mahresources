@@ -56,7 +56,7 @@ type BulkResourceDeleter interface {
 
 // ResourceMerger handles resource merging operations
 type ResourceMerger interface {
-	MergeResources(winnerId uint, loserIds []uint) error
+	MergeResources(winnerId uint, loserIds []uint, keepAsVersion bool) error
 }
 
 // ResourceMediaProcessor handles media operations on resources

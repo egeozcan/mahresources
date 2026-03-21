@@ -78,7 +78,7 @@ func TestMergeResourcesMultipleLosersVersionNumbersUnique(t *testing.T) {
 	assert.Equal(t, int64(2), loser2VersionCount, "loser2 should have 2 versions")
 
 	// Merge both losers into the winner
-	err = tc.AppCtx.MergeResources(winner.ID, []uint{loser1.ID, loser2.ID})
+	err = tc.AppCtx.MergeResources(winner.ID, []uint{loser1.ID, loser2.ID}, false)
 	assert.NoError(t, err)
 
 	// All versions should now belong to the winner

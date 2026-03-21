@@ -60,7 +60,7 @@ func TestMergeResources_NullWinnerMeta(t *testing.T) {
 	require.NotZero(t, loser.ID)
 
 	// Merge loser into winner
-	err = tc.AppCtx.MergeResources(winner.ID, []uint{loser.ID})
+	err = tc.AppCtx.MergeResources(winner.ID, []uint{loser.ID}, false)
 	require.NoError(t, err, "MergeResources should succeed")
 
 	// Reload winner's meta directly from DB

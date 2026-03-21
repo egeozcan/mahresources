@@ -24,6 +24,7 @@ type BulkEditMetaQuery struct {
 }
 
 type MergeQuery struct {
-	Winner uint
-	Losers []uint
+	Winner        uint
+	Losers        []uint
+	KeepAsVersion bool
 }
