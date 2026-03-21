@@ -35,11 +35,11 @@
     <!-- Side-by-side mode -->
     <div x-show="mode === 'side-by-side'" class="grid grid-cols-2 gap-4">
         <div class="border rounded overflow-hidden">
-            <div class="compare-panel-header--old">{{ label1 }} — v{{ comparison.Version1.VersionNumber }}</div>
+            <div class="compare-panel-header--old">{{ label1 }}{% if not crossResource %} — v{{ comparison.Version1.VersionNumber }}{% endif %}</div>
             <img :src="leftUrl" class="max-w-full h-auto" alt="Version {{ comparison.Version1.VersionNumber }}">
         </div>
         <div class="border rounded overflow-hidden">
-            <div class="compare-panel-header--new">{{ label2 }} — v{{ comparison.Version2.VersionNumber }}</div>
+            <div class="compare-panel-header--new">{{ label2 }}{% if not crossResource %} — v{{ comparison.Version2.VersionNumber }}{% endif %}</div>
             <img :src="rightUrl" class="max-w-full h-auto" alt="Version {{ comparison.Version2.VersionNumber }}">
         </div>
     </div>
@@ -81,8 +81,8 @@
     <!-- Toggle mode -->
     <div x-show="mode === 'toggle'" class="relative border rounded overflow-hidden cursor-pointer" tabindex="0" role="button" @click="toggleSide()" @keydown.space.prevent="toggleSide()">
         <div class="absolute top-2 right-2 z-10">
-            <span x-show="showLeft" class="compare-side-label--old">{{ label1 }} — v{{ comparison.Version1.VersionNumber }}</span>
-            <span x-show="!showLeft" class="compare-side-label--new">{{ label2 }} — v{{ comparison.Version2.VersionNumber }}</span>
+            <span x-show="showLeft" class="compare-side-label--old">{{ label1 }}{% if not crossResource %} — v{{ comparison.Version1.VersionNumber }}{% endif %}</span>
+            <span x-show="!showLeft" class="compare-side-label--new">{{ label2 }}{% if not crossResource %} — v{{ comparison.Version2.VersionNumber }}{% endif %}</span>
         </div>
         <img x-show="showLeft" :src="leftUrl" class="w-full h-auto" alt="Version {{ comparison.Version1.VersionNumber }}">
         <img x-show="!showLeft" :src="rightUrl" class="w-full h-auto" alt="Version {{ comparison.Version2.VersionNumber }}">

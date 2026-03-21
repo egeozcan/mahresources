@@ -10,7 +10,7 @@
     <!-- Thumbnails before loading -->
     <div x-show="!loaded" class="grid grid-cols-2 gap-6">
         <div class="border rounded p-4 text-center">
-            <div class="compare-panel-header--old rounded-t -mx-4 -mt-4 mb-3">{{ label1 }} — v{{ comparison.Version1.VersionNumber }}</div>
+            <div class="compare-panel-header--old rounded-t -mx-4 -mt-4 mb-3">{{ label1 }}{% if not crossResource %} — v{{ comparison.Version1.VersionNumber }}{% endif %}</div>
             <svg xmlns="http://www.w3.org/2000/svg" width="48" height="56" viewBox="0 0 24 28" fill="none" stroke="#6b7280" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mx-auto mb-3" aria-hidden="true">
                 <path d="M14 2H6a2 2 0 00-2 2v20a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z"/>
                 <polyline points="14 2 14 8 20 8"/>
@@ -23,7 +23,7 @@
             </a>
         </div>
         <div class="border rounded p-4 text-center">
-            <div class="compare-panel-header--new rounded-t -mx-4 -mt-4 mb-3">{{ label2 }} — v{{ comparison.Version2.VersionNumber }}</div>
+            <div class="compare-panel-header--new rounded-t -mx-4 -mt-4 mb-3">{{ label2 }}{% if not crossResource %} — v{{ comparison.Version2.VersionNumber }}{% endif %}</div>
             <svg xmlns="http://www.w3.org/2000/svg" width="48" height="56" viewBox="0 0 24 28" fill="none" stroke="#6b7280" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mx-auto mb-3" aria-hidden="true">
                 <path d="M14 2H6a2 2 0 00-2 2v20a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z"/>
                 <polyline points="14 2 14 8 20 8"/>
@@ -41,7 +41,7 @@
     <div x-show="loaded" class="grid grid-cols-2 gap-4">
         <div class="border rounded overflow-hidden">
             <div class="compare-panel-header--old flex justify-between items-center">
-                <span>{{ label1 }} — v{{ comparison.Version1.VersionNumber }}</span>
+                <span>{{ label1 }}{% if not crossResource %} — v{{ comparison.Version1.VersionNumber }}{% endif %}</span>
                 <a href="/v1/resource/version/file?versionId={{ comparison.Version1.ID }}" class="text-red-900/60 hover:underline text-xs">Download</a>
             </div>
             <iframe src="/v1/resource/version/file?versionId={{ comparison.Version1.ID }}"
@@ -49,7 +49,7 @@
         </div>
         <div class="border rounded overflow-hidden">
             <div class="compare-panel-header--new flex justify-between items-center">
-                <span>{{ label2 }} — v{{ comparison.Version2.VersionNumber }}</span>
+                <span>{{ label2 }}{% if not crossResource %} — v{{ comparison.Version2.VersionNumber }}{% endif %}</span>
                 <a href="/v1/resource/version/file?versionId={{ comparison.Version2.ID }}" class="text-green-900/60 hover:underline text-xs">Download</a>
             </div>
             <iframe src="/v1/resource/version/file?versionId={{ comparison.Version2.ID }}"

@@ -59,7 +59,7 @@
     <!-- Split diff view -->
     <div x-show="!loading && !error && mode === 'split'" class="grid grid-cols-2 gap-0 font-mono text-sm overflow-x-auto">
         <div class="border-r">
-            <div class="compare-panel-header--old sticky top-0 z-10">{{ label1 }} — v{{ comparison.Version1.VersionNumber }}</div>
+            <div class="compare-panel-header--old sticky top-0 z-10">{{ label1 }}{% if not crossResource %} — v{{ comparison.Version1.VersionNumber }}{% endif %}</div>
             <table class="w-full">
                 <template x-for="(line, index) in splitLeft" :key="index">
                     <tr :class="{'bg-red-50': line.changed}">
@@ -70,7 +70,7 @@
             </table>
         </div>
         <div>
-            <div class="compare-panel-header--new sticky top-0 z-10">{{ label2 }} — v{{ comparison.Version2.VersionNumber }}</div>
+            <div class="compare-panel-header--new sticky top-0 z-10">{{ label2 }}{% if not crossResource %} — v{{ comparison.Version2.VersionNumber }}{% endif %}</div>
             <table class="w-full">
                 <template x-for="(line, index) in splitRight" :key="index">
                     <tr :class="{'bg-green-50': line.changed}">
