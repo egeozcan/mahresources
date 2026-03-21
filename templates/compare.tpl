@@ -12,7 +12,7 @@
         <div class="flex flex-col md:flex-row items-stretch md:items-center gap-3">
             <!-- Left (OLD) side -->
             <div class="flex flex-wrap items-center gap-2 flex-1 min-w-0">
-                <span class="compare-side-label--old" aria-label="{% if crossResource %}Left resource{% else %}Old version{% endif %}">{% if crossResource %}Left{% else %}OLD{% endif %}</span>
+                <span class="compare-side-label--old" aria-label="{{ label1 }}">{{ label1 }}</span>
                 <div x-data="autocompleter({
                     url: '/v1/resources',
                     selectedResults: [{{ resource1|json }}],
@@ -49,7 +49,7 @@
 
             <!-- Right (NEW) side -->
             <div class="flex flex-wrap items-center gap-2 flex-1 min-w-0">
-                <span class="compare-side-label--new" aria-label="{% if crossResource %}Right resource{% else %}New version{% endif %}">{% if crossResource %}Right{% else %}NEW{% endif %}</span>
+                <span class="compare-side-label--new" aria-label="{{ label2 }}">{{ label2 }}</span>
                 <div x-data="autocompleter({
                     url: '/v1/resources',
                     selectedResults: [{{ resource2|json }}],
@@ -269,9 +269,9 @@
         <p class="text-lg font-medium text-stone-700">Ready to Compare</p>
         <p class="text-sm max-w-xs">Select resources and versions above to see a detailed comparison.</p>
         <div class="flex items-center gap-2 text-xs mt-1">
-            <span class="compare-side-label--old">{% if crossResource %}Left{% else %}OLD{% endif %}</span>
+            <span class="compare-side-label--old">{{ label1 }}</span>
             <span class="text-stone-400" aria-hidden="true">&harr;</span>
-            <span class="compare-side-label--new">{% if crossResource %}Right{% else %}NEW{% endif %}</span>
+            <span class="compare-side-label--new">{{ label2 }}</span>
         </div>
     </div>
     {% endif %}

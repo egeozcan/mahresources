@@ -6,7 +6,7 @@
 
     <div class="grid grid-cols-2 gap-6">
         <div class="border rounded overflow-hidden text-center">
-            <div class="compare-panel-header--old">{% if crossResource %}Left{% else %}OLD{% endif %} — v{{ comparison.Version1.VersionNumber }}</div>
+            <div class="compare-panel-header--old">{{ label1 }} — v{{ comparison.Version1.VersionNumber }}</div>
             <div class="p-4">
                 {% if comparison.Version1.Width > 0 %}
                 <img src="/v1/resource/preview?id={{ resource1.ID }}&maxX=200&maxY=200"
@@ -24,7 +24,7 @@
             </div>
         </div>
         <div class="border rounded overflow-hidden text-center">
-            <div class="compare-panel-header--new">{% if crossResource %}Right{% else %}NEW{% endif %} — v{{ comparison.Version2.VersionNumber }}</div>
+            <div class="compare-panel-header--new">{{ label2 }} — v{{ comparison.Version2.VersionNumber }}</div>
             <div class="p-4">
                 {% if comparison.Version2.Width > 0 %}
                 <img src="/v1/resource/preview?id={{ resource2.ID }}&maxX=200&maxY=200"

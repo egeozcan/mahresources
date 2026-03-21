@@ -100,9 +100,39 @@ func CompareContextProvider(context *application_context.MahresourcesContext) fu
 		}
 
 		// Determine if merge is available (cross-resource, both at latest versions)
+		crossResource := query.Resource1ID != query.Resource2ID
 		canMerge := false
-		if query.Resource1ID != query.Resource2ID && len(versions1) > 0 && len(versions2) > 0 {
+		if crossResource && len(versions1) > 0 && len(versions2) > 0 {
 			canMerge = query.Version1 == versions1[0].VersionNumber && query.Version2 == versions2[0].VersionNumber
+		}
+
+		// Compute side labels: version-aware for same resource, Left/Right for cross-resource
+		label1, label2 := "Left", "Right"
+		if !crossResource && query.Version1 > 0 && query.Version2 > 0 {
+			latestVersion := 0
+			if len(versions1) > 0 {
+				latestVersion = versions1[0].VersionNumber
+			}
+			v1IsCurrent := query.Version1 == latestVersion
+			v2IsCurrent := query.Version2 == latestVersion
+
+			switch {
+			case v1IsCurrent:
+				label1 = "Current"
+				label2 = fmt.Sprintf("v%d", query.Version2)
+			case v2IsCurrent:
+				label1 = fmt.Sprintf("v%d", query.Version1)
+				label2 = "Current"
+			default:
+				// Neither is current — use relative ordering
+				if query.Version1 > query.Version2 {
+					label1 = "Newer"
+					label2 = "Older"
+				} else {
+					label1 = "Older"
+					label2 = "Newer"
+				}
+			}
 		}
 
 		return baseContext.Update(pongo2.Context{
@@ -114,8 +144,10 @@ func CompareContextProvider(context *application_context.MahresourcesContext) fu
 			"comparison":      comparison,
 			"query":           query,
 			"contentCategory": contentCategory,
-			"crossResource":   query.Resource1ID != query.Resource2ID,
+			"crossResource":   crossResource,
 			"canMerge":        canMerge,
+			"label1":          label1,
+			"label2":          label2,
 		})
 	}
 }

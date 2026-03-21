@@ -549,17 +549,18 @@ test.describe.serial('Version Compare API', () => {
     await expect(newLabel).not.toContainText('NEW');
   });
 
-  test('same-resource compare shows OLD/NEW labels and no merge panel', async ({ page }) => {
+  test('same-resource compare shows version-aware labels and no merge panel', async ({ page }) => {
+    // v1=1 (older), v2=2 (current/latest) — labels should be "v1" and "Current"
     await page.goto(`/resource/compare?r1=${resource1Id}&v1=1&r2=${resource1Id}&v2=2`);
     await page.waitForLoadState('load');
 
     await expect(page.locator('summary:has-text("Metadata")')).toBeVisible({ timeout: 10000 });
 
-    // Should show OLD/NEW
-    const oldLabel = page.locator('.compare-side-label--old').first();
-    const newLabel = page.locator('.compare-side-label--new').first();
-    await expect(oldLabel).toContainText('OLD');
-    await expect(newLabel).toContainText('NEW');
+    // Left side (v1) should show "v1", right side (v2=current) should show "Current"
+    const leftLabel = page.locator('.compare-side-label--old').first();
+    const rightLabel = page.locator('.compare-side-label--new').first();
+    await expect(leftLabel).toContainText('v1');
+    await expect(rightLabel).toContainText('Current');
 
     // Merge panel should NOT be visible (same resource)
     await expect(page.locator('summary:has-text("Merge")')).toHaveCount(0);
