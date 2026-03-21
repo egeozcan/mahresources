@@ -1,8 +1,10 @@
-export function imageCompare({ leftUrl, rightUrl }) {
+export function imageCompare({ leftUrl, rightUrl, leftLabel, rightLabel }) {
   return {
     mode: 'side-by-side',
     leftUrl,
     rightUrl,
+    leftLabel: leftLabel || '',
+    rightLabel: rightLabel || '',
     sliderPos: 50,
     opacity: 50,
     showLeft: true,
@@ -29,9 +31,8 @@ export function imageCompare({ leftUrl, rightUrl }) {
     },
 
     swapSides() {
-      const temp = this.leftUrl;
-      this.leftUrl = this.rightUrl;
-      this.rightUrl = temp;
+      [this.leftUrl, this.rightUrl] = [this.rightUrl, this.leftUrl];
+      [this.leftLabel, this.rightLabel] = [this.rightLabel, this.leftLabel];
     },
 
     toggleSide() {

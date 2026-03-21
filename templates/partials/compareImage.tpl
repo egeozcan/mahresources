@@ -1,6 +1,8 @@
 <div class="bg-white shadow rounded-lg p-4" x-data="imageCompare({
     leftUrl: '/v1/resource/version/file?versionId={{ comparison.Version1.ID }}',
-    rightUrl: '/v1/resource/version/file?versionId={{ comparison.Version2.ID }}'
+    rightUrl: '/v1/resource/version/file?versionId={{ comparison.Version2.ID }}',
+    leftLabel: '{{ label1 }}{% if not crossResource %} — v{{ comparison.Version1.VersionNumber }}{% endif %}',
+    rightLabel: '{{ label2 }}{% if not crossResource %} — v{{ comparison.Version2.VersionNumber }}{% endif %}'
 })">
     <!-- Mode selector -->
     <div class="flex flex-wrap items-center gap-3 mb-4 border-b pb-4">
@@ -26,7 +28,7 @@
                 <span class="compare-seg-label">Toggle</span>
             </button>
         </div>
-        <button @click="$dispatch('compare-swap')" class="compare-swap-btn-sm" aria-label="Swap sides">
+        <button @click="swapSides()" class="compare-swap-btn-sm" aria-label="Swap sides">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4"/></svg>
             Swap
         </button>
@@ -35,11 +37,11 @@
     <!-- Side-by-side mode -->
     <div x-show="mode === 'side-by-side'" class="grid grid-cols-2 gap-4">
         <div class="border rounded overflow-hidden">
-            <div class="compare-panel-header--old">{{ label1 }}{% if not crossResource %} — v{{ comparison.Version1.VersionNumber }}{% endif %}</div>
+            <div class="compare-panel-header--old" x-text="leftLabel"></div>
             <img :src="leftUrl" class="max-w-full h-auto" alt="Version {{ comparison.Version1.VersionNumber }}">
         </div>
         <div class="border rounded overflow-hidden">
-            <div class="compare-panel-header--new">{{ label2 }}{% if not crossResource %} — v{{ comparison.Version2.VersionNumber }}{% endif %}</div>
+            <div class="compare-panel-header--new" x-text="rightLabel"></div>
             <img :src="rightUrl" class="max-w-full h-auto" alt="Version {{ comparison.Version2.VersionNumber }}">
         </div>
     </div>
@@ -59,8 +61,8 @@
                 <span class="text-stone-400">&#x22EE;</span>
             </div>
         </div>
-        <div class="absolute top-2 left-2"><span class="compare-side-label--old">{{ label1 }}</span></div>
-        <div class="absolute top-2 right-2"><span class="compare-side-label--new">{{ label2 }}</span></div>
+        <div class="absolute top-2 left-2"><span class="compare-side-label--old" x-text="leftLabel"></span></div>
+        <div class="absolute top-2 right-2"><span class="compare-side-label--new" x-text="rightLabel"></span></div>
     </div>
 
     <!-- Onion skin mode -->
@@ -72,17 +74,17 @@
                  alt="Version {{ comparison.Version2.VersionNumber }}">
         </div>
         <div class="sticky bottom-0 z-20 flex items-center justify-center gap-3 py-2 px-4 bg-white/90 backdrop-blur border-t border-stone-200">
-            <span class="compare-side-label--old">{{ label1 }}</span>
+            <span class="compare-side-label--old" x-text="leftLabel"></span>
             <input type="range" min="0" max="100" x-model="opacity" class="w-48" aria-label="Onion skin opacity">
-            <span class="compare-side-label--new">{{ label2 }}</span>
+            <span class="compare-side-label--new" x-text="rightLabel"></span>
         </div>
     </div>
 
     <!-- Toggle mode -->
     <div x-show="mode === 'toggle'" class="relative border rounded overflow-hidden cursor-pointer" tabindex="0" role="button" @click="toggleSide()" @keydown.space.prevent="toggleSide()">
         <div class="absolute top-2 right-2 z-10">
-            <span x-show="showLeft" class="compare-side-label--old">{{ label1 }}{% if not crossResource %} — v{{ comparison.Version1.VersionNumber }}{% endif %}</span>
-            <span x-show="!showLeft" class="compare-side-label--new">{{ label2 }}{% if not crossResource %} — v{{ comparison.Version2.VersionNumber }}{% endif %}</span>
+            <span x-show="showLeft" class="compare-side-label--old" x-text="leftLabel"></span>
+            <span x-show="!showLeft" class="compare-side-label--new" x-text="rightLabel"></span>
         </div>
         <img x-show="showLeft" :src="leftUrl" class="w-full h-auto" alt="Version {{ comparison.Version1.VersionNumber }}">
         <img x-show="!showLeft" :src="rightUrl" class="w-full h-auto" alt="Version {{ comparison.Version2.VersionNumber }}">
