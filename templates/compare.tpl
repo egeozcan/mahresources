@@ -6,7 +6,7 @@
     v1: {{ query.Version1|default:0 }},
     r2: {{ query.Resource2ID }},
     v2: {{ query.Version2|default:0 }}
-})" @resource1-selected.window="onResource1Change($event.detail.item.ID)" @resource2-selected.window="onResource2Change($event.detail.item.ID)">
+})" @resource1-selected.window="onResource1Change($event.detail.item.ID)" @resource2-selected.window="onResource2Change($event.detail.item.ID)" @compare-swap="swapSides()">
     <!-- Picker Toolbar -->
     <div class="bg-white shadow rounded-lg p-3 mb-4">
         <div class="flex flex-col md:flex-row items-stretch md:items-center gap-3">

@@ -26,7 +26,7 @@
                 <span class="compare-seg-label">Toggle</span>
             </button>
         </div>
-        <button @click="swapSides()" class="compare-swap-btn-sm" aria-label="Swap sides">
+        <button @click="$dispatch('compare-swap')" class="compare-swap-btn-sm" aria-label="Swap sides">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4"/></svg>
             Swap
         </button>
