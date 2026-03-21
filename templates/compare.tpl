@@ -231,7 +231,7 @@
             <div class="flex justify-between items-center gap-4">
                 <form
                     x-data="confirmAction({ message: 'Resource on the right will be merged into the left resource. Are you sure?' })"
-                    action="/v1/resources/merge?redirect=/resource?id={{ resource1.ID }}"
+                    action="/v1/resources/merge?redirect=%2Fresource%3Fid%3D{{ resource1.ID }}"
                     method="post"
                     x-bind="events"
                 >
@@ -242,7 +242,7 @@
                 </form>
                 <form
                     x-data="confirmAction({ message: 'Resource on the left will be merged into the right resource. Are you sure?' })"
-                    action="/v1/resources/merge?redirect=/resource?id={{ resource2.ID }}"
+                    action="/v1/resources/merge?redirect=%2Fresource%3Fid%3D{{ resource2.ID }}"
                     method="post"
                     x-bind="events"
                 >

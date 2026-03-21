@@ -585,10 +585,14 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint, k
 				return err
 			}
 
-			for i, loser := range losers {
+			created := 0
+			for _, loser := range losers {
+				if loser.Hash == "" || loser.Location == "" {
+					continue
+				}
 				version := models.ResourceVersion{
 					ResourceID:      winnerId,
-					VersionNumber:   currentMax + i + 1,
+					VersionNumber:   currentMax + created + 1,
 					Hash:            loser.Hash,
 					HashType:        loser.HashType,
 					FileSize:        loser.FileSize,
@@ -602,6 +606,7 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint, k
 				if err := tx.Create(&version).Error; err != nil {
 					return err
 				}
+				created++
 			}
 		}
 
