@@ -531,6 +531,64 @@ test.describe.serial('Version Compare API', () => {
     await expect(page.locator('.compare-stat:has-text("Cross-resource")')).toBeVisible();
   });
 
+  test('cross-resource compare shows Left/Right labels instead of OLD/NEW', async ({ page }) => {
+    await page.goto(`/resource/compare?r1=${resource1Id}&v1=1&r2=${resource2Id}&v2=1`);
+    await page.waitForLoadState('load');
+
+    // Wait for comparison to load
+    await expect(page.locator('summary:has-text("Metadata")')).toBeVisible({ timeout: 10000 });
+
+    // Picker toolbar should show Left/Right labels
+    const oldLabel = page.locator('.compare-side-label--old').first();
+    const newLabel = page.locator('.compare-side-label--new').first();
+    await expect(oldLabel).toContainText('Left');
+    await expect(newLabel).toContainText('Right');
+
+    // Should NOT contain OLD/NEW text
+    await expect(oldLabel).not.toContainText('OLD');
+    await expect(newLabel).not.toContainText('NEW');
+  });
+
+  test('same-resource compare shows OLD/NEW labels and no merge panel', async ({ page }) => {
+    await page.goto(`/resource/compare?r1=${resource1Id}&v1=1&r2=${resource1Id}&v2=2`);
+    await page.waitForLoadState('load');
+
+    await expect(page.locator('summary:has-text("Metadata")')).toBeVisible({ timeout: 10000 });
+
+    // Should show OLD/NEW
+    const oldLabel = page.locator('.compare-side-label--old').first();
+    const newLabel = page.locator('.compare-side-label--new').first();
+    await expect(oldLabel).toContainText('OLD');
+    await expect(newLabel).toContainText('NEW');
+
+    // Merge panel should NOT be visible (same resource)
+    await expect(page.locator('summary:has-text("Merge")')).toHaveCount(0);
+  });
+
+  test('merge panel appears for cross-resource compare with correct buttons', async ({ page }) => {
+    // canMerge requires both versions to be latest: resource1 has v1+v2 (latest=v2), resource2 has v1 (latest=v1)
+    await page.goto(`/resource/compare?r1=${resource1Id}&v1=2&r2=${resource2Id}&v2=1`);
+    await page.waitForLoadState('load');
+
+    await expect(page.locator('summary:has-text("Metadata")')).toBeVisible({ timeout: 10000 });
+
+    // Merge panel should be visible (collapsed)
+    const mergeSummary = page.locator('summary:has-text("Merge")');
+    await expect(mergeSummary).toBeVisible();
+
+    // Expand merge panel
+    await mergeSummary.click();
+
+    // Verify Left Wins and Right Wins buttons exist
+    await expect(page.getByRole('button', { name: /Left Wins/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Right Wins/ })).toBeVisible();
+
+    // Verify keepAsVersion checkbox exists and is unchecked by default
+    const checkbox = page.locator('details:has(summary:has-text("Merge")) input[type="checkbox"]');
+    await expect(checkbox).toBeVisible();
+    await expect(checkbox).not.toBeChecked();
+  });
+
   test.afterAll(async ({ apiClient }) => {
     if (resource1Id) {
       try {
