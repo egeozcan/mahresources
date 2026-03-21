@@ -99,6 +99,12 @@ func CompareContextProvider(context *application_context.MahresourcesContext) fu
 			}
 		}
 
+		// Determine if merge is available (cross-resource, both at latest versions)
+		canMerge := false
+		if query.Resource1ID != query.Resource2ID && len(versions1) > 0 && len(versions2) > 0 {
+			canMerge = query.Version1 == versions1[0].VersionNumber && query.Version2 == versions2[0].VersionNumber
+		}
+
 		return baseContext.Update(pongo2.Context{
 			"pageTitle":       "Compare Versions",
 			"resource1":       resource1,
@@ -109,6 +115,7 @@ func CompareContextProvider(context *application_context.MahresourcesContext) fu
 			"query":           query,
 			"contentCategory": contentCategory,
 			"crossResource":   query.Resource1ID != query.Resource2ID,
+			"canMerge":        canMerge,
 		})
 	}
 }
