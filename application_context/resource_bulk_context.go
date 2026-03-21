@@ -575,6 +575,36 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint, k
 			return err
 		}
 
+		// If keepAsVersion is true, create a version from each loser's resource-level file
+		if keepAsVersion {
+			var currentMax int
+			if err := tx.Model(&models.ResourceVersion{}).
+				Where("resource_id = ?", winnerId).
+				Select("COALESCE(MAX(version_number), 0)").
+				Scan(&currentMax).Error; err != nil {
+				return err
+			}
+
+			for i, loser := range losers {
+				version := models.ResourceVersion{
+					ResourceID:      winnerId,
+					VersionNumber:   currentMax + i + 1,
+					Hash:            loser.Hash,
+					HashType:        loser.HashType,
+					FileSize:        loser.FileSize,
+					ContentType:     loser.ContentType,
+					Width:           loser.Width,
+					Height:          loser.Height,
+					Location:        loser.Location,
+					StorageLocation: loser.StorageLocation,
+					Comment:         fmt.Sprintf("Merged from: %s", loser.Name),
+				}
+				if err := tx.Create(&version).Error; err != nil {
+					return err
+				}
+			}
+		}
+
 		// Transfer versions: re-assign loser versions to winner with renumbered version_number
 		// to avoid conflicts, starting from the winner's current max version number + 1.
 		var maxVersion int
