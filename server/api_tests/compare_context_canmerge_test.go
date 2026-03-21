@@ -101,6 +101,7 @@ func TestCompareContextProvider_CanMerge(t *testing.T) {
 
 	t.Run("same-resource neither current labels are Newer/Older", func(t *testing.T) {
 		// Create additional versions via DB to get 3+ versions on res1
+		var lastVersionID uint
 		for i := 2; i <= 4; i++ {
 			v := models.ResourceVersion{
 				ResourceID:    res1.ID,
@@ -113,9 +114,16 @@ func TestCompareContextProvider_CanMerge(t *testing.T) {
 				Comment:       fmt.Sprintf("version %d", i),
 			}
 			assert.NoError(t, tc.DB.Create(&v).Error)
+			lastVersionID = v.ID
 		}
+		// Point CurrentVersionID to v4 so v1 and v2 are both non-current
+		assert.NoError(t, tc.DB.Model(&models.Resource{}).Where("id = ?", res1.ID).
+			Update("current_version_id", lastVersionID).Error)
 
-		// Now comparing v1 vs v2 — neither is the latest (v4 is latest)
+		// Re-create provider to pick up the updated resource
+		provider = template_context_providers.CompareContextProvider(tc.AppCtx)
+
+		// Now comparing v1 vs v2 — neither is the current (v4 is current)
 		reqURL := fmt.Sprintf("/resource/compare?r1=%d&v1=1&v2=2", res1.ID)
 		req := httptest.NewRequest("GET", reqURL, nil)
 		ctx := provider(req)

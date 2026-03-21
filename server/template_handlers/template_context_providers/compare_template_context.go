@@ -48,16 +48,19 @@ func CompareContextProvider(context *application_context.MahresourcesContext) fu
 		}
 		versions2, _ := context.GetVersions(query.Resource2ID)
 
-		// Redirect to latest versions if versions are missing and comparing different resources
+		// Redirect to appropriate versions if versions are missing and comparing different resources.
+		// For cross-resource comparison, use the current version (matching CurrentVersionID)
+		// rather than the latest version number, since transferred merge versions may have
+		// higher numbers but represent different files.
 		if query.Resource1ID != query.Resource2ID && (query.Version1 == 0 || query.Version2 == 0) {
 			v1 := query.Version1
 			v2 := query.Version2
 
-			if v1 == 0 && len(versions1) > 0 {
-				v1 = versions1[0].VersionNumber
+			if v1 == 0 {
+				v1 = currentVersionNumber(resource1, versions1)
 			}
-			if v2 == 0 && len(versions2) > 0 {
-				v2 = versions2[0].VersionNumber
+			if v2 == 0 {
+				v2 = currentVersionNumber(resource2, versions2)
 			}
 
 			// Only redirect if we found both versions
@@ -99,11 +102,13 @@ func CompareContextProvider(context *application_context.MahresourcesContext) fu
 			}
 		}
 
-		// Determine if merge is available (cross-resource, both at latest versions)
+		// Determine if merge is available (cross-resource, both at current versions)
 		crossResource := query.Resource1ID != query.Resource2ID
 		canMerge := false
-		if crossResource && len(versions1) > 0 && len(versions2) > 0 {
-			canMerge = query.Version1 == versions1[0].VersionNumber && query.Version2 == versions2[0].VersionNumber
+		if crossResource {
+			cv1 := currentVersionNumber(resource1, versions1)
+			cv2 := currentVersionNumber(resource2, versions2)
+			canMerge = cv1 > 0 && cv2 > 0 && query.Version1 == cv1 && query.Version2 == cv2
 		}
 
 		// Compute side labels: version-aware for same resource, Left/Right for cross-resource
@@ -113,12 +118,9 @@ func CompareContextProvider(context *application_context.MahresourcesContext) fu
 				label1 = fmt.Sprintf("v%d", query.Version1)
 				label2 = fmt.Sprintf("v%d", query.Version2)
 			} else {
-				latestVersion := 0
-				if len(versions1) > 0 {
-					latestVersion = versions1[0].VersionNumber
-				}
-				v1IsCurrent := query.Version1 == latestVersion
-				v2IsCurrent := query.Version2 == latestVersion
+				curVer := currentVersionNumber(resource1, versions1)
+				v1IsCurrent := query.Version1 == curVer
+				v2IsCurrent := query.Version2 == curVer
 
 				switch {
 				case v1IsCurrent:
@@ -154,4 +156,21 @@ func CompareContextProvider(context *application_context.MahresourcesContext) fu
 			"label2":          label2,
 		})
 	}
+}
+
+// currentVersionNumber returns the version number that matches the resource's
+// CurrentVersionID. Falls back to the latest version number if CurrentVersionID
+// is not set or not found in the versions list.
+func currentVersionNumber(resource *models.Resource, versions []models.ResourceVersion) int {
+	if resource.CurrentVersionID != nil {
+		for _, v := range versions {
+			if v.ID == *resource.CurrentVersionID {
+				return v.VersionNumber
+			}
+		}
+	}
+	if len(versions) > 0 {
+		return versions[0].VersionNumber
+	}
+	return 0
 }
