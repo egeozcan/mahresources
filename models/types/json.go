@@ -36,8 +36,7 @@ func (j JSON) Value() (driver.Value, error) {
 	if len(j) == 0 {
 		return nil, nil
 	}
-	bytes, err := json.RawMessage(j).MarshalJSON()
-	return string(bytes), err
+	return string(j), nil
 }
 
 // Scan scan value into Jsonb, implements sql.Scanner interface
@@ -49,17 +48,18 @@ func (j *JSON) Scan(value any) error {
 	var bytes []byte
 	switch v := value.(type) {
 	case []byte:
-		bytes = v
+		if len(v) > 0 {
+			bytes = make([]byte, len(v))
+			copy(bytes, v)
+		}
 	case string:
 		bytes = []byte(v)
 	default:
 		return errors.New(fmt.Sprint("Failed to unmarshal JSONB value:", value))
 	}
 
-	result := json.RawMessage{}
-	err := json.Unmarshal(bytes, &result)
-	*j = JSON(result)
-	return err
+	*j = JSON(bytes)
+	return nil
 }
 
 // MarshalJSON to output non base64 encoded []byte
@@ -98,6 +98,9 @@ func (j JSON) GormDBDataType(db *gorm.DB, _ *schema.Field) string {
 }
 
 func (j JSON) GormValue(_ context.Context, _ *gorm.DB) clause.Expr {
+	if len(j) == 0 {
+		return gorm.Expr("NULL")
+	}
 	data, _ := j.MarshalJSON()
 	return gorm.Expr("?", string(data))
 }
@@ -117,7 +120,6 @@ func JSONQuery(column string) *JSONQueryExpression {
 
 // HasKey returns clause.Expression
 //
-//goland:noinspection GoUnnecessarilyExportedIdentifi
 //goland:noinspection GoUnnecessarilyExportedIdentifiers
 func (jsonQuery *JSONQueryExpression) HasKey(keys ...string) *JSONQueryExpression {
 	jsonQuery.keys = keys
@@ -137,9 +139,8 @@ func (jsonQuery *JSONQueryExpression) Operation(operation JsonOperation, value a
 	return jsonQuery
 }
 
-spection GoUnhandledErrorResult
-func 
 // Build implements clause.Expression
+//
 //goland:noinspection GoUnhandledErrorResult
 func (jsonQuery *JSONQueryExpression) Build(builder clause.Builder) {
 	if stmt, ok := builder.(*gorm.Statement); ok {

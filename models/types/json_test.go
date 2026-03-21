@@ -1,6 +1,7 @@
 package types
 
 import (
+	"context"
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
@@ -77,11 +78,26 @@ func TestJSON_Scan_UnsupportedType(t *testing.T) {
 	}
 }
 
-func TestJSON_Scan_InvalidJSON(t *testing.T) {
+func TestJSON_Scan_PreservesRawBytes(t *testing.T) {
+	// Scan no longer re-parses through json.Unmarshal (matches upstream).
+	// The DB already stores valid JSON, so Scan just copies the bytes.
 	var j JSON
-	err := j.Scan([]byte(`{not json`))
-	if err == nil {
-		t.Fatal("expected error for invalid JSON, got nil")
+	if err := j.Scan([]byte(`{  "spaced": true  }`)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Whitespace is preserved (no re-marshaling)
+	if string(j) != `{  "spaced": true  }` {
+		t.Fatalf("expected preserved whitespace, got %q", string(j))
+	}
+}
+
+func TestJSON_Scan_EmptyBytes(t *testing.T) {
+	var j JSON
+	if err := j.Scan([]byte{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(j) != 0 {
+		t.Fatalf("expected empty JSON for empty bytes, got %q", string(j))
 	}
 }
 
@@ -127,6 +143,24 @@ func TestJSON_GormDBDataType_SQLite(t *testing.T) {
 func TestJSON_ValueDriverInterface(t *testing.T) {
 	// Verify JSON implements driver.Valuer
 	var _ driver.Valuer = JSON(`{}`)
+}
+
+func TestJSON_GormValue_Empty_ReturnsNULL(t *testing.T) {
+	j := JSON{}
+	db := openTestDB(t)
+	expr := j.GormValue(context.Background(), db)
+	if expr.SQL != "NULL" {
+		t.Fatalf("expected SQL NULL for empty JSON, got %q", expr.SQL)
+	}
+}
+
+func TestJSON_GormValue_NonEmpty(t *testing.T) {
+	j := JSON(`{"a":1}`)
+	db := openTestDB(t)
+	expr := j.GormValue(context.Background(), db)
+	if expr.SQL != "?" {
+		t.Fatalf("expected ? placeholder, got %q", expr.SQL)
+	}
 }
 
 // ── JSONQueryExpression tests ────────────────────────────────────────────────
