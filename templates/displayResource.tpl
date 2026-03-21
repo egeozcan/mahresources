@@ -183,7 +183,21 @@
     {% endif %}
 
     {% if similarResources %}
-        {% include "/partials/seeAll.tpl" with entities=similarResources subtitle="Similar Resources" templateName="resource" %}
+        <div class="detail-panel">
+            <div class="detail-panel-header">
+                <h3 class="detail-panel-title">Similar Resources</h3>
+            </div>
+            <div class="detail-panel-body">
+                <div class="list-container">
+                    {% for entity in similarResources %}
+                        <div>
+                            {% include partial("resource") %}
+                            <a href="/resource/compare?r1={{ resource.ID }}&r2={{ entity.ID }}" class="btn btn-sm btn-outline mt-1 block text-center">Compare</a>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
         <form
             x-data="confirmAction({ message: 'All the similar resources will be deleted. Are you sure?' })"
             action="/v1/resources/merge"
