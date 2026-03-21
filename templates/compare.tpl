@@ -218,6 +218,46 @@
         {% include "/partials/compareBinary.tpl" %}
     {% endif %}
 
+    {% if canMerge %}
+    <details class="mt-6 bg-white shadow rounded-lg" x-data="{ keepAsVersion: false }">
+        <summary class="cursor-pointer text-sm font-medium text-stone-600 p-4 select-none font-mono">Merge</summary>
+        <div class="p-4 pt-0">
+            <div class="mb-4">
+                <label class="flex items-center gap-2 text-sm text-stone-600 cursor-pointer">
+                    <input type="checkbox" x-model="keepAsVersion" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
+                    Keep loser as older version of winner
+                </label>
+            </div>
+            <div class="flex justify-between items-center gap-4">
+                <form
+                    x-data="confirmAction({ message: 'Resource on the right will be merged into the left resource. Are you sure?' })"
+                    action="/v1/resources/merge"
+                    method="post"
+                    :action="'/v1/resources/merge?redirect=' + encodeURIComponent(window.location.pathname + window.location.search)"
+                    x-bind="events"
+                >
+                    <input type="hidden" name="winner" value="{{ resource1.ID }}">
+                    <input type="hidden" name="losers" value="{{ resource2.ID }}">
+                    <input type="hidden" name="KeepAsVersion" :value="keepAsVersion">
+                    {% include "/partials/form/searchButton.tpl" with text="← Left Wins" %}
+                </form>
+                <form
+                    x-data="confirmAction({ message: 'Resource on the left will be merged into the right resource. Are you sure?' })"
+                    action="/v1/resources/merge"
+                    method="post"
+                    :action="'/v1/resources/merge?redirect=' + encodeURIComponent(window.location.pathname + window.location.search)"
+                    x-bind="events"
+                >
+                    <input type="hidden" name="winner" value="{{ resource2.ID }}">
+                    <input type="hidden" name="losers" value="{{ resource1.ID }}">
+                    <input type="hidden" name="KeepAsVersion" :value="keepAsVersion">
+                    {% include "/partials/form/searchButton.tpl" with text="Right Wins →" %}
+                </form>
+            </div>
+        </div>
+    </details>
+    {% endif %}
+
     {% else %}
     <!-- Empty State -->
     <div class="compare-empty-state">
