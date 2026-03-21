@@ -35,11 +35,11 @@
     <!-- Side-by-side mode -->
     <div x-show="mode === 'side-by-side'" class="grid grid-cols-2 gap-4">
         <div class="border rounded overflow-hidden">
-            <div class="compare-panel-header--old">OLD — v{{ comparison.Version1.VersionNumber }}</div>
+            <div class="compare-panel-header--old">{% if crossResource %}Left{% else %}OLD{% endif %} — v{{ comparison.Version1.VersionNumber }}</div>
             <img :src="leftUrl" class="max-w-full h-auto" alt="Version {{ comparison.Version1.VersionNumber }}">
         </div>
         <div class="border rounded overflow-hidden">
-            <div class="compare-panel-header--new">NEW — v{{ comparison.Version2.VersionNumber }}</div>
+            <div class="compare-panel-header--new">{% if crossResource %}Right{% else %}NEW{% endif %} — v{{ comparison.Version2.VersionNumber }}</div>
             <img :src="rightUrl" class="max-w-full h-auto" alt="Version {{ comparison.Version2.VersionNumber }}">
         </div>
     </div>
@@ -59,8 +59,8 @@
                 <span class="text-stone-400">&#x22EE;</span>
             </div>
         </div>
-        <div class="absolute top-2 left-2"><span class="compare-side-label--old">OLD</span></div>
-        <div class="absolute top-2 right-2"><span class="compare-side-label--new">NEW</span></div>
+        <div class="absolute top-2 left-2"><span class="compare-side-label--old">{% if crossResource %}Left{% else %}OLD{% endif %}</span></div>
+        <div class="absolute top-2 right-2"><span class="compare-side-label--new">{% if crossResource %}Right{% else %}NEW{% endif %}</span></div>
     </div>
 
     <!-- Onion skin mode -->
@@ -72,17 +72,17 @@
                  alt="Version {{ comparison.Version2.VersionNumber }}">
         </div>
         <div class="sticky bottom-0 z-20 flex items-center justify-center gap-3 py-2 px-4 bg-white/90 backdrop-blur border-t border-stone-200">
-            <span class="compare-side-label--old">OLD</span>
+            <span class="compare-side-label--old">{% if crossResource %}Left{% else %}OLD{% endif %}</span>
             <input type="range" min="0" max="100" x-model="opacity" class="w-48" aria-label="Onion skin opacity">
-            <span class="compare-side-label--new">NEW</span>
+            <span class="compare-side-label--new">{% if crossResource %}Right{% else %}NEW{% endif %}</span>
         </div>
     </div>
 
     <!-- Toggle mode -->
     <div x-show="mode === 'toggle'" class="relative border rounded overflow-hidden cursor-pointer" tabindex="0" role="button" @click="toggleSide()" @keydown.space.prevent="toggleSide()">
         <div class="absolute top-2 right-2 z-10">
-            <span x-show="showLeft" class="compare-side-label--old">OLD — v{{ comparison.Version1.VersionNumber }}</span>
-            <span x-show="!showLeft" class="compare-side-label--new">NEW — v{{ comparison.Version2.VersionNumber }}</span>
+            <span x-show="showLeft" class="compare-side-label--old">{% if crossResource %}Left{% else %}OLD{% endif %} — v{{ comparison.Version1.VersionNumber }}</span>
+            <span x-show="!showLeft" class="compare-side-label--new">{% if crossResource %}Right{% else %}NEW{% endif %} — v{{ comparison.Version2.VersionNumber }}</span>
         </div>
         <img x-show="showLeft" :src="leftUrl" class="w-full h-auto" alt="Version {{ comparison.Version1.VersionNumber }}">
         <img x-show="!showLeft" :src="rightUrl" class="w-full h-auto" alt="Version {{ comparison.Version2.VersionNumber }}">
