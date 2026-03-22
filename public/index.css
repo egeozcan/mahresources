@@ -2271,6 +2271,11 @@ html {
     padding-top: 0.75rem;
 }
 
+.timeline-preview .card-checkbox,
+.timeline-preview .bulk-editor {
+    display: none;
+}
+
 @keyframes timeline-skeleton-pulse {
     0%, 100% { opacity: 0.4; }
     50% { opacity: 0.15; }
