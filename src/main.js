@@ -46,6 +46,7 @@ import { pluginSettings } from './components/pluginSettings.js';
 import { pluginActionModal } from './components/pluginActionModal.js';
 import { cardActionMenu } from './components/cardActionMenu.js';
 import { mentionTextarea } from './components/mentionTextarea.js';
+import { adminOverview } from './components/adminOverview.js';
 
 // Import utility modules
 import { renderMentions } from './utils/renderMentions.js';
@@ -114,6 +115,7 @@ Alpine.data('pluginSettings', pluginSettings);
 Alpine.data('pluginActionModal', pluginActionModal);
 Alpine.data('cardActionMenu', cardActionMenu);
 Alpine.data('mentionTextarea', mentionTextarea);
+Alpine.data('adminOverview', adminOverview);
 
 // Expose Alpine globally for debugging and morph usage
 window.Alpine = Alpine;
