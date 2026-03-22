@@ -57,12 +57,17 @@ export const quickTagPanelMethods = {
         data.lastResourceTags = Array(9).fill(null);
       }
 
-      if (Array.isArray(data.quickSlots)) {
-        this.quickSlots = [
-          padArray(data.quickSlots[0], 9),
-          padArray(data.quickSlots[1], 9),
-          padArray(data.quickSlots[2], 9),
-        ];
+      // Load each field independently so a failure in one doesn't prevent loading others
+      try {
+        if (Array.isArray(data.quickSlots)) {
+          this.quickSlots = [
+            padArray(data.quickSlots[0], 9),
+            padArray(data.quickSlots[1], 9),
+            padArray(data.quickSlots[2], 9),
+          ];
+        }
+      } catch (e) {
+        console.warn('Failed to load quickSlots from storage:', e);
       }
       if (typeof data.drawerOpen === 'boolean') {
         this.quickTagPanelOpen = data.drawerOpen;
@@ -76,24 +81,37 @@ export const quickTagPanelMethods = {
       if (Array.isArray(data.lastResourceTags)) {
         this.lastResourceTags = padArray(data.lastResourceTags, 9);
       }
-    } catch {
-      // Corrupted data — ignore
+    } catch (e) {
+      console.warn('Failed to load quick tags from storage:', e);
     }
   },
 
   _saveQuickTagsToStorage() {
+    const payload = JSON.stringify({
+      version: 2,
+      quickSlots: this.quickSlots,
+      drawerOpen: this.quickTagPanelOpen,
+      activeTab: this.activeTab,
+      recentTags: this.recentTags,
+      lastResourceTags: this.lastResourceTags,
+    });
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        version: 2,
-        quickSlots: this.quickSlots,
-        drawerOpen: this.quickTagPanelOpen,
-        activeTab: this.activeTab,
-        recentTags: this.recentTags,
-        lastResourceTags: this.lastResourceTags,
-      }));
-    } catch {
-      // Storage full or unavailable — ignore
+      localStorage.setItem(STORAGE_KEY, payload);
+    } catch (e) {
+      console.warn('Failed to save quick tags to localStorage:', e);
+      try {
+        const date = new Date().toISOString().slice(0, 10);
+        localStorage.setItem(`${STORAGE_KEY}_recover_${date}`, payload);
+      } catch { /* recovery save also failed — nothing more to do */ }
     }
+  },
+
+  _initStorageSync() {
+    window.addEventListener('storage', (event) => {
+      if (event.key === STORAGE_KEY) {
+        this._loadQuickTagsFromStorage();
+      }
+    });
   },
 
   // ==================== Tab Management ====================
