@@ -433,14 +433,17 @@ func TestGetExpensiveStats_LogStats(t *testing.T) {
 		t.Fatalf("GetExpensiveStats() error = %v", err)
 	}
 
-	if stats.LogStats.TotalInfo < 2 {
-		t.Errorf("expected at least 2 info logs, got %d", stats.LogStats.TotalInfo)
+	if stats.LogStats.TotalEntries < 5 {
+		t.Errorf("expected at least 5 total log entries, got %d", stats.LogStats.TotalEntries)
 	}
-	if stats.LogStats.TotalWarning < 1 {
-		t.Errorf("expected at least 1 warning log, got %d", stats.LogStats.TotalWarning)
+	if stats.LogStats.ByLevel[models.LogLevelInfo] < 2 {
+		t.Errorf("expected at least 2 info logs, got %d", stats.LogStats.ByLevel[models.LogLevelInfo])
 	}
-	if stats.LogStats.TotalError < 2 {
-		t.Errorf("expected at least 2 error logs, got %d", stats.LogStats.TotalError)
+	if stats.LogStats.ByLevel[models.LogLevelWarning] < 1 {
+		t.Errorf("expected at least 1 warning log, got %d", stats.LogStats.ByLevel[models.LogLevelWarning])
+	}
+	if stats.LogStats.ByLevel[models.LogLevelError] < 2 {
+		t.Errorf("expected at least 2 error logs, got %d", stats.LogStats.ByLevel[models.LogLevelError])
 	}
 	// All errors were created just now, so they should appear in recent 24h
 	if stats.LogStats.RecentErrors < 2 {
@@ -479,11 +482,11 @@ func TestGetExpensiveStats_SimilarityInfo(t *testing.T) {
 		t.Fatalf("GetExpensiveStats() error = %v", err)
 	}
 
-	if stats.Similarity.HashedResources != 0 {
-		t.Errorf("expected 0 hashed resources on empty db, got %d", stats.Similarity.HashedResources)
+	if stats.Similarity.TotalHashes != 0 {
+		t.Errorf("expected 0 hashed resources on empty db, got %d", stats.Similarity.TotalHashes)
 	}
-	if stats.Similarity.SimilarityPairs != 0 {
-		t.Errorf("expected 0 similarity pairs on empty db, got %d", stats.Similarity.SimilarityPairs)
+	if stats.Similarity.SimilarPairsFound != 0 {
+		t.Errorf("expected 0 similarity pairs on empty db, got %d", stats.Similarity.SimilarPairsFound)
 	}
 }
 

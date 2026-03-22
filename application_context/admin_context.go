@@ -152,18 +152,18 @@ func (ctx *MahresourcesContext) GetServerStats() (*ServerStats, error) {
 
 // EntityCounts holds the count of each entity type.
 type EntityCounts struct {
-	Resources         int64 `json:"resources"`
-	Notes             int64 `json:"notes"`
-	Groups            int64 `json:"groups"`
-	Tags              int64 `json:"tags"`
-	Categories        int64 `json:"categories"`
+	Resources          int64 `json:"resources"`
+	Notes              int64 `json:"notes"`
+	Groups             int64 `json:"groups"`
+	Tags               int64 `json:"tags"`
+	Categories         int64 `json:"categories"`
 	ResourceCategories int64 `json:"resourceCategories"`
-	NoteTypes         int64 `json:"noteTypes"`
-	Queries           int64 `json:"queries"`
-	GroupRelations    int64 `json:"groupRelations"`
-	GroupRelationTypes int64 `json:"groupRelationTypes"`
-	LogEntries        int64 `json:"logEntries"`
-	ResourceVersions  int64 `json:"resourceVersions"`
+	NoteTypes          int64 `json:"noteTypes"`
+	Queries            int64 `json:"queries"`
+	Relations          int64 `json:"relations"`
+	RelationTypes      int64 `json:"relationTypes"`
+	LogEntries         int64 `json:"logEntries"`
+	ResourceVersions   int64 `json:"resourceVersions"`
 }
 
 // GrowthPeriods holds creation counts for a single period (e.g. 7 days).
@@ -182,21 +182,39 @@ type GrowthStats struct {
 
 // ConfigSummary holds a subset of server configuration values.
 type ConfigSummary struct {
-	DbType          string `json:"dbType"`
-	EphemeralMode   bool   `json:"ephemeralMode"`
-	MemoryDB        bool   `json:"memoryDb"`
-	MemoryFS        bool   `json:"memoryFs"`
-	FTSEnabled      bool   `json:"ftsEnabled"`
-	HashWorkerEnabled bool `json:"hashWorkerEnabled"`
+	DbType                   string   `json:"dbType"`
+	EphemeralMode            bool     `json:"ephemeralMode"`
+	MemoryDB                 bool     `json:"memoryDb"`
+	MemoryFS                 bool     `json:"memoryFs"`
+	FTSEnabled               bool     `json:"ftsEnabled"`
+	HashWorkerEnabled        bool     `json:"hashWorkerEnabled"`
+	BindAddress              string   `json:"bindAddress"`
+	FileSavePath             string   `json:"fileSavePath"`
+	DbDsn                    string   `json:"dbDsn"`
+	HasReadOnlyDB            bool     `json:"hasReadOnlyDB"`
+	FfmpegAvailable          bool     `json:"ffmpegAvailable"`
+	LibreOfficeAvailable     bool     `json:"libreOfficeAvailable"`
+	HashWorkerCount          int      `json:"hashWorkerCount"`
+	HashBatchSize            int      `json:"hashBatchSize"`
+	HashPollInterval         string   `json:"hashPollInterval"`
+	HashSimilarityThreshold  int      `json:"hashSimilarityThreshold"`
+	HashCacheSize            int      `json:"hashCacheSize"`
+	AltFileSystems           []string `json:"altFileSystems"`
+	MaxDBConnections         int      `json:"maxDBConnections"`
+	RemoteConnectTimeout     string   `json:"remoteConnectTimeout"`
+	RemoteIdleTimeout        string   `json:"remoteIdleTimeout"`
+	RemoteOverallTimeout     string   `json:"remoteOverallTimeout"`
 }
 
 // DataStats holds entity counts, storage totals, growth stats, and config summary.
 type DataStats struct {
-	Entities        EntityCounts `json:"entities"`
-	StorageTotalBytes int64      `json:"storageTotalBytes"`
-	StorageTotalFmt   string     `json:"storageTotalFmt"`
-	Growth          GrowthStats  `json:"growth"`
-	Config          ConfigSummary `json:"config"`
+	Entities                     EntityCounts  `json:"entities"`
+	StorageTotalBytes            int64         `json:"storageTotalBytes"`
+	StorageTotalFmt              string        `json:"storageTotalFmt"`
+	TotalVersionStorageBytes     int64         `json:"totalVersionStorageBytes"`
+	TotalVersionStorageFormatted string        `json:"totalVersionStorageFormatted"`
+	Growth                       GrowthStats   `json:"growth"`
+	Config                       ConfigSummary `json:"config"`
 }
 
 // GetResourceVersionsCount returns the total count of resource versions.
@@ -251,10 +269,10 @@ func (ctx *MahresourcesContext) GetDataStats() (*DataStats, error) {
 		{&stats.Entities.Queries, func() (int64, error) {
 			return ctx.GetQueriesCount(&query_models.QueryQuery{})
 		}},
-		{&stats.Entities.GroupRelations, func() (int64, error) {
+		{&stats.Entities.Relations, func() (int64, error) {
 			return ctx.GetRelationsCount(&query_models.GroupRelationshipQuery{})
 		}},
-		{&stats.Entities.GroupRelationTypes, func() (int64, error) {
+		{&stats.Entities.RelationTypes, func() (int64, error) {
 			return ctx.GetRelationTypesCount(&query_models.RelationshipTypeQuery{})
 		}},
 		{&stats.Entities.LogEntries, func() (int64, error) {
@@ -298,6 +316,8 @@ func (ctx *MahresourcesContext) GetDataStats() (*DataStats, error) {
 		mu.Lock()
 		stats.StorageTotalBytes = total
 		stats.StorageTotalFmt = formatBytes(total)
+		stats.TotalVersionStorageBytes = versionStorage
+		stats.TotalVersionStorageFormatted = formatBytes(versionStorage)
 		mu.Unlock()
 	}()
 
@@ -344,13 +364,34 @@ func (ctx *MahresourcesContext) GetDataStats() (*DataStats, error) {
 		return nil, firstErr
 	}
 
+	altFSKeys := make([]string, 0, len(ctx.Config.AltFileSystems))
+	for k := range ctx.Config.AltFileSystems {
+		altFSKeys = append(altFSKeys, k)
+	}
+
 	stats.Config = ConfigSummary{
-		DbType:            ctx.Config.DbType,
-		EphemeralMode:     ctx.Config.EphemeralMode,
-		MemoryDB:          ctx.Config.MemoryDB,
-		MemoryFS:          ctx.Config.MemoryFS,
-		FTSEnabled:        ctx.ftsEnabled,
-		HashWorkerEnabled: ctx.Config.HashWorkerEnabled,
+		DbType:                  ctx.Config.DbType,
+		EphemeralMode:           ctx.Config.EphemeralMode,
+		MemoryDB:                ctx.Config.MemoryDB,
+		MemoryFS:                ctx.Config.MemoryFS,
+		FTSEnabled:              ctx.ftsEnabled,
+		HashWorkerEnabled:       ctx.Config.HashWorkerEnabled,
+		BindAddress:             ctx.Config.BindAddress,
+		FileSavePath:            ctx.Config.FileSavePath,
+		DbDsn:                   ctx.Config.DbDsn,
+		HasReadOnlyDB:           ctx.Config.DbReadOnlyDsn != "",
+		FfmpegAvailable:         ctx.Config.FfmpegPath != "",
+		LibreOfficeAvailable:    ctx.Config.LibreOfficePath != "",
+		HashWorkerCount:         ctx.Config.HashWorkerCount,
+		HashBatchSize:           ctx.Config.HashBatchSize,
+		HashPollInterval:        ctx.Config.HashPollInterval.String(),
+		HashSimilarityThreshold: ctx.Config.HashSimilarityThreshold,
+		HashCacheSize:           ctx.Config.HashCacheSize,
+		AltFileSystems:          altFSKeys,
+		MaxDBConnections:        ctx.Config.MaxDBConnections,
+		RemoteConnectTimeout:    ctx.Config.RemoteResourceConnectTimeout.String(),
+		RemoteIdleTimeout:       ctx.Config.RemoteResourceIdleTimeout.String(),
+		RemoteOverallTimeout:    ctx.Config.RemoteResourceOverallTimeout.String(),
 	}
 
 	return stats, nil
@@ -388,16 +429,15 @@ type OrphanStats struct {
 
 // SimilarityInfo holds counts related to image hashing and similarity.
 type SimilarityInfo struct {
-	HashedResources    int64 `json:"hashedResources"`
-	SimilarityPairs    int64 `json:"similarityPairs"`
+	TotalHashes      int64 `json:"totalHashes"`
+	SimilarPairsFound int64 `json:"similarPairsFound"`
 }
 
 // LogStatsInfo holds log entry counts by level and recent error count.
 type LogStatsInfo struct {
-	TotalInfo     int64 `json:"totalInfo"`
-	TotalWarning  int64 `json:"totalWarning"`
-	TotalError    int64 `json:"totalError"`
-	RecentErrors  int64 `json:"recentErrors"` // last 24h
+	TotalEntries int64            `json:"totalEntries"`
+	ByLevel      map[string]int64 `json:"byLevel"`
+	RecentErrors int64            `json:"recentErrors"` // last 24h
 }
 
 // ExpensiveStats holds more resource-intensive statistics.
@@ -539,8 +579,8 @@ func (ctx *MahresourcesContext) GetExpensiveStats() (*ExpensiveStats, error) {
 			return
 		}
 		mu.Lock()
-		stats.Similarity.HashedResources = hashed
-		stats.Similarity.SimilarityPairs = pairs
+		stats.Similarity.TotalHashes = hashed
+		stats.Similarity.SimilarPairsFound = pairs
 		mu.Unlock()
 	}()
 
@@ -548,30 +588,45 @@ func (ctx *MahresourcesContext) GetExpensiveStats() (*ExpensiveStats, error) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		var infoCount, warnCount, errCount, recentErrCount int64
-		if err := ctx.db.Model(&models.LogEntry{}).Where("level = ?", models.LogLevelInfo).Count(&infoCount).Error; err != nil {
+
+		// Total count
+		var totalEntries int64
+		if err := ctx.db.Model(&models.LogEntry{}).Count(&totalEntries).Error; err != nil {
 			setErr(err)
 			return
 		}
-		if err := ctx.db.Model(&models.LogEntry{}).Where("level = ?", models.LogLevelWarning).Count(&warnCount).Error; err != nil {
+
+		// Counts by level via GROUP BY
+		type levelCount struct {
+			Level string `gorm:"column:level"`
+			Count int64  `gorm:"column:count"`
+		}
+		var levelRows []levelCount
+		if err := ctx.db.Model(&models.LogEntry{}).
+			Select("level, COUNT(*) AS count").
+			Group("level").
+			Scan(&levelRows).Error; err != nil {
 			setErr(err)
 			return
 		}
-		if err := ctx.db.Model(&models.LogEntry{}).Where("level = ?", models.LogLevelError).Count(&errCount).Error; err != nil {
-			setErr(err)
-			return
+		byLevel := make(map[string]int64, len(levelRows))
+		for _, row := range levelRows {
+			byLevel[row.Level] = row.Count
 		}
+
+		// Recent errors (last 24h)
 		since24h := time.Now().Add(-24 * time.Hour)
+		var recentErrCount int64
 		if err := ctx.db.Model(&models.LogEntry{}).
 			Where("level = ? AND created_at >= ?", models.LogLevelError, since24h).
 			Count(&recentErrCount).Error; err != nil {
 			setErr(err)
 			return
 		}
+
 		mu.Lock()
-		stats.LogStats.TotalInfo = infoCount
-		stats.LogStats.TotalWarning = warnCount
-		stats.LogStats.TotalError = errCount
+		stats.LogStats.TotalEntries = totalEntries
+		stats.LogStats.ByLevel = byLevel
 		stats.LogStats.RecentErrors = recentErrCount
 		mu.Unlock()
 	}()
