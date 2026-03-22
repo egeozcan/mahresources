@@ -1,6 +1,7 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block prebody %}
+    {% include "/partials/boxSelect.tpl" with options=displayOptions %}
     {% include "/partials/bulkEditorTag.tpl" %}
 {% endblock %}
 

@@ -49,6 +49,10 @@ func TagListContextProvider(context *application_context.MahresourcesContext) fu
 				Name: "Add",
 				Url:  "/tag/new",
 			},
+			"displayOptions": getPathExtensionOptions(request.URL, &[]*SelectOption{
+				{Title: "List", Link: "/tags"},
+				{Title: "Timeline", Link: "/tags/timeline"},
+			}),
 		}.Update(baseContext)
 	}
 }

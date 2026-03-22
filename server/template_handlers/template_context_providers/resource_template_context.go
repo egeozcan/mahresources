@@ -118,6 +118,7 @@ func ResourceListContextProvider(context *application_context.MahresourcesContex
 				{Title: "Thumbnails", Link: "/resources"},
 				{Title: "Details", Link: "/resources/details"},
 				{Title: "Simple", Link: "/resources/simple"},
+				{Title: "Timeline", Link: "/resources/timeline"},
 			}),
 		}.Update(baseContext)
 	}
@@ -188,6 +189,77 @@ func ResourceCreateContextProvider(context *application_context.MahresourcesCont
 		}
 
 		return tplContext
+	}
+}
+
+func ResourceTimelineContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+	return func(request *http.Request) pongo2.Context {
+		var query query_models.ResourceSearchQuery
+		err := decoder.Decode(&query, request.URL.Query())
+		baseContext := staticTemplateCtx(request)
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		tags, err := context.GetTagsWithIds(&query.Tags, 0)
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		notes, _ := context.GetNotesWithIds(&query.Notes)
+		groups, _ := context.GetGroupsWithIds(&query.Groups)
+
+		owner := make([]*models.Group, 0)
+		if query.OwnerId != 0 {
+			ownerEntity, err := context.GetGroup(query.OwnerId)
+
+			if err == nil {
+				owner = []*models.Group{ownerEntity}
+			}
+		}
+
+		var selectedResourceCategory []*models.ResourceCategory
+		if query.ResourceCategoryId != 0 {
+			rc, err := context.GetResourceCategory(query.ResourceCategoryId)
+			if err == nil {
+				selectedResourceCategory = []*models.ResourceCategory{rc}
+			}
+		}
+
+		popularTags, err := context.GetPopularResourceTags(&query)
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		return pongo2.Context{
+			"pageTitle":                "Resources - Timeline",
+			"tags":                     tags,
+			"popularTags":              popularTags,
+			"notes":                    notes,
+			"owner":                    owner,
+			"groups":                   groups,
+			"selectedResourceCategory": selectedResourceCategory,
+			"parsedQuery":              query,
+			"action": template_entities.Entry{
+				Name: "Create",
+				Url:  "/resource/new",
+			},
+			"sortValues": createSortCols([]SortColumn{
+				{Name: "Created", Value: "created_at"},
+				{Name: "Name", Value: "name"},
+				{Name: "Updated", Value: "updated_at"},
+				{Name: "Size", Value: "file_size"},
+			}, query.SortBy),
+			"displayOptions": getPathExtensionOptions(request.URL, &[]*SelectOption{
+				{Title: "Thumbnails", Link: "/resources"},
+				{Title: "Details", Link: "/resources/details"},
+				{Title: "Simple", Link: "/resources/simple"},
+				{Title: "Timeline", Link: "/resources/timeline"},
+			}),
+		}.Update(baseContext)
 	}
 }
 

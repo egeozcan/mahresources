@@ -54,6 +54,10 @@ func CategoryListContextProvider(context *application_context.MahresourcesContex
 				{Name: "Name", Value: "name"},
 				{Name: "Updated", Value: "updated_at"},
 			}, query.SortBy),
+			"displayOptions": getPathExtensionOptions(request.URL, &[]*SelectOption{
+				{Title: "List", Link: "/categories"},
+				{Title: "Timeline", Link: "/categories/timeline"},
+			}),
 		}.Update(baseContext)
 	}
 }
