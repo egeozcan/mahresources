@@ -8,6 +8,23 @@
 >
     {# Navigation bar #}
     <div class="timeline-nav flex items-center gap-2 mb-4 flex-wrap">
+        <div role="group" aria-label="Activity type" class="timeline-granularity">
+            <button
+                type="button"
+                class="timeline-gran-btn"
+                :class="timelineMode === 'created' ? 'active' : ''"
+                @click="setTimelineMode('created')"
+                :aria-pressed="timelineMode === 'created' ? 'true' : 'false'"
+            >Created</button>
+            <button
+                type="button"
+                class="timeline-gran-btn"
+                :class="timelineMode === 'updated' ? 'active' : ''"
+                @click="setTimelineMode('updated')"
+                :aria-pressed="timelineMode === 'updated' ? 'true' : 'false'"
+            >Updated</button>
+        </div>
+
         <button
             type="button"
             class="btn btn-sm"
@@ -80,18 +97,6 @@
         role="group"
         :aria-label="'Bar chart showing ' + entityType + ' activity over time'"
     ></div>
-
-    {# Legend #}
-    <div class="timeline-legend flex gap-4 mt-2 text-xs text-stone-600" x-show="!loading && !error && maxCount > 0">
-        <span class="flex items-center gap-1">
-            <span class="inline-block w-3 h-3 rounded" style="background-color: var(--timeline-created-color, #b45309);"></span>
-            Created
-        </span>
-        <span class="flex items-center gap-1">
-            <span class="inline-block w-3 h-3 rounded" style="background-color: var(--timeline-updated-color, #d97706); opacity: 0.6;"></span>
-            Updated
-        </span>
-    </div>
 
     {# Preview panel (hidden until bar clicked) #}
     <div

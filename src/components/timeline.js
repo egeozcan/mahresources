@@ -8,6 +8,7 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
         defaultView,
 
         // State
+        timelineMode: 'created',
         granularity: 'month',
         anchor: new Date().toISOString().slice(0, 10),
         columns: 12,
@@ -104,11 +105,10 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
                 this.buckets = data.buckets || [];
                 this.hasMore = data.hasMore || { left: true, right: false };
                 this.maxCount = 0;
+                const key = this.timelineMode;
                 for (const b of this.buckets) {
-                    const created = b.created || 0;
-                    const updated = b.updated || 0;
-                    if (created > this.maxCount) this.maxCount = created;
-                    if (updated > this.maxCount) this.maxCount = updated;
+                    const v = b[key] || 0;
+                    if (v > this.maxCount) this.maxCount = v;
                 }
                 this.loading = false;
                 this.renderChart();
@@ -120,6 +120,18 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
             } finally {
                 this._fetchAborter = null;
             }
+        },
+
+        setTimelineMode(mode) {
+            this.timelineMode = mode;
+            this.closePreview();
+            // Recompute maxCount for the new mode
+            this.maxCount = 0;
+            for (const b of this.buckets) {
+                const v = b[mode] || 0;
+                if (v > this.maxCount) this.maxCount = v;
+            }
+            this.renderChart();
         },
 
         setGranularity(g) {
@@ -140,9 +152,16 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
         next() {
             if (!this.hasMore.right) return;
             if (this.buckets.length > 0) {
-                const lastEnd = this.buckets[this.buckets.length - 1].end.slice(0, 10);
+                // Shift forward by the same distance prev() shifts back:
+                // prev sets anchor = firstStart, so it moves back by (anchor - firstStart).
+                // Mirror that by adding the same offset forward.
+                const firstStart = new Date(this.buckets[0].start);
+                const anchorDate = new Date(this.anchor + 'T00:00:00Z');
+                const shiftMs = anchorDate.getTime() - firstStart.getTime();
+                const newAnchor = new Date(anchorDate.getTime() + shiftMs);
                 const today = new Date().toISOString().slice(0, 10);
-                this.anchor = lastEnd > today ? today : lastEnd;
+                const candidate = newAnchor.toISOString().slice(0, 10);
+                this.anchor = candidate > today ? today : candidate;
             }
             this.closePreview();
             this.fetchBuckets();
@@ -187,37 +206,27 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
             const labelsRow = document.createElement('div');
             labelsRow.className = 'timeline-labels-row';
 
+            const mode = this.timelineMode;
+            const barClass = mode === 'created' ? 'timeline-bar-created' : 'timeline-bar-updated';
+
             this.buckets.forEach((bucket, index) => {
-                const createdCount = bucket.created || 0;
-                const updatedCount = bucket.updated || 0;
-                const tooltipText = bucket.label + ' \u2014 ' + createdCount + ' created, ' + updatedCount + ' updated';
+                const count = bucket[mode] || 0;
+                const tooltipText = bucket.label + ' \u2014 ' + count + ' ' + mode;
 
                 // Bar column
                 const col = document.createElement('div');
                 col.className = 'timeline-bucket-col';
                 col.title = tooltipText;
 
-                if (updatedCount > 0) {
-                    const updatedBar = document.createElement('button');
-                    updatedBar.type = 'button';
-                    updatedBar.className = 'timeline-bar timeline-bar-updated' + (this.selectedBar === index && this.selectedBarType === 'updated' ? ' selected' : '');
-                    updatedBar.style.height = this.barHeight(updatedCount);
-                    updatedBar.setAttribute('aria-label', tooltipText);
-                    updatedBar.addEventListener('click', () => this.selectBar(index, 'updated'));
-                    col.appendChild(updatedBar);
-                }
-
-                if (createdCount > 0) {
-                    const createdBar = document.createElement('button');
-                    createdBar.type = 'button';
-                    createdBar.className = 'timeline-bar timeline-bar-created' + (this.selectedBar === index && this.selectedBarType === 'created' ? ' selected' : '');
-                    createdBar.style.height = this.barHeight(createdCount);
-                    createdBar.setAttribute('aria-label', tooltipText);
-                    createdBar.addEventListener('click', () => this.selectBar(index, 'created'));
-                    col.appendChild(createdBar);
-                }
-
-                if (createdCount === 0 && updatedCount === 0) {
+                if (count > 0) {
+                    const bar = document.createElement('button');
+                    bar.type = 'button';
+                    bar.className = 'timeline-bar ' + barClass + (this.selectedBar === index ? ' selected' : '');
+                    bar.style.height = this.barHeight(count);
+                    bar.setAttribute('aria-label', tooltipText);
+                    bar.addEventListener('click', () => this.selectBar(index, mode));
+                    col.appendChild(bar);
+                } else {
                     const emptyBar = document.createElement('div');
                     emptyBar.className = 'timeline-bar-empty';
                     col.appendChild(emptyBar);
@@ -239,20 +248,19 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
             chart.appendChild(labelsRow);
         },
 
-        // P2 fix: convert RFC3339 bucket bounds to date-only (YYYY-MM-DD) for
-        // Before params, using the day before the exclusive end so that
-        // ApplyDateRange's inclusive <= comparison doesn't pull in next-bucket rows.
+        // Build date filter params from bucket bounds.
+        // Bucket end is exclusive (e.g. 2026-03-16 for the Mar 09 week bucket).
+        // Pass the exclusive end date directly: ApplyDateRange uses `<=` and
+        // SQLite string comparison means '2026-03-15T10:00:00Z' < '2026-03-16'
+        // so all items within the bucket are correctly included while items on
+        // the next bucket's start date are excluded ('2026-03-16T...' > '2026-03-16').
         // Also drops 'page' param so drill-down always starts at page 1.
         _buildDateParams(bucket, barType) {
             const params = new URLSearchParams(window.location.search);
             params.delete('page');
 
             const startDate = bucket.start.slice(0, 10);
-            // end is exclusive (e.g. 2026-02-01 for Jan bucket), subtract one day
-            // for the inclusive Before param
-            const endExclusive = new Date(bucket.end);
-            endExclusive.setUTCDate(endExclusive.getUTCDate() - 1);
-            const beforeDate = endExclusive.toISOString().slice(0, 10);
+            const beforeDate = bucket.end.slice(0, 10);
 
             if (barType === 'created') {
                 params.set('CreatedAfter', startDate);
@@ -291,10 +299,9 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
             this.selectedBar = index;
             this.selectedBarType = barType;
 
-            const createdCount = bucket.created || 0;
-            const updatedCount = bucket.updated || 0;
-            this.previewTitle = bucket.label + ' \u2014 ' + createdCount + ' created, ' + updatedCount + ' updated';
-            this.previewTotalCount = barType === 'created' ? createdCount : updatedCount;
+            const count = bucket[barType] || 0;
+            this.previewTitle = bucket.label + ' \u2014 ' + count + ' ' + barType;
+            this.previewTotalCount = count;
 
             // Re-render chart to update selected state
             this.renderChart();

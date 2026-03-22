@@ -107,22 +107,27 @@ test.describe('Timeline View - Chart rendering', () => {
     await expect(chart).toHaveAttribute('role', 'group');
   });
 
-  test('legend section shows Created and Updated labels when data exists', async ({ apiClient, page }) => {
-    // Create a resource so the timeline has data and maxCount > 0
-    const tag = await apiClient.createTag('timeline-legend-tag', 'For legend test');
+  test('activity type toggle shows Created and Updated buttons', async ({ page }) => {
+    await page.goto('/resources/timeline');
+    await page.waitForLoadState('load');
 
-    try {
-      await page.goto('/tags/timeline');
-      await page.waitForLoadState('load');
+    const activityGroup = page.locator('[role="group"][aria-label="Activity type"]');
+    await expect(activityGroup).toBeVisible();
 
-      // Wait for chart to render with data
-      const legend = page.locator('.timeline-legend');
-      await expect(legend).toBeVisible({ timeout: 10000 });
-      await expect(legend.locator('text=Created')).toBeVisible();
-      await expect(legend.locator('text=Updated')).toBeVisible();
-    } finally {
-      await apiClient.deleteTag(tag.ID);
-    }
+    const createdBtn = activityGroup.locator('button:has-text("Created")');
+    const updatedBtn = activityGroup.locator('button:has-text("Updated")');
+
+    await expect(createdBtn).toBeVisible();
+    await expect(updatedBtn).toBeVisible();
+
+    // Created should be active by default
+    await expect(createdBtn).toHaveAttribute('aria-pressed', 'true');
+    await expect(updatedBtn).toHaveAttribute('aria-pressed', 'false');
+
+    // Click Updated and verify it becomes active
+    await updatedBtn.click();
+    await expect(updatedBtn).toHaveAttribute('aria-pressed', 'true');
+    await expect(createdBtn).toHaveAttribute('aria-pressed', 'false');
   });
 });
 
