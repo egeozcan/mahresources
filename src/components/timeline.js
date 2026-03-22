@@ -159,14 +159,20 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
                 return;
             }
 
-            const wrapper = document.createElement('div');
-            wrapper.style.display = 'flex';
-            wrapper.style.alignItems = 'flex-end';
-            wrapper.style.gap = '2px';
-            wrapper.style.height = '160px';
-            wrapper.style.padding = '0';
+            // Bars row (fixed height) and labels row (below, guaranteed space)
+            const barsRow = document.createElement('div');
+            barsRow.style.display = 'flex';
+            barsRow.style.alignItems = 'flex-end';
+            barsRow.style.gap = '2px';
+            barsRow.style.height = '160px';
+
+            const labelsRow = document.createElement('div');
+            labelsRow.style.display = 'flex';
+            labelsRow.style.gap = '2px';
+            labelsRow.style.marginTop = '4px';
 
             this.buckets.forEach((bucket, index) => {
+                // Bar column
                 const col = document.createElement('div');
                 col.style.flex = '1';
                 col.style.display = 'flex';
@@ -180,7 +186,6 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
                 const createdCount = bucket.created || 0;
                 const updatedCount = bucket.updated || 0;
 
-                // Updated bar (behind/lighter)
                 if (updatedCount > 0) {
                     const updatedBar = document.createElement('button');
                     updatedBar.type = 'button';
@@ -189,13 +194,10 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
                     updatedBar.style.width = '100%';
                     updatedBar.setAttribute('aria-label', bucket.label + ': ' + updatedCount + ' updated');
                     updatedBar.title = bucket.label + ': ' + updatedCount + ' updated';
-                    updatedBar.dataset.index = index;
-                    updatedBar.dataset.type = 'updated';
                     updatedBar.addEventListener('click', () => this.selectBar(index, 'updated'));
                     col.appendChild(updatedBar);
                 }
 
-                // Created bar (in front/darker)
                 if (createdCount > 0) {
                     const createdBar = document.createElement('button');
                     createdBar.type = 'button';
@@ -204,13 +206,10 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
                     createdBar.style.width = '100%';
                     createdBar.setAttribute('aria-label', bucket.label + ': ' + createdCount + ' created');
                     createdBar.title = bucket.label + ': ' + createdCount + ' created';
-                    createdBar.dataset.index = index;
-                    createdBar.dataset.type = 'created';
                     createdBar.addEventListener('click', () => this.selectBar(index, 'created'));
                     col.appendChild(createdBar);
                 }
 
-                // Empty placeholder if both are 0
                 if (createdCount === 0 && updatedCount === 0) {
                     const emptyBar = document.createElement('div');
                     emptyBar.style.height = '2px';
@@ -220,30 +219,27 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
                     col.appendChild(emptyBar);
                 }
 
-                // Label below — rotate if too many columns to fit horizontally
+                barsRow.appendChild(col);
+
+                // Label cell (separate row, always visible)
+                const labelCell = document.createElement('div');
+                labelCell.style.flex = '1';
+                labelCell.style.minWidth = '0';
+                labelCell.style.textAlign = 'center';
+                labelCell.style.overflow = 'hidden';
+                labelCell.style.textOverflow = 'ellipsis';
                 const label = document.createElement('span');
-                label.className = 'text-stone-600 mt-1';
+                label.className = 'text-stone-600';
                 label.style.fontSize = '0.6875rem';
                 label.style.lineHeight = '1';
                 label.style.whiteSpace = 'nowrap';
-                if (this.buckets.length > 12) {
-                    label.style.writingMode = 'vertical-rl';
-                    label.style.transform = 'rotate(180deg)';
-                    label.style.maxHeight = '3.5rem';
-                    label.style.overflow = 'hidden';
-                    label.style.textOverflow = 'ellipsis';
-                } else {
-                    label.style.overflow = 'hidden';
-                    label.style.textOverflow = 'ellipsis';
-                    label.style.maxWidth = '100%';
-                }
-                label.textContent = bucket.label;
-                col.appendChild(label);
-
-                wrapper.appendChild(col);
+                label.textContent = this._shortLabel(bucket.label, index);
+                labelCell.appendChild(label);
+                labelsRow.appendChild(labelCell);
             });
 
-            chart.appendChild(wrapper);
+            chart.appendChild(barsRow);
+            chart.appendChild(labelsRow);
         },
 
         _buildDateParams(bucket, barType) {
@@ -319,6 +315,28 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
             } finally {
                 this._previewAborter = null;
             }
+        },
+
+        _shortLabel(label, index) {
+            // For dense charts (>10 columns), shorten monthly labels like "2025-03"
+            // to just "03", showing full year only when it changes or on first label
+            if (this.buckets.length <= 10) return label;
+
+            // Monthly format: "YYYY-MM"
+            const monthMatch = label.match(/^(\d{4})-(\d{2})$/);
+            if (monthMatch) {
+                const year = monthMatch[1];
+                const month = monthMatch[2];
+                const prevLabel = index > 0 ? this.buckets[index - 1].label : '';
+                const prevYear = prevLabel.slice(0, 4);
+                // Show year on first label or when year changes
+                if (index === 0 || year !== prevYear) {
+                    return year + '-' + month;
+                }
+                return month;
+            }
+
+            return label;
         },
 
         closePreview() {
