@@ -1389,6 +1389,24 @@ components:
                 UpdatedBefore:
                     type: string
             type: object
+        TimelineBucketPartial:
+            type: object
+        TimelineHasMore:
+            properties:
+                left:
+                    type: boolean
+                right:
+                    type: boolean
+            type: object
+        TimelineResponse:
+            properties:
+                buckets:
+                    items:
+                        $ref: '#/components/schemas/TimelineBucketPartial'
+                    type: array
+                hasMore:
+                    $ref: '#/components/schemas/TimelineHasMore'
+            type: object
         VersionCleanupQuery:
             properties:
                 dryRun:
@@ -1501,6 +1519,69 @@ paths:
             summary: List categories
             tags:
                 - categories
+    /v1/categories/timeline:
+        get:
+            description: Returns bucketed counts of created and updated categories over time, with optional filters.
+            operationId: getCategoryTimeline
+            parameters:
+                - in: query
+                  name: Name
+                  schema:
+                    type: string
+                - in: query
+                  name: Description
+                  schema:
+                    type: string
+                - in: query
+                  name: CreatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: CreatedAfter
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedAfter
+                  schema:
+                    type: string
+                - explode: true
+                  in: query
+                  name: SortBy
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - description: 'Time granularity: yearly, monthly, or weekly (default: monthly)'
+                  in: query
+                  name: granularity
+                  schema:
+                    type: string
+                - description: 'Anchor date in YYYY-MM-DD format (default: today)'
+                  in: query
+                  name: anchor
+                  schema:
+                    type: string
+                - description: 'Number of time buckets to return (default: 15, max: 60)'
+                  in: query
+                  name: columns
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TimelineResponse'
+                    description: Successful response
+            summary: Get category creation/update timeline
+            tags:
+                - categories
+                - timeline
     /v1/category:
         post:
             operationId: createOrUpdateCategory
@@ -2082,6 +2163,161 @@ paths:
             summary: Bulk remove tags from groups
             tags:
                 - groups
+    /v1/groups/timeline:
+        get:
+            description: Returns bucketed counts of created and updated groups over time, with optional filters.
+            operationId: getGroupTimeline
+            parameters:
+                - in: query
+                  name: Name
+                  schema:
+                    type: string
+                - in: query
+                  name: SearchParentsForName
+                  schema:
+                    type: boolean
+                - in: query
+                  name: SearchChildrenForName
+                  schema:
+                    type: boolean
+                - in: query
+                  name: Description
+                  schema:
+                    type: string
+                - explode: true
+                  in: query
+                  name: Tags
+                  schema:
+                    items:
+                        type: integer
+                    type: array
+                  style: form
+                - in: query
+                  name: SearchParentsForTags
+                  schema:
+                    type: boolean
+                - in: query
+                  name: SearchChildrenForTags
+                  schema:
+                    type: boolean
+                - explode: true
+                  in: query
+                  name: Notes
+                  schema:
+                    items:
+                        type: integer
+                    type: array
+                  style: form
+                - explode: true
+                  in: query
+                  name: Groups
+                  schema:
+                    items:
+                        type: integer
+                    type: array
+                  style: form
+                - in: query
+                  name: OwnerId
+                  schema:
+                    type: integer
+                - explode: true
+                  in: query
+                  name: Resources
+                  schema:
+                    items:
+                        type: integer
+                    type: array
+                  style: form
+                - explode: true
+                  in: query
+                  name: Categories
+                  schema:
+                    items:
+                        type: integer
+                    type: array
+                  style: form
+                - in: query
+                  name: CategoryId
+                  schema:
+                    type: integer
+                - in: query
+                  name: CreatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: CreatedAfter
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedAfter
+                  schema:
+                    type: string
+                - in: query
+                  name: RelationTypeId
+                  schema:
+                    type: integer
+                - in: query
+                  name: RelationSide
+                  schema:
+                    type: integer
+                - explode: true
+                  in: query
+                  name: MetaQuery
+                  schema:
+                    items:
+                        $ref: '#/components/schemas/ColumnMetaPartial'
+                    type: array
+                  style: form
+                - explode: true
+                  in: query
+                  name: SortBy
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - in: query
+                  name: URL
+                  schema:
+                    type: string
+                - explode: true
+                  in: query
+                  name: Ids
+                  schema:
+                    items:
+                        type: integer
+                    type: array
+                  style: form
+                - description: 'Time granularity: yearly, monthly, or weekly (default: monthly)'
+                  in: query
+                  name: granularity
+                  schema:
+                    type: string
+                - description: 'Anchor date in YYYY-MM-DD format (default: today)'
+                  in: query
+                  name: anchor
+                  schema:
+                    type: string
+                - description: 'Number of time buckets to return (default: 15, max: 60)'
+                  in: query
+                  name: columns
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TimelineResponse'
+                    description: Successful response
+            summary: Get group creation/update timeline
+            tags:
+                - groups
+                - timeline
     /v1/log:
         get:
             operationId: getLog
@@ -2896,6 +3132,130 @@ paths:
             summary: Bulk remove tags from notes
             tags:
                 - notes
+    /v1/notes/timeline:
+        get:
+            description: Returns bucketed counts of created and updated notes over time, with optional filters.
+            operationId: getNoteTimeline
+            parameters:
+                - in: query
+                  name: Name
+                  schema:
+                    type: string
+                - in: query
+                  name: Description
+                  schema:
+                    type: string
+                - in: query
+                  name: OwnerId
+                  schema:
+                    type: integer
+                - explode: true
+                  in: query
+                  name: Groups
+                  schema:
+                    items:
+                        type: integer
+                    type: array
+                  style: form
+                - explode: true
+                  in: query
+                  name: Tags
+                  schema:
+                    items:
+                        type: integer
+                    type: array
+                  style: form
+                - in: query
+                  name: CreatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: CreatedAfter
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedAfter
+                  schema:
+                    type: string
+                - in: query
+                  name: StartDateBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: StartDateAfter
+                  schema:
+                    type: string
+                - in: query
+                  name: EndDateBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: EndDateAfter
+                  schema:
+                    type: string
+                - explode: true
+                  in: query
+                  name: SortBy
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - explode: true
+                  in: query
+                  name: Ids
+                  schema:
+                    items:
+                        type: integer
+                    type: array
+                  style: form
+                - explode: true
+                  in: query
+                  name: MetaQuery
+                  schema:
+                    items:
+                        $ref: '#/components/schemas/ColumnMetaPartial'
+                    type: array
+                  style: form
+                - in: query
+                  name: NoteTypeId
+                  schema:
+                    type: integer
+                - in: query
+                  name: Shared
+                  schema:
+                    nullable: true
+                    type: boolean
+                - description: 'Time granularity: yearly, monthly, or weekly (default: monthly)'
+                  in: query
+                  name: granularity
+                  schema:
+                    type: string
+                - description: 'Anchor date in YYYY-MM-DD format (default: today)'
+                  in: query
+                  name: anchor
+                  schema:
+                    type: string
+                - description: 'Number of time buckets to return (default: 15, max: 60)'
+                  in: query
+                  name: columns
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TimelineResponse'
+                    description: Successful response
+            summary: Get note creation/update timeline
+            tags:
+                - notes
+                - timeline
     /v1/plugins/{pluginName}/block/render:
         get:
             description: Renders a block using the plugin's block renderer, returning HTML content for the specified mode.
@@ -2984,6 +3344,69 @@ paths:
             summary: List queries
             tags:
                 - queries
+    /v1/queries/timeline:
+        get:
+            description: Returns bucketed counts of created and updated queries over time, with optional filters.
+            operationId: getQueryTimeline
+            parameters:
+                - in: query
+                  name: Name
+                  schema:
+                    type: string
+                - in: query
+                  name: Text
+                  schema:
+                    type: string
+                - in: query
+                  name: CreatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: CreatedAfter
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedAfter
+                  schema:
+                    type: string
+                - explode: true
+                  in: query
+                  name: SortBy
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - description: 'Time granularity: yearly, monthly, or weekly (default: monthly)'
+                  in: query
+                  name: granularity
+                  schema:
+                    type: string
+                - description: 'Anchor date in YYYY-MM-DD format (default: today)'
+                  in: query
+                  name: anchor
+                  schema:
+                    type: string
+                - description: 'Number of time buckets to return (default: 15, max: 60)'
+                  in: query
+                  name: columns
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TimelineResponse'
+                    description: Successful response
+            summary: Get query creation/update timeline
+            tags:
+                - queries
+                - timeline
     /v1/query:
         get:
             operationId: getQuery
@@ -4179,6 +4602,161 @@ paths:
             summary: Set dimensions for a resource
             tags:
                 - resources
+    /v1/resources/timeline:
+        get:
+            description: Returns bucketed counts of created and updated resources over time, with optional filters.
+            operationId: getResourceTimeline
+            parameters:
+                - in: query
+                  name: Name
+                  schema:
+                    type: string
+                - in: query
+                  name: Description
+                  schema:
+                    type: string
+                - in: query
+                  name: ContentType
+                  schema:
+                    type: string
+                - in: query
+                  name: OwnerId
+                  schema:
+                    type: integer
+                - in: query
+                  name: ResourceCategoryId
+                  schema:
+                    type: integer
+                - explode: true
+                  in: query
+                  name: Groups
+                  schema:
+                    items:
+                        type: integer
+                    type: array
+                  style: form
+                - explode: true
+                  in: query
+                  name: Tags
+                  schema:
+                    items:
+                        type: integer
+                    type: array
+                  style: form
+                - explode: true
+                  in: query
+                  name: Notes
+                  schema:
+                    items:
+                        type: integer
+                    type: array
+                  style: form
+                - explode: true
+                  in: query
+                  name: Ids
+                  schema:
+                    items:
+                        type: integer
+                    type: array
+                  style: form
+                - in: query
+                  name: CreatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: CreatedAfter
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedAfter
+                  schema:
+                    type: string
+                - explode: true
+                  in: query
+                  name: MetaQuery
+                  schema:
+                    items:
+                        $ref: '#/components/schemas/ColumnMetaPartial'
+                    type: array
+                  style: form
+                - explode: true
+                  in: query
+                  name: SortBy
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - in: query
+                  name: MaxResults
+                  schema:
+                    type: integer
+                - in: query
+                  name: OriginalName
+                  schema:
+                    type: string
+                - in: query
+                  name: OriginalLocation
+                  schema:
+                    type: string
+                - in: query
+                  name: Hash
+                  schema:
+                    type: string
+                - in: query
+                  name: ShowWithoutOwner
+                  schema:
+                    type: boolean
+                - in: query
+                  name: ShowWithSimilar
+                  schema:
+                    type: boolean
+                - in: query
+                  name: MinWidth
+                  schema:
+                    type: integer
+                - in: query
+                  name: MinHeight
+                  schema:
+                    type: integer
+                - in: query
+                  name: MaxWidth
+                  schema:
+                    type: integer
+                - in: query
+                  name: MaxHeight
+                  schema:
+                    type: integer
+                - description: 'Time granularity: yearly, monthly, or weekly (default: monthly)'
+                  in: query
+                  name: granularity
+                  schema:
+                    type: string
+                - description: 'Anchor date in YYYY-MM-DD format (default: today)'
+                  in: query
+                  name: anchor
+                  schema:
+                    type: string
+                - description: 'Number of time buckets to return (default: 15, max: 60)'
+                  in: query
+                  name: columns
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TimelineResponse'
+                    description: Successful response
+            summary: Get resource creation/update timeline
+            tags:
+                - resources
+                - timeline
     /v1/resources/versions/cleanup:
         post:
             operationId: bulkCleanupVersions
@@ -4531,6 +5109,69 @@ paths:
             summary: Merge tags
             tags:
                 - tags
+    /v1/tags/timeline:
+        get:
+            description: Returns bucketed counts of created and updated tags over time, with optional filters.
+            operationId: getTagTimeline
+            parameters:
+                - in: query
+                  name: Name
+                  schema:
+                    type: string
+                - in: query
+                  name: Description
+                  schema:
+                    type: string
+                - in: query
+                  name: CreatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: CreatedAfter
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedAfter
+                  schema:
+                    type: string
+                - explode: true
+                  in: query
+                  name: SortBy
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+                - description: 'Time granularity: yearly, monthly, or weekly (default: monthly)'
+                  in: query
+                  name: granularity
+                  schema:
+                    type: string
+                - description: 'Anchor date in YYYY-MM-DD format (default: today)'
+                  in: query
+                  name: anchor
+                  schema:
+                    type: string
+                - description: 'Number of time buckets to return (default: 15, max: 60)'
+                  in: query
+                  name: columns
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TimelineResponse'
+                    description: Successful response
+            summary: Get tag creation/update timeline
+            tags:
+                - tags
+                - timeline
 servers:
     - description: API Version 1
       url: /v1
@@ -4565,5 +5206,7 @@ tags:
       name: series
     - description: Operations related to tags
       name: tags
+    - description: Operations related to timeline
+      name: timeline
     - description: Operations related to versions
       name: versions
