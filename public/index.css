@@ -2091,3 +2091,80 @@ html {
     text-decoration: line-through;
     font-style: italic;
 }
+
+/* ========================================
+   Timeline Chart
+   ======================================== */
+
+:root {
+    --timeline-created-color: #b45309;
+    --timeline-updated-color: #d97706;
+}
+
+.timeline-container {
+    padding: 1rem;
+    background: #fff;
+    border: 1px solid #e7e5e4;
+    border-radius: var(--radius-md);
+    margin-bottom: 1rem;
+}
+
+.timeline-container:focus-visible {
+    outline: 2px solid var(--nav-hover);
+    outline-offset: 2px;
+}
+
+.timeline-chart:focus-visible {
+    outline: 2px solid var(--nav-hover);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+}
+
+.timeline-bar {
+    display: block;
+    min-width: 4px;
+    border: none;
+    border-radius: 2px 2px 0 0;
+    cursor: pointer;
+    transition: opacity var(--transition-fast), box-shadow var(--transition-fast);
+    padding: 0;
+}
+
+.timeline-bar-created {
+    background-color: var(--timeline-created-color);
+}
+
+.timeline-bar-updated {
+    background-color: var(--timeline-updated-color);
+    opacity: 0.6;
+}
+
+.timeline-bar:hover {
+    opacity: 0.85;
+}
+
+.timeline-bar.selected {
+    box-shadow: 0 0 0 2px var(--nav-active);
+    opacity: 1;
+}
+
+.timeline-bar:focus-visible {
+    outline: 2px solid var(--nav-hover);
+    outline-offset: 1px;
+}
+
+.timeline-preview {
+    border-top: 1px solid #e7e5e4;
+    padding-top: 0.75rem;
+}
+
+@keyframes timeline-skeleton-pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 0.15; }
+}
+
+.skeleton-bar {
+    background: #d6d3d1;
+    border-radius: 2px 2px 0 0;
+    animation: timeline-skeleton-pulse 1.5s ease-in-out infinite;
+}
