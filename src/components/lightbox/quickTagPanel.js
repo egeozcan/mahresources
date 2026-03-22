@@ -276,25 +276,63 @@ export const quickTagPanelMethods = {
     return (this.resourceDetails?.Tags || []).some(t => t.ID === tagId);
   },
 
+  slotMatchState(index) {
+    const slots = this.getActiveTabSlots();
+    const slot = slots[index];
+    if (!slot) return 'none';
+    if (!this.resourceDetails) return 'none';
+
+    // Normalize: RECENT entries are single {id, name, ts}, QUICK entries are arrays
+    const tags = Array.isArray(slot) ? slot : [slot];
+    if (tags.length === 0) return 'none';
+
+    const presentCount = tags.filter(t => this.isTagOnResource(t.id ?? t.ID)).length;
+    if (presentCount === tags.length) return 'all';
+    if (presentCount > 0) return 'some';
+    return 'none';
+  },
+
   async toggleTabTag(index) {
     const slots = this.getActiveTabSlots();
     const slot = slots[index];
     if (!slot) return;
 
-    const tagId = slot.id;
-    if (this._quickTagTogglingSlot !== null) return;
-
+    if (this._quickTagTogglingSlot === index) return;
     this._quickTagTogglingSlot = index;
-    try {
-      const tag = { ID: tagId, Name: slot.name };
 
-      if (this.isTagOnResource(tagId)) {
-        await this.saveTagRemoval(tag);
+    try {
+      // Normalize: RECENT entries are {id, name, ts}, QUICK entries are [{id, name}, ...]
+      const tags = (Array.isArray(slot) ? slot : [slot]).map(t => ({
+        ID: t.id ?? t.ID,
+        Name: t.name ?? t.Name,
+      }));
+
+      const state = this.slotMatchState(index);
+
+      if (state === 'all') {
+        // Remove ALL
+        const results = await Promise.allSettled(tags.map(tag => this.saveTagRemoval(tag)));
+        if (results.some(r => r.status === 'rejected')) {
+          this._reconcileAfterPartialFailure();
+        }
       } else {
-        await this.saveTagAddition(tag);
+        // Add MISSING
+        const missing = tags.filter(tag => !this.isTagOnResource(tag.ID));
+        const results = await Promise.allSettled(missing.map(tag => this.saveTagAddition(tag)));
+        if (results.some(r => r.status === 'rejected')) {
+          this._reconcileAfterPartialFailure();
+        }
       }
     } finally {
       this._quickTagTogglingSlot = null;
+    }
+  },
+
+  _reconcileAfterPartialFailure() {
+    const resourceId = this.getCurrentItem()?.id;
+    if (resourceId) {
+      this.detailsCache.delete(resourceId);
+      this.fetchResourceDetails();
     }
   },
 
