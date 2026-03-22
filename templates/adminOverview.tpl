@@ -354,12 +354,12 @@
                         <dl class="space-y-2 text-sm font-mono">
                             <div class="flex items-center justify-between">
                                 <dt class="text-stone-500">Without tags</dt>
-                                <dd :class="expensiveStats.orphans.withoutTags > 0 ? 'text-amber-700 font-semibold' : 'text-stone-900'"
+                                <dd role="status" :class="expensiveStats.orphans.withoutTags > 0 ? 'text-amber-700 font-semibold' : 'text-stone-900'"
                                     x-text="formatNumber(expensiveStats.orphans.withoutTags)"></dd>
                             </div>
                             <div class="flex items-center justify-between">
                                 <dt class="text-stone-500">Without groups</dt>
-                                <dd :class="expensiveStats.orphans.withoutGroups > 0 ? 'text-amber-700 font-semibold' : 'text-stone-900'"
+                                <dd role="status" :class="expensiveStats.orphans.withoutGroups > 0 ? 'text-amber-700 font-semibold' : 'text-stone-900'"
                                     x-text="formatNumber(expensiveStats.orphans.withoutGroups)"></dd>
                             </div>
                         </dl>
@@ -402,7 +402,7 @@
                             </template>
                             <div class="flex items-center justify-between border-t border-stone-100 pt-2 mt-1">
                                 <dt class="text-stone-500">Errors (last 24h)</dt>
-                                <dd :class="expensiveStats.logStats.recentErrors > 0 ? 'text-red-700 font-semibold' : 'text-stone-900'"
+                                <dd role="status" :class="expensiveStats.logStats.recentErrors > 0 ? 'text-red-700 font-semibold' : 'text-stone-900'"
                                     x-text="formatNumber(expensiveStats.logStats.recentErrors)"></dd>
                             </div>
                         </dl>
