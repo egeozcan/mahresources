@@ -69,15 +69,15 @@ The `mr admin` command fetches the same statistics from the command line.
 mr admin
 
 # Show only server health metrics
-mr admin --server
+mr admin --server-only
 
 # Show only data stats and configuration
-mr admin --data
+mr admin --data-only
 
 # Output raw JSON for scripting
 mr admin --json
-mr admin --server --json
-mr admin --data --json
+mr admin --server-only --json
+mr admin --data-only --json
 ```
 
 The default human-readable output uses aligned key-value tables. Use `--json` to get the raw API response suitable for piping to `jq` or other tools.

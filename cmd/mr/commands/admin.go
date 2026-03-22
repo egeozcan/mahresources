@@ -350,8 +350,8 @@ func NewAdminCmd(c *client.Client, opts *output.Options) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolVar(&serverOnly, "server", false, "Show server stats only")
-	cmd.Flags().BoolVar(&dataOnly, "data", false, "Show data stats only")
+	cmd.Flags().BoolVar(&serverOnly, "server-only", false, "Show server stats only")
+	cmd.Flags().BoolVar(&dataOnly, "data-only", false, "Show data stats only")
 
 	return cmd
 }
