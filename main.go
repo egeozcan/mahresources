@@ -199,6 +199,14 @@ func main() {
 		VideoThumbnailConcurrency:    uint(*videoThumbConcurrency),
 		PluginPath:                   *pluginPath,
 		PluginsDisabled:              *pluginsDisabled,
+		HashWorkerEnabled:            !*hashWorkerDisabled,
+		HashWorkerCount:              *hashWorkerCount,
+		HashBatchSize:                *hashBatchSize,
+		HashPollInterval:             *hashPollInterval,
+		HashSimilarityThreshold:      *hashSimilarityThreshold,
+		HashCacheSize:                *hashCacheSize,
+		EphemeralMode:                *ephemeral,
+		SkipFTS:                      *skipFTS,
 	}
 
 	context, db, mainFs := application_context.CreateContextWithConfig(cfg)

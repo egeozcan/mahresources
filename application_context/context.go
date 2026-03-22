@@ -61,6 +61,30 @@ type MahresourcesConfig struct {
 	PluginPath string
 	// PluginsDisabled disables all plugin loading when true
 	PluginsDisabled bool
+	// HashWorkerEnabled indicates whether the background hash worker is running
+	HashWorkerEnabled bool
+	// HashWorkerCount is the number of concurrent hash calculation workers
+	HashWorkerCount int
+	// HashBatchSize is the number of resources processed per batch cycle
+	HashBatchSize int
+	// HashPollInterval is the time between batch processing cycles
+	HashPollInterval time.Duration
+	// HashSimilarityThreshold is the maximum Hamming distance for similarity
+	HashSimilarityThreshold int
+	// HashCacheSize is the maximum entries in the hash similarity LRU cache
+	HashCacheSize int
+	// EphemeralMode indicates the server is running in fully ephemeral mode (memory DB + FS)
+	EphemeralMode bool
+	// MemoryDB indicates the server is using an in-memory SQLite database
+	MemoryDB bool
+	// MemoryFS indicates the server is using an in-memory filesystem
+	MemoryFS bool
+	// MaxDBConnections is the connection pool size limit (0 = unlimited)
+	MaxDBConnections int
+	// FileSavePath is the main file storage directory
+	FileSavePath string
+	// SkipFTS indicates whether Full-Text Search initialization was skipped
+	SkipFTS bool
 }
 
 // MahresourcesInputConfig holds all configuration options that can be passed
@@ -104,6 +128,22 @@ type MahresourcesInputConfig struct {
 	PluginPath string
 	// PluginsDisabled disables all plugin loading when true
 	PluginsDisabled bool
+	// HashWorkerEnabled indicates whether the background hash worker is running
+	HashWorkerEnabled bool
+	// HashWorkerCount is the number of concurrent hash calculation workers
+	HashWorkerCount int
+	// HashBatchSize is the number of resources processed per batch cycle
+	HashBatchSize int
+	// HashPollInterval is the time between batch processing cycles
+	HashPollInterval time.Duration
+	// HashSimilarityThreshold is the maximum Hamming distance for similarity
+	HashSimilarityThreshold int
+	// HashCacheSize is the maximum entries in the hash similarity LRU cache
+	HashCacheSize int
+	// EphemeralMode indicates the server is running in fully ephemeral mode (memory DB + FS)
+	EphemeralMode bool
+	// SkipFTS indicates whether Full-Text Search initialization was skipped
+	SkipFTS bool
 }
 
 type MahresourcesLocks struct {
@@ -115,6 +155,8 @@ type MahresourcesLocks struct {
 }
 
 type MahresourcesContext struct {
+	// StartedAt records when NewMahresourcesContext was called, for uptime calculation
+	StartedAt time.Time
 	// the main file system
 	fs afero.Fs
 	// the db connection to the main db with read and write rights
@@ -178,6 +220,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 	icsCache := NewICSCache(icsCacheMaxEntries, icsCacheTTL)
 
 	ctx := &MahresourcesContext{
+		StartedAt:      time.Now(),
 		fs:             filesystem,
 		db:             db,
 		readOnlyDB:     readOnlyDB,
@@ -605,6 +648,18 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		VideoThumbnailConcurrency:    cfg.VideoThumbnailConcurrency,
 		PluginPath:                   cfg.PluginPath,
 		PluginsDisabled:              cfg.PluginsDisabled,
+		HashWorkerEnabled:            cfg.HashWorkerEnabled,
+		HashWorkerCount:              cfg.HashWorkerCount,
+		HashBatchSize:                cfg.HashBatchSize,
+		HashPollInterval:             cfg.HashPollInterval,
+		HashSimilarityThreshold:      cfg.HashSimilarityThreshold,
+		HashCacheSize:                cfg.HashCacheSize,
+		EphemeralMode:                cfg.EphemeralMode,
+		MemoryDB:                     cfg.MemoryDB,
+		MemoryFS:                     cfg.MemoryFS,
+		MaxDBConnections:             cfg.MaxDBConnections,
+		FileSavePath:                 cfg.FileSavePath,
+		SkipFTS:                      cfg.SkipFTS,
 	}), db, mainFs
 }
 
