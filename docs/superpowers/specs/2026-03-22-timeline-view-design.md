@@ -1,7 +1,7 @@
 # Timeline View for Entity List Views
 
 **Date:** 2026-03-22
-**Status:** Draft
+**Status:** Draft (reviewed)
 
 ## Overview
 
@@ -20,6 +20,13 @@ A timeline view available on all entity list views (Resources, Notes, Groups, Ta
 - Preview has a "Show all" button that navigates to the default list view with the same sidebar filters plus `CreatedAfter`/`CreatedBefore` for the clicked bucket
 - All existing sidebar filters (Tags, Groups, Name, etc.) remain fully active and affect the chart counts
 - Applies to all entity types: Resources, Notes, Groups, Tags, Categories, Queries
+- "Updated" means `updated_at > created_at` — entities that were never modified after creation are excluded from the "updated" count. This avoids the "updated >= created" problem caused by GORM setting `updated_at = created_at` on insert.
+
+## Prerequisites
+
+**Query model extensions needed:**
+- `CategoryQuery` and `QueryQuery` currently lack `CreatedBefore`, `CreatedAfter`, and `SortBy` fields. These must be added (along with corresponding database scopes) before the timeline can work for Categories and Queries. This is a small addition following the existing pattern in `ResourceSearchQuery`/`NoteQuery`/`GroupQuery`.
+- `UpdatedBefore` and `UpdatedAfter` query parameters must be added to all entity search models. Currently only `CreatedBefore`/`CreatedAfter` exist. This is needed so "Show all" on the "updated" bar filters correctly by `updated_at` rather than `created_at`.
 
 ## Architecture
 
@@ -52,7 +59,7 @@ GET /v1/{entity}/timeline
     {
       "label": "2025-10",
       "start": "2025-10-01T00:00:00Z",
-      "end": "2025-10-31T23:59:59Z",
+      "end": "2025-11-01T00:00:00Z",
       "created": 42,
       "updated": 87
     }
@@ -64,11 +71,15 @@ GET /v1/{entity}/timeline
 }
 ```
 
-- `start`/`end` are the exact date boundaries for building "Show all" links
+- `start` is inclusive, `end` is exclusive (e.g., Oct 2025 = `start: 2025-10-01`, `end: 2025-11-01`). This makes "Show all" link construction straightforward: `CreatedAfter=start&CreatedBefore=end`
 - `hasMore.right` is `false` when the rightmost bucket includes today
 - Buckets are ordered chronologically (oldest first)
 
-**Implementation:** SQL `GROUP BY` on date-truncated `created_at`/`updated_at`, running through the same GORM scopes that power existing list views. Two separate aggregation queries (one for created, one for updated) joined by bucket label. Empty buckets within the range return zero counts.
+**Implementation:** SQL `GROUP BY` on date-truncated `created_at`/`updated_at`, running through the same GORM scopes that power existing list views. Two separate aggregation queries (one for created, one for updated where `updated_at > created_at`) joined by bucket label. Empty buckets within the range return zero counts.
+
+**SQL dialect handling:** Date truncation differs between SQLite and PostgreSQL. A dialect-aware helper function must be created following the existing pattern (e.g., `GetLikeOperator` in `database_scopes/db_utils.go`):
+- PostgreSQL: `DATE_TRUNC('month', created_at)`, `DATE_TRUNC('week', created_at)`, `DATE_TRUNC('year', created_at)`
+- SQLite: `STRFTIME('%Y-%m', created_at)`, `STRFTIME('%Y-%W', created_at)`, `STRFTIME('%Y', created_at)`
 
 ### Frontend Component
 
@@ -76,7 +87,7 @@ GET /v1/{entity}/timeline
 
 **Alpine.js component** (`timeline`) managing:
 
-- **State:** `granularity`, `anchor`, `columns`, `buckets`, `selectedBar` (index), `previewItems`, `loading`
+- **State:** `granularity`, `anchor`, `columns`, `buckets`, `selectedBar` (index), `selectedBarType` (`'created'` or `'updated'`), `previewItems`, `loading`, `error`
 - **Initialization:** Reads current URL query params for sidebar filters, fetches initial data
 - **Fetching:** Calls timeline API with granularity, anchor, columns, plus all current sidebar filter params
 - **Navigation:**
@@ -84,8 +95,9 @@ GET /v1/{entity}/timeline
   - Right arrow: sets anchor forward by the same offset, capped at today
   - Keyboard: arrow keys when component is focused
 - **Granularity switcher:** Three toggle buttons (Y / M / W), resets anchor to today on switch
-- **Bar click:** Fetches top 20 entities using existing list API with `CreatedAfter`/`CreatedBefore` + `pageSize=20`, renders preview grid below chart
-- **"Show all" button:** Navigates to default list view URL preserving all current sidebar query params, adding `CreatedAfter`/`CreatedBefore` from clicked bucket
+- **Bar click:** Fetches top 20 entities using existing list API with `CreatedAfter`/`CreatedBefore` (or `UpdatedAfter`/`UpdatedBefore` for the updated bar) + `pageSize=20`, renders preview grid below chart
+- **"Show all" button:** Navigates to default list view URL preserving all current sidebar query params, adding the appropriate date range filters from clicked bucket
+- **Which bar was clicked matters:** Clicking the "created" bar filters by `CreatedAfter`/`CreatedBefore`. Clicking the "updated" bar filters by `UpdatedAfter`/`UpdatedBefore`. This requires adding `UpdatedBefore`/`UpdatedAfter` query parameters to the search models (see Prerequisites).
 - **Same bar click again:** Closes the preview panel
 
 ### Templates
@@ -103,6 +115,7 @@ Each template:
 - Extends the base layout
 - Uses the **same sidebar block** as the entity's existing list template (same filter form, same popular tags)
 - Body block contains the Alpine.js timeline component div
+- The body block is identical across all 6 templates — only the sidebar block differs per entity. A shared `partials/timeline.tpl` partial holds the chart markup; each entity template includes it.
 
 **View switcher additions:**
 
@@ -126,6 +139,8 @@ New route per entity following existing patterns in the template context provide
 
 Each reuses the same query decoding and sidebar data fetching as the existing list context provider for that entity.
 
+New timeline API endpoints must also be registered in `server/routes_openapi.go` in the appropriate `register*Routes` functions for OpenAPI spec generation.
+
 ### Bar Chart Rendering
 
 Pure CSS using flexbox:
@@ -138,6 +153,12 @@ Pure CSS using flexbox:
 - Keyboard accessible: bars focusable with tab, activated with Enter/Space
 - `aria-label` on each bar with count and period info
 
+**Column count:** The component measures container width on mount and calculates columns as `Math.floor(containerWidth / 60)`, clamped to `[5, 30]`. Recalculates on window resize and re-fetches if column count changes.
+
+**Loading state:** While fetching, show a subtle pulsing skeleton of the bar chart (gray placeholder bars at random heights). On error, show inline error message with retry button. If all buckets in range have zero counts, show centered message: "No activity in this period."
+
+**Weekly bucket labels:** Use ISO start-of-week date format: "Mar 10" (short month + day). Tooltip shows full range: "Mar 10–16, 2025".
+
 **Navigation controls** above the chart:
 - Left/right arrow buttons on the sides
 - Center: current range label (e.g., "Jan 2025 — Mar 2026")
@@ -145,7 +166,7 @@ Pure CSS using flexbox:
 
 **Preview panel** below the chart:
 - Header: "Oct 2025 — 42 created, 87 updated"
-- Grid of up to 20 entity cards (same card partial as default list view)
+- Grid of up to 20 entity cards using existing entity partials (`partials/resource.tpl`, `partials/group.tpl`, `partials/note.tpl`). For Tags, Categories, and Queries, which don't have dedicated card partials, render a simple card with name and creation date.
 - "Show all (42)" button → navigates to default list view with filters + date range
 - Clicking a different bar replaces the preview
 - Clicking the same bar closes the preview
@@ -190,7 +211,7 @@ No interactive navigation in CLI — single snapshot. Users adjust the window wi
 New entry in `docs-site/static/img/screenshot-manifest.json`:
 - Page: `/resources/timeline`
 - Description: "Timeline view showing resource creation and update activity"
-- Seed dependencies: resources with varied `CreatedAt` dates spanning multiple years
+- Seed dependencies: resources with varied `CreatedAt` dates spanning multiple years. **Note:** The seed process must explicitly set `CreatedAt` values to different dates (existing seed data creates everything at roughly the same time). The seeding script should backdate some resources to produce a meaningful multi-year chart.
 - Viewport: 1200x800
 
 ## Testing
