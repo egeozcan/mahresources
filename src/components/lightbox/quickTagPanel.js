@@ -44,18 +44,36 @@ export const quickTagPanelMethods = {
       if (!raw) return;
       const data = JSON.parse(raw);
 
-      // Migration: old schema had flat `slots` array
+      // Migration v1 → v2: flat `slots` array to nested quickSlots
       if (Array.isArray(data.slots) && !Array.isArray(data.quickSlots)) {
         data.quickSlots = [
           padArray(data.slots, 9),
           Array(9).fill(null),
           Array(9).fill(null),
-          Array(9).fill(null),
         ];
         data.activeTab = 0;
+        data.version = 2;
       }
 
-      // Load each field independently so a failure in one doesn't prevent loading others
+      // Migration v2 → v3: single-tag slots to multi-tag arrays, 3→4 tabs, remap activeTab
+      if (!data.version || data.version < 3) {
+        if (Array.isArray(data.quickSlots)) {
+          // Wrap each non-null single-tag {id, name} in [{ id, name }]
+          data.quickSlots = data.quickSlots.map(tab =>
+            (tab || []).map(slot => slot && !Array.isArray(slot) ? [slot] : slot)
+          );
+          // Extend from 3 to 4 inner arrays
+          while (data.quickSlots.length < 4) {
+            data.quickSlots.push(Array(9).fill(null));
+          }
+        }
+        // Remap activeTab: v2 3(RECENT)→4, v2 4(LAST)→0
+        if (data.activeTab === 3) data.activeTab = 4;
+        else if (data.activeTab === 4) data.activeTab = 0;
+        data.version = 3;
+      }
+
+      // Load each field independently
       try {
         if (Array.isArray(data.quickSlots)) {
           this.quickSlots = [
@@ -168,31 +186,53 @@ export const quickTagPanelMethods = {
 
   // ==================== Slot Management ====================
 
-  setQuickTagSlot(index, tag) {
+  addTagToSlot(index, tag) {
     if (!this.isQuickTab()) return;
     const tabIdx = this.activeTab;
-    // tag = { ID: number, Name: string } or null
-    this.quickSlots[tabIdx][index] = tag ? { id: tag.ID, name: tag.Name } : null;
+    // tag = { ID: number, Name: string }
+    if (!tag) return;
+    const entry = { id: tag.ID, name: tag.Name };
+    const current = this.quickSlots[tabIdx][index];
+    if (current) {
+      // Skip if tag already in slot
+      if (current.some(t => t.id === tag.ID)) return;
+      current.push(entry);
+    } else {
+      this.quickSlots[tabIdx][index] = [entry];
+    }
     // Force Alpine reactivity
     this.quickSlots = [...this.quickSlots];
     // Remove from recents if this tag was there
-    if (tag) {
-      const recentIdx = this.recentTags.findIndex(r => r && r.id === tag.ID);
-      if (recentIdx !== -1) {
-        this.recentTags[recentIdx] = null;
-        this.recentTags = [...this.recentTags];
-      }
+    const recentIdx = this.recentTags.findIndex(r => r && r.id === tag.ID);
+    if (recentIdx !== -1) {
+      this.recentTags[recentIdx] = null;
+      this.recentTags = [...this.recentTags];
     }
     this._saveQuickTagsToStorage();
 
-    // Dismiss any open popovers in the quick-tag panel (autocompleter dropdowns)
+    // Dismiss any open popovers in the quick-tag panel
     document.querySelectorAll('[data-quick-tag-panel] [popover]').forEach(p => {
       try { p.hidePopover(); } catch {}
     });
   },
 
+  removeTagFromSlot(index, tagId) {
+    if (!this.isQuickTab()) return;
+    const tabIdx = this.activeTab;
+    const current = this.quickSlots[tabIdx][index];
+    if (!current) return;
+    const filtered = current.filter(t => t.id !== tagId);
+    this.quickSlots[tabIdx][index] = filtered.length > 0 ? filtered : null;
+    this.quickSlots = [...this.quickSlots];
+    this._saveQuickTagsToStorage();
+  },
+
   clearQuickTagSlot(index) {
-    this.setQuickTagSlot(index, null);
+    if (!this.isQuickTab()) return;
+    const tabIdx = this.activeTab;
+    this.quickSlots[tabIdx][index] = null;
+    this.quickSlots = [...this.quickSlots];
+    this._saveQuickTagsToStorage();
   },
 
   // ==================== Recent Tags ====================
@@ -200,7 +240,7 @@ export const quickTagPanelMethods = {
   recordRecentTag(tag) {
     // tag = { ID: number, Name: string }
     // Skip if this tag is in any quick-add slot
-    if (this.quickSlots.some(slots => slots.some(s => s && s.id === tag.ID))) return;
+    if (this.quickSlots.some(slots => slots.some(s => s && s.some(t => t.id === tag.ID)))) return;
 
     const now = Date.now();
 
