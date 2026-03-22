@@ -15,7 +15,7 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
         hasMore: { left: true, right: false },
         selectedBar: null,
         selectedBarType: null,
-        previewItems: [],
+        previewHtml: '',
         previewTitle: '',
         previewTotalCount: 0,
         loading: false,
@@ -220,15 +220,23 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
                     col.appendChild(emptyBar);
                 }
 
-                // Label below
+                // Label below — rotate if too many columns to fit horizontally
                 const label = document.createElement('span');
                 label.className = 'text-stone-600 mt-1';
                 label.style.fontSize = '0.6875rem';
                 label.style.lineHeight = '1';
                 label.style.whiteSpace = 'nowrap';
-                label.style.overflow = 'hidden';
-                label.style.textOverflow = 'ellipsis';
-                label.style.maxWidth = '100%';
+                if (this.buckets.length > 12) {
+                    label.style.writingMode = 'vertical-rl';
+                    label.style.transform = 'rotate(180deg)';
+                    label.style.maxHeight = '3.5rem';
+                    label.style.overflow = 'hidden';
+                    label.style.textOverflow = 'ellipsis';
+                } else {
+                    label.style.overflow = 'hidden';
+                    label.style.textOverflow = 'ellipsis';
+                    label.style.maxWidth = '100%';
+                }
                 label.textContent = bucket.label;
                 col.appendChild(label);
 
@@ -236,6 +244,26 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
             });
 
             chart.appendChild(wrapper);
+        },
+
+        _buildDateParams(bucket, barType) {
+            const params = new URLSearchParams(window.location.search);
+            if (barType === 'created') {
+                params.set('CreatedAfter', bucket.start);
+                params.set('CreatedBefore', bucket.end);
+            } else {
+                params.set('UpdatedAfter', bucket.start);
+                params.set('UpdatedBefore', bucket.end);
+            }
+            return params;
+        },
+
+        get showAllUrl() {
+            if (this.selectedBar === null) return '#';
+            const bucket = this.buckets[this.selectedBar];
+            if (!bucket) return '#';
+            const params = this._buildDateParams(bucket, this.selectedBarType);
+            return this.defaultView + '?' + params.toString();
         },
 
         async selectBar(index, barType) {
@@ -260,37 +288,33 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
             // Re-render chart to update selected state
             this.renderChart();
 
-            // Fetch preview items
+            // Fetch rendered HTML from the default list view
             if (this._previewAborter) {
                 this._previewAborter();
                 this._previewAborter = null;
             }
 
-            const params = new URLSearchParams(window.location.search);
-            if (barType === 'created') {
-                params.set('CreatedAfter', bucket.start);
-                params.set('CreatedBefore', bucket.end);
-            } else {
-                params.set('UpdatedAfter', bucket.start);
-                params.set('UpdatedBefore', bucket.end);
-            }
+            const params = this._buildDateParams(bucket, barType);
             params.set('pageSize', '20');
 
             try {
-                const url = this.apiUrl.replace('/timeline', '') + '?' + params.toString();
+                const url = this.defaultView + '?' + params.toString();
                 const { abort, ready } = abortableFetch(url);
                 this._previewAborter = abort;
 
                 const response = await ready;
                 if (!response.ok) throw new Error('HTTP ' + response.status);
 
-                const data = await response.json();
-                // The API typically returns an array or object with items
-                this.previewItems = Array.isArray(data) ? data : (data.items || data.results || data.data || []);
+                const html = await response.text();
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                const listContainer = doc.querySelector('.list-container') ||
+                                      doc.querySelector('.items-container');
+                this.previewHtml = listContainer ? listContainer.innerHTML : '<p class="text-stone-500 text-sm">No preview available.</p>';
             } catch (err) {
                 if (err.name !== 'AbortError') {
                     console.error('Failed to load preview:', err);
-                    this.previewItems = [];
+                    this.previewHtml = '';
                 }
             } finally {
                 this._previewAborter = null;
@@ -300,7 +324,7 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
         closePreview() {
             this.selectedBar = null;
             this.selectedBarType = null;
-            this.previewItems = [];
+            this.previewHtml = '';
             this.previewTitle = '';
             this.previewTotalCount = 0;
         },

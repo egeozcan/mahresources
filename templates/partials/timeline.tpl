@@ -82,18 +82,15 @@
     {# Preview panel (hidden until bar clicked) #}
     <div
         class="timeline-preview mt-4"
-        x-show="previewItems && previewItems.length > 0"
+        x-show="previewHtml"
         x-cloak
     >
-        <h3 class="text-sm font-semibold mb-2" x-text="previewTitle"></h3>
-        <ul class="list-disc pl-5 space-y-1">
-            <template x-for="item in previewItems" :key="item.ID || item.id">
-                <li>
-                    <a :href="defaultView + '/../' + entityType.slice(0, -1) + '?id=' + (item.ID || item.id)"
-                       class="text-amber-700 hover:text-amber-900 underline"
-                       x-text="item.Name || item.name || ('ID: ' + (item.ID || item.id))"></a>
-                </li>
-            </template>
-        </ul>
+        <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-semibold" x-text="previewTitle"></h3>
+            <a :href="showAllUrl" class="text-sm text-amber-700 hover:text-amber-900 underline">
+                Show all (<span x-text="previewTotalCount"></span>)
+            </a>
+        </div>
+        <div class="timeline-preview-grid" x-html="previewHtml"></div>
     </div>
 </section>
