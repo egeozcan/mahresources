@@ -351,12 +351,12 @@
                         <dl class="space-y-2 text-sm font-mono">
                             <div class="flex items-center justify-between">
                                 <dt class="text-stone-500">Without tags</dt>
-                                <dd role="status" :class="expensiveStats.orphans.withoutTags > 0 ? 'text-amber-700 font-semibold' : 'text-stone-900'"
+                                <dd aria-live="polite" :class="expensiveStats.orphans.withoutTags > 0 ? 'text-amber-700 font-semibold' : 'text-stone-900'"
                                     x-text="formatNumber(expensiveStats.orphans.withoutTags)"></dd>
                             </div>
                             <div class="flex items-center justify-between">
                                 <dt class="text-stone-500">Without groups</dt>
-                                <dd role="status" :class="expensiveStats.orphans.withoutGroups > 0 ? 'text-amber-700 font-semibold' : 'text-stone-900'"
+                                <dd aria-live="polite" :class="expensiveStats.orphans.withoutGroups > 0 ? 'text-amber-700 font-semibold' : 'text-stone-900'"
                                     x-text="formatNumber(expensiveStats.orphans.withoutGroups)"></dd>
                             </div>
                         </dl>
@@ -389,17 +389,15 @@
                                 <dt class="text-stone-500">Total entries</dt>
                                 <dd class="text-stone-900" x-text="formatNumber(expensiveStats.logStats.totalEntries)"></dd>
                             </div>
-                            <template x-if="expensiveStats.logStats.byLevel">
-                                <template x-for="[level, count] in Object.entries(expensiveStats.logStats.byLevel)" :key="level">
-                                    <div class="flex items-center justify-between">
-                                        <dt class="text-stone-500" x-text="level"></dt>
-                                        <dd class="text-stone-900" x-text="formatNumber(count)"></dd>
-                                    </div>
-                                </template>
+                            <template x-for="[level, count] in Object.entries(expensiveStats.logStats.byLevel || {})" :key="level">
+                                <div class="flex items-center justify-between">
+                                    <dt class="text-stone-500" x-text="level"></dt>
+                                    <dd class="text-stone-900" x-text="formatNumber(count)"></dd>
+                                </div>
                             </template>
                             <div class="flex items-center justify-between border-t border-stone-100 pt-2 mt-1">
                                 <dt class="text-stone-500">Errors (last 24h)</dt>
-                                <dd role="status" :class="expensiveStats.logStats.recentErrors > 0 ? 'text-red-700 font-semibold' : 'text-stone-900'"
+                                <dd aria-live="polite" :class="expensiveStats.logStats.recentErrors > 0 ? 'text-red-700 font-semibold' : 'text-stone-900'"
                                     x-text="formatNumber(expensiveStats.logStats.recentErrors)"></dd>
                             </div>
                         </dl>

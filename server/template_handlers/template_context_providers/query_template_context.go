@@ -50,6 +50,15 @@ func QueryListContextProvider(context *application_context.MahresourcesContext) 
 				Name: "Add",
 				Url:  "/query/new",
 			},
+			"sortValues": createSortCols([]SortColumn{
+				{Name: "Created", Value: "created_at"},
+				{Name: "Name", Value: "name"},
+				{Name: "Updated", Value: "updated_at"},
+			}, query.SortBy),
+			"displayOptions": getPathExtensionOptions(request.URL, &[]*SelectOption{
+				{Title: "List", Link: "/queries"},
+				{Title: "Timeline", Link: "/queries/timeline"},
+			}),
 		}.Update(baseContext)
 	}
 }

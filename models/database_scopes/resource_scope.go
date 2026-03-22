@@ -119,6 +119,7 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 		}
 
 		dbQuery = ApplyDateRange(dbQuery, "resources.", query.CreatedBefore, query.CreatedAfter)
+		dbQuery = ApplyUpdatedDateRange(dbQuery, "resources.", query.UpdatedBefore, query.UpdatedAfter)
 
 		if query.ShowWithoutOwner {
 			dbQuery = dbQuery.Where("resources.owner_id IS NULL")

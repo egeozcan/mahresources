@@ -32,6 +32,8 @@ type GroupQuery struct {
 	CategoryId            uint
 	CreatedBefore         string
 	CreatedAfter          string
+	UpdatedBefore         string
+	UpdatedAfter          string
 	RelationTypeId        uint
 	RelationSide          uint
 	MetaQuery             []ColumnMeta

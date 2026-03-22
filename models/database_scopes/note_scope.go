@@ -73,7 +73,8 @@ func NoteQuery(query *query_models.NoteQuery, ignoreSort bool, originalDB *gorm.
 			dbQuery = dbQuery.Where("owner_id = ?", query.OwnerId)
 		}
 
-		dbQuery = ApplyDateRange(dbQuery, "", query.CreatedBefore, query.CreatedAfter)
+		dbQuery = ApplyDateRange(dbQuery, "notes.", query.CreatedBefore, query.CreatedAfter)
+		dbQuery = ApplyUpdatedDateRange(dbQuery, "notes.", query.UpdatedBefore, query.UpdatedAfter)
 
 		if query.StartDateBefore != "" {
 			dbQuery = dbQuery.Where("start_date <= ?", query.StartDateBefore)

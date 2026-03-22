@@ -112,6 +112,88 @@ func GroupsListContextProvider(context *application_context.MahresourcesContext)
 				{Title: "List", Link: "/groups"},
 				{Title: "Text", Link: "/groups/text"},
 				{Title: "Tree", Link: "/group/tree"},
+				{Title: "Timeline", Link: "/groups/timeline"},
+			}),
+		}.Update(baseContext)
+	}
+}
+
+func GroupTimelineContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+	return func(request *http.Request) pongo2.Context {
+		var query query_models.GroupQuery
+		err := decoder.Decode(&query, request.URL.Query())
+		baseContext := staticTemplateCtx(request)
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		tags, err := context.GetTagsWithIds(&query.Tags, 0)
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		notes, err := context.GetNotesWithIds(&query.Notes)
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		resources, err := context.GetResourcesWithIds(&query.Resources)
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		categories, err := context.GetCategoriesWithIds(&query.Categories, 0)
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		groupsSelection, err := context.GetGroupsWithIds(&query.Groups)
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		owners, err := context.GetGroupsWithIds(&[]uint{query.OwnerId})
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		popularTags, err := context.GetPopularGroupTags(&query)
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		return pongo2.Context{
+			"pageTitle":       "Groups - Timeline",
+			"owners":          owners,
+			"groupsSelection": groupsSelection,
+			"categories":      categories,
+			"tags":            tags,
+			"popularTags":     popularTags,
+			"notes":           notes,
+			"resources":       resources,
+			"parsedQuery":     query,
+			"action": template_entities.Entry{
+				Name: "Add",
+				Url:  "/group/new",
+			},
+			"sortValues": createSortCols([]SortColumn{
+				{Name: "Created", Value: "created_at"},
+				{Name: "Name", Value: "name"},
+				{Name: "Updated", Value: "updated_at"},
+			}, query.SortBy),
+			"displayOptions": getPathExtensionOptions(request.URL, &[]*SelectOption{
+				{Title: "List", Link: "/groups"},
+				{Title: "Text", Link: "/groups/text"},
+				{Title: "Tree", Link: "/group/tree"},
+				{Title: "Timeline", Link: "/groups/timeline"},
 			}),
 		}.Update(baseContext)
 	}

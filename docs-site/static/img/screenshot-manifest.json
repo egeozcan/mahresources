@@ -234,6 +234,15 @@
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
       "capturedDate": "2026-03-14"
+    },
+    "timeline-view.png": {
+      "page": "/resources/timeline",
+      "description": "Timeline view showing resource creation and update activity over time",
+      "seedDependencies": ["categories", "tags", "groups", "resources"],
+      "seedDetails": "Resources with CreatedAt dates spanning 2020-2026. Some resources updated after creation.",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": [],
+      "capturedDate": ""
     }
   }
 }

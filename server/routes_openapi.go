@@ -65,6 +65,9 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 
 	// Admin
 	registerAdminRoutes(registry)
+
+	// Timeline
+	registerTimelineRoutes(registry)
 }
 
 func registerNoteShareRoutes(r *openapi.Registry) {
@@ -1517,6 +1520,100 @@ func registerAdminRoutes(r *openapi.Registry) {
 		OperationID:          "getExpensiveStats",
 		Summary:              "Get expensive data statistics",
 		Tags:                 []string{"admin"},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+}
+
+func registerTimelineRoutes(r *openapi.Registry) {
+	timelineResponseType := reflect.TypeOf(models.TimelineResponse{})
+
+	timelineQueryParams := []openapi.QueryParam{
+		{Name: "granularity", Type: "string", Description: "Time granularity: yearly, monthly, or weekly (default: monthly)"},
+		{Name: "anchor", Type: "string", Description: "Anchor date in YYYY-MM-DD format (default: today)"},
+		{Name: "columns", Type: "integer", Description: "Number of time buckets to return (default: 15, max: 60)"},
+	}
+
+	resourceQueryType := reflect.TypeOf(query_models.ResourceSearchQuery{})
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/resources/timeline",
+		OperationID:          "getResourceTimeline",
+		Summary:              "Get resource creation/update timeline",
+		Description:          "Returns bucketed counts of created and updated resources over time, with optional filters.",
+		Tags:                 []string{"resources", "timeline"},
+		QueryType:            resourceQueryType,
+		ExtraQueryParams:     timelineQueryParams,
+		ResponseType:         timelineResponseType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	noteQueryType := reflect.TypeOf(query_models.NoteQuery{})
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/notes/timeline",
+		OperationID:          "getNoteTimeline",
+		Summary:              "Get note creation/update timeline",
+		Description:          "Returns bucketed counts of created and updated notes over time, with optional filters.",
+		Tags:                 []string{"notes", "timeline"},
+		QueryType:            noteQueryType,
+		ExtraQueryParams:     timelineQueryParams,
+		ResponseType:         timelineResponseType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	groupQueryType := reflect.TypeOf(query_models.GroupQuery{})
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/groups/timeline",
+		OperationID:          "getGroupTimeline",
+		Summary:              "Get group creation/update timeline",
+		Description:          "Returns bucketed counts of created and updated groups over time, with optional filters.",
+		Tags:                 []string{"groups", "timeline"},
+		QueryType:            groupQueryType,
+		ExtraQueryParams:     timelineQueryParams,
+		ResponseType:         timelineResponseType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	tagQueryType := reflect.TypeOf(query_models.TagQuery{})
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/tags/timeline",
+		OperationID:          "getTagTimeline",
+		Summary:              "Get tag creation/update timeline",
+		Description:          "Returns bucketed counts of created and updated tags over time, with optional filters.",
+		Tags:                 []string{"tags", "timeline"},
+		QueryType:            tagQueryType,
+		ExtraQueryParams:     timelineQueryParams,
+		ResponseType:         timelineResponseType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	categoryQueryType := reflect.TypeOf(query_models.CategoryQuery{})
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/categories/timeline",
+		OperationID:          "getCategoryTimeline",
+		Summary:              "Get category creation/update timeline",
+		Description:          "Returns bucketed counts of created and updated categories over time, with optional filters.",
+		Tags:                 []string{"categories", "timeline"},
+		QueryType:            categoryQueryType,
+		ExtraQueryParams:     timelineQueryParams,
+		ResponseType:         timelineResponseType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	queryQueryType := reflect.TypeOf(query_models.QueryQuery{})
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/queries/timeline",
+		OperationID:          "getQueryTimeline",
+		Summary:              "Get query creation/update timeline",
+		Description:          "Returns bucketed counts of created and updated queries over time, with optional filters.",
+		Tags:                 []string{"queries", "timeline"},
+		QueryType:            queryQueryType,
+		ExtraQueryParams:     timelineQueryParams,
+		ResponseType:         timelineResponseType,
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 }

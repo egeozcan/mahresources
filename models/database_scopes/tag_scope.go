@@ -66,6 +66,7 @@ func TagQuery(query *query_models.TagQuery, ignoreSort bool) func(db *gorm.DB) *
 		}
 
 		dbQuery = ApplyDateRange(dbQuery, "", query.CreatedBefore, query.CreatedAfter)
+		dbQuery = ApplyUpdatedDateRange(dbQuery, "", query.UpdatedBefore, query.UpdatedAfter)
 
 		return dbQuery
 	}

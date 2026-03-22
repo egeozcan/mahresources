@@ -92,6 +92,75 @@ func NoteListContextProvider(context *application_context.MahresourcesContext) f
 				{Name: "Name", Value: "name"},
 				{Name: "Updated", Value: "updated_at"},
 			}, query.SortBy),
+			"displayOptions": getPathExtensionOptions(request.URL, &[]*SelectOption{
+				{Title: "List", Link: "/notes"},
+				{Title: "Timeline", Link: "/notes/timeline"},
+			}),
+		}.Update(baseContext)
+	}
+}
+
+func NoteTimelineContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+	return func(request *http.Request) pongo2.Context {
+		var query query_models.NoteQuery
+		err := decoder.Decode(&query, request.URL.Query())
+		baseContext := staticTemplateCtx(request)
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		tags, err := context.GetTagsWithIds(&query.Tags, 0)
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		groups, err := context.GetGroupsWithIds(&query.Groups)
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		owners, err := context.GetGroupsWithIds(&[]uint{query.OwnerId})
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		noteTypes, err := context.GetNoteTypesWithIds([]uint{query.NoteTypeId})
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		popularTags, err := context.GetPopularNoteTags(&query)
+
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		return pongo2.Context{
+			"pageTitle":   "Notes - Timeline",
+			"groups":      groups,
+			"owners":      owners,
+			"tags":        tags,
+			"popularTags": popularTags,
+			"noteTypes":   noteTypes,
+			"parsedQuery": query,
+			"action": template_entities.Entry{
+				Name: "Create",
+				Url:  "/note/new",
+			},
+			"sortValues": createSortCols([]SortColumn{
+				{Name: "Created", Value: "created_at"},
+				{Name: "Name", Value: "name"},
+				{Name: "Updated", Value: "updated_at"},
+			}, query.SortBy),
+			"displayOptions": getPathExtensionOptions(request.URL, &[]*SelectOption{
+				{Title: "List", Link: "/notes"},
+				{Title: "Timeline", Link: "/notes/timeline"},
+			}),
 		}.Update(baseContext)
 	}
 }

@@ -26,6 +26,8 @@ type NoteQuery struct {
 	Tags            []uint
 	CreatedBefore   string
 	CreatedAfter    string
+	UpdatedBefore   string
+	UpdatedAfter    string
 	StartDateBefore string
 	StartDateAfter  string
 	EndDateBefore   string

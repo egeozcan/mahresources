@@ -78,6 +78,13 @@ var templates = map[string]templateInformation{
 	"/query":      {template_context_providers.QueryContextProvider, "displayQuery.tpl", http.MethodGet},
 	"/query/edit": {template_context_providers.QueryCreateContextProvider, "createQuery.tpl", http.MethodGet},
 
+	"/resources/timeline":  {template_context_providers.ResourceTimelineContextProvider, "listResourcesTimeline.tpl", http.MethodGet},
+	"/notes/timeline":      {template_context_providers.NoteTimelineContextProvider, "listNotesTimeline.tpl", http.MethodGet},
+	"/groups/timeline":     {template_context_providers.GroupTimelineContextProvider, "listGroupsTimeline.tpl", http.MethodGet},
+	"/tags/timeline":       {template_context_providers.TagListContextProvider, "listTagsTimeline.tpl", http.MethodGet},
+	"/categories/timeline": {template_context_providers.CategoryListContextProvider, "listCategoriesTimeline.tpl", http.MethodGet},
+	"/queries/timeline":    {template_context_providers.QueryListContextProvider, "listQueriesTimeline.tpl", http.MethodGet},
+
 	"/logs": {template_context_providers.LogListContextProvider, "listLogs.tpl", http.MethodGet},
 	"/log":  {template_context_providers.LogContextProvider, "displayLog.tpl", http.MethodGet},
 
@@ -375,6 +382,14 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/admin/server-stats").HandlerFunc(api_handlers.GetServerStatsHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/admin/data-stats").HandlerFunc(api_handlers.GetDataStatsHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/admin/data-stats/expensive").HandlerFunc(api_handlers.GetExpensiveStatsHandler(appContext))
+
+	// Timeline routes
+	router.Methods(http.MethodGet).Path("/v1/resources/timeline").HandlerFunc(api_handlers.GetResourceTimelineHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/notes/timeline").HandlerFunc(api_handlers.GetNoteTimelineHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/groups/timeline").HandlerFunc(api_handlers.GetGroupTimelineHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/tags/timeline").HandlerFunc(api_handlers.GetTagTimelineHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/categories/timeline").HandlerFunc(api_handlers.GetCategoryTimelineHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/queries/timeline").HandlerFunc(api_handlers.GetQueryTimelineHandler(appContext))
 
 	// Plugin management API
 	router.Methods(http.MethodGet).Path("/v1/plugins/manage").HandlerFunc(api_handlers.GetPluginsManageHandler(appContext))

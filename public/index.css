@@ -2091,3 +2091,233 @@ html {
     text-decoration: line-through;
     font-style: italic;
 }
+
+/* ========================================
+   Timeline Chart
+   ======================================== */
+
+:root {
+    --timeline-created-color: #b45309;
+    --timeline-updated-color: #d97706;
+}
+
+.timeline-container {
+    padding: 1rem;
+    background: #fff;
+    border: 1px solid #e7e5e4;
+    border-radius: var(--radius-md);
+    margin-bottom: 1rem;
+}
+
+.timeline-container:focus-visible {
+    outline: 2px solid var(--nav-hover);
+    outline-offset: 2px;
+}
+
+.timeline-chart:focus-visible {
+    outline: 2px solid var(--nav-hover);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+}
+
+.timeline-chart-row {
+    display: flex;
+    height: 160px;
+}
+
+.timeline-y-axis {
+    position: relative;
+    width: 2.5rem;
+    flex-shrink: 0;
+    border-right: 1px solid #e7e5e4;
+}
+
+.timeline-y-tick {
+    position: absolute;
+    right: 0;
+    width: 100%;
+    border-top: 1px solid #f5f5f4;
+}
+
+.timeline-y-label {
+    position: absolute;
+    right: 0.375rem;
+    top: -0.5rem;
+    font-size: 0.625rem;
+    color: #a8a29e;
+    line-height: 1;
+}
+
+.timeline-bars-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    flex: 1;
+    height: 100%;
+}
+
+.timeline-labels-row {
+    display: flex;
+    gap: 2px;
+    margin-top: 4px;
+    margin-left: 2.5rem;
+}
+
+.timeline-bucket-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 100%;
+    justify-content: flex-end;
+    gap: 1px;
+    min-width: 0;
+}
+
+.timeline-label-cell {
+    flex: 1;
+    min-width: 0;
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.timeline-label {
+    font-size: 0.6875rem;
+    line-height: 1;
+    white-space: nowrap;
+    color: #57534e;
+}
+
+.timeline-bar-empty {
+    height: 2px;
+    width: 100%;
+    background: #e7e5e4;
+    border-radius: 2px;
+}
+
+.timeline-skeleton-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 160px;
+}
+
+.timeline-skeleton-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 100%;
+    justify-content: flex-end;
+    gap: 1px;
+    min-width: 0;
+}
+
+.timeline-bar {
+    display: block;
+    width: 100%;
+    min-width: 4px;
+    border: none;
+    border-radius: 2px 2px 0 0;
+    cursor: pointer;
+    transition: opacity var(--transition-fast), box-shadow var(--transition-fast);
+    padding: 0;
+}
+
+.timeline-bar-created {
+    background-color: var(--timeline-created-color);
+}
+
+.timeline-bar-updated {
+    background-color: var(--timeline-updated-color);
+    opacity: 0.6;
+}
+
+.timeline-bar:hover {
+    opacity: 0.85;
+}
+
+.timeline-bar.selected {
+    box-shadow: 0 0 0 2px var(--nav-active);
+    opacity: 1;
+}
+
+.timeline-bar:focus-visible {
+    outline: 2px solid var(--nav-hover);
+    outline-offset: 1px;
+}
+
+.timeline-granularity {
+    display: inline-flex;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background: #f5f5f4;
+}
+
+.timeline-gran-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem 0.625rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #57534e;
+    background: transparent;
+    border: none;
+    border-right: 1px solid #d6d3d1;
+    cursor: pointer;
+    transition: background-color var(--transition-fast), color var(--transition-fast);
+    white-space: nowrap;
+}
+
+.timeline-gran-btn:last-child {
+    border-right: none;
+}
+
+.timeline-gran-btn:hover {
+    background: #e7e5e4;
+    color: #44403c;
+}
+
+.timeline-gran-btn.active {
+    background: var(--nav-active);
+    color: #fff;
+}
+
+.timeline-gran-btn.active:hover {
+    background: var(--nav-hover);
+}
+
+.timeline-gran-btn:focus-visible {
+    outline: 2px solid var(--nav-hover);
+    outline-offset: -2px;
+    z-index: 1;
+}
+
+.timeline-preview {
+    border-top: 1px solid #e7e5e4;
+    padding-top: 0.75rem;
+}
+
+.timeline-preview .card-checkbox,
+.timeline-preview .bulk-editor {
+    display: none;
+}
+
+@keyframes timeline-skeleton-pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 0.15; }
+}
+
+.skeleton-bar {
+    width: 100%;
+    background: #d6d3d1;
+    border-radius: 2px 2px 0 0;
+    animation: timeline-skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+.skeleton-bar.lighter {
+    background: #e7e5e4;
+}

@@ -20,6 +20,10 @@ func CategoryQuery(query *query_models.CategoryQuery) func(db *gorm.DB) *gorm.DB
 			dbQuery = dbQuery.Where("description "+likeOperator+" ?"+esc, p)
 		}
 
+		dbQuery = ApplyDateRange(dbQuery, "", query.CreatedBefore, query.CreatedAfter)
+		dbQuery = ApplyUpdatedDateRange(dbQuery, "", query.UpdatedBefore, query.UpdatedAfter)
+		dbQuery = ApplySortColumns(dbQuery, query.SortBy, "", "created_at desc")
+
 		return dbQuery
 	}
 }
