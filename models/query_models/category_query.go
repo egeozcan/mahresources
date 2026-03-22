@@ -17,6 +17,9 @@ type CategoryEditor struct {
 }
 
 type CategoryQuery struct {
-	Name        string
-	Description string
+	Name          string
+	Description   string
+	CreatedBefore string
+	CreatedAfter  string
+	SortBy        []string
 }

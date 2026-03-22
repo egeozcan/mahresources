@@ -98,10 +98,18 @@ components:
             type: object
         CategoryQuery:
             properties:
+                CreatedAfter:
+                    type: string
+                CreatedBefore:
+                    type: string
                 Description:
                     type: string
                 Name:
                     type: string
+                SortBy:
+                    items:
+                        type: string
+                    type: array
             type: object
         ColumnMetaPartial:
             type: object
@@ -772,8 +780,16 @@ components:
             type: object
         QueryQuery:
             properties:
+                CreatedAfter:
+                    type: string
+                CreatedBefore:
+                    type: string
                 Name:
                     type: string
+                SortBy:
+                    items:
+                        type: string
+                    type: array
                 Text:
                     type: string
             type: object
@@ -1419,6 +1435,22 @@ paths:
                   name: Description
                   schema:
                     type: string
+                - in: query
+                  name: CreatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: CreatedAfter
+                  schema:
+                    type: string
+                - explode: true
+                  in: query
+                  name: SortBy
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
                 - description: Page number for pagination
                   in: query
                   name: page
@@ -2862,6 +2894,22 @@ paths:
                   name: Text
                   schema:
                     type: string
+                - in: query
+                  name: CreatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: CreatedAfter
+                  schema:
+                    type: string
+                - explode: true
+                  in: query
+                  name: SortBy
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
                 - description: Page number for pagination
                   in: query
                   name: page

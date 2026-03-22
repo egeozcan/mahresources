@@ -49,6 +49,11 @@ func CategoryListContextProvider(context *application_context.MahresourcesContex
 				Name: "Add",
 				Url:  "/category/new",
 			},
+			"sortValues": createSortCols([]SortColumn{
+				{Name: "Created", Value: "created_at"},
+				{Name: "Name", Value: "name"},
+				{Name: "Updated", Value: "updated_at"},
+			}, query.SortBy),
 		}.Update(baseContext)
 	}
 }
