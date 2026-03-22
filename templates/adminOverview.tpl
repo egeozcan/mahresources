@@ -1,16 +1,15 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
-<div x-data="adminOverview()" x-init="init()" @destroy="destroy()" class="space-y-6">
+<div x-data="adminOverview()" class="space-y-6">
 
     {# ── 1. Server Health ──────────────────────────────────────────── #}
     <section
         aria-label="Server health"
-        aria-live="polite"
-        aria-atomic="true"
         class="rounded-lg bg-amber-50 border border-amber-200 p-5"
     >
         <h2 class="text-base font-semibold font-mono text-amber-900 mb-4">Server Health</h2>
+        <span class="sr-only" aria-live="polite" x-text="serverStats ? 'Server stats updated' : ''"></span>
 
         <template x-if="serverStatsLoading && !serverStats">
             <p class="text-sm text-amber-700 font-mono" role="status">Loading server stats&hellip;</p>
@@ -264,15 +263,13 @@
     <section aria-label="Detailed statistics" class="rounded-lg bg-white border border-stone-200 p-5">
         <h2 class="text-base font-semibold font-mono text-stone-800 mb-4">Detailed Statistics</h2>
 
-        <template x-if="expensiveStatsLoading && !expensiveStats">
-            <div class="flex items-center gap-2 text-sm text-stone-500 font-mono" role="status">
-                <svg class="animate-spin h-4 w-4 text-amber-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                </svg>
-                Computing detailed statistics&hellip;
-            </div>
-        </template>
+        <div x-show="expensiveStatsLoading && !expensiveStats" class="flex items-center gap-2 text-sm text-stone-500 font-mono" role="status">
+            <svg class="animate-spin h-4 w-4 text-amber-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+            Computing detailed statistics&hellip;
+        </div>
 
         <template x-if="expensiveStatsError && !expensiveStats">
             <p class="text-sm text-red-700 font-mono" role="alert" x-text="expensiveStatsError"></p>
