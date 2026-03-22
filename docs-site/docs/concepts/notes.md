@@ -68,7 +68,7 @@ Templates have access to the `note` object and its metadata via Pongo2 (Django-l
 
 :::tip @-Mentions in descriptions
 
-Note descriptions and text blocks support @-mentions — type `@` to search and link to resources, groups, and tags. Mentioned entities are automatically added as relations when you save. Mentions in notes are additive only — removing a mention does not remove the relation. See [Mentions](../features/mentions.md).
+Note descriptions and text blocks support @-mentions. Type `@` to search and link to resources, groups, and tags. Mentioned entities are automatically added as relations when you save. Mentions in notes are additive only: removing a mention does not remove the relation. See [Mentions](../features/mentions.md).
 
 :::
 

@@ -120,8 +120,8 @@ When comparing two different resources (cross-resource), and both sides are set 
 
 The merge panel includes:
 - A **Keep loser as older version of winner** checkbox (`KeepAsVersion`). When checked, the losing resource's file is saved as an older version on the winner before the loser is deleted.
-- **← Left Wins** — merges the right resource into the left, redirecting to the left resource.
-- **Right Wins →** — merges the left resource into the right, redirecting to the right resource.
+- **← Left Wins**: merges the right resource into the left, redirecting to the left resource.
+- **Right Wins →**: merges the left resource into the right, redirecting to the right resource.
 
 ## Restoring a Version
 

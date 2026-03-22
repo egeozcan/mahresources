@@ -38,16 +38,16 @@ Template routes (without the `/v1/` prefix) return HTML by default and support t
 | `.body` | Returns the HTML body without the layout wrapper |
 
 ```bash
-# API route — always JSON
+# API route: always JSON
 curl http://localhost:8181/v1/resources
 
-# Template route — HTML by default
+# Template route: HTML by default
 curl http://localhost:8181/resources
 
-# Template route — JSON via suffix
+# Template route: JSON via suffix
 curl http://localhost:8181/resources.json
 
-# Template route — body only (useful for HTMX-style updates)
+# Template route: body only (useful for HTMX-style updates)
 curl http://localhost:8181/resources.body
 ```
 

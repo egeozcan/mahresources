@@ -24,7 +24,7 @@ Groups are hierarchical containers that organize Resources, Notes, and other Gro
 
 :::tip @-Mentions in descriptions
 
-Group descriptions support @-mentions — type `@` to search and link to resources, notes, other groups, and tags. For groups, removing a resource or note mention from the description removes that relation on save (unlike notes, where mentions are additive only). Tag and group mentions are always additive. See [Mentions](../features/mentions.md).
+Group descriptions support @-mentions. Type `@` to search and link to resources, notes, other groups, and tags. For groups, removing a resource or note mention from the description removes that relation on save (unlike notes, where mentions are additive only). Tag and group mentions are always additive. See [Mentions](../features/mentions.md).
 
 :::
 

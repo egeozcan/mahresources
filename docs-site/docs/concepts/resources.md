@@ -36,7 +36,7 @@ Every file in Mahresources is a Resource: images, documents, videos, or anything
 
 :::tip @-Mentions in descriptions
 
-Resource descriptions support @-mentions — type `@` in the description field to search and link to notes, groups, and tags. Mentioned entities are automatically added as relations when you save. See [Mentions](../features/mentions.md).
+Resource descriptions support @-mentions. Type `@` in the description field to search and link to notes, groups, and tags. Mentioned entities are automatically added as relations when you save. See [Mentions](../features/mentions.md).
 
 :::
 
