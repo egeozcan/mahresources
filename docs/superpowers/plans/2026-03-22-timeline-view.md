@@ -60,7 +60,9 @@
 | `server/template_handlers/template_context_providers/tag_template_context.go` | Add view switcher entry |
 | `server/template_handlers/template_context_providers/category_template_context.go` | Add view switcher entry |
 | `server/template_handlers/template_context_providers/query_template_context.go` | Add view switcher entry |
-| `templates/listCategories.tpl` | Add date filter inputs to sidebar |
+| `templates/listCategories.tpl` | Add date filter inputs to sidebar + view switcher include |
+| `templates/listTags.tpl` | Add view switcher include (`boxSelect.tpl`) |
+| `templates/listQueries.tpl` | Add view switcher include (`boxSelect.tpl`) |
 | `src/main.js` | Register timeline Alpine component |
 | `public/index.css` | Timeline chart CSS (or inline in partial) |
 | `cmd/mr/commands/resources.go` | Add `timeline` subcommand to `NewResourcesCmd` |
@@ -441,7 +443,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/egeozcan/mahresources/models"
+	"mahresources/models"
 )
 
 // BucketBoundary represents a time range for aggregation (no counts yet).
@@ -531,56 +533,9 @@ func GenerateBucketBoundaries(granularity string, anchor time.Time, columns int)
 	return buckets
 }
 
-// GetTimelineCounts fills in Created/Updated counts for each bucket boundary.
-// The baseQuery should be a *gorm.DB with entity scopes already applied.
-// tableName is the GORM table name (e.g., "resources", "notes").
-func (ctx *MahresourcesContext) GetTimelineCounts(
-	baseQuery *gorm.DB,
-	boundaries []BucketBoundary,
-) ([]models.TimelineBucket, error) {
-	buckets := make([]models.TimelineBucket, len(boundaries))
-
-	for i, b := range boundaries {
-		var createdCount int64
-		err := baseQuery.Session(&gorm.Session{NewDB: true}).
-			Where(baseQuery.Statement.Clauses).
-			Where("created_at >= ? AND created_at < ?", b.Start, b.End).
-			Count(&createdCount).Error
-		if err != nil {
-			return nil, fmt.Errorf("counting created for bucket %s: %w", b.Label, err)
-		}
-
-		var updatedCount int64
-		err = baseQuery.Session(&gorm.Session{NewDB: true}).
-			Where(baseQuery.Statement.Clauses).
-			Where("updated_at >= ? AND updated_at < ? AND updated_at > created_at", b.Start, b.End).
-			Count(&updatedCount).Error
-		if err != nil {
-			return nil, fmt.Errorf("counting updated for bucket %s: %w", b.Label, err)
-		}
-
-		buckets[i] = models.TimelineBucket{
-			Label:   b.Label,
-			Start:   b.Start,
-			End:     b.End,
-			Created: createdCount,
-			Updated: updatedCount,
-		}
-	}
-
-	return buckets, nil
-}
-```
-
-**Important note for implementer:** The `GetTimelineCounts` function above uses a simplified approach for re-applying the base query's WHERE clauses to each bucket count. The actual implementation needs to properly clone the base query for each bucket. The pattern should be:
-
-1. Build a base `*gorm.DB` with entity scopes applied (via the existing scope functions like `database_scopes.ResourceQuery(...)`)
-2. For each bucket, clone the base query and add the date range WHERE clause
-3. Execute `Count()` on each clone
-
-Study how the existing `GetResources`/`GetResourceCount` methods in `application_context/resource_crud_context.go` build their queries with scopes. The timeline method should accept the same query struct and apply the same scopes, then iterate over buckets. A cleaner approach:
-
-```go
+// GetResourceTimelineCounts counts created/updated resources per bucket.
+// It applies the same GORM scopes as GetResourceCount, then adds date range
+// filters per bucket. One method per entity type is needed.
 func (ctx *MahresourcesContext) GetResourceTimelineCounts(
 	query *query_models.ResourceSearchQuery,
 	boundaries []BucketBoundary,
@@ -652,11 +607,11 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/egeozcan/mahresources/application_context"
-	"github.com/egeozcan/mahresources/constants"
-	"github.com/egeozcan/mahresources/models"
-	"github.com/egeozcan/mahresources/models/query_models"
-	"github.com/egeozcan/mahresources/server/http_utils"
+	"mahresources/application_context"
+	"mahresources/constants"
+	"mahresources/models"
+	"mahresources/models/query_models"
+	"mahresources/server/http_utils"
 )
 
 func GetResourceTimelineHandler(ctx *application_context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
@@ -703,7 +658,7 @@ func GetResourceTimelineHandler(ctx *application_context.MahresourcesContext) fu
 		}
 
 		// Determine hasMore
-		hasMoreLeft := true  // Could check if earliest bucket has data before it
+		hasMoreLeft := true  // Always true — user can always navigate left into history. Known simplification.
 		hasMoreRight := !bucketContainsToday(boundaries[len(boundaries)-1])
 
 		response := models.TimelineResponse{
@@ -741,7 +696,7 @@ router.Methods(http.MethodGet).Path("/v1/categories/timeline").HandlerFunc(api_h
 router.Methods(http.MethodGet).Path("/v1/queries/timeline").HandlerFunc(api_handlers.GetQueryTimelineHandler(appContext))
 ```
 
-**Important:** Register these BEFORE the existing `/v1/resources`, `/v1/tags`, etc. routes. Gorilla Mux matches in registration order, and `/v1/resources/timeline` must match before `/v1/resources` catches it (though since these are different paths this should work regardless — verify during testing).
+**Note:** Gorilla Mux uses exact path matching, so `/v1/resources/timeline` and `/v1/resources` are distinct routes regardless of registration order. No special ordering needed.
 
 - [ ] **Step 3: Register in OpenAPI**
 
@@ -1016,7 +971,7 @@ For each entity's context provider, add "Timeline" to the `displayOptions`:
 }),
 ```
 
-**Tags, Categories, Queries** — these currently have no view switcher. Add `displayOptions` to each:
+**Tags, Categories, Queries** — these currently have no view switcher. Add `displayOptions` to each. Also ensure these providers return `parsedQuery` (or that `queryValues` from `staticTemplateCtx` is available) so sidebar filter inputs show pre-populated values:
 ```go
 "displayOptions": getPathExtensionOptions(request.URL, &[]*SelectOption{
     {Title: "List", Link: "/tags"},  // or /categories, /queries
@@ -1205,7 +1160,8 @@ export default function timeline({ entityApiUrl, entityType, entityDefaultView }
                 params.set('columns', this.columns.toString());
 
                 const url = `${entityApiUrl}/timeline?${params.toString()}`;
-                const response = await abortableFetch(url);
+                const { ready } = abortableFetch(url);
+                const response = await ready;
 
                 if (!response.ok) {
                     throw new Error(`Failed to load timeline data (${response.status})`);
@@ -1282,13 +1238,16 @@ export default function timeline({ entityApiUrl, entityType, entityDefaultView }
 
             try {
                 const url = `${entityApiUrl}?${params.toString()}`;
-                const response = await abortableFetch(url);
+                const { ready } = abortableFetch(url);
+                const response = await ready;
                 if (!response.ok) throw new Error('Failed to load preview');
 
                 const items = await response.json();
                 this.previewItems = items || [];
 
                 // Fetch rendered HTML for preview from the default list view
+                // Use the .body suffix to get just the template body (no layout chrome).
+                // Check if the route supports .body — if not, fall back to full page parsing.
                 params.set('page', '1');
                 const htmlUrl = `${entityDefaultView}?${params.toString()}`;
                 const htmlResponse = await fetch(htmlUrl);
@@ -1296,9 +1255,12 @@ export default function timeline({ entityApiUrl, entityType, entityDefaultView }
                     const html = await htmlResponse.text();
                     const parser = new DOMParser();
                     const doc = parser.parseFromString(html, 'text/html');
+                    // Try common container classes used across list templates
                     const listContainer = doc.querySelector('.list-container') ||
-                                          doc.querySelector('.items-container');
-                    this.previewHtml = listContainer ? listContainer.innerHTML : '';
+                                          doc.querySelector('.items-container') ||
+                                          doc.querySelector('section.list-container');
+                    this.previewHtml = listContainer ? listContainer.innerHTML :
+                        '<p class="opacity-50">Preview not available for this entity type.</p>';
                 }
             } catch (err) {
                 console.error('Preview fetch error:', err);
@@ -1464,12 +1426,11 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"net/url"
 	"strings"
 
-	"github.com/egeozcan/mahresources/cmd/mr/client"
-	"github.com/egeozcan/mahresources/cmd/mr/output"
+	"mahresources/cmd/mr/client"
+	"mahresources/cmd/mr/output"
 	"github.com/spf13/cobra"
 )
 
@@ -1604,7 +1565,6 @@ func printASCIIChart(resp timelineResponse) {
 		totalCreated += b.Created
 		totalUpdated += b.Updated
 	}
-	_ = math.Max(0, 0) // keep math import
 	fmt.Printf("\nTotal: %d created, %d updated\n", totalCreated, totalUpdated)
 
 	if resp.HasMore.Left {
@@ -2056,6 +2016,6 @@ Task 12 (A11y tests) ── (can start after Task 7)
 ```
 
 **Parallelizable groups:**
-- Tasks 1, 2, 3 can run in parallel (all prerequisites)
+- Task 1 before Task 2 (both modify `category_query.go` and `query_query.go`). Task 3 can run in parallel with Task 1.
 - Tasks 8 (CLI) and 6+7 (frontend) can run in parallel after Task 5
 - Tasks 9, 10, 11, 12 (all tests) can run in parallel after their dependencies complete
