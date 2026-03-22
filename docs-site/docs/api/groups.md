@@ -544,3 +544,17 @@ POST /v1/relation/editName?id={id}
 ```
 POST /v1/relation/editDescription?id={id}
 ```
+
+## Inline Editing for Relation Types
+
+### Edit Name
+
+```
+POST /v1/relationType/editName?id={id}
+```
+
+### Edit Description
+
+```
+POST /v1/relationType/editDescription?id={id}
+```

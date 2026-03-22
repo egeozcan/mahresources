@@ -4,9 +4,11 @@ End-to-end tests for the Mahresources application using Playwright.
 
 ## Test Coverage
 
-- **90 tests total** (89 passing, 1 intentionally skipped)
-- Tests cover: Tags, Categories, NoteTypes, Queries, RelationTypes, Groups, Notes, Resources, Relations, Bulk Operations, Global Search, and Edge Cases
-- **Skipped test**: "Resource from URL" - depends on external service (via.placeholder.com)
+- **107 spec files** across browser, CLI, accessibility, and plugin tests
+- **Browser tests** (75 spec files): Tags, Categories, NoteTypes, Queries, RelationTypes, Groups, Notes, Resources, Relations, Bulk Operations, Global Search, Edge Cases, Lightbox, Versioning, Version Compare, Blocks, Note Sharing, Entity Picker, Series, and many regression tests
+- **CLI tests** (20 spec files): Full coverage of the `mr` CLI binary against an ephemeral server
+- **Accessibility tests** (4 spec files): axe-core WCAG compliance checks on pages and components
+- **Plugin tests** (8 spec files): Plugin actions, API, blocks, hooks, injection, KV store, management, and pages
 
 ## Prerequisites
 
@@ -44,7 +46,7 @@ cd e2e
 npm install
 npx playwright install chromium
 
-# Run all tests (starts server automatically on an available port)
+# Run all browser tests (starts server automatically on an available port)
 npm run test:with-server
 
 # Run tests with browser visible
@@ -55,6 +57,12 @@ npm run test:with-server:debug
 
 # Run accessibility tests only
 npm run test:with-server:a11y
+
+# Run CLI tests only
+npm run test:with-server:cli
+
+# Run both browser and CLI tests in parallel (separate ephemeral servers)
+npm run test:with-server:all
 ```
 
 The `test:with-server` scripts will:
@@ -62,7 +70,7 @@ The `test:with-server` scripts will:
 2. Find an available port (starting from 8181)
 3. Start the server in ephemeral mode with `-max-db-connections=2` to reduce SQLite lock contention
 4. Wait for the server to be ready
-5. Run the tests with 2 workers (to further reduce database contention)
+5. Run the tests
 6. Clean up the server process
 
 ### Running Locally (Manual Server)
@@ -78,8 +86,14 @@ npx playwright install chromium
 # Start the app (from project root, in another terminal)
 ./mahresources -ephemeral -bind-address=:8181 -max-db-connections=2
 
-# Run all tests (use --workers=2 to reduce SQLite lock contention)
-npm test -- --workers=2
+# Run all browser tests
+npm test
+
+# Run CLI tests only
+npm run test:cli
+
+# Run accessibility tests only
+npm run test:a11y
 
 # Run tests with browser visible
 npm run test:headed
@@ -101,22 +115,33 @@ npx playwright test --grep "should create"
 
 ```
 e2e/
-├── fixtures/           # Playwright test fixtures
-│   └── base.fixture.ts # Provides page objects and API client
+├── fixtures/                    # Playwright test fixtures
+│   ├── base.fixture.ts          # Provides page objects and API client for browser tests
+│   ├── a11y.fixture.ts          # Extends base with axe-core accessibility testing
+│   ├── cli.fixture.ts           # CliRunner helper for CLI tests
+│   └── server-manager.ts        # Ephemeral server lifecycle management
 ├── helpers/
-│   └── api-client.ts   # API client for test setup/teardown
-├── pages/              # Page Object Model classes
-│   ├── BasePage.ts     # Common page operations
+│   ├── api-client.ts            # API client for test setup/teardown
+│   ├── cli-runner.ts            # CLI binary executor with retry logic for SQLite contention
+│   └── accessibility/
+│       ├── a11y-config.ts       # axe-core configuration
+│       └── axe-helper.ts        # Accessibility assertion helpers
+├── pages/                       # Page Object Model classes
+│   ├── BasePage.ts              # Common page operations
 │   ├── TagPage.ts
 │   ├── CategoryPage.ts
 │   ├── GroupPage.ts
 │   ├── NotePage.ts
 │   ├── ResourcePage.ts
+│   ├── ResourceCategoryPage.ts
 │   ├── QueryPage.ts
 │   ├── NoteTypePage.ts
 │   ├── RelationTypePage.ts
 │   └── RelationPage.ts
-├── tests/              # Test specifications
+├── scripts/
+│   ├── run-tests.js             # Single-project test runner with auto server
+│   └── run-all-tests.js         # Parallel runner for browser + CLI tests
+├── tests/                       # Test specifications
 │   ├── 01-tag.spec.ts
 │   ├── 02-category.spec.ts
 │   ├── 03-note-type.spec.ts
@@ -128,8 +153,61 @@ e2e/
 │   ├── 09-relation.spec.ts
 │   ├── 10-bulk-operations.spec.ts
 │   ├── 11-global-search.spec.ts
-│   └── 12-edge-cases.spec.ts
-├── test-assets/        # Test files (images, etc.)
+│   ├── 12-edge-cases.spec.ts
+│   ├── 13-lightbox.spec.ts
+│   ├── 14-resource-versioning.spec.ts
+│   ├── 15-version-compare.spec.ts
+│   ├── 16-blocks.spec.ts
+│   ├── 17-block-state.spec.ts
+│   ├── 18-block-backward-compat.spec.ts
+│   ├── 19-block-calendar.spec.ts
+│   ├── 19-note-sharing.spec.ts
+│   ├── 20-entity-picker.spec.ts
+│   ├── 21-resource-category.spec.ts
+│   ├── 22-series.spec.ts
+│   ├── 23-group-delete-preserves-resources.spec.ts
+│   ├── 24-json-table-copy.spec.ts
+│   ├── 25-tag-merge.spec.ts
+│   ├── 26-paste-upload.spec.ts
+│   ├── 27-autocompleter-remove-aria-label.spec.ts
+│   ├── ...                      # (75 browser spec files total)
+│   ├── dashboard.spec.ts
+│   ├── accessibility/           # axe-core accessibility tests
+│   │   ├── 01-a11y-pages.spec.ts
+│   │   ├── 02-a11y-components.spec.ts
+│   │   ├── 03-a11y-heading-and-pagination.spec.ts
+│   │   └── 04-a11y-heading-level-skip.spec.ts
+│   ├── cli/                     # CLI binary tests
+│   │   ├── cli-categories.spec.ts
+│   │   ├── cli-error-handling.spec.ts
+│   │   ├── cli-global-flags.spec.ts
+│   │   ├── cli-groups.spec.ts
+│   │   ├── cli-jobs.spec.ts
+│   │   ├── cli-logs.spec.ts
+│   │   ├── cli-note-blocks.spec.ts
+│   │   ├── cli-note-types.spec.ts
+│   │   ├── cli-notes.spec.ts
+│   │   ├── cli-output-formats.spec.ts
+│   │   ├── cli-plugins.spec.ts
+│   │   ├── cli-queries.spec.ts
+│   │   ├── cli-relation-types.spec.ts
+│   │   ├── cli-relations.spec.ts
+│   │   ├── cli-resource-categories.spec.ts
+│   │   ├── cli-resource-versions.spec.ts
+│   │   ├── cli-resources.spec.ts
+│   │   ├── cli-search.spec.ts
+│   │   ├── cli-series.spec.ts
+│   │   └── cli-tags.spec.ts
+│   └── plugins/                 # Plugin system tests
+│       ├── plugin-actions.spec.ts
+│       ├── plugin-api.spec.ts
+│       ├── plugin-blocks.spec.ts
+│       ├── plugin-hooks.spec.ts
+│       ├── plugin-injection.spec.ts
+│       ├── plugin-kvstore.spec.ts
+│       ├── plugin-manage.spec.ts
+│       └── plugin-pages.spec.ts
+├── test-assets/                 # Test files (images, etc.)
 ├── playwright.config.ts
 ├── tsconfig.json
 └── package.json
@@ -148,10 +226,31 @@ e2e/
 
 Key settings in `playwright.config.ts`:
 
-- **Workers**: 4 locally, 1 in CI (configurable via `--workers` flag)
+- **Projects**: `default` (browser tests, excludes `cli/`) and `cli` (CLI tests under `tests/cli/`)
+- **Workers**: 4 locally, 1 in CI for browser tests; 2 locally, 1 in CI for CLI tests
 - **Sequential within file**: `fullyParallel: false` ensures tests in a file run sequentially
-- **Retries**: 2 in CI, 1 locally for flaky UI interactions
+- **Retries**: 4 in CI, 2 locally
+- **Timeout**: 60 seconds per test
 - **Artifacts**: Screenshots on failure, traces on first retry, videos retained on failure
+
+### npm Scripts
+
+| Script | Description |
+|--------|-------------|
+| `test` | Run all browser tests |
+| `test:headed` | Run browser tests with visible browser |
+| `test:debug` | Run browser tests in debug mode |
+| `test:ui` | Run with Playwright UI |
+| `test:a11y` | Run accessibility tests only |
+| `test:a11y:headed` | Run accessibility tests with visible browser |
+| `test:cli` | Run CLI tests only |
+| `report` | Open the HTML test report |
+| `test:with-server` | Auto-start server, run browser tests, clean up |
+| `test:with-server:headed` | Auto-start server, run browser tests with visible browser |
+| `test:with-server:debug` | Auto-start server, run browser tests in debug mode |
+| `test:with-server:a11y` | Auto-start server, run accessibility tests |
+| `test:with-server:cli` | Auto-start server, run CLI tests |
+| `test:with-server:all` | Auto-start two servers, run browser + CLI tests in parallel |
 
 ## Writing Tests
 
@@ -232,27 +331,6 @@ npm run report
 # Or manually
 npx playwright show-report playwright-report
 ```
-
-## Resource Upload Tests
-
-The resource tests (`08-resource.spec.ts`) test file upload functionality:
-
-```typescript
-test('should upload a file resource', async ({ resourcePage, page }) => {
-  const testFilePath = path.join(__dirname, '../test-assets/sample-image.png');
-  await resourcePage.gotoNew();
-
-  // Set file via Playwright's setInputFiles
-  const fileInput = page.locator('input[type="file"]');
-  await fileInput.setInputFiles(testFilePath);
-
-  // Fill other fields and submit
-  await page.locator('input[name="Name"]').fill('My Image');
-  await page.locator('button[type="submit"]').click();
-});
-```
-
-**Note**: Resource tests clean up existing resources in `beforeAll` to handle test retries gracefully.
 
 ## Troubleshooting
 

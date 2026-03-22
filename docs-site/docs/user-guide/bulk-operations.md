@@ -116,6 +116,8 @@ The comparison view shows metadata differences between the two Resources: size d
 
 For image resources, four visual comparison modes are available: side-by-side, slider, onion skin, and toggle. For text-based resources, a unified or split diff view highlights line-level changes. Cross-resource version comparison is also supported.
 
+When comparing two different resources (not two versions of the same resource) and both are at their current version, a **Merge** panel appears at the bottom of the compare view. Select which resource wins, optionally keep the loser as an older version of the winner, then confirm. This is equivalent to the merge operation available on resource detail pages.
+
 ## Bulk Deletion
 
 Delete multiple items at once:

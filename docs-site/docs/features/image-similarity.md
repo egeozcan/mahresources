@@ -117,6 +117,7 @@ On any resource's detail page, if similar images exist, you will see a **Similar
 
 - Thumbnails of all similar images
 - Links to each similar resource
+- A **Compare** link per similar resource, opening the compare view for that pair (`/resource/compare?r1=...&r2=...`)
 - A form to merge similar resources into one
 
 ### Finding Images with Similarities
@@ -186,7 +187,7 @@ If the queue is full (1000 items), new uploads fall back to batch processing on 
 
 If you have images that were uploaded before hash calculation was available, the hash worker automatically processes them during its batch cycles. No manual intervention is required.
 
-The worker also handles migration of hash format changes transparently. The current storage format uses int64 for efficient Hamming distance calculation. Legacy string-format hashes are still supported and migrated automatically. No action needed from you.
+The worker also handles migration of hash format changes transparently. The current storage format uses int64 for efficient Hamming distance calculation. Legacy string-format hashes are still supported and migrated automatically.
 
 ## Troubleshooting
 

@@ -93,7 +93,6 @@ Filter by JSON metadata fields using `key:value` or `key:OPERATOR:value` syntax.
 | `GE` | Greater than or equal |
 | `LT` | Less than |
 | `LE` | Less than or equal |
-| `HAS_KEYS` | Key exists (value is ignored) |
 
 #### Value Type Detection
 
@@ -112,7 +111,12 @@ MetaQuery=author:Jane
 MetaQuery=priority:EQ:high
 MetaQuery=score:GT:80
 MetaQuery=status:NE:archived
+MetaQuery=url:EQ:https://example.com
 ```
+
+Values may contain colons. The parser splits on the first colon only when the middle segment is a recognized operator; otherwise the entire remainder is treated as the value with `LI` as the default operator.
+
+`HAS_KEYS` is not a valid URL MetaQuery operator. It exists internally as a JSON query type but is not in the recognized operator set, so `key:HAS_KEYS:value` will be treated as a literal value string rather than a key-existence check.
 
 Group MetaQuery supports `parent.key` and `child.key` prefixes to search parent or child Group metadata.
 

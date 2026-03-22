@@ -237,5 +237,5 @@ Returns table and column definitions for constructing Queries.
 
 ## Security
 
-- All Queries execute on a read-only connection -- data modification is not possible
+- Read-only enforcement requires `DB_READONLY_DSN` to point to a database-enforced read-only connection or user. Without that, saved queries execute through a secondary connection that is not inherently read-only.
 - Results may expose any data in the database; restrict access to the Mahresources instance accordingly

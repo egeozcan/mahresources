@@ -25,6 +25,15 @@ Each Category (for Groups), Resource Category (for Resources), and Note Type (fo
 | **CustomSummary** | Entity cards in list views |
 | **CustomAvatar** | Avatar/icon when linking to the entity |
 
+## Template Approaches
+
+Two approaches are available for accessing entity data in custom templates:
+
+- **Pongo2 + Alpine.js hybrid**: Pongo2 serializes the entity to JSON at render time using the `|json` filter, and Alpine.js reads it client-side. This is the approach shown in the examples below and is suitable when you need reactive bindings or JavaScript logic.
+- **Pure Pongo2**: Reference entity fields directly with server-side syntax (`{{ group.Name }}`, `{{ note.Description }}`). This is simpler when no client-side interactivity is needed.
+
+Both approaches work within custom template fields.
+
 ## Accessing Entity Data
 
 Templates have access to the entity data through Alpine.js. The entity is available as a JavaScript object:

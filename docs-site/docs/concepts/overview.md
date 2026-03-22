@@ -34,7 +34,7 @@ Ownership creates a parent-child hierarchy. Each entity can have one owner:
 
 - A **Group** can own other Groups, Notes, and Resources
 - Owned entities appear in the owner's "Owned" section
-- Deleting an owner Group cascades to owned Notes. Owned Resources and child Groups have their owner set to NULL (preserved as unowned)
+- Deleting an owner Group sets the owner to NULL on all owned entities (Notes, Resources, and child Groups are preserved as unowned)
 
 ```
 Project Alpha (Group)
@@ -142,9 +142,9 @@ These bulk operations apply to Resources, Groups, and Notes. The available opera
 | Entity | Deletion Behavior |
 |--------|-------------------|
 | **Tag** | Removed from all associated entities (cascade) |
-| **Group** | Cascades to owned Notes; owned Resources and child Groups have their owner set to NULL (preserved) |
+| **Group** | Owned Notes, Resources, and child Groups have their owner set to NULL (preserved) |
 | **Resource** | Deleted independently; file removed from storage only if no other resources or versions reference the same hash |
 | **Note** | Deleted independently |
-| **Category** | Cascade-deletes all Groups assigned to that Category |
-| **Note Type** | Cascade-deletes all Notes of that type |
+| **Category** | Groups are preserved; CategoryId set to NULL |
+| **Note Type** | Notes are preserved; NoteTypeId set to NULL |
 | **Resource Category** | Resources of that category have their category set to NULL (preserved) |

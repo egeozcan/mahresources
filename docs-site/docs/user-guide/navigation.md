@@ -62,7 +62,7 @@ Type at least 2 characters. Results appear as a flat list ranked by relevance, e
 | Enter | Open selected result |
 | Escape | Close search dialog |
 
-Results are cached server-side for 60 seconds. The default result limit is 15 (server max: 200).
+Results are cached server-side for 60 seconds. The default result limit is 20 (server max: 50). The frontend requests 15 by default.
 
 ## List Views
 
@@ -211,8 +211,8 @@ Each section includes:
 | T | Toggle quick tag panel |
 | Double-click | Toggle native resolution zoom |
 | Ctrl + Scroll | Zoom toward cursor position |
-| 1-9 | Toggle quick tag slots (requires quick tag panel open) |
-| Shift + 1-9 | Toggle recent tag slots (requires quick tag panel open) |
+| 1-9 | Toggle tag slot on active tab (requires quick tag panel open) |
+| Z / X / C / V / B | Switch to QUICK 1 / QUICK 2 / QUICK 3 / RECENT / LAST tab (requires quick tag panel open) |
 | 0 | Focus tag editor |
 | Escape | Close lightbox |
 
@@ -254,16 +254,29 @@ Click any image or media preview to open the lightbox viewer.
 
 The Quick Tag Panel is a side panel in the lightbox for rapid tag assignment while browsing images.
 
+The panel has five tabs:
+
+| Tab | Key | Behavior |
+|-----|-----|----------|
+| QUICK 1 | Z | 9 manually assigned tag slots |
+| QUICK 2 | X | 9 manually assigned tag slots |
+| QUICK 3 | C | 9 manually assigned tag slots |
+| RECENT | V | Auto-populated with the 9 most recently used tags |
+| LAST | B | Auto-populated with up to 9 tags from the most recently modified resource |
+
+Total configurable capacity: 27 slots across the three QUICK tabs.
+
 **Setup:**
 
 1. Open the lightbox on any image
 2. Open the Quick Tag Panel via its toggle button
-3. Assign tags to the 9 configurable slots -- each slot maps to a number key (1-9)
+3. On a QUICK tab, assign tags to the 9 slots -- each maps to a number key (1-9)
 4. Slot assignments persist in localStorage across sessions
 
 **Usage:**
 
-- Press **1** through **9** to toggle the corresponding tag on the current resource
+- Press **Z/X/C/V/B** to switch tabs
+- Press **1** through **9** to toggle the tag in that slot on the active tab
 - Click a tag slot button to toggle the tag
 - Tags are applied or removed immediately via API calls
 - Browse to the next image with arrow keys and continue tagging

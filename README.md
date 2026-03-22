@@ -108,6 +108,23 @@ The full documentation covers everything in detail:
 
 There is no built-in authentication or authorization. This application is designed to run on private networks or behind a reverse proxy that handles access control. See the [reverse proxy guide](https://egeozcan.github.io/mahresources/deployment/reverse-proxy) for setup instructions.
 
+## CLI
+
+The `mr` binary is a command-line client for the mahresources API. It covers all entity types (resources, notes, groups, tags, etc.) with CRUD operations, bulk actions, file upload/download, and version management.
+
+```bash
+# Build the CLI
+npm run build-cli
+
+# List resources
+mr resources list --content-type image/png
+
+# Upload a file
+mr resource upload photo.jpg --name "My Photo" --owner-id 1
+```
+
+See the [CLI documentation](https://egeozcan.github.io/mahresources/features/cli) for the full command reference.
+
 ## Scripting & Import
 
-The HTTP API supports all CRUD operations, making it straightforward to script bulk imports. For an example of direct library usage, see `cmd/importExisting/main.go`. The [API documentation](https://egeozcan.github.io/mahresources/api/overview) covers all available endpoints.
+The HTTP API supports all CRUD operations, making it easy to script bulk imports. For an example of direct library usage, see `cmd/importExisting/main.go`. The [API documentation](https://egeozcan.github.io/mahresources/api/overview) covers all available endpoints.

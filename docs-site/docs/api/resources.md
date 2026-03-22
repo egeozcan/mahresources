@@ -450,6 +450,7 @@ POST /v1/resources/merge
 |-----------|------|-------------|
 | `Winner` | integer | Resource ID to keep |
 | `Losers` | integer[] | Resource IDs to merge and delete |
+| `KeepAsVersion` | boolean | When true, each loser's file is saved as a new older version on the winner before the loser is deleted |
 
 #### Example
 

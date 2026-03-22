@@ -310,7 +310,7 @@ Content-Type: application/json
 
 #### Deleting Categories
 
-Deleting a Category cascade-deletes all Groups assigned to that Category.
+Deleting a Category preserves all Groups; their CategoryId is set to NULL.
 
 ```
 POST /v1/category/delete
@@ -352,7 +352,7 @@ Resource Categories work like Categories but apply to Resources instead of Group
 - **Unique names**: Each name must be unique
 - **One-to-many**: A resource category can have multiple resources, but each resource has at most one resource category
 - **Custom presentation**: Templates customize how resources appear (same system as Categories for Groups)
-- **Deletion behavior**: Deleting a resource category cascade-deletes all resources in that category
+- **Deletion behavior**: Deleting a resource category preserves all resources; their ResourceCategoryId is set to NULL
 
 ### Use Cases
 
@@ -405,4 +405,4 @@ GET /v1/resources?resourceCategoryId=1
 | Presentation | None | Custom templates | Custom templates | Custom templates |
 | Validation | None | JSON Schema | JSON Schema | None |
 | Purpose | Cross-cutting labels | Group type definition | Resource type definition | Note type definition |
-| On delete | Removed from entities | CASCADE (deletes Groups) | CASCADE (deletes Resources) | CASCADE (deletes Notes) |
+| On delete | Removed from entities | Groups preserved (CategoryId → NULL) | Resources preserved (ResourceCategoryId → NULL) | Notes preserved (NoteTypeId → NULL) |
