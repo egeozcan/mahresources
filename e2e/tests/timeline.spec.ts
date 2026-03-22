@@ -107,14 +107,22 @@ test.describe('Timeline View - Chart rendering', () => {
     await expect(chart).toHaveAttribute('role', 'group');
   });
 
-  test('legend section shows Created and Updated labels', async ({ page }) => {
-    await page.goto('/resources/timeline');
-    await page.waitForLoadState('load');
+  test('legend section shows Created and Updated labels when data exists', async ({ apiClient, page }) => {
+    // Create a resource so the timeline has data and maxCount > 0
+    const tag = await apiClient.createTag('timeline-legend-tag', 'For legend test');
 
-    const legend = page.locator('.timeline-legend');
-    await expect(legend).toBeVisible();
-    await expect(legend.locator('text=Created')).toBeVisible();
-    await expect(legend.locator('text=Updated')).toBeVisible();
+    try {
+      await page.goto('/tags/timeline');
+      await page.waitForLoadState('load');
+
+      // Wait for chart to render with data
+      const legend = page.locator('.timeline-legend');
+      await expect(legend).toBeVisible({ timeout: 10000 });
+      await expect(legend.locator('text=Created')).toBeVisible();
+      await expect(legend.locator('text=Updated')).toBeVisible();
+    } finally {
+      await apiClient.deleteTag(tag.ID);
+    }
   });
 });
 
