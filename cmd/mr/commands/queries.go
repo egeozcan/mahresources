@@ -267,6 +267,7 @@ func NewQueriesCmd(c *client.Client, opts *output.Options, page *int) *cobra.Com
 	}
 
 	queriesCmd.AddCommand(newQueriesListCmd(c, opts, page))
+	queriesCmd.AddCommand(newQueriesTimelineCmd(c, opts))
 
 	return queriesCmd
 }
@@ -310,6 +311,38 @@ func newQueriesListCmd(c *client.Client, opts *output.Options, page *int) *cobra
 		},
 	}
 
+	cmd.Flags().StringVar(&name, "name", "", "Filter by name")
+
+	return cmd
+}
+
+func newQueriesTimelineCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	var (
+		tFlags timelineFlags
+		name   string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "timeline",
+		Short: "Display a timeline of query activity",
+		Long: `Display a timeline of query creation and update activity as an ASCII bar chart.
+
+Examples:
+  mr queries timeline
+  mr queries timeline --granularity=weekly --columns=20
+  mr queries timeline --granularity=yearly --anchor=2020-01-01
+  mr queries timeline --json`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			q := url.Values{}
+			if name != "" {
+				q.Set("name", name)
+			}
+
+			return fetchAndPrintTimeline(c, *opts, "/v1/queries/timeline", buildTimelineQuery(&tFlags, q))
+		},
+	}
+
+	addTimelineFlags(cmd, &tFlags)
 	cmd.Flags().StringVar(&name, "name", "", "Filter by name")
 
 	return cmd

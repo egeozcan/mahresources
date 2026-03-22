@@ -223,6 +223,7 @@ func NewCategoriesCmd(c *client.Client, opts *output.Options, page *int) *cobra.
 	}
 
 	cmd.AddCommand(newCategoriesListCmd(c, opts, page))
+	cmd.AddCommand(newCategoriesTimelineCmd(c, opts))
 
 	return cmd
 }
@@ -269,6 +270,42 @@ func newCategoriesListCmd(c *client.Client, opts *output.Options, page *int) *co
 		},
 	}
 
+	cmd.Flags().StringVar(&name, "name", "", "Filter by name")
+	cmd.Flags().StringVar(&description, "description", "", "Filter by description")
+
+	return cmd
+}
+
+func newCategoriesTimelineCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	var (
+		tFlags              timelineFlags
+		name, description string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "timeline",
+		Short: "Display a timeline of category activity",
+		Long: `Display a timeline of category creation and update activity as an ASCII bar chart.
+
+Examples:
+  mr categories timeline
+  mr categories timeline --granularity=weekly --columns=20
+  mr categories timeline --granularity=yearly --anchor=2020-01-01
+  mr categories timeline --json`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			q := url.Values{}
+			if name != "" {
+				q.Set("name", name)
+			}
+			if description != "" {
+				q.Set("description", description)
+			}
+
+			return fetchAndPrintTimeline(c, *opts, "/v1/categories/timeline", buildTimelineQuery(&tFlags, q))
+		},
+	}
+
+	addTimelineFlags(cmd, &tFlags)
 	cmd.Flags().StringVar(&name, "name", "", "Filter by name")
 	cmd.Flags().StringVar(&description, "description", "", "Filter by description")
 

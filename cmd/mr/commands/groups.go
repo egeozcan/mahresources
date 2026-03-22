@@ -364,6 +364,7 @@ func NewGroupsCmd(c *client.Client, opts *output.Options, page *int) *cobra.Comm
 	cmd.AddCommand(newGroupsDeleteCmd(c, opts))
 	cmd.AddCommand(newGroupsMergeCmd(c, opts))
 	cmd.AddCommand(newGroupsMetaKeysCmd(c, opts))
+	cmd.AddCommand(newGroupsTimelineCmd(c, opts))
 
 	return cmd
 }
@@ -694,4 +695,81 @@ func newGroupsMetaKeysCmd(c *client.Client, opts *output.Options) *cobra.Command
 			return nil
 		},
 	}
+}
+
+func newGroupsTimelineCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	var (
+		tFlags                                                                          timelineFlags
+		name, description, tagsStr, groupsStr, urlStr, createdBefore, createdAfter string
+		ownerID, categoryID                                                             uint
+	)
+
+	cmd := &cobra.Command{
+		Use:   "timeline",
+		Short: "Display a timeline of group activity",
+		Long: `Display a timeline of group creation and update activity as an ASCII bar chart.
+
+Examples:
+  mr groups timeline
+  mr groups timeline --granularity=weekly --columns=20
+  mr groups timeline --granularity=yearly --anchor=2020-01-01
+  mr groups timeline --json`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			q := url.Values{}
+			if name != "" {
+				q.Set("name", name)
+			}
+			if description != "" {
+				q.Set("description", description)
+			}
+			if tagsStr != "" {
+				tags, err := parseUintList(tagsStr)
+				if err != nil {
+					return fmt.Errorf("parsing --tags: %w", err)
+				}
+				for _, t := range tags {
+					q.Add("tags", strconv.FormatUint(uint64(t), 10))
+				}
+			}
+			if groupsStr != "" {
+				groups, err := parseUintList(groupsStr)
+				if err != nil {
+					return fmt.Errorf("parsing --groups: %w", err)
+				}
+				for _, g := range groups {
+					q.Add("groups", strconv.FormatUint(uint64(g), 10))
+				}
+			}
+			if cmd.Flags().Changed("owner-id") {
+				q.Set("ownerId", strconv.FormatUint(uint64(ownerID), 10))
+			}
+			if cmd.Flags().Changed("category-id") {
+				q.Set("categoryId", strconv.FormatUint(uint64(categoryID), 10))
+			}
+			if urlStr != "" {
+				q.Set("url", urlStr)
+			}
+			if createdBefore != "" {
+				q.Set("createdBefore", createdBefore)
+			}
+			if createdAfter != "" {
+				q.Set("createdAfter", createdAfter)
+			}
+
+			return fetchAndPrintTimeline(c, *opts, "/v1/groups/timeline", buildTimelineQuery(&tFlags, q))
+		},
+	}
+
+	addTimelineFlags(cmd, &tFlags)
+	cmd.Flags().StringVar(&name, "name", "", "Filter by name")
+	cmd.Flags().StringVar(&description, "description", "", "Filter by description")
+	cmd.Flags().StringVar(&tagsStr, "tags", "", "Comma-separated tag IDs to filter by")
+	cmd.Flags().StringVar(&groupsStr, "groups", "", "Comma-separated group IDs to filter by")
+	cmd.Flags().UintVar(&ownerID, "owner-id", 0, "Filter by owner group ID")
+	cmd.Flags().UintVar(&categoryID, "category-id", 0, "Filter by category ID")
+	cmd.Flags().StringVar(&urlStr, "url", "", "Filter by URL")
+	cmd.Flags().StringVar(&createdBefore, "created-before", "", "Filter by creation date (before)")
+	cmd.Flags().StringVar(&createdAfter, "created-after", "", "Filter by creation date (after)")
+
+	return cmd
 }

@@ -206,6 +206,7 @@ func NewTagsCmd(c *client.Client, opts *output.Options, page *int) *cobra.Comman
 	tagsCmd.AddCommand(newTagsListCmd(c, opts, page))
 	tagsCmd.AddCommand(newTagsMergeCmd(c, opts))
 	tagsCmd.AddCommand(newTagsDeleteCmd(c, opts))
+	tagsCmd.AddCommand(newTagsTimelineCmd(c, opts))
 
 	return tagsCmd
 }
@@ -348,6 +349,42 @@ func newTagsDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
 
 	cmd.Flags().StringVar(&idsStr, "ids", "", "Comma-separated tag IDs to delete (required)")
 	cmd.MarkFlagRequired("ids")
+
+	return cmd
+}
+
+func newTagsTimelineCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	var (
+		tFlags              timelineFlags
+		name, description string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "timeline",
+		Short: "Display a timeline of tag activity",
+		Long: `Display a timeline of tag creation and update activity as an ASCII bar chart.
+
+Examples:
+  mr tags timeline
+  mr tags timeline --granularity=weekly --columns=20
+  mr tags timeline --granularity=yearly --anchor=2020-01-01
+  mr tags timeline --json`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			q := url.Values{}
+			if name != "" {
+				q.Set("name", name)
+			}
+			if description != "" {
+				q.Set("description", description)
+			}
+
+			return fetchAndPrintTimeline(c, *opts, "/v1/tags/timeline", buildTimelineQuery(&tFlags, q))
+		},
+	}
+
+	addTimelineFlags(cmd, &tFlags)
+	cmd.Flags().StringVar(&name, "name", "", "Filter by name")
+	cmd.Flags().StringVar(&description, "description", "", "Filter by description")
 
 	return cmd
 }

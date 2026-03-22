@@ -300,6 +300,7 @@ func NewNotesCmd(c *client.Client, opts *output.Options, page *int) *cobra.Comma
 	cmd.AddCommand(newNotesAddMetaCmd(c, opts))
 	cmd.AddCommand(newNotesDeleteCmd(c, opts))
 	cmd.AddCommand(newNotesMetaKeysCmd(c, opts))
+	cmd.AddCommand(newNotesTimelineCmd(c, opts))
 
 	return cmd
 }
@@ -629,4 +630,77 @@ func newNotesMetaKeysCmd(c *client.Client, opts *output.Options) *cobra.Command 
 			return nil
 		},
 	}
+}
+
+func newNotesTimelineCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	var (
+		tFlags                                                      timelineFlags
+		name, description, tagsStr, groupsStr, createdBefore, createdAfter string
+		ownerID, noteTypeID                                         uint
+	)
+
+	cmd := &cobra.Command{
+		Use:   "timeline",
+		Short: "Display a timeline of note activity",
+		Long: `Display a timeline of note creation and update activity as an ASCII bar chart.
+
+Examples:
+  mr notes timeline
+  mr notes timeline --granularity=weekly --columns=20
+  mr notes timeline --granularity=yearly --anchor=2020-01-01
+  mr notes timeline --json`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			q := url.Values{}
+			if name != "" {
+				q.Set("name", name)
+			}
+			if description != "" {
+				q.Set("description", description)
+			}
+			if tagsStr != "" {
+				tags, err := parseUintList(tagsStr)
+				if err != nil {
+					return fmt.Errorf("parsing --tags: %w", err)
+				}
+				for _, t := range tags {
+					q.Add("tags", strconv.FormatUint(uint64(t), 10))
+				}
+			}
+			if groupsStr != "" {
+				groups, err := parseUintList(groupsStr)
+				if err != nil {
+					return fmt.Errorf("parsing --groups: %w", err)
+				}
+				for _, g := range groups {
+					q.Add("groups", strconv.FormatUint(uint64(g), 10))
+				}
+			}
+			if cmd.Flags().Changed("owner-id") {
+				q.Set("ownerId", strconv.FormatUint(uint64(ownerID), 10))
+			}
+			if cmd.Flags().Changed("note-type-id") {
+				q.Set("noteTypeId", strconv.FormatUint(uint64(noteTypeID), 10))
+			}
+			if createdBefore != "" {
+				q.Set("createdBefore", createdBefore)
+			}
+			if createdAfter != "" {
+				q.Set("createdAfter", createdAfter)
+			}
+
+			return fetchAndPrintTimeline(c, *opts, "/v1/notes/timeline", buildTimelineQuery(&tFlags, q))
+		},
+	}
+
+	addTimelineFlags(cmd, &tFlags)
+	cmd.Flags().StringVar(&name, "name", "", "Filter by name")
+	cmd.Flags().StringVar(&description, "description", "", "Filter by description")
+	cmd.Flags().StringVar(&tagsStr, "tags", "", "Comma-separated tag IDs to filter by")
+	cmd.Flags().StringVar(&groupsStr, "groups", "", "Comma-separated group IDs to filter by")
+	cmd.Flags().UintVar(&ownerID, "owner-id", 0, "Filter by owner group ID")
+	cmd.Flags().UintVar(&noteTypeID, "note-type-id", 0, "Filter by note type ID")
+	cmd.Flags().StringVar(&createdBefore, "created-before", "", "Filter by creation date (before)")
+	cmd.Flags().StringVar(&createdAfter, "created-after", "", "Filter by creation date (after)")
+
+	return cmd
 }

@@ -1022,6 +1022,7 @@ func NewResourcesCmd(c *client.Client, opts *output.Options, page *int) *cobra.C
 	cmd.AddCommand(newResourcesSetDimensionsCmd(c, opts))
 	cmd.AddCommand(newResourcesVersionsCleanupCmd(c, opts))
 	cmd.AddCommand(newResourcesMetaKeysCmd(c, opts))
+	cmd.AddCommand(newResourcesTimelineCmd(c, opts))
 
 	return cmd
 }
@@ -1575,4 +1576,119 @@ func newResourcesMetaKeysCmd(c *client.Client, opts *output.Options) *cobra.Comm
 			return nil
 		},
 	}
+}
+
+func newResourcesTimelineCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	var (
+		tFlags                                   timelineFlags
+		name, description, contentType           string
+		tagsStr, groupsStr, notesStr             string
+		createdBefore, createdAfter              string
+		hash, originalName                       string
+		ownerID, resourceCategoryID              uint
+		minWidth, minHeight, maxWidth, maxHeight uint
+	)
+
+	cmd := &cobra.Command{
+		Use:   "timeline",
+		Short: "Display a timeline of resource activity",
+		Long: `Display a timeline of resource creation and update activity as an ASCII bar chart.
+
+Examples:
+  mr resources timeline
+  mr resources timeline --granularity=weekly --columns=20
+  mr resources timeline --granularity=yearly --anchor=2020-01-01
+  mr resources timeline --json`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			q := url.Values{}
+			if name != "" {
+				q.Set("name", name)
+			}
+			if description != "" {
+				q.Set("description", description)
+			}
+			if contentType != "" {
+				q.Set("contentType", contentType)
+			}
+			if cmd.Flags().Changed("owner-id") {
+				q.Set("ownerId", strconv.FormatUint(uint64(ownerID), 10))
+			}
+			if tagsStr != "" {
+				tags, err := parseUintList(tagsStr)
+				if err != nil {
+					return fmt.Errorf("parsing --tags: %w", err)
+				}
+				for _, t := range tags {
+					q.Add("tags", strconv.FormatUint(uint64(t), 10))
+				}
+			}
+			if groupsStr != "" {
+				groups, err := parseUintList(groupsStr)
+				if err != nil {
+					return fmt.Errorf("parsing --groups: %w", err)
+				}
+				for _, g := range groups {
+					q.Add("groups", strconv.FormatUint(uint64(g), 10))
+				}
+			}
+			if notesStr != "" {
+				notes, err := parseUintList(notesStr)
+				if err != nil {
+					return fmt.Errorf("parsing --notes: %w", err)
+				}
+				for _, n := range notes {
+					q.Add("notes", strconv.FormatUint(uint64(n), 10))
+				}
+			}
+			if cmd.Flags().Changed("resource-category-id") {
+				q.Set("resourceCategoryId", strconv.FormatUint(uint64(resourceCategoryID), 10))
+			}
+			if createdBefore != "" {
+				q.Set("createdBefore", createdBefore)
+			}
+			if createdAfter != "" {
+				q.Set("createdAfter", createdAfter)
+			}
+			if cmd.Flags().Changed("min-width") {
+				q.Set("minWidth", strconv.FormatUint(uint64(minWidth), 10))
+			}
+			if cmd.Flags().Changed("min-height") {
+				q.Set("minHeight", strconv.FormatUint(uint64(minHeight), 10))
+			}
+			if cmd.Flags().Changed("max-width") {
+				q.Set("maxWidth", strconv.FormatUint(uint64(maxWidth), 10))
+			}
+			if cmd.Flags().Changed("max-height") {
+				q.Set("maxHeight", strconv.FormatUint(uint64(maxHeight), 10))
+			}
+			if hash != "" {
+				q.Set("hash", hash)
+			}
+			if originalName != "" {
+				q.Set("originalName", originalName)
+			}
+
+			return fetchAndPrintTimeline(c, *opts, "/v1/resources/timeline", buildTimelineQuery(&tFlags, q))
+		},
+	}
+
+	addTimelineFlags(cmd, &tFlags)
+	cmd.Flags().StringVar(&name, "name", "", "Filter by name")
+	cmd.Flags().StringVar(&description, "description", "", "Filter by description")
+	cmd.Flags().StringVar(&contentType, "content-type", "", "Filter by content type")
+	cmd.Flags().UintVar(&ownerID, "owner-id", 0, "Filter by owner group ID")
+	cmd.Flags().StringVar(&tagsStr, "tags", "", "Comma-separated tag IDs to filter by")
+	cmd.Flags().StringVar(&groupsStr, "groups", "", "Comma-separated group IDs to filter by")
+	cmd.Flags().StringVar(&notesStr, "notes", "", "Comma-separated note IDs to filter by")
+	cmd.Flags().UintVar(&resourceCategoryID, "resource-category-id", 0, "Filter by resource category ID")
+	cmd.Flags().StringVar(&createdBefore, "created-before", "", "Filter by creation date (before)")
+	cmd.Flags().StringVar(&createdAfter, "created-after", "", "Filter by creation date (after)")
+	cmd.Flags().UintVar(&minWidth, "min-width", 0, "Minimum width")
+	cmd.Flags().UintVar(&minHeight, "min-height", 0, "Minimum height")
+	cmd.Flags().UintVar(&maxWidth, "max-width", 0, "Maximum width")
+	cmd.Flags().UintVar(&maxHeight, "max-height", 0, "Maximum height")
+	cmd.Flags().StringVar(&hash, "hash", "", "Filter by hash")
+	cmd.Flags().StringVar(&originalName, "original-name", "", "Filter by original name")
+
+	return cmd
 }
