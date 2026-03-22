@@ -34,3 +34,4 @@ docs-site/.docusaurus/
 /ux-research/
 /.playwright-cli/
 /.superpowers/
+/e2e/.playwright-cli/
