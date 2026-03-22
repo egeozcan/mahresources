@@ -439,59 +439,56 @@
             <!-- 3x3 tag grid (reads from active tab) -->
             <div class="grid grid-cols-3 gap-2" role="tabpanel">
                 <template x-for="(_, vIdx) in $store.lightbox._numpadOrder" :key="vIdx">
-                    <div x-data="{ get idx() { return $store.lightbox.numpadIndex(vIdx) }, get tag() { return $store.lightbox.getActiveTabSlots()[this.idx] } }">
-                        <!-- Card with tag assigned -->
-                        <template x-if="tag">
-                            <div class="group relative w-full aspect-[4/3] rounded-lg transition-colors"
-                                :class="$store.lightbox.isTagOnResource(tag?.id)
-                                    ? 'bg-green-900/30 border-2 border-green-600/60 text-green-300 hover:bg-red-900/30 hover:border-red-600/60 hover:text-red-300'
-                                    : 'bg-stone-800 border border-stone-700 text-stone-300 hover:bg-amber-900/20 hover:border-amber-700 hover:text-amber-300'"
-                            >
-                                <button
-                                    @click="$store.lightbox.toggleTabTag(idx)"
-                                    class="w-full h-full flex flex-col items-center justify-center gap-1 focus:outline-none focus:ring-2 focus:ring-stone-400 rounded-lg"
-                                    :aria-label="($store.lightbox.isTagOnResource(tag?.id) ? 'Remove ' : 'Add ') + tag?.name"
-                                >
-                                    <kbd class="text-sm font-mono text-stone-500" x-text="$store.lightbox.quickTagKeyLabel(idx)"></kbd>
-                                    <span class="text-sm font-semibold truncate max-w-full px-2" x-text="tag?.name"></span>
-                                </button>
-                                <!-- Clear button (only on QUICK tabs, sibling to avoid nested button) -->
-                                <template x-if="$store.lightbox.isQuickTab()">
-                                    <button
-                                        @click.stop="$store.lightbox.clearQuickTagSlot(idx)"
-                                        class="absolute top-1 right-1 p-0.5 hover:bg-white/10 rounded-full opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity focus:outline-none focus:ring-1 focus:ring-white"
-                                        :aria-label="'Clear slot ' + $store.lightbox.quickTagKeyLabel(idx)"
-                                    >
-                                        <svg class="w-3 h-3 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                                        </svg>
-                                    </button>
-                                </template>
-                            </div>
-                        </template>
-
-                        <!-- Empty card -->
-                        <template x-if="!tag">
-                            <div class="w-full aspect-[4/3] rounded-lg border border-dashed border-stone-700 flex flex-col items-center justify-center gap-1">
-                                <kbd class="text-sm font-mono text-stone-600" x-text="$store.lightbox.quickTagKeyLabel(idx)"></kbd>
-                                <!-- Autocompleter for QUICK tabs -->
-                                <div x-show="$store.lightbox.isQuickTab()" class="w-full px-2"
-                                     x-data="autocompleter({
-                                         selectedResults: [],
+                    <div x-data="{
+                        get idx() { return $store.lightbox.numpadIndex(vIdx) },
+                        get slot() { return $store.lightbox.getActiveTabSlots()[this.idx] },
+                        get tags() {
+                            const s = this.slot;
+                            if (!s) return [];
+                            return Array.isArray(s) ? s : [s];
+                        },
+                        get matchState() { return $store.lightbox.slotMatchState(this.idx) },
+                        get isEditing() { return $store.lightbox.editingSlotIndex === this.idx && $store.lightbox.isQuickTab() },
+                        tagNames() { return this.tags.map(t => t.name ?? t.Name).join(', ') },
+                    }">
+                        <!-- EDITING MODE: pills + autocomplete -->
+                        <template x-if="isEditing">
+                            <div class="w-full min-h-[4.5rem] rounded-lg border-2 border-stone-500 bg-stone-800 p-2 flex flex-col gap-1.5"
+                                 @click.outside="$store.lightbox.editingSlotIndex = null"
+                                 @keydown.escape.stop="$store.lightbox.editingSlotIndex = null"
+                                 @focusout="$nextTick(() => { if (!$el.contains(document.activeElement)) $store.lightbox.editingSlotIndex = null })">
+                                <kbd class="text-xs font-mono text-stone-500 self-center" x-text="$store.lightbox.quickTagKeyLabel(idx)"></kbd>
+                                <!-- Tag pills -->
+                                <div class="flex flex-wrap gap-1">
+                                    <template x-for="t in tags" :key="t.id">
+                                        <span class="inline-flex items-center gap-0.5 bg-stone-700 text-stone-200 rounded px-1.5 py-0.5 text-xs">
+                                            <span x-text="t.name" class="truncate max-w-[6rem]"></span>
+                                            <button
+                                                @click.stop="$store.lightbox.removeTagFromSlot(idx, t.id)"
+                                                class="hover:text-red-400 focus:outline-none focus:text-red-400"
+                                                :aria-label="'Remove ' + t.name + ' from slot'"
+                                            >&times;</button>
+                                        </span>
+                                    </template>
+                                </div>
+                                <!-- Autocomplete for adding more tags (seed with existing slot tags to exclude them) -->
+                                <div x-data="autocompleter({
+                                         selectedResults: tags.map(t => ({ID: t.id, Name: t.name})),
                                          url: '/v1/tags',
                                          standalone: true,
                                          sortBy: 'most_used_resource',
-                                         max: 1,
-                                         onSelect: (tag) => { $store.lightbox.setQuickTagSlot(idx, tag); }
+                                         max: 0,
+                                         onSelect: (tag) => { $store.lightbox.addTagToSlot(idx, tag); }
                                      })">
                                     <div class="relative">
                                         <input
                                             x-ref="autocompleter"
                                             type="text"
                                             x-bind="inputEvents"
-                                            class="w-full px-1.5 py-1 bg-stone-800/50 border border-stone-700 rounded text-xs text-white placeholder-stone-600 focus:outline-none focus:ring-2 focus:ring-stone-400 focus:border-transparent"
-                                            placeholder="Assign..."
-                                            :aria-label="'Assign tag to slot ' + $store.lightbox.quickTagKeyLabel(idx)"
+                                            x-init="$nextTick(() => $el.focus())"
+                                            class="w-full px-1.5 py-1 bg-stone-900/50 border border-stone-600 rounded text-xs text-white placeholder-stone-500 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                                            placeholder="Add tag..."
+                                            :aria-label="'Add tag to slot ' + $store.lightbox.quickTagKeyLabel(idx)"
                                             autocomplete="off"
                                             role="combobox"
                                             aria-autocomplete="list"
@@ -515,8 +512,63 @@
                                         </div>
                                     </div>
                                 </div>
+                            </div>
+                        </template>
+
+                        <!-- DISPLAY MODE: filled slot -->
+                        <template x-if="!isEditing && tags.length > 0">
+                            <div class="group relative w-full aspect-[4/3] rounded-lg transition-colors"
+                                :class="{
+                                    'bg-green-900/30 border-2 border-green-600/60 text-green-300 hover:bg-red-900/30 hover:border-red-600/60 hover:text-red-300': matchState === 'all',
+                                    'bg-amber-900/20 border-2 border-amber-600/50 text-amber-300 hover:bg-green-900/30 hover:border-green-600/60 hover:text-green-300': matchState === 'some',
+                                    'bg-stone-800 border border-stone-700 text-stone-300 hover:bg-amber-900/20 hover:border-amber-700 hover:text-amber-300': matchState === 'none',
+                                }"
+                            >
+                                <button
+                                    @click="$store.lightbox.toggleTabTag(idx)"
+                                    class="w-full h-full flex flex-col items-center justify-center gap-1 focus:outline-none focus:ring-2 focus:ring-stone-400 rounded-lg px-1.5"
+                                    :aria-label="(matchState === 'all' ? 'Remove ' : 'Add ') + tagNames() + (matchState === 'some' ? ' (partially active: ' + tags.filter(t => $store.lightbox.isTagOnResource(t.id ?? t.ID)).length + ' of ' + tags.length + ')' : '')"
+                                >
+                                    <kbd class="text-sm font-mono text-stone-500" x-text="$store.lightbox.quickTagKeyLabel(idx)"></kbd>
+                                    <span class="text-xs font-semibold line-clamp-2 max-w-full text-center leading-tight" x-text="tagNames()"></span>
+                                </button>
+                                <!-- Add button (QUICK tabs only) -->
+                                <template x-if="$store.lightbox.isQuickTab()">
+                                    <button
+                                        @click.stop="$store.lightbox.editingSlotIndex = idx"
+                                        class="absolute top-1 left-1 p-0.5 hover:bg-white/10 rounded-full opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity focus:outline-none focus:ring-1 focus:ring-white"
+                                        :aria-label="'Add tags to slot ' + $store.lightbox.quickTagKeyLabel(idx)"
+                                    >
+                                        <svg class="w-3 h-3 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                                        </svg>
+                                    </button>
+                                </template>
+                                <!-- Clear button (QUICK tabs only) -->
+                                <template x-if="$store.lightbox.isQuickTab()">
+                                    <button
+                                        @click.stop="$store.lightbox.clearQuickTagSlot(idx)"
+                                        class="absolute top-1 right-1 p-0.5 hover:bg-white/10 rounded-full opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity focus:outline-none focus:ring-1 focus:ring-white"
+                                        :aria-label="'Clear slot ' + $store.lightbox.quickTagKeyLabel(idx)"
+                                    >
+                                        <svg class="w-3 h-3 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                        </svg>
+                                    </button>
+                                </template>
+                            </div>
+                        </template>
+
+                        <!-- EMPTY SLOT -->
+                        <template x-if="!isEditing && tags.length === 0">
+                            <div class="w-full aspect-[4/3] rounded-lg border border-dashed border-stone-700 flex flex-col items-center justify-center gap-1"
+                                 :class="{ 'cursor-pointer hover:border-stone-500': $store.lightbox.isQuickTab() }"
+                                 @click="$store.lightbox.isQuickTab() && ($store.lightbox.editingSlotIndex = idx)">
+                                <kbd class="text-sm font-mono text-stone-600" x-text="$store.lightbox.quickTagKeyLabel(idx)"></kbd>
                                 <!-- Empty label for non-QUICK tabs -->
                                 <span x-show="!$store.lightbox.isQuickTab()" x-cloak class="text-[10px] text-stone-600 italic">empty</span>
+                                <!-- Assign hint for QUICK tabs -->
+                                <span x-show="$store.lightbox.isQuickTab()" x-cloak class="text-[10px] text-stone-500 italic">click to assign</span>
                             </div>
                         </template>
                     </div>

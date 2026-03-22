@@ -2362,12 +2362,6 @@
   .bg-stone-800 {
     background-color: var(--color-stone-800);
   }
-  .bg-stone-800\/50 {
-    background-color: color-mix(in srgb, oklch(26.8% 0.007 34.298) 50%, transparent);
-    @supports (color: color-mix(in lab, red, red)) {
-      background-color: color-mix(in oklab, var(--color-stone-800) 50%, transparent);
-    }
-  }
   .bg-stone-900 {
     background-color: var(--color-stone-900);
   }
@@ -2927,11 +2921,6 @@
   .placeholder-stone-500 {
     &::placeholder {
       color: var(--color-stone-500);
-    }
-  }
-  .placeholder-stone-600 {
-    &::placeholder {
-      color: var(--color-stone-600);
     }
   }
   .opacity-0 {
