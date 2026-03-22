@@ -225,6 +225,18 @@ func getURLWithNewPath(url *url.URL, path string) url.URL {
 	return newURL
 }
 
+// getResultsPerPage reads an optional pageSize query parameter, clamped to [1, 200].
+// Falls back to defaultPerPage if not provided.
+func getResultsPerPage(request *http.Request, defaultPerPage int) int {
+	if customPageSize := http_utils.GetIntQueryParameter(request, "pageSize", 0); customPageSize > 0 {
+		if customPageSize > 200 {
+			customPageSize = 200
+		}
+		return int(customPageSize)
+	}
+	return defaultPerPage
+}
+
 func getPathExtensionOptions(url *url.URL, options *[]*SelectOption) *[]*SelectOption {
 	for _, option := range *options {
 		if strings.HasSuffix(url.Path, option.Link) {

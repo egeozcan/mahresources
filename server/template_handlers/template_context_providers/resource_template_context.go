@@ -17,21 +17,12 @@ import (
 func ResourceListContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		page := http_utils.GetIntQueryParameter(request, "page", 1)
-		var resultsPerPage = constants.MaxResultsPerPage
-
 		simpleMode := strings.HasSuffix(request.URL.Path, "/simple")
-
+		defaultPerPage := constants.MaxResultsPerPage
 		if simpleMode {
-			resultsPerPage = constants.MaxResultsPerPage * 4
+			defaultPerPage = constants.MaxResultsPerPage * 4
 		}
-
-		// Allow custom pageSize via URL parameter (bounded between 1 and 200)
-		if customPageSize := http_utils.GetIntQueryParameter(request, "pageSize", 0); customPageSize > 0 {
-			if customPageSize > 200 {
-				customPageSize = 200
-			}
-			resultsPerPage = int(customPageSize)
-		}
+		resultsPerPage := getResultsPerPage(request, defaultPerPage)
 
 		offset := (page - 1) * int64(resultsPerPage)
 		var query query_models.ResourceSearchQuery

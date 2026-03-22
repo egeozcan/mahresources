@@ -14,7 +14,8 @@ import (
 func TagListContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		page := http_utils.GetIntQueryParameter(request, "page", 1)
-		offset := (page - 1) * constants.MaxResultsPerPage
+		resultsPerPage := getResultsPerPage(request, constants.MaxResultsPerPage)
+		offset := (page - 1) * int64(resultsPerPage)
 		var query query_models.TagQuery
 		err := decoder.Decode(&query, request.URL.Query())
 		baseContext := staticTemplateCtx(request)
@@ -23,7 +24,7 @@ func TagListContextProvider(context *application_context.MahresourcesContext) fu
 			return addErrContext(err, baseContext)
 		}
 
-		tags, err := context.GetTags(int(offset), constants.MaxResultsPerPage, &query)
+		tags, err := context.GetTags(int(offset), resultsPerPage, &query)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -35,7 +36,7 @@ func TagListContextProvider(context *application_context.MahresourcesContext) fu
 			return addErrContext(err, baseContext)
 		}
 
-		pagination, err := template_entities.GeneratePagination(request.URL.String(), tagsCount, constants.MaxResultsPerPage, int(page))
+		pagination, err := template_entities.GeneratePagination(request.URL.String(), tagsCount, resultsPerPage, int(page))
 
 		if err != nil {
 			return addErrContext(err, baseContext)
