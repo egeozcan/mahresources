@@ -223,7 +223,7 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
                 // Label below
                 const label = document.createElement('span');
                 label.className = 'text-stone-600 mt-1';
-                label.style.fontSize = '0.5625rem';
+                label.style.fontSize = '0.6875rem';
                 label.style.lineHeight = '1';
                 label.style.whiteSpace = 'nowrap';
                 label.style.overflow = 'hidden';
@@ -277,7 +277,7 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
             params.set('pageSize', '20');
 
             try {
-                const url = this.apiUrl.replace('/timeline', '.json') + '?' + params.toString();
+                const url = this.apiUrl.replace('/timeline', '') + '?' + params.toString();
                 const { abort, ready } = abortableFetch(url);
                 this._previewAborter = abort;
 

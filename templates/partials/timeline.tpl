@@ -25,28 +25,28 @@
             Next <span aria-hidden="true">&rarr;</span>
         </button>
 
-        <div role="group" aria-label="Time granularity" class="flex gap-1 ml-auto">
+        <div role="group" aria-label="Time granularity" class="timeline-granularity ml-auto">
             <button
                 type="button"
-                class="btn btn-sm"
-                :class="granularity === 'year' ? 'btn-active' : ''"
+                class="timeline-gran-btn"
+                :class="granularity === 'year' ? 'active' : ''"
                 @click="setGranularity('year')"
                 :aria-pressed="granularity === 'year' ? 'true' : 'false'"
-            >Y</button>
+            >Year</button>
             <button
                 type="button"
-                class="btn btn-sm"
-                :class="granularity === 'month' ? 'btn-active' : ''"
+                class="timeline-gran-btn"
+                :class="granularity === 'month' ? 'active' : ''"
                 @click="setGranularity('month')"
                 :aria-pressed="granularity === 'month' ? 'true' : 'false'"
-            >M</button>
+            >Month</button>
             <button
                 type="button"
-                class="btn btn-sm"
-                :class="granularity === 'week' ? 'btn-active' : ''"
+                class="timeline-gran-btn"
+                :class="granularity === 'week' ? 'active' : ''"
                 @click="setGranularity('week')"
                 :aria-pressed="granularity === 'week' ? 'true' : 'false'"
-            >W</button>
+            >Week</button>
         </div>
     </div>
 
