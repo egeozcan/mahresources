@@ -155,7 +155,7 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
             chart.innerHTML = '';
 
             if (this.buckets.length === 0) {
-                chart.innerHTML = '<p class="text-center text-stone-400 py-4 text-sm">No data for this range.</p>';
+                chart.innerHTML = '<p class="text-center text-stone-600 py-4 text-sm">No data for this range.</p>';
                 return;
             }
 
@@ -222,7 +222,7 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
 
                 // Label below
                 const label = document.createElement('span');
-                label.className = 'text-stone-400 mt-1';
+                label.className = 'text-stone-600 mt-1';
                 label.style.fontSize = '0.5625rem';
                 label.style.lineHeight = '1';
                 label.style.whiteSpace = 'nowrap';

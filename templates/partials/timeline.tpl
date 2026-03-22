@@ -63,8 +63,7 @@
         class="timeline-chart"
         x-ref="chart"
         x-show="!loading && !error"
-        tabindex="0"
-        role="img"
+        role="group"
         :aria-label="'Bar chart showing ' + entityType + ' activity over time'"
     ></div>
 
