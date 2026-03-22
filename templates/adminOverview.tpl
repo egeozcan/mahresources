@@ -68,7 +68,7 @@
                             <span x-text="serverStats.hashWorkerCount + ' active'"></span>
                         </template>
                         <template x-if="!serverStats.hashWorkerEnabled">
-                            <span class="text-stone-400">Disabled</span>
+                            <span class="text-stone-500">Disabled</span>
                         </template>
                     </dd>
                 </div>
@@ -113,27 +113,27 @@
                 </div>
                 <div>
                     <dt class="text-stone-500 text-xs uppercase tracking-wider">Read-only DB</dt>
-                    <dd class="mt-0.5" :class="dataStats.config.hasReadOnlyDB ? 'text-green-700' : 'text-stone-400'"
+                    <dd class="mt-0.5" :class="dataStats.config.hasReadOnlyDB ? 'text-green-700' : 'text-stone-500'"
                         x-text="dataStats.config.hasReadOnlyDB ? 'Enabled' : 'Disabled'"></dd>
                 </div>
                 <div>
                     <dt class="text-stone-500 text-xs uppercase tracking-wider">FFmpeg</dt>
-                    <dd class="mt-0.5" :class="dataStats.config.ffmpegAvailable ? 'text-green-700' : 'text-stone-400'"
+                    <dd class="mt-0.5" :class="dataStats.config.ffmpegAvailable ? 'text-green-700' : 'text-stone-500'"
                         x-text="dataStats.config.ffmpegAvailable ? 'Enabled' : 'Disabled'"></dd>
                 </div>
                 <div>
                     <dt class="text-stone-500 text-xs uppercase tracking-wider">LibreOffice</dt>
-                    <dd class="mt-0.5" :class="dataStats.config.libreOfficeAvailable ? 'text-green-700' : 'text-stone-400'"
+                    <dd class="mt-0.5" :class="dataStats.config.libreOfficeAvailable ? 'text-green-700' : 'text-stone-500'"
                         x-text="dataStats.config.libreOfficeAvailable ? 'Enabled' : 'Disabled'"></dd>
                 </div>
                 <div>
                     <dt class="text-stone-500 text-xs uppercase tracking-wider">Full-text Search</dt>
-                    <dd class="mt-0.5" :class="dataStats.config.ftsEnabled ? 'text-green-700' : 'text-stone-400'"
+                    <dd class="mt-0.5" :class="dataStats.config.ftsEnabled ? 'text-green-700' : 'text-stone-500'"
                         x-text="dataStats.config.ftsEnabled ? 'Enabled' : 'Disabled'"></dd>
                 </div>
                 <div>
                     <dt class="text-stone-500 text-xs uppercase tracking-wider">Hash Workers</dt>
-                    <dd class="mt-0.5" :class="dataStats.config.hashWorkerEnabled ? 'text-green-700' : 'text-stone-400'">
+                    <dd class="mt-0.5" :class="dataStats.config.hashWorkerEnabled ? 'text-green-700' : 'text-stone-500'">
                         <span x-text="dataStats.config.hashWorkerEnabled ? 'Enabled' : 'Disabled'"></span>
                         <template x-if="dataStats.config.hashWorkerEnabled">
                             <span class="text-stone-500"> (<span x-text="dataStats.config.hashWorkerCount"></span> workers)</span>
@@ -147,23 +147,23 @@
                             <span x-text="dataStats.config.altFileSystems.join(', ')"></span>
                         </template>
                         <template x-if="!dataStats.config.altFileSystems || dataStats.config.altFileSystems.length === 0">
-                            <span class="text-stone-400">None</span>
+                            <span class="text-stone-500">None</span>
                         </template>
                     </dd>
                 </div>
                 <div>
                     <dt class="text-stone-500 text-xs uppercase tracking-wider">Ephemeral</dt>
-                    <dd class="mt-0.5" :class="dataStats.config.ephemeralMode ? 'text-amber-700' : 'text-stone-400'"
+                    <dd class="mt-0.5" :class="dataStats.config.ephemeralMode ? 'text-amber-700' : 'text-stone-500'"
                         x-text="dataStats.config.ephemeralMode ? 'Enabled' : 'Disabled'"></dd>
                 </div>
                 <div>
                     <dt class="text-stone-500 text-xs uppercase tracking-wider">Memory DB</dt>
-                    <dd class="mt-0.5" :class="dataStats.config.memoryDb ? 'text-amber-700' : 'text-stone-400'"
+                    <dd class="mt-0.5" :class="dataStats.config.memoryDb ? 'text-amber-700' : 'text-stone-500'"
                         x-text="dataStats.config.memoryDb ? 'Enabled' : 'Disabled'"></dd>
                 </div>
                 <div>
                     <dt class="text-stone-500 text-xs uppercase tracking-wider">Memory FS</dt>
-                    <dd class="mt-0.5" :class="dataStats.config.memoryFs ? 'text-amber-700' : 'text-stone-400'"
+                    <dd class="mt-0.5" :class="dataStats.config.memoryFs ? 'text-amber-700' : 'text-stone-500'"
                         x-text="dataStats.config.memoryFs ? 'Enabled' : 'Disabled'"></dd>
                 </div>
             </dl>
@@ -202,21 +202,21 @@
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Resources</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.resources)"></p>
                         <template x-if="dataStats.growth && dataStats.growth.last7Days">
-                            <p class="text-xs text-stone-400 mt-0.5">+<span x-text="formatNumber(dataStats.growth.last7Days.resources)"></span> this week</p>
+                            <p class="text-xs text-stone-500 mt-0.5">+<span x-text="formatNumber(dataStats.growth.last7Days.resources)"></span> this week</p>
                         </template>
                     </a>
                     <a href="/notes" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Notes</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.notes)"></p>
                         <template x-if="dataStats.growth && dataStats.growth.last7Days">
-                            <p class="text-xs text-stone-400 mt-0.5">+<span x-text="formatNumber(dataStats.growth.last7Days.notes)"></span> this week</p>
+                            <p class="text-xs text-stone-500 mt-0.5">+<span x-text="formatNumber(dataStats.growth.last7Days.notes)"></span> this week</p>
                         </template>
                     </a>
                     <a href="/groups" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Groups</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.groups)"></p>
                         <template x-if="dataStats.growth && dataStats.growth.last7Days">
-                            <p class="text-xs text-stone-400 mt-0.5">+<span x-text="formatNumber(dataStats.growth.last7Days.groups)"></span> this week</p>
+                            <p class="text-xs text-stone-500 mt-0.5">+<span x-text="formatNumber(dataStats.growth.last7Days.groups)"></span> this week</p>
                         </template>
                     </a>
                     <a href="/tags" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">
@@ -307,7 +307,7 @@
                         </div>
                     </template>
                     <template x-if="!expensiveStats.storageByContentType || expensiveStats.storageByContentType.length === 0">
-                        <p class="text-sm text-stone-400 font-mono">No data.</p>
+                        <p class="text-sm text-stone-500 font-mono">No data.</p>
                     </template>
                 </div>
 
@@ -325,7 +325,7 @@
                         </ol>
                     </template>
                     <template x-if="!expensiveStats.topTags || expensiveStats.topTags.length === 0">
-                        <p class="text-sm text-stone-400 font-mono">No tags.</p>
+                        <p class="text-sm text-stone-500 font-mono">No tags.</p>
                     </template>
                 </div>
 
@@ -343,7 +343,7 @@
                         </ol>
                     </template>
                     <template x-if="!expensiveStats.topCategories || expensiveStats.topCategories.length === 0">
-                        <p class="text-sm text-stone-400 font-mono">No categories.</p>
+                        <p class="text-sm text-stone-500 font-mono">No categories.</p>
                     </template>
                 </div>
 
