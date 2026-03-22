@@ -15,25 +15,25 @@ Files (called Resources), Notes, and Groups are stored in a database with tracke
 
 ## Key Features
 
-- **File storage with thumbnails** -- Store any file type. Images, videos, and Office documents get automatic thumbnails (videos require FFmpeg, documents require LibreOffice).
-- **Notes** -- Create text notes and link them to specific Resources and Groups.
-- **Nested Groups** -- Groups contain Resources, Notes, and other Groups, forming a hierarchy.
-- **Tags and Categories** -- Tag any entity. Categories define types for Groups (e.g., "Person", "Project").
-- **Full-text search** -- FTS5 (SQLite) or tsvector (PostgreSQL) search across all content, accessible via Cmd/Ctrl+K.
-- **Image similarity** -- Perceptual hashing finds visually similar images automatically.
-- **Resource versioning** -- Track versions of a Resource over time.
-- **Saved queries** -- Store and re-run raw SQL queries. For database-level write protection, configure `DB_READONLY_DSN` as a read-only connection.
-- **Group relations** -- Define typed relationships between Groups (e.g., "works at", "belongs to").
-- **Note blocks** -- Structured content blocks within Notes: text, heading, divider, gallery, references, todos, table, and calendar. Plugins can register additional block types.
-- **Note sharing** -- Generate share tokens for individual Notes and serve them on a separate read-only HTTP server.
-- **Series** -- Group Resources with shared metadata (e.g., pages of a scanned document).
-- **Download queue** -- Queue remote URL downloads with progress tracking via the Download Cockpit UI.
-- **Activity log** -- Tracks create, update, delete, and plugin operations across all entities.
-- **Custom templates** -- Categories and Note Types support custom HTML templates (header, sidebar, summary, avatar) rendered with Pongo2.
-- **Meta schemas** -- Define JSON Schemas on Categories and Resource Categories to validate and generate structured metadata forms.
-- **Plugin system** -- Lua plugins that intercept create/update/delete operations, add custom pages, run background jobs, perform full entity CRUD (`mah.db.create_*`, `mah.db.update_*`, `mah.db.delete_*`), and store per-plugin data via a key-value store (`mah.kv.*`).
-- **Paste upload** -- Paste images or text from the clipboard (Cmd/Ctrl+V) to create Resources with a preview-and-tag modal workflow.
-- **JSON API** -- Every page has a JSON equivalent (`Accept: application/json` or `.json` suffix) for scripting and integration.
+Any file type can be stored as a Resource. Images, videos, and Office documents get automatic **thumbnail generation** (videos require FFmpeg, documents require LibreOffice).
+
+**Notes** are text entries that link to specific Resources and Groups. Within a Note, **note blocks** provide structured content: text, heading, divider, gallery, references, todos, table, and calendar. Plugins can register additional block types. Individual Notes can be published with **note sharing** — generate a share token and serve it on a separate read-only HTTP server.
+
+Groups form a **nested hierarchy** — each Group can contain Resources, Notes, and other Groups. **Group relations** define typed connections between Groups (e.g., "works at", "belongs to").
+
+**Tags and categories** provide additional classification across Groups. Tags apply to any entity. Categories define types for Groups (e.g., "Person", "Project"), and Resource Categories do the same for Resources.
+
+**Full-text search** via FTS5 (SQLite) or tsvector (PostgreSQL) covers all content, accessible via Cmd/Ctrl+K. **Saved queries** let you store and re-run raw SQL — for database-level write protection, configure `DB_READONLY_DSN` as a read-only connection.
+
+**Perceptual hashing** finds visually similar images automatically across your library. Resources support **versioning** to track changes over time. A **series** groups Resources with shared metadata (e.g., pages of a scanned document).
+
+The **download queue** accepts remote URLs and tracks progress via the Download Cockpit UI. An **activity log** records create, update, delete, and plugin operations across all entities.
+
+Categories and Note Types support **custom templates** — HTML fragments (header, sidebar, summary, avatar) rendered with Pongo2. **Meta schemas** define JSON Schemas on Categories and Resource Categories to validate and generate structured metadata forms.
+
+A Lua **plugin system** can intercept create/update/delete operations, add custom pages, run background jobs, perform full entity CRUD (`mah.db.create_*`, `mah.db.update_*`, `mah.db.delete_*`), and store per-plugin data via a key-value store (`mah.kv.*`).
+
+**Paste upload** lets you paste images or text from the clipboard (Cmd/Ctrl+V) to create Resources with a preview-and-tag modal workflow. Every page has a **JSON API** equivalent (`Accept: application/json` or `.json` suffix) for scripting and integration.
 
 :::danger No Authentication
 
