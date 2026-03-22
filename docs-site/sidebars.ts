@@ -53,6 +53,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Advanced Features',
       items: [
+        'features/admin-overview',
         'features/versioning',
         'features/image-similarity',
         'features/saved-queries',
