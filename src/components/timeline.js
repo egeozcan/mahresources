@@ -157,9 +157,30 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
                 return;
             }
 
-            // Bars row (fixed height) and labels row (below, guaranteed space)
+            // Y-axis scale + bars row (fixed height), then labels row below
+            const chartRow = document.createElement('div');
+            chartRow.className = 'timeline-chart-row';
+
+            // Y-axis with tick marks
+            const yAxis = document.createElement('div');
+            yAxis.className = 'timeline-y-axis';
+            const ticks = this._yAxisTicks(this.maxCount);
+            ticks.forEach(tick => {
+                const tickEl = document.createElement('div');
+                tickEl.className = 'timeline-y-tick';
+                tickEl.style.bottom = (tick.value / this.maxCount * 100) + '%';
+                const label = document.createElement('span');
+                label.className = 'timeline-y-label';
+                label.textContent = tick.label;
+                tickEl.appendChild(label);
+                yAxis.appendChild(tickEl);
+            });
+
             const barsRow = document.createElement('div');
             barsRow.className = 'timeline-bars-row';
+
+            chartRow.appendChild(yAxis);
+            chartRow.appendChild(barsRow);
 
             const labelsRow = document.createElement('div');
             labelsRow.className = 'timeline-labels-row';
@@ -212,7 +233,7 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
                 labelsRow.appendChild(labelCell);
             });
 
-            chart.appendChild(barsRow);
+            chart.appendChild(chartRow);
             chart.appendChild(labelsRow);
         },
 
@@ -289,6 +310,20 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
             } finally {
                 this._previewAborter = null;
             }
+        },
+
+        _yAxisTicks(maxCount) {
+            // Generate ~4 nice round tick values from 0 to maxCount
+            if (maxCount <= 0) return [];
+            const rough = maxCount / 4;
+            const magnitude = Math.pow(10, Math.floor(Math.log10(rough)));
+            const nice = [1, 2, 5, 10].find(n => n * magnitude >= rough) * magnitude;
+            const ticks = [];
+            for (let v = 0; v <= maxCount; v += nice) {
+                if (v === 0) continue;
+                ticks.push({ value: v, label: v >= 1000 ? (v / 1000).toFixed(v % 1000 === 0 ? 0 : 1) + 'k' : String(v) });
+            }
+            return ticks;
         },
 
         _shortLabel(label, index) {
