@@ -55,6 +55,8 @@ type ResourceSearchQuery struct {
 	Ids              []uint
 	CreatedBefore    string
 	CreatedAfter     string
+	UpdatedBefore    string
+	UpdatedAfter     string
 	MetaQuery        []ColumnMeta
 	SortBy           []string
 	MaxResults       uint

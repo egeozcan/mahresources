@@ -21,6 +21,7 @@ func QueryQuery(query *query_models.QueryQuery) func(db *gorm.DB) *gorm.DB {
 		}
 
 		dbQuery = ApplyDateRange(dbQuery, "", query.CreatedBefore, query.CreatedAfter)
+		dbQuery = ApplyUpdatedDateRange(dbQuery, "", query.UpdatedBefore, query.UpdatedAfter)
 		dbQuery = ApplySortColumns(dbQuery, query.SortBy, "", "created_at desc")
 
 		return dbQuery

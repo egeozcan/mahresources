@@ -110,6 +110,10 @@ components:
                     items:
                         type: string
                     type: array
+                UpdatedAfter:
+                    type: string
+                UpdatedBefore:
+                    type: string
             type: object
         ColumnMetaPartial:
             type: object
@@ -305,6 +309,10 @@ components:
                         type: integer
                     type: array
                 URL:
+                    type: string
+                UpdatedAfter:
+                    type: string
+                UpdatedBefore:
                     type: string
             type: object
         GroupRelation:
@@ -671,6 +679,10 @@ components:
                     items:
                         type: integer
                     type: array
+                UpdatedAfter:
+                    type: string
+                UpdatedBefore:
+                    type: string
             type: object
         NoteType:
             properties:
@@ -791,6 +803,10 @@ components:
                         type: string
                     type: array
                 Text:
+                    type: string
+                UpdatedAfter:
+                    type: string
+                UpdatedBefore:
                     type: string
             type: object
         RelationshipTypeEditorQuery:
@@ -1185,6 +1201,10 @@ components:
                     items:
                         type: integer
                     type: array
+                UpdatedAfter:
+                    type: string
+                UpdatedBefore:
+                    type: string
             type: object
         ResourceVersion:
             properties:
@@ -1364,6 +1384,10 @@ components:
                     items:
                         type: string
                     type: array
+                UpdatedAfter:
+                    type: string
+                UpdatedBefore:
+                    type: string
             type: object
         VersionCleanupQuery:
             properties:
@@ -1441,6 +1465,14 @@ paths:
                     type: string
                 - in: query
                   name: CreatedAfter
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedAfter
                   schema:
                     type: string
                 - explode: true
@@ -1885,6 +1917,14 @@ paths:
                     type: string
                 - in: query
                   name: CreatedAfter
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedAfter
                   schema:
                     type: string
                 - in: query
@@ -2681,6 +2721,14 @@ paths:
                   schema:
                     type: string
                 - in: query
+                  name: UpdatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedAfter
+                  schema:
+                    type: string
+                - in: query
                   name: StartDateBefore
                   schema:
                     type: string
@@ -2900,6 +2948,14 @@ paths:
                     type: string
                 - in: query
                   name: CreatedAfter
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedAfter
                   schema:
                     type: string
                 - explode: true
@@ -3868,6 +3924,14 @@ paths:
                   name: CreatedAfter
                   schema:
                     type: string
+                - in: query
+                  name: UpdatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedAfter
+                  schema:
+                    type: string
                 - explode: true
                   in: query
                   name: MetaQuery
@@ -4395,6 +4459,14 @@ paths:
                     type: string
                 - in: query
                   name: CreatedAfter
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedAfter
                   schema:
                     type: string
                 - explode: true

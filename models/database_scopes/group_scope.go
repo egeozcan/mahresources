@@ -162,6 +162,7 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 		}
 
 		dbQuery = ApplyDateRange(dbQuery, "groups.", query.CreatedBefore, query.CreatedAfter)
+		dbQuery = ApplyUpdatedDateRange(dbQuery, "groups.", query.UpdatedBefore, query.UpdatedAfter)
 
 		if query.CategoryId != 0 {
 			dbQuery = dbQuery.Where("groups.category_id = ?", query.CategoryId)

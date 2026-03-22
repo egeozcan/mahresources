@@ -79,6 +79,18 @@ func ApplyDateRange(db *gorm.DB, prefix, before, after string) *gorm.DB {
 	return db
 }
 
+// ApplyUpdatedDateRange adds updated_at filters for the given column prefix if provided.
+// The prefix should be empty string for simple table queries, or "tablename." for joined queries.
+func ApplyUpdatedDateRange(db *gorm.DB, prefix, before, after string) *gorm.DB {
+	if before != "" {
+		db = db.Where(prefix+"updated_at <= ?", before)
+	}
+	if after != "" {
+		db = db.Where(prefix+"updated_at >= ?", after)
+	}
+	return db
+}
+
 // ApplySortColumns validates and applies multiple ORDER BY clauses.
 // tablePrefix should be "tablename." for joined queries, or empty string for simple queries.
 // defaultSort is applied as the final tiebreaker sort (e.g., "created_at desc").
