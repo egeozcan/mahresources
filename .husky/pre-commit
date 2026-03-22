@@ -10,8 +10,8 @@ if git diff --cached --name-only | grep -qE '\.(js|css|tpl)$|src/|vite\.config';
         exit 1
     fi
 
-    # Stage the rebuilt files (main entry + dynamic chunks + CSS)
-    git add public/dist/main.js public/dist/assets/ public/tailwind.css
+    # Stage the rebuilt files (adds new bundles, removes stale ones, + CSS)
+    git add -A public/dist/ public/tailwind.css
 fi
 
 # Auto-generate OpenAPI spec when API-related files change
