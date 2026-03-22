@@ -62,6 +62,9 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 
 	// Plugins
 	registerPluginRoutes(registry)
+
+	// Admin
+	registerAdminRoutes(registry)
 }
 
 func registerNoteShareRoutes(r *openapi.Registry) {
@@ -1486,5 +1489,34 @@ func registerPluginRoutes(r *openapi.Registry) {
 			{Name: "mode", Type: "string", Required: true, Description: "Render mode: 'view' or 'edit'"},
 		},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeHTML},
+	})
+}
+
+func registerAdminRoutes(r *openapi.Registry) {
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/admin/server-stats",
+		OperationID:          "getServerStats",
+		Summary:              "Get server statistics",
+		Tags:                 []string{"admin"},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/admin/data-stats",
+		OperationID:          "getDataStats",
+		Summary:              "Get data statistics",
+		Tags:                 []string{"admin"},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/admin/data-stats/expensive",
+		OperationID:          "getExpensiveStats",
+		Summary:              "Get expensive data statistics",
+		Tags:                 []string{"admin"},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 }

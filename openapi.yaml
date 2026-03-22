@@ -1374,6 +1374,39 @@ info:
     version: "1.0"
 openapi: 3.0.0
 paths:
+    /v1/admin/data-stats:
+        get:
+            operationId: getDataStats
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Get data statistics
+            tags:
+                - admin
+    /v1/admin/data-stats/expensive:
+        get:
+            operationId: getExpensiveStats
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Get expensive data statistics
+            tags:
+                - admin
+    /v1/admin/server-stats:
+        get:
+            operationId: getServerStats
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Get server statistics
+            tags:
+                - admin
     /v1/categories:
         get:
             operationId: listCategories
@@ -4382,6 +4415,8 @@ servers:
     - description: API Version 1
       url: /v1
 tags:
+    - description: Operations related to admin
+      name: admin
     - description: Operations related to blocks
       name: blocks
     - description: Operations related to categories

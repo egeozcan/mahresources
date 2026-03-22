@@ -78,6 +78,7 @@ func main() {
 	rootCmd.AddCommand(commands.NewJobsCmd(c, opts))
 	rootCmd.AddCommand(commands.NewPluginCmd(c, opts))
 	rootCmd.AddCommand(commands.NewPluginsCmd(c, opts))
+	rootCmd.AddCommand(commands.NewAdminCmd(c, opts))
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

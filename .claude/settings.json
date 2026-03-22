@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.command' | grep -q 'git commit' && git add -A public/dist/ || true",
+            "timeout": 10,
+            "statusMessage": "Staging JS bundle changes..."
+          }
+        ]
+      }
+    ]
+  }
+}

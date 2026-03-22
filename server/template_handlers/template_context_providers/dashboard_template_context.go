@@ -88,7 +88,7 @@ func DashboardContextProvider(context *application_context.MahresourcesContext) 
 
 		return pongo2.Context{
 			"pageTitle":       "Dashboard",
-			"dashboardPage":   true,
+			"hideSidebar": true,
 			"recentResources": recentResources,
 			"recentNotes":     recentNotes,
 			"recentGroups":    recentGroups,
