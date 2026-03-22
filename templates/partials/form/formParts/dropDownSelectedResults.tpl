@@ -13,8 +13,8 @@
                         text-amber-600 hover:bg-amber-200 hover:text-amber-700 focus:outline-none
                         focus:bg-amber-700 focus:text-white"
                 tabindex="0"
-                @keydown.enter.prevent="selectedResults.splice(index, 1); $event.target.closest('button').focus()"
-                @keydown.space.prevent="selectedResults.splice(index, 1); $event.target.closest('button').focus()"
+                @keydown.enter.prevent="let el = $el.closest('[x-data]'); selectedResults.splice(index, 1); $nextTick(() => el.querySelector('input[role=combobox]')?.focus())"
+                @keydown.space.prevent="let el = $el.closest('[x-data]'); selectedResults.splice(index, 1); $nextTick(() => el.querySelector('input[role=combobox]')?.focus())"
         >
             <span x-text="'Remove ' + result.Name" class="sr-only"></span>
             <svg class="h-2 w-2" stroke="currentColor" fill="none" viewBox="0 0 8 8">

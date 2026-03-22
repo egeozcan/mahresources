@@ -340,6 +340,9 @@ export function autocompleter({
             },
 
             ['@keydown.arrow-up.prevent']() {
+                if (!this.dropdownActive && this.results.length > 0) {
+                    this.dropdownActive = true;
+                }
                 if (this.results.length === 0) return;
                 this.selectedIndex = this.selectedIndex === 0 ? this.results.length - 1 : this.selectedIndex - 1;
                 this.announceSelectedItem();
@@ -347,6 +350,9 @@ export function autocompleter({
             },
 
             ['@keydown.arrow-down.prevent']() {
+                if (!this.dropdownActive && this.results.length > 0) {
+                    this.dropdownActive = true;
+                }
                 if (this.results.length === 0) return;
                 this.selectedIndex = (this.selectedIndex + 1) % this.results.length;
                 this.announceSelectedItem();
@@ -358,10 +364,10 @@ export function autocompleter({
 
                 if (e.target.value === '') {
                     const form = e.target.closest('form');
-                    if (form && !standalone) {
+                    if (form && !standalone && !form.dataset.inlineEditor) {
                         form.requestSubmit();
+                        return;
                     }
-                    return;
                 }
 
                 this.pushVal(e);

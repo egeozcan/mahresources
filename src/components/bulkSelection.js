@@ -311,6 +311,10 @@ export function setupBulkSelectionListeners() {
       })();
 
       const form = document.createElement("form");
+      form.dataset.inlineEditor = "true";
+      form.addEventListener("submit", e => {
+        e.preventDefault();
+      });
       form.addEventListener("multiple-input", e => {
         fetch('/v1/' + entityType + 's/replaceTags', { method: "POST", body: new FormData(form) });
       })
