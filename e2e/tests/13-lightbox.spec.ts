@@ -1408,6 +1408,7 @@ test.describe('Lightbox on Group Detail Page', () => {
         { id: tag.id, name: tag.name, ts: Date.now() },
         null, null, null, null, null, null, null, null,
       ];
+      data.version = 3;
       data.activeTab = 4; // RECENT tab
       if (!data.quickSlots) {
         data.quickSlots = [Array(9).fill(null), Array(9).fill(null), Array(9).fill(null), Array(9).fill(null)];
@@ -1466,6 +1467,7 @@ test.describe('Lightbox on Group Detail Page', () => {
         null, null, null, null, null, null, null, null,
       ];
       // Ensure all quick-add slots are empty, start on QUICK 1 tab
+      data.version = 3;
       data.quickSlots = [Array(9).fill(null), Array(9).fill(null), Array(9).fill(null), Array(9).fill(null)];
       data.activeTab = 0;
       localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
