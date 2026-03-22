@@ -79,8 +79,9 @@ Implementation: new `GetServerStats()` method on `MahresourcesContext`. Reads fr
 - `runtime.Version()` for Go version
 - `db.DB().Stats()` for connection pool stats
 - `os.Stat()` on DSN path for SQLite file size
-- A `startedAt` timestamp captured once at context initialization
-- Existing config fields for worker status
+- A new `StartedAt` field added to `MahresourcesContext`, set in `NewMahresourcesContext`
+- Config fields for worker status (hash worker settings and mode flags need to be added to `MahresourcesConfig` and plumbed through from `main.go` — see "Infrastructure Changes" section)
+- `downloadManager.ActiveCount()` for download queue length
 
 ## Configuration Summary (part of `/v1/admin/data-stats`)
 
@@ -161,7 +162,7 @@ Response shape (nested under `counts` and `growth` keys):
 }
 ```
 
-Implementation: uses all existing `Get*Count()` methods in parallel via goroutines with `sync.WaitGroup`. Total storage via `SELECT SUM(file_size)` on resources and resource_versions tables. Growth via `SELECT COUNT(*) WHERE created_at > ?` queries on indexed `created_at` columns, tracked for resources, notes, and groups only.
+Implementation: uses existing `Get*Count()` methods (plus a new `GetResourceVersionsCount()`) in parallel via goroutines with `sync.WaitGroup`. Total storage via `SELECT SUM(file_size)` on resources and resource_versions tables. Growth via `SELECT COUNT(*) WHERE created_at > ?` queries on indexed `created_at` columns, tracked for resources, notes, and groups only.
 
 Rendered as a grid of cards. Each entity type gets a small card with its count and a link to the corresponding list page. Growth shown as "+N this week" beneath the main count.
 
@@ -192,7 +193,7 @@ Response shape:
     "totalEntries": 528104,
     "byLevel": {
       "info": 510000,
-      "warn": 15000,
+      "warning": 15000,
       "error": 3104
     },
     "recentErrors": 42
@@ -296,6 +297,15 @@ Accessibility test in `e2e/tests/accessibility/`:
 - Test `mr admin --data` output contains only data stats
 - Test `mr admin --json` output is valid JSON matching expected shape
 
+## Infrastructure Changes
+
+Several config values needed by the admin endpoints are currently local variables in `main.go` and not accessible from `MahresourcesContext`. The following must be added to `MahresourcesConfig` and plumbed through:
+
+- **Hash worker settings**: `HashWorkerEnabled`, `HashWorkerCount`, `HashBatchSize`, `HashPollInterval`, `HashSimilarityThreshold`, `HashCacheSize` — currently local vars in `main.go`
+- **Mode flags**: `EphemeralMode`, `MemoryDB`, `MemoryFS` — currently on `MahresourcesInputConfig` but not on `MahresourcesConfig`
+- **Server start time**: new `StartedAt time.Time` field on `MahresourcesContext`, set to `time.Now()` in `NewMahresourcesContext`
+- **Resource version count**: new `GetResourceVersionsCount()` method (no existing count method for this entity)
+
 ## Files to Create/Modify
 
 ### New Files
@@ -307,12 +317,15 @@ Accessibility test in `e2e/tests/accessibility/`:
 - `src/components/adminOverview.js` — Alpine.js component
 - `e2e/tests/admin-overview.spec.ts` — browser E2E tests
 - `e2e/tests/cli/admin.spec.ts` — CLI E2E tests
+- `cmd/mr/commands/admin.go` — CLI `admin` subcommand
 
 ### Modified Files
+- `application_context/context.go` — add `StartedAt` field, set in constructor
+- `application_context/config.go` (or equivalent) — add hash worker and mode fields to `MahresourcesConfig`
+- `main.go` — plumb hash worker settings and mode flags into config
 - `server/routes.go` — add template route and three API routes
 - `server/routes_openapi.go` — register three API endpoints for OpenAPI
 - `server/template_handlers/template_context_providers/static_template_context.go` — add "Overview" to `adminMenu`
 - `src/main.js` — register `adminOverview` Alpine component
-- `src/components/adminOverview.js` — new component (listed above)
-- CLI command registration (existing CLI infrastructure)
+- `cmd/mr/main.go` — register `admin` subcommand
 - Docs site pages and screenshot manifest
