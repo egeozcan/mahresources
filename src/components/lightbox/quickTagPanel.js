@@ -310,17 +310,11 @@ export const quickTagPanelMethods = {
       const state = this.slotMatchState(index);
 
       if (state === 'all') {
-        // Remove ALL
-        const results = await Promise.allSettled(tags.map(tag => this.saveTagRemoval(tag)));
-        if (results.some(r => r.status === 'rejected')) {
-          this._reconcileAfterPartialFailure();
-        }
+        await this._batchToggleTags(tags, 'remove');
       } else {
-        // Add MISSING
         const missing = tags.filter(tag => !this.isTagOnResource(tag.ID));
-        const results = await Promise.allSettled(missing.map(tag => this.saveTagAddition(tag)));
-        if (results.some(r => r.status === 'rejected')) {
-          this._reconcileAfterPartialFailure();
+        if (missing.length > 0) {
+          await this._batchToggleTags(missing, 'add');
         }
       }
     } finally {
@@ -328,11 +322,64 @@ export const quickTagPanelMethods = {
     }
   },
 
-  _reconcileAfterPartialFailure() {
+  async _batchToggleTags(tags, action) {
     const resourceId = this.getCurrentItem()?.id;
-    if (resourceId) {
+    if (!resourceId) return;
+
+    const endpoint = action === 'add' ? '/v1/resources/addTags' : '/v1/resources/removeTags';
+
+    // Optimistic UI update
+    if (this.resourceDetails) {
+      if (!this.resourceDetails.Tags) this.resourceDetails.Tags = [];
+      for (const tag of tags) {
+        if (action === 'add') {
+          if (!this.resourceDetails.Tags.some(t => t.ID === tag.ID)) {
+            this.resourceDetails.Tags.push(tag);
+          }
+        } else {
+          const idx = this.resourceDetails.Tags.findIndex(t => t.ID === tag.ID);
+          if (idx !== -1) this.resourceDetails.Tags.splice(idx, 1);
+        }
+      }
+    }
+
+    try {
+      const formData = new FormData();
+      formData.append('ID', resourceId);
+      for (const tag of tags) {
+        formData.append('EditedId', tag.ID);
+      }
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        body: formData,
+        headers: { 'Accept': 'application/json' },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to ${action} tags: ${response.status}`);
+      }
+
+      if (this.resourceDetails) {
+        this.detailsCache.set(resourceId, { ...this.resourceDetails });
+      }
+      this.needsRefreshOnClose = true;
+
+      const names = tags.map(t => t.Name).join(', ');
+      this.announce(`${action === 'add' ? 'Added' : 'Removed'} tags: ${names}`);
+
+      // Record each as recent tag
+      if (action === 'add') {
+        for (const tag of tags) {
+          this.recordRecentTag(tag);
+        }
+      }
+    } catch (err) {
+      console.error(`Failed to ${action} tags:`, err);
+      // Roll back optimistic update
       this.detailsCache.delete(resourceId);
-      this.fetchResourceDetails();
+      await this.fetchResourceDetails();
+      this.announce(`Failed to ${action} tags`);
     }
   },
 
