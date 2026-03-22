@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -49,6 +50,22 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dm %ds", minutes, seconds)
 	}
 	return fmt.Sprintf("%ds", seconds)
+}
+
+// maskDSN redacts credentials from a database connection string.
+// "postgres://user:pass@host/db" → "postgres://***@host/db"
+// File paths and memory DSNs are returned as-is.
+func maskDSN(dsn string) string {
+	if dsn == "" || dsn == ":memory:" {
+		return dsn
+	}
+	// Look for userinfo in URI-style DSNs (scheme://user:pass@host)
+	if at := strings.Index(dsn, "@"); at > 0 {
+		if scheme := strings.Index(dsn, "://"); scheme >= 0 && scheme < at {
+			return dsn[:scheme+3] + "***" + dsn[at:]
+		}
+	}
+	return dsn
 }
 
 // ---- Task 2: GetServerStats ----
@@ -131,13 +148,8 @@ func (ctx *MahresourcesContext) GetServerStats() (*ServerStats, error) {
 			dsn = dsn[5:]
 		}
 		// Strip query string
-		if idx := len(dsn); idx > 0 {
-			for i, c := range dsn {
-				if c == '?' {
-					dsn = dsn[:i]
-					break
-				}
-			}
+		if i := strings.IndexByte(dsn, '?'); i >= 0 {
+			dsn = dsn[:i]
 		}
 		if info, err := os.Stat(dsn); err == nil {
 			stats.DBFileSizeBytes = info.Size()
@@ -190,7 +202,7 @@ type ConfigSummary struct {
 	HashWorkerEnabled        bool     `json:"hashWorkerEnabled"`
 	BindAddress              string   `json:"bindAddress"`
 	FileSavePath             string   `json:"fileSavePath"`
-	DbDsn                    string   `json:"dbDsn"`
+	DbDsnMasked              string   `json:"dbDsn"`
 	HasReadOnlyDB            bool     `json:"hasReadOnlyDB"`
 	FfmpegAvailable          bool     `json:"ffmpegAvailable"`
 	LibreOfficeAvailable     bool     `json:"libreOfficeAvailable"`
@@ -378,7 +390,7 @@ func (ctx *MahresourcesContext) GetDataStats() (*DataStats, error) {
 		HashWorkerEnabled:       ctx.Config.HashWorkerEnabled,
 		BindAddress:             ctx.Config.BindAddress,
 		FileSavePath:            ctx.Config.FileSavePath,
-		DbDsn:                   ctx.Config.DbDsn,
+		DbDsnMasked:             maskDSN(ctx.Config.DbDsn),
 		HasReadOnlyDB:           ctx.Config.DbReadOnlyDsn != "",
 		FfmpegAvailable:         ctx.Config.FfmpegPath != "",
 		LibreOfficeAvailable:    ctx.Config.LibreOfficePath != "",
