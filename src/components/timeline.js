@@ -86,7 +86,9 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
             this.error = null;
 
             const params = new URLSearchParams(window.location.search);
-            params.set('granularity', this.granularity);
+            // Backend expects 'yearly'/'monthly'/'weekly', frontend uses 'year'/'month'/'week'
+            const granularityMap = { year: 'yearly', month: 'monthly', week: 'weekly' };
+            params.set('granularity', granularityMap[this.granularity] || 'monthly');
             params.set('anchor', this.anchor);
             params.set('columns', String(this.columns));
 
@@ -102,8 +104,8 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
                 this.hasMore = data.hasMore || { left: true, right: false };
                 this.maxCount = 0;
                 for (const b of this.buckets) {
-                    const created = b.createdCount || 0;
-                    const updated = b.updatedCount || 0;
+                    const created = b.created || 0;
+                    const updated = b.updated || 0;
                     if (created > this.maxCount) this.maxCount = created;
                     if (updated > this.maxCount) this.maxCount = updated;
                 }
@@ -175,8 +177,8 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
                 col.style.gap = '1px';
                 col.style.minWidth = '0';
 
-                const createdCount = bucket.createdCount || 0;
-                const updatedCount = bucket.updatedCount || 0;
+                const createdCount = bucket.created || 0;
+                const updatedCount = bucket.updated || 0;
 
                 // Updated bar (behind/lighter)
                 if (updatedCount > 0) {
@@ -250,7 +252,7 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
             this.selectedBar = index;
             this.selectedBarType = barType;
 
-            const count = barType === 'created' ? (bucket.createdCount || 0) : (bucket.updatedCount || 0);
+            const count = barType === 'created' ? (bucket.created || 0) : (bucket.updated || 0);
             const typeLabel = barType === 'created' ? 'Created' : 'Updated';
             this.previewTitle = bucket.label + ' \u2014 ' + typeLabel + ' (' + count + ')';
             this.previewTotalCount = count;
