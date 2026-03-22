@@ -86,7 +86,6 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
             this.error = null;
 
             const params = new URLSearchParams(window.location.search);
-            // Backend expects 'yearly'/'monthly'/'weekly', frontend uses 'year'/'month'/'week'
             const granularityMap = { year: 'yearly', month: 'monthly', week: 'weekly' };
             params.set('granularity', granularityMap[this.granularity] || 'monthly');
             params.set('anchor', this.anchor);
@@ -151,49 +150,36 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
             const chart = this.$refs.chart;
             if (!chart) return;
 
-            // Clear existing content
             chart.innerHTML = '';
 
-            if (this.buckets.length === 0) {
-                chart.innerHTML = '<p class="text-center text-stone-600 py-4 text-sm">No data for this range.</p>';
+            if (this.buckets.length === 0 || this.maxCount === 0) {
+                chart.innerHTML = '<p class="text-center text-stone-500 py-8 text-sm">No activity in this period.</p>';
                 return;
             }
 
             // Bars row (fixed height) and labels row (below, guaranteed space)
             const barsRow = document.createElement('div');
-            barsRow.style.display = 'flex';
-            barsRow.style.alignItems = 'flex-end';
-            barsRow.style.gap = '2px';
-            barsRow.style.height = '160px';
+            barsRow.className = 'timeline-bars-row';
 
             const labelsRow = document.createElement('div');
-            labelsRow.style.display = 'flex';
-            labelsRow.style.gap = '2px';
-            labelsRow.style.marginTop = '4px';
+            labelsRow.className = 'timeline-labels-row';
 
             this.buckets.forEach((bucket, index) => {
-                // Bar column
-                const col = document.createElement('div');
-                col.style.flex = '1';
-                col.style.display = 'flex';
-                col.style.flexDirection = 'column';
-                col.style.alignItems = 'center';
-                col.style.height = '100%';
-                col.style.justifyContent = 'flex-end';
-                col.style.gap = '1px';
-                col.style.minWidth = '0';
-
                 const createdCount = bucket.created || 0;
                 const updatedCount = bucket.updated || 0;
+                const tooltipText = bucket.label + ' \u2014 ' + createdCount + ' created, ' + updatedCount + ' updated';
+
+                // Bar column
+                const col = document.createElement('div');
+                col.className = 'timeline-bucket-col';
+                col.title = tooltipText;
 
                 if (updatedCount > 0) {
                     const updatedBar = document.createElement('button');
                     updatedBar.type = 'button';
                     updatedBar.className = 'timeline-bar timeline-bar-updated' + (this.selectedBar === index && this.selectedBarType === 'updated' ? ' selected' : '');
                     updatedBar.style.height = this.barHeight(updatedCount);
-                    updatedBar.style.width = '100%';
-                    updatedBar.setAttribute('aria-label', bucket.label + ': ' + updatedCount + ' updated');
-                    updatedBar.title = bucket.label + ': ' + updatedCount + ' updated';
+                    updatedBar.setAttribute('aria-label', tooltipText);
                     updatedBar.addEventListener('click', () => this.selectBar(index, 'updated'));
                     col.appendChild(updatedBar);
                 }
@@ -203,19 +189,14 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
                     createdBar.type = 'button';
                     createdBar.className = 'timeline-bar timeline-bar-created' + (this.selectedBar === index && this.selectedBarType === 'created' ? ' selected' : '');
                     createdBar.style.height = this.barHeight(createdCount);
-                    createdBar.style.width = '100%';
-                    createdBar.setAttribute('aria-label', bucket.label + ': ' + createdCount + ' created');
-                    createdBar.title = bucket.label + ': ' + createdCount + ' created';
+                    createdBar.setAttribute('aria-label', tooltipText);
                     createdBar.addEventListener('click', () => this.selectBar(index, 'created'));
                     col.appendChild(createdBar);
                 }
 
                 if (createdCount === 0 && updatedCount === 0) {
                     const emptyBar = document.createElement('div');
-                    emptyBar.style.height = '2px';
-                    emptyBar.style.width = '100%';
-                    emptyBar.style.background = '#e7e5e4';
-                    emptyBar.style.borderRadius = '2px';
+                    emptyBar.className = 'timeline-bar-empty';
                     col.appendChild(emptyBar);
                 }
 
@@ -223,16 +204,9 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
 
                 // Label cell (separate row, always visible)
                 const labelCell = document.createElement('div');
-                labelCell.style.flex = '1';
-                labelCell.style.minWidth = '0';
-                labelCell.style.textAlign = 'center';
-                labelCell.style.overflow = 'hidden';
-                labelCell.style.textOverflow = 'ellipsis';
+                labelCell.className = 'timeline-label-cell';
                 const label = document.createElement('span');
-                label.className = 'text-stone-600';
-                label.style.fontSize = '0.6875rem';
-                label.style.lineHeight = '1';
-                label.style.whiteSpace = 'nowrap';
+                label.className = 'timeline-label';
                 label.textContent = this._shortLabel(bucket.label, index);
                 labelCell.appendChild(label);
                 labelsRow.appendChild(labelCell);
@@ -276,15 +250,15 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
             this.selectedBar = index;
             this.selectedBarType = barType;
 
-            const count = barType === 'created' ? (bucket.created || 0) : (bucket.updated || 0);
-            const typeLabel = barType === 'created' ? 'Created' : 'Updated';
-            this.previewTitle = bucket.label + ' \u2014 ' + typeLabel + ' (' + count + ')';
-            this.previewTotalCount = count;
+            const createdCount = bucket.created || 0;
+            const updatedCount = bucket.updated || 0;
+            this.previewTitle = bucket.label + ' \u2014 ' + createdCount + ' created, ' + updatedCount + ' updated';
+            this.previewTotalCount = barType === 'created' ? createdCount : updatedCount;
 
             // Re-render chart to update selected state
             this.renderChart();
 
-            // Fetch rendered HTML from the default list view
+            // Fetch preview via .body suffix (returns body fragment, no full page layout)
             if (this._previewAborter) {
                 this._previewAborter();
                 this._previewAborter = null;
@@ -294,19 +268,14 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
             params.set('pageSize', '20');
 
             try {
-                const url = this.defaultView + '?' + params.toString();
+                const url = this.defaultView + '.body?' + params.toString();
                 const { abort, ready } = abortableFetch(url);
                 this._previewAborter = abort;
 
                 const response = await ready;
                 if (!response.ok) throw new Error('HTTP ' + response.status);
 
-                const html = await response.text();
-                const parser = new DOMParser();
-                const doc = parser.parseFromString(html, 'text/html');
-                const listContainer = doc.querySelector('.list-container') ||
-                                      doc.querySelector('.items-container');
-                this.previewHtml = listContainer ? listContainer.innerHTML : '<p class="text-stone-500 text-sm">No preview available.</p>';
+                this.previewHtml = await response.text();
             } catch (err) {
                 if (err.name !== 'AbortError') {
                     console.error('Failed to load preview:', err);
@@ -318,18 +287,15 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
         },
 
         _shortLabel(label, index) {
-            // For dense charts (>10 columns), shorten monthly labels like "2025-03"
-            // to just "03", showing full year only when it changes or on first label
             if (this.buckets.length <= 10) return label;
 
-            // Monthly format: "YYYY-MM"
+            // Monthly format: "YYYY-MM" -> abbreviated
             const monthMatch = label.match(/^(\d{4})-(\d{2})$/);
             if (monthMatch) {
                 const year = monthMatch[1];
                 const month = monthMatch[2];
                 const prevLabel = index > 0 ? this.buckets[index - 1].label : '';
                 const prevYear = prevLabel.slice(0, 4);
-                // Show year on first label or when year changes
                 if (index === 0 || year !== prevYear) {
                     return year + '-' + month;
                 }
