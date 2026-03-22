@@ -25,7 +25,8 @@ A timeline view available on all entity list views (Resources, Notes, Groups, Ta
 ## Prerequisites
 
 **Query model extensions needed:**
-- `CategoryQuery` and `QueryQuery` currently lack `CreatedBefore`, `CreatedAfter`, and `SortBy` fields. These must be added (along with corresponding database scopes) before the timeline can work for Categories and Queries. This is a small addition following the existing pattern in `ResourceSearchQuery`/`NoteQuery`/`GroupQuery`.
+- `CategoryQuery` and `QueryQuery` currently lack `CreatedBefore`, `CreatedAfter`, and `SortBy` fields. These must be added (along with corresponding database scopes) before the timeline can work for Categories and Queries. This is a small addition following the existing pattern in `ResourceSearchQuery`/`NoteQuery`/`GroupQuery`. **Note:** `listQueries.tpl` already renders `SortBy`, `CreatedBefore`, and `CreatedAfter` sidebar inputs, but the `QueryQuery` struct only has `Name` and `Text` — those sidebar controls are present but non-functional today. This prerequisite fixes a pre-existing bug.
+- The `listCategories.tpl` sidebar only has `Name` and `Description` inputs. Date filter inputs (`CreatedBefore`/`CreatedAfter`) must be added to the Category sidebar template so users can see and adjust date filters set by timeline "Show all" navigation.
 - `UpdatedBefore` and `UpdatedAfter` query parameters must be added to all entity search models. Currently only `CreatedBefore`/`CreatedAfter` exist. This is needed so "Show all" on the "updated" bar filters correctly by `updated_at` rather than `created_at`.
 
 ## Architecture
@@ -47,7 +48,7 @@ GET /v1/{entity}/timeline
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `granularity` | string | `monthly` | `yearly`, `monthly`, or `weekly` |
-| `anchor` | date | today | Date to anchor the rightmost column to |
+| `anchor` | string (`YYYY-MM-DD`) | today | Date to anchor the rightmost column to |
 | `columns` | int | 15 | Number of buckets to return (frontend calculates from available width) |
 | All existing entity query params | — | — | `Name`, `Tags`, `Groups`, `CreatedBefore`, `CreatedAfter`, etc. |
 
@@ -72,14 +73,12 @@ GET /v1/{entity}/timeline
 ```
 
 - `start` is inclusive, `end` is exclusive (e.g., Oct 2025 = `start: 2025-10-01`, `end: 2025-11-01`). This makes "Show all" link construction straightforward: `CreatedAfter=start&CreatedBefore=end`
-- `hasMore.right` is `false` when the rightmost bucket includes today
+- `hasMore.right` is `false` when the rightmost bucket includes today. For weekly granularity, the rightmost bucket may extend past today (e.g., if today is Wednesday, the week bucket covers Mon–Sun) — this is fine; the bucket still includes data up to now, and the label shows the full week range.
 - Buckets are ordered chronologically (oldest first)
 
-**Implementation:** SQL `GROUP BY` on date-truncated `created_at`/`updated_at`, running through the same GORM scopes that power existing list views. Two separate aggregation queries (one for created, one for updated where `updated_at > created_at`) joined by bucket label. Empty buckets within the range return zero counts.
+**Implementation:** The Go backend generates the complete sequence of bucket boundaries (start/end date pairs) based on granularity, anchor, and column count. For each bucket, it runs a `COUNT(*) WHERE created_at >= ? AND created_at < ?` query (and a separate one for `updated_at` where `updated_at > created_at`). The existing GORM scopes for entity filters are applied to both queries.
 
-**SQL dialect handling:** Date truncation differs between SQLite and PostgreSQL. A dialect-aware helper function must be created following the existing pattern (e.g., `GetLikeOperator` in `database_scopes/db_utils.go`):
-- PostgreSQL: `DATE_TRUNC('month', created_at)`, `DATE_TRUNC('week', created_at)`, `DATE_TRUNC('year', created_at)`
-- SQLite: `STRFTIME('%Y-%m', created_at)`, `STRFTIME('%Y-%W', created_at)`, `STRFTIME('%Y', created_at)`
+This boundary-based approach (rather than SQL `GROUP BY` on date-truncated columns) avoids dialect-specific date truncation differences between SQLite and PostgreSQL, and naturally produces zero-filled buckets for periods with no data. The bucket boundary generation happens entirely in Go code.
 
 ### Frontend Component
 
@@ -115,7 +114,7 @@ Each template:
 - Extends the base layout
 - Uses the **same sidebar block** as the entity's existing list template (same filter form, same popular tags)
 - Body block contains the Alpine.js timeline component div
-- The body block is identical across all 6 templates — only the sidebar block differs per entity. A shared `partials/timeline.tpl` partial holds the chart markup; each entity template includes it.
+- The body block is identical across all 6 templates — only the sidebar block differs per entity. A shared `partials/timeline.tpl` partial holds the chart markup; each entity template includes it with parameters: `entityApiUrl` (e.g., `/v1/resources`), `entityType` (e.g., `resources`), `entityDefaultView` (e.g., `/resources` — for "Show all" navigation).
 
 **View switcher additions:**
 
@@ -130,14 +129,14 @@ Each template:
 
 New route per entity following existing patterns in the template context providers:
 
-- `/resources/timeline` — ResourceTimelineContextProvider
-- `/notes/timeline` — NoteTimelineContextProvider
-- `/groups/timeline` — GroupTimelineContextProvider
-- `/tags/timeline` — TagTimelineContextProvider
-- `/categories/timeline` — CategoryTimelineContextProvider
-- `/queries/timeline` — QueryTimelineContextProvider
+- `/resources/timeline` — lightweight context provider (sidebar data only, skips entity list query)
+- `/notes/timeline` — lightweight context provider (sidebar data only)
+- `/groups/timeline` — lightweight context provider (sidebar data only)
+- `/tags/timeline` — reuses existing `TagListContextProvider` (lightweight already)
+- `/categories/timeline` — reuses existing `CategoryListContextProvider` (lightweight already)
+- `/queries/timeline` — reuses existing `QueryListContextProvider` (lightweight already)
 
-Each reuses the same query decoding and sidebar data fetching as the existing list context provider for that entity.
+**Context provider strategy:** The timeline view doesn't need the actual entity list data (chart data comes from the timeline API via Alpine.js). For Resources, Notes, and Groups — where the list query is expensive — new lightweight context providers fetch only sidebar data (popular tags, query state for filter form, display options). For Tags, Categories, and Queries — where the existing list context providers are already lightweight — reuse them directly. This avoids unnecessary database work while minimizing new code.
 
 New timeline API endpoints must also be registered in `server/routes_openapi.go` in the appropriate `register*Routes` functions for OpenAPI spec generation.
 
