@@ -59,8 +59,9 @@ func (ctx *MahresourcesContext) CategoryCRUD() (
 	*CRUDWriter[models.Category, *query_models.CategoryCreator],
 ) {
 	reader := NewCRUDReader[models.Category, *query_models.CategoryQuery](ctx.db, CRUDReaderConfig[*query_models.CategoryQuery]{
-		ScopeFn:      database_scopes.CategoryQuery,
-		PreloadAssoc: true,
+		ScopeFn:       ScopeWithIgnoreSort(database_scopes.CategoryQuery),
+		ScopeFnNoSort: ScopeWithIgnoreSortForCount(database_scopes.CategoryQuery),
+		PreloadAssoc:  true,
 	})
 
 	writer := NewCRUDWriter[models.Category, *query_models.CategoryCreator](
@@ -127,8 +128,9 @@ func (ctx *MahresourcesContext) QueryCRUD() (
 	*CRUDWriter[models.Query, *query_models.QueryCreator],
 ) {
 	reader := NewCRUDReader[models.Query, *query_models.QueryQuery](ctx.db, CRUDReaderConfig[*query_models.QueryQuery]{
-		ScopeFn:      database_scopes.QueryQuery,
-		PreloadAssoc: false, // Query model doesn't have associations to preload
+		ScopeFn:       ScopeWithIgnoreSort(database_scopes.QueryQuery),
+		ScopeFnNoSort: ScopeWithIgnoreSortForCount(database_scopes.QueryQuery),
+		PreloadAssoc:  false, // Query model doesn't have associations to preload
 	})
 
 	writer := NewCRUDWriter[models.Query, *query_models.QueryCreator](

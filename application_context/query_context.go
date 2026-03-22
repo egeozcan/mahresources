@@ -35,7 +35,7 @@ func (ctx *MahresourcesContext) RunReadOnlyQueryByName(queryName string, params 
 func (ctx *MahresourcesContext) GetQueries(offset, maxResults int, searchQuery *query_models.QueryQuery) ([]models.Query, error) {
 	var res []models.Query
 
-	if err := ctx.db.Scopes(database_scopes.QueryQuery(searchQuery)).Limit(maxResults).Offset(offset).Model(&res).Find(&res).Error; err != nil {
+	if err := ctx.db.Scopes(database_scopes.QueryQuery(searchQuery, false)).Limit(maxResults).Offset(offset).Model(&res).Find(&res).Error; err != nil {
 		return nil, err
 	}
 
@@ -46,7 +46,7 @@ func (ctx *MahresourcesContext) GetQueriesCount(queryQ *query_models.QueryQuery)
 	var query models.Query
 	var count int64
 
-	return count, ctx.db.Scopes(database_scopes.QueryQuery(queryQ)).Model(&query).Count(&count).Error
+	return count, ctx.db.Scopes(database_scopes.QueryQuery(queryQ, true)).Model(&query).Count(&count).Error
 }
 
 func (ctx *MahresourcesContext) GetQuery(id uint) (*models.Query, error) {

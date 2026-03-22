@@ -17,7 +17,7 @@ func (ctx *MahresourcesContext) GetCategory(id uint) (*models.Category, error) {
 
 func (ctx *MahresourcesContext) GetCategories(offset, maxResults int, query *query_models.CategoryQuery) ([]models.Category, error) {
 	var categories []models.Category
-	scope := database_scopes.CategoryQuery(query)
+	scope := database_scopes.CategoryQuery(query, false)
 
 	return categories, ctx.db.Scopes(scope).Limit(maxResults).Offset(offset).Find(&categories).Error
 }
@@ -26,7 +26,7 @@ func (ctx *MahresourcesContext) GetCategoriesCount(query *query_models.CategoryQ
 	var category models.Category
 	var count int64
 
-	return count, ctx.db.Scopes(database_scopes.CategoryQuery(query)).Model(&category).Count(&count).Error
+	return count, ctx.db.Scopes(database_scopes.CategoryQuery(query, true)).Model(&category).Count(&count).Error
 }
 
 func (ctx *MahresourcesContext) GetCategoriesWithIds(ids *[]uint, limit int) ([]models.Category, error) {

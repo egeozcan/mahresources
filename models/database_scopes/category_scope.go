@@ -5,7 +5,7 @@ import (
 	"mahresources/models/query_models"
 )
 
-func CategoryQuery(query *query_models.CategoryQuery) func(db *gorm.DB) *gorm.DB {
+func CategoryQuery(query *query_models.CategoryQuery, ignoreSort bool) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
 		dbQuery := db
 		likeOperator := GetLikeOperator(db)
@@ -22,7 +22,10 @@ func CategoryQuery(query *query_models.CategoryQuery) func(db *gorm.DB) *gorm.DB
 
 		dbQuery = ApplyDateRange(dbQuery, "", query.CreatedBefore, query.CreatedAfter)
 		dbQuery = ApplyUpdatedDateRange(dbQuery, "", query.UpdatedBefore, query.UpdatedAfter)
-		dbQuery = ApplySortColumns(dbQuery, query.SortBy, "", "created_at desc")
+
+		if !ignoreSort {
+			dbQuery = ApplySortColumns(dbQuery, query.SortBy, "", "created_at desc")
+		}
 
 		return dbQuery
 	}

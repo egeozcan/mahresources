@@ -267,7 +267,7 @@ func (ctx *MahresourcesContext) GetCategoryTimelineCounts(
 
 	for i, b := range boundaries {
 		var createdCount int64
-		err := ctx.db.Scopes(database_scopes.CategoryQuery(query)).
+		err := ctx.db.Scopes(database_scopes.CategoryQuery(query, true)).
 			Model(&models.Category{}).
 			Where("created_at >= ? AND created_at < ?", b.Start, b.End).
 			Count(&createdCount).Error
@@ -277,7 +277,7 @@ func (ctx *MahresourcesContext) GetCategoryTimelineCounts(
 		buckets[i].Created = createdCount
 
 		var updatedCount int64
-		err = ctx.db.Scopes(database_scopes.CategoryQuery(query)).
+		err = ctx.db.Scopes(database_scopes.CategoryQuery(query, true)).
 			Model(&models.Category{}).
 			Where("updated_at >= ? AND updated_at < ?", b.Start, b.End).
 			Where("updated_at > created_at").
@@ -300,7 +300,7 @@ func (ctx *MahresourcesContext) GetQueryTimelineCounts(
 
 	for i, b := range boundaries {
 		var createdCount int64
-		err := ctx.db.Scopes(database_scopes.QueryQuery(query)).
+		err := ctx.db.Scopes(database_scopes.QueryQuery(query, true)).
 			Model(&models.Query{}).
 			Where("created_at >= ? AND created_at < ?", b.Start, b.End).
 			Count(&createdCount).Error
@@ -310,7 +310,7 @@ func (ctx *MahresourcesContext) GetQueryTimelineCounts(
 		buckets[i].Created = createdCount
 
 		var updatedCount int64
-		err = ctx.db.Scopes(database_scopes.QueryQuery(query)).
+		err = ctx.db.Scopes(database_scopes.QueryQuery(query, true)).
 			Model(&models.Query{}).
 			Where("updated_at >= ? AND updated_at < ?", b.Start, b.End).
 			Where("updated_at > created_at").
