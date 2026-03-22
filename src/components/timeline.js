@@ -276,6 +276,11 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
                 if (!response.ok) throw new Error('HTTP ' + response.status);
 
                 this.previewHtml = await response.text();
+
+                // Re-initialize lightbox so thumbnail clicks open the gallery
+                this.$nextTick(() => {
+                    window.Alpine?.store('lightbox')?.initFromDOM();
+                });
             } catch (err) {
                 if (err.name !== 'AbortError') {
                     console.error('Failed to load preview:', err);
