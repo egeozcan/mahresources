@@ -80,6 +80,8 @@ var templates = map[string]templateInformation{
 
 	"/logs": {template_context_providers.LogListContextProvider, "listLogs.tpl", http.MethodGet},
 	"/log":  {template_context_providers.LogContextProvider, "displayLog.tpl", http.MethodGet},
+
+	"/admin/overview": {template_context_providers.AdminOverviewContextProvider, "adminOverview.tpl", http.MethodGet},
 }
 
 func wrapContextWithPlugins(appContext *application_context.MahresourcesContext, ctxFn func(request *http.Request) pongo2.Context) func(request *http.Request) pongo2.Context {
@@ -368,6 +370,11 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/logs").HandlerFunc(api_handlers.GetLogEntriesHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/log").HandlerFunc(api_handlers.GetLogEntryHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/logs/entity").HandlerFunc(api_handlers.GetEntityHistoryHandler(appContext))
+
+	// Admin stats routes
+	router.Methods(http.MethodGet).Path("/v1/admin/server-stats").HandlerFunc(api_handlers.GetServerStatsHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/admin/data-stats").HandlerFunc(api_handlers.GetDataStatsHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/admin/data-stats/expensive").HandlerFunc(api_handlers.GetExpensiveStatsHandler(appContext))
 
 	// Plugin management API
 	router.Methods(http.MethodGet).Path("/v1/plugins/manage").HandlerFunc(api_handlers.GetPluginsManageHandler(appContext))
