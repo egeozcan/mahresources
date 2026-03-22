@@ -2,6 +2,7 @@
     class="timeline-container"
     x-data="timeline({ apiUrl: '{{ entityApiUrl }}/timeline', entityType: '{{ entityType }}', defaultView: '{{ entityDefaultView }}' })"
     aria-label="{{ entityType }} timeline"
+    tabindex="0"
     @keydown.left="prev()"
     @keydown.right="next()"
 >
