@@ -165,9 +165,6 @@ export const navigationMethods = {
   },
 
   close() {
-    // Promote pending tags to LAST tab before closing
-    this._promoteLastTags();
-
     this.pauseCurrentVideo();
 
     if (this.isFullscreen) {

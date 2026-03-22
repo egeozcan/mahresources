@@ -182,9 +182,6 @@ export const editPanelMethods = {
   },
 
   async onResourceChange() {
-    // Promote pending tags to LAST tab before switching resources
-    this._promoteLastTags();
-
     if (!this.editPanelOpen && !this.quickTagPanelOpen) return;
 
     const focused = document.activeElement;
@@ -329,7 +326,6 @@ export const editPanelMethods = {
 
       // Record as recent tag (skips if in a quick-add slot)
       this.recordRecentTag(tag);
-      this._snapshotCurrentTags();
     } catch (err) {
       console.error('Failed to add tag:', err);
       if (this.resourceDetails?.Tags) {
@@ -376,7 +372,6 @@ export const editPanelMethods = {
       }
       this.needsRefreshOnClose = true;
       this.announce(`Removed tag: ${tag.Name}`);
-      this._snapshotCurrentTags();
     } catch (err) {
       console.error('Failed to remove tag:', err);
       if (this.resourceDetails?.Tags) {

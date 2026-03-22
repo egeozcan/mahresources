@@ -6,8 +6,8 @@ const TAB_LABELS = [
   { name: 'QUICK 1', key: 'Z' },
   { name: 'QUICK 2', key: 'X' },
   { name: 'QUICK 3', key: 'C' },
-  { name: 'RECENT',  key: 'V' },
-  { name: 'LAST',    key: 'B' },
+  { name: 'QUICK 4', key: 'V' },
+  { name: 'RECENT',  key: 'B' },
 ];
 
 function padArray(arr, len) {
@@ -22,18 +22,16 @@ function padArray(arr, len) {
  */
 export const quickTagPanelState = {
   quickTagPanelOpen: false,
-  activeTab: 0, // 0=QUICK1, 1=QUICK2, 2=QUICK3, 3=RECENT, 4=LAST
+  activeTab: 0, // 0-3=QUICK, 4=RECENT
   quickSlots: [
     Array(9).fill(null),
     Array(9).fill(null),
     Array(9).fill(null),
+    Array(9).fill(null),
   ],
-  _quickTagTogglingIds: new Set(),
-  _activeTagResourceId: null, // resource currently being tagged (not reactive)
-  _pendingLastTags: null, // latest snapshot of current resource's tags (not reactive)
-  _tagsModifiedOnResource: false, // true when tags were changed via the panel (not reactive)
-  recentTags: Array(9).fill(null), // [{id, name, ts} | null] x 9
-  lastResourceTags: Array(9).fill(null), // [{id, name} | null] x 9 — frozen on resource switch
+  _quickTagTogglingSlot: null,
+  editingSlotIndex: null,
+  recentTags: Array(9).fill(null),
   tabLabels: TAB_LABELS,
 };
 
@@ -52,9 +50,9 @@ export const quickTagPanelMethods = {
           padArray(data.slots, 9),
           Array(9).fill(null),
           Array(9).fill(null),
+          Array(9).fill(null),
         ];
         data.activeTab = 0;
-        data.lastResourceTags = Array(9).fill(null);
       }
 
       // Load each field independently so a failure in one doesn't prevent loading others
@@ -64,6 +62,7 @@ export const quickTagPanelMethods = {
             padArray(data.quickSlots[0], 9),
             padArray(data.quickSlots[1], 9),
             padArray(data.quickSlots[2], 9),
+            padArray(data.quickSlots[3], 9),
           ];
         }
       } catch (e) {
@@ -78,9 +77,6 @@ export const quickTagPanelMethods = {
       if (Array.isArray(data.recentTags)) {
         this.recentTags = padArray(data.recentTags, 9);
       }
-      if (Array.isArray(data.lastResourceTags)) {
-        this.lastResourceTags = padArray(data.lastResourceTags, 9);
-      }
     } catch (e) {
       console.warn('Failed to load quick tags from storage:', e);
     }
@@ -88,12 +84,11 @@ export const quickTagPanelMethods = {
 
   _saveQuickTagsToStorage() {
     const payload = JSON.stringify({
-      version: 2,
+      version: 3,
       quickSlots: this.quickSlots,
       drawerOpen: this.quickTagPanelOpen,
       activeTab: this.activeTab,
       recentTags: this.recentTags,
-      lastResourceTags: this.lastResourceTags,
     });
     try {
       localStorage.setItem(STORAGE_KEY, payload);
@@ -119,18 +114,18 @@ export const quickTagPanelMethods = {
   switchTab(tabIndex) {
     if (tabIndex < 0 || tabIndex > 4) return;
     this.activeTab = tabIndex;
+    this.editingSlotIndex = null;
     this._saveQuickTagsToStorage();
     this.announce(`Switched to ${TAB_LABELS[tabIndex].name} tab`);
   },
 
   getActiveTabSlots() {
-    if (this.activeTab < 3) return this.quickSlots[this.activeTab];
-    if (this.activeTab === 3) return this.recentTags;
-    return this.lastResourceTags;
+    if (this.activeTab < 4) return this.quickSlots[this.activeTab];
+    return this.recentTags;
   },
 
   isQuickTab() {
-    return this.activeTab < 3;
+    return this.activeTab < 4;
   },
 
   // ==================== Open / Close ====================
@@ -149,6 +144,7 @@ export const quickTagPanelMethods = {
   },
 
   closeQuickTagPanel() {
+    this.editingSlotIndex = null;
     this.quickTagPanelOpen = false;
     this._saveQuickTagsToStorage();
 
@@ -234,33 +230,6 @@ export const quickTagPanelMethods = {
     this._saveQuickTagsToStorage();
   },
 
-  // ==================== Last Resource Tags ====================
-
-  // Snapshot current resource's tags into the pending buffer (called after tag add/remove)
-  _snapshotCurrentTags() {
-    const currentId = this.getCurrentItem()?.id;
-    if (!currentId) return;
-
-    const tags = (this.resourceDetails?.Tags || []).slice(0, 9);
-    const snapshot = Array(9).fill(null);
-    tags.forEach((t, i) => {
-      snapshot[i] = { id: t.ID, name: t.Name };
-    });
-
-    this._activeTagResourceId = currentId;
-    this._pendingLastTags = snapshot;
-    this._tagsModifiedOnResource = true;
-  },
-
-  // Promote pending tags to LAST tab if tags were modified (called on navigation/close)
-  _promoteLastTags() {
-    if (this._tagsModifiedOnResource && this._pendingLastTags) {
-      this.lastResourceTags = this._pendingLastTags;
-      this._saveQuickTagsToStorage();
-    }
-    this._tagsModifiedOnResource = false;
-  },
-
   // ==================== Tag Toggle ====================
 
   isTagOnResource(tagId) {
@@ -273,9 +242,9 @@ export const quickTagPanelMethods = {
     if (!slot) return;
 
     const tagId = slot.id;
-    if (this._quickTagTogglingIds.has(tagId)) return;
+    if (this._quickTagTogglingSlot !== null) return;
 
-    this._quickTagTogglingIds.add(tagId);
+    this._quickTagTogglingSlot = index;
     try {
       const tag = { ID: tagId, Name: slot.name };
 
@@ -285,7 +254,7 @@ export const quickTagPanelMethods = {
         await this.saveTagAddition(tag);
       }
     } finally {
-      this._quickTagTogglingIds.delete(tagId);
+      this._quickTagTogglingSlot = null;
     }
   },
 
