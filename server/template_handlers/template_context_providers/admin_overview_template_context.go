@@ -11,8 +11,8 @@ func AdminOverviewContextProvider(context *application_context.MahresourcesConte
 	return func(request *http.Request) pongo2.Context {
 		baseContext := staticTemplateCtx(request)
 		return pongo2.Context{
-			"pageTitle":         "Admin Overview",
-			"adminOverviewPage": true,
+			"pageTitle":   "Admin Overview",
+			"hideSidebar": true,
 		}.Update(baseContext)
 	}
 }
