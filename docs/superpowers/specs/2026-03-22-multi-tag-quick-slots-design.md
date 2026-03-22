@@ -16,6 +16,16 @@ Restructure the lightbox quick tag panel: remove the LAST tab, add a 4th QUICK t
 
 The LAST tab is removed entirely along with all supporting code.
 
+```js
+const TAB_LABELS = [
+  { name: 'QUICK 1', key: 'Z' },
+  { name: 'QUICK 2', key: 'X' },
+  { name: 'QUICK 3', key: 'C' },
+  { name: 'QUICK 4', key: 'V' },
+  { name: 'RECENT',  key: 'B' },
+];
+```
+
 ## Slot Data Model
 
 Each slot changes from a single tag object to an array of tag objects:
@@ -52,7 +62,7 @@ During `_loadQuickTagsFromStorage`:
 1. If `version < 3` (or absent) and `quickSlots` exists: wrap each non-null slot `{id, name}` into `[{id, name}]`.
 2. Extend the `quickSlots` array from 3 to 4 inner arrays (4th is empty).
 3. Drop `lastResourceTags` from loaded data.
-4. Clamp `activeTab` to 0-4 range (same range, different meaning for index 4).
+4. Remap `activeTab`: v2 index 3 (RECENT) becomes v3 index 4 (RECENT). v2 index 4 (LAST) becomes v3 index 0 (QUICK 1, since LAST no longer exists). Indices 0-2 are unchanged.
 
 The old v1 migration (flat `slots` array) feeds into v2, which then feeds into v3.
 
@@ -69,15 +79,17 @@ Clicking the card body toggles the slot's tags on/off the resource.
 
 ### Edit Mode
 
+Tracked via `editingSlotIndex` (number or null) on the store. Only one slot can be in edit mode at a time. Setting a new slot clears the previous. Switching tabs or closing the panel clears it.
+
 Triggered by clicking "+" on a filled slot or clicking into an empty slot on a QUICK tab.
 
 Shows:
 - Each tag as a pill with an individual "x" remove button
-- Autocomplete input below the pills
+- Autocomplete input below the pills (with `max: 0` for unlimited selections)
 - Autocomplete stays open after each selection (input clears, ready for next tag)
-- Click outside or press Escape returns to display mode
+- Click outside, press Escape, or Tab out of the autocomplete returns to display mode
 
-The autocomplete uses the existing `autocompleter` component with `max: 0` (unlimited) and the `onSelect` callback appends to the slot rather than replacing it. Tags already in the slot are excluded from autocomplete results.
+The `onSelect` callback calls `addTagToSlot` to append to the slot. Tags already in the slot are excluded from autocomplete results.
 
 ### Empty Slot
 
@@ -96,11 +108,16 @@ On RECENT tab: shows key number and "empty" label (like today).
 ### Toggle Implementation
 
 `toggleTabTag(index)`:
-1. Read the slot's tag array.
-2. Determine state: check which tags are present on the resource.
-3. If all present: issue `saveTagRemoval` for each tag (parallel).
-4. If some or none present: issue `saveTagAddition` for each missing tag (parallel).
-5. Track all tag IDs in `_quickTagTogglingIds` during the operation to prevent double-fires.
+1. Guard: if `_quickTagTogglingSlot === index`, return (prevents double-fire at slot level, not per-tag).
+2. Set `_quickTagTogglingSlot = index`.
+3. Read the slot's tag array. For RECENT tab entries (single `{id, name, ts}`), wrap in a one-element array at the call site.
+4. Determine state: check which tags are present on the resource.
+5. If all present: issue `saveTagRemoval` for each tag via `Promise.all`.
+6. If some or none present: issue `saveTagAddition` for each missing tag via `Promise.all`.
+7. On partial failure (some promises reject): re-fetch resource details to reconcile state (`detailsCache.delete(resourceId)` + `fetchResourceDetails()`). This avoids stale optimistic UI from half-applied changes.
+8. In `finally`: clear `_quickTagTogglingSlot = null`.
+
+Replace the current `_quickTagTogglingIds: new Set()` with `_quickTagTogglingSlot: null` (a single slot index or null).
 
 ## Method Changes
 
@@ -112,10 +129,12 @@ On RECENT tab: shows key number and "empty" label (like today).
 | `clearQuickTagSlot(index)` | `clearQuickTagSlot(index)` | Sets slot to null (unchanged) |
 | — | `removeTagFromSlot(index, tagId)` | Removes one tag from slot; if last tag, sets to null |
 | `isTagOnResource(tagId)` | `isTagOnResource(tagId)` | Unchanged |
-| — | `slotMatchState(index)` | Returns `'all'`, `'some'`, or `'none'` for 3-state display |
+| — | `slotMatchState(index)` | Returns `'all'`, `'some'`, or `'none'`. Returns `'none'` for null/empty slots and when `resourceDetails` is null (loading). Single-tag slots can only be `'all'` or `'none'`. |
 | `isQuickTab()` | `isQuickTab()` | Returns `activeTab < 4` (was `< 3`) |
-| `getActiveTabSlots()` | `getActiveTabSlots()` | Index 0-3 return quickSlots, index 4 returns recentTags |
-| `toggleTabTag(index)` | `toggleTabTag(index)` | Handles multi-tag add/remove with parallel API calls |
+| `getActiveTabSlots()` | `getActiveTabSlots()` | Index 0-3 return quickSlots, index 4 returns recentTags. RECENT entries are `{id, name, ts}` (single tags), not arrays. |
+| `toggleTabTag(index)` | `toggleTabTag(index)` | For QUICK tabs: reads slot tag array, uses `Promise.all` for parallel add/remove. For RECENT tab: wraps single `{id, name}` entry into `[{id, name}]` at the call site so the same toggle logic applies. |
+| `_quickTagTogglingIds: Set` | `_quickTagTogglingSlot: null` | Guard changed from per-tag-ID to per-slot-index |
+| — | `editingSlotIndex: null` | Tracks which slot is in edit mode (number or null) |
 
 ### Deleted
 
@@ -129,7 +148,7 @@ All LAST tab code:
 
 Recent tags remain single-tag entries (`{id, name, ts}`). They represent individual tags recently used, not slot groups.
 
-`recordRecentTag` updates its quick-slot dedup check to scan all 4 quick slot arrays and to check inside each slot's tag array (not just compare against a single tag object).
+`recordRecentTag` updates its quick-slot dedup check: `this.quickSlots.some(slots => slots.some(s => s && s.some(t => t.id === tag.ID)))` — triple-nested because each slot is now an array of tags.
 
 ## Keyboard Shortcuts
 
