@@ -33,3 +33,4 @@ docs-site/build/
 docs-site/.docusaurus/
 /ux-research/
 /.playwright-cli/
+/.superpowers/
