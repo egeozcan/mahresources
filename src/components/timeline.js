@@ -32,7 +32,9 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
             this.fetchBuckets();
 
             this._resizeObserver = new ResizeObserver(() => {
-                const newCols = this.calculateColumns();
+                // P3 fix: calculate without mutating first, then compare + assign
+                const width = this.$el ? this.$el.clientWidth : 720;
+                const newCols = Math.max(5, Math.min(30, Math.floor(width / 60)));
                 if (newCols !== this.columns) {
                     this.columns = newCols;
                     this.fetchBuckets();
@@ -237,14 +239,27 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
             chart.appendChild(labelsRow);
         },
 
+        // P2 fix: convert RFC3339 bucket bounds to date-only (YYYY-MM-DD) for
+        // Before params, using the day before the exclusive end so that
+        // ApplyDateRange's inclusive <= comparison doesn't pull in next-bucket rows.
+        // Also drops 'page' param so drill-down always starts at page 1.
         _buildDateParams(bucket, barType) {
             const params = new URLSearchParams(window.location.search);
+            params.delete('page');
+
+            const startDate = bucket.start.slice(0, 10);
+            // end is exclusive (e.g. 2026-02-01 for Jan bucket), subtract one day
+            // for the inclusive Before param
+            const endExclusive = new Date(bucket.end);
+            endExclusive.setUTCDate(endExclusive.getUTCDate() - 1);
+            const beforeDate = endExclusive.toISOString().slice(0, 10);
+
             if (barType === 'created') {
-                params.set('CreatedAfter', bucket.start);
-                params.set('CreatedBefore', bucket.end);
+                params.set('CreatedAfter', startDate);
+                params.set('CreatedBefore', beforeDate);
             } else {
-                params.set('UpdatedAfter', bucket.start);
-                params.set('UpdatedBefore', bucket.end);
+                params.set('UpdatedAfter', startDate);
+                params.set('UpdatedBefore', beforeDate);
             }
             return params;
         },
@@ -260,6 +275,11 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
         async selectBar(index, barType) {
             // Toggle off if clicking same bar
             if (this.selectedBar === index && this.selectedBarType === barType) {
+                // P3 fix: abort in-flight preview before closing
+                if (this._previewAborter) {
+                    this._previewAborter();
+                    this._previewAborter = null;
+                }
                 this.closePreview();
                 this.renderChart();
                 return;
