@@ -2328,13 +2328,18 @@ html {
   bottom: 0;
   left: 0;
   height: 3px;
-  width: 100%;
+  width: 0;
   background: #d97706; /* amber-600 */
   border-radius: 0 0 8px 8px;
-  transition: none;
+  opacity: 0;
 }
 
-.quick-tag-hold-bar.animating {
-  width: 0;
-  transition: width 400ms linear;
+.quick-tag-hold-bar.active {
+  opacity: 1;
+  animation: hold-shrink 400ms linear forwards;
+}
+
+@keyframes hold-shrink {
+  from { width: 100%; }
+  to { width: 0; }
 }

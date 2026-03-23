@@ -586,13 +586,13 @@
                                     </button>
                                 </template>
                                 <!-- Hold progress bar (multi-tag slots only) -->
-                                <div
-                                  x-show="tags.length > 1 && $store.lightbox._longPressSlotIdx === idx"
-                                  x-cloak
-                                  class="quick-tag-hold-bar"
-                                  x-effect="if ($store.lightbox._longPressSlotIdx === idx) { $el.classList.remove('animating'); $el.offsetWidth; $el.classList.add('animating'); } else { $el.classList.remove('animating'); }"
-                                  aria-hidden="true"
-                                ></div>
+                                <template x-if="tags.length > 1">
+                                  <div
+                                    class="quick-tag-hold-bar"
+                                    :class="{ 'active': $store.lightbox._longPressSlotIdx === idx }"
+                                    aria-hidden="true"
+                                  ></div>
+                                </template>
                             </div>
                         </template>
 
