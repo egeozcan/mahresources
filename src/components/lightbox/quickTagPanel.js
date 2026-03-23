@@ -518,8 +518,8 @@ export const quickTagPanelMethods = {
   // ==================== Keyboard Dispatch ====================
 
   handleSlotKeydown(idx, event) {
-    // Guard against key repeat
-    if (event.repeat && this._longPressTimer) return;
+    // Guard against key repeat — never act on held keys
+    if (event.repeat) return;
 
     if (this.isExpanded()) {
       // In expanded mode: toggle individual tag at this index
