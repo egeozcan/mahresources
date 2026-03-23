@@ -9,7 +9,7 @@
     x-show="$store.lightbox.isOpen"
     x-cloak
     x-trap="$store.lightbox.isOpen"
-    @keydown.escape.window="$store.lightbox.isOpen && $store.lightbox.handleEscape()"
+    @keydown.escape.window="$store.lightbox.isOpen && ($store.lightbox.isExpanded() ? $store.lightbox.collapseExpanded() : $store.lightbox.handleEscape())"
     @keydown.arrow-left.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.prev()"
     @keydown.arrow-right.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.next()"
     @keydown.page-up.window.prevent="$store.lightbox.isOpen && $store.lightbox.prev()"
@@ -18,21 +18,30 @@
     @keydown.e.window="$store.lightbox.isOpen && canNavigate() && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
     @keydown.f2.window.prevent="$store.lightbox.isOpen && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
     @keydown.t.window="$store.lightbox.isOpen && canNavigate() && ($store.lightbox.quickTagPanelOpen ? $store.lightbox.closeQuickTagPanel() : $store.lightbox.openQuickTagPanel())"
-    @keydown.1.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleTabTag(0)"
-    @keydown.2.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleTabTag(1)"
-    @keydown.3.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleTabTag(2)"
-    @keydown.4.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleTabTag(3)"
-    @keydown.5.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleTabTag(4)"
-    @keydown.6.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleTabTag(5)"
-    @keydown.7.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleTabTag(6)"
-    @keydown.8.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleTabTag(7)"
-    @keydown.9.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.toggleTabTag(8)"
-    @keyup.0.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.focusTagEditor()"
-    @keydown.z.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.switchTab(0)"
-    @keydown.x.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.switchTab(1)"
-    @keydown.c.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.switchTab(2)"
-    @keydown.v.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.switchTab(3)"
-    @keydown.b.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.switchTab(4)"
+    @keydown.1.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(0, $event)"
+    @keydown.2.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(1, $event)"
+    @keydown.3.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(2, $event)"
+    @keydown.4.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(3, $event)"
+    @keydown.5.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(4, $event)"
+    @keydown.6.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(5, $event)"
+    @keydown.7.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(6, $event)"
+    @keydown.8.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(7, $event)"
+    @keydown.9.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(8, $event)"
+    @keyup.1.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(0)"
+    @keyup.2.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(1)"
+    @keyup.3.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(2)"
+    @keyup.4.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(3)"
+    @keyup.5.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(4)"
+    @keyup.6.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(5)"
+    @keyup.7.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(6)"
+    @keyup.8.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(7)"
+    @keyup.9.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(8)"
+    @keyup.0.window="$store.lightbox.isOpen && canNavigate() && ($store.lightbox.isExpanded() ? $store.lightbox.collapseExpanded() : $store.lightbox.focusTagEditor())"
+    @keydown.z.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && ($store.lightbox.isExpanded() ? $store.lightbox.collapseExpanded() : $store.lightbox.switchTab(0))"
+    @keydown.x.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && ($store.lightbox.isExpanded() ? $store.lightbox.collapseExpanded() : $store.lightbox.switchTab(1))"
+    @keydown.c.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && ($store.lightbox.isExpanded() ? $store.lightbox.collapseExpanded() : $store.lightbox.switchTab(2))"
+    @keydown.v.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && ($store.lightbox.isExpanded() ? $store.lightbox.collapseExpanded() : $store.lightbox.switchTab(3))"
+    @keydown.b.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && ($store.lightbox.isExpanded() ? $store.lightbox.collapseExpanded() : $store.lightbox.switchTab(4))"
     @touchstart="$store.lightbox.handleTouchStart($event)"
     @touchmove="$store.lightbox.handleTouchMove($event)"
     @touchend="$store.lightbox.handleTouchEnd($event)"
@@ -277,6 +286,8 @@
         class="fixed md:absolute inset-0 md:inset-auto md:top-0 md:left-0 md:bottom-0 bg-stone-900 md:bg-stone-900/95 md:backdrop-blur-sm text-white overflow-y-auto z-30"
         :class="$store.lightbox.editPanelOpen ? 'md:w-[320px]' : 'md:w-[400px]'"
         @click.stop
+        x-effect="$store.lightbox._setupExpandedClickOutside()"
+        @focusout="$store.lightbox.isExpanded() && $nextTick(() => { if (!$el.contains(document.activeElement)) $store.lightbox.collapseExpanded(); })"
     >
         <!-- Panel header -->
         <div class="sticky top-0 bg-stone-900 md:bg-stone-900/95 border-b border-stone-700 p-4 flex items-center justify-between z-10">
@@ -415,8 +426,9 @@
             <!-- Divider -->
             <div class="border-t border-stone-700"></div>
 
-            <!-- Tab bar -->
-            <div class="flex" role="tablist" aria-label="Tag slot tabs">
+            <!-- Tab bar / Expanded header -->
+            <template x-if="!$store.lightbox.isExpanded()">
+              <div class="flex" role="tablist" aria-label="Tag slot tabs">
                 <template x-for="(tab, tIdx) in $store.lightbox.tabLabels" :key="tIdx">
                     <button
                         @click="$store.lightbox.switchTab(tIdx)"
@@ -431,12 +443,25 @@
                         <kbd class="text-[10px] opacity-60" x-text="'(' + tab.key + ')'"></kbd>
                     </button>
                 </template>
-            </div>
+              </div>
+            </template>
+            <template x-if="$store.lightbox.isExpanded()">
+              <div class="flex items-center gap-2 py-1.5">
+                <button
+                  @click="$store.lightbox.collapseExpanded()"
+                  class="px-2 py-1 bg-stone-700 hover:bg-stone-600 text-stone-200 rounded-md text-xs font-mono transition-colors focus:outline-none focus:ring-2 focus:ring-stone-400"
+                  aria-label="Back to quick slots"
+                >&larr; Back</button>
+                <span class="text-xs text-stone-400" x-text="'Slot ' + $store.lightbox.quickTagKeyLabel($store.lightbox.expandedSlotIndex) + ' tags'"></span>
+                <span class="text-[10px] text-stone-600 ml-auto">ESC / 0 to close</span>
+              </div>
+            </template>
 
             <!-- Divider -->
             <div class="border-t border-stone-700"></div>
 
-            <!-- 3x3 tag grid (reads from active tab) -->
+            <!-- NORMAL GRID (not expanded) -->
+            <template x-if="!$store.lightbox.isExpanded()">
             <div class="grid grid-cols-3 gap-2" role="tabpanel">
                 <template x-for="(_, vIdx) in $store.lightbox._numpadOrder" :key="vIdx">
                     <div x-data="{
@@ -525,9 +550,13 @@
                                 }"
                             >
                                 <button
-                                    @click="$store.lightbox.toggleTabTag(idx)"
+                                    @click="tags.length <= 1 && $store.lightbox.toggleTabTag(idx)"
+                                    @mousedown="tags.length > 1 && $store.lightbox.handleSlotMousedown(idx)"
+                                    @mouseup="tags.length > 1 && $store.lightbox.handleSlotMouseup(idx)"
+                                    @mouseleave="tags.length > 1 && $store.lightbox.handleSlotMouseleave(idx)"
                                     class="w-full h-full flex flex-col items-center justify-center gap-1 focus:outline-none focus:ring-2 focus:ring-stone-400 rounded-lg px-1.5"
                                     :aria-label="(matchState === 'all' ? 'Remove ' : 'Add ') + tagNames() + (matchState === 'some' ? ' (partially active: ' + tags.filter(t => $store.lightbox.isTagOnResource(t.id ?? t.ID)).length + ' of ' + tags.length + ')' : '')"
+                                    :aria-description="tags.length > 1 ? 'Hold to expand individual tags' : null"
                                 >
                                     <kbd class="text-sm font-mono text-stone-500" x-text="$store.lightbox.quickTagKeyLabel(idx)"></kbd>
                                     <span class="text-xs font-semibold line-clamp-2 max-w-full text-center leading-tight" x-text="tagNames()"></span>
@@ -556,6 +585,14 @@
                                         </svg>
                                     </button>
                                 </template>
+                                <!-- Hold progress bar (multi-tag slots only) -->
+                                <div
+                                  x-show="tags.length > 1 && $store.lightbox._longPressSlotIdx === idx"
+                                  x-cloak
+                                  class="quick-tag-hold-bar"
+                                  x-effect="if ($store.lightbox._longPressSlotIdx === idx) { $el.classList.remove('animating'); $el.offsetWidth; $el.classList.add('animating'); } else { $el.classList.remove('animating'); }"
+                                  aria-hidden="true"
+                                ></div>
                             </div>
                         </template>
 
@@ -574,6 +611,44 @@
                     </div>
                 </template>
             </div>
+            </template>
+
+            <!-- EXPANDED GRID (individual tags from one slot) -->
+            <template x-if="$store.lightbox.isExpanded()">
+              <div class="grid grid-cols-3 gap-2" role="region" aria-label="Expanded slot tags">
+                <template x-for="(_, vIdx) in $store.lightbox._numpadOrder" :key="vIdx">
+                  <div x-data="{
+                    get idx() { return $store.lightbox.numpadIndex(vIdx) },
+                    get tag() { return $store.lightbox.expandedTags()[this.idx] },
+                    get isOn() { return this.tag ? $store.lightbox.isTagOnResource(this.tag.id ?? this.tag.ID) : false },
+                    tagName() { return this.tag ? (this.tag.name ?? this.tag.Name) : '' },
+                  }">
+                    <!-- FILLED: tag exists at this position -->
+                    <template x-if="tag">
+                      <div class="group relative w-full aspect-[4/3] rounded-lg transition-colors"
+                        :class="{
+                          'bg-green-900/30 border-2 border-green-600/60 text-green-300 hover:bg-red-900/30 hover:border-red-600/60 hover:text-red-300': isOn,
+                          'bg-stone-800 border border-stone-700 text-stone-300 hover:bg-amber-900/20 hover:border-amber-700 hover:text-amber-300': !isOn,
+                        }"
+                      >
+                        <button
+                          @click="$store.lightbox.toggleExpandedTag(idx)"
+                          class="w-full h-full flex flex-col items-center justify-center gap-1 focus:outline-none focus:ring-2 focus:ring-stone-400 rounded-lg px-1.5"
+                          :aria-label="(isOn ? 'Remove ' : 'Add ') + tagName()"
+                        >
+                          <kbd class="text-sm font-mono text-stone-500" x-text="$store.lightbox.quickTagKeyLabel(idx)"></kbd>
+                          <span class="text-xs font-semibold line-clamp-2 max-w-full text-center leading-tight" x-text="tagName()"></span>
+                        </button>
+                      </div>
+                    </template>
+                    <!-- EMPTY: no tag at this position -->
+                    <template x-if="!tag">
+                      <div class="w-full aspect-[4/3] rounded-lg border border-dashed border-stone-700/30"></div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </template>
         </div>
     </div>
 

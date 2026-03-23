@@ -2321,3 +2321,20 @@ html {
 .skeleton-bar.lighter {
     background: #e7e5e4;
 }
+
+/* Quick tag slot hold progress bar */
+.quick-tag-hold-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  width: 100%;
+  background: #d97706; /* amber-600 */
+  border-radius: 0 0 8px 8px;
+  transition: none;
+}
+
+.quick-tag-hold-bar.animating {
+  width: 0;
+  transition: width 400ms linear;
+}
