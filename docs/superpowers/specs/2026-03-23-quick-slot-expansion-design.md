@@ -26,21 +26,26 @@ Helper getters:
 - `isExpanded()` — returns `expandedSlotIndex !== null`
 - `expandedTags()` — returns the tag array from the expanded slot, capped at 9 entries
 
-Clear `expandedSlotIndex` to `null` on: tab switch, panel close, editing start.
+Clear `expandedSlotIndex` to `null` on: tab switch, panel close, editing start, resource navigation (prev/next).
 
 ### Keyboard Handling
 
-**Multi-tag slots — keydown (1-9):**
+**Dispatch mechanism:** The current template bindings call `toggleTabTag(idx)` directly on `@keydown`. Replace these with a new dispatcher method `handleSlotKeydown(idx, event)` that checks slot tag count and branches. Add corresponding `@keyup` bindings that call `handleSlotKeyup(idx)`.
 
-- If already in expanded mode: immediately toggle the individual tag at that index
+**`handleSlotKeydown(idx, event)` — keys 1-9:**
+
+- Guard against `event.repeat` (held key fires repeated keydown events) — ignore if timer is already running
+- If already in expanded mode: immediately toggle the individual tag at that index (index maps through `_numpadOrder` the same way normal slots do, so key positions are spatially consistent)
 - If not expanded and slot has >1 tag: start `_longPressTimer = setTimeout(() => expand(idx), 400)`
+- If not expanded and slot has 1 tag: fire `toggleTabTag(idx)` immediately (existing behavior)
 
-**Multi-tag slots — keyup (1-9):**
+**`handleSlotKeyup(idx)` — keys 1-9:**
 
 - If `_longPressTimer` is still active (short press): clear the timer, fire the normal batch toggle immediately
 - If the timer already fired (long press was detected): do nothing — already in expanded mode
+- If slot has 1 tag: do nothing (toggle already fired on keydown)
 
-**Single-tag slots:** No change. Fire on keydown as before. No long-press detection.
+**Index mapping in expanded mode:** Keys 1-9 map through the same `_numpadOrder` array in expanded mode, so key 1 = bottom-left grid position, key 7 = top-left, etc. This keeps the spatial mapping consistent between normal and expanded views.
 
 **Exit keys (ESC, 0, z, x, c, v, b):**
 
