@@ -31,6 +31,11 @@ export const quickTagPanelState = {
   ],
   _quickTagTogglingSlot: null,
   editingSlotIndex: null,
+  expandedSlotIndex: null,
+  _longPressTimer: null,
+  _longPressThreshold: 400,
+  _longPressSlotIdx: null, // tracks which slot started the long press (for progress bar)
+  _expandedClickOutsideHandler: null,
   recentTags: Array(9).fill(null),
   tabLabels: TAB_LABELS,
 };
@@ -131,6 +136,10 @@ export const quickTagPanelMethods = {
 
   switchTab(tabIndex) {
     if (tabIndex < 0 || tabIndex > 4) return;
+    if (this.expandedSlotIndex !== null) {
+      this.expandedSlotIndex = null;
+      this._cancelLongPress();
+    }
     this.activeTab = tabIndex;
     this.editingSlotIndex = null;
     this._saveQuickTagsToStorage();
@@ -163,6 +172,8 @@ export const quickTagPanelMethods = {
 
   closeQuickTagPanel() {
     this.editingSlotIndex = null;
+    this.expandedSlotIndex = null;
+    this._cancelLongPress();
     this.quickTagPanelOpen = false;
     this._saveQuickTagsToStorage();
 
@@ -387,6 +398,10 @@ export const quickTagPanelMethods = {
 
   onQuickTagResourceChange() {
     if (!this.quickTagPanelOpen) return;
+    if (this.expandedSlotIndex !== null) {
+      this.expandedSlotIndex = null;
+      this._cancelLongPress();
+    }
     this.fetchResourceDetails();
   },
 
@@ -438,5 +453,158 @@ export const quickTagPanelMethods = {
     if (bothOpen) return 'lg:max-w-[calc(100vw-690px)] max-w-[90vw]';
     if (editOnly || tagsOnly) return 'lg:max-w-[calc(100vw-450px)] max-w-[90vw]';
     return 'max-w-[90vw]';
+  },
+
+  // ==================== Slot Expansion ====================
+
+  isExpanded() {
+    return this.expandedSlotIndex !== null;
+  },
+
+  expandedTags() {
+    if (this.expandedSlotIndex === null) return [];
+    const slot = this.getActiveTabSlots()[this.expandedSlotIndex];
+    if (!slot) return [];
+    const tags = Array.isArray(slot) ? slot : [slot];
+    return tags.slice(0, 9);
+  },
+
+  collapseExpanded() {
+    if (this.expandedSlotIndex === null) return;
+    this.expandedSlotIndex = null;
+    this._cancelLongPress();
+    if (this._expandedClickOutsideHandler) {
+      document.removeEventListener('click', this._expandedClickOutsideHandler, true);
+      this._expandedClickOutsideHandler = null;
+    }
+    this.announce('Back to quick slots');
+  },
+
+  _expandSlot(index) {
+    this.expandedSlotIndex = index;
+    this._longPressTimer = null;
+    this._longPressSlotIdx = null;
+    const tags = this.expandedTags();
+    const label = this.quickTagKeyLabel(index);
+    this.announce(`Expanded slot ${label}: ${tags.length} tags. Press Escape to go back.`);
+  },
+
+  _cancelLongPress() {
+    if (this._longPressTimer) {
+      clearTimeout(this._longPressTimer);
+      this._longPressTimer = null;
+    }
+    this._longPressSlotIdx = null;
+  },
+
+  _slotTagCount(index) {
+    const slots = this.getActiveTabSlots();
+    const slot = slots[index];
+    if (!slot) return 0;
+    return Array.isArray(slot) ? slot.length : 1;
+  },
+
+  // ==================== Expanded Tag Toggle ====================
+
+  async toggleExpandedTag(index) {
+    const tags = this.expandedTags();
+    if (index >= tags.length) return;
+    const tag = tags[index];
+    const tagObj = { ID: tag.id ?? tag.ID, Name: tag.name ?? tag.Name };
+    const isOn = this.isTagOnResource(tagObj.ID);
+    await this._batchToggleTags([tagObj], isOn ? 'remove' : 'add');
+  },
+
+  // ==================== Keyboard Dispatch ====================
+
+  handleSlotKeydown(idx, event) {
+    // Guard against key repeat
+    if (event.repeat && this._longPressTimer) return;
+
+    if (this.isExpanded()) {
+      // In expanded mode: toggle individual tag at this index
+      this.toggleExpandedTag(idx);
+      return;
+    }
+
+    const tagCount = this._slotTagCount(idx);
+    if (tagCount <= 1) {
+      // Single-tag or empty: fire immediately (existing behavior)
+      this.toggleTabTag(idx);
+      return;
+    }
+
+    // Multi-tag: start long-press timer
+    this._longPressSlotIdx = idx;
+    this._longPressTimer = setTimeout(() => {
+      this._expandSlot(idx);
+    }, this._longPressThreshold);
+  },
+
+  handleSlotKeyup(idx) {
+    if (this.isExpanded()) return; // expansion already happened
+
+    const tagCount = this._slotTagCount(idx);
+    if (tagCount <= 1) return; // already fired on keydown
+
+    if (this._longPressTimer) {
+      // Short press: cancel timer, fire batch toggle
+      this._cancelLongPress();
+      this.toggleTabTag(idx);
+    }
+  },
+
+  // ==================== Mouse Dispatch ====================
+
+  handleSlotMousedown(idx) {
+    if (this.isExpanded()) return; // in expanded mode, click on slot cards toggles individually
+
+    const tagCount = this._slotTagCount(idx);
+    if (tagCount <= 1) return; // single-tag: normal click handler fires
+
+    this._longPressSlotIdx = idx;
+    this._longPressTimer = setTimeout(() => {
+      this._expandSlot(idx);
+    }, this._longPressThreshold);
+  },
+
+  handleSlotMouseup(idx) {
+    if (this.isExpanded()) return;
+
+    const tagCount = this._slotTagCount(idx);
+    if (tagCount <= 1) return;
+
+    if (this._longPressTimer) {
+      this._cancelLongPress();
+      this.toggleTabTag(idx);
+    }
+  },
+
+  handleSlotMouseleave(idx) {
+    if (this._longPressTimer) {
+      this._cancelLongPress();
+    }
+  },
+
+  _setupExpandedClickOutside() {
+    // Called via x-effect when isExpanded() changes
+    if (this._expandedClickOutsideHandler) {
+      document.removeEventListener('click', this._expandedClickOutsideHandler, true);
+      this._expandedClickOutsideHandler = null;
+    }
+    if (this.isExpanded()) {
+      this._expandedClickOutsideHandler = (e) => {
+        const panel = document.querySelector('[data-quick-tag-panel]');
+        if (panel && !panel.contains(e.target)) {
+          this.collapseExpanded();
+        }
+      };
+      // Use capture + nextTick to avoid triggering on the same click that caused expansion
+      setTimeout(() => {
+        if (this._expandedClickOutsideHandler) {
+          document.addEventListener('click', this._expandedClickOutsideHandler, true);
+        }
+      }, 0);
+    }
   },
 };

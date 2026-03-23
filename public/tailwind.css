@@ -1672,6 +1672,9 @@
   .flex-shrink-0 {
     flex-shrink: 0;
   }
+  .shrink {
+    flex-shrink: 1;
+  }
   .shrink-0 {
     flex-shrink: 0;
   }
@@ -2163,6 +2166,12 @@
   }
   .border-stone-700 {
     border-color: var(--color-stone-700);
+  }
+  .border-stone-700\/30 {
+    border-color: color-mix(in srgb, oklch(37.4% 0.01 67.558) 30%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      border-color: color-mix(in oklab, var(--color-stone-700) 30%, transparent);
+    }
   }
   .border-teal-600 {
     border-color: var(--color-teal-600);
@@ -3474,6 +3483,13 @@
     &:hover {
       @media (hover: hover) {
         background-color: var(--color-stone-300);
+      }
+    }
+  }
+  .hover\:bg-stone-600 {
+    &:hover {
+      @media (hover: hover) {
+        background-color: var(--color-stone-600);
       }
     }
   }
