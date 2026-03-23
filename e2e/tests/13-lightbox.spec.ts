@@ -1517,4 +1517,390 @@ test.describe('Lightbox on Group Detail Page', () => {
     await expect(slotButton).toBeVisible();
   });
 
+  test('should expand multi-tag slot on keyboard long-press and collapse on Escape', async ({ page, apiClient }) => {
+    const tag1 = await apiClient.createTag(`ExpandTag1-${testRunId}`);
+    const tag2 = await apiClient.createTag(`ExpandTag2-${testRunId}`);
+    const tag3 = await apiClient.createTag(`ExpandTag3-${testRunId}`);
+
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    // Seed localStorage with a multi-tag slot in slot 0 (key 1)
+    await page.evaluate((tags) => {
+      const data = {
+        version: 3,
+        quickSlots: [
+          [
+            tags.map(t => ({ id: t.id, name: t.name })),
+            null, null, null, null, null, null, null, null,
+          ],
+          Array(9).fill(null),
+          Array(9).fill(null),
+          Array(9).fill(null),
+        ],
+        recentTags: Array(9).fill(null),
+        activeTab: 0,
+        drawerOpen: true,
+      };
+      localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
+    }, [
+      { id: tag1.ID, name: tag1.Name },
+      { id: tag2.ID, name: tag2.Name },
+      { id: tag3.ID, name: tag3.Name },
+    ]);
+
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    // Open lightbox
+    const firstImage = page.locator('[data-lightbox-item]').first();
+    await expect(firstImage).toBeVisible();
+    await firstImage.click();
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
+    await expect(lightbox).toBeVisible();
+
+    // Open quick tag panel
+    await page.keyboard.press('t');
+    const quickTagPanel = lightbox.locator('[data-quick-tag-panel]');
+    await expect(quickTagPanel).toBeVisible();
+    await expect(quickTagPanel.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });
+
+    // Blur input so canNavigate() returns true
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+
+    // Verify the multi-tag slot shows all tag names
+    const slotButtonExpand = quickTagPanel.locator('button:has(kbd):has-text("ExpandTag1")');
+    await expect(slotButtonExpand).toBeVisible();
+
+    // Long-press key 1 (hold for >400ms)
+    await page.keyboard.down('Digit1');
+    await page.waitForTimeout(500);
+    await page.keyboard.up('Digit1');
+
+    // Should be in expanded mode — back button visible
+    const backButton = quickTagPanel.locator('button:has-text("Back")');
+    await expect(backButton).toBeVisible();
+
+    // Should show "Slot 1 tags" label
+    await expect(quickTagPanel.locator('text=Slot 1 tags')).toBeVisible();
+
+    // Individual tags should be visible as separate cards
+    await expect(quickTagPanel.locator(`button:has(kbd):has-text("ExpandTag1-${testRunId}")`)).toBeVisible();
+    await expect(quickTagPanel.locator(`button:has(kbd):has-text("ExpandTag2-${testRunId}")`)).toBeVisible();
+    await expect(quickTagPanel.locator(`button:has(kbd):has-text("ExpandTag3-${testRunId}")`)).toBeVisible();
+
+    // Tab bar should NOT be visible
+    await expect(quickTagPanel.locator('button[role="tab"]')).toBeHidden();
+
+    // Press Escape to collapse
+    await page.keyboard.press('Escape');
+
+    // Back button should be gone
+    await expect(backButton).toBeHidden();
+
+    // Tab bar should reappear
+    await expect(quickTagPanel.locator('button[role="tab"]').first()).toBeVisible();
+  });
+
+  test('should batch-toggle multi-tag slot on short press (no expansion)', async ({ page, apiClient }) => {
+    const tag1 = await apiClient.createTag(`ShortPress1-${testRunId}`);
+    const tag2 = await apiClient.createTag(`ShortPress2-${testRunId}`);
+
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    await page.evaluate((tags) => {
+      const data = {
+        version: 3,
+        quickSlots: [
+          [
+            tags.map(t => ({ id: t.id, name: t.name })),
+            null, null, null, null, null, null, null, null,
+          ],
+          Array(9).fill(null),
+          Array(9).fill(null),
+          Array(9).fill(null),
+        ],
+        recentTags: Array(9).fill(null),
+        activeTab: 0,
+        drawerOpen: true,
+      };
+      localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
+    }, [
+      { id: tag1.ID, name: tag1.Name },
+      { id: tag2.ID, name: tag2.Name },
+    ]);
+
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    const firstImage = page.locator('[data-lightbox-item]').first();
+    await expect(firstImage).toBeVisible();
+    await firstImage.click();
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
+    await expect(lightbox).toBeVisible();
+
+    await page.keyboard.press('t');
+    const quickTagPanel = lightbox.locator('[data-quick-tag-panel]');
+    await expect(quickTagPanel).toBeVisible();
+    await expect(quickTagPanel.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+
+    // Quick press key 1 (tap, no hold)
+    await page.keyboard.press('Digit1');
+    await page.waitForTimeout(600);
+
+    // Should NOT be in expanded mode
+    const backButton = quickTagPanel.locator('button:has-text("Back")');
+    await expect(backButton).toBeHidden();
+
+    // Tags should have been batch-toggled (both added)
+    const tagChip1 = quickTagPanel.locator(`.flex.flex-wrap.gap-2 span.inline-flex:has-text("ShortPress1-${testRunId}")`);
+    const tagChip2 = quickTagPanel.locator(`.flex.flex-wrap.gap-2 span.inline-flex:has-text("ShortPress2-${testRunId}")`);
+    await expect(tagChip1).toBeVisible();
+    await expect(tagChip2).toBeVisible();
+  });
+
+  test('should toggle individual tag in expanded mode', async ({ page, apiClient }) => {
+    const tag1 = await apiClient.createTag(`IndivTag1-${testRunId}`);
+    const tag2 = await apiClient.createTag(`IndivTag2-${testRunId}`);
+
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    await page.evaluate((tags) => {
+      const data = {
+        version: 3,
+        quickSlots: [
+          [
+            tags.map(t => ({ id: t.id, name: t.name })),
+            null, null, null, null, null, null, null, null,
+          ],
+          Array(9).fill(null),
+          Array(9).fill(null),
+          Array(9).fill(null),
+        ],
+        recentTags: Array(9).fill(null),
+        activeTab: 0,
+        drawerOpen: true,
+      };
+      localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
+    }, [
+      { id: tag1.ID, name: tag1.Name },
+      { id: tag2.ID, name: tag2.Name },
+    ]);
+
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    const firstImage = page.locator('[data-lightbox-item]').first();
+    await expect(firstImage).toBeVisible();
+    await firstImage.click();
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
+    await expect(lightbox).toBeVisible();
+
+    await page.keyboard.press('t');
+    const quickTagPanel = lightbox.locator('[data-quick-tag-panel]');
+    await expect(quickTagPanel).toBeVisible();
+    await expect(quickTagPanel.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+
+    // Long-press key 1 to expand
+    await page.keyboard.down('Digit1');
+    await page.waitForTimeout(500);
+    await page.keyboard.up('Digit1');
+
+    await expect(quickTagPanel.locator('button:has-text("Back")')).toBeVisible();
+
+    // Press key 1 to toggle the first tag individually
+    await page.keyboard.press('Digit1');
+    await page.waitForTimeout(600);
+
+    // First tag should now be on the resource
+    const tagChip = quickTagPanel.locator(`.flex.flex-wrap.gap-2 span.inline-flex:has-text("IndivTag1-${testRunId}")`);
+    await expect(tagChip).toBeVisible();
+
+    // Second tag should NOT be on the resource
+    const tagChip2 = quickTagPanel.locator(`.flex.flex-wrap.gap-2 span.inline-flex:has-text("IndivTag2-${testRunId}")`);
+    await expect(tagChip2).toBeHidden();
+
+    // Should still be in expanded mode
+    await expect(quickTagPanel.locator('button:has-text("Back")')).toBeVisible();
+  });
+
+  test('should collapse expanded slot via z key, 0 key, and back button', async ({ page, apiClient }) => {
+    const tag1 = await apiClient.createTag(`CollapseTag1-${testRunId}`);
+    const tag2 = await apiClient.createTag(`CollapseTag2-${testRunId}`);
+
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    await page.evaluate((tags) => {
+      const data = {
+        version: 3,
+        quickSlots: [
+          [
+            tags.map(t => ({ id: t.id, name: t.name })),
+            null, null, null, null, null, null, null, null,
+          ],
+          Array(9).fill(null),
+          Array(9).fill(null),
+          Array(9).fill(null),
+        ],
+        recentTags: Array(9).fill(null),
+        activeTab: 0,
+        drawerOpen: true,
+      };
+      localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
+    }, [
+      { id: tag1.ID, name: tag1.Name },
+      { id: tag2.ID, name: tag2.Name },
+    ]);
+
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    const firstImage = page.locator('[data-lightbox-item]').first();
+    await expect(firstImage).toBeVisible();
+    await firstImage.click();
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
+    await expect(lightbox).toBeVisible();
+    await page.keyboard.press('t');
+    const quickTagPanel = lightbox.locator('[data-quick-tag-panel]');
+    await expect(quickTagPanel).toBeVisible();
+    await expect(quickTagPanel.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+
+    const backButton = quickTagPanel.locator('button:has-text("Back")');
+
+    // Test 1: Collapse via Z key (should NOT switch tab)
+    await page.keyboard.down('Digit1');
+    await page.waitForTimeout(500);
+    await page.keyboard.up('Digit1');
+    await expect(backButton).toBeVisible();
+
+    await page.keyboard.press('z');
+    await expect(backButton).toBeHidden();
+    await expect(quickTagPanel.locator('button[role="tab"][aria-selected="true"]:has-text("QUICK 1")')).toBeVisible();
+
+    // Test 2: Collapse via 0 key
+    await page.keyboard.down('Digit1');
+    await page.waitForTimeout(500);
+    await page.keyboard.up('Digit1');
+    await expect(backButton).toBeVisible();
+
+    await page.keyboard.press('Digit0');
+    await expect(backButton).toBeHidden();
+
+    // Test 3: Collapse via back button click
+    await page.keyboard.down('Digit1');
+    await page.waitForTimeout(500);
+    await page.keyboard.up('Digit1');
+    await expect(backButton).toBeVisible();
+
+    await backButton.click();
+    await expect(backButton).toBeHidden();
+  });
+
+  test('should announce expand/collapse to screen readers', async ({ page, apiClient }) => {
+    const tag1 = await apiClient.createTag(`A11yTag1-${testRunId}`);
+    const tag2 = await apiClient.createTag(`A11yTag2-${testRunId}`);
+
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    await page.evaluate((tags) => {
+      const data = {
+        version: 3,
+        quickSlots: [
+          [
+            tags.map(t => ({ id: t.id, name: t.name })),
+            null, null, null, null, null, null, null, null,
+          ],
+          Array(9).fill(null),
+          Array(9).fill(null),
+          Array(9).fill(null),
+        ],
+        recentTags: Array(9).fill(null),
+        activeTab: 0,
+        drawerOpen: true,
+      };
+      localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
+    }, [
+      { id: tag1.ID, name: tag1.Name },
+      { id: tag2.ID, name: tag2.Name },
+    ]);
+
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    const firstImage = page.locator('[data-lightbox-item]').first();
+    await expect(firstImage).toBeVisible();
+    await firstImage.click();
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
+    await expect(lightbox).toBeVisible();
+    await page.keyboard.press('t');
+    const quickTagPanel = lightbox.locator('[data-quick-tag-panel]');
+    await expect(quickTagPanel).toBeVisible();
+    await expect(quickTagPanel.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+
+    // Long-press to expand
+    await page.keyboard.down('Digit1');
+    await page.waitForTimeout(500);
+    await page.keyboard.up('Digit1');
+
+    const liveRegion = page.locator('[role="status"][aria-live="polite"]');
+    await expect(liveRegion).toContainText('Expanded slot 1');
+
+    await page.keyboard.press('Escape');
+    await expect(liveRegion).toContainText('Back to quick slots');
+  });
+
+  test('should have aria-description on multi-tag slot cards', async ({ page, apiClient }) => {
+    const tag1 = await apiClient.createTag(`AriaDesc1-${testRunId}`);
+    const tag2 = await apiClient.createTag(`AriaDesc2-${testRunId}`);
+
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    await page.evaluate((tags) => {
+      const data = {
+        version: 3,
+        quickSlots: [
+          [
+            tags.map(t => ({ id: t.id, name: t.name })),
+            null, null, null, null, null, null, null, null,
+          ],
+          Array(9).fill(null),
+          Array(9).fill(null),
+          Array(9).fill(null),
+        ],
+        recentTags: Array(9).fill(null),
+        activeTab: 0,
+        drawerOpen: true,
+      };
+      localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
+    }, [
+      { id: tag1.ID, name: tag1.Name },
+      { id: tag2.ID, name: tag2.Name },
+    ]);
+
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    const firstImage = page.locator('[data-lightbox-item]').first();
+    await expect(firstImage).toBeVisible();
+    await firstImage.click();
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
+    await expect(lightbox).toBeVisible();
+    await page.keyboard.press('t');
+    const quickTagPanel = lightbox.locator('[data-quick-tag-panel]');
+    await expect(quickTagPanel).toBeVisible();
+    await expect(quickTagPanel.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });
+
+    const slotButtonAria = quickTagPanel.locator(`button:has(kbd):has-text("AriaDesc1-${testRunId}")`);
+    await expect(slotButtonAria).toHaveAttribute('aria-description', 'Hold to expand individual tags');
+  });
+
 });
