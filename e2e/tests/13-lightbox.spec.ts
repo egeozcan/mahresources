@@ -1773,7 +1773,7 @@ test.describe('Lightbox on Group Detail Page', () => {
 
     const backButton = quickTagPanel.locator('button:has-text("Back")');
 
-    // Test 1: Collapse via Z key (should NOT switch tab)
+    // Test 1: Collapse via Z key (switches to QUICK 1 tab)
     await page.keyboard.down('Digit1');
     await page.waitForTimeout(500);
     await page.keyboard.up('Digit1');
@@ -1781,6 +1781,7 @@ test.describe('Lightbox on Group Detail Page', () => {
 
     await page.keyboard.press('z');
     await expect(backButton).toBeHidden();
+    // Z switches to QUICK 1 (already on it, so tab stays the same)
     await expect(quickTagPanel.locator('button[role="tab"][aria-selected="true"]:has-text("QUICK 1")')).toBeVisible();
 
     // Test 2: Collapse via 0 key
