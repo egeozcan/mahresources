@@ -106,6 +106,54 @@ Click a resource name to view its detail page, showing:
 
 Click a resource thumbnail to open images in the lightbox, view PDFs in the browser, or download other file types. The lightbox supports arrow-key navigation across all visible resources.
 
+### Lightbox Tag Editing
+
+Press **T** to open the Edit Tags panel in the lightbox. This panel lets you add/remove tags quickly using two methods:
+
+**Tag Search**: Type in the search field at the top (press **0** to focus it) to find and add tags by name.
+
+**Quick Slots**: The 3x3 grid below provides instant keyboard-driven tag toggling:
+
+- **Tabs**: Four customizable tabs (QUICK 1-4) and a RECENT tab. Switch with **Z/X/C/V/B** keys.
+- **Assigning tags**: Click an empty slot, then search for a tag to assign it. Slots can hold one or multiple tags.
+- **Toggling**: Press **1-9** (matching the numpad layout: 7-8-9 top row, 4-5-6 middle, 1-2-3 bottom) to toggle the tags in that slot on/off for the current resource.
+
+**Color indicators** show each slot's state:
+- **Green**: All tags in the slot are on the resource (click/press to remove)
+- **Amber**: Some tags are on the resource (click/press to add the missing ones)
+- **Gray**: No tags from the slot are on the resource (click/press to add all)
+
+#### Expanding Multi-Tag Slots
+
+When a slot contains multiple tags, you can drill into it to toggle tags individually:
+
+1. **Keyboard**: Hold a number key (**1-9**) for 400ms on a multi-tag slot. A progress bar at the bottom of the slot shows the hold duration.
+2. **Mouse**: Click and hold a multi-tag slot card for 400ms.
+3. A short press (tap) still toggles all tags in the slot as a batch.
+
+In expanded mode:
+- The tab bar is replaced with a **Back** button and "Slot N tags" label
+- Each tag from the slot appears as its own card in the 3x3 grid
+- Press **1-9** to toggle individual tags
+- Tags show **green** (on resource, press to remove) or **gray** (not on resource, press to add)
+
+**Exiting expanded mode:**
+- Press **Escape**, **0**, **Z**, **X**, **C**, **V**, or **B**
+- Click the **Back** button
+- Click outside the quick tag panel
+- Click any tab button (also switches to that tab)
+
+:::tip Keyboard shortcuts summary
+| Key | Action |
+|-----|--------|
+| **T** | Toggle Edit Tags panel |
+| **1-9** | Toggle slot (tap) or expand slot (hold) |
+| **0** | Focus tag search (or exit expanded mode) |
+| **Z/X/C/V** | Switch to QUICK 1-4 (or exit expanded mode) |
+| **B** | Switch to RECENT tab (or exit expanded mode) |
+| **Escape** | Exit expanded mode, or close lightbox |
+:::
+
 ## Editing Resources
 
 ### Edit Page
