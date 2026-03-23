@@ -1540,7 +1540,7 @@ test.describe('Lightbox on Group Detail Page', () => {
         ],
         recentTags: Array(9).fill(null),
         activeTab: 0,
-        drawerOpen: true,
+        drawerOpen: false,
       };
       localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
     }, [
@@ -1623,7 +1623,7 @@ test.describe('Lightbox on Group Detail Page', () => {
         ],
         recentTags: Array(9).fill(null),
         activeTab: 0,
-        drawerOpen: true,
+        drawerOpen: false,
       };
       localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
     }, [
@@ -1682,7 +1682,7 @@ test.describe('Lightbox on Group Detail Page', () => {
         ],
         recentTags: Array(9).fill(null),
         activeTab: 0,
-        drawerOpen: true,
+        drawerOpen: false,
       };
       localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
     }, [
@@ -1749,7 +1749,7 @@ test.describe('Lightbox on Group Detail Page', () => {
         ],
         recentTags: Array(9).fill(null),
         activeTab: 0,
-        drawerOpen: true,
+        drawerOpen: false,
       };
       localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
     }, [
@@ -1823,7 +1823,7 @@ test.describe('Lightbox on Group Detail Page', () => {
         ],
         recentTags: Array(9).fill(null),
         activeTab: 0,
-        drawerOpen: true,
+        drawerOpen: false,
       };
       localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
     }, [
@@ -1850,11 +1850,13 @@ test.describe('Lightbox on Group Detail Page', () => {
     await page.waitForTimeout(500);
     await page.keyboard.up('Digit1');
 
-    const liveRegion = page.locator('[role="status"][aria-live="polite"]');
-    await expect(liveRegion).toContainText('Expanded slot 1');
+    // Check that a live region contains the expansion announcement
+    const expandAnnouncement = page.locator('[role="status"][aria-live="polite"]', { hasText: 'Expanded slot 1' });
+    await expect(expandAnnouncement).toHaveCount(1, { timeout: 5000 });
 
     await page.keyboard.press('Escape');
-    await expect(liveRegion).toContainText('Back to quick slots');
+    const collapseAnnouncement = page.locator('[role="status"][aria-live="polite"]', { hasText: 'Back to quick slots' });
+    await expect(collapseAnnouncement).toHaveCount(1, { timeout: 5000 });
   });
 
   test('should have aria-description on multi-tag slot cards', async ({ page, apiClient }) => {
@@ -1878,7 +1880,7 @@ test.describe('Lightbox on Group Detail Page', () => {
         ],
         recentTags: Array(9).fill(null),
         activeTab: 0,
-        drawerOpen: true,
+        drawerOpen: false,
       };
       localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
     }, [
