@@ -77,6 +77,22 @@ export function autocompleter({
             this.$watch('dropdownActive', () => this.updatePopover());
             this.$watch('results', () => this.updatePopover());
 
+            // Prevent scrollbar clicks from blurring the input.
+            // mousedown.preventDefault() stops the browser from moving focus
+            // away from the input, so the blur handler never fires.
+            this.$nextTick(() => {
+                const popover = this.$refs?.dropdown;
+                if (popover) {
+                    popover.addEventListener('mousedown', (e) => {
+                        // Only prevent default for clicks on the popover itself (scrollbar),
+                        // not on option items (which have their own mousedown.prevent)
+                        if (e.target === popover) {
+                            e.preventDefault();
+                        }
+                    });
+                }
+            });
+
             this._repositionHandler = () => {
                 if (this.dropdownActive && this.results.length > 0) {
                     this.positionDropdown();
