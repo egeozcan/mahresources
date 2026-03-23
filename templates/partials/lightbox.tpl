@@ -479,9 +479,9 @@
                         <!-- EDITING MODE: pills + autocomplete -->
                         <template x-if="isEditing">
                             <div class="w-full min-h-[4.5rem] rounded-lg border-2 border-stone-500 bg-stone-800 p-2 flex flex-col gap-1.5"
-                                 @click.outside="$store.lightbox.editingSlotIndex = null"
+                                 @click.outside="!$el.querySelector('[popover]:popover-open') && ($store.lightbox.editingSlotIndex = null)"
                                  @keydown.escape.stop="$store.lightbox.editingSlotIndex = null"
-                                 @focusout="$nextTick(() => { if (!$el.contains(document.activeElement)) $store.lightbox.editingSlotIndex = null })">
+                                 @focusout="$nextTick(() => { if (!$el.contains(document.activeElement) && !$el.querySelector('[popover]:popover-open')) $store.lightbox.editingSlotIndex = null })">
                                 <kbd class="text-xs font-mono text-stone-500 self-center" x-text="$store.lightbox.quickTagKeyLabel(idx)"></kbd>
                                 <!-- Tag pills -->
                                 <div class="flex flex-wrap gap-1">
