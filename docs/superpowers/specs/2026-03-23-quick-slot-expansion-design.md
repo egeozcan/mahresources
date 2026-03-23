@@ -49,8 +49,8 @@ Clear `expandedSlotIndex` to `null` on: tab switch, panel close, editing start, 
 
 **Exit keys (ESC, 0, z, x, c, v, b):**
 
-- If expanded: collapse back (`expandedSlotIndex = null`), consume the event (don't also switch tabs for z/x/c/v/b)
-- If not expanded: existing behavior unchanged
+- z/x/c/v/b always call `switchTab(N)` — this collapses expanded mode (if active) and switches to the target tab in one step
+- ESC and 0: if expanded, collapse back; if not expanded, existing behavior unchanged
 
 ### Mouse Handling
 
