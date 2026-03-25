@@ -45,8 +45,17 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 			return
 		}
 
+		statusCode, _ := context["_statusCode"].(int)
+
 		if accept := request.Header.Get("Accept"); strings.Contains(accept, constants.JSON) || strings.HasSuffix(request.URL.Path, ".json") {
 			writer.Header().Set("Content-Type", constants.JSON)
+			if statusCode >= 400 {
+				writer.WriteHeader(statusCode)
+				if errMsg, ok := context["errorMessage"].(string); ok {
+					_ = json.NewEncoder(writer).Encode(map[string]string{"error": errMsg})
+				}
+				return
+			}
 			if err := json.NewEncoder(writer).Encode(discardFields(map[string]bool{
 				"partial":        true,
 				"path":           true,
@@ -60,6 +69,17 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 				"pluginMenuItems": true,
 			}, context)); err != nil {
 				fmt.Println(err)
+			}
+			return
+		}
+
+		// For error status codes, render the error template instead
+		if statusCode >= 400 {
+			errorTpl := pongo2.Must(renderer.FromFile("error.tpl"))
+			writer.Header().Set("Content-Type", constants.HTML)
+			writer.WriteHeader(statusCode)
+			if err := errorTpl.ExecuteWriter(context, writer); err != nil {
+				http.Error(writer, err.Error(), http.StatusInternalServerError)
 			}
 			return
 		}
