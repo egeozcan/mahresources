@@ -90,3 +90,19 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 		}
 	}
 }
+
+// RenderNotFound renders a styled 404 page using the error template.
+func RenderNotFound(writer http.ResponseWriter, request *http.Request) {
+	renderer := pongo2.NewSet("", loaders.MustNewLocalFileSystemLoader("./templates", make(map[string]string)))
+	errorTpl := pongo2.Must(renderer.FromFile("error.tpl"))
+	context := pongo2.Context{
+		"errorMessage": "Page not found",
+		"title":        "mahresources",
+		"pageTitle":    "404 Not Found",
+	}
+	writer.Header().Set("Content-Type", constants.HTML)
+	writer.WriteHeader(http.StatusNotFound)
+	if err := errorTpl.ExecuteWriter(context, writer); err != nil {
+		http.Error(writer, "404 page not found", http.StatusNotFound)
+	}
+}

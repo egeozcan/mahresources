@@ -10,12 +10,17 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/spf13/afero"
 	"mahresources/application_context"
+	"mahresources/server/template_handlers"
 )
 
 func CreateServer(appContext *application_context.MahresourcesContext, fs afero.Fs, altFs map[string]string) *http.Server {
 	router := mux.NewRouter()
 
 	registerRoutes(router, appContext)
+
+	router.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		template_handlers.RenderNotFound(w, r)
+	})
 
 	filePathPrefix := "/files/"
 	router.PathPrefix(filePathPrefix).Handler(http.StripPrefix(filePathPrefix, http.FileServer(afero.NewHttpFs(fs).Dir("/"))))
