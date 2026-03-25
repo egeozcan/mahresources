@@ -216,8 +216,8 @@ export const gestureMethods = {
       const oldPanX = this.panX;
       const oldPanY = this.panY;
 
-      const zoomDelta = -event.deltaY * 0.01;
-      this.setZoomLevel(this.zoomLevel + zoomDelta);
+      const factor = Math.pow(1.002, -event.deltaY);
+      this.setZoomLevel(this.zoomLevel * factor);
       const newZoom = this.zoomLevel;
 
       if (newZoom !== oldZoom && media) {
@@ -244,63 +244,67 @@ export const gestureMethods = {
     }
 
     if (!this.isZoomed()) {
-      if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+      // Determine dominant axis and navigation delta
+      const absX = Math.abs(event.deltaX);
+      const absY = Math.abs(event.deltaY);
+      const isVertical = absY > absX;
+      const navDelta = isVertical ? event.deltaY : event.deltaX;
+      const absNav = Math.abs(navDelta);
+
+      if (absNav > 10) {
         event.preventDefault();
 
-        if (Math.abs(event.deltaX) > 10) {
-          if (this._wheelDebounce) {
-            const absDelta = Math.abs(event.deltaX);
-            const dirChanged = Math.sign(event.deltaX) !== this._wheelNavDirection;
-            const timeSinceNav = performance.now() - this._wheelNavTime;
+        if (this._wheelDebounce) {
+          const dirChanged = Math.sign(navDelta) !== this._wheelNavDirection;
+          const timeSinceNav = performance.now() - this._wheelNavTime;
 
-            if (absDelta > this._prevWheelAbsDelta) {
-              this._wheelIncreaseCount++;
-            } else {
-              this._wheelIncreaseCount = 0;
-            }
-            this._prevWheelAbsDelta = absDelta;
-
-            // Direction reversal = always a new gesture (can't happen mid-swipe).
-            // Acceleration = new gesture only after 150ms (skip same-swipe ramp-up).
-            const newGesture = dirChanged || (timeSinceNav > 150 && this._wheelIncreaseCount >= 3);
-
-            if (newGesture) {
-              clearTimeout(this._wheelDebounceTimer);
-              this._wheelDebounce = false;
-              this._navDebounce = false;
-              // Fall through to navigate below
-            } else {
-              clearTimeout(this._wheelDebounceTimer);
-              this._wheelDebounceTimer = setTimeout(() => {
-                this._wheelDebounce = false;
-                this._navDebounce = false;
-                this._wheelIncreaseCount = 0;
-                this._prevWheelAbsDelta = 0;
-              }, 300);
-              return;
-            }
+          if (absNav > this._prevWheelAbsDelta) {
+            this._wheelIncreaseCount++;
+          } else {
+            this._wheelIncreaseCount = 0;
           }
+          this._prevWheelAbsDelta = absNav;
 
-          if (this._navDebounce) return;
+          // Direction reversal = always a new gesture (can't happen mid-swipe).
+          // Acceleration = new gesture only after 150ms (skip same-swipe ramp-up).
+          const newGesture = dirChanged || (timeSinceNav > 150 && this._wheelIncreaseCount >= 3);
 
-          this._wheelDebounce = true;
-          this._navDebounce = true;
-          this._wheelNavDirection = Math.sign(event.deltaX);
-          this._wheelNavTime = performance.now();
-          this._prevWheelAbsDelta = Math.abs(event.deltaX);
-          this._wheelIncreaseCount = 0;
-          this._wheelDebounceTimer = setTimeout(() => {
+          if (newGesture) {
+            clearTimeout(this._wheelDebounceTimer);
             this._wheelDebounce = false;
             this._navDebounce = false;
-            this._wheelIncreaseCount = 0;
-            this._prevWheelAbsDelta = 0;
-          }, 300);
-
-          if (event.deltaX > 0) {
-            this.next();
+            // Fall through to navigate below
           } else {
-            this.prev();
+            clearTimeout(this._wheelDebounceTimer);
+            this._wheelDebounceTimer = setTimeout(() => {
+              this._wheelDebounce = false;
+              this._navDebounce = false;
+              this._wheelIncreaseCount = 0;
+              this._prevWheelAbsDelta = 0;
+            }, 300);
+            return;
           }
+        }
+
+        if (this._navDebounce) return;
+
+        this._wheelDebounce = true;
+        this._navDebounce = true;
+        this._wheelNavDirection = Math.sign(navDelta);
+        this._wheelNavTime = performance.now();
+        this._prevWheelAbsDelta = absNav;
+        this._wheelIncreaseCount = 0;
+        this._wheelDebounceTimer = setTimeout(() => {
+          this._wheelDebounce = false;
+          this._navDebounce = false;
+          this._wheelIncreaseCount = 0;
+          this._prevWheelAbsDelta = 0;
+        }, 300);
+
+        if (navDelta > 0) {
+          this.next();
+        } else {
+          this.prev();
         }
       }
     } else {

@@ -432,6 +432,13 @@ export const navigationMethods = {
     });
   },
 
+  restartVideo() {
+    const video = document.querySelector('[role="dialog"] video');
+    if (!video) return;
+    video.currentTime = 0;
+    video.play();
+  },
+
   pauseCurrentVideo() {
     const video = document.querySelector('[x-show="$store.lightbox.isOpen"] video');
     if (video && !video.paused) {

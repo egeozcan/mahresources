@@ -642,17 +642,13 @@ test.describe('Lightbox Edit Panel', () => {
     await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
     await page.keyboard.press('e');
 
-    // Wait for animation to complete
-    await page.waitForTimeout(400);
-
     // Edit panel should be hidden but lightbox should still be visible
-    await expect(editPanel).toBeHidden();
+    await expect(editPanel).toBeHidden({ timeout: 5000 });
     await expect(lightbox).toBeVisible();
 
     // Press Escape - should close lightbox
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(300);
-    await expect(lightbox).toBeHidden();
+    await expect(lightbox).toBeHidden({ timeout: 5000 });
   });
 
   test('should update resource name from edit panel', async ({ page }) => {
@@ -765,8 +761,7 @@ test.describe('Lightbox Edit Panel', () => {
     // Close lightbox completely
     await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(400);
-    await expect(lightbox).toBeHidden();
+    await expect(lightbox).toBeHidden({ timeout: 5000 });
 
     // Open lightbox on a DIFFERENT resource (second one)
     const imageLinks = page.locator('[data-lightbox-item]');
@@ -829,8 +824,7 @@ test.describe('Lightbox Edit Panel', () => {
     // Blur focused input, then press 't' to toggle panel closed
     await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
     await page.keyboard.press('t');
-    await page.waitForTimeout(400);
-    await expect(quickTagPanel).toBeHidden();
+    await expect(quickTagPanel).toBeHidden({ timeout: 5000 });
     await expect(lightbox).toBeVisible();
 
     // Arrow navigate to the next resource
@@ -884,8 +878,7 @@ test.describe('Lightbox Edit Panel', () => {
 
     // Close lightbox (Escape closes lightbox immediately, even with edit panel open)
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(400);
-    await expect(lightbox).toBeHidden();
+    await expect(lightbox).toBeHidden({ timeout: 5000 });
 
     // Wait for background refresh to complete
     await page.waitForTimeout(1000);
