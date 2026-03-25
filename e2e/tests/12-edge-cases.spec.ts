@@ -141,9 +141,8 @@ test.describe('Error Handling - Invalid Operations', () => {
     await page.waitForLoadState('load');
 
     // Should show error or redirect - not crash
-    const hasError = await page.locator('.error, [class*="error"]').isVisible() ||
-                     await page.getByText(/not found/i).isVisible() ||
-                     await page.getByText(/record not found/i).isVisible();
+    const hasError = await page.locator('.error, [class*="error"]').first().isVisible() ||
+                     await page.getByText(/not found/i).first().isVisible();
     const redirectedToList = page.url().includes('/tags');
 
     // At least one graceful handling should occur
