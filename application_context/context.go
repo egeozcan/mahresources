@@ -1,6 +1,8 @@
 package application_context
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -24,6 +26,17 @@ import (
 	"mahresources/server/interfaces"
 	"mahresources/storage"
 )
+
+// ValidateMeta checks that a Meta string is valid JSON. Empty string and "{}" are accepted.
+func ValidateMeta(meta string) error {
+	if meta == "" || meta == "{}" {
+		return nil
+	}
+	if !json.Valid([]byte(meta)) {
+		return errors.New("invalid JSON in Meta field")
+	}
+	return nil
+}
 
 type PopularTag struct {
 	Name  string
@@ -449,7 +462,7 @@ func metaKeys(ctx *MahresourcesContext, table string) ([]interfaces.MetaKey, err
 		if err := ctx.db.
 			Table(fmt.Sprintf("%v, json_each(%v.meta)", table, table)).
 			Select("DISTINCT json_each.key as Key").
-			Where("Meta IS NOT NULL").
+			Where(fmt.Sprintf("%v.meta IS NOT NULL AND %v.meta != '' AND %v.meta != 'null' AND json_valid(%v.meta)", table, table, table, table)).
 			Scan(&results).Error; err != nil {
 			return nil, err
 		}

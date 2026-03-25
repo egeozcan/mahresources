@@ -40,6 +40,10 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 		groupQuery.Meta = hMeta
 	}
 
+	if err := ValidateMeta(groupQuery.Meta); err != nil {
+		return nil, err
+	}
+
 	tx := ctx.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {

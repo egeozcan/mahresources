@@ -345,6 +345,10 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		resourceQuery.Meta = hMeta
 	}
 
+	if err := ValidateMeta(resourceQuery.Meta); err != nil {
+		return nil, err
+	}
+
 	res := &models.Resource{
 		Name:               fileName,
 		Hash:               hash,
