@@ -12,7 +12,17 @@ import (
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
 	"net/http"
+	"strings"
 )
+
+// errorStatusCode returns the appropriate HTTP status code for an error.
+// "record not found" errors map to 404; everything else maps to 500.
+func errorStatusCode(err error) int {
+	if strings.Contains(err.Error(), "record not found") {
+		return http.StatusNotFound
+	}
+	return http.StatusInternalServerError
+}
 
 // getEntityID extracts an entity ID from a request, checking form body first,
 // then falling back to URL query parameters with both "Id" and "id" casing.
@@ -93,7 +103,7 @@ func WithDeleteResponse[T any](handler DeleteHandler, redirectURL string) http.H
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id, err := handler(request)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, errorStatusCode(err))
 			return
 		}
 

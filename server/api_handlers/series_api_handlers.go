@@ -63,7 +63,7 @@ func GetDeleteSeriesHandler(ctx interfaces.SeriesDeleter) func(writer http.Respo
 		}
 
 		if err := effectiveCtx.DeleteSeries(id); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, errorStatusCode(err))
 			return
 		}
 
@@ -88,7 +88,7 @@ func GetRemoveResourceFromSeriesHandler(ctx interfaces.ResourceSeriesRemover) fu
 		}
 
 		if err := effectiveCtx.RemoveResourceFromSeries(id); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, errorStatusCode(err))
 			return
 		}
 

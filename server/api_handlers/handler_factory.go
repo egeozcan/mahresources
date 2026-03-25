@@ -152,7 +152,7 @@ func (f *CRUDHandlerFactory[T, Q, C]) DeleteHandler() http.HandlerFunc {
 		}
 
 		if err := f.writer.Delete(query.ID); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, errorStatusCode(err))
 			return
 		}
 

@@ -160,7 +160,7 @@ func GetRemoveRelationHandler(ctx interfaces.RelationshipDeleter) func(writer ht
 
 		err := effectiveCtx.DeleteRelationship(id)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, errorStatusCode(err))
 			return
 		}
 
@@ -187,7 +187,7 @@ func GetRemoveRelationTypeHandler(ctx interfaces.RelationshipDeleter) func(write
 
 		err := effectiveCtx.DeleteRelationshipType(id)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, errorStatusCode(err))
 			return
 		}
 

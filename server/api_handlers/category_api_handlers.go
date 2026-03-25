@@ -92,7 +92,7 @@ func GetRemoveCategoryHandler(ctx interfaces.CategoryDeleter) func(writer http.R
 
 		err := effectiveCtx.DeleteCategory(id)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, errorStatusCode(err))
 			return
 		}
 
@@ -119,7 +119,7 @@ func GetRemoveResourceCategoryHandler(ctx interfaces.ResourceCategoryDeleter) fu
 
 		err := effectiveCtx.DeleteResourceCategory(id)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, errorStatusCode(err))
 			return
 		}
 

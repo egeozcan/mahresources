@@ -204,7 +204,7 @@ func GetRemoveQueryHandler(ctx interfaces.QueryDeleter) func(writer http.Respons
 
 		err := effectiveCtx.DeleteQuery(id)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, errorStatusCode(err))
 			return
 		}
 
