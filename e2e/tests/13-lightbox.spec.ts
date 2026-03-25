@@ -232,6 +232,45 @@ test.describe('Lightbox Functionality', () => {
     expect(scrollAfter).toBe(scrollBefore);
   });
 
+  test('should not swallow space bar in text inputs when lightbox is closed', async ({ page }) => {
+    await page.goto('/resources');
+    await page.waitForLoadState('load');
+
+    // Focus the search/name input field on the resources page
+    const nameInput = page.locator('input[name="Name"]');
+    await nameInput.click();
+
+    // Type text that includes spaces
+    await page.keyboard.type('hello world');
+
+    // The input should contain the full text including the space
+    await expect(nameInput).toHaveValue('hello world');
+  });
+
+  test('should navigate with space bar when lightbox is open', async ({ page }) => {
+    await page.goto('/resources');
+    await page.waitForLoadState('load');
+
+    // Open lightbox
+    const imageLink = page.locator('[data-lightbox-item]').first();
+    await imageLink.click();
+
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
+    await expect(lightbox).toBeVisible();
+
+    const counter = lightbox.locator('div.bg-black\\/50:has-text("/")').first();
+    await expect(counter).toContainText('1 /');
+
+    // Blur any focused element so canNavigate() returns true
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+
+    // Press space to navigate to the next image
+    await page.keyboard.press('Space');
+
+    // Should have advanced to item 2
+    await expect(counter).toContainText('2 /');
+  });
+
   test('should show details link that navigates to resource page', async ({ page }) => {
     await page.goto('/resources');
     await page.waitForLoadState('load');
