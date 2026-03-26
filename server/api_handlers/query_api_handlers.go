@@ -4,14 +4,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+
 	"github.com/jmoiron/sqlx"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
 	"mahresources/server/interfaces"
-	"net/http"
-	"strconv"
 )
 
 func sQLToMap(rows *sqlx.Rows) ([]map[string]any, error) {
@@ -76,6 +79,50 @@ func GetDatabaseSchemaHandler(ctx interfaces.SchemaReader) func(writer http.Resp
 	}
 }
 
+// fillQueryParameters populates a map[string]any from the request body or
+// query string.  Unlike tryFillStructValuesFromRequest, it does not use
+// gorilla/schema (which requires a struct pointer) and instead parses form
+// values directly into the map.
+func fillQueryParameters(dst *query_models.QueryParameters, request *http.Request) error {
+	contentTypeHeader := request.Header.Get("Content-type")
+
+	if strings.HasPrefix(contentTypeHeader, constants.JSON) {
+		return json.NewDecoder(request.Body).Decode(dst)
+	}
+
+	// For form-encoded, multipart, or no content-type: parse form values into the map.
+	var formValues url.Values
+
+	if strings.HasPrefix(contentTypeHeader, constants.MultiPartForm) {
+		if err := request.ParseMultipartForm(int64(32) << 20); err != nil {
+			return err
+		}
+		formValues = request.PostForm
+	} else if strings.HasPrefix(contentTypeHeader, constants.UrlEncodedForm) {
+		if err := request.ParseForm(); err != nil {
+			return err
+		}
+		formValues = request.PostForm
+	} else {
+		formValues = request.URL.Query()
+	}
+
+	params := make(query_models.QueryParameters, len(formValues))
+	for key, vals := range formValues {
+		// Skip the routing parameters (id/name) used to identify the query itself.
+		if key == "id" || key == "name" {
+			continue
+		}
+		if len(vals) == 1 {
+			params[key] = vals[0]
+		} else {
+			params[key] = strings.Join(vals, ",")
+		}
+	}
+	*dst = params
+	return nil
+}
+
 func GetRunQueryHandler(ctx interfaces.QueryRunner) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := uint(http_utils.GetIntQueryParameter(request, "id", 0))
@@ -83,7 +130,7 @@ func GetRunQueryHandler(ctx interfaces.QueryRunner) func(writer http.ResponseWri
 
 		var values query_models.QueryParameters
 
-		if err := tryFillStructValuesFromRequest(&values, request); err != nil {
+		if err := fillQueryParameters(&values, request); err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
