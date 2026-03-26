@@ -116,6 +116,10 @@ func (ctx *MahresourcesContext) AddRelationType(query *query_models.Relationship
 		return nil, errors.New("relation type name is required")
 	}
 
+	if query.FromCategory == 0 || query.ToCategory == 0 {
+		return nil, errors.New("fromCategory and toCategory are required")
+	}
+
 	var relationType = models.GroupRelationType{
 		Name:           query.Name,
 		FromCategoryId: &query.FromCategory,
@@ -125,6 +129,9 @@ func (ctx *MahresourcesContext) AddRelationType(query *query_models.Relationship
 
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Save(&relationType).Error; err != nil {
+			if isForeignKeyError(err) {
+				return errors.New("fromCategory and toCategory must reference existing categories")
+			}
 			return err
 		}
 

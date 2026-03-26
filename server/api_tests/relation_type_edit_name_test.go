@@ -28,13 +28,13 @@ func TestRelationTypeEditNameEndpointExists(t *testing.T) {
 
 	// Create a relation type
 	rtPayload := struct {
-		Name           string
-		FromCategoryId uint
-		ToCategoryId   uint
+		Name         string
+		FromCategory uint
+		ToCategory   uint
 	}{
-		Name:           "OriginalRelTypeName",
-		FromCategoryId: category.ID,
-		ToCategoryId:   category.ID,
+		Name:         "OriginalRelTypeName",
+		FromCategory: category.ID,
+		ToCategory:   category.ID,
 	}
 	resp = tc.MakeRequest(http.MethodPost, "/v1/relationType", rtPayload)
 	require.Equal(t, http.StatusOK, resp.Code)
