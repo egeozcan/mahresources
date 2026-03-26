@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"errors"
+	"fmt"
 
 	"gorm.io/gorm/clause"
 	"mahresources/models"
@@ -79,6 +80,9 @@ func (ctx *MahresourcesContext) CreateTag(tagQuery *query_models.TagCreator) (*m
 	}
 
 	if err := ctx.db.Create(&tag).Error; err != nil {
+		if isUniqueConstraintError(err) {
+			return nil, fmt.Errorf("a tag named %q already exists", tagQuery.Name)
+		}
 		return nil, err
 	}
 
@@ -122,6 +126,9 @@ func (ctx *MahresourcesContext) UpdateTag(tagQuery *query_models.TagCreator) (*m
 	tag.Description = tagQuery.Description
 
 	if err := ctx.db.Save(&tag).Error; err != nil {
+		if isUniqueConstraintError(err) {
+			return nil, fmt.Errorf("a tag named %q already exists", tag.Name)
+		}
 		return nil, err
 	}
 

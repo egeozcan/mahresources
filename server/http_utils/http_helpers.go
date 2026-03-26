@@ -99,7 +99,39 @@ func RemoveValue(items []string, item string) []string {
 	return newItems
 }
 
+// SanitizeSchemaError rewrites raw gorilla/schema conversion errors into
+// user-friendly messages. If the error is not a schema error, it is returned
+// unchanged.
+func SanitizeSchemaError(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "schema: error converting value") &&
+		!strings.Contains(msg, "schema: invalid path") {
+		return err
+	}
+	return fmt.Errorf("invalid value for %s: must be a valid number", extractSchemaFieldName(msg))
+}
+
+// extractSchemaFieldName extracts the quoted field name from a gorilla/schema
+// error message like `schema: error converting value for "id"` or
+// `schema: error converting value for index 0 of "Tags"`.
+func extractSchemaFieldName(msg string) string {
+	// Look for the last quoted string in the message
+	lastQuote := strings.LastIndex(msg, "\"")
+	if lastQuote <= 0 {
+		return "parameter"
+	}
+	penultimateQuote := strings.LastIndex(msg[:lastQuote], "\"")
+	if penultimateQuote < 0 {
+		return "parameter"
+	}
+	return "\"" + msg[penultimateQuote+1:lastQuote] + "\""
+}
+
 func HandleError(err error, writer http.ResponseWriter, request *http.Request, responseCode int) {
+	err = SanitizeSchemaError(err)
 	fmt.Printf("\n[ERROR]: %v\n", err)
 
 	if RequestAcceptsHTML(request) {

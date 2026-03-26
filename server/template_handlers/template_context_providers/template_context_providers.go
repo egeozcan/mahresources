@@ -7,6 +7,7 @@ import (
 	"github.com/flosch/pongo2/v4"
 	"github.com/gorilla/schema"
 	"mahresources/models/query_models"
+	"mahresources/server/http_utils"
 	"reflect"
 )
 
@@ -27,6 +28,7 @@ func addErrContext(err error, ctx pongo2.Context) pongo2.Context {
 	} else if strings.Contains(errMsg, "schema: error converting value") ||
 		strings.Contains(errMsg, "schema: invalid path") {
 		statusCode = http.StatusBadRequest
+		errMsg = http_utils.SanitizeSchemaError(err).Error()
 	} else if strings.Contains(errMsg, "no such column") ||
 		strings.Contains(errMsg, "does not exist") {
 		statusCode = http.StatusBadRequest
