@@ -1,8 +1,6 @@
 package application_context
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 
@@ -212,8 +210,8 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 
 		resource.Name = resourceQuery.Name
 		if resourceQuery.Meta != "" {
-			if !json.Valid([]byte(resourceQuery.Meta)) {
-				return errors.New("invalid JSON in Meta field")
+			if err := ValidateMeta(resourceQuery.Meta); err != nil {
+				return err
 			}
 			resource.Meta = []byte(resourceQuery.Meta)
 			// Recompute OwnMeta if the resource is in a series

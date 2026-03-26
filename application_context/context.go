@@ -2,7 +2,6 @@ package application_context
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -26,25 +25,6 @@ import (
 	"mahresources/server/interfaces"
 	"mahresources/storage"
 )
-
-// ValidateMeta checks that a Meta string is a valid JSON object.
-// Empty string and "{}" are accepted. Non-object JSON values (null, arrays,
-// strings, numbers, booleans) are rejected because downstream operations
-// like json_each(), json_patch(), and jsonb_object_keys() require a JSON object.
-func ValidateMeta(meta string) error {
-	if meta == "" || meta == "{}" {
-		return nil
-	}
-	if !json.Valid([]byte(meta)) {
-		return errors.New("invalid JSON in Meta field")
-	}
-	// Ensure the value is a JSON object (not null, array, string, number, or boolean)
-	trimmed := strings.TrimSpace(meta)
-	if len(trimmed) == 0 || trimmed[0] != '{' {
-		return errors.New("Meta field must be a JSON object")
-	}
-	return nil
-}
 
 type PopularTag struct {
 	Name  string
@@ -445,6 +425,24 @@ func timeOrNil(time time.Time, err error) *time.Time {
 	return &time
 }
 
+// ValidateMeta checks that the given string is valid JSON and that
+// the top-level value is a JSON object (i.e. starts with '{').
+// GORM's JSONB scanner and SQLite's json_each both expect objects;
+// storing scalars or arrays causes 500 errors on list pages.
+func ValidateMeta(meta string) error {
+	meta = strings.TrimSpace(meta)
+	if meta == "" {
+		return nil
+	}
+	if !json.Valid([]byte(meta)) {
+		return fmt.Errorf("invalid JSON in meta field")
+	}
+	if meta[0] != '{' {
+		return fmt.Errorf("meta must be a JSON object, got %c", meta[0])
+	}
+	return nil
+}
+
 func pageLimit(db *gorm.DB) *gorm.DB {
 	return db.Limit(constants.MaxResultsPerPage)
 }
@@ -470,7 +468,7 @@ func metaKeys(ctx *MahresourcesContext, table string) ([]interfaces.MetaKey, err
 		if err := ctx.db.
 			Table(fmt.Sprintf("%v, json_each(%v.meta)", table, table)).
 			Select("DISTINCT json_each.key as Key").
-			Where(fmt.Sprintf("%v.meta IS NOT NULL AND %v.meta != '' AND %v.meta != 'null' AND json_valid(%v.meta)", table, table, table, table)).
+			Where("Meta IS NOT NULL").
 			Scan(&results).Error; err != nil {
 			return nil, err
 		}

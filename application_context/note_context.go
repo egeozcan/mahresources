@@ -15,7 +15,7 @@ import (
 )
 
 func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteEditor) (*models.Note, error) {
-	if strings.TrimSpace(noteQuery.Name) == "" {
+	if noteQuery.Name == "" {
 		return nil, errors.New("note name needed")
 	}
 
@@ -25,8 +25,8 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 		noteQuery.Meta = "{}"
 	}
 
-	if !json.Valid([]byte(noteQuery.Meta)) {
-		return nil, errors.New("invalid JSON in Meta field")
+	if err := ValidateMeta(noteQuery.Meta); err != nil {
+		return nil, err
 	}
 
 	var noteTypeId *uint
@@ -75,7 +75,6 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
-			panic(r)
 		}
 	}()
 
@@ -390,21 +389,15 @@ func (ctx *MahresourcesContext) DeleteNoteType(noteTypeId uint) error {
 	}
 	noteTypeName := noteType.Name
 
-	// Wrap in a transaction so that if the Delete fails, the SET NULL on
-	// notes is rolled back (otherwise notes lose their type_id but the type
-	// still exists).
-	err := ctx.db.Transaction(func(tx *gorm.DB) error {
-		// Do NOT use Select(clause.Associations) here — NoteType's only association
-		// is Notes, and deleting a type must SET NULL on notes (not cascade-delete them).
-		// Explicitly clear NoteTypeId since SQLite's PRAGMA foreign_keys is a no-op
-		// inside transactions, so FK constraints (OnDelete:SET NULL) don't fire reliably.
-		if err := tx.Model(&models.Note{}).Where("note_type_id = ?", noteTypeId).Update("note_type_id", nil).Error; err != nil {
-			return err
-		}
+	// Do NOT use Select(clause.Associations) here — NoteType's only association
+	// is Notes, and deleting a type must SET NULL on notes (not cascade-delete them).
+	// Explicitly clear NoteTypeId since SQLite's PRAGMA foreign_keys is a no-op
+	// inside transactions, so FK constraints (OnDelete:SET NULL) don't fire reliably.
+	if err := ctx.db.Model(&models.Note{}).Where("note_type_id = ?", noteTypeId).Update("note_type_id", nil).Error; err != nil {
+		return err
+	}
 
-		return tx.Delete(&noteType).Error
-	})
-
+	err := ctx.db.Delete(&noteType).Error
 	if err == nil {
 		ctx.Logger().Info(models.LogActionDelete, "noteType", &noteTypeId, noteTypeName, "Deleted note type", nil)
 		ctx.InvalidateSearchCacheByType(EntityTypeNoteType)

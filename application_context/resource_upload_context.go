@@ -3,7 +3,6 @@ package application_context
 import (
 	"crypto/sha1"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -219,6 +218,10 @@ func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.Re
 				group := models.Group{CategoryId: &category.ID, Name: resourceQuery.GroupName}
 
 				if err := ctx.db.Where(&group).First(&group).Error; err != nil {
+					if valErr := ValidateMeta(resourceQuery.GroupMeta); valErr != nil {
+						setError(valErr)
+						return
+					}
 					group.Meta = []byte(resourceQuery.GroupMeta)
 					if err := ctx.db.Save(&group).Error; err != nil {
 						setError(err)
@@ -346,10 +349,6 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		resourceQuery.Meta = hMeta
 	}
 
-	if err := ValidateMeta(resourceQuery.Meta); err != nil {
-		return nil, err
-	}
-
 	res := &models.Resource{
 		Name:               fileName,
 		Hash:               hash,
@@ -373,7 +372,6 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
-			panic(r)
 		}
 	}()
 
@@ -543,7 +541,6 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
-			panic(r)
 		}
 	}()
 
@@ -666,9 +663,9 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 		resourceQuery.Meta = "{}"
 	}
 
-	if !json.Valid([]byte(resourceQuery.Meta)) {
+	if err := ValidateMeta(resourceQuery.Meta); err != nil {
 		tx.Rollback()
-		return nil, errors.New("invalid JSON in Meta field")
+		return nil, err
 	}
 
 	width := 0

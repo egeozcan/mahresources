@@ -1,10 +1,8 @@
 package application_context
 
 import (
-	"encoding/json"
 	"errors"
 	"net/url"
-	"strings"
 
 	"gorm.io/gorm"
 	"mahresources/models"
@@ -14,7 +12,7 @@ import (
 )
 
 func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreator) (*models.Group, error) {
-	if strings.TrimSpace(groupQuery.Name) == "" {
+	if groupQuery.Name == "" {
 		return nil, errors.New("group name needed")
 	}
 
@@ -22,8 +20,8 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 		groupQuery.Meta = "{}"
 	}
 
-	if !json.Valid([]byte(groupQuery.Meta)) {
-		return nil, errors.New("invalid JSON in Meta field")
+	if err := ValidateMeta(groupQuery.Meta); err != nil {
+		return nil, err
 	}
 
 	hookData := map[string]any{
@@ -50,7 +48,6 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
-			panic(r)
 		}
 	}()
 
@@ -129,7 +126,7 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 }
 
 func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor) (*models.Group, error) {
-	if strings.TrimSpace(groupQuery.Name) == "" {
+	if groupQuery.Name == "" {
 		return nil, errors.New("group name needed")
 	}
 
@@ -158,7 +155,6 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
-			panic(r)
 		}
 	}()
 
@@ -169,9 +165,9 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 		groupQuery.Meta = "{}"
 	}
 
-	if !json.Valid([]byte(groupQuery.Meta)) {
+	if err := ValidateMeta(groupQuery.Meta); err != nil {
 		tx.Rollback()
-		return nil, errors.New("invalid JSON in Meta field")
+		return nil, err
 	}
 
 	group := &models.Group{
