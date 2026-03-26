@@ -13,7 +13,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("failed to open test db: %v", err)
 	}
-	db.Exec("CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)")
+	db.Exec("CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT)")
 	return db
 }
 
@@ -82,4 +82,79 @@ func TestFuzzyFallbackUnderscoreNotWildcard(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestFuzzyFallbackSearchesDescriptionAndOriginalName(t *testing.T) {
+	ftsProvider := NewSQLiteFTS()
+
+	t.Run("matches description on generic table", func(t *testing.T) {
+		db := setupTestDB(t)
+		// Insert a row where name does not match but description does
+		db.Exec("INSERT INTO items (name, description) VALUES ('alpha', 'fuzzy target here')")
+		db.Exec("INSERT INTO items (name, description) VALUES ('beta', 'nothing relevant')")
+
+		var names []string
+		ftsProvider.fuzzyFallback(db.Table("items"), "items", "target").
+			Pluck("name", &names)
+
+		found := false
+		for _, n := range names {
+			if n == "alpha" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected 'alpha' to match via description, got: %v", names)
+		}
+	})
+
+	t.Run("matches original_name on resources table", func(t *testing.T) {
+		db := setupTestDBResources(t)
+		db.Exec("INSERT INTO resources (name, description, original_name) VALUES ('renamed', 'some desc', 'original_fuzzy_file.txt')")
+		db.Exec("INSERT INTO resources (name, description, original_name) VALUES ('other', 'other desc', 'unrelated.txt')")
+
+		var names []string
+		ftsProvider.fuzzyFallback(db.Table("resources"), "resources", "original_fuzzy").
+			Pluck("name", &names)
+
+		found := false
+		for _, n := range names {
+			if n == "renamed" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected 'renamed' to match via original_name, got: %v", names)
+		}
+	})
+
+	t.Run("short term searches description", func(t *testing.T) {
+		db := setupTestDB(t)
+		db.Exec("INSERT INTO items (name, description) VALUES ('foo', 'ab match')")
+		db.Exec("INSERT INTO items (name, description) VALUES ('bar', 'no luck')")
+
+		var names []string
+		ftsProvider.fuzzyFallback(db.Table("items"), "items", "ab").
+			Pluck("name", &names)
+
+		found := false
+		for _, n := range names {
+			if n == "foo" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected 'foo' to match via description for short term 'ab', got: %v", names)
+		}
+	})
+}
+
+func setupTestDBResources(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=private"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to open test db: %v", err)
+	}
+	db.Exec("CREATE TABLE resources (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, original_name TEXT)")
+	return db
 }
