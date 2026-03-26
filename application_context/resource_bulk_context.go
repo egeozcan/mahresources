@@ -148,8 +148,8 @@ func (ctx *MahresourcesContext) ResourceMetaKeys() ([]interfaces.MetaKey, error)
 }
 
 func (ctx *MahresourcesContext) BulkRemoveTagsFromResources(query *query_models.BulkEditQuery) error {
-	if len(query.ID) == 0 || len(query.EditedId) == 0 {
-		return nil
+	if err := validateBulkEditQuery(query, "resource", "tag"); err != nil {
+		return err
 	}
 
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
@@ -170,8 +170,8 @@ func (ctx *MahresourcesContext) BulkRemoveTagsFromResources(query *query_models.
 }
 
 func (ctx *MahresourcesContext) BulkReplaceTagsFromResources(query *query_models.BulkEditQuery) error {
-	if len(query.ID) == 0 {
-		return nil
+	if err := requireIDs(query.ID, "resource"); err != nil {
+		return err
 	}
 
 	uniqueEditedIds := deduplicateUints(query.EditedId)
@@ -216,8 +216,21 @@ func (ctx *MahresourcesContext) BulkReplaceTagsFromResources(query *query_models
 }
 
 func (ctx *MahresourcesContext) BulkAddMetaToResources(query *query_models.BulkEditMetaQuery) error {
+	if err := requireIDs(query.ID, "resource"); err != nil {
+		return err
+	}
+
 	if !json.Valid([]byte(query.Meta)) {
 		return errors.New("invalid json")
+	}
+
+	uniqueIds := deduplicateUints(query.ID)
+	var count int64
+	if err := ctx.db.Model(&models.Resource{}).Where("id IN ?", uniqueIds).Count(&count).Error; err != nil {
+		return err
+	}
+	if int(count) != len(uniqueIds) {
+		return fmt.Errorf("one or more resources not found")
 	}
 
 	var resource models.Resource
@@ -300,11 +313,12 @@ func (ctx *MahresourcesContext) BulkAddMetaToResources(query *query_models.BulkE
 }
 
 func (ctx *MahresourcesContext) BulkAddTagsToResources(query *query_models.BulkEditQuery) error {
-	if len(query.ID) == 0 || len(query.EditedId) == 0 {
-		return nil
+	if err := validateBulkEditQuery(query, "resource", "tag"); err != nil {
+		return err
 	}
 
 	uniqueEditedIds := deduplicateUints(query.EditedId)
+	uniqueEntityIds := deduplicateUints(query.ID)
 
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		// Validate all tags exist (single query, no preloads)
@@ -314,6 +328,14 @@ func (ctx *MahresourcesContext) BulkAddTagsToResources(query *query_models.BulkE
 		}
 		if int(tagCount) != len(uniqueEditedIds) {
 			return fmt.Errorf("one or more tags not found")
+		}
+
+		var resourceCount int64
+		if err := tx.Model(&models.Resource{}).Where("id IN ?", uniqueEntityIds).Count(&resourceCount).Error; err != nil {
+			return err
+		}
+		if int(resourceCount) != len(uniqueEntityIds) {
+			return fmt.Errorf("one or more resources not found")
 		}
 
 		// Batch insert: one INSERT per tag, skip conflicts
@@ -339,8 +361,8 @@ func (ctx *MahresourcesContext) BulkAddTagsToResources(query *query_models.BulkE
 }
 
 func (ctx *MahresourcesContext) BulkAddGroupsToResources(query *query_models.BulkEditQuery) error {
-	if len(query.ID) == 0 || len(query.EditedId) == 0 {
-		return nil
+	if err := validateBulkEditQuery(query, "resource", "group"); err != nil {
+		return err
 	}
 
 	uniqueEditedIds := deduplicateUints(query.EditedId)
@@ -464,6 +486,10 @@ func (ctx *MahresourcesContext) deleteResourceDBOnly(resourceId uint) (*FileClea
 }
 
 func (ctx *MahresourcesContext) BulkDeleteResources(query *query_models.BulkQuery) error {
+	if err := requireIDs(query.ID, "resource"); err != nil {
+		return err
+	}
+
 	var cleanupActions []*FileCleanupAction
 
 	err := ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
