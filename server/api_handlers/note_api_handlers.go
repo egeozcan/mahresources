@@ -376,7 +376,12 @@ func GetBulkDeleteNotesHandler(ctx interfaces.NoteDeleter) func(writer http.Resp
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+
+		if len(editor.ID) == 0 {
+			http_utils.HandleError(fmt.Errorf("at least one note ID is required"), writer, request, http.StatusBadRequest)
 			return
 		}
 

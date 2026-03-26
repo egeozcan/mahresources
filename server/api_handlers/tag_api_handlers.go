@@ -111,7 +111,12 @@ func GetBulkDeleteTagsHandler(ctx interfaces.BulkTagDeleter) func(writer http.Re
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+
+		if len(editor.ID) == 0 {
+			http_utils.HandleError(fmt.Errorf("at least one tag ID is required"), writer, request, http.StatusBadRequest)
 			return
 		}
 
