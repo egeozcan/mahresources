@@ -75,6 +75,6 @@ func TestSeriesEditNameNotFound(t *testing.T) {
 	formData.Set("name", "New Name")
 
 	resp := tc.MakeFormRequest(http.MethodPost, "/v1/series/editName?id=999", formData)
-	assert.Equal(t, http.StatusBadRequest, resp.Code,
-		"POST /v1/series/editName for non-existent series should fail")
+	assert.Equal(t, http.StatusNotFound, resp.Code,
+		"POST /v1/series/editName for non-existent series should return 404")
 }
