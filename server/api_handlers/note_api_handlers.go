@@ -271,7 +271,7 @@ func GetRemoveNoteTypeHandler(ctx interfaces.NoteTypeDeleter) func(writer http.R
 
 		err := effectiveCtx.DeleteNoteType(id)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, errorStatusCode(err))
 			return
 		}
 

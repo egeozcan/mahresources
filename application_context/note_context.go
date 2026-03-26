@@ -15,6 +15,7 @@ import (
 )
 
 func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteEditor) (*models.Note, error) {
+	noteQuery.Name = strings.TrimSpace(noteQuery.Name)
 	if noteQuery.Name == "" {
 		return nil, errors.New("note name needed")
 	}

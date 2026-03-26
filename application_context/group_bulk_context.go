@@ -34,6 +34,11 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 			return loadErr
 		}
 
+		// Verify all loser IDs were found
+		if len(losers) != len(loserIds) {
+			return fmt.Errorf("one or more loser groups not found")
+		}
+
 		// Load winner WITHOUT associations
 		var winner models.Group
 		if err := altCtx.db.First(&winner, winnerId).Error; err != nil {
@@ -167,13 +172,26 @@ func (ctx *MahresourcesContext) GroupMetaKeys() ([]interfaces.MetaKey, error) {
 }
 
 func (ctx *MahresourcesContext) BulkAddTagsToGroups(query *query_models.BulkEditQuery) error {
-	if len(query.ID) == 0 || len(query.EditedId) == 0 {
-		return nil
+	if len(query.ID) == 0 {
+		return fmt.Errorf("at least one group ID is required")
+	}
+	if len(query.EditedId) == 0 {
+		return fmt.Errorf("at least one tag ID is required")
 	}
 
 	uniqueEditedIds := deduplicateUints(query.EditedId)
+	uniqueGroupIds := deduplicateUints(query.ID)
 
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		// Verify all group IDs exist
+		var groupCount int64
+		if err := tx.Model(&models.Group{}).Where("id IN ?", uniqueGroupIds).Count(&groupCount).Error; err != nil {
+			return err
+		}
+		if int(groupCount) != len(uniqueGroupIds) {
+			return fmt.Errorf("one or more groups not found")
+		}
+
 		var tagCount int64
 		if err := tx.Model(&models.Tag{}).Where("id IN ?", uniqueEditedIds).Count(&tagCount).Error; err != nil {
 			return err
@@ -195,8 +213,11 @@ func (ctx *MahresourcesContext) BulkAddTagsToGroups(query *query_models.BulkEdit
 }
 
 func (ctx *MahresourcesContext) BulkRemoveTagsFromGroups(query *query_models.BulkEditQuery) error {
-	if len(query.ID) == 0 || len(query.EditedId) == 0 {
-		return nil
+	if len(query.ID) == 0 {
+		return fmt.Errorf("at least one group ID is required")
+	}
+	if len(query.EditedId) == 0 {
+		return fmt.Errorf("at least one tag ID is required")
 	}
 
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
@@ -208,8 +229,21 @@ func (ctx *MahresourcesContext) BulkRemoveTagsFromGroups(query *query_models.Bul
 }
 
 func (ctx *MahresourcesContext) BulkAddMetaToGroups(query *query_models.BulkEditMetaQuery) error {
+	if len(query.ID) == 0 {
+		return fmt.Errorf("at least one group ID is required")
+	}
+
 	if err := ValidateMeta(query.Meta); err != nil {
 		return err
+	}
+
+	// Verify all group IDs exist
+	var count int64
+	if err := ctx.db.Model(&models.Group{}).Where("id IN ?", query.ID).Count(&count).Error; err != nil {
+		return err
+	}
+	if int(count) != len(deduplicateUints(query.ID)) {
+		return fmt.Errorf("one or more groups not found")
 	}
 
 	var group models.Group

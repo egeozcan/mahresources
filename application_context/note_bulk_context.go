@@ -11,13 +11,27 @@ import (
 )
 
 func (ctx *MahresourcesContext) BulkAddTagsToNotes(query *query_models.BulkEditQuery) error {
-	if len(query.ID) == 0 || len(query.EditedId) == 0 {
-		return nil
+	if len(query.ID) == 0 {
+		return fmt.Errorf("at least one note ID is required")
+	}
+	if len(query.EditedId) == 0 {
+		return fmt.Errorf("at least one tag ID is required")
 	}
 
 	uniqueEditedIds := deduplicateUints(query.EditedId)
 
+	uniqueNoteIds := deduplicateUints(query.ID)
+
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		// Verify all note IDs exist
+		var noteCount int64
+		if err := tx.Model(&models.Note{}).Where("id IN ?", uniqueNoteIds).Count(&noteCount).Error; err != nil {
+			return err
+		}
+		if int(noteCount) != len(uniqueNoteIds) {
+			return fmt.Errorf("one or more notes not found")
+		}
+
 		var tagCount int64
 		if err := tx.Model(&models.Tag{}).Where("id IN ?", uniqueEditedIds).Count(&tagCount).Error; err != nil {
 			return err
@@ -39,8 +53,11 @@ func (ctx *MahresourcesContext) BulkAddTagsToNotes(query *query_models.BulkEditQ
 }
 
 func (ctx *MahresourcesContext) BulkRemoveTagsFromNotes(query *query_models.BulkEditQuery) error {
-	if len(query.ID) == 0 || len(query.EditedId) == 0 {
-		return nil
+	if len(query.ID) == 0 {
+		return fmt.Errorf("at least one note ID is required")
+	}
+	if len(query.EditedId) == 0 {
+		return fmt.Errorf("at least one tag ID is required")
 	}
 
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
@@ -52,8 +69,11 @@ func (ctx *MahresourcesContext) BulkRemoveTagsFromNotes(query *query_models.Bulk
 }
 
 func (ctx *MahresourcesContext) BulkAddGroupsToNotes(query *query_models.BulkEditQuery) error {
-	if len(query.ID) == 0 || len(query.EditedId) == 0 {
-		return nil
+	if len(query.ID) == 0 {
+		return fmt.Errorf("at least one note ID is required")
+	}
+	if len(query.EditedId) == 0 {
+		return fmt.Errorf("at least one group ID is required")
 	}
 
 	uniqueEditedIds := deduplicateUints(query.EditedId)
@@ -80,8 +100,21 @@ func (ctx *MahresourcesContext) BulkAddGroupsToNotes(query *query_models.BulkEdi
 }
 
 func (ctx *MahresourcesContext) BulkAddMetaToNotes(query *query_models.BulkEditMetaQuery) error {
+	if len(query.ID) == 0 {
+		return fmt.Errorf("at least one note ID is required")
+	}
+
 	if err := ValidateMeta(query.Meta); err != nil {
 		return err
+	}
+
+	// Verify all note IDs exist
+	var count int64
+	if err := ctx.db.Model(&models.Note{}).Where("id IN ?", query.ID).Count(&count).Error; err != nil {
+		return err
+	}
+	if int(count) != len(deduplicateUints(query.ID)) {
+		return fmt.Errorf("one or more notes not found")
 	}
 
 	var note models.Note

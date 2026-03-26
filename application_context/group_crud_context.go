@@ -3,6 +3,7 @@ package application_context
 import (
 	"errors"
 	"net/url"
+	"strings"
 
 	"gorm.io/gorm"
 	"mahresources/models"
@@ -12,6 +13,7 @@ import (
 )
 
 func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreator) (*models.Group, error) {
+	groupQuery.Name = strings.TrimSpace(groupQuery.Name)
 	if groupQuery.Name == "" {
 		return nil, errors.New("group name needed")
 	}

@@ -148,8 +148,11 @@ func (ctx *MahresourcesContext) ResourceMetaKeys() ([]interfaces.MetaKey, error)
 }
 
 func (ctx *MahresourcesContext) BulkRemoveTagsFromResources(query *query_models.BulkEditQuery) error {
-	if len(query.ID) == 0 || len(query.EditedId) == 0 {
-		return nil
+	if len(query.ID) == 0 {
+		return fmt.Errorf("at least one resource ID is required")
+	}
+	if len(query.EditedId) == 0 {
+		return fmt.Errorf("at least one tag ID is required")
 	}
 
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
@@ -171,7 +174,7 @@ func (ctx *MahresourcesContext) BulkRemoveTagsFromResources(query *query_models.
 
 func (ctx *MahresourcesContext) BulkReplaceTagsFromResources(query *query_models.BulkEditQuery) error {
 	if len(query.ID) == 0 {
-		return nil
+		return fmt.Errorf("at least one resource ID is required")
 	}
 
 	uniqueEditedIds := deduplicateUints(query.EditedId)
@@ -216,8 +219,21 @@ func (ctx *MahresourcesContext) BulkReplaceTagsFromResources(query *query_models
 }
 
 func (ctx *MahresourcesContext) BulkAddMetaToResources(query *query_models.BulkEditMetaQuery) error {
+	if len(query.ID) == 0 {
+		return fmt.Errorf("at least one resource ID is required")
+	}
+
 	if err := ValidateMeta(query.Meta); err != nil {
 		return err
+	}
+
+	// Verify all resource IDs exist
+	var count int64
+	if err := ctx.db.Model(&models.Resource{}).Where("id IN ?", query.ID).Count(&count).Error; err != nil {
+		return err
+	}
+	if int(count) != len(deduplicateUints(query.ID)) {
+		return fmt.Errorf("one or more resources not found")
 	}
 
 	var resource models.Resource
@@ -300,13 +316,26 @@ func (ctx *MahresourcesContext) BulkAddMetaToResources(query *query_models.BulkE
 }
 
 func (ctx *MahresourcesContext) BulkAddTagsToResources(query *query_models.BulkEditQuery) error {
-	if len(query.ID) == 0 || len(query.EditedId) == 0 {
-		return nil
+	if len(query.ID) == 0 {
+		return fmt.Errorf("at least one resource ID is required")
+	}
+	if len(query.EditedId) == 0 {
+		return fmt.Errorf("at least one tag ID is required")
 	}
 
 	uniqueEditedIds := deduplicateUints(query.EditedId)
+	uniqueResourceIds := deduplicateUints(query.ID)
 
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		// Verify all resource IDs exist
+		var resourceCount int64
+		if err := tx.Model(&models.Resource{}).Where("id IN ?", uniqueResourceIds).Count(&resourceCount).Error; err != nil {
+			return err
+		}
+		if int(resourceCount) != len(uniqueResourceIds) {
+			return fmt.Errorf("one or more resources not found")
+		}
+
 		// Validate all tags exist (single query, no preloads)
 		var tagCount int64
 		if err := tx.Model(&models.Tag{}).Where("id IN ?", uniqueEditedIds).Count(&tagCount).Error; err != nil {
@@ -339,8 +368,11 @@ func (ctx *MahresourcesContext) BulkAddTagsToResources(query *query_models.BulkE
 }
 
 func (ctx *MahresourcesContext) BulkAddGroupsToResources(query *query_models.BulkEditQuery) error {
-	if len(query.ID) == 0 || len(query.EditedId) == 0 {
-		return nil
+	if len(query.ID) == 0 {
+		return fmt.Errorf("at least one resource ID is required")
+	}
+	if len(query.EditedId) == 0 {
+		return fmt.Errorf("at least one group ID is required")
 	}
 
 	uniqueEditedIds := deduplicateUints(query.EditedId)
@@ -552,6 +584,11 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint, k
 		var losers []*models.Resource
 		if loadResourcesErr := tx.Find(&losers, &loserIds).Error; loadResourcesErr != nil {
 			return loadResourcesErr
+		}
+
+		// Verify all loser IDs were found
+		if len(losers) != len(loserIds) {
+			return fmt.Errorf("one or more loser resources not found")
 		}
 
 		// Load winner WITHOUT associations

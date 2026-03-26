@@ -9,7 +9,6 @@ package api_handlers
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"mahresources/constants"
 	"mahresources/models/query_models"
@@ -17,12 +16,9 @@ import (
 )
 
 // errorStatusCode returns the appropriate HTTP status code for an error.
-// "record not found" errors map to 404; everything else maps to 500.
+// Delegates to statusCodeForError with a 500 fallback for consistent mapping.
 func errorStatusCode(err error) int {
-	if strings.Contains(err.Error(), "record not found") {
-		return http.StatusNotFound
-	}
-	return http.StatusInternalServerError
+	return statusCodeForError(err, http.StatusInternalServerError)
 }
 
 // getEntityID extracts an entity ID from a request, checking form body first,

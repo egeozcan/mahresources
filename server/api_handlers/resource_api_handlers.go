@@ -407,7 +407,7 @@ func GetResourceEditHandler(ctx interfaces.ResourceEditReader) func(writer http.
 		res, err := effectiveCtx.EditResource(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, errorStatusCode(err))
 			return
 		}
 
