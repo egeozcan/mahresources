@@ -107,6 +107,18 @@ func (ctx *MahresourcesContext) GlobalSearch(query *query_models.GlobalSearchQue
 
 	// Parse the search query to detect prefix/fuzzy modes
 	parsedQuery := fts.ParseSearchQuery(searchTerm)
+
+	// After sanitization, the search term may be empty (e.g., query was only
+	// special characters like quotes or angle brackets). Return no results
+	// rather than matching everything.
+	if parsedQuery.Term == "" {
+		return &query_models.GlobalSearchResponse{
+			Query:   searchTerm,
+			Total:   0,
+			Results: []query_models.SearchResultItem{},
+		}, nil
+	}
+
 	typesToSearch := getTypesToSearch(query.Types)
 
 	var wg sync.WaitGroup

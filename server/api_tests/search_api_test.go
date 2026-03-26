@@ -75,6 +75,44 @@ func TestSearchTotalReflectsAllResults(t *testing.T) {
 		"total from cache should be 5 (all cached results), not the trimmed count")
 }
 
+func TestSearchSpecialCharactersReturnNoResults(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	sqlDB, err := tc.DB.DB()
+	assert.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+
+	// Create some entities so the DB is not empty
+	tc.DB.Create(&models.Tag{Name: "RealTag"})
+	tc.DB.Create(&models.Tag{Name: "AnotherTag"})
+
+	// Search queries consisting only of special characters should return
+	// zero results. Before the fix, the sanitized term was empty which
+	// caused the FTS scope to apply no WHERE clause, returning everything.
+	specialQueries := []string{
+		"'",
+		"''",
+		"\"",
+		"<>",
+		"&&",
+		"@#$%",
+		"()",
+		"!!!",
+	}
+
+	for _, q := range specialQueries {
+		result, err := tc.AppCtx.GlobalSearch(&query_models.GlobalSearchQuery{
+			Query: q,
+			Limit: 50,
+		})
+		assert.NoError(t, err, "query=%q", q)
+		assert.Equal(t, 0, result.Total,
+			"search for %q (only special chars) should return 0 results, got %d", q, result.Total)
+		assert.Equal(t, 0, len(result.Results),
+			"search for %q should return empty results slice", q)
+	}
+}
+
 func TestSearchReturnsEmptyArrayNotNull(t *testing.T) {
 	tc := SetupTestEnv(t)
 

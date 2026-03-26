@@ -111,8 +111,8 @@ func HandleError(err error, writer http.ResponseWriter, request *http.Request, r
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Error %d</title>
-    <link rel="stylesheet" href="/tailwind.css">
-    <link rel="stylesheet" href="/index.css">
+    <link rel="stylesheet" href="/public/tailwind.css">
+    <link rel="stylesheet" href="/public/index.css">
     <style>
         .error-container { max-width: 40rem; margin: 4rem auto; padding: 2rem; }
         .error-heading { font-size: 1.5rem; font-weight: 700; color: #991b1b; margin-bottom: 1rem; }

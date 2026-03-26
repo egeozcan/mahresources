@@ -169,7 +169,7 @@ func GetRemoveRelationHandler(ctx interfaces.RelationshipDeleter) func(writer ht
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(&models.GroupRelation{ID: id})
+		_ = json.NewEncoder(writer).Encode(map[string]uint{"id": id})
 	}
 }
 
@@ -196,6 +196,6 @@ func GetRemoveRelationTypeHandler(ctx interfaces.RelationshipDeleter) func(write
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(&models.GroupRelationType{ID: id})
+		_ = json.NewEncoder(writer).Encode(map[string]uint{"id": id})
 	}
 }

@@ -8,11 +8,12 @@ package api_handlers
 
 import (
 	"encoding/json"
+	"net/http"
+	"strings"
+
 	"mahresources/constants"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
-	"net/http"
-	"strings"
 )
 
 // errorStatusCode returns the appropriate HTTP status code for an error.
@@ -115,5 +116,13 @@ func WithDeleteResponse[T any](handler DeleteHandler, redirectURL string) http.H
 		// Return a minimal response with just the ID
 		_ = json.NewEncoder(writer).Encode(map[string]uint{"id": id})
 	}
+}
+
+// writeJSONOk writes a standard JSON success response for operations that
+// don't return entity data (bulk operations, inline edits, etc.).
+// This ensures API clients always receive a valid JSON body with Content-Type.
+func writeJSONOk(writer http.ResponseWriter) {
+	writer.Header().Set("Content-Type", constants.JSON)
+	_ = json.NewEncoder(writer).Encode(map[string]bool{"ok": true})
 }
 

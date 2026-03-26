@@ -101,7 +101,7 @@ func GetRemoveCategoryHandler(ctx interfaces.CategoryDeleter) func(writer http.R
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(&models.Category{ID: id})
+		_ = json.NewEncoder(writer).Encode(map[string]uint{"id": id})
 	}
 }
 
@@ -128,6 +128,6 @@ func GetRemoveResourceCategoryHandler(ctx interfaces.ResourceCategoryDeleter) fu
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(&models.ResourceCategory{ID: id})
+		_ = json.NewEncoder(writer).Encode(map[string]uint{"id": id})
 	}
 }

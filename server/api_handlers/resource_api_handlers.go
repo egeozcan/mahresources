@@ -148,14 +148,14 @@ func GetResourceUploadHandler(ctx interfaces.ResourceCreator) func(writer http.R
 		creator := query_models.ResourceCreator{ResourceQueryBase: remoteCreator.ResourceQueryBase}
 
 		if request.MultipartForm == nil || request.MultipartForm.File == nil {
-			http.Error(writer, "no multipart form data found", http.StatusBadRequest)
+			http_utils.HandleError(errors.New("no multipart form data found"), writer, request, http.StatusBadRequest)
 			return
 		}
 
 		files := request.MultipartForm.File["resource"]
 
 		if len(files) == 0 {
-			http.Error(writer, "no files found to save", http.StatusBadRequest)
+			http_utils.HandleError(errors.New("no files found to save"), writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -501,7 +501,7 @@ func GetRemoveResourceHandler(ctx interfaces.ResourceDeleter) func(writer http.R
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(&models.Resource{ID: query.ID})
+		_ = json.NewEncoder(writer).Encode(map[string]uint{"id": query.ID})
 	}
 }
 
@@ -539,7 +539,11 @@ func GetAddTagsToResourcesHandler(ctx interfaces.BulkResourceTagEditor) func(wri
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/resources") {
+			return
+		}
+
+		writeJSONOk(writer)
 	}
 }
 
@@ -562,7 +566,11 @@ func GetAddGroupsToResourcesHandler(ctx interfaces.BulkResourceGroupEditor) func
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/resources") {
+			return
+		}
+
+		writeJSONOk(writer)
 	}
 }
 
@@ -585,7 +593,11 @@ func GetRemoveTagsFromResourcesHandler(ctx interfaces.BulkResourceTagEditor) fun
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/resources") {
+			return
+		}
+
+		writeJSONOk(writer)
 	}
 }
 
@@ -608,7 +620,11 @@ func GetReplaceTagsOfResourcesHandler(ctx interfaces.BulkResourceTagEditor) func
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/resources") {
+			return
+		}
+
+		writeJSONOk(writer)
 	}
 }
 
@@ -631,7 +647,11 @@ func GetAddMetaToResourcesHandler(ctx interfaces.BulkResourceMetaEditor) func(wr
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/resources") {
+			return
+		}
+
+		writeJSONOk(writer)
 	}
 }
 
@@ -655,7 +675,11 @@ func GetBulkDeleteResourcesHandler(ctx interfaces.BulkResourceDeleter) func(writ
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/resources") {
+			return
+		}
+
+		writeJSONOk(writer)
 	}
 }
 
@@ -679,7 +703,11 @@ func GetMergeResourcesHandler(ctx interfaces.ResourceMerger) func(writer http.Re
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", editor.Winner))
+		if http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", editor.Winner)) {
+			return
+		}
+
+		writeJSONOk(writer)
 	}
 }
 
@@ -700,7 +728,11 @@ func GetRotateResourceHandler(ctx interfaces.ResourceMediaProcessor) func(writer
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", editor.ID))
+		if http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", editor.ID)) {
+			return
+		}
+
+		writeJSONOk(writer)
 	}
 }
 
@@ -729,7 +761,11 @@ func GetBulkCalculateDimensionsHandler(ctx interfaces.ResourceMediaProcessor) fu
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/resources") {
+			return
+		}
+
+		writeJSONOk(writer)
 	}
 }
 
@@ -750,6 +786,10 @@ func GetResourceSetDimensionsHandler(ctx interfaces.ResourceMediaProcessor) func
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", editor.ID))
+		if http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", editor.ID)) {
+			return
+		}
+
+		writeJSONOk(writer)
 	}
 }

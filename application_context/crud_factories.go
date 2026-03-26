@@ -212,9 +212,13 @@ func buildSeries(creator *query_models.SeriesCreator) (models.Series, error) {
 	if name == "" {
 		return models.Series{}, errors.New("series name must be non-empty")
 	}
+	slug := strings.TrimSpace(creator.Slug)
+	if slug == "" {
+		slug = name
+	}
 	return models.Series{
 		Name: name,
-		Slug: name,
+		Slug: slug,
 		Meta: []byte("{}"),
 	}, nil
 }

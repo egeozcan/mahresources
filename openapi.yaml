@@ -1288,6 +1288,8 @@ components:
             properties:
                 Name:
                     type: string
+                Slug:
+                    type: string
             type: object
         SeriesEditor:
             properties:

@@ -213,6 +213,6 @@ func GetRemoveQueryHandler(ctx interfaces.QueryDeleter) func(writer http.Respons
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(&models.Query{ID: id})
+		_ = json.NewEncoder(writer).Encode(map[string]uint{"id": id})
 	}
 }

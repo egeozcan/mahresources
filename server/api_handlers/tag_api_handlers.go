@@ -99,7 +99,7 @@ func GetRemoveTagHandler(ctx interfaces.TagDeleter) func(writer http.ResponseWri
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(&models.Tag{ID: query.ID})
+		_ = json.NewEncoder(writer).Encode(map[string]uint{"id": query.ID})
 	}
 }
 
@@ -122,7 +122,11 @@ func GetBulkDeleteTagsHandler(ctx interfaces.BulkTagDeleter) func(writer http.Re
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/tags")
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/tags") {
+			return
+		}
+
+		writeJSONOk(writer)
 	}
 }
 
@@ -146,6 +150,10 @@ func GetMergeTagsHandler(ctx interfaces.TagMerger) func(writer http.ResponseWrit
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/tags")
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/tags") {
+			return
+		}
+
+		writeJSONOk(writer)
 	}
 }

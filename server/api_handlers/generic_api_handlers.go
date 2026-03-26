@@ -1,7 +1,9 @@
 package api_handlers
 
 import (
+	"encoding/json"
 	"fmt"
+	"mahresources/constants"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
 	"mahresources/server/interfaces"
@@ -30,7 +32,12 @@ func GetEditEntityNameHandler[T interfaces.BasicEntityReader](ctx interfaces.Bas
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/%s?id=%v", name, id))
+		if http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/%s?id=%v", name, id)) {
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(map[string]any{"ok": true, "id": id})
 	}
 }
 
@@ -56,6 +63,11 @@ func GetEditEntityDescriptionHandler[T interfaces.BasicEntityReader](ctx interfa
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/%s?id=%v", name, id))
+		if http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/%s?id=%v", name, id)) {
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(map[string]any{"ok": true, "id": id})
 	}
 }

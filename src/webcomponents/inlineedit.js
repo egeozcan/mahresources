@@ -199,7 +199,10 @@ class InlineEdit extends HTMLElement {
             fetch(this.postUrl, {
                 method: 'POST',
                 body: formData,
-            }).then(() => {
+            }).then((response) => {
+                if (!response.ok) {
+                    throw new Error(`Server responded with ${response.status}`);
+                }
                 // Flash success indicator
                 this.displayText.style.transition = 'background-color 0.3s';
                 this.displayText.style.backgroundColor = '#d1fae5';
@@ -208,6 +211,7 @@ class InlineEdit extends HTMLElement {
                 console.error('Error posting data:', error);
                 // Revert on error
                 this.displayText.textContent = this._originalValue;
+                this.textContent = this._originalValue;
                 this.displayText.style.transition = 'background-color 0.3s';
                 this.displayText.style.backgroundColor = '#fee2e2';
                 setTimeout(() => { this.displayText.style.backgroundColor = ''; }, 1000);

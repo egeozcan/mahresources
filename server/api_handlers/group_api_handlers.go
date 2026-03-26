@@ -168,7 +168,7 @@ func GetRemoveGroupHandler(ctx interfaces.GroupDeleter) func(writer http.Respons
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(&models.Group{ID: id})
+		_ = json.NewEncoder(writer).Encode(map[string]uint{"id": id})
 	}
 }
 
@@ -189,7 +189,11 @@ func GetAddTagsToGroupsHandler(ctx interfaces.BulkGroupTagEditor) func(writer ht
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/groups")
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/groups") {
+			return
+		}
+
+		writeJSONOk(writer)
 	}
 }
 
@@ -210,7 +214,11 @@ func GetRemoveTagsFromGroupsHandler(ctx interfaces.BulkGroupTagEditor) func(writ
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/groups")
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/groups") {
+			return
+		}
+
+		writeJSONOk(writer)
 	}
 }
 
@@ -234,7 +242,11 @@ func GetBulkDeleteGroupsHandler(ctx interfaces.GroupDeleter) func(writer http.Re
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/groups")
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/groups") {
+			return
+		}
+
+		writeJSONOk(writer)
 	}
 }
 
@@ -255,7 +267,11 @@ func GetAddMetaToGroupsHandler(ctx interfaces.BulkGroupMetaEditor) func(writer h
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/groups")
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/groups") {
+			return
+		}
+
+		writeJSONOk(writer)
 	}
 }
 
@@ -293,7 +309,11 @@ func GetMergeGroupsHandler(ctx interfaces.GroupMerger) func(writer http.Response
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/group?id=%v", editor.Winner))
+		if http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/group?id=%v", editor.Winner)) {
+			return
+		}
+
+		writeJSONOk(writer)
 	}
 }
 

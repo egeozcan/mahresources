@@ -34,6 +34,29 @@ func TestHandleErrorHTMLContainsStyling(t *testing.T) {
 	}
 }
 
+func TestHandleErrorHTMLUseCorrectCSSPaths(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/v1/test", nil)
+	req.Header.Set("Accept", "text/html")
+
+	HandleError(errors.New("test error"), w, req, http.StatusConflict)
+
+	body := w.Body.String()
+	// CSS hrefs must include the /public/ prefix so the browser can find them
+	if strings.Contains(body, `href="/tailwind.css"`) {
+		t.Error("CSS path should be /public/tailwind.css, not /tailwind.css")
+	}
+	if strings.Contains(body, `href="/index.css"`) {
+		t.Error("CSS path should be /public/index.css, not /index.css")
+	}
+	if !strings.Contains(body, `/public/tailwind.css`) {
+		t.Error("body should reference /public/tailwind.css")
+	}
+	if !strings.Contains(body, `/public/index.css`) {
+		t.Error("body should reference /public/index.css")
+	}
+}
+
 func TestHandleErrorJSONUnchanged(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/v1/test", nil)

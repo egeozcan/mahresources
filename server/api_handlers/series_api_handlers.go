@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"mahresources/constants"
-	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
 	"mahresources/server/interfaces"
@@ -72,7 +71,7 @@ func GetDeleteSeriesHandler(ctx interfaces.SeriesDeleter) func(writer http.Respo
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(&models.Series{ID: id})
+		_ = json.NewEncoder(writer).Encode(map[string]uint{"id": id})
 	}
 }
 
@@ -97,6 +96,6 @@ func GetRemoveResourceFromSeriesHandler(ctx interfaces.ResourceSeriesRemover) fu
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(&models.Resource{ID: id})
+		_ = json.NewEncoder(writer).Encode(map[string]uint{"id": id})
 	}
 }

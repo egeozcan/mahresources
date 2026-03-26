@@ -16,4 +16,5 @@ type SeriesEditor struct {
 
 type SeriesCreator struct {
 	Name string
+	Slug string
 }

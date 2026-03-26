@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"mahresources/constants"
-	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
 	"mahresources/server/interfaces"
@@ -156,7 +155,7 @@ func GetRemoveNoteHandler(ctx interfaces.NoteDeleter) func(writer http.ResponseW
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(&models.Note{ID: id})
+		_ = json.NewEncoder(writer).Encode(map[string]uint{"id": id})
 	}
 }
 
@@ -284,7 +283,7 @@ func GetRemoveNoteTypeHandler(ctx interfaces.NoteTypeDeleter) func(writer http.R
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(&models.NoteType{ID: id})
+		_ = json.NewEncoder(writer).Encode(map[string]uint{"id": id})
 	}
 }
 
@@ -305,7 +304,11 @@ func GetAddTagsToNotesHandler(ctx interfaces.BulkNoteTagEditor) func(writer http
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/notes")
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/notes") {
+			return
+		}
+
+		writeJSONOk(writer)
 	}
 }
 
@@ -326,7 +329,11 @@ func GetRemoveTagsFromNotesHandler(ctx interfaces.BulkNoteTagEditor) func(writer
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/notes")
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/notes") {
+			return
+		}
+
+		writeJSONOk(writer)
 	}
 }
 
@@ -347,7 +354,11 @@ func GetAddGroupsToNotesHandler(ctx interfaces.BulkNoteGroupEditor) func(writer 
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/notes")
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/notes") {
+			return
+		}
+
+		writeJSONOk(writer)
 	}
 }
 
@@ -368,7 +379,11 @@ func GetAddMetaToNotesHandler(ctx interfaces.BulkNoteMetaEditor) func(writer htt
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/notes")
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/notes") {
+			return
+		}
+
+		writeJSONOk(writer)
 	}
 }
 
@@ -391,6 +406,10 @@ func GetBulkDeleteNotesHandler(ctx interfaces.NoteDeleter) func(writer http.Resp
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/notes")
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/notes") {
+			return
+		}
+
+		writeJSONOk(writer)
 	}
 }
