@@ -373,6 +373,7 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
+			panic(r)
 		}
 	}()
 
@@ -542,6 +543,7 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
+			panic(r)
 		}
 	}()
 

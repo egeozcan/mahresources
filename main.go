@@ -382,6 +382,7 @@ func main() {
 	hw.Start()
 	context.SetHashQueue(hw.GetQueue())
 	defer hw.Stop()
+	defer context.DownloadManager().Shutdown()
 
 	// Start thumbnail worker for background video thumbnail pre-generation
 	thumbWorkerConfig := thumbnail_worker.Config{

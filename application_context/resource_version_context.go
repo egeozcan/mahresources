@@ -162,6 +162,7 @@ func (ctx *MahresourcesContext) UploadNewVersion(resourceID uint, file multipart
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
+			panic(r)
 		}
 	}()
 
@@ -327,6 +328,7 @@ func (ctx *MahresourcesContext) RestoreVersion(resourceID, versionID uint, comme
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
+			panic(r)
 		}
 	}()
 
@@ -664,6 +666,7 @@ func (ctx *MahresourcesContext) SyncResourcesFromCurrentVersion() error {
 		batch := outOfSync[batchStart:batchEnd]
 
 		tx := silentDB.Begin()
+		defer tx.Rollback() // no-op after successful Commit
 		var batchErr error
 		for _, item := range batch {
 			updates := map[string]interface{}{

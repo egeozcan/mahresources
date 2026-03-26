@@ -203,6 +203,22 @@ class InlineEdit extends HTMLElement {
                 if (!response.ok) {
                     throw new Error(`Server responded with ${response.status}`);
                 }
+                // Update document title when the entity name changes
+                if (this.name === 'name') {
+                    const suffix = ' - mahresources';
+                    const currentTitle = document.title;
+                    // Replace the old name portion before the suffix
+                    if (currentTitle.endsWith(suffix)) {
+                        const prefix = currentTitle.slice(0, currentTitle.length - suffix.length);
+                        // The title format varies: "Entity Name - mahresources" or
+                        // "Type Entity Name - mahresources". Try to replace just the
+                        // entity name portion (after the last known type prefix).
+                        const idx = prefix.lastIndexOf(this._originalValue);
+                        if (idx !== -1) {
+                            document.title = prefix.slice(0, idx) + newValue + prefix.slice(idx + this._originalValue.length) + suffix;
+                        }
+                    }
+                }
                 // Flash success indicator
                 this.displayText.style.transition = 'background-color 0.3s';
                 this.displayText.style.backgroundColor = '#d1fae5';
