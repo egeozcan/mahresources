@@ -51,17 +51,29 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 				writer.WriteHeader(statusCode)
 			}
 			if err := json.NewEncoder(writer).Encode(discardFields(map[string]bool{
-				"partial":        true,
-				"path":           true,
-				"withQuery":      true,
-				"hasQuery":       true,
-				"stringId":       true,
-				"getNextId":      true,
-				"dereference":    true,
-				"_pluginManager":  true,
-				"_statusCode":     true,
-				"currentPath":     true,
-				"pluginMenuItems": true,
+				// Function-valued fields (cannot serialize to JSON)
+				"partial":     true,
+				"path":        true,
+				"withQuery":   true,
+				"hasQuery":    true,
+				"stringId":    true,
+				"getNextId":   true,
+				"dereference": true,
+				// Internal/rendering fields (should not leak to JSON consumers)
+				"_pluginManager":     true,
+				"_statusCode":        true,
+				"currentPath":        true,
+				"pluginMenuItems":    true,
+				"menu":               true,
+				"adminMenu":          true,
+				"title":              true,
+				"assetVersion":       true,
+				"queryValues":        true,
+				"url":                true,
+				"hasPluginManager":   true,
+				"pluginDetailActions": true,
+				"pluginCardActions":  true,
+				"pluginBulkActions":  true,
 			}, context)); err != nil {
 				fmt.Println(err)
 			}
