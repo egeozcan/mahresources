@@ -170,14 +170,27 @@ func escapeLikeWildcards(s string) string {
 	return s
 }
 
-// fuzzyFallback provides basic fuzzy matching for SQLite using LIKE patterns
+// fuzzyFallback provides basic fuzzy matching for SQLite using LIKE patterns.
+// It searches name and description columns, plus original_name for the resources table.
 func (s *SQLiteFTS) fuzzyFallback(db *gorm.DB, tableName, term string) *gorm.DB {
 	escaped := escapeLikeWildcards(term)
 	likeEscape := " ESCAPE '\\'"
 
+	// Determine which columns to search
+	searchCols := []string{tableName + ".name", tableName + ".description"}
+	if tableName == "resources" {
+		searchCols = append(searchCols, tableName+".original_name")
+	}
+
 	if len(term) <= 2 {
-		// For very short terms, just use contains
-		return db.Where(tableName+".name LIKE ?"+likeEscape, "%"+escaped+"%")
+		// For very short terms, just use contains across all columns
+		var conditions []string
+		var args []interface{}
+		for _, col := range searchCols {
+			conditions = append(conditions, col+" LIKE ?"+likeEscape)
+			args = append(args, "%"+escaped+"%")
+		}
+		return db.Where(strings.Join(conditions, " OR "), args...)
 	}
 
 	// Build OR conditions for single-char wildcards at each position
@@ -190,13 +203,17 @@ func (s *SQLiteFTS) fuzzyFallback(db *gorm.DB, tableName, term string) *gorm.DB 
 		before := escapeLikeWildcards(string(runes[:i]))
 		after := escapeLikeWildcards(string(runes[i+1:]))
 		pattern := before + "_" + after // intentional single-char wildcard
-		conditions = append(conditions, tableName+".name LIKE ?"+likeEscape)
-		args = append(args, "%"+pattern+"%")
+		for _, col := range searchCols {
+			conditions = append(conditions, col+" LIKE ?"+likeEscape)
+			args = append(args, "%"+pattern+"%")
+		}
 	}
 
-	// Also include exact substring match
-	conditions = append(conditions, tableName+".name LIKE ?"+likeEscape)
-	args = append(args, "%"+escaped+"%")
+	// Also include exact substring match across all columns
+	for _, col := range searchCols {
+		conditions = append(conditions, col+" LIKE ?"+likeEscape)
+		args = append(args, "%"+escaped+"%")
+	}
 
 	return db.Where(strings.Join(conditions, " OR "), args...)
 }

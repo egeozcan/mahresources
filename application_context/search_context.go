@@ -66,8 +66,10 @@ func (ctx *MahresourcesContext) InitFTS() error {
 
 // GlobalSearch performs a unified search across all entity types
 func (ctx *MahresourcesContext) GlobalSearch(query *query_models.GlobalSearchQuery) (*query_models.GlobalSearchResponse, error) {
-	if query.Limit <= 0 || query.Limit > 50 {
+	if query.Limit <= 0 {
 		query.Limit = 20
+	} else if query.Limit > 50 {
+		query.Limit = 50
 	}
 
 	searchTerm := strings.TrimSpace(query.Query)
