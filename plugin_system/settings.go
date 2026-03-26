@@ -193,6 +193,24 @@ func ValidateSettings(defs []SettingDefinition, values map[string]any) []Validat
 	return errs
 }
 
+// ApplyDefaults fills in declared default values for any settings that are
+// not already present in values. It returns a new map (or the input map if
+// there are no defaults to apply).
+func ApplyDefaults(defs []SettingDefinition, values map[string]any) map[string]any {
+	if values == nil {
+		values = make(map[string]any)
+	}
+	for _, def := range defs {
+		if def.DefaultValue == nil {
+			continue
+		}
+		if _, exists := values[def.Name]; !exists {
+			values[def.Name] = def.DefaultValue
+		}
+	}
+	return values
+}
+
 // CheckRequiredSettings returns the labels of required settings that are
 // missing or empty in the provided values map.
 func CheckRequiredSettings(defs []SettingDefinition, values map[string]any) []string {

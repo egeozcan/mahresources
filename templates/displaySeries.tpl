@@ -13,7 +13,7 @@
                     <input type="text" name="Name" id="series-name" value="{{ series.Name }}" class="mt-1 block w-full rounded-md border-stone-300 shadow-sm focus:border-amber-600 focus:ring-amber-600 sm:text-sm">
                 </div>
                 <div class="mb-4">
-                    {% include "/partials/form/freeFields.tpl" with name="Meta" fromJSON=series.Meta jsonOutput="true" id=getNextId("freeField") %}
+                    {% include "/partials/form/freeFields.tpl" with name="Meta" url="" fromJSON=series.Meta jsonOutput="true" id=getNextId("freeField") %}
                 </div>
                 {% include "partials/form/searchButton.tpl" with text="Save" %}
             </form>

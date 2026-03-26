@@ -42,12 +42,12 @@
                                 </a>
                             {% endif %}
                             {% if log.EntityName %}
-                                <span class="text-stone-400">({{ log.EntityName|truncatechars:30 }})</span>
+                                <span class="text-stone-500">({{ log.EntityName|truncatechars:30 }})</span>
                             {% endif %}
                         {% elif log.EntityType %}
                             {{ log.EntityType }}
                         {% else %}
-                            <span class="text-stone-400">-</span>
+                            <span class="text-stone-500">-</span>
                         {% endif %}
                     </td>
                     <td class="px-3 py-2 text-sm text-stone-500 font-sans">

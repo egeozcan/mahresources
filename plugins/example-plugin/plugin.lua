@@ -18,7 +18,7 @@ function init()
         local show = mah.get_setting("show_footer")
         if show == false then return "" end
         local greeting = mah.get_setting("greeting") or "Powered by plugins"
-        return '<div style="text-align:center;padding:4px;color:#888;font-size:12px;">' .. greeting .. '</div>'
+        return '<div style="text-align:center;padding:4px;color:#767676;font-size:12px;">' .. greeting .. '</div>'
     end)
 
     -- Log when a note is created

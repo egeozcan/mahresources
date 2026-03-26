@@ -4890,6 +4890,24 @@ paths:
             summary: Delete a series
             tags:
                 - series
+    /v1/series/editName:
+        post:
+            operationId: editSeriesName
+            parameters:
+                - description: Series ID
+                  in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Edit a series name inline
+            tags:
+                - series
     /v1/seriesList:
         get:
             operationId: listSeries

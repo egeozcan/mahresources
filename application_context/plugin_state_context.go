@@ -207,12 +207,22 @@ func (ctx *MahresourcesContext) findDiscoveredPlugin(name string) *plugin_system
 func (ctx *MahresourcesContext) loadPluginSettingsMap(pluginName string) (map[string]any, error) {
 	state, err := ctx.GetPluginState(pluginName)
 	if err != nil || state.SettingsJSON == "" {
-		return make(map[string]any), err
+		return ctx.applyPluginDefaults(pluginName, make(map[string]any)), err
 	}
 
 	var settings map[string]any
 	if err := json.Unmarshal([]byte(state.SettingsJSON), &settings); err != nil {
-		return make(map[string]any), err
+		return ctx.applyPluginDefaults(pluginName, make(map[string]any)), err
 	}
-	return settings, nil
+	return ctx.applyPluginDefaults(pluginName, settings), nil
+}
+
+// applyPluginDefaults merges declared default values from the plugin's
+// setting definitions into the settings map for any keys not already present.
+func (ctx *MahresourcesContext) applyPluginDefaults(pluginName string, settings map[string]any) map[string]any {
+	dp := ctx.findDiscoveredPlugin(pluginName)
+	if dp == nil {
+		return settings
+	}
+	return plugin_system.ApplyDefaults(dp.Settings, settings)
 }

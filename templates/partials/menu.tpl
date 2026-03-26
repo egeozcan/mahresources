@@ -1,4 +1,4 @@
-<nav x-data="{ mobileOpen: false, adminOpen: false, pluginsOpen: false, currentPath: '' }"
+<nav aria-label="Main" x-data="{ mobileOpen: false, adminOpen: false, pluginsOpen: false, currentPath: '' }"
      x-init="currentPath = $el.dataset.currentPath"
      data-current-path="{{ path }}"
      class="navbar flex items-center gap-1">

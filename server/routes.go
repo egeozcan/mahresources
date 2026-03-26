@@ -183,6 +183,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	basicRelationWriter := application_context.NewEntityWriter[models.GroupRelation](appContext)
 	basicRelationTypeWriter := application_context.NewEntityWriter[models.GroupRelationType](appContext)
 	basicNoteTypeWriter := application_context.NewEntityWriter[models.NoteType](appContext)
+	basicSeriesWriter := application_context.NewEntityWriter[models.Series](appContext)
 
 	router.Methods(http.MethodGet).Path("/v1/notes").HandlerFunc(api_handlers.GetNotesHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/notes/meta/keys").HandlerFunc(api_handlers.GetNoteMetaKeysHandler(appContext))
@@ -303,6 +304,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/series").HandlerFunc(api_handlers.GetSeriesHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/series").HandlerFunc(api_handlers.GetUpdateSeriesHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/series/delete").HandlerFunc(api_handlers.GetDeleteSeriesHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/series/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Series](basicSeriesWriter, "series"))
 	router.Methods(http.MethodPost).Path("/v1/resource/removeSeries").HandlerFunc(api_handlers.GetRemoveResourceFromSeriesHandler(appContext))
 
 	// Tag routes using factory

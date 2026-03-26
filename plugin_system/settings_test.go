@@ -285,6 +285,64 @@ func TestValidateSettings_AllTypes(t *testing.T) {
 	})
 }
 
+func TestApplyDefaults(t *testing.T) {
+	defs := []SettingDefinition{
+		{Name: "greeting", Type: "string", Label: "Greeting", DefaultValue: "Hello from Plugin!"},
+		{Name: "show_footer", Type: "boolean", Label: "Show Footer", DefaultValue: true},
+		{Name: "retries", Type: "number", Label: "Max Retries", DefaultValue: float64(3)},
+		{Name: "api_key", Type: "password", Label: "API Key"},
+	}
+
+	t.Run("empty map gets defaults", func(t *testing.T) {
+		values := make(map[string]any)
+		result := ApplyDefaults(defs, values)
+		if result["greeting"] != "Hello from Plugin!" {
+			t.Errorf("expected greeting default, got %v", result["greeting"])
+		}
+		if result["show_footer"] != true {
+			t.Errorf("expected show_footer default true, got %v", result["show_footer"])
+		}
+		if result["retries"] != float64(3) {
+			t.Errorf("expected retries default 3, got %v", result["retries"])
+		}
+		if _, exists := result["api_key"]; exists {
+			t.Error("api_key should not be set (no default declared)")
+		}
+	})
+
+	t.Run("user values not overwritten", func(t *testing.T) {
+		values := map[string]any{
+			"greeting": "Custom greeting",
+			"retries":  float64(10),
+		}
+		result := ApplyDefaults(defs, values)
+		if result["greeting"] != "Custom greeting" {
+			t.Errorf("expected custom greeting, got %v", result["greeting"])
+		}
+		if result["retries"] != float64(10) {
+			t.Errorf("expected custom retries 10, got %v", result["retries"])
+		}
+		if result["show_footer"] != true {
+			t.Errorf("expected show_footer default true, got %v", result["show_footer"])
+		}
+	})
+
+	t.Run("nil input gets defaults", func(t *testing.T) {
+		result := ApplyDefaults(defs, nil)
+		if result["greeting"] != "Hello from Plugin!" {
+			t.Errorf("expected greeting default, got %v", result["greeting"])
+		}
+	})
+
+	t.Run("nil definitions returns input", func(t *testing.T) {
+		values := map[string]any{"key": "val"}
+		result := ApplyDefaults(nil, values)
+		if result["key"] != "val" {
+			t.Errorf("expected original value, got %v", result["key"])
+		}
+	})
+}
+
 func TestCheckRequiredSettings(t *testing.T) {
 	defs := []SettingDefinition{
 		{Name: "api_key", Type: "password", Label: "API Key", Required: true},

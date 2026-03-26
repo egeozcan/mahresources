@@ -3,7 +3,7 @@
 {% block body %}
     <div class="bg-white shadow overflow-hidden sm:rounded-lg">
         <div class="px-4 py-5 sm:px-6">
-            <h3 class="text-lg leading-6 font-medium text-stone-900">Log Entry Details</h3>
+            <h2 class="text-lg leading-6 font-medium text-stone-900">Log Entry Details</h2>
             <p class="mt-1 max-w-2xl text-sm text-stone-500">
                 {% if log.Level == "error" %}
                     <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-700">error</span>
@@ -47,7 +47,7 @@
                         {% elif log.EntityType %}
                             {{ log.EntityType }}
                         {% else %}
-                            <span class="text-stone-400">N/A</span>
+                            <span class="text-stone-500">N/A</span>
                         {% endif %}
                     </dd>
                 </div>

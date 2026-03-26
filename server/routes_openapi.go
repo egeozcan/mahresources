@@ -432,6 +432,19 @@ func registerSeriesRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.RouteInfo{
+		Method:      http.MethodPost,
+		Path:        "/v1/series/editName",
+		OperationID: "editSeriesName",
+		Summary:     "Edit a series name inline",
+		Tags:        []string{"series"},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "id", Type: "integer", Required: true, Description: "Series ID"},
+		},
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
 		Method:       http.MethodPost,
 		Path:         "/v1/resource/removeSeries",
 		OperationID:  "removeResourceFromSeries",
