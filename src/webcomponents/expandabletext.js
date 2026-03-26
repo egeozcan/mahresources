@@ -35,6 +35,13 @@ class ExpandableText extends HTMLElement {
           }
         `;
         this.shadowRoot.appendChild(style);
+
+        // Hidden slot suppresses light DOM from the accessibility tree
+        // Without this, screen readers double-announce the text content
+        const hiddenSlot = document.createElement('slot');
+        hiddenSlot.style.display = 'none';
+        hiddenSlot.setAttribute('aria-hidden', 'true');
+        this.shadowRoot.appendChild(hiddenSlot);
     }
 
     disconnectedCallback() {

@@ -243,7 +243,7 @@
                         {% endif %}
                     </span>
                     {% if root.ChildCount > 0 %}
-                    <span class="text-xs text-stone-400">{{ root.ChildCount }} children</span>
+                    <span class="text-xs text-stone-400">{{ root.ChildCount }} {% if root.ChildCount == 1 %}child{% else %}children{% endif %}</span>
                     {% endif %}
                 </a>
             </li>
