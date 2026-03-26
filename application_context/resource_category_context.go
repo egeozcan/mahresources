@@ -61,7 +61,7 @@ func (ctx *MahresourcesContext) CreateResourceCategory(query *query_models.Resou
 	}
 
 	if err := ctx.db.Create(&resourceCategory).Error; err != nil {
-		return nil, err
+		return nil, friendlyUniqueError("resource category", err)
 	}
 
 	ctx.Logger().Info(models.LogActionCreate, "resourceCategory", &resourceCategory.ID, resourceCategory.Name, "Created resource category", nil)
@@ -87,7 +87,7 @@ func (ctx *MahresourcesContext) UpdateResourceCategory(query *query_models.Resou
 	resourceCategory.MetaSchema = query.MetaSchema
 
 	if err := ctx.db.Save(&resourceCategory).Error; err != nil {
-		return nil, err
+		return nil, friendlyUniqueError("resource category", err)
 	}
 
 	ctx.Logger().Info(models.LogActionUpdate, "resourceCategory", &resourceCategory.ID, resourceCategory.Name, "Updated resource category", nil)

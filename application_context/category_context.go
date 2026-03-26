@@ -77,7 +77,7 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 	}
 
 	if err := ctx.db.Create(&category).Error; err != nil {
-		return nil, err
+		return nil, friendlyUniqueError("category", err)
 	}
 
 	ctx.Logger().Info(models.LogActionCreate, "category", &category.ID, category.Name, "Created category", nil)
@@ -125,7 +125,7 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 	category.MetaSchema = categoryQuery.MetaSchema
 
 	if err := ctx.db.Save(&category).Error; err != nil {
-		return nil, err
+		return nil, friendlyUniqueError("category", err)
 	}
 
 	ctx.Logger().Info(models.LogActionUpdate, "category", &category.ID, category.Name, "Updated category", nil)

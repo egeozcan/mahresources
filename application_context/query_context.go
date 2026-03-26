@@ -70,7 +70,7 @@ func (ctx *MahresourcesContext) CreateQuery(queryQuery *query_models.QueryCreato
 	}
 
 	if err := ctx.db.Create(&query).Error; err != nil {
-		return nil, err
+		return nil, friendlyUniqueError("query", err)
 	}
 
 	ctx.Logger().Info(models.LogActionCreate, "query", &query.ID, query.Name, "Created query", nil)
@@ -90,7 +90,7 @@ func (ctx *MahresourcesContext) UpdateQuery(queryQuery *query_models.QueryEditor
 	query.Template = queryQuery.Template
 
 	if err := ctx.db.Save(&query).Error; err != nil {
-		return nil, err
+		return nil, friendlyUniqueError("query", err)
 	}
 
 	ctx.Logger().Info(models.LogActionUpdate, "query", &query.ID, query.Name, "Updated query", nil)

@@ -445,9 +445,25 @@ func TestPluginDBAdapter_RelationTypeCRUD(t *testing.T) {
 	ctx := createTestContext(t)
 	adapter := &pluginDBAdapter{ctx: ctx}
 
+	// Create categories required by relation types
+	catFrom, err := adapter.CreateCategory(map[string]any{
+		"name": "From Cat",
+	})
+	if err != nil {
+		t.Fatalf("CreateCategory (from) failed: %v", err)
+	}
+	catTo, err := adapter.CreateCategory(map[string]any{
+		"name": "To Cat",
+	})
+	if err != nil {
+		t.Fatalf("CreateCategory (to) failed: %v", err)
+	}
+
 	result, err := adapter.CreateRelationType(map[string]any{
-		"name":        "belongs-to",
-		"description": "Belongs to relationship",
+		"name":          "belongs-to",
+		"description":   "Belongs to relationship",
+		"from_category": catFrom["id"],
+		"to_category":   catTo["id"],
 	})
 	if err != nil {
 		t.Fatalf("CreateRelationType failed: %v", err)
