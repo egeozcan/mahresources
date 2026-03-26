@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"mahresources/constants"
-	"strings"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
@@ -15,7 +14,7 @@ import (
 
 func GetGroupsHandler(ctx interfaces.GroupReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		page := http_utils.GetPageParameter(request)
+		page := http_utils.GetIntQueryParameter(request, "page", 1)
 		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.GroupQuery
 		err := decoder.Decode(&query, request.URL.Query())
@@ -28,10 +27,6 @@ func GetGroupsHandler(ctx interfaces.GroupReader) func(writer http.ResponseWrite
 		groups, err := ctx.GetGroups(int(offset), constants.MaxResultsPerPage, &query)
 
 		if err != nil {
-			if http_utils.IsColumnError(err) {
-				http_utils.HandleError(http_utils.ErrInvalidSortColumn, writer, request, http.StatusBadRequest)
-				return
-			}
 			http_utils.HandleError(err, writer, request, http.StatusNotFound)
 			return
 		}
@@ -82,7 +77,7 @@ func GetAddGroupHandler(ctx interfaces.GroupCRUDReader) func(writer http.Respons
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err == nil && editor.ID == 0 {
-			if strings.TrimSpace(editor.Name) == "" {
+			if editor.Name == "" {
 				http_utils.HandleError(fmt.Errorf("group name is required"), writer, request, http.StatusBadRequest)
 				return
 			}
@@ -91,40 +86,39 @@ func GetAddGroupHandler(ctx interfaces.GroupCRUDReader) func(writer http.Respons
 		} else if err == nil {
 			// Pre-populate unset fields from the existing group so partial
 			// updates don't clear them. Applies to both JSON and form-encoded requests.
-			existing, getErr := effectiveCtx.GetGroup(editor.ID)
-			if getErr != nil {
-				http_utils.HandleError(fmt.Errorf("group not found"), writer, request, http.StatusBadRequest)
-				return
-			}
-
-			if editor.Name == "" {
-				editor.Name = existing.Name
-			}
-			if editor.Description == "" && !formHasField(request, "Description") {
-				editor.Description = existing.Description
-			}
-			if editor.Meta == "" {
-				editor.Meta = string(existing.Meta)
-			}
-			if editor.URL == "" && existing.URL != nil {
-				editor.URL = (*url.URL)(existing.URL).String()
-			}
-			if editor.OwnerId == 0 && existing.OwnerId != nil && !formHasField(request, "ownerId") {
-				editor.OwnerId = *existing.OwnerId
-			}
-			if editor.CategoryId == 0 && existing.CategoryId != nil && !formHasField(request, "categoryId") {
-				editor.CategoryId = *existing.CategoryId
-			}
-			if editor.Tags == nil && len(existing.Tags) > 0 {
-				editor.Tags = make([]uint, len(existing.Tags))
-				for i, t := range existing.Tags {
-					editor.Tags[i] = t.ID
-				}
-			}
-			if editor.Groups == nil && len(existing.RelatedGroups) > 0 {
-				editor.Groups = make([]uint, len(existing.RelatedGroups))
-				for i, g := range existing.RelatedGroups {
-					editor.Groups[i] = g.ID
+			{
+				existing, getErr := effectiveCtx.GetGroup(editor.ID)
+				if getErr == nil {
+					if editor.Name == "" {
+						editor.Name = existing.Name
+					}
+					if editor.Description == "" {
+						editor.Description = existing.Description
+					}
+					if editor.Meta == "" {
+						editor.Meta = string(existing.Meta)
+					}
+					if editor.URL == "" && existing.URL != nil {
+						editor.URL = (*url.URL)(existing.URL).String()
+					}
+					if editor.OwnerId == 0 && existing.OwnerId != nil && !formHasField(request, "ownerId") {
+						editor.OwnerId = *existing.OwnerId
+					}
+					if editor.CategoryId == 0 && existing.CategoryId != nil && !formHasField(request, "categoryId") {
+						editor.CategoryId = *existing.CategoryId
+					}
+					if editor.Tags == nil && len(existing.Tags) > 0 {
+						editor.Tags = make([]uint, len(existing.Tags))
+						for i, t := range existing.Tags {
+							editor.Tags[i] = t.ID
+						}
+					}
+					if editor.Groups == nil && len(existing.RelatedGroups) > 0 {
+						editor.Groups = make([]uint, len(existing.RelatedGroups))
+						for i, g := range existing.RelatedGroups {
+							editor.Groups[i] = g.ID
+						}
+					}
 				}
 			}
 
@@ -159,7 +153,7 @@ func GetRemoveGroupHandler(ctx interfaces.GroupDeleter) func(writer http.Respons
 
 		err := effectiveCtx.DeleteGroup(id)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, errorStatusCode(err))
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
@@ -168,7 +162,7 @@ func GetRemoveGroupHandler(ctx interfaces.GroupDeleter) func(writer http.Respons
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(map[string]uint{"id": id})
+		_ = json.NewEncoder(writer).Encode(&models.Group{ID: id})
 	}
 }
 
@@ -178,22 +172,18 @@ func GetAddTagsToGroupsHandler(ctx interfaces.BulkGroupTagEditor) func(writer ht
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		err = ctx.BulkAddTagsToGroups(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
-		if http_utils.RedirectIfHTMLAccepted(writer, request, "/groups") {
-			return
-		}
-
-		writeJSONOk(writer)
+		http_utils.RedirectIfHTMLAccepted(writer, request, "/groups")
 	}
 }
 
@@ -203,22 +193,18 @@ func GetRemoveTagsFromGroupsHandler(ctx interfaces.BulkGroupTagEditor) func(writ
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		err = ctx.BulkRemoveTagsFromGroups(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
-		if http_utils.RedirectIfHTMLAccepted(writer, request, "/groups") {
-			return
-		}
-
-		writeJSONOk(writer)
+		http_utils.RedirectIfHTMLAccepted(writer, request, "/groups")
 	}
 }
 
@@ -235,18 +221,19 @@ func GetBulkDeleteGroupsHandler(ctx interfaces.GroupDeleter) func(writer http.Re
 			return
 		}
 
+		if len(editor.ID) == 0 {
+			http_utils.HandleError(fmt.Errorf("at least one group ID is required"), writer, request, http.StatusBadRequest)
+			return
+		}
+
 		err = effectiveCtx.BulkDeleteGroups(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, errorStatusCode(err))
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
-		if http_utils.RedirectIfHTMLAccepted(writer, request, "/groups") {
-			return
-		}
-
-		writeJSONOk(writer)
+		http_utils.RedirectIfHTMLAccepted(writer, request, "/groups")
 	}
 }
 
@@ -256,22 +243,18 @@ func GetAddMetaToGroupsHandler(ctx interfaces.BulkGroupMetaEditor) func(writer h
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		err = ctx.BulkAddMetaToGroups(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
-		if http_utils.RedirectIfHTMLAccepted(writer, request, "/groups") {
-			return
-		}
-
-		writeJSONOk(writer)
+		http_utils.RedirectIfHTMLAccepted(writer, request, "/groups")
 	}
 }
 
@@ -298,22 +281,18 @@ func GetMergeGroupsHandler(ctx interfaces.GroupMerger) func(writer http.Response
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		err = effectiveCtx.MergeGroups(editor.Winner, editor.Losers)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
-		if http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/group?id=%v", editor.Winner)) {
-			return
-		}
-
-		writeJSONOk(writer)
+		http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/group?id=%v", editor.Winner))
 	}
 }
 
@@ -353,13 +332,13 @@ func GetDuplicateGroupHandler(ctx interfaces.GroupDuplicator) func(writer http.R
 		var editor query_models.EntityIdQuery
 
 		if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		group, err := effectiveCtx.DuplicateGroup(editor.ID)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, errorStatusCode(err))
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
