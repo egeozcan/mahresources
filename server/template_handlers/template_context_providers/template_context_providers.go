@@ -1,12 +1,13 @@
 package template_context_providers
 
 import (
+	"net/http"
+	"strings"
+
 	"github.com/flosch/pongo2/v4"
 	"github.com/gorilla/schema"
 	"mahresources/models/query_models"
-	"net/http"
 	"reflect"
-	"strings"
 )
 
 var decoder = schema.NewDecoder()
@@ -20,11 +21,15 @@ func init() {
 
 func addErrContext(err error, ctx pongo2.Context) pongo2.Context {
 	statusCode := http.StatusInternalServerError
-	if strings.Contains(err.Error(), "record not found") {
+	errMsg := err.Error()
+	if strings.Contains(errMsg, "record not found") {
 		statusCode = http.StatusNotFound
+	} else if strings.Contains(errMsg, "schema: error converting value") ||
+		strings.Contains(errMsg, "schema: invalid path") {
+		statusCode = http.StatusBadRequest
 	}
 	return ctx.Update(pongo2.Context{
-		"errorMessage": err.Error(),
+		"errorMessage": errMsg,
 		"_statusCode":  statusCode,
 	})
 }

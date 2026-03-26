@@ -83,6 +83,14 @@ class InlineEdit extends HTMLElement {
         });
 
         this.shadowRoot.appendChild(this.displayContainer);
+
+        // Hidden slot consumes light DOM content so it is not rendered alongside
+        // the shadow DOM. Without this, both the light DOM text and the shadow
+        // DOM span are exposed to assistive technology, causing double announcement.
+        const hiddenSlot = document.createElement('slot');
+        hiddenSlot.style.display = 'none';
+        this.shadowRoot.appendChild(hiddenSlot);
+
         this.updateProperties();
     }
 

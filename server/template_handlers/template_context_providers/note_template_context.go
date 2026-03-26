@@ -319,16 +319,18 @@ func NoteTypeCreateContextProvider(context *application_context.MahresourcesCont
 		}.Update(staticTemplateCtx(request))
 
 		var query query_models.EntityIdQuery
-		err := decoder.Decode(&query, request.URL.Query())
+		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
+			return addErrContext(err, tplContext)
+		}
 
-		if err != nil || query.ID == 0 {
+		if query.ID == 0 {
 			return tplContext
 		}
 
 		noteType, err := context.GetNoteType(query.ID)
 
 		if err != nil {
-			return tplContext
+			return addErrContext(err, tplContext)
 		}
 
 		tplContext["pageTitle"] = "Edit Note Type"

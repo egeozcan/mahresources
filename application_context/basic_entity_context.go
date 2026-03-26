@@ -2,8 +2,10 @@ package application_context
 
 import (
 	"encoding/json"
+	"errors"
 	"mahresources/models"
 	"mahresources/server/interfaces"
+	"strings"
 
 	"gorm.io/gorm"
 )
@@ -17,8 +19,18 @@ func NewEntityWriter[T interfaces.BasicEntityReader](ctx *MahresourcesContext) *
 }
 
 func (w *EntityWriter[T]) UpdateName(id uint, name string) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("name must not be empty")
+	}
 	entity := new(T)
-	return w.ctx.db.Model(entity).Where("id = ?", id).Update("name", name).Error
+	result := w.ctx.db.Model(entity).Where("id = ?", id).Update("name", name)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("record not found")
+	}
+	return nil
 }
 
 func (w *EntityWriter[T]) UpdateDescription(id uint, description string) error {
@@ -30,8 +42,12 @@ func (w *EntityWriter[T]) UpdateDescription(id uint, description string) error {
 	tableName := stmt.Table
 
 	err := w.ctx.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(entity).Where("id = ?", id).Update("description", description).Error; err != nil {
-			return err
+		result := tx.Model(entity).Where("id = ?", id).Update("description", description)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return errors.New("record not found")
 		}
 
 		// If this is a Note, sync description to the first text block so that

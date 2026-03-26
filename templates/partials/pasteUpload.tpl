@@ -146,6 +146,7 @@
                                        x-bind="inputEvents"
                                        class="w-full px-2 py-1.5 text-sm border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600"
                                        placeholder="Search tags..."
+                                       aria-label="Search tags"
                                        autocomplete="off">
                             </template>
                             <template x-if="addModeForTag">
@@ -183,6 +184,7 @@
                                    x-bind="inputEvents"
                                    class="w-full px-2 py-1.5 text-sm border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600"
                                    placeholder="Search categories..."
+                                   aria-label="Search categories"
                                    autocomplete="off">
                             {% include "/partials/form/formParts/dropDownResults.tpl" with action="pushVal" id="paste-upload-category" title="Category" %}
                             {% include "/partials/form/formParts/dropDownSelectedResults.tpl" %}
@@ -207,6 +209,7 @@
                                        x-bind="inputEvents"
                                        class="w-full px-2 py-1.5 text-sm border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600"
                                        placeholder="Search or create series..."
+                                       aria-label="Search or create series"
                                        autocomplete="off">
                             </template>
                             <template x-if="addModeForTag">

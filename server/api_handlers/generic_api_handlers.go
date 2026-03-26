@@ -14,15 +14,19 @@ func GetEditEntityNameHandler[T interfaces.BasicEntityReader](ctx interfaces.Bas
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		id := http_utils.GetUIntQueryParameter(request, "id", 0)
+		if id == 0 {
+			http_utils.HandleError(fmt.Errorf("missing or invalid %s ID", name), writer, request, http.StatusBadRequest)
+			return
+		}
 
 		err = ctx.UpdateName(id, editor.Name)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -36,15 +40,19 @@ func GetEditEntityDescriptionHandler[T interfaces.BasicEntityReader](ctx interfa
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		id := http_utils.GetUIntQueryParameter(request, "id", 0)
+		if id == 0 {
+			http_utils.HandleError(fmt.Errorf("missing or invalid %s ID", name), writer, request, http.StatusBadRequest)
+			return
+		}
 
 		err = ctx.UpdateDescription(id, editor.Description)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 

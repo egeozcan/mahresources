@@ -76,7 +76,7 @@ func TagCreateContextProvider(context *application_context.MahresourcesContext) 
 		tag, err := context.GetTag(query.ID)
 
 		if err != nil {
-			return tplContext
+			return addErrContext(err, tplContext)
 		}
 
 		tplContext["pageTitle"] = "Edit Tag"

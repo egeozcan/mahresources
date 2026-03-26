@@ -45,16 +45,10 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 			return
 		}
 
-		statusCode, _ := context["_statusCode"].(int)
-
 		if accept := request.Header.Get("Accept"); strings.Contains(accept, constants.JSON) || strings.HasSuffix(request.URL.Path, ".json") {
 			writer.Header().Set("Content-Type", constants.JSON)
-			if statusCode >= 400 {
+			if statusCode, ok := context["_statusCode"].(int); ok && statusCode != http.StatusOK {
 				writer.WriteHeader(statusCode)
-				if errMsg, ok := context["errorMessage"].(string); ok {
-					_ = json.NewEncoder(writer).Encode(map[string]string{"error": errMsg})
-				}
-				return
 			}
 			if err := json.NewEncoder(writer).Encode(discardFields(map[string]bool{
 				"partial":        true,
@@ -65,6 +59,7 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 				"getNextId":      true,
 				"dereference":    true,
 				"_pluginManager":  true,
+				"_statusCode":     true,
 				"currentPath":     true,
 				"pluginMenuItems": true,
 			}, context)); err != nil {
@@ -73,18 +68,17 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 			return
 		}
 
-		// For error status codes, render the error template instead
-		if statusCode >= 400 {
-			errorTpl := pongo2.Must(renderer.FromFile("error.tpl"))
-			writer.Header().Set("Content-Type", constants.HTML)
+		writer.Header().Set("Content-Type", constants.HTML)
+		if statusCode, ok := context["_statusCode"].(int); ok && statusCode != http.StatusOK {
 			writer.WriteHeader(statusCode)
+			// Render the error template instead of the entity template to avoid
+			// panics from templates that access nil entity variables.
+			errorTpl := pongo2.Must(renderer.FromFile("error.tpl"))
 			if err := errorTpl.ExecuteWriter(context, writer); err != nil {
 				http.Error(writer, err.Error(), http.StatusInternalServerError)
 			}
 			return
 		}
-
-		writer.Header().Set("Content-Type", constants.HTML)
 		if err := template.ExecuteWriter(context, writer); err != nil {
 			http.Error(writer, err.Error(), http.StatusInternalServerError)
 		}

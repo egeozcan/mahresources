@@ -44,7 +44,7 @@ func GetAddTagHandler(ctx interfaces.TagsWriter) func(writer http.ResponseWriter
 		var creator = query_models.TagCreator{}
 
 		if err := tryFillStructValuesFromRequest(&creator, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -111,14 +111,14 @@ func GetBulkDeleteTagsHandler(ctx interfaces.BulkTagDeleter) func(writer http.Re
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		err = effectiveCtx.BulkDeleteTags(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, errorStatusCode(err))
 			return
 		}
 
@@ -135,14 +135,14 @@ func GetMergeTagsHandler(ctx interfaces.TagMerger) func(writer http.ResponseWrit
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		err = effectiveCtx.MergeTags(editor.Winner, editor.Losers)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 

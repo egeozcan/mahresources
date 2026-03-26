@@ -2,6 +2,8 @@ package application_context
 
 import (
 	"errors"
+	"strings"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"mahresources/models"
@@ -110,6 +112,10 @@ func (ctx *MahresourcesContext) GetRelationType(id uint) (*models.GroupRelationT
 }
 
 func (ctx *MahresourcesContext) AddRelationType(query *query_models.RelationshipTypeEditorQuery) (*models.GroupRelationType, error) {
+	if strings.TrimSpace(query.Name) == "" {
+		return nil, errors.New("relation type name is required")
+	}
+
 	var relationType = models.GroupRelationType{
 		Name:           query.Name,
 		FromCategoryId: &query.FromCategory,

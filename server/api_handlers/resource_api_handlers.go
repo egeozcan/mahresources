@@ -344,7 +344,7 @@ func GetResourceEditHandler(ctx interfaces.ResourceEditReader) func(writer http.
 		var editor = query_models.ResourceEditor{}
 		err := tryFillStructValuesFromRequest(&editor, request)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -425,7 +425,7 @@ func GetResourceThumbnailHandler(ctx interfaces.ResourceThumbnailLoader) func(wr
 		var query = query_models.ResourceThumbnailQuery{}
 		err := tryFillStructValuesFromRequest(&query, request)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -478,7 +478,7 @@ func GetRemoveResourceHandler(ctx interfaces.ResourceDeleter) func(writer http.R
 		var query = query_models.EntityIdQuery{}
 
 		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -524,14 +524,14 @@ func GetAddTagsToResourcesHandler(ctx interfaces.BulkResourceTagEditor) func(wri
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		err = effectiveCtx.BulkAddTagsToResources(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -547,14 +547,14 @@ func GetAddGroupsToResourcesHandler(ctx interfaces.BulkResourceGroupEditor) func
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		err = effectiveCtx.BulkAddGroupsToResources(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -570,14 +570,14 @@ func GetRemoveTagsFromResourcesHandler(ctx interfaces.BulkResourceTagEditor) fun
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		err = effectiveCtx.BulkRemoveTagsFromResources(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -593,14 +593,14 @@ func GetReplaceTagsOfResourcesHandler(ctx interfaces.BulkResourceTagEditor) func
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		err = effectiveCtx.BulkReplaceTagsFromResources(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -616,14 +616,14 @@ func GetAddMetaToResourcesHandler(ctx interfaces.BulkResourceMetaEditor) func(wr
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		err = effectiveCtx.BulkAddMetaToResources(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -640,14 +640,14 @@ func GetBulkDeleteResourcesHandler(ctx interfaces.BulkResourceDeleter) func(writ
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		err = effectiveCtx.BulkDeleteResources(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, errorStatusCode(err))
 			return
 		}
 
@@ -664,14 +664,14 @@ func GetMergeResourcesHandler(ctx interfaces.ResourceMerger) func(writer http.Re
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		err = effectiveCtx.MergeResources(editor.Winner, editor.Losers, editor.KeepAsVersion)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -685,7 +685,7 @@ func GetRotateResourceHandler(ctx interfaces.ResourceMediaProcessor) func(writer
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -706,7 +706,7 @@ func GetBulkCalculateDimensionsHandler(ctx interfaces.ResourceMediaProcessor) fu
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -735,7 +735,7 @@ func GetResourceSetDimensionsHandler(ctx interfaces.ResourceMediaProcessor) func
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 

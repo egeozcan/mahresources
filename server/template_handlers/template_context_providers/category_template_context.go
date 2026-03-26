@@ -81,7 +81,7 @@ func CategoryCreateContextProvider(context *application_context.MahresourcesCont
 		category, err := context.GetCategory(query.ID)
 
 		if err != nil {
-			return tplContext
+			return addErrContext(err, tplContext)
 		}
 
 		tplContext["pageTitle"] = "Edit Category"

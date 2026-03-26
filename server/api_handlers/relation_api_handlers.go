@@ -22,14 +22,14 @@ func GetAddGroupRelationTypeHandler(ctx interfaces.RelationshipWriter) func(writ
 		var editor = query_models.RelationshipTypeEditorQuery{}
 
 		if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		relationType, err := effectiveCtx.AddRelationType(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -50,14 +50,14 @@ func GetEditGroupRelationTypeHandler(ctx interfaces.RelationshipWriter) func(wri
 		var editor = query_models.RelationshipTypeEditorQuery{}
 
 		if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		relationType, err := effectiveCtx.EditRelationType(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -78,7 +78,7 @@ func GetAddRelationHandler(ctx interfaces.RelationshipWriter) func(writer http.R
 		var editor = query_models.GroupRelationshipQuery{}
 
 		if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -129,7 +129,7 @@ func GetRelationTypesHandler(ctx interfaces.RelationshipReader) func(writer http
 		var query = query_models.RelationshipTypeQuery{}
 
 		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 

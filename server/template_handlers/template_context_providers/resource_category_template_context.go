@@ -71,7 +71,7 @@ func ResourceCategoryCreateContextProvider(context *application_context.Mahresou
 		resourceCategory, err := context.GetResourceCategory(query.ID)
 
 		if err != nil {
-			return tplContext
+			return addErrContext(err, tplContext)
 		}
 
 		tplContext["pageTitle"] = "Edit Resource Category"

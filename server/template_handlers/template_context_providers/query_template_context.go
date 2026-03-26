@@ -84,7 +84,7 @@ func QueryCreateContextProvider(context *application_context.MahresourcesContext
 		query, err := context.GetQuery(entityId.ID)
 
 		if err != nil {
-			return tplContext
+			return addErrContext(err, tplContext)
 		}
 
 		tplContext["pageTitle"] = "Edit Query"
