@@ -16,7 +16,7 @@ import (
 
 func GetNotesHandler(ctx interfaces.NoteReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.NoteQuery
 
@@ -26,6 +26,10 @@ func GetNotesHandler(ctx interfaces.NoteReader) func(writer http.ResponseWriter,
 		}
 
 		if notes, err := ctx.GetNotes(int(offset), constants.MaxResultsPerPage, &query); err != nil {
+			if http_utils.IsColumnError(err) {
+				http_utils.HandleError(http_utils.ErrInvalidSortColumn, writer, request, http.StatusBadRequest)
+				return
+			}
 			http_utils.HandleError(err, writer, request, http.StatusNotFound)
 			return
 		} else {
@@ -172,7 +176,7 @@ func GetNoteMetaKeysHandler(ctx interfaces.NoteMetaReader) func(writer http.Resp
 
 func GetNoteTypesHandler(ctx interfaces.NoteTypeReader) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.NoteTypeQuery
 		err := decoder.Decode(&query, request.URL.Query())

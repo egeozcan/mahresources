@@ -14,7 +14,7 @@ import (
 
 func RelationTypeListContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.RelationshipTypeQuery
 		err := decoder.Decode(&query, request.URL.Query())
@@ -139,7 +139,7 @@ func RelationTypeEditContextProvider(context *application_context.MahresourcesCo
 
 func RelationListContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.GroupRelationshipQuery
 		err := decoder.Decode(&query, request.URL.Query())

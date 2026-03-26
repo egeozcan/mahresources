@@ -66,7 +66,7 @@ func (f *CRUDHandlerFactory[T, Q, C]) GetHandler() http.HandlerFunc {
 // Note: Q must be a pointer type (e.g., *TagQuery) for proper decoding.
 func (f *CRUDHandlerFactory[T, Q, C]) ListHandler() http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
 
 		// Create a new instance of the underlying query type
@@ -84,6 +84,10 @@ func (f *CRUDHandlerFactory[T, Q, C]) ListHandler() http.HandlerFunc {
 		typedQuery := queryPtr.(Q)
 		entities, err := f.reader.List(int(offset), constants.MaxResultsPerPage, typedQuery)
 		if err != nil {
+			if http_utils.IsColumnError(err) {
+				http_utils.HandleError(http_utils.ErrInvalidSortColumn, writer, request, http.StatusBadRequest)
+				return
+			}
 			http_utils.HandleError(err, writer, request, http.StatusNotFound)
 			return
 		}

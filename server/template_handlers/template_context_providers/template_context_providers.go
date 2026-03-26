@@ -27,6 +27,10 @@ func addErrContext(err error, ctx pongo2.Context) pongo2.Context {
 	} else if strings.Contains(errMsg, "schema: error converting value") ||
 		strings.Contains(errMsg, "schema: invalid path") {
 		statusCode = http.StatusBadRequest
+	} else if strings.Contains(errMsg, "no such column") ||
+		strings.Contains(errMsg, "does not exist") {
+		statusCode = http.StatusBadRequest
+		errMsg = "invalid sort column"
 	}
 	return ctx.Update(pongo2.Context{
 		"errorMessage": errMsg,

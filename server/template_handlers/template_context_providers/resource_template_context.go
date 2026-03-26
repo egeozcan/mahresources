@@ -16,7 +16,7 @@ import (
 
 func ResourceListContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		page := http_utils.GetPageParameter(request)
 		simpleMode := strings.HasSuffix(request.URL.Path, "/simple")
 		defaultPerPage := constants.MaxResultsPerPage
 		if simpleMode {

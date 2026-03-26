@@ -24,7 +24,7 @@ type uploadErrorDetail struct {
 
 func GetResourcesHandler(ctx interfaces.ResourceReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		page := http_utils.GetPageParameter(request)
 		var query query_models.ResourceSearchQuery
 
 		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
@@ -41,6 +41,10 @@ func GetResourcesHandler(ctx interfaces.ResourceReader) func(writer http.Respons
 		resources, err := ctx.GetResources(int(offset), constants.MaxResultsPerPage, &query)
 
 		if err != nil {
+			if http_utils.IsColumnError(err) {
+				http_utils.HandleError(http_utils.ErrInvalidSortColumn, writer, request, http.StatusBadRequest)
+				return
+			}
 			http_utils.HandleError(err, writer, request, http.StatusNotFound)
 			return
 		}

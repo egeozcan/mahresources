@@ -14,7 +14,7 @@ import (
 
 func GetTagsHandler(ctx interfaces.TagsReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.TagQuery
 

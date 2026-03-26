@@ -133,7 +133,7 @@ func GetQueryHandler(ctx interfaces.QueryReader) func(writer http.ResponseWriter
 func GetQueriesHandler(ctx interfaces.QueryReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var query query_models.QueryQuery
-		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
 		err := decoder.Decode(&query, request.URL.Query())
 

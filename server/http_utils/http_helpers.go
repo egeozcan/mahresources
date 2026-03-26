@@ -2,6 +2,7 @@ package http_utils
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"mahresources/constants"
@@ -10,6 +11,21 @@ import (
 	"strconv"
 	"strings"
 )
+
+// ErrInvalidSortColumn is returned when a sort column does not exist in the database.
+var ErrInvalidSortColumn = errors.New("invalid sort column")
+
+// IsColumnError checks whether an error is a database "no such column" error
+// (from SQLite) or "column ... does not exist" (from Postgres).
+// When true, the raw error should not be exposed to the client.
+func IsColumnError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "no such column") ||
+		strings.Contains(msg, "does not exist")
+}
 
 func GetIntQueryParameter(request *http.Request, paramName string, defVal int64) int64 {
 	paramFromRes := GetQueryParameter(request, paramName, "")
@@ -159,6 +175,15 @@ func RequestAcceptsHTML(request *http.Request) bool {
 	}
 
 	return false
+}
+
+// GetPageParameter returns the "page" query parameter, clamped to a minimum of 1.
+func GetPageParameter(request *http.Request) int64 {
+	page := GetIntQueryParameter(request, "page", 1)
+	if page < 1 {
+		page = 1
+	}
+	return page
 }
 
 // SetPaginationHeaders sets standard pagination response headers.

@@ -48,7 +48,7 @@ var entityTypes = []SelectOption{
 // LogListContextProvider provides context for the log list template.
 func LogListContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.LogEntryQuery
 		err := decoder.Decode(&query, request.URL.Query())

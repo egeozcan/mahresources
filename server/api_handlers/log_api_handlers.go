@@ -23,7 +23,7 @@ type LogEntriesResponse struct {
 // GetLogEntriesHandler returns a handler for listing log entries with filtering and pagination.
 func GetLogEntriesHandler(ctx interfaces.LogEntryReader) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.LogEntryQuery
 
@@ -81,7 +81,7 @@ func GetEntityHistoryHandler(ctx interfaces.LogEntryReader) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		entityType := request.URL.Query().Get("entityType")
 		entityID := http_utils.GetUIntQueryParameter(request, "entityId", 0)
-		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
 
 		if entityType == "" {

@@ -15,7 +15,7 @@ import (
 
 func GetGroupsHandler(ctx interfaces.GroupReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.GroupQuery
 		err := decoder.Decode(&query, request.URL.Query())
@@ -28,6 +28,10 @@ func GetGroupsHandler(ctx interfaces.GroupReader) func(writer http.ResponseWrite
 		groups, err := ctx.GetGroups(int(offset), constants.MaxResultsPerPage, &query)
 
 		if err != nil {
+			if http_utils.IsColumnError(err) {
+				http_utils.HandleError(http_utils.ErrInvalidSortColumn, writer, request, http.StatusBadRequest)
+				return
+			}
 			http_utils.HandleError(err, writer, request, http.StatusNotFound)
 			return
 		}

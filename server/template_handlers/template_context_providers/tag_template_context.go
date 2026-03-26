@@ -13,7 +13,7 @@ import (
 
 func TagListContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		page := http_utils.GetPageParameter(request)
 		resultsPerPage := getResultsPerPage(request, constants.MaxResultsPerPage)
 		offset := (page - 1) * int64(resultsPerPage)
 		var query query_models.TagQuery
