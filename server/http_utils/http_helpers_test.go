@@ -212,6 +212,75 @@ func TestGetQueryParameter(t *testing.T) {
 	}
 }
 
+func TestGetPageParameterClampsOverflow(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		want int64
+	}{
+		{
+			name: "page=1",
+			url:  "/test?page=1",
+			want: 1,
+		},
+		{
+			name: "page=0 clamped to 1",
+			url:  "/test?page=0",
+			want: 1,
+		},
+		{
+			name: "page=-1 clamped to 1",
+			url:  "/test?page=-1",
+			want: 1,
+		},
+		{
+			name: "page missing defaults to 1",
+			url:  "/test",
+			want: 1,
+		},
+		{
+			name: "normal page",
+			url:  "/test?page=42",
+			want: 42,
+		},
+		{
+			name: "max int64 clamped to maxPage",
+			url:  "/test?page=9223372036854775807",
+			want: maxPage,
+		},
+		{
+			name: "large page clamped to maxPage",
+			url:  "/test?page=368934881474191033",
+			want: maxPage,
+		},
+		{
+			name: "page at maxPage boundary",
+			url:  "/test?page=1000000000",
+			want: 1000000000,
+		},
+		{
+			name: "page just above maxPage clamped",
+			url:  "/test?page=1000000001",
+			want: maxPage,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", tt.url, nil)
+			got := GetPageParameter(req)
+			if got != tt.want {
+				t.Errorf("GetPageParameter(req) = %d, want %d", got, tt.want)
+			}
+			// Verify no overflow: (page-1)*200 must be non-negative
+			offset := (got - 1) * 200
+			if offset < 0 {
+				t.Errorf("offset = (page-1)*200 = %d is negative, indicating overflow", offset)
+			}
+		})
+	}
+}
+
 func TestGetIntQueryParameter(t *testing.T) {
 	tests := []struct {
 		name   string

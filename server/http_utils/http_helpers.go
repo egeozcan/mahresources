@@ -177,11 +177,20 @@ func RequestAcceptsHTML(request *http.Request) bool {
 	return false
 }
 
-// GetPageParameter returns the "page" query parameter, clamped to a minimum of 1.
+// maxPage is a safe upper bound that prevents integer overflow when computing
+// offset = (page-1) * perPage.  For perPage up to 200 (the template-layer
+// maximum), (maxPage-1)*200 is well within int64 range.
+const maxPage int64 = 1_000_000_000
+
+// GetPageParameter returns the "page" query parameter, clamped to [1, maxPage].
+// The upper bound prevents integer overflow when computing pagination offsets.
 func GetPageParameter(request *http.Request) int64 {
 	page := GetIntQueryParameter(request, "page", 1)
 	if page < 1 {
 		page = 1
+	}
+	if page > maxPage {
+		page = maxPage
 	}
 	return page
 }

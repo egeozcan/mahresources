@@ -77,6 +77,7 @@ func GetResourceTimelineHandler(ctx *application_context.MahresourcesContext) fu
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var query query_models.ResourceSearchQuery
 		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
+			writer.Header().Set("Content-Type", constants.JSON)
 			writer.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(writer).Encode(map[string]string{"error": err.Error()})
 			return
@@ -87,6 +88,7 @@ func GetResourceTimelineHandler(ctx *application_context.MahresourcesContext) fu
 
 		buckets, err := ctx.GetResourceTimelineCounts(&query, boundaries)
 		if err != nil {
+			writer.Header().Set("Content-Type", constants.JSON)
 			writer.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(writer).Encode(map[string]string{"error": err.Error()})
 			return
@@ -106,6 +108,7 @@ func GetNoteTimelineHandler(ctx *application_context.MahresourcesContext) func(w
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var query query_models.NoteQuery
 		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
+			writer.Header().Set("Content-Type", constants.JSON)
 			writer.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(writer).Encode(map[string]string{"error": err.Error()})
 			return
@@ -116,6 +119,7 @@ func GetNoteTimelineHandler(ctx *application_context.MahresourcesContext) func(w
 
 		buckets, err := ctx.GetNoteTimelineCounts(&query, boundaries)
 		if err != nil {
+			writer.Header().Set("Content-Type", constants.JSON)
 			writer.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(writer).Encode(map[string]string{"error": err.Error()})
 			return
@@ -135,6 +139,7 @@ func GetGroupTimelineHandler(ctx *application_context.MahresourcesContext) func(
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var query query_models.GroupQuery
 		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
+			writer.Header().Set("Content-Type", constants.JSON)
 			writer.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(writer).Encode(map[string]string{"error": err.Error()})
 			return
@@ -145,6 +150,7 @@ func GetGroupTimelineHandler(ctx *application_context.MahresourcesContext) func(
 
 		buckets, err := ctx.GetGroupTimelineCounts(&query, boundaries)
 		if err != nil {
+			writer.Header().Set("Content-Type", constants.JSON)
 			writer.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(writer).Encode(map[string]string{"error": err.Error()})
 			return
@@ -164,6 +170,7 @@ func GetTagTimelineHandler(ctx *application_context.MahresourcesContext) func(wr
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var query query_models.TagQuery
 		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
+			writer.Header().Set("Content-Type", constants.JSON)
 			writer.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(writer).Encode(map[string]string{"error": err.Error()})
 			return
@@ -174,6 +181,7 @@ func GetTagTimelineHandler(ctx *application_context.MahresourcesContext) func(wr
 
 		buckets, err := ctx.GetTagTimelineCounts(&query, boundaries)
 		if err != nil {
+			writer.Header().Set("Content-Type", constants.JSON)
 			writer.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(writer).Encode(map[string]string{"error": err.Error()})
 			return
@@ -193,6 +201,7 @@ func GetCategoryTimelineHandler(ctx *application_context.MahresourcesContext) fu
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var query query_models.CategoryQuery
 		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
+			writer.Header().Set("Content-Type", constants.JSON)
 			writer.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(writer).Encode(map[string]string{"error": err.Error()})
 			return
@@ -203,6 +212,7 @@ func GetCategoryTimelineHandler(ctx *application_context.MahresourcesContext) fu
 
 		buckets, err := ctx.GetCategoryTimelineCounts(&query, boundaries)
 		if err != nil {
+			writer.Header().Set("Content-Type", constants.JSON)
 			writer.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(writer).Encode(map[string]string{"error": err.Error()})
 			return
@@ -222,6 +232,7 @@ func GetQueryTimelineHandler(ctx *application_context.MahresourcesContext) func(
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var query query_models.QueryQuery
 		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
+			writer.Header().Set("Content-Type", constants.JSON)
 			writer.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(writer).Encode(map[string]string{"error": err.Error()})
 			return
@@ -232,6 +243,7 @@ func GetQueryTimelineHandler(ctx *application_context.MahresourcesContext) func(
 
 		buckets, err := ctx.GetQueryTimelineCounts(&query, boundaries)
 		if err != nil {
+			writer.Header().Set("Content-Type", constants.JSON)
 			writer.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(writer).Encode(map[string]string{"error": err.Error()})
 			return
