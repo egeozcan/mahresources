@@ -33,6 +33,9 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 		if loadErr := altCtx.db.Find(&losers, &loserIds).Error; loadErr != nil {
 			return loadErr
 		}
+		if len(losers) != len(loserIds) {
+			return errors.New("one or more loser groups not found")
+		}
 
 		// Load winner WITHOUT associations
 		var winner models.Group

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"mahresources/constants"
+	"strings"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
@@ -77,7 +78,7 @@ func GetAddGroupHandler(ctx interfaces.GroupCRUDReader) func(writer http.Respons
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err == nil && editor.ID == 0 {
-			if editor.Name == "" {
+			if strings.TrimSpace(editor.Name) == "" {
 				http_utils.HandleError(fmt.Errorf("group name is required"), writer, request, http.StatusBadRequest)
 				return
 			}

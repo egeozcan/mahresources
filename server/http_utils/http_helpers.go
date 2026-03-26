@@ -89,12 +89,31 @@ func HandleError(err error, writer http.ResponseWriter, request *http.Request, r
 	if RequestAcceptsHTML(request) {
 		writer.Header().Set("Content-Type", "text/html")
 		writer.WriteHeader(responseCode)
-		_, _ = fmt.Fprintf(writer, `
-			<html>
-				<head><title>Error</title></head>
-				<body><h1>An error has occured:</h1><pre><code>%v</code></pre></body>
-			</html>
-		`, html.EscapeString(err.Error()))
+		_, _ = fmt.Fprintf(writer, `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Error %d</title>
+    <link rel="stylesheet" href="/tailwind.css">
+    <link rel="stylesheet" href="/index.css">
+    <style>
+        .error-container { max-width: 40rem; margin: 4rem auto; padding: 2rem; }
+        .error-heading { font-size: 1.5rem; font-weight: 700; color: #991b1b; margin-bottom: 1rem; }
+        .error-detail { background: #fef2f2; border: 1px solid #fecaca; border-radius: 0.5rem; padding: 1rem; }
+        .error-detail code { font-size: 0.875rem; color: #7f1d1d; white-space: pre-wrap; word-break: break-word; }
+        .error-back { margin-top: 1.5rem; }
+        .error-back a { color: #2563eb; text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="error-container">
+        <h1 class="error-heading">An error has occurred</h1>
+        <div class="error-detail"><pre><code>%v</code></pre></div>
+        <p class="error-back"><a href="javascript:history.back()">Go back</a></p>
+    </div>
+</body>
+</html>`, responseCode, html.EscapeString(err.Error()))
 		return
 	}
 

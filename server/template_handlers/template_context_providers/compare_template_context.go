@@ -26,6 +26,7 @@ func CompareContextProvider(context *application_context.MahresourcesContext) fu
 			return baseContext.Update(pongo2.Context{
 				"pageTitle":    "Compare Versions",
 				"errorMessage": "Resource 1 ID (r1) is required",
+				"query":        query,
 			})
 		}
 

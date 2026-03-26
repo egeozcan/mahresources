@@ -553,6 +553,9 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint, k
 		if loadResourcesErr := tx.Find(&losers, &loserIds).Error; loadResourcesErr != nil {
 			return loadResourcesErr
 		}
+		if len(losers) != len(loserIds) {
+			return errors.New("one or more loser resources not found")
+		}
 
 		// Load winner WITHOUT associations
 		var winner models.Resource

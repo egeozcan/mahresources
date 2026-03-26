@@ -3,6 +3,7 @@ package application_context
 import (
 	"errors"
 	"net/url"
+	"strings"
 
 	"gorm.io/gorm"
 	"mahresources/models"
@@ -12,7 +13,7 @@ import (
 )
 
 func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreator) (*models.Group, error) {
-	if groupQuery.Name == "" {
+	if strings.TrimSpace(groupQuery.Name) == "" {
 		return nil, errors.New("group name needed")
 	}
 
@@ -38,10 +39,6 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 	}
 	if hMeta, ok := hookData["meta"].(string); ok {
 		groupQuery.Meta = hMeta
-	}
-
-	if err := ValidateMeta(groupQuery.Meta); err != nil {
-		return nil, err
 	}
 
 	tx := ctx.db.Begin()
@@ -126,7 +123,7 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 }
 
 func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor) (*models.Group, error) {
-	if groupQuery.Name == "" {
+	if strings.TrimSpace(groupQuery.Name) == "" {
 		return nil, errors.New("group name needed")
 	}
 

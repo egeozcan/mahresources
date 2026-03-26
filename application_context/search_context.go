@@ -132,7 +132,7 @@ func (ctx *MahresourcesContext) GlobalSearch(query *query_models.GlobalSearchQue
 		close(resultsChan)
 	}()
 
-	var allResults []query_models.SearchResultItem
+	allResults := make([]query_models.SearchResultItem, 0)
 	for results := range resultsChan {
 		allResults = append(allResults, results...)
 	}

@@ -57,7 +57,7 @@ test.describe('Tag Validation', () => {
       // Should show error or stay on form - the app handles unique constraint violation
       // Check for error heading/message (the app shows "An error has occured:" heading)
       const hasErrorHeading = await page.locator('h1:has-text("error")').isVisible();
-      const hasErrorClass = await page.locator('.error, [class*="error"], [class*="Error"]').isVisible();
+      const hasErrorClass = await page.locator('.error, [class*="error"], [class*="Error"]').first().isVisible();
       const hasConstraintError = await page.locator('text=UNIQUE constraint').isVisible();
       const stayedOnForm = page.url().includes('/tag/new');
       const redirectedToExisting = page.url().includes('/tag?id=');

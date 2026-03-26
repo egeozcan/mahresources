@@ -67,7 +67,7 @@
 
     <div class="sidebar-group">
         <form
-            x-data="confirmAction({ message: `Selected groups will be deleted and merged to {{ group.Name|json }}. Are you sure?` })"
+            x-data="confirmAction({ message: 'Selected groups will be deleted and merged to {{ group.Name|escapejs }}. Are you sure?' })"
             action="/v1/groups/merge"
             :action="'/v1/groups/merge?redirect=' + encodeURIComponent(window.location.pathname + window.location.search)"
             method="post"

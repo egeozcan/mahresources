@@ -1,6 +1,7 @@
 package api_tests
 
 import (
+	"encoding/json"
 	"fmt"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -72,4 +73,26 @@ func TestSearchTotalReflectsAllResults(t *testing.T) {
 	assert.Equal(t, 3, len(result2.Results), "should return 3 items from cache")
 	assert.Equal(t, 5, result2.Total,
 		"total from cache should be 5 (all cached results), not the trimmed count")
+}
+
+func TestSearchReturnsEmptyArrayNotNull(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	sqlDB, err := tc.DB.DB()
+	assert.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+
+	result, err := tc.AppCtx.GlobalSearch(&query_models.GlobalSearchQuery{
+		Query: "zzzznonexistentterm12345",
+		Limit: 20,
+	})
+	assert.NoError(t, err)
+	assert.NotNil(t, result.Results, "Results should not be nil")
+	assert.Equal(t, 0, len(result.Results))
+
+	// Verify JSON marshaling produces [] not null
+	data, err := json.Marshal(result)
+	assert.NoError(t, err)
+	assert.Contains(t, string(data), `"results":[]`)
+	assert.NotContains(t, string(data), `"results":null`)
 }

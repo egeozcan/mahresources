@@ -19,6 +19,10 @@ func (ctx *MahresourcesContext) RunReadOnlyQuery(queryId uint, params map[string
 		return nil, err
 	}
 
+	if strings.TrimSpace(query.Text) == "" {
+		return nil, errors.New("query text is empty")
+	}
+
 	return ctx.readOnlyDB.NamedQuery(strings.ReplaceAll(query.Text, "::", "::::"), params)
 }
 
@@ -63,6 +67,10 @@ func (ctx *MahresourcesContext) CreateQuery(queryQuery *query_models.QueryCreato
 		return nil, errors.New("query name must be non-empty")
 	}
 
+	if strings.TrimSpace(queryQuery.Text) == "" {
+		return nil, errors.New("query text must be non-empty")
+	}
+
 	query := models.Query{
 		Name:     queryQuery.Name,
 		Text:     queryQuery.Text,
@@ -88,6 +96,10 @@ func (ctx *MahresourcesContext) UpdateQuery(queryQuery *query_models.QueryEditor
 	query.Name = queryQuery.Name
 	query.Text = queryQuery.Text
 	query.Template = queryQuery.Template
+
+	if strings.TrimSpace(query.Text) == "" {
+		return nil, errors.New("query text must be non-empty")
+	}
 
 	if err := ctx.db.Save(&query).Error; err != nil {
 		return nil, err

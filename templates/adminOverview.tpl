@@ -226,11 +226,11 @@
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Categories</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.categories)"></p>
                     </a>
-                    <a href="/resource-categories" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">
+                    <a href="/resourceCategories" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Resource Categories</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.resourceCategories)"></p>
                     </a>
-                    <a href="/note-types" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">
+                    <a href="/noteTypes" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Note Types</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.noteTypes)"></p>
                     </a>
@@ -242,7 +242,7 @@
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Relations</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.relations)"></p>
                     </a>
-                    <a href="/relation-types" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">
+                    <a href="/relationTypes" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Relation Types</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.relationTypes)"></p>
                     </a>

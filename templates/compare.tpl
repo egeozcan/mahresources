@@ -1,6 +1,11 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
+{% if errorMessage %}
+<div class="max-w-7xl mx-auto">
+    <p class="text-stone-600">Please provide a resource ID to compare versions.</p>
+</div>
+{% else %}
 <div class="max-w-7xl mx-auto" x-data="compareView({
     r1: {{ query.Resource1ID }},
     v1: {{ query.Version1|default:0 }},
@@ -274,4 +279,5 @@
     </div>
     {% endif %}
 </div>
+{% endif %}
 {% endblock %}

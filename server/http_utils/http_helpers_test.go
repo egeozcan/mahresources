@@ -1,10 +1,57 @@
 package http_utils
 
 import (
+	"encoding/json"
+	"errors"
+	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 )
+
+func TestHandleErrorHTMLContainsStyling(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/v1/test", nil)
+	req.Header.Set("Accept", "text/html")
+
+	HandleError(errors.New("test error"), w, req, http.StatusBadRequest)
+
+	body := w.Body.String()
+	// Should contain "occurred" not "occured"
+	if strings.Contains(body, "occured") {
+		t.Errorf("body should not contain the typo 'occured'")
+	}
+	if !strings.Contains(body, "occurred") {
+		t.Errorf("body should contain 'occurred'")
+	}
+	if !strings.Contains(body, "test error") {
+		t.Errorf("body should contain the error message 'test error'")
+	}
+	// Should have some styling
+	if !strings.Contains(body, "<style") && !strings.Contains(body, ".css") {
+		t.Errorf("body should contain styling (<style> or .css link)")
+	}
+}
+
+func TestHandleErrorJSONUnchanged(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/v1/test", nil)
+	req.Header.Set("Accept", "application/json")
+
+	HandleError(errors.New("test error"), w, req, http.StatusBadRequest)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+	var result map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode JSON: %v", err)
+	}
+	if result["error"] != "test error" {
+		t.Errorf("expected error 'test error', got %q", result["error"])
+	}
+}
 
 func TestRemoveValue(t *testing.T) {
 	tests := []struct {
