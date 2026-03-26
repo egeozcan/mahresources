@@ -102,7 +102,7 @@ func NoteQuery(query *query_models.NoteQuery, ignoreSort bool, originalDB *gorm.
 					continue
 				}
 
-				dbQuery = dbQuery.Where(types.JSONQuery("meta").Operation(getOperationType(v.Operation), v.Value, v.Key))
+				dbQuery = dbQuery.Where(types.JSONQuery("notes.meta").Operation(getOperationType(v.Operation), v.Value, v.Key))
 			}
 		}
 
