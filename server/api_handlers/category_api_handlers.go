@@ -45,14 +45,14 @@ func GetAddCategoryHandler(ctx interfaces.CategoryWriter) func(writer http.Respo
 		err := request.ParseForm()
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		var categoryEditor = query_models.CategoryEditor{}
 
 		if err = tryFillStructValuesFromRequest(&categoryEditor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 

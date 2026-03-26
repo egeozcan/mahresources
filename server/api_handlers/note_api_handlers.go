@@ -16,7 +16,7 @@ import (
 
 func GetNotesHandler(ctx interfaces.NoteReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.NoteQuery
 
@@ -26,6 +26,10 @@ func GetNotesHandler(ctx interfaces.NoteReader) func(writer http.ResponseWriter,
 		}
 
 		if notes, err := ctx.GetNotes(int(offset), constants.MaxResultsPerPage, &query); err != nil {
+			if http_utils.IsColumnError(err) {
+				http_utils.HandleError(http_utils.ErrInvalidSortColumn, writer, request, http.StatusBadRequest)
+				return
+			}
 			http_utils.HandleError(err, writer, request, http.StatusNotFound)
 			return
 		} else {
@@ -59,7 +63,7 @@ func GetAddNoteHandler(ctx interfaces.NoteWriteReader) func(writer http.Response
 		var queryVars = query_models.NoteEditor{}
 
 		if err := tryFillStructValuesFromRequest(&queryVars, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -143,7 +147,7 @@ func GetRemoveNoteHandler(ctx interfaces.NoteDeleter) func(writer http.ResponseW
 
 		err := effectiveCtx.DeleteNote(id)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, errorStatusCode(err))
 			return
 		}
 
@@ -152,7 +156,7 @@ func GetRemoveNoteHandler(ctx interfaces.NoteDeleter) func(writer http.ResponseW
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(&models.Note{ID: id})
+		_ = json.NewEncoder(writer).Encode(map[string]uint{"id": id})
 	}
 }
 
@@ -172,12 +176,12 @@ func GetNoteMetaKeysHandler(ctx interfaces.NoteMetaReader) func(writer http.Resp
 
 func GetNoteTypesHandler(ctx interfaces.NoteTypeReader) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.NoteTypeQuery
 		err := decoder.Decode(&query, request.URL.Query())
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -236,7 +240,7 @@ func GetAddNoteTypeHandler(ctx interfaces.NoteTypeWriter) func(writer http.Respo
 			}
 		} else {
 			if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
-				http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 				return
 			}
 		}
@@ -244,7 +248,7 @@ func GetAddNoteTypeHandler(ctx interfaces.NoteTypeWriter) func(writer http.Respo
 		noteType, err := effectiveCtx.CreateOrUpdateNoteType(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
 		}
 
@@ -290,7 +294,7 @@ func GetAddTagsToNotesHandler(ctx interfaces.BulkNoteTagEditor) func(writer http
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -301,7 +305,9 @@ func GetAddTagsToNotesHandler(ctx interfaces.BulkNoteTagEditor) func(writer http
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/notes")
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, "/notes") {
+			writeJSONOk(writer)
+		}
 	}
 }
 
@@ -311,7 +317,7 @@ func GetRemoveTagsFromNotesHandler(ctx interfaces.BulkNoteTagEditor) func(writer
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -322,7 +328,9 @@ func GetRemoveTagsFromNotesHandler(ctx interfaces.BulkNoteTagEditor) func(writer
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/notes")
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, "/notes") {
+			writeJSONOk(writer)
+		}
 	}
 }
 
@@ -332,7 +340,7 @@ func GetAddGroupsToNotesHandler(ctx interfaces.BulkNoteGroupEditor) func(writer 
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -343,7 +351,9 @@ func GetAddGroupsToNotesHandler(ctx interfaces.BulkNoteGroupEditor) func(writer 
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/notes")
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, "/notes") {
+			writeJSONOk(writer)
+		}
 	}
 }
 
@@ -353,18 +363,20 @@ func GetAddMetaToNotesHandler(ctx interfaces.BulkNoteMetaEditor) func(writer htt
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		err = ctx.BulkAddMetaToNotes(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/notes")
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, "/notes") {
+			writeJSONOk(writer)
+		}
 	}
 }
 
@@ -388,10 +400,12 @@ func GetBulkDeleteNotesHandler(ctx interfaces.NoteDeleter) func(writer http.Resp
 		err = effectiveCtx.BulkDeleteNotes(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, errorStatusCode(err))
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/notes")
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, "/notes") {
+			writeJSONOk(writer)
+		}
 	}
 }

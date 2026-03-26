@@ -14,7 +14,7 @@ import (
 
 func GetTagsHandler(ctx interfaces.TagsReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.TagQuery
 
@@ -26,6 +26,10 @@ func GetTagsHandler(ctx interfaces.TagsReader) func(writer http.ResponseWriter, 
 		tags, err := ctx.GetTags(int(offset), constants.MaxResultsPerPage, &query)
 
 		if err != nil {
+			if http_utils.IsColumnError(err) {
+				http_utils.HandleError(http_utils.ErrInvalidSortColumn, writer, request, http.StatusBadRequest)
+				return
+			}
 			http_utils.HandleError(err, writer, request, http.StatusNotFound)
 			return
 		}
@@ -44,7 +48,7 @@ func GetAddTagHandler(ctx interfaces.TagsWriter) func(writer http.ResponseWriter
 		var creator = query_models.TagCreator{}
 
 		if err := tryFillStructValuesFromRequest(&creator, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -90,7 +94,7 @@ func GetRemoveTagHandler(ctx interfaces.TagDeleter) func(writer http.ResponseWri
 
 		err := effectiveCtx.DeleteTag(query.ID)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, errorStatusCode(err))
 			return
 		}
 
@@ -123,11 +127,13 @@ func GetBulkDeleteTagsHandler(ctx interfaces.BulkTagDeleter) func(writer http.Re
 		err = effectiveCtx.BulkDeleteTags(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, errorStatusCode(err))
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/tags")
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, "/tags") {
+			writeJSONOk(writer)
+		}
 	}
 }
 
@@ -140,17 +146,19 @@ func GetMergeTagsHandler(ctx interfaces.TagMerger) func(writer http.ResponseWrit
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		err = effectiveCtx.MergeTags(editor.Winner, editor.Losers)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/tags")
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, "/tags") {
+			writeJSONOk(writer)
+		}
 	}
 }

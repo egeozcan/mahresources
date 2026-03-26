@@ -14,7 +14,7 @@ import (
 
 func GetGroupsHandler(ctx interfaces.GroupReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.GroupQuery
 		err := decoder.Decode(&query, request.URL.Query())
@@ -27,6 +27,10 @@ func GetGroupsHandler(ctx interfaces.GroupReader) func(writer http.ResponseWrite
 		groups, err := ctx.GetGroups(int(offset), constants.MaxResultsPerPage, &query)
 
 		if err != nil {
+			if http_utils.IsColumnError(err) {
+				http_utils.HandleError(http_utils.ErrInvalidSortColumn, writer, request, http.StatusBadRequest)
+				return
+			}
 			http_utils.HandleError(err, writer, request, http.StatusNotFound)
 			return
 		}
@@ -88,7 +92,11 @@ func GetAddGroupHandler(ctx interfaces.GroupCRUDReader) func(writer http.Respons
 			// updates don't clear them. Applies to both JSON and form-encoded requests.
 			{
 				existing, getErr := effectiveCtx.GetGroup(editor.ID)
-				if getErr == nil {
+				if getErr != nil {
+					http_utils.HandleError(getErr, writer, request, statusCodeForError(getErr, http.StatusBadRequest))
+					return
+				}
+				if existing != nil {
 					if editor.Name == "" {
 						editor.Name = existing.Name
 					}
@@ -153,7 +161,7 @@ func GetRemoveGroupHandler(ctx interfaces.GroupDeleter) func(writer http.Respons
 
 		err := effectiveCtx.DeleteGroup(id)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, errorStatusCode(err))
 			return
 		}
 
@@ -162,7 +170,7 @@ func GetRemoveGroupHandler(ctx interfaces.GroupDeleter) func(writer http.Respons
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(&models.Group{ID: id})
+		_ = json.NewEncoder(writer).Encode(map[string]uint{"id": id})
 	}
 }
 
@@ -172,7 +180,7 @@ func GetAddTagsToGroupsHandler(ctx interfaces.BulkGroupTagEditor) func(writer ht
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -183,7 +191,9 @@ func GetAddTagsToGroupsHandler(ctx interfaces.BulkGroupTagEditor) func(writer ht
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/groups")
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, "/groups") {
+			writeJSONOk(writer)
+		}
 	}
 }
 
@@ -193,7 +203,7 @@ func GetRemoveTagsFromGroupsHandler(ctx interfaces.BulkGroupTagEditor) func(writ
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -204,7 +214,9 @@ func GetRemoveTagsFromGroupsHandler(ctx interfaces.BulkGroupTagEditor) func(writ
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/groups")
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, "/groups") {
+			writeJSONOk(writer)
+		}
 	}
 }
 
@@ -229,11 +241,13 @@ func GetBulkDeleteGroupsHandler(ctx interfaces.GroupDeleter) func(writer http.Re
 		err = effectiveCtx.BulkDeleteGroups(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, errorStatusCode(err))
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/groups")
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, "/groups") {
+			writeJSONOk(writer)
+		}
 	}
 }
 
@@ -243,18 +257,20 @@ func GetAddMetaToGroupsHandler(ctx interfaces.BulkGroupMetaEditor) func(writer h
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		err = ctx.BulkAddMetaToGroups(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/groups")
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, "/groups") {
+			writeJSONOk(writer)
+		}
 	}
 }
 
@@ -281,18 +297,20 @@ func GetMergeGroupsHandler(ctx interfaces.GroupMerger) func(writer http.Response
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		err = effectiveCtx.MergeGroups(editor.Winner, editor.Losers)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/group?id=%v", editor.Winner))
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/group?id=%v", editor.Winner)) {
+			writeJSONOk(writer)
+		}
 	}
 }
 
@@ -332,13 +350,13 @@ func GetDuplicateGroupHandler(ctx interfaces.GroupDuplicator) func(writer http.R
 		var editor query_models.EntityIdQuery
 
 		if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		group, err := effectiveCtx.DuplicateGroup(editor.ID)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, errorStatusCode(err))
 			return
 		}
 

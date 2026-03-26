@@ -24,7 +24,7 @@ type uploadErrorDetail struct {
 
 func GetResourcesHandler(ctx interfaces.ResourceReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		page := http_utils.GetIntQueryParameter(request, "page", 1)
+		page := http_utils.GetPageParameter(request)
 		var query query_models.ResourceSearchQuery
 
 		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
@@ -41,6 +41,10 @@ func GetResourcesHandler(ctx interfaces.ResourceReader) func(writer http.Respons
 		resources, err := ctx.GetResources(int(offset), constants.MaxResultsPerPage, &query)
 
 		if err != nil {
+			if http_utils.IsColumnError(err) {
+				http_utils.HandleError(http_utils.ErrInvalidSortColumn, writer, request, http.StatusBadRequest)
+				return
+			}
 			http_utils.HandleError(err, writer, request, http.StatusNotFound)
 			return
 		}
@@ -144,14 +148,14 @@ func GetResourceUploadHandler(ctx interfaces.ResourceCreator) func(writer http.R
 		creator := query_models.ResourceCreator{ResourceQueryBase: remoteCreator.ResourceQueryBase}
 
 		if request.MultipartForm == nil || request.MultipartForm.File == nil {
-			http.Error(writer, "no multipart form data found", http.StatusBadRequest)
+			http_utils.HandleError(fmt.Errorf("no multipart form data found"), writer, request, http.StatusBadRequest)
 			return
 		}
 
 		files := request.MultipartForm.File["resource"]
 
 		if len(files) == 0 {
-			http.Error(writer, "no files found to save", http.StatusBadRequest)
+			http_utils.HandleError(fmt.Errorf("no files found to save"), writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -344,7 +348,7 @@ func GetResourceEditHandler(ctx interfaces.ResourceEditReader) func(writer http.
 		var editor = query_models.ResourceEditor{}
 		err := tryFillStructValuesFromRequest(&editor, request)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -478,7 +482,7 @@ func GetRemoveResourceHandler(ctx interfaces.ResourceDeleter) func(writer http.R
 		var query = query_models.EntityIdQuery{}
 
 		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -488,7 +492,7 @@ func GetRemoveResourceHandler(ctx interfaces.ResourceDeleter) func(writer http.R
 		}
 
 		if err := effectiveCtx.DeleteResource(query.ID); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, errorStatusCode(err))
 			return
 		}
 
@@ -524,7 +528,7 @@ func GetAddTagsToResourcesHandler(ctx interfaces.BulkResourceTagEditor) func(wri
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -535,7 +539,9 @@ func GetAddTagsToResourcesHandler(ctx interfaces.BulkResourceTagEditor) func(wri
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, "/resources") {
+			writeJSONOk(writer)
+		}
 	}
 }
 
@@ -547,7 +553,7 @@ func GetAddGroupsToResourcesHandler(ctx interfaces.BulkResourceGroupEditor) func
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -558,7 +564,9 @@ func GetAddGroupsToResourcesHandler(ctx interfaces.BulkResourceGroupEditor) func
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, "/resources") {
+			writeJSONOk(writer)
+		}
 	}
 }
 
@@ -570,7 +578,7 @@ func GetRemoveTagsFromResourcesHandler(ctx interfaces.BulkResourceTagEditor) fun
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -581,7 +589,9 @@ func GetRemoveTagsFromResourcesHandler(ctx interfaces.BulkResourceTagEditor) fun
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, "/resources") {
+			writeJSONOk(writer)
+		}
 	}
 }
 
@@ -593,7 +603,7 @@ func GetReplaceTagsOfResourcesHandler(ctx interfaces.BulkResourceTagEditor) func
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -604,7 +614,9 @@ func GetReplaceTagsOfResourcesHandler(ctx interfaces.BulkResourceTagEditor) func
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, "/resources") {
+			writeJSONOk(writer)
+		}
 	}
 }
 
@@ -616,18 +628,20 @@ func GetAddMetaToResourcesHandler(ctx interfaces.BulkResourceMetaEditor) func(wr
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		err = effectiveCtx.BulkAddMetaToResources(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, "/resources") {
+			writeJSONOk(writer)
+		}
 	}
 }
 
@@ -652,11 +666,13 @@ func GetBulkDeleteResourcesHandler(ctx interfaces.BulkResourceDeleter) func(writ
 		err = effectiveCtx.BulkDeleteResources(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, errorStatusCode(err))
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, "/resources") {
+			writeJSONOk(writer)
+		}
 	}
 }
 
@@ -669,18 +685,20 @@ func GetMergeResourcesHandler(ctx interfaces.ResourceMerger) func(writer http.Re
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		err = effectiveCtx.MergeResources(editor.Winner, editor.Losers, editor.KeepAsVersion)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", editor.Winner))
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", editor.Winner)) {
+			writeJSONOk(writer)
+		}
 	}
 }
 
