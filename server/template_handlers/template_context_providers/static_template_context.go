@@ -104,11 +104,32 @@ func contains(s []string, e string) bool {
 	return false
 }
 
+// normalizeQueryValues ensures URL query parameter keys are accessible with
+// PascalCase names in templates. gorilla/schema decodes case-insensitively,
+// but templates access queryValues via case-sensitive Go map lookups
+// (e.g., queryValues.Name.0). This function adds PascalCase copies of
+// lowercase-initial keys so both "name" and "Name" work as map keys.
+func normalizeQueryValues(values url.Values) url.Values {
+	result := make(url.Values)
+	for key, vals := range values {
+		result[key] = vals
+	}
+	for key, vals := range values {
+		if len(key) > 0 && key[0] >= 'a' && key[0] <= 'z' {
+			canonical := strings.ToUpper(key[:1]) + key[1:]
+			if _, exists := result[canonical]; !exists {
+				result[canonical] = vals
+			}
+		}
+	}
+	return result
+}
+
 var staticTemplateCtx = func(request *http.Request) pongo2.Context {
 	currentId := 0
 
 	context := pongo2.Context{
-		"queryValues": request.URL.Query(),
+		"queryValues": normalizeQueryValues(request.URL.Query()),
 		"path":        request.URL.Path,
 		"url":         request.URL.String(),
 		"withQuery":   getWithQuery(request),
