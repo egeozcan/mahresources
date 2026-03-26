@@ -178,7 +178,7 @@ func DeleteBlockHandler(ctx interfaces.BlockDeleter) func(http.ResponseWriter, *
 		}
 
 		if err := ctx.DeleteBlock(id); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
 		}
 

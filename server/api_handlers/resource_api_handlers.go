@@ -408,10 +408,16 @@ func GetResourceEditHandler(ctx interfaces.ResourceEditReader) func(writer http.
 			}
 		}
 
+		// Validate Meta JSON before saving
+		if editor.Meta != "" && !json.Valid([]byte(editor.Meta)) {
+			http_utils.HandleError(errors.New("invalid Meta JSON"), writer, request, http.StatusBadRequest)
+			return
+		}
+
 		res, err := effectiveCtx.EditResource(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, errorStatusCode(err))
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
 		}
 

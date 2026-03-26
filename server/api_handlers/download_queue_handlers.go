@@ -106,7 +106,7 @@ func GetDownloadPauseHandler(ctx DownloadQueueReader) func(writer http.ResponseW
 		}
 
 		if err := ctx.DownloadManager().Pause(jobID); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
 		}
 
@@ -130,7 +130,7 @@ func GetDownloadResumeHandler(ctx DownloadQueueReader) func(writer http.Response
 		}
 
 		if err := ctx.DownloadManager().Resume(jobID); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
 		}
 
@@ -154,7 +154,7 @@ func GetDownloadRetryHandler(ctx DownloadQueueReader) func(writer http.ResponseW
 		}
 
 		if err := ctx.DownloadManager().Retry(jobID); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
 		}
 

@@ -28,7 +28,7 @@ func (w *EntityWriter[T]) UpdateName(id uint, name string) error {
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return errors.New("record not found")
+		return gorm.ErrRecordNotFound
 	}
 	return nil
 }
@@ -47,7 +47,7 @@ func (w *EntityWriter[T]) UpdateDescription(id uint, description string) error {
 			return result.Error
 		}
 		if result.RowsAffected == 0 {
-			return errors.New("record not found")
+			return gorm.ErrRecordNotFound
 		}
 
 		// If this is a Note, sync description to the first text block so that

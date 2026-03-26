@@ -28,7 +28,7 @@ func GetEditEntityNameHandler[T interfaces.BasicEntityReader](ctx interfaces.Bas
 
 		err = ctx.UpdateName(id, editor.Name)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
 		}
 
@@ -59,7 +59,7 @@ func GetEditEntityDescriptionHandler[T interfaces.BasicEntityReader](ctx interfa
 
 		err = ctx.UpdateDescription(id, editor.Description)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
 		}
 

@@ -145,7 +145,7 @@ func GetRunQueryHandler(ctx interfaces.QueryRunner) func(writer http.ResponseWri
 		}
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusNotFound)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
 		}
 		defer result.Close()
@@ -153,7 +153,7 @@ func GetRunQueryHandler(ctx interfaces.QueryRunner) func(writer http.ResponseWri
 		resultMap, err := sQLToMap(result)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusNotFound)
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
