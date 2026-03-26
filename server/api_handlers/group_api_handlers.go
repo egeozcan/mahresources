@@ -100,7 +100,7 @@ func GetAddGroupHandler(ctx interfaces.GroupCRUDReader) func(writer http.Respons
 			if editor.Name == "" {
 				editor.Name = existing.Name
 			}
-			if editor.Description == "" {
+			if editor.Description == "" && !formHasField(request, "Description") {
 				editor.Description = existing.Description
 			}
 			if editor.Meta == "" {

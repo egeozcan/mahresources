@@ -692,6 +692,20 @@ func registerGroupRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.RouteInfo{
+		Method:      http.MethodGet,
+		Path:        "/v1/group/tree/children",
+		OperationID: "getGroupTreeChildren",
+		Summary:     "Get tree children of a group (or root groups if no parentId)",
+		Tags:        []string{"groups"},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "parentId", Type: "integer", Description: "Parent group ID (omit for root groups)"},
+			{Name: "limit", Type: "integer", Description: "Maximum number of children to return (default: 50, max: 100)"},
+		},
+		ResponseType:         reflect.SliceOf(reflect.TypeOf(query_models.GroupTreeNode{})),
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
 		Method:               http.MethodPost,
 		Path:                 "/v1/group/clone",
 		OperationID:          "cloneGroup",
@@ -861,6 +875,12 @@ func registerRelationRoutes(r *openapi.Registry) {
 		WithIDParam("id", true))
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/relation/editDescription", "editRelationDescription", "Edit a relation instance's description", "relations").
+		WithIDParam("id", true))
+
+	r.Register(openapi.NewRoute(http.MethodPost, "/v1/relationType/editName", "editRelationTypeName", "Edit a relation type's name", "relations").
+		WithIDParam("id", true))
+
+	r.Register(openapi.NewRoute(http.MethodPost, "/v1/relationType/editDescription", "editRelationTypeDescription", "Edit a relation type's description", "relations").
 		WithIDParam("id", true))
 }
 
@@ -1487,6 +1507,102 @@ func registerDownloadRoutes(r *openapi.Registry) {
 		Description: "Returns a Server-Sent Events stream with real-time updates about download job status changes.",
 		Tags:        []string{"downloads"},
 	})
+
+	// Jobs routes (canonical paths — aliases for download routes above, plus action routes)
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/jobs/download/submit",
+		OperationID:          "jobsSubmitDownload",
+		Summary:              "Submit a URL for background download (canonical path)",
+		Tags:                 []string{"jobs"},
+		RequestType:          remoteCreatorType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/jobs/queue",
+		OperationID:          "jobsGetQueue",
+		Summary:              "Get all jobs in the queue (canonical path)",
+		Tags:                 []string{"jobs"},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:              http.MethodPost,
+		Path:                "/v1/jobs/cancel",
+		OperationID:         "jobsCancel",
+		Summary:             "Cancel a job (canonical path)",
+		Tags:                []string{"jobs"},
+		IDQueryParam:        "id",
+		IDRequired:          true,
+		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:              http.MethodPost,
+		Path:                "/v1/jobs/pause",
+		OperationID:         "jobsPause",
+		Summary:             "Pause a job (canonical path)",
+		Tags:                []string{"jobs"},
+		IDQueryParam:        "id",
+		IDRequired:          true,
+		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:              http.MethodPost,
+		Path:                "/v1/jobs/resume",
+		OperationID:         "jobsResume",
+		Summary:             "Resume a paused job (canonical path)",
+		Tags:                []string{"jobs"},
+		IDQueryParam:        "id",
+		IDRequired:          true,
+		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:              http.MethodPost,
+		Path:                "/v1/jobs/retry",
+		OperationID:         "jobsRetry",
+		Summary:             "Retry a failed job (canonical path)",
+		Tags:                []string{"jobs"},
+		IDQueryParam:        "id",
+		IDRequired:          true,
+		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodGet,
+		Path:        "/v1/jobs/events",
+		OperationID: "jobsEvents",
+		Summary:     "Server-Sent Events stream for job updates (canonical path)",
+		Tags:        []string{"jobs"},
+	})
+
+	// Plugin action routes via jobs
+	r.Register(openapi.RouteInfo{
+		Method:              http.MethodPost,
+		Path:                "/v1/jobs/action/run",
+		OperationID:         "runPluginAction",
+		Summary:             "Run a plugin action as a background job",
+		Tags:                []string{"jobs", "plugins"},
+		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodGet,
+		Path:        "/v1/jobs/action/job",
+		OperationID: "getActionJob",
+		Summary:     "Get the status of a plugin action job",
+		Tags:        []string{"jobs", "plugins"},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "jobId", Type: "string", Required: true, Description: "Job ID"},
+		},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
 }
 
 func registerPluginRoutes(r *openapi.Registry) {
@@ -1505,6 +1621,74 @@ func registerPluginRoutes(r *openapi.Registry) {
 			{Name: "mode", Type: "string", Required: true, Description: "Render mode: 'view' or 'edit'"},
 		},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeHTML},
+	})
+
+	// Plugin management routes
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/plugin/actions",
+		OperationID:          "getPluginActions",
+		Summary:              "Get available plugin actions",
+		Tags:                 []string{"plugins"},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/plugins/manage",
+		OperationID:          "getPluginsManage",
+		Summary:              "Get plugin management information",
+		Tags:                 []string{"plugins"},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodPost,
+		Path:        "/v1/plugin/enable",
+		OperationID: "enablePlugin",
+		Summary:     "Enable a plugin",
+		Tags:        []string{"plugins"},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "name", Type: "string", Required: true, Description: "Plugin name to enable"},
+		},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodPost,
+		Path:        "/v1/plugin/disable",
+		OperationID: "disablePlugin",
+		Summary:     "Disable a plugin",
+		Tags:        []string{"plugins"},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "name", Type: "string", Required: true, Description: "Plugin name to disable"},
+		},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodPost,
+		Path:        "/v1/plugin/settings",
+		OperationID: "updatePluginSettings",
+		Summary:     "Update plugin settings",
+		Tags:        []string{"plugins"},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "name", Type: "string", Required: true, Description: "Plugin name"},
+		},
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodPost,
+		Path:        "/v1/plugin/purge-data",
+		OperationID: "purgePluginData",
+		Summary:     "Purge all data for a plugin",
+		Tags:        []string{"plugins"},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "name", Type: "string", Required: true, Description: "Plugin name to purge data for"},
+		},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 }
 

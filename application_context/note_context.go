@@ -25,6 +25,10 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 		noteQuery.Meta = "{}"
 	}
 
+	if !json.Valid([]byte(noteQuery.Meta)) {
+		return nil, errors.New("invalid JSON in Meta field")
+	}
+
 	var noteTypeId *uint
 	if noteQuery.NoteTypeId != 0 {
 		noteTypeId = &noteQuery.NoteTypeId

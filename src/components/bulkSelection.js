@@ -296,10 +296,20 @@ export function setupBulkSelectionListeners() {
       e.preventDefault();
       const entityType = e.target.dataset.entityType;
 
+      // Get the entity's current tags from the Alpine component data
+      const xDataEl = e.target.closest('[x-data]');
+      let currentTags = [];
+      if (xDataEl && window.Alpine) {
+        const data = window.Alpine.$data(xDataEl);
+        if (data?.entity?.Tags) {
+          currentTags = data.entity.Tags;
+        }
+      }
+
       const res = await (async function() {
         const url = new URL(`${window.location.origin}/partials/autocompleter`);
 
-        url.searchParams.append("selectedItems", "entity.Tags");
+        url.searchParams.append("selectedItems", JSON.stringify(currentTags));
         url.searchParams.append("title", "");
         url.searchParams.append("sortBy", `most_used_${entityType}`);
         url.searchParams.append("id", `tagEditor_${Math.random()}`);

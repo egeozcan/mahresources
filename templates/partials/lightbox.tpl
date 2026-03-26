@@ -14,6 +14,7 @@
     @keydown.arrow-right.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.next()"
     @keydown.page-up.window.prevent="$store.lightbox.isOpen && $store.lightbox.prev()"
     @keydown.page-down.window.prevent="$store.lightbox.isOpen && $store.lightbox.next()"
+    @keydown.space.window="$store.lightbox.isOpen && canNavigate() && ($event.preventDefault(), $store.lightbox.next())"
     @keydown.enter.window="$store.lightbox.isOpen && canNavigate() && !document.activeElement?.closest('[data-edit-panel], [data-quick-tag-panel]') && $store.lightbox.toggleFullscreen()"
     @keydown.e.window="$store.lightbox.isOpen && canNavigate() && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
     @keydown.f2.window.prevent="$store.lightbox.isOpen && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"

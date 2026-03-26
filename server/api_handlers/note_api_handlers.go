@@ -74,7 +74,7 @@ func GetAddNoteHandler(ctx interfaces.NoteWriteReader) func(writer http.Response
 				if queryVars.Name == "" {
 					queryVars.Name = existing.Name
 				}
-				if queryVars.Description == "" {
+				if queryVars.Description == "" && !formHasField(request, "Description") {
 					queryVars.Description = existing.Description
 				}
 				if queryVars.Meta == "" {

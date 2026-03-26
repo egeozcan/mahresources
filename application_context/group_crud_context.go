@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"encoding/json"
 	"errors"
 	"net/url"
 	"strings"
@@ -19,6 +20,10 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 
 	if groupQuery.Meta == "" {
 		groupQuery.Meta = "{}"
+	}
+
+	if !json.Valid([]byte(groupQuery.Meta)) {
+		return nil, errors.New("invalid JSON in Meta field")
 	}
 
 	hookData := map[string]any{
@@ -160,6 +165,11 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 
 	if groupQuery.Meta == "" {
 		groupQuery.Meta = "{}"
+	}
+
+	if !json.Valid([]byte(groupQuery.Meta)) {
+		tx.Rollback()
+		return nil, errors.New("invalid JSON in Meta field")
 	}
 
 	group := &models.Group{

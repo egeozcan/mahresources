@@ -3,6 +3,7 @@ package application_context
 import (
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -661,6 +662,11 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 
 	if resourceQuery.Meta == "" {
 		resourceQuery.Meta = "{}"
+	}
+
+	if !json.Valid([]byte(resourceQuery.Meta)) {
+		tx.Rollback()
+		return nil, errors.New("invalid JSON in Meta field")
 	}
 
 	width := 0

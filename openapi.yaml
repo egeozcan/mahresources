@@ -410,6 +410,13 @@ components:
                 ToGroupId:
                     type: integer
             type: object
+        GroupTreeNodePartial:
+            properties:
+                id:
+                    type: integer
+                name:
+                    type: string
+            type: object
         LogEntry:
             properties:
                 action:
@@ -1918,6 +1925,32 @@ paths:
             summary: Get parents of a group
             tags:
                 - groups
+    /v1/group/tree/children:
+        get:
+            operationId: getGroupTreeChildren
+            parameters:
+                - description: Parent group ID (omit for root groups)
+                  in: query
+                  name: parentId
+                  schema:
+                    type: integer
+                - description: 'Maximum number of children to return (default: 50, max: 100)'
+                  in: query
+                  name: limit
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/GroupTreeNodePartial'
+                                type: array
+                    description: Successful response
+            summary: Get tree children of a group (or root groups if no parentId)
+            tags:
+                - groups
     /v1/groups:
         get:
             operationId: listGroups
@@ -2320,6 +2353,137 @@ paths:
             tags:
                 - groups
                 - timeline
+    /v1/jobs/action/job:
+        get:
+            operationId: getActionJob
+            parameters:
+                - description: Job ID
+                  in: query
+                  name: jobId
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Get the status of a plugin action job
+            tags:
+                - jobs
+                - plugins
+    /v1/jobs/action/run:
+        post:
+            operationId: runPluginAction
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Run a plugin action as a background job
+            tags:
+                - jobs
+                - plugins
+    /v1/jobs/cancel:
+        post:
+            operationId: jobsCancel
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Cancel a job (canonical path)
+            tags:
+                - jobs
+    /v1/jobs/download/submit:
+        post:
+            operationId: jobsSubmitDownload
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/ResourceFromRemoteCreator'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/ResourceFromRemoteCreator'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Submit a URL for background download (canonical path)
+            tags:
+                - jobs
+    /v1/jobs/events:
+        get:
+            operationId: jobsEvents
+            responses:
+                "200":
+                    description: Successful response
+            summary: Server-Sent Events stream for job updates (canonical path)
+            tags:
+                - jobs
+    /v1/jobs/pause:
+        post:
+            operationId: jobsPause
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Pause a job (canonical path)
+            tags:
+                - jobs
+    /v1/jobs/queue:
+        get:
+            operationId: jobsGetQueue
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Get all jobs in the queue (canonical path)
+            tags:
+                - jobs
+    /v1/jobs/resume:
+        post:
+            operationId: jobsResume
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Resume a paused job (canonical path)
+            tags:
+                - jobs
+    /v1/jobs/retry:
+        post:
+            operationId: jobsRetry
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Retry a failed job (canonical path)
+            tags:
+                - jobs
     /v1/log:
         get:
             operationId: getLog
@@ -3258,6 +3422,89 @@ paths:
             tags:
                 - notes
                 - timeline
+    /v1/plugin/actions:
+        get:
+            operationId: getPluginActions
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Get available plugin actions
+            tags:
+                - plugins
+    /v1/plugin/disable:
+        post:
+            operationId: disablePlugin
+            parameters:
+                - description: Plugin name to disable
+                  in: query
+                  name: name
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Disable a plugin
+            tags:
+                - plugins
+    /v1/plugin/enable:
+        post:
+            operationId: enablePlugin
+            parameters:
+                - description: Plugin name to enable
+                  in: query
+                  name: name
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Enable a plugin
+            tags:
+                - plugins
+    /v1/plugin/purge-data:
+        post:
+            operationId: purgePluginData
+            parameters:
+                - description: Plugin name to purge data for
+                  in: query
+                  name: name
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Purge all data for a plugin
+            tags:
+                - plugins
+    /v1/plugin/settings:
+        post:
+            operationId: updatePluginSettings
+            parameters:
+                - description: Plugin name
+                  in: query
+                  name: name
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Update plugin settings
+            tags:
+                - plugins
     /v1/plugins/{pluginName}/block/render:
         get:
             description: Renders a block using the plugin's block renderer, returning HTML content for the specified mode.
@@ -3292,6 +3539,17 @@ paths:
             tags:
                 - plugins
                 - blocks
+    /v1/plugins/manage:
+        get:
+            operationId: getPluginsManage
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Get plugin management information
+            tags:
+                - plugins
     /v1/queries:
         get:
             operationId: listQueries
@@ -3681,6 +3939,52 @@ paths:
                                 $ref: '#/components/schemas/GroupRelationType'
                     description: Successful response
             summary: Edit an existing relation type
+            tags:
+                - relations
+    /v1/relationType/editDescription:
+        post:
+            operationId: editRelationTypeDescription
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Edit a relation type's description
+            tags:
+                - relations
+    /v1/relationType/editName:
+        post:
+            operationId: editRelationTypeName
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Edit a relation type's name
             tags:
                 - relations
     /v1/relationTypes:
@@ -5206,6 +5510,8 @@ tags:
       name: downloads
     - description: Operations related to groups
       name: groups
+    - description: Operations related to jobs
+      name: jobs
     - description: Operations related to logs
       name: logs
     - description: Operations related to notes

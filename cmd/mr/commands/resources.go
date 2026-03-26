@@ -379,9 +379,10 @@ func newResourceUploadCmd(c *client.Client, opts *output.Options) *cobra.Command
 			if opts.JSON {
 				output.PrintSingle(*opts, nil, raw)
 			} else {
-				var res resourceResponse
-				if err := json.Unmarshal(raw, &res); err == nil {
-					output.PrintMessage(fmt.Sprintf("Created resource %d: %s", res.ID, res.Name))
+				// The upload API returns an array of resources (supports multi-file upload).
+				var resources []resourceResponse
+				if err := json.Unmarshal(raw, &resources); err == nil && len(resources) > 0 {
+					output.PrintMessage(fmt.Sprintf("Created resource %d: %s", resources[0].ID, resources[0].Name))
 				} else {
 					output.PrintMessage("Resource uploaded successfully.")
 				}

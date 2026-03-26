@@ -360,7 +360,7 @@ func GetResourceEditHandler(ctx interfaces.ResourceEditReader) func(writer http.
 				if editor.Name == "" {
 					editor.Name = existing.Name
 				}
-				if editor.Description == "" {
+				if editor.Description == "" && !formHasField(request, "Description") {
 					editor.Description = existing.Description
 				}
 				if editor.Meta == "" {
