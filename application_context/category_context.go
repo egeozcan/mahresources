@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"errors"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"mahresources/models"
 	"mahresources/models/database_scopes"
@@ -153,41 +154,48 @@ func (ctx *MahresourcesContext) DeleteCategory(categoryId uint) error {
 	}
 	categoryName := category.Name
 
-	// Do NOT use Select(clause.Associations) — Category's only association is
-	// Groups, and deleting a category must SET NULL on groups (not cascade-delete them).
-	// Explicitly clear CategoryId since SQLite FK constraints don't fire reliably.
-	if err := ctx.db.Model(&models.Group{}).Where("category_id = ?", categoryId).Update("category_id", nil).Error; err != nil {
-		return err
-	}
+	// Wrap all writes in a transaction to maintain consistency.
+	// Without this, a failure midway (e.g. when deleting relation types)
+	// would leave the database in an inconsistent state where groups have
+	// already lost their category_id but the category still exists.
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		// Do NOT use Select(clause.Associations) — Category's only association is
+		// Groups, and deleting a category must SET NULL on groups (not cascade-delete them).
+		// Explicitly clear CategoryId since SQLite FK constraints don't fire reliably.
+		if err := tx.Model(&models.Group{}).Where("category_id = ?", categoryId).Update("category_id", nil).Error; err != nil {
+			return err
+		}
 
-	// Cascade-delete GroupRelationType records that reference this category
-	// (FromCategoryId or ToCategoryId). SQLite FK cascades don't fire reliably.
-	var relTypeIDs []uint
-	if err := ctx.db.Model(&models.GroupRelationType{}).
-		Where("from_category_id = ? OR to_category_id = ?", categoryId, categoryId).
-		Pluck("id", &relTypeIDs).Error; err != nil {
-		return err
-	}
-	if len(relTypeIDs) > 0 {
-		// Delete GroupRelation records whose RelationTypeId references these types
-		if err := ctx.db.Where("relation_type_id IN ?", relTypeIDs).
-			Delete(&models.GroupRelation{}).Error; err != nil {
+		// Cascade-delete GroupRelationType records that reference this category
+		// (FromCategoryId or ToCategoryId). SQLite FK cascades don't fire reliably.
+		var relTypeIDs []uint
+		if err := tx.Model(&models.GroupRelationType{}).
+			Where("from_category_id = ? OR to_category_id = ?", categoryId, categoryId).
+			Pluck("id", &relTypeIDs).Error; err != nil {
 			return err
 		}
-		// Clear BackRelationId on any GroupRelationType that points to one of these
-		if err := ctx.db.Model(&models.GroupRelationType{}).
-			Where("back_relation_id IN ?", relTypeIDs).
-			Update("back_relation_id", nil).Error; err != nil {
-			return err
+		if len(relTypeIDs) > 0 {
+			// Delete GroupRelation records whose RelationTypeId references these types
+			if err := tx.Where("relation_type_id IN ?", relTypeIDs).
+				Delete(&models.GroupRelation{}).Error; err != nil {
+				return err
+			}
+			// Clear BackRelationId on any GroupRelationType that points to one of these
+			if err := tx.Model(&models.GroupRelationType{}).
+				Where("back_relation_id IN ?", relTypeIDs).
+				Update("back_relation_id", nil).Error; err != nil {
+				return err
+			}
+			// Delete the GroupRelationType records themselves
+			if err := tx.Where("id IN ?", relTypeIDs).
+				Delete(&models.GroupRelationType{}).Error; err != nil {
+				return err
+			}
 		}
-		// Delete the GroupRelationType records themselves
-		if err := ctx.db.Where("id IN ?", relTypeIDs).
-			Delete(&models.GroupRelationType{}).Error; err != nil {
-			return err
-		}
-	}
 
-	err := ctx.db.Delete(&category).Error
+		return tx.Delete(&category).Error
+	})
+
 	if err == nil {
 		ctx.Logger().Info(models.LogActionDelete, "category", &categoryId, categoryName, "Deleted category", nil)
 		ctx.RunAfterPluginHooks("after_category_delete", map[string]any{"id": float64(categoryId), "name": categoryName})

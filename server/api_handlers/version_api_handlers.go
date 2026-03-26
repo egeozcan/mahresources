@@ -5,12 +5,34 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"mahresources/constants"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
 	"mahresources/server/interfaces"
 )
+
+// versionErrorStatus maps a version operation error to the appropriate HTTP status code.
+// "not found" errors become 404, ownership/constraint violations become 400 or 409,
+// and truly unexpected failures remain 500.
+func versionErrorStatus(err error) int {
+	if err == nil {
+		return http.StatusOK
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "not found"):
+		return http.StatusNotFound
+	case strings.Contains(msg, "does not belong"):
+		return http.StatusBadRequest
+	case strings.Contains(msg, "cannot delete current version"),
+		strings.Contains(msg, "cannot delete last version"):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
+}
 
 // GetListVersionsHandler returns handler for listing versions
 func GetListVersionsHandler(ctx interfaces.VersionReader) func(http.ResponseWriter, *http.Request) {
@@ -23,7 +45,7 @@ func GetListVersionsHandler(ctx interfaces.VersionReader) func(http.ResponseWrit
 
 		versions, err := ctx.GetVersions(uint(resourceID))
 		if err != nil {
-			http_utils.HandleError(err, w, r, http.StatusInternalServerError)
+			http_utils.HandleError(err, w, r, versionErrorStatus(err))
 			return
 		}
 
@@ -77,7 +99,7 @@ func GetUploadVersionHandler(ctx interfaces.VersionWriter) func(http.ResponseWri
 
 		version, err := ctx.UploadNewVersion(uint(resourceID), file, header, comment)
 		if err != nil {
-			http_utils.HandleError(err, w, r, http.StatusInternalServerError)
+			http_utils.HandleError(err, w, r, versionErrorStatus(err))
 			return
 		}
 
@@ -101,7 +123,7 @@ func GetRestoreVersionHandler(ctx interfaces.VersionWriter) func(http.ResponseWr
 
 		version, err := ctx.RestoreVersion(query.ResourceID, query.VersionID, query.Comment)
 		if err != nil {
-			http_utils.HandleError(err, w, r, http.StatusInternalServerError)
+			http_utils.HandleError(err, w, r, versionErrorStatus(err))
 			return
 		}
 
@@ -135,7 +157,7 @@ func GetDeleteVersionHandler(ctx interfaces.VersionDeleter) func(http.ResponseWr
 		}
 
 		if err := ctx.DeleteVersion(uint(resourceID), uint(versionID)); err != nil {
-			http_utils.HandleError(err, w, r, http.StatusInternalServerError)
+			http_utils.HandleError(err, w, r, versionErrorStatus(err))
 			return
 		}
 
@@ -194,7 +216,7 @@ func GetCleanupVersionsHandler(ctx interfaces.VersionCleaner) func(http.Response
 
 		deletedIDs, err := ctx.CleanupVersions(&query)
 		if err != nil {
-			http_utils.HandleError(err, w, r, http.StatusInternalServerError)
+			http_utils.HandleError(err, w, r, versionErrorStatus(err))
 			return
 		}
 
@@ -217,7 +239,7 @@ func GetBulkCleanupVersionsHandler(ctx interfaces.VersionCleaner) func(http.Resp
 
 		result, err := ctx.BulkCleanupVersions(&query)
 		if err != nil {
-			http_utils.HandleError(err, w, r, http.StatusInternalServerError)
+			http_utils.HandleError(err, w, r, versionErrorStatus(err))
 			return
 		}
 
@@ -257,7 +279,7 @@ func GetCompareVersionsHandler(ctx interfaces.VersionComparer) func(http.Respons
 
 		comparison, err := ctx.CompareVersions(uint(resourceID), uint(v1), uint(v2))
 		if err != nil {
-			http_utils.HandleError(err, w, r, http.StatusInternalServerError)
+			http_utils.HandleError(err, w, r, versionErrorStatus(err))
 			return
 		}
 

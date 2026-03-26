@@ -9,6 +9,7 @@ import (
 	"mahresources/plugin_system"
 	"mahresources/server/http_utils"
 	"net/http"
+	"strings"
 )
 
 // DownloadQueueReader is the interface for reading download queue state
@@ -34,7 +35,13 @@ func GetDownloadSubmitHandler(ctx DownloadQueueReader) func(writer http.Response
 
 		jobs, err := ctx.DownloadManager().SubmitMultiple(&creator)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusServiceUnavailable)
+			// "no valid URLs provided" is a client validation error (400),
+			// while "download queue is full" is a capacity issue (503).
+			status := http.StatusServiceUnavailable
+			if strings.Contains(err.Error(), "no valid URLs") {
+				status = http.StatusBadRequest
+			}
+			http_utils.HandleError(err, writer, request, status)
 			return
 		}
 

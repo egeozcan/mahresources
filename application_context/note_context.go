@@ -390,15 +390,21 @@ func (ctx *MahresourcesContext) DeleteNoteType(noteTypeId uint) error {
 	}
 	noteTypeName := noteType.Name
 
-	// Do NOT use Select(clause.Associations) here — NoteType's only association
-	// is Notes, and deleting a type must SET NULL on notes (not cascade-delete them).
-	// Explicitly clear NoteTypeId since SQLite's PRAGMA foreign_keys is a no-op
-	// inside transactions, so FK constraints (OnDelete:SET NULL) don't fire reliably.
-	if err := ctx.db.Model(&models.Note{}).Where("note_type_id = ?", noteTypeId).Update("note_type_id", nil).Error; err != nil {
-		return err
-	}
+	// Wrap in a transaction so that if the Delete fails, the SET NULL on
+	// notes is rolled back (otherwise notes lose their type_id but the type
+	// still exists).
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		// Do NOT use Select(clause.Associations) here — NoteType's only association
+		// is Notes, and deleting a type must SET NULL on notes (not cascade-delete them).
+		// Explicitly clear NoteTypeId since SQLite's PRAGMA foreign_keys is a no-op
+		// inside transactions, so FK constraints (OnDelete:SET NULL) don't fire reliably.
+		if err := tx.Model(&models.Note{}).Where("note_type_id = ?", noteTypeId).Update("note_type_id", nil).Error; err != nil {
+			return err
+		}
 
-	err := ctx.db.Delete(&noteType).Error
+		return tx.Delete(&noteType).Error
+	})
+
 	if err == nil {
 		ctx.Logger().Info(models.LogActionDelete, "noteType", &noteTypeId, noteTypeName, "Deleted note type", nil)
 		ctx.InvalidateSearchCacheByType(EntityTypeNoteType)

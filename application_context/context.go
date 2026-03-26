@@ -27,13 +27,21 @@ import (
 	"mahresources/storage"
 )
 
-// ValidateMeta checks that a Meta string is valid JSON. Empty string and "{}" are accepted.
+// ValidateMeta checks that a Meta string is a valid JSON object.
+// Empty string and "{}" are accepted. Non-object JSON values (null, arrays,
+// strings, numbers, booleans) are rejected because downstream operations
+// like json_each(), json_patch(), and jsonb_object_keys() require a JSON object.
 func ValidateMeta(meta string) error {
 	if meta == "" || meta == "{}" {
 		return nil
 	}
 	if !json.Valid([]byte(meta)) {
 		return errors.New("invalid JSON in Meta field")
+	}
+	// Ensure the value is a JSON object (not null, array, string, number, or boolean)
+	trimmed := strings.TrimSpace(meta)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return errors.New("Meta field must be a JSON object")
 	}
 	return nil
 }

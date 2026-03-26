@@ -515,9 +515,9 @@ test.describe.serial('Version API Operations', () => {
       `${baseURL}/v1/resource/version?resourceId=${resourceId}&versionId=${current.id}`
     );
 
-    // Should fail
+    // Should fail with 409 Conflict (cannot delete current version)
     expect(response.ok()).toBeFalsy();
-    expect(response.status()).toBe(500); // Internal server error with message
+    expect(response.status()).toBe(409);
   });
 
   test.afterAll(async ({ apiClient }) => {

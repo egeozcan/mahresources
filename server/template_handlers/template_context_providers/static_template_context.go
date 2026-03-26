@@ -187,6 +187,9 @@ func stringId(id any) string {
 		return strconv.Itoa(int(u))
 	}
 	if u, ok := id.(*uint); ok {
+		if u == nil {
+			return ""
+		}
 		return strconv.Itoa(int(*u))
 	}
 	return ""
@@ -252,10 +255,19 @@ func getPathExtensionOptions(url *url.URL, options *[]*SelectOption) *[]*SelectO
 func dereference(v interface{}) interface{} {
 	switch v := v.(type) {
 	case *uint:
+		if v == nil {
+			return nil
+		}
 		return *v
 	case *string:
+		if v == nil {
+			return nil
+		}
 		return *v
 	case *time.Time:
+		if v == nil {
+			return nil
+		}
 		return *v
 	default:
 		return v

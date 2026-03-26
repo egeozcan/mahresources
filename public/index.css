@@ -24,6 +24,7 @@
 
 html {
     height: 100%;
+    overflow-x: hidden;
 }
 
 .site {
@@ -95,7 +96,7 @@ html {
     align-items: center;
 }
 
-@media (min-width: 768px) {
+@media (min-width: 900px) {
     .navbar-links {
         display: flex;
     }
@@ -235,6 +236,19 @@ html {
     color: var(--nav-active);
     background-color: rgba(180, 83, 9, 0.12);
     font-weight: 600;
+}
+
+/* ========================================
+   Breadcrumb
+   ======================================== */
+
+.breadcrumb-list {
+    max-width: 100%;
+    min-width: 0;
+}
+
+.breadcrumb-link {
+    max-width: min(24rem, calc(100vw - 7rem));
 }
 
 .title {
