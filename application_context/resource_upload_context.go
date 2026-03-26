@@ -218,6 +218,10 @@ func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.Re
 				group := models.Group{CategoryId: &category.ID, Name: resourceQuery.GroupName}
 
 				if err := ctx.db.Where(&group).First(&group).Error; err != nil {
+					if valErr := ValidateMeta(resourceQuery.GroupMeta); valErr != nil {
+						setError(valErr)
+						return
+					}
 					group.Meta = []byte(resourceQuery.GroupMeta)
 					if err := ctx.db.Save(&group).Error; err != nil {
 						setError(err)
@@ -657,6 +661,11 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 
 	if resourceQuery.Meta == "" {
 		resourceQuery.Meta = "{}"
+	}
+
+	if err := ValidateMeta(resourceQuery.Meta); err != nil {
+		tx.Rollback()
+		return nil, err
 	}
 
 	width := 0

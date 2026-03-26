@@ -210,6 +210,9 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 
 		resource.Name = resourceQuery.Name
 		if resourceQuery.Meta != "" {
+			if err := ValidateMeta(resourceQuery.Meta); err != nil {
+				return err
+			}
 			resource.Meta = []byte(resourceQuery.Meta)
 			// Recompute OwnMeta if the resource is in a series
 			if resource.SeriesID != nil && resource.Series != nil {

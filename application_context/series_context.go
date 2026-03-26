@@ -48,6 +48,9 @@ func (ctx *MahresourcesContext) UpdateSeries(editor *query_models.SeriesEditor) 
 
 		metaChanged := false
 		if editor.Meta != "" {
+			if err := ValidateMeta(editor.Meta); err != nil {
+				return err
+			}
 			series.Meta = types.JSON(editor.Meta)
 			metaChanged = string(oldMeta) != editor.Meta
 		}

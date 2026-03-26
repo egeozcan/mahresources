@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -422,6 +423,24 @@ func timeOrNil(time time.Time, err error) *time.Time {
 	}
 
 	return &time
+}
+
+// ValidateMeta checks that the given string is valid JSON and that
+// the top-level value is a JSON object (i.e. starts with '{').
+// GORM's JSONB scanner and SQLite's json_each both expect objects;
+// storing scalars or arrays causes 500 errors on list pages.
+func ValidateMeta(meta string) error {
+	meta = strings.TrimSpace(meta)
+	if meta == "" {
+		return nil
+	}
+	if !json.Valid([]byte(meta)) {
+		return fmt.Errorf("invalid JSON in meta field")
+	}
+	if meta[0] != '{' {
+		return fmt.Errorf("meta must be a JSON object, got %c", meta[0])
+	}
+	return nil
 }
 
 func pageLimit(db *gorm.DB) *gorm.DB {

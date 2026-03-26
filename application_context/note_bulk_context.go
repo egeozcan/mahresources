@@ -1,8 +1,6 @@
 package application_context
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
 
 	"gorm.io/gorm"
@@ -82,8 +80,8 @@ func (ctx *MahresourcesContext) BulkAddGroupsToNotes(query *query_models.BulkEdi
 }
 
 func (ctx *MahresourcesContext) BulkAddMetaToNotes(query *query_models.BulkEditMetaQuery) error {
-	if !json.Valid([]byte(query.Meta)) {
-		return errors.New("invalid json")
+	if err := ValidateMeta(query.Meta); err != nil {
+		return err
 	}
 
 	var note models.Note

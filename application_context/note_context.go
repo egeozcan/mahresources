@@ -25,6 +25,10 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 		noteQuery.Meta = "{}"
 	}
 
+	if err := ValidateMeta(noteQuery.Meta); err != nil {
+		return nil, err
+	}
+
 	var noteTypeId *uint
 	if noteQuery.NoteTypeId != 0 {
 		noteTypeId = &noteQuery.NoteTypeId

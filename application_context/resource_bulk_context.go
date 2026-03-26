@@ -216,8 +216,8 @@ func (ctx *MahresourcesContext) BulkReplaceTagsFromResources(query *query_models
 }
 
 func (ctx *MahresourcesContext) BulkAddMetaToResources(query *query_models.BulkEditMetaQuery) error {
-	if !json.Valid([]byte(query.Meta)) {
-		return errors.New("invalid json")
+	if err := ValidateMeta(query.Meta); err != nil {
+		return err
 	}
 
 	var resource models.Resource

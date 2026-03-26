@@ -20,6 +20,10 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 		groupQuery.Meta = "{}"
 	}
 
+	if err := ValidateMeta(groupQuery.Meta); err != nil {
+		return nil, err
+	}
+
 	hookData := map[string]any{
 		"id":          float64(0),
 		"name":        groupQuery.Name,
@@ -159,6 +163,11 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 
 	if groupQuery.Meta == "" {
 		groupQuery.Meta = "{}"
+	}
+
+	if err := ValidateMeta(groupQuery.Meta); err != nil {
+		tx.Rollback()
+		return nil, err
 	}
 
 	group := &models.Group{
