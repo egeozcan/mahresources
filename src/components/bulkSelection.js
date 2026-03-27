@@ -310,7 +310,7 @@ export function setupBulkSelectionListeners() {
         const url = new URL(`${window.location.origin}/partials/autocompleter`);
 
         url.searchParams.append("selectedItems", JSON.stringify(currentTags));
-        url.searchParams.append("title", "");
+        url.searchParams.append("title", "Edit tags");
         url.searchParams.append("sortBy", `most_used_${entityType}`);
         url.searchParams.append("id", `tagEditor_${Math.random()}`);
         url.searchParams.append("elName", "editedId");

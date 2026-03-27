@@ -45,7 +45,7 @@
                               }"
                               :title="connectionStatus"></span>
                     </div>
-                    <button @click="close()" class="p-1 text-stone-400 hover:text-stone-600 rounded focus:outline-none focus:ring-2 focus:ring-amber-600">
+                    <button @click="close()" class="p-1 text-stone-400 hover:text-stone-600 rounded focus:outline-none focus:ring-2 focus:ring-amber-600" aria-label="Close jobs panel">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                         </svg>

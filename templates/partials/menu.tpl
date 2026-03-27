@@ -39,11 +39,13 @@
                  x-transition:leave="transition ease-in duration-100"
                  x-transition:leave-start="opacity-100 translate-y-0"
                  x-transition:leave-end="opacity-0 -translate-y-1"
-                 class="navbar-dropdown-menu">
+                 class="navbar-dropdown-menu"
+                 role="menu">
                 {% for adminEntry in adminMenu %}
                 <a href="{{ adminEntry.Url }}"
                    class="navbar-dropdown-item {% if adminEntry.Url == path %}navbar-dropdown-item--active{% endif %}"
-                   @click="adminOpen = false">
+                   @click="adminOpen = false"
+                   role="menuitem">
                     {{ adminEntry.Name }}
                 </a>
                 {% endfor %}
@@ -70,19 +72,22 @@
                  x-transition:leave="transition ease-in duration-100"
                  x-transition:leave-start="opacity-100 translate-y-0"
                  x-transition:leave-end="opacity-0 -translate-y-1"
-                 class="navbar-dropdown-menu">
+                 class="navbar-dropdown-menu"
+                 role="menu">
                 <a href="/plugins/manage"
                    class="navbar-dropdown-item {% if '/plugins/manage' == currentPath %}navbar-dropdown-item--active{% endif %}"
-                   @click="pluginsOpen = false">
+                   @click="pluginsOpen = false"
+                   role="menuitem">
                     Manage Plugins
                 </a>
                 {% if pluginMenuItems %}
-                <div class="navbar-dropdown-divider"></div>
+                <div class="navbar-dropdown-divider" role="separator"></div>
                 {% endif %}
                 {% for pi in pluginMenuItems %}
                 <a href="{{ pi.FullPath }}"
                    class="navbar-dropdown-item {% if pi.FullPath == path %}navbar-dropdown-item--active{% endif %}"
-                   @click="pluginsOpen = false">
+                   @click="pluginsOpen = false"
+                   role="menuitem">
                     {{ pi.Label }}
                 </a>
                 {% endfor %}
