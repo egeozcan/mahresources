@@ -165,27 +165,26 @@ test.describe('Bug 3: Admin overview should use correct singular/plural nouns', 
   }) => {
     await page.goto(`${baseURL}/admin/overview`);
 
-    // Wait for the detailed statistics section to load (it fetches async)
+    // Wait for the detailed statistics section to load (it fetches async via Alpine.js)
     const detailedSection = page.locator('section[aria-label="Detailed statistics"]');
     await expect(
       detailedSection.locator('h3:has-text("Top Categories")')
     ).toBeVisible({ timeout: 30000 });
 
-    // Look for our category's count display
-    // The category we created should have exactly 1 group
-    // Find any span that says "1 groups" - this is the bug
+    // Wait for Alpine.js to hydrate the category count spans
+    // The correct text "1 group" should appear once Alpine renders the x-text binding
+    const correctText = detailedSection.locator('span:text("1 group")');
+    await expect(
+      correctText,
+      '"1 group" (singular) should appear for a category with one group'
+    ).toHaveCount(1, { timeout: 10000 });
+
+    // Verify the buggy plural form does NOT appear
     const buggyText = detailedSection.locator('span:text("1 groups")');
     await expect(
       buggyText,
       '"1 groups" should not appear - it should be "1 group"'
     ).toHaveCount(0);
-
-    // Verify the correct singular form exists
-    const correctText = detailedSection.locator('span:text("1 group")');
-    await expect(
-      correctText,
-      '"1 group" (singular) should appear for a category with one group'
-    ).toHaveCount(1);
   });
 
   test.afterAll(async ({ apiClient }) => {
