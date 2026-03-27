@@ -28,7 +28,8 @@
                 })" class="relative flex-1 min-w-[140px]">
                     <input type="text" x-ref="autocompleter" x-bind="inputEvents"
                            class="w-full border rounded px-3 py-1.5 text-sm"
-                           placeholder="Search resources...">
+                           placeholder="Search resources..."
+                           aria-label="Search left resource">
                     <div x-show="dropdownActive" x-ref="list" class="absolute z-10 bg-white border rounded shadow-lg mt-1 max-h-60 overflow-auto w-full">
                         <template x-for="(item, index) in results" :key="item.ID">
                             <div @mousedown.prevent="selectedIndex = index; pushVal($event)"
@@ -38,7 +39,7 @@
                         </template>
                     </div>
                 </div>
-                <select x-model="v1" @change="updateUrl()" class="border rounded px-2 py-1.5 text-sm">
+                <select x-model="v1" @change="updateUrl()" class="border rounded px-2 py-1.5 text-sm" aria-label="Left version">
                     {% for v in versions1 %}
                     <option value="{{ v.VersionNumber }}" {% if v.VersionNumber == query.Version1 %}selected{% endif %}>
                         v{{ v.VersionNumber }} - {{ v.CreatedAt|date:"Jan 02, 2006" }}
@@ -65,7 +66,8 @@
                 })" class="relative flex-1 min-w-[140px]">
                     <input type="text" x-ref="autocompleter" x-bind="inputEvents"
                            class="w-full border rounded px-3 py-1.5 text-sm"
-                           placeholder="Search resources...">
+                           placeholder="Search resources..."
+                           aria-label="Search right resource">
                     <div x-show="dropdownActive" x-ref="list" class="absolute z-10 bg-white border rounded shadow-lg mt-1 max-h-60 overflow-auto w-full">
                         <template x-for="(item, index) in results" :key="item.ID">
                             <div @mousedown.prevent="selectedIndex = index; pushVal($event)"
@@ -75,7 +77,7 @@
                         </template>
                     </div>
                 </div>
-                <select x-model="v2" @change="updateUrl()" class="border rounded px-2 py-1.5 text-sm">
+                <select x-model="v2" @change="updateUrl()" class="border rounded px-2 py-1.5 text-sm" aria-label="Right version">
                     {% for v in versions2 %}
                     <option value="{{ v.VersionNumber }}" {% if v.VersionNumber == query.Version2 %}selected{% endif %}>
                         v{{ v.VersionNumber }} - {{ v.CreatedAt|date:"Jan 02, 2006" }}
