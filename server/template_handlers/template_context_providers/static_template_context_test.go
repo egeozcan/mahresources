@@ -300,7 +300,7 @@ func TestNormalizeQueryValues_MultipleKeys(t *testing.T) {
 
 func TestStaticTemplateCtx_QueryValuesNormalized(t *testing.T) {
 	req := httptest.NewRequest("GET", "http://example.com/tags?name=QA", nil)
-	ctx := staticTemplateCtx(req)
+	ctx := StaticTemplateCtx(req)
 
 	queryValues, ok := ctx["queryValues"].(url.Values)
 	if !ok {

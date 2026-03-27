@@ -18,7 +18,7 @@ func TagListContextProvider(context *application_context.MahresourcesContext) fu
 		offset := (page - 1) * int64(resultsPerPage)
 		var query query_models.TagQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -62,7 +62,7 @@ func TagCreateContextProvider(context *application_context.MahresourcesContext) 
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
 			"pageTitle": "Create Tag",
-		}.Update(staticTemplateCtx(request))
+		}.Update(StaticTemplateCtx(request))
 
 		var query query_models.EntityIdQuery
 		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
@@ -90,7 +90,7 @@ func TagContextProvider(context *application_context.MahresourcesContext) func(r
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -103,7 +103,7 @@ func TagContextProvider(context *application_context.MahresourcesContext) func(r
 		}
 
 		return pongo2.Context{
-			"pageTitle": tag.Name,
+			"pageTitle": "Tag: " + tag.Name,
 			"prefix":    "Tag",
 			"tag":       tag,
 			"action": template_entities.Entry{

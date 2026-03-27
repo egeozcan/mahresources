@@ -18,7 +18,7 @@ func RelationTypeListContextProvider(context *application_context.MahresourcesCo
 		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.RelationshipTypeQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -72,7 +72,7 @@ func RelationTypeContextProvider(context *application_context.MahresourcesContex
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -85,7 +85,7 @@ func RelationTypeContextProvider(context *application_context.MahresourcesContex
 		}
 
 		return pongo2.Context{
-			"pageTitle":    relationType.Name,
+			"pageTitle":    "Relation Type: " + relationType.Name,
 			"prefix":       "Relation Type",
 			"relationType": relationType,
 			"action": template_entities.Entry{
@@ -106,7 +106,7 @@ func RelationTypeCreateContextProvider(_ *application_context.MahresourcesContex
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
 			"pageTitle": "Create Relation Type",
-		}.Update(staticTemplateCtx(request))
+		}.Update(StaticTemplateCtx(request))
 
 		return tplContext
 	}
@@ -114,7 +114,7 @@ func RelationTypeCreateContextProvider(_ *application_context.MahresourcesContex
 
 func RelationTypeEditContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())
 
@@ -143,7 +143,7 @@ func RelationListContextProvider(context *application_context.MahresourcesContex
 		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.GroupRelationshipQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -204,7 +204,7 @@ func RelationContextProvider(context *application_context.MahresourcesContext) f
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -251,7 +251,7 @@ func RelationContextProvider(context *application_context.MahresourcesContext) f
 
 func RelationCreateContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 		tplContext := pongo2.Context{
 			"pageTitle": "Create Relation",
 		}.Update(baseContext)
@@ -309,7 +309,7 @@ func RelationCreateContextProvider(context *application_context.MahresourcesCont
 
 func RelationEditContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 		tplContext := pongo2.Context{
 			"pageTitle": "Edit Relation",
 		}.Update(baseContext)

@@ -13,7 +13,7 @@ func SeriesContextProvider(context *application_context.MahresourcesContext) fun
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)

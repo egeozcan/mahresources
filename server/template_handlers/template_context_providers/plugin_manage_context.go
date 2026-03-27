@@ -21,7 +21,7 @@ type pluginDisplay struct {
 
 func PluginManageContextProvider(appCtx *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		ctx := staticTemplateCtx(request)
+		ctx := StaticTemplateCtx(request)
 		ctx["pageTitle"] = "Manage Plugins"
 
 		pm := appCtx.PluginManager()

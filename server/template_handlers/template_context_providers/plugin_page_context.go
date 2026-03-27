@@ -12,7 +12,7 @@ import (
 
 func PluginPageContextProvider(pm *plugin_system.PluginManager) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		ctx := staticTemplateCtx(request)
+		ctx := StaticTemplateCtx(request)
 
 		// Parse /plugins/{pluginName}/{path...} from URL
 		path := strings.TrimPrefix(request.URL.Path, "/plugins/")

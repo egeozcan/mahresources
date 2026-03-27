@@ -27,7 +27,7 @@ func ResourceListContextProvider(context *application_context.MahresourcesContex
 		offset := (page - 1) * int64(resultsPerPage)
 		var query query_models.ResourceSearchQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -119,7 +119,7 @@ func ResourceCreateContextProvider(context *application_context.MahresourcesCont
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
 			"pageTitle": "Create Resource",
-		}.Update(staticTemplateCtx(request))
+		}.Update(StaticTemplateCtx(request))
 
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())
@@ -187,7 +187,7 @@ func ResourceTimelineContextProvider(context *application_context.MahresourcesCo
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.ResourceSearchQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -258,7 +258,7 @@ func ResourceContextProvider(context *application_context.MahresourcesContext) f
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
 			return addErrContext(err, baseContext)
@@ -284,7 +284,7 @@ func ResourceContextProvider(context *application_context.MahresourcesContext) f
 		}
 
 		result := pongo2.Context{
-			"pageTitle":        resource.Name,
+			"pageTitle":        "Resource: " + resource.Name,
 			"prefix":           "Resource",
 			"resource":         resource,
 			"versions":         versions,

@@ -18,7 +18,7 @@ func QueryListContextProvider(context *application_context.MahresourcesContext) 
 		offset := (page - 1) * int64(resultsPerPage)
 		var query query_models.QueryQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -70,7 +70,7 @@ func QueryCreateContextProvider(context *application_context.MahresourcesContext
 			"pageTitle":        "Create Query",
 			"dbType":           context.Config.DbType,
 			"readOnlyEnforced": context.IsReadOnlyDBEnforced(),
-		}.Update(staticTemplateCtx(request))
+		}.Update(StaticTemplateCtx(request))
 
 		var entityId query_models.EntityIdQuery
 		if err := decoder.Decode(&entityId, request.URL.Query()); err != nil {
@@ -98,7 +98,7 @@ func QueryContextProvider(context *application_context.MahresourcesContext) func
 	return func(request *http.Request) pongo2.Context {
 		var entityId query_models.EntityIdQuery
 		err := decoder.Decode(&entityId, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -111,7 +111,7 @@ func QueryContextProvider(context *application_context.MahresourcesContext) func
 		}
 
 		return pongo2.Context{
-			"pageTitle":        query.Name,
+			"pageTitle":        "Query: " + query.Name,
 			"prefix":           "Query",
 			"query":            query,
 			"readOnlyEnforced": context.IsReadOnlyDBEnforced(),

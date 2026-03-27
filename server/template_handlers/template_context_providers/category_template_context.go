@@ -18,7 +18,7 @@ func CategoryListContextProvider(context *application_context.MahresourcesContex
 		offset := (page - 1) * int64(resultsPerPage)
 		var query query_models.CategoryQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -67,7 +67,7 @@ func CategoryCreateContextProvider(context *application_context.MahresourcesCont
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
 			"pageTitle": "Create Category",
-		}.Update(staticTemplateCtx(request))
+		}.Update(StaticTemplateCtx(request))
 
 		var query query_models.EntityIdQuery
 		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
@@ -95,7 +95,7 @@ func CategoryContextProvider(context *application_context.MahresourcesContext) f
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -108,7 +108,7 @@ func CategoryContextProvider(context *application_context.MahresourcesContext) f
 		}
 
 		return pongo2.Context{
-			"pageTitle": category.Name,
+			"pageTitle": "Category: " + category.Name,
 			"prefix":    "Category",
 			"category":  category,
 			"action": template_entities.Entry{

@@ -16,7 +16,7 @@ const dashboardActivityLimit = 20
 
 func DashboardContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		var (
 			recentResources []models.Resource

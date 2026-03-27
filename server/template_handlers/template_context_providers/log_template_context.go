@@ -52,7 +52,7 @@ func LogListContextProvider(context *application_context.MahresourcesContext) fu
 		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.LogEntryQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -95,7 +95,7 @@ func LogContextProvider(context *application_context.MahresourcesContext) func(r
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)

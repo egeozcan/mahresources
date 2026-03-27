@@ -8,6 +8,7 @@ import (
 	"github.com/flosch/pongo2/v4"
 	"mahresources/constants"
 	"mahresources/server/template_handlers/loaders"
+	"mahresources/server/template_handlers/template_context_providers"
 	_ "mahresources/server/template_handlers/template_filters"
 	"net/http"
 	"strings"
@@ -101,11 +102,9 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 func RenderNotFound(writer http.ResponseWriter, request *http.Request) {
 	renderer := pongo2.NewSet("", loaders.MustNewLocalFileSystemLoader("./templates", make(map[string]string)))
 	errorTpl := pongo2.Must(renderer.FromFile("error.tpl"))
-	context := pongo2.Context{
-		"errorMessage": "Page not found",
-		"title":        "mahresources",
-		"pageTitle":    "404 Not Found",
-	}
+	context := template_context_providers.StaticTemplateCtx(request)
+	context["errorMessage"] = "Page not found"
+	context["pageTitle"] = "404 Not Found"
 	writer.Header().Set("Content-Type", constants.HTML)
 	writer.WriteHeader(http.StatusNotFound)
 	if err := errorTpl.ExecuteWriter(context, writer); err != nil {

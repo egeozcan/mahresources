@@ -14,7 +14,7 @@ import (
 
 func CompareContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		var query query_models.CrossVersionCompareQuery
 		if err := decoder.Decode(&query, request.URL.Query()); err != nil {

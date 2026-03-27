@@ -9,7 +9,7 @@ import (
 
 func AdminOverviewContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 		return pongo2.Context{
 			"pageTitle":   "Admin Overview",
 			"hideSidebar": true,

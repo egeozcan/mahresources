@@ -8,7 +8,7 @@ import (
 
 func PartialContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		result := staticTemplateCtx(request)
+		result := StaticTemplateCtx(request)
 		err := request.ParseForm()
 
 		if err != nil {

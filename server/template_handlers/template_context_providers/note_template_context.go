@@ -20,7 +20,7 @@ func NoteListContextProvider(context *application_context.MahresourcesContext) f
 		offset := (page - 1) * int64(resultsPerPage)
 		var query query_models.NoteQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -105,7 +105,7 @@ func NoteTimelineContextProvider(context *application_context.MahresourcesContex
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.NoteQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -170,7 +170,7 @@ func NoteCreateContextProvider(context *application_context.MahresourcesContext)
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
 			"pageTitle": "Create Note",
-		}.Update(staticTemplateCtx(request))
+		}.Update(StaticTemplateCtx(request))
 
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())
@@ -231,7 +231,7 @@ func NoteContextProvider(context *application_context.MahresourcesContext) func(
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -251,7 +251,7 @@ func NoteContextProvider(context *application_context.MahresourcesContext) func(
 		}
 
 		return pongo2.Context{
-			"pageTitle": note.GetName(),
+			"pageTitle": "Note: " + note.GetName(),
 			"prefix":    "Note",
 			"note":      note,
 			"action": template_entities.Entry{
@@ -276,7 +276,7 @@ func NoteTypeListContextProvider(context *application_context.MahresourcesContex
 		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.NoteTypeQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -316,7 +316,7 @@ func NoteTypeCreateContextProvider(context *application_context.MahresourcesCont
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
 			"pageTitle": "Create Note Type",
-		}.Update(staticTemplateCtx(request))
+		}.Update(StaticTemplateCtx(request))
 
 		var query query_models.EntityIdQuery
 		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
@@ -344,7 +344,7 @@ func NoteTypeContextProvider(context *application_context.MahresourcesContext) f
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -357,7 +357,7 @@ func NoteTypeContextProvider(context *application_context.MahresourcesContext) f
 		}
 
 		return pongo2.Context{
-			"pageTitle": noteType.Name,
+			"pageTitle": "Note Type: " + noteType.Name,
 			"prefix":    "Note Type",
 			"noteType":  noteType,
 			"action": template_entities.Entry{

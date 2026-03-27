@@ -125,7 +125,7 @@ func normalizeQueryValues(values url.Values) url.Values {
 	return result
 }
 
-var staticTemplateCtx = func(request *http.Request) pongo2.Context {
+var StaticTemplateCtx = func(request *http.Request) pongo2.Context {
 	currentId := 0
 
 	context := pongo2.Context{

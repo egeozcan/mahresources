@@ -17,7 +17,7 @@ func ResourceCategoryListContextProvider(context *application_context.Mahresourc
 		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.ResourceCategoryQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -57,7 +57,7 @@ func ResourceCategoryCreateContextProvider(context *application_context.Mahresou
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
 			"pageTitle": "Create Resource Category",
-		}.Update(staticTemplateCtx(request))
+		}.Update(StaticTemplateCtx(request))
 
 		var query query_models.EntityIdQuery
 		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
@@ -85,7 +85,7 @@ func ResourceCategoryContextProvider(context *application_context.MahresourcesCo
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)

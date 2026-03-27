@@ -22,7 +22,7 @@ func GroupsListContextProvider(context *application_context.MahresourcesContext)
 		offset := (page - 1) * int64(resultsPerPage)
 		var query query_models.GroupQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -123,7 +123,7 @@ func GroupTimelineContextProvider(context *application_context.MahresourcesConte
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.GroupQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -204,7 +204,7 @@ func GroupCreateContextProvider(context *application_context.MahresourcesContext
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
 			"pageTitle": "Add New Group",
-		}.Update(staticTemplateCtx(request))
+		}.Update(StaticTemplateCtx(request))
 
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())
@@ -270,7 +270,7 @@ func groupContextProviderImpl(context interfaces.GroupReader) func(request *http
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -307,7 +307,7 @@ func groupContextProviderImpl(context interfaces.GroupReader) func(request *http
 		}
 
 		return pongo2.Context{
-			"pageTitle": group.GetName(),
+			"pageTitle": "Group: " + group.GetName(),
 			"prefix":    prefix,
 			"group":     group,
 			"action": template_entities.Entry{
@@ -331,7 +331,7 @@ func groupContextProviderImpl(context interfaces.GroupReader) func(request *http
 
 func GroupTreeContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
-		baseContext := staticTemplateCtx(request)
+		baseContext := StaticTemplateCtx(request)
 
 		rootID := http_utils.GetUIntQueryParameter(request, "root", 0)
 		containingID := http_utils.GetUIntQueryParameter(request, "containing", 0)
