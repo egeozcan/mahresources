@@ -75,6 +75,21 @@ func GetUIntQueryParameter(request *http.Request, paramName string, defVal uint)
 // and multipart/form-data bodies. Returns defVal if the parameter is missing or
 // cannot be parsed.
 func GetUIntFormValue(request *http.Request, paramName string, defVal uint) uint {
+	// Go's FormValue only parses bodies for POST/PUT/PATCH. For DELETE
+	// (and other methods) we need to manually parse the body first.
+	if request.Method == http.MethodDelete && request.PostForm == nil {
+		ct := request.Header.Get("Content-Type")
+		if strings.HasPrefix(ct, "application/x-www-form-urlencoded") && request.Body != nil {
+			bodyBytes, err := io.ReadAll(request.Body)
+			if err == nil {
+				request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				if parsed, err := url.ParseQuery(string(bodyBytes)); err == nil {
+					request.PostForm = parsed
+				}
+			}
+		}
+	}
+
 	val := request.FormValue(paramName)
 	if val == "" {
 		return defVal
