@@ -64,6 +64,15 @@ func QueryListContextProvider(context *application_context.MahresourcesContext) 
 	}
 }
 
+func QueryTimelineContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+	listProvider := QueryListContextProvider(context)
+	return func(request *http.Request) pongo2.Context {
+		ctx := listProvider(request)
+		ctx["pageTitle"] = "Queries - Timeline"
+		return ctx
+	}
+}
+
 func QueryCreateContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{

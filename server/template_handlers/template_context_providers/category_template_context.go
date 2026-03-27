@@ -63,6 +63,15 @@ func CategoryListContextProvider(context *application_context.MahresourcesContex
 	}
 }
 
+func CategoryTimelineContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+	listProvider := CategoryListContextProvider(context)
+	return func(request *http.Request) pongo2.Context {
+		ctx := listProvider(request)
+		ctx["pageTitle"] = "Categories - Timeline"
+		return ctx
+	}
+}
+
 func CategoryCreateContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{

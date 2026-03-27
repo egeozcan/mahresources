@@ -25,7 +25,7 @@ func SeriesContextProvider(context *application_context.MahresourcesContext) fun
 		}
 
 		return pongo2.Context{
-			"pageTitle": series.Name,
+			"pageTitle": "Series: " + series.Name,
 			"prefix":    "Series",
 			"series":    series,
 			"deleteAction": template_entities.Entry{

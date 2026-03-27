@@ -58,6 +58,15 @@ func TagListContextProvider(context *application_context.MahresourcesContext) fu
 	}
 }
 
+func TagTimelineContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+	listProvider := TagListContextProvider(context)
+	return func(request *http.Request) pongo2.Context {
+		ctx := listProvider(request)
+		ctx["pageTitle"] = "Tags - Timeline"
+		return ctx
+	}
+}
+
 func TagCreateContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{

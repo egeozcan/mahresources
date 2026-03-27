@@ -81,9 +81,9 @@ var templates = map[string]templateInformation{
 	"/resources/timeline":  {template_context_providers.ResourceTimelineContextProvider, "listResourcesTimeline.tpl", http.MethodGet},
 	"/notes/timeline":      {template_context_providers.NoteTimelineContextProvider, "listNotesTimeline.tpl", http.MethodGet},
 	"/groups/timeline":     {template_context_providers.GroupTimelineContextProvider, "listGroupsTimeline.tpl", http.MethodGet},
-	"/tags/timeline":       {template_context_providers.TagListContextProvider, "listTagsTimeline.tpl", http.MethodGet},
-	"/categories/timeline": {template_context_providers.CategoryListContextProvider, "listCategoriesTimeline.tpl", http.MethodGet},
-	"/queries/timeline":    {template_context_providers.QueryListContextProvider, "listQueriesTimeline.tpl", http.MethodGet},
+	"/tags/timeline":       {template_context_providers.TagTimelineContextProvider, "listTagsTimeline.tpl", http.MethodGet},
+	"/categories/timeline": {template_context_providers.CategoryTimelineContextProvider, "listCategoriesTimeline.tpl", http.MethodGet},
+	"/queries/timeline":    {template_context_providers.QueryTimelineContextProvider, "listQueriesTimeline.tpl", http.MethodGet},
 
 	"/logs": {template_context_providers.LogListContextProvider, "listLogs.tpl", http.MethodGet},
 	"/log":  {template_context_providers.LogContextProvider, "displayLog.tpl", http.MethodGet},
