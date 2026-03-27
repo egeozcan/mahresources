@@ -1,6 +1,7 @@
 package template_context_providers
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -37,6 +38,7 @@ func addErrContext(err error, ctx pongo2.Context) pongo2.Context {
 	return ctx.Update(pongo2.Context{
 		"errorMessage": errMsg,
 		"_statusCode":  statusCode,
+		"pageTitle":    fmt.Sprintf("Error %d", statusCode),
 	})
 }
 
