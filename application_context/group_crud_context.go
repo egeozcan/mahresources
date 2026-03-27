@@ -18,6 +18,10 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 		return nil, errors.New("group name needed")
 	}
 
+	if err := ValidateEntityName(groupQuery.Name, "group"); err != nil {
+		return nil, err
+	}
+
 	if groupQuery.Meta == "" {
 		groupQuery.Meta = "{}"
 	}
@@ -91,6 +95,10 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 	}
 
 	if len(groupQuery.Tags) > 0 {
+		if err := ValidateAssociationIDs[models.Tag](tx, groupQuery.Tags, "tags"); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
 		tags := BuildAssociationSlice(groupQuery.Tags, TagFromID)
 
 		if createTagsErr := tx.Model(&group).Association("Tags").Append(&tags); createTagsErr != nil {
@@ -100,6 +108,10 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 	}
 
 	if len(groupQuery.Groups) > 0 {
+		if err := ValidateAssociationIDs[models.Group](tx, groupQuery.Groups, "groups"); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
 		groups := BuildAssociationSlice(groupQuery.Groups, GroupFromID)
 
 		if createGroupsErr := tx.Model(&group).Association("RelatedGroups").Append(&groups); createGroupsErr != nil {
@@ -130,6 +142,10 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor) (*models.Group, error) {
 	if groupQuery.Name == "" {
 		return nil, errors.New("group name needed")
+	}
+
+	if err := ValidateEntityName(groupQuery.Name, "group"); err != nil {
+		return nil, err
 	}
 
 	hookData := map[string]any{
@@ -267,6 +283,20 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 			"to_group_id = ? AND relation_type_id IN (SELECT id FROM group_relation_types WHERE to_category_id IS NOT NULL AND to_category_id != ?)",
 			group.ID, newCategoryId,
 		).Delete(&models.GroupRelation{}).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+
+	if len(groupQuery.Tags) > 0 {
+		if err := ValidateAssociationIDs[models.Tag](tx, groupQuery.Tags, "tags"); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+
+	if len(groupQuery.Groups) > 0 {
+		if err := ValidateAssociationIDs[models.Group](tx, groupQuery.Groups, "groups"); err != nil {
 			tx.Rollback()
 			return nil, err
 		}

@@ -1,6 +1,47 @@
 package application_context
 
-import "mahresources/models"
+import (
+	"fmt"
+
+	"gorm.io/gorm"
+	"mahresources/models"
+)
+
+// MaxEntityNameLength is the maximum allowed length for entity names.
+// Names longer than this are rejected to prevent database bloat and rendering issues.
+const MaxEntityNameLength = 1000
+
+// ValidateEntityName checks that a name does not exceed MaxEntityNameLength.
+func ValidateEntityName(name, entityType string) error {
+	if len(name) > MaxEntityNameLength {
+		return fmt.Errorf("%s name must not exceed %d characters", entityType, MaxEntityNameLength)
+	}
+	return nil
+}
+
+// ValidateAssociationIDs checks that all given IDs exist in the database for the model type T.
+// This prevents phantom entity creation via GORM's many-to-many Association().Append/Replace.
+func ValidateAssociationIDs[T any](db *gorm.DB, ids []uint, entityName string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	unique := make(map[uint]bool)
+	for _, id := range ids {
+		unique[id] = true
+	}
+	uniqueSlice := make([]uint, 0, len(unique))
+	for id := range unique {
+		uniqueSlice = append(uniqueSlice, id)
+	}
+	var count int64
+	if err := db.Model(new(T)).Where("id IN ?", uniqueSlice).Count(&count).Error; err != nil {
+		return err
+	}
+	if int(count) != len(uniqueSlice) {
+		return fmt.Errorf("one or more %s not found", entityName)
+	}
+	return nil
+}
 
 // BuildAssociationSlice converts a slice of IDs to a slice of model structs.
 // The factory function creates a model instance from an ID.

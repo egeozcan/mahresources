@@ -51,6 +51,10 @@ func (ctx *MahresourcesContext) CreateResourceCategory(query *query_models.Resou
 		return nil, errors.New("resource category name must be non-empty")
 	}
 
+	if err := ValidateEntityName(query.Name, "resource category"); err != nil {
+		return nil, err
+	}
+
 	resourceCategory := models.ResourceCategory{
 		Name:          query.Name,
 		Description:   query.Description,

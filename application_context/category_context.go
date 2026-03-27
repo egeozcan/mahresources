@@ -51,6 +51,10 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 		return nil, errors.New("category name must be non-empty")
 	}
 
+	if err := ValidateEntityName(categoryQuery.Name, "category"); err != nil {
+		return nil, err
+	}
+
 	hookData := map[string]any{
 		"id":          float64(0),
 		"name":        categoryQuery.Name,

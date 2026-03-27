@@ -20,6 +20,10 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 		return nil, errors.New("note name needed")
 	}
 
+	if err := ValidateEntityName(noteQuery.Name, "note"); err != nil {
+		return nil, err
+	}
+
 	var note models.Note
 
 	if noteQuery.Meta == "" {
@@ -132,6 +136,10 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 	}
 
 	if len(noteQuery.Groups) > 0 {
+		if err := ValidateAssociationIDs[models.Group](tx, noteQuery.Groups, "groups"); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
 		groups := BuildAssociationSlice(noteQuery.Groups, GroupFromID)
 
 		if createGroupsErr := tx.Model(&note).Association("Groups").Append(&groups); createGroupsErr != nil {
@@ -141,6 +149,10 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 	}
 
 	if len(noteQuery.Resources) > 0 {
+		if err := ValidateAssociationIDs[models.Resource](tx, noteQuery.Resources, "resources"); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
 		resources := BuildAssociationSlice(noteQuery.Resources, ResourceFromID)
 
 		if createResourcesErr := tx.Model(&note).Association("Resources").Append(&resources); createResourcesErr != nil {
@@ -150,6 +162,10 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 	}
 
 	if len(noteQuery.Tags) > 0 {
+		if err := ValidateAssociationIDs[models.Tag](tx, noteQuery.Tags, "tags"); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
 		tags := BuildAssociationSlice(noteQuery.Tags, TagFromID)
 
 		if createTagsErr := tx.Model(&note).Association("Tags").Append(&tags); createTagsErr != nil {
@@ -359,6 +375,9 @@ func (ctx *MahresourcesContext) CreateOrUpdateNoteType(query *query_models.NoteT
 		}
 	}
 	if strings.TrimSpace(query.Name) != "" {
+		if err := ValidateEntityName(query.Name, "note type"); err != nil {
+			return nil, err
+		}
 		noteType.Name = query.Name
 	} else if isNew {
 		return nil, errors.New("note type name must be non-empty")
@@ -408,6 +427,9 @@ func (ctx *MahresourcesContext) DeleteNoteType(noteTypeId uint) error {
 
 // AddTagsToNote appends tags to a note by ID.
 func (ctx *MahresourcesContext) AddTagsToNote(noteId uint, tagIds []uint) error {
+	if err := ValidateAssociationIDs[models.Tag](ctx.db, tagIds, "tags"); err != nil {
+		return err
+	}
 	note := models.Note{ID: noteId}
 	tags := BuildAssociationSlice(tagIds, TagFromID)
 	return ctx.db.Model(&note).Association("Tags").Append(&tags)
@@ -422,6 +444,9 @@ func (ctx *MahresourcesContext) RemoveTagsFromNote(noteId uint, tagIds []uint) e
 
 // AddGroupsToNote appends groups to a note by ID.
 func (ctx *MahresourcesContext) AddGroupsToNote(noteId uint, groupIds []uint) error {
+	if err := ValidateAssociationIDs[models.Group](ctx.db, groupIds, "groups"); err != nil {
+		return err
+	}
 	note := models.Note{ID: noteId}
 	groups := BuildAssociationSlice(groupIds, GroupFromID)
 	return ctx.db.Model(&note).Association("Groups").Append(&groups)
@@ -436,6 +461,9 @@ func (ctx *MahresourcesContext) RemoveGroupsFromNote(noteId uint, groupIds []uin
 
 // AddResourcesToNote appends resources to a note by ID.
 func (ctx *MahresourcesContext) AddResourcesToNote(noteId uint, resourceIds []uint) error {
+	if err := ValidateAssociationIDs[models.Resource](ctx.db, resourceIds, "resources"); err != nil {
+		return err
+	}
 	note := models.Note{ID: noteId}
 	resources := BuildAssociationSlice(resourceIds, ResourceFromID)
 	return ctx.db.Model(&note).Association("Resources").Append(&resources)
