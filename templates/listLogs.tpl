@@ -34,7 +34,7 @@
                     </td>
                     <td class="px-3 py-2 whitespace-nowrap text-sm text-stone-500 font-mono">
                         {% if log.EntityType and log.EntityID %}
-                            {% if log.Action == "delete" %}
+                            {% if log.Action == "delete" or log.EntityType == "resource_version" %}
                                 <span class="text-stone-500">{{ log.EntityType }} #{{ log.EntityID }}</span>
                             {% else %}
                                 <a href="/{{ log.EntityType }}?id={{ log.EntityID }}" class="text-amber-700 hover:underline">

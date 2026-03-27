@@ -6,8 +6,6 @@
 
 {% block body %}
 <div class="content-wrap">
-    <h1 class="page-title">Manage Plugins</h1>
-
     {% if not plugins %}
     <p class="text-stone-500 italic">No plugins discovered. Place plugin directories in the plugins folder.</p>
     {% endif %}
