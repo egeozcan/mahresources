@@ -27,6 +27,7 @@ func ResourceListContextProvider(context *application_context.MahresourcesContex
 		offset := (page - 1) * int64(resultsPerPage)
 		var query query_models.ResourceSearchQuery
 		err := decoder.Decode(&query, request.URL.Query())
+		query_models.FillMetaQueryFromRequest(request, &query)
 		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {

@@ -63,17 +63,32 @@ func tryFillStructValuesFromRequest(dst any, request *http.Request) error {
 		if err := request.ParseForm(); err != nil {
 			return err
 		}
-		return decoder.Decode(dst, request.PostForm)
+		if err := decoder.Decode(dst, request.PostForm); err != nil {
+			return err
+		}
+		// gorilla/schema converter doesn't work for slice fields; parse manually
+		query_models.FillMetaQueryFromRequest(request, dst)
+		return nil
 	}
 
 	if strings.HasPrefix(contentTypeHeader, constants.MultiPartForm) {
 		if err := request.ParseMultipartForm(int64(32) << 20); err != nil {
 			return err
 		}
-		return decoder.Decode(dst, request.PostForm)
+		if err := decoder.Decode(dst, request.PostForm); err != nil {
+			return err
+		}
+		// gorilla/schema converter doesn't work for slice fields; parse manually
+		query_models.FillMetaQueryFromRequest(request, dst)
+		return nil
 	}
 
-	return decoder.Decode(dst, request.URL.Query())
+	if err := decoder.Decode(dst, request.URL.Query()); err != nil {
+		return err
+	}
+	// gorilla/schema converter doesn't work for slice fields; parse manually
+	query_models.FillMetaQueryFromRequest(request, dst)
+	return nil
 }
 
 // isEmptyResourceSearchQuery returns true when none of the meaningful search

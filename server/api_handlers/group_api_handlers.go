@@ -18,6 +18,7 @@ func GetGroupsHandler(ctx interfaces.GroupReader) func(writer http.ResponseWrite
 		offset := (page - 1) * constants.MaxResultsPerPage
 		var query query_models.GroupQuery
 		err := decoder.Decode(&query, request.URL.Query())
+		query_models.FillMetaQueryFromRequest(request, &query)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusBadRequest)

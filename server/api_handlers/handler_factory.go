@@ -79,6 +79,8 @@ func (f *CRUDHandlerFactory[T, Q, C]) ListHandler() http.HandlerFunc {
 			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
+		// gorilla/schema converter doesn't work for slice fields; parse manually
+		query_models.FillMetaQueryFromRequest(request, queryPtr)
 
 		// Cast back to Q
 		typedQuery := queryPtr.(Q)
@@ -121,6 +123,8 @@ func (f *CRUDHandlerFactory[T, Q, C]) CountHandler() http.HandlerFunc {
 			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
+		// gorilla/schema converter doesn't work for slice fields; parse manually
+		query_models.FillMetaQueryFromRequest(request, queryPtr)
 
 		typedQuery := queryPtr.(Q)
 		count, err := f.reader.Count(typedQuery)

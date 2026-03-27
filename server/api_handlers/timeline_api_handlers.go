@@ -82,6 +82,7 @@ func GetResourceTimelineHandler(ctx *application_context.MahresourcesContext) fu
 			_ = json.NewEncoder(writer).Encode(map[string]string{"error": err.Error()})
 			return
 		}
+		query_models.FillMetaQueryFromRequest(request, &query)
 
 		granularity, anchor, columns := parseTimelineParams(request)
 		boundaries := application_context.GenerateBucketBoundaries(granularity, anchor, columns)
@@ -113,6 +114,7 @@ func GetNoteTimelineHandler(ctx *application_context.MahresourcesContext) func(w
 			_ = json.NewEncoder(writer).Encode(map[string]string{"error": err.Error()})
 			return
 		}
+		query_models.FillMetaQueryFromRequest(request, &query)
 
 		granularity, anchor, columns := parseTimelineParams(request)
 		boundaries := application_context.GenerateBucketBoundaries(granularity, anchor, columns)
@@ -144,6 +146,7 @@ func GetGroupTimelineHandler(ctx *application_context.MahresourcesContext) func(
 			_ = json.NewEncoder(writer).Encode(map[string]string{"error": err.Error()})
 			return
 		}
+		query_models.FillMetaQueryFromRequest(request, &query)
 
 		granularity, anchor, columns := parseTimelineParams(request)
 		boundaries := application_context.GenerateBucketBoundaries(granularity, anchor, columns)
