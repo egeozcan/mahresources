@@ -31,6 +31,7 @@ func statusCodeForError(err error, fallback int) int {
 		"invalid json",
 		"invalid meta",
 		"is required",
+		"is not in a",
 		"must be",
 		"cannot be",
 		"attempt to write",

@@ -40,6 +40,10 @@ func (ctx *MahresourcesContext) AddRelation(fromGroupId, toGroupId, relationType
 	var toGroup models.Group
 	var relation models.GroupRelation
 
+	if fromGroupId == 0 || toGroupId == 0 {
+		return nil, errors.New("fromGroupId and toGroupId are required")
+	}
+
 	if fromGroupId == toGroupId {
 		return nil, errors.New("cannot relate to self")
 	}
