@@ -344,7 +344,9 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
             if (maxCount <= 0) return [];
             const rough = maxCount / 4;
             const magnitude = Math.pow(10, Math.floor(Math.log10(rough)));
-            const nice = [1, 2, 5, 10].find(n => n * magnitude >= rough) * magnitude;
+            let nice = [1, 2, 5, 10].find(n => n * magnitude >= rough) * magnitude;
+            // Counts are always integers, so enforce a minimum step of 1
+            nice = Math.max(1, nice);
             const ticks = [];
             for (let v = 0; v <= maxCount; v += nice) {
                 if (v === 0) continue;
