@@ -36,6 +36,10 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 
 	var noteTypeId *uint
 	if noteQuery.NoteTypeId != 0 {
+		var ntCheck models.NoteType
+		if err := ctx.db.Select("id").First(&ntCheck, noteQuery.NoteTypeId).Error; err != nil {
+			return nil, errors.New("note type not found")
+		}
 		noteTypeId = &noteQuery.NoteTypeId
 	}
 
@@ -97,6 +101,9 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 
 		if err := tx.Create(&note).Error; err != nil {
 			tx.Rollback()
+			if isForeignKeyError(err) {
+				return nil, errors.New("referenced note type or owner does not exist")
+			}
 			return nil, err
 		}
 
@@ -116,6 +123,9 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 
 		if err := tx.Save(&note).Error; err != nil {
 			tx.Rollback()
+			if isForeignKeyError(err) {
+				return nil, errors.New("referenced note type or owner does not exist")
+			}
 			return nil, err
 		}
 

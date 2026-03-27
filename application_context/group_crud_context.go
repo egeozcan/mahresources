@@ -83,8 +83,19 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 		group.OwnerId = &groupQuery.OwnerId
 	}
 
+	if groupQuery.CategoryId != 0 {
+		var catCheck models.Category
+		if err := tx.Select("id").First(&catCheck, groupQuery.CategoryId).Error; err != nil {
+			tx.Rollback()
+			return nil, errors.New("category not found")
+		}
+	}
+
 	if err := tx.Create(&group).Error; err != nil {
 		tx.Rollback()
+		if isForeignKeyError(err) {
+			return nil, errors.New("referenced category or owner does not exist")
+		}
 		return nil, err
 	}
 
@@ -243,8 +254,19 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 		return nil, err
 	}
 
+	if groupQuery.CategoryId != 0 {
+		var catCheck models.Category
+		if err := tx.Select("id").First(&catCheck, groupQuery.CategoryId).Error; err != nil {
+			tx.Rollback()
+			return nil, errors.New("category not found")
+		}
+	}
+
 	if err := tx.Model(group).Select("Name", "Description", "Meta", "URL", "OwnerId", "Owner", "CategoryId").Updates(group).Error; err != nil {
 		tx.Rollback()
+		if isForeignKeyError(err) {
+			return nil, errors.New("referenced category or owner does not exist")
+		}
 		return nil, err
 	}
 
