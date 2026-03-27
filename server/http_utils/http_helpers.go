@@ -1,10 +1,12 @@
 package http_utils
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
+	"io"
 	"mahresources/constants"
 	"net/http"
 	"net/url"
@@ -235,6 +237,49 @@ func SetPaginationHeaders(writer http.ResponseWriter, page, perPage int, totalCo
 	if totalCount >= 0 {
 		writer.Header().Set("X-Total-Count", strconv.FormatInt(totalCount, 10))
 	}
+}
+
+// GetUIntFormParameter reads a uint parameter from the request body
+// (form-encoded) first, then falls back to URL query string. Unlike
+// http.Request.FormValue, this explicitly parses the body for all HTTP
+// methods including DELETE, which Go's standard library skips.
+func GetUIntFormParameter(request *http.Request, paramName string, defVal uint) uint {
+	// Ensure the form body is parsed for all methods. Go's ParseForm only
+	// reads the body for POST, PUT, and PATCH, so for DELETE (and other
+	// methods) we need to parse it manually.
+	if request.PostForm == nil {
+		ct := request.Header.Get("Content-Type")
+		if strings.HasPrefix(ct, "application/x-www-form-urlencoded") {
+			if request.Body != nil {
+				bodyBytes, err := io.ReadAll(request.Body)
+				if err == nil {
+					// Restore the body so it can be read again if needed
+					request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+					parsed, err := url.ParseQuery(string(bodyBytes))
+					if err == nil {
+						request.PostForm = parsed
+					}
+				}
+			}
+		}
+	}
+
+	// Check POST body first, then URL query string
+	val := ""
+	if request.PostForm != nil {
+		val = request.PostForm.Get(paramName)
+	}
+	if val == "" {
+		val = request.URL.Query().Get(paramName)
+	}
+	if val == "" {
+		return defVal
+	}
+	param, err := strconv.ParseUint(val, 10, 0)
+	if err != nil {
+		return defVal
+	}
+	return uint(param)
 }
 
 func GetQueryParameter(request *http.Request, paramName string, defVal string) string {

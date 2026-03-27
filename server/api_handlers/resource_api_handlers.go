@@ -86,16 +86,21 @@ func GetResourceContentHandler(ctx interfaces.ResourceReader) func(writer http.R
 			if err := tryFillStructValuesFromRequest(&detailsQuery, request); err != nil {
 				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 				return
-			} else {
-				resources, err := ctx.GetResources(0, 1, &detailsQuery)
-
-				if err != nil || len(resources) != 1 {
-					http_utils.HandleError(errors.New("no suitable resource found"), writer, request, http.StatusNotFound)
-					return
-				}
-
-				resource = &resources[0]
 			}
+
+			if isEmptyResourceSearchQuery(&detailsQuery) {
+				http_utils.HandleError(errors.New("resource ID or search criteria required"), writer, request, http.StatusBadRequest)
+				return
+			}
+
+			resources, err := ctx.GetResources(0, 1, &detailsQuery)
+
+			if err != nil || len(resources) != 1 {
+				http_utils.HandleError(errors.New("no suitable resource found"), writer, request, http.StatusNotFound)
+				return
+			}
+
+			resource = &resources[0]
 		} else {
 			resource, err = ctx.GetResource(query.ID)
 
