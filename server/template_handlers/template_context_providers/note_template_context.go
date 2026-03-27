@@ -20,6 +20,7 @@ func NoteListContextProvider(context *application_context.MahresourcesContext) f
 		offset := (page - 1) * int64(resultsPerPage)
 		var query query_models.NoteQuery
 		err := decoder.Decode(&query, request.URL.Query())
+		query_models.FillMetaQueryFromRequest(request, &query)
 		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
@@ -105,6 +106,7 @@ func NoteTimelineContextProvider(context *application_context.MahresourcesContex
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.NoteQuery
 		err := decoder.Decode(&query, request.URL.Query())
+		query_models.FillMetaQueryFromRequest(request, &query)
 		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {

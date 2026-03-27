@@ -22,6 +22,7 @@ func GroupsListContextProvider(context *application_context.MahresourcesContext)
 		offset := (page - 1) * int64(resultsPerPage)
 		var query query_models.GroupQuery
 		err := decoder.Decode(&query, request.URL.Query())
+		query_models.FillMetaQueryFromRequest(request, &query)
 		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
@@ -123,6 +124,7 @@ func GroupTimelineContextProvider(context *application_context.MahresourcesConte
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.GroupQuery
 		err := decoder.Decode(&query, request.URL.Query())
+		query_models.FillMetaQueryFromRequest(request, &query)
 		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {
@@ -212,6 +214,7 @@ func GroupCreateContextProvider(context *application_context.MahresourcesContext
 		if err != nil || query.ID == 0 {
 			var groupQuery query_models.GroupQuery
 			err := decoder.Decode(&groupQuery, request.URL.Query())
+			query_models.FillMetaQueryFromRequest(request, &groupQuery)
 
 			if err == nil {
 				tplContext["group"] = groupQuery
