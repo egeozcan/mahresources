@@ -1,9 +1,10 @@
 package query_models
 
 type QueryCreator struct {
-	Name     string
-	Text     string
-	Template string
+	Name        string
+	Text        string
+	Template    string
+	Description string
 }
 
 type QueryEditor struct {

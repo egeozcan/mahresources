@@ -59,10 +59,16 @@ export class QueryPage extends BasePage {
     name: string;
     text: string;
     template?: string;
+    description?: string;
   }): Promise<number> {
     await this.gotoNew();
 
     await this.fillName(data.name);
+
+    if (data.description) {
+      await this.fillDescription(data.description);
+    }
+
     await this.fillCodeEditor('Text', data.text);
 
     if (data.template) {

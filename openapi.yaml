@@ -781,6 +781,8 @@ components:
             type: object
         QueryEditor:
             properties:
+                Description:
+                    type: string
                 ID:
                     type: integer
                 Name:

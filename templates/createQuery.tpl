@@ -13,6 +13,7 @@
     {% endif %}
 
     {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" value=query.Name required=true %}
+    {% include "/partials/form/createFormTextareaInput.tpl" with title="Description" name="Description" value=query.Description %}
     {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Query" name="Text" value=query.Text mode="sql" dbType=dbType %}
 
     <div x-data="{ open: false }" class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-start">
@@ -68,7 +69,7 @@
                         </div>
                         <div>
                             <code class="text-amber-800 font-semibold">queries</code>
-                            <span class="text-xs text-stone-500">&mdash; id, name, text, template, created_at, updated_at</span>
+                            <span class="text-xs text-stone-500">&mdash; id, name, text, template, description, created_at, updated_at</span>
                         </div>
                         <div>
                             <code class="text-amber-800 font-semibold">group_relations</code>
@@ -77,6 +78,22 @@
                         <div>
                             <code class="text-amber-800 font-semibold">group_relation_types</code>
                             <span class="text-xs text-stone-500">&mdash; id, name, description, from_category_id, to_category_id</span>
+                        </div>
+                        <div>
+                            <code class="text-amber-800 font-semibold">resource_versions</code>
+                            <span class="text-xs text-stone-500">&mdash; id, created_at, resource_id, version_number, hash, hash_type, file_size, content_type, width, height, location, storage_location, comment</span>
+                        </div>
+                        <div>
+                            <code class="text-amber-800 font-semibold">series</code>
+                            <span class="text-xs text-stone-500">&mdash; id, name, slug, meta, created_at, updated_at</span>
+                        </div>
+                        <div>
+                            <code class="text-amber-800 font-semibold">note_blocks</code>
+                            <span class="text-xs text-stone-500">&mdash; id, created_at, updated_at, note_id, type, position, content, state</span>
+                        </div>
+                        <div>
+                            <code class="text-amber-800 font-semibold">log_entries</code>
+                            <span class="text-xs text-stone-500">&mdash; id, created_at, level, action, entity_type, entity_id, entity_name, message, details, request_path, user_agent, ip_address</span>
                         </div>
                     </div>
                 </div>
