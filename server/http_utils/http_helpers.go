@@ -59,6 +59,24 @@ func GetUIntQueryParameter(request *http.Request, paramName string, defVal uint)
 	return uint(param)
 }
 
+// GetUIntFormValue reads a uint parameter from the request using FormValue,
+// which checks URL query parameters, application/x-www-form-urlencoded bodies,
+// and multipart/form-data bodies. Returns defVal if the parameter is missing or
+// cannot be parsed.
+func GetUIntFormValue(request *http.Request, paramName string, defVal uint) uint {
+	val := request.FormValue(paramName)
+	if val == "" {
+		return defVal
+	}
+
+	parsed, err := strconv.ParseUint(val, 10, 0)
+	if err != nil {
+		return defVal
+	}
+
+	return uint(parsed)
+}
+
 func RedirectIfHTMLAccepted(writer http.ResponseWriter, request *http.Request, defaultURL string) bool {
 	requestedBackUrl := GetQueryParameter(request, "redirect", "")
 
