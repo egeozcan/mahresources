@@ -456,6 +456,8 @@ html {
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
+    overflow-wrap: break-word;
+    word-break: break-all;
 }
 
 .card-title:last-child {
@@ -1522,6 +1524,10 @@ html {
     font-size: 0.8125rem;
     font-weight: 500;
     text-decoration: none;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     transition: background var(--transition-fast, 120ms) ease,
                 border-color var(--transition-fast, 120ms) ease;
 }

@@ -314,9 +314,9 @@
                     <template x-if="expensiveStats.topTags && expensiveStats.topTags.length > 0">
                         <ol class="space-y-1">
                             <template x-for="tag in expensiveStats.topTags" :key="tag.id">
-                                <li class="flex items-center justify-between text-sm font-mono">
-                                    <a :href="'/tag?id=' + tag.id" class="text-amber-700 hover:underline truncate mr-2" x-text="tag.name"></a>
-                                    <span class="text-stone-500 whitespace-nowrap" x-text="formatNumber(tag.count) + ' resources'"></span>
+                                <li class="flex items-center justify-between text-sm font-mono min-w-0">
+                                    <a :href="'/tag?id=' + tag.id" class="text-amber-700 hover:underline truncate mr-2 min-w-0" x-text="tag.name"></a>
+                                    <span class="text-stone-500 whitespace-nowrap flex-shrink-0" x-text="formatNumber(tag.count) + ' resources'"></span>
                                 </li>
                             </template>
                         </ol>
@@ -332,9 +332,9 @@
                     <template x-if="expensiveStats.topCategories && expensiveStats.topCategories.length > 0">
                         <ol class="space-y-1">
                             <template x-for="cat in expensiveStats.topCategories" :key="cat.id">
-                                <li class="flex items-center justify-between text-sm font-mono">
-                                    <a :href="'/category?id=' + cat.id" class="text-amber-700 hover:underline truncate mr-2" x-text="cat.name"></a>
-                                    <span class="text-stone-500 whitespace-nowrap" x-text="formatNumber(cat.count) + ' groups'"></span>
+                                <li class="flex items-center justify-between text-sm font-mono min-w-0">
+                                    <a :href="'/category?id=' + cat.id" class="text-amber-700 hover:underline truncate mr-2 min-w-0" x-text="cat.name"></a>
+                                    <span class="text-stone-500 whitespace-nowrap flex-shrink-0" x-text="formatNumber(cat.count) + ' groups'"></span>
                                 </li>
                             </template>
                         </ol>

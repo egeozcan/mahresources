@@ -11,6 +11,8 @@ import (
 	"github.com/spf13/afero"
 	"mahresources/application_context"
 	"mahresources/server/template_handlers"
+
+	"github.com/flosch/pongo2/v4"
 )
 
 func CreateServer(appContext *application_context.MahresourcesContext, fs afero.Fs, altFs map[string]string) *http.Server {
@@ -18,8 +20,19 @@ func CreateServer(appContext *application_context.MahresourcesContext, fs afero.
 
 	registerRoutes(router, appContext)
 
+	// Build a context enricher that adds plugin info to the 404 page,
+	// mirroring what wrapContextWithPlugins does for normal routes.
+	var notFoundEnricher func(ctx pongo2.Context) pongo2.Context
+	if pm := appContext.PluginManager(); pm != nil {
+		notFoundEnricher = func(ctx pongo2.Context) pongo2.Context {
+			ctx["_pluginManager"] = pm
+			ctx["pluginMenuItems"] = pm.GetMenuItems()
+			ctx["hasPluginManager"] = true
+			return ctx
+		}
+	}
 	router.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		template_handlers.RenderNotFound(w, r)
+		template_handlers.RenderNotFound(w, r, notFoundEnricher)
 	})
 
 	filePathPrefix := "/files/"

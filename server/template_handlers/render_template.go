@@ -99,12 +99,17 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 }
 
 // RenderNotFound renders a styled 404 page using the error template.
-func RenderNotFound(writer http.ResponseWriter, request *http.Request) {
+// The optional contextEnricher function adds plugin context (menu items, etc.)
+// to the template context. Pass nil when plugin context is not available.
+func RenderNotFound(writer http.ResponseWriter, request *http.Request, contextEnricher func(ctx pongo2.Context) pongo2.Context) {
 	renderer := pongo2.NewSet("", loaders.MustNewLocalFileSystemLoader("./templates", make(map[string]string)))
 	errorTpl := pongo2.Must(renderer.FromFile("error.tpl"))
 	context := template_context_providers.StaticTemplateCtx(request)
 	context["errorMessage"] = "Page not found"
 	context["pageTitle"] = "404 Not Found"
+	if contextEnricher != nil {
+		context = contextEnricher(context)
+	}
 	writer.Header().Set("Content-Type", constants.HTML)
 	writer.WriteHeader(http.StatusNotFound)
 	if err := errorTpl.ExecuteWriter(context, writer); err != nil {

@@ -32,7 +32,7 @@ func (ctx *MahresourcesContext) GetRecentActivity(limit int) ([]ActivityEntry, e
 	if ctx.Config.DbType == constants.DbTypePosgres {
 		updatedFilter = "updated_at > created_at + interval '1 second'"
 	} else {
-		updatedFilter = "updated_at > datetime(created_at, '+1 second')"
+		updatedFilter = "datetime(updated_at) > datetime(created_at, '+1 second')"
 	}
 
 	query := fmt.Sprintf(`
