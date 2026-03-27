@@ -75,3 +75,17 @@ func tryFillStructValuesFromRequest(dst any, request *http.Request) error {
 
 	return decoder.Decode(dst, request.URL.Query())
 }
+
+// isEmptyResourceSearchQuery returns true when none of the meaningful search
+// fields are populated, which means the caller did not provide any criteria to
+// narrow down the result set.
+func isEmptyResourceSearchQuery(q *query_models.ResourceSearchQuery) bool {
+	return q.Name == "" && q.Description == "" && q.ContentType == "" &&
+		q.OwnerId == 0 && q.ResourceCategoryId == 0 &&
+		len(q.Groups) == 0 && len(q.Tags) == 0 && len(q.Notes) == 0 && len(q.Ids) == 0 &&
+		q.OriginalName == "" && q.OriginalLocation == "" && q.Hash == "" &&
+		q.MinWidth == 0 && q.MinHeight == 0 && q.MaxWidth == 0 && q.MaxHeight == 0 &&
+		len(q.MetaQuery) == 0 &&
+		q.CreatedBefore == "" && q.CreatedAfter == "" &&
+		q.UpdatedBefore == "" && q.UpdatedAfter == ""
+}
