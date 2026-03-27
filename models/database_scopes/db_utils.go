@@ -1,11 +1,34 @@
 package database_scopes
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 )
+
+// ErrInvalidDateFilter is a sentinel error for invalid date filter values.
+// Handlers should check for this error using errors.Is and return HTTP 400.
+var ErrInvalidDateFilter = fmt.Errorf("invalid date filter value")
+
+// ValidateDateString checks whether a string is a valid date for use in date range filters.
+// Accepted formats: "2006-01-02" (date only) and RFC 3339 (e.g., "2006-01-02T15:04:05Z07:00").
+func ValidateDateString(s string) bool {
+	if s == "" {
+		return false
+	}
+	// Try date-only format first
+	if _, err := time.Parse("2006-01-02", s); err == nil {
+		return true
+	}
+	// Try full RFC 3339
+	if _, err := time.Parse(time.RFC3339, s); err == nil {
+		return true
+	}
+	return false
+}
 
 // SortColumnMatcher validates sort column strings to prevent SQL injection.
 // Matches: column_name, column_name desc, column_name asc, meta->>'key', meta->>'key' desc
@@ -69,11 +92,20 @@ func deduplicateUints(ids []uint) []uint {
 
 // ApplyDateRange adds created_at filters for the given column prefix if provided.
 // The prefix should be empty string for simple table queries, or "tablename." for joined queries.
+// Invalid date strings cause an error on the *gorm.DB via AddError, which propagates through the chain.
 func ApplyDateRange(db *gorm.DB, prefix, before, after string) *gorm.DB {
 	if before != "" {
+		if !ValidateDateString(before) {
+			_ = db.AddError(fmt.Errorf("%w: createdBefore=%q is not a valid date (expected YYYY-MM-DD or RFC 3339)", ErrInvalidDateFilter, before))
+			return db
+		}
 		db = db.Where(prefix+"created_at <= ?", before)
 	}
 	if after != "" {
+		if !ValidateDateString(after) {
+			_ = db.AddError(fmt.Errorf("%w: createdAfter=%q is not a valid date (expected YYYY-MM-DD or RFC 3339)", ErrInvalidDateFilter, after))
+			return db
+		}
 		db = db.Where(prefix+"created_at >= ?", after)
 	}
 	return db
@@ -81,11 +113,20 @@ func ApplyDateRange(db *gorm.DB, prefix, before, after string) *gorm.DB {
 
 // ApplyUpdatedDateRange adds updated_at filters for the given column prefix if provided.
 // The prefix should be empty string for simple table queries, or "tablename." for joined queries.
+// Invalid date strings cause an error on the *gorm.DB via AddError, which propagates through the chain.
 func ApplyUpdatedDateRange(db *gorm.DB, prefix, before, after string) *gorm.DB {
 	if before != "" {
+		if !ValidateDateString(before) {
+			_ = db.AddError(fmt.Errorf("%w: updatedBefore=%q is not a valid date (expected YYYY-MM-DD or RFC 3339)", ErrInvalidDateFilter, before))
+			return db
+		}
 		db = db.Where(prefix+"updated_at <= ?", before)
 	}
 	if after != "" {
+		if !ValidateDateString(after) {
+			_ = db.AddError(fmt.Errorf("%w: updatedAfter=%q is not a valid date (expected YYYY-MM-DD or RFC 3339)", ErrInvalidDateFilter, after))
+			return db
+		}
 		db = db.Where(prefix+"updated_at >= ?", after)
 	}
 	return db

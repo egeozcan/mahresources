@@ -30,6 +30,10 @@ func GetTagsHandler(ctx interfaces.TagsReader) func(writer http.ResponseWriter, 
 				http_utils.HandleError(http_utils.ErrInvalidSortColumn, writer, request, http.StatusBadRequest)
 				return
 			}
+			if http_utils.IsDateFilterError(err) {
+				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+				return
+			}
 			http_utils.HandleError(err, writer, request, http.StatusNotFound)
 			return
 		}

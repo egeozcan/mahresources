@@ -1,6 +1,8 @@
 package database_scopes
 
 import (
+	"fmt"
+
 	"gorm.io/gorm"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
@@ -77,18 +79,34 @@ func NoteQuery(query *query_models.NoteQuery, ignoreSort bool, originalDB *gorm.
 		dbQuery = ApplyUpdatedDateRange(dbQuery, "notes.", query.UpdatedBefore, query.UpdatedAfter)
 
 		if query.StartDateBefore != "" {
+			if !ValidateDateString(query.StartDateBefore) {
+				_ = dbQuery.AddError(fmt.Errorf("%w: startDateBefore=%q is not a valid date (expected YYYY-MM-DD or RFC 3339)", ErrInvalidDateFilter, query.StartDateBefore))
+				return dbQuery
+			}
 			dbQuery = dbQuery.Where("start_date <= ?", query.StartDateBefore)
 		}
 
 		if query.StartDateAfter != "" {
+			if !ValidateDateString(query.StartDateAfter) {
+				_ = dbQuery.AddError(fmt.Errorf("%w: startDateAfter=%q is not a valid date (expected YYYY-MM-DD or RFC 3339)", ErrInvalidDateFilter, query.StartDateAfter))
+				return dbQuery
+			}
 			dbQuery = dbQuery.Where("start_date >= ?", query.StartDateAfter)
 		}
 
 		if query.EndDateBefore != "" {
+			if !ValidateDateString(query.EndDateBefore) {
+				_ = dbQuery.AddError(fmt.Errorf("%w: endDateBefore=%q is not a valid date (expected YYYY-MM-DD or RFC 3339)", ErrInvalidDateFilter, query.EndDateBefore))
+				return dbQuery
+			}
 			dbQuery = dbQuery.Where("end_date <= ?", query.EndDateBefore)
 		}
 
 		if query.EndDateAfter != "" {
+			if !ValidateDateString(query.EndDateAfter) {
+				_ = dbQuery.AddError(fmt.Errorf("%w: endDateAfter=%q is not a valid date (expected YYYY-MM-DD or RFC 3339)", ErrInvalidDateFilter, query.EndDateAfter))
+				return dbQuery
+			}
 			dbQuery = dbQuery.Where("end_date >= ?", query.EndDateAfter)
 		}
 

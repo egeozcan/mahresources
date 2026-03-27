@@ -126,6 +126,41 @@ func TestGetGroupTreeDown(t *testing.T) {
 	}
 }
 
+func TestGetGroupTreeChildren_ReturnsEmptySliceNotNil(t *testing.T) {
+	ctx := createTestContext(t)
+
+	// Query children for a non-existent parent ID
+	children, err := ctx.GetGroupTreeChildren(99999, 50)
+	if err != nil {
+		t.Fatalf("GetGroupTreeChildren() error: %v", err)
+	}
+
+	// Should return an empty slice, not nil
+	if children == nil {
+		t.Error("GetGroupTreeChildren should return empty slice, not nil, for non-existent parent")
+	}
+
+	if len(children) != 0 {
+		t.Errorf("expected 0 children, got %d", len(children))
+	}
+}
+
+func TestGetGroupTreeRoots_ReturnsNonNilSlice(t *testing.T) {
+	ctx := createTestContext(t)
+
+	// Query roots - even if shared DB has groups from other tests,
+	// the result must be a non-nil slice (not nil) for proper JSON marshaling
+	roots, err := ctx.GetGroupTreeRoots(50)
+	if err != nil {
+		t.Fatalf("GetGroupTreeRoots() error: %v", err)
+	}
+
+	// Should return a non-nil slice so json.Marshal produces [] not null
+	if roots == nil {
+		t.Error("GetGroupTreeRoots should return non-nil slice, not nil")
+	}
+}
+
 func TestGetGroupTreeDown_RespectsMaxLevels(t *testing.T) {
 	ctx := createTestContext(t)
 
