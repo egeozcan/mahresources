@@ -440,6 +440,16 @@ func ValidateMeta(meta string) error {
 	if meta[0] != '{' {
 		return fmt.Errorf("meta must be a JSON object, got %c", meta[0])
 	}
+	// Reject empty or whitespace-only keys
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(meta), &parsed); err != nil {
+		return fmt.Errorf("invalid JSON in meta field: %w", err)
+	}
+	for key := range parsed {
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("meta object keys must not be empty or whitespace-only")
+		}
+	}
 	return nil
 }
 

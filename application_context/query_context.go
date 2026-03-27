@@ -67,6 +67,10 @@ func (ctx *MahresourcesContext) CreateQuery(queryQuery *query_models.QueryCreato
 		return nil, errors.New("query name must be non-empty")
 	}
 
+	if err := ValidateEntityName(queryQuery.Name, "query"); err != nil {
+		return nil, err
+	}
+
 	if strings.TrimSpace(queryQuery.Text) == "" {
 		return nil, errors.New("query text must be non-empty")
 	}

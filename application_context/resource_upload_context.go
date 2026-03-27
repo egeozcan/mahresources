@@ -381,6 +381,10 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 	}
 
 	if len(resourceQuery.Groups) > 0 {
+		if err := ValidateAssociationIDs[models.Group](tx, resourceQuery.Groups, "groups"); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
 		groups := BuildAssociationSlice(resourceQuery.Groups, GroupFromID)
 		if err := tx.Model(&res).Association("Groups").Append(&groups); err != nil {
 			tx.Rollback()
@@ -389,6 +393,10 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 	}
 
 	if len(resourceQuery.Notes) > 0 {
+		if err := ValidateAssociationIDs[models.Note](tx, resourceQuery.Notes, "notes"); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
 		notes := BuildAssociationSlice(resourceQuery.Notes, NoteFromID)
 		if err := tx.Model(&res).Association("Notes").Append(&notes); err != nil {
 			tx.Rollback()
@@ -397,6 +405,10 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 	}
 
 	if len(resourceQuery.Tags) > 0 {
+		if err := ValidateAssociationIDs[models.Tag](tx, resourceQuery.Tags, "tags"); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
 		tags := BuildAssociationSlice(resourceQuery.Tags, TagFromID)
 		if err := tx.Model(&res).Association("Tags").Append(&tags); err != nil {
 			tx.Rollback()
@@ -550,6 +562,10 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 		if existingResource.OwnerId != nil && resourceQuery.OwnerId == *existingResource.OwnerId {
 			needsCommit := false
 			if len(resourceQuery.Groups) > 0 {
+				if valErr := ValidateAssociationIDs[models.Group](tx, resourceQuery.Groups, "groups"); valErr != nil {
+					tx.Rollback()
+					return nil, valErr
+				}
 				groups := BuildAssociationSlice(resourceQuery.Groups, GroupFromID)
 				if appendErr := tx.Model(&existingResource).Association("Groups").Append(&groups); appendErr != nil {
 					tx.Rollback()
@@ -558,6 +574,10 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 				needsCommit = true
 			}
 			if len(resourceQuery.Tags) > 0 {
+				if valErr := ValidateAssociationIDs[models.Tag](tx, resourceQuery.Tags, "tags"); valErr != nil {
+					tx.Rollback()
+					return nil, valErr
+				}
 				tags := BuildAssociationSlice(resourceQuery.Tags, TagFromID)
 				if appendErr := tx.Model(&existingResource).Association("Tags").Append(&tags); appendErr != nil {
 					tx.Rollback()
@@ -566,6 +586,10 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 				needsCommit = true
 			}
 			if len(resourceQuery.Notes) > 0 {
+				if valErr := ValidateAssociationIDs[models.Note](tx, resourceQuery.Notes, "notes"); valErr != nil {
+					tx.Rollback()
+					return nil, valErr
+				}
 				notes := BuildAssociationSlice(resourceQuery.Notes, NoteFromID)
 				if appendErr := tx.Model(&existingResource).Association("Notes").Append(&notes); appendErr != nil {
 					tx.Rollback()
@@ -714,6 +738,10 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 	}
 
 	if len(resourceQuery.Groups) > 0 {
+		if valErr := ValidateAssociationIDs[models.Group](tx, resourceQuery.Groups, "groups"); valErr != nil {
+			tx.Rollback()
+			return nil, valErr
+		}
 		groups := BuildAssociationSlice(resourceQuery.Groups, GroupFromID)
 
 		if createGroupsErr := tx.Model(&res).Association("Groups").Append(&groups); createGroupsErr != nil {
@@ -723,6 +751,10 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 	}
 
 	if len(resourceQuery.Notes) > 0 {
+		if valErr := ValidateAssociationIDs[models.Note](tx, resourceQuery.Notes, "notes"); valErr != nil {
+			tx.Rollback()
+			return nil, valErr
+		}
 		notes := BuildAssociationSlice(resourceQuery.Notes, NoteFromID)
 
 		if createNotesErr := tx.Model(&res).Association("Notes").Append(&notes); createNotesErr != nil {
@@ -732,6 +764,10 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 	}
 
 	if len(resourceQuery.Tags) > 0 {
+		if valErr := ValidateAssociationIDs[models.Tag](tx, resourceQuery.Tags, "tags"); valErr != nil {
+			tx.Rollback()
+			return nil, valErr
+		}
 		tags := BuildAssociationSlice(resourceQuery.Tags, TagFromID)
 
 		if createTagsErr := tx.Model(&res).Association("Tags").Append(&tags); createTagsErr != nil {

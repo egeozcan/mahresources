@@ -185,6 +185,22 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 			return err
 		}
 
+		if len(resourceQuery.Groups) > 0 {
+			if err := ValidateAssociationIDs[models.Group](tx, resourceQuery.Groups, "groups"); err != nil {
+				return err
+			}
+		}
+		if len(resourceQuery.Notes) > 0 {
+			if err := ValidateAssociationIDs[models.Note](tx, resourceQuery.Notes, "notes"); err != nil {
+				return err
+			}
+		}
+		if len(resourceQuery.Tags) > 0 {
+			if err := ValidateAssociationIDs[models.Tag](tx, resourceQuery.Tags, "tags"); err != nil {
+				return err
+			}
+		}
+
 		groups := BuildAssociationSlice(resourceQuery.Groups, GroupFromID)
 		if err := tx.Model(&resource).Association("Groups").Append(&groups); err != nil {
 			return err

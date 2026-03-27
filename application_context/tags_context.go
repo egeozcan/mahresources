@@ -58,6 +58,10 @@ func (ctx *MahresourcesContext) CreateTag(tagQuery *query_models.TagCreator) (*m
 		return nil, errors.New("tag name must be non-empty")
 	}
 
+	if err := ValidateEntityName(tagQuery.Name, "tag"); err != nil {
+		return nil, err
+	}
+
 	hookData := map[string]any{
 		"id":          float64(0),
 		"name":        tagQuery.Name,
