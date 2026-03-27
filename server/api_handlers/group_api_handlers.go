@@ -187,7 +187,7 @@ func GetAddTagsToGroupsHandler(ctx interfaces.BulkGroupTagEditor) func(writer ht
 		err = ctx.BulkAddTagsToGroups(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
 		}
 
@@ -210,7 +210,7 @@ func GetRemoveTagsFromGroupsHandler(ctx interfaces.BulkGroupTagEditor) func(writ
 		err = ctx.BulkRemoveTagsFromGroups(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
 		}
 

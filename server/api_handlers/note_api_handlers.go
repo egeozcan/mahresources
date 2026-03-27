@@ -301,7 +301,7 @@ func GetAddTagsToNotesHandler(ctx interfaces.BulkNoteTagEditor) func(writer http
 		err = ctx.BulkAddTagsToNotes(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
 		}
 
@@ -324,7 +324,7 @@ func GetRemoveTagsFromNotesHandler(ctx interfaces.BulkNoteTagEditor) func(writer
 		err = ctx.BulkRemoveTagsFromNotes(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
 		}
 
@@ -347,7 +347,7 @@ func GetAddGroupsToNotesHandler(ctx interfaces.BulkNoteGroupEditor) func(writer 
 		err = ctx.BulkAddGroupsToNotes(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
 		}
 

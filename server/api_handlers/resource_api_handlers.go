@@ -535,7 +535,7 @@ func GetAddTagsToResourcesHandler(ctx interfaces.BulkResourceTagEditor) func(wri
 		err = effectiveCtx.BulkAddTagsToResources(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
 		}
 
@@ -560,7 +560,7 @@ func GetAddGroupsToResourcesHandler(ctx interfaces.BulkResourceGroupEditor) func
 		err = effectiveCtx.BulkAddGroupsToResources(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
 		}
 
@@ -585,7 +585,7 @@ func GetRemoveTagsFromResourcesHandler(ctx interfaces.BulkResourceTagEditor) fun
 		err = effectiveCtx.BulkRemoveTagsFromResources(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
 		}
 
@@ -610,7 +610,7 @@ func GetReplaceTagsOfResourcesHandler(ctx interfaces.BulkResourceTagEditor) func
 		err = effectiveCtx.BulkReplaceTagsFromResources(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
 		}
 
@@ -708,14 +708,14 @@ func GetRotateResourceHandler(ctx interfaces.ResourceMediaProcessor) func(writer
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		err = ctx.RotateResource(editor.ID, editor.Degrees)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
 		}
 
@@ -729,7 +729,12 @@ func GetBulkCalculateDimensionsHandler(ctx interfaces.ResourceMediaProcessor) fu
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+
+		if len(editor.ID) == 0 {
+			http_utils.HandleError(fmt.Errorf("at least one resource ID is required"), writer, request, http.StatusBadRequest)
 			return
 		}
 
@@ -748,7 +753,9 @@ func GetBulkCalculateDimensionsHandler(ctx interfaces.ResourceMediaProcessor) fu
 			return
 		}
 
-		http_utils.RedirectIfHTMLAccepted(writer, request, "/resources")
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, "/resources") {
+			writeJSONOk(writer)
+		}
 	}
 }
 
@@ -758,14 +765,14 @@ func GetResourceSetDimensionsHandler(ctx interfaces.ResourceMediaProcessor) func
 		var err error
 
 		if err = tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
 		err = ctx.SetResourceDimensions(editor.ID, editor.Width, editor.Height)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
 		}
 

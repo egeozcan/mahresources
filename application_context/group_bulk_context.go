@@ -21,7 +21,14 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 		return errors.New("one or more losers required")
 	}
 
+	if winnerId == 0 {
+		return errors.New("invalid winner ID")
+	}
+
 	for _, id := range loserIds {
+		if id == 0 {
+			return errors.New("invalid group ID")
+		}
 		if id == winnerId {
 			return errors.New("winner cannot also be the loser")
 		}
