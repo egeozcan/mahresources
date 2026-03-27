@@ -144,6 +144,14 @@ func UpdateBlockStateHandler(ctx interfaces.BlockStateWriter) func(http.Response
 			return
 		}
 
+		// body.State is nil when the "state" key is missing from the JSON body,
+		// and contains the bytes "null" when explicitly set to null.  Both cases
+		// would violate the NOT NULL constraint on the state column.
+		if body.State == nil || string(body.State) == "null" {
+			http_utils.HandleError(errors.New("state field is required"), writer, request, http.StatusBadRequest)
+			return
+		}
+
 		block, err := ctx.UpdateBlockState(id, body.State)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusBadRequest)

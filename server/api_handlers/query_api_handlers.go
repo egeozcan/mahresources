@@ -92,6 +92,14 @@ func fillQueryParameters(dst *query_models.QueryParameters, request *http.Reques
 
 	// For form-encoded, multipart, or no content-type: parse form values into the map.
 	var formValues url.Values
+	// stripRouteKeys controls whether "id" and "name" are removed from the
+	// parameter map.  For form-encoded / multipart requests the query lookup
+	// keys (id, name) come from the URL query string (parsed separately by
+	// the handler), so the POST body values are genuine SQL bind parameters
+	// and must be preserved.  For the no-content-type fallback path, the URL
+	// query string doubles as both lookup and parameter source, so we strip
+	// the routing keys to avoid passing them to the SQL query.
+	var stripRouteKeys bool
 
 	if strings.HasPrefix(contentTypeHeader, constants.MultiPartForm) {
 		if err := request.ParseMultipartForm(int64(32) << 20); err != nil {
@@ -105,12 +113,14 @@ func fillQueryParameters(dst *query_models.QueryParameters, request *http.Reques
 		formValues = request.PostForm
 	} else {
 		formValues = request.URL.Query()
+		stripRouteKeys = true
 	}
 
 	params := make(query_models.QueryParameters, len(formValues))
 	for key, vals := range formValues {
-		// Skip the routing parameters (id/name) used to identify the query itself.
-		if key == "id" || key == "name" {
+		// In the URL-query-string fallback path, skip the routing parameters
+		// (id/name) that are used to identify which saved query to run.
+		if stripRouteKeys && (key == "id" || key == "name") {
 			continue
 		}
 		if len(vals) == 1 {
