@@ -5,12 +5,13 @@ import (
 )
 
 // GetGroupTreeRoots returns top-level groups (no owner) with child counts.
+// Always returns a non-nil slice so JSON marshaling produces [] instead of null.
 func (ctx *MahresourcesContext) GetGroupTreeRoots(limit int) ([]query_models.GroupTreeNode, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
 
-	var results []query_models.GroupTreeNode
+	results := make([]query_models.GroupTreeNode, 0)
 
 	err := ctx.db.Raw(`
 		SELECT g.id, g.name, g.owner_id, COALESCE(c.name, '') AS category_name,
@@ -30,12 +31,13 @@ func (ctx *MahresourcesContext) GetGroupTreeRoots(limit int) ([]query_models.Gro
 }
 
 // GetGroupTreeChildren returns the direct children of a group with child counts.
+// Always returns a non-nil slice so JSON marshaling produces [] instead of null.
 func (ctx *MahresourcesContext) GetGroupTreeChildren(parentID uint, limit int) ([]query_models.GroupTreeNode, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
 
-	var results []query_models.GroupTreeNode
+	results := make([]query_models.GroupTreeNode, 0)
 
 	err := ctx.db.Raw(`
 		SELECT g.id, g.name, g.owner_id, COALESCE(c.name, '') AS category_name,

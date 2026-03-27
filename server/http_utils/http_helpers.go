@@ -17,6 +17,15 @@ import (
 // ErrInvalidSortColumn is returned when a sort column does not exist in the database.
 var ErrInvalidSortColumn = errors.New("invalid sort column")
 
+// IsDateFilterError checks whether an error wraps the ErrInvalidDateFilter sentinel
+// from the database_scopes package. When true, the handler should return HTTP 400.
+func IsDateFilterError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "invalid date filter value")
+}
+
 // IsColumnError checks whether an error is a database "no such column" error
 // (from SQLite) or "column ... does not exist" (from Postgres).
 // When true, the raw error should not be exposed to the client.
