@@ -301,16 +301,16 @@
 
         {# Event Modal #}
         <template x-if="showEventModal">
-            <div class="fixed inset-0 z-50 flex items-center justify-center" @keydown.escape.window="closeEventModal()">
+            <div class="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="shared-event-modal-heading" @keydown.escape.window="closeEventModal()">
                 <div class="absolute inset-0 bg-black/50" @click="closeEventModal()"></div>
                 <div class="relative bg-white rounded-lg shadow-xl w-full max-w-md mx-4 p-6">
-                    <h3 class="text-lg font-semibold mb-4" x-text="editingEvent ? 'Edit Event' : 'New Event'"></h3>
+                    <h3 id="shared-event-modal-heading" class="text-lg font-semibold mb-4" x-text="editingEvent ? 'Edit Event' : 'New Event'"></h3>
 
                     <form @submit.prevent="saveEvent()">
                         {# Title #}
                         <div class="mb-4">
-                            <label class="block text-sm font-medium text-stone-700 mb-1">Title</label>
-                            <input type="text" x-model="eventForm.title" required
+                            <label for="shared-event-title" class="block text-sm font-medium text-stone-700 mb-1">Title</label>
+                            <input id="shared-event-title" type="text" x-model="eventForm.title" required
                                    class="w-full px-3 py-2 border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600">
                         </div>
 
@@ -323,13 +323,13 @@
                         {# Start date/time #}
                         <div class="grid grid-cols-2 gap-3 mb-4">
                             <div>
-                                <label class="block text-sm font-medium text-stone-700 mb-1">Start Date</label>
-                                <input type="date" x-model="eventForm.startDate" required
+                                <label for="shared-event-start-date" class="block text-sm font-medium text-stone-700 mb-1">Start Date</label>
+                                <input id="shared-event-start-date" type="date" x-model="eventForm.startDate" required
                                        class="w-full px-3 py-2 border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600">
                             </div>
                             <div x-show="!eventForm.allDay">
-                                <label class="block text-sm font-medium text-stone-700 mb-1">Start Time</label>
-                                <input type="time" x-model="eventForm.startTime"
+                                <label for="shared-event-start-time" class="block text-sm font-medium text-stone-700 mb-1">Start Time</label>
+                                <input id="shared-event-start-time" type="time" x-model="eventForm.startTime"
                                        class="w-full px-3 py-2 border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600">
                             </div>
                         </div>
@@ -337,28 +337,28 @@
                         {# End date/time #}
                         <div class="grid grid-cols-2 gap-3 mb-4">
                             <div>
-                                <label class="block text-sm font-medium text-stone-700 mb-1">End Date</label>
-                                <input type="date" x-model="eventForm.endDate" required
+                                <label for="shared-event-end-date" class="block text-sm font-medium text-stone-700 mb-1">End Date</label>
+                                <input id="shared-event-end-date" type="date" x-model="eventForm.endDate" required
                                        class="w-full px-3 py-2 border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600">
                             </div>
                             <div x-show="!eventForm.allDay">
-                                <label class="block text-sm font-medium text-stone-700 mb-1">End Time</label>
-                                <input type="time" x-model="eventForm.endTime"
+                                <label for="shared-event-end-time" class="block text-sm font-medium text-stone-700 mb-1">End Time</label>
+                                <input id="shared-event-end-time" type="time" x-model="eventForm.endTime"
                                        class="w-full px-3 py-2 border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600">
                             </div>
                         </div>
 
                         {# Location #}
                         <div class="mb-4">
-                            <label class="block text-sm font-medium text-stone-700 mb-1">Location (optional)</label>
-                            <input type="text" x-model="eventForm.location"
+                            <label for="shared-event-location" class="block text-sm font-medium text-stone-700 mb-1">Location (optional)</label>
+                            <input id="shared-event-location" type="text" x-model="eventForm.location"
                                    class="w-full px-3 py-2 border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600">
                         </div>
 
                         {# Description #}
                         <div class="mb-4">
-                            <label class="block text-sm font-medium text-stone-700 mb-1">Description (optional)</label>
-                            <textarea x-model="eventForm.description" rows="2"
+                            <label for="shared-event-description" class="block text-sm font-medium text-stone-700 mb-1">Description (optional)</label>
+                            <textarea id="shared-event-description" x-model="eventForm.description" rows="2"
                                       class="w-full px-3 py-2 border border-stone-300 rounded resize-none focus:ring-amber-600 focus:border-amber-600"></textarea>
                         </div>
 
