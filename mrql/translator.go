@@ -616,8 +616,15 @@ func (tc *translateContext) translateMetaComparison(db *gorm.DB, fd FieldDef, op
 		}
 	}
 
-	// For SQLite: json_extract(table.meta, '$.key')
-	jsonExpr := fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
+	// Build the JSON extraction expression per database dialect
+	var jsonExpr string
+	if tc.isPostgres() {
+		// PostgreSQL: table.meta->>'key' (extracts as text)
+		jsonExpr = fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)
+	} else {
+		// SQLite: json_extract(table.meta, '$.key')
+		jsonExpr = fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
+	}
 
 	sqlOp := tc.sqlOperator(op)
 
@@ -852,18 +859,32 @@ func (tc *translateContext) translateRelationIsEmpty(db *gorm.DB, fd FieldDef, n
 
 // translateTextSearch handles TEXT ~ "query" for full-text search.
 func (tc *translateContext) translateTextSearch(db *gorm.DB, expr *TextSearchExpr) (*gorm.DB, error) {
-	// Sanitize FTS5 input — strip operators and special characters
-	sanitized := sanitizeFTS5(expr.Value.Value)
-	if sanitized == "" {
+	searchTerm := strings.TrimSpace(expr.Value.Value)
+	if searchTerm == "" {
 		return db, nil
 	}
 
-	ftsTable := tc.tableName + "_fts"
-	subquery := fmt.Sprintf(
-		"%s.id IN (SELECT rowid FROM %s WHERE %s MATCH ?)",
-		tc.tableName, ftsTable, ftsTable,
-	)
-	db = db.Where(subquery, sanitized)
+	if tc.isPostgres() {
+		// PostgreSQL: use the search_vector column with plainto_tsquery
+		subquery := fmt.Sprintf(
+			"%s.search_vector @@ plainto_tsquery('english', ?)",
+			tc.tableName,
+		)
+		db = db.Where(subquery, searchTerm)
+	} else {
+		// SQLite: use FTS5 MATCH via rowid subquery
+		sanitized := sanitizeFTS5(searchTerm)
+		if sanitized == "" {
+			return db, nil
+		}
+		ftsTable := tc.tableName + "_fts"
+		subquery := fmt.Sprintf(
+			"%s.id IN (SELECT rowid FROM %s WHERE %s MATCH ?)",
+			tc.tableName, ftsTable, ftsTable,
+		)
+		db = db.Where(subquery, sanitized)
+	}
+
 	return db, nil
 }
 
@@ -981,12 +1002,15 @@ func (tc *translateContext) qualifiedColumn(column string) string {
 func (tc *translateContext) resolveOrderByColumn(f *FieldExpr) string {
 	fieldName := f.Name()
 
-	// Handle meta.key → json_extract(table.meta, '$.key')
+	// Handle meta.key → JSON extraction per dialect
 	if strings.HasPrefix(fieldName, "meta.") {
 		key := strings.TrimPrefix(fieldName, "meta.")
 		if !isValidMetaKey(key) {
 			// Validation should have caught this; fallback to safe column name
 			return tc.tableName + ".meta"
+		}
+		if tc.isPostgres() {
+			return fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)
 		}
 		return fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
 	}

@@ -3,6 +3,7 @@ package application_context
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -115,7 +116,8 @@ func (ctx *MahresourcesContext) executeSingleEntity(parsed *mrql.Query, entityTy
 }
 
 // executeCrossEntity runs the query against resources, notes, and groups
-// separately and merges the results.
+// separately and merges the results. LIMIT/OFFSET apply to the merged
+// result set, not per-entity, to avoid returning up to 3x the requested limit.
 func (ctx *MahresourcesContext) executeCrossEntity(parsed *mrql.Query, opts mrql.TranslateOptions) (*MRQLResult, error) {
 	result := &MRQLResult{EntityType: "all"}
 
@@ -124,12 +126,23 @@ func (ctx *MahresourcesContext) executeCrossEntity(parsed *mrql.Query, opts mrql
 	queryCtx, cancel := context.WithTimeout(context.Background(), MRQLQueryTimeout)
 	defer cancel()
 
+	// Determine the global limit for the merged result set.
+	globalLimit := defaultMRQLLimit
+	if parsed.Limit >= 0 {
+		globalLimit = parsed.Limit
+	}
+
+	// For cross-entity, remove LIMIT/OFFSET from per-entity queries —
+	// we apply them after merging. Each entity gets a cap of globalLimit
+	// to avoid fetching unbounded rows, but we trim the merged set after.
 	entityTypes := []mrql.EntityType{mrql.EntityResource, mrql.EntityNote, mrql.EntityGroup}
 
 	for _, et := range entityTypes {
-		// Clone the parsed query for each entity type
+		// Clone the parsed query for each entity type, without LIMIT/OFFSET
 		clone := *parsed
 		clone.EntityType = et
+		clone.Limit = globalLimit // cap per-entity to avoid unbounded fetches
+		clone.Offset = -1         // offset applied to merged set below
 
 		db, err := mrql.TranslateWithOptions(&clone, ctx.db.WithContext(queryCtx), opts)
 		if err != nil {
@@ -141,30 +154,82 @@ func (ctx *MahresourcesContext) executeCrossEntity(parsed *mrql.Query, opts mrql
 			return nil, err
 		}
 
-		// Apply a default limit cap if the query has no explicit LIMIT.
-		if parsed.Limit < 0 {
-			db = db.Limit(defaultMRQLLimit)
-		}
-
 		switch et {
 		case mrql.EntityResource:
 			var resources []models.Resource
 			if err := db.Find(&resources).Error; err != nil {
-				continue // skip on error (e.g., field not found for this entity)
+				// Propagate real DB errors; only translate errors are skipped above
+				return nil, fmt.Errorf("resource query failed: %w", err)
 			}
 			result.Resources = resources
 		case mrql.EntityNote:
 			var notes []models.Note
 			if err := db.Find(&notes).Error; err != nil {
-				continue
+				return nil, fmt.Errorf("note query failed: %w", err)
 			}
 			result.Notes = notes
 		case mrql.EntityGroup:
 			var groups []models.Group
 			if err := db.Find(&groups).Error; err != nil {
-				continue
+				return nil, fmt.Errorf("group query failed: %w", err)
 			}
 			result.Groups = groups
+		}
+	}
+
+	// Apply global LIMIT/OFFSET to the merged result set.
+	// We interleave results (resources first, then notes, then groups)
+	// and trim to the requested window.
+	totalCount := len(result.Resources) + len(result.Notes) + len(result.Groups)
+
+	offset := 0
+	if parsed.Offset >= 0 {
+		offset = parsed.Offset
+	}
+
+	if offset > 0 || totalCount > globalLimit {
+		// Flatten into a counted sequence and apply offset+limit
+		remaining := globalLimit
+		skip := offset
+
+		// Trim resources
+		if skip >= len(result.Resources) {
+			skip -= len(result.Resources)
+			result.Resources = nil
+		} else {
+			result.Resources = result.Resources[skip:]
+			skip = 0
+		}
+		if len(result.Resources) > remaining {
+			result.Resources = result.Resources[:remaining]
+		}
+		remaining -= len(result.Resources)
+
+		// Trim notes
+		if skip >= len(result.Notes) {
+			skip -= len(result.Notes)
+			result.Notes = nil
+		} else {
+			result.Notes = result.Notes[skip:]
+			skip = 0
+		}
+		if remaining <= 0 {
+			result.Notes = nil
+		} else if len(result.Notes) > remaining {
+			result.Notes = result.Notes[:remaining]
+		}
+		remaining -= len(result.Notes)
+
+		// Trim groups
+		if skip >= len(result.Groups) {
+			result.Groups = nil
+		} else {
+			result.Groups = result.Groups[skip:]
+		}
+		if remaining <= 0 {
+			result.Groups = nil
+		} else if len(result.Groups) > remaining {
+			result.Groups = result.Groups[:remaining]
 		}
 	}
 
