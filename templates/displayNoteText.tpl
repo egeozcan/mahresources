@@ -7,6 +7,9 @@
         {{ note.Description|markdown2 }}
         </div>
     {% endautoescape %}
+    {% if note.Blocks && note.Blocks|length > 0 %}
+        {% include "/partials/blockEditor.tpl" with noteId=note.ID blocks=note.Blocks %}
+    {% endif %}
 {% endblock %}
 
 {% block sidebar %}

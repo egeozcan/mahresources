@@ -77,17 +77,42 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode) {
       return this.queryId != null;
     },
 
+    // Normalize a column: if it's a plain string, convert to {id, label} object
+    _normalizeColumns(cols) {
+      if (!cols || !cols.length) return cols;
+      return cols.map((col, idx) =>
+        typeof col === 'string' ? { id: `col_${idx}`, label: col } : col
+      );
+    },
+
+    // Normalize rows: if they are arrays, convert to objects using normalized column IDs
+    _normalizeRows(rows, normalizedCols) {
+      if (!rows || !rows.length) return rows;
+      // If the first row is an array, all rows are arrays
+      if (!Array.isArray(rows[0])) return rows;
+      return rows.map((row, rowIdx) => {
+        const obj = { id: `row_${rowIdx}` };
+        normalizedCols.forEach((col, colIdx) => {
+          obj[col.id] = row[colIdx] !== undefined ? row[colIdx] : '';
+        });
+        return obj;
+      });
+    },
+
     // Computed: which columns to display
     get displayColumns() {
-      return this.isQueryMode ? this.queryColumns : this.columns;
+      const raw = this.isQueryMode ? this.queryColumns : this.columns;
+      return this._normalizeColumns(raw);
     },
 
     // Computed: which rows to display (sorted)
     get displayRows() {
-      const rows = this.isQueryMode ? this.queryRows : this.rows;
+      const rawRows = this.isQueryMode ? this.queryRows : this.rows;
+      const cols = this.displayColumns;
+      const rows = this._normalizeRows(rawRows, cols);
       if (!this.sortColumn) return rows;
 
-      const col = this.displayColumns.find(c => c.id === this.sortColumn);
+      const col = cols.find(c => c.id === this.sortColumn);
       if (!col) return rows;
 
       return [...rows].sort((a, b) => {
