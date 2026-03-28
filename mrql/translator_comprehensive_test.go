@@ -2086,3 +2086,52 @@ func TestComprehensive_FractionalLimitOffset(t *testing.T) {
 		})
 	}
 }
+
+// Mixed-type OR: each branch scoped to its own entity type should validate.
+func TestComprehensive_MixedTypeOrValidation(t *testing.T) {
+	q, err := Parse(`(type = "note" AND noteType = 1) OR (type = "resource" AND contentType ~ "image/*")`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	err = Validate(q)
+	if err != nil {
+		t.Fatalf("expected valid query, got: %v", err)
+	}
+}
+
+// parent IN / children IN should be rejected at validation.
+func TestComprehensive_ParentChildrenInValidation(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"parent IN", `type = "group" AND parent IN ("Vacation", "Work")`},
+		{"children IN", `type = "group" AND children IN ("Sub-Work")`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := Parse(tt.query)
+			if err != nil {
+				return
+			}
+			err = Validate(q)
+			if err == nil {
+				t.Fatalf("expected validation error for %s, got nil", tt.query)
+			}
+		})
+	}
+}
+
+// Completer should detect type = "resource" (quoted) and narrow fields.
+func TestComprehensive_CompleterQuotedType(t *testing.T) {
+	suggestions := Complete(`type = "resource" AND `, 22)
+	hasContentType := false
+	for _, s := range suggestions {
+		if s.Value == "contentType" {
+			hasContentType = true
+		}
+	}
+	if !hasContentType {
+		t.Fatalf("after type = \"resource\" AND, should suggest contentType; got %v", suggestions)
+	}
+}

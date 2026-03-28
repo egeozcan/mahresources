@@ -120,7 +120,7 @@ func detectEntityType(tokens []Token) EntityType {
 		t2 := tokens[i+2]
 		if (t0.Type == TokenKwType || (t0.Type == TokenIdentifier && strings.ToLower(t0.Value) == "type")) &&
 			t1.Type == TokenEq &&
-			t2.Type == TokenIdentifier {
+			(t2.Type == TokenIdentifier || t2.Type == TokenString) {
 			switch strings.ToLower(t2.Value) {
 			case "resource":
 				return EntityResource

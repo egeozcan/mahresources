@@ -125,10 +125,23 @@ func isTypeField(f *FieldExpr) bool {
 func validateNode(node Node, entityType EntityType) error {
 	switch n := node.(type) {
 	case *BinaryExpr:
-		if err := validateNode(n.Left, entityType); err != nil {
+		// For OR branches under an unspecified entity type, each branch may
+		// declare its own type. Validate each against its own extracted type
+		// so queries like (type=note AND noteType=1) OR (type=resource AND contentType~"image/*") work.
+		leftType := entityType
+		rightType := entityType
+		if entityType == EntityUnspecified && n.Operator.Type == TokenOr {
+			if lt := extractEntityTypeFromNode(n.Left); lt != EntityUnspecified {
+				leftType = lt
+			}
+			if rt := extractEntityTypeFromNode(n.Right); rt != EntityUnspecified {
+				rightType = rt
+			}
+		}
+		if err := validateNode(n.Left, leftType); err != nil {
 			return err
 		}
-		return validateNode(n.Right, entityType)
+		return validateNode(n.Right, rightType)
 
 	case *NotExpr:
 		return validateNode(n.Expr, entityType)
@@ -191,6 +204,17 @@ func validateNode(node Node, entityType EntityType) error {
 					Message: fmt.Sprintf("%s.%s does not support IN operator; use = or != instead", prefix, n.Field.Parts[1].Value),
 					Pos:     n.Field.Pos(),
 					Length:  len(n.Field.Name()),
+				}
+			}
+		}
+		// Reject bare parent/children IN — translator only supports tags/groups IN
+		if len(n.Field.Parts) == 1 {
+			fieldName := n.Field.Parts[0].Value
+			if fieldName == "parent" || fieldName == "children" {
+				return &ValidationError{
+					Message: fmt.Sprintf("%s does not support IN operator; use %s = \"...\" or %s IS EMPTY instead", fieldName, fieldName, fieldName),
+					Pos:     n.Field.Pos(),
+					Length:  len(fieldName),
 				}
 			}
 		}
