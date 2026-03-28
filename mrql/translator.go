@@ -93,6 +93,11 @@ type translateContext struct {
 	tableName  string
 }
 
+// isPostgres returns true if the underlying database is PostgreSQL.
+func (tc *translateContext) isPostgres() bool {
+	return tc.db.Config.Dialector.Name() == "postgres"
+}
+
 // entityTableName returns the database table name for an entity type.
 func entityTableName(et EntityType) string {
 	switch et {
@@ -490,32 +495,53 @@ func (tc *translateContext) translateTraversalComparison(db *gorm.DB, expr *Comp
 			)
 		}
 	} else {
-		// children — for negated operators, include leaf groups (no children)
-		nullClause := ""
+		// children traversal
+		// For negated operators, use NOT EXISTS semantics: "has no child matching X"
+		// rather than "has some child not matching X" (which would incorrectly include
+		// mixed-child groups). Also include leaf groups (no children at all).
 		if isNegated {
-			nullClause = " OR groups.id NOT IN (SELECT owner_id FROM groups WHERE owner_id IS NOT NULL)"
-		}
-
-		if expr.Operator.Type == TokenLike || expr.Operator.Type == TokenNotLike {
-			likePattern := convertMRQLWildcards(fmt.Sprint(val))
-			likeOp := tc.likeOperator()
+			leafClause := " OR groups.id NOT IN (SELECT owner_id FROM groups WHERE owner_id IS NOT NULL)"
 			if expr.Operator.Type == TokenNotLike {
-				likeOp = "NOT " + likeOp
+				likePattern := convertMRQLWildcards(fmt.Sprint(val))
+				likeOp := tc.likeOperator()
+				// NOT LIKE → "no child matches pattern" → NOT IN (children matching pattern)
+				db = db.Where(
+					fmt.Sprintf("(groups.id NOT IN (SELECT c.owner_id FROM groups c WHERE c.%s %s ? ESCAPE '\\')%s)", col, likeOp, leafClause),
+					likePattern,
+				)
+			} else if subFd.Type == FieldString && expr.Operator.Type == TokenNeq {
+				// != → "no child equals X" → NOT IN (children equaling X)
+				db = db.Where(
+					fmt.Sprintf("(groups.id NOT IN (SELECT c.owner_id FROM groups c WHERE LOWER(c.%s) = LOWER(?))%s)", col, leafClause),
+					val,
+				)
+			} else {
+				// Numeric != → NOT IN (children matching value)
+				db = db.Where(
+					fmt.Sprintf("(groups.id NOT IN (SELECT c.owner_id FROM groups c WHERE c.%s = ?)%s)", col, leafClause),
+					val,
+				)
 			}
-			db = db.Where(
-				fmt.Sprintf("(groups.id IN (SELECT c.owner_id FROM groups c WHERE c.%s %s ? ESCAPE '\\')%s)", col, likeOp, nullClause),
-				likePattern,
-			)
-		} else if subFd.Type == FieldString && (expr.Operator.Type == TokenEq || expr.Operator.Type == TokenNeq) {
-			db = db.Where(
-				fmt.Sprintf("(groups.id IN (SELECT c.owner_id FROM groups c WHERE LOWER(c.%s) %s LOWER(?))%s)", col, op, nullClause),
-				val,
-			)
 		} else {
-			db = db.Where(
-				fmt.Sprintf("(groups.id IN (SELECT c.owner_id FROM groups c WHERE c.%s %s ?)%s)", col, op, nullClause),
-				val,
-			)
+			// Positive operators: "has some child matching X"
+			if expr.Operator.Type == TokenLike {
+				likePattern := convertMRQLWildcards(fmt.Sprint(val))
+				likeOp := tc.likeOperator()
+				db = db.Where(
+					fmt.Sprintf("groups.id IN (SELECT c.owner_id FROM groups c WHERE c.%s %s ? ESCAPE '\\')", col, likeOp),
+					likePattern,
+				)
+			} else if subFd.Type == FieldString && expr.Operator.Type == TokenEq {
+				db = db.Where(
+					fmt.Sprintf("groups.id IN (SELECT c.owner_id FROM groups c WHERE LOWER(c.%s) = LOWER(?))", col),
+					val,
+				)
+			} else {
+				db = db.Where(
+					fmt.Sprintf("groups.id IN (SELECT c.owner_id FROM groups c WHERE c.%s %s ?)", col, op),
+					val,
+				)
+			}
 		}
 	}
 

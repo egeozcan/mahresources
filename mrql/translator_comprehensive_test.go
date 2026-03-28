@@ -89,7 +89,7 @@ func TestComprehensive_ComparisonOperators(t *testing.T) {
 
 		// ---- Group name comparisons ----
 		{"group name eq", `type = "group" AND name = "Vacation"`, EntityGroup, 1, []string{"Vacation"}},
-		{"group name neq", `type = "group" AND name != "Vacation"`, EntityGroup, 3, []string{"Work", "Archive", "Sub-Work"}},
+		{"group name neq", `type = "group" AND name != "Vacation"`, EntityGroup, 4, []string{"Work", "Archive", "Sub-Work", "Photos"}},
 
 		// ---- Resource id comparisons ----
 		{"resource id eq", `type = "resource" AND id = 1`, EntityResource, 1, []string{"sunset.jpg"}},
@@ -100,7 +100,7 @@ func TestComprehensive_ComparisonOperators(t *testing.T) {
 		{"resource id neq", `type = "resource" AND id != 1`, EntityResource, 3, nil},
 
 		// ---- Group id comparisons ----
-		{"group id gt", `type = "group" AND id > 2`, EntityGroup, 2, []string{"Archive", "Sub-Work"}},
+		{"group id gt", `type = "group" AND id > 2`, EntityGroup, 3, []string{"Archive", "Sub-Work", "Photos"}},
 	}
 
 	for _, tt := range tests {
@@ -178,7 +178,7 @@ func TestComprehensive_LikeOperators(t *testing.T) {
 		// ---- Group name LIKE ----
 		{"group name like", `type = "group" AND name ~ "Vac*"`, EntityGroup, 1, []string{"Vacation"}},
 		{"group name like contains", `type = "group" AND name ~ "*Work*"`, EntityGroup, 2, []string{"Work", "Sub-Work"}},
-		{"group name not like", `type = "group" AND name !~ "*Work*"`, EntityGroup, 2, []string{"Vacation", "Archive"}},
+		{"group name not like", `type = "group" AND name !~ "*Work*"`, EntityGroup, 3, []string{"Vacation", "Archive", "Photos"}},
 
 		// ---- Resource originalName LIKE ----
 		{"resource originalName like", `type = "resource" AND originalName ~ "sunset*"`, EntityResource, 1, []string{"sunset.jpg"}},
@@ -266,9 +266,9 @@ func TestComprehensive_TagRelations(t *testing.T) {
 
 		// ---- Group tags ----
 		{"group tags eq photo", `type = "group" AND tags = "photo"`, EntityGroup, 1, []string{"Vacation"}},
-		{"group tags neq photo", `type = "group" AND tags != "photo"`, EntityGroup, 3, []string{"Work", "Archive", "Sub-Work"}},
+		{"group tags neq photo", `type = "group" AND tags != "photo"`, EntityGroup, 4, []string{"Work", "Archive", "Sub-Work", "Photos"}},
 		{"group tags like pho*", `type = "group" AND tags ~ "pho*"`, EntityGroup, 1, []string{"Vacation"}},
-		{"group tags is empty", `type = "group" AND tags IS EMPTY`, EntityGroup, 3, []string{"Work", "Archive", "Sub-Work"}},
+		{"group tags is empty", `type = "group" AND tags IS EMPTY`, EntityGroup, 4, []string{"Work", "Archive", "Sub-Work", "Photos"}},
 		{"group tags is not empty", `type = "group" AND tags IS NOT EMPTY`, EntityGroup, 1, []string{"Vacation"}},
 	}
 
@@ -567,7 +567,7 @@ func TestComprehensive_ParentChildrenTraversal(t *testing.T) {
 		wantNames []string
 	}{
 		// parent.name traversal
-		{"parent.name eq Vacation", `type = "group" AND parent.name = "Vacation"`, 1, []string{"Work"}},
+		{"parent.name eq Vacation", `type = "group" AND parent.name = "Vacation"`, 2, []string{"Work", "Photos"}},
 		{"parent.name eq Work", `type = "group" AND parent.name = "Work"`, 1, []string{"Sub-Work"}},
 		// parent.name != includes groups with no parent (owner_id IS NULL)
 		{"parent.name neq Vacation", `type = "group" AND parent.name != "Vacation"`, 3, []string{"Sub-Work", "Vacation", "Archive"}},
@@ -577,7 +577,7 @@ func TestComprehensive_ParentChildrenTraversal(t *testing.T) {
 		{"children.name eq Sub-Work", `type = "group" AND children.name = "Sub-Work"`, 1, []string{"Work"}},
 
 		// parent.tags traversal
-		{"parent.tags eq photo", `type = "group" AND parent.tags = "photo"`, 1, []string{"Work"}},
+		{"parent.tags eq photo", `type = "group" AND parent.tags = "photo"`, 2, []string{"Work", "Photos"}},
 		// parent.tags != includes groups with no parent (Vacation, Archive)
 		{"parent.tags neq photo", `type = "group" AND parent.tags != "photo"`, 3, []string{"Sub-Work", "Vacation", "Archive"}},
 
@@ -585,10 +585,10 @@ func TestComprehensive_ParentChildrenTraversal(t *testing.T) {
 
 		// parent IS EMPTY / IS NOT EMPTY
 		{"parent is empty", `type = "group" AND parent IS EMPTY`, 2, []string{"Vacation", "Archive"}},
-		{"parent is not empty", `type = "group" AND parent IS NOT EMPTY`, 2, []string{"Work", "Sub-Work"}},
+		{"parent is not empty", `type = "group" AND parent IS NOT EMPTY`, 3, []string{"Work", "Sub-Work", "Photos"}},
 
 		// children IS EMPTY / IS NOT EMPTY
-		{"children is empty", `type = "group" AND children IS EMPTY`, 2, []string{"Archive", "Sub-Work"}},
+		{"children is empty", `type = "group" AND children IS EMPTY`, 3, []string{"Archive", "Sub-Work", "Photos"}},
 		{"children is not empty", `type = "group" AND children IS NOT EMPTY`, 2, []string{"Vacation", "Work"}},
 	}
 
@@ -629,7 +629,7 @@ func TestComprehensive_ChildrenTagsTraversal(t *testing.T) {
 		// children.tags: find groups whose children have a specific tag
 		// Work (child of Vacation) has "video" tag => Vacation matches
 		{"children.tags eq video", `type = "group" AND children.tags = "video"`, 1, []string{"Vacation"}},
-		{"children.tags neq video", `type = "group" AND children.tags != "video"`, 3, []string{"Work", "Archive", "Sub-Work"}},
+		{"children.tags neq video", `type = "group" AND children.tags != "video"`, 4, []string{"Work", "Archive", "Sub-Work", "Photos"}},
 	}
 
 	for _, tt := range tests {
@@ -741,7 +741,7 @@ func TestComprehensive_InNotIn(t *testing.T) {
 
 		// group name IN
 		{"group name in", `type = "group" AND name IN ("Vacation", "Archive")`, EntityGroup, 2, []string{"Vacation", "Archive"}},
-		{"group name not in", `type = "group" AND name NOT IN ("Vacation", "Archive")`, EntityGroup, 2, []string{"Work", "Sub-Work"}},
+		{"group name not in", `type = "group" AND name NOT IN ("Vacation", "Archive")`, EntityGroup, 3, []string{"Work", "Sub-Work", "Photos"}},
 	}
 
 	for _, tt := range tests {
@@ -937,7 +937,7 @@ func TestComprehensive_LimitOffset(t *testing.T) {
 		{"offset beyond results", `type = "resource" ORDER BY name ASC LIMIT 10 OFFSET 100`, EntityResource, 0, nil},
 		{"limit 1 offset 2", `type = "resource" ORDER BY name ASC LIMIT 1 OFFSET 2`, EntityResource, 1, []string{"sunset.jpg"}},
 		{"limit and offset on notes", `type = "note" ORDER BY name ASC LIMIT 1 OFFSET 0`, EntityNote, 1, []string{"Meeting notes"}},
-		{"limit on groups", `type = "group" ORDER BY name ASC LIMIT 2`, EntityGroup, 2, []string{"Archive", "Sub-Work"}},
+		{"limit on groups", `type = "group" ORDER BY name ASC LIMIT 2`, EntityGroup, 2, []string{"Archive", "Photos"}},
 	}
 
 	for _, tt := range tests {
@@ -1024,7 +1024,7 @@ func TestComprehensive_CaseInsensitivity(t *testing.T) {
 		{"tags in case insensitive", `type = "resource" AND tags IN ("PHOTO", "VIDEO")`, EntityResource, 2, []string{"sunset.jpg", "photo_album.png"}},
 
 		// parent.name is case-insensitive
-		{"parent name case insensitive", `type = "group" AND parent.name = "vacation"`, EntityGroup, 1, []string{"Work"}},
+		{"parent name case insensitive", `type = "group" AND parent.name = "vacation"`, EntityGroup, 2, []string{"Work", "Photos"}},
 	}
 
 	for _, tt := range tests {
@@ -1166,7 +1166,7 @@ func TestComprehensive_EmptyQueries(t *testing.T) {
 	}{
 		{"all resources", `ORDER BY name ASC`, EntityResource, 4},
 		{"all notes", `ORDER BY name ASC`, EntityNote, 2},
-		{"all groups", `ORDER BY name ASC`, EntityGroup, 4},
+		{"all groups", `ORDER BY name ASC`, EntityGroup, 5},
 	}
 
 	for _, tt := range tests {
@@ -1320,15 +1320,15 @@ func TestComprehensive_TraversalLike(t *testing.T) {
 		wantCount int
 		wantNames []string
 	}{
-		// parent.name ~ "Vac*" should match Work (parent is Vacation)
-		{"parent.name like", `type = "group" AND parent.name ~ "Vac*"`, 1, []string{"Work"}},
+		// parent.name ~ "Vac*" should match Work and Photos (both have parent Vacation)
+		{"parent.name like", `type = "group" AND parent.name ~ "Vac*"`, 2, []string{"Work", "Photos"}},
 		// children.name ~ "*Work*" matches Vacation (child Work) and Work (child Sub-Work)
 		{"children.name like Work", `type = "group" AND children.name ~ "*Work*"`, 2, []string{"Vacation", "Work"}},
 		// parent.name !~ "Vac*" should match Sub-Work (parent is Work) + parentless groups (Vacation, Archive)
 		{"parent.name not like", `type = "group" AND parent.name !~ "Vac*"`, 3, nil},
 		// children.name !~ "*Work*": both Vacation (child=Work) and Work (child=Sub-Work) match *Work*,
-		// so only leaf groups (Archive, Sub-Work) pass the NOT LIKE
-		{"children.name not like", `type = "group" AND children.name !~ "*Work*"`, 2, nil},
+		// so leaf groups without any matching child (Archive, Sub-Work, Photos) pass the NOT LIKE
+		{"children.name not like", `type = "group" AND children.name !~ "*Work*"`, 3, nil},
 	}
 
 	for _, tt := range tests {
@@ -1365,6 +1365,65 @@ func TestComprehensive_TraversalLike(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestComprehensive_ChildrenNegationSemantics verifies that children.name != "X" means
+// "has no child named X", NOT "has some child not named X". With mixed children
+// (Vacation has children Work AND Photos), children.name != "Work" should EXCLUDE
+// Vacation because it DOES have a child named Work.
+func TestComprehensive_ChildrenNegationSemantics(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Vacation has children: Work, Photos. Work has child: Sub-Work. Archive has none.
+	// children.name != "Work" should mean "has no child named Work":
+	//   - Vacation: has child "Work" → EXCLUDED
+	//   - Work: has child "Sub-Work" (not "Work") → INCLUDED
+	//   - Archive: no children → INCLUDED (leaf)
+	//   - Sub-Work: no children → INCLUDED (leaf)
+	//   - Photos: no children → INCLUDED (leaf)
+	result := parseAndTranslate(t, `type = "group" AND children.name != "Work"`, EntityGroup, db)
+
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+
+	names := namesOfGroups(groups)
+	if len(groups) != 4 {
+		t.Fatalf("expected 4 groups (Work, Archive, Sub-Work, Photos), got %d: %v", len(groups), names)
+	}
+	for _, name := range names {
+		if name == "Vacation" {
+			t.Fatalf("Vacation should be excluded (it has a child named Work), got: %v", names)
+		}
+	}
+}
+
+// TestComprehensive_ChildrenNotLikeSemantics verifies children.name !~ "W*" uses
+// NOT EXISTS semantics (no child matches pattern), not "has some child not matching".
+func TestComprehensive_ChildrenNotLikeSemantics(t *testing.T) {
+	db := setupTestDB(t)
+
+	// children.name !~ "W*" should mean "has no child with name matching W*":
+	//   - Vacation: has child "Work" (matches W*) → EXCLUDED
+	//   - Work: has child "Sub-Work" (no match) → INCLUDED
+	//   - Archive, Sub-Work, Photos: no children → INCLUDED
+	result := parseAndTranslate(t, `type = "group" AND children.name !~ "W*"`, EntityGroup, db)
+
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+
+	names := namesOfGroups(groups)
+	if len(groups) != 4 {
+		t.Fatalf("expected 4 groups (Work, Archive, Sub-Work, Photos), got %d: %v", len(groups), names)
+	}
+	for _, name := range names {
+		if name == "Vacation" {
+			t.Fatalf("Vacation should be excluded, got: %v", names)
+		}
 	}
 }
 

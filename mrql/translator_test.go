@@ -116,6 +116,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		{ID: 2, Name: "Work", OwnerID: &parentGroupID, Meta: `{}`},
 		{ID: 3, Name: "Archive", Meta: `{}`},
 		{ID: 4, Name: "Sub-Work", OwnerID: &workGroupID, Meta: `{}`},
+		{ID: 5, Name: "Photos", OwnerID: &parentGroupID, Meta: `{}`}, // second child of Vacation — exposes mixed-child bugs
 	}
 	for _, g := range groups {
 		db.Create(&g)
@@ -833,12 +834,12 @@ func TestTranslateParentNameTraversal(t *testing.T) {
 		t.Fatalf("query error: %v", err)
 	}
 
-	if len(groups) != 1 || groups[0].Name != "Work" {
+	if len(groups) != 2 {
 		names := make([]string, len(groups))
 		for i, g := range groups {
 			names[i] = g.Name
 		}
-		t.Fatalf("expected 1 group 'Work' with parent 'Vacation', got %d groups: %v", len(groups), names)
+		t.Fatalf("expected 2 groups (Work, Photos) with parent 'Vacation', got %d groups: %v", len(groups), names)
 	}
 }
 
