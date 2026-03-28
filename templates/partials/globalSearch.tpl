@@ -138,7 +138,7 @@
                     </ul>
 
                     <div
-                        x-show="query.length > 0 && results.length === 0 && !loading"
+                        x-show="query.trim().length >= 2 && results.length === 0 && !loading"
                         class="px-4 py-12 text-center"
                     >
                         <svg class="w-12 h-12 text-stone-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">

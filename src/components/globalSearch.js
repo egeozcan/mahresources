@@ -49,6 +49,7 @@ export function globalSearch() {
             group: '\u{1F465}',
             tag: '\u{1F3F7}',
             category: '\u{1F4C1}',
+            resourceCategory: '\u{1F4C2}',
             query: '\u{1F50D}',
             relationType: '\u{1F517}',
             noteType: '\u{1F4CB}'
@@ -60,6 +61,7 @@ export function globalSearch() {
             group: 'Group',
             tag: 'Tag',
             category: 'Category',
+            resourceCategory: 'Resource Category',
             query: 'Query',
             relationType: 'Relation Type',
             noteType: 'Note Type'
