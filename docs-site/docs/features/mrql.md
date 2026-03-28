@@ -277,11 +277,11 @@ Omitting `type` causes MRQL to fan out the query across resources, notes, and gr
 
 ```
 name ~ "budget*"                              # search all entity types
-tags = "urgent" ORDER BY updated DESC         # across all types
+tags = "urgent" LIMIT 30                      # across all types
 TEXT ~ "quarterly review" LIMIT 30            # full-text across all types
 ```
 
-Results are returned grouped by entity type.
+Results are returned grouped by entity type (resources, then notes, then groups). `LIMIT` and `OFFSET` apply to the total merged result set. `ORDER BY` applies within each entity type, not globally across the merged set — for globally ordered results, query a single entity type.
 
 ## Saved Queries
 
@@ -368,7 +368,7 @@ type = resource AND meta.rating > 4
 ### Everything tagged "urgent" across all entity types
 
 ```
-tags = "urgent" ORDER BY updated DESC LIMIT 50
+tags = "urgent" LIMIT 50
 ```
 
 ### Resources with a specific original filename pattern

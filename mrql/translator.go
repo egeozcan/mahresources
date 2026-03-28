@@ -1027,17 +1027,17 @@ func (tc *translateContext) resolveOrderByColumn(f *FieldExpr) string {
 	fieldName := f.Name()
 
 	// Handle meta.key → JSON extraction per dialect.
-	// On Postgres, meta->>'key' returns text. For ORDER BY, we attempt a
-	// numeric cast so numeric values sort correctly (9 before 10). If the
-	// value isn't numeric, Postgres falls back gracefully via NULLS LAST.
+	// ORDER BY cannot know the runtime type of meta values, so we use
+	// text ordering on Postgres (meta->>'key') and native JSON type on
+	// SQLite (json_extract preserves numbers). This matches the existing
+	// codebase's meta sort behavior in database_scopes/db_utils.go.
 	if strings.HasPrefix(fieldName, "meta.") {
 		key := strings.TrimPrefix(fieldName, "meta.")
 		if !isValidMetaKey(key) {
 			return tc.tableName + ".meta"
 		}
 		if tc.isPostgres() {
-			// Use numeric cast for proper ordering; non-numeric values become NULL
-			return fmt.Sprintf("(%s.meta->>'%s')::numeric", tc.tableName, key)
+			return fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)
 		}
 		return fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
 	}

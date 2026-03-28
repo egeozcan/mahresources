@@ -61,29 +61,46 @@ func ExtractEntityType(q *Query) EntityType {
 	return extractEntityTypeFromNode(q.Where)
 }
 
-// extractEntityTypeFromNode walks the AST looking for `type = "<value>"` comparisons.
-// Returns EntityUnspecified if no such comparison is found.
+// extractEntityTypeFromNode walks the AST collecting all `type = "<value>"`
+// comparisons. Returns the entity type only if all type comparisons agree on
+// the same type. If there are conflicting types (e.g., `type = resource OR
+// type = note`), returns EntityUnspecified so the query runs as cross-entity.
 func extractEntityTypeFromNode(node Node) EntityType {
+	types := collectEntityTypes(node)
+	if len(types) == 0 {
+		return EntityUnspecified
+	}
+	// All must agree
+	first := types[0]
+	for _, et := range types[1:] {
+		if et != first {
+			return EntityUnspecified
+		}
+	}
+	return first
+}
+
+// collectEntityTypes recursively finds all `type = "..."` comparisons in the AST.
+func collectEntityTypes(node Node) []EntityType {
 	switch n := node.(type) {
 	case *BinaryExpr:
-		if et := extractEntityTypeFromNode(n.Left); et != EntityUnspecified {
-			return et
-		}
-		return extractEntityTypeFromNode(n.Right)
+		left := collectEntityTypes(n.Left)
+		right := collectEntityTypes(n.Right)
+		return append(left, right...)
 
 	case *NotExpr:
-		return extractEntityTypeFromNode(n.Expr)
+		return collectEntityTypes(n.Expr)
 
 	case *ComparisonExpr:
 		if isTypeField(n.Field) && n.Operator.Type == TokenEq {
 			if sl, ok := n.Value.(*StringLiteral); ok {
 				if et, valid := ValidEntityTypes[strings.ToLower(sl.Value)]; valid {
-					return et
+					return []EntityType{et}
 				}
 			}
 		}
 	}
-	return EntityUnspecified
+	return nil
 }
 
 // isTypeField returns true if the FieldExpr refers to the "type" pseudo-field.
@@ -163,6 +180,18 @@ func validateFieldExpr(f *FieldExpr, entityType EntityType) error {
 					Message: fmt.Sprintf("field %q: parent/children traversal is only valid for group entities (got %s)", f.Name(), entityType),
 					Pos:     f.Pos(),
 					Length:  len(f.Name()),
+				}
+			}
+			// Validate the subfield against group fields
+			subField := f.Parts[1].Value
+			if subField == "meta" {
+				return nil // meta.* always valid
+			}
+			if _, ok := LookupField(EntityGroup, subField); !ok && !IsCommonField(subField) {
+				return &ValidationError{
+					Message: fmt.Sprintf("unknown field %q for %s traversal; valid fields: name, description, tags, category, id, created, updated, meta.*", subField, prefix),
+					Pos:     f.Parts[1].Pos,
+					Length:  len(subField),
 				}
 			}
 			return nil

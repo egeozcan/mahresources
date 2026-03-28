@@ -1522,3 +1522,75 @@ func TestComprehensive_ParentDirectNotLike(t *testing.T) {
 		t.Fatalf("expected 3 (Sub-Work, Vacation, Archive), got %d: %v", len(groups), names)
 	}
 }
+
+// TestComprehensive_TypeOrTypeQuery verifies that `type = resource OR type = note`
+// is treated as a cross-entity query, not collapsed to single-entity resource.
+func TestComprehensive_TypeOrTypeQuery(t *testing.T) {
+	_ = setupTestDB(t) // ensure test infra works
+
+	// type = resource OR type = note should return both resources AND notes
+	q, err := Parse(`(type = "resource" OR type = "note") AND name ~ "*"`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	et := ExtractEntityType(q)
+	// Should be Unspecified (cross-entity), NOT EntityResource
+	if et != EntityUnspecified {
+		t.Fatalf("expected EntityUnspecified for OR-ed types, got %s", et)
+	}
+}
+
+// TestComprehensive_ValidatorRejectsInvalidTraversalSubfield verifies that
+// the validator catches unknown subfields like parent.nonexistent at validation
+// time, not at translation time.
+func TestComprehensive_ValidatorRejectsInvalidTraversalSubfield(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"parent.nonexistent", `type = "group" AND parent.nonexistent = "x"`},
+		{"children.foobar", `type = "group" AND children.foobar = "x"`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := Parse(tt.query)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			err = Validate(q)
+			if err == nil {
+				t.Fatalf("expected validation error for %s, got nil", tt.query)
+			}
+		})
+	}
+}
+
+// TestComprehensive_ValidatorAcceptsValidTraversalSubfields verifies that
+// known subfields pass validation.
+func TestComprehensive_ValidatorAcceptsValidTraversalSubfields(t *testing.T) {
+	tests := []string{
+		`type = "group" AND parent.name = "x"`,
+		`type = "group" AND parent.tags = "x"`,
+		`type = "group" AND parent.category IS NULL`,
+		`type = "group" AND children.name = "x"`,
+		`type = "group" AND children.tags = "x"`,
+		`type = "group" AND children.description ~ "x*"`,
+	}
+
+	for _, query := range tests {
+		t.Run(query, func(t *testing.T) {
+			q, err := Parse(query)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if err := Validate(q); err != nil {
+				t.Fatalf("unexpected validation error: %v", err)
+			}
+		})
+	}
+}
