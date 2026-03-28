@@ -185,8 +185,19 @@ func (tc *translateContext) translateNotExpr(db *gorm.DB, expr *NotExpr) (*gorm.
 func (tc *translateContext) translateComparisonExpr(db *gorm.DB, expr *ComparisonExpr) (*gorm.DB, error) {
 	fieldName := expr.Field.Name()
 
-	// Skip type = "..." comparisons — they're metadata, not filters
+	// Handle type = "..." comparisons. In single-entity mode these are
+	// redundant (entity type already selected). In cross-entity fan-out,
+	// they must be enforced: if the query says type = "resource" but we're
+	// translating for the "group" table, inject WHERE FALSE to exclude rows.
 	if fieldName == "type" {
+		if sl, ok := expr.Value.(*StringLiteral); ok {
+			requestedType, valid := ValidEntityTypes[strings.ToLower(sl.Value)]
+			if valid && requestedType != tc.entityType {
+				// This entity type doesn't match the filter — exclude all rows
+				db = db.Where("1 = 0")
+			}
+			// If types match or value is invalid (caught by validator), pass through
+		}
 		return db, nil
 	}
 
@@ -662,6 +673,13 @@ func (tc *translateContext) translateMetaComparison(db *gorm.DB, fd FieldDef, op
 		return db, nil
 	}
 
+	// For string equality/inequality on meta fields, use case-insensitive comparison
+	// to match the language's general case-insensitive rule.
+	if !isNumericVal && (op.Type == TokenEq || op.Type == TokenNeq) {
+		db = db.Where("LOWER("+jsonExpr+") "+sqlOp+" LOWER(?)", val)
+		return db, nil
+	}
+
 	db = db.Where(jsonExpr+" "+sqlOp+" ?", val)
 	return db, nil
 }
@@ -792,8 +810,19 @@ func (tc *translateContext) translateIsExpr(db *gorm.DB, expr *IsExpr) (*gorm.DB
 	}
 
 	if expr.IsNull {
-		// IS NULL / IS NOT NULL for scalar fields
-		column := tc.qualifiedColumn(fd.Column)
+		// IS NULL / IS NOT NULL
+		var column string
+		if fd.Type == FieldMeta {
+			// Meta fields need json_extract, not a direct column reference
+			key := strings.TrimPrefix(fd.Name, "meta.")
+			if tc.isPostgres() {
+				column = fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)
+			} else {
+				column = fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
+			}
+		} else {
+			column = tc.qualifiedColumn(fd.Column)
+		}
 		if expr.Negated {
 			db = db.Where(column + " IS NOT NULL")
 		} else {

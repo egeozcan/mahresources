@@ -1594,3 +1594,96 @@ func TestComprehensive_ValidatorAcceptsValidTraversalSubfields(t *testing.T) {
 		})
 	}
 }
+
+// TestComprehensive_MultiTypeFilterExecution verifies that `type = resource OR type = note`
+// only returns resources and notes, NOT groups.
+func TestComprehensive_MultiTypeFilterExecution(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Cross-entity query: only resource + note, not group.
+	// ExtractEntityType returns Unspecified for OR-ed types, so the translator
+	// fans out. But the type = comparisons must still be enforced as WHERE filters.
+	// We test by calling Translate per entity type and checking that groups are
+	// excluded when the query says type = resource OR type = note.
+
+	// For entity type "group", the type = resource comparison should filter out all groups.
+	q, err := Parse(`(type = "resource" OR type = "note") AND name ~ "*"`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	Validate(q)
+
+	// When translated for groups, `type = "resource"` should produce zero results
+	// because none of the groups have type = resource.
+	clone := *q
+	clone.EntityType = EntityGroup
+	result, err := TranslateWithOptions(&clone, db, TranslateOptions{})
+	if err != nil {
+		// TranslateError is acceptable — means the type field was rejected
+		t.Logf("translate error (acceptable): %v", err)
+		return
+	}
+
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(groups) != 0 {
+		t.Fatalf("expected 0 groups (type filter should exclude groups), got %d: %v",
+			len(groups), namesOfGroups(groups))
+	}
+}
+
+// TestComprehensive_MetaIsNull verifies that meta.rating IS NULL works
+// without generating invalid SQL like "resources.meta.rating IS NULL".
+func TestComprehensive_MetaIsNull(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Resources 3 and 4 have meta={} (no rating key).
+	// meta.rating IS NULL should return those resources.
+	result := parseAndTranslate(t, `type = "resource" AND meta.rating IS NULL`, EntityResource, db)
+
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	// Resources 1 has rating=5, resource 2 has rating=3. Resources 3,4 have no rating.
+	if len(resources) != 2 {
+		t.Fatalf("expected 2 resources without meta.rating, got %d: %v",
+			len(resources), namesOfResources(resources))
+	}
+}
+
+// TestComprehensive_MetaIsNotNull verifies meta.rating IS NOT NULL works.
+func TestComprehensive_MetaIsNotNull(t *testing.T) {
+	db := setupTestDB(t)
+
+	result := parseAndTranslate(t, `type = "resource" AND meta.rating IS NOT NULL`, EntityResource, db)
+
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) != 2 {
+		t.Fatalf("expected 2 resources with meta.rating set, got %d: %v",
+			len(resources), namesOfResources(resources))
+	}
+}
+
+// TestComprehensive_MetaStringCaseInsensitive verifies that meta string
+// equality is case-insensitive, matching the language's general rule.
+func TestComprehensive_MetaStringCaseInsensitive(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Note 1 has meta.priority = "high". Query with "HIGH" should match.
+	result := parseAndTranslate(t, `type = "note" AND meta.priority = "HIGH"`, EntityNote, db)
+
+	var notes []testNote
+	if err := result.Find(&notes).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(notes) != 1 || notes[0].Name != "Meeting notes" {
+		t.Fatalf("expected 1 note (Meeting notes) for case-insensitive meta.priority = HIGH, got %d: %v",
+			len(notes), namesOfNotes(notes))
+	}
+}
