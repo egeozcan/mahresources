@@ -164,39 +164,19 @@ test.describe('Bug 3: Admin overview should use correct singular/plural nouns', 
     baseURL,
   }) => {
     await page.goto(`${baseURL}/admin/overview`);
-    await page.waitForLoadState('networkidle');
 
-    // Wait for the detailed statistics section and Alpine.js hydration
-    const detailedSection = page.locator('section[aria-label="Detailed statistics"]');
-    await expect(
-      detailedSection.locator('h3:has-text("Top Categories")')
-    ).toBeVisible({ timeout: 30000 });
-
-    // Wait for Alpine.js to fully render the category count spans
-    // Poll until we see our category's count text (either correct or buggy form)
-    await page.waitForFunction(
-      () => {
-        const section = document.querySelector('section[aria-label="Detailed statistics"]');
-        if (!section) return false;
-        const spans = section.querySelectorAll('span');
-        return Array.from(spans).some(s => /\d+ groups?$/.test(s.textContent?.trim() || ''));
-      },
-      { timeout: 15000 }
+    // Wait for Alpine.js to hydrate the "Top Categories" section and render counts
+    // Use a single robust locator that waits for our specific category's text
+    const correctText = page.locator(
+      `section[aria-label="Detailed statistics"] span:text("1 group")`
     );
+    await expect(correctText).toHaveCount(1, { timeout: 30000 });
 
-    // Now verify correct singular form
-    const correctText = detailedSection.locator('span:text("1 group")');
-    await expect(
-      correctText,
-      '"1 group" (singular) should appear for a category with one group'
-    ).toHaveCount(1);
-
-    // Verify the buggy plural form does NOT appear
-    const buggyText = detailedSection.locator('span:text("1 groups")');
-    await expect(
-      buggyText,
-      '"1 groups" should not appear - it should be "1 group"'
-    ).toHaveCount(0);
+    // Verify the buggy plural form "1 groups" does NOT appear
+    const buggyText = page.locator(
+      `section[aria-label="Detailed statistics"] span:text("1 groups")`
+    );
+    await expect(buggyText).toHaveCount(0);
   });
 
   test.afterAll(async ({ apiClient }) => {
