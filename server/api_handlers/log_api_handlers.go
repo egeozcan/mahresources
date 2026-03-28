@@ -34,12 +34,20 @@ func GetLogEntriesHandler(ctx interfaces.LogEntryReader) http.HandlerFunc {
 
 		logs, err := ctx.GetLogEntries(int(offset), constants.MaxResultsPerPage, &query)
 		if err != nil {
+			if http_utils.IsDateFilterError(err) {
+				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+				return
+			}
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		count, err := ctx.GetLogEntriesCount(&query)
 		if err != nil {
+			if http_utils.IsDateFilterError(err) {
+				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+				return
+			}
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}

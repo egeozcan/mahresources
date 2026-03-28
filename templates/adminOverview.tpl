@@ -238,6 +238,10 @@
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Queries</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.queries)"></p>
                     </a>
+                    <div class="rounded-md bg-stone-50 border border-stone-200 p-3">
+                        <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Series</p>
+                        <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.series)"></p>
+                    </div>
                     <a href="/relations" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">
                         <p class="text-xs font-mono text-stone-500 uppercase tracking-wider">Relations</p>
                         <p class="text-xl font-bold font-mono text-stone-900 mt-0.5" x-text="formatNumber(dataStats.entities.relations)"></p>
