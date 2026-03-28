@@ -569,10 +569,8 @@ func TestComprehensive_ParentChildrenTraversal(t *testing.T) {
 		// parent.name traversal
 		{"parent.name eq Vacation", `type = "group" AND parent.name = "Vacation"`, 1, []string{"Work"}},
 		{"parent.name eq Work", `type = "group" AND parent.name = "Work"`, 1, []string{"Sub-Work"}},
-		// CONCERN: parent.name != excludes groups with NULL owner_id due to SQL NULL semantics.
-		// Only Sub-Work (owner_id=2, parent=Work) passes since NULL NOT IN (...) is NULL/false.
-		// Ideally groups without parents should also be included in the "not Vacation" result.
-		{"parent.name neq Vacation", `type = "group" AND parent.name != "Vacation"`, 1, []string{"Sub-Work"}},
+		// parent.name != includes groups with no parent (owner_id IS NULL)
+		{"parent.name neq Vacation", `type = "group" AND parent.name != "Vacation"`, 3, []string{"Sub-Work", "Vacation", "Archive"}},
 
 		// children.name traversal
 		{"children.name eq Work", `type = "group" AND children.name = "Work"`, 1, []string{"Vacation"}},
@@ -580,12 +578,10 @@ func TestComprehensive_ParentChildrenTraversal(t *testing.T) {
 
 		// parent.tags traversal
 		{"parent.tags eq photo", `type = "group" AND parent.tags = "photo"`, 1, []string{"Work"}},
-		// CONCERN: same NULL semantics issue as parent.name !=
-		{"parent.tags neq photo", `type = "group" AND parent.tags != "photo"`, 1, []string{"Sub-Work"}},
+		// parent.tags != includes groups with no parent (Vacation, Archive)
+		{"parent.tags neq photo", `type = "group" AND parent.tags != "photo"`, 3, []string{"Sub-Work", "Vacation", "Archive"}},
 
-		// CONCERN: parent.name ~ and children.name ~ cause SQLite error due to ESCAPE '\\' being
-		// two characters instead of one. The translator uses '\\\\"' in Go which produces '\\' in SQL,
-		// but SQLite ESCAPE requires a single character. These tests are skipped below.
+		// parent/children LIKE traversal is tested in TestComprehensive_TraversalLike
 
 		// parent IS EMPTY / IS NOT EMPTY
 		{"parent is empty", `type = "group" AND parent IS EMPTY`, 2, []string{"Vacation", "Archive"}},
@@ -634,7 +630,6 @@ func TestComprehensive_ChildrenTagsTraversal(t *testing.T) {
 		// Work (child of Vacation) has "video" tag => Vacation matches
 		{"children.tags eq video", `type = "group" AND children.tags = "video"`, 1, []string{"Vacation"}},
 		{"children.tags neq video", `type = "group" AND children.tags != "video"`, 3, []string{"Work", "Archive", "Sub-Work"}},
-		// NOTE: children.tags ~ "vid*" skipped due to ESCAPE bug (see TestComprehensive_TraversalLikeBug)
 	}
 
 	for _, tt := range tests {
@@ -1313,25 +1308,27 @@ func TestComprehensive_TranslateErrors(t *testing.T) {
 // ============================================================
 
 // ============================================================
-// BUG: Traversal LIKE uses double-backslash ESCAPE (translator bug)
+// Traversal LIKE patterns
 // ============================================================
 
-// TestComprehensive_TraversalLikeBug documents a translator bug where parent.name ~,
-// children.name ~, and children.tags ~ produce ESCAPE '\\' (two characters) instead of
-// ESCAPE '\' (one character), causing SQLite to error with "ESCAPE expression must be a
-// single character". The fix would be to change '\\\\' to '\\' in translateTraversalComparison
-// in translator.go (lines ~471, ~494).
-func TestComprehensive_TraversalLikeBug(t *testing.T) {
+func TestComprehensive_TraversalLike(t *testing.T) {
 	db := setupTestDB(t)
 
 	tests := []struct {
-		name  string
-		query string
+		name      string
+		query     string
+		wantCount int
+		wantNames []string
 	}{
-		{"parent.name like", `type = "group" AND parent.name ~ "Vac*"`},
-		{"children.name like", `type = "group" AND children.name ~ "*Work*"`},
-		{"parent.name not like", `type = "group" AND parent.name !~ "Vac*"`},
-		{"children.name not like", `type = "group" AND children.name !~ "*Work*"`},
+		// parent.name ~ "Vac*" should match Work (parent is Vacation)
+		{"parent.name like", `type = "group" AND parent.name ~ "Vac*"`, 1, []string{"Work"}},
+		// children.name ~ "*Work*" matches Vacation (child Work) and Work (child Sub-Work)
+		{"children.name like Work", `type = "group" AND children.name ~ "*Work*"`, 2, []string{"Vacation", "Work"}},
+		// parent.name !~ "Vac*" should match Sub-Work (parent is Work) + parentless groups (Vacation, Archive)
+		{"parent.name not like", `type = "group" AND parent.name !~ "Vac*"`, 3, nil},
+		// children.name !~ "*Work*": both Vacation (child=Work) and Work (child=Sub-Work) match *Work*,
+		// so only leaf groups (Archive, Sub-Work) pass the NOT LIKE
+		{"children.name not like", `type = "group" AND children.name !~ "*Work*"`, 2, nil},
 	}
 
 	for _, tt := range tests {
@@ -1339,12 +1336,34 @@ func TestComprehensive_TraversalLikeBug(t *testing.T) {
 			result := parseAndTranslate(t, tt.query, EntityGroup, db)
 
 			var groups []testGroup
-			err := result.Find(&groups).Error
-			if err == nil {
-				t.Skip("Bug may have been fixed: ESCAPE traversal LIKE now works")
+			if err := result.Find(&groups).Error; err != nil {
+				t.Fatalf("query error: %v", err)
 			}
-			// Expect the error due to the double-backslash ESCAPE bug
-			t.Logf("KNOWN BUG: %v", err)
+			if len(groups) != tt.wantCount {
+				names := make([]string, len(groups))
+				for i, g := range groups {
+					names[i] = g.Name
+				}
+				t.Errorf("expected %d results, got %d: %v", tt.wantCount, len(groups), names)
+			}
+			if tt.wantNames != nil {
+				names := make([]string, len(groups))
+				for i, g := range groups {
+					names[i] = g.Name
+				}
+				for _, want := range tt.wantNames {
+					found := false
+					for _, got := range names {
+						if got == want {
+							found = true
+							break
+						}
+					}
+					if !found {
+						t.Errorf("expected %q in results, got %v", want, names)
+					}
+				}
+			}
 		})
 	}
 }

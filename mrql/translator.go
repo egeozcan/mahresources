@@ -459,8 +459,15 @@ func (tc *translateContext) translateTraversalComparison(db *gorm.DB, expr *Comp
 	// Scalar sub-field on parent/children
 	col := subFd.Column
 	op := tc.sqlOperator(expr.Operator)
+	isNegated := expr.Operator.Type == TokenNeq || expr.Operator.Type == TokenNotLike
 
 	if root == "parent" {
+		// For negated operators, include groups with no parent (owner_id IS NULL)
+		nullClause := ""
+		if isNegated {
+			nullClause = " OR groups.owner_id IS NULL"
+		}
+
 		if expr.Operator.Type == TokenLike || expr.Operator.Type == TokenNotLike {
 			likePattern := convertMRQLWildcards(fmt.Sprint(val))
 			likeOp := tc.likeOperator()
@@ -468,22 +475,27 @@ func (tc *translateContext) translateTraversalComparison(db *gorm.DB, expr *Comp
 				likeOp = "NOT " + likeOp
 			}
 			db = db.Where(
-				fmt.Sprintf("groups.owner_id IN (SELECT p.id FROM groups p WHERE p.%s %s ? ESCAPE '\\\\')", col, likeOp),
+				fmt.Sprintf("(groups.owner_id IN (SELECT p.id FROM groups p WHERE p.%s %s ? ESCAPE '\\')%s)", col, likeOp, nullClause),
 				likePattern,
 			)
 		} else if subFd.Type == FieldString && (expr.Operator.Type == TokenEq || expr.Operator.Type == TokenNeq) {
 			db = db.Where(
-				fmt.Sprintf("groups.owner_id IN (SELECT p.id FROM groups p WHERE LOWER(p.%s) %s LOWER(?))", col, op),
+				fmt.Sprintf("(groups.owner_id IN (SELECT p.id FROM groups p WHERE LOWER(p.%s) %s LOWER(?))%s)", col, op, nullClause),
 				val,
 			)
 		} else {
 			db = db.Where(
-				fmt.Sprintf("groups.owner_id IN (SELECT p.id FROM groups p WHERE p.%s %s ?)", col, op),
+				fmt.Sprintf("(groups.owner_id IN (SELECT p.id FROM groups p WHERE p.%s %s ?)%s)", col, op, nullClause),
 				val,
 			)
 		}
 	} else {
-		// children
+		// children — for negated operators, include leaf groups (no children)
+		nullClause := ""
+		if isNegated {
+			nullClause = " OR groups.id NOT IN (SELECT owner_id FROM groups WHERE owner_id IS NOT NULL)"
+		}
+
 		if expr.Operator.Type == TokenLike || expr.Operator.Type == TokenNotLike {
 			likePattern := convertMRQLWildcards(fmt.Sprint(val))
 			likeOp := tc.likeOperator()
@@ -491,17 +503,17 @@ func (tc *translateContext) translateTraversalComparison(db *gorm.DB, expr *Comp
 				likeOp = "NOT " + likeOp
 			}
 			db = db.Where(
-				fmt.Sprintf("groups.id IN (SELECT c.owner_id FROM groups c WHERE c.%s %s ? ESCAPE '\\\\')", col, likeOp),
+				fmt.Sprintf("(groups.id IN (SELECT c.owner_id FROM groups c WHERE c.%s %s ? ESCAPE '\\')%s)", col, likeOp, nullClause),
 				likePattern,
 			)
 		} else if subFd.Type == FieldString && (expr.Operator.Type == TokenEq || expr.Operator.Type == TokenNeq) {
 			db = db.Where(
-				fmt.Sprintf("groups.id IN (SELECT c.owner_id FROM groups c WHERE LOWER(c.%s) %s LOWER(?))", col, op),
+				fmt.Sprintf("(groups.id IN (SELECT c.owner_id FROM groups c WHERE LOWER(c.%s) %s LOWER(?))%s)", col, op, nullClause),
 				val,
 			)
 		} else {
 			db = db.Where(
-				fmt.Sprintf("groups.id IN (SELECT c.owner_id FROM groups c WHERE c.%s %s ?)", col, op),
+				fmt.Sprintf("(groups.id IN (SELECT c.owner_id FROM groups c WHERE c.%s %s ?)%s)", col, op, nullClause),
 				val,
 			)
 		}
@@ -539,7 +551,12 @@ func (tc *translateContext) translateTraversalTagComparison(db *gorm.DB, op Toke
 			"groups.owner_id %s (SELECT gt.group_id FROM group_tags gt JOIN tags t ON t.id = gt.tag_id WHERE %s)",
 			inOrNotIn, tagMatchClause,
 		)
-		db = db.Where(subquery, tagMatchVal)
+		if isNegated {
+			// For negated operators, also include groups with no parent
+			db = db.Where("("+subquery+" OR groups.owner_id IS NULL)", tagMatchVal)
+		} else {
+			db = db.Where(subquery, tagMatchVal)
+		}
 	} else {
 		// Find groups that have children with matching tags
 		subquery := fmt.Sprintf(
