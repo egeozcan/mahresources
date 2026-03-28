@@ -21,9 +21,7 @@ func (ctx *MahresourcesContext) EditRelation(query query_models.GroupRelationshi
 	if query.Name != "" {
 		relation.Name = query.Name
 	}
-	if query.Description != "" {
-		relation.Description = query.Description
-	}
+	relation.Description = query.Description
 
 	if err := ctx.db.Save(relation).Error; err != nil {
 		return nil, err
@@ -194,9 +192,7 @@ func (ctx *MahresourcesContext) EditRelationType(query *query_models.Relationshi
 		if query.Name != "" {
 			relationType.Name = query.Name
 		}
-		if query.Description != "" {
-			relationType.Description = query.Description
-		}
+		relationType.Description = query.Description
 		if query.FromCategory != 0 {
 			relationType.FromCategoryId = &query.FromCategory
 		}

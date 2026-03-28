@@ -275,6 +275,28 @@ func GetAddNoteTypeHandler(ctx interfaces.NoteTypeWriter) func(writer http.Respo
 				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 				return
 			}
+			// For form-encoded partial updates, pre-fill absent fields from
+			// the existing entity so unsent fields are not wiped.
+			if editor.ID != 0 {
+				existing, getErr := effectiveCtx.GetNoteType(editor.ID)
+				if getErr == nil {
+					if editor.Description == "" && !formHasField(request, "Description") {
+						editor.Description = existing.Description
+					}
+					if editor.CustomHeader == "" && !formHasField(request, "CustomHeader") {
+						editor.CustomHeader = existing.CustomHeader
+					}
+					if editor.CustomSidebar == "" && !formHasField(request, "CustomSidebar") {
+						editor.CustomSidebar = existing.CustomSidebar
+					}
+					if editor.CustomSummary == "" && !formHasField(request, "CustomSummary") {
+						editor.CustomSummary = existing.CustomSummary
+					}
+					if editor.CustomAvatar == "" && !formHasField(request, "CustomAvatar") {
+						editor.CustomAvatar = existing.CustomAvatar
+					}
+				}
+			}
 		}
 
 		noteType, err := effectiveCtx.CreateOrUpdateNoteType(&editor)

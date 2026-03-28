@@ -3,6 +3,7 @@ package api_handlers
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 func GetAddGroupRelationTypeHandler(ctx interfaces.RelationshipWriter) func(writer http.ResponseWriter, request *http.Request) {
@@ -47,10 +49,47 @@ func GetEditGroupRelationTypeHandler(ctx interfaces.RelationshipWriter) func(wri
 		effectiveCtx := withRequestContext(ctx, request).(interfaces.RelationshipWriter)
 
 		var editor = query_models.RelationshipTypeEditorQuery{}
+		var sentFields map[string]bool
 
-		if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
-			return
+		if strings.HasPrefix(request.Header.Get("Content-type"), constants.JSON) {
+			bodyBytes, readErr := io.ReadAll(request.Body)
+			if readErr != nil {
+				http_utils.HandleError(readErr, writer, request, http.StatusBadRequest)
+				return
+			}
+			if err := json.Unmarshal(bodyBytes, &editor); err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+				return
+			}
+			var raw map[string]json.RawMessage
+			_ = json.Unmarshal(bodyBytes, &raw)
+			sentFields = make(map[string]bool, len(raw))
+			for k := range raw {
+				sentFields[k] = true
+			}
+		} else {
+			if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+				return
+			}
+		}
+
+		// Pre-populate unset fields from the existing relation type so partial
+		// updates don't clear them. For JSON, use sentFields to distinguish
+		// absent vs explicitly empty. For form-encoded, use formHasField.
+		if editor.Id != 0 {
+			existing, getErr := effectiveCtx.GetRelationType(editor.Id)
+			if getErr == nil {
+				fieldWasSent := func(field string) bool {
+					if sentFields != nil {
+						return sentFields[field]
+					}
+					return formHasField(request, field)
+				}
+				if editor.Description == "" && !fieldWasSent("Description") {
+					editor.Description = existing.Description
+				}
+			}
 		}
 
 		relationType, err := effectiveCtx.EditRelationType(&editor)
@@ -75,16 +114,50 @@ func GetAddRelationHandler(ctx interfaces.RelationshipWriter) func(writer http.R
 		effectiveCtx := withRequestContext(ctx, request).(interfaces.RelationshipWriter)
 
 		var editor = query_models.GroupRelationshipQuery{}
+		var sentFields map[string]bool
 
-		if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
-			return
+		if strings.HasPrefix(request.Header.Get("Content-type"), constants.JSON) {
+			bodyBytes, readErr := io.ReadAll(request.Body)
+			if readErr != nil {
+				http_utils.HandleError(readErr, writer, request, http.StatusBadRequest)
+				return
+			}
+			if err := json.Unmarshal(bodyBytes, &editor); err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+				return
+			}
+			var raw map[string]json.RawMessage
+			_ = json.Unmarshal(bodyBytes, &raw)
+			sentFields = make(map[string]bool, len(raw))
+			for k := range raw {
+				sentFields[k] = true
+			}
+		} else {
+			if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+				return
+			}
 		}
 
 		var relation *models.GroupRelation
 		var err error
 
 		if editor.Id != 0 {
+			// Pre-populate unset fields from the existing relation so partial
+			// updates don't clear them. For JSON, use sentFields to distinguish
+			// absent vs explicitly empty. For form-encoded, use formHasField.
+			existing, getErr := effectiveCtx.GetRelation(editor.Id)
+			if getErr == nil {
+				fieldWasSent := func(field string) bool {
+					if sentFields != nil {
+						return sentFields[field]
+					}
+					return formHasField(request, field)
+				}
+				if editor.Description == "" && !fieldWasSent("Description") {
+					editor.Description = existing.Description
+				}
+			}
 			relation, err = effectiveCtx.EditRelation(editor)
 		} else {
 			relation, err = effectiveCtx.AddRelation(editor.FromGroupId, editor.ToGroupId, editor.GroupRelationTypeId, editor.Name, editor.Description)
