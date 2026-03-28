@@ -14,7 +14,7 @@
                 <div class="relation-groups">
                     {% include "/partials/relation_reverse.tpl" with entity=relation %}
                     <div class="relation-arrow">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <line x1="5" y1="12" x2="19" y2="12"></line>
                             <polyline points="12 5 19 12 12 19"></polyline>
                         </svg>
@@ -31,7 +31,7 @@
 {% block sidebar %}
     <div class="sidebar-group">
         {% include "/partials/sideTitle.tpl" with title="Filter" %}
-        <form class="flex gap-2 items-start flex-col w-full">
+        <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter relations">
             {% include "/partials/form/textInput.tpl" with name='Name' label='Name' value=queryValues.Name.0 %}
             {% include "/partials/form/textInput.tpl" with name='Description' label='Description' value=queryValues.Description.0 %}
             {% include "/partials/form/autocompleter.tpl" with url='/v1/relationTypes' elName='GroupRelationTypeId' title='Type' max=1 selectedItems=fromTypes id=getNextId("autocompleter") %}

@@ -7,7 +7,7 @@
 
 {% block body %}
     <div class="detail-table-wrap">
-        <table class="gallery detail-table">
+        <table class="gallery detail-table" aria-label="Resources">
             <thead>
                 <tr>
                     <th scope="col"><span class="sr-only">Select</span></th>
