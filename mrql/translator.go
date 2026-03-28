@@ -836,8 +836,19 @@ func (tc *translateContext) translateIsExpr(db *gorm.DB, expr *IsExpr) (*gorm.DB
 		return tc.translateRelationIsEmpty(db, fd, expr.Negated)
 	}
 
-	// IS EMPTY / IS NOT EMPTY for scalar fields: treat as NULL check
-	column := tc.qualifiedColumn(fd.Column)
+	// IS EMPTY / IS NOT EMPTY for scalar fields: treat as NULL/empty check.
+	// Meta fields need json_extract, not a direct column reference.
+	var column string
+	if fd.Type == FieldMeta {
+		key := strings.TrimPrefix(fd.Name, "meta.")
+		if tc.isPostgres() {
+			column = fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)
+		} else {
+			column = fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
+		}
+	} else {
+		column = tc.qualifiedColumn(fd.Column)
+	}
 	if expr.Negated {
 		db = db.Where(column + " IS NOT NULL AND " + column + " != ''")
 	} else {

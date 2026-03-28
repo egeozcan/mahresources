@@ -1687,3 +1687,38 @@ func TestComprehensive_MetaStringCaseInsensitive(t *testing.T) {
 			len(notes), namesOfNotes(notes))
 	}
 }
+
+// TestComprehensive_MetaIsEmpty verifies that meta.rating IS EMPTY works
+// without generating invalid SQL like "resources.meta.rating IS NULL".
+func TestComprehensive_MetaIsEmpty(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Resources 3 and 4 have no rating. IS EMPTY on a meta field should
+	// behave like IS NULL (the value doesn't exist in JSON).
+	result := parseAndTranslate(t, `type = "resource" AND meta.rating IS EMPTY`, EntityResource, db)
+
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) != 2 {
+		t.Fatalf("expected 2 resources without meta.rating, got %d: %v",
+			len(resources), namesOfResources(resources))
+	}
+}
+
+// TestComprehensive_MetaIsNotEmpty verifies meta.rating IS NOT EMPTY works.
+func TestComprehensive_MetaIsNotEmpty(t *testing.T) {
+	db := setupTestDB(t)
+
+	result := parseAndTranslate(t, `type = "resource" AND meta.rating IS NOT EMPTY`, EntityResource, db)
+
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) != 2 {
+		t.Fatalf("expected 2 resources with meta.rating, got %d: %v",
+			len(resources), namesOfResources(resources))
+	}
+}
