@@ -280,9 +280,9 @@ func CreateTagHandler(writer interfaces.TagsWriter) http.HandlerFunc {
 }
 
 // CreateCategoryHandler returns a handler that creates or updates categories.
-// For JSON update requests, it pre-fills unset fields from the existing entity
-// so that partial JSON updates don't clear fields that were not included in
-// the request body, while still allowing explicit clearing (sending "").
+// For update requests, it pre-fills unset fields from the existing entity so
+// that partial updates (both JSON and form-encoded) don't clear fields that
+// were not included in the request body, while still allowing explicit clearing.
 func CreateCategoryHandler(ctx interfaces.CategoryCRUDReader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var editor query_models.CategoryEditor
@@ -321,32 +321,37 @@ func CreateCategoryHandler(ctx interfaces.CategoryCRUDReader) http.HandlerFunc {
 		var err error
 
 		if editor.ID != 0 {
-			// For JSON requests, pre-populate unset string fields from the
-			// existing category so partial updates don't clear them.
-			if sentFields != nil {
-				existing, getErr := ctx.GetCategory(editor.ID)
-				if getErr == nil {
-					if !sentFields["Name"] && existing.Name != "" {
-						editor.Name = existing.Name
+			// Pre-populate unset fields from the existing category so partial
+			// updates don't clear them. For JSON, use sentFields to distinguish
+			// absent vs explicitly empty. For form-encoded, use formHasField.
+			existing, getErr := ctx.GetCategory(editor.ID)
+			if getErr == nil {
+				fieldWasSent := func(field string) bool {
+					if sentFields != nil {
+						return sentFields[field]
 					}
-					if !sentFields["Description"] {
-						editor.Description = existing.Description
-					}
-					if !sentFields["CustomHeader"] {
-						editor.CustomHeader = existing.CustomHeader
-					}
-					if !sentFields["CustomSidebar"] {
-						editor.CustomSidebar = existing.CustomSidebar
-					}
-					if !sentFields["CustomSummary"] {
-						editor.CustomSummary = existing.CustomSummary
-					}
-					if !sentFields["CustomAvatar"] {
-						editor.CustomAvatar = existing.CustomAvatar
-					}
-					if !sentFields["MetaSchema"] {
-						editor.MetaSchema = existing.MetaSchema
-					}
+					return formHasField(r, field)
+				}
+				if !fieldWasSent("Name") && existing.Name != "" {
+					editor.Name = existing.Name
+				}
+				if !fieldWasSent("Description") {
+					editor.Description = existing.Description
+				}
+				if !fieldWasSent("CustomHeader") {
+					editor.CustomHeader = existing.CustomHeader
+				}
+				if !fieldWasSent("CustomSidebar") {
+					editor.CustomSidebar = existing.CustomSidebar
+				}
+				if !fieldWasSent("CustomSummary") {
+					editor.CustomSummary = existing.CustomSummary
+				}
+				if !fieldWasSent("CustomAvatar") {
+					editor.CustomAvatar = existing.CustomAvatar
+				}
+				if !fieldWasSent("MetaSchema") {
+					editor.MetaSchema = existing.MetaSchema
 				}
 			}
 			result, err = ctx.UpdateCategory(&editor)
@@ -373,7 +378,8 @@ func CreateCategoryHandler(ctx interfaces.CategoryCRUDReader) http.HandlerFunc {
 }
 
 // CreateResourceCategoryHandler returns a handler that creates or updates resource categories.
-// For JSON update requests, pre-fills unset fields from the existing entity.
+// For update requests, pre-fills unset fields from the existing entity so that
+// partial updates (both JSON and form-encoded) don't clear unsent fields.
 func CreateResourceCategoryHandler(writer interfaces.ResourceCategoryWriter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var editor query_models.ResourceCategoryEditor
@@ -406,30 +412,37 @@ func CreateResourceCategoryHandler(writer interfaces.ResourceCategoryWriter) htt
 		var err error
 
 		if editor.ID != 0 {
-			if sentFields != nil {
-				existing, getErr := writer.GetResourceCategory(editor.ID)
-				if getErr == nil {
-					if !sentFields["Name"] && existing.Name != "" {
-						editor.Name = existing.Name
+			// Pre-populate unset fields from the existing resource category so
+			// partial updates don't clear them. For JSON, use sentFields to
+			// distinguish absent vs explicitly empty. For form-encoded, use formHasField.
+			existing, getErr := writer.GetResourceCategory(editor.ID)
+			if getErr == nil {
+				fieldWasSent := func(field string) bool {
+					if sentFields != nil {
+						return sentFields[field]
 					}
-					if !sentFields["Description"] {
-						editor.Description = existing.Description
-					}
-					if !sentFields["CustomHeader"] {
-						editor.CustomHeader = existing.CustomHeader
-					}
-					if !sentFields["CustomSidebar"] {
-						editor.CustomSidebar = existing.CustomSidebar
-					}
-					if !sentFields["CustomSummary"] {
-						editor.CustomSummary = existing.CustomSummary
-					}
-					if !sentFields["CustomAvatar"] {
-						editor.CustomAvatar = existing.CustomAvatar
-					}
-					if !sentFields["MetaSchema"] {
-						editor.MetaSchema = existing.MetaSchema
-					}
+					return formHasField(r, field)
+				}
+				if !fieldWasSent("Name") && existing.Name != "" {
+					editor.Name = existing.Name
+				}
+				if !fieldWasSent("Description") {
+					editor.Description = existing.Description
+				}
+				if !fieldWasSent("CustomHeader") {
+					editor.CustomHeader = existing.CustomHeader
+				}
+				if !fieldWasSent("CustomSidebar") {
+					editor.CustomSidebar = existing.CustomSidebar
+				}
+				if !fieldWasSent("CustomSummary") {
+					editor.CustomSummary = existing.CustomSummary
+				}
+				if !fieldWasSent("CustomAvatar") {
+					editor.CustomAvatar = existing.CustomAvatar
+				}
+				if !fieldWasSent("MetaSchema") {
+					editor.MetaSchema = existing.MetaSchema
 				}
 			}
 			result, err = writer.UpdateResourceCategory(&editor)
