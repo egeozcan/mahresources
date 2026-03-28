@@ -3,7 +3,7 @@
 {% block body %}
     <div class="detail-panel">
         <div class="detail-panel-header">
-            <h3 class="detail-panel-title">Series Details</h3>
+            <h2 class="detail-panel-title">Series Details</h2>
         </div>
         <div class="detail-panel-body">
             <form method="POST" action="/v1/series">
@@ -22,7 +22,7 @@
 
     <div class="detail-panel">
         <div class="detail-panel-header">
-            <h3 class="detail-panel-title">Resources{% if series.Resources %}<span class="detail-panel-count">{{ series.Resources|length }}</span>{% endif %}</h3>
+            <h2 class="detail-panel-title">Resources{% if series.Resources %}<span class="detail-panel-count">{{ series.Resources|length }}</span>{% endif %}</h2>
         </div>
         <div class="detail-panel-body">
             {% if series.Resources %}

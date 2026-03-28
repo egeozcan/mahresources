@@ -94,10 +94,12 @@ export function groupTree({ initialRows = [], highlightedPath = null, containing
       li.appendChild(a);
 
       if (hasChildren) {
+        const childLabel = node.childCount === 1 ? '1 child' : `${node.childCount} children`;
         if (isLoading) {
           const btn = document.createElement('button');
           btn.className = 'tree-node-expand';
           btn.disabled = true;
+          btn.setAttribute('aria-label', `Loading children of ${node.name || 'group'}`);
           btn.textContent = 'Loading...';
           li.appendChild(btn);
         } else if (isExpanded && children.length > 0) {
@@ -105,9 +107,12 @@ export function groupTree({ initialRows = [], highlightedPath = null, containing
           btn.className = 'tree-node-expand';
           btn.dataset.nodeId = node.id;
           btn.dataset.action = 'collapse';
+          btn.setAttribute('aria-expanded', 'true');
+          btn.setAttribute('aria-label', `Collapse ${node.name || 'group'}, ${childLabel}`);
 
           const arrow = document.createElement('span');
           arrow.className = 'tree-node-arrow tree-node-arrow--down';
+          arrow.setAttribute('aria-hidden', 'true');
           btn.appendChild(arrow);
           btn.appendChild(document.createTextNode(` ${node.childCount}`));
           li.appendChild(btn);
@@ -135,9 +140,12 @@ export function groupTree({ initialRows = [], highlightedPath = null, containing
           btn.className = 'tree-node-expand';
           btn.dataset.nodeId = node.id;
           btn.dataset.action = 'expand';
+          btn.setAttribute('aria-expanded', 'false');
+          btn.setAttribute('aria-label', `Expand ${node.name || 'group'}, ${childLabel}`);
 
           const arrow = document.createElement('span');
           arrow.className = 'tree-node-arrow';
+          arrow.setAttribute('aria-hidden', 'true');
           btn.appendChild(arrow);
           btn.appendChild(document.createTextNode(` ${node.childCount}`));
           li.appendChild(btn);

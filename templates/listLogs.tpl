@@ -37,7 +37,7 @@
                             {% if log.Action == "delete" or log.EntityType == "resource_version" %}
                                 <span class="text-stone-500">{{ log.EntityType }} #{{ log.EntityID }}</span>
                             {% else %}
-                                <a href="/{{ log.EntityType }}?id={{ log.EntityID }}" class="text-amber-700 hover:underline">
+                                <a href="/{{ log.EntityType }}?id={{ log.EntityID }}" class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700">
                                     {{ log.EntityType }} #{{ log.EntityID }}
                                 </a>
                             {% endif %}

@@ -1,7 +1,7 @@
 {# with entities= formAction= formID= formParamName= templateName= addAction= addFormParamName= addFormSecondParamName= addFormSecondParamValue= #}
     <div class="detail-panel">
         <div class="detail-panel-header">
-            <h3 class="detail-panel-title">{{ subtitle }}</h3>
+            <h2 class="detail-panel-title">{{ subtitle }}</h2>
             <div class="detail-panel-actions">
                 {% if entities && formParamName %}
                     <form action="{{ formAction }}">

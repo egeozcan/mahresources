@@ -11,7 +11,7 @@
                     {% if !preview %}{{ description|markdown2|render_mentions }}{% endif %}
                     {% if preview %}{{ description|markdown|render_mentions|truncatechars_html:250 }}{% endif %}
                 {% else %}
-                    <p class="text-stone-400 italic">No description</p>
+                    <p class="text-stone-500 italic">No description</p>
                 {% endif %}
             {% endautoescape %}
         </div>

@@ -2917,6 +2917,9 @@
   .underline {
     text-decoration-line: underline;
   }
+  .decoration-amber-300 {
+    text-decoration-color: var(--color-amber-300);
+  }
   .placeholder-gray-500 {
     &::placeholder {
       color: var(--color-gray-500);
@@ -3723,6 +3726,13 @@
     &:hover {
       @media (hover: hover) {
         text-decoration-line: underline;
+      }
+    }
+  }
+  .hover\:decoration-amber-700 {
+    &:hover {
+      @media (hover: hover) {
+        text-decoration-color: var(--color-amber-700);
       }
     }
   }

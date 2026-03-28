@@ -131,7 +131,7 @@
     .tree-node-category {
         font-size: 0.6875rem;
         background: #f1f5f9;
-        color: #64748b;
+        color: #475569;
         padding: 0.0625rem 0.375rem;
         border-radius: 9999px;
     }
@@ -225,7 +225,7 @@
         @click="handleClick($event)"
     >
         <div class="tree-chart" x-ref="treeContainer">
-            <p class="text-stone-400 p-4">Loading tree...</p>
+            <p class="text-stone-500 p-4">Loading tree...</p>
         </div>
     </div>
     {% else %}
@@ -239,11 +239,11 @@
                     <span>
                         <span class="font-medium">{{ root.Name }}</span>
                         {% if root.CategoryName %}
-                        <span class="text-xs text-stone-400 ml-2">{{ root.CategoryName }}</span>
+                        <span class="text-xs text-stone-500 ml-2">{{ root.CategoryName }}</span>
                         {% endif %}
                     </span>
                     {% if root.ChildCount > 0 %}
-                    <span class="text-xs text-stone-400">{{ root.ChildCount }} {% if root.ChildCount == 1 %}child{% else %}children{% endif %}</span>
+                    <span class="text-xs text-stone-500">{{ root.ChildCount }} {% if root.ChildCount == 1 %}child{% else %}children{% endif %}</span>
                     {% endif %}
                 </a>
             </li>
