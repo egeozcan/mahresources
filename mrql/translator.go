@@ -604,6 +604,17 @@ func isValidMetaKey(key string) bool {
 	return metaKeyPattern.MatchString(key)
 }
 
+// isNumericValue returns true if the value is a numeric Go type.
+func isNumericValue(val interface{}) bool {
+	switch val.(type) {
+	case int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64,
+		float32, float64:
+		return true
+	}
+	return false
+}
+
 // translateMetaComparison handles meta.key comparisons using json_extract.
 func (tc *translateContext) translateMetaComparison(db *gorm.DB, fd FieldDef, op Token, val interface{}) (*gorm.DB, error) {
 	// Extract the key from "meta.key"
@@ -616,25 +627,36 @@ func (tc *translateContext) translateMetaComparison(db *gorm.DB, fd FieldDef, op
 		}
 	}
 
-	// Build the JSON extraction expression per database dialect
+	// Build the JSON extraction expression per database dialect.
+	// On Postgres, ->>' returns text, so numeric comparisons/sorts need a cast.
+	isNumericVal := isNumericValue(val)
 	var jsonExpr string
 	if tc.isPostgres() {
-		// PostgreSQL: table.meta->>'key' (extracts as text)
-		jsonExpr = fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)
+		if isNumericVal {
+			// Cast to numeric for proper ordering and comparison
+			jsonExpr = fmt.Sprintf("(%s.meta->>'%s')::numeric", tc.tableName, key)
+		} else {
+			jsonExpr = fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)
+		}
 	} else {
-		// SQLite: json_extract(table.meta, '$.key')
+		// SQLite: json_extract returns the native JSON type (number, string, etc.)
 		jsonExpr = fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
 	}
 
 	sqlOp := tc.sqlOperator(op)
 
 	if op.Type == TokenLike || op.Type == TokenNotLike {
+		// LIKE always operates on text — use the text expression on Postgres
+		textExpr := jsonExpr
+		if tc.isPostgres() && isNumericVal {
+			textExpr = fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)
+		}
 		likePattern := convertMRQLWildcards(fmt.Sprint(val))
 		likeOp := tc.likeOperator()
 		if op.Type == TokenNotLike {
 			likeOp = "NOT " + likeOp
 		}
-		db = db.Where(jsonExpr+" "+likeOp+" ? ESCAPE '\\'", likePattern)
+		db = db.Where(textExpr+" "+likeOp+" ? ESCAPE '\\'", likePattern)
 		return db, nil
 	}
 

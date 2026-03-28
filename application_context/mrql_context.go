@@ -126,23 +126,32 @@ func (ctx *MahresourcesContext) executeCrossEntity(parsed *mrql.Query, opts mrql
 	queryCtx, cancel := context.WithTimeout(context.Background(), MRQLQueryTimeout)
 	defer cancel()
 
-	// Determine the global limit for the merged result set.
+	// Determine the global limit and offset for the merged result set.
 	globalLimit := defaultMRQLLimit
 	if parsed.Limit >= 0 {
 		globalLimit = parsed.Limit
 	}
+	globalOffset := 0
+	if parsed.Offset >= 0 {
+		globalOffset = parsed.Offset
+	}
 
-	// For cross-entity, remove LIMIT/OFFSET from per-entity queries —
-	// we apply them after merging. Each entity gets a cap of globalLimit
-	// to avoid fetching unbounded rows, but we trim the merged set after.
+	// Each entity needs enough rows to cover offset + limit in the merged set.
+	// Without this, OFFSET 1500 LIMIT 50 with per-entity cap of 50 would
+	// fetch far too few rows and return an empty or wrong window.
+	perEntityCap := globalOffset + globalLimit
+	if perEntityCap > defaultMRQLLimit {
+		perEntityCap = defaultMRQLLimit // hard cap to prevent unbounded fetches
+	}
+
 	entityTypes := []mrql.EntityType{mrql.EntityResource, mrql.EntityNote, mrql.EntityGroup}
 
 	for _, et := range entityTypes {
 		// Clone the parsed query for each entity type, without LIMIT/OFFSET
 		clone := *parsed
 		clone.EntityType = et
-		clone.Limit = globalLimit // cap per-entity to avoid unbounded fetches
-		clone.Offset = -1         // offset applied to merged set below
+		clone.Limit = perEntityCap // enough rows to cover offset+limit in merged set
+		clone.Offset = -1          // offset applied to merged set below
 
 		db, err := mrql.TranslateWithOptions(&clone, ctx.db.WithContext(queryCtx), opts)
 		if err != nil {
@@ -182,15 +191,10 @@ func (ctx *MahresourcesContext) executeCrossEntity(parsed *mrql.Query, opts mrql
 	// and trim to the requested window.
 	totalCount := len(result.Resources) + len(result.Notes) + len(result.Groups)
 
-	offset := 0
-	if parsed.Offset >= 0 {
-		offset = parsed.Offset
-	}
-
-	if offset > 0 || totalCount > globalLimit {
+	if globalOffset > 0 || totalCount > globalLimit {
 		// Flatten into a counted sequence and apply offset+limit
 		remaining := globalLimit
-		skip := offset
+		skip := globalOffset
 
 		// Trim resources
 		if skip >= len(result.Resources) {
