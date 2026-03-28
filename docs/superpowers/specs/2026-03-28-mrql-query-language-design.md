@@ -26,6 +26,7 @@ MRQL (mahresources query language) is a structured text-based query language for
 - Sub-queries
 - Recursive traversal (`ancestors`, `descendants`) for group hierarchies
 - Perceptual hash similarity (`SIMILAR TO`)
+- Cursor-based (keyset) pagination for deep result sets
 - Integration into existing list views as an alternative to filter forms
 - Global search (Cmd+K) enhancement with MRQL syntax
 
@@ -90,6 +91,17 @@ More examples:
 - `originalName ~ "*.png"` -- original filename ends with .png
 - `contentType ~ "image/*"` -- any image MIME type
 
+**Existence / emptiness:**
+
+| Operator | Meaning | Example | Interpretation |
+|---|---|---|---|
+| `IS EMPTY` | field has no value / no associations | `tags IS EMPTY` | entity has no tags |
+| `IS NOT EMPTY` | field has a value / has associations | `group IS NOT EMPTY` | entity belongs to at least one group |
+| `IS NULL` | field is null / unset | `category IS NULL` | no category assigned |
+| `IS NOT NULL` | field is not null | `meta.rating IS NOT NULL` | rating metadata exists |
+
+`IS EMPTY` applies to relationship fields (tags, groups, notes, children, parent). `IS NULL` applies to scalar fields (category, noteType, meta keys). Both are valid on fields where the distinction is meaningful.
+
 **Set operators:**
 
 | Operator | Meaning | Example | Interpretation |
@@ -113,6 +125,29 @@ More examples:
 | `OR` | either condition | `tags = "photo" OR tags = "video"` | tagged photo OR video |
 | `NOT` | negate condition | `NOT name ~ "*draft*"` | name does not contain draft |
 | `(...)` | grouping | `(tags = "a" OR tags = "b") AND group = "X"` | either tag, but must be in group X |
+
+**Operator precedence** (highest to lowest, following SQL convention):
+1. `NOT`
+2. `AND`
+3. `OR`
+
+Example: `a OR b AND NOT c` is evaluated as `a OR (b AND (NOT c))`. Use parentheses to override.
+
+### Case sensitivity
+
+All string comparisons (`=`, `!=`, `~`, `!~`, `IN`) are **case-insensitive** by default. This matches user expectations — `name = "project"` will match "Project", "PROJECT", etc.
+
+Implementation: `=` and `!=` use `LOWER()` wrapping on both sides. `~` translates to `LIKE` which is already case-insensitive in SQLite; for PostgreSQL, `ILIKE` is used instead.
+
+### String escaping
+
+Strings are delimited by double quotes. To include a literal double quote inside a string, escape it with a backslash: `\"`. To include a literal backslash, use `\\`.
+
+Examples:
+- `description ~ "*said \"hello\"*"` -- matches descriptions containing `said "hello"`
+- `name = "file\\backup"` -- matches the literal name `file\backup`
+
+The lexer handles `\"` and `\\` as escape sequences within quoted strings. All other backslash sequences are treated as literal characters.
 
 ### Relative dates
 
@@ -153,14 +188,18 @@ Examples:
 - `LIMIT 50` -- return at most 50 results
 - `LIMIT 50 OFFSET 100` -- skip first 100, return next 50
 
-### Traversal (one level)
+### Traversal (one level only)
 
 For groups, `parent.<field>` and `children.<field>` access immediate parent/child group fields:
 
 - `parent.name = "Projects"` -- direct parent group is named "Projects"
 - `parent.category = "Active"` -- direct parent group's category is "Active"
 - `parent.tags = "priority"` -- direct parent group has tag "priority"
+- `parent IS NULL` -- group has no parent (top-level group)
 - `children.tags = "completed"` -- at least one direct child group has tag "completed"
+- `children IS EMPTY` -- group has no child groups (leaf group)
+
+**Depth restriction:** Only one level of traversal is allowed. The parser must reject multi-level traversal like `parent.parent.name` with a clear error: `"Multi-level traversal is not supported. Use 'parent.<field>' for one level. Recursive traversal (ancestors/descendants) is planned for v2."` This is validated at parse time, not execution time.
 
 ### Complete examples
 
@@ -188,6 +227,18 @@ type = note AND updated >= START_OF_MONTH() AND meta.priority = "high"
 
 -- Resources with specific original filename pattern
 type = resource AND originalName ~ "IMG_2024*" AND width >= 3840 ORDER BY fileSize DESC
+
+-- Untagged resources (cleanup candidates)
+type = resource AND tags IS EMPTY AND created < -30d
+
+-- Top-level groups (no parent)
+type = group AND parent IS NULL
+
+-- Notes with rating metadata set
+type = note AND meta.rating IS NOT NULL ORDER BY meta.rating DESC
+
+-- Resources with descriptions containing quotes
+type = resource AND description ~ "*said \"hello\"*"
 ```
 
 ## Section 2: Parser & Execution Architecture
@@ -229,7 +280,21 @@ User query string
 
 4. **SQL injection safety** -- the translator never interpolates user strings into SQL. All values become parameterized GORM `Where` arguments.
 
+5. **FTS5 input sanitization** -- FTS5 `MATCH` has its own internal syntax (e.g., `NEAR()`, boolean operators). User input passed to `TEXT ~` must be sanitized before reaching the FTS5 engine: strip FTS5 operators and special characters, treating the input as a plain text phrase. This prevents malformed FTS input from causing query errors.
+
+6. **Traversal depth enforcement** -- the parser rejects `parent.parent.*` or `children.children.*` at parse time with a descriptive error. This is a hard constraint, not a runtime check.
+
+### Performance considerations
+
+**Leading wildcard queries:** Patterns like `name ~ "*sunset*"` translate to `LIKE '%sunset%'`, which bypasses B-Tree indexes and causes full table scans. This is inherent to LIKE and acceptable for most use cases, but can be slow on tables with millions of rows. The query timeout (see Section 3) mitigates runaway scans. For substring search on large datasets, `TEXT ~` (FTS5) is the recommended alternative.
+
+**Offset pagination:** `LIMIT n OFFSET n` is used for v1 pagination. Deep offsets (e.g., `OFFSET 100000`) force the database to scan and discard rows, which degrades with depth. This is acceptable for v1 where most queries won't paginate deeply. Cursor-based (keyset) pagination is flagged as a v2 optimization.
+
 ## Section 3: API Endpoints
+
+### Query timeout
+
+All MRQL query execution is wrapped in a context timeout, configurable via the `-mrql-query-timeout` flag / `MRQL_QUERY_TIMEOUT` env var (default: 10 seconds). If a query exceeds the timeout, the database context is cancelled and the API returns a `408 Request Timeout` with a message explaining the query was too expensive. This prevents accidental DoS from complex cross-entity queries, multiple OR conditions, or leading wildcard patterns on large tables.
 
 ### Query execution
 
@@ -363,6 +428,15 @@ CodeMirror 6 is modular -- only import what's needed. Adds ~30KB gzipped to the 
 - Single entity type detected: render using existing entity card/row templates (resource thumbnails, note previews, group cards)
 - Cross-entity or ambiguous: unified table with columns: Type, Name, Tags, Created, and a link to the entity's detail page
 
+### Date input in autocompletion
+
+When the cursor is in a position expecting a date value (after `created >=`, `updated <`, etc.), the autocompletion popup suggests:
+- Relative date shortcuts: `-7d`, `-30d`, `-3m`, `-1y`
+- Date functions: `NOW()`, `START_OF_DAY()`, `START_OF_MONTH()`, `START_OF_YEAR()`
+- Format hint: `"YYYY-MM-DD"` as a placeholder showing the expected format
+
+No date-picker widget — it adds complexity disproportionate to its value in a text-based query language. The relative date shortcuts and functions cover the most common cases without needing to pick a calendar date.
+
 ### Syntax help panel
 
 A collapsible `[Docs]` button that shows a quick-reference of fields, operators, functions, and example queries inline. Static HTML, no extra API call.
@@ -378,6 +452,13 @@ mr mrql 'type = resource AND tags = "photo" AND created > -7d'
 # Execute with ordering/pagination flags (alternative to in-query syntax)
 mr mrql 'tags = "photo"' --limit 20 --page 2
 
+# Read query from a file (avoids bash quoting issues)
+mr mrql -f query.mrql
+
+# Read query from stdin
+cat query.mrql | mr mrql -
+echo 'tags = "photo"' | mr mrql -
+
 # Save a query
 mr mrql save "recent photos" 'type = resource AND tags = "photo" AND created > -7d'
 
@@ -391,6 +472,8 @@ mr mrql run 42
 # Delete a saved query
 mr mrql delete 42
 ```
+
+The `-f` flag and stdin (`-`) support avoids bash quoting hell for complex queries with escaped quotes or special characters. When `-f` or `-` is used, the query argument is ignored.
 
 ### Output modes
 
@@ -463,10 +546,10 @@ Add `mr mrql` section:
 
 ### Go unit tests (`mrql/`)
 
-- **Lexer tests** -- tokenization of all token types, edge cases (escaped quotes, wildcards, numbers with units like `10mb`)
-- **Parser tests** -- table-driven: query string -> expected AST. Cover every operator, nesting, precedence, error cases
-- **Validator tests** -- field existence per entity type, type mismatches (e.g., `fileSize = "abc"`), traversal on non-group entities
-- **Translator tests** -- AST -> generated SQL verification. Ensure parameterized queries (no injection). Test that existing database scopes are reused correctly
+- **Lexer tests** -- tokenization of all token types, edge cases (escaped quotes with `\"` and `\\`, wildcards `*`/`?`, numbers with units like `10mb`, relative dates like `-7d`)
+- **Parser tests** -- table-driven: query string -> expected AST. Cover every operator, nesting, precedence (`NOT` > `AND` > `OR`), IS EMPTY/IS NULL, error cases, multi-level traversal rejection (`parent.parent.name` -> descriptive error)
+- **Validator tests** -- field existence per entity type, type mismatches (e.g., `fileSize = "abc"`), traversal on non-group entities, IS EMPTY on scalar fields, IS NULL on relationship fields
+- **Translator tests** -- AST -> generated SQL verification. Ensure parameterized queries (no injection). Test that existing database scopes are reused correctly. Verify case-insensitive comparisons. Verify FTS5 input sanitization strips special FTS operators. Verify `*`/`?` wildcards translate to `%`/`_`
 - **Completer tests** -- partial query + cursor position -> expected suggestions
 - **Round-trip tests** -- query string -> parse -> translate -> execute against in-memory SQLite with test data -> verify result set
 
@@ -487,9 +570,11 @@ Add `mr mrql` section:
 - `mr mrql 'name ~ "*test*"'` returns matching results
 - `mr mrql ... --json` returns valid JSON
 - `mr mrql ... --quiet` returns only IDs
+- `mr mrql -f query.mrql` reads query from file
+- `echo 'tags = "photo"' | mr mrql -` reads query from stdin
 - `mr mrql save`, `mr mrql list`, `mr mrql run`, `mr mrql delete` lifecycle
 - Piping: `mr mrql ... --quiet | xargs mr resource add-tags ...`
-- Error handling: invalid syntax, unknown fields
+- Error handling: invalid syntax, unknown fields, query timeout
 
 ### Accessibility tests (`e2e/tests/accessibility/mrql-a11y.spec.ts`)
 
