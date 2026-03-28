@@ -31,12 +31,12 @@ type mrqlResponse struct {
 
 // mrqlSavedQuery represents a saved MRQL query.
 type mrqlSavedQuery struct {
-	ID          uint      `json:"ID"`
-	Name        string    `json:"Name"`
-	Query       string    `json:"Query"`
-	Description string    `json:"Description"`
-	CreatedAt   time.Time `json:"CreatedAt"`
-	UpdatedAt   time.Time `json:"UpdatedAt"`
+	ID          uint      `json:"id"`
+	Name        string    `json:"name"`
+	Query       string    `json:"query"`
+	Description string    `json:"description"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 // NewMRQLCmd returns the "mrql" command with subcommands for managing and executing MRQL queries.

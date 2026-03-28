@@ -66,11 +66,9 @@ test.describe('Query edit: clearing Template field should persist', () => {
       input.value = '';
 
       // Also clear the CodeMirror editor if present
-      const cmEditor = input.parentElement?.querySelector(
-        '.cm-editor'
-      ) as any;
-      if (cmEditor?.cmView?.view) {
-        const view = cmEditor.cmView.view;
+      const container = input.parentElement as any;
+      if (container?._cmView) {
+        const view = container._cmView;
         view.dispatch({
           changes: {
             from: 0,

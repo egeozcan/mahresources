@@ -44,10 +44,10 @@ export class QueryPage extends BasePage {
       const input = document.querySelector(`input[type="hidden"][name="${name}"]`) as HTMLInputElement;
       if (!input) return;
       input.value = value;
-      // Access the EditorView via CodeMirror's DOM binding
-      const cmEditor = input.parentElement?.querySelector('.cm-editor') as any;
-      if (cmEditor?.cmView?.view) {
-        const view = cmEditor.cmView.view;
+      // Access the EditorView via the reference exposed by the codeEditor component
+      const container = input.parentElement as any;
+      if (container?._cmView) {
+        const view = container._cmView;
         view.dispatch({
           changes: { from: 0, to: view.state.doc.length, insert: value }
         });

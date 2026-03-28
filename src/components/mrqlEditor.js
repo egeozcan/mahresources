@@ -188,6 +188,13 @@ export function mrqlEditor() {
               return true;
             },
           },
+          {
+            key: 'Ctrl-Enter',
+            run() {
+              self.execute();
+              return true;
+            },
+          },
         ]),
         this.langCompartment.of(mrqlLang),
         this.lintCompartment.of([]),
@@ -211,6 +218,9 @@ export function mrqlEditor() {
         state: EditorState.create({ doc: '', extensions }),
         parent: container,
       });
+
+      // Expose the view on the container for test automation
+      container._cmView = this.view;
     },
 
     getQuery() {

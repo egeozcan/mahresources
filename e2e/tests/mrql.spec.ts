@@ -88,8 +88,8 @@ test.describe('MRQL Page', () => {
     const mrql = new MRQLPage(page);
     await mrql.navigate();
 
-    // Enter a query that should match our test data
-    await mrql.enterQuery('name ~ "MRQL Test"');
+    // Enter a query that should match our test data (use * wildcard for contains)
+    await mrql.enterQuery('name ~ "*MRQL Test*"');
     await mrql.executeQuery();
 
     // Verify results section shows up with results
@@ -144,7 +144,7 @@ test.describe('MRQL Page', () => {
     await mrql.navigate();
 
     const queryName = `Load Test Query ${Date.now()}`;
-    const queryText = 'name ~ "MRQL Test"';
+    const queryText = 'name ~ "*MRQL Test*"';
 
     // First save a query
     await mrql.enterQuery(queryText);
@@ -170,8 +170,8 @@ test.describe('MRQL Page', () => {
     const mrql = new MRQLPage(page);
     await mrql.navigate();
 
-    // Enter a query
-    await mrql.enterQuery('name ~ "MRQL Test"');
+    // Enter a query (use * wildcard for contains)
+    await mrql.enterQuery('name ~ "*MRQL Test*"');
 
     // Execute using keyboard shortcut
     await mrql.executeQueryWithKeyboard();

@@ -112,8 +112,8 @@ test.describe('MRQL saved query lifecycle', () => {
     // Parse the saved query response
     try {
       const parsed = JSON.parse(result.stdout);
-      if (parsed.ID) {
-        savedId = parsed.ID;
+      if (parsed.id) {
+        savedId = parsed.id;
         expect(savedId).toBeGreaterThan(0);
       }
     } catch {
@@ -131,10 +131,10 @@ test.describe('MRQL saved query lifecycle', () => {
 
     // Should contain our saved query
     if (Array.isArray(parsed)) {
-      const found = parsed.find((q: any) => q.Name === savedName);
+      const found = parsed.find((q: any) => q.name === savedName);
       expect(found).toBeDefined();
       if (found && !savedId) {
-        savedId = found.ID;
+        savedId = found.id;
       }
     }
   });
@@ -163,7 +163,7 @@ test.describe('MRQL saved query lifecycle', () => {
     if (listResult.exitCode === 0) {
       const parsed = JSON.parse(listResult.stdout);
       if (Array.isArray(parsed)) {
-        const found = parsed.find((q: any) => q.ID === savedId);
+        const found = parsed.find((q: any) => q.id === savedId);
         expect(found).toBeUndefined();
       }
     }
@@ -192,9 +192,9 @@ test.describe('MRQL save with description', () => {
 
     try {
       const parsed = JSON.parse(result.stdout);
-      if (parsed.ID) {
-        savedId = parsed.ID;
-        expect(parsed.Name).toBe(savedName);
+      if (parsed.id) {
+        savedId = parsed.id;
+        expect(parsed.name).toBe(savedName);
       }
     } catch {
       expect(result.stdout).toBeTruthy();

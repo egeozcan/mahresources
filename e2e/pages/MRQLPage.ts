@@ -33,11 +33,11 @@ export class MRQLPage {
    */
   async enterQuery(query: string) {
     await this.page.evaluate((text) => {
-      const container = document.querySelector('[x-ref="editorContainer"]');
+      const container = document.querySelector('[x-ref="editorContainer"]') as any;
       if (!container) throw new Error('Editor container not found');
-      const cmEditor = container.querySelector('.cm-editor') as any;
-      if (!cmEditor?.cmView?.view) throw new Error('CodeMirror view not found');
-      const view = cmEditor.cmView.view;
+      // Use the view reference exposed by the mrqlEditor Alpine component
+      const view = container._cmView;
+      if (!view) throw new Error('CodeMirror view not found');
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: text },
       });
@@ -61,9 +61,10 @@ export class MRQLPage {
   async executeQueryWithKeyboard() {
     // Focus the editor first
     await this.editorContainer.locator('.cm-content').click();
-    const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
-    await this.page.keyboard.press(`${modifier}+Enter`);
-    // Wait for execution to complete
+    // Use Control+Enter -- the editor binds both Mod-Enter and Ctrl-Enter
+    // to ensure cross-platform compatibility (including headless Chromium on macOS)
+    await this.page.keyboard.press('Control+Enter');
+    // Wait for execution to complete (button text changes from "Running..." back to "Run")
     await expect(this.runButton).toContainText('Run', { timeout: 15000 });
     await this.page.waitForTimeout(300);
   }
@@ -127,11 +128,12 @@ export class MRQLPage {
    */
   async getEditorContent(): Promise<string> {
     return this.page.evaluate(() => {
-      const container = document.querySelector('[x-ref="editorContainer"]');
+      const container = document.querySelector('[x-ref="editorContainer"]') as any;
       if (!container) return '';
-      const cmEditor = container.querySelector('.cm-editor') as any;
-      if (!cmEditor?.cmView?.view) return '';
-      return cmEditor.cmView.view.state.doc.toString();
+      // Use the view reference exposed by the mrqlEditor Alpine component
+      const view = container._cmView;
+      if (!view) return '';
+      return view.state.doc.toString();
     });
   }
 
