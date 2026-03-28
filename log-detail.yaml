@@ -1,0 +1,72 @@
+- generic [active] [ref=e1]:
+  - link "Skip to main content" [ref=e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - banner [ref=e3]:
+    - navigation "Main" [ref=e4]:
+      - generic [ref=e5]:
+        - link "Dashboard" [ref=e6] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Notes" [ref=e7] [cursor=pointer]:
+          - /url: /notes
+        - link "Resources" [ref=e8] [cursor=pointer]:
+          - /url: /resources
+        - link "Tags" [ref=e9] [cursor=pointer]:
+          - /url: /tags
+        - link "Groups" [ref=e10] [cursor=pointer]:
+          - /url: /groups
+        - link "Queries" [ref=e11] [cursor=pointer]:
+          - /url: /queries
+        - button "Admin" [ref=e13] [cursor=pointer]:
+          - generic [ref=e14]: Admin
+          - img [ref=e15]
+        - button "Plugins" [ref=e18] [cursor=pointer]:
+          - generic [ref=e19]: Plugins
+          - img [ref=e20]
+    - generic [ref=e22]:
+      - button "Open search dialog" [ref=e24]:
+        - img [ref=e25]
+        - generic [ref=e27]: Search
+        - generic [ref=e28]: ⌘K
+      - button "Settings" [ref=e30]: ⚙
+  - 'heading "Log Entry #1" [level=1] [ref=e33]':
+    - generic [ref=e34]: "Log Entry #1"
+  - generic [ref=e35]:
+    - complementary [ref=e36]:
+      - generic [ref=e37]:
+        - link "Back to Logs" [ref=e38] [cursor=pointer]:
+          - /url: /logs
+        - link "View tag history" [ref=e39] [cursor=pointer]:
+          - /url: /logs?EntityType=tag&EntityID=1
+    - main [ref=e40]:
+      - generic [ref=e41]:
+        - generic [ref=e42]:
+          - heading "Log Entry Details" [level=2] [ref=e43]
+          - paragraph [ref=e44]:
+            - generic [ref=e45]: info
+            - text: create operation
+        - generic [ref=e47]:
+          - generic [ref=e48]:
+            - term [ref=e49]: Created At
+            - definition [ref=e50]: 2026-03-27 23:16:41
+          - generic [ref=e51]:
+            - term [ref=e52]: Level
+            - definition [ref=e53]: info
+          - generic [ref=e54]:
+            - term [ref=e55]: Action
+            - definition [ref=e56]: create
+          - generic [ref=e57]:
+            - term [ref=e58]: Entity
+            - definition [ref=e59]:
+              - 'link "tag #1" [ref=e60] [cursor=pointer]':
+                - /url: /tag?id=1
+              - text: (TestTag)
+          - generic [ref=e61]:
+            - term [ref=e62]: Message
+            - definition [ref=e63]: Created tag
+  - contentinfo
+  - button "Open jobs panel" [ref=e64]:
+    - img [ref=e65]
+  - status [ref=e67]
+  - status [ref=e68]
+  - status [ref=e69]
+  - status [ref=e70]

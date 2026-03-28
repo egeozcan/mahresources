@@ -1,0 +1,137 @@
+- generic [active] [ref=e1]:
+  - link "Skip to main content" [ref=e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - banner [ref=e3]:
+    - navigation "Main" [ref=e4]:
+      - generic [ref=e5]:
+        - link "Dashboard" [ref=e6] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Notes" [ref=e7] [cursor=pointer]:
+          - /url: /notes
+        - link "Resources" [ref=e8] [cursor=pointer]:
+          - /url: /resources
+        - link "Tags" [ref=e9] [cursor=pointer]:
+          - /url: /tags
+        - link "Groups" [ref=e10] [cursor=pointer]:
+          - /url: /groups
+        - link "Queries" [ref=e11] [cursor=pointer]:
+          - /url: /queries
+        - button "Admin" [ref=e13] [cursor=pointer]:
+          - generic [ref=e14]: Admin
+          - img [ref=e15]
+        - button "Plugins" [ref=e18] [cursor=pointer]:
+          - generic [ref=e19]: Plugins
+          - img [ref=e20]
+    - generic [ref=e22]:
+      - button "Open search dialog" [ref=e24]:
+        - img [ref=e25]
+        - generic [ref=e27]: Search
+        - generic [ref=e28]: ⌘K
+      - button "Settings" [ref=e30]: ⚙
+  - generic [ref=e32]:
+    - heading "Queries" [level=1] [ref=e33]:
+      - generic [ref=e34]: Queries
+    - link "Add" [ref=e35] [cursor=pointer]:
+      - /url: /query/new
+  - generic [ref=e36]:
+    - complementary [ref=e37]:
+      - form "Filter queries" [ref=e38]:
+        - generic [ref=e39]:
+          - heading "Sort" [level=2] [ref=e40]
+          - generic [ref=e41]: Sort
+          - combobox "Sort" [ref=e42]:
+            - option "Created ↓" [selected]
+            - option "Created ↑"
+            - option "Name ↓"
+            - option "Name ↑"
+            - option "Updated ↓"
+            - option "Updated ↑"
+        - generic [ref=e43]:
+          - heading "Filter" [level=2] [ref=e44]
+          - generic [ref=e45]: Name
+          - searchbox "Name" [ref=e46]
+          - generic [ref=e47]: Text
+          - searchbox "Text" [ref=e48]
+          - generic [ref=e49]: Created Before
+          - textbox "Created Before" [ref=e50]
+          - generic [ref=e51]: Created After
+          - textbox "Created After" [ref=e52]
+          - button "Apply Filters" [ref=e54]
+    - main [ref=e55]:
+      - group "Display options" [ref=e56]:
+        - link "List" [ref=e57] [cursor=pointer]:
+          - /url: /queries
+        - link "Timeline" [ref=e58] [cursor=pointer]:
+          - /url: /queries/timeline
+      - generic [ref=e59]:
+        - article [ref=e60]:
+          - generic [ref=e61]:
+            - generic [ref=e63]:
+              - heading "DropQuery" [level=3] [ref=e64]:
+                - link "DropQuery" [ref=e65] [cursor=pointer]:
+                  - /url: /query?id=4
+              - generic [ref=e66]:
+                - generic [ref=e67]:
+                  - generic [ref=e68]: "Updated:"
+                  - text: 2026-03-27 23:23
+                - generic [ref=e69]:
+                  - generic [ref=e70]: "Created:"
+                  - text: 2026-03-27 23:23
+            - generic "Double-click to edit" [ref=e73]:
+              - paragraph [ref=e74]: DROP TABLE groups
+        - article [ref=e75]:
+          - generic [ref=e76]:
+            - generic [ref=e78]:
+              - heading "EmptyQuery" [level=3] [ref=e79]:
+                - link "EmptyQuery" [ref=e80] [cursor=pointer]:
+                  - /url: /query?id=3
+              - generic [ref=e81]:
+                - generic [ref=e82]:
+                  - generic [ref=e83]: "Updated:"
+                  - text: 2026-03-27 23:19
+                - generic [ref=e84]:
+                  - generic [ref=e85]: "Created:"
+                  - text: 2026-03-27 23:19
+            - generic "Double-click to edit" [ref=e88]:
+              - paragraph [ref=e89]: SELECT * FROM groups WHERE id > 999999
+        - article [ref=e90]:
+          - generic [ref=e91]:
+            - generic [ref=e93]:
+              - heading "BadQuery" [level=3] [ref=e94]:
+                - link "BadQuery" [ref=e95] [cursor=pointer]:
+                  - /url: /query?id=2
+              - generic [ref=e96]:
+                - generic [ref=e97]:
+                  - generic [ref=e98]: "Updated:"
+                  - text: 2026-03-27 23:18
+                - generic [ref=e99]:
+                  - generic [ref=e100]: "Created:"
+                  - text: 2026-03-27 23:18
+            - generic "Double-click to edit" [ref=e103]:
+              - paragraph [ref=e104]: SELECT * FORM groups
+        - article [ref=e105]:
+          - generic [ref=e106]:
+            - generic [ref=e108]:
+              - heading "TestQuery" [level=3] [ref=e109]:
+                - link "TestQuery" [ref=e110] [cursor=pointer]:
+                  - /url: /query?id=1
+              - generic [ref=e111]:
+                - generic [ref=e112]:
+                  - generic [ref=e113]: "Updated:"
+                  - text: 2026-03-27 23:17
+                - generic [ref=e114]:
+                  - generic [ref=e115]: "Created:"
+                  - text: 2026-03-27 23:17
+            - generic "Double-click to edit" [ref=e118]:
+              - paragraph [ref=e119]: SELECT * FROM groups
+  - contentinfo [ref=e120]:
+    - navigation "Pagination" [ref=e121]:
+      - link "Page 1" [ref=e123] [cursor=pointer]:
+        - /url: /queries?page=1
+        - text: "1"
+  - button "Open jobs panel" [ref=e124]:
+    - img [ref=e125]
+  - status [ref=e127]
+  - status [ref=e128]
+  - status [ref=e129]
+  - status [ref=e130]

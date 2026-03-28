@@ -1,0 +1,64 @@
+- generic [active] [ref=e1]:
+  - link "Skip to main content" [ref=e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - banner [ref=e3]:
+    - navigation "Main" [ref=e4]:
+      - generic [ref=e5]:
+        - link "Dashboard" [ref=e6] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Notes" [ref=e7] [cursor=pointer]:
+          - /url: /notes
+        - link "Resources" [ref=e8] [cursor=pointer]:
+          - /url: /resources
+        - link "Tags" [ref=e9] [cursor=pointer]:
+          - /url: /tags
+        - link "Groups" [ref=e10] [cursor=pointer]:
+          - /url: /groups
+        - link "Queries" [ref=e11] [cursor=pointer]:
+          - /url: /queries
+        - button "Admin" [ref=e13] [cursor=pointer]:
+          - generic [ref=e14]: Admin
+          - img [ref=e15]
+        - button "Plugins" [ref=e18] [cursor=pointer]:
+          - generic [ref=e19]: Plugins
+          - img [ref=e20]
+    - generic [ref=e22]:
+      - button "Open search dialog" [ref=e24]:
+        - img [ref=e25]
+        - generic [ref=e27]: Search
+        - generic [ref=e28]: ⌘K
+      - button "Settings" [ref=e30]: ⚙
+  - generic [ref=e32]:
+    - heading "Note TestNote Edit name" [level=1] [ref=e33]:
+      - generic [ref=e34]: Note
+      - generic [ref=e36]:
+        - generic [ref=e37]: TestNote
+        - button "Edit name" [ref=e38] [cursor=pointer]:
+          - img [ref=e39]
+    - link "Edit" [ref=e41] [cursor=pointer]:
+      - /url: /note/edit?id=1
+    - button "Delete" [ref=e43]
+  - generic [ref=e44]:
+    - complementary [ref=e45]:
+      - generic [ref=e46]: "Updated: 2026-03-27 23:21"
+      - generic [ref=e47]: "Created: 2026-03-27 23:17"
+      - heading "Tags" [level=2] [ref=e48]
+      - generic [ref=e50]:
+        - generic [ref=e51]:
+          - generic [ref=e52]: Add Tag
+          - combobox "Add Tag" [ref=e54]
+          - status [ref=e55]
+        - button "Add Tags" [ref=e58]
+      - heading "Meta Data" [level=2] [ref=e59]
+      - table [ref=e62]: No data
+    - main [ref=e63]:
+      - link "Go back to the note" [ref=e64] [cursor=pointer]:
+        - /url: /note?id=1
+      - paragraph [ref=e66]: Test block content
+  - contentinfo
+  - button "Open jobs panel" [ref=e67]:
+    - img [ref=e68]
+  - status [ref=e70]
+  - status [ref=e71]
+  - status [ref=e72]
+  - status [ref=e73]

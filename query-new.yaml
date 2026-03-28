@@ -1,0 +1,65 @@
+- generic [active] [ref=e1]:
+  - link "Skip to main content" [ref=e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - banner [ref=e3]:
+    - navigation "Main" [ref=e4]:
+      - generic [ref=e5]:
+        - link "Dashboard" [ref=e6] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Notes" [ref=e7] [cursor=pointer]:
+          - /url: /notes
+        - link "Resources" [ref=e8] [cursor=pointer]:
+          - /url: /resources
+        - link "Tags" [ref=e9] [cursor=pointer]:
+          - /url: /tags
+        - link "Groups" [ref=e10] [cursor=pointer]:
+          - /url: /groups
+        - link "Queries" [ref=e11] [cursor=pointer]:
+          - /url: /queries
+        - button "Admin" [ref=e13] [cursor=pointer]:
+          - generic [ref=e14]: Admin
+          - img [ref=e15]
+        - button "Plugins" [ref=e18] [cursor=pointer]:
+          - generic [ref=e19]: Plugins
+          - img [ref=e20]
+    - generic [ref=e22]:
+      - button "Open search dialog" [ref=e24]:
+        - img [ref=e25]
+        - generic [ref=e27]: Search
+        - generic [ref=e28]: ⌘K
+      - button "Settings" [ref=e30]: ⚙
+  - heading "Create Query" [level=1] [ref=e33]:
+    - generic [ref=e34]: Create Query
+  - generic [ref=e35]:
+    - complementary [ref=e36]
+    - main [ref=e37]:
+      - generic [ref=e38]:
+        - generic [ref=e39]:
+          - generic [ref=e40]: Name *
+          - generic [ref=e41]:
+            - textbox "Name *" [ref=e43]
+            - text: Required
+        - generic [ref=e44]:
+          - generic [ref=e45]: Query
+          - generic [ref=e49]:
+            - generic [ref=e52]: "1"
+            - textbox "Query" [ref=e53]
+        - button "SQL query reference" [ref=e57]:
+          - img [ref=e58]
+          - text: SQL query reference
+        - generic [ref=e60]:
+          - generic [ref=e61]: Template
+          - generic [ref=e65]:
+            - generic [ref=e68]: "1"
+            - textbox "Template" [ref=e69]
+        - button "Template reference" [ref=e73]:
+          - img [ref=e74]
+          - text: Template reference
+        - button "Save" [ref=e78]
+  - contentinfo
+  - button "Open jobs panel" [ref=e79]:
+    - img [ref=e80]
+  - status [ref=e82]
+  - status [ref=e83]
+  - status [ref=e84]
+  - status [ref=e85]

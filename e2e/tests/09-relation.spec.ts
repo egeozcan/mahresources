@@ -51,8 +51,8 @@ test.describe('Relation CRUD Operations', () => {
 
   test('should display the created relation', async ({ relationPage, page }) => {
     await relationPage.gotoDisplay(createdRelationId);
-    // The page title shows "Relation from X to Y" format (Name is not saved by AddRelation)
-    await expect(page.locator('.title')).toContainText(`Relation from Person ${testRunId} to Company ${testRunId}`);
+    // The title shows the relation Name via inline-edit (AddRelation saves the Name field)
+    await expect(page.locator('.title')).toContainText(`Person works at Company ${testRunId}`);
   });
 
   test('should show relation on group page', async ({ groupPage, page }) => {

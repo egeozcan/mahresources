@@ -1,0 +1,108 @@
+- generic [active] [ref=e1]:
+  - link "Skip to main content" [ref=e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - banner [ref=e3]:
+    - navigation "Main" [ref=e4]:
+      - generic [ref=e5]:
+        - link "Dashboard" [ref=e6] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Notes" [ref=e7] [cursor=pointer]:
+          - /url: /notes
+        - link "Resources" [ref=e8] [cursor=pointer]:
+          - /url: /resources
+        - link "Tags" [ref=e9] [cursor=pointer]:
+          - /url: /tags
+        - link "Groups" [ref=e10] [cursor=pointer]:
+          - /url: /groups
+        - link "Queries" [ref=e11] [cursor=pointer]:
+          - /url: /queries
+        - button "Admin" [ref=e13] [cursor=pointer]:
+          - generic [ref=e14]: Admin
+          - img [ref=e15]
+        - button "Plugins" [ref=e18] [cursor=pointer]:
+          - generic [ref=e19]: Plugins
+          - img [ref=e20]
+    - generic [ref=e22]:
+      - button "Open search dialog" [ref=e24]:
+        - img [ref=e25]
+        - generic [ref=e27]: Search
+        - generic [ref=e28]: ⌘K
+      - button "Settings" [ref=e30]: ⚙
+  - generic [ref=e32]:
+    - heading "Relations" [level=1] [ref=e33]:
+      - generic [ref=e34]: Relations
+    - link "Add" [ref=e35] [cursor=pointer]:
+      - /url: /relation/new
+  - generic [ref=e36]:
+    - complementary [ref=e37]:
+      - generic [ref=e38]:
+        - heading "Filter" [level=2] [ref=e39]
+        - generic [ref=e40]:
+          - generic [ref=e41]: Name
+          - searchbox "Name" [ref=e42]
+          - generic [ref=e43]: Description
+          - searchbox "Description" [ref=e44]
+          - generic [ref=e45]:
+            - generic [ref=e46]: Type
+            - combobox "Type" [ref=e48]
+            - status [ref=e49]
+          - generic [ref=e50]:
+            - generic [ref=e51]: From Group
+            - combobox "From Group" [ref=e53]
+            - status [ref=e54]
+          - generic [ref=e55]:
+            - generic [ref=e56]: To Group
+            - combobox "To Group" [ref=e58]
+            - status [ref=e59]
+          - button "Apply Filters" [ref=e61]
+    - main [ref=e62]:
+      - article [ref=e64]:
+        - link "TestRelation" [ref=e67] [cursor=pointer]:
+          - /url: /relation?id=1
+          - heading "TestRelation" [level=3] [ref=e68]
+        - generic [ref=e69]:
+          - article [ref=e70]:
+            - generic [ref=e75]:
+              - link "Address" [ref=e76] [cursor=pointer]:
+                - /url: /relation?id=1
+              - heading "TestGroup1" [level=3] [ref=e77]:
+                - link "TestGroup1" [ref=e78] [cursor=pointer]:
+                  - /url: /group?id=2
+              - generic [ref=e79]:
+                - generic [ref=e80]:
+                  - generic [ref=e81]: "Updated:"
+                  - text: 2026-03-27 23:17
+                - generic [ref=e82]:
+                  - generic [ref=e83]: "Created:"
+                  - text: 2026-03-27 23:17
+          - img [ref=e85]
+          - article [ref=e87]:
+            - generic [ref=e88]:
+              - generic [ref=e92]:
+                - heading "ChildGroup1" [level=3] [ref=e93]:
+                  - link "ChildGroup1" [ref=e94] [cursor=pointer]:
+                    - /url: /group?id=3
+                - link "Address" [ref=e95] [cursor=pointer]:
+                  - /url: /relation?id=1
+                - generic [ref=e96]:
+                  - generic [ref=e97]:
+                    - generic [ref=e98]: "Updated:"
+                    - text: 2026-03-27 23:17
+                  - generic [ref=e99]:
+                    - generic [ref=e100]: "Created:"
+                    - text: 2026-03-27 23:17
+              - link "TestRelDesc" [ref=e101] [cursor=pointer]:
+                - /url: /relation?id=1
+                - generic "Double-click to edit" [ref=e103]:
+                  - paragraph [ref=e104]: TestRelDesc
+  - contentinfo [ref=e105]:
+    - navigation "Pagination" [ref=e106]:
+      - link "Page 1" [ref=e108] [cursor=pointer]:
+        - /url: /relations?page=1
+        - text: "1"
+  - button "Open jobs panel" [ref=e109]:
+    - img [ref=e110]
+  - status [ref=e112]
+  - status [ref=e113]
+  - status [ref=e114]
+  - status [ref=e115]

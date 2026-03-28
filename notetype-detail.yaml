@@ -1,0 +1,55 @@
+- generic [active] [ref=e1]:
+  - link "Skip to main content" [ref=e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - banner [ref=e3]:
+    - navigation "Main" [ref=e4]:
+      - generic [ref=e5]:
+        - link "Dashboard" [ref=e6] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Notes" [ref=e7] [cursor=pointer]:
+          - /url: /notes
+        - link "Resources" [ref=e8] [cursor=pointer]:
+          - /url: /resources
+        - link "Tags" [ref=e9] [cursor=pointer]:
+          - /url: /tags
+        - link "Groups" [ref=e10] [cursor=pointer]:
+          - /url: /groups
+        - link "Queries" [ref=e11] [cursor=pointer]:
+          - /url: /queries
+        - button "Admin" [ref=e13] [cursor=pointer]:
+          - generic [ref=e14]: Admin
+          - img [ref=e15]
+        - button "Plugins" [ref=e18] [cursor=pointer]:
+          - generic [ref=e19]: Plugins
+          - img [ref=e20]
+    - generic [ref=e22]:
+      - button "Open search dialog" [ref=e24]:
+        - img [ref=e25]
+        - generic [ref=e27]: Search
+        - generic [ref=e28]: ⌘K
+      - button "Settings" [ref=e30]: ⚙
+  - generic [ref=e32]:
+    - heading "Note Type TestNoteType Edit name" [level=1] [ref=e33]:
+      - generic [ref=e34]: Note Type
+      - generic [ref=e36]:
+        - generic [ref=e37]: TestNoteType
+        - button "Edit name" [ref=e38] [cursor=pointer]:
+          - img [ref=e39]
+    - link "Edit" [ref=e41] [cursor=pointer]:
+      - /url: /noteType/edit?id=1
+    - button "Delete" [ref=e43]
+  - generic [ref=e44]:
+    - complementary [ref=e45]:
+      - generic [ref=e46]: "Updated: 2026-03-27 23:20"
+      - generic [ref=e47]: "Created: 2026-03-27 23:20"
+    - main [ref=e48]:
+      - heading "TestNoteType" [level=2] [ref=e49]
+      - generic "Double-click to edit" [ref=e51]:
+        - paragraph [ref=e52]: Test note type
+  - contentinfo
+  - button "Open jobs panel" [ref=e53]:
+    - img [ref=e54]
+  - status [ref=e56]
+  - status [ref=e57]
+  - status [ref=e58]
+  - status [ref=e59]

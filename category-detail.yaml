@@ -1,0 +1,124 @@
+- generic [active] [ref=e1]:
+  - link "Skip to main content" [ref=e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - banner [ref=e3]:
+    - navigation "Main" [ref=e4]:
+      - generic [ref=e5]:
+        - link "Dashboard" [ref=e6] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Notes" [ref=e7] [cursor=pointer]:
+          - /url: /notes
+        - link "Resources" [ref=e8] [cursor=pointer]:
+          - /url: /resources
+        - link "Tags" [ref=e9] [cursor=pointer]:
+          - /url: /tags
+        - link "Groups" [ref=e10] [cursor=pointer]:
+          - /url: /groups
+        - link "Queries" [ref=e11] [cursor=pointer]:
+          - /url: /queries
+        - button "Admin" [ref=e13] [cursor=pointer]:
+          - generic [ref=e14]: Admin
+          - img [ref=e15]
+        - button "Plugins" [ref=e18] [cursor=pointer]:
+          - generic [ref=e19]: Plugins
+          - img [ref=e20]
+    - generic [ref=e22]:
+      - button "Open search dialog" [ref=e24]:
+        - img [ref=e25]
+        - generic [ref=e27]: Search
+        - generic [ref=e28]: ⌘K
+      - button "Settings" [ref=e30]: ⚙
+  - generic [ref=e32]:
+    - heading "Category Person Edit name" [level=1] [ref=e33]:
+      - generic [ref=e34]: Category
+      - generic [ref=e36]:
+        - generic [ref=e37]: Person
+        - button "Edit name" [ref=e38] [cursor=pointer]:
+          - img [ref=e39]
+    - link "Edit" [ref=e41] [cursor=pointer]:
+      - /url: /category/edit?id=1
+    - button "Delete" [ref=e43]
+  - generic [ref=e44]:
+    - complementary [ref=e45]:
+      - generic [ref=e46]: "Updated: 2026-03-27 23:15"
+      - generic [ref=e47]: "Created: 2026-03-27 23:15"
+    - main [ref=e48]:
+      - generic "Double-click to edit" [ref=e50]:
+        - paragraph [ref=e51]: A person. Likely a human.
+      - generic [ref=e53]:
+        - generic [ref=e54]: Groups
+        - generic [ref=e55]: "4"
+      - generic [ref=e56]:
+        - generic [ref=e57]:
+          - heading "Groups" [level=3] [ref=e58]
+          - generic [ref=e59]:
+            - button "See All" [ref=e61]
+            - button "New" [ref=e63]
+        - generic [ref=e65]:
+          - article [ref=e66]:
+            - generic [ref=e67]:
+              - generic [ref=e71]:
+                - heading "TestGroup1" [level=3] [ref=e72]:
+                  - link "TestGroup1" [ref=e73] [cursor=pointer]:
+                    - /url: /group?id=2
+                - generic [ref=e74]:
+                  - generic [ref=e75]:
+                    - generic [ref=e76]: "Updated:"
+                    - text: 2026-03-27 23:17
+                  - generic [ref=e77]:
+                    - generic [ref=e78]: "Created:"
+                    - text: 2026-03-27 23:17
+              - generic "Double-click to edit" [ref=e81]:
+                - paragraph [ref=e82]: A test group
+          - article [ref=e83]:
+            - generic [ref=e84]:
+              - generic [ref=e88]:
+                - heading "TestGroup1" [level=3] [ref=e89]:
+                  - link "TestGroup1" [ref=e90] [cursor=pointer]:
+                    - /url: /group?id=19
+                - generic [ref=e91]:
+                  - generic [ref=e92]:
+                    - generic [ref=e93]: "Updated:"
+                    - text: 2026-03-27 23:19
+                  - generic [ref=e94]:
+                    - generic [ref=e95]: "Created:"
+                    - text: 2026-03-27 23:19
+              - generic "Double-click to edit" [ref=e98]:
+                - paragraph [ref=e99]: A test group
+          - article [ref=e100]:
+            - generic [ref=e101]:
+              - generic [ref=e105]:
+                - heading "Test<script>alert(1)</script>Group" [level=3] [ref=e106]:
+                  - link "Test<script>alert(1)</script>Group" [ref=e107] [cursor=pointer]:
+                    - /url: /group?id=20
+                - generic [ref=e108]:
+                  - generic [ref=e109]:
+                    - generic [ref=e110]: "Updated:"
+                    - text: 2026-03-27 23:19
+                  - generic [ref=e111]:
+                    - generic [ref=e112]: "Created:"
+                    - text: 2026-03-27 23:19
+              - generic "Double-click to edit" [ref=e115]:
+                - paragraph [ref=e116]: XSS test
+          - article [ref=e117]:
+            - generic [ref=e118]:
+              - generic [ref=e122]:
+                - heading "🎉 Test Ünïcödé グループ 🇯🇵" [level=3] [ref=e123]:
+                  - link "🎉 Test Ünïcödé グループ 🇯🇵" [ref=e124] [cursor=pointer]:
+                    - /url: /group?id=21
+                - generic [ref=e125]:
+                  - generic [ref=e126]:
+                    - generic [ref=e127]: "Updated:"
+                    - text: 2026-03-27 23:19
+                  - generic [ref=e128]:
+                    - generic [ref=e129]: "Created:"
+                    - text: 2026-03-27 23:19
+              - generic "Double-click to edit" [ref=e132]:
+                - paragraph [ref=e133]: Unicode test with emoji
+  - contentinfo
+  - button "Open jobs panel" [ref=e134]:
+    - img [ref=e135]
+  - status [ref=e137]
+  - status [ref=e138]
+  - status [ref=e139]
+  - status [ref=e140]
