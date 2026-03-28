@@ -130,10 +130,34 @@ type OrderByClause struct {
 	Ascending bool // true = ASC, false = DESC
 }
 
+// EntityType identifies which entity a query targets.
+type EntityType int
+
+const (
+	EntityUnspecified EntityType = iota
+	EntityResource
+	EntityNote
+	EntityGroup
+)
+
+func (e EntityType) String() string {
+	switch e {
+	case EntityResource:
+		return "resource"
+	case EntityNote:
+		return "note"
+	case EntityGroup:
+		return "group"
+	default:
+		return "unspecified"
+	}
+}
+
 // Query is the top-level AST node for a complete MRQL query.
 type Query struct {
-	Where   Node            // the filter expression (may be nil)
-	OrderBy []OrderByClause // ORDER BY clauses (may be empty)
-	Limit   int             // -1 if not specified
-	Offset  int             // -1 if not specified
+	Where      Node            // the filter expression (may be nil)
+	OrderBy    []OrderByClause // ORDER BY clauses (may be empty)
+	Limit      int             // -1 if not specified
+	Offset     int             // -1 if not specified
+	EntityType EntityType      // populated by validator or caller
 }
