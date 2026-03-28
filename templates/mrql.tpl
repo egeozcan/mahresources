@@ -121,7 +121,7 @@
                     </svg>
                 </template>
                 <span x-text="executing ? 'Running...' : 'Run'"></span>
-                <kbd class="ml-2 text-xs opacity-90" aria-hidden="true">Ctrl+Enter</kbd>
+                <kbd class="ml-2 text-xs" aria-hidden="true">Ctrl+Enter</kbd>
             </button>
             <button type="button"
                     @click="showSaveDialog = true"
