@@ -1576,7 +1576,6 @@ func TestComprehensive_ValidatorAcceptsValidTraversalSubfields(t *testing.T) {
 	tests := []string{
 		`type = "group" AND parent.name = "x"`,
 		`type = "group" AND parent.tags = "x"`,
-		`type = "group" AND parent.category IS NULL`,
 		`type = "group" AND children.name = "x"`,
 		`type = "group" AND children.tags = "x"`,
 		`type = "group" AND children.description ~ "x*"`,
@@ -1867,5 +1866,95 @@ func TestComprehensive_TypeOrNameExecution(t *testing.T) {
 	if len(notes) != 1 || notes[0].Name != "Todo list" {
 		t.Fatalf("name=Todo list arm should match 1 note, got %d: %v",
 			len(notes), namesOfNotes(notes))
+	}
+}
+
+// P1: type with unsupported operators should be rejected at validation.
+func TestComprehensive_TypeUnsupportedOperators(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"type != invalid", `type != "foobar"`},
+		{"type like", `type ~ "res*"`},
+		{"type not like", `type !~ "res*"`},
+		{"type gt", `type > "resource"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := Parse(tt.query)
+			if err != nil {
+				return // parse error is fine
+			}
+			err = Validate(q)
+			if err == nil {
+				t.Fatalf("expected validation error for %s, got nil", tt.query)
+			}
+		})
+	}
+}
+
+// P2: meta.rating IN (3, 5) should not produce invalid SQL.
+func TestComprehensive_MetaInExpr(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Resources: 1 has rating=5, 2 has rating=3, 3+4 have no rating.
+	result := parseAndTranslate(t, `type = "resource" AND meta.rating IN (3, 5)`, EntityResource, db)
+
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) != 2 {
+		t.Fatalf("expected 2 resources with rating 3 or 5, got %d: %v",
+			len(resources), namesOfResources(resources))
+	}
+}
+
+// P2: parent.name IN (...) should be rejected at validation.
+func TestComprehensive_TraversalInValidation(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"parent.name IN", `type = "group" AND parent.name IN ("Vacation", "Work")`},
+		{"children.name IS EMPTY", `type = "group" AND children.name IS EMPTY`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := Parse(tt.query)
+			if err != nil {
+				return
+			}
+			err = Validate(q)
+			if err == nil {
+				t.Fatalf("expected validation error for %s, got nil", tt.query)
+			}
+		})
+	}
+}
+
+// P2: ORDER BY on relation/traversal fields should be rejected at validation.
+func TestComprehensive_OrderByRelationFieldValidation(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"order by tags", `type = "resource" ORDER BY tags ASC`},
+		{"order by groups", `type = "resource" ORDER BY groups ASC`},
+		{"order by parent.name", `type = "group" ORDER BY parent.name ASC`},
+		{"order by children", `type = "group" ORDER BY children ASC`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := Parse(tt.query)
+			if err != nil {
+				return
+			}
+			err = Validate(q)
+			if err == nil {
+				t.Fatalf("expected validation error for %s, got nil", tt.query)
+			}
+		})
 	}
 }

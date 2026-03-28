@@ -39,9 +39,12 @@ func Validate(q *Query) error {
 		}
 	}
 
-	// Validate ORDER BY fields.
+	// Validate ORDER BY fields — must be sortable (scalar or meta, not relation/traversal).
 	for _, ob := range q.OrderBy {
 		if err := validateFieldExpr(ob.Field, entityType); err != nil {
+			return err
+		}
+		if err := validateSortable(ob.Field, entityType); err != nil {
 			return err
 		}
 	}
@@ -134,8 +137,15 @@ func validateNode(node Node, entityType EntityType) error {
 		if err := validateFieldExpr(n.Field, entityType); err != nil {
 			return err
 		}
-		// Validate entity type value in `type = "..."` comparisons
-		if isTypeField(n.Field) && n.Operator.Type == TokenEq {
+		// Validate type pseudo-field: only = and != with valid entity names allowed
+		if isTypeField(n.Field) {
+			if n.Operator.Type != TokenEq && n.Operator.Type != TokenNeq {
+				return &ValidationError{
+					Message: fmt.Sprintf("type field only supports = and != operators, got %q", n.Operator.Value),
+					Pos:     n.Operator.Pos,
+					Length:  n.Operator.Length,
+				}
+			}
 			if sl, ok := n.Value.(*StringLiteral); ok {
 				if _, valid := ValidEntityTypes[strings.ToLower(sl.Value)]; !valid {
 					return &ValidationError{
@@ -149,14 +159,83 @@ func validateNode(node Node, entityType EntityType) error {
 		return nil
 
 	case *InExpr:
+		// Reject type IN (...) and traversal IN (...)
+		if isTypeField(n.Field) {
+			return &ValidationError{
+				Message: "type field does not support IN operator; use type = \"...\" or type != \"...\"",
+				Pos:     n.Field.Pos(),
+				Length:  len(n.Field.Name()),
+			}
+		}
+		if len(n.Field.Parts) == 2 {
+			prefix := n.Field.Parts[0].Value
+			if prefix == "parent" || prefix == "children" {
+				return &ValidationError{
+					Message: fmt.Sprintf("%s.%s does not support IN operator; use = or != instead", prefix, n.Field.Parts[1].Value),
+					Pos:     n.Field.Pos(),
+					Length:  len(n.Field.Name()),
+				}
+			}
+		}
 		return validateFieldExpr(n.Field, entityType)
 
 	case *IsExpr:
+		// Reject traversal IS EMPTY/NULL (e.g., children.name IS EMPTY)
+		if len(n.Field.Parts) == 2 {
+			prefix := n.Field.Parts[0].Value
+			if prefix == "parent" || prefix == "children" {
+				return &ValidationError{
+					Message: fmt.Sprintf("%s.%s does not support IS EMPTY/NULL; use parent/children IS EMPTY or %s.%s = \"...\" instead", prefix, n.Field.Parts[1].Value, prefix, n.Field.Parts[1].Value),
+					Pos:     n.Field.Pos(),
+					Length:  len(n.Field.Name()),
+				}
+			}
+		}
 		return validateFieldExpr(n.Field, entityType)
 
 	case *TextSearchExpr:
 		// TEXT ~ "..." has no field reference to validate
 		return nil
+	}
+	return nil
+}
+
+// validateSortable rejects ORDER BY on fields that don't map to scalar columns
+// (relation fields like tags/groups, and traversal paths like parent.name).
+func validateSortable(f *FieldExpr, entityType EntityType) error {
+	// Traversal fields (parent.X, children.X) are not sortable
+	if len(f.Parts) == 2 {
+		prefix := f.Parts[0].Value
+		if prefix == "parent" || prefix == "children" {
+			return &ValidationError{
+				Message: fmt.Sprintf("cannot ORDER BY %s: traversal fields are not sortable", f.Name()),
+				Pos:     f.Pos(),
+				Length:  len(f.Name()),
+			}
+		}
+		// meta.X is sortable
+		return nil
+	}
+
+	name := f.Parts[0].Value
+	if name == "type" {
+		return &ValidationError{
+			Message: "cannot ORDER BY type",
+			Pos:     f.Pos(),
+			Length:  len(name),
+		}
+	}
+
+	fd, ok := LookupField(entityType, name)
+	if !ok {
+		return nil // unknown field already caught by validateFieldExpr
+	}
+	if fd.Type == FieldRelation {
+		return &ValidationError{
+			Message: fmt.Sprintf("cannot ORDER BY %s: relation fields are not sortable", name),
+			Pos:     f.Pos(),
+			Length:  len(name),
+		}
 	}
 	return nil
 }

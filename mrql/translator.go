@@ -716,6 +716,26 @@ func (tc *translateContext) translateInExpr(db *gorm.DB, expr *InExpr) (*gorm.DB
 		return tc.translateRelationIn(db, fd, expr.Negated, values)
 	}
 
+	// Handle meta fields — need json_extract, not qualifiedColumn
+	if fd.Type == FieldMeta {
+		key := strings.TrimPrefix(fd.Name, "meta.")
+		if !isValidMetaKey(key) {
+			return nil, &TranslateError{Message: fmt.Sprintf("invalid meta key %q", key)}
+		}
+		var jsonExpr string
+		if tc.isPostgres() {
+			jsonExpr = fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)
+		} else {
+			jsonExpr = fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
+		}
+		if expr.Negated {
+			db = db.Where(jsonExpr+" NOT IN (?)", values)
+		} else {
+			db = db.Where(jsonExpr+" IN (?)", values)
+		}
+		return db, nil
+	}
+
 	column := tc.qualifiedColumn(fd.Column)
 
 	if fd.Type == FieldString {
