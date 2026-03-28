@@ -33,7 +33,7 @@ var commonFields = []FieldDef{
 var resourceFields = []FieldDef{
 	{Name: "groups", Type: FieldRelation, Column: "groups"},
 	{Name: "group", Type: FieldRelation, Column: "groups"}, // alias
-	{Name: "category", Type: FieldString, Column: "category_id"},
+	{Name: "category", Type: FieldString, Column: "resource_category_id"},
 	{Name: "contentType", Type: FieldString, Column: "content_type"},
 	{Name: "fileSize", Type: FieldNumber, Column: "file_size"},
 	{Name: "width", Type: FieldNumber, Column: "width"},

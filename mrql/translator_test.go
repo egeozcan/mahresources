@@ -816,3 +816,68 @@ func TestTranslateTagLikeFilter(t *testing.T) {
 		t.Fatalf("expected 2 resources with tag matching 'pho*', got %d", len(resources))
 	}
 }
+
+func TestTranslateParentNameTraversal(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Group "Work" (id=2) has owner_id=1 pointing to "Vacation" (id=1)
+	// parent.name = "Vacation" should find "Work"
+	result := parseAndTranslate(t, `type = "group" AND parent.name = "Vacation"`, EntityGroup, db)
+
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+
+	if len(groups) != 1 || groups[0].Name != "Work" {
+		names := make([]string, len(groups))
+		for i, g := range groups {
+			names[i] = g.Name
+		}
+		t.Fatalf("expected 1 group 'Work' with parent 'Vacation', got %d groups: %v", len(groups), names)
+	}
+}
+
+func TestTranslateChildrenNameTraversal(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Group "Work" (id=2) has owner_id=1, so Vacation has child "Work"
+	// children.name = "Work" should find "Vacation"
+	result := parseAndTranslate(t, `type = "group" AND children.name = "Work"`, EntityGroup, db)
+
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+
+	if len(groups) != 1 || groups[0].Name != "Vacation" {
+		names := make([]string, len(groups))
+		for i, g := range groups {
+			names[i] = g.Name
+		}
+		t.Fatalf("expected 1 group 'Vacation' with child 'Work', got %d groups: %v", len(groups), names)
+	}
+}
+
+func TestTranslateChildrenTagsTraversal(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Give "Work" (id=2) the "photo" tag. "Vacation" is its parent.
+	// children.tags = "photo" should find "Vacation"
+	db.Exec("INSERT INTO group_tags (group_id, tag_id) VALUES (2, 1)") // Work -> photo
+
+	result := parseAndTranslate(t, `type = "group" AND children.tags = "photo"`, EntityGroup, db)
+
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+
+	if len(groups) != 1 || groups[0].Name != "Vacation" {
+		names := make([]string, len(groups))
+		for i, g := range groups {
+			names[i] = g.Name
+		}
+		t.Fatalf("expected 1 group 'Vacation' with child having tag 'photo', got %d groups: %v", len(groups), names)
+	}
+}

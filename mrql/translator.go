@@ -185,6 +185,14 @@ func (tc *translateContext) translateComparisonExpr(db *gorm.DB, expr *Compariso
 		return db, nil
 	}
 
+	// Handle parent.X and children.X traversal (groups only)
+	if len(expr.Field.Parts) == 2 {
+		root := expr.Field.Parts[0].Value
+		if root == "parent" || root == "children" {
+			return tc.translateTraversalComparison(db, expr, root)
+		}
+	}
+
 	fd, ok := LookupField(tc.entityType, fieldName)
 	if !ok {
 		return nil, &TranslateError{
@@ -408,6 +416,139 @@ func (tc *translateContext) translateChildrenComparison(db *gorm.DB, op Token, v
 	}
 
 	db = db.Where(subquery, matchVal)
+	return db, nil
+}
+
+// translateTraversalComparison handles parent.field and children.field for groups.
+// It generates subqueries that join through the owner_id relationship.
+func (tc *translateContext) translateTraversalComparison(db *gorm.DB, expr *ComparisonExpr, root string) (*gorm.DB, error) {
+	subField := expr.Field.Parts[1].Value
+
+	// Resolve the value
+	// Look up the sub-field on the group entity (since parent/children are always groups)
+	subFd, ok := LookupField(EntityGroup, subField)
+	if !ok && !IsCommonField(subField) {
+		// Check if it's a meta field
+		if subField != "meta" {
+			return nil, &TranslateError{
+				Message: fmt.Sprintf("unknown field %q for group traversal", subField),
+				Pos:     expr.Field.Parts[1].Pos,
+			}
+		}
+	}
+	if IsCommonField(subField) {
+		subFd, _ = LookupField(EntityGroup, subField)
+	}
+
+	val, err := tc.resolveValue(expr.Value, subFd)
+	if err != nil {
+		return nil, err
+	}
+
+	// Handle meta sub-fields: parent.meta.key
+	if subField == "meta" {
+		// This would be a 3-part field which is rejected by the parser
+		return nil, &TranslateError{Message: "parent.meta requires a key (e.g., parent.meta.key) — use the full dotted path", Pos: expr.Pos()}
+	}
+
+	// Handle relation sub-fields: parent.tags, children.tags
+	if subFd.Type == FieldRelation && subFd.Column == "tags" {
+		return tc.translateTraversalTagComparison(db, expr.Operator, val, root)
+	}
+
+	// Scalar sub-field on parent/children
+	col := subFd.Column
+	op := tc.sqlOperator(expr.Operator)
+
+	if root == "parent" {
+		if expr.Operator.Type == TokenLike || expr.Operator.Type == TokenNotLike {
+			likePattern := convertMRQLWildcards(fmt.Sprint(val))
+			likeOp := tc.likeOperator()
+			if expr.Operator.Type == TokenNotLike {
+				likeOp = "NOT " + likeOp
+			}
+			db = db.Where(
+				fmt.Sprintf("groups.owner_id IN (SELECT p.id FROM groups p WHERE p.%s %s ? ESCAPE '\\\\')", col, likeOp),
+				likePattern,
+			)
+		} else if subFd.Type == FieldString && (expr.Operator.Type == TokenEq || expr.Operator.Type == TokenNeq) {
+			db = db.Where(
+				fmt.Sprintf("groups.owner_id IN (SELECT p.id FROM groups p WHERE LOWER(p.%s) %s LOWER(?))", col, op),
+				val,
+			)
+		} else {
+			db = db.Where(
+				fmt.Sprintf("groups.owner_id IN (SELECT p.id FROM groups p WHERE p.%s %s ?)", col, op),
+				val,
+			)
+		}
+	} else {
+		// children
+		if expr.Operator.Type == TokenLike || expr.Operator.Type == TokenNotLike {
+			likePattern := convertMRQLWildcards(fmt.Sprint(val))
+			likeOp := tc.likeOperator()
+			if expr.Operator.Type == TokenNotLike {
+				likeOp = "NOT " + likeOp
+			}
+			db = db.Where(
+				fmt.Sprintf("groups.id IN (SELECT c.owner_id FROM groups c WHERE c.%s %s ? ESCAPE '\\\\')", col, likeOp),
+				likePattern,
+			)
+		} else if subFd.Type == FieldString && (expr.Operator.Type == TokenEq || expr.Operator.Type == TokenNeq) {
+			db = db.Where(
+				fmt.Sprintf("groups.id IN (SELECT c.owner_id FROM groups c WHERE LOWER(c.%s) %s LOWER(?))", col, op),
+				val,
+			)
+		} else {
+			db = db.Where(
+				fmt.Sprintf("groups.id IN (SELECT c.owner_id FROM groups c WHERE c.%s %s ?)", col, op),
+				val,
+			)
+		}
+	}
+
+	return db, nil
+}
+
+// translateTraversalTagComparison handles parent.tags = "X" and children.tags = "X".
+func (tc *translateContext) translateTraversalTagComparison(db *gorm.DB, op Token, val interface{}, root string) (*gorm.DB, error) {
+	isNegated := op.Type == TokenNeq || op.Type == TokenNotLike
+	isLike := op.Type == TokenLike || op.Type == TokenNotLike
+
+	var tagMatchClause string
+	var tagMatchVal interface{}
+
+	if isLike {
+		likePattern := convertMRQLWildcards(fmt.Sprint(val))
+		likeOp := tc.likeOperator()
+		tagMatchClause = "LOWER(t.name) " + likeOp + " LOWER(?) ESCAPE '\\'"
+		tagMatchVal = likePattern
+	} else {
+		tagMatchClause = "LOWER(t.name) = LOWER(?)"
+		tagMatchVal = val
+	}
+
+	inOrNotIn := "IN"
+	if isNegated {
+		inOrNotIn = "NOT IN"
+	}
+
+	if root == "parent" {
+		// Find groups whose parent has matching tags
+		subquery := fmt.Sprintf(
+			"groups.owner_id %s (SELECT gt.group_id FROM group_tags gt JOIN tags t ON t.id = gt.tag_id WHERE %s)",
+			inOrNotIn, tagMatchClause,
+		)
+		db = db.Where(subquery, tagMatchVal)
+	} else {
+		// Find groups that have children with matching tags
+		subquery := fmt.Sprintf(
+			"groups.id %s (SELECT c.owner_id FROM groups c JOIN group_tags gt ON gt.group_id = c.id JOIN tags t ON t.id = gt.tag_id WHERE c.owner_id IS NOT NULL AND %s)",
+			inOrNotIn, tagMatchClause,
+		)
+		db = db.Where(subquery, tagMatchVal)
+	}
+
 	return db, nil
 }
 

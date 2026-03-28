@@ -83,8 +83,12 @@ Examples:
 
 			body := map[string]interface{}{
 				"query": queryText,
-				"limit": limit,
-				"page":  *page,
+			}
+			if cmd.Flags().Changed("limit") {
+				body["limit"] = limit
+			}
+			if cmd.Flags().Changed("page") {
+				body["page"] = *page
 			}
 
 			var raw json.RawMessage
@@ -108,7 +112,7 @@ Examples:
 	}
 
 	mrqlCmd.Flags().StringVarP(&fileFlag, "file", "f", "", "Read query from file")
-	mrqlCmd.Flags().IntVar(&limit, "limit", 50, "Maximum number of results")
+	mrqlCmd.Flags().IntVar(&limit, "limit", 0, "Override result limit (0 = use query's LIMIT or server default)")
 
 	mrqlCmd.AddCommand(newMRQLSaveCmd(c, opts))
 	mrqlCmd.AddCommand(newMRQLListCmd(c, opts, page))
