@@ -180,12 +180,13 @@ func validateNode(node Node, entityType EntityType) error {
 		return validateFieldExpr(n.Field, entityType)
 
 	case *IsExpr:
-		// Reject traversal IS EMPTY/NULL (e.g., children.name IS EMPTY)
+		// Reject traversal IS EMPTY (not translatable as a subfield check),
+		// but allow traversal IS NULL / IS NOT NULL (translatable via subquery).
 		if len(n.Field.Parts) == 2 {
 			prefix := n.Field.Parts[0].Value
-			if prefix == "parent" || prefix == "children" {
+			if (prefix == "parent" || prefix == "children") && !n.IsNull {
 				return &ValidationError{
-					Message: fmt.Sprintf("%s.%s does not support IS EMPTY/NULL; use parent/children IS EMPTY or %s.%s = \"...\" instead", prefix, n.Field.Parts[1].Value, prefix, n.Field.Parts[1].Value),
+					Message: fmt.Sprintf("%s.%s does not support IS EMPTY; use parent/children IS EMPTY or %s.%s = \"...\" instead", prefix, n.Field.Parts[1].Value, prefix, n.Field.Parts[1].Value),
 					Pos:     n.Field.Pos(),
 					Length:  len(n.Field.Name()),
 				}

@@ -614,6 +614,53 @@ func (tc *translateContext) translateTraversalTagComparison(db *gorm.DB, op Toke
 	return db, nil
 }
 
+// translateTraversalIsNull handles parent.X IS [NOT] NULL and children.X IS [NOT] NULL.
+func (tc *translateContext) translateTraversalIsNull(db *gorm.DB, expr *IsExpr, root string) (*gorm.DB, error) {
+	subField := expr.Field.Parts[1].Value
+
+	// Look up the sub-field on the group entity
+	subFd, ok := LookupField(EntityGroup, subField)
+	if !ok && !IsCommonField(subField) {
+		return nil, &TranslateError{
+			Message: fmt.Sprintf("unknown field %q for %s traversal", subField, root),
+			Pos:     expr.Field.Parts[1].Pos,
+		}
+	}
+	if IsCommonField(subField) {
+		subFd, _ = LookupField(EntityGroup, subField)
+	}
+
+	col := subFd.Column
+
+	if root == "parent" {
+		// parent.X IS NULL → parent exists but parent.X is null, OR no parent at all
+		// parent.X IS NOT NULL → parent exists and parent.X is not null
+		if expr.Negated {
+			db = db.Where(
+				fmt.Sprintf("groups.owner_id IN (SELECT p.id FROM groups p WHERE p.%s IS NOT NULL)", col),
+			)
+		} else {
+			db = db.Where(
+				fmt.Sprintf("(groups.owner_id IN (SELECT p.id FROM groups p WHERE p.%s IS NULL) OR groups.owner_id IS NULL)", col),
+			)
+		}
+	} else {
+		// children.X IS NULL → has some child where X is null (or no children)
+		// children.X IS NOT NULL → has some child where X is not null
+		if expr.Negated {
+			db = db.Where(
+				fmt.Sprintf("groups.id IN (SELECT c.owner_id FROM groups c WHERE c.%s IS NOT NULL AND c.owner_id IS NOT NULL)", col),
+			)
+		} else {
+			db = db.Where(
+				fmt.Sprintf("(groups.id IN (SELECT c.owner_id FROM groups c WHERE c.%s IS NULL AND c.owner_id IS NOT NULL) OR groups.id NOT IN (SELECT owner_id FROM groups WHERE owner_id IS NOT NULL))", col),
+			)
+		}
+	}
+
+	return db, nil
+}
+
 // metaKeyPattern matches valid meta keys: only alphanumeric and underscores.
 var metaKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 
@@ -827,6 +874,15 @@ func (tc *translateContext) translateRelationIn(db *gorm.DB, fd FieldDef, negate
 // translateIsExpr handles IS EMPTY, IS NOT EMPTY, IS NULL, IS NOT NULL.
 func (tc *translateContext) translateIsExpr(db *gorm.DB, expr *IsExpr) (*gorm.DB, error) {
 	fieldName := expr.Field.Name()
+
+	// Handle parent.X / children.X IS NULL / IS NOT NULL via traversal subquery
+	if len(expr.Field.Parts) == 2 && expr.IsNull {
+		root := expr.Field.Parts[0].Value
+		if root == "parent" || root == "children" {
+			return tc.translateTraversalIsNull(db, expr, root)
+		}
+	}
+
 	fd, ok := LookupField(tc.entityType, fieldName)
 	if !ok {
 		return nil, &TranslateError{

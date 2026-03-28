@@ -27,6 +27,7 @@ type testGroup struct {
 	Name        string    `gorm:"index"`
 	Description string
 	Meta        string `gorm:"type:JSON"`
+	CategoryID  *uint  `gorm:"index"`
 	OwnerID     *uint  `gorm:"index"`
 }
 

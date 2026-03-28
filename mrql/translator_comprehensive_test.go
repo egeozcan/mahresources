@@ -1576,6 +1576,8 @@ func TestComprehensive_ValidatorAcceptsValidTraversalSubfields(t *testing.T) {
 	tests := []string{
 		`type = "group" AND parent.name = "x"`,
 		`type = "group" AND parent.tags = "x"`,
+		`type = "group" AND parent.category IS NULL`,
+		`type = "group" AND children.name IS NOT NULL`,
 		`type = "group" AND children.name = "x"`,
 		`type = "group" AND children.tags = "x"`,
 		`type = "group" AND children.description ~ "x*"`,
@@ -1956,5 +1958,61 @@ func TestComprehensive_OrderByRelationFieldValidation(t *testing.T) {
 				t.Fatalf("expected validation error for %s, got nil", tt.query)
 			}
 		})
+	}
+}
+
+// TestComprehensive_TraversalIsNull verifies parent.category IS NULL and
+// children.name IS NOT NULL work via traversal subqueries.
+func TestComprehensive_TraversalIsNull(t *testing.T) {
+	db := setupTestDB(t)
+
+	// All parent groups have null category_id. parent.category IS NULL matches:
+	// - Work, Photos, Sub-Work (parents all have null category)
+	// - Vacation, Archive (no parent → included by IS NULL null-parent fallback)
+	result := parseAndTranslate(t, `type = "group" AND parent.category IS NULL`, EntityGroup, db)
+
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(groups) != 5 {
+		t.Fatalf("expected 5 groups (all parents have null category + root groups), got %d: %v",
+			len(groups), namesOfGroups(groups))
+	}
+}
+
+// TestComprehensive_TraversalIsNotNull verifies parent.name IS NOT NULL.
+func TestComprehensive_TraversalIsNotNull(t *testing.T) {
+	db := setupTestDB(t)
+
+	// All groups with a parent have parent.name IS NOT NULL.
+	result := parseAndTranslate(t, `type = "group" AND parent.name IS NOT NULL`, EntityGroup, db)
+
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	// Work (parent=Vacation), Photos (parent=Vacation), Sub-Work (parent=Work)
+	if len(groups) != 3 {
+		t.Fatalf("expected 3 groups with parent.name IS NOT NULL, got %d: %v",
+			len(groups), namesOfGroups(groups))
+	}
+}
+
+// TestComprehensive_ChildrenTraversalIsNotNull verifies children.name IS NOT NULL.
+func TestComprehensive_ChildrenTraversalIsNotNull(t *testing.T) {
+	db := setupTestDB(t)
+
+	// children.name IS NOT NULL means "has at least one child" (same as children IS NOT EMPTY)
+	result := parseAndTranslate(t, `type = "group" AND children.name IS NOT NULL`, EntityGroup, db)
+
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	// Vacation (children: Work, Photos), Work (child: Sub-Work)
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 groups with children.name IS NOT NULL, got %d: %v",
+			len(groups), namesOfGroups(groups))
 	}
 }
