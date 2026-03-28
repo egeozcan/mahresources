@@ -21,39 +21,43 @@ type testTag struct {
 func (testTag) TableName() string { return "tags" }
 
 type testGroup struct {
-	ID        uint      `gorm:"primarykey"`
-	CreatedAt time.Time `gorm:"index"`
-	UpdatedAt time.Time `gorm:"index"`
-	Name      string    `gorm:"index"`
-	OwnerID   *uint     `gorm:"index"`
-}
-
-func (testGroup) TableName() string { return "groups" }
-
-type testResource struct {
 	ID          uint      `gorm:"primarykey"`
 	CreatedAt   time.Time `gorm:"index"`
 	UpdatedAt   time.Time `gorm:"index"`
 	Name        string    `gorm:"index"`
 	Description string
-	ContentType string `gorm:"index"`
-	FileSize    int64
-	Width       uint
-	Height      uint
-	Hash        string
 	Meta        string `gorm:"type:JSON"`
 	OwnerID     *uint  `gorm:"index"`
+}
+
+func (testGroup) TableName() string { return "groups" }
+
+type testResource struct {
+	ID           uint      `gorm:"primarykey"`
+	CreatedAt    time.Time `gorm:"index"`
+	UpdatedAt    time.Time `gorm:"index"`
+	Name         string    `gorm:"index"`
+	Description  string
+	ContentType  string `gorm:"index"`
+	FileSize     int64
+	Width        uint
+	Height       uint
+	Hash         string
+	OriginalName string
+	Meta         string `gorm:"type:JSON"`
+	OwnerID      *uint  `gorm:"index"`
 }
 
 func (testResource) TableName() string { return "resources" }
 
 type testNote struct {
-	ID        uint      `gorm:"primarykey"`
-	CreatedAt time.Time `gorm:"index"`
-	UpdatedAt time.Time `gorm:"index"`
-	Name      string    `gorm:"index"`
-	Meta      string    `gorm:"type:JSON"`
-	OwnerID   *uint     `gorm:"index"`
+	ID          uint      `gorm:"primarykey"`
+	CreatedAt   time.Time `gorm:"index"`
+	UpdatedAt   time.Time `gorm:"index"`
+	Name        string    `gorm:"index"`
+	Description string
+	Meta        string `gorm:"type:JSON"`
+	OwnerID     *uint  `gorm:"index"`
 }
 
 func (testNote) TableName() string { return "notes" }
@@ -106,9 +110,12 @@ func setupTestDB(t *testing.T) *gorm.DB {
 
 	// Groups
 	parentGroupID := uint(1)
+	workGroupID := uint(2)
 	groups := []testGroup{
-		{ID: 1, Name: "Vacation"},
-		{ID: 2, Name: "Work", OwnerID: &parentGroupID},
+		{ID: 1, Name: "Vacation", Meta: `{"region":"europe","priority":3}`},
+		{ID: 2, Name: "Work", OwnerID: &parentGroupID, Meta: `{}`},
+		{ID: 3, Name: "Archive", Meta: `{}`},
+		{ID: 4, Name: "Sub-Work", OwnerID: &workGroupID, Meta: `{}`},
 	}
 	for _, g := range groups {
 		db.Create(&g)
@@ -117,10 +124,10 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	// Resources
 	now := time.Now()
 	resources := []testResource{
-		{ID: 1, Name: "sunset.jpg", ContentType: "image/jpeg", FileSize: 1024000, Width: 1920, Height: 1080, CreatedAt: now, UpdatedAt: now, Meta: `{"rating":5}`},
-		{ID: 2, Name: "photo_album.png", ContentType: "image/png", FileSize: 2048000, Width: 800, Height: 600, CreatedAt: now, UpdatedAt: now, Meta: `{"rating":3}`},
-		{ID: 3, Name: "report.pdf", ContentType: "application/pdf", FileSize: 512000, CreatedAt: now, UpdatedAt: now, Meta: `{}`},
-		{ID: 4, Name: "untagged_file.txt", ContentType: "text/plain", FileSize: 100, CreatedAt: now.Add(-24 * 30 * time.Hour), UpdatedAt: now, Meta: `{}`},
+		{ID: 1, Name: "sunset.jpg", OriginalName: "sunset.jpg", ContentType: "image/jpeg", FileSize: 1024000, Width: 1920, Height: 1080, CreatedAt: now, UpdatedAt: now, Meta: `{"rating":5}`},
+		{ID: 2, Name: "photo_album.png", OriginalName: "photo_album.png", ContentType: "image/png", FileSize: 2048000, Width: 800, Height: 600, CreatedAt: now, UpdatedAt: now, Meta: `{"rating":3}`},
+		{ID: 3, Name: "report.pdf", OriginalName: "report.pdf", ContentType: "application/pdf", FileSize: 512000, CreatedAt: now, UpdatedAt: now, Meta: `{}`},
+		{ID: 4, Name: "untagged_file.txt", OriginalName: "untagged.txt", ContentType: "text/plain", FileSize: 100, CreatedAt: now.Add(-24 * 30 * time.Hour), UpdatedAt: now, Meta: `{}`},
 	}
 	for _, r := range resources {
 		db.Create(&r)
@@ -129,7 +136,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	// Notes
 	notes := []testNote{
 		{ID: 1, Name: "Meeting notes", CreatedAt: now, UpdatedAt: now, Meta: `{"priority":"high"}`},
-		{ID: 2, Name: "Todo list", CreatedAt: now, UpdatedAt: now, Meta: `{}`},
+		{ID: 2, Name: "Todo list", CreatedAt: now, UpdatedAt: now, Meta: `{"priority":"low","count":7}`},
 	}
 	for _, n := range notes {
 		db.Create(&n)
@@ -140,14 +147,17 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	db.Exec("INSERT INTO resource_tags (resource_id, tag_id) VALUES (2, 1)")
 	db.Exec("INSERT INTO resource_tags (resource_id, tag_id) VALUES (2, 2)")
 
-	// note_tags: note 1 has tag "document"
+	// note_tags: note 1 has tags "document" and "photo"
 	db.Exec("INSERT INTO note_tags (note_id, tag_id) VALUES (1, 3)")
+	db.Exec("INSERT INTO note_tags (note_id, tag_id) VALUES (1, 1)")
 
-	// groups_related_resources: resource 1 belongs to Vacation group
+	// groups_related_resources: resource 1 belongs to Vacation group, resource 3 to Work group
 	db.Exec("INSERT INTO groups_related_resources (resource_id, group_id) VALUES (1, 1)")
+	db.Exec("INSERT INTO groups_related_resources (resource_id, group_id) VALUES (3, 2)")
 
-	// groups_related_notes: note 1 belongs to Vacation group
+	// groups_related_notes: note 1 belongs to Vacation group, note 2 to Work group
 	db.Exec("INSERT INTO groups_related_notes (note_id, group_id) VALUES (1, 1)")
+	db.Exec("INSERT INTO groups_related_notes (note_id, group_id) VALUES (2, 2)")
 
 	// group_tags: group 1 has tag "photo"
 	db.Exec("INSERT INTO group_tags (group_id, tag_id) VALUES (1, 1)")
@@ -508,12 +518,9 @@ func TestTranslateGroupParentIsEmpty(t *testing.T) {
 		t.Fatalf("query error: %v", err)
 	}
 
-	// Group 1 (Vacation) has no parent; Group 2 (Work) has parent
-	if len(groups) != 1 {
-		t.Fatalf("expected 1 group without parent, got %d", len(groups))
-	}
-	if groups[0].Name != "Vacation" {
-		t.Errorf("expected 'Vacation', got %q", groups[0].Name)
+	// Groups 1 (Vacation) and 3 (Archive) have no parent; Groups 2 (Work) and 4 (Sub-Work) have parents
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 groups without parent, got %d", len(groups))
 	}
 }
 
@@ -527,12 +534,9 @@ func TestTranslateGroupChildrenIsNotEmpty(t *testing.T) {
 		t.Fatalf("query error: %v", err)
 	}
 
-	// Group 1 (Vacation) has child group 2 (Work)
-	if len(groups) != 1 {
-		t.Fatalf("expected 1 group with children, got %d", len(groups))
-	}
-	if groups[0].Name != "Vacation" {
-		t.Errorf("expected 'Vacation', got %q", groups[0].Name)
+	// Group 1 (Vacation) has child group 2 (Work); Group 2 (Work) has child group 4 (Sub-Work)
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 groups with children, got %d", len(groups))
 	}
 }
 
@@ -700,9 +704,9 @@ func TestTranslateGroupsIsEmpty(t *testing.T) {
 		t.Fatalf("query error: %v", err)
 	}
 
-	// Only resource 1 is in the Vacation group. Resources 2, 3, 4 are not in any group.
-	if len(resources) != 3 {
-		t.Fatalf("expected 3 resources with no groups, got %d", len(resources))
+	// Resources 1 and 3 are in groups; resources 2 and 4 are not.
+	if len(resources) != 2 {
+		t.Fatalf("expected 2 resources with no groups, got %d", len(resources))
 	}
 }
 
