@@ -22,7 +22,7 @@
 {% block sidebar %}
     <div class="sidebar-group">
         {% include "/partials/sideTitle.tpl" with title="Filter" %}
-        <form class="flex gap-2 items-start flex-col w-full">
+        <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter resource categories">
             {% include "/partials/form/textInput.tpl" with name='Name' label='Name' value=queryValues.Name.0 %}
             {% include "/partials/form/textInput.tpl" with name='Description' label='Description' value=queryValues.Description.0 %}
             {% include "/partials/form/searchButton.tpl" %}

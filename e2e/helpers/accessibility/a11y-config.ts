@@ -20,6 +20,8 @@ export const STATIC_PAGES = [
   { path: '/noteTypes', name: 'Note types list' },
   { path: '/relationTypes', name: 'Relation types list' },
   { path: '/relations', name: 'Relations list' },
+  { path: '/resourceCategories', name: 'Resource categories list' },
+  { path: '/logs', name: 'Logs list' },
 
   // Create/new forms
   { path: '/note/new', name: 'Create note form' },

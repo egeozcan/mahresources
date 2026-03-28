@@ -15,7 +15,7 @@
 
 
 {% block sidebar %}
-    <form class="flex gap-2 items-start flex-col w-full">
+    <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter groups">
         {% include "/partials/sideTitle.tpl" with title="Sort" %}
         {% include "/partials/form/multiSortInput.tpl" with name='SortBy' values=sortValues %}
         {% include "/partials/sideTitle.tpl" with title="Filter" %}

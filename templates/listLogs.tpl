@@ -2,7 +2,7 @@
 
 {% block body %}
     <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-stone-200">
+        <table class="min-w-full divide-y divide-stone-200" aria-label="Log entries">
             <thead class="bg-stone-50">
                 <tr>
                     <th scope="col" class="px-3 py-2 text-left text-xs font-medium font-mono text-stone-500 uppercase tracking-wider">Time</th>
@@ -67,7 +67,7 @@
 {% block sidebar %}
     <div class="sidebar-group">
         {% include "/partials/sideTitle.tpl" with title="Filter" %}
-        <form class="flex gap-2 items-start flex-col w-full">
+        <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter logs">
             <label for="Level" class="block text-sm font-medium font-mono text-stone-700 mt-2">Level</label>
             <select name="Level" id="Level" class="mt-1 focus:ring-amber-600 focus:border-amber-600 block w-full shadow-sm sm:text-sm border-stone-300 rounded-md">
                 {% for level in logLevels %}

@@ -43,7 +43,7 @@
             <template x-for="(queryVal, queryParamName) in queryParams">
                 <div>
                     <p x-text="queryParamName"></p>
-                    <input class="mb-4" type="text" @input="e => queryParams[queryParamName] = getJSONValue(e.target.value)" @keyup="e => e.key === 'Enter' && query()" >
+                    <input class="mb-4" type="text" :aria-label="queryParamName" @input="e => queryParams[queryParamName] = getJSONValue(e.target.value)" @keyup="e => e.key === 'Enter' && query()" >
                 </div>
             </template>
             <template x-if="!loading">
