@@ -199,6 +199,11 @@ func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.Re
 
 			defer resp.Body.Close()
 
+			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+				setError(fmt.Errorf("remote URL returned HTTP %d: %s", resp.StatusCode, resp.Status))
+				return
+			}
+
 			// Wrap response body with timeout reader to detect stalled transfers
 			timeoutBody := newTimeoutReader(resp.Body, idleTimeout)
 			defer timeoutBody.Close()

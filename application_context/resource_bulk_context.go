@@ -223,6 +223,10 @@ func (ctx *MahresourcesContext) BulkAddMetaToResources(query *query_models.BulkE
 		return fmt.Errorf("at least one resource ID is required")
 	}
 
+	if strings.TrimSpace(query.Meta) == "" {
+		return nil
+	}
+
 	if err := ValidateMeta(query.Meta); err != nil {
 		return err
 	}
