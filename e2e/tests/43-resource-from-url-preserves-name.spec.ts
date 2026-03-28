@@ -31,7 +31,7 @@ test.describe('Resource from URL preserves user-provided name', () => {
     baseURL,
   }) => {
     // Use the app's own favicon as the download URL (guaranteed to exist)
-    const downloadUrl = `${baseURL}/favicon/favicon.ico`;
+    const downloadUrl = `${baseURL}/public/favicon/favicon.ico`;
 
     // Create a resource from URL with a custom name via API
     const response = await request.post(`${baseURL}/v1/resource/remote`, {

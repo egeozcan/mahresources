@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"fmt"
+	"strings"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -102,6 +103,10 @@ func (ctx *MahresourcesContext) BulkAddGroupsToNotes(query *query_models.BulkEdi
 func (ctx *MahresourcesContext) BulkAddMetaToNotes(query *query_models.BulkEditMetaQuery) error {
 	if len(query.ID) == 0 {
 		return fmt.Errorf("at least one note ID is required")
+	}
+
+	if strings.TrimSpace(query.Meta) == "" {
+		return nil
 	}
 
 	if err := ValidateMeta(query.Meta); err != nil {

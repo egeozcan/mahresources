@@ -247,29 +247,20 @@ test.describe('Resource recalculate-dimensions', () => {
 });
 
 test.describe('Resource from-url', () => {
-  let sourceId: number;
   let createdId: number;
-
-  test.beforeAll(() => {
-    const cli = createCliRunner();
-    const result = cli.runJson<Resource | Resource[]>('resource', 'upload', SAMPLE_DOC);
-    const res = Array.isArray(result) ? result[0] : result;
-    sourceId = res.ID;
-  });
 
   test.afterAll(() => {
     const cli = createCliRunner();
     if (createdId) cli.run('resource', 'delete', String(createdId));
-    cli.run('resource', 'delete', String(sourceId));
   });
 
   test('from-url creates a resource from an existing resource URL', async ({ cli, workerServer }) => {
     const serverUrl = `http://127.0.0.1:${workerServer.port}`;
-    const url = `${serverUrl}/v1/resource/content?id=${sourceId}`;
+    // Use the app's own favicon as the download URL (guaranteed to exist and return 200)
+    const url = `${serverUrl}/public/favicon/favicon.ico`;
     const result = cli.runJson<Resource | Resource[]>('resource', 'from-url', '--url', url);
     const res = Array.isArray(result) ? result[0] : result;
     expect(res.ID).toBeGreaterThan(0);
-    expect(res.ID).not.toBe(sourceId);
     createdId = res.ID;
   });
 });

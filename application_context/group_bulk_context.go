@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -238,6 +239,10 @@ func (ctx *MahresourcesContext) BulkRemoveTagsFromGroups(query *query_models.Bul
 func (ctx *MahresourcesContext) BulkAddMetaToGroups(query *query_models.BulkEditMetaQuery) error {
 	if len(query.ID) == 0 {
 		return fmt.Errorf("at least one group ID is required")
+	}
+
+	if strings.TrimSpace(query.Meta) == "" {
+		return nil
 	}
 
 	if err := ValidateMeta(query.Meta); err != nil {
