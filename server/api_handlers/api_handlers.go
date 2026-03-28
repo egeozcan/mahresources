@@ -36,14 +36,19 @@ func init() {
 }
 
 // formHasField reports whether a form-encoded request explicitly included the
-// named field.  For JSON requests it always returns false (JSON partial-update
-// semantics rely on zero-value checks instead).
+// named field.  The lookup is case-insensitive so that a form field named
+// "name" matches a struct field check for "Name" (gorilla/schema is also
+// case-insensitive).  For JSON requests it always returns false (JSON
+// partial-update semantics rely on zero-value checks instead).
 func formHasField(request *http.Request, field string) bool {
 	ct := request.Header.Get("Content-type")
 	if strings.HasPrefix(ct, constants.UrlEncodedForm) || strings.HasPrefix(ct, constants.MultiPartForm) {
 		if request.PostForm != nil {
-			_, ok := request.PostForm[field]
-			return ok
+			for k := range request.PostForm {
+				if strings.EqualFold(k, field) {
+					return true
+				}
+			}
 		}
 	}
 	return false
