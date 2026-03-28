@@ -221,6 +221,26 @@ export function mrqlEditor() {
 
       // Expose the view on the container for test automation
       container._cmView = this.view;
+
+      // Load query from URL if present, and auto-execute
+      const urlQuery = new URLSearchParams(window.location.search).get('q');
+      if (urlQuery) {
+        this.setQuery(urlQuery);
+        this.execute({ pushState: false });
+      }
+
+      // Handle back/forward navigation
+      window.addEventListener('popstate', () => {
+        const q = new URLSearchParams(window.location.search).get('q');
+        if (q) {
+          this.setQuery(q);
+          this.execute({ pushState: false });
+        } else {
+          this.setQuery('');
+          this.result = null;
+          this.error = '';
+        }
+      });
     },
 
     getQuery() {
@@ -269,7 +289,7 @@ export function mrqlEditor() {
       }
     },
 
-    async execute() {
+    async execute({ pushState = true } = {}) {
       const query = this.getQuery().trim();
       if (!query) return;
 
@@ -292,6 +312,13 @@ export function mrqlEditor() {
 
         this.result = await resp.json();
         this.addToHistory(query);
+
+        // Update URL so back/forward works
+        if (pushState) {
+          const url = new URL(window.location);
+          url.searchParams.set('q', query);
+          window.history.pushState({ q: query }, '', url);
+        }
       } catch (err) {
         this.error = err.message || 'Network error';
       } finally {
@@ -309,6 +336,7 @@ export function mrqlEditor() {
 
     loadFromHistory(query) {
       this.setQuery(query);
+      this.execute();
     },
 
     async fetchSavedQueries() {
@@ -323,6 +351,7 @@ export function mrqlEditor() {
 
     loadSavedQuery(q) {
       this.setQuery(q.query);
+      this.execute();
     },
 
     async saveQuery() {
