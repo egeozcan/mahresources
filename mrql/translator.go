@@ -1,0 +1,827 @@
+package mrql
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"gorm.io/gorm"
+)
+
+// TranslateError is returned when the translator encounters an unrecoverable issue.
+type TranslateError struct {
+	Message string
+	Pos     int
+}
+
+func (e *TranslateError) Error() string {
+	return fmt.Sprintf("translate error at position %d: %s", e.Pos, e.Message)
+}
+
+// TranslateOptions provides configurable options for query translation.
+type TranslateOptions struct {
+	Timeout time.Duration // query timeout (applied as context deadline)
+}
+
+// Translate converts a validated MRQL Query AST into a GORM DB query.
+// The entity type must be determinable (either set on the Query or extractable
+// from a `type = "..."` comparison in the WHERE clause).
+func Translate(q *Query, db *gorm.DB) (*gorm.DB, error) {
+	return TranslateWithOptions(q, db, TranslateOptions{})
+}
+
+// TranslateWithOptions is like Translate but accepts configuration options.
+func TranslateWithOptions(q *Query, db *gorm.DB, opts TranslateOptions) (*gorm.DB, error) {
+	// Resolve entity type
+	entityType := q.EntityType
+	if entityType == EntityUnspecified {
+		entityType = ExtractEntityType(q)
+	}
+	if entityType == EntityUnspecified {
+		return nil, &TranslateError{
+			Message: "entity type is required: use type = \"resource|note|group\" in the query or set Query.EntityType",
+			Pos:     0,
+		}
+	}
+
+	// Build the translator context
+	tc := &translateContext{
+		db:         db,
+		entityType: entityType,
+		tableName:  entityTableName(entityType),
+	}
+
+	// Apply timeout if specified via a context deadline.
+	// The context will be cancelled automatically when the deadline expires.
+	// Note: the cancel function is intentionally not deferred here because the
+	// returned *gorm.DB carries the context and the caller will execute the query.
+	// The deadline ensures the query doesn't run indefinitely.
+	if opts.Timeout > 0 {
+		ctx, _ := context.WithTimeout(context.Background(), opts.Timeout) //nolint:govet // intentional; see above
+		tc.db = tc.db.WithContext(ctx)
+	}
+
+	// Start with the correct table
+	result := tc.db.Table(tc.tableName)
+
+	// Translate WHERE clause
+	if q.Where != nil {
+		var err error
+		result, err = tc.translateNode(result, q.Where)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Translate ORDER BY clauses
+	for _, ob := range q.OrderBy {
+		col := tc.resolveOrderByColumn(ob.Field)
+		direction := "ASC"
+		if !ob.Ascending {
+			direction = "DESC"
+		}
+		result = result.Order(col + " " + direction)
+	}
+
+	// Apply LIMIT
+	if q.Limit >= 0 {
+		result = result.Limit(q.Limit)
+	}
+
+	// Apply OFFSET
+	if q.Offset >= 0 {
+		result = result.Offset(q.Offset)
+	}
+
+	return result, nil
+}
+
+// translateContext holds shared state during AST translation.
+type translateContext struct {
+	db         *gorm.DB
+	entityType EntityType
+	tableName  string
+}
+
+// entityTableName returns the database table name for an entity type.
+func entityTableName(et EntityType) string {
+	switch et {
+	case EntityResource:
+		return "resources"
+	case EntityNote:
+		return "notes"
+	case EntityGroup:
+		return "groups"
+	default:
+		return ""
+	}
+}
+
+// translateNode recursively translates an AST node into GORM Where/Or clauses.
+func (tc *translateContext) translateNode(db *gorm.DB, node Node) (*gorm.DB, error) {
+	switch n := node.(type) {
+	case *BinaryExpr:
+		return tc.translateBinaryExpr(db, n)
+	case *NotExpr:
+		return tc.translateNotExpr(db, n)
+	case *ComparisonExpr:
+		return tc.translateComparisonExpr(db, n)
+	case *InExpr:
+		return tc.translateInExpr(db, n)
+	case *IsExpr:
+		return tc.translateIsExpr(db, n)
+	case *TextSearchExpr:
+		return tc.translateTextSearch(db, n)
+	default:
+		return nil, &TranslateError{
+			Message: fmt.Sprintf("unsupported AST node type %T", node),
+			Pos:     node.Pos(),
+		}
+	}
+}
+
+// translateBinaryExpr handles AND and OR expressions.
+func (tc *translateContext) translateBinaryExpr(db *gorm.DB, expr *BinaryExpr) (*gorm.DB, error) {
+	if expr.Operator.Type == TokenAnd {
+		var err error
+		db, err = tc.translateNode(db, expr.Left)
+		if err != nil {
+			return nil, err
+		}
+		return tc.translateNode(db, expr.Right)
+	}
+
+	// OR: build each side as a subquery condition and combine with Or
+	leftDB := tc.db.Table(tc.tableName)
+	leftDB, err := tc.translateNode(leftDB, expr.Left)
+	if err != nil {
+		return nil, err
+	}
+
+	rightDB := tc.db.Table(tc.tableName)
+	rightDB, err = tc.translateNode(rightDB, expr.Right)
+	if err != nil {
+		return nil, err
+	}
+
+	// Extract the clauses and combine with OR
+	// We use gorm's raw Where with OR grouping
+	leftSQL, leftVars := extractWhereClause(leftDB)
+	rightSQL, rightVars := extractWhereClause(rightDB)
+
+	if leftSQL != "" && rightSQL != "" {
+		combinedVars := append(leftVars, rightVars...)
+		db = db.Where("("+leftSQL+") OR ("+rightSQL+")", combinedVars...)
+	} else if leftSQL != "" {
+		db = db.Where(leftSQL, leftVars...)
+	} else if rightSQL != "" {
+		db = db.Where(rightSQL, rightVars...)
+	}
+
+	return db, nil
+}
+
+// translateNotExpr handles NOT expressions.
+func (tc *translateContext) translateNotExpr(db *gorm.DB, expr *NotExpr) (*gorm.DB, error) {
+	// Build the inner expression in a fresh query to extract its SQL
+	innerDB := tc.db.Table(tc.tableName)
+	innerDB, err := tc.translateNode(innerDB, expr.Expr)
+	if err != nil {
+		return nil, err
+	}
+
+	innerSQL, innerVars := extractWhereClause(innerDB)
+	if innerSQL != "" {
+		db = db.Where("NOT ("+innerSQL+")", innerVars...)
+	}
+
+	return db, nil
+}
+
+// translateComparisonExpr handles field op value comparisons.
+func (tc *translateContext) translateComparisonExpr(db *gorm.DB, expr *ComparisonExpr) (*gorm.DB, error) {
+	fieldName := expr.Field.Name()
+
+	// Skip type = "..." comparisons — they're metadata, not filters
+	if fieldName == "type" {
+		return db, nil
+	}
+
+	fd, ok := LookupField(tc.entityType, fieldName)
+	if !ok {
+		return nil, &TranslateError{
+			Message: fmt.Sprintf("unknown field %q for entity type %s", fieldName, tc.entityType),
+			Pos:     expr.Pos(),
+		}
+	}
+
+	// Resolve the comparison value to a Go value
+	val, err := tc.resolveValue(expr.Value, fd)
+	if err != nil {
+		return nil, err
+	}
+
+	// Handle relation fields (tags, groups) with equality and LIKE operators
+	if fd.Type == FieldRelation {
+		return tc.translateRelationComparison(db, fd, expr.Operator, val)
+	}
+
+	// Handle meta fields
+	if fd.Type == FieldMeta {
+		return tc.translateMetaComparison(db, fd, expr.Operator, val)
+	}
+
+	// Regular scalar field comparison
+	column := tc.qualifiedColumn(fd.Column)
+	op := tc.sqlOperator(expr.Operator)
+
+	if expr.Operator.Type == TokenLike || expr.Operator.Type == TokenNotLike {
+		return tc.translateLikeComparison(db, column, expr.Operator, val)
+	}
+
+	// For string equality, use case-insensitive comparison
+	if fd.Type == FieldString && (expr.Operator.Type == TokenEq || expr.Operator.Type == TokenNeq) {
+		db = db.Where("LOWER("+column+") "+op+" LOWER(?)", val)
+		return db, nil
+	}
+
+	db = db.Where(column+" "+op+" ?", val)
+	return db, nil
+}
+
+// translateRelationComparison handles tags = "name" and groups = "name" etc.
+func (tc *translateContext) translateRelationComparison(db *gorm.DB, fd FieldDef, op Token, val interface{}) (*gorm.DB, error) {
+	switch fd.Column {
+	case "tags":
+		return tc.translateTagComparison(db, op, val)
+	case "groups":
+		return tc.translateGroupComparison(db, op, val)
+	case "parent_id":
+		// parent.X traversal is handled in translateComparisonExpr for dotted fields
+		// Here it's direct parent comparison (parent = "name")
+		return tc.translateParentComparison(db, op, val)
+	case "children":
+		return tc.translateChildrenComparison(db, op, val)
+	default:
+		return nil, &TranslateError{
+			Message: fmt.Sprintf("unsupported relation field %q", fd.Name),
+			Pos:     0,
+		}
+	}
+}
+
+// translateTagComparison generates a subquery on the tag junction table.
+func (tc *translateContext) translateTagComparison(db *gorm.DB, op Token, val interface{}) (*gorm.DB, error) {
+	var junctionTable, entityCol string
+	switch tc.entityType {
+	case EntityResource:
+		junctionTable = "resource_tags"
+		entityCol = "resource_id"
+	case EntityNote:
+		junctionTable = "note_tags"
+		entityCol = "note_id"
+	case EntityGroup:
+		junctionTable = "group_tags"
+		entityCol = "group_id"
+	default:
+		return nil, &TranslateError{Message: "tags not supported for this entity type"}
+	}
+
+	isLike := op.Type == TokenLike || op.Type == TokenNotLike
+	isNegated := op.Type == TokenNeq || op.Type == TokenNotLike
+
+	var tagMatchClause string
+	var tagMatchVal interface{}
+
+	if isLike {
+		likePattern := convertMRQLWildcards(fmt.Sprint(val))
+		likeOp := tc.likeOperator()
+		tagMatchClause = "LOWER(t.name) " + likeOp + " LOWER(?)"
+		tagMatchVal = likePattern
+	} else {
+		tagMatchClause = "LOWER(t.name) = LOWER(?)"
+		tagMatchVal = val
+	}
+
+	subquery := fmt.Sprintf(
+		"%s.id IN (SELECT jt.%s FROM %s jt JOIN tags t ON t.id = jt.tag_id WHERE %s)",
+		tc.tableName, entityCol, junctionTable, tagMatchClause,
+	)
+
+	if isNegated {
+		subquery = fmt.Sprintf(
+			"%s.id NOT IN (SELECT jt.%s FROM %s jt JOIN tags t ON t.id = jt.tag_id WHERE %s)",
+			tc.tableName, entityCol, junctionTable, tagMatchClause,
+		)
+	}
+
+	db = db.Where(subquery, tagMatchVal)
+	return db, nil
+}
+
+// translateGroupComparison generates a subquery on the group junction table.
+func (tc *translateContext) translateGroupComparison(db *gorm.DB, op Token, val interface{}) (*gorm.DB, error) {
+	var junctionTable, entityCol string
+	switch tc.entityType {
+	case EntityResource:
+		junctionTable = "groups_related_resources"
+		entityCol = "resource_id"
+	case EntityNote:
+		junctionTable = "groups_related_notes"
+		entityCol = "note_id"
+	default:
+		return nil, &TranslateError{Message: "group filtering not supported for this entity type"}
+	}
+
+	isLike := op.Type == TokenLike || op.Type == TokenNotLike
+	isNegated := op.Type == TokenNeq || op.Type == TokenNotLike
+
+	var groupMatchClause string
+	var groupMatchVal interface{}
+
+	if isLike {
+		likePattern := convertMRQLWildcards(fmt.Sprint(val))
+		likeOp := tc.likeOperator()
+		groupMatchClause = "LOWER(g.name) " + likeOp + " LOWER(?)"
+		groupMatchVal = likePattern
+	} else {
+		groupMatchClause = "LOWER(g.name) = LOWER(?)"
+		groupMatchVal = val
+	}
+
+	subquery := fmt.Sprintf(
+		"%s.id IN (SELECT jt.%s FROM %s jt JOIN groups g ON g.id = jt.group_id WHERE %s)",
+		tc.tableName, entityCol, junctionTable, groupMatchClause,
+	)
+
+	if isNegated {
+		subquery = fmt.Sprintf(
+			"%s.id NOT IN (SELECT jt.%s FROM %s jt JOIN groups g ON g.id = jt.group_id WHERE %s)",
+			tc.tableName, entityCol, junctionTable, groupMatchClause,
+		)
+	}
+
+	db = db.Where(subquery, groupMatchVal)
+	return db, nil
+}
+
+// translateParentComparison handles parent = "name" for groups.
+func (tc *translateContext) translateParentComparison(db *gorm.DB, op Token, val interface{}) (*gorm.DB, error) {
+	isNegated := op.Type == TokenNeq || op.Type == TokenNotLike
+	isLike := op.Type == TokenLike || op.Type == TokenNotLike
+
+	var matchClause string
+	var matchVal interface{}
+
+	if isLike {
+		likePattern := convertMRQLWildcards(fmt.Sprint(val))
+		likeOp := tc.likeOperator()
+		matchClause = "LOWER(p.name) " + likeOp + " LOWER(?)"
+		matchVal = likePattern
+	} else {
+		matchClause = "LOWER(p.name) = LOWER(?)"
+		matchVal = val
+	}
+
+	subquery := fmt.Sprintf(
+		"groups.owner_id IN (SELECT p.id FROM groups p WHERE %s)",
+		matchClause,
+	)
+
+	if isNegated {
+		subquery = fmt.Sprintf(
+			"groups.owner_id NOT IN (SELECT p.id FROM groups p WHERE %s)",
+			matchClause,
+		)
+	}
+
+	db = db.Where(subquery, matchVal)
+	return db, nil
+}
+
+// translateChildrenComparison handles children = "name" for groups.
+func (tc *translateContext) translateChildrenComparison(db *gorm.DB, op Token, val interface{}) (*gorm.DB, error) {
+	isNegated := op.Type == TokenNeq || op.Type == TokenNotLike
+	isLike := op.Type == TokenLike || op.Type == TokenNotLike
+
+	var matchClause string
+	var matchVal interface{}
+
+	if isLike {
+		likePattern := convertMRQLWildcards(fmt.Sprint(val))
+		likeOp := tc.likeOperator()
+		matchClause = "LOWER(c.name) " + likeOp + " LOWER(?)"
+		matchVal = likePattern
+	} else {
+		matchClause = "LOWER(c.name) = LOWER(?)"
+		matchVal = val
+	}
+
+	subquery := fmt.Sprintf(
+		"groups.id IN (SELECT c.owner_id FROM groups c WHERE %s)",
+		matchClause,
+	)
+
+	if isNegated {
+		subquery = fmt.Sprintf(
+			"groups.id NOT IN (SELECT c.owner_id FROM groups c WHERE %s)",
+			matchClause,
+		)
+	}
+
+	db = db.Where(subquery, matchVal)
+	return db, nil
+}
+
+// translateMetaComparison handles meta.key comparisons using json_extract.
+func (tc *translateContext) translateMetaComparison(db *gorm.DB, fd FieldDef, op Token, val interface{}) (*gorm.DB, error) {
+	// Extract the key from "meta.key"
+	key := strings.TrimPrefix(fd.Name, "meta.")
+
+	// For SQLite: json_extract(table.meta, '$.key')
+	jsonExpr := fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
+
+	sqlOp := tc.sqlOperator(op)
+
+	if op.Type == TokenLike || op.Type == TokenNotLike {
+		likePattern := convertMRQLWildcards(fmt.Sprint(val))
+		likeOp := tc.likeOperator()
+		if op.Type == TokenNotLike {
+			likeOp = "NOT " + likeOp
+		}
+		db = db.Where(jsonExpr+" "+likeOp+" ?", likePattern)
+		return db, nil
+	}
+
+	db = db.Where(jsonExpr+" "+sqlOp+" ?", val)
+	return db, nil
+}
+
+// translateInExpr handles field IN (...) and field NOT IN (...).
+func (tc *translateContext) translateInExpr(db *gorm.DB, expr *InExpr) (*gorm.DB, error) {
+	fieldName := expr.Field.Name()
+	fd, ok := LookupField(tc.entityType, fieldName)
+	if !ok {
+		return nil, &TranslateError{
+			Message: fmt.Sprintf("unknown field %q for entity type %s", fieldName, tc.entityType),
+			Pos:     expr.Pos(),
+		}
+	}
+
+	values := make([]interface{}, len(expr.Values))
+	for i, v := range expr.Values {
+		resolved, err := tc.resolveValue(v, fd)
+		if err != nil {
+			return nil, err
+		}
+		values[i] = resolved
+	}
+
+	column := tc.qualifiedColumn(fd.Column)
+
+	if fd.Type == FieldString {
+		// Case-insensitive IN for strings
+		lowerValues := make([]interface{}, len(values))
+		for i, v := range values {
+			lowerValues[i] = strings.ToLower(fmt.Sprint(v))
+		}
+		if expr.Negated {
+			db = db.Where("LOWER("+column+") NOT IN (?)", lowerValues)
+		} else {
+			db = db.Where("LOWER("+column+") IN (?)", lowerValues)
+		}
+	} else {
+		if expr.Negated {
+			db = db.Where(column+" NOT IN (?)", values)
+		} else {
+			db = db.Where(column+" IN (?)", values)
+		}
+	}
+
+	return db, nil
+}
+
+// translateIsExpr handles IS EMPTY, IS NOT EMPTY, IS NULL, IS NOT NULL.
+func (tc *translateContext) translateIsExpr(db *gorm.DB, expr *IsExpr) (*gorm.DB, error) {
+	fieldName := expr.Field.Name()
+	fd, ok := LookupField(tc.entityType, fieldName)
+	if !ok {
+		return nil, &TranslateError{
+			Message: fmt.Sprintf("unknown field %q for entity type %s", fieldName, tc.entityType),
+			Pos:     expr.Pos(),
+		}
+	}
+
+	if expr.IsNull {
+		// IS NULL / IS NOT NULL for scalar fields
+		column := tc.qualifiedColumn(fd.Column)
+		if expr.Negated {
+			db = db.Where(column + " IS NOT NULL")
+		} else {
+			db = db.Where(column + " IS NULL")
+		}
+		return db, nil
+	}
+
+	// IS EMPTY / IS NOT EMPTY — for relation fields, check junction table
+	if fd.Type == FieldRelation {
+		return tc.translateRelationIsEmpty(db, fd, expr.Negated)
+	}
+
+	// IS EMPTY / IS NOT EMPTY for scalar fields: treat as NULL check
+	column := tc.qualifiedColumn(fd.Column)
+	if expr.Negated {
+		db = db.Where(column + " IS NOT NULL AND " + column + " != ''")
+	} else {
+		db = db.Where(column + " IS NULL OR " + column + " = ''")
+	}
+
+	return db, nil
+}
+
+// translateRelationIsEmpty handles IS EMPTY / IS NOT EMPTY for relation fields.
+func (tc *translateContext) translateRelationIsEmpty(db *gorm.DB, fd FieldDef, negated bool) (*gorm.DB, error) {
+	existsOp := "NOT EXISTS"
+	if negated {
+		existsOp = "EXISTS"
+	}
+
+	switch fd.Column {
+	case "tags":
+		var junctionTable, entityCol string
+		switch tc.entityType {
+		case EntityResource:
+			junctionTable = "resource_tags"
+			entityCol = "resource_id"
+		case EntityNote:
+			junctionTable = "note_tags"
+			entityCol = "note_id"
+		case EntityGroup:
+			junctionTable = "group_tags"
+			entityCol = "group_id"
+		}
+		subquery := fmt.Sprintf(
+			"%s (SELECT 1 FROM %s jt WHERE jt.%s = %s.id)",
+			existsOp, junctionTable, entityCol, tc.tableName,
+		)
+		db = db.Where(subquery)
+
+	case "groups":
+		var junctionTable, entityCol string
+		switch tc.entityType {
+		case EntityResource:
+			junctionTable = "groups_related_resources"
+			entityCol = "resource_id"
+		case EntityNote:
+			junctionTable = "groups_related_notes"
+			entityCol = "note_id"
+		}
+		subquery := fmt.Sprintf(
+			"%s (SELECT 1 FROM %s jt WHERE jt.%s = %s.id)",
+			existsOp, junctionTable, entityCol, tc.tableName,
+		)
+		db = db.Where(subquery)
+
+	case "parent_id":
+		// parent IS EMPTY → owner_id IS NULL
+		if negated {
+			db = db.Where(tc.tableName + ".owner_id IS NOT NULL")
+		} else {
+			db = db.Where(tc.tableName + ".owner_id IS NULL")
+		}
+
+	case "children":
+		// children IS EMPTY → no rows in groups where owner_id = this group's id
+		subquery := fmt.Sprintf(
+			"%s (SELECT 1 FROM groups c WHERE c.owner_id = %s.id)",
+			existsOp, tc.tableName,
+		)
+		db = db.Where(subquery)
+	}
+
+	return db, nil
+}
+
+// translateTextSearch handles TEXT ~ "query" for full-text search.
+func (tc *translateContext) translateTextSearch(db *gorm.DB, expr *TextSearchExpr) (*gorm.DB, error) {
+	// Sanitize FTS5 input — strip operators and special characters
+	sanitized := sanitizeFTS5(expr.Value.Value)
+	if sanitized == "" {
+		return db, nil
+	}
+
+	ftsTable := tc.tableName + "_fts"
+	subquery := fmt.Sprintf(
+		"%s.id IN (SELECT rowid FROM %s WHERE %s MATCH ?)",
+		tc.tableName, ftsTable, ftsTable,
+	)
+	db = db.Where(subquery, sanitized)
+	return db, nil
+}
+
+// resolveValue converts an AST value node to a Go value suitable for SQL parameters.
+func (tc *translateContext) resolveValue(node Node, fd FieldDef) (interface{}, error) {
+	switch v := node.(type) {
+	case *StringLiteral:
+		return v.Value, nil
+	case *NumberLiteral:
+		// Use Raw for file size fields (already converted to bytes)
+		if fd.Column == "file_size" && v.Unit != "" {
+			return v.Raw, nil
+		}
+		// Return as float64 for general numeric comparisons
+		if v.Value == float64(int64(v.Value)) {
+			return int64(v.Value), nil
+		}
+		return v.Value, nil
+	case *RelDateLiteral:
+		return resolveRelativeDate(v), nil
+	case *FuncCall:
+		return resolveFunction(v)
+	default:
+		return nil, &TranslateError{
+			Message: fmt.Sprintf("unsupported value type %T", node),
+			Pos:     node.Pos(),
+		}
+	}
+}
+
+// resolveRelativeDate converts a relative date literal to a time.Time.
+func resolveRelativeDate(rd *RelDateLiteral) time.Time {
+	now := time.Now()
+	switch rd.Unit {
+	case "d":
+		return now.AddDate(0, 0, -rd.Amount)
+	case "w":
+		return now.AddDate(0, 0, -rd.Amount*7)
+	case "m":
+		return now.AddDate(0, -rd.Amount, 0)
+	case "y":
+		return now.AddDate(-rd.Amount, 0, 0)
+	default:
+		return now
+	}
+}
+
+// resolveFunction resolves a function call (NOW, START_OF_DAY, etc.) to a time.Time.
+func resolveFunction(fc *FuncCall) (time.Time, error) {
+	now := time.Now()
+	// The name from the lexer includes "()" (e.g. "NOW()"), strip it
+	name := strings.ToUpper(strings.TrimSuffix(fc.Name, "()"))
+
+	switch name {
+	case "NOW":
+		return now, nil
+	case "START_OF_DAY":
+		return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()), nil
+	case "START_OF_WEEK":
+		weekday := int(now.Weekday())
+		if weekday == 0 {
+			weekday = 7
+		}
+		monday := now.AddDate(0, 0, -(weekday - 1))
+		return time.Date(monday.Year(), monday.Month(), monday.Day(), 0, 0, 0, 0, now.Location()), nil
+	case "START_OF_MONTH":
+		return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()), nil
+	case "START_OF_YEAR":
+		return time.Date(now.Year(), 1, 1, 0, 0, 0, 0, now.Location()), nil
+	default:
+		return time.Time{}, &TranslateError{
+			Message: fmt.Sprintf("unknown function %q", fc.Name),
+		}
+	}
+}
+
+// sqlOperator maps a token operator to its SQL equivalent.
+func (tc *translateContext) sqlOperator(op Token) string {
+	switch op.Type {
+	case TokenEq:
+		return "="
+	case TokenNeq:
+		return "!="
+	case TokenGt:
+		return ">"
+	case TokenGte:
+		return ">="
+	case TokenLt:
+		return "<"
+	case TokenLte:
+		return "<="
+	case TokenLike:
+		return tc.likeOperator()
+	case TokenNotLike:
+		return "NOT " + tc.likeOperator()
+	default:
+		return "="
+	}
+}
+
+// likeOperator returns "ILIKE" for Postgres, "LIKE" for everything else.
+func (tc *translateContext) likeOperator() string {
+	if tc.db.Config.Dialector.Name() == "postgres" {
+		return "ILIKE"
+	}
+	return "LIKE"
+}
+
+// qualifiedColumn returns the fully qualified column name (table.column).
+func (tc *translateContext) qualifiedColumn(column string) string {
+	return tc.tableName + "." + column
+}
+
+// resolveOrderByColumn converts a FieldExpr to a qualified column name for ORDER BY.
+func (tc *translateContext) resolveOrderByColumn(f *FieldExpr) string {
+	fieldName := f.Name()
+
+	// Handle meta.key → json_extract(table.meta, '$.key')
+	if strings.HasPrefix(fieldName, "meta.") {
+		key := strings.TrimPrefix(fieldName, "meta.")
+		return fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
+	}
+
+	fd, ok := LookupField(tc.entityType, fieldName)
+	if !ok {
+		// Fallback: use the field name as-is (validation should have caught this)
+		return tc.tableName + "." + fieldName
+	}
+
+	return tc.qualifiedColumn(fd.Column)
+}
+
+// translateLikeComparison handles ~ and !~ operators with MRQL wildcard conversion.
+func (tc *translateContext) translateLikeComparison(db *gorm.DB, column string, op Token, val interface{}) (*gorm.DB, error) {
+	pattern := convertMRQLWildcards(fmt.Sprint(val))
+	likeOp := tc.likeOperator()
+
+	if op.Type == TokenNotLike {
+		db = db.Where("LOWER("+column+") NOT "+likeOp+" LOWER(?)", pattern)
+	} else {
+		db = db.Where("LOWER("+column+") "+likeOp+" LOWER(?)", pattern)
+	}
+
+	return db, nil
+}
+
+// convertMRQLWildcards converts MRQL wildcards (* → %, ? → _) after escaping
+// existing SQL wildcards in the value.
+func convertMRQLWildcards(s string) string {
+	// First escape existing SQL wildcards
+	s = strings.ReplaceAll(s, "%", "\\%")
+	s = strings.ReplaceAll(s, "_", "\\_")
+	// Then convert MRQL wildcards to SQL wildcards
+	s = strings.ReplaceAll(s, "*", "%")
+	s = strings.ReplaceAll(s, "?", "_")
+	return s
+}
+
+// sanitizeFTS5 strips FTS5 operators and special characters from a search string,
+// leaving only safe tokens.
+func sanitizeFTS5(input string) string {
+	// Remove FTS5 special operators: AND, OR, NOT, NEAR, +, -, *, ^, :, (, ), "
+	// Keep only alphanumeric characters, spaces, and basic punctuation
+	var sb strings.Builder
+	for _, r := range input {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			sb.WriteRune(r)
+		case r == ' ' || r == '\t':
+			sb.WriteRune(' ')
+		case r == '.' || r == ',' || r == '-' || r == '\'':
+			sb.WriteRune(r)
+		// Skip: *, +, ^, :, (, ), ", !, ~, etc.
+		}
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+// extractWhereClause builds the WHERE SQL from a GORM *gorm.DB's Statement.
+// This is used for OR and NOT composition where we need to extract the raw SQL.
+func extractWhereClause(db *gorm.DB) (string, []interface{}) {
+	// Build the statement to get SQL and vars
+	stmt := db.Statement
+	if stmt == nil {
+		return "", nil
+	}
+
+	// We need to build the query to extract WHERE clauses
+	// Use GORM's statement builder
+	clone := db.Session(&gorm.Session{DryRun: true})
+	clone = clone.Find(nil)
+
+	if clone.Statement == nil {
+		return "", nil
+	}
+
+	sql := clone.Statement.SQL.String()
+	vars := clone.Statement.Vars
+
+	// Extract just the WHERE part from the full SQL
+	whereIdx := strings.Index(strings.ToUpper(sql), "WHERE")
+	if whereIdx < 0 {
+		return "", nil
+	}
+
+	whereClause := sql[whereIdx+6:] // skip "WHERE "
+	return strings.TrimSpace(whereClause), vars
+}
