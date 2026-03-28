@@ -185,18 +185,24 @@ func (tc *translateContext) translateNotExpr(db *gorm.DB, expr *NotExpr) (*gorm.
 func (tc *translateContext) translateComparisonExpr(db *gorm.DB, expr *ComparisonExpr) (*gorm.DB, error) {
 	fieldName := expr.Field.Name()
 
-	// Handle type = "..." comparisons. In single-entity mode these are
-	// redundant (entity type already selected). In cross-entity fan-out,
-	// they must be enforced: if the query says type = "resource" but we're
-	// translating for the "group" table, inject WHERE FALSE to exclude rows.
+	// Handle type comparisons. In cross-entity fan-out, these must be enforced
+	// as filters: type = "resource" excludes non-resource tables, and
+	// type != "resource" excludes the resource table.
 	if fieldName == "type" {
 		if sl, ok := expr.Value.(*StringLiteral); ok {
 			requestedType, valid := ValidEntityTypes[strings.ToLower(sl.Value)]
-			if valid && requestedType != tc.entityType {
-				// This entity type doesn't match the filter — exclude all rows
-				db = db.Where("1 = 0")
+			if valid {
+				switch expr.Operator.Type {
+				case TokenEq:
+					if requestedType != tc.entityType {
+						db = db.Where("1 = 0")
+					}
+				case TokenNeq:
+					if requestedType == tc.entityType {
+						db = db.Where("1 = 0")
+					}
+				}
 			}
-			// If types match or value is invalid (caught by validator), pass through
 		}
 		return db, nil
 	}

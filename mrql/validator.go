@@ -61,16 +61,17 @@ func ExtractEntityType(q *Query) EntityType {
 	return extractEntityTypeFromNode(q.Where)
 }
 
-// extractEntityTypeFromNode walks the AST collecting all `type = "<value>"`
-// comparisons. Returns the entity type only if all type comparisons agree on
-// the same type. If there are conflicting types (e.g., `type = resource OR
-// type = note`), returns EntityUnspecified so the query runs as cross-entity.
+// extractEntityTypeFromNode extracts a single entity type only if a
+// `type = "..."` comparison appears in a top-level AND chain (i.e.,
+// reachable purely through AND from the root). A type comparison under
+// OR or NOT does not constrain the whole query to one entity type —
+// those queries run as cross-entity.
 func extractEntityTypeFromNode(node Node) EntityType {
-	types := collectEntityTypes(node)
+	types := collectTopLevelTypes(node)
 	if len(types) == 0 {
 		return EntityUnspecified
 	}
-	// All must agree
+	// All top-level type comparisons must agree
 	first := types[0]
 	for _, et := range types[1:] {
 		if et != first {
@@ -80,16 +81,24 @@ func extractEntityTypeFromNode(node Node) EntityType {
 	return first
 }
 
-// collectEntityTypes recursively finds all `type = "..."` comparisons in the AST.
-func collectEntityTypes(node Node) []EntityType {
+// collectTopLevelTypes finds `type = "..."` comparisons reachable only through
+// AND from the root. It does NOT descend into OR or NOT branches, because a
+// type comparison inside those doesn't constrain the entire query.
+func collectTopLevelTypes(node Node) []EntityType {
 	switch n := node.(type) {
 	case *BinaryExpr:
-		left := collectEntityTypes(n.Left)
-		right := collectEntityTypes(n.Right)
-		return append(left, right...)
+		if n.Operator.Type == TokenAnd {
+			// AND: both sides constrain the query
+			left := collectTopLevelTypes(n.Left)
+			right := collectTopLevelTypes(n.Right)
+			return append(left, right...)
+		}
+		// OR: type comparisons inside OR don't constrain the whole query
+		return nil
 
 	case *NotExpr:
-		return collectEntityTypes(n.Expr)
+		// NOT type = "resource" doesn't mean "only resources"
+		return nil
 
 	case *ComparisonExpr:
 		if isTypeField(n.Field) && n.Operator.Type == TokenEq {

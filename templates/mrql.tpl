@@ -193,7 +193,7 @@
                 {# Resource results #}
                 <template x-if="result.resources && result.resources.length > 0">
                     <div>
-                        <h3 class="text-sm font-semibold font-mono text-amber-800 mb-2" x-show="result.entityType === 'mixed'">Resources</h3>
+                        <h3 class="text-sm font-semibold font-mono text-amber-800 mb-2" x-show="result.entityType !== 'resource' && result.entityType !== 'note' && result.entityType !== 'group'">Resources</h3>
                         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                             <template x-for="entity in result.resources" :key="entity.ID">
                                 <a :href="'/resource?id=' + entity.ID"
@@ -216,7 +216,7 @@
                 {# Note results #}
                 <template x-if="result.notes && result.notes.length > 0">
                     <div>
-                        <h3 class="text-sm font-semibold font-mono text-amber-800 mb-2" x-show="result.entityType === 'mixed'">Notes</h3>
+                        <h3 class="text-sm font-semibold font-mono text-amber-800 mb-2" x-show="result.entityType !== 'resource' && result.entityType !== 'note' && result.entityType !== 'group'">Notes</h3>
                         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                             <template x-for="entity in result.notes" :key="entity.ID">
                                 <a :href="'/note?id=' + entity.ID"
@@ -234,7 +234,7 @@
                 {# Group results #}
                 <template x-if="result.groups && result.groups.length > 0">
                     <div>
-                        <h3 class="text-sm font-semibold font-mono text-amber-800 mb-2" x-show="result.entityType === 'mixed'">Groups</h3>
+                        <h3 class="text-sm font-semibold font-mono text-amber-800 mb-2" x-show="result.entityType !== 'resource' && result.entityType !== 'note' && result.entityType !== 'group'">Groups</h3>
                         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                             <template x-for="entity in result.groups" :key="entity.ID">
                                 <a :href="'/group?id=' + entity.ID"

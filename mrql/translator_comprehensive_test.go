@@ -1722,3 +1722,74 @@ func TestComprehensive_MetaIsNotEmpty(t *testing.T) {
 			len(resources), namesOfResources(resources))
 	}
 }
+
+// TestComprehensive_NotTypeResource verifies NOT type = "resource" is cross-entity
+// and excludes resources from results.
+func TestComprehensive_NotTypeResource(t *testing.T) {
+	// NOT type = "resource" should NOT collapse to single-entity resource.
+	q, err := Parse(`NOT type = "resource" AND name ~ "*"`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	Validate(q)
+
+	et := ExtractEntityType(q)
+	if et != EntityUnspecified {
+		t.Fatalf("NOT type = resource should be cross-entity (Unspecified), got %s", et)
+	}
+}
+
+// TestComprehensive_TypeOrNonType verifies type = "resource" OR name = "foo"
+// is cross-entity because the OR means non-resource entities could match the name.
+func TestComprehensive_TypeOrNonType(t *testing.T) {
+	q, err := Parse(`type = "resource" OR name = "Todo list"`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	Validate(q)
+
+	et := ExtractEntityType(q)
+	if et != EntityUnspecified {
+		t.Fatalf("type=resource OR name=x should be cross-entity, got %s", et)
+	}
+}
+
+// TestComprehensive_TypeNeqExcludesEntity verifies type != "resource" excludes
+// resources and includes notes and groups.
+func TestComprehensive_TypeNeqExcludesEntity(t *testing.T) {
+	db := setupTestDB(t)
+
+	// type != "resource" translated for the resource table should return 0 rows
+	q, _ := Parse(`type != "resource" AND name ~ "*"`)
+	Validate(q)
+
+	clone := *q
+	clone.EntityType = EntityResource
+	result, err := TranslateWithOptions(&clone, db, TranslateOptions{})
+	if err != nil {
+		t.Logf("translate error (acceptable): %v", err)
+		return
+	}
+
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) != 0 {
+		t.Fatalf("type != resource should exclude all resources, got %d: %v",
+			len(resources), namesOfResources(resources))
+	}
+
+	// ...but translated for notes should return notes
+	clone2 := *q
+	clone2.EntityType = EntityNote
+	result2, err := TranslateWithOptions(&clone2, db, TranslateOptions{})
+	if err != nil {
+		t.Fatalf("translate for notes: %v", err)
+	}
+	var notes []testNote
+	result2.Find(&notes)
+	if len(notes) == 0 {
+		t.Fatal("type != resource should include notes, got 0")
+	}
+}
