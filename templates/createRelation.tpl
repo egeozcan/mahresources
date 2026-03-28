@@ -1,10 +1,9 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
-<input type="hidden" name="RelationSideFrom" value="0" >
-<input type="hidden" name="RelationSideTo" value="1" >
-
 <form class="space-y-8" method="post" action="/v1/relation">
+    <input type="hidden" name="RelationSideFrom" value="0" >
+    <input type="hidden" name="RelationSideTo" value="1" >
     {% if relation.ID > 0 %}
     <input type="hidden" value="{{ relation.ID }}" name="ID">
     {% endif %}

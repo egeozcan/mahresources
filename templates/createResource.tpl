@@ -26,7 +26,7 @@
                                 name="Name"
                                 placeholder="If you leave this empty, the name of the uploaded file will be used"
                                 id="name"
-                                autocomplete="name"
+                                autocomplete="off"
                                 class="flex-1 block w-full focus:ring-amber-600 focus:border-amber-600 min-w-0 rounded-md sm:text-sm border-stone-300"
                             >
                         </div>
@@ -76,7 +76,7 @@
                     </div>
                     <label for="URL" class="block text-sm font-medium font-mono text-stone-700">
                         URL
-                        <p class="mt-2 text-sm text-stone-500 font-sans">If you fill this, the contents of the file picker will be ignored and remote data will be downloaded.</p>
+                        <span class="block mt-2 text-sm text-stone-500 font-sans">If you fill this, the contents of the file picker will be ignored and remote data will be downloaded.</span>
                     </label>
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="max-w-lg flex flex-col gap-2">
@@ -150,10 +150,10 @@
                 </div>
 
                 <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-stone-200 sm:pt-5">
-                    <span class="block text-sm font-medium font-mono text-stone-700">
+                    <div class="block text-sm font-medium font-mono text-stone-700">
                         Series
                         <p class="mt-2 text-sm text-stone-500 font-sans">Optional. Resources in the same series are grouped together.</p>
-                    </span>
+                    </div>
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="flex gap-2">
                             <div class="flex-1">
