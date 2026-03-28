@@ -10,7 +10,7 @@
             <div class="flex items-center gap-2">
                 <button type="button"
                         @click="showDocs = !showDocs"
-                        class="text-sm text-amber-700 hover:text-amber-900 font-mono flex items-center gap-1"
+                        class="text-sm text-amber-700 hover:text-amber-900 font-mono flex items-center gap-1 cursor-pointer"
                         :aria-expanded="showDocs.toString()"
                         aria-controls="mrql-docs-panel">
                     <svg :class="showDocs && 'rotate-90'" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -113,7 +113,7 @@
             <button type="button"
                     @click="execute()"
                     :disabled="executing"
-                    class="inline-flex items-center px-4 py-2 border border-stone-300 rounded-md shadow-sm text-sm font-mono font-medium text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed">
+                    class="inline-flex items-center px-4 py-2 border border-stone-300 rounded-md shadow-sm text-sm font-mono font-medium text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
                 <template x-if="executing">
                     <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -121,11 +121,11 @@
                     </svg>
                 </template>
                 <span x-text="executing ? 'Running...' : 'Run'"></span>
-                <kbd class="ml-2 text-xs" aria-hidden="true">Ctrl+Enter</kbd>
+                <kbd class="ml-2 text-xs" aria-hidden="true" x-text="navigator.platform.indexOf('Mac') > -1 ? '⌘↵' : 'Ctrl+Enter'"></kbd>
             </button>
             <button type="button"
                     @click="showSaveDialog = true"
-                    class="inline-flex items-center px-4 py-2 border border-stone-300 rounded-md shadow-sm text-sm font-mono font-medium text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
+                    class="inline-flex items-center px-4 py-2 border border-stone-300 rounded-md shadow-sm text-sm font-mono font-medium text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 cursor-pointer">
                 Save
             </button>
         </div>
@@ -153,12 +153,12 @@
                 </template>
                 <div class="flex justify-end gap-2">
                     <button type="button" @click="showSaveDialog = false"
-                            class="px-4 py-2 text-sm font-mono text-stone-700 hover:bg-stone-100 rounded-md">
+                            class="px-4 py-2 text-sm font-mono text-stone-700 hover:bg-stone-100 rounded-md cursor-pointer">
                         Cancel
                     </button>
                     <button type="button" @click="saveQuery()"
                             :disabled="!saveName.trim()"
-                            class="px-4 py-2 text-sm font-mono font-medium text-white bg-amber-700 hover:bg-amber-800 rounded-md disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
+                            class="px-4 py-2 text-sm font-mono font-medium text-white bg-amber-700 hover:bg-amber-800 rounded-md disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 cursor-pointer">
                         Save
                     </button>
                 </div>
@@ -198,16 +198,16 @@
                     <div>
                         <h3 class="text-sm font-semibold font-mono text-amber-800 mb-2" x-show="result.entityType === 'mixed'">Resources</h3>
                         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                            <template x-for="entity in result.resources" :key="entity.id">
-                                <a :href="'/resource?id=' + entity.id"
+                            <template x-for="entity in result.resources" :key="entity.ID">
+                                <a :href="'/resource?id=' + entity.ID"
                                    class="block p-3 bg-white border border-stone-200 rounded-md hover:border-amber-400 hover:shadow-sm transition-colors">
                                     <div class="flex items-start gap-2">
-                                        <template x-if="entity.hasThumbnail">
-                                            <img :src="'/v1/resource/thumb?id=' + entity.id" :alt="entity.name" class="w-12 h-12 rounded object-cover flex-shrink-0" loading="lazy" />
+                                        <template x-if="entity.ContentType && entity.ContentType.startsWith('image/')">
+                                            <img :src="'/v1/resource/preview?id=' + entity.ID + '&width=96&height=96'" :alt="entity.Name" class="w-12 h-12 rounded object-cover flex-shrink-0" loading="lazy" />
                                         </template>
                                         <div class="min-w-0 flex-1">
-                                            <p class="text-sm font-medium text-stone-900 truncate" x-text="entity.name"></p>
-                                            <p class="text-xs text-stone-500 mt-0.5" x-text="entity.contentType || ''"></p>
+                                            <p class="text-sm font-medium text-stone-900 truncate" x-text="entity.Name"></p>
+                                            <p class="text-xs text-stone-500 mt-0.5" x-text="entity.ContentType || ''"></p>
                                         </div>
                                     </div>
                                 </a>
@@ -221,12 +221,12 @@
                     <div>
                         <h3 class="text-sm font-semibold font-mono text-amber-800 mb-2" x-show="result.entityType === 'mixed'">Notes</h3>
                         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                            <template x-for="entity in result.notes" :key="entity.id">
-                                <a :href="'/note?id=' + entity.id"
+                            <template x-for="entity in result.notes" :key="entity.ID">
+                                <a :href="'/note?id=' + entity.ID"
                                    class="block p-3 bg-white border border-stone-200 rounded-md hover:border-amber-400 hover:shadow-sm transition-colors">
                                     <div class="min-w-0">
-                                        <p class="text-sm font-medium text-stone-900 truncate" x-text="entity.name"></p>
-                                        <p class="text-xs text-stone-500 mt-0.5 line-clamp-2" x-text="entity.description || ''"></p>
+                                        <p class="text-sm font-medium text-stone-900 truncate" x-text="entity.Name"></p>
+                                        <p class="text-xs text-stone-500 mt-0.5 line-clamp-2" x-text="entity.Description || ''"></p>
                                     </div>
                                 </a>
                             </template>
@@ -239,12 +239,12 @@
                     <div>
                         <h3 class="text-sm font-semibold font-mono text-amber-800 mb-2" x-show="result.entityType === 'mixed'">Groups</h3>
                         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                            <template x-for="entity in result.groups" :key="entity.id">
-                                <a :href="'/group?id=' + entity.id"
+                            <template x-for="entity in result.groups" :key="entity.ID">
+                                <a :href="'/group?id=' + entity.ID"
                                    class="block p-3 bg-white border border-stone-200 rounded-md hover:border-amber-400 hover:shadow-sm transition-colors">
                                     <div class="min-w-0">
-                                        <p class="text-sm font-medium text-stone-900 truncate" x-text="entity.name"></p>
-                                        <p class="text-xs text-stone-500 mt-0.5 line-clamp-2" x-text="entity.description || ''"></p>
+                                        <p class="text-sm font-medium text-stone-900 truncate" x-text="entity.Name"></p>
+                                        <p class="text-xs text-stone-500 mt-0.5 line-clamp-2" x-text="entity.Description || ''"></p>
                                     </div>
                                 </a>
                             </template>
@@ -277,13 +277,13 @@
                     <li class="flex items-center justify-between px-3 py-2 hover:bg-stone-50 group">
                         <button type="button"
                                 @click="loadSavedQuery(q)"
-                                class="flex-1 text-left min-w-0">
+                                class="flex-1 text-left min-w-0 cursor-pointer">
                             <span class="text-sm font-medium text-stone-900 truncate block" x-text="q.name"></span>
                             <span class="text-xs text-stone-500 font-mono truncate block" x-text="q.query"></span>
                         </button>
                         <button type="button"
                                 @click="deleteSavedQuery(q.id)"
-                                class="ml-2 text-xs text-red-600 hover:text-red-800 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity flex-shrink-0"
+                                class="ml-2 text-xs text-red-600 hover:text-red-800 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity flex-shrink-0 cursor-pointer"
                                 :aria-label="'Delete saved query: ' + q.name">
                             Delete
                         </button>
@@ -297,7 +297,7 @@
     <section aria-label="Query history" x-show="history.length > 0">
         <div x-data="{ showHistory: false }">
             <button type="button" @click="showHistory = !showHistory"
-                    class="text-sm text-amber-700 hover:text-amber-900 font-mono flex items-center gap-1 mb-2"
+                    class="text-sm text-amber-700 hover:text-amber-900 font-mono flex items-center gap-1 mb-2 cursor-pointer"
                     :aria-expanded="showHistory.toString()"
                     aria-controls="mrql-history-panel">
                 <svg :class="showHistory && 'rotate-90'" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -311,7 +311,7 @@
                         <li class="px-3 py-2 hover:bg-stone-50">
                             <button type="button"
                                     @click="loadFromHistory(h)"
-                                    class="w-full text-left text-sm text-stone-700 font-mono truncate block">
+                                    class="w-full text-left text-sm text-stone-700 font-mono truncate block cursor-pointer">
                                 <span x-text="h"></span>
                             </button>
                         </li>
