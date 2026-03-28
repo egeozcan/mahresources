@@ -45,7 +45,8 @@
                 <a href="/v1/resource/version/file?versionId={{ comparison.Version1.ID }}" class="text-red-900/60 hover:underline text-xs">Download</a>
             </div>
             <iframe src="/v1/resource/version/file?versionId={{ comparison.Version1.ID }}"
-                    class="w-full h-[600px]"></iframe>
+                    class="w-full h-[600px]"
+                    title="{{ label1 }}{% if not crossResource %} — v{{ comparison.Version1.VersionNumber }}{% endif %} PDF viewer"></iframe>
         </div>
         <div class="border rounded overflow-hidden">
             <div class="compare-panel-header--new flex justify-between items-center">
@@ -53,7 +54,8 @@
                 <a href="/v1/resource/version/file?versionId={{ comparison.Version2.ID }}" class="text-green-900/60 hover:underline text-xs">Download</a>
             </div>
             <iframe src="/v1/resource/version/file?versionId={{ comparison.Version2.ID }}"
-                    class="w-full h-[600px]"></iframe>
+                    class="w-full h-[600px]"
+                    title="{{ label2 }}{% if not crossResource %} — v{{ comparison.Version2.VersionNumber }}{% endif %} PDF viewer"></iframe>
         </div>
     </div>
 </div>

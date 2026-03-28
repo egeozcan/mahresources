@@ -205,7 +205,7 @@ func GroupTimelineContextProvider(context *application_context.MahresourcesConte
 func GroupCreateContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
-			"pageTitle": "Add New Group",
+			"pageTitle": "Create Group",
 		}.Update(StaticTemplateCtx(request))
 
 		var query query_models.EntityIdQuery

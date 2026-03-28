@@ -21,7 +21,7 @@
         <div class="sm:col-span-2">
             <button type="button" @click="open = !open"
                     class="text-sm text-amber-700 hover:text-amber-900 font-mono flex items-center gap-1">
-                <svg :class="open && 'rotate-90'" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg :class="open && 'rotate-90'" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
                 </svg>
                 SQL query reference
@@ -141,7 +141,7 @@ ORDER BY resource_count DESC</pre>
         <div class="sm:col-span-2">
             <button type="button" @click="open = !open"
                     class="text-sm text-amber-700 hover:text-amber-900 font-mono flex items-center gap-1">
-                <svg :class="open && 'rotate-90'" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg :class="open && 'rotate-90'" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
                 </svg>
                 Template reference

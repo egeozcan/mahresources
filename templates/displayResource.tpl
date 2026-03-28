@@ -12,7 +12,7 @@
 
     <div class="detail-panel" aria-label="Resource metadata">
         <div class="detail-panel-header">
-            <h3 class="detail-panel-title">Metadata</h3>
+            <h2 class="detail-panel-title">Metadata</h2>
         </div>
         <div class="detail-panel-body">
             <dl class="grid grid-cols-2 md:grid-cols-3 gap-3" x-data>
@@ -159,7 +159,7 @@
     {% if resource.Series %}
     <div class="detail-panel">
         <div class="detail-panel-header">
-            <h3 class="detail-panel-title">Series</h3>
+            <h2 class="detail-panel-title">Series</h2>
             <div class="detail-panel-actions">
                 <a href="/series?id={{ resource.Series.ID }}" class="text-amber-700 hover:text-amber-800 text-sm">{{ resource.Series.Name }}</a>
                 <form method="POST" action="/v1/resource/removeSeries?redirect={{ url|urlencode }}"
@@ -185,7 +185,7 @@
     {% if similarResources %}
         <div class="detail-panel">
             <div class="detail-panel-header">
-                <h3 class="detail-panel-title">Similar Resources</h3>
+                <h2 class="detail-panel-title">Similar Resources</h2>
             </div>
             <div class="detail-panel-body">
                 <div class="list-container">
