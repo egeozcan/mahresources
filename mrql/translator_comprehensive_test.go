@@ -1482,3 +1482,43 @@ func TestComprehensive_CombinedFilters(t *testing.T) {
 		})
 	}
 }
+
+// TestComprehensive_ParentDirectNegation verifies that parent != "X" includes
+// root groups (owner_id IS NULL), matching parent.name != semantics.
+func TestComprehensive_ParentDirectNegation(t *testing.T) {
+	db := setupTestDB(t)
+
+	// parent != "Vacation": Work and Photos excluded (parent=Vacation).
+	// Sub-Work (parent=Work), Vacation (root), Archive (root) included.
+	result := parseAndTranslate(t, `type = "group" AND parent != "Vacation"`, EntityGroup, db)
+
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	names := namesOfGroups(groups)
+	if len(groups) != 3 {
+		t.Fatalf("expected 3 groups (Sub-Work, Vacation, Archive), got %d: %v", len(groups), names)
+	}
+	for _, n := range names {
+		if n == "Work" || n == "Photos" {
+			t.Fatalf("%s should be excluded (parent IS Vacation), got: %v", n, names)
+		}
+	}
+}
+
+// TestComprehensive_ParentDirectNotLike verifies parent !~ includes root groups.
+func TestComprehensive_ParentDirectNotLike(t *testing.T) {
+	db := setupTestDB(t)
+
+	result := parseAndTranslate(t, `type = "group" AND parent !~ "Vac*"`, EntityGroup, db)
+
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	names := namesOfGroups(groups)
+	if len(groups) != 3 {
+		t.Fatalf("expected 3 (Sub-Work, Vacation, Archive), got %d: %v", len(groups), names)
+	}
+}

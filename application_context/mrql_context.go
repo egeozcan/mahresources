@@ -118,6 +118,12 @@ func (ctx *MahresourcesContext) executeSingleEntity(parsed *mrql.Query, entityTy
 // executeCrossEntity runs the query against resources, notes, and groups
 // separately and merges the results. LIMIT/OFFSET apply to the merged
 // result set, not per-entity, to avoid returning up to 3x the requested limit.
+//
+// Limitation: ORDER BY applies within each entity type, not globally across
+// the merged set. A query like "ORDER BY created DESC LIMIT 20" returns the
+// top 20 resources by date, then notes, then groups — not the 20 newest
+// across all types. True global ordering would require UNION ALL or in-memory
+// sort, which is deferred to v2.
 func (ctx *MahresourcesContext) executeCrossEntity(parsed *mrql.Query, opts mrql.TranslateOptions) (*MRQLResult, error) {
 	result := &MRQLResult{EntityType: "all"}
 
@@ -137,12 +143,9 @@ func (ctx *MahresourcesContext) executeCrossEntity(parsed *mrql.Query, opts mrql
 	}
 
 	// Each entity needs enough rows to cover offset + limit in the merged set.
-	// Without this, OFFSET 1500 LIMIT 50 with per-entity cap of 50 would
+	// Without this, OFFSET 100 LIMIT 50 with per-entity cap of 50 would
 	// fetch far too few rows and return an empty or wrong window.
 	perEntityCap := globalOffset + globalLimit
-	if perEntityCap > defaultMRQLLimit {
-		perEntityCap = defaultMRQLLimit // hard cap to prevent unbounded fetches
-	}
 
 	entityTypes := []mrql.EntityType{mrql.EntityResource, mrql.EntityNote, mrql.EntityGroup}
 

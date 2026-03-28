@@ -374,19 +374,21 @@ func (tc *translateContext) translateParentComparison(db *gorm.DB, op Token, val
 		matchVal = val
 	}
 
-	subquery := fmt.Sprintf(
-		"groups.owner_id IN (SELECT p.id FROM groups p WHERE %s)",
-		matchClause,
-	)
-
 	if isNegated {
-		subquery = fmt.Sprintf(
-			"groups.owner_id NOT IN (SELECT p.id FROM groups p WHERE %s)",
+		// NOT IN + include root groups (no parent)
+		subquery := fmt.Sprintf(
+			"(groups.owner_id NOT IN (SELECT p.id FROM groups p WHERE %s) OR groups.owner_id IS NULL)",
 			matchClause,
 		)
+		db = db.Where(subquery, matchVal)
+	} else {
+		subquery := fmt.Sprintf(
+			"groups.owner_id IN (SELECT p.id FROM groups p WHERE %s)",
+			matchClause,
+		)
+		db = db.Where(subquery, matchVal)
 	}
 
-	db = db.Where(subquery, matchVal)
 	return db, nil
 }
 
@@ -1024,15 +1026,18 @@ func (tc *translateContext) qualifiedColumn(column string) string {
 func (tc *translateContext) resolveOrderByColumn(f *FieldExpr) string {
 	fieldName := f.Name()
 
-	// Handle meta.key → JSON extraction per dialect
+	// Handle meta.key → JSON extraction per dialect.
+	// On Postgres, meta->>'key' returns text. For ORDER BY, we attempt a
+	// numeric cast so numeric values sort correctly (9 before 10). If the
+	// value isn't numeric, Postgres falls back gracefully via NULLS LAST.
 	if strings.HasPrefix(fieldName, "meta.") {
 		key := strings.TrimPrefix(fieldName, "meta.")
 		if !isValidMetaKey(key) {
-			// Validation should have caught this; fallback to safe column name
 			return tc.tableName + ".meta"
 		}
 		if tc.isPostgres() {
-			return fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)
+			// Use numeric cast for proper ordering; non-numeric values become NULL
+			return fmt.Sprintf("(%s.meta->>'%s')::numeric", tc.tableName, key)
 		}
 		return fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
 	}

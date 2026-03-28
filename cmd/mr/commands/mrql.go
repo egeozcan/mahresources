@@ -216,8 +216,12 @@ func newMRQLRunCmd(c *client.Client, opts *output.Options, page *int) *cobra.Com
 			} else {
 				q.Set("name", args[0])
 			}
-			q.Set("limit", strconv.Itoa(limit))
-			q.Set("page", strconv.Itoa(*page))
+			if cmd.Flags().Changed("limit") {
+				q.Set("limit", strconv.Itoa(limit))
+			}
+			if cmd.Flags().Changed("page") {
+				q.Set("page", strconv.Itoa(*page))
+			}
 
 			var raw json.RawMessage
 			if err := c.Post("/v1/mrql/saved/run", q, nil, &raw); err != nil {
@@ -238,7 +242,7 @@ func newMRQLRunCmd(c *client.Client, opts *output.Options, page *int) *cobra.Com
 		},
 	}
 
-	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum number of results")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Override result limit (0 = use saved query's LIMIT or server default)")
 
 	return cmd
 }
