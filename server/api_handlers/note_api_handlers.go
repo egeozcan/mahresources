@@ -65,36 +65,64 @@ func GetAddNoteHandler(ctx interfaces.NoteWriteReader) func(writer http.Response
 		effectiveCtx := withRequestContext(ctx, request).(interfaces.NoteWriteReader)
 
 		var queryVars = query_models.NoteEditor{}
+		var sentFields map[string]bool
 
-		if err := tryFillStructValuesFromRequest(&queryVars, request); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
-			return
+		// For JSON requests, buffer the body so we can detect which fields
+		// were explicitly included (distinguishing absent vs. empty).
+		if strings.HasPrefix(request.Header.Get("Content-type"), constants.JSON) {
+			bodyBytes, readErr := io.ReadAll(request.Body)
+			if readErr != nil {
+				http_utils.HandleError(readErr, writer, request, http.StatusBadRequest)
+				return
+			}
+			if err := json.Unmarshal(bodyBytes, &queryVars); err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+				return
+			}
+			var raw map[string]json.RawMessage
+			_ = json.Unmarshal(bodyBytes, &raw)
+			sentFields = make(map[string]bool, len(raw))
+			for k := range raw {
+				sentFields[k] = true
+			}
+		} else {
+			if err := tryFillStructValuesFromRequest(&queryVars, request); err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+				return
+			}
 		}
 
 		// Pre-populate unset fields from the existing note so partial updates
-		// don't clear them. Applies to both JSON and form-encoded requests.
+		// don't clear them. For JSON, use sentFields to distinguish absent vs
+		// explicitly empty. For form-encoded, use formHasField.
 		if queryVars.ID != 0 {
 			existing, getErr := effectiveCtx.GetNote(queryVars.ID)
 			if getErr == nil {
+				fieldWasSent := func(field string) bool {
+					if sentFields != nil {
+						return sentFields[field]
+					}
+					return formHasField(request, field)
+				}
 				if queryVars.Name == "" {
 					queryVars.Name = existing.Name
 				}
-				if queryVars.Description == "" {
+				if queryVars.Description == "" && !fieldWasSent("Description") {
 					queryVars.Description = existing.Description
 				}
 				if queryVars.Meta == "" {
 					queryVars.Meta = string(existing.Meta)
 				}
-				if queryVars.StartDate == "" && existing.StartDate != nil && !formHasField(request, "startDate") {
+				if queryVars.StartDate == "" && existing.StartDate != nil && !fieldWasSent("StartDate") {
 					queryVars.StartDate = existing.StartDate.Format("2006-01-02T15:04")
 				}
-				if queryVars.EndDate == "" && existing.EndDate != nil && !formHasField(request, "endDate") {
+				if queryVars.EndDate == "" && existing.EndDate != nil && !fieldWasSent("EndDate") {
 					queryVars.EndDate = existing.EndDate.Format("2006-01-02T15:04")
 				}
 				if queryVars.NoteTypeId == 0 && existing.NoteTypeId != nil && !formHasField(request, "NoteTypeId") {
 					queryVars.NoteTypeId = *existing.NoteTypeId
 				}
-				if queryVars.OwnerId == 0 && existing.OwnerId != nil && !formHasField(request, "ownerId") {
+				if queryVars.OwnerId == 0 && existing.OwnerId != nil && !formHasField(request, "OwnerId") {
 					queryVars.OwnerId = *existing.OwnerId
 				}
 				// Pre-populate nil association arrays so partial JSON updates

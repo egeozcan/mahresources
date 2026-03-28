@@ -3,6 +3,7 @@ package api_handlers
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -10,6 +11,7 @@ import (
 	"mahresources/server/interfaces"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 func GetGroupsHandler(ctx interfaces.GroupReader) func(writer http.ResponseWriter, request *http.Request) {
@@ -82,19 +84,48 @@ func GetAddGroupHandler(ctx interfaces.GroupCRUDReader) func(writer http.Respons
 		effectiveCtx := withRequestContext(ctx, request).(interfaces.GroupCRUDReader)
 
 		var editor = query_models.GroupEditor{}
+		var sentFields map[string]bool
 		var group *models.Group
 		var err error
 
-		if err = tryFillStructValuesFromRequest(&editor, request); err == nil && editor.ID == 0 {
+		// For JSON requests, buffer the body so we can detect which fields
+		// were explicitly included (distinguishing absent vs. empty).
+		if strings.HasPrefix(request.Header.Get("Content-type"), constants.JSON) {
+			bodyBytes, readErr := io.ReadAll(request.Body)
+			if readErr != nil {
+				http_utils.HandleError(readErr, writer, request, http.StatusBadRequest)
+				return
+			}
+			if jsonErr := json.Unmarshal(bodyBytes, &editor); jsonErr != nil {
+				http_utils.HandleError(jsonErr, writer, request, http.StatusBadRequest)
+				return
+			}
+			var raw map[string]json.RawMessage
+			_ = json.Unmarshal(bodyBytes, &raw)
+			sentFields = make(map[string]bool, len(raw))
+			for k := range raw {
+				sentFields[k] = true
+			}
+		} else {
+			err = tryFillStructValuesFromRequest(&editor, request)
+		}
+
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+
+		if editor.ID == 0 {
 			if editor.Name == "" {
 				http_utils.HandleError(fmt.Errorf("group name is required"), writer, request, http.StatusBadRequest)
 				return
 			}
 
 			group, err = effectiveCtx.CreateGroup(&editor.GroupCreator)
-		} else if err == nil {
+		} else {
 			// Pre-populate unset fields from the existing group so partial
-			// updates don't clear them. Applies to both JSON and form-encoded requests.
+			// updates don't clear them. For JSON, use sentFields to distinguish
+			// absent vs explicitly empty. For form-encoded, use formHasField.
 			{
 				existing, getErr := effectiveCtx.GetGroup(editor.ID)
 				if getErr != nil {
@@ -102,22 +133,28 @@ func GetAddGroupHandler(ctx interfaces.GroupCRUDReader) func(writer http.Respons
 					return
 				}
 				if existing != nil {
+					fieldWasSent := func(field string) bool {
+						if sentFields != nil {
+							return sentFields[field]
+						}
+						return formHasField(request, field)
+					}
 					if editor.Name == "" {
 						editor.Name = existing.Name
 					}
-					if editor.Description == "" {
+					if editor.Description == "" && !fieldWasSent("Description") {
 						editor.Description = existing.Description
 					}
 					if editor.Meta == "" {
 						editor.Meta = string(existing.Meta)
 					}
-					if editor.URL == "" && existing.URL != nil {
+					if editor.URL == "" && existing.URL != nil && !fieldWasSent("URL") {
 						editor.URL = (*url.URL)(existing.URL).String()
 					}
-					if editor.OwnerId == 0 && existing.OwnerId != nil && !formHasField(request, "ownerId") {
+					if editor.OwnerId == 0 && existing.OwnerId != nil && !formHasField(request, "OwnerId") {
 						editor.OwnerId = *existing.OwnerId
 					}
-					if editor.CategoryId == 0 && existing.CategoryId != nil && !formHasField(request, "categoryId") {
+					if editor.CategoryId == 0 && existing.CategoryId != nil && !formHasField(request, "CategoryId") {
 						editor.CategoryId = *existing.CategoryId
 					}
 					if editor.Tags == nil && len(existing.Tags) > 0 {

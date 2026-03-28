@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/models"
@@ -355,21 +356,49 @@ func GetResourceEditHandler(ctx interfaces.ResourceEditReader) func(writer http.
 		effectiveCtx := withRequestContext(ctx, request).(interfaces.ResourceEditReader)
 
 		var editor = query_models.ResourceEditor{}
-		err := tryFillStructValuesFromRequest(&editor, request)
-		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
-			return
+		var sentFields map[string]bool
+
+		// For JSON requests, buffer the body so we can detect which fields
+		// were explicitly included (distinguishing absent vs. empty).
+		if strings.HasPrefix(request.Header.Get("Content-type"), constants.JSON) {
+			bodyBytes, readErr := io.ReadAll(request.Body)
+			if readErr != nil {
+				http_utils.HandleError(readErr, writer, request, http.StatusBadRequest)
+				return
+			}
+			if err := json.Unmarshal(bodyBytes, &editor); err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+				return
+			}
+			var raw map[string]json.RawMessage
+			_ = json.Unmarshal(bodyBytes, &raw)
+			sentFields = make(map[string]bool, len(raw))
+			for k := range raw {
+				sentFields[k] = true
+			}
+		} else {
+			if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+				return
+			}
 		}
 
 		// Pre-populate unset fields from the existing resource so partial
-		// updates don't clear them. Applies to both JSON and form-encoded requests.
+		// updates don't clear them. For JSON, use sentFields to distinguish
+		// absent vs explicitly empty. For form-encoded, use formHasField.
 		if editor.ID != 0 {
 			existing, getErr := effectiveCtx.GetResource(editor.ID)
 			if getErr == nil {
+				fieldWasSent := func(field string) bool {
+					if sentFields != nil {
+						return sentFields[field]
+					}
+					return formHasField(request, field)
+				}
 				if editor.Name == "" {
 					editor.Name = existing.Name
 				}
-				if editor.Description == "" {
+				if editor.Description == "" && !fieldWasSent("Description") {
 					editor.Description = existing.Description
 				}
 				if editor.Meta == "" {
@@ -387,7 +416,7 @@ func GetResourceEditHandler(ctx interfaces.ResourceEditReader) func(writer http.
 				if editor.ContentCategory == "" {
 					editor.ContentCategory = existing.ContentCategory
 				}
-				if editor.OwnerId == 0 && existing.OwnerId != nil && !formHasField(request, "ownerId") {
+				if editor.OwnerId == 0 && existing.OwnerId != nil && !formHasField(request, "OwnerId") {
 					editor.OwnerId = *existing.OwnerId
 				}
 				if editor.ResourceCategoryId == 0 && existing.ResourceCategoryId != nil && !formHasField(request, "ResourceCategoryId") {

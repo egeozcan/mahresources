@@ -501,6 +501,9 @@ func CreateQueryHandler(ctx interface {
 				if editor.Text == "" {
 					editor.Text = existing.Text
 				}
+				if editor.Description == "" && !formHasField(r, "Description") {
+					editor.Description = existing.Description
+				}
 				if editor.Template == "" && !formHasField(r, "Template") {
 					editor.Template = existing.Template
 				}
