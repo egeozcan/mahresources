@@ -89,6 +89,8 @@ var templates = map[string]templateInformation{
 	"/log":  {template_context_providers.LogContextProvider, "displayLog.tpl", http.MethodGet},
 
 	"/admin/overview": {template_context_providers.AdminOverviewContextProvider, "adminOverview.tpl", http.MethodGet},
+
+	"/mrql": {template_context_providers.MRQLContextProvider, "mrql.tpl", http.MethodGet},
 }
 
 func wrapContextWithPlugins(appContext *application_context.MahresourcesContext, ctxFn func(request *http.Request) pongo2.Context) func(request *http.Request) pongo2.Context {

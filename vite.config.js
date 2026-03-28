@@ -16,6 +16,7 @@ export default defineConfig({
         assetFileNames: 'assets/[name]-[hash][extname]',
         manualChunks(id) {
           if (id.includes('/diff/')) return 'diff';
+          if (id.includes('mrqlEditor')) return 'mrql';
         },
       },
     },
