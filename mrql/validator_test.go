@@ -188,7 +188,6 @@ func TestValidator(t *testing.T) {
 		cases := []string{
 			`type = "foobar"`,
 			`type = "invalid"`,
-			`type = "RESOURCE"`, // case-sensitive check
 		}
 		for _, q := range cases {
 			t.Run(q, func(t *testing.T) {
@@ -210,6 +209,9 @@ func TestValidator(t *testing.T) {
 			`type = "resource"`,
 			`type = "note"`,
 			`type = "group"`,
+			`type = "RESOURCE"`,   // case-insensitive
+			`type = "Note"`,       // mixed case
+			`type = "GROUP"`,      // uppercase
 		}
 		for _, q := range cases {
 			t.Run(q, func(t *testing.T) {
@@ -287,6 +289,8 @@ func TestValidator(t *testing.T) {
 			{`type = "resource"`, EntityResource},
 			{`type = "note"`, EntityNote},
 			{`type = "group"`, EntityGroup},
+			{`type = "RESOURCE"`, EntityResource},
+			{`type = "Note"`, EntityNote},
 			{`name = "foo"`, EntityUnspecified},
 			{`type = "resource" AND name = "foo"`, EntityResource},
 			{`name = "foo" AND type = "group"`, EntityGroup},

@@ -1,8 +1,8 @@
 package mrql
 
 import (
-	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -21,7 +21,6 @@ func (e *TranslateError) Error() string {
 
 // TranslateOptions provides configurable options for query translation.
 type TranslateOptions struct {
-	Timeout time.Duration // query timeout (applied as context deadline)
 }
 
 // Translate converts a validated MRQL Query AST into a GORM DB query.
@@ -50,16 +49,6 @@ func TranslateWithOptions(q *Query, db *gorm.DB, opts TranslateOptions) (*gorm.D
 		db:         db,
 		entityType: entityType,
 		tableName:  entityTableName(entityType),
-	}
-
-	// Apply timeout if specified via a context deadline.
-	// The context will be cancelled automatically when the deadline expires.
-	// Note: the cancel function is intentionally not deferred here because the
-	// returned *gorm.DB carries the context and the caller will execute the query.
-	// The deadline ensures the query doesn't run indefinitely.
-	if opts.Timeout > 0 {
-		ctx, _ := context.WithTimeout(context.Background(), opts.Timeout) //nolint:govet // intentional; see above
-		tc.db = tc.db.WithContext(ctx)
 	}
 
 	// Start with the correct table
@@ -152,49 +141,37 @@ func (tc *translateContext) translateBinaryExpr(db *gorm.DB, expr *BinaryExpr) (
 		return tc.translateNode(db, expr.Right)
 	}
 
-	// OR: build each side as a subquery condition and combine with Or
-	leftDB := tc.db.Table(tc.tableName)
+	// OR: build each branch using a fresh session with only the Where clauses
+	// from that branch, then combine with GORM's Or to produce
+	// "WHERE (left conditions) OR (right conditions)".
+	leftDB := tc.db.Session(&gorm.Session{NewDB: true})
 	leftDB, err := tc.translateNode(leftDB, expr.Left)
 	if err != nil {
 		return nil, err
 	}
 
-	rightDB := tc.db.Table(tc.tableName)
+	rightDB := tc.db.Session(&gorm.Session{NewDB: true})
 	rightDB, err = tc.translateNode(rightDB, expr.Right)
 	if err != nil {
 		return nil, err
 	}
 
-	// Extract the clauses and combine with OR
-	// We use gorm's raw Where with OR grouping
-	leftSQL, leftVars := extractWhereClause(leftDB)
-	rightSQL, rightVars := extractWhereClause(rightDB)
-
-	if leftSQL != "" && rightSQL != "" {
-		combinedVars := append(leftVars, rightVars...)
-		db = db.Where("("+leftSQL+") OR ("+rightSQL+")", combinedVars...)
-	} else if leftSQL != "" {
-		db = db.Where(leftSQL, leftVars...)
-	} else if rightSQL != "" {
-		db = db.Where(rightSQL, rightVars...)
-	}
+	// Combine branches: db.Where(left).Or(right) produces "(left) OR (right)"
+	db = db.Where(leftDB).Or(rightDB)
 
 	return db, nil
 }
 
 // translateNotExpr handles NOT expressions.
 func (tc *translateContext) translateNotExpr(db *gorm.DB, expr *NotExpr) (*gorm.DB, error) {
-	// Build the inner expression in a fresh query to extract its SQL
-	innerDB := tc.db.Table(tc.tableName)
+	// Build the inner expression in a fresh session, then negate it with Not.
+	innerDB := tc.db.Session(&gorm.Session{NewDB: true})
 	innerDB, err := tc.translateNode(innerDB, expr.Expr)
 	if err != nil {
 		return nil, err
 	}
 
-	innerSQL, innerVars := extractWhereClause(innerDB)
-	if innerSQL != "" {
-		db = db.Where("NOT ("+innerSQL+")", innerVars...)
-	}
+	db = db.Not(innerDB)
 
 	return db, nil
 }
@@ -297,7 +274,7 @@ func (tc *translateContext) translateTagComparison(db *gorm.DB, op Token, val in
 	if isLike {
 		likePattern := convertMRQLWildcards(fmt.Sprint(val))
 		likeOp := tc.likeOperator()
-		tagMatchClause = "LOWER(t.name) " + likeOp + " LOWER(?)"
+		tagMatchClause = "LOWER(t.name) " + likeOp + " LOWER(?) ESCAPE '\\'"
 		tagMatchVal = likePattern
 	} else {
 		tagMatchClause = "LOWER(t.name) = LOWER(?)"
@@ -343,7 +320,7 @@ func (tc *translateContext) translateGroupComparison(db *gorm.DB, op Token, val 
 	if isLike {
 		likePattern := convertMRQLWildcards(fmt.Sprint(val))
 		likeOp := tc.likeOperator()
-		groupMatchClause = "LOWER(g.name) " + likeOp + " LOWER(?)"
+		groupMatchClause = "LOWER(g.name) " + likeOp + " LOWER(?) ESCAPE '\\'"
 		groupMatchVal = likePattern
 	} else {
 		groupMatchClause = "LOWER(g.name) = LOWER(?)"
@@ -377,7 +354,7 @@ func (tc *translateContext) translateParentComparison(db *gorm.DB, op Token, val
 	if isLike {
 		likePattern := convertMRQLWildcards(fmt.Sprint(val))
 		likeOp := tc.likeOperator()
-		matchClause = "LOWER(p.name) " + likeOp + " LOWER(?)"
+		matchClause = "LOWER(p.name) " + likeOp + " LOWER(?) ESCAPE '\\'"
 		matchVal = likePattern
 	} else {
 		matchClause = "LOWER(p.name) = LOWER(?)"
@@ -411,7 +388,7 @@ func (tc *translateContext) translateChildrenComparison(db *gorm.DB, op Token, v
 	if isLike {
 		likePattern := convertMRQLWildcards(fmt.Sprint(val))
 		likeOp := tc.likeOperator()
-		matchClause = "LOWER(c.name) " + likeOp + " LOWER(?)"
+		matchClause = "LOWER(c.name) " + likeOp + " LOWER(?) ESCAPE '\\'"
 		matchVal = likePattern
 	} else {
 		matchClause = "LOWER(c.name) = LOWER(?)"
@@ -434,10 +411,26 @@ func (tc *translateContext) translateChildrenComparison(db *gorm.DB, op Token, v
 	return db, nil
 }
 
+// metaKeyPattern matches valid meta keys: only alphanumeric and underscores.
+var metaKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+
+// isValidMetaKey returns true if the key contains only safe characters for
+// interpolation into json_extract paths.
+func isValidMetaKey(key string) bool {
+	return metaKeyPattern.MatchString(key)
+}
+
 // translateMetaComparison handles meta.key comparisons using json_extract.
 func (tc *translateContext) translateMetaComparison(db *gorm.DB, fd FieldDef, op Token, val interface{}) (*gorm.DB, error) {
 	// Extract the key from "meta.key"
 	key := strings.TrimPrefix(fd.Name, "meta.")
+
+	if !isValidMetaKey(key) {
+		return nil, &TranslateError{
+			Message: fmt.Sprintf("invalid meta key %q: must contain only alphanumeric characters and underscores", key),
+			Pos:     0,
+		}
+	}
 
 	// For SQLite: json_extract(table.meta, '$.key')
 	jsonExpr := fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
@@ -450,7 +443,7 @@ func (tc *translateContext) translateMetaComparison(db *gorm.DB, fd FieldDef, op
 		if op.Type == TokenNotLike {
 			likeOp = "NOT " + likeOp
 		}
-		db = db.Where(jsonExpr+" "+likeOp+" ?", likePattern)
+		db = db.Where(jsonExpr+" "+likeOp+" ? ESCAPE '\\'", likePattern)
 		return db, nil
 	}
 
@@ -478,6 +471,12 @@ func (tc *translateContext) translateInExpr(db *gorm.DB, expr *InExpr) (*gorm.DB
 		values[i] = resolved
 	}
 
+	// Handle relation fields (tags, groups) with IN using subqueries,
+	// similar to translateRelationComparison but matching multiple values.
+	if fd.Type == FieldRelation {
+		return tc.translateRelationIn(db, fd, expr.Negated, values)
+	}
+
 	column := tc.qualifiedColumn(fd.Column)
 
 	if fd.Type == FieldString {
@@ -500,6 +499,70 @@ func (tc *translateContext) translateInExpr(db *gorm.DB, expr *InExpr) (*gorm.DB
 	}
 
 	return db, nil
+}
+
+// translateRelationIn handles field IN (...) for relation fields (tags, groups).
+func (tc *translateContext) translateRelationIn(db *gorm.DB, fd FieldDef, negated bool, values []interface{}) (*gorm.DB, error) {
+	// Lowercase all values for case-insensitive matching
+	lowerValues := make([]interface{}, len(values))
+	for i, v := range values {
+		lowerValues[i] = strings.ToLower(fmt.Sprint(v))
+	}
+
+	inOrNotIn := "IN"
+	if negated {
+		inOrNotIn = "NOT IN"
+	}
+
+	switch fd.Column {
+	case "tags":
+		var junctionTable, entityCol string
+		switch tc.entityType {
+		case EntityResource:
+			junctionTable = "resource_tags"
+			entityCol = "resource_id"
+		case EntityNote:
+			junctionTable = "note_tags"
+			entityCol = "note_id"
+		case EntityGroup:
+			junctionTable = "group_tags"
+			entityCol = "group_id"
+		default:
+			return nil, &TranslateError{Message: "tags IN not supported for this entity type"}
+		}
+
+		subquery := fmt.Sprintf(
+			"%s.id %s (SELECT jt.%s FROM %s jt JOIN tags t ON t.id = jt.tag_id WHERE LOWER(t.name) IN (?))",
+			tc.tableName, inOrNotIn, entityCol, junctionTable,
+		)
+		db = db.Where(subquery, lowerValues)
+		return db, nil
+
+	case "groups":
+		var junctionTable, entityCol string
+		switch tc.entityType {
+		case EntityResource:
+			junctionTable = "groups_related_resources"
+			entityCol = "resource_id"
+		case EntityNote:
+			junctionTable = "groups_related_notes"
+			entityCol = "note_id"
+		default:
+			return nil, &TranslateError{Message: "groups IN not supported for this entity type"}
+		}
+
+		subquery := fmt.Sprintf(
+			"%s.id %s (SELECT jt.%s FROM %s jt JOIN groups g ON g.id = jt.group_id WHERE LOWER(g.name) IN (?))",
+			tc.tableName, inOrNotIn, entityCol, junctionTable,
+		)
+		db = db.Where(subquery, lowerValues)
+		return db, nil
+
+	default:
+		return nil, &TranslateError{
+			Message: fmt.Sprintf("IN not supported for relation field %q", fd.Name),
+		}
+	}
 }
 
 // translateIsExpr handles IS EMPTY, IS NOT EMPTY, IS NULL, IS NOT NULL.
@@ -737,6 +800,10 @@ func (tc *translateContext) resolveOrderByColumn(f *FieldExpr) string {
 	// Handle meta.key → json_extract(table.meta, '$.key')
 	if strings.HasPrefix(fieldName, "meta.") {
 		key := strings.TrimPrefix(fieldName, "meta.")
+		if !isValidMetaKey(key) {
+			// Validation should have caught this; fallback to safe column name
+			return tc.tableName + ".meta"
+		}
 		return fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
 	}
 
@@ -753,11 +820,12 @@ func (tc *translateContext) resolveOrderByColumn(f *FieldExpr) string {
 func (tc *translateContext) translateLikeComparison(db *gorm.DB, column string, op Token, val interface{}) (*gorm.DB, error) {
 	pattern := convertMRQLWildcards(fmt.Sprint(val))
 	likeOp := tc.likeOperator()
+	escapeClause := " ESCAPE '\\'"
 
 	if op.Type == TokenNotLike {
-		db = db.Where("LOWER("+column+") NOT "+likeOp+" LOWER(?)", pattern)
+		db = db.Where("LOWER("+column+") NOT "+likeOp+" LOWER(?)"+escapeClause, pattern)
 	} else {
-		db = db.Where("LOWER("+column+") "+likeOp+" LOWER(?)", pattern)
+		db = db.Where("LOWER("+column+") "+likeOp+" LOWER(?)"+escapeClause, pattern)
 	}
 
 	return db, nil
@@ -787,7 +855,7 @@ func sanitizeFTS5(input string) string {
 			sb.WriteRune(r)
 		case r == ' ' || r == '\t':
 			sb.WriteRune(' ')
-		case r == '.' || r == ',' || r == '-' || r == '\'':
+		case r == '.' || r == ',':
 			sb.WriteRune(r)
 		// Skip: *, +, ^, :, (, ), ", !, ~, etc.
 		}
@@ -795,33 +863,3 @@ func sanitizeFTS5(input string) string {
 	return strings.TrimSpace(sb.String())
 }
 
-// extractWhereClause builds the WHERE SQL from a GORM *gorm.DB's Statement.
-// This is used for OR and NOT composition where we need to extract the raw SQL.
-func extractWhereClause(db *gorm.DB) (string, []interface{}) {
-	// Build the statement to get SQL and vars
-	stmt := db.Statement
-	if stmt == nil {
-		return "", nil
-	}
-
-	// We need to build the query to extract WHERE clauses
-	// Use GORM's statement builder
-	clone := db.Session(&gorm.Session{DryRun: true})
-	clone = clone.Find(nil)
-
-	if clone.Statement == nil {
-		return "", nil
-	}
-
-	sql := clone.Statement.SQL.String()
-	vars := clone.Statement.Vars
-
-	// Extract just the WHERE part from the full SQL
-	whereIdx := strings.Index(strings.ToUpper(sql), "WHERE")
-	if whereIdx < 0 {
-		return "", nil
-	}
-
-	whereClause := sql[whereIdx+6:] // skip "WHERE "
-	return strings.TrimSpace(whereClause), vars
-}

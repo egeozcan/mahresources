@@ -15,18 +15,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// mrqlResult represents a single result item from a MRQL query execution.
-type mrqlResult struct {
+// mrqlEntity represents a single entity with common fields for display.
+type mrqlEntity struct {
 	ID        uint      `json:"ID"`
-	Type      string    `json:"type"`
 	Name      string    `json:"Name"`
 	CreatedAt time.Time `json:"CreatedAt"`
 }
 
-// mrqlResponse wraps the MRQL query execution results.
+// mrqlResponse matches the MRQLResult struct returned by the API.
 type mrqlResponse struct {
-	Results []mrqlResult `json:"results"`
-	Total   int          `json:"total"`
+	EntityType string       `json:"entityType"`
+	Resources  []mrqlEntity `json:"resources,omitempty"`
+	Notes      []mrqlEntity `json:"notes,omitempty"`
+	Groups     []mrqlEntity `json:"groups,omitempty"`
 }
 
 // mrqlSavedQuery represents a saved MRQL query.
@@ -99,15 +100,7 @@ Examples:
 			}
 
 			columns := []string{"ID", "TYPE", "NAME", "CREATED"}
-			var rows [][]string
-			for _, r := range resp.Results {
-				rows = append(rows, []string{
-					strconv.FormatUint(uint64(r.ID), 10),
-					r.Type,
-					output.Truncate(r.Name, 40),
-					r.CreatedAt.Format(time.RFC3339),
-				})
-			}
+			rows := mrqlResponseToRows(resp)
 
 			output.Print(*opts, columns, rows, raw)
 			return nil
@@ -234,15 +227,7 @@ func newMRQLRunCmd(c *client.Client, opts *output.Options, page *int) *cobra.Com
 			}
 
 			columns := []string{"ID", "TYPE", "NAME", "CREATED"}
-			var rows [][]string
-			for _, r := range resp.Results {
-				rows = append(rows, []string{
-					strconv.FormatUint(uint64(r.ID), 10),
-					r.Type,
-					output.Truncate(r.Name, 40),
-					r.CreatedAt.Format(time.RFC3339),
-				})
-			}
+			rows := mrqlResponseToRows(resp)
 
 			output.Print(*opts, columns, rows, raw)
 			return nil
@@ -252,6 +237,36 @@ func newMRQLRunCmd(c *client.Client, opts *output.Options, page *int) *cobra.Com
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum number of results")
 
 	return cmd
+}
+
+// mrqlResponseToRows converts the API response into unified table rows.
+func mrqlResponseToRows(resp mrqlResponse) [][]string {
+	var rows [][]string
+	for _, r := range resp.Resources {
+		rows = append(rows, []string{
+			strconv.FormatUint(uint64(r.ID), 10),
+			"resource",
+			output.Truncate(r.Name, 40),
+			r.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	for _, n := range resp.Notes {
+		rows = append(rows, []string{
+			strconv.FormatUint(uint64(n.ID), 10),
+			"note",
+			output.Truncate(n.Name, 40),
+			n.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	for _, g := range resp.Groups {
+		rows = append(rows, []string{
+			strconv.FormatUint(uint64(g.ID), 10),
+			"group",
+			output.Truncate(g.Name, 40),
+			g.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	return rows
 }
 
 func newMRQLDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {

@@ -1,6 +1,9 @@
 package mrql
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // ValidationError is returned when semantic validation of a Query fails.
 type ValidationError struct {
@@ -74,7 +77,7 @@ func extractEntityTypeFromNode(node Node) EntityType {
 	case *ComparisonExpr:
 		if isTypeField(n.Field) && n.Operator.Type == TokenEq {
 			if sl, ok := n.Value.(*StringLiteral); ok {
-				if et, valid := ValidEntityTypes[sl.Value]; valid {
+				if et, valid := ValidEntityTypes[strings.ToLower(sl.Value)]; valid {
 					return et
 				}
 			}
@@ -108,7 +111,7 @@ func validateNode(node Node, entityType EntityType) error {
 		// Validate entity type value in `type = "..."` comparisons
 		if isTypeField(n.Field) && n.Operator.Type == TokenEq {
 			if sl, ok := n.Value.(*StringLiteral); ok {
-				if _, valid := ValidEntityTypes[sl.Value]; !valid {
+				if _, valid := ValidEntityTypes[strings.ToLower(sl.Value)]; !valid {
 					return &ValidationError{
 						Message: fmt.Sprintf("invalid entity type value %q: must be one of resource, note, group", sl.Value),
 						Pos:     sl.Pos(),

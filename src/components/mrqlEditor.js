@@ -2,7 +2,6 @@ export function mrqlEditor() {
   return {
     view: null,
     langCompartment: null,
-    lintCompartment: null,
 
     // UI state
     showDocs: false,
@@ -63,7 +62,6 @@ export function mrqlEditor() {
       ]);
 
       this.langCompartment = new Compartment();
-      this.lintCompartment = new Compartment();
 
       // MRQL keywords and operators for syntax highlighting
       const mrqlKeywords = new Set([
@@ -109,10 +107,6 @@ export function mrqlEditor() {
           if (stream.match(/^[a-zA-Z_][a-zA-Z0-9_.]*/, true)) {
             const word = stream.current();
             if (mrqlKeywords.has(word.toUpperCase())) {
-              return 'keyword';
-            }
-            // "type" is a special keyword
-            if (word.toLowerCase() === 'type') {
               return 'keyword';
             }
             return 'variableName';
@@ -177,10 +171,6 @@ export function mrqlEditor() {
           activateOnTyping: true,
         }),
         keymap.of([
-          ...closeBracketsKeymap,
-          ...defaultKeymap,
-          ...historyKeymap,
-          indentWithTab,
           {
             key: 'Mod-Enter',
             run() {
@@ -195,9 +185,12 @@ export function mrqlEditor() {
               return true;
             },
           },
+          ...closeBracketsKeymap,
+          ...defaultKeymap,
+          ...historyKeymap,
+          indentWithTab,
         ]),
         this.langCompartment.of(mrqlLang),
-        this.lintCompartment.of([]),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             self.scheduleValidation();
@@ -230,7 +223,7 @@ export function mrqlEditor() {
       }
 
       // Handle back/forward navigation
-      window.addEventListener('popstate', () => {
+      this._popstateHandler = () => {
         const q = new URLSearchParams(window.location.search).get('q');
         if (q) {
           this.setQuery(q);
@@ -240,7 +233,8 @@ export function mrqlEditor() {
           this.result = null;
           this.error = '';
         }
-      });
+      };
+      window.addEventListener('popstate', this._popstateHandler);
     },
 
     getQuery() {
@@ -313,11 +307,14 @@ export function mrqlEditor() {
         this.result = await resp.json();
         this.addToHistory(query);
 
-        // Update URL so back/forward works
+        // Update URL so back/forward works (skip if already the same query)
         if (pushState) {
-          const url = new URL(window.location);
-          url.searchParams.set('q', query);
-          window.history.pushState({ q: query }, '', url);
+          const currentQ = new URLSearchParams(window.location.search).get('q');
+          if (currentQ !== query) {
+            const url = new URL(window.location);
+            url.searchParams.set('q', query);
+            window.history.pushState({ q: query }, '', url);
+          }
         }
       } catch (err) {
         this.error = err.message || 'Network error';
@@ -387,12 +384,11 @@ export function mrqlEditor() {
       }
     },
 
-    async deleteSavedQuery(id) {
+    async deleteSavedQuery(id, name) {
+      if (!window.confirm('Delete saved query "' + (name || id) + '"?')) return;
       try {
         const resp = await fetch('/v1/mrql/saved/delete?id=' + id, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id }),
         });
 
         if (resp.ok) {
@@ -403,6 +399,9 @@ export function mrqlEditor() {
 
     destroy() {
       if (this._validateTimer) clearTimeout(this._validateTimer);
+      if (this._popstateHandler) {
+        window.removeEventListener('popstate', this._popstateHandler);
+      }
       if (this.view) {
         this.view.destroy();
         this.view = null;

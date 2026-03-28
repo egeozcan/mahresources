@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"time"
@@ -25,7 +26,8 @@ type MRQLResult struct {
 // ExecuteMRQL parses, validates, translates, and executes an MRQL query string.
 // For single-entity queries it returns typed results; for cross-entity (no type
 // specified) it fans out to resources, notes, and groups, merging the results.
-func (ctx *MahresourcesContext) ExecuteMRQL(queryStr string) (*MRQLResult, error) {
+// The optional limit and page parameters override the parsed LIMIT/OFFSET when > 0.
+func (ctx *MahresourcesContext) ExecuteMRQL(queryStr string, limit, page int) (*MRQLResult, error) {
 	queryStr = strings.TrimSpace(queryStr)
 	if queryStr == "" {
 		return nil, errors.New("query string must not be empty")
@@ -40,11 +42,21 @@ func (ctx *MahresourcesContext) ExecuteMRQL(queryStr string) (*MRQLResult, error
 		return nil, err
 	}
 
+	// Override parsed LIMIT/OFFSET with request parameters if provided.
+	if limit > 0 {
+		parsed.Limit = limit
+	}
+	if page > 1 {
+		effectiveLimit := parsed.Limit
+		if effectiveLimit < 0 {
+			effectiveLimit = 1000 // default cap
+		}
+		parsed.Offset = (page - 1) * effectiveLimit
+	}
+
 	entityType := mrql.ExtractEntityType(parsed)
 
-	opts := mrql.TranslateOptions{
-		Timeout: MRQLQueryTimeout,
-	}
+	opts := mrql.TranslateOptions{}
 
 	if entityType != mrql.EntityUnspecified {
 		return ctx.executeSingleEntity(parsed, entityType, opts)
@@ -54,13 +66,26 @@ func (ctx *MahresourcesContext) ExecuteMRQL(queryStr string) (*MRQLResult, error
 	return ctx.executeCrossEntity(parsed, opts)
 }
 
+// defaultMRQLLimit is applied when the query has no explicit LIMIT clause.
+const defaultMRQLLimit = 1000
+
 // executeSingleEntity runs the query against a single entity table.
 func (ctx *MahresourcesContext) executeSingleEntity(parsed *mrql.Query, entityType mrql.EntityType, opts mrql.TranslateOptions) (*MRQLResult, error) {
 	parsed.EntityType = entityType
 
-	db, err := mrql.TranslateWithOptions(parsed, ctx.db, opts)
+	// Create a timeout context scoped to this execution so it gets cancelled
+	// when execution completes, avoiding context leaks.
+	queryCtx, cancel := context.WithTimeout(context.Background(), MRQLQueryTimeout)
+	defer cancel()
+
+	db, err := mrql.TranslateWithOptions(parsed, ctx.db.WithContext(queryCtx), opts)
 	if err != nil {
 		return nil, err
+	}
+
+	// Apply a default limit cap if the query has no explicit LIMIT.
+	if parsed.Limit < 0 {
+		db = db.Limit(defaultMRQLLimit)
 	}
 
 	result := &MRQLResult{EntityType: entityType.String()}
@@ -94,6 +119,11 @@ func (ctx *MahresourcesContext) executeSingleEntity(parsed *mrql.Query, entityTy
 func (ctx *MahresourcesContext) executeCrossEntity(parsed *mrql.Query, opts mrql.TranslateOptions) (*MRQLResult, error) {
 	result := &MRQLResult{EntityType: "all"}
 
+	// Create a timeout context scoped to this execution so it gets cancelled
+	// when execution completes, avoiding context leaks.
+	queryCtx, cancel := context.WithTimeout(context.Background(), MRQLQueryTimeout)
+	defer cancel()
+
 	entityTypes := []mrql.EntityType{mrql.EntityResource, mrql.EntityNote, mrql.EntityGroup}
 
 	for _, et := range entityTypes {
@@ -101,7 +131,7 @@ func (ctx *MahresourcesContext) executeCrossEntity(parsed *mrql.Query, opts mrql
 		clone := *parsed
 		clone.EntityType = et
 
-		db, err := mrql.TranslateWithOptions(&clone, ctx.db, opts)
+		db, err := mrql.TranslateWithOptions(&clone, ctx.db.WithContext(queryCtx), opts)
 		if err != nil {
 			// Skip entities where the query fields don't apply
 			var translateErr *mrql.TranslateError
@@ -109,6 +139,11 @@ func (ctx *MahresourcesContext) executeCrossEntity(parsed *mrql.Query, opts mrql
 				continue
 			}
 			return nil, err
+		}
+
+		// Apply a default limit cap if the query has no explicit LIMIT.
+		if parsed.Limit < 0 {
+			db = db.Limit(defaultMRQLLimit)
 		}
 
 		switch et {
@@ -226,6 +261,15 @@ func (ctx *MahresourcesContext) GetSavedMRQLQueries() ([]models.SavedMRQLQuery, 
 func (ctx *MahresourcesContext) GetSavedMRQLQuery(id uint) (*models.SavedMRQLQuery, error) {
 	var query models.SavedMRQLQuery
 	if err := ctx.db.First(&query, id).Error; err != nil {
+		return nil, err
+	}
+	return &query, nil
+}
+
+// GetSavedMRQLQueryByName returns a single saved MRQL query by name.
+func (ctx *MahresourcesContext) GetSavedMRQLQueryByName(name string) (*models.SavedMRQLQuery, error) {
+	var query models.SavedMRQLQuery
+	if err := ctx.db.Where("name = ?", name).First(&query).Error; err != nil {
 		return nil, err
 	}
 	return &query, nil

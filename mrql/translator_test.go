@@ -620,9 +620,7 @@ func TestTranslateWithOptions(t *testing.T) {
 		t.Fatalf("validation error: %v", err)
 	}
 
-	result, err := TranslateWithOptions(q, db, TranslateOptions{
-		Timeout: 5 * time.Second,
-	})
+	result, err := TranslateWithOptions(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate error: %v", err)
 	}

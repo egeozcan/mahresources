@@ -96,10 +96,7 @@
 
         {# Editor container #}
         <div x-ref="editorContainer"
-             class="border border-stone-300 rounded-md overflow-hidden bg-white"
-             role="textbox"
-             aria-label="MRQL query editor"
-             aria-multiline="true"></div>
+             class="border border-stone-300 rounded-md overflow-hidden bg-white"></div>
 
         {# Validation status #}
         <div class="mt-1 min-h-[1.25rem]">
@@ -134,7 +131,7 @@
     {# ── Save Dialog ─────────────────────────────────────────────── #}
     <template x-if="showSaveDialog">
         <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="showSaveDialog = false" @keydown.escape.window="showSaveDialog = false">
-            <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-4 space-y-4" role="dialog" aria-label="Save MRQL query" @click.stop>
+            <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-4 space-y-4" role="dialog" aria-modal="true" aria-label="Save MRQL query" @click.stop x-trap.noscroll="showSaveDialog">
                 <h3 class="text-lg font-semibold font-mono text-stone-800">Save Query</h3>
                 <div>
                     <label for="mrql-save-name" class="block text-sm font-medium text-stone-700 mb-1">Name</label>
@@ -282,7 +279,7 @@
                             <span class="text-xs text-stone-500 font-mono truncate block" x-text="q.query"></span>
                         </button>
                         <button type="button"
-                                @click="deleteSavedQuery(q.id)"
+                                @click="deleteSavedQuery(q.id, q.name)"
                                 class="ml-2 text-xs text-red-600 hover:text-red-800 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity flex-shrink-0 cursor-pointer"
                                 :aria-label="'Delete saved query: ' + q.name">
                             Delete

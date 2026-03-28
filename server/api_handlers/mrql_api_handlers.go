@@ -7,6 +7,7 @@ import (
 
 	"mahresources/application_context"
 	"mahresources/constants"
+	"mahresources/models"
 	"mahresources/server/http_utils"
 )
 
@@ -14,6 +15,8 @@ import (
 
 type mrqlExecuteRequest struct {
 	Query string `json:"query" schema:"query"`
+	Limit int    `json:"limit" schema:"limit"`
+	Page  int    `json:"page" schema:"page"`
 }
 
 type mrqlValidateRequest struct {
@@ -54,7 +57,7 @@ func GetExecuteMRQLHandler(ctx *application_context.MahresourcesContext) func(ht
 			return
 		}
 
-		result, err := ctx.ExecuteMRQL(req.Query)
+		result, err := ctx.ExecuteMRQL(req.Query, req.Limit, req.Page)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
@@ -203,22 +206,33 @@ func GetDeleteSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext
 	}
 }
 
-// GetRunSavedMRQLQueryHandler handles POST /v1/mrql/saved/run?id=N — execute a saved MRQL query.
+// GetRunSavedMRQLQueryHandler handles POST /v1/mrql/saved/run?id=N or ?name=X — execute a saved MRQL query.
 func GetRunSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := http_utils.GetUIntQueryParameter(request, "id", 0)
-		if id == 0 {
-			http_utils.HandleError(errors.New("saved MRQL query id is required"), writer, request, http.StatusBadRequest)
+		name := http_utils.GetQueryParameter(request, "name", "")
+
+		var saved *models.SavedMRQLQuery
+		var err error
+
+		if id != 0 {
+			saved, err = ctx.GetSavedMRQLQuery(id)
+		} else if name != "" {
+			saved, err = ctx.GetSavedMRQLQueryByName(name)
+		} else {
+			http_utils.HandleError(errors.New("saved MRQL query id or name is required"), writer, request, http.StatusBadRequest)
 			return
 		}
 
-		saved, err := ctx.GetSavedMRQLQuery(id)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusNotFound))
 			return
 		}
 
-		result, err := ctx.ExecuteMRQL(saved.Query)
+		limit := int(http_utils.GetUIntQueryParameter(request, "limit", 0))
+		page := int(http_utils.GetUIntQueryParameter(request, "page", 0))
+
+		result, err := ctx.ExecuteMRQL(saved.Query, limit, page)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
