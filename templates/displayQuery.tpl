@@ -78,7 +78,7 @@
                     <div class="query-results output mt-2" x-ref="output"></div>
                     <template x-if="error">
                         <div>
-                            <h3>Something went wrong.</h3>
+                            <h2>Something went wrong.</h2>
                             <p class="text-red-700" x-text="(error.message || 'unknown error')"></p>
                         </div>
                     </template>
