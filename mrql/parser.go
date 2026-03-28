@@ -565,9 +565,13 @@ func parseIntFromToken(tok Token) (int, error) {
 	if strings.HasSuffix(lower, "kb") || strings.HasSuffix(lower, "mb") || strings.HasSuffix(lower, "gb") {
 		return 0, fmt.Errorf("LIMIT/OFFSET requires a plain integer, got %q", tok.Value)
 	}
-	val, err := strconv.ParseFloat(raw, 64)
+	// Reject fractional values — LIMIT/OFFSET must be whole numbers
+	if strings.Contains(raw, ".") {
+		return 0, fmt.Errorf("LIMIT/OFFSET requires a whole number, got %q", tok.Value)
+	}
+	val, err := strconv.Atoi(raw)
 	if err != nil {
 		return 0, fmt.Errorf("invalid integer %q: %v", tok.Value, err)
 	}
-	return int(val), nil
+	return val, nil
 }

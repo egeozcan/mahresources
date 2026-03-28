@@ -892,10 +892,14 @@ func (tc *translateContext) translateIsExpr(db *gorm.DB, expr *IsExpr) (*gorm.DB
 	}
 
 	if expr.IsNull {
-		// IS NULL / IS NOT NULL
+		// For relation fields, IS NULL is equivalent to IS EMPTY — redirect
+		if fd.Type == FieldRelation {
+			return tc.translateRelationIsEmpty(db, fd, expr.Negated)
+		}
+
+		// IS NULL / IS NOT NULL for scalar and meta fields
 		var column string
 		if fd.Type == FieldMeta {
-			// Meta fields need json_extract, not a direct column reference
 			key := strings.TrimPrefix(fd.Name, "meta.")
 			if tc.isPostgres() {
 				column = fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)

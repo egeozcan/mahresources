@@ -2016,3 +2016,73 @@ func TestComprehensive_ChildrenTraversalIsNotNull(t *testing.T) {
 			len(groups), namesOfGroups(groups))
 	}
 }
+
+// P1: Unsupported operators on relation fields should be rejected.
+func TestComprehensive_RelationUnsupportedOperators(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"tags gt", `type = "resource" AND tags > 3`},
+		{"tags gte", `type = "resource" AND tags >= 3`},
+		{"tags lt", `type = "resource" AND tags < 3`},
+		{"tags lte", `type = "resource" AND tags <= 3`},
+		{"groups gt", `type = "resource" AND groups > 1`},
+		{"parent gte", `type = "group" AND parent >= 1`},
+		{"children lt", `type = "group" AND children < 5`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := Parse(tt.query)
+			if err != nil {
+				return
+			}
+			err = Validate(q)
+			if err == nil {
+				t.Fatalf("expected validation error for %s, got nil", tt.query)
+			}
+		})
+	}
+}
+
+// P1: IS NULL on relation fields should use correct SQL (not fd.Column).
+func TestComprehensive_RelationIsNull(t *testing.T) {
+	db := setupTestDB(t)
+
+	// parent IS NULL should work (owner_id IS NULL) — tests the relation IS NULL path
+	result := parseAndTranslate(t, `type = "group" AND parent IS NULL`, EntityGroup, db)
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("parent IS NULL query error: %v", err)
+	}
+	// Vacation and Archive have no parent
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 root groups, got %d: %v", len(groups), namesOfGroups(groups))
+	}
+
+	// tags IS NULL should be rejected — tags is a relation, use IS EMPTY instead
+	q, _ := Parse(`type = "resource" AND tags IS NULL`)
+	err := Validate(q)
+	if err == nil {
+		t.Fatal("expected validation error for tags IS NULL, got nil")
+	}
+}
+
+// P2: Fractional LIMIT/OFFSET should be rejected.
+func TestComprehensive_FractionalLimitOffset(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"fractional limit", `type = "resource" LIMIT 1.9`},
+		{"fractional offset", `type = "resource" LIMIT 10 OFFSET 2.5`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse(tt.query)
+			if err == nil {
+				t.Fatalf("expected parse error for %s, got nil", tt.query)
+			}
+		})
+	}
+}

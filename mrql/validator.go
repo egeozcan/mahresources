@@ -156,6 +156,23 @@ func validateNode(node Node, entityType EntityType) error {
 				}
 			}
 		}
+		// Validate operators on relation fields: only =, !=, ~, !~ are supported
+		if !isTypeField(n.Field) {
+			fieldName := n.Field.Parts[0].Value
+			fd, ok := LookupField(entityType, fieldName)
+			if ok && fd.Type == FieldRelation {
+				switch n.Operator.Type {
+				case TokenEq, TokenNeq, TokenLike, TokenNotLike:
+					// supported
+				default:
+					return &ValidationError{
+						Message: fmt.Sprintf("field %q is a relation and only supports =, !=, ~, !~ operators", fieldName),
+						Pos:     n.Operator.Pos,
+						Length:  n.Operator.Length,
+					}
+				}
+			}
+		}
 		return nil
 
 	case *InExpr:
@@ -189,6 +206,19 @@ func validateNode(node Node, entityType EntityType) error {
 					Message: fmt.Sprintf("%s.%s does not support IS EMPTY; use parent/children IS EMPTY or %s.%s = \"...\" instead", prefix, n.Field.Parts[1].Value, prefix, n.Field.Parts[1].Value),
 					Pos:     n.Field.Pos(),
 					Length:  len(n.Field.Name()),
+				}
+			}
+		}
+		// Reject IS NULL on relation fields (tags, groups) — use IS EMPTY instead.
+		// parent IS NULL and children IS NULL are handled by the IS EMPTY path.
+		if n.IsNull && len(n.Field.Parts) == 1 {
+			fieldName := n.Field.Parts[0].Value
+			fd, ok := LookupField(entityType, fieldName)
+			if ok && fd.Type == FieldRelation && fieldName != "parent" && fieldName != "children" {
+				return &ValidationError{
+					Message: fmt.Sprintf("use \"%s IS EMPTY\" instead of \"%s IS NULL\" for relation fields", fieldName, fieldName),
+					Pos:     n.Field.Pos(),
+					Length:  len(fieldName),
 				}
 			}
 		}
