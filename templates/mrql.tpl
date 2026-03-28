@@ -187,7 +187,8 @@
                         Results
                         <span class="text-sm font-normal text-stone-500" x-text="'(' + totalCount + ' items)'"></span>
                     </h2>
-                    <span class="text-xs text-stone-500 font-mono" x-text="'Entity: ' + (result.entityType || 'mixed')"></span>
+                    <span class="text-xs text-stone-500 font-mono"
+                          x-text="'Entity: ' + (['resource','note','group'].includes(result.entityType) ? result.entityType : 'all types')"></span>
                 </div>
 
                 {# Resource results #}

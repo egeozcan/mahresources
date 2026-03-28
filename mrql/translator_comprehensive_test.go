@@ -1793,3 +1793,79 @@ func TestComprehensive_TypeNeqExcludesEntity(t *testing.T) {
 		t.Fatal("type != resource should include notes, got 0")
 	}
 }
+
+// TestComprehensive_NotTypeResourceExecution verifies that NOT type = "resource"
+// actually excludes resources at query execution time, not just at extraction.
+func TestComprehensive_NotTypeResourceExecution(t *testing.T) {
+	db := setupTestDB(t)
+
+	q, _ := Parse(`NOT type = "resource" AND name ~ "*"`)
+	Validate(q)
+
+	// Cross-entity: translate for resources — should return 0
+	clone := *q
+	clone.EntityType = EntityResource
+	result, err := TranslateWithOptions(&clone, db, TranslateOptions{})
+	if err != nil {
+		t.Logf("translate error (acceptable): %v", err)
+		return
+	}
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) != 0 {
+		t.Fatalf("NOT type=resource should exclude ALL resources, got %d: %v",
+			len(resources), namesOfResources(resources))
+	}
+
+	// Translate for notes — should return all notes
+	clone2 := *q
+	clone2.EntityType = EntityNote
+	result2, err := TranslateWithOptions(&clone2, db, TranslateOptions{})
+	if err != nil {
+		t.Fatalf("translate for notes: %v", err)
+	}
+	var notes []testNote
+	result2.Find(&notes)
+	if len(notes) == 0 {
+		t.Fatal("NOT type=resource should include notes, got 0")
+	}
+}
+
+// TestComprehensive_TypeOrNameExecution verifies that type = "resource" OR name = "Todo list"
+// returns both matching resources AND the note named "Todo list".
+func TestComprehensive_TypeOrNameExecution(t *testing.T) {
+	db := setupTestDB(t)
+
+	q, _ := Parse(`type = "resource" OR name = "Todo list"`)
+	Validate(q)
+
+	// For resources: type = "resource" matches, so all resources should be returned
+	clone := *q
+	clone.EntityType = EntityResource
+	result, err := TranslateWithOptions(&clone, db, TranslateOptions{})
+	if err != nil {
+		t.Fatalf("translate for resources: %v", err)
+	}
+	var resources []testResource
+	result.Find(&resources)
+	if len(resources) != 4 {
+		t.Fatalf("type=resource arm should return all 4 resources, got %d: %v",
+			len(resources), namesOfResources(resources))
+	}
+
+	// For notes: type = "resource" doesn't match notes, but name = "Todo list" does
+	clone2 := *q
+	clone2.EntityType = EntityNote
+	result2, err := TranslateWithOptions(&clone2, db, TranslateOptions{})
+	if err != nil {
+		t.Fatalf("translate for notes: %v", err)
+	}
+	var notes []testNote
+	result2.Find(&notes)
+	if len(notes) != 1 || notes[0].Name != "Todo list" {
+		t.Fatalf("name=Todo list arm should match 1 note, got %d: %v",
+			len(notes), namesOfNotes(notes))
+	}
+}

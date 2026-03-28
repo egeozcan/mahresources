@@ -185,22 +185,22 @@ func (tc *translateContext) translateNotExpr(db *gorm.DB, expr *NotExpr) (*gorm.
 func (tc *translateContext) translateComparisonExpr(db *gorm.DB, expr *ComparisonExpr) (*gorm.DB, error) {
 	fieldName := expr.Field.Name()
 
-	// Handle type comparisons. In cross-entity fan-out, these must be enforced
-	// as filters: type = "resource" excludes non-resource tables, and
-	// type != "resource" excludes the resource table.
+	// Handle type comparisons. These must produce explicit TRUE/FALSE clauses
+	// so they compose correctly inside OR and NOT expressions. Returning db
+	// unchanged (no clause) would break boolean composition — GORM treats an
+	// empty subquery differently from a "WHERE 1=1" subquery in OR/NOT contexts.
 	if fieldName == "type" {
 		if sl, ok := expr.Value.(*StringLiteral); ok {
 			requestedType, valid := ValidEntityTypes[strings.ToLower(sl.Value)]
 			if valid {
-				switch expr.Operator.Type {
-				case TokenEq:
-					if requestedType != tc.entityType {
-						db = db.Where("1 = 0")
-					}
-				case TokenNeq:
-					if requestedType == tc.entityType {
-						db = db.Where("1 = 0")
-					}
+				matches := requestedType == tc.entityType
+				if expr.Operator.Type == TokenNeq {
+					matches = !matches
+				}
+				if matches {
+					db = db.Where("1 = 1") // explicit TRUE — composes in OR/NOT
+				} else {
+					db = db.Where("1 = 0") // explicit FALSE
 				}
 			}
 		}
