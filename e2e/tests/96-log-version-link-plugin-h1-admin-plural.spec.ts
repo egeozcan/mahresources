@@ -165,18 +165,17 @@ test.describe('Bug 3: Admin overview should use correct singular/plural nouns', 
   }) => {
     await page.goto(`${baseURL}/admin/overview`);
 
-    // Wait for Alpine.js to hydrate the "Top Categories" section and render counts
-    // Use a single robust locator that waits for our specific category's text
-    const correctText = page.locator(
-      `section[aria-label="Detailed statistics"] span:text("1 group")`
-    );
-    await expect(correctText).toHaveCount(1, { timeout: 30000 });
+    // Wait for Alpine.js to hydrate the "Top Categories" section and render counts.
+    // Use getByText with exact match to avoid "1 group" matching "1 groups".
+    const detailedStats = page.locator('section[aria-label="Detailed statistics"]');
+    await expect(
+      detailedStats.getByText('1 group', { exact: true })
+    ).toBeVisible({ timeout: 30000 });
 
     // Verify the buggy plural form "1 groups" does NOT appear
-    const buggyText = page.locator(
-      `section[aria-label="Detailed statistics"] span:text("1 groups")`
-    );
-    await expect(buggyText).toHaveCount(0);
+    await expect(
+      detailedStats.getByText('1 groups', { exact: true })
+    ).toHaveCount(0);
   });
 
   test.afterAll(async ({ apiClient }) => {
