@@ -244,7 +244,8 @@ func RelationContextProvider(context *application_context.MahresourcesContext) f
 				Name: "Edit",
 				Url:  fmt.Sprintf("/relation/edit?id=%v", relation.ID),
 			},
-			"mainEntity": relation,
+			"mainEntity":     relation,
+			"mainEntityType": "relation",
 		}.Update(baseContext)
 	}
 }

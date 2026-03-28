@@ -12,7 +12,7 @@
         title="Jobs (Ctrl+Shift+D / Cmd+Shift+D)"
         aria-label="Open jobs panel"
     >
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg aria-hidden="true" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
         </svg>
         <span x-show="activeCount > 0" x-text="activeCount" class="px-1.5 py-0.5 text-xs bg-white text-amber-700 rounded-full font-bold"></span>
@@ -45,8 +45,8 @@
                               }"
                               :title="connectionStatus"></span>
                     </div>
-                    <button @click="close()" class="p-1 text-stone-400 hover:text-stone-600 rounded focus:outline-none focus:ring-2 focus:ring-amber-600">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <button @click="close()" class="p-1 text-stone-400 hover:text-stone-600 rounded focus:outline-none focus:ring-2 focus:ring-amber-600" aria-label="Close jobs panel">
+                        <svg aria-hidden="true" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                         </svg>
                     </button>
@@ -56,7 +56,7 @@
                 <div class="flex-1 overflow-y-auto">
                     <template x-if="displayJobs.length === 0">
                         <div class="flex flex-col items-center justify-center h-full text-stone-500 p-8">
-                            <svg class="w-16 h-16 mb-4 text-stone-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg aria-hidden="true" class="w-16 h-16 mb-4 text-stone-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
                             </svg>
                             <p class="text-center">No jobs in queue</p>
