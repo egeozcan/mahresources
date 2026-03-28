@@ -19,6 +19,12 @@ func (ctx *MahresourcesContext) GetSeries(id uint) (*models.Series, error) {
 	return &series, ctx.db.Preload("Resources", pageLimit).First(&series, id).Error
 }
 
+// GetSeriesCount returns the total count of series.
+func (ctx *MahresourcesContext) GetSeriesCount() (int64, error) {
+	var count int64
+	return count, ctx.db.Model(&models.Series{}).Count(&count).Error
+}
+
 // GetSeriesBySlug retrieves a series by its unique slug.
 func (ctx *MahresourcesContext) GetSeriesBySlug(slug string) (*models.Series, error) {
 	var series models.Series

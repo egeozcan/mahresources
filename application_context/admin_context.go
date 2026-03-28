@@ -171,6 +171,7 @@ type EntityCounts struct {
 	Categories         int64 `json:"categories"`
 	ResourceCategories int64 `json:"resourceCategories"`
 	NoteTypes          int64 `json:"noteTypes"`
+	Series             int64 `json:"series"`
 	Queries            int64 `json:"queries"`
 	Relations          int64 `json:"relations"`
 	RelationTypes      int64 `json:"relationTypes"`
@@ -286,6 +287,9 @@ func (ctx *MahresourcesContext) GetDataStats() (*DataStats, error) {
 		}},
 		{&stats.Entities.RelationTypes, func() (int64, error) {
 			return ctx.GetRelationTypesCount(&query_models.RelationshipTypeQuery{})
+		}},
+		{&stats.Entities.Series, func() (int64, error) {
+			return ctx.GetSeriesCount()
 		}},
 		{&stats.Entities.LogEntries, func() (int64, error) {
 			return ctx.GetLogEntriesCount(&query_models.LogEntryQuery{})
