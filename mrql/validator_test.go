@@ -362,3 +362,60 @@ func TestValidator(t *testing.T) {
 		}
 	})
 }
+
+func TestValidatorOwnerTraversal(t *testing.T) {
+	validQueries := []string{
+		`type = resource AND owner = "MyGroup"`,
+		`type = resource AND owner ~ "Project*"`,
+		`type = resource AND owner.name = "test"`,
+		`type = resource AND owner.tags = "urgent"`,
+		`type = resource AND owner.category = "3"`,
+		`type = resource AND owner.parent.name = "Acme"`,
+		`type = resource AND owner.parent.tags = "active"`,
+		`type = resource AND owner.children.name ~ "Q*"`,
+		`type = note AND owner = "MyGroup"`,
+		`type = note AND owner.parent.name = "test"`,
+		`type = group AND parent.parent.name = "Root"`,
+		`type = group AND parent.parent.tags = "org"`,
+		`type = group AND children.parent.name = "X"`,
+	}
+	for _, q := range validQueries {
+		t.Run(q, func(t *testing.T) {
+			ast, err := Parse(q)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			if err := Validate(ast); err != nil {
+				t.Fatalf("expected valid, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidatorOwnerTraversalInvalid(t *testing.T) {
+	cases := []struct {
+		query       string
+		errContains string
+	}{
+		{`type = group AND owner = "test"`, "unknown"},
+		{`type = resource AND owner.owner.name = "test"`, "not valid as intermediate"},
+		{`type = resource AND owner.groups.name = "test"`, "not a traversal field"},
+		{`type = resource AND owner.parent.meta = "test"`, "not supported"},
+		{`owner = "test"`, "unknown"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.query, func(t *testing.T) {
+			ast, err := Parse(tc.query)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			err = Validate(ast)
+			if err == nil {
+				t.Fatal("expected validation error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.errContains) {
+				t.Fatalf("expected error containing %q, got: %v", tc.errContains, err)
+			}
+		})
+	}
+}

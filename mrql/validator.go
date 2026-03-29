@@ -16,6 +16,38 @@ func (e *ValidationError) Error() string {
 	return fmt.Sprintf("validation error at position %d: %s", e.Pos, e.Message)
 }
 
+// traversalRoots maps field names that can start a traversal chain to the entity
+// types on which they are valid roots. "parent" and "children" are group-only;
+// "owner" is valid on resources and notes.
+var traversalRoots = map[string][]EntityType{
+	"parent":   {EntityGroup},
+	"children": {EntityGroup},
+	"owner":    {EntityResource, EntityNote},
+}
+
+// traversalIntermediates are field names allowed in the middle of a traversal chain.
+// Only parent and children can appear as intermediate steps — owner cannot because
+// it references a group from a non-group entity and doesn't chain.
+var traversalIntermediates = map[string]bool{
+	"parent":   true,
+	"children": true,
+}
+
+// isTraversalRoot returns true if fieldName is a valid traversal root for the
+// given entity type.
+func isTraversalRoot(fieldName string, entityType EntityType) bool {
+	allowedTypes, ok := traversalRoots[fieldName]
+	if !ok {
+		return false
+	}
+	for _, et := range allowedTypes {
+		if et == entityType {
+			return true
+		}
+	}
+	return false
+}
+
 // Validate performs semantic validation of a parsed Query AST.
 //
 // It proceeds in two passes:
@@ -177,8 +209,10 @@ func validateNode(node Node, entityType EntityType) error {
 				}
 			}
 		}
-		// Validate operators on relation fields: only =, !=, ~, !~ are supported
-		if !isTypeField(n.Field) {
+		// Validate operators on relation fields: only =, !=, ~, !~ are supported.
+		// Only apply to single-part fields — multi-part traversals validate their
+		// own leaf field types in validateTraversalChain.
+		if !isTypeField(n.Field) && len(n.Field.Parts) == 1 {
 			fieldName := n.Field.Parts[0].Value
 			fd, ok := LookupField(entityType, fieldName)
 			if ok && fd.Type == FieldRelation {
@@ -211,20 +245,28 @@ func validateNode(node Node, entityType EntityType) error {
 				Length:  len(n.Field.Name()),
 			}
 		}
-		if len(n.Field.Parts) == 2 {
+		// Reject traversal IN (multi-part chains like parent.name, owner.tags, etc.)
+		if len(n.Field.Parts) >= 2 {
 			prefix := n.Field.Parts[0].Value
-			if prefix == "parent" || prefix == "children" {
+			if _, isRoot := traversalRoots[prefix]; isRoot {
 				return &ValidationError{
-					Message: fmt.Sprintf("%s.%s does not support IN operator; use = or != instead", prefix, n.Field.Parts[1].Value),
+					Message: fmt.Sprintf("%s does not support IN operator; use = or != instead", n.Field.Name()),
+					Pos:     n.Field.Pos(),
+					Length:  len(n.Field.Name()),
+				}
+			}
+			if traversalIntermediates[prefix] {
+				return &ValidationError{
+					Message: fmt.Sprintf("%s does not support IN operator; use = or != instead", n.Field.Name()),
 					Pos:     n.Field.Pos(),
 					Length:  len(n.Field.Name()),
 				}
 			}
 		}
-		// Reject bare parent/children IN — translator only supports tags/groups IN
+		// Reject bare parent/children/owner IN — translator only supports tags/groups IN
 		if len(n.Field.Parts) == 1 {
 			fieldName := n.Field.Parts[0].Value
-			if fieldName == "parent" || fieldName == "children" {
+			if fieldName == "parent" || fieldName == "children" || fieldName == "owner" {
 				return &ValidationError{
 					Message: fmt.Sprintf("%s does not support IN operator; use %s = \"...\" or %s IS EMPTY instead", fieldName, fieldName, fieldName),
 					Pos:     n.Field.Pos(),
@@ -237,38 +279,47 @@ func validateNode(node Node, entityType EntityType) error {
 	case *IsExpr:
 		// Reject traversal IS EMPTY (not translatable as a subfield check),
 		// but allow traversal IS NULL / IS NOT NULL (translatable via subquery).
-		if len(n.Field.Parts) == 2 {
+		if len(n.Field.Parts) >= 2 {
 			prefix := n.Field.Parts[0].Value
-			if prefix == "parent" || prefix == "children" {
-				subField := n.Field.Parts[1].Value
+			isRoot := isTraversalRoot(prefix, entityType)
+			isIntermediate := traversalIntermediates[prefix]
+			if isRoot || isIntermediate {
 				if !n.IsNull {
 					return &ValidationError{
-						Message: fmt.Sprintf("%s.%s does not support IS EMPTY; use parent/children IS EMPTY or %s.%s = \"...\" instead", prefix, subField, prefix, subField),
+						Message: fmt.Sprintf("%s does not support IS EMPTY; use the base traversal field IS EMPTY or %s = \"...\" instead", n.Field.Name(), n.Field.Name()),
+						Pos:     n.Field.Pos(),
+						Length:  len(n.Field.Name()),
+					}
+				}
+				// IS NULL on chains longer than 2 parts is not supported
+				if len(n.Field.Parts) > 2 {
+					return &ValidationError{
+						Message: fmt.Sprintf("%s IS NULL is not supported for multi-level traversals", n.Field.Name()),
 						Pos:     n.Field.Pos(),
 						Length:  len(n.Field.Name()),
 					}
 				}
 				// IS NULL on relation subfields (tags) is not supported — the
 				// traversal IS NULL handler only works on scalar columns.
-				subFd, ok := LookupField(EntityGroup, subField)
-				if !ok {
-					subFd, _ = LookupField(EntityGroup, subField)
-				}
-				if ok && subFd.Type == FieldRelation {
-					return &ValidationError{
-						Message: fmt.Sprintf("%s.%s IS NULL is not supported; use %s.%s = \"...\" for tag comparisons", prefix, subField, prefix, subField),
-						Pos:     n.Field.Pos(),
-						Length:  len(n.Field.Name()),
+				if len(n.Field.Parts) == 2 {
+					subField := n.Field.Parts[1].Value
+					subFd, ok := LookupField(EntityGroup, subField)
+					if ok && subFd.Type == FieldRelation {
+						return &ValidationError{
+							Message: fmt.Sprintf("%s.%s IS NULL is not supported; use %s.%s = \"...\" for tag comparisons", prefix, subField, prefix, subField),
+							Pos:     n.Field.Pos(),
+							Length:  len(n.Field.Name()),
+						}
 					}
 				}
 			}
 		}
 		// Reject IS NULL on relation fields (tags, groups) — use IS EMPTY instead.
-		// parent IS NULL and children IS NULL are handled by the IS EMPTY path.
+		// parent/children/owner IS NULL are handled by the IS EMPTY path.
 		if n.IsNull && len(n.Field.Parts) == 1 {
 			fieldName := n.Field.Parts[0].Value
 			fd, ok := LookupField(entityType, fieldName)
-			if ok && fd.Type == FieldRelation && fieldName != "parent" && fieldName != "children" {
+			if ok && fd.Type == FieldRelation && fieldName != "parent" && fieldName != "children" && fieldName != "owner" {
 				return &ValidationError{
 					Message: fmt.Sprintf("use \"%s IS EMPTY\" instead of \"%s IS NULL\" for relation fields", fieldName, fieldName),
 					Pos:     n.Field.Pos(),
@@ -288,17 +339,28 @@ func validateNode(node Node, entityType EntityType) error {
 // validateSortable rejects ORDER BY on fields that don't map to scalar columns
 // (relation fields like tags/groups, and traversal paths like parent.name).
 func validateSortable(f *FieldExpr, entityType EntityType) error {
-	// Traversal fields (parent.X, children.X) are not sortable
-	if len(f.Parts) == 2 {
+	// Multi-part fields: allow meta.X, reject all traversal ORDER BY
+	if len(f.Parts) >= 2 {
 		prefix := f.Parts[0].Value
-		if prefix == "parent" || prefix == "children" {
+		if prefix == "meta" {
+			// meta.X is sortable
+			return nil
+		}
+		// Any traversal field (parent.X, children.X, owner.X, etc.) is not sortable
+		if _, isRoot := traversalRoots[prefix]; isRoot {
 			return &ValidationError{
 				Message: fmt.Sprintf("cannot ORDER BY %s: traversal fields are not sortable", f.Name()),
 				Pos:     f.Pos(),
 				Length:  len(f.Name()),
 			}
 		}
-		// meta.X is sortable
+		if traversalIntermediates[prefix] {
+			return &ValidationError{
+				Message: fmt.Sprintf("cannot ORDER BY %s: traversal fields are not sortable", f.Name()),
+				Pos:     f.Pos(),
+				Length:  len(f.Name()),
+			}
+		}
 		return nil
 	}
 
@@ -336,9 +398,12 @@ func validateValueType(field *FieldExpr, value Node, entityType EntityType) erro
 		return nil
 	}
 	// Traversal subfields — validated by the translator
-	if len(field.Parts) == 2 {
+	if len(field.Parts) >= 2 {
 		prefix := field.Parts[0].Value
-		if prefix == "parent" || prefix == "children" {
+		if _, isRoot := traversalRoots[prefix]; isRoot {
+			return nil
+		}
+		if traversalIntermediates[prefix] {
 			return nil
 		}
 	}
@@ -398,65 +463,17 @@ func validateFieldExpr(f *FieldExpr, entityType EntityType) error {
 		return nil
 	}
 
-	// Handle dotted traversal: parent.field, children.field, or meta.key
-	if len(f.Parts) == 2 {
+	// Multi-part fields: meta.key, or traversal chains
+	if len(f.Parts) >= 2 {
 		prefix := firstName
-		switch prefix {
-		case "meta":
-			// meta.* is always valid
+
+		// meta.* is always valid (2-part only)
+		if prefix == "meta" {
 			return nil
-		case "parent", "children":
-			// Traversal only allowed on group entities
-			if entityType != EntityGroup {
-				return &ValidationError{
-					Message: fmt.Sprintf("field %q: parent/children traversal is only valid for group entities (got %s)", f.Name(), entityType),
-					Pos:     f.Pos(),
-					Length:  len(f.Name()),
-				}
-			}
-			// Validate the subfield against group fields
-			subField := f.Parts[1].Value
-			if subField == "meta" {
-				// parent.meta / children.meta is not actionable — the parser
-				// forbids 3-segment fields (parent.meta.key), so there's no
-				// way to specify which meta key to access.
-				return &ValidationError{
-					Message: fmt.Sprintf("%s.meta is not supported; traversal of parent/children metadata requires a key (parent.meta.key), which is planned for v2", prefix),
-					Pos:     f.Pos(),
-					Length:  len(f.Name()),
-				}
-			}
-			subFd, ok := LookupField(EntityGroup, subField)
-			if !ok && !IsCommonField(subField) {
-				return &ValidationError{
-					Message: fmt.Sprintf("unknown field %q for %s traversal; valid fields: name, description, tags, category, id, created, updated", subField, prefix),
-					Pos:     f.Parts[1].Pos,
-					Length:  len(subField),
-				}
-			}
-			if ok || IsCommonField(subField) {
-				if !ok {
-					subFd, _ = LookupField(EntityGroup, subField)
-				}
-				// Only tags is supported as a relation traversal subfield.
-				// Other relation subfields (children, parent, groups) can't be
-				// translated to SQL in a traversal context.
-				if subFd.Type == FieldRelation && subField != "tags" {
-					return &ValidationError{
-						Message: fmt.Sprintf("%s.%s is not supported; only %s.tags, %s.name, %s.category, and other scalar fields are valid", prefix, subField, prefix, prefix, prefix),
-						Pos:     f.Pos(),
-						Length:  len(f.Name()),
-					}
-				}
-			}
-			return nil
-		default:
-			return &ValidationError{
-				Message: fmt.Sprintf("unknown field prefix %q in %q", prefix, f.Name()),
-				Pos:     f.Pos(),
-				Length:  len(f.Name()),
-			}
 		}
+
+		// Traversal chain: root.intermediate...leaf
+		return validateTraversalChain(f, entityType)
 	}
 
 	// Single-part field name lookup
@@ -469,5 +486,103 @@ func validateFieldExpr(f *FieldExpr, entityType EntityType) error {
 			Length:  len(fieldName),
 		}
 	}
+	return nil
+}
+
+// validateTraversalChain validates a multi-part field expression as a traversal
+// chain. The chain is classified as: root . [intermediate...] . leaf
+//
+// Rules:
+//   - Root must be a valid traversal root for the entity type (parent/children
+//     for groups, owner for resources/notes).
+//   - Intermediates must be parent or children only (owner is not valid as an
+//     intermediate because it references a group from a non-group entity).
+//   - Leaf must be a valid group field: scalar fields or tags. Meta and other
+//     relation fields (parent, children, groups) are not supported as leaves.
+//   - For 2-part chains (root.leaf), the leaf is validated directly.
+//   - For 3+ part chains, all parts between root and leaf are intermediates.
+func validateTraversalChain(f *FieldExpr, entityType EntityType) error {
+	root := f.Parts[0].Value
+
+	// Validate root is a known traversal field for this entity type
+	if !isTraversalRoot(root, entityType) {
+		// Check if it's a known traversal root on some other entity type
+		if _, anyRoot := traversalRoots[root]; anyRoot {
+			return &ValidationError{
+				Message: fmt.Sprintf("field %q: %s traversal is not valid for entity type %s", f.Name(), root, entityType),
+				Pos:     f.Pos(),
+				Length:  len(f.Name()),
+			}
+		}
+		return &ValidationError{
+			Message: fmt.Sprintf("unknown field prefix %q in %q; not a traversal field", root, f.Name()),
+			Pos:     f.Pos(),
+			Length:  len(f.Name()),
+		}
+	}
+
+	// For chains with 3+ parts, validate intermediates (all parts except first and last)
+	for i := 1; i < len(f.Parts)-1; i++ {
+		part := f.Parts[i].Value
+		if !traversalIntermediates[part] {
+			// Check if it's a known traversal root but not valid as intermediate
+			if _, anyRoot := traversalRoots[part]; anyRoot {
+				return &ValidationError{
+					Message: fmt.Sprintf("%q is not valid as intermediate in traversal chain %q; only parent/children can appear in the middle", part, f.Name()),
+					Pos:     f.Parts[i].Pos,
+					Length:  len(part),
+				}
+			}
+			return &ValidationError{
+				Message: fmt.Sprintf("%q is not a traversal field; cannot appear in traversal chain %q", part, f.Name()),
+				Pos:     f.Parts[i].Pos,
+				Length:  len(part),
+			}
+		}
+	}
+
+	// Validate the leaf (last part) — must be a valid group field
+	leaf := f.Parts[len(f.Parts)-1].Value
+
+	// meta as leaf is not supported — traversal meta would need an additional
+	// key part (parent.meta.key) and the semantics are complex.
+	if leaf == "meta" {
+		chainPrefix := f.Parts[0].Value
+		for i := 1; i < len(f.Parts)-1; i++ {
+			chainPrefix += "." + f.Parts[i].Value
+		}
+		return &ValidationError{
+			Message: fmt.Sprintf("%s.meta is not supported; traversal of metadata requires a key (%s.meta.key), which is planned for v2", chainPrefix, chainPrefix),
+			Pos:     f.Pos(),
+			Length:  len(f.Name()),
+		}
+	}
+
+	// Look up the leaf field on group entity (all traversals resolve to groups)
+	subFd, ok := LookupField(EntityGroup, leaf)
+	if !ok && !IsCommonField(leaf) {
+		return &ValidationError{
+			Message: fmt.Sprintf("unknown field %q for traversal; valid fields: name, description, tags, category, id, created, updated", leaf),
+			Pos:     f.Parts[len(f.Parts)-1].Pos,
+			Length:  len(leaf),
+		}
+	}
+
+	// Resolve the field def if it came from common fields
+	if !ok {
+		subFd, _ = LookupField(EntityGroup, leaf)
+	}
+
+	// Only tags is supported as a relation leaf field.
+	// Other relation fields (children, parent, groups) can't be translated
+	// to SQL in a traversal context.
+	if subFd.Type == FieldRelation && leaf != "tags" {
+		return &ValidationError{
+			Message: fmt.Sprintf("%s is not supported; only scalar fields and tags are valid as traversal leaf fields", f.Name()),
+			Pos:     f.Pos(),
+			Length:  len(f.Name()),
+		}
+	}
+
 	return nil
 }
