@@ -1,6 +1,7 @@
 package mrql
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -416,11 +417,15 @@ func TestParserOrderByLimitOffset(t *testing.T) {
 	}
 }
 
-// Test 21: Multi-level traversal rejection: parent.parent.name = "a" → error
+// Test 21: Multi-level traversal: parent.parent.name = "a" is now valid (up to 5 parts allowed).
 func TestParserThreeLevelFieldRejected(t *testing.T) {
-	pe := mustFail(t, `parent.parent.name = "a"`)
-	if pe.Message == "" {
-		t.Error("expected non-empty error message for three-level field")
+	q := mustParse(t, `parent.parent.name = "a"`)
+	comp, ok := q.Where.(*ComparisonExpr)
+	if !ok {
+		t.Fatalf("expected *ComparisonExpr, got %T", q.Where)
+	}
+	if len(comp.Field.Parts) != 3 {
+		t.Fatalf("expected 3 parts, got %d", len(comp.Field.Parts))
 	}
 }
 
@@ -748,5 +753,43 @@ func TestParserKbUnit(t *testing.T) {
 	}
 	if num.Raw != 500*1024 {
 		t.Errorf("expected raw %d, got %d", 500*1024, num.Raw)
+	}
+}
+
+func TestParserMultiPartField(t *testing.T) {
+	q := mustParse(t, `owner.parent.name = "test"`)
+	comp, ok := q.Where.(*ComparisonExpr)
+	if !ok {
+		t.Fatal("expected ComparisonExpr")
+	}
+	if len(comp.Field.Parts) != 3 {
+		t.Fatalf("expected 3 parts, got %d", len(comp.Field.Parts))
+	}
+	if comp.Field.Parts[0].Value != "owner" {
+		t.Fatalf("expected part[0] = owner, got %q", comp.Field.Parts[0].Value)
+	}
+	if comp.Field.Parts[1].Value != "parent" {
+		t.Fatalf("expected part[1] = parent, got %q", comp.Field.Parts[1].Value)
+	}
+	if comp.Field.Parts[2].Value != "name" {
+		t.Fatalf("expected part[2] = name, got %q", comp.Field.Parts[2].Value)
+	}
+}
+
+func TestParserMaxDepthField(t *testing.T) {
+	q := mustParse(t, `owner.parent.parent.parent.name = "test"`)
+	comp := q.Where.(*ComparisonExpr)
+	if len(comp.Field.Parts) != 5 {
+		t.Fatalf("expected 5 parts, got %d", len(comp.Field.Parts))
+	}
+}
+
+func TestParserTooDeepFieldRejected(t *testing.T) {
+	_, err := Parse(`a.b.c.d.e.f = "test"`)
+	if err == nil {
+		t.Fatal("expected error for 6-part field, got nil")
+	}
+	if !strings.Contains(err.Error(), "too deep") {
+		t.Fatalf("expected 'too deep' error, got: %v", err)
 	}
 }

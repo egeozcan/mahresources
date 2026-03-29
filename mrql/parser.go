@@ -272,7 +272,10 @@ func (p *parser) parseFieldExpr() (Node, error) {
 	}
 }
 
-// parseField reads a field name: IDENT or KWTYPE, optionally followed by "." IDENT
+// maxFieldParts is the maximum number of parts in a dotted field expression.
+const maxFieldParts = 5
+
+// parseField reads a field name: IDENT (. IDENT)* with up to maxFieldParts parts.
 func (p *parser) parseField() (*FieldExpr, error) {
 	tok := p.lexer.Next()
 	if tok.Type != TokenIdentifier && tok.Type != TokenKwType {
@@ -285,8 +288,15 @@ func (p *parser) parseField() (*FieldExpr, error) {
 
 	parts := []Token{tok}
 
-	// Check for "." IDENT
-	if p.lexer.Peek().Type == TokenDot {
+	for p.lexer.Peek().Type == TokenDot {
+		if len(parts) >= maxFieldParts {
+			dotTok := p.lexer.Peek()
+			return nil, &ParseError{
+				Message: fmt.Sprintf("traversal chain too deep (max %d parts)", maxFieldParts),
+				Pos:     dotTok.Pos,
+				Length:  dotTok.Length,
+			}
+		}
 		p.lexer.Next() // consume '.'
 
 		nextTok := p.lexer.Next()
@@ -298,16 +308,6 @@ func (p *parser) parseField() (*FieldExpr, error) {
 			}
 		}
 		parts = append(parts, nextTok)
-
-		// Reject three-level traversal: a.b.c
-		if p.lexer.Peek().Type == TokenDot {
-			dotTok := p.lexer.Peek()
-			return nil, &ParseError{
-				Message: fmt.Sprintf("field %q.%q: only one level of dotted access is allowed (max 2 parts), use format 'parent.field'", tok.Value, nextTok.Value),
-				Pos:     dotTok.Pos,
-				Length:  dotTok.Length,
-			}
-		}
 	}
 
 	return &FieldExpr{Parts: parts}, nil
