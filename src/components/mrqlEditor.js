@@ -338,7 +338,7 @@ export function mrqlEditor() {
 
     async fetchSavedQueries() {
       try {
-        const resp = await fetch('/v1/mrql/saved');
+        const resp = await fetch('/v1/mrql/saved?all=1');
         if (resp.ok) {
           this.savedQueries = await resp.json();
           if (!Array.isArray(this.savedQueries)) this.savedQueries = [];

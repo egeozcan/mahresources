@@ -123,9 +123,15 @@ func GetSavedMRQLQueriesHandler(ctx *application_context.MahresourcesContext) fu
 			return
 		}
 
-		page := http_utils.GetPageParameter(request)
-		offset := (page - 1) * constants.MaxResultsPerPage
-		queries, err := ctx.GetSavedMRQLQueries(int(offset), constants.MaxResultsPerPage)
+		var offset, limit int
+		if request.URL.Query().Get("all") == "1" {
+			offset, limit = 0, 0 // no pagination — return all
+		} else {
+			page := http_utils.GetPageParameter(request)
+			offset = int((page - 1) * constants.MaxResultsPerPage)
+			limit = constants.MaxResultsPerPage
+		}
+		queries, err := ctx.GetSavedMRQLQueries(offset, limit)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return

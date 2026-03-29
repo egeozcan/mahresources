@@ -144,7 +144,15 @@ func validateNode(node Node, entityType EntityType) error {
 		return validateNode(n.Right, rightType)
 
 	case *NotExpr:
-		return validateNode(n.Expr, entityType)
+		// Re-resolve entity type inside NOT — NOT (type = "note" AND noteType = 1)
+		// should validate noteType against the note entity type, not the parent's.
+		innerType := entityType
+		if entityType == EntityUnspecified {
+			if it := extractEntityTypeFromNode(n.Expr); it != EntityUnspecified {
+				innerType = it
+			}
+		}
+		return validateNode(n.Expr, innerType)
 
 	case *ComparisonExpr:
 		if err := validateFieldExpr(n.Field, entityType); err != nil {

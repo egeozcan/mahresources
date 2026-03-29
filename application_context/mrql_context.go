@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -115,24 +116,23 @@ func (ctx *MahresourcesContext) executeSingleEntity(parsed *mrql.Query, entityTy
 	return result, nil
 }
 
+// crossEntityItem wraps any entity with its common sortable fields for global ordering.
+type crossEntityItem struct {
+	entityType string
+	name       string
+	created    time.Time
+	updated    time.Time
+	index      int // original index within its type slice
+}
+
 // executeCrossEntity runs the query against resources, notes, and groups
-// separately and merges the results. LIMIT/OFFSET apply to the merged
-// result set, not per-entity, to avoid returning up to 3x the requested limit.
-//
-// Limitation: ORDER BY applies within each entity type, not globally across
-// the merged set. A query like "ORDER BY created DESC LIMIT 20" returns the
-// top 20 resources by date, then notes, then groups — not the 20 newest
-// across all types. True global ordering would require UNION ALL or in-memory
-// sort, which is deferred to v2.
+// separately, then globally sorts and paginates the merged result set.
 func (ctx *MahresourcesContext) executeCrossEntity(parsed *mrql.Query, opts mrql.TranslateOptions) (*MRQLResult, error) {
 	result := &MRQLResult{EntityType: "all"}
 
-	// Create a timeout context scoped to this execution so it gets cancelled
-	// when execution completes, avoiding context leaks.
 	queryCtx, cancel := context.WithTimeout(context.Background(), MRQLQueryTimeout)
 	defer cancel()
 
-	// Determine the global limit and offset for the merged result set.
 	globalLimit := defaultMRQLLimit
 	if parsed.Limit >= 0 {
 		globalLimit = parsed.Limit
@@ -142,23 +142,23 @@ func (ctx *MahresourcesContext) executeCrossEntity(parsed *mrql.Query, opts mrql
 		globalOffset = parsed.Offset
 	}
 
-	// Each entity needs enough rows to cover offset + limit in the merged set.
-	// Without this, OFFSET 100 LIMIT 50 with per-entity cap of 50 would
-	// fetch far too few rows and return an empty or wrong window.
+	// Per-entity cap: fetch enough for offset+limit since we sort globally.
 	perEntityCap := globalOffset + globalLimit
+
+	var allResources []models.Resource
+	var allNotes []models.Note
+	var allGroups []models.Group
 
 	entityTypes := []mrql.EntityType{mrql.EntityResource, mrql.EntityNote, mrql.EntityGroup}
 
 	for _, et := range entityTypes {
-		// Clone the parsed query for each entity type, without LIMIT/OFFSET
 		clone := *parsed
 		clone.EntityType = et
-		clone.Limit = perEntityCap // enough rows to cover offset+limit in merged set
-		clone.Offset = -1          // offset applied to merged set below
+		clone.Limit = perEntityCap
+		clone.Offset = -1
 
 		db, err := mrql.TranslateWithOptions(&clone, ctx.db.WithContext(queryCtx), opts)
 		if err != nil {
-			// Skip entities where the query fields don't apply
 			var translateErr *mrql.TranslateError
 			if errors.As(err, &translateErr) {
 				continue
@@ -168,75 +168,109 @@ func (ctx *MahresourcesContext) executeCrossEntity(parsed *mrql.Query, opts mrql
 
 		switch et {
 		case mrql.EntityResource:
-			var resources []models.Resource
-			if err := db.Find(&resources).Error; err != nil {
-				// Propagate real DB errors; only translate errors are skipped above
+			if err := db.Find(&allResources).Error; err != nil {
 				return nil, fmt.Errorf("resource query failed: %w", err)
 			}
-			result.Resources = resources
 		case mrql.EntityNote:
-			var notes []models.Note
-			if err := db.Find(&notes).Error; err != nil {
+			if err := db.Find(&allNotes).Error; err != nil {
 				return nil, fmt.Errorf("note query failed: %w", err)
 			}
-			result.Notes = notes
 		case mrql.EntityGroup:
-			var groups []models.Group
-			if err := db.Find(&groups).Error; err != nil {
+			if err := db.Find(&allGroups).Error; err != nil {
 				return nil, fmt.Errorf("group query failed: %w", err)
 			}
-			result.Groups = groups
 		}
 	}
 
-	// Apply global LIMIT/OFFSET to the merged result set.
-	// We interleave results (resources first, then notes, then groups)
-	// and trim to the requested window.
-	totalCount := len(result.Resources) + len(result.Notes) + len(result.Groups)
+	// Build unified sortable items
+	items := make([]crossEntityItem, 0, len(allResources)+len(allNotes)+len(allGroups))
+	for i, r := range allResources {
+		items = append(items, crossEntityItem{"resource", r.Name, r.CreatedAt, r.UpdatedAt, i})
+	}
+	for i, n := range allNotes {
+		items = append(items, crossEntityItem{"note", n.Name, n.CreatedAt, n.UpdatedAt, i})
+	}
+	for i, g := range allGroups {
+		items = append(items, crossEntityItem{"group", g.Name, g.CreatedAt, g.UpdatedAt, i})
+	}
 
-	if globalOffset > 0 || totalCount > globalLimit {
-		// Flatten into a counted sequence and apply offset+limit
-		remaining := globalLimit
-		skip := globalOffset
+	// Global sort if ORDER BY is specified
+	if len(parsed.OrderBy) > 0 {
+		sort.SliceStable(items, func(i, j int) bool {
+			for _, ob := range parsed.OrderBy {
+				fieldName := ob.Field.Name()
+				cmp := 0
+				switch fieldName {
+				case "name":
+					cmp = strings.Compare(strings.ToLower(items[i].name), strings.ToLower(items[j].name))
+				case "created":
+					if items[i].created.Before(items[j].created) {
+						cmp = -1
+					} else if items[i].created.After(items[j].created) {
+						cmp = 1
+					}
+				case "updated":
+					if items[i].updated.Before(items[j].updated) {
+						cmp = -1
+					} else if items[i].updated.After(items[j].updated) {
+						cmp = 1
+					}
+				default:
+					continue // unsortable field in cross-entity context
+				}
+				if cmp == 0 {
+					continue // tie, try next ORDER BY column
+				}
+				if !ob.Ascending {
+					cmp = -cmp
+				}
+				return cmp < 0
+			}
+			return false // all equal
+		})
+	}
 
-		// Trim resources
-		if skip >= len(result.Resources) {
-			skip -= len(result.Resources)
-			result.Resources = nil
+	// Apply global OFFSET
+	if globalOffset > 0 {
+		if globalOffset >= len(items) {
+			items = nil
 		} else {
-			result.Resources = result.Resources[skip:]
-			skip = 0
+			items = items[globalOffset:]
 		}
-		if len(result.Resources) > remaining {
-			result.Resources = result.Resources[:remaining]
-		}
-		remaining -= len(result.Resources)
+	}
 
-		// Trim notes
-		if skip >= len(result.Notes) {
-			skip -= len(result.Notes)
-			result.Notes = nil
-		} else {
-			result.Notes = result.Notes[skip:]
-			skip = 0
-		}
-		if remaining <= 0 {
-			result.Notes = nil
-		} else if len(result.Notes) > remaining {
-			result.Notes = result.Notes[:remaining]
-		}
-		remaining -= len(result.Notes)
+	// Apply global LIMIT
+	if len(items) > globalLimit {
+		items = items[:globalLimit]
+	}
 
-		// Trim groups
-		if skip >= len(result.Groups) {
-			result.Groups = nil
-		} else {
-			result.Groups = result.Groups[skip:]
+	// Split back into typed slices, preserving the global sort order
+	resourceIndices := make(map[int]bool)
+	noteIndices := make(map[int]bool)
+	groupIndices := make(map[int]bool)
+	for _, item := range items {
+		switch item.entityType {
+		case "resource":
+			resourceIndices[item.index] = true
+		case "note":
+			noteIndices[item.index] = true
+		case "group":
+			groupIndices[item.index] = true
 		}
-		if remaining <= 0 {
-			result.Groups = nil
-		} else if len(result.Groups) > remaining {
-			result.Groups = result.Groups[:remaining]
+	}
+
+	// Rebuild slices preserving global order
+	result.Resources = make([]models.Resource, 0, len(resourceIndices))
+	result.Notes = make([]models.Note, 0, len(noteIndices))
+	result.Groups = make([]models.Group, 0, len(groupIndices))
+	for _, item := range items {
+		switch item.entityType {
+		case "resource":
+			result.Resources = append(result.Resources, allResources[item.index])
+		case "note":
+			result.Notes = append(result.Notes, allNotes[item.index])
+		case "group":
+			result.Groups = append(result.Groups, allGroups[item.index])
 		}
 	}
 

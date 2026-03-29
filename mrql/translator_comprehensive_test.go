@@ -2228,3 +2228,16 @@ func TestComprehensive_TraversalMetaValidation(t *testing.T) {
 		})
 	}
 }
+
+// P1: NOT (type = "note" AND noteType = 1) should validate — the NOT branch
+// has its own type guard scoping noteType.
+func TestComprehensive_NotTypeGuardedField(t *testing.T) {
+	q, err := Parse(`NOT (type = "note" AND noteType = 1)`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	err = Validate(q)
+	if err != nil {
+		t.Fatalf("expected valid query, got: %v", err)
+	}
+}

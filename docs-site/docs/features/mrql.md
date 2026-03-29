@@ -281,7 +281,7 @@ tags = "urgent" LIMIT 30                      # across all types
 TEXT ~ "quarterly review" LIMIT 30            # full-text across all types
 ```
 
-Results are returned grouped by entity type (resources, then notes, then groups). `LIMIT` and `OFFSET` apply to the total merged result set. `ORDER BY` applies within each entity type, not globally across the merged set — for globally ordered results, query a single entity type.
+Results are returned grouped by entity type (resources, then notes, then groups). `ORDER BY`, `LIMIT`, and `OFFSET` apply globally across the merged result set. Cross-entity sorting supports the common fields: `name`, `created`, `updated`.
 
 ## Saved Queries
 
