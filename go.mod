@@ -18,7 +18,7 @@ require (
 	github.com/invopop/jsonschema v0.7.0
 	github.com/jmoiron/sqlx v1.3.4
 	github.com/joho/godotenv v1.5.1
-	github.com/lib/pq v1.10.2
+	github.com/lib/pq v1.10.9
 	github.com/matoous/go-nanoid/v2 v2.1.0
 	github.com/mattn/go-sqlite3 v1.14.37
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
@@ -42,6 +42,7 @@ require (
 	github.com/flosch/go-humanize v0.0.0-20140728123800-3ba51eabe506 // indirect
 	github.com/go-openapi/jsonpointer v0.22.5 // indirect
 	github.com/go-openapi/swag/jsonname v0.25.5 // indirect
+	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/iancoleman/orderedmap v0.0.0-20190318233801-ac98e3ecb4b0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
@@ -51,6 +52,7 @@ require (
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
+	github.com/kr/pretty v0.3.1 // indirect
 	github.com/mailru/easyjson v0.9.2 // indirect
 	github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826 // indirect
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
@@ -58,6 +60,7 @@ require (
 	github.com/oasdiff/yaml3 v0.0.0-20260224194419-61cd415a242b // indirect
 	github.com/perimeterx/marshmallow v1.1.5 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/woodsbury/decimal128 v1.3.0 // indirect
