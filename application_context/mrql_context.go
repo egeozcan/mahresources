@@ -45,13 +45,16 @@ func (ctx *MahresourcesContext) ExecuteMRQL(queryStr string, limit, page int) (*
 	}
 
 	// Override parsed LIMIT/OFFSET with request parameters if provided.
+	// limit=0 and page=0 mean "not provided" — use the query's own values.
 	if limit > 0 {
 		parsed.Limit = limit
 	}
-	if page > 1 {
+	if page >= 1 {
+		// Explicit page resets offset. page=1 means offset=0 (first page),
+		// which also clears any OFFSET baked into the query itself.
 		effectiveLimit := parsed.Limit
 		if effectiveLimit < 0 {
-			effectiveLimit = 1000 // default cap
+			effectiveLimit = defaultMRQLLimit
 		}
 		parsed.Offset = (page - 1) * effectiveLimit
 	}

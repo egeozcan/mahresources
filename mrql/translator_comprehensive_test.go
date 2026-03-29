@@ -2536,3 +2536,53 @@ func TestComprehensive_CompleterPartialFieldEdgeCases(t *testing.T) {
 		})
 	}
 }
+
+// Traversal relation subfields like parent.children, parent.groups,
+// parent.tags IS NULL should be rejected at validation.
+func TestComprehensive_TraversalRelationSubfieldValidation(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"parent.children", `type = "group" AND parent.children = "x"`},
+		{"parent.groups", `type = "group" AND parent.groups = "x"`},
+		{"children.parent", `type = "group" AND children.parent = "x"`},
+		{"children.children", `type = "group" AND children.children = "x"`},
+		{"parent.tags IS NULL", `type = "group" AND parent.tags IS NULL`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := Parse(tt.query)
+			if err != nil {
+				return
+			}
+			err = Validate(q)
+			if err == nil {
+				t.Fatalf("expected validation error for %s, got nil", tt.query)
+			}
+		})
+	}
+}
+
+// Valid traversal subfields should still pass.
+func TestComprehensive_TraversalValidSubfields(t *testing.T) {
+	tests := []string{
+		`type = "group" AND parent.name = "x"`,
+		`type = "group" AND parent.tags = "photo"`,
+		`type = "group" AND children.name ~ "x*"`,
+		`type = "group" AND children.tags != "old"`,
+		`type = "group" AND parent.description ~ "*test*"`,
+		`type = "group" AND parent.category IS NULL`,
+	}
+	for _, query := range tests {
+		t.Run(query, func(t *testing.T) {
+			q, err := Parse(query)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if err := Validate(q); err != nil {
+				t.Fatalf("expected valid, got: %v", err)
+			}
+		})
+	}
+}

@@ -239,11 +239,27 @@ func validateNode(node Node, entityType EntityType) error {
 		// but allow traversal IS NULL / IS NOT NULL (translatable via subquery).
 		if len(n.Field.Parts) == 2 {
 			prefix := n.Field.Parts[0].Value
-			if (prefix == "parent" || prefix == "children") && !n.IsNull {
-				return &ValidationError{
-					Message: fmt.Sprintf("%s.%s does not support IS EMPTY; use parent/children IS EMPTY or %s.%s = \"...\" instead", prefix, n.Field.Parts[1].Value, prefix, n.Field.Parts[1].Value),
-					Pos:     n.Field.Pos(),
-					Length:  len(n.Field.Name()),
+			if prefix == "parent" || prefix == "children" {
+				subField := n.Field.Parts[1].Value
+				if !n.IsNull {
+					return &ValidationError{
+						Message: fmt.Sprintf("%s.%s does not support IS EMPTY; use parent/children IS EMPTY or %s.%s = \"...\" instead", prefix, subField, prefix, subField),
+						Pos:     n.Field.Pos(),
+						Length:  len(n.Field.Name()),
+					}
+				}
+				// IS NULL on relation subfields (tags) is not supported — the
+				// traversal IS NULL handler only works on scalar columns.
+				subFd, ok := LookupField(EntityGroup, subField)
+				if !ok {
+					subFd, _ = LookupField(EntityGroup, subField)
+				}
+				if ok && subFd.Type == FieldRelation {
+					return &ValidationError{
+						Message: fmt.Sprintf("%s.%s IS NULL is not supported; use %s.%s = \"...\" for tag comparisons", prefix, subField, prefix, subField),
+						Pos:     n.Field.Pos(),
+						Length:  len(n.Field.Name()),
+					}
 				}
 			}
 		}
@@ -410,11 +426,27 @@ func validateFieldExpr(f *FieldExpr, entityType EntityType) error {
 					Length:  len(f.Name()),
 				}
 			}
-			if _, ok := LookupField(EntityGroup, subField); !ok && !IsCommonField(subField) {
+			subFd, ok := LookupField(EntityGroup, subField)
+			if !ok && !IsCommonField(subField) {
 				return &ValidationError{
-					Message: fmt.Sprintf("unknown field %q for %s traversal; valid fields: name, description, tags, category, id, created, updated, meta.*", subField, prefix),
+					Message: fmt.Sprintf("unknown field %q for %s traversal; valid fields: name, description, tags, category, id, created, updated", subField, prefix),
 					Pos:     f.Parts[1].Pos,
 					Length:  len(subField),
+				}
+			}
+			if ok || IsCommonField(subField) {
+				if !ok {
+					subFd, _ = LookupField(EntityGroup, subField)
+				}
+				// Only tags is supported as a relation traversal subfield.
+				// Other relation subfields (children, parent, groups) can't be
+				// translated to SQL in a traversal context.
+				if subFd.Type == FieldRelation && subField != "tags" {
+					return &ValidationError{
+						Message: fmt.Sprintf("%s.%s is not supported; only %s.tags, %s.name, %s.category, and other scalar fields are valid", prefix, subField, prefix, prefix, prefix),
+						Pos:     f.Pos(),
+						Length:  len(f.Name()),
+					}
 				}
 			}
 			return nil
