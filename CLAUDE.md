@@ -212,6 +212,21 @@ This launches two separate ephemeral servers and runs browser + CLI tests simult
 
 The `test:with-server` scripts automatically find an available port, start an ephemeral server with `-max-db-connections=2`, run tests in parallel, and clean up.
 
+### Postgres Tests (requires Docker)
+
+```bash
+# Run Go tests against Postgres (MRQL + API)
+go test --tags 'json1 fts5 postgres' ./mrql/... ./server/api_tests/... -count=1
+
+# Run E2E tests against Postgres
+cd e2e && npm run test:with-server:postgres
+
+# Run all Postgres tests (Go + E2E)
+go test --tags 'json1 fts5 postgres' ./mrql/... ./server/api_tests/... -count=1 && cd e2e && npm run test:with-server:postgres
+```
+
+**Note:** Postgres tests should be run when finishing features or bugfixes, alongside regular SQLite tests. They require Docker to be running.
+
 **Manual server management** (if you need more control):
 
 ```bash

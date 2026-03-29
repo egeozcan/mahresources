@@ -2,6 +2,7 @@
 /.test.env
 /mahresources
 /mr
+/testpg
 /*.exe
 /test2.db
 /filezz/
