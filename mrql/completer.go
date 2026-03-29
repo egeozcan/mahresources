@@ -61,23 +61,26 @@ var metaSubFieldSuggestions = []Suggestion{
 	{Value: "meta.<key>", Type: "field", Label: "any meta key"},
 }
 
-// traversalSubFieldSuggestions returns field suggestions for parent. / children. context.
+// traversalSubFieldSuggestions returns field suggestions for parent. / children. / owner. context.
 func traversalSubFieldSuggestions(entityType EntityType) []Suggestion {
 	var suggestions []Suggestion
-	// Common fields valid on groups (since parent/children are always groups)
+	// Common fields valid on groups (since parent/children/owner are always groups)
 	for name := range commonIndex {
 		if name == "tags" {
-			suggestions = append(suggestions, Suggestion{Value: name, Type: "field", Label: "parent/child tag"})
+			suggestions = append(suggestions, Suggestion{Value: name, Type: "field", Label: "group tag"})
 		} else {
 			suggestions = append(suggestions, Suggestion{Value: name, Type: "field"})
 		}
 	}
 	// Group-specific fields (category)
 	for name, fd := range groupIndex {
-		if name != "parent" && name != "children" && fd.Type != FieldRelation {
+		if fd.Type != FieldRelation {
 			suggestions = append(suggestions, Suggestion{Value: name, Type: "field"})
 		}
 	}
+	// Allow chaining further traversals
+	suggestions = append(suggestions, Suggestion{Value: "parent", Type: "field", Label: "parent group traversal"})
+	suggestions = append(suggestions, Suggestion{Value: "children", Type: "field", Label: "child groups traversal"})
 	return suggestions
 }
 
@@ -219,7 +222,7 @@ func suggestionsForContext(tokens []Token, entityType EntityType, cursor int) []
 	if last.Type == TokenDot && len(tokens) >= 2 {
 		prev := tokens[len(tokens)-2]
 		switch prev.Value {
-		case "parent", "children":
+		case "parent", "children", "owner":
 			return traversalSubFieldSuggestions(entityType)
 		default:
 			return metaSubFieldSuggestions

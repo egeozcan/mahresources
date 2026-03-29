@@ -253,6 +253,49 @@ func TestComplete_AfterLParen(t *testing.T) {
 	}
 }
 
+func TestCompleterOwnerDot(t *testing.T) {
+	suggestions := Complete(`type = "resource" AND owner.`, 28)
+	hasName := false
+	hasTags := false
+	for _, s := range suggestions {
+		if s.Value == "name" {
+			hasName = true
+		}
+		if s.Value == "tags" {
+			hasTags = true
+		}
+	}
+	if !hasName || !hasTags {
+		t.Fatalf("after owner., expected name and tags in suggestions; got %v", suggestions)
+	}
+}
+
+func TestCompleterOwnerFieldSuggestion(t *testing.T) {
+	suggestions := Complete(`type = "resource" AND `, 22)
+	hasOwner := false
+	for _, s := range suggestions {
+		if s.Value == "owner" {
+			hasOwner = true
+		}
+	}
+	if !hasOwner {
+		t.Fatalf("expected owner in field suggestions for resource; got %v", suggestions)
+	}
+}
+
+func TestCompleterOwnerParentDot(t *testing.T) {
+	suggestions := Complete(`type = "resource" AND owner.parent.`, 35)
+	hasName := false
+	for _, s := range suggestions {
+		if s.Value == "name" {
+			hasName = true
+		}
+	}
+	if !hasName {
+		t.Fatalf("after owner.parent., expected name in suggestions; got %v", suggestions)
+	}
+}
+
 // TestComplete_SuggestionStructure verifies all returned suggestions have non-empty Value and Type.
 func TestComplete_SuggestionStructure(t *testing.T) {
 	queries := []struct {
