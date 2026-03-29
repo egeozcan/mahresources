@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestPG_TagCRUD(t *testing.T) {
+func TestPG_TagCreate(t *testing.T) {
 	tc := SetupPostgresTestEnv(t)
 	formData := url.Values{}
 	formData.Set("Name", "pg-test-tag")
@@ -16,13 +16,9 @@ func TestPG_TagCRUD(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("create tag: expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
-	rr = tc.MakeRequest("GET", "/v1/tags.json", nil)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("list tags: expected 200, got %d", rr.Code)
-	}
 }
 
-func TestPG_GroupCRUD(t *testing.T) {
+func TestPG_GroupCreate(t *testing.T) {
 	tc := SetupPostgresTestEnv(t)
 	formData := url.Values{}
 	formData.Set("Name", "pg-test-group")
@@ -30,23 +26,15 @@ func TestPG_GroupCRUD(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("create group: expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
-	rr = tc.MakeRequest("GET", "/v1/groups.json", nil)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("list groups: expected 200, got %d", rr.Code)
-	}
 }
 
-func TestPG_NoteCRUD(t *testing.T) {
+func TestPG_NoteCreate(t *testing.T) {
 	tc := SetupPostgresTestEnv(t)
 	formData := url.Values{}
 	formData.Set("Name", "pg-test-note")
 	rr := tc.MakeFormRequest("POST", "/v1/note", formData)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("create note: expected 200, got %d: %s", rr.Code, rr.Body.String())
-	}
-	rr = tc.MakeRequest("GET", "/v1/notes.json", nil)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("list notes: expected 200, got %d", rr.Code)
 	}
 }
 

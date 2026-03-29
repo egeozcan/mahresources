@@ -85,7 +85,8 @@ func (c *Container) CreateTestDB(t *testing.T) *gorm.DB {
 	testDSN := replaceDatabaseInDSN(c.AdminDSN, dbName)
 
 	db, err := gorm.Open(pgdriver.Open(testDSN), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
+		Logger:                                   logger.Default.LogMode(logger.Silent),
+		DisableForeignKeyConstraintWhenMigrating: true,
 	})
 	if err != nil {
 		t.Fatalf("failed to connect to test database %s: %v", dbName, err)

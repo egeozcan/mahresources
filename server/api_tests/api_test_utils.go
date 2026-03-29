@@ -131,6 +131,15 @@ func (tc *TestContext) MakeFormRequest(method, reqUrl string, formData url.Value
 	return rr
 }
 
+// MakeJSONGetRequest sends a GET request with Accept: application/json header.
+func (tc *TestContext) MakeJSONGetRequest(url string) *httptest.ResponseRecorder {
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("Accept", "application/json")
+	rr := httptest.NewRecorder()
+	tc.Router.ServeHTTP(rr, req)
+	return rr
+}
+
 // Helper to create a dummy note for testing
 func (tc *TestContext) CreateDummyNote(name string) *models.Note {
 	note := &models.Note{Name: name, Description: "Test Description"}

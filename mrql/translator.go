@@ -713,8 +713,9 @@ func (tc *translateContext) translateMetaComparison(db *gorm.DB, fd FieldDef, op
 		if isNumericVal {
 			// Safe numeric cast: returns NULL for non-numeric values instead of crashing.
 			// This handles schemaless metadata where the same key may hold mixed types.
+			// Use {0,1} instead of ? in the regex — GORM interprets ? as a parameter placeholder.
 			jsonExpr = fmt.Sprintf(
-				"CASE WHEN %s.meta->>'%s' ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (%s.meta->>'%s')::numeric ELSE NULL END",
+				"CASE WHEN %s.meta->>'%s' ~ '^-{0,1}[0-9]+(\\.[0-9]+){0,1}$' THEN (%s.meta->>'%s')::numeric ELSE NULL END",
 				tc.tableName, key, tc.tableName, key,
 			)
 		} else {
