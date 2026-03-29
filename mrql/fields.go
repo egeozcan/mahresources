@@ -117,3 +117,16 @@ func IsCommonField(fieldName string) bool {
 	_, ok := commonIndex[fieldName]
 	return ok
 }
+
+// isFieldOnAnyEntity returns true if fieldName is valid on at least one entity type.
+func isFieldOnAnyEntity(fieldName string) bool {
+	if IsCommonField(fieldName) {
+		return true
+	}
+	for _, idx := range []map[string]FieldDef{resourceIndex, noteIndex, groupIndex} {
+		if _, ok := idx[fieldName]; ok {
+			return true
+		}
+	}
+	return false
+}

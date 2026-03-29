@@ -217,6 +217,13 @@ func (tc *translateContext) translateComparisonExpr(db *gorm.DB, expr *Compariso
 
 	fd, ok := LookupField(tc.entityType, fieldName)
 	if !ok {
+		// If the field is valid on another entity type, this is a cross-entity
+		// field mismatch (e.g., contentType on notes). Inject 1=0 instead of
+		// erroring, so OR branches with type guards work correctly.
+		if isFieldOnAnyEntity(fieldName) {
+			db = db.Where("1 = 0")
+			return db, nil
+		}
 		return nil, &TranslateError{
 			Message: fmt.Sprintf("unknown field %q for entity type %s", fieldName, tc.entityType),
 			Pos:     expr.Pos(),
@@ -742,6 +749,10 @@ func (tc *translateContext) translateInExpr(db *gorm.DB, expr *InExpr) (*gorm.DB
 	fieldName := expr.Field.Name()
 	fd, ok := LookupField(tc.entityType, fieldName)
 	if !ok {
+		if isFieldOnAnyEntity(fieldName) {
+			db = db.Where("1 = 0")
+			return db, nil
+		}
 		return nil, &TranslateError{
 			Message: fmt.Sprintf("unknown field %q for entity type %s", fieldName, tc.entityType),
 			Pos:     expr.Pos(),
@@ -885,6 +896,10 @@ func (tc *translateContext) translateIsExpr(db *gorm.DB, expr *IsExpr) (*gorm.DB
 
 	fd, ok := LookupField(tc.entityType, fieldName)
 	if !ok {
+		if isFieldOnAnyEntity(fieldName) {
+			db = db.Where("1 = 0")
+			return db, nil
+		}
 		return nil, &TranslateError{
 			Message: fmt.Sprintf("unknown field %q for entity type %s", fieldName, tc.entityType),
 			Pos:     expr.Pos(),
@@ -1022,17 +1037,32 @@ func (tc *translateContext) translateTextSearch(db *gorm.DB, expr *TextSearchExp
 		)
 		db = db.Where(subquery, searchTerm)
 	} else {
-		// SQLite: use FTS5 MATCH via rowid subquery
+		// SQLite: try FTS5 MATCH, fall back to LIKE if FTS tables don't exist
 		sanitized := sanitizeFTS5(searchTerm)
 		if sanitized == "" {
 			return db, nil
 		}
 		ftsTable := tc.tableName + "_fts"
-		subquery := fmt.Sprintf(
-			"%s.id IN (SELECT rowid FROM %s WHERE %s MATCH ?)",
-			tc.tableName, ftsTable, ftsTable,
-		)
-		db = db.Where(subquery, sanitized)
+
+		// Check if the FTS table exists (handles -skip-fts and FTS init failures)
+		var tableExists int
+		tc.db.Raw("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", ftsTable).Scan(&tableExists)
+
+		if tableExists > 0 {
+			subquery := fmt.Sprintf(
+				"%s.id IN (SELECT rowid FROM %s WHERE %s MATCH ?)",
+				tc.tableName, ftsTable, ftsTable,
+			)
+			db = db.Where(subquery, sanitized)
+		} else {
+			// Fallback: LIKE search on name and description
+			likePattern := "%" + searchTerm + "%"
+			db = db.Where(
+				fmt.Sprintf("(%s.name LIKE ? ESCAPE '\\' OR %s.description LIKE ? ESCAPE '\\')",
+					tc.tableName, tc.tableName),
+				likePattern, likePattern,
+			)
+		}
 	}
 
 	return db, nil

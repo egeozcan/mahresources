@@ -2135,3 +2135,42 @@ func TestComprehensive_CompleterQuotedType(t *testing.T) {
 		t.Fatalf("after type = \"resource\" AND, should suggest contentType; got %v", suggestions)
 	}
 }
+
+// Mixed-type OR: per-entity translation should not fail on the opposite branch.
+// type = resource AND contentType ~ "image/*" translated for notes should
+// return 0 rows (type mismatch), NOT a translation error.
+func TestComprehensive_MixedTypeOrTranslation(t *testing.T) {
+	db := setupTestDB(t)
+
+	q, _ := Parse(`(type = "resource" AND contentType ~ "image/*") OR (type = "note" AND name ~ "*notes*")`)
+	Validate(q)
+
+	// For resources: type=resource matches, contentType works. type=note → 1=0.
+	// The note branch has name ~ which is valid on resources too. Should return image resources.
+	clone := *q
+	clone.EntityType = EntityResource
+	result, err := TranslateWithOptions(&clone, db, TranslateOptions{})
+	if err != nil {
+		t.Fatalf("translate for resources should not error: %v", err)
+	}
+	var resources []testResource
+	result.Find(&resources)
+	if len(resources) != 2 {
+		t.Fatalf("expected 2 image resources, got %d: %v", len(resources), namesOfResources(resources))
+	}
+
+	// For notes: type=resource → 1=0, type=note → 1=1, name ~ "*notes*" filters.
+	// contentType is resource-only but sits under an OR with type=resource (→ 1=0),
+	// so the whole left branch is false. Should not error.
+	clone2 := *q
+	clone2.EntityType = EntityNote
+	result2, err := TranslateWithOptions(&clone2, db, TranslateOptions{})
+	if err != nil {
+		t.Fatalf("translate for notes should not error: %v", err)
+	}
+	var notes []testNote
+	result2.Find(&notes)
+	if len(notes) != 1 || notes[0].Name != "Meeting notes" {
+		t.Fatalf("expected 1 note (Meeting notes), got %d: %v", len(notes), namesOfNotes(notes))
+	}
+}

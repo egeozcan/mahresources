@@ -355,6 +355,11 @@ export function mrqlEditor() {
       const query = this.getQuery().trim();
       if (!query || !this.saveName.trim()) return;
 
+      if (this.validationError) {
+        this.saveError = 'Fix syntax errors before saving';
+        return;
+      }
+
       this.saveError = '';
 
       try {

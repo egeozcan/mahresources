@@ -305,6 +305,11 @@ func (ctx *MahresourcesContext) CreateSavedMRQLQuery(name, query, description st
 		return nil, errors.New("saved MRQL query text must be non-empty")
 	}
 
+	// Validate the MRQL query syntax before saving
+	if _, err := mrql.Parse(query); err != nil {
+		return nil, fmt.Errorf("invalid MRQL syntax: %w", err)
+	}
+
 	saved := models.SavedMRQLQuery{
 		Name:        name,
 		Query:       query,
@@ -362,6 +367,11 @@ func (ctx *MahresourcesContext) UpdateSavedMRQLQuery(id uint, name, query, descr
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, errors.New("saved MRQL query text must be non-empty")
+	}
+
+	// Validate the MRQL query syntax before updating
+	if _, err := mrql.Parse(query); err != nil {
+		return nil, fmt.Errorf("invalid MRQL syntax: %w", err)
 	}
 
 	saved.Name = name
