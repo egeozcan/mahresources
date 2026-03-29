@@ -114,9 +114,11 @@ async function main() {
     `-bind-address=:${port}`,
     `-share-port=${sharePort}`,
     '-share-bind-address=127.0.0.1',
+    '-memory-fs',
     '-hash-worker-disabled',
     '-thumb-worker-disabled',
     '-skip-version-migration',
+    '-max-db-connections=1',
     '-plugin-path=./e2e/test-plugins',
   ], {
     cwd: PROJECT_ROOT,
@@ -127,7 +129,7 @@ async function main() {
   server.stderr.on('data', () => {});
 
   try {
-    await waitForServer(port, 30000);
+    await waitForServer(port, 60000);
     console.log(`Server ready on port ${port}`);
 
     const args = process.argv.slice(2);

@@ -80,6 +80,7 @@ func CreateDatabaseConnection(dbType, dsn, logType string) (*gorm.DB, error) {
 	case constants.DbTypePosgres:
 		if pgDb, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 			Logger: dbLogger,
+			DisableForeignKeyConstraintWhenMigrating: true,
 		}); err != nil {
 			return nil, err
 		} else {
