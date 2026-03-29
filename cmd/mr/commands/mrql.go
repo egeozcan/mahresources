@@ -210,12 +210,11 @@ func newMRQLRunCmd(c *client.Client, opts *output.Options, page *int) *cobra.Com
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
-			// Try to detect if it's a numeric ID or a name
-			if _, err := strconv.ParseUint(args[0], 10, 64); err == nil {
-				q.Set("id", args[0])
-			} else {
-				q.Set("name", args[0])
-			}
+			// Always send both id and name — the server tries id first,
+			// then falls back to name. This avoids the ambiguity where
+			// numeric-only names (e.g., "42") can't be looked up by name.
+			q.Set("id", args[0])
+			q.Set("name", args[0])
 			if cmd.Flags().Changed("limit") {
 				q.Set("limit", strconv.Itoa(limit))
 			}

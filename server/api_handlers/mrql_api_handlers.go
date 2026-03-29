@@ -57,7 +57,7 @@ func GetExecuteMRQLHandler(ctx *application_context.MahresourcesContext) func(ht
 			return
 		}
 
-		result, err := ctx.ExecuteMRQL(req.Query, req.Limit, req.Page)
+		result, err := ctx.ExecuteMRQL(request.Context(), req.Query, req.Limit, req.Page)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
@@ -223,8 +223,16 @@ func GetRunSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) f
 		var saved *models.SavedMRQLQuery
 		var err error
 
+		// Try ID first; if not found, fall back to name lookup.
+		// This handles numeric-only saved query names: the CLI sends
+		// both id=42 and name=42, so if ID 42 doesn't exist, we
+		// can still find a query named "42".
 		if id != 0 {
 			saved, err = ctx.GetSavedMRQLQuery(id)
+			if err != nil && name != "" {
+				// ID lookup failed — try name
+				saved, err = ctx.GetSavedMRQLQueryByName(name)
+			}
 		} else if name != "" {
 			saved, err = ctx.GetSavedMRQLQueryByName(name)
 		} else {
@@ -240,7 +248,7 @@ func GetRunSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) f
 		limit := int(http_utils.GetUIntQueryParameter(request, "limit", 0))
 		page := int(http_utils.GetUIntQueryParameter(request, "page", 0))
 
-		result, err := ctx.ExecuteMRQL(saved.Query, limit, page)
+		result, err := ctx.ExecuteMRQL(request.Context(), saved.Query, limit, page)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return

@@ -29,7 +29,7 @@ type MRQLResult struct {
 // For single-entity queries it returns typed results; for cross-entity (no type
 // specified) it fans out to resources, notes, and groups, merging the results.
 // The optional limit and page parameters override the parsed LIMIT/OFFSET when > 0.
-func (ctx *MahresourcesContext) ExecuteMRQL(queryStr string, limit, page int) (*MRQLResult, error) {
+func (ctx *MahresourcesContext) ExecuteMRQL(reqCtx context.Context, queryStr string, limit, page int) (*MRQLResult, error) {
 	queryStr = strings.TrimSpace(queryStr)
 	if queryStr == "" {
 		return nil, errors.New("query string must not be empty")
@@ -64,23 +64,22 @@ func (ctx *MahresourcesContext) ExecuteMRQL(queryStr string, limit, page int) (*
 	opts := mrql.TranslateOptions{}
 
 	if entityType != mrql.EntityUnspecified {
-		return ctx.executeSingleEntity(parsed, entityType, opts)
+		return ctx.executeSingleEntity(reqCtx, parsed, entityType, opts)
 	}
 
 	// Cross-entity: fan out to all three entity types
-	return ctx.executeCrossEntity(parsed, opts)
+	return ctx.executeCrossEntity(reqCtx, parsed, opts)
 }
 
 // defaultMRQLLimit is applied when the query has no explicit LIMIT clause.
 const defaultMRQLLimit = 1000
 
 // executeSingleEntity runs the query against a single entity table.
-func (ctx *MahresourcesContext) executeSingleEntity(parsed *mrql.Query, entityType mrql.EntityType, opts mrql.TranslateOptions) (*MRQLResult, error) {
+func (ctx *MahresourcesContext) executeSingleEntity(reqCtx context.Context, parsed *mrql.Query, entityType mrql.EntityType, opts mrql.TranslateOptions) (*MRQLResult, error) {
 	parsed.EntityType = entityType
 
-	// Create a timeout context scoped to this execution so it gets cancelled
-	// when execution completes, avoiding context leaks.
-	queryCtx, cancel := context.WithTimeout(context.Background(), MRQLQueryTimeout)
+	// Derive timeout from the request context so client disconnects cancel the query.
+	queryCtx, cancel := context.WithTimeout(reqCtx, MRQLQueryTimeout)
 	defer cancel()
 
 	db, err := mrql.TranslateWithOptions(parsed, ctx.db.WithContext(queryCtx), opts)
@@ -130,10 +129,10 @@ type crossEntityItem struct {
 
 // executeCrossEntity runs the query against resources, notes, and groups
 // separately, then globally sorts and paginates the merged result set.
-func (ctx *MahresourcesContext) executeCrossEntity(parsed *mrql.Query, opts mrql.TranslateOptions) (*MRQLResult, error) {
+func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parsed *mrql.Query, opts mrql.TranslateOptions) (*MRQLResult, error) {
 	result := &MRQLResult{EntityType: "all"}
 
-	queryCtx, cancel := context.WithTimeout(context.Background(), MRQLQueryTimeout)
+	queryCtx, cancel := context.WithTimeout(reqCtx, MRQLQueryTimeout)
 	defer cancel()
 
 	globalLimit := defaultMRQLLimit
@@ -410,6 +409,10 @@ func (ctx *MahresourcesContext) UpdateSavedMRQLQuery(id uint, name, query, descr
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, errors.New("saved MRQL query name must be non-empty")
+	}
+
+	if err := ValidateEntityName(name, "saved MRQL query"); err != nil {
+		return nil, err
 	}
 
 	query = strings.TrimSpace(query)
