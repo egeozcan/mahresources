@@ -41,6 +41,7 @@ import { blockText, blockHeading, blockDivider, blockTodos, blockGallery, blockR
 import { sharedTodos } from './components/sharedTodos.js';
 import { sharedCalendar } from './components/sharedCalendar.js';
 import { codeEditor } from './components/codeEditor.js';
+import { mrqlEditor } from './components/mrqlEditor.js';
 import { groupTree } from './components/groupTree.js';
 import { pluginSettings } from './components/pluginSettings.js';
 import { pluginActionModal } from './components/pluginActionModal.js';
@@ -111,6 +112,7 @@ Alpine.data('blockPlugin', blockPlugin);
 Alpine.data('sharedTodos', sharedTodos);
 Alpine.data('sharedCalendar', sharedCalendar);
 Alpine.data('codeEditor', codeEditor);
+Alpine.data('mrqlEditor', mrqlEditor);
 Alpine.data('groupTree', groupTree);
 Alpine.data('pluginSettings', pluginSettings);
 Alpine.data('pluginActionModal', pluginActionModal);

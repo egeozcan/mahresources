@@ -43,11 +43,15 @@ func SetupTestEnv(t *testing.T) *TestContext {
 	// AutoMigrate all models (same as main.go)
 	err = db.AutoMigrate(
 		&models.Query{},
+		&models.Series{},
 		&models.Resource{},
+		&models.ResourceVersion{},
 		&models.Note{},
+		&models.NoteBlock{},
 		&models.Tag{},
 		&models.Group{},
 		&models.Category{},
+		&models.ResourceCategory{},
 		&models.NoteType{},
 		&models.Preview{},
 		&models.GroupRelation{},
@@ -55,7 +59,9 @@ func SetupTestEnv(t *testing.T) *TestContext {
 		&models.ImageHash{},
 		&models.ResourceSimilarity{},
 		&models.LogEntry{},
-		&models.NoteBlock{},
+		&models.PluginState{},
+		&models.PluginKV{},
+		&models.SavedMRQLQuery{},
 	)
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)

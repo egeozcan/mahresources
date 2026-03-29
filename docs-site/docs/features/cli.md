@@ -397,6 +397,88 @@ mr query delete <id>
 mr queries list --name "filter"
 ```
 
+### mrql
+
+Execute MRQL (Mahresources Query Language) queries and manage saved queries. See the [MRQL documentation](./mrql) for the full query language reference.
+
+#### Execute a query
+
+```bash
+# Inline query
+mr mrql 'type = resource AND tags = "photo" ORDER BY created DESC'
+
+# Read from a file
+mr mrql -f query.mrql
+
+# Read from stdin
+echo 'tags = "urgent" AND updated > -7d' | mr mrql -
+
+# Limit results
+mr mrql --limit 20 'type = note AND TEXT ~ "meeting"'
+
+# Paginate
+mr mrql --page 2 --limit 50 'type = resource AND contentType ~ "image/*"'
+```
+
+| Flag | Description |
+|------|-------------|
+| `-f`, `--file` | Read query from a file |
+| `--limit` | Maximum number of results (default 50) |
+
+#### Subcommands
+
+```bash
+# Save a query for later reuse
+mr mrql save "Untagged Resources" 'type = resource AND tags IS EMPTY'
+mr mrql save "Recent Notes" 'type = note AND created > -7d ORDER BY created DESC' \
+  --description "Notes from the past week"
+
+# List all saved queries
+mr mrql list
+
+# Run a saved query by name or numeric ID
+mr mrql run "Untagged Resources"
+mr mrql run 3
+
+# Delete a saved query by ID
+mr mrql delete 3
+```
+
+#### Output modes
+
+Like all `mr` commands, `mrql` supports the standard output flags:
+
+```bash
+# Formatted table (default)
+mr mrql 'type = resource AND tags = "photo"'
+
+# Raw JSON
+mr mrql --json 'type = resource AND fileSize > 10mb'
+
+# IDs only (useful for piping)
+mr mrql --quiet 'type = resource AND tags IS EMPTY'
+
+# No column headers
+mr mrql --no-header 'type = note AND updated > -30d'
+```
+
+#### Piping MRQL results
+
+```bash
+# Delete all untagged resources (use with caution)
+mr mrql --quiet 'type = resource AND tags IS EMPTY' | while read id; do
+  mr resource delete "$id"
+done
+
+# Add a tag to resources matching a query
+mr mrql --quiet 'type = resource AND contentType ~ "image/*" AND created > -7d' | while read id; do
+  mr resources add-tags --ids "$id" --tags 10
+done
+
+# Export MRQL results as JSON
+mr mrql --json 'type = note AND tags = "important"' > important-notes.json
+```
+
 ### search
 
 Global search across all entity types.

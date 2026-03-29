@@ -134,6 +134,9 @@ func main() {
 	sharePort := flag.String("share-port", os.Getenv("SHARE_PORT"), "Port for public share server (env: SHARE_PORT)")
 	shareBindAddress := flag.String("share-bind-address", getEnvOrDefault("SHARE_BIND_ADDRESS", "0.0.0.0"), "Bind address for share server (env: SHARE_BIND_ADDRESS)")
 
+	// MRQL options
+	mrqlTimeout := flag.Duration("mrql-query-timeout", parseDurationEnv("MRQL_QUERY_TIMEOUT", 10*time.Second), "Maximum execution time for MRQL queries (env: MRQL_QUERY_TIMEOUT)")
+
 	// Plugin options
 	pluginPath := flag.String("plugin-path", getEnvOrDefault("PLUGIN_PATH", "./plugins"), "Path to plugin directory (env: PLUGIN_PATH)")
 	pluginsDisabled := flag.Bool("plugins-disabled", os.Getenv("PLUGINS_DISABLED") == "1", "Disable all plugins (env: PLUGINS_DISABLED=1)")
@@ -211,6 +214,9 @@ func main() {
 
 	context, db, mainFs := application_context.CreateContextWithConfig(cfg)
 
+	// Configure MRQL query timeout
+	application_context.MRQLQueryTimeout = *mrqlTimeout
+
 	// Ensure plugin manager is cleaned up on shutdown
 	if context.PluginManager() != nil {
 		defer context.PluginManager().Close()
@@ -258,6 +264,7 @@ func main() {
 		&models.LogEntry{},
 		&models.PluginState{},
 		&models.PluginKV{},
+		&models.SavedMRQLQuery{},
 	); err != nil {
 		log.Fatalf("failed to migrate: %v", err)
 	}

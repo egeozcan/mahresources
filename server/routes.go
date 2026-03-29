@@ -89,6 +89,8 @@ var templates = map[string]templateInformation{
 	"/log":  {template_context_providers.LogContextProvider, "displayLog.tpl", http.MethodGet},
 
 	"/admin/overview": {template_context_providers.AdminOverviewContextProvider, "adminOverview.tpl", http.MethodGet},
+
+	"/mrql": {template_context_providers.MRQLContextProvider, "mrql.tpl", http.MethodGet},
 }
 
 func wrapContextWithPlugins(appContext *application_context.MahresourcesContext, ctxFn func(request *http.Request) pongo2.Context) func(request *http.Request) pongo2.Context {
@@ -348,6 +350,16 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/query/run").HandlerFunc(api_handlers.GetRunQueryHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/query/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Query](basicQueryWriter, "query"))
 	router.Methods(http.MethodPost).Path("/v1/query/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.Query](basicQueryWriter, "query"))
+
+	// MRQL routes
+	router.Methods(http.MethodPost).Path("/v1/mrql").HandlerFunc(api_handlers.GetExecuteMRQLHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/mrql/validate").HandlerFunc(api_handlers.GetValidateMRQLHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/mrql/complete").HandlerFunc(api_handlers.GetCompleteMRQLHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/mrql/saved").HandlerFunc(api_handlers.GetSavedMRQLQueriesHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/mrql/saved").HandlerFunc(api_handlers.GetCreateSavedMRQLQueryHandler(appContext))
+	router.Methods(http.MethodPut).Path("/v1/mrql/saved").HandlerFunc(api_handlers.GetUpdateSavedMRQLQueryHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/mrql/saved/delete").HandlerFunc(api_handlers.GetDeleteSavedMRQLQueryHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/mrql/saved/run").HandlerFunc(api_handlers.GetRunSavedMRQLQueryHandler(appContext))
 
 	// Global Search
 	router.Methods(http.MethodGet).Path("/v1/search").HandlerFunc(api_handlers.GetGlobalSearchHandler(appContext))

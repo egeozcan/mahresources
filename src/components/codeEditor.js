@@ -67,6 +67,9 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '' } = {})
         parent: container,
       });
 
+      // Expose the view on the container for test automation
+      container._cmView = this.view;
+
       // Load language extension asynchronously
       if (mode === 'sql') {
         this.loadSQL(dbType);

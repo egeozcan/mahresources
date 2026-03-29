@@ -58,14 +58,18 @@ var baseTemplateContext = pongo2.Context{
 			Url:  "/groups",
 		},
 		{
-			Name: "Queries",
-			Url:  "/queries",
+			Name: "MRQL",
+			Url:  "/mrql",
 		},
 	},
 	"adminMenu": []template_entities.Entry{
 		{
 			Name: "Overview",
 			Url:  "/admin/overview",
+		},
+		{
+			Name: "Queries",
+			Url:  "/queries",
 		},
 		{
 			Name: "Categories",

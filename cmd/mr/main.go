@@ -71,6 +71,7 @@ func main() {
 	rootCmd.AddCommand(commands.NewSeriesCmd(c, opts, &page))
 	rootCmd.AddCommand(commands.NewQueryCmd(c, opts))
 	rootCmd.AddCommand(commands.NewQueriesCmd(c, opts, &page))
+	rootCmd.AddCommand(commands.NewMRQLCmd(c, opts, &page))
 	rootCmd.AddCommand(commands.NewSearchCmd(c, opts))
 	rootCmd.AddCommand(commands.NewLogCmd(c, opts))
 	rootCmd.AddCommand(commands.NewLogsCmd(c, opts, &page))
