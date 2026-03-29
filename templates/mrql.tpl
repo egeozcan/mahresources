@@ -49,6 +49,7 @@
                 <h3 class="font-semibold text-stone-700">Resource Fields</h3>
                 <p class="text-xs">
                     <code class="bg-stone-200 px-1 rounded">groups</code>,
+                    <code class="bg-stone-200 px-1 rounded">owner</code>,
                     <code class="bg-stone-200 px-1 rounded">category</code>,
                     <code class="bg-stone-200 px-1 rounded">contentType</code>,
                     <code class="bg-stone-200 px-1 rounded">fileSize</code>,
@@ -62,6 +63,7 @@
                 <h3 class="font-semibold text-stone-700">Note Fields</h3>
                 <p class="text-xs">
                     <code class="bg-stone-200 px-1 rounded">groups</code>,
+                    <code class="bg-stone-200 px-1 rounded">owner</code>,
                     <code class="bg-stone-200 px-1 rounded">noteType</code>
                 </p>
             </div>
@@ -90,6 +92,14 @@
                 <h3 class="font-semibold text-stone-700">Wildcards in <code class="bg-stone-200 px-1 rounded">~</code></h3>
                 <p class="text-xs">Without wildcards, <code class="bg-stone-200 px-1 rounded">~</code> is a <strong>substring</strong> match: <code>contentType ~ "image"</code> matches <code>image/png</code>, <code>image/jpeg</code>, etc.
                 Use <code class="bg-stone-200 px-1 rounded">*</code> (any characters) and <code class="bg-stone-200 px-1 rounded">?</code> (single character) for anchored patterns: <code>name ~ "project*"</code> matches only names starting with "project".</p>
+            </div>
+            <div>
+                <h3 class="font-semibold text-stone-700">Traversal</h3>
+                <p class="text-xs">Use dotted paths to filter by related group properties:
+                <code class="bg-stone-200 px-1 rounded">owner.tags = "x"</code>,
+                <code class="bg-stone-200 px-1 rounded">owner.parent.name = "y"</code>,
+                <code class="bg-stone-200 px-1 rounded">parent.parent.tags = "z"</code>.
+                Chain up to 5 levels deep.</p>
             </div>
             <div>
                 <h3 class="font-semibold text-stone-700">Examples</h3>

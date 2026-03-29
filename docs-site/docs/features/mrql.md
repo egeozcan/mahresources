@@ -72,6 +72,7 @@ Omit the `type` selector entirely to search all entity types at once (cross-enti
 | Field | Type | Description |
 |-------|------|-------------|
 | `groups` / `group` | relation | Associated groups (match by name) |
+| `owner` | relation | Owner group (match by name, supports traversal) |
 | `category` | string | Resource category ID |
 | `contentType` | string | MIME type (e.g. `image/png`) |
 | `fileSize` | number | File size in bytes (supports `kb`, `mb`, `gb` units) |
@@ -85,6 +86,7 @@ Omit the `type` selector entirely to search all entity types at once (cross-enti
 | Field | Type | Description |
 |-------|------|-------------|
 | `groups` / `group` | relation | Associated groups (match by name) |
+| `owner` | relation | Owner group (match by name, supports traversal) |
 | `noteType` | string | Note type ID |
 
 **Group-only fields:**
@@ -273,15 +275,45 @@ The default sort order when `ORDER BY` is omitted is implementation-defined (typ
 
 ## Traversal
 
-For group entities, you can filter by properties of the parent or children one level deep:
+MRQL supports filtering by properties of related groups through dotted field paths. Traversal works on:
+
+- **Resources and notes:** `owner` accesses the owner group
+- **Groups:** `parent` accesses the parent group, `children` accesses child groups
+
+### Single-Level Traversal
 
 ```
+type = resource AND owner.name = "Project Alpha"
+type = resource AND owner.tags = "active"
+type = resource AND owner.category = "3"
 type = group AND parent.name = "Acme Corp"
 type = group AND children.name ~ "Q*"
-type = group AND parent.category = "1"
 ```
 
-Traversal fields follow the same operators as regular fields. Traversal deeper than one level is not supported.
+### Multi-Level Traversal
+
+Chain traversal fields to reach groups further up or down the hierarchy. After the first step, you're always in group context, so `parent` and `children` are the valid intermediate steps:
+
+```
+type = resource AND owner.parent.name = "Acme Corp"
+type = resource AND owner.parent.tags = "active"
+type = note AND owner.children.name ~ "Sprint*"
+type = group AND parent.parent.name = "Root"
+type = group AND parent.parent.tags = "org-level"
+```
+
+Maximum traversal depth is 5 parts (4 traversal steps + 1 leaf field).
+
+### Valid Traversal Subfields
+
+At the end of a traversal chain, you can access any group field:
+
+- **Scalar:** `name`, `description`, `category`, `id`, `created`, `updated`
+- **Relation:** `tags` (match by tag name)
+
+`meta.*` fields are not supported in traversal chains.
+
+Traversal fields follow the same operators as regular fields. Traversal deeper than 5 levels is not supported.
 
 ## Cross-Entity Queries
 
@@ -411,4 +443,28 @@ type = group AND children.name ~ "Q* 2025"
 
 ```
 type = resource AND NOT (tags IN ("draft", "archived")) ORDER BY created DESC LIMIT 25
+```
+
+### Resources owned by a specific group
+
+```
+type = resource AND owner = "Project Alpha"
+```
+
+### Resources whose owner has a specific tag
+
+```
+type = resource AND tags = "photo" AND owner.tags = "active"
+```
+
+### Resources whose owner's parent matches
+
+```
+type = resource AND owner.parent.name = "Acme Corp"
+```
+
+### Groups with deeply nested parent
+
+```
+type = group AND parent.parent.name = "Root Organization"
 ```
