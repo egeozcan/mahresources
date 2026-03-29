@@ -110,19 +110,31 @@ String comparisons with `=` and `!=` are always case-insensitive.
 
 ### Pattern Matching
 
-The `~` operator performs a LIKE-style match. Use `*` for any sequence of characters and `?` for a single character:
+The `~` operator performs a **contains** match by default. Without wildcards, the value is matched anywhere in the field:
 
 ```
-name ~ "project*"         # starts with "project"
-contentType ~ "image/*"   # any image MIME type
+contentType ~ "image"     # matches "image/png", "image/jpeg", etc.
+name ~ "report"           # matches "Q1 Report", "Annual reporting", etc.
+```
+
+Use `*` for any sequence of characters and `?` for a single character to create anchored patterns:
+
+```
+name ~ "project*"         # starts with "project" (no implicit wrapping)
+contentType ~ "image/*"   # matches "image/png" but not "text/image"
 originalName ~ "*.jpg"    # ends with .jpg
 name ~ "Q?-report"        # Q1-report, Q2-report, etc.
 ```
+
+:::info Wildcard behavior
+When your value contains **no** `*` or `?` wildcards, `~` automatically wraps it with `*` on both sides, making it a substring/contains match. As soon as you include any wildcard, the value is used as-is, giving you precise control over anchoring.
+:::
 
 The `!~` operator is the negated form:
 
 ```
 name !~ "draft*"          # does not start with "draft"
+contentType !~ "image"    # does not contain "image"
 ```
 
 Both `~` and `!~` are case-insensitive.

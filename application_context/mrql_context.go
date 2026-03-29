@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/gorm/clause"
@@ -19,10 +20,11 @@ var MRQLQueryTimeout = 10 * time.Second
 
 // MRQLResult holds the results of executing an MRQL query, organized by entity type.
 type MRQLResult struct {
-	EntityType string        `json:"entityType"`
+	EntityType string            `json:"entityType"`
 	Resources  []models.Resource `json:"resources,omitempty"`
 	Notes      []models.Note     `json:"notes,omitempty"`
 	Groups     []models.Group    `json:"groups,omitempty"`
+	Warnings   []string          `json:"warnings,omitempty"`
 }
 
 // ExecuteMRQL parses, validates, translates, and executes an MRQL query string.
@@ -128,12 +130,12 @@ type crossEntityItem struct {
 }
 
 // executeCrossEntity runs the query against resources, notes, and groups
-// separately, then globally sorts and paginates the merged result set.
+// concurrently, then globally sorts and paginates the merged result set.
+// Each entity query gets its own timeout so a slow table doesn't block the
+// others. If an entity times out, its results are omitted and a warning is
+// included in the response.
 func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parsed *mrql.Query, opts mrql.TranslateOptions) (*MRQLResult, error) {
 	result := &MRQLResult{EntityType: "all"}
-
-	queryCtx, cancel := context.WithTimeout(reqCtx, MRQLQueryTimeout)
-	defer cancel()
 
 	globalLimit := defaultMRQLLimit
 	if parsed.Limit >= 0 {
@@ -147,20 +149,30 @@ func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parse
 	// Per-entity cap: fetch enough for offset+limit since we sort globally.
 	perEntityCap := globalOffset + globalLimit
 
-	var allResources []models.Resource
-	var allNotes []models.Note
-	var allGroups []models.Group
+	var (
+		allResources []models.Resource
+		allNotes     []models.Note
+		allGroups    []models.Group
+		mu           sync.Mutex
+		warnings     []string
+	)
 
+	var wg sync.WaitGroup
 	entityTypes := []mrql.EntityType{mrql.EntityResource, mrql.EntityNote, mrql.EntityGroup}
+	errs := make([]error, len(entityTypes))
 
-	for _, et := range entityTypes {
+	for i, et := range entityTypes {
 		clone := *parsed
 		clone.EntityType = et
 		clone.Limit = perEntityCap
 		clone.Offset = -1
 
-		db, err := mrql.TranslateWithOptions(&clone, ctx.db.WithContext(queryCtx), opts)
+		// Each entity gets its own timeout derived from the request context.
+		entityCtx, cancel := context.WithTimeout(reqCtx, MRQLQueryTimeout)
+
+		db, err := mrql.TranslateWithOptions(&clone, ctx.db.WithContext(entityCtx), opts)
 		if err != nil {
+			cancel()
 			var translateErr *mrql.TranslateError
 			if errors.As(err, &translateErr) {
 				continue
@@ -168,21 +180,57 @@ func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parse
 			return nil, err
 		}
 
-		switch et {
-		case mrql.EntityResource:
-			if err := db.Find(&allResources).Error; err != nil {
-				return nil, fmt.Errorf("resource query failed: %w", err)
+		wg.Add(1)
+		go func(idx int, et mrql.EntityType, cancel context.CancelFunc) {
+			defer wg.Done()
+			defer cancel()
+
+			switch et {
+			case mrql.EntityResource:
+				var resources []models.Resource
+				if err := db.Find(&resources).Error; err != nil {
+					errs[idx] = fmt.Errorf("resource query failed: %w", err)
+					return
+				}
+				mu.Lock()
+				allResources = resources
+				mu.Unlock()
+			case mrql.EntityNote:
+				var notes []models.Note
+				if err := db.Find(&notes).Error; err != nil {
+					errs[idx] = fmt.Errorf("note query failed: %w", err)
+					return
+				}
+				mu.Lock()
+				allNotes = notes
+				mu.Unlock()
+			case mrql.EntityGroup:
+				var groups []models.Group
+				if err := db.Find(&groups).Error; err != nil {
+					errs[idx] = fmt.Errorf("group query failed: %w", err)
+					return
+				}
+				mu.Lock()
+				allGroups = groups
+				mu.Unlock()
 			}
-		case mrql.EntityNote:
-			if err := db.Find(&allNotes).Error; err != nil {
-				return nil, fmt.Errorf("note query failed: %w", err)
-			}
-		case mrql.EntityGroup:
-			if err := db.Find(&allGroups).Error; err != nil {
-				return nil, fmt.Errorf("group query failed: %w", err)
-			}
+		}(i, et, cancel)
+	}
+
+	wg.Wait()
+
+	// Collect timeout errors as warnings; return non-timeout errors as failures.
+	for _, err := range errs {
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			warnings = append(warnings, err.Error())
+		} else {
+			return nil, err
 		}
 	}
+	result.Warnings = warnings
 
 	// Build unified sortable items
 	items := make([]crossEntityItem, 0, len(allResources)+len(allNotes)+len(allGroups))

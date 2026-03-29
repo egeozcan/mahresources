@@ -87,6 +87,11 @@
                 </p>
             </div>
             <div>
+                <h3 class="font-semibold text-stone-700">Wildcards in <code class="bg-stone-200 px-1 rounded">~</code></h3>
+                <p class="text-xs">Without wildcards, <code class="bg-stone-200 px-1 rounded">~</code> is a <strong>substring</strong> match: <code>contentType ~ "image"</code> matches <code>image/png</code>, <code>image/jpeg</code>, etc.
+                Use <code class="bg-stone-200 px-1 rounded">*</code> (any characters) and <code class="bg-stone-200 px-1 rounded">?</code> (single character) for anchored patterns: <code>name ~ "project*"</code> matches only names starting with "project".</p>
+            </div>
+            <div>
                 <h3 class="font-semibold text-stone-700">Examples</h3>
                 <pre class="bg-stone-100 p-2 rounded overflow-x-auto">type = resource AND contentType ~ "image" AND fileSize > 1MB</pre>
                 <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = note AND tags = "todo" ORDER BY updated DESC</pre>
@@ -190,6 +195,22 @@
                     <span class="text-xs text-stone-500 font-mono"
                           x-text="'Entity: ' + (['resource','note','group'].includes(result.entityType) ? result.entityType : 'all types')"></span>
                 </div>
+
+                {# Warnings (e.g. partial results due to timeout) #}
+                <template x-if="result.warnings && result.warnings.length > 0">
+                    <div class="rounded-md bg-amber-50 border border-amber-200 p-3" role="status">
+                        <div class="flex">
+                            <div class="flex-shrink-0">
+                                <svg class="h-5 w-5 text-amber-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                    <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.168 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+                                </svg>
+                            </div>
+                            <div class="ml-3">
+                                <p class="text-sm text-amber-700 font-mono">Partial results — some entity types timed out. Try narrowing your query or specifying a type (e.g. <code>type = resource</code>).</p>
+                            </div>
+                        </div>
+                    </div>
+                </template>
 
                 {# Resource results #}
                 <template x-if="result.resources && result.resources.length > 0">

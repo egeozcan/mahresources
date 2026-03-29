@@ -1273,14 +1273,20 @@ func (tc *translateContext) translateLikeComparison(db *gorm.DB, column string, 
 }
 
 // convertMRQLWildcards converts MRQL wildcards (* → %, ? → _) after escaping
-// existing SQL wildcards in the value.
+// existing SQL wildcards in the value. If the value contains no MRQL wildcards,
+// it is wrapped with % on both sides so ~ acts as a "contains" match.
 func convertMRQLWildcards(s string) string {
+	hasWildcards := strings.ContainsAny(s, "*?")
 	// First escape existing SQL wildcards
 	s = strings.ReplaceAll(s, "%", "\\%")
 	s = strings.ReplaceAll(s, "_", "\\_")
 	// Then convert MRQL wildcards to SQL wildcards
 	s = strings.ReplaceAll(s, "*", "%")
 	s = strings.ReplaceAll(s, "?", "_")
+	// If no wildcards were present, wrap with % for contains semantics
+	if !hasWildcards {
+		s = "%" + s + "%"
+	}
 	return s
 }
 
