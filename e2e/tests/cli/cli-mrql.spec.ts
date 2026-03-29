@@ -201,3 +201,66 @@ test.describe('MRQL save with description', () => {
     }
   });
 });
+
+test.describe('MRQL owner traversal', () => {
+  const suffix = Date.now();
+  let parentGroupId: number;
+  let childGroupId: number;
+  let noteId: number;
+  let tagId: number;
+
+  test.beforeAll(() => {
+    const cli = createCliRunner();
+
+    // Create a tag
+    const tag = JSON.parse(cli.runOrFail('tag', 'create', '--name', `mrql-owner-tag-${suffix}`, '--json').stdout);
+    tagId = tag.ID;
+
+    // Create parent group
+    const parent = JSON.parse(cli.runOrFail('group', 'create', '--name', `MrqlOwnerParent-${suffix}`, '--json').stdout);
+    parentGroupId = parent.ID;
+
+    // Tag the parent group
+    cli.runOrFail('groups', 'add-tags', '--ids', String(parentGroupId), '--tags', String(tagId));
+
+    // Create child group owned by parent
+    const child = JSON.parse(cli.runOrFail('group', 'create', '--name', `MrqlOwnerChild-${suffix}`, '--owner-id', String(parentGroupId), '--json').stdout);
+    childGroupId = child.ID;
+
+    // Create a note owned by the child group
+    const note = JSON.parse(cli.runOrFail('note', 'create', '--name', `MrqlOwnerNote-${suffix}`, '--owner-id', String(childGroupId), '--json').stdout);
+    noteId = note.ID;
+  });
+
+  test.afterAll(() => {
+    const cli = createCliRunner();
+    if (noteId) cli.run('note', 'delete', String(noteId));
+    if (childGroupId) cli.run('group', 'delete', String(childGroupId));
+    if (parentGroupId) cli.run('group', 'delete', String(parentGroupId));
+    if (tagId) cli.run('tag', 'delete', String(tagId));
+  });
+
+  test('owner = "name" finds notes by owner name', async ({ cli }) => {
+    const result = cli.run('mrql', `type = note AND owner = "MrqlOwnerChild-${suffix}"`, '--json');
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    const names = (parsed.notes || []).map((n: any) => n.Name);
+    expect(names).toContain(`MrqlOwnerNote-${suffix}`);
+  });
+
+  test('owner.parent.name chains through hierarchy', async ({ cli }) => {
+    const result = cli.run('mrql', `type = note AND owner.parent.name = "MrqlOwnerParent-${suffix}"`, '--json');
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    const names = (parsed.notes || []).map((n: any) => n.Name);
+    expect(names).toContain(`MrqlOwnerNote-${suffix}`);
+  });
+
+  test('owner.parent.tags chains to parent tags', async ({ cli }) => {
+    const result = cli.run('mrql', `type = note AND owner.parent.tags = "mrql-owner-tag-${suffix}"`, '--json');
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    const names = (parsed.notes || []).map((n: any) => n.Name);
+    expect(names).toContain(`MrqlOwnerNote-${suffix}`);
+  });
+});
