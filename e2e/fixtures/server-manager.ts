@@ -1,11 +1,14 @@
 /**
  * Per-worker ephemeral server management.
  *
- * Each Playwright worker starts its own ephemeral mahresources server
- * with an in-memory SQLite database, eliminating all cross-worker
- * database contention.
+ * Each Playwright worker starts its own mahresources server, eliminating
+ * all cross-worker database contention.
+ *
+ * SQLite mode (default): each worker gets an in-memory SQLite database.
+ * Postgres mode (PG_DSN env var set): each worker creates its own database
+ * in the shared Postgres testcontainer and starts a server against it.
  */
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, ChildProcess, execSync } from 'child_process';
 import * as net from 'net';
 import * as path from 'path';
 
@@ -56,20 +59,65 @@ export async function waitForServer(port: number, timeout = 30000): Promise<void
 }
 
 /**
- * Spawn an ephemeral mahresources server on the given ports.
+ * Create a unique per-worker Postgres database in the shared container.
+ * Uses the testpg binary's createdb subcommand.
+ * Returns the DSN for the new database.
+ */
+function createWorkerDatabase(adminDsn: string): string {
+  const testpgBinary = path.join(PROJECT_ROOT, 'testpg');
+  try {
+    const result = execSync(`"${testpgBinary}" createdb "${adminDsn}"`, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 10000,
+    });
+    return result.toString().trim();
+  } catch (err: any) {
+    console.error(`[server-manager] Failed to create worker database: ${err.stderr?.toString() || err.message}`);
+    // Fall back to using the admin DSN (shared, less isolated)
+    return adminDsn;
+  }
+}
+
+/**
+ * Spawn a mahresources server on the given ports.
+ * Uses Postgres if PG_DSN env var is set, otherwise ephemeral SQLite.
  */
 export function startServerProcess(port: number, sharePort: number): ChildProcess {
-  const proc = spawn(SERVER_BINARY, [
-    '-ephemeral',
-    `-bind-address=:${port}`,
-    `-share-port=${sharePort}`,
-    '-share-bind-address=127.0.0.1',
-    '-hash-worker-disabled',
-    '-thumb-worker-disabled',
-    '-skip-version-migration',
-    '-max-db-connections=1',
-    '-plugin-path=./e2e/test-plugins',
-  ], {
+  const pgDsn = process.env.PG_DSN;
+
+  let args: string[];
+  if (pgDsn) {
+    // Postgres mode: create a per-worker database
+    const workerDsn = createWorkerDatabase(pgDsn);
+    args = [
+      '-db-type=POSTGRES',
+      `-db-dsn=${workerDsn}`,
+      `-db-readonly-dsn=${workerDsn}`,
+      `-bind-address=:${port}`,
+      `-share-port=${sharePort}`,
+      '-share-bind-address=127.0.0.1',
+      '-memory-fs',
+      '-hash-worker-disabled',
+      '-thumb-worker-disabled',
+      '-skip-version-migration',
+      '-plugin-path=./e2e/test-plugins',
+    ];
+  } else {
+    // SQLite ephemeral mode (default)
+    args = [
+      '-ephemeral',
+      `-bind-address=:${port}`,
+      `-share-port=${sharePort}`,
+      '-share-bind-address=127.0.0.1',
+      '-hash-worker-disabled',
+      '-thumb-worker-disabled',
+      '-skip-version-migration',
+      '-max-db-connections=1',
+      '-plugin-path=./e2e/test-plugins',
+    ];
+  }
+
+  const proc = spawn(SERVER_BINARY, args, {
     cwd: PROJECT_ROOT,
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: false,
@@ -96,7 +144,9 @@ export async function startServer(maxAttempts = 3): Promise<ServerInfo> {
     const proc = startServerProcess(port, sharePort);
 
     try {
-      await waitForServer(port, 20000);
+      // Postgres migration takes longer on first boot
+      const timeout = process.env.PG_DSN ? 60000 : 20000;
+      await waitForServer(port, timeout);
       return { port, sharePort, proc };
     } catch (err) {
       // Server failed to start (port conflict or other issue) — kill and retry

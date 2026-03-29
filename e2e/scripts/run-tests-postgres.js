@@ -5,15 +5,14 @@
  *
  * 1. Builds binaries (server, CLI, testpg)
  * 2. Starts a Postgres testcontainer via the testpg binary
- * 3. Starts mahresources against Postgres
- * 4. Runs Playwright tests
- * 5. Cleans up everything
+ * 3. Passes PG_DSN to Playwright — each worker starts its own server
+ *    with a per-worker database (same architecture as SQLite mode)
+ * 4. Cleans up the testcontainer when done
  */
 
 const { spawn, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const net = require('net');
 
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
 const SERVER_BINARY = path.join(PROJECT_ROOT, 'mahresources');
@@ -32,40 +31,6 @@ function ensureBuilt() {
   execSync('go build --tags "json1 fts5 postgres" -o testpg ./cmd/testpg/', { cwd: PROJECT_ROOT, stdio: 'inherit' });
 }
 
-function findAvailablePort() {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.listen(0, '127.0.0.1', () => {
-      const addr = server.address();
-      if (addr && typeof addr !== 'string') {
-        const port = addr.port;
-        server.close(() => resolve(port));
-      } else {
-        reject(new Error('Could not get port'));
-      }
-    });
-    server.on('error', reject);
-  });
-}
-
-function waitForServer(port, timeout = 30000) {
-  const startTime = Date.now();
-  return new Promise((resolve, reject) => {
-    const check = async () => {
-      if (Date.now() - startTime > timeout) {
-        reject(new Error(`Server on port ${port} did not start within ${timeout}ms`));
-        return;
-      }
-      try {
-        const response = await fetch(`http://127.0.0.1:${port}/`);
-        if (response.ok) { resolve(); return; }
-      } catch { /* not ready */ }
-      setTimeout(check, 200);
-    };
-    check();
-  });
-}
-
 async function main() {
   ensureBuilt();
 
@@ -81,10 +46,9 @@ async function main() {
     const timeout = setTimeout(() => reject(new Error('Timeout waiting for DSN from testpg')), 60000);
     testpg.stdout.on('data', (data) => {
       buffer += data.toString();
-      const lines = buffer.split('\n');
-      if (lines.length > 1 || buffer.includes('\n')) {
+      if (buffer.includes('\n')) {
         clearTimeout(timeout);
-        resolve(lines[0].trim());
+        resolve(buffer.split('\n')[0].trim());
       }
     });
     testpg.stderr.on('data', (data) => {
@@ -104,66 +68,33 @@ async function main() {
 
   console.log(`Postgres DSN: ${dsn.replace(/password=[^&\s]+/, 'password=***')}`);
 
-  const port = await findAvailablePort();
-  const sharePort = await findAvailablePort();
-  console.log(`Starting mahresources on port ${port} with Postgres...`);
+  // Pass PG_DSN to Playwright — each worker creates its own database
+  // and starts its own server (same architecture as SQLite ephemeral mode)
+  const args = process.argv.slice(2);
+  const playwrightArgs = args.length > 0 ? args : ['test'];
 
-  const server = spawn(SERVER_BINARY, [
-    '-db-type=POSTGRES',
-    `-db-dsn=${dsn}`,
-    `-bind-address=:${port}`,
-    `-share-port=${sharePort}`,
-    '-share-bind-address=127.0.0.1',
-    '-memory-fs',
-    '-hash-worker-disabled',
-    '-thumb-worker-disabled',
-    '-skip-version-migration',
-    '-max-db-connections=1',
-    '-plugin-path=./e2e/test-plugins',
-  ], {
-    cwd: PROJECT_ROOT,
-    stdio: ['ignore', 'pipe', 'pipe'],
+  console.log(`Running: npx playwright ${playwrightArgs.join(' ')}`);
+  const testProcess = spawn('npx', ['playwright', ...playwrightArgs], {
+    cwd: E2E_DIR,
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      PG_DSN: dsn,
+      CLI_PATH: CLI_BINARY,
+    },
   });
 
-  server.stdout.on('data', () => {});
-  server.stderr.on('data', () => {});
+  const exitCode = await new Promise((resolve) => {
+    testProcess.on('close', resolve);
+  });
 
-  try {
-    await waitForServer(port, 60000);
-    console.log(`Server ready on port ${port}`);
+  // Cleanup
+  console.log('Stopping Postgres container...');
+  testpg.kill('SIGTERM');
+  await new Promise(r => setTimeout(r, 5000));
+  if (!testpg.killed) try { testpg.kill('SIGKILL'); } catch {}
 
-    const args = process.argv.slice(2);
-    const playwrightArgs = args.length > 0 ? args : ['test'];
-
-    console.log(`Running: npx playwright ${playwrightArgs.join(' ')}`);
-    const testProcess = spawn('npx', ['playwright', ...playwrightArgs], {
-      cwd: E2E_DIR,
-      stdio: 'inherit',
-      env: {
-        ...process.env,
-        BASE_URL: `http://127.0.0.1:${port}`,
-        CLI_BASE_URL: `http://127.0.0.1:${port}`,
-        SHARE_BASE_URL: `http://127.0.0.1:${sharePort}`,
-        CLI_PATH: CLI_BINARY,
-      },
-    });
-
-    const exitCode = await new Promise((resolve) => {
-      testProcess.on('close', resolve);
-    });
-
-    process.exitCode = exitCode;
-  } finally {
-    console.log('Stopping server...');
-    server.kill('SIGTERM');
-    await new Promise(r => setTimeout(r, 2000));
-    if (!server.killed) try { server.kill('SIGKILL'); } catch {}
-
-    console.log('Stopping Postgres container...');
-    testpg.kill('SIGTERM');
-    await new Promise(r => setTimeout(r, 5000));
-    if (!testpg.killed) try { testpg.kill('SIGKILL'); } catch {}
-  }
+  process.exit(exitCode);
 }
 
 main().catch((err) => {

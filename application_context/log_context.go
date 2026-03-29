@@ -128,7 +128,7 @@ func (ctx *MahresourcesContext) GetEntityHistoryCount(entityType string, entityI
 		EntityType: entityType,
 		EntityID:   entityID,
 	}
-	return count, ctx.db.Model(&models.LogEntry{}).Scopes(database_scopes.EntityHistoryQuery(query)).Count(&count).Error
+	return count, ctx.db.Model(&models.LogEntry{}).Scopes(database_scopes.EntityHistoryQuery(query, true)).Count(&count).Error
 }
 
 // CleanupOldLogs deletes log entries older than the specified number of days.

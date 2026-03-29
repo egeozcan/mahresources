@@ -78,8 +78,12 @@ func CreateDatabaseConnection(dbType, dsn, logType string) (*gorm.DB, error) {
 
 	switch dbType {
 	case constants.DbTypePosgres:
+		// DisableForeignKeyConstraintWhenMigrating is required because models
+		// have circular FK references (Group ↔ Resource via many2many + Owner).
+		// GORM can't determine a valid migration order for circular deps.
+		// FK constraints should be added via a proper migration tool for production.
 		if pgDb, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
-			Logger: dbLogger,
+			Logger:                                   dbLogger,
 			DisableForeignKeyConstraintWhenMigrating: true,
 		}); err != nil {
 			return nil, err

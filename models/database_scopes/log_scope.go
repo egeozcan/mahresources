@@ -48,9 +48,14 @@ func LogEntryQuery(query *query_models.LogEntryQuery, ignoreSort bool) func(db *
 }
 
 // EntityHistoryQuery returns a GORM scope for getting history of a specific entity.
-func EntityHistoryQuery(query *query_models.EntityHistoryQuery) func(db *gorm.DB) *gorm.DB {
+// When ignoreSort is true (for count queries), ORDER BY is omitted to avoid
+// Postgres errors about non-aggregated columns.
+func EntityHistoryQuery(query *query_models.EntityHistoryQuery, ignoreSort ...bool) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
-		return db.Where("entity_type = ? AND entity_id = ?", query.EntityType, query.EntityID).
-			Order("created_at desc")
+		db = db.Where("entity_type = ? AND entity_id = ?", query.EntityType, query.EntityID)
+		if len(ignoreSort) == 0 || !ignoreSort[0] {
+			db = db.Order("created_at desc")
+		}
+		return db
 	}
 }

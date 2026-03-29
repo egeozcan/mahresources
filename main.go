@@ -244,27 +244,33 @@ func main() {
 		db.Exec("PRAGMA foreign_keys = OFF")
 	}
 
+	// Migration order matters for Postgres: tables with FK constraints must be
+	// created after the tables they reference. Independent tables first, then
+	// tables with foreign keys in dependency order.
 	if err := db.AutoMigrate(
+		// Independent tables (no FK dependencies)
 		&models.Query{},
 		&models.Series{},
-		&models.Resource{},
-		&models.ResourceVersion{},
-		&models.Note{},
-		&models.NoteBlock{},
 		&models.Tag{},
-		&models.Group{},
 		&models.Category{},
 		&models.ResourceCategory{},
 		&models.NoteType{},
-		&models.Preview{},
-		&models.GroupRelation{},
-		&models.GroupRelationType{},
-		&models.ImageHash{},
-		&models.ResourceSimilarity{},
 		&models.LogEntry{},
 		&models.PluginState{},
 		&models.PluginKV{},
 		&models.SavedMRQLQuery{},
+		// Tables with FK to independent tables
+		&models.Group{},             // FK to Category (self-referencing Owner is handled by GORM)
+		&models.GroupRelationType{},  // FK to Category
+		&models.Resource{},          // FK to ResourceCategory, Series, Group
+		// Tables with FK to Resource/Group/Note
+		&models.Note{},              // FK to Group, NoteType; many2many with Resource
+		&models.ResourceVersion{},   // FK to Resource
+		&models.NoteBlock{},         // FK to Note
+		&models.Preview{},           // FK to Resource
+		&models.GroupRelation{},     // FK to Group, GroupRelationType
+		&models.ImageHash{},         // FK to Resource
+		&models.ResourceSimilarity{}, // FK to Resource
 	); err != nil {
 		log.Fatalf("failed to migrate: %v", err)
 	}
