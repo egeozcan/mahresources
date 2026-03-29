@@ -161,8 +161,17 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	db.Exec("INSERT INTO groups_related_notes (note_id, group_id) VALUES (1, 1)")
 	db.Exec("INSERT INTO groups_related_notes (note_id, group_id) VALUES (2, 2)")
 
-	// group_tags: group 1 has tag "photo"
+	// group_tags: group 1 has tag "photo", group 2 has tag "document"
 	db.Exec("INSERT INTO group_tags (group_id, tag_id) VALUES (1, 1)")
+	db.Exec("INSERT INTO group_tags (group_id, tag_id) VALUES (2, 3)")
+
+	// Set owner_id on resources
+	db.Model(&testResource{}).Where("id = ?", 1).Update("owner_id", 1) // sunset.jpg owned by Vacation
+	db.Model(&testResource{}).Where("id = ?", 3).Update("owner_id", 2) // report.pdf owned by Work
+
+	// Set owner_id on notes
+	db.Model(&testNote{}).Where("id = ?", 1).Update("owner_id", 1) // Meeting notes owned by Vacation
+	db.Model(&testNote{}).Where("id = ?", 2).Update("owner_id", 2) // Todo list owned by Work
 
 	return db
 }
@@ -885,5 +894,103 @@ func TestTranslateChildrenTagsTraversal(t *testing.T) {
 			names[i] = g.Name
 		}
 		t.Fatalf("expected 1 group 'Vacation' with child having tag 'photo', got %d groups: %v", len(groups), names)
+	}
+}
+
+// ---- Owner traversal tests ----
+
+func TestTranslateOwnerDirect(t *testing.T) {
+	db := setupTestDB(t)
+	result := parseAndTranslate(t, `owner = "Vacation"`, EntityResource, db)
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) != 1 || resources[0].Name != "sunset.jpg" {
+		t.Fatalf("expected [sunset.jpg], got %v", namesOfResources(resources))
+	}
+}
+
+func TestTranslateOwnerTags(t *testing.T) {
+	db := setupTestDB(t)
+	result := parseAndTranslate(t, `owner.tags = "photo"`, EntityResource, db)
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) != 1 || resources[0].Name != "sunset.jpg" {
+		t.Fatalf("expected [sunset.jpg], got %v", namesOfResources(resources))
+	}
+}
+
+func TestTranslateOwnerName(t *testing.T) {
+	db := setupTestDB(t)
+	result := parseAndTranslate(t, `owner.name = "Work"`, EntityResource, db)
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) != 1 || resources[0].Name != "report.pdf" {
+		t.Fatalf("expected [report.pdf], got %v", namesOfResources(resources))
+	}
+}
+
+func TestTranslateOwnerParentChain(t *testing.T) {
+	db := setupTestDB(t)
+	result := parseAndTranslate(t, `owner.parent.name = "Vacation"`, EntityResource, db)
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) != 1 || resources[0].Name != "report.pdf" {
+		t.Fatalf("expected [report.pdf], got %v", namesOfResources(resources))
+	}
+}
+
+func TestTranslateOwnerParentTags(t *testing.T) {
+	db := setupTestDB(t)
+	result := parseAndTranslate(t, `owner.parent.tags = "photo"`, EntityResource, db)
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) != 1 || resources[0].Name != "report.pdf" {
+		t.Fatalf("expected [report.pdf], got %v", namesOfResources(resources))
+	}
+}
+
+func TestTranslateParentParentChain(t *testing.T) {
+	db := setupTestDB(t)
+	result := parseAndTranslate(t, `parent.parent.name = "Vacation"`, EntityGroup, db)
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(groups) != 1 || groups[0].Name != "Sub-Work" {
+		t.Fatalf("expected [Sub-Work], got %v", namesOfGroups(groups))
+	}
+}
+
+func TestTranslateOwnerNegationNull(t *testing.T) {
+	db := setupTestDB(t)
+	result := parseAndTranslate(t, `owner != "Work"`, EntityResource, db)
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) != 3 {
+		t.Fatalf("expected 3 resources, got %d: %v", len(resources), namesOfResources(resources))
+	}
+}
+
+func TestTranslateNoteOwner(t *testing.T) {
+	db := setupTestDB(t)
+	result := parseAndTranslate(t, `owner.tags = "document"`, EntityNote, db)
+	var notes []testNote
+	if err := result.Find(&notes).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(notes) != 1 || notes[0].Name != "Todo list" {
+		t.Fatalf("expected [Todo list], got %v", namesOfNotes(notes))
 	}
 }

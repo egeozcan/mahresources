@@ -93,9 +93,241 @@ type translateContext struct {
 	tableName  string
 }
 
+// fkStep describes one level of a foreign-key traversal (owner, parent, or children).
+type fkStep struct {
+	fkExpr    string // source FK expression, e.g. "resources.owner_id" or "_t0.id"
+	selectCol string // what to SELECT: "_t0.id" (forward) or "_t0.owner_id" (reverse)
+	alias     string // subquery table alias
+}
+
+// traversalFieldNames are fields that can start or continue an FK traversal chain.
+var traversalFieldNames = map[string]bool{
+	"owner": true, "parent": true, "children": true,
+}
+
 // isPostgres returns true if the underlying database is PostgreSQL.
 func (tc *translateContext) isPostgres() bool {
 	return tc.db.Config.Dialector.Name() == "postgres"
+}
+
+// buildFKStep creates a single traversal step for the given field name.
+// For "children" (reverse FK), the SELECT column is the child's owner_id so the
+// outer query matches on the parent's id. For "owner" and "parent" (forward FK),
+// the SELECT column is the group's id so the outer query matches on the FK column.
+func buildFKStep(fieldName string, outerRef string, idx int) fkStep {
+	alias := fmt.Sprintf("_t%d", idx)
+	if fieldName == "children" {
+		return fkStep{fkExpr: outerRef, selectCol: alias + ".owner_id", alias: alias}
+	}
+	// owner and parent: forward FK lookup — SELECT id
+	return fkStep{fkExpr: outerRef, selectCol: alias + ".id", alias: alias}
+}
+
+// buildTraversalChain converts the traversal portion of a FieldExpr (all parts
+// except the leaf) into a slice of fkStep values describing nested subqueries.
+func (tc *translateContext) buildTraversalChain(parts []Token) []fkStep {
+	var steps []fkStep
+	for i := 0; i < len(parts)-1; i++ {
+		fieldName := parts[i].Value
+		var outerRef string
+		if i == 0 {
+			// First step: reference from the entity table
+			if fieldName == "children" {
+				outerRef = tc.tableName + ".id"
+			} else {
+				outerRef = tc.tableName + ".owner_id"
+			}
+		} else {
+			// Subsequent steps: reference from the previous subquery alias
+			prevAlias := steps[i-1].alias
+			if fieldName == "children" {
+				outerRef = prevAlias + ".id"
+			} else {
+				outerRef = prevAlias + ".owner_id"
+			}
+		}
+		steps = append(steps, buildFKStep(fieldName, outerRef, i))
+	}
+	return steps
+}
+
+// wrapChainSubqueries wraps the innermost WHERE clause in nested IN subqueries,
+// building from the inside out. Each step becomes:
+//
+//	fkExpr IN (SELECT selectCol FROM groups alias WHERE ...)
+func (tc *translateContext) wrapChainSubqueries(steps []fkStep, innerWhere string, innerVals []interface{}) (string, []interface{}) {
+	currentWhere := innerWhere
+	currentVals := innerVals
+	for i := len(steps) - 1; i >= 0; i-- {
+		step := steps[i]
+		childFilter := ""
+		// For reverse (children) traversal, the SELECT is owner_id which can be NULL.
+		// Filter out NULLs to prevent NOT IN from returning empty sets.
+		if strings.HasSuffix(step.selectCol, ".owner_id") {
+			childFilter = step.alias + ".owner_id IS NOT NULL AND "
+		}
+		currentWhere = fmt.Sprintf("%s IN (SELECT %s FROM groups %s WHERE %s%s)",
+			step.fkExpr, step.selectCol, step.alias, childFilter, currentWhere)
+	}
+	return currentWhere, currentVals
+}
+
+// buildScalarClause builds a single-column comparison clause with appropriate
+// case-insensitivity and LIKE handling.
+func (tc *translateContext) buildScalarClause(qualifiedCol string, op Token, val interface{}, fd FieldDef) (string, interface{}) {
+	if op.Type == TokenLike || op.Type == TokenNotLike {
+		likePattern := convertMRQLWildcards(fmt.Sprint(val))
+		likeOp := tc.likeOperator()
+		if op.Type == TokenNotLike {
+			likeOp = "NOT " + likeOp
+		}
+		return qualifiedCol + " " + likeOp + " ? ESCAPE '\\'", likePattern
+	}
+	sqlOp := tc.sqlOperator(op)
+	if fd.Type == FieldString && (op.Type == TokenEq || op.Type == TokenNeq) {
+		return "LOWER(" + qualifiedCol + ") " + sqlOp + " LOWER(?)", val
+	}
+	return qualifiedCol + " " + sqlOp + " ?", val
+}
+
+// translateFKChainScalar translates a chained traversal ending in a scalar field
+// comparison. Example: owner.parent.name = "Vacation" → nested IN subqueries.
+func (tc *translateContext) translateFKChainScalar(db *gorm.DB, steps []fkStep, leafCol string, op Token, val interface{}, leafFd FieldDef) (*gorm.DB, error) {
+	isNegated := op.Type == TokenNeq || op.Type == TokenNotLike
+	isChildrenRoot := tc.isChildrenStep(steps[0])
+
+	if isNegated && isChildrenRoot {
+		// Children negation uses NOT EXISTS semantics: flip to positive match with NOT IN wrapper.
+		positiveOp := tc.flipOperator(op)
+		innerAlias := steps[len(steps)-1].alias
+		innerWhere, innerVal := tc.buildScalarClause(innerAlias+"."+leafCol, positiveOp, val, leafFd)
+		sql, vals := tc.wrapChainSubqueries(steps, innerWhere, []interface{}{innerVal})
+		// Replace the outermost IN with NOT IN
+		sql = strings.Replace(sql, steps[0].fkExpr+" IN ", steps[0].fkExpr+" NOT IN ", 1)
+		sql = "(" + sql + " OR " + tc.negatedNullClause(steps[0]) + ")"
+		db = db.Where(sql, vals...)
+		return db, nil
+	}
+
+	innerAlias := steps[len(steps)-1].alias
+	innerWhere, innerVal := tc.buildScalarClause(innerAlias+"."+leafCol, op, val, leafFd)
+	sql, vals := tc.wrapChainSubqueries(steps, innerWhere, []interface{}{innerVal})
+	if isNegated {
+		sql = "(" + sql + " OR " + tc.negatedNullClause(steps[0]) + ")"
+	}
+	db = db.Where(sql, vals...)
+	return db, nil
+}
+
+// translateFKChainTag translates a chained traversal ending in a tags comparison.
+// Example: owner.tags = "photo" → nested IN with group_tags join.
+func (tc *translateContext) translateFKChainTag(db *gorm.DB, steps []fkStep, op Token, val interface{}) (*gorm.DB, error) {
+	isNegated := op.Type == TokenNeq || op.Type == TokenNotLike
+	isLike := op.Type == TokenLike || op.Type == TokenNotLike
+	isChildrenRoot := tc.isChildrenStep(steps[0])
+
+	var tagMatchClause string
+	var tagMatchVal interface{}
+
+	if isLike {
+		likePattern := convertMRQLWildcards(fmt.Sprint(val))
+		likeOp := tc.likeOperator()
+		tagMatchClause = "LOWER(t.name) " + likeOp + " LOWER(?) ESCAPE '\\'"
+		tagMatchVal = likePattern
+	} else {
+		tagMatchClause = "LOWER(t.name) = LOWER(?)"
+		tagMatchVal = val
+	}
+
+	if isNegated && isChildrenRoot {
+		// Children negation uses NOT EXISTS semantics: use a positive tag match
+		// and flip the outermost IN to NOT IN.
+		innerAlias := steps[len(steps)-1].alias
+		innerWhere := fmt.Sprintf("%s.id IN (SELECT gt.group_id FROM group_tags gt JOIN tags t ON t.id = gt.tag_id WHERE %s)",
+			innerAlias, tagMatchClause)
+		sql, vals := tc.wrapChainSubqueries(steps, innerWhere, []interface{}{tagMatchVal})
+		// Replace the outermost IN with NOT IN
+		sql = strings.Replace(sql, steps[0].fkExpr+" IN ", steps[0].fkExpr+" NOT IN ", 1)
+		sql = "(" + sql + " OR " + tc.negatedNullClause(steps[0]) + ")"
+		db = db.Where(sql, vals...)
+		return db, nil
+	}
+
+	inOrNotIn := "IN"
+	if isNegated {
+		inOrNotIn = "NOT IN"
+	}
+
+	innerAlias := steps[len(steps)-1].alias
+	innerWhere := fmt.Sprintf("%s.id %s (SELECT gt.group_id FROM group_tags gt JOIN tags t ON t.id = gt.tag_id WHERE %s)",
+		innerAlias, inOrNotIn, tagMatchClause)
+	sql, vals := tc.wrapChainSubqueries(steps, innerWhere, []interface{}{tagMatchVal})
+	if isNegated {
+		sql = "(" + sql + " OR " + tc.negatedNullClause(steps[0]) + ")"
+	}
+	db = db.Where(sql, vals...)
+	return db, nil
+}
+
+// negatedNullClause returns the SQL clause to include entities that have no related
+// record for the given FK step. For forward FKs (owner/parent), this is
+// "table.owner_id IS NULL". For reverse FKs (children), this is "table.id NOT IN
+// (SELECT owner_id FROM groups WHERE owner_id IS NOT NULL)" — i.e., leaf groups.
+func (tc *translateContext) negatedNullClause(step fkStep) string {
+	if tc.isChildrenStep(step) {
+		return step.fkExpr + " NOT IN (SELECT owner_id FROM groups WHERE owner_id IS NOT NULL)"
+	}
+	// For forward FK (owner/parent): the fkExpr is like "resources.owner_id"
+	return step.fkExpr + " IS NULL"
+}
+
+// isChildrenStep returns true if the step represents a reverse FK (children) traversal.
+func (tc *translateContext) isChildrenStep(step fkStep) bool {
+	return strings.HasSuffix(step.selectCol, ".owner_id")
+}
+
+// flipOperator converts a negated operator to its positive counterpart for
+// children NOT EXISTS semantics.
+func (tc *translateContext) flipOperator(op Token) Token {
+	flipped := op
+	switch op.Type {
+	case TokenNeq:
+		flipped.Type = TokenEq
+	case TokenNotLike:
+		flipped.Type = TokenLike
+	}
+	return flipped
+}
+
+// translateChainedComparison is the main router for multi-part traversal
+// comparisons (owner.X, parent.X, children.X, owner.parent.X, etc.).
+func (tc *translateContext) translateChainedComparison(db *gorm.DB, expr *ComparisonExpr) (*gorm.DB, error) {
+	parts := expr.Field.Parts
+	leaf := parts[len(parts)-1].Value
+
+	// Look up the leaf field on the group entity (all traversals resolve to groups)
+	subFd, ok := LookupField(EntityGroup, leaf)
+	if !ok && !IsCommonField(leaf) {
+		return nil, &TranslateError{Message: fmt.Sprintf("unknown field %q for traversal", leaf), Pos: parts[len(parts)-1].Pos}
+	}
+	if IsCommonField(leaf) && !ok {
+		subFd, _ = LookupField(EntityGroup, leaf)
+	}
+
+	val, err := tc.resolveValue(expr.Value, subFd)
+	if err != nil {
+		return nil, err
+	}
+
+	steps := tc.buildTraversalChain(parts)
+
+	// Handle relation sub-fields: tags
+	if subFd.Type == FieldRelation && subFd.Column == "tags" {
+		return tc.translateFKChainTag(db, steps, expr.Operator, val)
+	}
+
+	// Scalar sub-field
+	return tc.translateFKChainScalar(db, steps, subFd.Column, expr.Operator, val, subFd)
 }
 
 // entityTableName returns the database table name for an entity type.
@@ -209,11 +441,11 @@ func (tc *translateContext) translateComparisonExpr(db *gorm.DB, expr *Compariso
 		return db, nil
 	}
 
-	// Handle parent.X and children.X traversal (groups only)
-	if len(expr.Field.Parts) == 2 {
+	// Handle traversal chains: owner.X, parent.X, children.X, owner.parent.X, etc.
+	if len(expr.Field.Parts) >= 2 {
 		root := expr.Field.Parts[0].Value
-		if root == "parent" || root == "children" {
-			return tc.translateTraversalComparison(db, expr, root)
+		if traversalFieldNames[root] {
+			return tc.translateChainedComparison(db, expr)
 		}
 	}
 
@@ -268,17 +500,24 @@ func (tc *translateContext) translateComparisonExpr(db *gorm.DB, expr *Compariso
 
 // translateRelationComparison handles tags = "name" and groups = "name" etc.
 func (tc *translateContext) translateRelationComparison(db *gorm.DB, fd FieldDef, op Token, val interface{}) (*gorm.DB, error) {
+	nameFd := FieldDef{Name: "name", Type: FieldString, Column: "name"}
 	switch fd.Column {
 	case "tags":
 		return tc.translateTagComparison(db, op, val)
 	case "groups":
 		return tc.translateGroupComparison(db, op, val)
+	case "owner_id":
+		// owner = "name" → find entities whose owner group has the given name
+		steps := tc.buildTraversalChain([]Token{{Value: "owner"}, {Value: "name"}})
+		return tc.translateFKChainScalar(db, steps, "name", op, val, nameFd)
 	case "parent_id":
-		// parent.X traversal is handled in translateComparisonExpr for dotted fields
-		// Here it's direct parent comparison (parent = "name")
-		return tc.translateParentComparison(db, op, val)
+		// parent = "name" → find groups whose parent has the given name
+		steps := tc.buildTraversalChain([]Token{{Value: "parent"}, {Value: "name"}})
+		return tc.translateFKChainScalar(db, steps, "name", op, val, nameFd)
 	case "children":
-		return tc.translateChildrenComparison(db, op, val)
+		// children = "name" → find groups that have a child with the given name
+		steps := tc.buildTraversalChain([]Token{{Value: "children"}, {Value: "name"}})
+		return tc.translateFKChainScalar(db, steps, "name", op, val, nameFd)
 	default:
 		return nil, &TranslateError{
 			Message: fmt.Sprintf("unsupported relation field %q", fd.Name),
@@ -382,250 +621,9 @@ func (tc *translateContext) translateGroupComparison(db *gorm.DB, op Token, val 
 	return db, nil
 }
 
-// translateParentComparison handles parent = "name" for groups.
-func (tc *translateContext) translateParentComparison(db *gorm.DB, op Token, val interface{}) (*gorm.DB, error) {
-	isNegated := op.Type == TokenNeq || op.Type == TokenNotLike
-	isLike := op.Type == TokenLike || op.Type == TokenNotLike
 
-	var matchClause string
-	var matchVal interface{}
-
-	if isLike {
-		likePattern := convertMRQLWildcards(fmt.Sprint(val))
-		likeOp := tc.likeOperator()
-		matchClause = "LOWER(p.name) " + likeOp + " LOWER(?) ESCAPE '\\'"
-		matchVal = likePattern
-	} else {
-		matchClause = "LOWER(p.name) = LOWER(?)"
-		matchVal = val
-	}
-
-	if isNegated {
-		// NOT IN + include root groups (no parent)
-		subquery := fmt.Sprintf(
-			"(groups.owner_id NOT IN (SELECT p.id FROM groups p WHERE %s) OR groups.owner_id IS NULL)",
-			matchClause,
-		)
-		db = db.Where(subquery, matchVal)
-	} else {
-		subquery := fmt.Sprintf(
-			"groups.owner_id IN (SELECT p.id FROM groups p WHERE %s)",
-			matchClause,
-		)
-		db = db.Where(subquery, matchVal)
-	}
-
-	return db, nil
-}
-
-// translateChildrenComparison handles children = "name" for groups.
-func (tc *translateContext) translateChildrenComparison(db *gorm.DB, op Token, val interface{}) (*gorm.DB, error) {
-	isNegated := op.Type == TokenNeq || op.Type == TokenNotLike
-	isLike := op.Type == TokenLike || op.Type == TokenNotLike
-
-	var matchClause string
-	var matchVal interface{}
-
-	if isLike {
-		likePattern := convertMRQLWildcards(fmt.Sprint(val))
-		likeOp := tc.likeOperator()
-		matchClause = "LOWER(c.name) " + likeOp + " LOWER(?) ESCAPE '\\'"
-		matchVal = likePattern
-	} else {
-		matchClause = "LOWER(c.name) = LOWER(?)"
-		matchVal = val
-	}
-
-	if isNegated {
-		// NOT EXISTS semantics: "has no child matching X" + include leaf groups.
-		// Must filter c.owner_id IS NOT NULL to prevent NULL from poisoning NOT IN.
-		leafClause := " OR groups.id NOT IN (SELECT owner_id FROM groups WHERE owner_id IS NOT NULL)"
-		subquery := fmt.Sprintf(
-			"(groups.id NOT IN (SELECT c.owner_id FROM groups c WHERE c.owner_id IS NOT NULL AND %s)%s)",
-			matchClause, leafClause,
-		)
-		db = db.Where(subquery, matchVal)
-	} else {
-		subquery := fmt.Sprintf(
-			"groups.id IN (SELECT c.owner_id FROM groups c WHERE c.owner_id IS NOT NULL AND %s)",
-			matchClause,
-		)
-		db = db.Where(subquery, matchVal)
-	}
-
-	return db, nil
-}
-
-// translateTraversalComparison handles parent.field and children.field for groups.
-// It generates subqueries that join through the owner_id relationship.
-func (tc *translateContext) translateTraversalComparison(db *gorm.DB, expr *ComparisonExpr, root string) (*gorm.DB, error) {
-	subField := expr.Field.Parts[1].Value
-
-	// Resolve the value
-	// Look up the sub-field on the group entity (since parent/children are always groups)
-	subFd, ok := LookupField(EntityGroup, subField)
-	if !ok && !IsCommonField(subField) {
-		// Check if it's a meta field
-		if subField != "meta" {
-			return nil, &TranslateError{
-				Message: fmt.Sprintf("unknown field %q for group traversal", subField),
-				Pos:     expr.Field.Parts[1].Pos,
-			}
-		}
-	}
-	if IsCommonField(subField) {
-		subFd, _ = LookupField(EntityGroup, subField)
-	}
-
-	val, err := tc.resolveValue(expr.Value, subFd)
-	if err != nil {
-		return nil, err
-	}
-
-	// Handle meta sub-fields: parent.meta.key
-	if subField == "meta" {
-		// This would be a 3-part field which is rejected by the parser
-		return nil, &TranslateError{Message: "parent.meta requires a key (e.g., parent.meta.key) — use the full dotted path", Pos: expr.Pos()}
-	}
-
-	// Handle relation sub-fields: parent.tags, children.tags
-	if subFd.Type == FieldRelation && subFd.Column == "tags" {
-		return tc.translateTraversalTagComparison(db, expr.Operator, val, root)
-	}
-
-	// Scalar sub-field on parent/children
-	col := subFd.Column
-	op := tc.sqlOperator(expr.Operator)
-	isNegated := expr.Operator.Type == TokenNeq || expr.Operator.Type == TokenNotLike
-
-	if root == "parent" {
-		// For negated operators, include groups with no parent (owner_id IS NULL)
-		nullClause := ""
-		if isNegated {
-			nullClause = " OR groups.owner_id IS NULL"
-		}
-
-		if expr.Operator.Type == TokenLike || expr.Operator.Type == TokenNotLike {
-			likePattern := convertMRQLWildcards(fmt.Sprint(val))
-			likeOp := tc.likeOperator()
-			if expr.Operator.Type == TokenNotLike {
-				likeOp = "NOT " + likeOp
-			}
-			db = db.Where(
-				fmt.Sprintf("(groups.owner_id IN (SELECT p.id FROM groups p WHERE p.%s %s ? ESCAPE '\\')%s)", col, likeOp, nullClause),
-				likePattern,
-			)
-		} else if subFd.Type == FieldString && (expr.Operator.Type == TokenEq || expr.Operator.Type == TokenNeq) {
-			db = db.Where(
-				fmt.Sprintf("(groups.owner_id IN (SELECT p.id FROM groups p WHERE LOWER(p.%s) %s LOWER(?))%s)", col, op, nullClause),
-				val,
-			)
-		} else {
-			db = db.Where(
-				fmt.Sprintf("(groups.owner_id IN (SELECT p.id FROM groups p WHERE p.%s %s ?)%s)", col, op, nullClause),
-				val,
-			)
-		}
-	} else {
-		// children traversal
-		// For negated operators, use NOT EXISTS semantics: "has no child matching X"
-		// rather than "has some child not matching X" (which would incorrectly include
-		// mixed-child groups). Also include leaf groups (no children at all).
-		if isNegated {
-			// NOT EXISTS semantics with c.owner_id IS NOT NULL to prevent NULL poisoning NOT IN.
-			leafClause := " OR groups.id NOT IN (SELECT owner_id FROM groups WHERE owner_id IS NOT NULL)"
-			if expr.Operator.Type == TokenNotLike {
-				likePattern := convertMRQLWildcards(fmt.Sprint(val))
-				likeOp := tc.likeOperator()
-				db = db.Where(
-					fmt.Sprintf("(groups.id NOT IN (SELECT c.owner_id FROM groups c WHERE c.owner_id IS NOT NULL AND c.%s %s ? ESCAPE '\\')%s)", col, likeOp, leafClause),
-					likePattern,
-				)
-			} else if subFd.Type == FieldString && expr.Operator.Type == TokenNeq {
-				db = db.Where(
-					fmt.Sprintf("(groups.id NOT IN (SELECT c.owner_id FROM groups c WHERE c.owner_id IS NOT NULL AND LOWER(c.%s) = LOWER(?))%s)", col, leafClause),
-					val,
-				)
-			} else {
-				db = db.Where(
-					fmt.Sprintf("(groups.id NOT IN (SELECT c.owner_id FROM groups c WHERE c.owner_id IS NOT NULL AND c.%s = ?)%s)", col, leafClause),
-					val,
-				)
-			}
-		} else {
-			// Positive operators: "has some child matching X"
-			if expr.Operator.Type == TokenLike {
-				likePattern := convertMRQLWildcards(fmt.Sprint(val))
-				likeOp := tc.likeOperator()
-				db = db.Where(
-					fmt.Sprintf("groups.id IN (SELECT c.owner_id FROM groups c WHERE c.%s %s ? ESCAPE '\\')", col, likeOp),
-					likePattern,
-				)
-			} else if subFd.Type == FieldString && expr.Operator.Type == TokenEq {
-				db = db.Where(
-					fmt.Sprintf("groups.id IN (SELECT c.owner_id FROM groups c WHERE LOWER(c.%s) = LOWER(?))", col),
-					val,
-				)
-			} else {
-				db = db.Where(
-					fmt.Sprintf("groups.id IN (SELECT c.owner_id FROM groups c WHERE c.%s %s ?)", col, op),
-					val,
-				)
-			}
-		}
-	}
-
-	return db, nil
-}
-
-// translateTraversalTagComparison handles parent.tags = "X" and children.tags = "X".
-func (tc *translateContext) translateTraversalTagComparison(db *gorm.DB, op Token, val interface{}, root string) (*gorm.DB, error) {
-	isNegated := op.Type == TokenNeq || op.Type == TokenNotLike
-	isLike := op.Type == TokenLike || op.Type == TokenNotLike
-
-	var tagMatchClause string
-	var tagMatchVal interface{}
-
-	if isLike {
-		likePattern := convertMRQLWildcards(fmt.Sprint(val))
-		likeOp := tc.likeOperator()
-		tagMatchClause = "LOWER(t.name) " + likeOp + " LOWER(?) ESCAPE '\\'"
-		tagMatchVal = likePattern
-	} else {
-		tagMatchClause = "LOWER(t.name) = LOWER(?)"
-		tagMatchVal = val
-	}
-
-	inOrNotIn := "IN"
-	if isNegated {
-		inOrNotIn = "NOT IN"
-	}
-
-	if root == "parent" {
-		// Find groups whose parent has matching tags
-		subquery := fmt.Sprintf(
-			"groups.owner_id %s (SELECT gt.group_id FROM group_tags gt JOIN tags t ON t.id = gt.tag_id WHERE %s)",
-			inOrNotIn, tagMatchClause,
-		)
-		if isNegated {
-			// For negated operators, also include groups with no parent
-			db = db.Where("("+subquery+" OR groups.owner_id IS NULL)", tagMatchVal)
-		} else {
-			db = db.Where(subquery, tagMatchVal)
-		}
-	} else {
-		// Find groups that have children with matching tags
-		subquery := fmt.Sprintf(
-			"groups.id %s (SELECT c.owner_id FROM groups c JOIN group_tags gt ON gt.group_id = c.id JOIN tags t ON t.id = gt.tag_id WHERE c.owner_id IS NOT NULL AND %s)",
-			inOrNotIn, tagMatchClause,
-		)
-		db = db.Where(subquery, tagMatchVal)
-	}
-
-	return db, nil
-}
-
-// translateTraversalIsNull handles parent.X IS [NOT] NULL and children.X IS [NOT] NULL.
+// translateTraversalIsNull handles traversal.X IS [NOT] NULL (e.g. parent.name IS NULL,
+// owner.description IS NOT NULL, children.category IS NULL).
 func (tc *translateContext) translateTraversalIsNull(db *gorm.DB, expr *IsExpr, root string) (*gorm.DB, error) {
 	subField := expr.Field.Parts[1].Value
 
@@ -643,28 +641,32 @@ func (tc *translateContext) translateTraversalIsNull(db *gorm.DB, expr *IsExpr, 
 
 	col := subFd.Column
 
-	if root == "parent" {
-		// parent.X IS NULL → parent exists but parent.X is null, OR no parent at all
-		// parent.X IS NOT NULL → parent exists and parent.X is not null
+	// Determine the FK column based on the root traversal type
+	if root == "children" {
+		// children.X IS NULL → has some child where X is null (or no children)
+		// children.X IS NOT NULL → has some child where X is not null
+		srcCol := tc.tableName + ".id"
 		if expr.Negated {
 			db = db.Where(
-				fmt.Sprintf("groups.owner_id IN (SELECT p.id FROM groups p WHERE p.%s IS NOT NULL)", col),
+				fmt.Sprintf("%s IN (SELECT c.owner_id FROM groups c WHERE c.%s IS NOT NULL AND c.owner_id IS NOT NULL)", srcCol, col),
 			)
 		} else {
 			db = db.Where(
-				fmt.Sprintf("(groups.owner_id IN (SELECT p.id FROM groups p WHERE p.%s IS NULL) OR groups.owner_id IS NULL)", col),
+				fmt.Sprintf("(%s IN (SELECT c.owner_id FROM groups c WHERE c.%s IS NULL AND c.owner_id IS NOT NULL) OR %s NOT IN (SELECT owner_id FROM groups WHERE owner_id IS NOT NULL))", srcCol, col, srcCol),
 			)
 		}
 	} else {
-		// children.X IS NULL → has some child where X is null (or no children)
-		// children.X IS NOT NULL → has some child where X is not null
+		// parent/owner: forward FK traversal
+		// X.field IS NULL → FK target exists but field is null, OR no FK at all
+		// X.field IS NOT NULL → FK target exists and field is not null
+		fkCol := tc.tableName + ".owner_id"
 		if expr.Negated {
 			db = db.Where(
-				fmt.Sprintf("groups.id IN (SELECT c.owner_id FROM groups c WHERE c.%s IS NOT NULL AND c.owner_id IS NOT NULL)", col),
+				fmt.Sprintf("%s IN (SELECT p.id FROM groups p WHERE p.%s IS NOT NULL)", fkCol, col),
 			)
 		} else {
 			db = db.Where(
-				fmt.Sprintf("(groups.id IN (SELECT c.owner_id FROM groups c WHERE c.%s IS NULL AND c.owner_id IS NOT NULL) OR groups.id NOT IN (SELECT owner_id FROM groups WHERE owner_id IS NOT NULL))", col),
+				fmt.Sprintf("(%s IN (SELECT p.id FROM groups p WHERE p.%s IS NULL) OR %s IS NULL)", fkCol, col, fkCol),
 			)
 		}
 	}
@@ -920,10 +922,10 @@ func (tc *translateContext) translateRelationIn(db *gorm.DB, fd FieldDef, negate
 func (tc *translateContext) translateIsExpr(db *gorm.DB, expr *IsExpr) (*gorm.DB, error) {
 	fieldName := expr.Field.Name()
 
-	// Handle parent.X / children.X IS NULL / IS NOT NULL via traversal subquery
+	// Handle traversal IS NULL / IS NOT NULL via traversal subquery
 	if len(expr.Field.Parts) == 2 && expr.IsNull {
 		root := expr.Field.Parts[0].Value
-		if root == "parent" || root == "children" {
+		if traversalFieldNames[root] {
 			return tc.translateTraversalIsNull(db, expr, root)
 		}
 	}
@@ -1036,8 +1038,8 @@ func (tc *translateContext) translateRelationIsEmpty(db *gorm.DB, fd FieldDef, n
 		)
 		db = db.Where(subquery)
 
-	case "parent_id":
-		// parent IS EMPTY → owner_id IS NULL
+	case "owner_id", "parent_id":
+		// owner/parent IS EMPTY → owner_id IS NULL
 		if negated {
 			db = db.Where(tc.tableName + ".owner_id IS NOT NULL")
 		} else {

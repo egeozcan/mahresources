@@ -269,8 +269,8 @@ func TestComprehensive_TagRelations(t *testing.T) {
 		{"group tags eq photo", `type = "group" AND tags = "photo"`, EntityGroup, 1, []string{"Vacation"}},
 		{"group tags neq photo", `type = "group" AND tags != "photo"`, EntityGroup, 4, []string{"Work", "Archive", "Sub-Work", "Photos"}},
 		{"group tags like pho*", `type = "group" AND tags ~ "pho*"`, EntityGroup, 1, []string{"Vacation"}},
-		{"group tags is empty", `type = "group" AND tags IS EMPTY`, EntityGroup, 4, []string{"Work", "Archive", "Sub-Work", "Photos"}},
-		{"group tags is not empty", `type = "group" AND tags IS NOT EMPTY`, EntityGroup, 1, []string{"Vacation"}},
+		{"group tags is empty", `type = "group" AND tags IS EMPTY`, EntityGroup, 3, []string{"Archive", "Sub-Work", "Photos"}},
+		{"group tags is not empty", `type = "group" AND tags IS NOT EMPTY`, EntityGroup, 2, []string{"Vacation", "Work"}},
 	}
 
 	for _, tt := range tests {
