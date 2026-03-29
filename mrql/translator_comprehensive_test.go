@@ -2174,3 +2174,57 @@ func TestComprehensive_MixedTypeOrTranslation(t *testing.T) {
 		t.Fatalf("expected 1 note (Meeting notes), got %d: %v", len(notes), namesOfNotes(notes))
 	}
 }
+
+// P1: A AND (B OR C) must preserve grouping.
+func TestComprehensive_NestedOrGrouping(t *testing.T) {
+	db := setupTestDB(t)
+
+	// name ~ "*photo*" matches only "photo_album.png" (1 resource)
+	// tags = "video" matches resource 2 (photo_album has video tag)
+	// contentType = "application/pdf" matches resource 3 (report.pdf)
+	//
+	// contentType = "application/pdf" AND (name ~ "*photo*" OR tags = "video")
+	// Should match: only photo_album.png (matches name OR tags) that is also pdf? No.
+	// Actually: contentType = "application/pdf" → resource 3. name ~ "*photo*" → resource 2.
+	// tags = "video" → resource 2. So the AND groups: pdf AND (photo_name OR video_tag).
+	// Resource 3 is pdf but doesn't match either OR branch. Resource 2 matches OR but not pdf.
+	// Result: 0 rows. If grouping is broken (pdf AND photo_name OR video_tag),
+	// resource 2 would leak through because video_tag is OR'd at top level.
+
+	result := parseAndTranslate(t,
+		`type = "resource" AND contentType = "application/pdf" AND (name ~ "*photo*" OR tags = "video")`,
+		EntityResource, db)
+
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) != 0 {
+		t.Fatalf("expected 0 results (pdf AND (photo_name OR video_tag) matches nothing), got %d: %v",
+			len(resources), namesOfResources(resources))
+	}
+}
+
+// P2: parent.meta and children.meta should be rejected at validation
+// since the parser forbids 3-segment fields and the translator can't handle them.
+func TestComprehensive_TraversalMetaValidation(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"parent.meta", `type = "group" AND parent.meta = "x"`},
+		{"children.meta", `type = "group" AND children.meta = "x"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := Parse(tt.query)
+			if err != nil {
+				return // parse error is acceptable
+			}
+			err = Validate(q)
+			if err == nil {
+				t.Fatalf("expected validation error for %s, got nil", tt.query)
+			}
+		})
+	}
+}

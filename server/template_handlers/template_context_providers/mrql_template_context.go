@@ -12,7 +12,7 @@ func MRQLContextProvider(ctx *application_context.MahresourcesContext) func(requ
 	return func(request *http.Request) pongo2.Context {
 		baseContext := StaticTemplateCtx(request)
 
-		savedQueries, err := ctx.GetSavedMRQLQueries()
+		savedQueries, err := ctx.GetSavedMRQLQueries(0, 0) // all, for sidebar display
 		if err != nil {
 			log.Printf("mrql: failed to load saved queries: %v", err)
 		}

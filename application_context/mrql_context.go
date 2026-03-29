@@ -330,9 +330,16 @@ func (ctx *MahresourcesContext) CreateSavedMRQLQuery(name, query, description st
 }
 
 // GetSavedMRQLQueries returns all saved MRQL queries, ordered by name.
-func (ctx *MahresourcesContext) GetSavedMRQLQueries() ([]models.SavedMRQLQuery, error) {
+func (ctx *MahresourcesContext) GetSavedMRQLQueries(offset, limit int) ([]models.SavedMRQLQuery, error) {
 	var queries []models.SavedMRQLQuery
-	if err := ctx.db.Order("name ASC").Find(&queries).Error; err != nil {
+	q := ctx.db.Order("name ASC")
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	if offset > 0 {
+		q = q.Offset(offset)
+	}
+	if err := q.Find(&queries).Error; err != nil {
 		return nil, err
 	}
 	return queries, nil

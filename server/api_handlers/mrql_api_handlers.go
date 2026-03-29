@@ -123,7 +123,9 @@ func GetSavedMRQLQueriesHandler(ctx *application_context.MahresourcesContext) fu
 			return
 		}
 
-		queries, err := ctx.GetSavedMRQLQueries()
+		page := http_utils.GetPageParameter(request)
+		offset := (page - 1) * constants.MaxResultsPerPage
+		queries, err := ctx.GetSavedMRQLQueries(int(offset), constants.MaxResultsPerPage)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return

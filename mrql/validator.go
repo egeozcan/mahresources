@@ -328,7 +328,14 @@ func validateFieldExpr(f *FieldExpr, entityType EntityType) error {
 			// Validate the subfield against group fields
 			subField := f.Parts[1].Value
 			if subField == "meta" {
-				return nil // meta.* always valid
+				// parent.meta / children.meta is not actionable — the parser
+				// forbids 3-segment fields (parent.meta.key), so there's no
+				// way to specify which meta key to access.
+				return &ValidationError{
+					Message: fmt.Sprintf("%s.meta is not supported; traversal of parent/children metadata requires a key (parent.meta.key), which is planned for v2", prefix),
+					Pos:     f.Pos(),
+					Length:  len(f.Name()),
+				}
 			}
 			if _, ok := LookupField(EntityGroup, subField); !ok && !IsCommonField(subField) {
 				return &ValidationError{

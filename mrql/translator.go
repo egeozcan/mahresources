@@ -161,8 +161,10 @@ func (tc *translateContext) translateBinaryExpr(db *gorm.DB, expr *BinaryExpr) (
 		return nil, err
 	}
 
-	// Combine branches: db.Where(left).Or(right) produces "(left) OR (right)"
-	db = db.Where(leftDB).Or(rightDB)
+	// Wrap the OR in a nested Where so it's parenthesized when combined
+	// with prior AND conditions: A AND (B OR C), not A AND B OR C.
+	orGroup := tc.db.Session(&gorm.Session{NewDB: true}).Where(leftDB).Or(rightDB)
+	db = db.Where(orGroup)
 
 	return db, nil
 }
