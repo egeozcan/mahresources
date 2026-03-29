@@ -2485,3 +2485,54 @@ func TestComprehensive_CompleterCompleteField(t *testing.T) {
 		t.Fatalf("complete field 'name ' should suggest operators; got %v", suggestions)
 	}
 }
+
+// Focused regression tests for partial-field completer behavior.
+func TestComprehensive_CompleterPartialFieldEdgeCases(t *testing.T) {
+	tests := []struct {
+		name          string
+		query         string
+		cursor        int
+		wantFields    bool // should suggest fields, not operators
+		wantOperators bool // should suggest operators, not fields
+	}{
+		// Partial identifier, cursor at end — suggest fields
+		{"partial 'cont'", `type = "resource" AND cont`, 26, true, false},
+		{"partial 'na'", `na`, 2, true, false},
+		{"partial 'file'", `type = "resource" AND file`, 26, true, false},
+
+		// Complete identifier followed by space — suggest operators
+		{"complete 'name '", `name `, 5, false, true},
+		{"complete 'fileSize '", `type = "resource" AND fileSize `, 31, false, true},
+
+		// Partial after dot — suggest sub-fields (not operators)
+		{"partial 'meta.ra'", `meta.ra`, 7, true, false},
+
+		// Cursor mid-token (not at end) — suggest fields
+		{"cursor mid-word", `contentType`, 4, true, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			suggestions := Complete(tt.query, tt.cursor)
+			hasField := false
+			hasOperator := false
+			for _, s := range suggestions {
+				if s.Type == "field" || s.Type == "keyword" {
+					hasField = true
+				}
+				if s.Type == "operator" {
+					hasOperator = true
+				}
+			}
+			if tt.wantFields && !hasField {
+				t.Errorf("expected field suggestions, got %v", suggestions)
+			}
+			if tt.wantFields && hasOperator {
+				t.Errorf("should not suggest operators for partial field, got %v", suggestions)
+			}
+			if tt.wantOperators && !hasOperator {
+				t.Errorf("expected operator suggestions, got %v", suggestions)
+			}
+		})
+	}
+}
