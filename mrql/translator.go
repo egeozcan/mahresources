@@ -436,19 +436,23 @@ func (tc *translateContext) translateChildrenComparison(db *gorm.DB, op Token, v
 		matchVal = val
 	}
 
-	subquery := fmt.Sprintf(
-		"groups.id IN (SELECT c.owner_id FROM groups c WHERE %s)",
-		matchClause,
-	)
-
 	if isNegated {
-		subquery = fmt.Sprintf(
-			"groups.id NOT IN (SELECT c.owner_id FROM groups c WHERE %s)",
+		// NOT EXISTS semantics: "has no child matching X" + include leaf groups.
+		// Must filter c.owner_id IS NOT NULL to prevent NULL from poisoning NOT IN.
+		leafClause := " OR groups.id NOT IN (SELECT owner_id FROM groups WHERE owner_id IS NOT NULL)"
+		subquery := fmt.Sprintf(
+			"(groups.id NOT IN (SELECT c.owner_id FROM groups c WHERE c.owner_id IS NOT NULL AND %s)%s)",
+			matchClause, leafClause,
+		)
+		db = db.Where(subquery, matchVal)
+	} else {
+		subquery := fmt.Sprintf(
+			"groups.id IN (SELECT c.owner_id FROM groups c WHERE c.owner_id IS NOT NULL AND %s)",
 			matchClause,
 		)
+		db = db.Where(subquery, matchVal)
 	}
 
-	db = db.Where(subquery, matchVal)
 	return db, nil
 }
 
@@ -528,25 +532,23 @@ func (tc *translateContext) translateTraversalComparison(db *gorm.DB, expr *Comp
 		// rather than "has some child not matching X" (which would incorrectly include
 		// mixed-child groups). Also include leaf groups (no children at all).
 		if isNegated {
+			// NOT EXISTS semantics with c.owner_id IS NOT NULL to prevent NULL poisoning NOT IN.
 			leafClause := " OR groups.id NOT IN (SELECT owner_id FROM groups WHERE owner_id IS NOT NULL)"
 			if expr.Operator.Type == TokenNotLike {
 				likePattern := convertMRQLWildcards(fmt.Sprint(val))
 				likeOp := tc.likeOperator()
-				// NOT LIKE → "no child matches pattern" → NOT IN (children matching pattern)
 				db = db.Where(
-					fmt.Sprintf("(groups.id NOT IN (SELECT c.owner_id FROM groups c WHERE c.%s %s ? ESCAPE '\\')%s)", col, likeOp, leafClause),
+					fmt.Sprintf("(groups.id NOT IN (SELECT c.owner_id FROM groups c WHERE c.owner_id IS NOT NULL AND c.%s %s ? ESCAPE '\\')%s)", col, likeOp, leafClause),
 					likePattern,
 				)
 			} else if subFd.Type == FieldString && expr.Operator.Type == TokenNeq {
-				// != → "no child equals X" → NOT IN (children equaling X)
 				db = db.Where(
-					fmt.Sprintf("(groups.id NOT IN (SELECT c.owner_id FROM groups c WHERE LOWER(c.%s) = LOWER(?))%s)", col, leafClause),
+					fmt.Sprintf("(groups.id NOT IN (SELECT c.owner_id FROM groups c WHERE c.owner_id IS NOT NULL AND LOWER(c.%s) = LOWER(?))%s)", col, leafClause),
 					val,
 				)
 			} else {
-				// Numeric != → NOT IN (children matching value)
 				db = db.Where(
-					fmt.Sprintf("(groups.id NOT IN (SELECT c.owner_id FROM groups c WHERE c.%s = ?)%s)", col, leafClause),
+					fmt.Sprintf("(groups.id NOT IN (SELECT c.owner_id FROM groups c WHERE c.owner_id IS NOT NULL AND c.%s = ?)%s)", col, leafClause),
 					val,
 				)
 			}

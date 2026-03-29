@@ -2307,3 +2307,75 @@ func TestComprehensive_CompleterChildrenDot(t *testing.T) {
 		t.Fatalf("after children., should suggest 'tags'; got %v", suggestions)
 	}
 }
+
+// Direct children != should not be broken by NULL owner_ids.
+// children != "Vacation" should return all groups since no group has a child named "Vacation".
+func TestComprehensive_ChildrenDirectNeqNull(t *testing.T) {
+	db := setupTestDB(t)
+
+	// No group in the fixture has a child named "Vacation".
+	// children != "Vacation" should return Work (child=Sub-Work) + leaf groups.
+	// Vacation has children Work+Photos (neither named "Vacation") → included.
+	// All 5 groups should match.
+	result := parseAndTranslate(t, `type = "group" AND children != "Vacation"`, EntityGroup, db)
+
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(groups) != 5 {
+		t.Fatalf("expected 5 groups (no child is named Vacation), got %d: %v",
+			len(groups), namesOfGroups(groups))
+	}
+}
+
+// Direct children !~ should not be broken by NULL owner_ids.
+func TestComprehensive_ChildrenDirectNotLikeNull(t *testing.T) {
+	db := setupTestDB(t)
+
+	// children !~ "NonExistent*" — no child matches, so all groups qualify.
+	result := parseAndTranslate(t, `type = "group" AND children !~ "NonExistent*"`, EntityGroup, db)
+
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(groups) != 5 {
+		t.Fatalf("expected 5 groups, got %d: %v", len(groups), namesOfGroups(groups))
+	}
+}
+
+// Traversal children.name != should use NOT EXISTS semantics and handle NULLs.
+// children.name != "Vacation" should include all groups since no child is named "Vacation".
+func TestComprehensive_ChildrenTraversalNeqNull(t *testing.T) {
+	db := setupTestDB(t)
+
+	result := parseAndTranslate(t, `type = "group" AND children.name != "Vacation"`, EntityGroup, db)
+
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	// Vacation (children: Work, Photos — neither "Vacation") → INCLUDED
+	// Work (child: Sub-Work) → INCLUDED
+	// Archive, Sub-Work, Photos (no children) → INCLUDED (leaf)
+	if len(groups) != 5 {
+		t.Fatalf("expected 5 groups (no child named Vacation), got %d: %v",
+			len(groups), namesOfGroups(groups))
+	}
+}
+
+// Traversal children.name !~ should handle NULLs.
+func TestComprehensive_ChildrenTraversalNotLikeNull(t *testing.T) {
+	db := setupTestDB(t)
+
+	result := parseAndTranslate(t, `type = "group" AND children.name !~ "NoMatch*"`, EntityGroup, db)
+
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(groups) != 5 {
+		t.Fatalf("expected 5 groups, got %d: %v", len(groups), namesOfGroups(groups))
+	}
+}
