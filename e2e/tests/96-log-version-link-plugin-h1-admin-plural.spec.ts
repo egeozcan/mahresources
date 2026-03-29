@@ -166,13 +166,17 @@ test.describe('Bug 3: Admin overview should use correct singular/plural nouns', 
     await page.goto(`${baseURL}/admin/overview`);
 
     // Wait for Alpine.js to hydrate the "Top Categories" section and render counts.
-    // Use getByText with exact match to avoid "1 group" matching "1 groups".
+    // Scope to the specific <li> containing our category to avoid strict-mode
+    // violations when multiple categories each have exactly 1 group.
     const detailedStats = page.locator('section[aria-label="Detailed statistics"]');
+    const categoryRow = detailedStats.locator('li', {
+      has: page.locator(`a[href*="/category?id=${categoryId}"]`),
+    });
     await expect(
-      detailedStats.getByText('1 group', { exact: true })
+      categoryRow.getByText('1 group', { exact: true })
     ).toBeVisible({ timeout: 30000 });
 
-    // Verify the buggy plural form "1 groups" does NOT appear
+    // Verify the buggy plural form "1 groups" does NOT appear anywhere
     await expect(
       detailedStats.getByText('1 groups', { exact: true })
     ).toHaveCount(0);

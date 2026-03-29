@@ -23,10 +23,9 @@ function ensureBuilt() {
     console.log('Building server binary...');
     execSync('npm run build', { cwd: PROJECT_ROOT, stdio: 'inherit' });
   }
-  if (!fs.existsSync(CLI_BINARY)) {
-    console.log('Building CLI binary...');
-    execSync('go build -o mr ./cmd/mr/', { cwd: PROJECT_ROOT, stdio: 'inherit' });
-  }
+  // Always rebuild CLI binary to avoid stale binary issues
+  console.log('Building CLI binary...');
+  execSync('go build --tags "json1 fts5" -o mr ./cmd/mr/', { cwd: PROJECT_ROOT, stdio: 'inherit' });
 }
 
 async function main() {
