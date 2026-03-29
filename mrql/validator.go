@@ -194,6 +194,12 @@ func validateNode(node Node, entityType EntityType) error {
 				}
 			}
 		}
+		// Validate value type compatibility with field type
+		if !isTypeField(n.Field) && n.Value != nil {
+			if err := validateValueType(n.Field, n.Value, entityType); err != nil {
+				return err
+			}
+		}
 		return nil
 
 	case *InExpr:
@@ -300,6 +306,65 @@ func validateSortable(f *FieldExpr, entityType EntityType) error {
 			Length:  len(name),
 		}
 	}
+	return nil
+}
+
+// validateValueType checks that the comparison value is compatible with the field type.
+// Number fields reject string values; datetime fields reject plain numbers;
+// meta fields and string fields accept anything (meta is dynamically typed).
+func validateValueType(field *FieldExpr, value Node, entityType EntityType) error {
+	fieldName := field.Parts[0].Value
+
+	// Meta fields are dynamically typed — any value is fine
+	if len(field.Parts) >= 2 && field.Parts[0].Value == "meta" {
+		return nil
+	}
+	// Traversal subfields — validated by the translator
+	if len(field.Parts) == 2 {
+		prefix := field.Parts[0].Value
+		if prefix == "parent" || prefix == "children" {
+			return nil
+		}
+	}
+
+	fd, ok := LookupField(entityType, fieldName)
+	if !ok {
+		return nil // field lookup errors caught elsewhere
+	}
+
+	switch fd.Type {
+	case FieldNumber:
+		// Number fields only accept numeric values.
+		// FK fields (category, noteType) are typed as FieldNumber but users
+		// may pass string values (which just won't match — no crash). Only
+		// enforce for non-FK numeric fields.
+		isFKField := strings.HasSuffix(fd.Column, "_id")
+		if !isFKField {
+			switch value.(type) {
+			case *NumberLiteral:
+				// ok
+			default:
+				return &ValidationError{
+					Message: fmt.Sprintf("field %q is numeric but got a non-numeric value", fieldName),
+					Pos:     value.Pos(),
+					Length:  0,
+				}
+			}
+		}
+	case FieldDateTime:
+		// DateTime fields accept strings (date literals), relative dates, and functions
+		switch value.(type) {
+		case *StringLiteral, *RelDateLiteral, *FuncCall:
+			// ok
+		default:
+			return &ValidationError{
+				Message: fmt.Sprintf("field %q is a datetime; use a date string, relative date (-7d), or function (NOW())", fieldName),
+				Pos:     value.Pos(),
+				Length:  0,
+			}
+		}
+	}
+	// FieldString, FieldRelation, FieldMeta — accept any value type
 	return nil
 }
 

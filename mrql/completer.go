@@ -108,7 +108,7 @@ func Complete(query string, cursor int) []Suggestion {
 	entityType := detectEntityType(tokens)
 
 	// Determine context from the last meaningful token(s).
-	return suggestionsForContext(tokens, entityType)
+	return suggestionsForContext(tokens, entityType, cursor)
 }
 
 // tokeniseAll runs the lexer over input until EOF and returns all tokens
@@ -196,13 +196,18 @@ func fieldSuggestions(entityType EntityType) []Suggestion {
 
 // suggestionsForContext analyses the token stream and returns the appropriate
 // suggestions for the cursor position.
-func suggestionsForContext(tokens []Token, entityType EntityType) []Suggestion {
+func suggestionsForContext(tokens []Token, entityType EntityType, cursor int) []Suggestion {
 	// Empty prefix — suggest fields.
 	if len(tokens) == 0 {
 		return fieldSuggestions(entityType)
 	}
 
 	last := tokens[len(tokens)-1]
+
+	// Check if cursor is immediately after the last token (no trailing space).
+	// If so, the user is still typing that token — suggest completions for it,
+	// not what comes after it.
+	cursorAtTokenEnd := (last.Pos + last.Length) == cursor
 
 	// After AND / OR / NOT / "(" — suggest fields.
 	switch last.Type {
@@ -221,9 +226,13 @@ func suggestionsForContext(tokens []Token, entityType EntityType) []Suggestion {
 		}
 	}
 
-	// After an identifier or keyword that looks like a field name — suggest operators.
+	// After an identifier or keyword: if cursor is right at the token end
+	// (no space), the user is still typing the field name → suggest fields.
+	// If there's a space after, the field name is complete → suggest operators.
 	if last.Type == TokenIdentifier || last.Type == TokenKwType {
-		// If it's the "type" keyword/identifier alone, suggest operators.
+		if cursorAtTokenEnd {
+			return fieldSuggestions(entityType)
+		}
 		return operators
 	}
 

@@ -2379,3 +2379,109 @@ func TestComprehensive_ChildrenTraversalNotLikeNull(t *testing.T) {
 		t.Fatalf("expected 5 groups, got %d: %v", len(groups), namesOfGroups(groups))
 	}
 }
+
+// P1: fileSize > "abc" should be rejected at validation (type mismatch).
+func TestComprehensive_ValueTypeMismatch(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"number field with string", `type = "resource" AND fileSize > "abc"`},
+		{"number field with string eq", `type = "resource" AND width = "hello"`},
+		{"datetime field with number", `type = "resource" AND created > 42`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := Parse(tt.query)
+			if err != nil {
+				return
+			}
+			err = Validate(q)
+			if err == nil {
+				t.Fatalf("expected validation error for %s, got nil", tt.query)
+			}
+		})
+	}
+}
+
+// P1: Valid type combinations should still pass.
+func TestComprehensive_ValueTypeValid(t *testing.T) {
+	tests := []string{
+		`type = "resource" AND fileSize > 100`,
+		`type = "resource" AND fileSize > 10mb`,
+		`type = "resource" AND name = "hello"`,
+		`type = "resource" AND name ~ "hel*"`,
+		`type = "resource" AND created > -7d`,
+		`type = "resource" AND created > NOW()`,
+		`type = "resource" AND created >= "2024-01-01"`,
+		`type = "resource" AND width > 1920`,
+		`type = "resource" AND meta.rating > 5`,
+		`type = "resource" AND meta.name = "hello"`,
+	}
+	for _, query := range tests {
+		t.Run(query, func(t *testing.T) {
+			q, err := Parse(query)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if err := Validate(q); err != nil {
+				t.Fatalf("expected valid, got: %v", err)
+			}
+		})
+	}
+}
+
+// P2: meta.priority IN ("high", "LOW") should be case-insensitive.
+func TestComprehensive_MetaInCaseInsensitive(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Note 1 has meta.priority = "high". Query with "HIGH" should match.
+	result := parseAndTranslate(t, `type = "note" AND meta.priority IN ("HIGH", "medium")`, EntityNote, db)
+
+	var notes []testNote
+	if err := result.Find(&notes).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(notes) != 1 || notes[0].Name != "Meeting notes" {
+		t.Fatalf("expected 1 note (Meeting notes), got %d: %v",
+			len(notes), namesOfNotes(notes))
+	}
+}
+
+// P3: Completer should suggest fields (not operators) when cursor is
+// immediately after a partial identifier with no trailing space.
+func TestComprehensive_CompleterPartialField(t *testing.T) {
+	// User typed "cont" (partial for contentType) — cursor at end, no space
+	suggestions := Complete(`type = "resource" AND cont`, 26)
+	hasOperator := false
+	hasField := false
+	for _, s := range suggestions {
+		if s.Value == "=" || s.Value == "!=" {
+			hasOperator = true
+		}
+		if s.Value == "contentType" {
+			hasField = true
+		}
+	}
+	if hasOperator {
+		t.Fatalf("partial field 'cont' should not suggest operators; got %v", suggestions)
+	}
+	if !hasField {
+		t.Fatalf("partial field 'cont' should suggest 'contentType'; got %v", suggestions)
+	}
+}
+
+// Completer should suggest operators after a complete field name followed by space.
+func TestComprehensive_CompleterCompleteField(t *testing.T) {
+	// "name " — complete field with trailing space
+	suggestions := Complete(`name `, 5)
+	hasOperator := false
+	for _, s := range suggestions {
+		if s.Value == "=" {
+			hasOperator = true
+		}
+	}
+	if !hasOperator {
+		t.Fatalf("complete field 'name ' should suggest operators; got %v", suggestions)
+	}
+}

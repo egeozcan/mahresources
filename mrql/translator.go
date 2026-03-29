@@ -800,10 +800,30 @@ func (tc *translateContext) translateInExpr(db *gorm.DB, expr *InExpr) (*gorm.DB
 		} else {
 			jsonExpr = fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
 		}
-		if expr.Negated {
-			db = db.Where(jsonExpr+" NOT IN (?)", values)
+		// Case-insensitive IN for string meta values
+		hasStrings := false
+		for _, v := range values {
+			if _, ok := v.(string); ok {
+				hasStrings = true
+				break
+			}
+		}
+		if hasStrings {
+			lowerValues := make([]interface{}, len(values))
+			for i, v := range values {
+				lowerValues[i] = strings.ToLower(fmt.Sprint(v))
+			}
+			if expr.Negated {
+				db = db.Where("LOWER("+jsonExpr+") NOT IN (?)", lowerValues)
+			} else {
+				db = db.Where("LOWER("+jsonExpr+") IN (?)", lowerValues)
+			}
 		} else {
-			db = db.Where(jsonExpr+" IN (?)", values)
+			if expr.Negated {
+				db = db.Where(jsonExpr+" NOT IN (?)", values)
+			} else {
+				db = db.Where(jsonExpr+" IN (?)", values)
+			}
 		}
 		return db, nil
 	}
