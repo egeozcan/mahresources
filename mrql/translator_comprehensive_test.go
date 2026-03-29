@@ -3,6 +3,7 @@ package mrql
 import (
 	"sort"
 	"testing"
+	"time"
 )
 
 // ---- helpers ----
@@ -2239,5 +2240,70 @@ func TestComprehensive_NotTypeGuardedField(t *testing.T) {
 	err = Validate(q)
 	if err != nil {
 		t.Fatalf("expected valid query, got: %v", err)
+	}
+}
+
+// Postgres numeric meta cast should not blow up on mixed-type data.
+// On SQLite, json_extract handles mixed types gracefully. This test
+// verifies the comparison logic works when meta values are strings
+// but the query uses a numeric comparison.
+func TestComprehensive_MetaNumericOnMixedData(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Resource 1 has meta.rating=5 (numeric), but let's add a resource
+	// with a string value for the same key to simulate mixed data.
+	db.Create(&testResource{
+		ID: 10, Name: "mixed_meta.txt", ContentType: "text/plain",
+		FileSize: 50, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		Meta: `{"rating":"not_a_number"}`,
+	})
+
+	// meta.rating > 3 should still work — the string value row should
+	// simply not match, not crash the query.
+	result := parseAndTranslate(t, `type = "resource" AND meta.rating > 3`, EntityResource, db)
+
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query should not error on mixed meta types: %v", err)
+	}
+	// Only resource 1 (rating=5) should match, not the string-value one
+	if len(resources) != 1 || resources[0].Name != "sunset.jpg" {
+		t.Fatalf("expected 1 result (sunset.jpg with rating=5), got %d: %v",
+			len(resources), namesOfResources(resources))
+	}
+}
+
+// Completer should suggest group subfields after "parent.", not meta keys.
+func TestComprehensive_CompleterParentDot(t *testing.T) {
+	suggestions := Complete(`type = "group" AND parent.`, 26)
+	hasName := false
+	hasMeta := false
+	for _, s := range suggestions {
+		if s.Value == "name" {
+			hasName = true
+		}
+		if s.Value == "meta.<key>" {
+			hasMeta = true
+		}
+	}
+	if !hasName {
+		t.Fatalf("after parent., should suggest 'name'; got %v", suggestions)
+	}
+	if hasMeta {
+		t.Fatalf("after parent., should NOT suggest meta.<key>; got %v", suggestions)
+	}
+}
+
+// Completer should suggest group subfields after "children." too.
+func TestComprehensive_CompleterChildrenDot(t *testing.T) {
+	suggestions := Complete(`type = "group" AND children.`, 28)
+	hasTags := false
+	for _, s := range suggestions {
+		if s.Value == "tags" {
+			hasTags = true
+		}
+	}
+	if !hasTags {
+		t.Fatalf("after children., should suggest 'tags'; got %v", suggestions)
 	}
 }

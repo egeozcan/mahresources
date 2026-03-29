@@ -703,19 +703,29 @@ func (tc *translateContext) translateMetaComparison(db *gorm.DB, fd FieldDef, op
 	}
 
 	// Build the JSON extraction expression per database dialect.
-	// On Postgres, ->>' returns text, so numeric comparisons/sorts need a cast.
 	isNumericVal := isNumericValue(val)
 	var jsonExpr string
 	if tc.isPostgres() {
 		if isNumericVal {
-			// Cast to numeric for proper ordering and comparison
-			jsonExpr = fmt.Sprintf("(%s.meta->>'%s')::numeric", tc.tableName, key)
+			// Safe numeric cast: returns NULL for non-numeric values instead of crashing.
+			// This handles schemaless metadata where the same key may hold mixed types.
+			jsonExpr = fmt.Sprintf(
+				"CASE WHEN %s.meta->>'%s' ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (%s.meta->>'%s')::numeric ELSE NULL END",
+				tc.tableName, key, tc.tableName, key,
+			)
 		} else {
 			jsonExpr = fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)
 		}
 	} else {
-		// SQLite: json_extract returns the native JSON type (number, string, etc.)
-		jsonExpr = fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
+		if isNumericVal {
+			// SQLite: json_extract returns native types, but string values compare
+			// incorrectly with numbers (strings > numbers in SQLite affinity).
+			// Filter to only rows where the JSON type is numeric.
+			jsonExpr = fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
+			db = db.Where(fmt.Sprintf("json_type(%s.meta, '$.%s') IN ('integer', 'real')", tc.tableName, key))
+		} else {
+			jsonExpr = fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
+		}
 	}
 
 	sqlOp := tc.sqlOperator(op)

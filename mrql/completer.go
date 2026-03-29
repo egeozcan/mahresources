@@ -61,6 +61,26 @@ var metaSubFieldSuggestions = []Suggestion{
 	{Value: "meta.<key>", Type: "field", Label: "any meta key"},
 }
 
+// traversalSubFieldSuggestions returns field suggestions for parent. / children. context.
+func traversalSubFieldSuggestions(entityType EntityType) []Suggestion {
+	var suggestions []Suggestion
+	// Common fields valid on groups (since parent/children are always groups)
+	for name := range commonIndex {
+		if name == "tags" {
+			suggestions = append(suggestions, Suggestion{Value: name, Type: "field", Label: "parent/child tag"})
+		} else {
+			suggestions = append(suggestions, Suggestion{Value: name, Type: "field"})
+		}
+	}
+	// Group-specific fields (category)
+	for name, fd := range groupIndex {
+		if name != "parent" && name != "children" && fd.Type != FieldRelation {
+			suggestions = append(suggestions, Suggestion{Value: name, Type: "field"})
+		}
+	}
+	return suggestions
+}
+
 // dateFieldNames is the set of field names that hold date/time values.
 var dateFieldNames = map[string]bool{
 	"created": true,
@@ -190,9 +210,15 @@ func suggestionsForContext(tokens []Token, entityType EntityType) []Suggestion {
 		return fieldSuggestions(entityType)
 	}
 
-	// After a dot — we're completing a qualified field name (meta.*, parent.*).
-	if last.Type == TokenDot {
-		return metaSubFieldSuggestions
+	// After a dot — context depends on what's before the dot.
+	if last.Type == TokenDot && len(tokens) >= 2 {
+		prev := tokens[len(tokens)-2]
+		switch prev.Value {
+		case "parent", "children":
+			return traversalSubFieldSuggestions(entityType)
+		default:
+			return metaSubFieldSuggestions
+		}
 	}
 
 	// After an identifier or keyword that looks like a field name — suggest operators.
