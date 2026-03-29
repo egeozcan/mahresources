@@ -1030,12 +1030,28 @@ func (tc *translateContext) translateTextSearch(db *gorm.DB, expr *TextSearchExp
 	}
 
 	if tc.isPostgres() {
-		// PostgreSQL: use the search_vector column with plainto_tsquery
-		subquery := fmt.Sprintf(
-			"%s.search_vector @@ plainto_tsquery('english', ?)",
+		// PostgreSQL: check if search_vector column exists (handles -skip-fts)
+		var colExists int
+		tc.db.Raw(
+			"SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = 'search_vector'",
 			tc.tableName,
-		)
-		db = db.Where(subquery, searchTerm)
+		).Scan(&colExists)
+
+		if colExists > 0 {
+			subquery := fmt.Sprintf(
+				"%s.search_vector @@ plainto_tsquery('english', ?)",
+				tc.tableName,
+			)
+			db = db.Where(subquery, searchTerm)
+		} else {
+			// Fallback: ILIKE search on name and description
+			likePattern := "%" + searchTerm + "%"
+			db = db.Where(
+				fmt.Sprintf("(%s.name ILIKE ? OR %s.description ILIKE ?)",
+					tc.tableName, tc.tableName),
+				likePattern, likePattern,
+			)
+		}
 	} else {
 		// SQLite: try FTS5 MATCH, fall back to LIKE if FTS tables don't exist
 		sanitized := sanitizeFTS5(searchTerm)
