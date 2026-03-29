@@ -54,7 +54,7 @@ var noteFields = []FieldDef{
 // groupFields are fields only available on the Group entity.
 var groupFields = []FieldDef{
 	{Name: "category", Type: FieldNumber, Column: "category_id"},
-	{Name: "parent", Type: FieldRelation, Column: "parent_id"},
+	{Name: "parent", Type: FieldRelation, Column: "parent_id"}, // logical name; actual DB column is owner_id (intercepted by translator)
 	{Name: "children", Type: FieldRelation, Column: "children"},
 }
 

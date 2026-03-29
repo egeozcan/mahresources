@@ -983,6 +983,122 @@ func TestTranslateOwnerNegationNull(t *testing.T) {
 	}
 }
 
+// TestTranslateOwnerLike tests owner ~ "pattern" on resources.
+func TestTranslateOwnerLike(t *testing.T) {
+	db := setupTestDB(t)
+	// owner ~ "Vac*" should match resource 1 (owned by Vacation)
+	result := parseAndTranslate(t, `owner ~ "Vac*"`, EntityResource, db)
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) != 1 || resources[0].Name != "sunset.jpg" {
+		t.Fatalf("expected [sunset.jpg], got %v", namesOfResources(resources))
+	}
+}
+
+// TestTranslateOwnerNotLike tests owner !~ "pattern" on resources.
+func TestTranslateOwnerNotLike(t *testing.T) {
+	db := setupTestDB(t)
+	// owner !~ "Work" should return resources 1, 2, 4 (not resource 3 which is owned by Work)
+	// Resources 2 and 4 have no owner (NULL), which should be included in negation
+	result := parseAndTranslate(t, `owner !~ "Work"`, EntityResource, db)
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) != 3 {
+		t.Fatalf("expected 3 resources, got %d: %v", len(resources), namesOfResources(resources))
+	}
+}
+
+// TestTranslateOwnerIsEmpty tests owner IS EMPTY on resources.
+func TestTranslateOwnerIsEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	// Resources 2 and 4 have no owner
+	result := parseAndTranslate(t, `owner IS EMPTY`, EntityResource, db)
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) != 2 {
+		t.Fatalf("expected 2 resources with no owner, got %d: %v", len(resources), namesOfResources(resources))
+	}
+}
+
+// TestTranslateOwnerIsNotEmpty tests owner IS NOT EMPTY on resources.
+func TestTranslateOwnerIsNotEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	// Resources 1 and 3 have owners
+	result := parseAndTranslate(t, `owner IS NOT EMPTY`, EntityResource, db)
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) != 2 {
+		t.Fatalf("expected 2 resources with owner, got %d: %v", len(resources), namesOfResources(resources))
+	}
+}
+
+// TestTranslateOwnerNameIsNull tests owner.name IS NULL on resources.
+func TestTranslateOwnerNameIsNull(t *testing.T) {
+	db := setupTestDB(t)
+	// All owners have names, so owner.name IS NULL should match only resources with no owner
+	result := parseAndTranslate(t, `owner.name IS NULL`, EntityResource, db)
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	// Resources 2 and 4 have no owner (owner_id IS NULL), which means owner.name IS NULL
+	if len(resources) != 2 {
+		t.Fatalf("expected 2 resources, got %d: %v", len(resources), namesOfResources(resources))
+	}
+}
+
+// TestTranslateOwnerChildrenChain tests owner.children.name (forward then reverse FK).
+func TestTranslateOwnerChildrenChain(t *testing.T) {
+	db := setupTestDB(t)
+	// Resource 1 is owned by Vacation (group 1). Vacation has children: Work (2) and Photos (5).
+	// owner.children.name = "Work" should match resource 1
+	result := parseAndTranslate(t, `owner.children.name = "Work"`, EntityResource, db)
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) != 1 || resources[0].Name != "sunset.jpg" {
+		t.Fatalf("expected [sunset.jpg], got %v", namesOfResources(resources))
+	}
+}
+
+// TestTranslateParentParentTags tests parent.parent.tags on groups (multi-level with tags leaf).
+func TestTranslateParentParentTags(t *testing.T) {
+	db := setupTestDB(t)
+	// Sub-Work (4) -> parent Work (2) -> parent Vacation (1, has tag "photo")
+	result := parseAndTranslate(t, `parent.parent.tags = "photo"`, EntityGroup, db)
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(groups) != 1 || groups[0].Name != "Sub-Work" {
+		t.Fatalf("expected [Sub-Work], got %v", namesOfGroups(groups))
+	}
+}
+
+// TestTranslateNoteOwnerNegationNull tests owner != on notes includes NULL owners.
+func TestTranslateNoteOwnerNegationNull(t *testing.T) {
+	db := setupTestDB(t)
+	// Note 1 owned by Vacation, Note 2 owned by Work. No notes without owner in test data.
+	// owner != "Vacation" should return Note 2 (owned by Work)
+	result := parseAndTranslate(t, `owner != "Vacation"`, EntityNote, db)
+	var notes []testNote
+	if err := result.Find(&notes).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(notes) != 1 || notes[0].Name != "Todo list" {
+		t.Fatalf("expected [Todo list], got %v", namesOfNotes(notes))
+	}
+}
+
 func TestTranslateNoteOwner(t *testing.T) {
 	db := setupTestDB(t)
 	result := parseAndTranslate(t, `owner.tags = "document"`, EntityNote, db)
