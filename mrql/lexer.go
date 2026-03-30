@@ -252,6 +252,30 @@ func (l *Lexer) readWord(start int) Token {
 		l.pos = savedPos
 	}
 
+	// Check for GROUP BY (two-word keyword): word is "GROUP" followed by whitespace then "BY"
+	if upper == "GROUP" {
+		savedPos := l.pos
+		tmp := l.pos
+		for tmp < len(l.input) && unicode.IsSpace(rune(l.input[tmp])) {
+			tmp++
+		}
+		if tmp+2 <= len(l.input) && strings.ToUpper(l.input[tmp:tmp+2]) == "BY" {
+			endBy := tmp + 2
+			if endBy >= len(l.input) || !isWordChar(l.input[endBy]) {
+				l.pos = endBy
+				return Token{Type: TokenGroupBy, Value: "GROUP BY", Pos: start, Length: l.pos - start}
+			}
+		}
+		l.pos = savedPos
+	}
+
+	// Aggregate function keyword: word followed by "(" — emit keyword, don't consume "("
+	if l.pos < len(l.input) && l.input[l.pos] == '(' {
+		if aggType, ok := aggregateKeywords[upper]; ok {
+			return Token{Type: aggType, Value: word, Pos: start, Length: l.pos - start}
+		}
+	}
+
 	// Check if it's a function call: word followed by "()"
 	if l.pos+1 < len(l.input) && l.input[l.pos] == '(' && l.input[l.pos+1] == ')' {
 		funcName := upper
@@ -286,6 +310,15 @@ var keywordMap = map[string]TokenType{
 	"OFFSET": TokenOffset,
 	"TEXT":   TokenText,
 	"TYPE":   TokenKwType,
+}
+
+// aggregateKeywords maps uppercase aggregate function names to token types.
+var aggregateKeywords = map[string]TokenType{
+	"COUNT": TokenCount,
+	"SUM":   TokenSum,
+	"AVG":   TokenAvg,
+	"MIN":   TokenMin,
+	"MAX":   TokenMax,
 }
 
 // knownFunctions is the set of recognized built-in function names (uppercase).

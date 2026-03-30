@@ -554,6 +554,65 @@ func TestLexerStringPositionLength(t *testing.T) {
 	}
 }
 
+func TestLexer_GroupBy(t *testing.T) {
+	l := NewLexer("GROUP BY contentType")
+	tok := l.Next()
+	if tok.Type != TokenGroupBy || tok.Value != "GROUP BY" {
+		t.Errorf("expected TokenGroupBy 'GROUP BY', got %v %q", tok.Type, tok.Value)
+	}
+	tok = l.Next()
+	if tok.Type != TokenIdentifier || tok.Value != "contentType" {
+		t.Errorf("expected identifier 'contentType', got %v %q", tok.Type, tok.Value)
+	}
+}
+
+func TestLexer_GroupByCaseInsensitive(t *testing.T) {
+	l := NewLexer("group by name")
+	tok := l.Next()
+	if tok.Type != TokenGroupBy {
+		t.Errorf("expected TokenGroupBy, got %v %q", tok.Type, tok.Value)
+	}
+}
+
+func TestLexer_AggregateTokens(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected TokenType
+		value    string
+	}{
+		{"COUNT(", TokenCount, "COUNT"},
+		{"SUM(", TokenSum, "SUM"},
+		{"AVG(", TokenAvg, "AVG"},
+		{"MIN(", TokenMin, "MIN"},
+		{"MAX(", TokenMax, "MAX"},
+		{"count(", TokenCount, "count"},
+		{"Sum(", TokenSum, "Sum"},
+	}
+	for _, tt := range tests {
+		l := NewLexer(tt.input)
+		tok := l.Next()
+		if tok.Type != tt.expected {
+			t.Errorf("input %q: expected %v, got %v %q", tt.input, tt.expected, tok.Type, tok.Value)
+		}
+	}
+}
+
+func TestLexer_AggregateWithoutParenIsIdentifier(t *testing.T) {
+	l := NewLexer("count = 5")
+	tok := l.Next()
+	if tok.Type != TokenIdentifier {
+		t.Errorf("expected TokenIdentifier for bare 'count', got %v", tok.Type)
+	}
+}
+
+func TestLexer_GroupWithoutByIsIdentifier(t *testing.T) {
+	l := NewLexer("group = \"Photos\"")
+	tok := l.Next()
+	if tok.Type != TokenIdentifier {
+		t.Errorf("expected TokenIdentifier for bare 'group', got %v", tok.Type)
+	}
+}
+
 // TestLexerDotSeparated tests dot-separated identifiers (e.g. relation paths).
 func TestLexerDotSeparated(t *testing.T) {
 	input := "group.name"

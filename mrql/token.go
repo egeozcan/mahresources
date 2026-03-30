@@ -24,6 +24,12 @@ const (
 	TokenDesc    // DESC
 	TokenLimit   // LIMIT
 	TokenOffset  // OFFSET
+	TokenGroupBy // GROUP BY (two words, merged by lexer)
+	TokenCount   // COUNT (followed by '(')
+	TokenSum     // SUM (followed by '(')
+	TokenAvg     // AVG (followed by '(')
+	TokenMin     // MIN (followed by '(')
+	TokenMax     // MAX (followed by '(')
 	TokenText    // TEXT (for TEXT ~)
 	TokenKwType  // TYPE (also usable as field name via context)
 
