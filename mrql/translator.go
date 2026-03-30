@@ -1524,6 +1524,16 @@ func (tc *translateContext) groupByRelationJoins(db *gorm.DB, fields []*FieldExp
 			db = db.Joins("LEFT JOIN groups _gb_g ON _gb_g.id = _gb_grp_jt.group_id")
 			// Group by junction group_id (unique per association) and display name.
 			exprMap[fieldName] = groupByRelExpr{selectExpr: "_gb_g.name", groupExpr: "_gb_grp_jt.group_id"}
+
+		case "parent_id":
+			// parent on groups — logical Column is "parent_id", actual DB column is owner_id
+			db = db.Joins(fmt.Sprintf("LEFT JOIN groups _gb_parent ON _gb_parent.id = %s.owner_id", tc.tableName))
+			exprMap[fieldName] = groupByRelExpr{selectExpr: "_gb_parent.name", groupExpr: tc.tableName + ".owner_id"}
+
+		case "children":
+			// children on groups — reverse FK: child.owner_id = parent.id
+			db = db.Joins(fmt.Sprintf("LEFT JOIN groups _gb_child ON _gb_child.owner_id = %s.id", tc.tableName))
+			exprMap[fieldName] = groupByRelExpr{selectExpr: "_gb_child.name", groupExpr: "_gb_child.id"}
 		}
 	}
 	return db, exprMap

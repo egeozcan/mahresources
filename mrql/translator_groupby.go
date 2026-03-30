@@ -72,22 +72,15 @@ func TranslateGroupByKeys(q *Query, db *gorm.DB) ([]map[string]any, error) {
 		result = result.Group(gc)
 	}
 
-	// ORDER BY for keys
-	for _, ob := range q.OrderBy {
-		direction := "ASC"
-		if !ob.Ascending {
-			direction = "DESC"
-		}
-		result = result.Order(`"` + ob.Field.Name() + `" ` + direction)
-	}
+	// ORDER BY is NOT applied to the keys query — it applies to items within
+	// each bucket (handled by TranslateGroupByBucket). Applying ORDER BY here
+	// would fail on PostgreSQL when the ORDER BY field is not in the GROUP BY.
 
-	// Apply LIMIT (capped at maxBuckets) and OFFSET for pagination
-	limit := maxBuckets
-	if q.Limit >= 0 && q.Limit < maxBuckets {
-		limit = q.Limit
-	}
-	result = result.Limit(limit)
+	// LIMIT is per-bucket (applied in TranslateGroupByBucket), not a cap on
+	// the number of keys. Only cap keys at maxBuckets to prevent runaway queries.
+	result = result.Limit(maxBuckets)
 
+	// OFFSET applies to key pagination (for paginating through bucket pages)
 	if q.Offset >= 0 {
 		result = result.Offset(q.Offset)
 	}

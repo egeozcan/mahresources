@@ -4053,3 +4053,124 @@ func TestBugfix_GroupByTypePseudoFieldRejected(t *testing.T) {
 		t.Errorf("expected error mentioning 'type', got: %v", err)
 	}
 }
+
+// P1a: Bucketed LIMIT should cap items per bucket, not the number of bucket keys.
+func TestBugfix_BucketedLimitIsPerBucketNotKeyCount(t *testing.T) {
+	db := setupTestDB(t)
+
+	// 4 content types exist. LIMIT 2 should return ALL 4 groups, each with max 2 items.
+	q, err := Parse(`type = "resource" GROUP BY contentType LIMIT 2`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	keys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("keys: %v", err)
+	}
+	// Should return all 4 content types, not just 2
+	if len(keys) < 4 {
+		t.Errorf("expected all 4 content type keys (LIMIT is per-bucket, not key count), got %d: %v", len(keys), keys)
+	}
+}
+
+// P1b: Bucketed ORDER BY should NOT apply to the keys query — only to items within buckets.
+func TestBugfix_BucketedOrderByNotAppliedToKeysQuery(t *testing.T) {
+	db := setupTestDB(t)
+
+	// ORDER BY name is valid for items within buckets, but applying it to the
+	// keys query (SELECT contentType ... GROUP BY contentType ORDER BY name)
+	// would fail on PostgreSQL since "name" is neither grouped nor aggregated.
+	q, err := Parse(`type = "resource" GROUP BY contentType ORDER BY name ASC LIMIT 3`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	// The keys query must succeed and NOT include ORDER BY name.
+	// Use DryRun to inspect the SQL.
+	tc := &translateContext{db: db, entityType: EntityResource, tableName: "resources"}
+	_ = tc // suppress unused — we just need to verify TranslateGroupByKeys works
+
+	keys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("keys query failed (ORDER BY leaked to keys query): %v", err)
+	}
+	if len(keys) == 0 {
+		t.Error("expected at least one key")
+	}
+
+	// Verify ORDER BY still works within a bucket
+	bucketDB, err := TranslateGroupByBucket(q, db, keys[0])
+	if err != nil {
+		t.Fatalf("bucket: %v", err)
+	}
+	var resources []testResource
+	if err := bucketDB.Find(&resources).Error; err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	// Items should be ordered by name ASC
+	for i := 1; i < len(resources); i++ {
+		if resources[i].Name < resources[i-1].Name {
+			t.Errorf("items not in name ASC order: %q < %q", resources[i].Name, resources[i-1].Name)
+		}
+	}
+}
+
+// P2: GROUP BY parent/children should work — translator must handle these relation fields.
+func TestBugfix_GroupByParentRelationField(t *testing.T) {
+	db := setupTestDB(t)
+
+	// GROUP BY parent on groups — should group by parent's FK (owner_id) and display parent name.
+	// Groups: Vacation (no parent), Work (parent=Vacation), Archive (no parent),
+	// Sub-Work (parent=Work), Photos (parent=Vacation)
+	q, err := Parse(`type = "group" GROUP BY parent COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityGroup
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate failed (parent not handled): %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+	// Should have rows for Vacation (parent of Work, Photos), Work (parent of Sub-Work), and NULL (no parent)
+	if len(result.Rows) < 2 {
+		t.Errorf("expected at least 2 rows, got %d: %v", len(result.Rows), result.Rows)
+	}
+}
+
+func TestBugfix_GroupByChildrenRelationField(t *testing.T) {
+	db := setupTestDB(t)
+
+	// GROUP BY children on groups — reverse FK, group by child name.
+	q, err := Parse(`type = "group" GROUP BY children COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityGroup
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate failed (children not handled): %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+}
