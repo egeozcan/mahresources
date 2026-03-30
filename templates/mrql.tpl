@@ -114,7 +114,7 @@
                 <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = resource GROUP BY contentType COUNT() SUM(fileSize)</pre>
                 <p class="text-xs mt-1"><strong>Bucketed</strong> (no functions) &mdash; returns entities organized into groups. LIMIT applies per bucket.</p>
                 <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = resource GROUP BY contentType LIMIT 5</pre>
-                <p class="text-xs mt-1">Group by <code class="bg-stone-200 px-1 rounded">meta.*</code>, <code class="bg-stone-200 px-1 rounded">tags</code>, <code class="bg-stone-200 px-1 rounded">owner</code>, or any scalar field. Traversal paths not supported.</p>
+                <p class="text-xs mt-1">Group by any scalar field, <code class="bg-stone-200 px-1 rounded">meta.*</code>, <code class="bg-stone-200 px-1 rounded">tags</code>, <code class="bg-stone-200 px-1 rounded">owner</code>, <code class="bg-stone-200 px-1 rounded">parent</code>, or traversal paths like <code class="bg-stone-200 px-1 rounded">owner.name</code>, <code class="bg-stone-200 px-1 rounded">owner.meta.key</code>.</p>
             </div>
             <div>
                 <h3 class="font-semibold text-stone-700">Examples</h3>

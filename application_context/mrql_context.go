@@ -194,7 +194,14 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 			break
 		}
 
-		bucketDB, err := mrql.TranslateGroupByBucket(parsed, ctx.db.WithContext(reqCtx), key)
+		// Reduce per-bucket limit to remaining budget so we never exceed the cap
+		remaining := maxBucketedTotalItems - totalItems
+		bucketParsed := *parsed
+		if bucketParsed.Limit < 0 || bucketParsed.Limit > remaining {
+			bucketParsed.Limit = remaining
+		}
+
+		bucketDB, err := mrql.TranslateGroupByBucket(&bucketParsed, ctx.db.WithContext(reqCtx), key)
 		if err != nil {
 			return nil, err
 		}

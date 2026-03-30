@@ -4262,3 +4262,47 @@ func TestBugfix_BucketedTotalItemsCapped(t *testing.T) {
 		}
 	}
 }
+
+// P1: Bucketed keys query must have deterministic ordering for stable pagination.
+func TestBugfix_BucketedKeysHaveDeterministicOrder(t *testing.T) {
+	db := setupTestDB(t)
+
+	q, err := Parse(`type = "resource" GROUP BY contentType`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	// Run twice — results should be in the same order
+	keys1, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("keys1: %v", err)
+	}
+	keys2, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("keys2: %v", err)
+	}
+
+	if len(keys1) != len(keys2) {
+		t.Fatalf("key counts differ: %d vs %d", len(keys1), len(keys2))
+	}
+	for i := range keys1 {
+		ct1 := groupByVal(keys1[i]["contentType"])
+		ct2 := groupByVal(keys2[i]["contentType"])
+		if ct1 != ct2 {
+			t.Errorf("key order unstable at index %d: %q vs %q", i, ct1, ct2)
+		}
+	}
+
+	// Verify keys are actually sorted
+	for i := 1; i < len(keys1); i++ {
+		prev := groupByVal(keys1[i-1]["contentType"])
+		curr := groupByVal(keys1[i]["contentType"])
+		if curr < prev {
+			t.Errorf("keys not sorted: %q < %q at index %d", curr, prev, i)
+		}
+	}
+}
