@@ -4569,3 +4569,98 @@ func TestBugfix_OrderByAcceptsDeduplicatedAlias(t *testing.T) {
 		})
 	}
 }
+
+// P1: ORDER BY on a dropped alias must resolve to the surviving alias in SQL.
+func TestBugfix_OrderByDroppedAliasTranslatesCorrectly(t *testing.T) {
+	db := setupTestDB(t)
+
+	// GROUP BY groups, group → dedups to "groups". ORDER BY group should
+	// produce ORDER BY "groups" in SQL, not ORDER BY "group" (which doesn't exist).
+	q, err := Parse(`type = "resource" GROUP BY groups, group COUNT() ORDER BY group ASC`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+	if result.Rows == nil {
+		t.Error("expected non-nil rows")
+	}
+
+	// Verify the SQL uses the surviving alias "groups", not the dropped "group"
+	// We can check by looking at the ORDER BY field name resolution.
+	// The query's OrderBy[0].Field.Name() is "group", but after alias resolution
+	// the SELECT alias is "groups". Verify the field name in AllFieldNames.
+	if q.GroupBy.AllFieldNames == nil {
+		t.Fatal("expected AllFieldNames to be set after validation")
+	}
+	if !q.GroupBy.AllFieldNames["group"] {
+		t.Error("expected 'group' in AllFieldNames")
+	}
+	if !q.GroupBy.AllFieldNames["groups"] {
+		t.Error("expected 'groups' in AllFieldNames")
+	}
+	// The surviving field should be "groups" (first occurrence)
+	if len(q.GroupBy.Fields) != 1 || q.GroupBy.Fields[0].Name() != "groups" {
+		t.Errorf("expected deduped field 'groups', got %v", q.GroupBy.Fields)
+	}
+}
+
+// Also test the symmetric case: GROUP BY group, groups ORDER BY groups
+func TestBugfix_OrderBySurvivorAliasAlsoWorks(t *testing.T) {
+	db := setupTestDB(t)
+
+	q, err := Parse(`type = "resource" GROUP BY group, groups COUNT() ORDER BY groups ASC`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Rows == nil {
+		t.Error("expected non-nil rows")
+	}
+}
+
+// P2: SUM/AVG on meta with mixed-type data should not crash on PG.
+func TestBugfix_MetaAggregateSafeNumericCast(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Seed a note with a non-numeric meta value for the "count" key
+	// (note 1 already has priority="high" which is non-numeric)
+	// note 2 has count=7 (numeric). Insert a third with count="oops".
+	db.Exec("INSERT INTO notes (id, name, meta, created_at, updated_at, owner_id) VALUES (99, 'bad-meta', '{\"count\":\"oops\"}', datetime('now'), datetime('now'), 1)")
+
+	q, err := Parse(`type = "note" GROUP BY owner SUM(meta.count)`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityNote
+
+	// This should NOT crash — non-numeric values should be treated as NULL
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate failed (unsafe numeric cast): %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+}

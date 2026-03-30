@@ -1406,9 +1406,17 @@ func (tc *translateContext) translateAggregatedGroupBy(db *gorm.DB, q *Query) (*
 		db = db.Group(gc)
 	}
 
+	// Build alias resolution map: any original field name → surviving SELECT alias.
+	// After deduplication, "group" and "groups" both resolve to whichever survived
+	// (e.g., "groups"). ORDER BY must use the surviving alias, not the original name.
+	aliasMap := tc.buildGroupByAliasMap(q)
+
 	// ORDER BY
 	for _, ob := range q.OrderBy {
 		obName := ob.Field.Name()
+		if resolved, ok := aliasMap[obName]; ok {
+			obName = resolved
+		}
 		direction := "ASC"
 		if !ob.Ascending {
 			direction = "DESC"
@@ -1433,6 +1441,50 @@ func (tc *translateContext) translateAggregatedGroupBy(db *gorm.DB, q *Query) (*
 		Mode: "aggregated",
 		Rows: rows,
 	}, nil
+}
+
+// buildGroupByAliasMap creates a mapping from all original GROUP BY field names
+// (including dropped aliases) to the surviving SELECT alias name. This ensures
+// ORDER BY on a dropped alias (e.g., "group" when "groups" survived) resolves
+// to the correct SQL alias.
+func (tc *translateContext) buildGroupByAliasMap(q *Query) map[string]string {
+	if q.GroupBy == nil {
+		return nil
+	}
+
+	// Build canonical column → surviving field name
+	canonToSurvivor := make(map[string]string)
+	for _, f := range q.GroupBy.Fields {
+		col := f.Name()
+		if len(f.Parts) == 1 {
+			if fd, ok := LookupField(tc.entityType, f.Parts[0].Value); ok {
+				col = fd.Column
+			}
+		}
+		canonToSurvivor[col] = f.Name()
+	}
+
+	// Map every original name to the surviving alias
+	aliasMap := make(map[string]string)
+	for name := range q.GroupBy.AllFieldNames {
+		col := name
+		if fd, ok := LookupField(tc.entityType, name); ok {
+			col = fd.Column
+		}
+		if survivor, ok := canonToSurvivor[col]; ok {
+			aliasMap[name] = survivor
+		}
+	}
+	// Also map aggregate output keys to themselves
+	for _, agg := range q.GroupBy.Aggregates {
+		if agg.Field == nil {
+			aliasMap["count"] = "count"
+		} else {
+			key := strings.ToLower(agg.Name) + "_" + agg.Field.Name()
+			aliasMap[key] = key
+		}
+	}
+	return aliasMap
 }
 
 // groupByFieldExprs returns the SELECT expression and GROUP BY expression for a field.
@@ -1633,7 +1685,12 @@ func (tc *translateContext) resolveAggregateColumn(fieldName string, numericCast
 		key := strings.TrimPrefix(fieldName, "meta.")
 		if tc.isPostgres() {
 			if numericCast {
-				return fmt.Sprintf("(%s.meta->>'%s')::numeric", tc.tableName, key)
+				// Safe numeric cast: returns NULL for non-numeric values instead of crashing.
+				// Uses the same guarded CASE pattern as translateMetaComparison.
+				return fmt.Sprintf(
+					"CASE WHEN %s.meta->>'%s' ~ '^-{0,1}[0-9]+(\\.[0-9]+){0,1}$' THEN (%s.meta->>'%s')::numeric ELSE NULL END",
+					tc.tableName, key, tc.tableName, key,
+				)
 			}
 			return fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)
 		}
