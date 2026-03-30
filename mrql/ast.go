@@ -133,8 +133,9 @@ type AggregateFunc struct {
 
 // GroupByClause holds GROUP BY fields and optional aggregate functions.
 type GroupByClause struct {
-	Fields     []*FieldExpr    // the fields to group by
-	Aggregates []AggregateFunc // aggregate functions (empty = bucketed mode)
+	Fields        []*FieldExpr    // the fields to group by (deduplicated by validator)
+	Aggregates    []AggregateFunc // aggregate functions (empty = bucketed mode)
+	AllFieldNames map[string]bool // all original field names including dropped aliases (set by validator)
 }
 
 // OrderByClause is a single ORDER BY column+direction.

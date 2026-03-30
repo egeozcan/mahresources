@@ -636,7 +636,9 @@ func validateGroupBy(gb *GroupByClause, entityType EntityType, orderBy []OrderBy
 	// Validate, normalize, and deduplicate GROUP BY fields.
 	// Aliases like "group" and "groups" resolve to the same column —
 	// keep the first occurrence and silently drop duplicates.
+	// All original names (including dropped aliases) remain valid for ORDER BY.
 	seenColumns := make(map[string]bool)
+	allFieldNames := make(map[string]bool) // all names seen, including aliases
 	deduped := make([]*FieldExpr, 0, len(gb.Fields))
 	for _, f := range gb.Fields {
 		// Reject the "type" pseudo-field — it's a filter, not a real column.
@@ -653,6 +655,8 @@ func validateGroupBy(gb *GroupByClause, entityType EntityType, orderBy []OrderBy
 			return err
 		}
 
+		allFieldNames[f.Name()] = true
+
 		// Resolve to canonical column for deduplication
 		resolvedCol := f.Name()
 		if len(f.Parts) == 1 {
@@ -667,6 +671,7 @@ func validateGroupBy(gb *GroupByClause, entityType EntityType, orderBy []OrderBy
 		deduped = append(deduped, f)
 	}
 	gb.Fields = deduped
+	gb.AllFieldNames = allFieldNames
 
 	// Validate aggregate functions
 	for _, agg := range gb.Aggregates {
@@ -734,6 +739,11 @@ func validateGroupBy(gb *GroupByClause, entityType EntityType, orderBy []OrderBy
 // aggregated GROUP BY query: group field names + aggregate output keys.
 func buildAggregateOrderKeys(gb *GroupByClause) map[string]bool {
 	keys := make(map[string]bool)
+	// Accept any original field name (including dropped aliases) for ORDER BY
+	for name := range gb.AllFieldNames {
+		keys[name] = true
+	}
+	// Also add deduplicated field names (in case AllFieldNames is not set)
 	for _, f := range gb.Fields {
 		keys[f.Name()] = true
 	}

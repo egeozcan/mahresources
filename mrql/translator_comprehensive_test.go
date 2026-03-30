@@ -4504,3 +4504,68 @@ func TestBugfix_DuplicateGroupByFieldsNormalized(t *testing.T) {
 		})
 	}
 }
+
+// P1: Backward-compat — limit+page without buckets param should still paginate groups.
+func TestBugfix_LegacyLimitPageBackwardCompat(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Simulate what the API handler does: limit=1, page=2, no buckets param.
+	// Should set BucketLimit=1, Offset=1 for backward compat.
+	q, err := Parse(`type = "resource" GROUP BY contentType`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+	q.Limit = 1       // items per bucket
+	q.BucketLimit = 1 // backward compat: limit doubles as bucket page size
+	q.Offset = 1      // page 2 → skip 1 bucket
+
+	keys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("keys: %v", err)
+	}
+	// Should return at most 2 keys (1 + 1 overflow detection)
+	if len(keys) > 2 {
+		t.Errorf("expected at most 2 keys (BucketLimit=1 + overflow), got %d", len(keys))
+	}
+	// Should have skipped the first bucket
+	if len(keys) > 0 {
+		allQ := *q
+		allQ.Offset = -1
+		allQ.BucketLimit = -1
+		allKeys, _ := TranslateGroupByKeys(&allQ, db)
+		if len(allKeys) > 1 {
+			first := groupByVal(allKeys[0]["contentType"])
+			paged := groupByVal(keys[0]["contentType"])
+			if first == paged {
+				t.Errorf("page 2 returned same first key as page 1 (%s)", first)
+			}
+		}
+	}
+}
+
+// P2: ORDER BY should accept any alias that was in the original GROUP BY, even if deduped.
+func TestBugfix_OrderByAcceptsDeduplicatedAlias(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"ORDER BY dropped alias", `type = "resource" GROUP BY groups, group COUNT() ORDER BY group ASC`},
+		{"ORDER BY kept alias", `type = "resource" GROUP BY groups, group COUNT() ORDER BY groups ASC`},
+		{"ORDER BY second spelling", `type = "resource" GROUP BY group, groups COUNT() ORDER BY groups ASC`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := Parse(tt.query)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if err := Validate(q); err != nil {
+				t.Errorf("expected valid (ORDER BY on deduped alias), got: %v", err)
+			}
+		})
+	}
+}
