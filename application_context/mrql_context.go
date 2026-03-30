@@ -27,6 +27,21 @@ type MRQLResult struct {
 	Warnings   []string          `json:"warnings,omitempty"`
 }
 
+// MRQLGroupedResult holds the results of a GROUP BY MRQL query.
+type MRQLGroupedResult struct {
+	EntityType string           `json:"entityType"`
+	Mode       string           `json:"mode"` // "aggregated" or "bucketed"
+	Rows       []map[string]any `json:"rows,omitempty"`
+	Groups     []MRQLBucket     `json:"groups,omitempty"`
+	Warnings   []string         `json:"warnings,omitempty"`
+}
+
+// MRQLBucket is a single group of entities in bucketed mode.
+type MRQLBucket struct {
+	Key   map[string]any `json:"key"`
+	Items any            `json:"items"` // []models.Resource, []models.Note, or []models.Group
+}
+
 // ExecuteMRQL parses, validates, translates, and executes an MRQL query string.
 // For single-entity queries it returns typed results; for cross-entity (no type
 // specified) it fans out to resources, notes, and groups, merging the results.
@@ -118,6 +133,89 @@ func (ctx *MahresourcesContext) executeSingleEntity(reqCtx context.Context, pars
 	}
 
 	return result, nil
+}
+
+// ExecuteMRQLGrouped executes a GROUP BY MRQL query and returns grouped results.
+// The parsed query must have GroupBy set and EntityType populated.
+func (ctx *MahresourcesContext) ExecuteMRQLGrouped(reqCtx context.Context, parsed *mrql.Query) (*MRQLGroupedResult, error) {
+	queryCtx, cancel := context.WithTimeout(reqCtx, MRQLQueryTimeout)
+	defer cancel()
+
+	if len(parsed.GroupBy.Aggregates) > 0 {
+		return ctx.executeAggregatedQuery(queryCtx, parsed)
+	}
+	return ctx.executeBucketedQuery(queryCtx, parsed)
+}
+
+func (ctx *MahresourcesContext) executeAggregatedQuery(reqCtx context.Context, parsed *mrql.Query) (*MRQLGroupedResult, error) {
+	db := ctx.db.WithContext(reqCtx)
+	gbResult, err := mrql.TranslateGroupBy(parsed, db)
+	if err != nil {
+		return nil, err
+	}
+
+	// Ensure Rows is never nil for consistent JSON
+	if gbResult.Rows == nil {
+		gbResult.Rows = []map[string]any{}
+	}
+
+	return &MRQLGroupedResult{
+		EntityType: parsed.EntityType.String(),
+		Mode:       gbResult.Mode,
+		Rows:       gbResult.Rows,
+	}, nil
+}
+
+func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, parsed *mrql.Query) (*MRQLGroupedResult, error) {
+	db := ctx.db.WithContext(reqCtx)
+
+	keys, err := mrql.TranslateGroupByKeys(parsed, db)
+	if err != nil {
+		return nil, err
+	}
+
+	var buckets []MRQLBucket
+	for _, key := range keys {
+		bucketDB, err := mrql.TranslateGroupByBucket(parsed, ctx.db.WithContext(reqCtx), key)
+		if err != nil {
+			return nil, err
+		}
+
+		bucket := MRQLBucket{Key: key}
+
+		switch parsed.EntityType {
+		case mrql.EntityResource:
+			var resources []models.Resource
+			if err := bucketDB.Find(&resources).Error; err != nil {
+				return nil, err
+			}
+			bucket.Items = resources
+		case mrql.EntityNote:
+			var notes []models.Note
+			if err := bucketDB.Find(&notes).Error; err != nil {
+				return nil, err
+			}
+			bucket.Items = notes
+		case mrql.EntityGroup:
+			var groups []models.Group
+			if err := bucketDB.Find(&groups).Error; err != nil {
+				return nil, err
+			}
+			bucket.Items = groups
+		}
+
+		buckets = append(buckets, bucket)
+	}
+
+	if buckets == nil {
+		buckets = []MRQLBucket{}
+	}
+
+	return &MRQLGroupedResult{
+		EntityType: parsed.EntityType.String(),
+		Mode:       "bucketed",
+		Groups:     buckets,
+	}, nil
 }
 
 // crossEntityItem wraps any entity with its common sortable fields for global ordering.
