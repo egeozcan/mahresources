@@ -217,7 +217,8 @@
                 <div class="flex items-center justify-between">
                     <h2 class="text-base font-semibold font-mono text-stone-800">
                         Results
-                        <span class="text-sm font-normal text-stone-500" x-text="'(' + totalCount + ' items)'"></span>
+                        <span class="text-sm font-normal text-stone-500"
+                              x-text="result.mode === 'aggregated' ? '(' + totalCount + ' rows)' : result.mode === 'bucketed' ? '(' + (result.groups?.length || 0) + ' groups, ' + totalCount + ' items)' : '(' + totalCount + ' items)'"></span>
                     </h2>
                     <span class="text-xs text-stone-500 font-mono"
                           x-text="'Entity: ' + (['resource','note','group'].includes(result.entityType) ? result.entityType : 'all types')"></span>
@@ -239,8 +240,72 @@
                     </div>
                 </template>
 
+                {# Aggregated GROUP BY results — render as table #}
+                <template x-if="result.mode === 'aggregated' && result.rows && result.rows.length > 0">
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full text-sm font-mono border border-stone-200 rounded-md">
+                            <thead class="bg-stone-100">
+                                <tr>
+                                    <template x-for="key in Object.keys(result.rows[0])" :key="key">
+                                        <th class="px-3 py-2 text-left text-xs font-semibold text-stone-600 uppercase tracking-wider border-b border-stone-200" x-text="key"></th>
+                                    </template>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-stone-100">
+                                <template x-for="(row, idx) in result.rows" :key="idx">
+                                    <tr class="hover:bg-stone-50">
+                                        <template x-for="key in Object.keys(result.rows[0])" :key="key">
+                                            <td class="px-3 py-2 text-stone-800 whitespace-nowrap" x-text="row[key] ?? '(null)'"></td>
+                                        </template>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </template>
+
+                {# Bucketed GROUP BY results — render as grouped cards #}
+                <template x-if="result.mode === 'bucketed' && result.groups && result.groups.length > 0">
+                    <div class="space-y-4">
+                        <template x-for="(bucket, bIdx) in result.groups" :key="bIdx">
+                            <div class="border border-stone-200 rounded-md overflow-hidden">
+                                <div class="bg-stone-100 px-3 py-2 flex items-center gap-2">
+                                    <template x-for="(val, key) in bucket.key" :key="key">
+                                        <span class="inline-flex items-center text-xs font-mono">
+                                            <span class="text-stone-500" x-text="key + ': '"></span>
+                                            <span class="font-semibold text-stone-700" x-text="val ?? '(null)'"></span>
+                                        </span>
+                                    </template>
+                                    <span class="ml-auto text-xs text-stone-400 font-mono" x-text="(bucket.items?.length || 0) + ' items'"></span>
+                                </div>
+                                <div class="p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                    <template x-for="entity in (bucket.items || [])" :key="entity.ID">
+                                        <a :href="'/' + result.entityType + '?id=' + entity.ID"
+                                           class="block p-2 bg-white border border-stone-100 rounded hover:border-amber-400 hover:shadow-sm transition-colors">
+                                            <div class="flex items-start gap-2">
+                                                <template x-if="entity.ContentType && entity.ContentType.startsWith('image/')">
+                                                    <img :src="'/v1/resource/preview?id=' + entity.ID + '&width=64&height=64'" :alt="entity.Name" class="w-8 h-8 rounded object-cover flex-shrink-0" loading="lazy" />
+                                                </template>
+                                                <div class="min-w-0 flex-1">
+                                                    <p class="text-sm font-medium text-stone-900 truncate" x-text="entity.Name"></p>
+                                                    <p class="text-xs text-stone-500 mt-0.5" x-text="entity.ContentType || entity.Description || ''"></p>
+                                                </div>
+                                            </div>
+                                        </a>
+                                    </template>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+
+                {# Aggregated/bucketed empty state #}
+                <template x-if="(result.mode === 'aggregated' && (!result.rows || result.rows.length === 0)) || (result.mode === 'bucketed' && (!result.groups || result.groups.length === 0))">
+                    <p class="text-sm text-stone-500 font-mono py-4 text-center">No results found.</p>
+                </template>
+
                 {# Resource results #}
-                <template x-if="result.resources && result.resources.length > 0">
+                <template x-if="!result.mode && result.resources && result.resources.length > 0">
                     <div>
                         <h3 class="text-sm font-semibold font-mono text-amber-800 mb-2" x-show="result.entityType !== 'resource' && result.entityType !== 'note' && result.entityType !== 'group'">Resources</h3>
                         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -263,7 +328,7 @@
                 </template>
 
                 {# Note results #}
-                <template x-if="result.notes && result.notes.length > 0">
+                <template x-if="!result.mode && result.notes && result.notes.length > 0">
                     <div>
                         <h3 class="text-sm font-semibold font-mono text-amber-800 mb-2" x-show="result.entityType !== 'resource' && result.entityType !== 'note' && result.entityType !== 'group'">Notes</h3>
                         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -281,7 +346,7 @@
                 </template>
 
                 {# Group results #}
-                <template x-if="result.groups && result.groups.length > 0">
+                <template x-if="!result.mode && result.groups && result.groups.length > 0">
                     <div>
                         <h3 class="text-sm font-semibold font-mono text-amber-800 mb-2" x-show="result.entityType !== 'resource' && result.entityType !== 'note' && result.entityType !== 'group'">Groups</h3>
                         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -298,8 +363,8 @@
                     </div>
                 </template>
 
-                {# Empty state #}
-                <template x-if="totalCount === 0">
+                {# Empty state (non-grouped) #}
+                <template x-if="!result.mode && totalCount === 0">
                     <p class="text-sm text-stone-500 font-mono py-4 text-center">No results found.</p>
                 </template>
             </div>

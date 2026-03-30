@@ -29,6 +29,10 @@ export function mrqlEditor() {
 
     get totalCount() {
       if (!this.result) return 0;
+      if (this.result.mode === 'aggregated') return this.result.rows?.length || 0;
+      if (this.result.mode === 'bucketed') {
+        return (this.result.groups || []).reduce((sum, g) => sum + (g.items?.length || 0), 0);
+      }
       return (this.result.resources?.length || 0)
         + (this.result.notes?.length || 0)
         + (this.result.groups?.length || 0);
