@@ -296,6 +296,110 @@ func TestCompleterOwnerParentDot(t *testing.T) {
 	}
 }
 
+// TestComplete_SuggestsGroupByAfterValue verifies that GROUP BY is suggested after a value.
+func TestComplete_SuggestsGroupByAfterValue(t *testing.T) {
+	suggestions := Complete(`type = "resource" `, 19)
+	if !hasSuggestion(suggestions, "GROUP BY") {
+		t.Errorf("expected GROUP BY in suggestions after value, got: %v", suggestions)
+	}
+}
+
+// TestComplete_SuggestsFieldsAfterGroupBy verifies that fields are suggested after GROUP BY.
+func TestComplete_SuggestsFieldsAfterGroupBy(t *testing.T) {
+	suggestions := Complete(`type = "resource" GROUP BY `, 27)
+	if !hasSuggestion(suggestions, "contentType") {
+		t.Errorf("expected field suggestions after GROUP BY, got: %v", suggestions)
+	}
+	if !hasSuggestion(suggestions, "name") {
+		t.Errorf("expected common field 'name' after GROUP BY, got: %v", suggestions)
+	}
+}
+
+// TestComplete_SuggestsAggregatesAfterGroupByField verifies that aggregate functions
+// are suggested after a GROUP BY field name.
+func TestComplete_SuggestsAggregatesAfterGroupByField(t *testing.T) {
+	suggestions := Complete(`type = "resource" GROUP BY contentType `, 39)
+	foundCount := false
+	foundSum := false
+	foundOrderBy := false
+	foundLimit := false
+	for _, s := range suggestions {
+		switch s.Value {
+		case "COUNT()":
+			foundCount = true
+		case "SUM()":
+			foundSum = true
+		case "ORDER BY":
+			foundOrderBy = true
+		case "LIMIT":
+			foundLimit = true
+		}
+	}
+	if !foundCount {
+		t.Errorf("expected COUNT() in suggestions after GROUP BY field, got: %v", suggestions)
+	}
+	if !foundSum {
+		t.Errorf("expected SUM() in suggestions after GROUP BY field, got: %v", suggestions)
+	}
+	if !foundOrderBy {
+		t.Errorf("expected ORDER BY in suggestions after GROUP BY field, got: %v", suggestions)
+	}
+	if !foundLimit {
+		t.Errorf("expected LIMIT in suggestions after GROUP BY field, got: %v", suggestions)
+	}
+}
+
+// TestComplete_SuggestsAggregatesAfterAggregateParen verifies that after an
+// aggregate function's closing paren in GROUP BY context, more aggregates,
+// ORDER BY and LIMIT are suggested.
+func TestComplete_SuggestsAggregatesAfterAggregateParen(t *testing.T) {
+	suggestions := Complete(`type = "resource" GROUP BY contentType COUNT() `, 48)
+	foundCount := false
+	foundOrderBy := false
+	foundLimit := false
+	for _, s := range suggestions {
+		switch s.Value {
+		case "COUNT()":
+			foundCount = true
+		case "ORDER BY":
+			foundOrderBy = true
+		case "LIMIT":
+			foundLimit = true
+		}
+	}
+	if !foundCount {
+		t.Errorf("expected COUNT() in post-aggregate suggestions, got: %v", suggestions)
+	}
+	if !foundOrderBy {
+		t.Errorf("expected ORDER BY in post-aggregate suggestions, got: %v", suggestions)
+	}
+	if !foundLimit {
+		t.Errorf("expected LIMIT in post-aggregate suggestions, got: %v", suggestions)
+	}
+}
+
+// TestComplete_SuggestsAllAggregatesAfterGroupByField verifies all five aggregate
+// functions are suggested.
+func TestComplete_SuggestsAllAggregatesAfterGroupByField(t *testing.T) {
+	suggestions := Complete(`type = "note" GROUP BY noteType `, 32)
+	for _, want := range []string{"COUNT()", "SUM()", "AVG()", "MIN()", "MAX()"} {
+		if !hasSuggestion(suggestions, want) {
+			t.Errorf("expected aggregate %q in suggestions, got: %v", want, suggestions)
+		}
+	}
+}
+
+// TestComplete_GroupByContextNotLeakedToNonGroupBy verifies that aggregate
+// suggestions do not appear in non-GROUP BY contexts.
+func TestComplete_GroupByContextNotLeakedToNonGroupBy(t *testing.T) {
+	suggestions := Complete(`type = "resource" `, 19)
+	for _, s := range suggestions {
+		if s.Value == "COUNT()" || s.Value == "SUM()" || s.Value == "AVG()" {
+			t.Errorf("aggregate %q should not appear in non-GROUP BY post-value context", s.Value)
+		}
+	}
+}
+
 // TestComplete_SuggestionStructure verifies all returned suggestions have non-empty Value and Type.
 func TestComplete_SuggestionStructure(t *testing.T) {
 	queries := []struct {

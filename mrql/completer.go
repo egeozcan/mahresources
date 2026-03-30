@@ -28,6 +28,27 @@ var operators = []Suggestion{
 var postValueKeywords = []Suggestion{
 	{Value: "AND", Type: "keyword"},
 	{Value: "OR", Type: "keyword"},
+	{Value: "GROUP BY", Type: "keyword"},
+	{Value: "ORDER BY", Type: "keyword"},
+	{Value: "LIMIT", Type: "keyword"},
+}
+
+// aggregateSuggestions are suggested after GROUP BY field(s).
+var aggregateSuggestions = []Suggestion{
+	{Value: "COUNT()", Type: "function", Label: "count rows"},
+	{Value: "SUM()", Type: "function", Label: "sum of field"},
+	{Value: "AVG()", Type: "function", Label: "average of field"},
+	{Value: "MIN()", Type: "function", Label: "minimum value"},
+	{Value: "MAX()", Type: "function", Label: "maximum value"},
+}
+
+// postAggregateKeywords are suggested after aggregate functions in GROUP BY context.
+var postAggregateKeywords = []Suggestion{
+	{Value: "COUNT()", Type: "function", Label: "count rows"},
+	{Value: "SUM()", Type: "function", Label: "sum of field"},
+	{Value: "AVG()", Type: "function", Label: "average of field"},
+	{Value: "MIN()", Type: "function", Label: "minimum value"},
+	{Value: "MAX()", Type: "function", Label: "maximum value"},
 	{Value: "ORDER BY", Type: "keyword"},
 	{Value: "LIMIT", Type: "keyword"},
 }
@@ -197,6 +218,16 @@ func fieldSuggestions(entityType EntityType) []Suggestion {
 	return suggs
 }
 
+// isInGroupByContext returns true if the token stream contains a GROUP BY keyword.
+func isInGroupByContext(tokens []Token) bool {
+	for _, t := range tokens {
+		if t.Type == TokenGroupBy {
+			return true
+		}
+	}
+	return false
+}
+
 // suggestionsForContext analyses the token stream and returns the appropriate
 // suggestions for the cursor position.
 func suggestionsForContext(tokens []Token, entityType EntityType, cursor int) []Suggestion {
@@ -212,6 +243,11 @@ func suggestionsForContext(tokens []Token, entityType EntityType, cursor int) []
 	// not what comes after it.
 	cursorAtTokenEnd := (last.Pos + last.Length) == cursor
 
+	// After GROUP BY — suggest fields.
+	if last.Type == TokenGroupBy {
+		return fieldSuggestions(entityType)
+	}
+
 	// After AND / OR / NOT / "(" — suggest fields.
 	switch last.Type {
 	case TokenAnd, TokenOr, TokenNot, TokenLParen:
@@ -226,6 +262,28 @@ func suggestionsForContext(tokens []Token, entityType EntityType, cursor int) []
 			return traversalSubFieldSuggestions(entityType)
 		default:
 			return metaSubFieldSuggestions
+		}
+	}
+
+	// Check for GROUP BY context: if we see TokenGroupBy in the token stream
+	// and we're past the group-by fields, suggest aggregates.
+	if isInGroupByContext(tokens) {
+		// After a field name in GROUP BY context (with space after it),
+		// suggest aggregates + ORDER BY + LIMIT.
+		if last.Type == TokenIdentifier || last.Type == TokenKwType {
+			if !cursorAtTokenEnd {
+				var suggs []Suggestion
+				suggs = append(suggs, aggregateSuggestions...)
+				suggs = append(suggs, Suggestion{Value: "ORDER BY", Type: "keyword"})
+				suggs = append(suggs, Suggestion{Value: "LIMIT", Type: "keyword"})
+				return suggs
+			}
+			// Still typing the field name — suggest fields.
+			return fieldSuggestions(entityType)
+		}
+		// After closing paren in GROUP BY context — suggest more aggregates or ORDER BY/LIMIT.
+		if last.Type == TokenRParen {
+			return postAggregateKeywords
 		}
 	}
 
