@@ -6,7 +6,9 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"mahresources/cmd/mr/client"
@@ -38,6 +40,19 @@ type mrqlSavedQuery struct {
 	Description string    `json:"description"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+// mrqlGroupedResponse matches the MRQLGroupedResult struct.
+type mrqlGroupedResponse struct {
+	EntityType string           `json:"entityType"`
+	Mode       string           `json:"mode"`
+	Rows       []map[string]any `json:"rows,omitempty"`
+	Groups     []mrqlBucket     `json:"groups,omitempty"`
+}
+
+type mrqlBucket struct {
+	Key   map[string]any  `json:"key"`
+	Items json.RawMessage `json:"items"`
 }
 
 // NewMRQLCmd returns the "mrql" command with subcommands for managing and executing MRQL queries.
@@ -96,9 +111,21 @@ Examples:
 				return err
 			}
 
+			// Try grouped response first (has "mode" field)
+			var grouped mrqlGroupedResponse
+			if err := json.Unmarshal(raw, &grouped); err == nil && grouped.Mode != "" {
+				if grouped.Mode == "aggregated" {
+					columns, rows := aggregatedToTable(grouped.Rows)
+					output.Print(*opts, columns, rows, raw)
+				} else {
+					printBucketedOutput(*opts, grouped, raw)
+				}
+				return nil
+			}
+
+			// Fall back to standard response
 			var resp mrqlResponse
 			if err := json.Unmarshal(raw, &resp); err != nil {
-				// Response may not match the expected shape; fall back to raw output
 				output.PrintSingle(*opts, nil, raw)
 				return nil
 			}
@@ -227,6 +254,18 @@ func newMRQLRunCmd(c *client.Client, opts *output.Options, page *int) *cobra.Com
 				return err
 			}
 
+			// Try grouped response first (has "mode" field)
+			var grouped mrqlGroupedResponse
+			if err := json.Unmarshal(raw, &grouped); err == nil && grouped.Mode != "" {
+				if grouped.Mode == "aggregated" {
+					columns, rows := aggregatedToTable(grouped.Rows)
+					output.Print(*opts, columns, rows, raw)
+				} else {
+					printBucketedOutput(*opts, grouped, raw)
+				}
+				return nil
+			}
+
 			var resp mrqlResponse
 			if err := json.Unmarshal(raw, &resp); err != nil {
 				output.PrintSingle(*opts, nil, raw)
@@ -274,6 +313,70 @@ func mrqlResponseToRows(resp mrqlResponse) [][]string {
 		})
 	}
 	return rows
+}
+
+// aggregatedToTable converts aggregated rows to table columns/rows.
+func aggregatedToTable(rows []map[string]any) ([]string, [][]string) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+
+	// Collect column names from the first row and sort for stable order
+	var columns []string
+	for k := range rows[0] {
+		columns = append(columns, k)
+	}
+	sort.Strings(columns)
+
+	var tableRows [][]string
+	for _, row := range rows {
+		var cells []string
+		for _, col := range columns {
+			cells = append(cells, fmt.Sprintf("%v", row[col]))
+		}
+		tableRows = append(tableRows, cells)
+	}
+
+	// Uppercase column headers
+	var headers []string
+	for _, c := range columns {
+		headers = append(headers, strings.ToUpper(c))
+	}
+
+	return headers, tableRows
+}
+
+// printBucketedOutput renders bucketed results with headers per group.
+func printBucketedOutput(opts output.Options, grouped mrqlGroupedResponse, raw json.RawMessage) {
+	if opts.JSON {
+		output.PrintSingle(opts, nil, raw)
+		return
+	}
+
+	for _, bucket := range grouped.Groups {
+		// Print bucket header
+		var keyParts []string
+		for k, v := range bucket.Key {
+			keyParts = append(keyParts, fmt.Sprintf("%s=%v", k, v))
+		}
+		sort.Strings(keyParts) // stable order
+		output.PrintMessage(fmt.Sprintf("--- %s ---", strings.Join(keyParts, ", ")))
+
+		// Parse items as entities
+		var entities []mrqlEntity
+		if err := json.Unmarshal(bucket.Items, &entities); err == nil {
+			columns := []string{"ID", "NAME", "CREATED"}
+			var rows [][]string
+			for _, e := range entities {
+				rows = append(rows, []string{
+					strconv.FormatUint(uint64(e.ID), 10),
+					output.Truncate(e.Name, 40),
+					e.CreatedAt.Format(time.RFC3339),
+				})
+			}
+			output.Print(opts, columns, rows, nil)
+		}
+	}
 }
 
 func newMRQLDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
