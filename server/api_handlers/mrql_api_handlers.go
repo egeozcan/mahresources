@@ -82,16 +82,17 @@ func GetExecuteMRQLHandler(ctx *application_context.MahresourcesContext) func(ht
 
 			// Override pagination with request parameters.
 			// buckets = groups per page (preferred), limit = items per bucket, page = which page.
-			// Backward compat: when "buckets" is absent but limit+page are set,
-			// use limit as the bucket page size so existing clients still work.
 			if req.Limit > 0 {
 				parsed.Limit = req.Limit
 			}
 			if req.Buckets > 0 {
 				parsed.BucketLimit = req.Buckets
 			} else if req.Limit > 0 && req.Page >= 1 {
-				// Legacy: limit doubles as bucket page size when buckets param is absent
+				// Legacy: request limit doubles as bucket page size when buckets absent
 				parsed.BucketLimit = req.Limit
+			} else if parsed.Limit > 0 && req.Page >= 1 {
+				// Query-text LIMIT (e.g., GROUP BY x LIMIT 5) used as bucket page size
+				parsed.BucketLimit = parsed.Limit
 			}
 			if req.Page >= 1 {
 				effectiveBuckets := parsed.BucketLimit
@@ -331,6 +332,8 @@ func GetRunSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) f
 				parsed.BucketLimit = buckets
 			} else if limit > 0 && page >= 1 {
 				parsed.BucketLimit = limit
+			} else if parsed.Limit > 0 && page >= 1 {
+				parsed.BucketLimit = parsed.Limit
 			}
 			if page >= 1 {
 				effectiveBuckets := parsed.BucketLimit
