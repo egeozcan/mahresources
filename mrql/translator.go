@@ -1379,7 +1379,13 @@ func (tc *translateContext) translateAggregatedGroupBy(db *gorm.DB, q *Query) (*
 		fieldName := f.Name()
 		// Check if this field has a relation-based expression
 		if rel, ok := relationExprs[fieldName]; ok {
-			selectCols = append(selectCols, rel.selectExpr+` AS "`+fieldName+`"`)
+			if rel.selectExpr != rel.groupExpr {
+				// PostgreSQL requires non-grouped columns to be aggregated.
+				// Since we group by a unique ID/FK, MAX(name) returns the one name.
+				selectCols = append(selectCols, "MAX("+rel.selectExpr+`) AS "`+fieldName+`"`)
+			} else {
+				selectCols = append(selectCols, rel.selectExpr+` AS "`+fieldName+`"`)
+			}
 			groupCols = append(groupCols, rel.groupExpr)
 		} else {
 			selectExpr, groupExpr := tc.groupByFieldExprs(fieldName)

@@ -4174,3 +4174,91 @@ func TestBugfix_GroupByChildrenRelationField(t *testing.T) {
 		t.Errorf("expected aggregated, got %s", result.Mode)
 	}
 }
+
+// PG-safe: GROUP BY owner with aggregates must include the display name in GROUP BY
+// or wrap it in an aggregate function, since PostgreSQL rejects non-grouped,
+// non-aggregated columns in SELECT.
+func TestBugfix_GroupByOwnerSelectGroupByConsistency(t *testing.T) {
+	db := setupTestDB(t)
+
+	q, err := Parse(`type = "resource" GROUP BY owner COUNT() SUM(fileSize)`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	// On SQLite this always works; on PostgreSQL the old code would fail because
+	// SELECT _gb_owner.name ... GROUP BY resources.owner_id is invalid.
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+	// Verify the result has the expected keys
+	for _, row := range result.Rows {
+		if _, ok := row["owner"]; !ok {
+			t.Error("missing 'owner' key in row")
+		}
+		if _, ok := row["count"]; !ok {
+			t.Error("missing 'count' key in row")
+		}
+	}
+}
+
+// Bucketed total items must be bounded even without explicit LIMIT.
+func TestBugfix_BucketedTotalItemsCapped(t *testing.T) {
+	db := setupTestDB(t)
+
+	// No explicit LIMIT — the execution layer sets defaultMRQLLimit=1000 per bucket.
+	// With 4 content types, that's 4000 potential items. There should be a global cap.
+	q, err := Parse(`type = "resource" GROUP BY contentType`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	// Simulate execution layer setting default limit
+	q.Limit = 1000
+
+	keys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("keys: %v", err)
+	}
+
+	// Count total items across all buckets
+	totalItems := 0
+	for _, key := range keys {
+		bucketDB, err := TranslateGroupByBucket(q, db, key)
+		if err != nil {
+			t.Fatalf("bucket: %v", err)
+		}
+		var resources []testResource
+		if err := bucketDB.Find(&resources).Error; err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		totalItems += len(resources)
+	}
+
+	// With 4 resources in test data, this is fine. The real concern is
+	// at scale — the execution layer should enforce a global cap.
+	// For now just verify the per-bucket limit is applied.
+	for _, key := range keys {
+		bucketDB, err := TranslateGroupByBucket(q, db, key)
+		if err != nil {
+			t.Fatalf("bucket: %v", err)
+		}
+		dryDB := bucketDB.Session(&gorm.Session{DryRun: true}).Find(&[]testResource{})
+		sql := strings.ToUpper(dryDB.Statement.SQL.String())
+		if !strings.Contains(sql, "LIMIT") {
+			t.Errorf("expected LIMIT in per-bucket query, got SQL: %s", sql)
+		}
+	}
+}

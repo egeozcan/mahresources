@@ -54,12 +54,14 @@ func TranslateGroupByKeys(q *Query, db *gorm.DB) ([]map[string]any, error) {
 	for _, f := range q.GroupBy.Fields {
 		fieldName := f.Name()
 		if rel, ok := relationExprs[fieldName]; ok {
-			selectCols = append(selectCols, rel.selectExpr+` AS "`+fieldName+`"`)
-			groupCols = append(groupCols, rel.groupExpr)
-			// Also select the identity expression so bucket filtering uses it
 			if rel.selectExpr != rel.groupExpr {
+				// PostgreSQL: wrap display column in MAX() since it's not in GROUP BY
+				selectCols = append(selectCols, "MAX("+rel.selectExpr+`) AS "`+fieldName+`"`)
 				selectCols = append(selectCols, rel.groupExpr+` AS "_gbid_`+fieldName+`"`)
+			} else {
+				selectCols = append(selectCols, rel.selectExpr+` AS "`+fieldName+`"`)
 			}
+			groupCols = append(groupCols, rel.groupExpr)
 		} else {
 			selectExpr, groupExpr := tc.groupByFieldExprs(fieldName)
 			selectCols = append(selectCols, selectExpr+` AS "`+fieldName+`"`)

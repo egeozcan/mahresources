@@ -347,6 +347,7 @@ func aggregatedToTable(rows []map[string]any) ([]string, [][]string) {
 }
 
 // printBucketedOutput renders bucketed results with headers per group.
+// In quiet mode, only entity IDs are printed (no headers, no bucket separators).
 func printBucketedOutput(opts output.Options, grouped mrqlGroupedResponse, raw json.RawMessage) {
 	if opts.JSON {
 		output.PrintSingle(opts, nil, raw)
@@ -354,6 +355,20 @@ func printBucketedOutput(opts output.Options, grouped mrqlGroupedResponse, raw j
 	}
 
 	for _, bucket := range grouped.Groups {
+		// Parse items as entities
+		var entities []mrqlEntity
+		if err := json.Unmarshal(bucket.Items, &entities); err != nil {
+			continue
+		}
+
+		if opts.Quiet {
+			// Quiet mode: just IDs, no headers
+			for _, e := range entities {
+				fmt.Println(strconv.FormatUint(uint64(e.ID), 10))
+			}
+			continue
+		}
+
 		// Print bucket header
 		var keyParts []string
 		for k, v := range bucket.Key {
@@ -362,20 +377,16 @@ func printBucketedOutput(opts output.Options, grouped mrqlGroupedResponse, raw j
 		sort.Strings(keyParts) // stable order
 		output.PrintMessage(fmt.Sprintf("--- %s ---", strings.Join(keyParts, ", ")))
 
-		// Parse items as entities
-		var entities []mrqlEntity
-		if err := json.Unmarshal(bucket.Items, &entities); err == nil {
-			columns := []string{"ID", "NAME", "CREATED"}
-			var rows [][]string
-			for _, e := range entities {
-				rows = append(rows, []string{
-					strconv.FormatUint(uint64(e.ID), 10),
-					output.Truncate(e.Name, 40),
-					e.CreatedAt.Format(time.RFC3339),
-				})
-			}
-			output.Print(opts, columns, rows, nil)
+		columns := []string{"ID", "NAME", "CREATED"}
+		var rows [][]string
+		for _, e := range entities {
+			rows = append(rows, []string{
+				strconv.FormatUint(uint64(e.ID), 10),
+				output.Truncate(e.Name, 40),
+				e.CreatedAt.Format(time.RFC3339),
+			})
 		}
+		output.Print(opts, columns, rows, nil)
 	}
 }
 

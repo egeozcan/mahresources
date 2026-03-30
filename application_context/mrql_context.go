@@ -91,6 +91,11 @@ func (ctx *MahresourcesContext) ExecuteMRQL(reqCtx context.Context, queryStr str
 // defaultMRQLLimit is applied when the query has no explicit LIMIT clause.
 const defaultMRQLLimit = 1000
 
+// maxBucketedTotalItems caps the total number of entity items materialized
+// across all buckets, preventing a single bucketed query from loading
+// maxBuckets × defaultMRQLLimit entities into memory.
+const maxBucketedTotalItems = 10000
+
 // executeSingleEntity runs the query against a single entity table.
 func (ctx *MahresourcesContext) executeSingleEntity(reqCtx context.Context, parsed *mrql.Query, entityType mrql.EntityType, opts mrql.TranslateOptions) (*MRQLResult, error) {
 	parsed.EntityType = entityType
@@ -182,7 +187,13 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 	}
 
 	var buckets []MRQLBucket
+	totalItems := 0
 	for _, key := range keys {
+		// Stop materializing buckets if we've hit the global item cap
+		if totalItems >= maxBucketedTotalItems {
+			break
+		}
+
 		bucketDB, err := mrql.TranslateGroupByBucket(parsed, ctx.db.WithContext(reqCtx), key)
 		if err != nil {
 			return nil, err
@@ -204,18 +215,21 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 				return nil, err
 			}
 			bucket.Items = resources
+			totalItems += len(resources)
 		case mrql.EntityNote:
 			var notes []models.Note
 			if err := bucketDB.Find(&notes).Error; err != nil {
 				return nil, err
 			}
 			bucket.Items = notes
+			totalItems += len(notes)
 		case mrql.EntityGroup:
 			var groups []models.Group
 			if err := bucketDB.Find(&groups).Error; err != nil {
 				return nil, err
 			}
 			bucket.Items = groups
+			totalItems += len(groups)
 		}
 
 		buckets = append(buckets, bucket)
