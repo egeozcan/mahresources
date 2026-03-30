@@ -61,6 +61,7 @@ func NewMRQLCmd(c *client.Client, opts *output.Options, page *int) *cobra.Comman
 	var (
 		fileFlag string
 		limit    int
+		buckets  int
 	)
 
 	mrqlCmd := &cobra.Command{
@@ -72,7 +73,15 @@ Examples:
   mr mrql 'type = resource AND tags = "photo"'
   mr mrql -f query.mrql
   echo 'tags = "photo"' | mr mrql -
-  mr mrql --limit 10 --page 2 'type = note'`,
+  mr mrql --limit 10 --page 2 'type = note'
+
+GROUP BY (aggregated — returns computed rows):
+  mr mrql 'type = resource GROUP BY contentType COUNT()'
+  mr mrql 'type = resource GROUP BY owner.name COUNT() SUM(fileSize)'
+
+GROUP BY (bucketed — returns grouped entities):
+  mr mrql 'type = resource GROUP BY contentType LIMIT 5'
+  mr mrql --buckets 10 --page 2 'type = resource GROUP BY contentType LIMIT 5'`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var queryText string
 
@@ -103,6 +112,9 @@ Examples:
 			if cmd.Flags().Changed("limit") {
 				body["limit"] = limit
 			}
+			if cmd.Flags().Changed("buckets") {
+				body["buckets"] = buckets
+			}
 			if cmd.Flags().Changed("page") {
 				body["page"] = *page
 			}
@@ -118,7 +130,8 @@ Examples:
 	}
 
 	mrqlCmd.Flags().StringVarP(&fileFlag, "file", "f", "", "Read query from file")
-	mrqlCmd.Flags().IntVar(&limit, "limit", 0, "Override result limit (0 = use query's LIMIT or server default)")
+	mrqlCmd.Flags().IntVar(&limit, "limit", 0, "Items per bucket for GROUP BY, or total items for regular queries")
+	mrqlCmd.Flags().IntVar(&buckets, "buckets", 0, "Groups per page for bucketed GROUP BY queries")
 
 	mrqlCmd.AddCommand(newMRQLSaveCmd(c, opts))
 	mrqlCmd.AddCommand(newMRQLListCmd(c, opts, page))
@@ -208,7 +221,10 @@ func newMRQLListCmd(c *client.Client, opts *output.Options, page *int) *cobra.Co
 }
 
 func newMRQLRunCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
-	var limit int
+	var (
+		limit   int
+		buckets int
+	)
 
 	cmd := &cobra.Command{
 		Use:   "run <name-or-id>",
@@ -224,6 +240,9 @@ func newMRQLRunCmd(c *client.Client, opts *output.Options, page *int) *cobra.Com
 			if cmd.Flags().Changed("limit") {
 				q.Set("limit", strconv.Itoa(limit))
 			}
+			if cmd.Flags().Changed("buckets") {
+				q.Set("buckets", strconv.Itoa(buckets))
+			}
 			if cmd.Flags().Changed("page") {
 				q.Set("page", strconv.Itoa(*page))
 			}
@@ -238,7 +257,8 @@ func newMRQLRunCmd(c *client.Client, opts *output.Options, page *int) *cobra.Com
 		},
 	}
 
-	cmd.Flags().IntVar(&limit, "limit", 0, "Override result limit (0 = use saved query's LIMIT or server default)")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Items per bucket for GROUP BY, or total items for regular queries")
+	cmd.Flags().IntVar(&buckets, "buckets", 0, "Groups per page for bucketed GROUP BY queries")
 
 	return cmd
 }
