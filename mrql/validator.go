@@ -532,9 +532,18 @@ func validateTraversalChain(f *FieldExpr, entityType EntityType) error {
 		}
 	}
 
-	// For chains with 3+ parts, validate intermediates (all parts except first and last)
+	// For chains with 3+ parts, validate intermediates (all parts except first and last).
+	// Special case: "meta" followed by a key (e.g., owner.meta.abc) is a meta leaf,
+	// not an intermediate — stop validating intermediates at that point.
 	for i := 1; i < len(f.Parts)-1; i++ {
 		part := f.Parts[i].Value
+
+		// meta.key leaf: the rest of the chain is a meta field reference, not traversal
+		if part == "meta" && i == len(f.Parts)-2 {
+			// owner.meta.abc → valid (meta.abc is the leaf on the target group)
+			return nil
+		}
+
 		if !traversalIntermediates[part] {
 			// Check if it's a known traversal root but not valid as intermediate
 			if _, anyRoot := traversalRoots[part]; anyRoot {
@@ -555,15 +564,14 @@ func validateTraversalChain(f *FieldExpr, entityType EntityType) error {
 	// Validate the leaf (last part) — must be a valid group field
 	leaf := f.Parts[len(f.Parts)-1].Value
 
-	// meta as leaf is not supported — traversal meta would need an additional
-	// key part (parent.meta.key) and the semantics are complex.
+	// Bare "meta" as leaf requires a key — suggest the correct syntax.
 	if leaf == "meta" {
 		chainPrefix := f.Parts[0].Value
 		for i := 1; i < len(f.Parts)-1; i++ {
 			chainPrefix += "." + f.Parts[i].Value
 		}
 		return &ValidationError{
-			Message: fmt.Sprintf("%s.meta is not supported; traversal of metadata requires a key (%s.meta.key), which is planned for v2", chainPrefix, chainPrefix),
+			Message: fmt.Sprintf("%s.meta requires a key (e.g. %s.meta.mykey)", chainPrefix, chainPrefix),
 			Pos:     f.Pos(),
 			Length:  len(f.Name()),
 		}

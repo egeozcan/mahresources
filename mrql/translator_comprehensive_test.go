@@ -3693,3 +3693,38 @@ func TestComprehensive_GroupByMultipleKeysWithTraversal(t *testing.T) {
 		t.Error("missing Work + application/pdf combination")
 	}
 }
+
+func TestComprehensive_GroupByTraversalMetaLeaf(t *testing.T) {
+	db := setupTestDB(t)
+	// owner.meta.region: sunset.jpg → Vacation (region=europe), report.pdf → Work (no region)
+	q, err := Parse(`type = "resource" GROUP BY owner.meta.region COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+	// Should have at least one row with region=europe (from Vacation-owned sunset.jpg)
+	foundEurope := false
+	for _, row := range result.Rows {
+		val := groupByVal(row["owner.meta.region"])
+		if val == "europe" {
+			foundEurope = true
+			if groupByVal(row["count"]) != "1" {
+				t.Errorf("expected count=1 for europe, got %s", groupByVal(row["count"]))
+			}
+		}
+	}
+	if !foundEurope {
+		t.Errorf("expected owner.meta.region=europe, got rows: %v", result.Rows)
+	}
+}

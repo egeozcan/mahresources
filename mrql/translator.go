@@ -1516,6 +1516,18 @@ func (tc *translateContext) groupByTraversalJoins(db *gorm.DB, f *FieldExpr, fie
 	parts := f.Parts
 	leaf := parts[len(parts)-1].Value
 
+	// Handle meta.key leaf: owner.meta.abc, owner.parent.meta.xyz
+	// Detect by checking if the second-to-last part is "meta"
+	if len(parts) >= 3 && parts[len(parts)-2].Value == "meta" {
+		metaKey := leaf
+		// Build chain JOINs for everything before "meta"
+		lastAlias := tc.groupByBuildChainJoins(&db, parts[:len(parts)-2], fieldIdx)
+		if tc.isPostgres() {
+			return db, fmt.Sprintf("%s.meta->>'%s'", lastAlias, metaKey)
+		}
+		return db, fmt.Sprintf("json_extract(%s.meta, '$.%s')", lastAlias, metaKey)
+	}
+
 	// Resolve the leaf field on the group entity (all traversals resolve to groups)
 	leafFd, ok := LookupField(EntityGroup, leaf)
 	if !ok && IsCommonField(leaf) {

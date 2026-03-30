@@ -400,7 +400,7 @@ func TestValidatorOwnerTraversalInvalid(t *testing.T) {
 		{`type = group AND owner = "test"`, "unknown"},
 		{`type = resource AND owner.owner.name = "test"`, "not valid as intermediate"},
 		{`type = resource AND owner.groups.name = "test"`, "not a traversal field"},
-		{`type = resource AND owner.parent.meta = "test"`, "not supported"},
+		{`type = resource AND owner.parent.meta = "test"`, "requires a key"},
 		{`owner = "test"`, "unknown"},
 	}
 	for _, tc := range cases {
@@ -471,6 +471,8 @@ func TestValidate_GroupByAcceptsTraversal(t *testing.T) {
 		`type = "group" GROUP BY parent.name COUNT()`,
 		`type = "resource" GROUP BY owner.tags COUNT()`,
 		`type = "resource" GROUP BY owner.parent.name COUNT()`,
+		`type = "resource" GROUP BY owner.meta.region COUNT()`,
+		`type = "group" GROUP BY parent.meta.priority COUNT()`,
 	}
 	for _, input := range tests {
 		q, err := Parse(input)
