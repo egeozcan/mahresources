@@ -264,3 +264,144 @@ test.describe('MRQL owner traversal', () => {
     expect(names).toContain(`MrqlOwnerNote-${suffix}`);
   });
 });
+
+test.describe('MRQL GROUP BY', () => {
+  const suffix = Date.now();
+  const resourceIds: number[] = [];
+  let groupId: number;
+
+  test.beforeAll(() => {
+    const cli = createCliRunner();
+
+    // Create a group to own resources (needed for owner traversal test)
+    const group = JSON.parse(cli.runOrFail('group', 'create', '--name', `GBCliGroup-${suffix}`, '--json').stdout);
+    groupId = group.ID;
+
+    // Upload resources with different content types
+    const sampleDoc = path.join(__dirname, '../../test-assets/sample-document.txt');
+    const sampleImg = path.join(__dirname, '../../test-assets/sample-image.png');
+    const sampleImg2 = path.join(__dirname, '../../test-assets/sample-image-2.png');
+
+    const r1 = JSON.parse(cli.runOrFail('resource', 'upload', sampleDoc, '--name', `gb-doc-${suffix}`, '--owner-id', String(groupId), '--json').stdout);
+    const res1 = Array.isArray(r1) ? r1[0] : r1;
+    resourceIds.push(res1.ID);
+
+    const r2 = JSON.parse(cli.runOrFail('resource', 'upload', sampleImg, '--name', `gb-img1-${suffix}`, '--owner-id', String(groupId), '--json').stdout);
+    const res2 = Array.isArray(r2) ? r2[0] : r2;
+    resourceIds.push(res2.ID);
+
+    const r3 = JSON.parse(cli.runOrFail('resource', 'upload', sampleImg2, '--name', `gb-img2-${suffix}`, '--owner-id', String(groupId), '--json').stdout);
+    const res3 = Array.isArray(r3) ? r3[0] : r3;
+    resourceIds.push(res3.ID);
+  });
+
+  test.afterAll(() => {
+    const cli = createCliRunner();
+    for (const id of resourceIds) {
+      cli.run('resource', 'delete', String(id));
+    }
+    if (groupId) cli.run('group', 'delete', String(groupId));
+  });
+
+  test('aggregated JSON output has mode and rows', async ({ cli }) => {
+    const result = cli.run('mrql', 'type = resource GROUP BY contentType COUNT()', '--json');
+    expect(result.exitCode).toBe(0);
+
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.mode).toBe('aggregated');
+    expect(Array.isArray(parsed.rows)).toBe(true);
+    expect(parsed.rows.length).toBeGreaterThan(0);
+
+    // Each row should have contentType and count keys
+    for (const row of parsed.rows) {
+      expect(row).toHaveProperty('contentType');
+      expect(row).toHaveProperty('count');
+    }
+  });
+
+  test('bucketed JSON output has mode and groups', async ({ cli }) => {
+    const result = cli.run('mrql', 'type = resource GROUP BY contentType LIMIT 5', '--json');
+    expect(result.exitCode).toBe(0);
+
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.mode).toBe('bucketed');
+    expect(Array.isArray(parsed.groups)).toBe(true);
+    expect(parsed.groups.length).toBeGreaterThan(0);
+
+    // Each group should have key and items
+    for (const group of parsed.groups) {
+      expect(group).toHaveProperty('key');
+      expect(group).toHaveProperty('items');
+      expect(group.key).toHaveProperty('contentType');
+    }
+  });
+
+  test('aggregated table output has column headers', async ({ cli }) => {
+    const result = cli.run('mrql', 'type = resource GROUP BY contentType COUNT()');
+    expect(result.exitCode).toBe(0);
+
+    // Table output should contain uppercase column headers
+    const stdout = result.stdout.toUpperCase();
+    expect(stdout).toContain('CONTENTTYPE');
+    expect(stdout).toContain('COUNT');
+  });
+
+  test('GROUP BY with filter narrows results', async ({ cli }) => {
+    const result = cli.run('mrql', 'type = resource AND contentType ~ "image" GROUP BY contentType COUNT()', '--json');
+    expect(result.exitCode).toBe(0);
+
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.mode).toBe('aggregated');
+    expect(Array.isArray(parsed.rows)).toBe(true);
+
+    // All rows should have image-related content types
+    for (const row of parsed.rows) {
+      expect(String(row.contentType).toLowerCase()).toContain('image');
+    }
+  });
+
+  test('GROUP BY traversal (owner.name)', async ({ cli }) => {
+    const result = cli.run('mrql', 'type = resource GROUP BY owner.name COUNT()', '--json');
+    expect(result.exitCode).toBe(0);
+
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.mode).toBe('aggregated');
+    expect(Array.isArray(parsed.rows)).toBe(true);
+  });
+
+  test('GROUP BY validation error without entity type', async ({ cli }) => {
+    const result = cli.run('mrql', 'GROUP BY name COUNT()');
+    expect(result.exitCode).not.toBe(0);
+
+    const combined = result.stdout + result.stderr;
+    expect(combined.length).toBeGreaterThan(0);
+  });
+
+  test('saved query with GROUP BY', async ({ cli }) => {
+    const savedName = `cli-gb-saved-${suffix}`;
+    const gbQuery = 'type = resource GROUP BY contentType COUNT()';
+
+    // Save the GROUP BY query
+    const saveResult = cli.run('mrql', 'save', savedName, gbQuery, '--json');
+    expect(saveResult.exitCode).toBe(0);
+
+    let savedId: number | undefined;
+    try {
+      const parsed = JSON.parse(saveResult.stdout);
+      if (parsed.id) savedId = parsed.id;
+    } catch { /* non-JSON output is fine */ }
+
+    // Run the saved query by name
+    const runResult = cli.run('mrql', 'run', savedName, '--json');
+    expect(runResult.exitCode).toBe(0);
+
+    const runParsed = JSON.parse(runResult.stdout);
+    expect(runParsed.mode).toBe('aggregated');
+    expect(Array.isArray(runParsed.rows)).toBe(true);
+
+    // Cleanup: delete the saved query
+    if (savedId) {
+      cli.run('mrql', 'delete', String(savedId));
+    }
+  });
+});

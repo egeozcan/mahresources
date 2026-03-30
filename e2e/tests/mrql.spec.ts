@@ -3,6 +3,7 @@ import { getWorkerBaseUrl } from '../fixtures/base.fixture';
 import { ApiClient } from '../helpers/api-client';
 import { MRQLPage } from '../pages/MRQLPage';
 import { request as playwrightRequest } from '@playwright/test';
+import * as path from 'path';
 
 test.describe('MRQL Page', () => {
   // Track created entity IDs for cleanup
@@ -179,5 +180,201 @@ test.describe('MRQL Page', () => {
     // Verify results appear
     const count = await mrql.getResultCount();
     expect(count).toBeGreaterThan(0);
+  });
+});
+
+test.describe('MRQL GROUP BY', () => {
+  // Track created entity IDs for cleanup
+  let categoryId: number;
+  let groupId: number;
+  const resourceIds: number[] = [];
+
+  test.beforeAll(async () => {
+    const baseUrl = getWorkerBaseUrl();
+    const ctx = await playwrightRequest.newContext({ baseURL: baseUrl });
+    const api = new ApiClient(ctx, baseUrl);
+    const suffix = `gb-${Date.now()}`;
+
+    // Create a category and group (needed for resource ownership)
+    const category = await api.createCategory(`GB Test Category ${suffix}`);
+    categoryId = category.ID;
+
+    const group = await api.createGroup({
+      name: `GB Test Group ${suffix}`,
+      description: 'Group for GROUP BY E2E tests',
+      categoryId: categoryId,
+    });
+    groupId = group.ID;
+
+    // Create resources with different content types:
+    // 2 images (image/png) and 1 text file (text/plain)
+    const imgPath = path.join(__dirname, '../test-assets/sample-image.png');
+    const imgPath2 = path.join(__dirname, '../test-assets/sample-image-2.png');
+    const txtPath = path.join(__dirname, '../test-assets/sample-document.txt');
+
+    const r1 = await api.createResource({
+      filePath: imgPath,
+      name: `GB Image 1 ${suffix}`,
+      ownerId: groupId,
+    });
+    resourceIds.push(r1.ID);
+
+    const r2 = await api.createResource({
+      filePath: imgPath2,
+      name: `GB Image 2 ${suffix}`,
+      ownerId: groupId,
+    });
+    resourceIds.push(r2.ID);
+
+    const r3 = await api.createResource({
+      filePath: txtPath,
+      name: `GB Doc ${suffix}`,
+      ownerId: groupId,
+    });
+    resourceIds.push(r3.ID);
+
+    await ctx.dispose();
+  });
+
+  test.afterAll(async () => {
+    const baseUrl = getWorkerBaseUrl();
+    const ctx = await playwrightRequest.newContext({ baseURL: baseUrl });
+    const api = new ApiClient(ctx, baseUrl);
+
+    for (const id of resourceIds) {
+      try { await api.deleteResource(id); } catch { /* ignore */ }
+    }
+    try { if (groupId) await api.deleteGroup(groupId); } catch { /* ignore */ }
+    try { if (categoryId) await api.deleteCategory(categoryId); } catch { /* ignore */ }
+
+    await ctx.dispose();
+  });
+
+  test('aggregated mode renders table', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+
+    await mrql.enterQuery('type = resource GROUP BY contentType COUNT()');
+    await mrql.executeQuery();
+
+    // Results heading should mention "rows" (aggregated mode)
+    const heading = mrql.resultsSection.locator('h2');
+    await expect(heading).toContainText('rows');
+
+    // A <table> element should be present
+    const table = mrql.resultsSection.locator('table');
+    await expect(table).toBeVisible();
+
+    // Table should have <th> headers including contentType and count
+    const headers = table.locator('thead th');
+    const headerCount = await headers.count();
+    expect(headerCount).toBeGreaterThanOrEqual(2);
+
+    const headerTexts: string[] = [];
+    for (let i = 0; i < headerCount; i++) {
+      const text = await headers.nth(i).textContent();
+      if (text) headerTexts.push(text.trim().toLowerCase());
+    }
+    expect(headerTexts).toContain('contenttype');
+    expect(headerTexts).toContain('count');
+
+    // At least one data row should exist
+    const dataRows = table.locator('tbody tr');
+    const rowCount = await dataRows.count();
+    expect(rowCount).toBeGreaterThan(0);
+  });
+
+  test('bucketed mode renders groups', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+
+    await mrql.enterQuery('type = resource GROUP BY contentType LIMIT 5');
+    await mrql.executeQuery();
+
+    // Results heading should mention "groups" (bucketed mode)
+    const heading = mrql.resultsSection.locator('h2');
+    await expect(heading).toContainText('groups');
+
+    // Bucket headers (bg-stone-100 divs inside bordered containers) should have key labels
+    const bucketHeaders = mrql.resultsSection.locator('.bg-stone-100');
+    await expect(bucketHeaders.first()).toBeVisible();
+    const firstHeaderText = await bucketHeaders.first().textContent();
+    expect(firstHeaderText).toContain('contentType');
+
+    // Entity cards should appear within groups (links to entity pages)
+    const entityCards = mrql.resultsSection.locator('a[href*="?id="]');
+    const cardCount = await entityCards.count();
+    expect(cardCount).toBeGreaterThan(0);
+  });
+
+  test('aggregated with multiple aggregates', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+
+    await mrql.enterQuery('type = resource GROUP BY contentType COUNT() SUM(fileSize)');
+    await mrql.executeQuery();
+
+    const table = mrql.resultsSection.locator('table');
+    await expect(table).toBeVisible();
+
+    // Table headers should include count and sum_filesize (or similar)
+    const headers = table.locator('thead th');
+    const headerCount = await headers.count();
+    expect(headerCount).toBeGreaterThanOrEqual(3); // contentType, count, sum_fileSize
+
+    const headerTexts: string[] = [];
+    for (let i = 0; i < headerCount; i++) {
+      const text = await headers.nth(i).textContent();
+      if (text) headerTexts.push(text.trim().toLowerCase());
+    }
+    expect(headerTexts).toContain('count');
+    // The sum column name varies by implementation — check for any header containing "sum" or "filesize"
+    const hasSumColumn = headerTexts.some(h => h.includes('sum') || h.includes('filesize'));
+    expect(hasSumColumn).toBe(true);
+  });
+
+  test('GROUP BY with traversal (owner.name)', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+
+    await mrql.enterQuery('type = resource GROUP BY owner.name COUNT()');
+    await mrql.executeQuery();
+
+    // Should not show an error — either results or empty state
+    const errorText = await mrql.getErrors();
+    expect(errorText).toBeFalsy();
+
+    // Results heading should be visible
+    const heading = mrql.resultsSection.locator('h2');
+    await expect(heading).toBeVisible();
+  });
+
+  test('GROUP BY validation error without entity type', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+
+    await mrql.enterQuery('name ~ "test" GROUP BY name COUNT()');
+    await mrql.executeQuery();
+
+    // Should show an error about requiring entity type
+    const errorText = await mrql.getErrors();
+    expect(errorText).toBeTruthy();
+    expect(errorText!.toLowerCase()).toContain('type');
+  });
+
+  test('GROUP BY meta field', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+
+    await mrql.enterQuery('type = resource GROUP BY meta.source COUNT()');
+    await mrql.executeQuery();
+
+    // Should not crash — either results table or empty state
+    const errorText = await mrql.getErrors();
+    expect(errorText).toBeFalsy();
+
+    // Results section should be visible
+    const heading = mrql.resultsSection.locator('h2');
+    await expect(heading).toBeVisible();
   });
 });
