@@ -3728,3 +3728,144 @@ func TestComprehensive_GroupByTraversalMetaLeaf(t *testing.T) {
 		t.Errorf("expected owner.meta.region=europe, got rows: %v", result.Rows)
 	}
 }
+
+// ============================================================
+// GROUP BY — Meta Traversal Leaf Tests
+// ============================================================
+
+func TestComprehensive_GroupByOwnerMetaPriority(t *testing.T) {
+	db := setupTestDB(t)
+	// owner.meta.priority: sunset.jpg → Vacation (priority=3), report.pdf → Work (no priority)
+	q, err := Parse(`type = "resource" GROUP BY owner.meta.priority COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+	// Should have a row with priority=3 (from Vacation-owned sunset.jpg)
+	foundPriority3 := false
+	for _, row := range result.Rows {
+		val := groupByVal(row["owner.meta.priority"])
+		if val == "3" {
+			foundPriority3 = true
+			if groupByVal(row["count"]) != "1" {
+				t.Errorf("expected count=1 for priority=3, got %s", groupByVal(row["count"]))
+			}
+		}
+	}
+	if !foundPriority3 {
+		t.Errorf("expected owner.meta.priority=3, got rows: %v", result.Rows)
+	}
+}
+
+func TestComprehensive_GroupByOwnerMetaRegionBucketed(t *testing.T) {
+	db := setupTestDB(t)
+	// Bucketed mode: GROUP BY owner.meta.region without aggregates
+	q, err := Parse(`type = "resource" GROUP BY owner.meta.region LIMIT 10`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	keys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("keys: %v", err)
+	}
+	if len(keys) == 0 {
+		t.Fatal("expected at least one bucket key")
+	}
+	// Each key should contain "owner.meta.region"
+	for _, key := range keys {
+		if _, ok := key["owner.meta.region"]; !ok {
+			t.Errorf("expected 'owner.meta.region' in key, got: %v", key)
+		}
+	}
+}
+
+func TestComprehensive_GroupByParentMetaRegionOnGroups(t *testing.T) {
+	db := setupTestDB(t)
+	// parent.meta.region on groups:
+	// Work (id=2, owner=Vacation) → parent meta has region=europe
+	// Photos (id=5, owner=Vacation) → parent meta has region=europe
+	// Sub-Work (id=4, owner=Work) → parent meta has no region (empty meta)
+	// Vacation, Archive → no parent (NULL)
+	q, err := Parse(`type = "group" GROUP BY parent.meta.region COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityGroup
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+	// Should have a row with region=europe (Work and Photos both have parent=Vacation)
+	foundEurope := false
+	for _, row := range result.Rows {
+		val := groupByVal(row["parent.meta.region"])
+		if val == "europe" {
+			foundEurope = true
+			count := groupByVal(row["count"])
+			// Work and Photos both have parent Vacation (region=europe)
+			if count != "2" {
+				t.Errorf("expected count=2 for europe (Work + Photos), got %s", count)
+			}
+		}
+	}
+	if !foundEurope {
+		t.Errorf("expected parent.meta.region=europe, got rows: %v", result.Rows)
+	}
+}
+
+func TestComprehensive_GroupByOwnerMetaNonexistent(t *testing.T) {
+	db := setupTestDB(t)
+	// owner.meta.nonexistent: no seeded data has this key, so all values should be NULL
+	// The query should succeed without error
+	q, err := Parse(`type = "resource" GROUP BY owner.meta.nonexistent COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+	// All resources should fall into NULL bucket(s) since no group has meta.nonexistent
+	// Just verify it executes without error and returns rows
+	if len(result.Rows) == 0 {
+		t.Error("expected at least one row (NULL bucket), got 0")
+	}
+	// Verify all values are nil/<nil> since no group has this meta key
+	for _, row := range result.Rows {
+		val := groupByVal(row["owner.meta.nonexistent"])
+		if val != "<nil>" && val != "" {
+			t.Errorf("expected NULL for nonexistent meta key, got %q in rows: %v", val, result.Rows)
+		}
+	}
+}

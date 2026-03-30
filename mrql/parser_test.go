@@ -1065,3 +1065,79 @@ func TestParser_GroupByEmptyFieldsAfterComma(t *testing.T) {
 		t.Fatal("expected error for trailing comma in GROUP BY fields")
 	}
 }
+
+// ---- GROUP BY with meta.key traversal leaf parser tests ----
+
+func TestParser_GroupByMetaTraversalLeaf(t *testing.T) {
+	t.Run("owner.meta.region parses as 3 parts", func(t *testing.T) {
+		q, err := Parse(`GROUP BY owner.meta.region`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if q.GroupBy == nil || len(q.GroupBy.Fields) != 1 {
+			t.Fatal("expected 1 GROUP BY field")
+		}
+		f := q.GroupBy.Fields[0]
+		if f.Name() != "owner.meta.region" {
+			t.Errorf("expected field 'owner.meta.region', got %q", f.Name())
+		}
+		if len(f.Parts) != 3 {
+			t.Errorf("expected 3 parts, got %d", len(f.Parts))
+		}
+		if f.Parts[0].Value != "owner" {
+			t.Errorf("part[0] expected 'owner', got %q", f.Parts[0].Value)
+		}
+		if f.Parts[1].Value != "meta" {
+			t.Errorf("part[1] expected 'meta', got %q", f.Parts[1].Value)
+		}
+		if f.Parts[2].Value != "region" {
+			t.Errorf("part[2] expected 'region', got %q", f.Parts[2].Value)
+		}
+	})
+
+	t.Run("owner.meta.region with COUNT aggregate", func(t *testing.T) {
+		q, err := Parse(`GROUP BY owner.meta.region COUNT()`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if q.GroupBy == nil || len(q.GroupBy.Fields) != 1 {
+			t.Fatal("expected 1 GROUP BY field")
+		}
+		if q.GroupBy.Fields[0].Name() != "owner.meta.region" {
+			t.Errorf("expected field 'owner.meta.region', got %q", q.GroupBy.Fields[0].Name())
+		}
+		if len(q.GroupBy.Aggregates) != 1 || q.GroupBy.Aggregates[0].Name != "COUNT" {
+			t.Errorf("expected 1 COUNT aggregate, got %v", q.GroupBy.Aggregates)
+		}
+	})
+
+	t.Run("mixed meta traversal and scalar GROUP BY", func(t *testing.T) {
+		q, err := Parse(`GROUP BY parent.meta.key, contentType COUNT()`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if q.GroupBy == nil || len(q.GroupBy.Fields) != 2 {
+			t.Fatalf("expected 2 GROUP BY fields, got %v", q.GroupBy)
+		}
+		// First field: parent.meta.key (3 parts)
+		f0 := q.GroupBy.Fields[0]
+		if f0.Name() != "parent.meta.key" {
+			t.Errorf("field[0]: expected 'parent.meta.key', got %q", f0.Name())
+		}
+		if len(f0.Parts) != 3 {
+			t.Errorf("field[0]: expected 3 parts, got %d", len(f0.Parts))
+		}
+		// Second field: contentType (1 part)
+		f1 := q.GroupBy.Fields[1]
+		if f1.Name() != "contentType" {
+			t.Errorf("field[1]: expected 'contentType', got %q", f1.Name())
+		}
+		if len(f1.Parts) != 1 {
+			t.Errorf("field[1]: expected 1 part, got %d", len(f1.Parts))
+		}
+		// Aggregate
+		if len(q.GroupBy.Aggregates) != 1 || q.GroupBy.Aggregates[0].Name != "COUNT" {
+			t.Errorf("expected 1 COUNT aggregate, got %v", q.GroupBy.Aggregates)
+		}
+	})
+}

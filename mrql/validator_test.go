@@ -485,6 +485,78 @@ func TestValidate_GroupByAcceptsTraversal(t *testing.T) {
 	}
 }
 
+func TestValidate_GroupByMetaTraversalLeaf(t *testing.T) {
+	t.Run("valid traversals with meta leaf", func(t *testing.T) {
+		validCases := []string{
+			// owner.meta.key on resources
+			`type = "resource" GROUP BY owner.meta.region COUNT()`,
+			// parent.meta.key on groups
+			`type = "group" GROUP BY parent.meta.priority COUNT()`,
+			// deeper chain: owner.parent.meta.key on resources
+			`type = "resource" GROUP BY owner.parent.meta.key COUNT()`,
+			// children.meta.key on groups
+			`type = "group" GROUP BY children.meta.key COUNT()`,
+		}
+		for _, input := range validCases {
+			t.Run(input, func(t *testing.T) {
+				q, err := Parse(input)
+				if err != nil {
+					t.Fatalf("parse: %v", err)
+				}
+				if err := Validate(q); err != nil {
+					t.Errorf("expected valid, got: %v", err)
+				}
+			})
+		}
+	})
+
+	t.Run("bare meta without key in GROUP BY fails", func(t *testing.T) {
+		cases := []struct {
+			input       string
+			errContains string
+		}{
+			{
+				`type = "resource" GROUP BY owner.meta COUNT()`,
+				"requires a key",
+			},
+			{
+				`type = "group" GROUP BY parent.meta COUNT()`,
+				"requires a key",
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.input, func(t *testing.T) {
+				q, err := Parse(tc.input)
+				if err != nil {
+					t.Fatalf("parse: %v", err)
+				}
+				err = Validate(q)
+				if err == nil {
+					t.Fatal("expected validation error for bare meta without key, got nil")
+				}
+				if !strings.Contains(err.Error(), tc.errContains) {
+					t.Errorf("expected error containing %q, got: %v", tc.errContains, err)
+				}
+			})
+		}
+	})
+
+	t.Run("bare meta without key in WHERE still fails", func(t *testing.T) {
+		// owner.meta without a key in a WHERE clause should also fail
+		q, err := Parse(`type = "resource" AND owner.parent.meta = "test"`)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		err = Validate(q)
+		if err == nil {
+			t.Fatal("expected validation error for bare meta in WHERE, got nil")
+		}
+		if !strings.Contains(err.Error(), "requires a key") {
+			t.Errorf("expected error containing 'requires a key', got: %v", err)
+		}
+	})
+}
+
 func TestValidate_GroupByRejectsInvalidTraversal(t *testing.T) {
 	// parent.name is not valid on resources (parent is group-only)
 	q, err := Parse(`type = "resource" GROUP BY parent.name COUNT()`)
