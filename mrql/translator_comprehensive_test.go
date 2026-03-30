@@ -1,6 +1,8 @@
 package mrql
 
 import (
+	"fmt"
+	"reflect"
 	"sort"
 	"testing"
 	"time"
@@ -2584,5 +2586,650 @@ func TestComprehensive_TraversalValidSubfields(t *testing.T) {
 				t.Fatalf("expected valid, got: %v", err)
 			}
 		})
+	}
+}
+
+// groupByVal dereferences pointer values returned by GORM's map[string]any scanning.
+// SQLite driver often returns *int64, *string, etc. in raw map results.
+func groupByVal(v any) string {
+	if v == nil {
+		return "<nil>"
+	}
+	rv := reflect.ValueOf(v)
+	for rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return "<nil>"
+		}
+		rv = rv.Elem()
+	}
+	return fmt.Sprintf("%v", rv.Interface())
+}
+
+// ============================================================
+// GROUP BY — Aggregated Mode
+// ============================================================
+
+func TestComprehensive_GroupByAggregatedCount(t *testing.T) {
+	db := setupTestDB(t)
+	q, err := Parse(`type = "resource" GROUP BY contentType COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+	// 4 resources with 4 distinct contentTypes
+	if len(result.Rows) != 4 {
+		t.Errorf("expected 4 rows, got %d: %v", len(result.Rows), result.Rows)
+	}
+	// Each row should have contentType and count
+	for _, row := range result.Rows {
+		if _, ok := row["contentType"]; !ok {
+			t.Error("missing 'contentType' in aggregated row")
+		}
+		if _, ok := row["count"]; !ok {
+			t.Error("missing 'count' in aggregated row")
+		}
+		// Each content type has exactly 1 resource in seed data
+		if groupByVal(row["count"]) != "1" {
+			t.Errorf("expected count=1 for each contentType, got %s for %s", groupByVal(row["count"]), groupByVal(row["contentType"]))
+		}
+	}
+}
+
+func TestComprehensive_GroupByAggregatedSumAvg(t *testing.T) {
+	db := setupTestDB(t)
+	q, err := Parse(`type = "resource" GROUP BY contentType COUNT() SUM(fileSize) AVG(fileSize)`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+	for _, row := range result.Rows {
+		if _, ok := row["sum_fileSize"]; !ok {
+			t.Error("missing 'sum_fileSize'")
+		}
+		if _, ok := row["avg_fileSize"]; !ok {
+			t.Error("missing 'avg_fileSize'")
+		}
+		if _, ok := row["count"]; !ok {
+			t.Error("missing 'count'")
+		}
+	}
+
+	// Verify specific values: each contentType has one resource, so sum=avg=fileSize
+	expectedSizes := map[string]int64{
+		"image/jpeg":      1024000,
+		"image/png":       2048000,
+		"application/pdf": 512000,
+		"text/plain":      100,
+	}
+	for _, row := range result.Rows {
+		ct := groupByVal(row["contentType"])
+		expectedSize, ok := expectedSizes[ct]
+		if !ok {
+			t.Errorf("unexpected contentType %q", ct)
+			continue
+		}
+		// SUM and AVG should equal the single resource's fileSize (since count=1)
+		sumVal := groupByVal(row["sum_fileSize"])
+		if sumVal != fmt.Sprintf("%d", expectedSize) {
+			t.Errorf("contentType %q: expected sum_fileSize=%d, got %s", ct, expectedSize, sumVal)
+		}
+	}
+}
+
+func TestComprehensive_GroupByAggregatedMeta(t *testing.T) {
+	db := setupTestDB(t)
+	// Group resources by meta.rating — only sunset.jpg (rating=5) and photo_album.png (rating=3) have it
+	q, err := Parse(`type = "resource" GROUP BY meta.rating COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+	// Expect at least 2 distinct rating groups (5, 3) — resources without rating may form a null group
+	if len(result.Rows) < 2 {
+		t.Errorf("expected at least 2 rows for meta.rating grouping, got %d: %v", len(result.Rows), result.Rows)
+	}
+	for _, row := range result.Rows {
+		if _, ok := row["meta.rating"]; !ok {
+			t.Error("missing 'meta.rating' key in row")
+		}
+		if _, ok := row["count"]; !ok {
+			t.Error("missing 'count' key in row")
+		}
+	}
+}
+
+func TestComprehensive_GroupByAggregatedWithFilter(t *testing.T) {
+	db := setupTestDB(t)
+	// Only resources with fileSize > 100000 — excludes untagged_file.txt (100)
+	q, err := Parse(`type = "resource" AND fileSize > 100000 GROUP BY contentType COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	// 3 resources match: sunset.jpg, photo_album.png, report.pdf — each with distinct contentType
+	if len(result.Rows) != 3 {
+		t.Errorf("expected 3 rows after filter, got %d: %v", len(result.Rows), result.Rows)
+	}
+	for _, row := range result.Rows {
+		count, ok := row["count"]
+		if !ok {
+			t.Error("missing count")
+			continue
+		}
+		if groupByVal(count) == "0" {
+			t.Error("expected non-zero count after filter")
+		}
+	}
+}
+
+func TestComprehensive_GroupByAggregatedOrderByLimit(t *testing.T) {
+	db := setupTestDB(t)
+	q, err := Parse(`type = "resource" GROUP BY contentType COUNT() ORDER BY count DESC LIMIT 2`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if len(result.Rows) > 2 {
+		t.Errorf("expected at most 2 rows, got %d", len(result.Rows))
+	}
+	if len(result.Rows) == 0 {
+		t.Error("expected at least 1 row")
+	}
+	// Verify all rows have both required fields
+	for _, row := range result.Rows {
+		if _, ok := row["contentType"]; !ok {
+			t.Error("missing 'contentType'")
+		}
+		if _, ok := row["count"]; !ok {
+			t.Error("missing 'count'")
+		}
+	}
+}
+
+func TestComprehensive_GroupByMinMax(t *testing.T) {
+	db := setupTestDB(t)
+	q, err := Parse(`type = "resource" GROUP BY contentType MIN(fileSize) MAX(fileSize)`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+	// Each contentType has exactly 1 resource, so min=max=fileSize
+	for _, row := range result.Rows {
+		if _, ok := row["min_fileSize"]; !ok {
+			t.Error("missing min_fileSize")
+		}
+		if _, ok := row["max_fileSize"]; !ok {
+			t.Error("missing max_fileSize")
+		}
+		// With 1 item per group, min should equal max
+		minVal := groupByVal(row["min_fileSize"])
+		maxVal := groupByVal(row["max_fileSize"])
+		if minVal != maxVal {
+			t.Errorf("expected min=max for single-item groups, got min=%s max=%s for %s", minVal, maxVal, groupByVal(row["contentType"]))
+		}
+	}
+}
+
+func TestComprehensive_GroupByMultipleKeys(t *testing.T) {
+	db := setupTestDB(t)
+	q, err := Parse(`type = "resource" GROUP BY contentType, meta.rating COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+	// 4 resources, each has unique contentType; 2 have rating, 2 don't
+	// All 4 should have distinct (contentType, meta.rating) combinations
+	if len(result.Rows) != 4 {
+		t.Errorf("expected 4 rows, got %d: %v", len(result.Rows), result.Rows)
+	}
+	for _, row := range result.Rows {
+		if _, ok := row["contentType"]; !ok {
+			t.Error("missing contentType")
+		}
+		// meta.rating key must be present even if the value is nil
+		if _, ok := row["meta.rating"]; !ok {
+			t.Error("missing meta.rating key")
+		}
+		if _, ok := row["count"]; !ok {
+			t.Error("missing count")
+		}
+	}
+}
+
+func TestComprehensive_GroupByNotesByOwner(t *testing.T) {
+	db := setupTestDB(t)
+	// Group notes by their owner — note 1 owned by Vacation, note 2 owned by Work
+	q, err := Parse(`type = "note" GROUP BY owner COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityNote
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+	// 2 notes with 2 distinct owners
+	if len(result.Rows) != 2 {
+		t.Errorf("expected 2 rows, got %d: %v", len(result.Rows), result.Rows)
+	}
+	ownerNames := make(map[string]bool)
+	for _, row := range result.Rows {
+		if _, ok := row["count"]; !ok {
+			t.Error("missing count")
+		}
+		ownerName := groupByVal(row["owner"])
+		ownerNames[ownerName] = true
+	}
+	if !ownerNames["Vacation"] || !ownerNames["Work"] {
+		t.Errorf("expected owner names {Vacation, Work}, got %v", ownerNames)
+	}
+}
+
+func TestComprehensive_GroupByAllAggregates(t *testing.T) {
+	db := setupTestDB(t)
+	// All 5 aggregate functions at once
+	q, err := Parse(`type = "resource" GROUP BY contentType COUNT() SUM(fileSize) AVG(fileSize) MIN(fileSize) MAX(fileSize)`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+	expectedKeys := []string{"contentType", "count", "sum_fileSize", "avg_fileSize", "min_fileSize", "max_fileSize"}
+	for _, row := range result.Rows {
+		for _, key := range expectedKeys {
+			if _, ok := row[key]; !ok {
+				t.Errorf("missing key %q in row %v", key, row)
+			}
+		}
+	}
+}
+
+// ============================================================
+// GROUP BY — Bucketed Mode
+// ============================================================
+
+func TestComprehensive_GroupByBucketedSimple(t *testing.T) {
+	db := setupTestDB(t)
+	q, err := Parse(`type = "resource" GROUP BY contentType LIMIT 5`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	keys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("keys: %v", err)
+	}
+	// 4 distinct content types
+	if len(keys) != 4 {
+		t.Errorf("expected 4 bucket keys, got %d: %v", len(keys), keys)
+	}
+
+	// Fetch items for each bucket
+	totalResources := 0
+	for _, key := range keys {
+		bucketDB, err := TranslateGroupByBucket(q, db, key)
+		if err != nil {
+			t.Fatalf("bucket: %v", err)
+		}
+		var resources []testResource
+		if err := bucketDB.Find(&resources).Error; err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		if len(resources) > 5 {
+			t.Errorf("expected at most 5 per bucket, got %d", len(resources))
+		}
+		if len(resources) == 0 {
+			t.Errorf("expected at least 1 resource per bucket key %v", key)
+		}
+		totalResources += len(resources)
+	}
+	// All 4 resources accounted for (each unique contentType)
+	if totalResources != 4 {
+		t.Errorf("expected 4 total resources across all buckets, got %d", totalResources)
+	}
+}
+
+func TestComprehensive_GroupByBucketedLimitEnforcement(t *testing.T) {
+	db := setupTestDB(t)
+	// LIMIT 1 per bucket — should return at most 1 resource per content type
+	q, err := Parse(`type = "resource" GROUP BY contentType LIMIT 1`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	keys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("keys: %v", err)
+	}
+
+	for _, key := range keys {
+		bucketDB, err := TranslateGroupByBucket(q, db, key)
+		if err != nil {
+			t.Fatalf("bucket: %v", err)
+		}
+		var resources []testResource
+		if err := bucketDB.Find(&resources).Error; err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		if len(resources) > 1 {
+			t.Errorf("LIMIT 1 violated: got %d resources for bucket %v", len(resources), key)
+		}
+	}
+}
+
+func TestComprehensive_GroupByBucketedWithFilter(t *testing.T) {
+	db := setupTestDB(t)
+	// Only image/* resources — should produce 2 buckets (jpeg, png)
+	q, err := Parse(`type = "resource" AND contentType ~ "image/*" GROUP BY contentType LIMIT 10`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	keys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("keys: %v", err)
+	}
+	if len(keys) != 2 {
+		t.Errorf("expected 2 bucket keys for image/* filter, got %d: %v", len(keys), keys)
+	}
+
+	expectedTypes := map[string]bool{"image/jpeg": true, "image/png": true}
+	for _, key := range keys {
+		ct := groupByVal(key["contentType"])
+		if !expectedTypes[ct] {
+			t.Errorf("unexpected bucket key contentType=%q", ct)
+		}
+
+		bucketDB, err := TranslateGroupByBucket(q, db, key)
+		if err != nil {
+			t.Fatalf("bucket: %v", err)
+		}
+		var resources []testResource
+		if err := bucketDB.Find(&resources).Error; err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		if len(resources) != 1 {
+			t.Errorf("expected 1 resource per bucket, got %d for %q", len(resources), ct)
+		}
+	}
+}
+
+func TestComprehensive_GroupByBucketedNotes(t *testing.T) {
+	db := setupTestDB(t)
+	// Group notes by owner — bucketed mode (no aggregates)
+	q, err := Parse(`type = "note" GROUP BY owner LIMIT 10`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityNote
+
+	keys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("keys: %v", err)
+	}
+	// 2 notes, 2 distinct owners
+	if len(keys) != 2 {
+		t.Errorf("expected 2 bucket keys, got %d: %v", len(keys), keys)
+	}
+
+	for _, key := range keys {
+		bucketDB, err := TranslateGroupByBucket(q, db, key)
+		if err != nil {
+			t.Fatalf("bucket: %v", err)
+		}
+		var notes []testNote
+		if err := bucketDB.Find(&notes).Error; err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		if len(notes) == 0 {
+			t.Errorf("expected at least 1 note per bucket key %v", key)
+		}
+		if len(notes) > 10 {
+			t.Errorf("LIMIT 10 violated: got %d notes", len(notes))
+		}
+	}
+}
+
+// ============================================================
+// GROUP BY — Edge Cases
+// ============================================================
+
+func TestComprehensive_GroupByEmptyResultSet(t *testing.T) {
+	db := setupTestDB(t)
+	// Filter that matches nothing — fileSize > 999999999
+	q, err := Parse(`type = "resource" AND fileSize > 999999999 GROUP BY contentType COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+	if len(result.Rows) != 0 {
+		t.Errorf("expected 0 rows for empty result set, got %d: %v", len(result.Rows), result.Rows)
+	}
+}
+
+func TestComprehensive_GroupByBucketedEmptyResultSet(t *testing.T) {
+	db := setupTestDB(t)
+	// Filter that matches nothing
+	q, err := Parse(`type = "resource" AND fileSize > 999999999 GROUP BY contentType LIMIT 5`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	keys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("keys: %v", err)
+	}
+	if len(keys) != 0 {
+		t.Errorf("expected 0 bucket keys for empty result set, got %d", len(keys))
+	}
+}
+
+func TestComprehensive_GroupByTranslateReturnsNilForBucketed(t *testing.T) {
+	db := setupTestDB(t)
+	// Bucketed mode (no aggregates) — TranslateGroupBy should return nil result
+	q, err := Parse(`type = "resource" GROUP BY contentType LIMIT 5`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != nil {
+		t.Errorf("expected nil result for bucketed mode, got %+v", result)
+	}
+}
+
+func TestComprehensive_GroupByGroupsByMetaRegion(t *testing.T) {
+	db := setupTestDB(t)
+	// Group groups by meta.region — only Vacation has region=europe
+	q, err := Parse(`type = "group" GROUP BY meta.region COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityGroup
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+	// At least 1 row for "europe", possibly more for null region
+	if len(result.Rows) == 0 {
+		t.Error("expected at least 1 row")
+	}
+	// Find the "europe" row
+	foundEurope := false
+	for _, row := range result.Rows {
+		if groupByVal(row["meta.region"]) == "europe" {
+			foundEurope = true
+			if groupByVal(row["count"]) != "1" {
+				t.Errorf("expected count=1 for europe, got %s", groupByVal(row["count"]))
+			}
+		}
+	}
+	if !foundEurope {
+		t.Errorf("expected a row with meta.region=europe, got rows: %v", result.Rows)
+	}
+}
+
+func TestComprehensive_GroupByAggregatedOrderByAscending(t *testing.T) {
+	db := setupTestDB(t)
+	q, err := Parse(`type = "resource" GROUP BY contentType COUNT() SUM(fileSize) ORDER BY sum_fileSize ASC`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if len(result.Rows) < 2 {
+		t.Fatalf("need at least 2 rows to verify ordering, got %d", len(result.Rows))
+	}
+	// Verify ascending order of sum_fileSize (numeric comparison)
+	parseNum := func(s string) int64 {
+		var n int64
+		fmt.Sscanf(s, "%d", &n)
+		return n
+	}
+	for i := 1; i < len(result.Rows); i++ {
+		prevSum := parseNum(groupByVal(result.Rows[i-1]["sum_fileSize"]))
+		currSum := parseNum(groupByVal(result.Rows[i]["sum_fileSize"]))
+		if prevSum > currSum {
+			t.Errorf("rows not in ascending order: row[%d]=%d > row[%d]=%d", i-1, prevSum, i, currSum)
+		}
 	}
 }
