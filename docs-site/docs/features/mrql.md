@@ -34,7 +34,7 @@ Navigate to `/mrql` in the web UI. The page provides:
 ### Basic Structure
 
 ```
-[type = "resource|note|group" AND] <conditions> [ORDER BY <field> [ASC|DESC]] [LIMIT <n>] [OFFSET <n>]
+[type = "resource|note|group" AND] <conditions> [GROUP BY <field> [<aggregates>]] [ORDER BY <field> [ASC|DESC]] [LIMIT <n>] [OFFSET <n>]
 ```
 
 Conditions are field-value comparisons joined with `AND`, `OR`, and `NOT`.
@@ -273,6 +273,71 @@ type = note ORDER BY updated ASC, name ASC LIMIT 50 OFFSET 100
 
 The default sort order when `ORDER BY` is omitted is implementation-defined (typically insertion order).
 
+## GROUP BY and Aggregation
+
+Group results by field values with optional aggregate functions. GROUP BY requires an explicit entity type (`type = "resource"`, `type = "note"`, or `type = "group"`).
+
+```
+type = "<entity>" [<conditions>] GROUP BY <field>[, <field>...] [<aggregates>] [ORDER BY ...] [LIMIT <n>]
+```
+
+### Two Modes
+
+| Mode | Trigger | Returns |
+|------|---------|---------|
+| Aggregated | GROUP BY with aggregate functions | Flat rows with computed values |
+| Bucketed | GROUP BY without aggregate functions | Entity rows organized into groups |
+
+### Aggregate Functions
+
+| Function | Argument | Field types | Output key |
+|----------|----------|-------------|------------|
+| `COUNT()` | none | n/a | `count` |
+| `SUM(field)` | required | numeric, meta | `sum_{field}` |
+| `AVG(field)` | required | numeric, datetime, meta | `avg_{field}` |
+| `MIN(field)` | required | numeric, datetime, meta | `min_{field}` |
+| `MAX(field)` | required | numeric, datetime, meta | `max_{field}` |
+
+Aggregate functions are case-insensitive (`count()`, `COUNT()`, `Count()` all work).
+
+### Aggregated Mode
+
+When aggregate functions are present, GROUP BY returns flat rows of computed values — one row per unique combination of the grouped fields.
+
+```
+type = resource GROUP BY contentType COUNT()
+type = resource GROUP BY contentType COUNT() SUM(fileSize) AVG(fileSize)
+type = resource GROUP BY contentType COUNT() ORDER BY count DESC
+type = resource GROUP BY meta.source COUNT()
+type = note GROUP BY owner, noteType COUNT()
+type = resource AND fileSize > 10mb GROUP BY contentType MIN(fileSize) MAX(fileSize)
+```
+
+Each result row includes the grouped field values plus one key per aggregate function (e.g., `count`, `sum_fileSize`, `avg_fileSize`).
+
+### Bucketed Mode
+
+When no aggregate functions are specified, GROUP BY returns entities organized into named buckets — one bucket per unique value of the grouped field.
+
+```
+type = resource GROUP BY contentType LIMIT 5
+type = resource GROUP BY meta.camera_model LIMIT 10
+type = note GROUP BY owner ORDER BY name ASC LIMIT 3
+```
+
+In bucketed mode, `LIMIT` applies **per bucket** (maximum items per group), not to the total result set.
+
+### ORDER BY with GROUP BY
+
+- **Aggregated mode:** ORDER BY can reference group fields or aggregate output keys (`count`, `sum_fileSize`, etc.)
+- **Bucketed mode:** ORDER BY applies to items within each bucket
+
+### Constraints
+
+- GROUP BY requires `type = "resource|note|group"` — cross-entity grouping is not supported
+- Traversal paths (e.g., `owner.name`) are not supported in GROUP BY fields — use direct fields only
+- Maximum 1000 buckets in bucketed mode
+
 ## Traversal
 
 MRQL supports filtering by properties of related groups through dotted field paths. Traversal works on:
@@ -467,4 +532,40 @@ type = resource AND owner.parent.name = "Acme Corp"
 
 ```
 type = group AND parent.parent.name = "Root Organization"
+```
+
+### Count resources by content type
+
+```
+type = resource GROUP BY contentType COUNT() ORDER BY count DESC
+```
+
+### Total and average file size per content type
+
+```
+type = resource GROUP BY contentType COUNT() SUM(fileSize) AVG(fileSize)
+```
+
+### Size extremes for large files by content type
+
+```
+type = resource AND fileSize > 10mb GROUP BY contentType MIN(fileSize) MAX(fileSize)
+```
+
+### Notes by owner and note type
+
+```
+type = note GROUP BY owner, noteType COUNT()
+```
+
+### Resources bucketed by content type (5 per bucket)
+
+```
+type = resource GROUP BY contentType LIMIT 5
+```
+
+### Resources bucketed by metadata field
+
+```
+type = resource GROUP BY meta.camera_model LIMIT 10
 ```
