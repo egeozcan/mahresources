@@ -48,6 +48,7 @@ type mrqlGroupedResponse struct {
 	Mode       string           `json:"mode"`
 	Rows       []map[string]any `json:"rows,omitempty"`
 	Groups     []mrqlBucket     `json:"groups,omitempty"`
+	Warnings   []string         `json:"warnings,omitempty"`
 }
 
 type mrqlBucket struct {
@@ -111,29 +112,7 @@ Examples:
 				return err
 			}
 
-			// Try grouped response first (has "mode" field)
-			var grouped mrqlGroupedResponse
-			if err := json.Unmarshal(raw, &grouped); err == nil && grouped.Mode != "" {
-				if grouped.Mode == "aggregated" {
-					columns, rows := aggregatedToTable(grouped.Rows)
-					output.Print(*opts, columns, rows, raw)
-				} else {
-					printBucketedOutput(*opts, grouped, raw)
-				}
-				return nil
-			}
-
-			// Fall back to standard response
-			var resp mrqlResponse
-			if err := json.Unmarshal(raw, &resp); err != nil {
-				output.PrintSingle(*opts, nil, raw)
-				return nil
-			}
-
-			columns := []string{"ID", "TYPE", "NAME", "CREATED"}
-			rows := mrqlResponseToRows(resp)
-
-			output.Print(*opts, columns, rows, raw)
+			printMRQLResponse(*opts, raw)
 			return nil
 		},
 	}
@@ -254,28 +233,7 @@ func newMRQLRunCmd(c *client.Client, opts *output.Options, page *int) *cobra.Com
 				return err
 			}
 
-			// Try grouped response first (has "mode" field)
-			var grouped mrqlGroupedResponse
-			if err := json.Unmarshal(raw, &grouped); err == nil && grouped.Mode != "" {
-				if grouped.Mode == "aggregated" {
-					columns, rows := aggregatedToTable(grouped.Rows)
-					output.Print(*opts, columns, rows, raw)
-				} else {
-					printBucketedOutput(*opts, grouped, raw)
-				}
-				return nil
-			}
-
-			var resp mrqlResponse
-			if err := json.Unmarshal(raw, &resp); err != nil {
-				output.PrintSingle(*opts, nil, raw)
-				return nil
-			}
-
-			columns := []string{"ID", "TYPE", "NAME", "CREATED"}
-			rows := mrqlResponseToRows(resp)
-
-			output.Print(*opts, columns, rows, raw)
+			printMRQLResponse(*opts, raw)
 			return nil
 		},
 	}
@@ -283,6 +241,36 @@ func newMRQLRunCmd(c *client.Client, opts *output.Options, page *int) *cobra.Com
 	cmd.Flags().IntVar(&limit, "limit", 0, "Override result limit (0 = use saved query's LIMIT or server default)")
 
 	return cmd
+}
+
+// printMRQLResponse handles rendering of both grouped and standard MRQL responses,
+// including warnings from the server (e.g., truncated bucketed results).
+func printMRQLResponse(opts output.Options, raw json.RawMessage) {
+	// Try grouped response first (has "mode" field)
+	var grouped mrqlGroupedResponse
+	if err := json.Unmarshal(raw, &grouped); err == nil && grouped.Mode != "" {
+		for _, w := range grouped.Warnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+		}
+		if grouped.Mode == "aggregated" {
+			columns, rows := aggregatedToTable(grouped.Rows)
+			output.Print(opts, columns, rows, raw)
+		} else {
+			printBucketedOutput(opts, grouped, raw)
+		}
+		return
+	}
+
+	// Fall back to standard response
+	var resp mrqlResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		output.PrintSingle(opts, nil, raw)
+		return
+	}
+
+	columns := []string{"ID", "TYPE", "NAME", "CREATED"}
+	rows := mrqlResponseToRows(resp)
+	output.Print(opts, columns, rows, raw)
 }
 
 // mrqlResponseToRows converts the API response into unified table rows.
