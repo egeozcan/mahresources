@@ -27,7 +27,7 @@
             <div>
                 <h3 class="font-semibold text-stone-700">Syntax Overview</h3>
                 <p>MRQL queries filter entities using field-value conditions connected with <code class="bg-stone-200 px-1 rounded">AND</code> / <code class="bg-stone-200 px-1 rounded">OR</code>.</p>
-                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">name ~ "search term" AND tags = "important" ORDER BY created DESC LIMIT 20</pre>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">name ~ "search term" AND tags = "important" [GROUP BY field [COUNT() SUM(f)]] ORDER BY created DESC LIMIT 20</pre>
             </div>
             <div>
                 <h3 class="font-semibold text-stone-700">Entity Types</h3>
@@ -102,10 +102,27 @@
                 Chain up to 5 levels deep.</p>
             </div>
             <div>
+                <h3 class="font-semibold text-stone-700">GROUP BY</h3>
+                <p class="text-xs">Group results by field values. Requires <code class="bg-stone-200 px-1 rounded">type = ...</code>. Two modes:</p>
+                <p class="text-xs mt-1"><strong>Aggregated</strong> (with functions) &mdash; returns computed rows:
+                    <code class="bg-stone-200 px-1 rounded">COUNT()</code>,
+                    <code class="bg-stone-200 px-1 rounded">SUM(field)</code>,
+                    <code class="bg-stone-200 px-1 rounded">AVG(field)</code>,
+                    <code class="bg-stone-200 px-1 rounded">MIN(field)</code>,
+                    <code class="bg-stone-200 px-1 rounded">MAX(field)</code>
+                </p>
+                <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = resource GROUP BY contentType COUNT() SUM(fileSize)</pre>
+                <p class="text-xs mt-1"><strong>Bucketed</strong> (no functions) &mdash; returns entities organized into groups. LIMIT applies per bucket.</p>
+                <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = resource GROUP BY contentType LIMIT 5</pre>
+                <p class="text-xs mt-1">Group by <code class="bg-stone-200 px-1 rounded">meta.*</code>, <code class="bg-stone-200 px-1 rounded">tags</code>, <code class="bg-stone-200 px-1 rounded">owner</code>, or any scalar field. Traversal paths not supported.</p>
+            </div>
+            <div>
                 <h3 class="font-semibold text-stone-700">Examples</h3>
                 <pre class="bg-stone-100 p-2 rounded overflow-x-auto">type = resource AND contentType ~ "image" AND fileSize > 1MB</pre>
                 <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = note AND tags = "todo" ORDER BY updated DESC</pre>
                 <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">name ~ "project" AND created > -30d</pre>
+                <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = resource GROUP BY contentType COUNT() ORDER BY count DESC</pre>
+                <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = resource GROUP BY meta.source COUNT() SUM(fileSize)</pre>
             </div>
         </div>
 
