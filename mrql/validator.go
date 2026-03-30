@@ -633,6 +633,7 @@ func validateGroupBy(gb *GroupByClause, entityType EntityType, orderBy []OrderBy
 	}
 
 	// Validate each GROUP BY field
+	seenColumns := make(map[string]string) // resolved column → original field name
 	for _, f := range gb.Fields {
 		// Reject the "type" pseudo-field — it's a filter, not a real column.
 		if len(f.Parts) == 1 && f.Parts[0].Value == "type" {
@@ -647,6 +648,23 @@ func validateGroupBy(gb *GroupByClause, entityType EntityType, orderBy []OrderBy
 		if err := validateFieldExpr(f, entityType); err != nil {
 			return err
 		}
+
+		// Reject duplicate or alias-equivalent fields (e.g., GROUP BY groups, group
+		// or GROUP BY tags, tags) — these produce ambiguous SQL with duplicate JOINs.
+		resolvedCol := f.Name()
+		if len(f.Parts) == 1 {
+			if fd, ok := LookupField(entityType, f.Parts[0].Value); ok {
+				resolvedCol = fd.Column
+			}
+		}
+		if prev, exists := seenColumns[resolvedCol]; exists {
+			return &ValidationError{
+				Message: fmt.Sprintf("duplicate GROUP BY field: %q resolves to the same column as %q", f.Name(), prev),
+				Pos:     f.Pos(),
+				Length:  len(f.Name()),
+			}
+		}
+		seenColumns[resolvedCol] = f.Name()
 	}
 
 	// Validate aggregate functions

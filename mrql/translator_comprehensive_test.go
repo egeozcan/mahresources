@@ -4396,3 +4396,104 @@ func TestBugfix_BucketedRelationKeysIncludeID(t *testing.T) {
 		t.Errorf("expected 2 SameName buckets, got %d", sameNameKeys)
 	}
 }
+
+// P1: Bucketed paging with limit+offset should return exactly limit keys.
+func TestBugfix_BucketedPagingRespectsLimit(t *testing.T) {
+	db := setupTestDB(t)
+
+	// 4 content types exist. limit=1, offset=1 (page 2, size 1) should return exactly 1 key.
+	q, err := Parse(`type = "resource" GROUP BY contentType`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+	q.Limit = 1
+	q.Offset = 1
+
+	keys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("keys: %v", err)
+	}
+	// Should return at most 1 key (the +1 overflow detection is trimmed by caller)
+	// TranslateGroupByKeys returns limit+1 for overflow detection; caller trims.
+	// At the translator level we get at most 2 (1+1). Verify it's <= 2.
+	if len(keys) > 2 {
+		t.Errorf("expected at most 2 keys (limit=1 + 1 overflow), got %d", len(keys))
+	}
+
+	// Now simulate the execution layer trim
+	if len(keys) > 1 {
+		keys = keys[:1]
+	}
+	if len(keys) != 1 {
+		t.Errorf("after trim: expected exactly 1 key, got %d", len(keys))
+	}
+}
+
+func TestBugfix_BucketedPagingStablePages(t *testing.T) {
+	db := setupTestDB(t)
+
+	q := &Query{
+		Where:      nil,
+		GroupBy:    &GroupByClause{Fields: []*FieldExpr{{Parts: []Token{{Value: "contentType", Type: TokenIdentifier}}}}},
+		EntityType: EntityResource,
+		Limit:      2,
+		Offset:     0,
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	page1, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("page1: %v", err)
+	}
+	if len(page1) > 3 { // 2+1 overflow
+		t.Errorf("page1: expected at most 3, got %d", len(page1))
+	}
+
+	q2 := *q
+	q2.Offset = 2
+	page2, err := TranslateGroupByKeys(&q2, db)
+	if err != nil {
+		t.Fatalf("page2: %v", err)
+	}
+
+	// Pages should not overlap
+	if len(page1) > 0 && len(page2) > 0 {
+		p1first := groupByVal(page1[0]["contentType"])
+		p2first := groupByVal(page2[0]["contentType"])
+		if p1first == p2first {
+			t.Errorf("page1 and page2 start with same key %q — pages overlap", p1first)
+		}
+	}
+}
+
+// P2: Duplicate/alias-equivalent GROUP BY fields should be rejected.
+func TestBugfix_DuplicateGroupByFieldsRejected(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"exact duplicate", `type = "resource" GROUP BY tags, tags COUNT()`},
+		{"alias equivalent", `type = "resource" GROUP BY groups, group COUNT()`},
+		{"exact scalar", `type = "resource" GROUP BY contentType, contentType COUNT()`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := Parse(tt.query)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			err = Validate(q)
+			if err == nil {
+				t.Fatal("expected validation error for duplicate GROUP BY field")
+			}
+			if !strings.Contains(err.Error(), "duplicate") {
+				t.Errorf("expected error about duplicate, got: %v", err)
+			}
+		})
+	}
+}

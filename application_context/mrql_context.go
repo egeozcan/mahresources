@@ -186,10 +186,16 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 		return nil, err
 	}
 
+	// Determine the effective key page size (matches TranslateGroupByKeys logic)
+	keyLimit := mrql.MaxBuckets
+	if parsed.Limit >= 0 && parsed.Offset >= 0 {
+		keyLimit = parsed.Limit
+	}
+
 	var warnings []string
-	if len(keys) > mrql.MaxBuckets {
-		warnings = append(warnings, fmt.Sprintf("Only the first %d groups are shown. Add filters to narrow the result set.", mrql.MaxBuckets))
-		keys = keys[:mrql.MaxBuckets]
+	if len(keys) > keyLimit {
+		warnings = append(warnings, fmt.Sprintf("Only the first %d groups are shown. Add filters to narrow the result set.", keyLimit))
+		keys = keys[:keyLimit]
 	}
 
 	var buckets []MRQLBucket
