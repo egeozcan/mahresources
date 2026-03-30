@@ -578,3 +578,135 @@ func TestMRQLSavedQueryCreateDuplicateName(t *testing.T) {
 	json.Unmarshal(resp.Body.Bytes(), &errResp)
 	assert.NotEmpty(t, errResp["error"])
 }
+
+// ---- Saved query GROUP BY paging ----
+
+func TestMRQLSavedQueryRunGroupByInlineLimitAndPage(t *testing.T) {
+	tc := setupMRQLTest(t)
+
+	// Seed resources with 2 distinct content types
+	tc.DB.Create(&models.Resource{Name: "pageSaved1", ContentType: "text/plain"})
+	tc.DB.Create(&models.Resource{Name: "pageSaved2", ContentType: "image/png"})
+	tc.DB.Create(&models.Resource{Name: "pageSaved3", ContentType: "image/png"})
+
+	// Save a GROUP BY query with inline LIMIT 1
+	saved := &models.SavedMRQLQuery{
+		Name:  "GroupByPaged",
+		Query: `type = "resource" GROUP BY contentType LIMIT 1`,
+	}
+	tc.DB.Create(saved)
+
+	// Page 1: should return exactly 1 bucket
+	resp1 := tc.MakeRequest(http.MethodPost, fmt.Sprintf("/v1/mrql/saved/run?id=%d&page=1", saved.ID), nil)
+	assert.Equal(t, http.StatusOK, resp1.Code)
+
+	var result1 map[string]any
+	err := json.Unmarshal(resp1.Body.Bytes(), &result1)
+	assert.NoError(t, err)
+	assert.Equal(t, "bucketed", result1["mode"])
+
+	groups1, _ := result1["groups"].([]any)
+	assert.Len(t, groups1, 1, "page 1 should have exactly 1 bucket (inline LIMIT 1 as bucket page size)")
+
+	// Page 2: should return the second bucket (not empty)
+	resp2 := tc.MakeRequest(http.MethodPost, fmt.Sprintf("/v1/mrql/saved/run?id=%d&page=2", saved.ID), nil)
+	assert.Equal(t, http.StatusOK, resp2.Code)
+
+	var result2 map[string]any
+	err = json.Unmarshal(resp2.Body.Bytes(), &result2)
+	assert.NoError(t, err)
+	assert.Equal(t, "bucketed", result2["mode"])
+
+	groups2, _ := result2["groups"].([]any)
+	assert.Len(t, groups2, 1, "page 2 should have exactly 1 bucket")
+
+	// Pages should have different bucket keys
+	if len(groups1) > 0 && len(groups2) > 0 {
+		key1 := groups1[0].(map[string]any)["key"].(map[string]any)["contentType"]
+		key2 := groups2[0].(map[string]any)["key"].(map[string]any)["contentType"]
+		assert.NotEqual(t, key1, key2, "page 1 and page 2 should have different bucket keys")
+	}
+}
+
+func TestMRQLSavedQueryRunGroupByWithBucketsParam(t *testing.T) {
+	tc := setupMRQLTest(t)
+
+	tc.DB.Create(&models.Resource{Name: "bucketParam1", ContentType: "text/plain"})
+	tc.DB.Create(&models.Resource{Name: "bucketParam2", ContentType: "image/png"})
+
+	saved := &models.SavedMRQLQuery{
+		Name:  "GroupByBucketsParam",
+		Query: `type = "resource" GROUP BY contentType`,
+	}
+	tc.DB.Create(saved)
+
+	// Use explicit buckets=1 param to page through groups
+	resp := tc.MakeRequest(http.MethodPost, fmt.Sprintf("/v1/mrql/saved/run?id=%d&buckets=1&page=1", saved.ID), nil)
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	var result map[string]any
+	err := json.Unmarshal(resp.Body.Bytes(), &result)
+	assert.NoError(t, err)
+	assert.Equal(t, "bucketed", result["mode"])
+
+	groups, _ := result["groups"].([]any)
+	assert.Len(t, groups, 1, "buckets=1 should return exactly 1 bucket")
+}
+
+func TestMRQLSavedQueryRunGroupByRevalidation(t *testing.T) {
+	tc := setupMRQLTest(t)
+
+	// Insert a saved query with an invalid field directly (bypassing validation)
+	tc.DB.Exec(
+		"INSERT INTO saved_mrql_queries (name, query, description) VALUES (?, ?, ?)",
+		"InvalidSaved",
+		`type = "resource" AND bogusField = "x"`,
+		"",
+	)
+
+	var inserted models.SavedMRQLQuery
+	tc.DB.Where("name = ?", "InvalidSaved").First(&inserted)
+
+	resp := tc.MakeRequest(http.MethodPost, fmt.Sprintf("/v1/mrql/saved/run?id=%d", inserted.ID), nil)
+	assert.Equal(t, http.StatusBadRequest, resp.Code, "running an invalid saved query should return validation error")
+}
+
+// ---- Execute endpoint GROUP BY paging ----
+
+func TestMRQLExecuteGroupByInlineLimitAndPage(t *testing.T) {
+	tc := setupMRQLTest(t)
+
+	tc.DB.Create(&models.Resource{Name: "execPage1", ContentType: "text/plain"})
+	tc.DB.Create(&models.Resource{Name: "execPage2", ContentType: "image/png"})
+
+	// Page 1 with inline LIMIT 1
+	resp1 := tc.MakeRequest(http.MethodPost, "/v1/mrql", map[string]any{
+		"query": `type = "resource" GROUP BY contentType LIMIT 1`,
+		"page":  1,
+	})
+	assert.Equal(t, http.StatusOK, resp1.Code)
+
+	var result1 map[string]any
+	json.Unmarshal(resp1.Body.Bytes(), &result1)
+	groups1, _ := result1["groups"].([]any)
+	assert.Len(t, groups1, 1, "page 1 with inline LIMIT 1 should return 1 bucket")
+
+	// Page 2
+	resp2 := tc.MakeRequest(http.MethodPost, "/v1/mrql", map[string]any{
+		"query": `type = "resource" GROUP BY contentType LIMIT 1`,
+		"page":  2,
+	})
+	assert.Equal(t, http.StatusOK, resp2.Code)
+
+	var result2 map[string]any
+	json.Unmarshal(resp2.Body.Bytes(), &result2)
+	groups2, _ := result2["groups"].([]any)
+	assert.Len(t, groups2, 1, "page 2 with inline LIMIT 1 should return 1 bucket")
+
+	// Different keys on different pages
+	if len(groups1) > 0 && len(groups2) > 0 {
+		key1 := groups1[0].(map[string]any)["key"].(map[string]any)["contentType"]
+		key2 := groups2[0].(map[string]any)["key"].(map[string]any)["contentType"]
+		assert.NotEqual(t, key1, key2, "pages should have different bucket keys")
+	}
+}
