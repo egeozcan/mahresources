@@ -1618,18 +1618,24 @@ func (tc *translateContext) aggregateExpr(agg AggregateFunc) (string, string) {
 		return "COUNT(*)", "count"
 	default:
 		fieldName := agg.Field.Name()
-		col := tc.resolveAggregateColumn(fieldName)
+		needsNumericCast := agg.Name == "SUM" || agg.Name == "AVG"
+		col := tc.resolveAggregateColumn(fieldName, needsNumericCast)
 		alias := strings.ToLower(agg.Name) + "_" + fieldName
 		return fmt.Sprintf("%s(%s)", agg.Name, col), alias
 	}
 }
 
 // resolveAggregateColumn converts a field name to its SQL column expression.
-func (tc *translateContext) resolveAggregateColumn(fieldName string) string {
+// numericCast controls whether meta fields are cast to numeric on PostgreSQL.
+// SUM/AVG require numeric; MIN/MAX work on text and should not cast.
+func (tc *translateContext) resolveAggregateColumn(fieldName string, numericCast bool) string {
 	if strings.HasPrefix(fieldName, "meta.") {
 		key := strings.TrimPrefix(fieldName, "meta.")
 		if tc.isPostgres() {
-			return fmt.Sprintf("(%s.meta->>'%s')::numeric", tc.tableName, key)
+			if numericCast {
+				return fmt.Sprintf("(%s.meta->>'%s')::numeric", tc.tableName, key)
+			}
+			return fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)
 		}
 		return fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
 	}

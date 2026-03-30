@@ -186,6 +186,11 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 		return nil, err
 	}
 
+	var warnings []string
+	if len(keys) >= mrql.MaxBuckets {
+		warnings = append(warnings, fmt.Sprintf("Only the first %d groups are shown. Add filters to narrow the result set.", mrql.MaxBuckets))
+	}
+
 	var buckets []MRQLBucket
 	totalItems := 0
 	for _, key := range keys {
@@ -250,7 +255,6 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 		buckets = []MRQLBucket{}
 	}
 
-	var warnings []string
 	if totalItems >= maxBucketedTotalItems {
 		warnings = append(warnings, fmt.Sprintf("Results truncated at %d items. Narrow your query or add a filter to see all groups.", maxBucketedTotalItems))
 	}

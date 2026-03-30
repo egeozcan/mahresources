@@ -7,8 +7,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// maxBuckets is the maximum number of distinct group keys allowed in bucketed mode.
-const maxBuckets = 1000
+// MaxBuckets is the maximum number of distinct group keys allowed in bucketed mode.
+const MaxBuckets = 1000
 
 // TranslateGroupByKeys executes a SELECT DISTINCT query to get unique bucket keys.
 // Returns a slice of maps, each containing the group-by field values for one bucket.
@@ -81,9 +81,9 @@ func TranslateGroupByKeys(q *Query, db *gorm.DB) ([]map[string]any, error) {
 		result = result.Order(gc)
 	}
 
-	// Cap number of keys at maxBuckets. LIMIT from the query is per-bucket
+	// Cap number of keys at MaxBuckets. LIMIT from the query is per-bucket
 	// items, not a key count cap — it's applied in TranslateGroupByBucket.
-	result = result.Limit(maxBuckets)
+	result = result.Limit(MaxBuckets)
 
 	// OFFSET paginates through bucket keys (e.g., page=2 skips first N groups).
 	if q.Offset >= 0 {
