@@ -8,6 +8,7 @@ import (
 	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/models"
+	"mahresources/mrql"
 	"mahresources/server/http_utils"
 )
 
@@ -57,6 +58,50 @@ func GetExecuteMRQLHandler(ctx *application_context.MahresourcesContext) func(ht
 			return
 		}
 
+		// Parse and validate to check for GROUP BY before execution
+		parsed, err := mrql.Parse(req.Query)
+		if err != nil {
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+			return
+		}
+		if err := mrql.Validate(parsed); err != nil {
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+			return
+		}
+
+		// GROUP BY queries use a separate execution path
+		if parsed.GroupBy != nil {
+			entityType := mrql.ExtractEntityType(parsed)
+			if entityType == mrql.EntityUnspecified {
+				http_utils.HandleError(errors.New("GROUP BY requires an explicit entity type"), writer, request, http.StatusBadRequest)
+				return
+			}
+			parsed.EntityType = entityType
+
+			// Override parsed LIMIT/OFFSET with request parameters
+			if req.Limit > 0 {
+				parsed.Limit = req.Limit
+			}
+			if req.Page >= 1 {
+				effectiveLimit := parsed.Limit
+				if effectiveLimit < 0 {
+					effectiveLimit = 1000 // defaultMRQLLimit
+				}
+				parsed.Offset = (req.Page - 1) * effectiveLimit
+			}
+
+			grouped, err := ctx.ExecuteMRQLGrouped(request.Context(), parsed)
+			if err != nil {
+				http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+				return
+			}
+
+			writer.Header().Set("Content-Type", constants.JSON)
+			_ = json.NewEncoder(writer).Encode(grouped)
+			return
+		}
+
+		// Non-grouped query: use the existing path
 		result, err := ctx.ExecuteMRQL(request.Context(), req.Query, req.Limit, req.Page)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
@@ -247,6 +292,42 @@ func GetRunSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) f
 
 		limit := int(http_utils.GetUIntQueryParameter(request, "limit", 0))
 		page := int(http_utils.GetUIntQueryParameter(request, "page", 0))
+
+		// Parse the saved query to check for GROUP BY
+		parsed, parseErr := mrql.Parse(saved.Query)
+		if parseErr == nil {
+			_ = mrql.Validate(parsed) // already validated at save time
+		}
+
+		if parseErr == nil && parsed.GroupBy != nil {
+			entityType := mrql.ExtractEntityType(parsed)
+			if entityType == mrql.EntityUnspecified {
+				http_utils.HandleError(errors.New("GROUP BY requires an explicit entity type"), writer, request, http.StatusBadRequest)
+				return
+			}
+			parsed.EntityType = entityType
+
+			if limit > 0 {
+				parsed.Limit = limit
+			}
+			if page >= 1 {
+				effectiveLimit := parsed.Limit
+				if effectiveLimit < 0 {
+					effectiveLimit = 1000
+				}
+				parsed.Offset = (page - 1) * effectiveLimit
+			}
+
+			grouped, err := ctx.ExecuteMRQLGrouped(request.Context(), parsed)
+			if err != nil {
+				http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+				return
+			}
+
+			writer.Header().Set("Content-Type", constants.JSON)
+			_ = json.NewEncoder(writer).Encode(grouped)
+			return
+		}
 
 		result, err := ctx.ExecuteMRQL(request.Context(), saved.Query, limit, page)
 		if err != nil {
