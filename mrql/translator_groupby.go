@@ -121,7 +121,8 @@ func TranslateGroupByBucket(q *Query, db *gorm.DB, key map[string]any) (*gorm.DB
 		tableName:  entityTableName(entityType),
 	}
 
-	result := db.Table(tc.tableName)
+	// Use DISTINCT to prevent duplicates when relation JOINs multiply rows.
+	result := db.Table(tc.tableName).Distinct(tc.tableName + ".*")
 
 	// Apply WHERE clause from the original query
 	if q.Where != nil {

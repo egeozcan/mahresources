@@ -206,10 +206,14 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 			return nil, err
 		}
 
-		// Build public key (strip internal _gbid_ fields used for bucket filtering)
+		// Build public key — rename internal _gbid_ fields to user-friendly
+		// <field>_id keys so same-named relation buckets are distinguishable.
 		publicKey := make(map[string]any, len(key))
 		for k, v := range key {
-			if !strings.HasPrefix(k, "_gbid_") {
+			if strings.HasPrefix(k, "_gbid_") {
+				friendlyKey := strings.TrimPrefix(k, "_gbid_") + "_id"
+				publicKey[friendlyKey] = v
+			} else {
 				publicKey[k] = v
 			}
 		}
@@ -246,10 +250,16 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 		buckets = []MRQLBucket{}
 	}
 
+	var warnings []string
+	if totalItems >= maxBucketedTotalItems {
+		warnings = append(warnings, fmt.Sprintf("Results truncated at %d items. Narrow your query or add a filter to see all groups.", maxBucketedTotalItems))
+	}
+
 	return &MRQLGroupedResult{
 		EntityType: parsed.EntityType.String(),
 		Mode:       "bucketed",
 		Groups:     buckets,
+		Warnings:   warnings,
 	}, nil
 }
 

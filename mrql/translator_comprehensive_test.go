@@ -4306,3 +4306,93 @@ func TestBugfix_BucketedKeysHaveDeterministicOrder(t *testing.T) {
 		}
 	}
 }
+
+// P2a: Bucketed queries with relation JOINs must not duplicate base entities.
+// GROUP BY owner joins groups, and if the owner group has multiple children
+// or tags, the JOIN can multiply rows. The bucket query must deduplicate.
+func TestBugfix_BucketedRelationJoinNoDuplicates(t *testing.T) {
+	db := setupTestDB(t)
+
+	// GROUP BY owner — the join to groups for filtering shouldn't duplicate
+	// entities. sunset.jpg (owner=Vacation) should appear exactly once.
+	// Add a second tag to Vacation to create potential duplication via
+	// the group_tags join (not directly relevant here, but test with
+	// a GROUP BY that causes JOINs).
+	q, err := Parse(`type = "resource" GROUP BY owner LIMIT 100`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	keys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("keys: %v", err)
+	}
+
+	for _, key := range keys {
+		bucketDB, err := TranslateGroupByBucket(q, db, key)
+		if err != nil {
+			t.Fatalf("bucket: %v", err)
+		}
+		var resources []testResource
+		if err := bucketDB.Find(&resources).Error; err != nil {
+			t.Fatalf("find: %v", err)
+		}
+
+		// Check for duplicate IDs
+		seen := make(map[uint]bool)
+		for _, r := range resources {
+			if seen[r.ID] {
+				t.Errorf("bucket owner=%v: duplicate resource ID %d (%s)", key["owner"], r.ID, r.Name)
+			}
+			seen[r.ID] = true
+		}
+	}
+}
+
+// P2b: Bucketed keys for relation fields must include ID for disambiguation.
+func TestBugfix_BucketedRelationKeysIncludeID(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Seed two groups with the same name but different IDs
+	db.Exec("INSERT INTO groups (id, name, meta, created_at, updated_at) VALUES (200, 'SameName', '{}', datetime('now'), datetime('now'))")
+	db.Exec("INSERT INTO groups (id, name, meta, created_at, updated_at) VALUES (201, 'SameName', '{}', datetime('now'), datetime('now'))")
+	db.Exec("INSERT INTO resources (id, name, content_type, file_size, meta, created_at, updated_at, owner_id) VALUES (200, 'res-x', 'text/plain', 10, '{}', datetime('now'), datetime('now'), 200)")
+	db.Exec("INSERT INTO resources (id, name, content_type, file_size, meta, created_at, updated_at, owner_id) VALUES (201, 'res-y', 'text/plain', 20, '{}', datetime('now'), datetime('now'), 201)")
+
+	q, err := Parse(`type = "resource" GROUP BY owner LIMIT 100`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	keys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("keys: %v", err)
+	}
+
+	// Find the two SameName buckets — they must be distinguishable.
+	// The keys query includes _gbid_owner (internal), which the execution
+	// layer renames to owner_id (public). At the translator level we see _gbid_.
+	sameNameKeys := 0
+	for _, key := range keys {
+		name := groupByVal(key["owner"])
+		if name == "SameName" {
+			sameNameKeys++
+			// At translator level the key has _gbid_owner for bucket filtering
+			idKey := key["_gbid_owner"]
+			if idKey == nil {
+				t.Error("expected _gbid_owner in key for disambiguation, got nil")
+			}
+		}
+	}
+	if sameNameKeys < 2 {
+		t.Errorf("expected 2 SameName buckets, got %d", sameNameKeys)
+	}
+}
