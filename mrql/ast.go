@@ -124,6 +124,19 @@ type FuncCall struct {
 func (f *FuncCall) nodeType() string { return "FuncCall" }
 func (f *FuncCall) Pos() int         { return f.Token.Pos }
 
+// AggregateFunc represents an aggregate function call: COUNT(), SUM(field), etc.
+type AggregateFunc struct {
+	Token Token      // the aggregate keyword token (COUNT, SUM, etc.)
+	Name  string     // uppercase: "COUNT", "SUM", "AVG", "MIN", "MAX"
+	Field *FieldExpr // nil for COUNT(), required for SUM/AVG/MIN/MAX
+}
+
+// GroupByClause holds GROUP BY fields and optional aggregate functions.
+type GroupByClause struct {
+	Fields     []*FieldExpr    // the fields to group by
+	Aggregates []AggregateFunc // aggregate functions (empty = bucketed mode)
+}
+
 // OrderByClause is a single ORDER BY column+direction.
 type OrderByClause struct {
 	Field     *FieldExpr
@@ -155,9 +168,10 @@ func (e EntityType) String() string {
 
 // Query is the top-level AST node for a complete MRQL query.
 type Query struct {
-	Where      Node            // the filter expression (may be nil)
-	OrderBy    []OrderByClause // ORDER BY clauses (may be empty)
-	Limit      int             // -1 if not specified
-	Offset     int             // -1 if not specified
-	EntityType EntityType      // populated by validator or caller
+	Where      Node             // the filter expression (may be nil)
+	GroupBy    *GroupByClause   // GROUP BY clause (nil when absent)
+	OrderBy    []OrderByClause  // ORDER BY clauses (may be empty)
+	Limit      int              // -1 if not specified
+	Offset     int              // -1 if not specified
+	EntityType EntityType       // populated by validator or caller
 }
