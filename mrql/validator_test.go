@@ -419,3 +419,156 @@ func TestValidatorOwnerTraversalInvalid(t *testing.T) {
 		})
 	}
 }
+
+func TestValidate_GroupByRequiresEntityType(t *testing.T) {
+	q, err := Parse(`name ~ "test" GROUP BY name`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	err = Validate(q)
+	if err == nil {
+		t.Fatal("expected validation error: GROUP BY requires entity type")
+	}
+	if !strings.Contains(err.Error(), "GROUP BY requires an explicit entity type") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidate_GroupByValidScalarField(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY contentType COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Errorf("expected valid, got: %v", err)
+	}
+}
+
+func TestValidate_GroupByMetaField(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY meta.source COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Errorf("expected valid, got: %v", err)
+	}
+}
+
+func TestValidate_GroupByRelationField(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY tags COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Errorf("expected valid, got: %v", err)
+	}
+}
+
+func TestValidate_GroupByRejectsTraversal(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY owner.name COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	err = Validate(q)
+	if err == nil {
+		t.Fatal("expected validation error for traversal in GROUP BY")
+	}
+	if !strings.Contains(err.Error(), "traversal") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidate_GroupByRejectsUnknownField(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY fakeField COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err == nil {
+		t.Fatal("expected validation error for unknown field")
+	}
+}
+
+func TestValidate_SumRequiresNumericField(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY contentType SUM(name)`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	err = Validate(q)
+	if err == nil {
+		t.Fatal("expected validation error: SUM on string field")
+	}
+	if !strings.Contains(err.Error(), "numeric") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidate_AvgRequiresNumericField(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY contentType AVG(description)`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err == nil {
+		t.Fatal("expected validation error: AVG on string field")
+	}
+}
+
+func TestValidate_MinAllowsDateTimeField(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY contentType MIN(created)`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Errorf("expected valid (MIN on datetime), got: %v", err)
+	}
+}
+
+func TestValidate_MaxAllowsNumberField(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY contentType MAX(fileSize)`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Errorf("expected valid (MAX on number), got: %v", err)
+	}
+}
+
+func TestValidate_SumAllowsMetaField(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY contentType SUM(meta.size)`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Errorf("expected valid (SUM on meta), got: %v", err)
+	}
+}
+
+func TestValidate_AggregateFieldMustExist(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY contentType SUM(bogus)`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err == nil {
+		t.Fatal("expected validation error for unknown aggregate field")
+	}
+}
+
+func TestValidate_GroupByOrderByAggregateKey(t *testing.T) {
+	// In aggregated mode, ORDER BY can reference output keys like "count"
+	q, err := Parse(`type = "resource" GROUP BY contentType COUNT() ORDER BY count DESC`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Errorf("expected valid ORDER BY on aggregate key, got: %v", err)
+	}
+}
+
+func TestValidate_GroupByOrderByGroupField(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY contentType COUNT() ORDER BY contentType ASC`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Errorf("expected valid ORDER BY on group field, got: %v", err)
+	}
+}

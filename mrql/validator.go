@@ -72,11 +72,22 @@ func Validate(q *Query) error {
 	}
 
 	// Validate ORDER BY fields — must be sortable (scalar or meta, not relation/traversal).
+	// In aggregated GROUP BY mode, ORDER BY is validated by validateGroupBy instead.
+	isAggregatedGroupBy := q.GroupBy != nil && len(q.GroupBy.Aggregates) > 0
 	for _, ob := range q.OrderBy {
-		if err := validateFieldExpr(ob.Field, entityType); err != nil {
-			return err
+		if !isAggregatedGroupBy {
+			if err := validateFieldExpr(ob.Field, entityType); err != nil {
+				return err
+			}
+			if err := validateSortable(ob.Field, entityType); err != nil {
+				return err
+			}
 		}
-		if err := validateSortable(ob.Field, entityType); err != nil {
+	}
+
+	// Validate GROUP BY clause
+	if q.GroupBy != nil {
+		if err := validateGroupBy(q.GroupBy, entityType, q.OrderBy); err != nil {
 			return err
 		}
 	}
@@ -585,4 +596,136 @@ func validateTraversalChain(f *FieldExpr, entityType EntityType) error {
 	}
 
 	return nil
+}
+
+// validateGroupBy validates the GROUP BY clause: entity type required, field
+// types, no traversals, aggregate field type constraints, ORDER BY interaction.
+func validateGroupBy(gb *GroupByClause, entityType EntityType, orderBy []OrderByClause) error {
+	if entityType == EntityUnspecified {
+		pos := 0
+		if len(gb.Fields) > 0 {
+			pos = gb.Fields[0].Pos()
+		}
+		return &ValidationError{
+			Message: "GROUP BY requires an explicit entity type (e.g. type = \"resource\")",
+			Pos:     pos,
+			Length:  0,
+		}
+	}
+
+	// Validate each GROUP BY field
+	for _, f := range gb.Fields {
+		// Reject traversal paths (multi-part fields that aren't meta.*)
+		if len(f.Parts) >= 2 {
+			prefix := f.Parts[0].Value
+			if prefix != "meta" {
+				return &ValidationError{
+					Message: fmt.Sprintf("GROUP BY does not support traversal paths; use a direct field like %q instead of %q", prefix, f.Name()),
+					Pos:     f.Pos(),
+					Length:  len(f.Name()),
+				}
+			}
+		}
+
+		// Validate field exists for entity type
+		if err := validateFieldExpr(f, entityType); err != nil {
+			return err
+		}
+	}
+
+	// Validate aggregate functions
+	for _, agg := range gb.Aggregates {
+		if agg.Field != nil {
+			// Validate the field exists
+			if err := validateFieldExpr(agg.Field, entityType); err != nil {
+				return err
+			}
+
+			fieldName := agg.Field.Name()
+			fd, ok := LookupField(entityType, fieldName)
+			if !ok {
+				// Meta fields are always ok
+				if !strings.HasPrefix(fieldName, "meta.") {
+					return &ValidationError{
+						Message: fmt.Sprintf("unknown field %q for aggregate %s", fieldName, agg.Name),
+						Pos:     agg.Field.Pos(),
+						Length:  len(fieldName),
+					}
+				}
+			} else {
+				// SUM/AVG require numeric fields
+				if agg.Name == "SUM" || agg.Name == "AVG" {
+					if fd.Type != FieldNumber && fd.Type != FieldMeta {
+						return &ValidationError{
+							Message: fmt.Sprintf("%s requires a numeric field, but %q is %s", agg.Name, fieldName, fieldTypeName(fd.Type)),
+							Pos:     agg.Field.Pos(),
+							Length:  len(fieldName),
+						}
+					}
+				}
+				// MIN/MAX allow numeric and datetime
+				if agg.Name == "MIN" || agg.Name == "MAX" {
+					if fd.Type != FieldNumber && fd.Type != FieldDateTime && fd.Type != FieldMeta {
+						return &ValidationError{
+							Message: fmt.Sprintf("%s requires a numeric or datetime field, but %q is %s", agg.Name, fieldName, fieldTypeName(fd.Type)),
+							Pos:     agg.Field.Pos(),
+							Length:  len(fieldName),
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Validate ORDER BY interaction in aggregated mode
+	if len(gb.Aggregates) > 0 && len(orderBy) > 0 {
+		validOrderKeys := buildAggregateOrderKeys(gb)
+		for _, ob := range orderBy {
+			obName := ob.Field.Name()
+			if !validOrderKeys[obName] {
+				return &ValidationError{
+					Message: fmt.Sprintf("ORDER BY %q is not valid in aggregated GROUP BY; use a group-by field or aggregate key (e.g. count, sum_fileSize)", obName),
+					Pos:     ob.Field.Pos(),
+					Length:  len(obName),
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// buildAggregateOrderKeys returns the set of valid ORDER BY keys for an
+// aggregated GROUP BY query: group field names + aggregate output keys.
+func buildAggregateOrderKeys(gb *GroupByClause) map[string]bool {
+	keys := make(map[string]bool)
+	for _, f := range gb.Fields {
+		keys[f.Name()] = true
+	}
+	for _, agg := range gb.Aggregates {
+		if agg.Field == nil {
+			keys["count"] = true
+		} else {
+			keys[strings.ToLower(agg.Name)+"_"+agg.Field.Name()] = true
+		}
+	}
+	return keys
+}
+
+// fieldTypeName returns a human-readable name for a FieldType.
+func fieldTypeName(ft FieldType) string {
+	switch ft {
+	case FieldString:
+		return "a string field"
+	case FieldNumber:
+		return "a numeric field"
+	case FieldDateTime:
+		return "a datetime field"
+	case FieldRelation:
+		return "a relation field"
+	case FieldMeta:
+		return "a meta field"
+	default:
+		return "unknown"
+	}
 }
