@@ -168,10 +168,11 @@ func (e EntityType) String() string {
 
 // Query is the top-level AST node for a complete MRQL query.
 type Query struct {
-	Where      Node             // the filter expression (may be nil)
-	GroupBy    *GroupByClause   // GROUP BY clause (nil when absent)
-	OrderBy    []OrderByClause  // ORDER BY clauses (may be empty)
-	Limit      int              // -1 if not specified
-	Offset     int              // -1 if not specified
-	EntityType EntityType       // populated by validator or caller
+	Where       Node             // the filter expression (may be nil)
+	GroupBy     *GroupByClause   // GROUP BY clause (nil when absent)
+	OrderBy     []OrderByClause  // ORDER BY clauses (may be empty)
+	Limit       int              // -1 if not specified; per-bucket item cap in grouped mode
+	Offset      int              // -1 if not specified; bucket page offset in grouped mode
+	BucketLimit int              // -1 if not specified; max buckets per page (set by API, not syntax)
+	EntityType  EntityType       // populated by validator or caller
 }

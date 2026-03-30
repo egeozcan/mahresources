@@ -4401,7 +4401,7 @@ func TestBugfix_BucketedRelationKeysIncludeID(t *testing.T) {
 func TestBugfix_BucketedPagingRespectsLimit(t *testing.T) {
 	db := setupTestDB(t)
 
-	// 4 content types exist. limit=1, offset=1 (page 2, size 1) should return exactly 1 key.
+	// 4 content types exist. bucketLimit=1, offset=1 (page 2, size 1) should return exactly 1 key.
 	q, err := Parse(`type = "resource" GROUP BY contentType`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -4410,7 +4410,7 @@ func TestBugfix_BucketedPagingRespectsLimit(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 	q.EntityType = EntityResource
-	q.Limit = 1
+	q.BucketLimit = 1
 	q.Offset = 1
 
 	keys, err := TranslateGroupByKeys(q, db)
@@ -4437,11 +4437,12 @@ func TestBugfix_BucketedPagingStablePages(t *testing.T) {
 	db := setupTestDB(t)
 
 	q := &Query{
-		Where:      nil,
-		GroupBy:    &GroupByClause{Fields: []*FieldExpr{{Parts: []Token{{Value: "contentType", Type: TokenIdentifier}}}}},
-		EntityType: EntityResource,
-		Limit:      2,
-		Offset:     0,
+		Where:       nil,
+		GroupBy:     &GroupByClause{Fields: []*FieldExpr{{Parts: []Token{{Value: "contentType", Type: TokenIdentifier}}}}},
+		EntityType:  EntityResource,
+		Limit:       -1,
+		Offset:      0,
+		BucketLimit: 2,
 	}
 	if err := Validate(q); err != nil {
 		t.Fatalf("validate: %v", err)
@@ -4472,14 +4473,17 @@ func TestBugfix_BucketedPagingStablePages(t *testing.T) {
 }
 
 // P2: Duplicate/alias-equivalent GROUP BY fields should be rejected.
-func TestBugfix_DuplicateGroupByFieldsRejected(t *testing.T) {
+// Duplicate/alias-equivalent GROUP BY fields are silently deduplicated.
+func TestBugfix_DuplicateGroupByFieldsNormalized(t *testing.T) {
 	tests := []struct {
-		name  string
-		query string
+		name       string
+		query      string
+		wantFields int
 	}{
-		{"exact duplicate", `type = "resource" GROUP BY tags, tags COUNT()`},
-		{"alias equivalent", `type = "resource" GROUP BY groups, group COUNT()`},
-		{"exact scalar", `type = "resource" GROUP BY contentType, contentType COUNT()`},
+		{"exact duplicate", `type = "resource" GROUP BY tags, tags COUNT()`, 1},
+		{"alias equivalent", `type = "resource" GROUP BY groups, group COUNT()`, 1},
+		{"exact scalar", `type = "resource" GROUP BY contentType, contentType COUNT()`, 1},
+		{"mixed unique + dup", `type = "resource" GROUP BY contentType, tags, contentType COUNT()`, 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -4487,12 +4491,15 @@ func TestBugfix_DuplicateGroupByFieldsRejected(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
-			err = Validate(q)
-			if err == nil {
-				t.Fatal("expected validation error for duplicate GROUP BY field")
+			if err := Validate(q); err != nil {
+				t.Fatalf("expected valid after dedup, got: %v", err)
 			}
-			if !strings.Contains(err.Error(), "duplicate") {
-				t.Errorf("expected error about duplicate, got: %v", err)
+			if len(q.GroupBy.Fields) != tt.wantFields {
+				names := make([]string, len(q.GroupBy.Fields))
+				for i, f := range q.GroupBy.Fields {
+					names[i] = f.Name()
+				}
+				t.Errorf("expected %d fields after dedup, got %d: %v", tt.wantFields, len(q.GroupBy.Fields), names)
 			}
 		})
 	}

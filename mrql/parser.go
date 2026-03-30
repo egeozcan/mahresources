@@ -35,8 +35,9 @@ func Parse(input string) (*Query, error) {
 // parseQuery = [expression] [orderBy] [limit] [offset]
 func (p *parser) parseQuery() (*Query, error) {
 	q := &Query{
-		Limit:  -1,
-		Offset: -1,
+		Limit:       -1,
+		Offset:      -1,
+		BucketLimit: -1,
 	}
 
 	// Parse optional WHERE expression — but only if the next token looks like

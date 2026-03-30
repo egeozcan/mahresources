@@ -81,12 +81,11 @@ func TranslateGroupByKeys(q *Query, db *gorm.DB) ([]map[string]any, error) {
 		result = result.Order(gc)
 	}
 
-	// When the caller provides both LIMIT and OFFSET, use LIMIT as the key
-	// page size (for paginated bucket listing). Otherwise cap at MaxBuckets.
-	// Fetch one extra to detect truncation.
+	// BucketLimit controls how many group keys per page. When not set,
+	// cap at MaxBuckets. Fetch one extra to detect truncation.
 	keyLimit := MaxBuckets
-	if q.Limit >= 0 && q.Offset >= 0 {
-		keyLimit = q.Limit
+	if q.BucketLimit >= 0 {
+		keyLimit = q.BucketLimit
 	}
 	result = result.Limit(keyLimit + 1)
 

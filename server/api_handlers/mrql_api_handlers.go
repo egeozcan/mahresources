@@ -3,6 +3,7 @@ package api_handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"mahresources/application_context"
@@ -15,9 +16,10 @@ import (
 // -- Request/response types for MRQL endpoints --
 
 type mrqlExecuteRequest struct {
-	Query string `json:"query" schema:"query"`
-	Limit int    `json:"limit" schema:"limit"`
-	Page  int    `json:"page" schema:"page"`
+	Query   string `json:"query" schema:"query"`
+	Limit   int    `json:"limit" schema:"limit"`     // items per bucket (grouped) or total items (non-grouped)
+	Buckets int    `json:"buckets" schema:"buckets"`  // buckets per page (grouped mode only)
+	Page    int    `json:"page" schema:"page"`        // page number (paginates buckets in grouped mode)
 }
 
 type mrqlValidateRequest struct {
@@ -78,16 +80,20 @@ func GetExecuteMRQLHandler(ctx *application_context.MahresourcesContext) func(ht
 			}
 			parsed.EntityType = entityType
 
-			// Override parsed LIMIT/OFFSET with request parameters
+			// Override pagination with request parameters.
+			// limit = items per bucket, buckets = groups per page, page = which page.
 			if req.Limit > 0 {
 				parsed.Limit = req.Limit
 			}
+			if req.Buckets > 0 {
+				parsed.BucketLimit = req.Buckets
+			}
 			if req.Page >= 1 {
-				effectiveLimit := parsed.Limit
-				if effectiveLimit < 0 {
-					effectiveLimit = 1000 // defaultMRQLLimit
+				effectiveBuckets := parsed.BucketLimit
+				if effectiveBuckets < 0 {
+					effectiveBuckets = 1000 // MaxBuckets default
 				}
-				parsed.Offset = (req.Page - 1) * effectiveLimit
+				parsed.Offset = (req.Page - 1) * effectiveBuckets
 			}
 
 			grouped, err := ctx.ExecuteMRQLGrouped(request.Context(), parsed)
@@ -292,14 +298,20 @@ func GetRunSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) f
 
 		limit := int(http_utils.GetUIntQueryParameter(request, "limit", 0))
 		page := int(http_utils.GetUIntQueryParameter(request, "page", 0))
+		buckets := int(http_utils.GetUIntQueryParameter(request, "buckets", 0))
 
-		// Parse the saved query to check for GROUP BY
+		// Revalidate saved query — schema changes may have invalidated it since save time.
 		parsed, parseErr := mrql.Parse(saved.Query)
-		if parseErr == nil {
-			_ = mrql.Validate(parsed) // already validated at save time
+		if parseErr != nil {
+			http_utils.HandleError(fmt.Errorf("saved query is no longer valid: %w", parseErr), writer, request, http.StatusBadRequest)
+			return
+		}
+		if valErr := mrql.Validate(parsed); valErr != nil {
+			http_utils.HandleError(fmt.Errorf("saved query is no longer valid: %w", valErr), writer, request, http.StatusBadRequest)
+			return
 		}
 
-		if parseErr == nil && parsed.GroupBy != nil {
+		if parsed.GroupBy != nil {
 			entityType := mrql.ExtractEntityType(parsed)
 			if entityType == mrql.EntityUnspecified {
 				http_utils.HandleError(errors.New("GROUP BY requires an explicit entity type"), writer, request, http.StatusBadRequest)
@@ -310,12 +322,15 @@ func GetRunSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) f
 			if limit > 0 {
 				parsed.Limit = limit
 			}
+			if buckets > 0 {
+				parsed.BucketLimit = buckets
+			}
 			if page >= 1 {
-				effectiveLimit := parsed.Limit
-				if effectiveLimit < 0 {
-					effectiveLimit = 1000
+				effectiveBuckets := parsed.BucketLimit
+				if effectiveBuckets < 0 {
+					effectiveBuckets = 1000
 				}
-				parsed.Offset = (page - 1) * effectiveLimit
+				parsed.Offset = (page - 1) * effectiveBuckets
 			}
 
 			grouped, err := ctx.ExecuteMRQLGrouped(request.Context(), parsed)
