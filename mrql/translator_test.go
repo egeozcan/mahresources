@@ -1187,3 +1187,162 @@ func TestTranslate_GroupByAggregated_Meta(t *testing.T) {
 		t.Errorf("expected mode 'aggregated', got %q", result.Mode)
 	}
 }
+
+// ---- GROUP BY Bucketed Mode Tests ----
+
+func TestTranslate_GroupByBucketed_Simple(t *testing.T) {
+	db := setupTestDB(t)
+	q, err := Parse(`type = "resource" GROUP BY contentType LIMIT 5`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+	keys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("translate keys: %v", err)
+	}
+	if keys == nil {
+		t.Fatal("expected non-nil keys")
+	}
+	// keys should be a slice of maps
+	for _, key := range keys {
+		if _, ok := key["contentType"]; !ok {
+			t.Error("expected 'contentType' in key")
+		}
+	}
+}
+
+func TestTranslate_GroupByBucketed_ItemsQuery(t *testing.T) {
+	db := setupTestDB(t)
+	q, err := Parse(`type = "resource" GROUP BY contentType LIMIT 5`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+	// Get a bucket query for a specific key
+	bucketDB, err := TranslateGroupByBucket(q, db, map[string]any{"contentType": "image/png"})
+	if err != nil {
+		t.Fatalf("translate bucket: %v", err)
+	}
+	if bucketDB == nil {
+		t.Fatal("expected non-nil DB")
+	}
+	// Should be able to Find resources
+	var resources []testResource
+	if err := bucketDB.Find(&resources).Error; err != nil {
+		t.Fatalf("find: %v", err)
+	}
+}
+
+func TestTranslate_GroupByBucketed_CorrectResults(t *testing.T) {
+	db := setupTestDB(t)
+	q, err := Parse(`type = "resource" GROUP BY contentType`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	keys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("translate keys: %v", err)
+	}
+
+	// We have 4 resources with content types: image/jpeg, image/png, application/pdf, text/plain
+	if len(keys) != 4 {
+		t.Fatalf("expected 4 distinct content types, got %d: %v", len(keys), keys)
+	}
+
+	// Check that each bucket returns the right items
+	for _, key := range keys {
+		bucketDB, err := TranslateGroupByBucket(q, db, key)
+		if err != nil {
+			t.Fatalf("translate bucket for %v: %v", key, err)
+		}
+		var resources []testResource
+		if err := bucketDB.Find(&resources).Error; err != nil {
+			t.Fatalf("find for %v: %v", key, err)
+		}
+		ct := key["contentType"]
+		for _, r := range resources {
+			if r.ContentType != ct {
+				t.Errorf("bucket %v: expected contentType %v, got %v", key, ct, r.ContentType)
+			}
+		}
+	}
+}
+
+func TestTranslate_GroupByBucketed_WithFilter(t *testing.T) {
+	db := setupTestDB(t)
+	q, err := Parse(`type = "resource" AND contentType ~ "image/*" GROUP BY contentType`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	keys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("translate keys: %v", err)
+	}
+
+	// Only image/jpeg and image/png should match
+	if len(keys) != 2 {
+		t.Fatalf("expected 2 image content types, got %d: %v", len(keys), keys)
+	}
+}
+
+func TestTranslate_GroupByBucketed_NilValue(t *testing.T) {
+	db := setupTestDB(t)
+	// Resources 3 and 4 have no owner_id — GROUP BY owner should include a nil bucket
+	q, err := Parse(`type = "resource" GROUP BY owner`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	keys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("translate keys: %v", err)
+	}
+
+	// Should have at least one nil-owner bucket
+	hasNilOwner := false
+	for _, key := range keys {
+		if key["owner"] == nil {
+			hasNilOwner = true
+			break
+		}
+	}
+	if !hasNilOwner {
+		t.Errorf("expected a nil owner bucket, got keys: %v", keys)
+	}
+
+	// The nil bucket should return only unowned resources
+	nilBucketDB, err := TranslateGroupByBucket(q, db, map[string]any{"owner": nil})
+	if err != nil {
+		t.Fatalf("translate nil bucket: %v", err)
+	}
+	var resources []testResource
+	if err := nilBucketDB.Find(&resources).Error; err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	for _, r := range resources {
+		if r.OwnerID != nil {
+			t.Errorf("nil-owner bucket should not contain resource with owner_id=%v", *r.OwnerID)
+		}
+	}
+}
