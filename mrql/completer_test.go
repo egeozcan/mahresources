@@ -313,6 +313,13 @@ func TestComplete_SuggestsFieldsAfterGroupBy(t *testing.T) {
 	if !hasSuggestion(suggestions, "name") {
 		t.Errorf("expected common field 'name' after GROUP BY, got: %v", suggestions)
 	}
+	// type and TEXT should NOT be suggested — they're not valid GROUP BY fields
+	if hasSuggestion(suggestions, "type") {
+		t.Error("'type' pseudo-field should not be suggested for GROUP BY")
+	}
+	if hasSuggestion(suggestions, "TEXT") {
+		t.Error("'TEXT' keyword should not be suggested for GROUP BY")
+	}
 }
 
 // TestComplete_SuggestsAggregatesAfterGroupByField verifies that aggregate functions
@@ -327,7 +334,7 @@ func TestComplete_SuggestsAggregatesAfterGroupByField(t *testing.T) {
 		switch s.Value {
 		case "COUNT()":
 			foundCount = true
-		case "SUM()":
+		case "SUM(field)":
 			foundSum = true
 		case "ORDER BY":
 			foundOrderBy = true
@@ -339,7 +346,7 @@ func TestComplete_SuggestsAggregatesAfterGroupByField(t *testing.T) {
 		t.Errorf("expected COUNT() in suggestions after GROUP BY field, got: %v", suggestions)
 	}
 	if !foundSum {
-		t.Errorf("expected SUM() in suggestions after GROUP BY field, got: %v", suggestions)
+		t.Errorf("expected SUM(field) in suggestions after GROUP BY field, got: %v", suggestions)
 	}
 	if !foundOrderBy {
 		t.Errorf("expected ORDER BY in suggestions after GROUP BY field, got: %v", suggestions)
@@ -382,7 +389,7 @@ func TestComplete_SuggestsAggregatesAfterAggregateParen(t *testing.T) {
 // functions are suggested.
 func TestComplete_SuggestsAllAggregatesAfterGroupByField(t *testing.T) {
 	suggestions := Complete(`type = "note" GROUP BY noteType `, 32)
-	for _, want := range []string{"COUNT()", "SUM()", "AVG()", "MIN()", "MAX()"} {
+	for _, want := range []string{"COUNT()", "SUM(field)", "AVG(field)", "MIN(field)", "MAX(field)"} {
 		if !hasSuggestion(suggestions, want) {
 			t.Errorf("expected aggregate %q in suggestions, got: %v", want, suggestions)
 		}
@@ -394,7 +401,7 @@ func TestComplete_SuggestsAllAggregatesAfterGroupByField(t *testing.T) {
 func TestComplete_GroupByContextNotLeakedToNonGroupBy(t *testing.T) {
 	suggestions := Complete(`type = "resource" `, 19)
 	for _, s := range suggestions {
-		if s.Value == "COUNT()" || s.Value == "SUM()" || s.Value == "AVG()" {
+		if s.Value == "COUNT()" || s.Value == "SUM(field)" || s.Value == "AVG(field)" {
 			t.Errorf("aggregate %q should not appear in non-GROUP BY post-value context", s.Value)
 		}
 	}

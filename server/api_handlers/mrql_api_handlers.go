@@ -81,25 +81,38 @@ func GetExecuteMRQLHandler(ctx *application_context.MahresourcesContext) func(ht
 			parsed.EntityType = entityType
 
 			// Override pagination with request parameters.
-			// buckets = groups per page (preferred), limit = items per bucket, page = which page.
+			// Aggregated mode: limit/page are standard row pagination.
+			// Bucketed mode: limit = items per bucket, buckets = groups per page, page paginates groups.
 			if req.Limit > 0 {
 				parsed.Limit = req.Limit
 			}
-			if req.Buckets > 0 {
-				parsed.BucketLimit = req.Buckets
-			} else if req.Limit > 0 && req.Page >= 1 {
-				// Legacy: request limit doubles as bucket page size when buckets absent
-				parsed.BucketLimit = req.Limit
-			} else if parsed.Limit > 0 && req.Page >= 1 {
-				// Query-text LIMIT (e.g., GROUP BY x LIMIT 5) used as bucket page size
-				parsed.BucketLimit = parsed.Limit
-			}
-			if req.Page >= 1 {
-				effectiveBuckets := parsed.BucketLimit
-				if effectiveBuckets < 0 {
-					effectiveBuckets = mrql.MaxBuckets
+
+			isAggregated := len(parsed.GroupBy.Aggregates) > 0
+			if isAggregated {
+				// Aggregated: standard LIMIT/OFFSET row pagination
+				if req.Page >= 1 {
+					effectiveLimit := parsed.Limit
+					if effectiveLimit < 0 {
+						effectiveLimit = 1000
+					}
+					parsed.Offset = (req.Page - 1) * effectiveLimit
 				}
-				parsed.Offset = (req.Page - 1) * effectiveBuckets
+			} else {
+				// Bucketed: BucketLimit controls groups per page
+				if req.Buckets > 0 {
+					parsed.BucketLimit = req.Buckets
+				} else if req.Limit > 0 && req.Page >= 1 {
+					parsed.BucketLimit = req.Limit
+				} else if parsed.Limit > 0 && req.Page >= 1 {
+					parsed.BucketLimit = parsed.Limit
+				}
+				if req.Page >= 1 {
+					effectiveBuckets := parsed.BucketLimit
+					if effectiveBuckets < 0 {
+						effectiveBuckets = mrql.MaxBuckets
+					}
+					parsed.Offset = (req.Page - 1) * effectiveBuckets
+				}
 			}
 
 			grouped, err := ctx.ExecuteMRQLGrouped(request.Context(), parsed)
@@ -328,19 +341,31 @@ func GetRunSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) f
 			if limit > 0 {
 				parsed.Limit = limit
 			}
-			if buckets > 0 {
-				parsed.BucketLimit = buckets
-			} else if limit > 0 && page >= 1 {
-				parsed.BucketLimit = limit
-			} else if parsed.Limit > 0 && page >= 1 {
-				parsed.BucketLimit = parsed.Limit
-			}
-			if page >= 1 {
-				effectiveBuckets := parsed.BucketLimit
-				if effectiveBuckets < 0 {
-					effectiveBuckets = mrql.MaxBuckets
+
+			isAggregated := len(parsed.GroupBy.Aggregates) > 0
+			if isAggregated {
+				if page >= 1 {
+					effectiveLimit := parsed.Limit
+					if effectiveLimit < 0 {
+						effectiveLimit = 1000
+					}
+					parsed.Offset = (page - 1) * effectiveLimit
 				}
-				parsed.Offset = (page - 1) * effectiveBuckets
+			} else {
+				if buckets > 0 {
+					parsed.BucketLimit = buckets
+				} else if limit > 0 && page >= 1 {
+					parsed.BucketLimit = limit
+				} else if parsed.Limit > 0 && page >= 1 {
+					parsed.BucketLimit = parsed.Limit
+				}
+				if page >= 1 {
+					effectiveBuckets := parsed.BucketLimit
+					if effectiveBuckets < 0 {
+						effectiveBuckets = mrql.MaxBuckets
+					}
+					parsed.Offset = (page - 1) * effectiveBuckets
+				}
 			}
 
 			grouped, err := ctx.ExecuteMRQLGrouped(request.Context(), parsed)

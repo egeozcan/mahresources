@@ -274,9 +274,17 @@ func printMRQLResponse(opts output.Options, raw json.RawMessage) {
 		}
 		if grouped.Mode == "aggregated" {
 			columns, rows := aggregatedToTable(grouped.Rows)
-			output.Print(opts, columns, rows, raw)
+			if len(rows) == 0 && !opts.JSON && !opts.Quiet {
+				output.PrintMessage("No results found.")
+			} else {
+				output.Print(opts, columns, rows, raw)
+			}
 		} else {
-			printBucketedOutput(opts, grouped, raw)
+			if len(grouped.Groups) == 0 && !opts.JSON && !opts.Quiet {
+				output.PrintMessage("No results found.")
+			} else {
+				printBucketedOutput(opts, grouped, raw)
+			}
 		}
 		return
 	}

@@ -34,21 +34,22 @@ var postValueKeywords = []Suggestion{
 }
 
 // aggregateSuggestions are suggested after GROUP BY field(s).
+// SUM/AVG/MIN/MAX show with "(field)" to indicate they require an argument.
 var aggregateSuggestions = []Suggestion{
 	{Value: "COUNT()", Type: "function", Label: "count rows"},
-	{Value: "SUM()", Type: "function", Label: "sum of field"},
-	{Value: "AVG()", Type: "function", Label: "average of field"},
-	{Value: "MIN()", Type: "function", Label: "minimum value"},
-	{Value: "MAX()", Type: "function", Label: "maximum value"},
+	{Value: "SUM(field)", Type: "function", Label: "sum of numeric field"},
+	{Value: "AVG(field)", Type: "function", Label: "average of numeric field"},
+	{Value: "MIN(field)", Type: "function", Label: "minimum value"},
+	{Value: "MAX(field)", Type: "function", Label: "maximum value"},
 }
 
 // postAggregateKeywords are suggested after aggregate functions in GROUP BY context.
 var postAggregateKeywords = []Suggestion{
 	{Value: "COUNT()", Type: "function", Label: "count rows"},
-	{Value: "SUM()", Type: "function", Label: "sum of field"},
-	{Value: "AVG()", Type: "function", Label: "average of field"},
-	{Value: "MIN()", Type: "function", Label: "minimum value"},
-	{Value: "MAX()", Type: "function", Label: "maximum value"},
+	{Value: "SUM(field)", Type: "function", Label: "sum of numeric field"},
+	{Value: "AVG(field)", Type: "function", Label: "average of numeric field"},
+	{Value: "MIN(field)", Type: "function", Label: "minimum value"},
+	{Value: "MAX(field)", Type: "function", Label: "maximum value"},
 	{Value: "ORDER BY", Type: "keyword"},
 	{Value: "LIMIT", Type: "keyword"},
 }
@@ -218,6 +219,52 @@ func fieldSuggestions(entityType EntityType) []Suggestion {
 	return suggs
 }
 
+// groupByFieldSuggestions returns field suggestions valid for GROUP BY.
+// Excludes the "type" pseudo-field and TEXT keyword which are not groupable.
+func groupByFieldSuggestions(entityType EntityType) []Suggestion {
+	var suggs []Suggestion
+
+	// Common fields (all valid for GROUP BY)
+	for _, fd := range commonFields {
+		suggs = append(suggs, Suggestion{Value: fd.Name, Type: "field"})
+	}
+
+	// Entity-specific fields
+	var extra []FieldDef
+	switch entityType {
+	case EntityResource:
+		extra = resourceFields
+	case EntityNote:
+		extra = noteFields
+	case EntityGroup:
+		extra = groupFields
+	}
+	seen := make(map[string]bool)
+	for _, s := range suggs {
+		seen[s.Value] = true
+	}
+	for _, fd := range extra {
+		if !seen[fd.Name] {
+			suggs = append(suggs, Suggestion{Value: fd.Name, Type: "field"})
+			seen[fd.Name] = true
+		}
+	}
+
+	// meta.* hint
+	suggs = append(suggs, Suggestion{Value: "meta.<key>", Type: "field", Label: "any meta key"})
+
+	// Traversal hints
+	if entityType == EntityResource || entityType == EntityNote {
+		suggs = append(suggs, Suggestion{Value: "owner.name", Type: "field", Label: "owner group name"})
+		suggs = append(suggs, Suggestion{Value: "owner.meta.<key>", Type: "field", Label: "owner meta field"})
+	}
+	if entityType == EntityGroup {
+		suggs = append(suggs, Suggestion{Value: "parent.name", Type: "field", Label: "parent group name"})
+	}
+
+	return suggs
+}
+
 // isInGroupByContext returns true if the token stream contains a GROUP BY keyword.
 func isInGroupByContext(tokens []Token) bool {
 	for _, t := range tokens {
@@ -243,9 +290,9 @@ func suggestionsForContext(tokens []Token, entityType EntityType, cursor int) []
 	// not what comes after it.
 	cursorAtTokenEnd := (last.Pos + last.Length) == cursor
 
-	// After GROUP BY — suggest fields.
+	// After GROUP BY — suggest groupable fields (no type pseudo-field, no TEXT).
 	if last.Type == TokenGroupBy {
-		return fieldSuggestions(entityType)
+		return groupByFieldSuggestions(entityType)
 	}
 
 	// After AND / OR / NOT / "(" — suggest fields.
