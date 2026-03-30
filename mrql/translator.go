@@ -1313,3 +1313,217 @@ func sanitizeFTS5(input string) string {
 	return strings.TrimSpace(sb.String())
 }
 
+// GroupByResult holds the result of a GROUP BY query.
+type GroupByResult struct {
+	Mode string           `json:"mode"` // "aggregated" or "bucketed"
+	Rows []map[string]any `json:"rows,omitempty"`
+}
+
+// TranslateGroupBy translates and executes a GROUP BY query.
+// For aggregated mode (aggregates present), it returns flat rows.
+// For bucketed mode (no aggregates), it returns nil -- the caller handles bucketing.
+func TranslateGroupBy(q *Query, db *gorm.DB) (*GroupByResult, error) {
+	if q.GroupBy == nil {
+		return nil, &TranslateError{Message: "TranslateGroupBy called without GROUP BY clause", Pos: 0}
+	}
+
+	entityType := q.EntityType
+	if entityType == EntityUnspecified {
+		entityType = ExtractEntityType(q)
+	}
+	if entityType == EntityUnspecified {
+		return nil, &TranslateError{Message: "entity type is required for GROUP BY", Pos: 0}
+	}
+
+	tc := &translateContext{
+		db:         db,
+		entityType: entityType,
+		tableName:  entityTableName(entityType),
+	}
+
+	result := db.Table(tc.tableName)
+
+	// Apply WHERE clause
+	if q.Where != nil {
+		var err error
+		result, err = tc.translateNode(result, q.Where)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if len(q.GroupBy.Aggregates) > 0 {
+		return tc.translateAggregatedGroupBy(result, q)
+	}
+
+	// Bucketed mode -- return nil to signal caller should handle it
+	return nil, nil
+}
+
+// translateAggregatedGroupBy builds SELECT ... GROUP BY ... and executes.
+func (tc *translateContext) translateAggregatedGroupBy(db *gorm.DB, q *Query) (*GroupByResult, error) {
+	// Add JOINs for relation fields (tags, owner, groups) if used in GROUP BY
+	var relationExprs map[string]string
+	db, relationExprs = tc.groupByRelationJoins(db, q.GroupBy.Fields)
+
+	var selectCols []string
+	var groupCols []string
+
+	// Build SELECT and GROUP BY column lists
+	for _, f := range q.GroupBy.Fields {
+		fieldName := f.Name()
+		// Check if this field has a relation-based expression
+		if relExpr, ok := relationExprs[fieldName]; ok {
+			selectCols = append(selectCols, relExpr+` AS "`+fieldName+`"`)
+			groupCols = append(groupCols, relExpr)
+		} else {
+			selectExpr, groupExpr := tc.groupByFieldExprs(fieldName)
+			selectCols = append(selectCols, selectExpr+` AS "`+fieldName+`"`)
+			groupCols = append(groupCols, groupExpr)
+		}
+	}
+
+	// Build aggregate SELECT expressions
+	for _, agg := range q.GroupBy.Aggregates {
+		selectExpr, alias := tc.aggregateExpr(agg)
+		selectCols = append(selectCols, selectExpr+` AS "`+alias+`"`)
+	}
+
+	db = db.Select(strings.Join(selectCols, ", "))
+
+	for _, gc := range groupCols {
+		db = db.Group(gc)
+	}
+
+	// ORDER BY
+	for _, ob := range q.OrderBy {
+		obName := ob.Field.Name()
+		direction := "ASC"
+		if !ob.Ascending {
+			direction = "DESC"
+		}
+		db = db.Order(`"` + obName + `" ` + direction)
+	}
+
+	// LIMIT / OFFSET
+	if q.Limit >= 0 {
+		db = db.Limit(q.Limit)
+	}
+	if q.Offset >= 0 {
+		db = db.Offset(q.Offset)
+	}
+
+	var rows []map[string]any
+	if err := db.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	return &GroupByResult{
+		Mode: "aggregated",
+		Rows: rows,
+	}, nil
+}
+
+// groupByFieldExprs returns the SELECT expression and GROUP BY expression for a field.
+func (tc *translateContext) groupByFieldExprs(fieldName string) (string, string) {
+	// Meta fields
+	if strings.HasPrefix(fieldName, "meta.") {
+		key := strings.TrimPrefix(fieldName, "meta.")
+		if tc.isPostgres() {
+			expr := fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)
+			return expr, expr
+		}
+		expr := fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
+		return expr, expr
+	}
+
+	fd, ok := LookupField(tc.entityType, fieldName)
+	if !ok {
+		return tc.tableName + "." + fieldName, tc.tableName + "." + fieldName
+	}
+
+	col := tc.qualifiedColumn(fd.Column)
+	return col, col
+}
+
+// groupByRelationJoins modifies the db query to add JOINs for relation fields
+// used in GROUP BY. Returns the db and a map of fieldName -> select/group expression.
+func (tc *translateContext) groupByRelationJoins(db *gorm.DB, fields []*FieldExpr) (*gorm.DB, map[string]string) {
+	exprMap := make(map[string]string)
+	for _, f := range fields {
+		fieldName := f.Name()
+		fd, ok := LookupField(tc.entityType, fieldName)
+		if !ok || fd.Type != FieldRelation {
+			continue
+		}
+
+		switch fd.Column {
+		case "tags":
+			var junctionTable, entityCol string
+			switch tc.entityType {
+			case EntityResource:
+				junctionTable = "resource_tags"
+				entityCol = "resource_id"
+			case EntityNote:
+				junctionTable = "note_tags"
+				entityCol = "note_id"
+			case EntityGroup:
+				junctionTable = "group_tags"
+				entityCol = "group_id"
+			}
+			db = db.Joins(fmt.Sprintf("LEFT JOIN %s _gb_jt ON _gb_jt.%s = %s.id", junctionTable, entityCol, tc.tableName))
+			db = db.Joins("LEFT JOIN tags _gb_t ON _gb_t.id = _gb_jt.tag_id")
+			exprMap[fieldName] = "_gb_t.name"
+
+		case "owner_id":
+			db = db.Joins(fmt.Sprintf("LEFT JOIN groups _gb_owner ON _gb_owner.id = %s.owner_id", tc.tableName))
+			exprMap[fieldName] = "_gb_owner.name"
+
+		case "groups":
+			var junctionTable, entityCol string
+			switch tc.entityType {
+			case EntityResource:
+				junctionTable = "groups_related_resources"
+				entityCol = "resource_id"
+			case EntityNote:
+				junctionTable = "groups_related_notes"
+				entityCol = "note_id"
+			}
+			db = db.Joins(fmt.Sprintf("LEFT JOIN %s _gb_grp_jt ON _gb_grp_jt.%s = %s.id", junctionTable, entityCol, tc.tableName))
+			db = db.Joins("LEFT JOIN groups _gb_g ON _gb_g.id = _gb_grp_jt.group_id")
+			exprMap[fieldName] = "_gb_g.name"
+		}
+	}
+	return db, exprMap
+}
+
+// aggregateExpr returns the SQL aggregate expression and the output alias.
+func (tc *translateContext) aggregateExpr(agg AggregateFunc) (string, string) {
+	switch agg.Name {
+	case "COUNT":
+		return "COUNT(*)", "count"
+	default:
+		fieldName := agg.Field.Name()
+		col := tc.resolveAggregateColumn(fieldName)
+		alias := strings.ToLower(agg.Name) + "_" + fieldName
+		return fmt.Sprintf("%s(%s)", agg.Name, col), alias
+	}
+}
+
+// resolveAggregateColumn converts a field name to its SQL column expression.
+func (tc *translateContext) resolveAggregateColumn(fieldName string) string {
+	if strings.HasPrefix(fieldName, "meta.") {
+		key := strings.TrimPrefix(fieldName, "meta.")
+		if tc.isPostgres() {
+			return fmt.Sprintf("(%s.meta->>'%s')::numeric", tc.tableName, key)
+		}
+		return fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
+	}
+
+	fd, ok := LookupField(tc.entityType, fieldName)
+	if !ok {
+		return tc.tableName + "." + fieldName
+	}
+	return tc.qualifiedColumn(fd.Column)
+}
+

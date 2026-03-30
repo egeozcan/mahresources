@@ -1110,3 +1110,80 @@ func TestTranslateNoteOwner(t *testing.T) {
 		t.Fatalf("expected [Todo list], got %v", namesOfNotes(notes))
 	}
 }
+
+// ---- GROUP BY Aggregated Mode Tests ----
+
+func TestTranslate_GroupByAggregated_Simple(t *testing.T) {
+	db := setupTestDB(t)
+	q, err := Parse(`type = "resource" GROUP BY contentType COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected mode 'aggregated', got %q", result.Mode)
+	}
+	if result.Rows == nil {
+		t.Fatal("expected Rows to be set")
+	}
+}
+
+func TestTranslate_GroupByAggregated_WithFilter(t *testing.T) {
+	db := setupTestDB(t)
+	q, err := Parse(`type = "resource" AND fileSize > 0 GROUP BY contentType COUNT() SUM(fileSize)`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected mode 'aggregated', got %q", result.Mode)
+	}
+	// Check that rows have expected keys
+	for _, row := range result.Rows {
+		if _, ok := row["contentType"]; !ok {
+			t.Error("expected 'contentType' key in row")
+		}
+		if _, ok := row["count"]; !ok {
+			t.Error("expected 'count' key in row")
+		}
+		if _, ok := row["sum_fileSize"]; !ok {
+			t.Error("expected 'sum_fileSize' key in row")
+		}
+	}
+}
+
+func TestTranslate_GroupByAggregated_Meta(t *testing.T) {
+	db := setupTestDB(t)
+	q, err := Parse(`type = "resource" GROUP BY meta.rating COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected mode 'aggregated', got %q", result.Mode)
+	}
+}
