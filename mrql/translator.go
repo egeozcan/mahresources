@@ -640,6 +640,11 @@ func (tc *translateContext) translateTraversalIsNull(db *gorm.DB, expr *IsExpr, 
 	}
 
 	col := subFd.Column
+	// The "parent" field has a logical Column of "parent_id" but the actual
+	// DB column on groups is "owner_id". Map it here.
+	if col == "parent_id" {
+		col = "owner_id"
+	}
 
 	// Determine the FK column based on the root traversal type
 	if root == "children" {

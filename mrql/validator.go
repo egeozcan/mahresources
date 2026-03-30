@@ -310,14 +310,14 @@ func validateNode(node Node, entityType EntityType) error {
 						Length:  len(n.Field.Name()),
 					}
 				}
-				// IS NULL on relation subfields (tags) is not supported — the
-				// traversal IS NULL handler only works on scalar columns.
+				// IS NULL on junction-table relations (tags) is not supported.
+				// FK-based relations (parent, owner, children) are fine — they
+				// translate to checking the FK column IS NULL on the joined group.
 				if len(n.Field.Parts) == 2 {
 					subField := n.Field.Parts[1].Value
-					subFd, ok := LookupField(EntityGroup, subField)
-					if ok && subFd.Type == FieldRelation {
+					if subField == "tags" {
 						return &ValidationError{
-							Message: fmt.Sprintf("%s.%s IS NULL is not supported; use %s.%s = \"...\" for tag comparisons", prefix, subField, prefix, subField),
+							Message: fmt.Sprintf("%s.tags IS NULL is not supported; use %s.tags = \"...\" for tag comparisons", prefix, prefix),
 							Pos:     n.Field.Pos(),
 							Length:  len(n.Field.Name()),
 						}
@@ -335,6 +335,18 @@ func validateNode(node Node, entityType EntityType) error {
 					Message: fmt.Sprintf("use \"%s IS EMPTY\" instead of \"%s IS NULL\" for relation fields", fieldName, fieldName),
 					Pos:     n.Field.Pos(),
 					Length:  len(fieldName),
+				}
+			}
+		}
+		// For traversal IS NULL on FK relation leaves (parent, owner, children),
+		// skip validateFieldExpr — it would reject them as unsupported leaf fields,
+		// but they're valid for IS NULL checks (checking FK column IS NULL).
+		if n.IsNull && len(n.Field.Parts) == 2 {
+			subField := n.Field.Parts[1].Value
+			if subField == "parent" || subField == "owner" || subField == "children" {
+				prefix := n.Field.Parts[0].Value
+				if isTraversalRoot(prefix, entityType) || traversalIntermediates[prefix] {
+					return nil
 				}
 			}
 		}
@@ -592,9 +604,8 @@ func validateTraversalChain(f *FieldExpr, entityType EntityType) error {
 		subFd, _ = LookupField(EntityGroup, leaf)
 	}
 
-	// Only tags is supported as a relation leaf field.
-	// Other relation fields (children, parent, groups) can't be translated
-	// to SQL in a traversal context.
+	// Only tags is supported as a relation leaf field for comparisons.
+	// Parent/owner/children as leaves are handled by IS NULL validation separately.
 	if subFd.Type == FieldRelation && leaf != "tags" {
 		return &ValidationError{
 			Message: fmt.Sprintf("%s is not supported; only scalar fields and tags are valid as traversal leaf fields", f.Name()),

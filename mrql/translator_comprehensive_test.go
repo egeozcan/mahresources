@@ -2020,6 +2020,46 @@ func TestComprehensive_ChildrenTraversalIsNotNull(t *testing.T) {
 	}
 }
 
+func TestComprehensive_OwnerParentIsNull(t *testing.T) {
+	db := setupTestDB(t)
+
+	// owner.parent IS NULL: resources whose owner group has no parent.
+	// sunset.jpg → Vacation (no parent) → matches
+	// report.pdf → Work (parent=Vacation) → doesn't match
+	// photo_album.png, untagged_file.txt → no owner → also matches (null FK fallback)
+	result := parseAndTranslate(t, `type = "resource" AND owner.parent IS NULL`, EntityResource, db)
+
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	// sunset.jpg (owner Vacation, no parent) + 2 ownerless = 3
+	if len(resources) != 3 {
+		t.Fatalf("expected 3 resources with owner.parent IS NULL, got %d: %v",
+			len(resources), namesOfResources(resources))
+	}
+}
+
+func TestComprehensive_OwnerParentIsNotNull(t *testing.T) {
+	db := setupTestDB(t)
+
+	// owner.parent IS NOT NULL: resources whose owner group has a parent.
+	// report.pdf → Work (parent=Vacation) → matches
+	result := parseAndTranslate(t, `type = "resource" AND owner.parent IS NOT NULL`, EntityResource, db)
+
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) != 1 {
+		t.Fatalf("expected 1 resource with owner.parent IS NOT NULL, got %d: %v",
+			len(resources), namesOfResources(resources))
+	}
+	if resources[0].Name != "report.pdf" {
+		t.Errorf("expected report.pdf, got %s", resources[0].Name)
+	}
+}
+
 // P1: Unsupported operators on relation fields should be rejected.
 func TestComprehensive_RelationUnsupportedOperators(t *testing.T) {
 	tests := []struct {
