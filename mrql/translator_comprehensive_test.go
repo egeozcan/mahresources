@@ -3340,3 +3340,356 @@ func TestComprehensive_GroupByTraversalDeep(t *testing.T) {
 		t.Errorf("expected owner.parent.name=Vacation for Work-owned resources, got: %v", result.Rows)
 	}
 }
+
+// ============================================================
+// GROUP BY — Additional Tests
+// ============================================================
+
+func TestComprehensive_GroupByTagsRelationWithCount(t *testing.T) {
+	db := setupTestDB(t)
+	// GROUP BY tags — each tag should appear as a key
+	// resource_tags: r1→photo, r2→photo, r2→video
+	// resources without tags (r3, r4) should appear under NULL tag
+	q, err := Parse(`type = "resource" GROUP BY tags COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+
+	// Verify tag names appear as keys
+	tagCounts := make(map[string]string)
+	for _, row := range result.Rows {
+		tagName := groupByVal(row["tags"])
+		count := groupByVal(row["count"])
+		tagCounts[tagName] = count
+	}
+
+	// "photo" tag: resources 1 and 2
+	if c, ok := tagCounts["photo"]; !ok {
+		t.Error("expected 'photo' tag in grouped results")
+	} else if c != "2" {
+		t.Errorf("expected count=2 for photo tag, got %s", c)
+	}
+
+	// "video" tag: resource 2 only
+	if c, ok := tagCounts["video"]; !ok {
+		t.Error("expected 'video' tag in grouped results")
+	} else if c != "1" {
+		t.Errorf("expected count=1 for video tag, got %s", c)
+	}
+}
+
+func TestComprehensive_GroupByOwnerRelationWithCount(t *testing.T) {
+	db := setupTestDB(t)
+	// GROUP BY owner (relation, no traversal) — joins groups via owner_id
+	// r1 owned by Vacation, r3 owned by Work, r2 and r4 have no owner
+	q, err := Parse(`type = "resource" GROUP BY owner COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+
+	// Verify owner names
+	ownerCounts := make(map[string]string)
+	for _, row := range result.Rows {
+		name := groupByVal(row["owner"])
+		count := groupByVal(row["count"])
+		ownerCounts[name] = count
+	}
+	if ownerCounts["Vacation"] != "1" {
+		t.Errorf("expected count=1 for Vacation owner, got %s", ownerCounts["Vacation"])
+	}
+	if ownerCounts["Work"] != "1" {
+		t.Errorf("expected count=1 for Work owner, got %s", ownerCounts["Work"])
+	}
+	// NULL owner (r2, r4)
+	if ownerCounts["<nil>"] != "2" {
+		t.Errorf("expected count=2 for NULL owner, got %s", ownerCounts["<nil>"])
+	}
+}
+
+func TestComprehensive_GroupByWithWhereFilterOnSameField(t *testing.T) {
+	db := setupTestDB(t)
+	// Filter on contentType ~ "image" then GROUP BY contentType
+	// Should only return image types
+	q, err := Parse(`type = "resource" AND contentType ~ "image*" GROUP BY contentType COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+
+	// Only image/* types should appear
+	for _, row := range result.Rows {
+		ct := groupByVal(row["contentType"])
+		if ct != "image/jpeg" && ct != "image/png" {
+			t.Errorf("unexpected contentType %q after image* filter", ct)
+		}
+	}
+	if len(result.Rows) != 2 {
+		t.Errorf("expected 2 rows (jpeg, png), got %d: %v", len(result.Rows), result.Rows)
+	}
+}
+
+func TestComprehensive_GroupByCreatedDatetime(t *testing.T) {
+	db := setupTestDB(t)
+	// GROUP BY created (datetime field) — tests datetime handling
+	q, err := Parse(`type = "resource" GROUP BY created COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+	// There are 4 resources. 3 share the same CreatedAt (now), 1 is 30 days ago.
+	// So we should have at least 2 distinct groups.
+	if len(result.Rows) < 2 {
+		t.Errorf("expected at least 2 rows for created grouping, got %d: %v", len(result.Rows), result.Rows)
+	}
+	for _, row := range result.Rows {
+		if _, ok := row["created"]; !ok {
+			t.Error("missing 'created' key")
+		}
+		if _, ok := row["count"]; !ok {
+			t.Error("missing 'count' key")
+		}
+	}
+}
+
+func TestComprehensive_GroupBySumOnMetaNumericField(t *testing.T) {
+	db := setupTestDB(t)
+	// note 2 has meta.count=7, note 1 has no count
+	// Group notes by owner, sum meta.count
+	q, err := Parse(`type = "note" GROUP BY owner SUM(meta.count)`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityNote
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+
+	// Find the Work owner row (note 2, which has count=7)
+	for _, row := range result.Rows {
+		ownerName := groupByVal(row["owner"])
+		if ownerName == "Work" {
+			sumVal := groupByVal(row["sum_meta.count"])
+			if sumVal != "7" {
+				t.Errorf("expected sum_meta.count=7 for Work owner, got %s", sumVal)
+			}
+		}
+	}
+}
+
+func TestComprehensive_GroupByBucketedWithOrderBy(t *testing.T) {
+	db := setupTestDB(t)
+	// Bucketed mode with ORDER BY within buckets
+	q, err := Parse(`type = "resource" GROUP BY contentType ORDER BY name ASC LIMIT 10`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	keys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("keys: %v", err)
+	}
+	if len(keys) != 4 {
+		t.Fatalf("expected 4 bucket keys, got %d", len(keys))
+	}
+
+	// Fetch items and verify order within buckets
+	for _, key := range keys {
+		bucketDB, err := TranslateGroupByBucket(q, db, key)
+		if err != nil {
+			t.Fatalf("bucket: %v", err)
+		}
+		var resources []testResource
+		if err := bucketDB.Find(&resources).Error; err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		// Each bucket should have exactly 1 resource (all content types are unique)
+		if len(resources) != 1 {
+			t.Errorf("expected 1 resource per bucket, got %d for key %v", len(resources), key)
+		}
+	}
+}
+
+func TestComprehensive_GroupByBucketedByMetaField(t *testing.T) {
+	db := setupTestDB(t)
+	// Bucketed GROUP BY meta.rating on resources
+	q, err := Parse(`type = "resource" GROUP BY meta.rating LIMIT 10`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	keys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("keys: %v", err)
+	}
+	// sunset.jpg rating=5, photo_album.png rating=3, others have no rating
+	// Expect at least 2 distinct keys (5, 3, possibly null)
+	if len(keys) < 2 {
+		t.Errorf("expected at least 2 bucket keys for meta.rating, got %d: %v", len(keys), keys)
+	}
+
+	// Verify each bucket returns resources
+	for _, key := range keys {
+		bucketDB, err := TranslateGroupByBucket(q, db, key)
+		if err != nil {
+			t.Fatalf("bucket: %v", err)
+		}
+		var resources []testResource
+		if err := bucketDB.Find(&resources).Error; err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		if len(resources) == 0 {
+			t.Errorf("expected at least 1 resource per bucket key %v", key)
+		}
+	}
+}
+
+func TestComprehensive_GroupByOwnerTagsTraversal(t *testing.T) {
+	db := setupTestDB(t)
+	// GROUP BY owner.tags — traversal ending in a relation
+	// r1 owner=Vacation → tags: photo
+	// r3 owner=Work → tags: document
+	// r2, r4 no owner → NULL
+	q, err := Parse(`type = "resource" GROUP BY owner.tags COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+
+	// Verify owner tag names appear
+	tagNames := make(map[string]bool)
+	for _, row := range result.Rows {
+		name := groupByVal(row["owner.tags"])
+		tagNames[name] = true
+	}
+	// Vacation group has tag "photo", Work group has tag "document"
+	if !tagNames["photo"] {
+		t.Errorf("expected 'photo' (Vacation's tag) in owner.tags grouping, got: %v", tagNames)
+	}
+	if !tagNames["document"] {
+		t.Errorf("expected 'document' (Work's tag) in owner.tags grouping, got: %v", tagNames)
+	}
+}
+
+func TestComprehensive_GroupByMultipleKeysWithTraversal(t *testing.T) {
+	db := setupTestDB(t)
+	// Multiple GROUP BY keys: owner.name + contentType
+	q, err := Parse(`type = "resource" GROUP BY owner.name, contentType COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+
+	// Each row should have both owner.name and contentType
+	for _, row := range result.Rows {
+		if _, ok := row["owner.name"]; !ok {
+			t.Error("missing 'owner.name' key")
+		}
+		if _, ok := row["contentType"]; !ok {
+			t.Error("missing 'contentType' key")
+		}
+		if _, ok := row["count"]; !ok {
+			t.Error("missing 'count' key")
+		}
+	}
+
+	// 4 resources, each with unique contentType and varying owners
+	// r1: Vacation + image/jpeg, r2: NULL + image/png, r3: Work + application/pdf, r4: NULL + text/plain
+	if len(result.Rows) != 4 {
+		t.Errorf("expected 4 distinct (owner.name, contentType) rows, got %d: %v", len(result.Rows), result.Rows)
+	}
+
+	// Verify specific combos
+	type combo struct{ owner, ct string }
+	combos := make(map[combo]bool)
+	for _, row := range result.Rows {
+		c := combo{groupByVal(row["owner.name"]), groupByVal(row["contentType"])}
+		combos[c] = true
+	}
+	if !combos[combo{"Vacation", "image/jpeg"}] {
+		t.Error("missing Vacation + image/jpeg combination")
+	}
+	if !combos[combo{"Work", "application/pdf"}] {
+		t.Error("missing Work + application/pdf combination")
+	}
+}

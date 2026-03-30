@@ -927,3 +927,141 @@ func TestParser_CountWithFieldFails(t *testing.T) {
 		t.Fatal("expected error: COUNT does not take a field argument")
 	}
 }
+
+// ---- Additional GROUP BY parser tests ----
+
+func TestParser_GroupByMetaField(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY meta.source`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if q.GroupBy == nil || len(q.GroupBy.Fields) != 1 {
+		t.Fatal("expected 1 GROUP BY field")
+	}
+	if q.GroupBy.Fields[0].Name() != "meta.source" {
+		t.Errorf("expected field 'meta.source', got %q", q.GroupBy.Fields[0].Name())
+	}
+}
+
+func TestParser_GroupByTraversal(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY owner.name`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if q.GroupBy == nil || len(q.GroupBy.Fields) != 1 {
+		t.Fatal("expected 1 GROUP BY field")
+	}
+	if q.GroupBy.Fields[0].Name() != "owner.name" {
+		t.Errorf("expected field 'owner.name', got %q", q.GroupBy.Fields[0].Name())
+	}
+	if len(q.GroupBy.Fields[0].Parts) != 2 {
+		t.Errorf("expected 2 parts, got %d", len(q.GroupBy.Fields[0].Parts))
+	}
+}
+
+func TestParser_GroupByRelationField(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY tags`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if q.GroupBy == nil || len(q.GroupBy.Fields) != 1 {
+		t.Fatal("expected 1 GROUP BY field")
+	}
+	if q.GroupBy.Fields[0].Name() != "tags" {
+		t.Errorf("expected field 'tags', got %q", q.GroupBy.Fields[0].Name())
+	}
+}
+
+func TestParser_GroupByThenOrderBy(t *testing.T) {
+	// GROUP BY without aggregates, directly followed by ORDER BY
+	q, err := Parse(`type = "resource" GROUP BY contentType ORDER BY contentType ASC`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if q.GroupBy == nil {
+		t.Fatal("expected GroupBy to be set")
+	}
+	if len(q.GroupBy.Aggregates) != 0 {
+		t.Errorf("expected 0 aggregates, got %d", len(q.GroupBy.Aggregates))
+	}
+	if len(q.OrderBy) != 1 {
+		t.Fatalf("expected 1 ORDER BY clause, got %d", len(q.OrderBy))
+	}
+	if q.OrderBy[0].Field.Name() != "contentType" {
+		t.Errorf("expected ORDER BY 'contentType', got %q", q.OrderBy[0].Field.Name())
+	}
+	if !q.OrderBy[0].Ascending {
+		t.Error("expected ASC direction")
+	}
+}
+
+func TestParser_GroupByMultipleAggregatesDifferentFields(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY contentType COUNT() SUM(fileSize) MIN(created) MAX(updated)`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if q.GroupBy == nil {
+		t.Fatal("expected GroupBy to be set")
+	}
+	if len(q.GroupBy.Aggregates) != 4 {
+		t.Fatalf("expected 4 aggregates, got %d", len(q.GroupBy.Aggregates))
+	}
+	expected := []struct {
+		name  string
+		field string // empty means nil field
+	}{
+		{"COUNT", ""},
+		{"SUM", "fileSize"},
+		{"MIN", "created"},
+		{"MAX", "updated"},
+	}
+	for i, exp := range expected {
+		agg := q.GroupBy.Aggregates[i]
+		if agg.Name != exp.name {
+			t.Errorf("agg[%d]: expected %s, got %s", i, exp.name, agg.Name)
+		}
+		if exp.field == "" {
+			if agg.Field != nil {
+				t.Errorf("agg[%d]: expected nil field, got %v", i, agg.Field)
+			}
+		} else {
+			if agg.Field == nil || agg.Field.Name() != exp.field {
+				t.Errorf("agg[%d]: expected field %q, got %v", i, exp.field, agg.Field)
+			}
+		}
+	}
+}
+
+func TestParser_GroupByWithExpressionAndFilter(t *testing.T) {
+	// WHERE clause followed by GROUP BY
+	q, err := Parse(`type = "resource" AND fileSize > 100 GROUP BY contentType COUNT()`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Where should be a BinaryExpr (AND)
+	bin, ok := q.Where.(*BinaryExpr)
+	if !ok {
+		t.Fatalf("expected *BinaryExpr WHERE, got %T", q.Where)
+	}
+	if bin.Operator.Type != TokenAnd {
+		t.Errorf("expected AND operator, got %v", bin.Operator.Type)
+	}
+	// GROUP BY should be present
+	if q.GroupBy == nil {
+		t.Fatal("expected GroupBy")
+	}
+	if len(q.GroupBy.Fields) != 1 || q.GroupBy.Fields[0].Name() != "contentType" {
+		t.Errorf("expected GROUP BY contentType, got %v", q.GroupBy.Fields)
+	}
+	if len(q.GroupBy.Aggregates) != 1 || q.GroupBy.Aggregates[0].Name != "COUNT" {
+		t.Errorf("expected COUNT(), got %v", q.GroupBy.Aggregates)
+	}
+}
+
+func TestParser_GroupByEmptyFieldsAfterComma(t *testing.T) {
+	// Trailing comma without a second field
+	_, err := Parse(`type = "resource" GROUP BY contentType,`)
+	if err == nil {
+		t.Fatal("expected error for trailing comma in GROUP BY fields")
+	}
+}

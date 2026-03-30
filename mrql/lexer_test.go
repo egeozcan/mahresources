@@ -629,3 +629,92 @@ func TestLexerDotSeparated(t *testing.T) {
 		}
 	}
 }
+
+// TestLexer_GroupByInFullQuery tests GROUP BY tokens within a full query string.
+func TestLexer_GroupByInFullQuery(t *testing.T) {
+	input := `type = "resource" GROUP BY contentType COUNT()`
+	tokens := tokenizeAll(t, input)
+
+	// Aggregate tokens don't consume '(' — it becomes a separate LParen token
+	wantTypes := []TokenType{
+		TokenKwType,     // type
+		TokenEq,         // =
+		TokenString,     // "resource"
+		TokenGroupBy,    // GROUP BY
+		TokenIdentifier, // contentType
+		TokenCount,      // COUNT
+		TokenLParen,     // (
+		TokenRParen,     // )
+		TokenEOF,
+	}
+	if len(tokens) != len(wantTypes) {
+		t.Fatalf("got %d tokens, want %d: %v", len(tokens), len(wantTypes), tokens)
+	}
+	for i, want := range wantTypes {
+		if tokens[i].Type != want {
+			t.Errorf("token[%d]: got %v (%q), want %v", i, tokens[i].Type, tokens[i].Value, want)
+		}
+	}
+}
+
+// TestLexer_AggregatesMixedWithIdentifiers tests aggregate keywords mixed
+// with regular identifiers in the same query.
+func TestLexer_AggregatesMixedWithIdentifiers(t *testing.T) {
+	// "count" without paren should be identifier; "COUNT(" should be aggregate
+	// Note: aggregate token does not consume '(' — it's emitted separately as LParen
+	input := `count = 5 AND COUNT(`
+	tokens := tokenizeAll(t, input)
+
+	wantTypes := []TokenType{
+		TokenIdentifier, // count (no paren → identifier)
+		TokenEq,         // =
+		TokenNumber,     // 5
+		TokenAnd,        // AND
+		TokenCount,      // COUNT (followed by paren, but does not consume it)
+		TokenLParen,     // (
+		TokenEOF,
+	}
+	if len(tokens) != len(wantTypes) {
+		t.Fatalf("got %d tokens, want %d: %v", len(tokens), len(wantTypes), tokens)
+	}
+	for i, want := range wantTypes {
+		if tokens[i].Type != want {
+			t.Errorf("token[%d]: got %v (%q), want %v", i, tokens[i].Type, tokens[i].Value, want)
+		}
+	}
+}
+
+// TestLexer_GroupByExtraWhitespace tests GROUP BY with extra whitespace between GROUP and BY.
+func TestLexer_GroupByExtraWhitespace(t *testing.T) {
+	input := "GROUP   BY contentType"
+	l := NewLexer(input)
+	tok := l.Next()
+	if tok.Type != TokenGroupBy {
+		t.Errorf("expected TokenGroupBy for 'GROUP   BY', got %v %q", tok.Type, tok.Value)
+	}
+	tok = l.Next()
+	if tok.Type != TokenIdentifier || tok.Value != "contentType" {
+		t.Errorf("expected identifier 'contentType', got %v %q", tok.Type, tok.Value)
+	}
+}
+
+// TestLexer_GroupByCaseVariations tests different case variations of GROUP BY.
+func TestLexer_GroupByCaseVariations(t *testing.T) {
+	cases := []string{
+		"Group By",
+		"GROUP by",
+		"group BY",
+		"GROUP BY",
+		"group by",
+		"Group by",
+	}
+	for _, input := range cases {
+		t.Run(input, func(t *testing.T) {
+			l := NewLexer(input)
+			tok := l.Next()
+			if tok.Type != TokenGroupBy {
+				t.Errorf("input=%q: expected TokenGroupBy, got %v %q", input, tok.Type, tok.Value)
+			}
+		})
+	}
+}
