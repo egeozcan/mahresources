@@ -335,7 +335,7 @@ In bucketed mode, `LIMIT` applies **per bucket** (maximum items per group), not 
 ### Constraints
 
 - GROUP BY requires `type = "resource|note|group"` — cross-entity grouping is not supported
-- Traversal paths (e.g., `owner.name`) are not supported in GROUP BY fields — use direct fields only
+- Traversal paths are supported: `owner.name`, `owner.parent.name`, `owner.meta.key`, etc.
 - Maximum 1000 buckets in bucketed mode
 
 ## Traversal
@@ -374,9 +374,8 @@ Maximum traversal depth is 5 parts (4 traversal steps + 1 leaf field).
 At the end of a traversal chain, you can access any group field:
 
 - **Scalar:** `name`, `description`, `category`, `id`, `created`, `updated`
-- **Relation:** `tags` (match by tag name)
-
-`meta.*` fields are not supported in traversal chains.
+- **Relation:** `tags` (match by tag name), `parent`, `children`
+- **Meta:** `meta.<key>` (e.g., `owner.meta.region`)
 
 Traversal fields follow the same operators as regular fields. Traversal deeper than 5 levels is not supported.
 
