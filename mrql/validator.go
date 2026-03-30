@@ -634,13 +634,19 @@ func validateGroupBy(gb *GroupByClause, entityType EntityType, orderBy []OrderBy
 
 	// Validate each GROUP BY field
 	for _, f := range gb.Fields {
+		// Reject the "type" pseudo-field — it's a filter, not a real column.
+		if len(f.Parts) == 1 && f.Parts[0].Value == "type" {
+			return &ValidationError{
+				Message: "cannot GROUP BY type: it is a filter pseudo-field, not a data column",
+				Pos:     f.Pos(),
+				Length:  len("type"),
+			}
+		}
+
 		// Validate field exists for entity type (handles traversals, meta, scalars)
 		if err := validateFieldExpr(f, entityType); err != nil {
 			return err
 		}
-
-		// For traversal paths, validate the leaf is a scalar or tags (not a relation like parent/children)
-		// This is already enforced by validateTraversalChain via validateFieldExpr.
 	}
 
 	// Validate aggregate functions

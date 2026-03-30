@@ -141,6 +141,13 @@ func (ctx *MahresourcesContext) ExecuteMRQLGrouped(reqCtx context.Context, parse
 	queryCtx, cancel := context.WithTimeout(reqCtx, MRQLQueryTimeout)
 	defer cancel()
 
+	// Apply default limit when no explicit LIMIT was specified.
+	// For aggregated mode this caps the number of result rows;
+	// for bucketed mode this caps items per bucket.
+	if parsed.Limit < 0 {
+		parsed.Limit = defaultMRQLLimit
+	}
+
 	if len(parsed.GroupBy.Aggregates) > 0 {
 		return ctx.executeAggregatedQuery(queryCtx, parsed)
 	}
@@ -181,7 +188,14 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 			return nil, err
 		}
 
-		bucket := MRQLBucket{Key: key}
+		// Build public key (strip internal _gbid_ fields used for bucket filtering)
+		publicKey := make(map[string]any, len(key))
+		for k, v := range key {
+			if !strings.HasPrefix(k, "_gbid_") {
+				publicKey[k] = v
+			}
+		}
+		bucket := MRQLBucket{Key: publicKey}
 
 		switch parsed.EntityType {
 		case mrql.EntityResource:

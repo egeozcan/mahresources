@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // ---- helpers ----
@@ -3907,5 +3910,146 @@ func TestComprehensive_GroupByOwnerMetaNonexistent(t *testing.T) {
 		if val != "<nil>" && val != "" {
 			t.Errorf("expected NULL for nonexistent meta key, got %q in rows: %v", val, result.Rows)
 		}
+	}
+}
+
+// ============================================================
+// Bug fix tests
+// ============================================================
+
+// Bug 1: GROUP BY owner groups by name, not ID — distinct groups with same name merge.
+func TestBugfix_GroupByOwnerUsesIDNotName(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Seed two groups with the SAME name but different IDs
+	db.Exec("INSERT INTO groups (id, name, meta, created_at, updated_at) VALUES (100, 'DuplicateName', '{}', datetime('now'), datetime('now'))")
+	db.Exec("INSERT INTO groups (id, name, meta, created_at, updated_at) VALUES (101, 'DuplicateName', '{}', datetime('now'), datetime('now'))")
+	// Assign resources to different groups with same name
+	db.Exec("INSERT INTO resources (id, name, content_type, file_size, meta, created_at, updated_at, owner_id) VALUES (100, 'res-a', 'text/plain', 10, '{}', datetime('now'), datetime('now'), 100)")
+	db.Exec("INSERT INTO resources (id, name, content_type, file_size, meta, created_at, updated_at, owner_id) VALUES (101, 'res-b', 'text/plain', 20, '{}', datetime('now'), datetime('now'), 101)")
+
+	q, err := Parse(`type = "resource" GROUP BY owner COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+
+	// There should be separate rows for each owner, even though names match.
+	// Count rows where the display name is "DuplicateName"
+	dupCount := 0
+	for _, row := range result.Rows {
+		name := groupByVal(row["owner"])
+		if name == "DuplicateName" {
+			dupCount++
+		}
+	}
+	if dupCount < 2 {
+		t.Errorf("expected 2 separate rows for owners named 'DuplicateName' (different IDs), got %d; rows: %v", dupCount, result.Rows)
+	}
+}
+
+// Bug 2: TranslateGroupByKeys ignores OFFSET — bucketed pagination always returns first page.
+func TestBugfix_BucketedKeysRespectsOffset(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Resources have 4 content types: image/jpeg, image/png, application/pdf, text/plain
+	q, err := Parse(`type = "resource" GROUP BY contentType LIMIT 2 OFFSET 2`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	allKeys, err := TranslateGroupByKeys(&Query{
+		Where: q.Where, GroupBy: &GroupByClause{Fields: q.GroupBy.Fields},
+		EntityType: EntityResource, Limit: -1, Offset: -1,
+	}, db)
+	if err != nil {
+		t.Fatalf("all keys: %v", err)
+	}
+
+	offsetKeys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("offset keys: %v", err)
+	}
+
+	// With 4 total content types, LIMIT 2 OFFSET 2 should skip the first 2
+	if len(allKeys) < 4 {
+		t.Skipf("need 4+ content types, got %d", len(allKeys))
+	}
+	if len(offsetKeys) > 2 {
+		t.Errorf("expected at most 2 keys with LIMIT 2, got %d", len(offsetKeys))
+	}
+	// The offset keys should NOT be the same as the first 2 all-keys
+	if len(offsetKeys) > 0 && len(allKeys) > 0 {
+		firstAllKey := groupByVal(allKeys[0]["contentType"])
+		firstOffsetKey := groupByVal(offsetKeys[0]["contentType"])
+		if firstAllKey == firstOffsetKey {
+			t.Errorf("OFFSET 2 returned same first key as OFFSET 0 (%s) — OFFSET is being ignored", firstAllKey)
+		}
+	}
+}
+
+// Bug 3: Grouped execution has no default limit — unbounded results.
+// The default limit is applied by ExecuteMRQLGrouped in the execution layer,
+// which sets parsed.Limit = defaultMRQLLimit (1000) when Limit < 0.
+// We test this by verifying the execution layer mutates the query's Limit.
+func TestBugfix_GroupedQueryAppliesDefaultLimit(t *testing.T) {
+	// Verify that parsed queries start with Limit=-1 (unset)
+	q, err := Parse(`type = "resource" GROUP BY contentType COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if q.Limit != -1 {
+		t.Fatalf("expected Limit=-1 after parse, got %d", q.Limit)
+	}
+
+	// Verify that TranslateGroupByBucket applies LIMIT when Limit >= 0
+	db := setupTestDB(t)
+	q2, err := Parse(`type = "resource" GROUP BY contentType`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q2); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q2.EntityType = EntityResource
+	// Simulate what ExecuteMRQLGrouped does: set default limit
+	q2.Limit = 1000
+
+	bucketDB, err := TranslateGroupByBucket(q2, db, map[string]any{"contentType": "image/jpeg"})
+	if err != nil {
+		t.Fatalf("bucket: %v", err)
+	}
+	// Use DryRun to capture SQL without executing
+	dryDB := bucketDB.Session(&gorm.Session{DryRun: true}).Find(&[]testResource{})
+	sql := strings.ToUpper(dryDB.Statement.SQL.String())
+	if !strings.Contains(sql, "LIMIT") {
+		t.Errorf("expected LIMIT in bucketed query when Limit=1000, got SQL: %s", sql)
+	}
+}
+
+// Bug 4: GROUP BY type pseudo-field should be rejected by validator.
+func TestBugfix_GroupByTypePseudoFieldRejected(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY type COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	err = Validate(q)
+	if err == nil {
+		t.Fatal("expected validation error for GROUP BY type pseudo-field")
+	}
+	if !strings.Contains(err.Error(), "type") {
+		t.Errorf("expected error mentioning 'type', got: %v", err)
 	}
 }

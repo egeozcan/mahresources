@@ -1368,7 +1368,7 @@ func TranslateGroupBy(q *Query, db *gorm.DB) (*GroupByResult, error) {
 // translateAggregatedGroupBy builds SELECT ... GROUP BY ... and executes.
 func (tc *translateContext) translateAggregatedGroupBy(db *gorm.DB, q *Query) (*GroupByResult, error) {
 	// Add JOINs for relation fields (tags, owner, groups) if used in GROUP BY
-	var relationExprs map[string]string
+	var relationExprs map[string]groupByRelExpr
 	db, relationExprs = tc.groupByRelationJoins(db, q.GroupBy.Fields)
 
 	var selectCols []string
@@ -1378,9 +1378,9 @@ func (tc *translateContext) translateAggregatedGroupBy(db *gorm.DB, q *Query) (*
 	for _, f := range q.GroupBy.Fields {
 		fieldName := f.Name()
 		// Check if this field has a relation-based expression
-		if relExpr, ok := relationExprs[fieldName]; ok {
-			selectCols = append(selectCols, relExpr+` AS "`+fieldName+`"`)
-			groupCols = append(groupCols, relExpr)
+		if rel, ok := relationExprs[fieldName]; ok {
+			selectCols = append(selectCols, rel.selectExpr+` AS "`+fieldName+`"`)
+			groupCols = append(groupCols, rel.groupExpr)
 		} else {
 			selectExpr, groupExpr := tc.groupByFieldExprs(fieldName)
 			selectCols = append(selectCols, selectExpr+` AS "`+fieldName+`"`)
@@ -1451,10 +1451,18 @@ func (tc *translateContext) groupByFieldExprs(fieldName string) (string, string)
 	return col, col
 }
 
+// groupByRelExpr holds separate SELECT and GROUP BY expressions for a relation field.
+// For tags, both are the same (tag name). For owner/groups, we GROUP BY the ID (unique)
+// but SELECT the name (display), avoiding merges of distinct entities with the same name.
+type groupByRelExpr struct {
+	selectExpr string // what to show (e.g., _gb_owner.name)
+	groupExpr  string // what to group by (e.g., _gb_owner.id)
+}
+
 // groupByRelationJoins modifies the db query to add JOINs for relation fields
-// used in GROUP BY. Returns the db and a map of fieldName -> select/group expression.
-func (tc *translateContext) groupByRelationJoins(db *gorm.DB, fields []*FieldExpr) (*gorm.DB, map[string]string) {
-	exprMap := make(map[string]string)
+// used in GROUP BY. Returns the db and a map of fieldName -> select/group expressions.
+func (tc *translateContext) groupByRelationJoins(db *gorm.DB, fields []*FieldExpr) (*gorm.DB, map[string]groupByRelExpr) {
+	exprMap := make(map[string]groupByRelExpr)
 	for i, f := range fields {
 		fieldName := f.Name()
 
@@ -1464,7 +1472,9 @@ func (tc *translateContext) groupByRelationJoins(db *gorm.DB, fields []*FieldExp
 			if traversalFieldNames[root] {
 				var expr string
 				db, expr = tc.groupByTraversalJoins(db, f, i)
-				exprMap[fieldName] = expr
+				// Traversal leaves are scalar columns or meta extracts —
+				// the expression is the same for SELECT and GROUP BY.
+				exprMap[fieldName] = groupByRelExpr{selectExpr: expr, groupExpr: expr}
 				continue
 			}
 		}
@@ -1490,11 +1500,15 @@ func (tc *translateContext) groupByRelationJoins(db *gorm.DB, fields []*FieldExp
 			}
 			db = db.Joins(fmt.Sprintf("LEFT JOIN %s _gb_jt ON _gb_jt.%s = %s.id", junctionTable, entityCol, tc.tableName))
 			db = db.Joins("LEFT JOIN tags _gb_t ON _gb_t.id = _gb_jt.tag_id")
-			exprMap[fieldName] = "_gb_t.name"
+			// Tags have unique names, so grouping by name is safe and produces
+			// better output than opaque IDs.
+			exprMap[fieldName] = groupByRelExpr{selectExpr: "_gb_t.name", groupExpr: "_gb_t.name"}
 
 		case "owner_id":
 			db = db.Joins(fmt.Sprintf("LEFT JOIN groups _gb_owner ON _gb_owner.id = %s.owner_id", tc.tableName))
-			exprMap[fieldName] = "_gb_owner.name"
+			// Group by FK column (unique per entity) and display the joined name.
+			// Group names are NOT unique, so grouping by name would merge distinct groups.
+			exprMap[fieldName] = groupByRelExpr{selectExpr: "_gb_owner.name", groupExpr: tc.tableName + ".owner_id"}
 
 		case "groups":
 			var junctionTable, entityCol string
@@ -1508,7 +1522,8 @@ func (tc *translateContext) groupByRelationJoins(db *gorm.DB, fields []*FieldExp
 			}
 			db = db.Joins(fmt.Sprintf("LEFT JOIN %s _gb_grp_jt ON _gb_grp_jt.%s = %s.id", junctionTable, entityCol, tc.tableName))
 			db = db.Joins("LEFT JOIN groups _gb_g ON _gb_g.id = _gb_grp_jt.group_id")
-			exprMap[fieldName] = "_gb_g.name"
+			// Group by junction group_id (unique per association) and display name.
+			exprMap[fieldName] = groupByRelExpr{selectExpr: "_gb_g.name", groupExpr: "_gb_grp_jt.group_id"}
 		}
 	}
 	return db, exprMap

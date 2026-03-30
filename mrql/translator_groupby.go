@@ -43,17 +43,23 @@ func TranslateGroupByKeys(q *Query, db *gorm.DB) ([]map[string]any, error) {
 	}
 
 	// Add JOINs for relation fields
-	var relationExprs map[string]string
+	var relationExprs map[string]groupByRelExpr
 	result, relationExprs = tc.groupByRelationJoins(result, q.GroupBy.Fields)
 
-	// Build SELECT DISTINCT for group-by fields
+	// Build SELECT DISTINCT for group-by fields.
+	// For relation fields with non-unique names (owner, groups), we SELECT both
+	// the display name and the identity (FK/ID) so bucket filtering can match by ID.
 	var selectCols []string
 	var groupCols []string
 	for _, f := range q.GroupBy.Fields {
 		fieldName := f.Name()
-		if relExpr, ok := relationExprs[fieldName]; ok {
-			selectCols = append(selectCols, relExpr+` AS "`+fieldName+`"`)
-			groupCols = append(groupCols, relExpr)
+		if rel, ok := relationExprs[fieldName]; ok {
+			selectCols = append(selectCols, rel.selectExpr+` AS "`+fieldName+`"`)
+			groupCols = append(groupCols, rel.groupExpr)
+			// Also select the identity expression so bucket filtering uses it
+			if rel.selectExpr != rel.groupExpr {
+				selectCols = append(selectCols, rel.groupExpr+` AS "_gbid_`+fieldName+`"`)
+			}
 		} else {
 			selectExpr, groupExpr := tc.groupByFieldExprs(fieldName)
 			selectCols = append(selectCols, selectExpr+` AS "`+fieldName+`"`)
@@ -75,13 +81,27 @@ func TranslateGroupByKeys(q *Query, db *gorm.DB) ([]map[string]any, error) {
 		result = result.Order(`"` + ob.Field.Name() + `" ` + direction)
 	}
 
-	// Cap buckets
-	result = result.Limit(maxBuckets)
+	// Apply LIMIT (capped at maxBuckets) and OFFSET for pagination
+	limit := maxBuckets
+	if q.Limit >= 0 && q.Limit < maxBuckets {
+		limit = q.Limit
+	}
+	result = result.Limit(limit)
+
+	if q.Offset >= 0 {
+		result = result.Offset(q.Offset)
+	}
 
 	var keys []map[string]any
 	if err := result.Find(&keys).Error; err != nil {
 		return nil, err
 	}
+
+	// Strip internal _gbid_ keys from the public key maps — they're used
+	// internally by TranslateGroupByBucket but shouldn't appear in API responses.
+	// Note: we keep them in the maps so the caller (executeBucketedQuery) passes
+	// them through to TranslateGroupByBucket. The execution layer strips them
+	// from the MRQLBucket.Key before serialization.
 	return keys, nil
 }
 
@@ -115,18 +135,28 @@ func TranslateGroupByBucket(q *Query, db *gorm.DB, key map[string]any) (*gorm.DB
 	}
 
 	// Add JOINs for relation fields
-	var relationExprs map[string]string
+	var relationExprs map[string]groupByRelExpr
 	result, relationExprs = tc.groupByRelationJoins(result, q.GroupBy.Fields)
 
-	// Add bucket key constraints
+	// Add bucket key constraints. For relation fields with separate identity
+	// expressions (owner, groups), prefer the _gbid_ key for filtering to avoid
+	// ambiguity when multiple groups share the same display name.
 	for _, f := range q.GroupBy.Fields {
 		fieldName := f.Name()
-		val := key[fieldName]
 		var expr string
-		if relExpr, ok := relationExprs[fieldName]; ok {
-			expr = relExpr
+		var val any
+		if rel, ok := relationExprs[fieldName]; ok {
+			if rel.selectExpr != rel.groupExpr {
+				// Use the identity (FK/ID) for filtering
+				expr = rel.groupExpr
+				val = key["_gbid_"+fieldName]
+			} else {
+				expr = rel.selectExpr
+				val = key[fieldName]
+			}
 		} else {
 			_, expr = tc.groupByFieldExprs(fieldName)
+			val = key[fieldName]
 		}
 
 		if val == nil {
