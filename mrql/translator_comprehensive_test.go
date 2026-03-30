@@ -3233,3 +3233,110 @@ func TestComprehensive_GroupByAggregatedOrderByAscending(t *testing.T) {
 		}
 	}
 }
+
+// ============================================================
+// GROUP BY — Traversal Paths
+// ============================================================
+
+func TestComprehensive_GroupByTraversalOwnerName(t *testing.T) {
+	db := setupTestDB(t)
+	// GROUP BY owner.name — resources grouped by their owner group's name
+	// sunset.jpg → Vacation, report.pdf → Work, others → NULL
+	q, err := Parse(`type = "resource" GROUP BY owner.name COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if result.Mode != "aggregated" {
+		t.Errorf("expected aggregated, got %s", result.Mode)
+	}
+	// Expect at least Vacation and Work rows
+	foundVacation := false
+	foundWork := false
+	for _, row := range result.Rows {
+		name := groupByVal(row["owner.name"])
+		if name == "Vacation" {
+			foundVacation = true
+			if groupByVal(row["count"]) != "1" {
+				t.Errorf("expected count=1 for Vacation, got %s", groupByVal(row["count"]))
+			}
+		}
+		if name == "Work" {
+			foundWork = true
+			if groupByVal(row["count"]) != "1" {
+				t.Errorf("expected count=1 for Work, got %s", groupByVal(row["count"]))
+			}
+		}
+	}
+	if !foundVacation {
+		t.Errorf("expected Vacation in results, got: %v", result.Rows)
+	}
+	if !foundWork {
+		t.Errorf("expected Work in results, got: %v", result.Rows)
+	}
+}
+
+func TestComprehensive_GroupByTraversalBucketed(t *testing.T) {
+	db := setupTestDB(t)
+	// Bucketed mode with traversal: GROUP BY owner.name without aggregates
+	q, err := Parse(`type = "resource" GROUP BY owner.name LIMIT 10`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	keys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("keys: %v", err)
+	}
+	if len(keys) == 0 {
+		t.Fatal("expected at least one bucket key")
+	}
+	// Each key should have "owner.name"
+	for _, key := range keys {
+		if _, ok := key["owner.name"]; !ok {
+			t.Errorf("expected 'owner.name' in key, got: %v", key)
+		}
+	}
+}
+
+func TestComprehensive_GroupByTraversalDeep(t *testing.T) {
+	db := setupTestDB(t)
+	// owner.parent.name: report.pdf → Work → Vacation (parent)
+	// sunset.jpg → Vacation → no parent (NULL)
+	q, err := Parse(`type = "resource" GROUP BY owner.parent.name COUNT()`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	// Work's parent is Vacation, so report.pdf → owner.parent.name = "Vacation"
+	foundVacation := false
+	for _, row := range result.Rows {
+		name := groupByVal(row["owner.parent.name"])
+		if name == "Vacation" {
+			foundVacation = true
+		}
+	}
+	if !foundVacation {
+		t.Errorf("expected owner.parent.name=Vacation for Work-owned resources, got: %v", result.Rows)
+	}
+}

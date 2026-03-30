@@ -1450,8 +1450,20 @@ func (tc *translateContext) groupByFieldExprs(fieldName string) (string, string)
 // used in GROUP BY. Returns the db and a map of fieldName -> select/group expression.
 func (tc *translateContext) groupByRelationJoins(db *gorm.DB, fields []*FieldExpr) (*gorm.DB, map[string]string) {
 	exprMap := make(map[string]string)
-	for _, f := range fields {
+	for i, f := range fields {
 		fieldName := f.Name()
+
+		// Handle traversal paths: owner.name, owner.parent.name, parent.name, children.name, etc.
+		if len(f.Parts) >= 2 {
+			root := f.Parts[0].Value
+			if traversalFieldNames[root] {
+				var expr string
+				db, expr = tc.groupByTraversalJoins(db, f, i)
+				exprMap[fieldName] = expr
+				continue
+			}
+		}
+
 		fd, ok := LookupField(tc.entityType, fieldName)
 		if !ok || fd.Type != FieldRelation {
 			continue
@@ -1495,6 +1507,60 @@ func (tc *translateContext) groupByRelationJoins(db *gorm.DB, fields []*FieldExp
 		}
 	}
 	return db, exprMap
+}
+
+// groupByTraversalJoins builds LEFT JOIN chains for traversal paths in GROUP BY.
+// For example, "owner.name" joins groups via owner_id; "owner.parent.name" chains
+// two joins. Returns the modified db and the SQL expression for the leaf column.
+func (tc *translateContext) groupByTraversalJoins(db *gorm.DB, f *FieldExpr, fieldIdx int) (*gorm.DB, string) {
+	parts := f.Parts
+	leaf := parts[len(parts)-1].Value
+
+	// Resolve the leaf field on the group entity (all traversals resolve to groups)
+	leafFd, ok := LookupField(EntityGroup, leaf)
+	if !ok && IsCommonField(leaf) {
+		leafFd, _ = LookupField(EntityGroup, leaf)
+	}
+
+	// Handle leaf = "tags" (junction table on the final group)
+	if ok && leafFd.Type == FieldRelation && leafFd.Column == "tags" {
+		lastAlias := tc.groupByBuildChainJoins(&db, parts[:len(parts)-1], fieldIdx)
+		tagAlias := fmt.Sprintf("_gbt_%d", fieldIdx)
+		jtAlias := fmt.Sprintf("_gbjt_%d", fieldIdx)
+		db = db.Joins(fmt.Sprintf("LEFT JOIN group_tags %s ON %s.group_id = %s.id", jtAlias, jtAlias, lastAlias))
+		db = db.Joins(fmt.Sprintf("LEFT JOIN tags %s ON %s.id = %s.tag_id", tagAlias, tagAlias, jtAlias))
+		return db, tagAlias + ".name"
+	}
+
+	// Scalar leaf: build chain JOINs then reference leaf column on last alias
+	lastAlias := tc.groupByBuildChainJoins(&db, parts[:len(parts)-1], fieldIdx)
+	return db, lastAlias + "." + leafFd.Column
+}
+
+// groupByBuildChainJoins adds LEFT JOINs for each step in a traversal chain.
+// steps are the traversal tokens (e.g., [owner], [owner, parent]).
+// Returns the alias of the last joined table.
+func (tc *translateContext) groupByBuildChainJoins(db **gorm.DB, steps []Token, fieldIdx int) string {
+	prevRef := tc.tableName
+	var lastAlias string
+
+	for i, step := range steps {
+		alias := fmt.Sprintf("_gbr_%d_%d", fieldIdx, i)
+		fieldName := step.Value
+
+		if fieldName == "children" {
+			// Reverse FK: children's owner_id points to parent's id
+			*db = (*db).Joins(fmt.Sprintf("LEFT JOIN groups %s ON %s.owner_id = %s.id", alias, alias, prevRef))
+		} else {
+			// Forward FK (owner/parent): source.owner_id = target.id
+			*db = (*db).Joins(fmt.Sprintf("LEFT JOIN groups %s ON %s.id = %s.owner_id", alias, alias, prevRef))
+		}
+
+		prevRef = alias
+		lastAlias = alias
+	}
+
+	return lastAlias
 }
 
 // aggregateExpr returns the SQL aggregate expression and the output alias.

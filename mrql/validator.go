@@ -615,22 +615,13 @@ func validateGroupBy(gb *GroupByClause, entityType EntityType, orderBy []OrderBy
 
 	// Validate each GROUP BY field
 	for _, f := range gb.Fields {
-		// Reject traversal paths (multi-part fields that aren't meta.*)
-		if len(f.Parts) >= 2 {
-			prefix := f.Parts[0].Value
-			if prefix != "meta" {
-				return &ValidationError{
-					Message: fmt.Sprintf("GROUP BY does not support traversal paths; use a direct field like %q instead of %q", prefix, f.Name()),
-					Pos:     f.Pos(),
-					Length:  len(f.Name()),
-				}
-			}
-		}
-
-		// Validate field exists for entity type
+		// Validate field exists for entity type (handles traversals, meta, scalars)
 		if err := validateFieldExpr(f, entityType); err != nil {
 			return err
 		}
+
+		// For traversal paths, validate the leaf is a scalar or tags (not a relation like parent/children)
+		// This is already enforced by validateTraversalChain via validateFieldExpr.
 	}
 
 	// Validate aggregate functions

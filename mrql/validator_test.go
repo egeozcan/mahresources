@@ -464,17 +464,33 @@ func TestValidate_GroupByRelationField(t *testing.T) {
 	}
 }
 
-func TestValidate_GroupByRejectsTraversal(t *testing.T) {
-	q, err := Parse(`type = "resource" GROUP BY owner.name COUNT()`)
+func TestValidate_GroupByAcceptsTraversal(t *testing.T) {
+	tests := []string{
+		`type = "resource" GROUP BY owner.name COUNT()`,
+		`type = "resource" GROUP BY owner.category COUNT()`,
+		`type = "group" GROUP BY parent.name COUNT()`,
+		`type = "resource" GROUP BY owner.tags COUNT()`,
+		`type = "resource" GROUP BY owner.parent.name COUNT()`,
+	}
+	for _, input := range tests {
+		q, err := Parse(input)
+		if err != nil {
+			t.Fatalf("parse %q: %v", input, err)
+		}
+		if err := Validate(q); err != nil {
+			t.Errorf("expected valid for %q, got: %v", input, err)
+		}
+	}
+}
+
+func TestValidate_GroupByRejectsInvalidTraversal(t *testing.T) {
+	// parent.name is not valid on resources (parent is group-only)
+	q, err := Parse(`type = "resource" GROUP BY parent.name COUNT()`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	err = Validate(q)
-	if err == nil {
-		t.Fatal("expected validation error for traversal in GROUP BY")
-	}
-	if !strings.Contains(err.Error(), "traversal") {
-		t.Errorf("unexpected error: %v", err)
+	if err := Validate(q); err == nil {
+		t.Fatal("expected error for parent traversal on resource")
 	}
 }
 
