@@ -42,12 +42,21 @@ func (p *parser) parseQuery() (*Query, error) {
 	// Parse optional WHERE expression — but only if the next token looks like
 	// the start of an expression. ORDER BY, LIMIT, OFFSET signal no WHERE clause.
 	tok := p.lexer.Peek()
-	if tok.Type != TokenEOF && tok.Type != TokenOrderBy && tok.Type != TokenLimit && tok.Type != TokenOffset {
+	if tok.Type != TokenEOF && tok.Type != TokenOrderBy && tok.Type != TokenLimit && tok.Type != TokenOffset && tok.Type != TokenGroupBy {
 		var err error
 		q.Where, err = p.parseExpression()
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	// Optional GROUP BY
+	if p.lexer.Peek().Type == TokenGroupBy {
+		groupBy, err := p.parseGroupBy()
+		if err != nil {
+			return nil, err
+		}
+		q.GroupBy = groupBy
 	}
 
 	// Optional ORDER BY
@@ -98,6 +107,13 @@ func (p *parser) parseQuery() (*Query, error) {
 	// Should be at EOF now
 	final := p.lexer.Peek()
 	if final.Type != TokenEOF {
+		if isAggregateToken(final.Type) {
+			return nil, &ParseError{
+				Message: fmt.Sprintf("aggregate function %s requires a preceding GROUP BY clause", final.Value),
+				Pos:     final.Pos,
+				Length:  final.Length,
+			}
+		}
 		return nil, &ParseError{
 			Message: fmt.Sprintf("unexpected token %q at end of query", final.Value),
 			Pos:     final.Pos,
@@ -476,6 +492,102 @@ func (p *parser) parseOrderBy() ([]OrderByClause, error) {
 	}
 
 	return clauses, nil
+}
+
+// isAggregateToken returns true if the token is an aggregate function keyword.
+func isAggregateToken(tt TokenType) bool {
+	switch tt {
+	case TokenCount, TokenSum, TokenAvg, TokenMin, TokenMax:
+		return true
+	}
+	return false
+}
+
+// parseGroupBy = "GROUP BY" field ("," field)* [aggregates]
+func (p *parser) parseGroupBy() (*GroupByClause, error) {
+	p.lexer.Next() // consume GROUP BY
+
+	clause := &GroupByClause{}
+
+	// Parse first field
+	field, err := p.parseField()
+	if err != nil {
+		return nil, err
+	}
+	clause.Fields = append(clause.Fields, field)
+
+	// Parse additional comma-separated fields
+	for p.lexer.Peek().Type == TokenComma {
+		p.lexer.Next() // consume ','
+		field, err := p.parseField()
+		if err != nil {
+			return nil, err
+		}
+		clause.Fields = append(clause.Fields, field)
+	}
+
+	// Parse optional aggregate functions
+	for isAggregateToken(p.lexer.Peek().Type) {
+		agg, err := p.parseAggregateFunc()
+		if err != nil {
+			return nil, err
+		}
+		clause.Aggregates = append(clause.Aggregates, agg)
+	}
+
+	return clause, nil
+}
+
+// parseAggregateFunc = ("COUNT" "(" ")" | ("SUM"|"AVG"|"MIN"|"MAX") "(" field ")")
+func (p *parser) parseAggregateFunc() (AggregateFunc, error) {
+	tok := p.lexer.Next() // consume aggregate keyword
+	name := strings.ToUpper(tok.Value)
+
+	lp := p.lexer.Next() // consume '('
+	if lp.Type != TokenLParen {
+		return AggregateFunc{}, &ParseError{
+			Message: fmt.Sprintf("expected '(' after %s, got %q", name, lp.Value),
+			Pos:     lp.Pos,
+			Length:  lp.Length,
+		}
+	}
+
+	agg := AggregateFunc{Token: tok, Name: name}
+
+	if name == "COUNT" {
+		rp := p.lexer.Next()
+		if rp.Type != TokenRParen {
+			return AggregateFunc{}, &ParseError{
+				Message: fmt.Sprintf("COUNT() takes no arguments; expected ')', got %q", rp.Value),
+				Pos:     rp.Pos,
+				Length:  rp.Length,
+			}
+		}
+	} else {
+		if p.lexer.Peek().Type == TokenRParen {
+			return AggregateFunc{}, &ParseError{
+				Message: fmt.Sprintf("%s() requires a field argument", name),
+				Pos:     p.lexer.Peek().Pos,
+				Length:  1,
+			}
+		}
+		field, err := p.parseField()
+		if err != nil {
+			return AggregateFunc{}, err
+		}
+		agg.Field = field
+
+		rp := p.lexer.Next()
+		if rp.Type != TokenRParen {
+			return AggregateFunc{}, &ParseError{
+				Message: fmt.Sprintf("expected ')' after %s field argument, got %q", name, rp.Value),
+				Pos:     rp.Pos,
+				Length:  rp.Length,
+			}
+		}
+	}
+
+	return agg, nil
 }
 
 // parseNumberLiteral parses a TokenNumber into a NumberLiteral node.

@@ -793,3 +793,137 @@ func TestParserTooDeepFieldRejected(t *testing.T) {
 		t.Fatalf("expected 'too deep' error, got: %v", err)
 	}
 }
+
+func TestParser_GroupBySimple(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY contentType`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if q.GroupBy == nil {
+		t.Fatal("expected GroupBy to be set")
+	}
+	if len(q.GroupBy.Fields) != 1 || q.GroupBy.Fields[0].Name() != "contentType" {
+		t.Errorf("expected GROUP BY [contentType], got %v", q.GroupBy.Fields)
+	}
+	if len(q.GroupBy.Aggregates) != 0 {
+		t.Errorf("expected no aggregates, got %d", len(q.GroupBy.Aggregates))
+	}
+}
+
+func TestParser_GroupByMultipleFields(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY contentType, meta.source`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if q.GroupBy == nil || len(q.GroupBy.Fields) != 2 {
+		t.Fatalf("expected 2 GROUP BY fields, got %v", q.GroupBy)
+	}
+	if q.GroupBy.Fields[0].Name() != "contentType" {
+		t.Errorf("first field: expected 'contentType', got %q", q.GroupBy.Fields[0].Name())
+	}
+	if q.GroupBy.Fields[1].Name() != "meta.source" {
+		t.Errorf("second field: expected 'meta.source', got %q", q.GroupBy.Fields[1].Name())
+	}
+}
+
+func TestParser_GroupByWithCount(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY contentType COUNT()`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if q.GroupBy == nil {
+		t.Fatal("expected GroupBy to be set")
+	}
+	if len(q.GroupBy.Aggregates) != 1 {
+		t.Fatalf("expected 1 aggregate, got %d", len(q.GroupBy.Aggregates))
+	}
+	agg := q.GroupBy.Aggregates[0]
+	if agg.Name != "COUNT" {
+		t.Errorf("expected COUNT, got %q", agg.Name)
+	}
+	if agg.Field != nil {
+		t.Errorf("expected nil field for COUNT(), got %v", agg.Field)
+	}
+}
+
+func TestParser_GroupByWithMultipleAggregates(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY contentType COUNT() SUM(fileSize) AVG(fileSize)`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if q.GroupBy == nil || len(q.GroupBy.Aggregates) != 3 {
+		t.Fatalf("expected 3 aggregates, got %v", q.GroupBy)
+	}
+	if q.GroupBy.Aggregates[0].Name != "COUNT" || q.GroupBy.Aggregates[0].Field != nil {
+		t.Errorf("agg[0]: expected COUNT()")
+	}
+	if q.GroupBy.Aggregates[1].Name != "SUM" || q.GroupBy.Aggregates[1].Field.Name() != "fileSize" {
+		t.Errorf("agg[1]: expected SUM(fileSize)")
+	}
+	if q.GroupBy.Aggregates[2].Name != "AVG" || q.GroupBy.Aggregates[2].Field.Name() != "fileSize" {
+		t.Errorf("agg[2]: expected AVG(fileSize)")
+	}
+}
+
+func TestParser_GroupByWithOrderByLimitOffset(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY contentType COUNT() ORDER BY count DESC LIMIT 10 OFFSET 5`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if q.GroupBy == nil {
+		t.Fatal("expected GroupBy")
+	}
+	if len(q.OrderBy) != 1 || q.OrderBy[0].Field.Name() != "count" || q.OrderBy[0].Ascending {
+		t.Errorf("expected ORDER BY count DESC, got %v", q.OrderBy)
+	}
+	if q.Limit != 10 {
+		t.Errorf("expected LIMIT 10, got %d", q.Limit)
+	}
+	if q.Offset != 5 {
+		t.Errorf("expected OFFSET 5, got %d", q.Offset)
+	}
+}
+
+func TestParser_GroupByMinMax(t *testing.T) {
+	q, err := Parse(`type = "resource" GROUP BY contentType MIN(fileSize) MAX(created)`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(q.GroupBy.Aggregates) != 2 {
+		t.Fatalf("expected 2 aggregates, got %d", len(q.GroupBy.Aggregates))
+	}
+	if q.GroupBy.Aggregates[0].Name != "MIN" || q.GroupBy.Aggregates[0].Field.Name() != "fileSize" {
+		t.Errorf("agg[0]: expected MIN(fileSize)")
+	}
+	if q.GroupBy.Aggregates[1].Name != "MAX" || q.GroupBy.Aggregates[1].Field.Name() != "created" {
+		t.Errorf("agg[1]: expected MAX(created)")
+	}
+}
+
+func TestParser_AggregateWithoutGroupByFails(t *testing.T) {
+	_, err := Parse(`type = "resource" COUNT()`)
+	if err == nil {
+		t.Fatal("expected error for aggregate without GROUP BY")
+	}
+}
+
+func TestParser_GroupByNoFields(t *testing.T) {
+	_, err := Parse(`type = "resource" GROUP BY`)
+	if err == nil {
+		t.Fatal("expected error for GROUP BY without fields")
+	}
+}
+
+func TestParser_SumWithoutFieldFails(t *testing.T) {
+	_, err := Parse(`type = "resource" GROUP BY contentType SUM()`)
+	if err == nil {
+		t.Fatal("expected error: SUM requires a field argument")
+	}
+}
+
+func TestParser_CountWithFieldFails(t *testing.T) {
+	_, err := Parse(`type = "resource" GROUP BY contentType COUNT(fileSize)`)
+	if err == nil {
+		t.Fatal("expected error: COUNT does not take a field argument")
+	}
+}
