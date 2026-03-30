@@ -187,8 +187,9 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 	}
 
 	var warnings []string
-	if len(keys) >= mrql.MaxBuckets {
+	if len(keys) > mrql.MaxBuckets {
 		warnings = append(warnings, fmt.Sprintf("Only the first %d groups are shown. Add filters to narrow the result set.", mrql.MaxBuckets))
+		keys = keys[:mrql.MaxBuckets]
 	}
 
 	var buckets []MRQLBucket
