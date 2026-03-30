@@ -470,6 +470,85 @@ func TestMRQLSavedQueryDelete(t *testing.T) {
 	assert.Equal(t, int64(0), count)
 }
 
+// ---- GROUP BY endpoint tests ----
+
+func TestMRQL_GroupByAggregated(t *testing.T) {
+	tc := setupMRQLTest(t)
+
+	// Seed several resources with varying content types
+	tc.DB.Create(&models.Resource{Name: "aggRes1", ContentType: "text/plain"})
+	tc.DB.Create(&models.Resource{Name: "aggRes2", ContentType: "text/plain"})
+	tc.DB.Create(&models.Resource{Name: "aggRes3", ContentType: "image/png"})
+
+	resp := tc.MakeRequest(http.MethodPost, "/v1/mrql", map[string]any{
+		"query": `type = "resource" GROUP BY contentType COUNT()`,
+	})
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	var result map[string]any
+	err := json.Unmarshal(resp.Body.Bytes(), &result)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "aggregated", result["mode"])
+	assert.Equal(t, "resource", result["entityType"])
+
+	rows, ok := result["rows"].([]any)
+	assert.True(t, ok, "expected 'rows' to be an array")
+	assert.NotEmpty(t, rows, "expected at least one aggregated row")
+
+	// Verify each row has the group key and count
+	for _, r := range rows {
+		row := r.(map[string]any)
+		assert.Contains(t, row, "contentType", "row should contain the group-by field")
+		assert.Contains(t, row, "count", "row should contain count aggregate")
+	}
+}
+
+func TestMRQL_GroupByBucketed(t *testing.T) {
+	tc := setupMRQLTest(t)
+
+	// Seed several resources with varying content types
+	tc.DB.Create(&models.Resource{Name: "bucketRes1", ContentType: "text/plain"})
+	tc.DB.Create(&models.Resource{Name: "bucketRes2", ContentType: "text/plain"})
+	tc.DB.Create(&models.Resource{Name: "bucketRes3", ContentType: "image/png"})
+
+	resp := tc.MakeRequest(http.MethodPost, "/v1/mrql", map[string]any{
+		"query": `type = "resource" GROUP BY contentType LIMIT 5`,
+	})
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	var result map[string]any
+	err := json.Unmarshal(resp.Body.Bytes(), &result)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "bucketed", result["mode"])
+	assert.Equal(t, "resource", result["entityType"])
+
+	groups, ok := result["groups"].([]any)
+	assert.True(t, ok, "expected 'groups' to be an array")
+	assert.NotEmpty(t, groups, "expected at least one bucket group")
+
+	// Verify each group has a key and items
+	for _, g := range groups {
+		group := g.(map[string]any)
+		assert.Contains(t, group, "key", "group should contain 'key'")
+		assert.Contains(t, group, "items", "group should contain 'items'")
+	}
+}
+
+func TestMRQL_GroupByWithoutEntityTypeFails(t *testing.T) {
+	tc := setupMRQLTest(t)
+
+	resp := tc.MakeRequest(http.MethodPost, "/v1/mrql", map[string]any{
+		"query": `name ~ "test" GROUP BY name COUNT()`,
+	})
+	assert.NotEqual(t, http.StatusOK, resp.Code, "GROUP BY without entity type should fail")
+
+	var errResp map[string]string
+	json.Unmarshal(resp.Body.Bytes(), &errResp)
+	assert.NotEmpty(t, errResp["error"])
+}
+
 func TestMRQLSavedQueryCreateEmptyName(t *testing.T) {
 	tc := setupMRQLTest(t)
 
