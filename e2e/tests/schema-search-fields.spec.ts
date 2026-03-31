@@ -531,6 +531,32 @@ test.describe('Schema-Driven Search Fields', () => {
     await expect(restoredContainer.getByRole('checkbox', { name: 'green' })).not.toBeChecked();
   });
 
+  // ── 16c. Category change preserves in-progress field values ──────────────────
+
+  test('adding a second category preserves in-progress field values for common fields', async ({
+    groupPage,
+    page,
+  }) => {
+    await groupPage.gotoList();
+
+    // Select category A (has: color, weight, active, dimensions.width/height)
+    await selectGroupCategory(page, `Schema Cat A ${runId}`);
+
+    const container = schemaFieldsGroup(page);
+
+    // Fill weight with a value the user hasn't submitted yet
+    const weightInput = container.locator('input[type="number"]').first();
+    await weightInput.fill('99');
+
+    // Now add category B (has: weight, active, score)
+    // "weight" is common to both — its value should be preserved
+    await selectGroupCategory(page, `Schema Cat B ${runId}`);
+
+    // Weight should still show "99" (preserved from before category change)
+    const updatedWeightInput = container.locator('input[type="number"]').first();
+    await expect(updatedWeightInput).toHaveValue('99');
+  });
+
   // ── 16. Schema-claimed entries excluded from freeFields ─────────────────────
 
   test('freeFields does not show entries for paths owned by schema fields', async ({

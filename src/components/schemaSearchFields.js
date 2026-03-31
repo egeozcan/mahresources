@@ -157,6 +157,18 @@ export function schemaSearchFields({ elName, existingMetaQuery, initialCategorie
     handleCategoryChange(items) {
       const hadFields = this.hasFields;
 
+      // Snapshot current field values so they survive category changes.
+      // Keyed by field path → { value, operator, enumValues, boolValue }.
+      const currentValues = new Map();
+      for (const f of this.fields) {
+        currentValues.set(f.path, {
+          value: f.value,
+          operator: f.operator,
+          enumValues: f.enumValues,
+          boolValue: f.boolValue,
+        });
+      }
+
       const schemas = items
         .filter(item => item.MetaSchema)
         .map(item => {
@@ -177,7 +189,9 @@ export function schemaSearchFields({ elName, existingMetaQuery, initialCategorie
 
       this.fields = merged.map(field => {
         const op = defaultOperator(field);
-        const existing = this._findExistingValue(field.path);
+        // Prefer in-progress values (from current session), fall back to URL state
+        const current = currentValues.get(field.path);
+        const existing = current || this._findExistingValue(field.path);
 
         let enumValues = existing ? existing.enumValues : [];
         // For enum fields with a single existing value, _findExistingValue puts
