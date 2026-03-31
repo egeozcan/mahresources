@@ -4754,3 +4754,19 @@ func TestBugfix_ChildrenMetaNegationSemantics(t *testing.T) {
 		}
 	}
 }
+
+// Traversal meta string equality must be case-insensitive.
+func TestBugfix_TraversalMetaCaseInsensitive(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Vacation has meta.region = "europe". Query with "EUROPE" should match.
+	result := parseAndTranslate(t, `type = "resource" AND owner.meta.region = "EUROPE"`, EntityResource, db)
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(resources) != 1 {
+		t.Errorf("expected 1 resource (sunset.jpg) for case-insensitive owner.meta.region = EUROPE, got %d: %v",
+			len(resources), namesOfResources(resources))
+	}
+}

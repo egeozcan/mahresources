@@ -184,7 +184,11 @@ func (tc *translateContext) buildScalarClause(qualifiedCol string, op Token, val
 		return qualifiedCol + " " + likeOp + " ? ESCAPE '\\'", likePattern
 	}
 	sqlOp := tc.sqlOperator(op)
-	if fd.Type == FieldString && (op.Type == TokenEq || op.Type == TokenNeq) {
+	// Case-insensitive equality for string and non-numeric meta fields
+	if (fd.Type == FieldString || fd.Type == FieldMeta) && (op.Type == TokenEq || op.Type == TokenNeq) {
+		if fd.Type == FieldMeta && isNumericValue(val) {
+			return qualifiedCol + " " + sqlOp + " ?", val
+		}
 		return "LOWER(" + qualifiedCol + ") " + sqlOp + " LOWER(?)", val
 	}
 	return qualifiedCol + " " + sqlOp + " ?", val
