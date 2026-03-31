@@ -817,3 +817,63 @@ func TestMRQLExecuteGroupByNextOffsetAccountsTruncation(t *testing.T) {
 		}
 	}
 }
+
+// Aggregated GROUP BY with a large limit must not have its page size clamped
+// by the bucketed item cap. limit=N&page=2 must skip exactly N rows.
+func TestMRQLExecuteAggregatedLargeLimitPageNotClamped(t *testing.T) {
+	tc := setupMRQLTest(t)
+
+	// Seed 3 distinct content types
+	tc.DB.Create(&models.Resource{Name: "lp1", ContentType: "text/plain"})
+	tc.DB.Create(&models.Resource{Name: "lp2", ContentType: "image/png"})
+	tc.DB.Create(&models.Resource{Name: "lp3", ContentType: "application/pdf"})
+
+	// Page 1: limit=2 returns first 2 aggregated rows
+	resp1 := tc.MakeRequest(http.MethodPost, "/v1/mrql", map[string]any{
+		"query": `type = "resource" GROUP BY contentType COUNT()`,
+		"limit": 2,
+		"page":  1,
+	})
+	assert.Equal(t, http.StatusOK, resp1.Code)
+
+	var result1 map[string]any
+	json.Unmarshal(resp1.Body.Bytes(), &result1)
+	assert.Equal(t, "aggregated", result1["mode"])
+	rows1, _ := result1["rows"].([]any)
+	assert.Len(t, rows1, 2, "page 1 with limit=2 should return 2 rows")
+
+	// Page 2: should return the remaining row(s), not overlap with page 1
+	resp2 := tc.MakeRequest(http.MethodPost, "/v1/mrql", map[string]any{
+		"query": `type = "resource" GROUP BY contentType COUNT()`,
+		"limit": 2,
+		"page":  2,
+	})
+	assert.Equal(t, http.StatusOK, resp2.Code)
+
+	var result2 map[string]any
+	json.Unmarshal(resp2.Body.Bytes(), &result2)
+	rows2, _ := result2["rows"].([]any)
+	assert.NotEmpty(t, rows2, "page 2 should have remaining rows")
+
+	// Verify no overlap between pages
+	if len(rows1) > 0 && len(rows2) > 0 {
+		ct1 := rows1[0].(map[string]any)["contentType"]
+		ct2 := rows2[0].(map[string]any)["contentType"]
+		assert.NotEqual(t, ct1, ct2, "page 1 and page 2 should not overlap")
+	}
+
+	// Now test with a very large limit — the bucketed item cap (10000) must NOT
+	// clamp this. With limit=20000&page=2, offset should be 20000, not 10000.
+	// Since we only have 3 rows, page 2 should be empty (offset 20000 > 3 rows).
+	resp3 := tc.MakeRequest(http.MethodPost, "/v1/mrql", map[string]any{
+		"query": `type = "resource" GROUP BY contentType COUNT()`,
+		"limit": 20000,
+		"page":  2,
+	})
+	assert.Equal(t, http.StatusOK, resp3.Code)
+
+	var result3 map[string]any
+	json.Unmarshal(resp3.Body.Bytes(), &result3)
+	rows3, _ := result3["rows"].([]any)
+	assert.Empty(t, rows3, "limit=20000&page=2 should skip past all 3 rows (offset=20000)")
+}
