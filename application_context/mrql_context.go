@@ -193,11 +193,11 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 	}
 
 	var warnings []string
-	isPaginated := parsed.BucketLimit >= 0
+	isPaginated := parsed.BucketLimit >= 0 || parsed.Offset >= 0
 	if len(keys) > keyLimit {
-		// Only warn when hitting the MaxBuckets ceiling without explicit pagination.
-		// When the caller set BucketLimit (via --buckets, page+limit, or inline LIMIT),
-		// the overflow key is a "has next page" signal, not a truncation warning.
+		// Only warn when hitting the MaxBuckets ceiling without any pagination.
+		// When the caller is paging (BucketLimit or Offset set), the overflow key
+		// is a "has next page" signal, not a truncation warning.
 		if !isPaginated {
 			warnings = append(warnings, fmt.Sprintf("Only the first %d groups are shown. Add filters to narrow the result set.", keyLimit))
 		}
