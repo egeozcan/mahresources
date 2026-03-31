@@ -5,7 +5,6 @@ import (
 
 	"gorm.io/gorm"
 	"mahresources/models/query_models"
-	"mahresources/models/types"
 )
 
 func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gorm.DB) func(db *gorm.DB) *gorm.DB {
@@ -177,41 +176,33 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 		}
 
 		if len(query.MetaQuery) > 0 {
-			// Separate parent/child prefixed entries (handled with subqueries)
-			// from regular entries (handled by ApplyMetaQuery with OR grouping).
-			var regularMeta []query_models.ColumnMeta
+			// Separate parent/child prefixed entries from regular entries.
+			// Same-stripped-key EQ entries within each prefix are OR'd (multi-select enum),
+			// matching the behavior of ApplyMetaQuery for regular keys.
+			var parentMeta, childMeta, regularMeta []query_models.ColumnMeta
+
 			for _, v := range query.MetaQuery {
 				if v.Key == "" {
 					continue
 				}
-
-				parentPrefix := "parent."
-				childPrefix := "child."
-
-				if strings.HasPrefix(v.Key, parentPrefix) {
-					key := strings.TrimPrefix(v.Key, parentPrefix)
-
-					subSelect := originalDB.
-						Table("groups p").
-						Select("count(*)").
-						Where(types.JSONQuery("p.meta").Operation(getOperationType(v.Operation), v.Value, key)).
-						Where("groups.owner_id = p.id")
-
-					dbQuery = dbQuery.Where("(?) = 1", subSelect)
-				} else if strings.HasPrefix(v.Key, childPrefix) {
-					key := strings.TrimPrefix(v.Key, childPrefix)
-
-					subSelect := originalDB.
-						Table("groups p").
-						Select("count(*)").
-						Where(types.JSONQuery("p.meta").Operation(getOperationType(v.Operation), v.Value, key)).
-						Where("groups.id = p.owner_id")
-
-					dbQuery = dbQuery.Where("(?) >= 1", subSelect)
+				if strings.HasPrefix(v.Key, "parent.") {
+					parentMeta = append(parentMeta, query_models.ColumnMeta{
+						Key: strings.TrimPrefix(v.Key, "parent."), Operation: v.Operation, Value: v.Value,
+					})
+				} else if strings.HasPrefix(v.Key, "child.") {
+					childMeta = append(childMeta, query_models.ColumnMeta{
+						Key: strings.TrimPrefix(v.Key, "child."), Operation: v.Operation, Value: v.Value,
+					})
 				} else {
 					regularMeta = append(regularMeta, v)
 				}
 			}
+
+			// Apply parent-prefixed entries with OR grouping for same-key EQ
+			dbQuery = ApplyPrefixedMetaQuery(dbQuery, originalDB, parentMeta, "groups.owner_id = p.id", "= 1")
+			// Apply child-prefixed entries with OR grouping for same-key EQ
+			dbQuery = ApplyPrefixedMetaQuery(dbQuery, originalDB, childMeta, "groups.id = p.owner_id", ">= 1")
+			// Apply regular entries
 			dbQuery = ApplyMetaQuery(dbQuery, regularMeta, "groups.meta")
 		}
 

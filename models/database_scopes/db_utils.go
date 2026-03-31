@@ -191,6 +191,75 @@ func ApplyMetaQuery(db *gorm.DB, metaQuery []query_models.ColumnMeta, column str
 	return db
 }
 
+// ApplyPrefixedMetaQuery applies parent./child. prefixed MetaQuery entries
+// using subqueries on the "groups p" alias table. Same-key EQ entries are
+// grouped into OR within a single subquery, matching ApplyMetaQuery behavior.
+//
+// joinCondition links alias "p" to the main "groups" table
+// (e.g., "groups.owner_id = p.id"). countOp compares the count
+// (e.g., "= 1" or ">= 1").
+func ApplyPrefixedMetaQuery(db, originalDB *gorm.DB, entries []query_models.ColumnMeta, joinCondition, countOp string) *gorm.DB {
+	if len(entries) == 0 {
+		return db
+	}
+
+	// Group same-key EQ entries for OR semantics
+	type eqGroup struct{ values []any }
+	eqGroups := make(map[string]*eqGroup)
+	var nonGrouped []query_models.ColumnMeta
+
+	for _, e := range entries {
+		if e.Operation == "EQ" || e.Operation == "" {
+			g, ok := eqGroups[e.Key]
+			if !ok {
+				g = &eqGroup{}
+				eqGroups[e.Key] = g
+			}
+			g.values = append(g.values, e.Value)
+		} else {
+			nonGrouped = append(nonGrouped, e)
+		}
+	}
+
+	// Apply grouped EQ entries
+	for key, g := range eqGroups {
+		if len(g.values) == 1 {
+			subSelect := originalDB.
+				Table("groups p").
+				Select("count(*)").
+				Where(types.JSONQuery("p.meta").Operation(types.OperatorEquals, g.values[0], key)).
+				Where(joinCondition)
+			db = db.Where("(?) "+countOp, subSelect)
+		} else {
+			subSelect := originalDB.
+				Table("groups p").
+				Select("count(*)")
+			orDB := originalDB.Session(&gorm.Session{NewDB: true})
+			for i, val := range g.values {
+				if i == 0 {
+					orDB = orDB.Where(types.JSONQuery("p.meta").Operation(types.OperatorEquals, val, key))
+				} else {
+					orDB = orDB.Or(types.JSONQuery("p.meta").Operation(types.OperatorEquals, val, key))
+				}
+			}
+			subSelect = subSelect.Where(orDB).Where(joinCondition)
+			db = db.Where("(?) "+countOp, subSelect)
+		}
+	}
+
+	// Apply non-grouped entries
+	for _, e := range nonGrouped {
+		subSelect := originalDB.
+			Table("groups p").
+			Select("count(*)").
+			Where(types.JSONQuery("p.meta").Operation(getOperationType(e.Operation), e.Value, e.Key)).
+			Where(joinCondition)
+		db = db.Where("(?) "+countOp, subSelect)
+	}
+
+	return db
+}
+
 // ApplySortColumns validates and applies multiple ORDER BY clauses.
 // tablePrefix should be "tablename." for joined queries, or empty string for simple queries.
 // defaultSort is applied as the final tiebreaker sort (e.g., "created_at desc").

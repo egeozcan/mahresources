@@ -220,6 +220,51 @@ func TestMetaQuerySameKeyOR(t *testing.T) {
 	})
 }
 
+// TestMetaQueryPrefixedSameKeyOR verifies that parent./child. prefixed
+// MetaQuery entries with the same stripped key get OR semantics, matching
+// the behavior of regular (unprefixed) keys.
+func TestMetaQueryPrefixedSameKeyOR(t *testing.T) {
+	tc := SetupTestEnv(t)
+	requireJsonPatch(t, tc.DB)
+
+	// Create a parent with color=red, and a child owned by it
+	parent1 := &models.Group{Name: "Parent Red", Description: "p1", Meta: []byte(`{"color":"red"}`)}
+	tc.DB.Create(parent1)
+	parent2 := &models.Group{Name: "Parent Green", Description: "p2", Meta: []byte(`{"color":"green"}`)}
+	tc.DB.Create(parent2)
+	parent3 := &models.Group{Name: "Parent Blue", Description: "p3", Meta: []byte(`{"color":"blue"}`)}
+	tc.DB.Create(parent3)
+
+	child1 := &models.Group{Name: "Child of Red", Description: "c1", OwnerId: &parent1.ID}
+	tc.DB.Create(child1)
+	child2 := &models.Group{Name: "Child of Green", Description: "c2", OwnerId: &parent2.ID}
+	tc.DB.Create(child2)
+	child3 := &models.Group{Name: "Child of Blue", Description: "c3", OwnerId: &parent3.ID}
+	tc.DB.Create(child3)
+
+	t.Run("parent-prefixed same-key EQ entries are OR'd", func(t *testing.T) {
+		// Find children whose parent has color=red OR color=green
+		reqURL := fmt.Sprintf("/v1/groups?MetaQuery=%s&MetaQuery=%s",
+			url.QueryEscape(`parent.color:EQ:"red"`),
+			url.QueryEscape(`parent.color:EQ:"green"`))
+		resp := tc.MakeRequest(http.MethodGet, reqURL, nil)
+		assert.Equal(t, http.StatusOK, resp.Code)
+
+		var groups []models.Group
+		err := json.Unmarshal(resp.Body.Bytes(), &groups)
+		require.NoError(t, err)
+
+		// Should find child1 (parent=red) and child2 (parent=green), not child3 (parent=blue)
+		assert.Len(t, groups, 2, "parent-prefixed same-key EQ should be OR'd")
+		names := make([]string, len(groups))
+		for i, g := range groups {
+			names[i] = g.Name
+		}
+		assert.Contains(t, names, "Child of Red")
+		assert.Contains(t, names, "Child of Green")
+	})
+}
+
 // TestMetaQueryFilterViaFormEncoding verifies MetaQuery works when submitted
 // as form-encoded data (as template pages would use).
 func TestMetaQueryFilterViaFormEncoding(t *testing.T) {
