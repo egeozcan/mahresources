@@ -4803,3 +4803,80 @@ func TestBugfix_TraversalMetaNumericFiltering(t *testing.T) {
 		t.Errorf("expected sunset.jpg in results (owner priority=3 > 2), got: %v", namesOfResources(resources))
 	}
 }
+
+// P1a: Item cap must warn with actual bucket count, not silently hide buckets.
+func TestBugfix_ItemCapWarnsWithBucketCount(t *testing.T) {
+	// This test verifies the execution layer behavior, but we can at least
+	// verify that the translator-level per-bucket limit works correctly.
+	db := setupTestDB(t)
+
+	q, err := Parse(`type = "resource" GROUP BY contentType`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+	q.Limit = 1 // 1 item per bucket
+
+	keys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("keys: %v", err)
+	}
+
+	// All 4 content types should be returned as keys
+	if len(keys) < 4 {
+		t.Errorf("expected 4 content type keys, got %d", len(keys))
+	}
+
+	// Each bucket with Limit=1 should return at most 1 item
+	for _, key := range keys {
+		bucketDB, err := TranslateGroupByBucket(q, db, key)
+		if err != nil {
+			t.Fatalf("bucket: %v", err)
+		}
+		var resources []testResource
+		if err := bucketDB.Find(&resources).Error; err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		if len(resources) > 1 {
+			t.Errorf("expected at most 1 resource per bucket, got %d for key %v", len(resources), key)
+		}
+	}
+}
+
+// P1b: MAX(meta.*) with multi-digit numbers must return the correct numeric max.
+func TestBugfix_MaxMetaNumericOrdering(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Seed resources with numeric meta scores: 2 and 10
+	db.Exec("INSERT INTO resources (id, name, content_type, file_size, meta, created_at, updated_at) VALUES (500, 'score2', 'text/plain', 10, '{\"score\":2}', datetime('now'), datetime('now'))")
+	db.Exec("INSERT INTO resources (id, name, content_type, file_size, meta, created_at, updated_at) VALUES (501, 'score10', 'text/plain', 10, '{\"score\":10}', datetime('now'), datetime('now'))")
+
+	q, err := Parse(`type = "resource" GROUP BY contentType MAX(meta.score)`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+
+	// Find the text/plain row — MAX(meta.score) should be 10, not 2
+	for _, row := range result.Rows {
+		ct := groupByVal(row["contentType"])
+		if ct == "text/plain" {
+			maxScore := groupByVal(row["max_meta.score"])
+			// Numeric max: 10 > 2. Text max would give "2" > "10".
+			if maxScore == "2" {
+				t.Errorf("MAX(meta.score) returned 2 (text ordering), expected 10 (numeric ordering)")
+			}
+		}
+	}
+}

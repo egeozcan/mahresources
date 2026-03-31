@@ -481,11 +481,16 @@ func suggestionsForContext(tokens []Token, entityType EntityType, cursor int) []
 
 	// Check for GROUP BY clause context: between GROUP BY and ORDER BY/LIMIT.
 	if isInGroupByClause(tokens) {
+		// After a comma — suggest next grouping field.
+		if last.Type == TokenComma {
+			return groupByFieldSuggestions(entityType)
+		}
 		// After a field name in GROUP BY clause (with space after it),
-		// suggest aggregates + ORDER BY + LIMIT.
+		// suggest aggregates, comma (for more fields), ORDER BY, LIMIT.
 		if last.Type == TokenIdentifier || last.Type == TokenKwType {
 			if !cursorAtTokenEnd {
 				var suggs []Suggestion
+				suggs = append(suggs, Suggestion{Value: ",", Type: "operator", Label: "add another group field"})
 				suggs = append(suggs, aggregateSuggestions...)
 				suggs = append(suggs, Suggestion{Value: "ORDER BY", Type: "keyword"})
 				suggs = append(suggs, Suggestion{Value: "LIMIT", Type: "keyword"})

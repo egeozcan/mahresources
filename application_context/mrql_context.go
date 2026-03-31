@@ -206,6 +206,7 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 
 	var buckets []MRQLBucket
 	totalItems := 0
+	totalKeys := len(keys)
 	for _, key := range keys {
 		// Stop materializing buckets if we've hit the global item cap
 		if totalItems >= maxBucketedTotalItems {
@@ -268,8 +269,11 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 		buckets = []MRQLBucket{}
 	}
 
-	if totalItems >= maxBucketedTotalItems {
-		warnings = append(warnings, fmt.Sprintf("Results truncated at %d items. Narrow your query or add a filter to see all groups.", maxBucketedTotalItems))
+	if totalItems >= maxBucketedTotalItems && len(buckets) < totalKeys {
+		droppedGroups := totalKeys - len(buckets)
+		warnings = append(warnings, fmt.Sprintf(
+			"Results truncated at %d items (%d of %d groups shown, %d groups omitted). Narrow your query or add a filter.",
+			maxBucketedTotalItems, len(buckets), totalKeys, droppedGroups))
 	}
 
 	return &MRQLGroupedResult{

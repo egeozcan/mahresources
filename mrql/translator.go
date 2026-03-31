@@ -1781,12 +1781,13 @@ func (tc *translateContext) aggregateExpr(agg AggregateFunc) (string, string) {
 		return "COUNT(*)", "count"
 	default:
 		fieldName := agg.Field.Name()
-		// SUM/AVG on meta require numeric cast (non-numeric → NULL, correct arithmetic).
-		// MIN/MAX on meta use text extraction to include all values — text ordering
-		// is imperfect for multi-digit numbers on PG but avoids silently dropping
-		// non-numeric values. SQLite's json_extract returns native types, so MIN/MAX
-		// on numeric JSON values sort correctly there.
-		needsNumericCast := (agg.Name == "SUM" || agg.Name == "AVG") && strings.HasPrefix(fieldName, "meta.")
+		// All aggregates on meta.* use numeric cast on PG — non-numeric values become
+		// NULL and are excluded. This gives correct numeric ordering for MIN/MAX and
+		// correct arithmetic for SUM/AVG. Without the cast, PG text ordering makes
+		// MAX("2","10")="2" which is wrong. Non-numeric meta values are excluded
+		// from aggregation, matching SUM/AVG behavior. SQLite's json_extract returns
+		// native types so this only affects the PG codepath.
+		needsNumericCast := strings.HasPrefix(fieldName, "meta.")
 		col := tc.resolveAggregateColumn(fieldName, needsNumericCast)
 		alias := strings.ToLower(agg.Name) + "_" + fieldName
 		return fmt.Sprintf("%s(%s)", agg.Name, col), alias

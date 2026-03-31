@@ -412,13 +412,16 @@ func TestComplete_GroupByContextNotLeakedToNonGroupBy(t *testing.T) {
 // TestComplete_AfterGroupByCommaReturnsEmpty verifies the current behavior:
 // the completer does not yet handle the second field position after a comma in
 // GROUP BY (returns empty suggestions). This documents the limitation.
-func TestComplete_AfterGroupByCommaReturnsEmpty(t *testing.T) {
+func TestComplete_AfterGroupByCommaSuggestsFields(t *testing.T) {
 	suggestions := Complete(`type = "resource" GROUP BY contentType, `, 40)
-	// Current behavior: no suggestions after comma in GROUP BY.
-	// This is a known limitation of the completer.
-	if len(suggestions) != 0 {
-		// If this starts passing, it means the completer was enhanced — update test.
-		t.Logf("completer now returns %d suggestions after GROUP BY comma (previously 0): %v", len(suggestions), suggestions)
+	if !hasSuggestion(suggestions, "name") {
+		t.Error("expected field suggestions after GROUP BY comma for second key")
+	}
+	if hasSuggestion(suggestions, "type") {
+		t.Error("'type' should not be suggested after GROUP BY comma")
+	}
+	if hasSuggestion(suggestions, "TEXT") {
+		t.Error("'TEXT' should not be suggested after GROUP BY comma")
 	}
 }
 
