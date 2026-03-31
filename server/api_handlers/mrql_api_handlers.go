@@ -20,6 +20,7 @@ type mrqlExecuteRequest struct {
 	Limit   int    `json:"limit" schema:"limit"`     // items per bucket (grouped) or total items (non-grouped)
 	Buckets int    `json:"buckets" schema:"buckets"`  // buckets per page (grouped mode only)
 	Page    int    `json:"page" schema:"page"`        // page number (paginates buckets in grouped mode)
+	Offset  int    `json:"offset" schema:"offset"`    // direct offset for cursor-based bucket paging
 }
 
 type mrqlValidateRequest struct {
@@ -109,7 +110,10 @@ func GetExecuteMRQLHandler(ctx *application_context.MahresourcesContext) func(ht
 				if parsed.BucketLimit > mrql.MaxBuckets {
 					parsed.BucketLimit = mrql.MaxBuckets
 				}
-				if req.Page >= 1 {
+				// Direct offset (cursor-based) takes precedence over page computation
+				if req.Offset > 0 {
+					parsed.Offset = req.Offset
+				} else if req.Page >= 1 {
 					effectiveBuckets := parsed.BucketLimit
 					if effectiveBuckets < 0 {
 						effectiveBuckets = mrql.MaxBuckets
@@ -321,6 +325,7 @@ func GetRunSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) f
 		limit := int(http_utils.GetUIntQueryParameter(request, "limit", 0))
 		page := int(http_utils.GetUIntQueryParameter(request, "page", 0))
 		buckets := int(http_utils.GetUIntQueryParameter(request, "buckets", 0))
+		directOffset := int(http_utils.GetUIntQueryParameter(request, "offset", 0))
 
 		// Revalidate saved query — schema changes may have invalidated it since save time.
 		parsed, parseErr := mrql.Parse(saved.Query)
@@ -365,7 +370,9 @@ func GetRunSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) f
 				if parsed.BucketLimit > mrql.MaxBuckets {
 					parsed.BucketLimit = mrql.MaxBuckets
 				}
-				if page >= 1 {
+				if directOffset > 0 {
+					parsed.Offset = directOffset
+				} else if page >= 1 {
 					effectiveBuckets := parsed.BucketLimit
 					if effectiveBuckets < 0 {
 						effectiveBuckets = mrql.MaxBuckets

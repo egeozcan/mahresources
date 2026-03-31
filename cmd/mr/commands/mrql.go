@@ -44,11 +44,13 @@ type mrqlSavedQuery struct {
 
 // mrqlGroupedResponse matches the MRQLGroupedResult struct.
 type mrqlGroupedResponse struct {
-	EntityType string           `json:"entityType"`
-	Mode       string           `json:"mode"`
-	Rows       []map[string]any `json:"rows,omitempty"`
-	Groups     []mrqlBucket     `json:"groups,omitempty"`
-	Warnings   []string         `json:"warnings,omitempty"`
+	EntityType  string           `json:"entityType"`
+	Mode        string           `json:"mode"`
+	Rows        []map[string]any `json:"rows,omitempty"`
+	Groups      []mrqlBucket     `json:"groups,omitempty"`
+	Warnings    []string         `json:"warnings,omitempty"`
+	NextOffset  *int             `json:"nextOffset,omitempty"`
+	TotalGroups int              `json:"totalGroups,omitempty"`
 }
 
 type mrqlBucket struct {
@@ -284,6 +286,10 @@ func printMRQLResponse(opts output.Options, raw json.RawMessage) {
 				output.PrintMessage("No results found.")
 			} else {
 				printBucketedOutput(opts, grouped, raw)
+				if grouped.NextOffset != nil && !opts.JSON && !opts.Quiet {
+					fmt.Fprintf(os.Stderr, "Showing %d of %d groups. Use --offset %d for next page.\n",
+						len(grouped.Groups), grouped.TotalGroups, *grouped.NextOffset)
+				}
 			}
 		}
 		return

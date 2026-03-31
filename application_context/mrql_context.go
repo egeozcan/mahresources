@@ -29,11 +29,13 @@ type MRQLResult struct {
 
 // MRQLGroupedResult holds the results of a GROUP BY MRQL query.
 type MRQLGroupedResult struct {
-	EntityType string           `json:"entityType"`
-	Mode       string           `json:"mode"` // "aggregated" or "bucketed"
-	Rows       []map[string]any `json:"rows,omitempty"`
-	Groups     []MRQLBucket     `json:"groups,omitempty"`
-	Warnings   []string         `json:"warnings,omitempty"`
+	EntityType  string           `json:"entityType"`
+	Mode        string           `json:"mode"` // "aggregated" or "bucketed"
+	Rows        []map[string]any `json:"rows,omitempty"`
+	Groups      []MRQLBucket     `json:"groups,omitempty"`
+	Warnings    []string         `json:"warnings,omitempty"`
+	NextOffset  *int             `json:"nextOffset,omitempty"`  // bucketed: offset for next page (nil if no more)
+	TotalGroups int              `json:"totalGroups,omitempty"` // bucketed: total group count (before pagination)
 }
 
 // MRQLBucket is a single group of entities in bucketed mode.
@@ -287,11 +289,26 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 			maxBucketedTotalItems, len(buckets), totalKeys, droppedGroups))
 	}
 
+	// Compute cursor for next page based on actual buckets materialized,
+	// not the requested page size. This ensures the item cap doesn't cause
+	// the next page to skip over un-materialized buckets.
+	offset := 0
+	if parsed.Offset > 0 {
+		offset = parsed.Offset
+	}
+	actualNextOffset := offset + len(buckets)
+	var nextOffset *int
+	if actualNextOffset < len(allKeys) {
+		nextOffset = &actualNextOffset
+	}
+
 	return &MRQLGroupedResult{
-		EntityType: parsed.EntityType.String(),
-		Mode:       "bucketed",
-		Groups:     buckets,
-		Warnings:   warnings,
+		EntityType:  parsed.EntityType.String(),
+		Mode:        "bucketed",
+		Groups:      buckets,
+		Warnings:    warnings,
+		NextOffset:  nextOffset,
+		TotalGroups: len(allKeys),
 	}, nil
 }
 
