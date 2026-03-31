@@ -30,6 +30,7 @@
         {% include "/partials/form/checkboxInput.tpl" with name='SearchChildrenForTags' label='Search Children For Tags' value=queryValues.SearchChildrenForTags.0 id=getNextId("SearchChildrenForTags") %}
 
         {% include "/partials/form/autocompleter.tpl" with url='/v1/categories' elName='categories' title='Categories' selectedItems=categories id=getNextId("autocompleter") %}
+        {% include "/partials/form/schemaSearchFields.tpl" with elName='categories' existingMetaQuery=parsedQuery.MetaQuery id=getNextId("schemaSearch") %}
         {% include "/partials/form/autocompleter.tpl" with url='/v1/notes' elName='notes' title='Notes' selectedItems=notes id=getNextId("autocompleter") %}
         {% include "/partials/form/autocompleter.tpl" with url='/v1/resources' elName='resources' title='Resources' selectedItems=resources id=getNextId("autocompleter") %}
         {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='groups' title='Groups' selectedItems=groupsSelection id=getNextId("autocompleter") extraInfo="Category" %}

@@ -6,8 +6,11 @@
     })"
     @multiple-input.window="if ($event.detail.name === '{{ elName }}') handleCategoryChange($event.detail.value)"
     class="w-full"
-    aria-live="polite"
+    role="group"
+    aria-label="Schema fields"
 >
+    <span class="sr-only" aria-live="polite" aria-atomic="true"
+          x-text="hasFields ? fields.length + ' schema filter fields available' : ''"></span>
     <template x-if="hasFields">
         <div class="flex flex-col gap-2 w-full">
             <template x-for="(field, fIdx) in fields" :key="field.path">
@@ -19,11 +22,10 @@
 
                     <!-- Boolean: three-state radio -->
                     <template x-if="field.type === 'boolean'">
-                        <fieldset class="w-full">
+                        <fieldset class="w-full" :aria-label="field.label.replace(/ › /g, ', ')">
                             <legend
                                 class="block text-xs font-mono font-medium text-stone-600 mt-1"
                                 x-text="field.label"
-                                :aria-label="field.label.replace(/ › /g, ', ')"
                             ></legend>
                             <div class="flex gap-3 mt-1">
                                 <label class="text-sm flex items-center gap-1">
@@ -47,11 +49,10 @@
 
                     <!-- Enum ≤ 6: checkboxes -->
                     <template x-if="field.enum && field.enum.length <= 6">
-                        <fieldset class="w-full">
+                        <fieldset class="w-full" :aria-label="field.label.replace(/ › /g, ', ')">
                             <legend
                                 class="block text-xs font-mono font-medium text-stone-600 mt-1"
                                 x-text="field.label"
-                                :aria-label="field.label.replace(/ › /g, ', ')"
                             ></legend>
                             <div class="flex flex-wrap gap-x-3 gap-y-1 mt-1">
                                 <template x-for="enumVal in field.enum" :key="enumVal">
@@ -67,16 +68,14 @@
 
                     <!-- Enum > 6: multi-select dropdown -->
                     <template x-if="field.enum && field.enum.length > 6">
-                        <fieldset class="w-full">
+                        <fieldset class="w-full" :aria-label="field.label.replace(/ › /g, ', ')">
                             <legend
                                 class="block text-xs font-mono font-medium text-stone-600 mt-1"
                                 x-text="field.label"
-                                :aria-label="field.label.replace(/ › /g, ', ')"
                             ></legend>
                             <select multiple
                                     x-model="field.enumValues"
                                     :id="id + '-enum-' + field.path"
-                                    :aria-label="field.label.replace(/ › /g, ', ')"
                                     class="w-full text-sm border-stone-300 rounded mt-1 focus:ring-1 focus:ring-amber-600 focus:border-amber-600"
                                     :size="Math.min(field.enum.length, 6)"
                             >
@@ -94,7 +93,6 @@
                                 :for="id + '-' + field.path"
                                 class="block text-xs font-mono font-medium text-stone-600 mt-1"
                                 x-text="field.label"
-                                :aria-label="field.label.replace(/ › /g, ', ')"
                             ></label>
                             <div class="flex gap-1 items-center w-full mt-1">
                                 <!-- Collapsed operator symbol (clickable) -->
@@ -126,7 +124,6 @@
                                     :step="field.type === 'integer' ? '1' : 'any'"
                                     x-model="field.value"
                                     :id="id + '-' + field.path"
-                                    :aria-label="field.label.replace(/ › /g, ', ')"
                                     class="flex-grow w-full text-sm border-stone-300 rounded focus:ring-1 focus:ring-amber-600 focus:border-amber-600"
                                 >
                             </div>
