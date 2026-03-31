@@ -507,6 +507,30 @@ test.describe('Schema-Driven Search Fields', () => {
     await expect(operatorSelect).not.toBeVisible({ timeout: 3000 });
   });
 
+  // ── 16b. Single enum value restored after reload ────────────────────────────
+
+  test('single enum checkbox is checked after form submit and reload', async ({
+    groupPage,
+    page,
+  }) => {
+    await groupPage.gotoList();
+    await selectGroupCategory(page, `Schema Cat A ${runId}`);
+
+    const container = schemaFieldsGroup(page);
+
+    // Check only "red"
+    await container.getByRole('checkbox', { name: 'red' }).check();
+
+    // Submit
+    await submitFilterForm(page, 'Filter groups');
+
+    // After reload, "red" checkbox should be checked
+    const restoredContainer = schemaFieldsGroup(page);
+    await expect(restoredContainer.getByRole('checkbox', { name: 'red' })).toBeVisible({ timeout: 5000 });
+    await expect(restoredContainer.getByRole('checkbox', { name: 'red' })).toBeChecked();
+    await expect(restoredContainer.getByRole('checkbox', { name: 'green' })).not.toBeChecked();
+  });
+
   // ── 16. Schema-claimed entries excluded from freeFields ─────────────────────
 
   test('freeFields does not show entries for paths owned by schema fields', async ({

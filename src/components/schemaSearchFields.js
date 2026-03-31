@@ -179,11 +179,19 @@ export function schemaSearchFields({ elName, existingMetaQuery, initialCategorie
         const op = defaultOperator(field);
         const existing = this._findExistingValue(field.path);
 
+        let enumValues = existing ? existing.enumValues : [];
+        // For enum fields with a single existing value, _findExistingValue puts
+        // it in `value` (not `enumValues`). Route it into enumValues so the
+        // checkbox/select UI shows it as checked.
+        if (field.enum && existing && enumValues.length === 0 && existing.value) {
+          enumValues = [existing.value];
+        }
+
         return {
           ...field,
           operator: existing ? existing.operator : op,
-          value: existing ? existing.value : '',
-          enumValues: existing ? existing.enumValues : [],
+          value: (existing && !field.enum) ? existing.value : '',
+          enumValues,
           boolValue: existing ? existing.boolValue : 'any',
           showOperator: false,
           operators: operatorsForType(field),
