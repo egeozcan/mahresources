@@ -344,11 +344,14 @@ export function schemaSearchFields({ elName, existingMetaQuery, initialCategorie
       }
 
       if (field.enum) {
-        // Always quote enum values so coercible strings like "007", "true", "null"
-        // are preserved as strings. generateParamNameForMeta would route through
-        // getJSONValue which coerces them to number/boolean/nil.
+        // String enums must be quoted so coercible values like "007", "true", "null"
+        // are preserved as strings. Numeric enums must NOT be quoted so the backend
+        // matches them as numbers.
+        const quote = field.type === 'string';
         return field.enumValues.map(v => ({
-          value: `${field.path}:EQ:"${v}"`,
+          value: quote
+            ? `${field.path}:EQ:"${v}"`
+            : `${field.path}:EQ:${v}`,
         }));
       }
 

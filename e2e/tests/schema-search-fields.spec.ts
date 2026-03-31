@@ -56,6 +56,7 @@ test.describe('Schema-Driven Search Fields', () => {
   let categoryPlainStringId: number;
   let categoryIntegerWeightId: number;
   let categoryCoercibleEnumId: number;
+  let categoryNumericEnumId: number;
   let resourceCategoryId: number;
   const runId = Date.now();
 
@@ -142,6 +143,20 @@ test.describe('Schema-Driven Search Fields', () => {
     );
     categoryCoercibleEnumId = catCoercible.ID;
 
+    // Category with a numeric enum
+    const numericEnumSchema = JSON.stringify({
+      type: 'object',
+      properties: {
+        rating: { type: 'number', enum: [1, 2, 3, 4, 5] },
+      },
+    });
+    const catNumericEnum = await apiClient.createCategory(
+      `Schema Cat NumEnum ${runId}`,
+      'Category with numeric enum',
+      { MetaSchema: numericEnumSchema }
+    );
+    categoryNumericEnumId = catNumericEnum.ID;
+
     // Category with a plain string field (no enum) for string-quoting tests
     const plainStringSchema = JSON.stringify({
       type: 'object',
@@ -174,6 +189,7 @@ test.describe('Schema-Driven Search Fields', () => {
     if (categoryPlainStringId) await apiClient.deleteCategory(categoryPlainStringId).catch(() => {});
     if (categoryIntegerWeightId) await apiClient.deleteCategory(categoryIntegerWeightId).catch(() => {});
     if (categoryCoercibleEnumId) await apiClient.deleteCategory(categoryCoercibleEnumId).catch(() => {});
+    if (categoryNumericEnumId) await apiClient.deleteCategory(categoryNumericEnumId).catch(() => {});
     if (resourceCategoryId) await apiClient.deleteResourceCategory(resourceCategoryId).catch(() => {});
   });
 
@@ -936,5 +952,25 @@ test.describe('Schema-Driven Search Fields', () => {
     const decoded = decodeURIComponent(page.url());
     // Should be code:EQ:"007" (quoted string), not code:EQ:7
     expect(decoded).toContain('code:EQ:"007"');
+  });
+
+  // ── 26. Numeric enum values are not quoted ──────────────────────────────────
+
+  test('numeric enum value is submitted without quotes', async ({
+    groupPage,
+    page,
+  }) => {
+    await groupPage.gotoList();
+    await selectGroupCategory(page, `Schema Cat NumEnum ${runId}`);
+
+    const container = schemaFieldsGroup(page);
+    await container.getByRole('checkbox', { name: '3' }).check();
+
+    await submitFilterForm(page, 'Filter groups');
+
+    const decoded = decodeURIComponent(page.url());
+    // Should be rating:EQ:3 (unquoted number), not rating:EQ:"3"
+    expect(decoded).toContain('rating:EQ:3');
+    expect(decoded).not.toContain('rating:EQ:"3"');
   });
 });
