@@ -65,9 +65,15 @@ export function intersectFields(fieldLists) {
       const existing = base.get(field.path);
       if (!existing) continue;
 
+      const numericTypes = new Set(['number', 'integer']);
       if (existing.type !== field.type) {
-        existing.type = 'string';
-        existing.enum = null;
+        if (numericTypes.has(existing.type) && numericTypes.has(field.type)) {
+          // integer and number are compatible — merge to number
+          existing.type = 'number';
+        } else {
+          existing.type = 'string';
+          existing.enum = null;
+        }
       } else if (existing.enum && field.enum) {
         // Sort before comparing so order doesn't matter
         const a = [...existing.enum].sort();
@@ -338,8 +344,11 @@ export function schemaSearchFields({ elName, existingMetaQuery, initialCategorie
       }
 
       if (field.enum) {
+        // Always quote enum values so coercible strings like "007", "true", "null"
+        // are preserved as strings. generateParamNameForMeta would route through
+        // getJSONValue which coerces them to number/boolean/nil.
         return field.enumValues.map(v => ({
-          value: generateParamNameForMeta({ name: field.path, value: v, operation: 'EQ' }),
+          value: `${field.path}:EQ:"${v}"`,
         }));
       }
 

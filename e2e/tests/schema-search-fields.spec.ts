@@ -54,6 +54,8 @@ test.describe('Schema-Driven Search Fields', () => {
   let categoryNoOverlapId: number;
   let categoryLargeEnumId: number;
   let categoryPlainStringId: number;
+  let categoryIntegerWeightId: number;
+  let categoryCoercibleEnumId: number;
   let resourceCategoryId: number;
   const runId = Date.now();
 
@@ -112,6 +114,34 @@ test.describe('Schema-Driven Search Fields', () => {
     );
     categoryLargeEnumId = catLargeEnum.ID;
 
+    // Category with weight as integer (not number) for type merge test
+    const integerWeightSchema = JSON.stringify({
+      type: 'object',
+      properties: {
+        weight: { type: 'integer' },
+      },
+    });
+    const catIntWeight = await apiClient.createCategory(
+      `Schema Cat IntWeight ${runId}`,
+      'Category with integer weight',
+      { MetaSchema: integerWeightSchema }
+    );
+    categoryIntegerWeightId = catIntWeight.ID;
+
+    // Category with enum values that look like numbers/bools/null
+    const coercibleEnumSchema = JSON.stringify({
+      type: 'object',
+      properties: {
+        code: { type: 'string', enum: ['007', 'true', 'null', 'abc'] },
+      },
+    });
+    const catCoercible = await apiClient.createCategory(
+      `Schema Cat CoercibleEnum ${runId}`,
+      'Category with coercible enum values',
+      { MetaSchema: coercibleEnumSchema }
+    );
+    categoryCoercibleEnumId = catCoercible.ID;
+
     // Category with a plain string field (no enum) for string-quoting tests
     const plainStringSchema = JSON.stringify({
       type: 'object',
@@ -142,6 +172,8 @@ test.describe('Schema-Driven Search Fields', () => {
     if (categoryNoOverlapId) await apiClient.deleteCategory(categoryNoOverlapId).catch(() => {});
     if (categoryLargeEnumId) await apiClient.deleteCategory(categoryLargeEnumId).catch(() => {});
     if (categoryPlainStringId) await apiClient.deleteCategory(categoryPlainStringId).catch(() => {});
+    if (categoryIntegerWeightId) await apiClient.deleteCategory(categoryIntegerWeightId).catch(() => {});
+    if (categoryCoercibleEnumId) await apiClient.deleteCategory(categoryCoercibleEnumId).catch(() => {});
     if (resourceCategoryId) await apiClient.deleteResourceCategory(resourceCategoryId).catch(() => {});
   });
 
@@ -856,5 +888,53 @@ test.describe('Schema-Driven Search Fields', () => {
     // The URL should contain label:LI:"007" (quoted string), not label:LI:7 (number)
     const decoded = decodeURIComponent(page.url());
     expect(decoded).toContain('label:LI:"007"');
+  });
+
+  // ── 24. integer/number intersection stays numeric ───────────────────────────
+
+  test('intersecting integer and number fields produces a number input, not text', async ({
+    groupPage,
+    page,
+  }) => {
+    await groupPage.gotoList();
+
+    // Cat A has weight:number, Cat IntWeight has weight:integer
+    await selectGroupCategory(page, `Schema Cat A ${runId}`);
+    await selectGroupCategory(page, `Schema Cat IntWeight ${runId}`);
+
+    const container = schemaFieldsGroup(page);
+
+    // Weight should remain a number input (not downgraded to text)
+    const numberInputs = container.locator('input[type="number"]');
+    await expect(numberInputs).not.toHaveCount(0);
+
+    // Fill and submit — should use EQ (number default), not LI (string default)
+    await numberInputs.first().fill('42');
+    await submitFilterForm(page, 'Filter groups');
+
+    const decoded = decodeURIComponent(page.url());
+    expect(decoded).toContain('weight:EQ:42');
+    expect(decoded).not.toContain('weight:LI:');
+  });
+
+  // ── 25. Enum values with coercible strings are quoted ───────────────────────
+
+  test('enum value "007" is submitted as quoted string, not coerced to number', async ({
+    groupPage,
+    page,
+  }) => {
+    await groupPage.gotoList();
+    await selectGroupCategory(page, `Schema Cat CoercibleEnum ${runId}`);
+
+    const container = schemaFieldsGroup(page);
+
+    // Check the "007" checkbox
+    await container.getByRole('checkbox', { name: '007' }).check();
+
+    await submitFilterForm(page, 'Filter groups');
+
+    const decoded = decodeURIComponent(page.url());
+    // Should be code:EQ:"007" (quoted string), not code:EQ:7
+    expect(decoded).toContain('code:EQ:"007"');
   });
 });
