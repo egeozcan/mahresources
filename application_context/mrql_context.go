@@ -149,18 +149,18 @@ func (ctx *MahresourcesContext) ExecuteMRQLGrouped(reqCtx context.Context, parse
 	defer cancel()
 
 	// Apply default limit when no explicit LIMIT was specified.
-	// For aggregated mode this caps the number of result rows;
-	// for bucketed mode this caps items per bucket.
 	if parsed.Limit < 0 {
 		parsed.Limit = defaultMRQLLimit
 	}
-	// Clamp per-bucket limit so no single bucket can exceed the global item cap.
-	if parsed.Limit > maxBucketedTotalItems {
-		parsed.Limit = maxBucketedTotalItems
-	}
 
 	if len(parsed.GroupBy.Aggregates) > 0 {
+		// Aggregated: Limit is standard row pagination — no clamping
 		return ctx.executeAggregatedQuery(queryCtx, parsed)
+	}
+
+	// Bucketed: clamp per-bucket limit so no single bucket exceeds the item cap
+	if parsed.Limit > maxBucketedTotalItems {
+		parsed.Limit = maxBucketedTotalItems
 	}
 	return ctx.executeBucketedQuery(queryCtx, parsed)
 }
