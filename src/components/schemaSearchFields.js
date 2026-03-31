@@ -228,6 +228,17 @@ export function schemaSearchFields({ elName, existingMetaQuery, initialCategorie
           unclaimable.add(field.path);
         }
 
+        // Enum and boolean schema fields only support EQ semantics.
+        // If any URL entry for this path uses a non-EQ operator (NE, NL, GT, etc.),
+        // the schema UI can't represent it — leave it for freeFields.
+        if (!current && (field.enum || field.type === 'boolean')) {
+          const rawMatches = this._existingMeta.filter(m => m.name === field.path);
+          if (rawMatches.some(m => m.operation && m.operation !== 'EQ')) {
+            existing = null;
+            unclaimable.add(field.path);
+          }
+        }
+
         let enumValues = existing ? existing.enumValues : [];
         // For enum fields with a single existing value, _findExistingValue puts
         // it in `value` (not `enumValues`). Route it into enumValues so the

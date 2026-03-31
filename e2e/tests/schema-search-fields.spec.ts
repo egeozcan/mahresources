@@ -737,4 +737,42 @@ test.describe('Schema-Driven Search Fields', () => {
     }
     expect(activeCount, 'freeFields should keep both repeated boolean entries').toBe(2);
   });
+
+  // ── 21. Non-EQ enum/boolean entries stay in freeFields ──────────────────────
+
+  test('non-EQ enum entry (color:NE:"red") is preserved in freeFields, not rewritten as EQ', async ({
+    groupPage,
+    page,
+  }) => {
+    await page.goto(`/groups?categories=${categoryWithSchemaId}&MetaQuery=${encodeURIComponent('color:NE:"red"')}`);
+    await page.waitForLoadState('load');
+    await page.waitForTimeout(500);
+
+    const freeFieldsGroup = page.locator('[role="group"][aria-label="Meta"]');
+    const freeFieldNameInputs = freeFieldsGroup.locator('input[type="text"]');
+    const count = await freeFieldNameInputs.count();
+    let hasColor = false;
+    for (let i = 0; i < count; i++) {
+      if (await freeFieldNameInputs.nth(i).inputValue() === 'color') hasColor = true;
+    }
+    expect(hasColor, 'freeFields should keep color:NE entry that schema cannot represent').toBe(true);
+  });
+
+  test('non-EQ boolean entry (active:NE:true) is preserved in freeFields, not rewritten as EQ', async ({
+    groupPage,
+    page,
+  }) => {
+    await page.goto(`/groups?categories=${categoryWithSchemaId}&MetaQuery=${encodeURIComponent('active:NE:true')}`);
+    await page.waitForLoadState('load');
+    await page.waitForTimeout(500);
+
+    const freeFieldsGroup = page.locator('[role="group"][aria-label="Meta"]');
+    const freeFieldNameInputs = freeFieldsGroup.locator('input[type="text"]');
+    const count = await freeFieldNameInputs.count();
+    let hasActive = false;
+    for (let i = 0; i < count; i++) {
+      if (await freeFieldNameInputs.nth(i).inputValue() === 'active') hasActive = true;
+    }
+    expect(hasActive, 'freeFields should keep active:NE entry that schema cannot represent').toBe(true);
+  });
 });
