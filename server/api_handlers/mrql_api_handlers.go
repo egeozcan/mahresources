@@ -98,13 +98,16 @@ func GetExecuteMRQLHandler(ctx *application_context.MahresourcesContext) func(ht
 					parsed.Offset = (req.Page - 1) * effectiveLimit
 				}
 			} else {
-				// Bucketed: BucketLimit controls groups per page
+				// Bucketed: BucketLimit controls groups per page, clamped to MaxBuckets
 				if req.Buckets > 0 {
 					parsed.BucketLimit = req.Buckets
 				} else if req.Limit > 0 && req.Page >= 1 {
 					parsed.BucketLimit = req.Limit
 				} else if parsed.Limit > 0 && req.Page >= 1 {
 					parsed.BucketLimit = parsed.Limit
+				}
+				if parsed.BucketLimit > mrql.MaxBuckets {
+					parsed.BucketLimit = mrql.MaxBuckets
 				}
 				if req.Page >= 1 {
 					effectiveBuckets := parsed.BucketLimit
@@ -358,6 +361,9 @@ func GetRunSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) f
 					parsed.BucketLimit = limit
 				} else if parsed.Limit > 0 && page >= 1 {
 					parsed.BucketLimit = parsed.Limit
+				}
+				if parsed.BucketLimit > mrql.MaxBuckets {
+					parsed.BucketLimit = mrql.MaxBuckets
 				}
 				if page >= 1 {
 					effectiveBuckets := parsed.BucketLimit

@@ -4723,3 +4723,34 @@ func TestBugfix_TraversalMetaComparisonDeep(t *testing.T) {
 		t.Errorf("expected report.pdf, got %s", resources[0].Name)
 	}
 }
+
+// children.meta negation must use NOT EXISTS semantics (flip + NOT IN),
+// matching the established pattern from translateFKChainScalar.
+func TestBugfix_ChildrenMetaNegationSemantics(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Setup: Vacation (id=1) has meta.priority=3 and children Work (id=2) and Photos (id=5).
+	// Work has meta={} (no priority). Photos has meta={} (no priority).
+	// Add priority to Work:
+	db.Model(&testGroup{}).Where("id = ?", 2).Update("meta", `{"priority":3}`)
+	// Add different priority to Photos:
+	db.Model(&testGroup{}).Where("id = ?", 5).Update("meta", `{"priority":1}`)
+
+	// children.meta.priority != 3 should mean "has NO child with priority=3"
+	// Vacation has child Work (priority=3), so Vacation should NOT match.
+	// Archive (id=3) has no children at all → should match (null-child fallback).
+	// Work has child Sub-Work (id=4, no priority) → should match.
+	result := parseAndTranslate(t, `type = "group" AND children.meta.priority != 3`, EntityGroup, db)
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+
+	names := namesOfGroups(groups)
+	// Vacation should NOT be in results (it has a child with priority=3)
+	for _, n := range names {
+		if n == "Vacation" {
+			t.Errorf("Vacation should be excluded (has child Work with priority=3), got: %v", names)
+		}
+	}
+}

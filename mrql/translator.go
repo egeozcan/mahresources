@@ -366,10 +366,23 @@ func (tc *translateContext) translateChainedMetaComparison(db *gorm.DB, expr *Co
 		return nil, err
 	}
 
+	isNegated := expr.Operator.Type == TokenNeq || expr.Operator.Type == TokenNotLike
+	isChildrenRoot := tc.isChildrenStep(steps[0])
+
+	if isNegated && isChildrenRoot {
+		// Children negation uses NOT EXISTS semantics: flip to positive match,
+		// wrap in NOT IN. Same pattern as translateFKChainScalar.
+		positiveOp := tc.flipOperator(expr.Operator)
+		innerWhere, innerVal := tc.buildScalarClause(jsonExpr, positiveOp, val, metaFd)
+		sql, vals := tc.wrapChainSubqueries(steps, innerWhere, []interface{}{innerVal})
+		sql = strings.Replace(sql, steps[0].fkExpr+" IN ", steps[0].fkExpr+" NOT IN ", 1)
+		sql = "(" + sql + " OR " + tc.negatedNullClause(steps[0]) + ")"
+		db = db.Where(sql, vals...)
+		return db, nil
+	}
+
 	innerWhere, innerVal := tc.buildScalarClause(jsonExpr, expr.Operator, val, metaFd)
 	sql, vals := tc.wrapChainSubqueries(steps, innerWhere, []interface{}{innerVal})
-
-	isNegated := expr.Operator.Type == TokenNeq || expr.Operator.Type == TokenNotLike
 	if isNegated {
 		sql = "(" + sql + " OR " + tc.negatedNullClause(steps[0]) + ")"
 	}
