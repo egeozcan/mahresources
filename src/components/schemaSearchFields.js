@@ -192,6 +192,12 @@ export function schemaSearchFields({ elName, existingMetaQuery, initialCategorie
 
       this.hasFields = this.fields.length > 0;
       this.fieldsCleared = hadFields && !this.hasFields;
+
+      // Notify freeFields which paths are claimed by schema fields so it
+      // can exclude them and avoid duplicate MetaQuery submissions.
+      window.dispatchEvent(new CustomEvent('schema-fields-claimed', {
+        detail: { paths: this.fields.map(f => f.path) },
+      }));
     },
 
     _findExistingValue(path) {

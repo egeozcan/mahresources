@@ -13,6 +13,15 @@ export function freeFields({ fields, name, url, jsonOutput, id, title, fromJSON 
     jsonText: "",
 
     async init() {
+      // Listen for schema fields claiming MetaQuery paths — must be registered
+      // before any async work to avoid missing events from schemaSearchFields init().
+      window.addEventListener('schema-fields-claimed', (e) => {
+        const claimed = new Set(e.detail.paths || []);
+        if (claimed.size > 0 && this.fields) {
+          this.fields = this.fields.filter(f => !claimed.has(f.name));
+        }
+      });
+
       if (this.jsonOutput) {
         window.Alpine.effect(() => {
           this.jsonText = JSON.stringify(
@@ -59,6 +68,7 @@ export function freeFields({ fields, name, url, jsonOutput, id, title, fromJSON 
           console.error('Failed to fetch remote fields:', err);
         }
       }
+
     },
 
     inputEvents: {},

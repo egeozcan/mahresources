@@ -506,4 +506,34 @@ test.describe('Schema-Driven Search Fields', () => {
     // The dropdown should close after selection
     await expect(operatorSelect).not.toBeVisible({ timeout: 3000 });
   });
+
+  // ── 16. Schema-claimed entries excluded from freeFields ─────────────────────
+
+  test('freeFields does not show entries for paths owned by schema fields', async ({
+    groupPage,
+    page,
+  }) => {
+    await groupPage.gotoList();
+    await selectGroupCategory(page, `Schema Cat A ${runId}`);
+
+    const container = schemaFieldsGroup(page);
+
+    // Fill weight in schema fields
+    const weightInput = container.locator('input[type="number"]').first();
+    await weightInput.fill('42');
+
+    // Submit
+    await submitFilterForm(page, 'Filter groups');
+
+    // After reload, the freeFields section should NOT contain a "weight" entry
+    // because the schema fields component owns that path.
+    const freeFieldsGroup = page.locator('[role="group"][aria-label="Meta"]');
+    // freeFields uses text inputs for field names — none should have value "weight"
+    const freeFieldNameInputs = freeFieldsGroup.locator('input[type="text"]');
+    const count = await freeFieldNameInputs.count();
+    for (let i = 0; i < count; i++) {
+      const val = await freeFieldNameInputs.nth(i).inputValue();
+      expect(val, 'freeFields should not show entries owned by schema fields').not.toBe('weight');
+    }
+  });
 });
