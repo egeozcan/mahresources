@@ -294,7 +294,7 @@ type = "<entity>" [<conditions>] GROUP BY <field>[, <field>...] [<aggregates>] [
 |----------|----------|-------------|------------|
 | `COUNT()` | none | n/a | `count` |
 | `SUM(field)` | required | numeric, meta | `sum_{field}` |
-| `AVG(field)` | required | numeric, datetime, meta | `avg_{field}` |
+| `AVG(field)` | required | numeric, meta | `avg_{field}` |
 | `MIN(field)` | required | numeric, datetime, meta | `min_{field}` |
 | `MAX(field)` | required | numeric, datetime, meta | `max_{field}` |
 
