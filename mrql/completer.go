@@ -333,6 +333,98 @@ var postDirectionSuggestions = []Suggestion{
 	{Value: "LIMIT", Type: "keyword"},
 }
 
+// extractAggregatedOrderKeys scans tokens for a GROUP BY clause with aggregates
+// and returns suggestions for the valid ORDER BY keys (group fields + aggregate
+// output keys). Returns nil if there's no aggregated GROUP BY (i.e., bucketed or
+// no GROUP BY at all).
+func extractAggregatedOrderKeys(tokens []Token) []Suggestion {
+	// Find GROUP BY position
+	gbIdx := -1
+	for i, t := range tokens {
+		if t.Type == TokenGroupBy {
+			gbIdx = i
+			break
+		}
+	}
+	if gbIdx < 0 {
+		return nil
+	}
+
+	// Check if there are any aggregate tokens after GROUP BY
+	hasAggregates := false
+	for _, t := range tokens[gbIdx:] {
+		if t.Type == TokenCount || t.Type == TokenSum || t.Type == TokenAvg || t.Type == TokenMin || t.Type == TokenMax {
+			hasAggregates = true
+			break
+		}
+	}
+	if !hasAggregates {
+		return nil // bucketed mode — use regular field suggestions
+	}
+
+	var suggs []Suggestion
+
+	// Extract GROUP BY field names: tokens between GROUP BY and the first aggregate/ORDER BY/LIMIT
+	i := gbIdx + 1
+	for i < len(tokens) {
+		t := tokens[i]
+		if t.Type == TokenCount || t.Type == TokenSum || t.Type == TokenAvg || t.Type == TokenMin || t.Type == TokenMax ||
+			t.Type == TokenOrderBy || t.Type == TokenLimit || t.Type == TokenOffset {
+			break
+		}
+		if t.Type == TokenIdentifier || t.Type == TokenKwType {
+			// Build dotted field name (e.g., owner.name, meta.source)
+			fieldName := t.Value
+			for i+2 < len(tokens) && tokens[i+1].Type == TokenDot &&
+				(tokens[i+2].Type == TokenIdentifier || tokens[i+2].Type == TokenKwType) {
+				fieldName += "." + tokens[i+2].Value
+				i += 2
+			}
+			suggs = append(suggs, Suggestion{Value: fieldName, Type: "field", Label: "group key"})
+		}
+		i++
+	}
+
+	// Extract aggregate output keys from aggregate tokens
+	for i < len(tokens) {
+		t := tokens[i]
+		if t.Type == TokenOrderBy || t.Type == TokenLimit || t.Type == TokenOffset {
+			break
+		}
+		switch t.Type {
+		case TokenCount:
+			suggs = append(suggs, Suggestion{Value: "count", Type: "field", Label: "COUNT() result"})
+		case TokenSum, TokenAvg, TokenMin, TokenMax:
+			// Look for the field argument: AGG ( field )
+			aggName := strings.ToLower(t.Value)
+			if i+3 < len(tokens) && tokens[i+1].Type == TokenLParen {
+				// Build dotted field name inside parens
+				j := i + 2
+				fieldName := ""
+				for j < len(tokens) && tokens[j].Type != TokenRParen {
+					if tokens[j].Type == TokenIdentifier || tokens[j].Type == TokenKwType {
+						if fieldName != "" {
+							fieldName += "."
+						}
+						fieldName += tokens[j].Value
+					}
+					j++
+				}
+				if fieldName != "" {
+					suggs = append(suggs, Suggestion{
+						Value: aggName + "_" + fieldName,
+						Type:  "field",
+						Label: strings.ToUpper(aggName) + "(" + fieldName + ") result",
+					})
+				}
+			}
+		}
+		i++
+	}
+
+	return suggs
+}
+
 // isInGroupByClause returns true if the cursor is within the GROUP BY clause
 // (between GROUP BY and ORDER BY/LIMIT/OFFSET/EOF). Returns false if we've
 // moved past into ORDER BY or LIMIT territory.
@@ -410,14 +502,24 @@ func suggestionsForContext(tokens []Token, entityType EntityType, cursor int) []
 
 	// ORDER BY context: suggest sortable fields, directions, and next-clause keywords.
 	if isInOrderByClause(tokens) {
+		// In aggregated GROUP BY mode, ORDER BY can only reference group fields
+		// and aggregate output keys. In all other cases, suggest entity fields.
+		aggKeys := extractAggregatedOrderKeys(tokens)
+		fieldSuggestFn := func() []Suggestion {
+			if aggKeys != nil {
+				return aggKeys
+			}
+			return orderByFieldSuggestions(entityType)
+		}
+
 		switch last.Type {
 		case TokenOrderBy, TokenComma:
-			return orderByFieldSuggestions(entityType)
+			return fieldSuggestFn()
 		case TokenAsc, TokenDesc:
 			return postDirectionSuggestions
 		case TokenIdentifier, TokenKwType:
 			if cursorAtTokenEnd {
-				return orderByFieldSuggestions(entityType)
+				return fieldSuggestFn()
 			}
 			return orderByDirectionSuggestions
 		}

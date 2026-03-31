@@ -542,6 +542,49 @@ func TestComplete_AfterOrderByCommaSuggestsFields(t *testing.T) {
 	}
 }
 
+// After ORDER BY in an aggregated GROUP BY query, suggest group keys and aggregate output keys.
+func TestComplete_OrderByInAggregatedGroupBySuggestsGroupKeys(t *testing.T) {
+	suggestions := Complete(`type = "resource" GROUP BY contentType COUNT() SUM(fileSize) ORDER BY `, 69)
+	// Should suggest the group field and aggregate output keys
+	if !hasSuggestion(suggestions, "contentType") {
+		t.Error("expected 'contentType' group key in ORDER BY suggestions")
+	}
+	if !hasSuggestion(suggestions, "count") {
+		t.Error("expected 'count' aggregate key in ORDER BY suggestions")
+	}
+	if !hasSuggestion(suggestions, "sum_fileSize") {
+		t.Error("expected 'sum_fileSize' aggregate key in ORDER BY suggestions")
+	}
+	// Should NOT suggest regular entity fields that aren't in GROUP BY
+	if hasSuggestion(suggestions, "name") {
+		t.Error("'name' should not be suggested — not a GROUP BY field or aggregate key")
+	}
+	if hasSuggestion(suggestions, "created") {
+		t.Error("'created' should not be suggested — not a GROUP BY field or aggregate key")
+	}
+}
+
+func TestComplete_OrderByInAggregatedGroupByWithTraversal(t *testing.T) {
+	suggestions := Complete(`type = "resource" GROUP BY owner.name COUNT() ORDER BY `, 55)
+	if !hasSuggestion(suggestions, "owner.name") {
+		t.Error("expected 'owner.name' group key in ORDER BY suggestions")
+	}
+	if !hasSuggestion(suggestions, "count") {
+		t.Error("expected 'count' aggregate key in ORDER BY suggestions")
+	}
+}
+
+func TestComplete_OrderByInBucketedGroupBySuggestsEntityFields(t *testing.T) {
+	// Bucketed mode (no aggregates): ORDER BY should suggest regular entity fields
+	suggestions := Complete(`type = "resource" GROUP BY contentType ORDER BY `, 48)
+	if !hasSuggestion(suggestions, "name") {
+		t.Error("expected 'name' in bucketed ORDER BY suggestions")
+	}
+	if !hasSuggestion(suggestions, "created") {
+		t.Error("expected 'created' in bucketed ORDER BY suggestions")
+	}
+}
+
 // TestComplete_SuggestionStructure verifies all returned suggestions have non-empty Value and Type.
 func TestComplete_SuggestionStructure(t *testing.T) {
 	queries := []struct {
