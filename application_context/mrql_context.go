@@ -181,28 +181,39 @@ func (ctx *MahresourcesContext) executeAggregatedQuery(reqCtx context.Context, p
 func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, parsed *mrql.Query) (*MRQLGroupedResult, error) {
 	db := ctx.db.WithContext(reqCtx)
 
-	keys, err := mrql.TranslateGroupByKeys(parsed, db)
+	allKeys, err := mrql.TranslateGroupByKeys(parsed, db)
 	if err != nil {
 		return nil, err
 	}
 
-	// Determine the effective key page size (matches TranslateGroupByKeys clamping)
-	keyLimit := mrql.MaxBuckets
-	if parsed.BucketLimit >= 0 && parsed.BucketLimit < mrql.MaxBuckets {
-		keyLimit = parsed.BucketLimit
+	var warnings []string
+
+	// Detect MaxBuckets ceiling truncation (only for unpaginated queries)
+	isPaginated := parsed.BucketLimit >= 0 || parsed.Offset >= 0
+	if len(allKeys) > mrql.MaxBuckets {
+		allKeys = allKeys[:mrql.MaxBuckets]
+		if !isPaginated {
+			warnings = append(warnings, fmt.Sprintf("Only the first %d groups are shown. Add filters to narrow the result set.", mrql.MaxBuckets))
+		}
 	}
 
-	var warnings []string
-	isPaginated := parsed.BucketLimit >= 0 || parsed.Offset >= 0
-	if len(keys) > keyLimit {
-		// Only warn when hitting the MaxBuckets ceiling without any pagination.
-		// When the caller is paging (BucketLimit or Offset set), the overflow key
-		// is a "has next page" signal, not a truncation warning.
-		if !isPaginated {
-			warnings = append(warnings, fmt.Sprintf("Only the first %d groups are shown. Add filters to narrow the result set.", keyLimit))
+	// Apply pagination in-memory: OFFSET skips keys, BucketLimit caps page size.
+	// This is done here (not in SQL) so the item cap and page slicing interact
+	// correctly — a page cut short by the item cap doesn't cause the next page
+	// to skip over un-materialized buckets.
+	keys := allKeys
+	if parsed.Offset > 0 {
+		if parsed.Offset >= len(keys) {
+			keys = nil
+		} else {
+			keys = keys[parsed.Offset:]
 		}
-		keys = keys[:keyLimit]
 	}
+	pageSize := len(keys)
+	if parsed.BucketLimit >= 0 && parsed.BucketLimit < pageSize {
+		pageSize = parsed.BucketLimit
+	}
+	keys = keys[:pageSize]
 
 	var buckets []MRQLBucket
 	totalItems := 0

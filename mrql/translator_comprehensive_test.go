@@ -3957,11 +3957,12 @@ func TestBugfix_GroupByOwnerUsesIDNotName(t *testing.T) {
 }
 
 // Bug 2: TranslateGroupByKeys ignores OFFSET — bucketed pagination always returns first page.
-func TestBugfix_BucketedKeysRespectsOffset(t *testing.T) {
+// TranslateGroupByKeys returns ALL keys (up to MaxBuckets+1) regardless of
+// BucketLimit/Offset — pagination is handled in the execution layer.
+func TestBugfix_TranslateGroupByKeysReturnsAllKeys(t *testing.T) {
 	db := setupTestDB(t)
 
-	// Resources have 4 content types: image/jpeg, image/png, application/pdf, text/plain
-	q, err := Parse(`type = "resource" GROUP BY contentType LIMIT 2 OFFSET 2`)
+	q, err := Parse(`type = "resource" GROUP BY contentType`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -3969,34 +3970,16 @@ func TestBugfix_BucketedKeysRespectsOffset(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 	q.EntityType = EntityResource
+	q.BucketLimit = 1 // should be ignored by translator
+	q.Offset = 2      // should be ignored by translator
 
-	allKeys, err := TranslateGroupByKeys(&Query{
-		Where: q.Where, GroupBy: &GroupByClause{Fields: q.GroupBy.Fields},
-		EntityType: EntityResource, Limit: -1, Offset: -1,
-	}, db)
+	keys, err := TranslateGroupByKeys(q, db)
 	if err != nil {
-		t.Fatalf("all keys: %v", err)
+		t.Fatalf("keys: %v", err)
 	}
-
-	offsetKeys, err := TranslateGroupByKeys(q, db)
-	if err != nil {
-		t.Fatalf("offset keys: %v", err)
-	}
-
-	// With 4 total content types, LIMIT 2 OFFSET 2 should skip the first 2
-	if len(allKeys) < 4 {
-		t.Skipf("need 4+ content types, got %d", len(allKeys))
-	}
-	if len(offsetKeys) > 2 {
-		t.Errorf("expected at most 2 keys with LIMIT 2, got %d", len(offsetKeys))
-	}
-	// The offset keys should NOT be the same as the first 2 all-keys
-	if len(offsetKeys) > 0 && len(allKeys) > 0 {
-		firstAllKey := groupByVal(allKeys[0]["contentType"])
-		firstOffsetKey := groupByVal(offsetKeys[0]["contentType"])
-		if firstAllKey == firstOffsetKey {
-			t.Errorf("OFFSET 2 returned same first key as OFFSET 0 (%s) — OFFSET is being ignored", firstAllKey)
-		}
+	// 4 content types — translator should return all of them
+	if len(keys) < 4 {
+		t.Errorf("expected all 4 keys regardless of BucketLimit/Offset, got %d", len(keys))
 	}
 }
 
@@ -4397,11 +4380,10 @@ func TestBugfix_BucketedRelationKeysIncludeID(t *testing.T) {
 	}
 }
 
-// P1: Bucketed paging with limit+offset should return exactly limit keys.
-func TestBugfix_BucketedPagingRespectsLimit(t *testing.T) {
+// TranslateGroupByKeys ignores BucketLimit and Offset — pagination is in-memory.
+func TestBugfix_TranslateGroupByKeysIgnoresPagination(t *testing.T) {
 	db := setupTestDB(t)
 
-	// 4 content types exist. bucketLimit=1, offset=1 (page 2, size 1) should return exactly 1 key.
 	q, err := Parse(`type = "resource" GROUP BY contentType`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -4411,64 +4393,15 @@ func TestBugfix_BucketedPagingRespectsLimit(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 	q.BucketLimit = 1
-	q.Offset = 1
+	q.Offset = 2
 
 	keys, err := TranslateGroupByKeys(q, db)
 	if err != nil {
 		t.Fatalf("keys: %v", err)
 	}
-	// Should return at most 1 key (the +1 overflow detection is trimmed by caller)
-	// TranslateGroupByKeys returns limit+1 for overflow detection; caller trims.
-	// At the translator level we get at most 2 (1+1). Verify it's <= 2.
-	if len(keys) > 2 {
-		t.Errorf("expected at most 2 keys (limit=1 + 1 overflow), got %d", len(keys))
-	}
-
-	// Now simulate the execution layer trim
-	if len(keys) > 1 {
-		keys = keys[:1]
-	}
-	if len(keys) != 1 {
-		t.Errorf("after trim: expected exactly 1 key, got %d", len(keys))
-	}
-}
-
-func TestBugfix_BucketedPagingStablePages(t *testing.T) {
-	db := setupTestDB(t)
-
-	q := &Query{
-		Where:       nil,
-		GroupBy:     &GroupByClause{Fields: []*FieldExpr{{Parts: []Token{{Value: "contentType", Type: TokenIdentifier}}}}},
-		EntityType:  EntityResource,
-		Limit:       -1,
-		Offset:      0,
-		BucketLimit: 2,
-	}
-	if err := Validate(q); err != nil {
-		t.Fatalf("validate: %v", err)
-	}
-	page1, err := TranslateGroupByKeys(q, db)
-	if err != nil {
-		t.Fatalf("page1: %v", err)
-	}
-	if len(page1) > 3 { // 2+1 overflow
-		t.Errorf("page1: expected at most 3, got %d", len(page1))
-	}
-
-	q2 := *q
-	q2.Offset = 2
-	page2, err := TranslateGroupByKeys(&q2, db)
-	if err != nil {
-		t.Fatalf("page2: %v", err)
-	}
-
-	// Pages should not overlap
-	if len(page1) > 0 && len(page2) > 0 {
-		p1first := groupByVal(page1[0]["contentType"])
-		p2first := groupByVal(page2[0]["contentType"])
-		if p1first == p2first {
-			t.Errorf("page1 and page2 start with same key %q — pages overlap", p1first)
-		}
+	// Should return all 4 keys regardless of BucketLimit/Offset
+	if len(keys) < 4 {
+		t.Errorf("expected 4+ keys (translator ignores pagination), got %d", len(keys))
 	}
 }
 
@@ -4505,47 +4438,9 @@ func TestBugfix_DuplicateGroupByFieldsNormalized(t *testing.T) {
 	}
 }
 
-// P1: Backward-compat — limit+page without buckets param should still paginate groups.
-func TestBugfix_LegacyLimitPageBackwardCompat(t *testing.T) {
-	db := setupTestDB(t)
-
-	// Simulate what the API handler does: limit=1, page=2, no buckets param.
-	// Should set BucketLimit=1, Offset=1 for backward compat.
-	q, err := Parse(`type = "resource" GROUP BY contentType`)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if err := Validate(q); err != nil {
-		t.Fatalf("validate: %v", err)
-	}
-	q.EntityType = EntityResource
-	q.Limit = 1       // items per bucket
-	q.BucketLimit = 1 // backward compat: limit doubles as bucket page size
-	q.Offset = 1      // page 2 → skip 1 bucket
-
-	keys, err := TranslateGroupByKeys(q, db)
-	if err != nil {
-		t.Fatalf("keys: %v", err)
-	}
-	// Should return at most 2 keys (1 + 1 overflow detection)
-	if len(keys) > 2 {
-		t.Errorf("expected at most 2 keys (BucketLimit=1 + overflow), got %d", len(keys))
-	}
-	// Should have skipped the first bucket
-	if len(keys) > 0 {
-		allQ := *q
-		allQ.Offset = -1
-		allQ.BucketLimit = -1
-		allKeys, _ := TranslateGroupByKeys(&allQ, db)
-		if len(allKeys) > 1 {
-			first := groupByVal(allKeys[0]["contentType"])
-			paged := groupByVal(keys[0]["contentType"])
-			if first == paged {
-				t.Errorf("page 2 returned same first key as page 1 (%s)", first)
-			}
-		}
-	}
-}
+// Backward-compat paging is tested at the API level (TestMRQLExecuteGroupByInlineLimitAndPage
+// and TestMRQLSavedQueryRunGroupByInlineLimitAndPage) since pagination is now in-memory
+// in the execution layer, not in TranslateGroupByKeys.
 
 // P2: ORDER BY should accept any alias that was in the original GROUP BY, even if deduped.
 func TestBugfix_OrderByAcceptsDeduplicatedAlias(t *testing.T) {
