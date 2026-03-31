@@ -265,6 +265,74 @@ func groupByFieldSuggestions(entityType EntityType) []Suggestion {
 	return suggs
 }
 
+// isInOrderByClause returns true if the cursor is within the ORDER BY clause
+// (between ORDER BY and LIMIT/OFFSET/EOF).
+func isInOrderByClause(tokens []Token) bool {
+	foundOrderBy := false
+	for _, t := range tokens {
+		if t.Type == TokenOrderBy {
+			foundOrderBy = true
+		}
+		if foundOrderBy && (t.Type == TokenLimit || t.Type == TokenOffset) {
+			return false
+		}
+	}
+	return foundOrderBy
+}
+
+// orderByFieldSuggestions returns field suggestions valid for ORDER BY.
+// Excludes type pseudo-field, TEXT, and relation fields (not sortable).
+func orderByFieldSuggestions(entityType EntityType) []Suggestion {
+	var suggs []Suggestion
+
+	// Common scalar/datetime fields
+	for _, fd := range commonFields {
+		if fd.Type != FieldRelation {
+			suggs = append(suggs, Suggestion{Value: fd.Name, Type: "field"})
+		}
+	}
+
+	// Entity-specific non-relation fields
+	var extra []FieldDef
+	switch entityType {
+	case EntityResource:
+		extra = resourceFields
+	case EntityNote:
+		extra = noteFields
+	case EntityGroup:
+		extra = groupFields
+	}
+	seen := make(map[string]bool)
+	for _, s := range suggs {
+		seen[s.Value] = true
+	}
+	for _, fd := range extra {
+		if !seen[fd.Name] && fd.Type != FieldRelation {
+			suggs = append(suggs, Suggestion{Value: fd.Name, Type: "field"})
+			seen[fd.Name] = true
+		}
+	}
+
+	// meta.* hint
+	suggs = append(suggs, Suggestion{Value: "meta.<key>", Type: "field", Label: "any meta key"})
+
+	return suggs
+}
+
+// orderByDirectionSuggestions are suggested after a sort field in ORDER BY.
+var orderByDirectionSuggestions = []Suggestion{
+	{Value: "ASC", Type: "keyword", Label: "ascending"},
+	{Value: "DESC", Type: "keyword", Label: "descending"},
+	{Value: ",", Type: "operator", Label: "add another sort field"},
+	{Value: "LIMIT", Type: "keyword"},
+}
+
+// postDirectionSuggestions are suggested after ASC/DESC in ORDER BY.
+var postDirectionSuggestions = []Suggestion{
+	{Value: ",", Type: "operator", Label: "add another sort field"},
+	{Value: "LIMIT", Type: "keyword"},
+}
+
 // isInGroupByClause returns true if the cursor is within the GROUP BY clause
 // (between GROUP BY and ORDER BY/LIMIT/OFFSET/EOF). Returns false if we've
 // moved past into ORDER BY or LIMIT territory.
@@ -337,6 +405,21 @@ func suggestionsForContext(tokens []Token, entityType EntityType, cursor int) []
 		// After closing paren in GROUP BY clause — suggest more aggregates or ORDER BY/LIMIT.
 		if last.Type == TokenRParen {
 			return postAggregateKeywords
+		}
+	}
+
+	// ORDER BY context: suggest sortable fields, directions, and next-clause keywords.
+	if isInOrderByClause(tokens) {
+		switch last.Type {
+		case TokenOrderBy, TokenComma:
+			return orderByFieldSuggestions(entityType)
+		case TokenAsc, TokenDesc:
+			return postDirectionSuggestions
+		case TokenIdentifier, TokenKwType:
+			if cursorAtTokenEnd {
+				return orderByFieldSuggestions(entityType)
+			}
+			return orderByDirectionSuggestions
 		}
 	}
 

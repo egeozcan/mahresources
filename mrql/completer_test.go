@@ -491,6 +491,57 @@ func TestComplete_AfterOrderByInGroupByNoAggregates(t *testing.T) {
 	}
 }
 
+// ---- ORDER BY completion tests ----
+
+func TestComplete_AfterOrderBySuggestsFields(t *testing.T) {
+	suggestions := Complete(`type = "resource" ORDER BY `, 27)
+	if !hasSuggestion(suggestions, "name") {
+		t.Error("expected 'name' field after ORDER BY")
+	}
+	if !hasSuggestion(suggestions, "created") {
+		t.Error("expected 'created' field after ORDER BY")
+	}
+	// type and TEXT are not sortable
+	if hasSuggestion(suggestions, "type") {
+		t.Error("'type' should not be suggested after ORDER BY")
+	}
+	if hasSuggestion(suggestions, "TEXT") {
+		t.Error("'TEXT' should not be suggested after ORDER BY")
+	}
+	// relation fields are not sortable
+	if hasSuggestion(suggestions, "tags") {
+		t.Error("'tags' should not be suggested after ORDER BY")
+	}
+}
+
+func TestComplete_AfterOrderByFieldSuggestsDirection(t *testing.T) {
+	suggestions := Complete(`type = "resource" ORDER BY name `, 32)
+	if !hasSuggestion(suggestions, "ASC") {
+		t.Error("expected 'ASC' after ORDER BY field")
+	}
+	if !hasSuggestion(suggestions, "DESC") {
+		t.Error("expected 'DESC' after ORDER BY field")
+	}
+	// Should not suggest operators
+	if hasSuggestion(suggestions, "=") {
+		t.Error("should not suggest '=' operator after ORDER BY field")
+	}
+}
+
+func TestComplete_AfterOrderByDirectionSuggestsCommaOrLimit(t *testing.T) {
+	suggestions := Complete(`type = "resource" ORDER BY name ASC `, 36)
+	if !hasSuggestion(suggestions, "LIMIT") {
+		t.Error("expected 'LIMIT' after ORDER BY direction")
+	}
+}
+
+func TestComplete_AfterOrderByCommaSuggestsFields(t *testing.T) {
+	suggestions := Complete(`type = "resource" ORDER BY name ASC, `, 37)
+	if !hasSuggestion(suggestions, "created") {
+		t.Error("expected 'created' after ORDER BY comma for next sort field")
+	}
+}
+
 // TestComplete_SuggestionStructure verifies all returned suggestions have non-empty Value and Type.
 func TestComplete_SuggestionStructure(t *testing.T) {
 	queries := []struct {
