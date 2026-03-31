@@ -204,7 +204,7 @@ export function schemaSearchFields({ elName, existingMetaQuery, id }) {
 
       if (field.enum) {
         return field.enumValues.map(v => ({
-          value: generateParamNameForMeta({ name: field.path, value: `"${v}"`, operation: 'EQ' }),
+          value: generateParamNameForMeta({ name: field.path, value: v, operation: 'EQ' }),
         }));
       }
 
