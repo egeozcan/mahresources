@@ -4741,10 +4741,13 @@ func TestBugfix_ItemCapWarnsWithBucketCount(t *testing.T) {
 	}
 }
 
-// MAX(meta.*) must not return NULL — it should include all values.
-// On SQLite, json_extract returns native types so numeric ordering is correct.
-// On PG, text extraction gives lexicographic order (known trade-off).
-func TestBugfix_MaxMetaReturnsValue(t *testing.T) {
+// MIN/MAX(meta.*) trade-off tests:
+// - Must not return NULL when values exist (string or numeric)
+// - On SQLite, json_extract returns native types so numeric ordering is correct
+// - On PG, text extraction gives lexicographic order for multi-digit numbers
+//   (known trade-off: "10" < "2" in text, but all values are included)
+// - SUM/AVG use numeric cast (non-numeric → NULL) — tested separately
+func TestBugfix_MaxMetaReturnsValueNotNull(t *testing.T) {
 	db := setupTestDB(t)
 
 	db.Exec("INSERT INTO resources (id, name, content_type, file_size, meta, created_at, updated_at) VALUES (500, 'score2', 'text/plain', 10, '{\"score\":2}', datetime('now'), datetime('now'))")
@@ -4768,9 +4771,43 @@ func TestBugfix_MaxMetaReturnsValue(t *testing.T) {
 		ct := groupByVal(row["contentType"])
 		if ct == "text/plain" {
 			maxScore := groupByVal(row["max_meta.score"])
-			// Must not be NULL — both values are present
 			if maxScore == "<nil>" || maxScore == "" {
-				t.Errorf("MAX(meta.score) returned NULL — values were dropped")
+				t.Errorf("MAX(meta.score) returned NULL — values were dropped by numeric cast")
+			}
+			// On SQLite: json_extract returns native int, so MAX(2,10)=10 ✓
+			// On PG: text extraction, so MAX("2","10")="2" (known limitation)
+			t.Logf("MAX(meta.score) = %s (SQLite returns native types; PG uses text order)", maxScore)
+		}
+	}
+}
+
+// SUM on meta must use numeric cast — non-numeric values become NULL.
+func TestBugfix_SumMetaUsesNumericCast(t *testing.T) {
+	db := setupTestDB(t)
+
+	db.Exec("INSERT INTO resources (id, name, content_type, file_size, meta, created_at, updated_at) VALUES (510, 'num1', 'test/sum', 10, '{\"val\":5}', datetime('now'), datetime('now'))")
+	db.Exec("INSERT INTO resources (id, name, content_type, file_size, meta, created_at, updated_at) VALUES (511, 'num2', 'test/sum', 10, '{\"val\":3}', datetime('now'), datetime('now'))")
+
+	q, err := Parse(`type = "resource" GROUP BY contentType SUM(meta.val)`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+
+	for _, row := range result.Rows {
+		ct := groupByVal(row["contentType"])
+		if ct == "test/sum" {
+			sum := groupByVal(row["sum_meta.val"])
+			if sum != "8" {
+				t.Errorf("SUM(meta.val) expected 8, got %s", sum)
 			}
 		}
 	}
