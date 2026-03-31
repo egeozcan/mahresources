@@ -129,9 +129,10 @@ function operatorSymbol(code) {
  * @param {object} opts
  * @param {string} opts.elName - The autocompleter element name to listen for
  * @param {Array} opts.existingMetaQuery - Pre-parsed MetaQuery from URL
+ * @param {Array} opts.initialCategories - Categories already selected on page load (from URL params)
  * @param {string} opts.id - Unique ID prefix for form elements
  */
-export function schemaSearchFields({ elName, existingMetaQuery, id }) {
+export function schemaSearchFields({ elName, existingMetaQuery, initialCategories, id }) {
   return {
     elName,
     id,
@@ -143,6 +144,12 @@ export function schemaSearchFields({ elName, existingMetaQuery, id }) {
 
     init() {
       this._existingMeta = existingMetaQuery || [];
+      // If categories were pre-selected on page load (restored from URL params),
+      // call handleCategoryChange immediately so schema fields and pre-filled values render.
+      const initial = initialCategories || [];
+      if (initial.length > 0) {
+        this.$nextTick(() => this.handleCategoryChange(initial));
+      }
     },
 
     handleCategoryChange(items) {
@@ -186,31 +193,33 @@ export function schemaSearchFields({ elName, existingMetaQuery, id }) {
     },
 
     _findExistingValue(path) {
-      const matches = this._existingMeta.filter(m => m.Key === path);
+      // ColumnMeta is JSON-serialised with lowercase keys matching its json struct tags:
+      // Key → "name", Value → "value", Operation → "operation"
+      const matches = this._existingMeta.filter(m => m.name === path);
       if (matches.length === 0) return null;
 
       if (matches.length > 1) {
         return {
-          operator: matches[0].Operation || 'EQ',
+          operator: matches[0].operation || 'EQ',
           value: '',
-          enumValues: matches.map(m => String(m.Value)),
+          enumValues: matches.map(m => String(m.value)),
           boolValue: 'any',
         };
       }
 
       const m = matches[0];
-      if (typeof m.Value === 'boolean') {
+      if (typeof m.value === 'boolean') {
         return {
           operator: 'EQ',
           value: '',
           enumValues: [],
-          boolValue: String(m.Value),
+          boolValue: String(m.value),
         };
       }
 
       return {
-        operator: m.Operation || 'EQ',
-        value: m.Value != null ? String(m.Value) : '',
+        operator: m.operation || 'EQ',
+        value: m.value != null ? String(m.value) : '',
         enumValues: [],
         boolValue: 'any',
       };

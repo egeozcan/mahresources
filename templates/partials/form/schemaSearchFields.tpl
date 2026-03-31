@@ -2,6 +2,7 @@
     x-data="schemaSearchFields({
         elName: '{{ elName }}',
         existingMetaQuery: {{ existingMetaQuery|json }} || [],
+        initialCategories: {{ initialCategories|json }} || [],
         id: '{{ id }}',
     })"
     @multiple-input.window="if ($event.detail.name === '{{ elName }}') handleCategoryChange($event.detail.value)"
@@ -22,11 +23,10 @@
 
                     <!-- Boolean: three-state radio -->
                     <template x-if="field.type === 'boolean'">
-                        <fieldset class="w-full">
+                        <fieldset class="w-full" :aria-label="field.label.replace(/ › /g, ', ')">
                             <legend
                                 class="block text-xs font-mono font-medium text-stone-600 mt-1"
                                 x-text="field.label"
-                                :aria-label="field.label.replace(/ › /g, ', ')"
                             ></legend>
                             <div class="flex gap-3 mt-1">
                                 <label class="text-sm flex items-center gap-1">
@@ -50,11 +50,10 @@
 
                     <!-- Enum ≤ 6: checkboxes -->
                     <template x-if="field.enum && field.enum.length <= 6">
-                        <fieldset class="w-full">
+                        <fieldset class="w-full" :aria-label="field.label.replace(/ › /g, ', ')">
                             <legend
                                 class="block text-xs font-mono font-medium text-stone-600 mt-1"
                                 x-text="field.label"
-                                :aria-label="field.label.replace(/ › /g, ', ')"
                             ></legend>
                             <div class="flex flex-wrap gap-x-3 gap-y-1 mt-1">
                                 <template x-for="enumVal in field.enum" :key="enumVal">
@@ -70,11 +69,10 @@
 
                     <!-- Enum > 6: multi-select dropdown -->
                     <template x-if="field.enum && field.enum.length > 6">
-                        <fieldset class="w-full">
+                        <fieldset class="w-full" :aria-label="field.label.replace(/ › /g, ', ')">
                             <legend
                                 class="block text-xs font-mono font-medium text-stone-600 mt-1"
                                 x-text="field.label"
-                                :aria-label="field.label.replace(/ › /g, ', ')"
                             ></legend>
                             <select multiple
                                     x-model="field.enumValues"

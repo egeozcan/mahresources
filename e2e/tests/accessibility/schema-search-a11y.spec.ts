@@ -6,6 +6,7 @@
  * inputs in list-view sidebars when a category with a MetaSchema is selected.
  */
 import { test, expect } from '../../fixtures/a11y.fixture';
+import { selectGroupCategory } from '../../helpers/schema-search-helpers';
 
 // ── Shared test schema covering all field types ───────────────────────────────
 
@@ -25,20 +26,6 @@ const testSchema = JSON.stringify({
     },
   },
 });
-
-// ── Helper: select a category from the groups list sidebar ────────────────────
-
-async function selectGroupCategory(page: any, searchText: string) {
-  const input = page.getByRole('combobox', { name: 'Categories' });
-  await input.click();
-  await input.fill(searchText);
-  const option = page.locator(`div[role="option"]:visible:has-text("${searchText}")`).first();
-  await option.waitFor({ timeout: 10000 });
-  await option.click();
-  await option.waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {});
-  // Give Alpine time to propagate the selection and re-render schema fields
-  await page.waitForTimeout(300);
-}
 
 // ── Test suite ────────────────────────────────────────────────────────────────
 

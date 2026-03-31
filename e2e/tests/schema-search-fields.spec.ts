@@ -7,6 +7,13 @@
  * expected MetaQuery URL parameters.
  */
 import { test, expect } from '../fixtures/base.fixture';
+import {
+  selectGroupCategory,
+  removeGroupCategory,
+  selectResourceCategory,
+  schemaFieldsGroup,
+  submitFilterForm,
+} from '../helpers/schema-search-helpers';
 
 // ── Shared test schema ───────────────────────────────────────────────────────
 
@@ -26,69 +33,16 @@ const testSchema = JSON.stringify({
   },
 });
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/**
- * Select a value from the Categories autocompleter on the groups list page.
- * The autocompleter is labelled "Categories".
- */
-async function selectGroupCategory(page: any, searchText: string) {
-  const input = page.getByRole('combobox', { name: 'Categories' });
-  await input.click();
-  await input.fill(searchText);
-  const option = page.locator(`div[role="option"]:visible:has-text("${searchText}")`).first();
-  await option.waitFor({ timeout: 10000 });
-  await option.click();
-  await option.waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {});
-  // Give Alpine time to propagate the selection and re-render schema fields
-  await page.waitForTimeout(300);
-}
-
-/**
- * Remove a previously-selected category chip by clicking its remove button.
- */
-async function removeGroupCategory(page: any, categoryName: string) {
-  const removeBtn = page
-    .locator(`[x-data*="autocompleter"] button[aria-label="Remove ${categoryName}"]`)
-    .first();
-  await removeBtn.click();
-  // Give Alpine time to re-render
-  await page.waitForTimeout(200);
-}
-
-/**
- * Select a value from the Resource Category autocompleter on the resources list page.
- */
-async function selectResourceCategory(page: any, searchText: string) {
-  const input = page.getByRole('combobox', { name: 'Resource Category' });
-  await input.click();
-  await input.fill(searchText);
-  const option = page.locator(`div[role="option"]:visible:has-text("${searchText}")`).first();
-  await option.waitFor({ timeout: 10000 });
-  await option.click();
-  await option.waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {});
-  // Give Alpine time to propagate and render schema fields
-  await page.waitForTimeout(300);
-}
-
-/**
- * The schema fields container — anchored by role="group" / aria-label="Schema fields".
- */
-function schemaFieldsGroup(page: any) {
-  return page.locator('[role="group"][aria-label="Schema fields"]');
-}
-
-/**
- * Submit the filter form on a list page. Finds the submit button within the
- * sidebar filter form specifically (using aria-label) to avoid ambiguity.
- */
-async function submitFilterForm(page: any, formAriaLabel = 'Filter groups') {
-  const form = page.locator(`form[aria-label="${formAriaLabel}"]`);
-  const submitBtn = form.getByRole('button', { name: 'Apply Filters' });
-  await submitBtn.scrollIntoViewIfNeeded();
-  await submitBtn.click();
-  await page.waitForLoadState('load');
-}
+// Schema with > 6 enum values — forces multi-select dropdown rendering
+const largeEnumSchema = JSON.stringify({
+  type: 'object',
+  properties: {
+    country: {
+      type: 'string',
+      enum: ['US', 'UK', 'CA', 'DE', 'FR', 'JP', 'AU', 'BR'],
+    },
+  },
+});
 
 // ── Test suite ────────────────────────────────────────────────────────────────
 
@@ -97,6 +51,8 @@ test.describe('Schema-Driven Search Fields', () => {
   let categoryWithSchemaId: number;
   let categoryNoSchemaId: number;
   let category2WithSchemaId: number;
+  let categoryNoOverlapId: number;
+  let categoryLargeEnumId: number;
   let resourceCategoryId: number;
   const runId = Date.now();
 
@@ -132,6 +88,29 @@ test.describe('Schema-Driven Search Fields', () => {
     );
     category2WithSchemaId = catB.ID;
 
+    // Category with ZERO field overlap with schema A (for "no common fields" test)
+    const noOverlapSchema = JSON.stringify({
+      type: 'object',
+      properties: {
+        altitude: { type: 'number' },
+        pressure: { type: 'number' },
+      },
+    });
+    const catNoOverlap = await apiClient.createCategory(
+      `Schema Cat NoOverlap ${runId}`,
+      'Category with no field overlap',
+      { MetaSchema: noOverlapSchema }
+    );
+    categoryNoOverlapId = catNoOverlap.ID;
+
+    // Category with > 6 enum values — forces multi-select dropdown rendering
+    const catLargeEnum = await apiClient.createCategory(
+      `Schema Cat LargeEnum ${runId}`,
+      'Category with large enum for dropdown rendering test',
+      { MetaSchema: largeEnumSchema }
+    );
+    categoryLargeEnumId = catLargeEnum.ID;
+
     // Resource category with schema
     const rc = await apiClient.createResourceCategory(
       `Schema RC ${runId}`,
@@ -145,6 +124,8 @@ test.describe('Schema-Driven Search Fields', () => {
     if (categoryWithSchemaId) await apiClient.deleteCategory(categoryWithSchemaId).catch(() => {});
     if (categoryNoSchemaId) await apiClient.deleteCategory(categoryNoSchemaId).catch(() => {});
     if (category2WithSchemaId) await apiClient.deleteCategory(category2WithSchemaId).catch(() => {});
+    if (categoryNoOverlapId) await apiClient.deleteCategory(categoryNoOverlapId).catch(() => {});
+    if (categoryLargeEnumId) await apiClient.deleteCategory(categoryLargeEnumId).catch(() => {});
     if (resourceCategoryId) await apiClient.deleteResourceCategory(resourceCategoryId).catch(() => {});
   });
 
@@ -396,5 +377,133 @@ test.describe('Schema-Driven Search Fields', () => {
     await expect(container.getByRole('checkbox', { name: 'red' })).toBeVisible();
     await expect(container.getByRole('radio', { name: 'Any' })).toBeVisible();
     await expect(container.locator('input[type="number"]')).not.toHaveCount(0);
+  });
+
+  // ── 11. URL state restoration (pre-fill from MetaQuery params) ─────────────
+
+  test('schema fields are pre-filled after form submit and page reload', async ({
+    groupPage,
+    page,
+  }) => {
+    await groupPage.gotoList();
+    await selectGroupCategory(page, `Schema Cat A ${runId}`);
+
+    const container = schemaFieldsGroup(page);
+
+    // Fill in the weight field
+    const weightInput = container.locator('input[type="number"]').first();
+    await weightInput.fill('42');
+
+    // Submit — page reloads with MetaQuery params in URL
+    await submitFilterForm(page, 'Filter groups');
+
+    // After reload, the category autocompleter should restore from URL params,
+    // which triggers handleCategoryChange, which calls _findExistingValue.
+    // Wait for schema fields to re-render after category restoration.
+    const restoredContainer = schemaFieldsGroup(page);
+    await expect(restoredContainer.locator('input[type="number"]').first()).toBeVisible({
+      timeout: 5000,
+    });
+
+    // The weight input should be pre-filled with "42"
+    await expect(
+      restoredContainer.locator('input[type="number"]').first()
+    ).toHaveValue('42');
+  });
+
+  // ── 12. Enum > 6 renders as multi-select dropdown ─────────────────────────
+
+  test('enum field with > 6 values renders as a multi-select dropdown', async ({
+    groupPage,
+    page,
+  }) => {
+    await groupPage.gotoList();
+    await selectGroupCategory(page, `Schema Cat LargeEnum ${runId}`);
+
+    const container = schemaFieldsGroup(page);
+
+    // Should render a <select multiple> rather than checkboxes
+    const multiSelect = container.locator('select[multiple]');
+    await expect(multiSelect).toBeVisible({ timeout: 5000 });
+
+    // Should NOT render individual checkboxes for enum values
+    await expect(container.locator('input[type="checkbox"]')).toHaveCount(0);
+
+    // Verify options are present
+    for (const country of ['US', 'UK', 'CA', 'DE', 'FR', 'JP', 'AU', 'BR']) {
+      await expect(multiSelect.locator(`option[value="${country}"]`)).toHaveCount(1);
+    }
+  });
+
+  // ── 13. Two categories with NO common fields → schema section hidden ───────
+
+  test('selecting two categories with no common fields hides all schema fields', async ({
+    groupPage,
+    page,
+  }) => {
+    await groupPage.gotoList();
+
+    // Category A has: color, weight, active, dimensions.*
+    await selectGroupCategory(page, `Schema Cat A ${runId}`);
+    // NoOverlap category has: altitude, pressure — zero overlap with A
+    await selectGroupCategory(page, `Schema Cat NoOverlap ${runId}`);
+
+    const container = schemaFieldsGroup(page);
+
+    // No interactive inputs should be rendered when intersection is empty
+    await expect(container.locator('input, select')).toHaveCount(0);
+  });
+
+  // ── 14. Multiple enum checkboxes → multiple MetaQuery entries (OR logic) ───
+
+  test('checking multiple enum checkboxes produces multiple MetaQuery entries', async ({
+    groupPage,
+    page,
+  }) => {
+    await groupPage.gotoList();
+    await selectGroupCategory(page, `Schema Cat A ${runId}`);
+
+    const container = schemaFieldsGroup(page);
+
+    // Check both "red" and "green"
+    await container.getByRole('checkbox', { name: 'red' }).check();
+    await container.getByRole('checkbox', { name: 'green' }).check();
+
+    // Submit
+    await submitFilterForm(page, 'Filter groups');
+
+    const decoded = decodeURIComponent(page.url());
+    expect(decoded).toContain('color:EQ:"red"');
+    expect(decoded).toContain('color:EQ:"green"');
+  });
+
+  // ── 15. Keyboard focus management for operator toggle ─────────────────────
+
+  test('keyboard: Tab to operator button, Enter opens select, choosing option closes it', async ({
+    groupPage,
+    page,
+  }) => {
+    await groupPage.gotoList();
+    await selectGroupCategory(page, `Schema Cat A ${runId}`);
+
+    const container = schemaFieldsGroup(page);
+
+    // Find the first operator button and focus it via keyboard
+    const operatorButton = container.locator('button[aria-label^="Change operator"]').first();
+    await operatorButton.focus();
+    await expect(operatorButton).toBeFocused();
+
+    // Press Enter to open the operator dropdown
+    await page.keyboard.press('Enter');
+
+    // The operator select should now be visible
+    const operatorSelect = container.locator('select[aria-label^="Operator for"]').first();
+    await expect(operatorSelect).toBeVisible({ timeout: 3000 });
+
+    // Select an option with keyboard (GT)
+    await operatorSelect.selectOption('GT');
+
+    // The dropdown should close after selection
+    await expect(operatorSelect).not.toBeVisible({ timeout: 3000 });
   });
 });
