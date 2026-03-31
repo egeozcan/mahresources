@@ -146,6 +146,8 @@ export function schemaSearchFields({ elName, existingMetaQuery, initialCategorie
       this._existingMeta = existingMetaQuery || [];
       // If categories were pre-selected on page load (restored from URL params),
       // call handleCategoryChange immediately so schema fields and pre-filled values render.
+      // Without this, the autocompleter only dispatches multiple-input on later mutations
+      // (dropdown.js line 59), so schema fields stay empty after form submit or saved URLs.
       const initial = initialCategories || [];
       if (initial.length > 0) {
         this.$nextTick(() => this.handleCategoryChange(initial));
