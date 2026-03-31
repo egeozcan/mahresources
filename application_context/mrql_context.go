@@ -154,6 +154,10 @@ func (ctx *MahresourcesContext) ExecuteMRQLGrouped(reqCtx context.Context, parse
 	if parsed.Limit < 0 {
 		parsed.Limit = defaultMRQLLimit
 	}
+	// Clamp per-bucket limit so no single bucket can exceed the global item cap.
+	if parsed.Limit > maxBucketedTotalItems {
+		parsed.Limit = maxBucketedTotalItems
+	}
 
 	if len(parsed.GroupBy.Aggregates) > 0 {
 		return ctx.executeAggregatedQuery(queryCtx, parsed)
