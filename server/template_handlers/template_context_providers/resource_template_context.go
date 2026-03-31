@@ -188,6 +188,7 @@ func ResourceTimelineContextProvider(context *application_context.MahresourcesCo
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.ResourceSearchQuery
 		err := decoder.Decode(&query, request.URL.Query())
+		query_models.FillMetaQueryFromRequest(request, &query)
 		baseContext := StaticTemplateCtx(request)
 
 		if err != nil {

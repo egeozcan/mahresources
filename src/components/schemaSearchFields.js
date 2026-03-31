@@ -345,6 +345,13 @@ export function schemaSearchFields({ elName, existingMetaQuery, initialCategorie
 
       if (!field.value && field.value !== 0) return [];
 
+      // For string-typed schema fields, always quote the value so the backend
+      // treats it as a string. Without quotes, generateParamNameForMeta routes
+      // through getJSONValue which coerces "42" → 42, "false" → false, etc.
+      if (field.type === 'string') {
+        return [{ value: `${field.path}:${field.operator}:"${field.value}"` }];
+      }
+
       return [{ value: generateParamNameForMeta({ name: field.path, value: field.value, operation: field.operator }) }];
     },
   };

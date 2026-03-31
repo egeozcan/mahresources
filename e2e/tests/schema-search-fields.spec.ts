@@ -53,6 +53,7 @@ test.describe('Schema-Driven Search Fields', () => {
   let category2WithSchemaId: number;
   let categoryNoOverlapId: number;
   let categoryLargeEnumId: number;
+  let categoryPlainStringId: number;
   let resourceCategoryId: number;
   const runId = Date.now();
 
@@ -111,6 +112,20 @@ test.describe('Schema-Driven Search Fields', () => {
     );
     categoryLargeEnumId = catLargeEnum.ID;
 
+    // Category with a plain string field (no enum) for string-quoting tests
+    const plainStringSchema = JSON.stringify({
+      type: 'object',
+      properties: {
+        label: { type: 'string' },
+      },
+    });
+    const catPlainString = await apiClient.createCategory(
+      `Schema Cat PlainStr ${runId}`,
+      'Category with plain string field',
+      { MetaSchema: plainStringSchema }
+    );
+    categoryPlainStringId = catPlainString.ID;
+
     // Resource category with schema
     const rc = await apiClient.createResourceCategory(
       `Schema RC ${runId}`,
@@ -126,6 +141,7 @@ test.describe('Schema-Driven Search Fields', () => {
     if (category2WithSchemaId) await apiClient.deleteCategory(category2WithSchemaId).catch(() => {});
     if (categoryNoOverlapId) await apiClient.deleteCategory(categoryNoOverlapId).catch(() => {});
     if (categoryLargeEnumId) await apiClient.deleteCategory(categoryLargeEnumId).catch(() => {});
+    if (categoryPlainStringId) await apiClient.deleteCategory(categoryPlainStringId).catch(() => {});
     if (resourceCategoryId) await apiClient.deleteResourceCategory(resourceCategoryId).catch(() => {});
   });
 
@@ -774,5 +790,71 @@ test.describe('Schema-Driven Search Fields', () => {
       if (await freeFieldNameInputs.nth(i).inputValue() === 'active') hasActive = true;
     }
     expect(hasActive, 'freeFields should keep active:NE entry that schema cannot represent').toBe(true);
+  });
+
+  // ── 22. Resource timeline sidebar preserves bare MetaQuery params ────────────
+
+  test('resource timeline view preserves bare MetaQuery params in the sidebar', async ({
+    page,
+  }) => {
+    // Navigate to resource timeline with a bare MetaQuery + resource category
+    await page.goto(`/resources/timeline?ResourceCategoryId=${resourceCategoryId}&MetaQuery=${encodeURIComponent('weight:EQ:42')}`);
+    await page.waitForLoadState('load');
+    await page.waitForTimeout(500);
+
+    // The freeFields or schema fields sidebar should show the weight filter.
+    // Check freeFields first (it should have the weight entry since
+    // parsedQuery.MetaQuery should be populated).
+    const freeFieldsGroup = page.locator('[role="group"][aria-label="Meta"]');
+    const schemaGroup = page.locator('[role="group"][aria-label="Schema fields"]');
+
+    // Either schema fields pre-filled weight, or freeFields has it
+    const schemaWeightInputs = schemaGroup.locator('input[type="number"]');
+    const freeFieldNameInputs = freeFieldsGroup.locator('input[type="text"]');
+
+    const schemaCount = await schemaWeightInputs.count();
+    let weightVisible = false;
+
+    if (schemaCount > 0) {
+      const val = await schemaWeightInputs.first().inputValue();
+      if (val === '42') weightVisible = true;
+    }
+
+    if (!weightVisible) {
+      const freeCount = await freeFieldNameInputs.count();
+      for (let i = 0; i < freeCount; i++) {
+        if (await freeFieldNameInputs.nth(i).inputValue() === 'weight') {
+          weightVisible = true;
+          break;
+        }
+      }
+    }
+
+    expect(weightVisible, 'weight:EQ:42 should be visible in timeline sidebar (schema or freeFields)').toBe(true);
+  });
+
+  // ── 23. Schema string fields preserve string type for numeric-looking values ─
+
+  test('schema string field value "007" is submitted as quoted string, not as number', async ({
+    groupPage,
+    page,
+  }) => {
+    await groupPage.gotoList();
+
+    // Use the category with a plain string field (no enum)
+    await selectGroupCategory(page, `Schema Cat PlainStr ${runId}`);
+
+    const container = schemaFieldsGroup(page);
+
+    // Type a numeric-looking string into the "label" text input
+    const labelInput = container.locator('input[type="text"]').first();
+    await labelInput.fill('007');
+
+    // Submit
+    await submitFilterForm(page, 'Filter groups');
+
+    // The URL should contain label:LI:"007" (quoted string), not label:LI:7 (number)
+    const decoded = decodeURIComponent(page.url());
+    expect(decoded).toContain('label:LI:"007"');
   });
 });
