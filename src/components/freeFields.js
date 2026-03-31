@@ -15,15 +15,30 @@ export function freeFields({ fields, name, url, jsonOutput, id, title, fromJSON 
     async init() {
       // Listen for schema fields claiming MetaQuery paths — must be registered
       // before any async work to avoid missing events from schemaSearchFields init().
-      // We keep the original field list so we can restore entries when paths are unclaimed.
-      this._originalFields = null;
+      // Track removed entries so they can be restored when paths are unclaimed,
+      // without losing user-added rows that weren't in the original snapshot.
+      this._removedBySchema = [];
       window.addEventListener('schema-fields-claimed', (e) => {
         const claimed = new Set(e.detail.paths || []);
-        if (this._originalFields === null && this.fields) {
-          this._originalFields = [...this.fields];
+        if (!this.fields) return;
+
+        // Restore previously removed entries back into the current list
+        if (this._removedBySchema.length > 0) {
+          this.fields = this.fields.concat(this._removedBySchema);
+          this._removedBySchema = [];
         }
-        if (this._originalFields) {
-          this.fields = this._originalFields.filter(f => !claimed.has(f.name));
+
+        // Remove newly claimed entries from the current list
+        if (claimed.size > 0) {
+          const kept = [];
+          for (const f of this.fields) {
+            if (claimed.has(f.name)) {
+              this._removedBySchema.push(f);
+            } else {
+              kept.push(f);
+            }
+          }
+          this.fields = kept;
         }
       });
 

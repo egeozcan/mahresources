@@ -679,4 +679,40 @@ test.describe('Schema-Driven Search Fields', () => {
     }
     expect(weightCount, 'freeFields should keep both weight range entries').toBe(2);
   });
+
+  // ── 19. User-added freeFields rows survive schema selection changes ──────────
+
+  test('user-added freeFields rows are not erased by schema category changes', async ({
+    groupPage,
+    page,
+  }) => {
+    await groupPage.gotoList();
+
+    // Select a category so schema fields appear
+    await selectGroupCategory(page, `Schema Cat A ${runId}`);
+    const container = schemaFieldsGroup(page);
+    await expect(container.locator('input, select')).not.toHaveCount(0);
+
+    // Add a custom free-form field (click "+ Add Field" in freeFields)
+    const freeFieldsGroup = page.locator('[role="group"][aria-label="Meta"]');
+    await freeFieldsGroup.getByRole('button', { name: 'Add new field' }).click();
+
+    // Fill in the new field
+    const freeFieldNameInputs = freeFieldsGroup.locator('input[type="text"]');
+    const lastIdx = await freeFieldNameInputs.count() - 1;
+    await freeFieldNameInputs.nth(lastIdx).fill('custom_key');
+
+    // Now add a second category — this triggers schema-fields-claimed again
+    await selectGroupCategory(page, `Schema Cat B ${runId}`);
+
+    // The user-added "custom_key" should still be in freeFields
+    const updatedNameInputs = freeFieldsGroup.locator('input[type="text"]');
+    const count = await updatedNameInputs.count();
+    let hasCustomKey = false;
+    for (let i = 0; i < count; i++) {
+      const val = await updatedNameInputs.nth(i).inputValue();
+      if (val === 'custom_key') hasCustomKey = true;
+    }
+    expect(hasCustomKey, 'user-added freeFields row should survive schema category changes').toBe(true);
+  });
 });
