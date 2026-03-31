@@ -10,11 +10,11 @@
     aria-label="Schema fields"
 >
     <span class="sr-only" aria-live="polite" aria-atomic="true"
-          x-text="hasFields ? fields.length + ' schema filter fields available' : ''"></span>
+          x-text="hasFields ? fields.length + ' schema filter fields available' : (fieldsCleared ? 'Schema filter fields cleared' : '')"></span>
     <template x-if="hasFields">
         <div class="flex flex-col gap-2 w-full">
             <template x-for="(field, fIdx) in fields" :key="field.path">
-                <div class="w-full">
+                <div class="w-full" :data-field-path="field.path">
                     <!-- Hidden inputs for form submission -->
                     <template x-for="(hidden, hIdx) in getHiddenInputs(field)" :key="fIdx + '-h-' + hIdx">
                         <input type="hidden" name="MetaQuery" :value="hidden.value">
@@ -22,10 +22,11 @@
 
                     <!-- Boolean: three-state radio -->
                     <template x-if="field.type === 'boolean'">
-                        <fieldset class="w-full" :aria-label="field.label.replace(/ › /g, ', ')">
+                        <fieldset class="w-full">
                             <legend
                                 class="block text-xs font-mono font-medium text-stone-600 mt-1"
                                 x-text="field.label"
+                                :aria-label="field.label.replace(/ › /g, ', ')"
                             ></legend>
                             <div class="flex gap-3 mt-1">
                                 <label class="text-sm flex items-center gap-1">
@@ -49,10 +50,11 @@
 
                     <!-- Enum ≤ 6: checkboxes -->
                     <template x-if="field.enum && field.enum.length <= 6">
-                        <fieldset class="w-full" :aria-label="field.label.replace(/ › /g, ', ')">
+                        <fieldset class="w-full">
                             <legend
                                 class="block text-xs font-mono font-medium text-stone-600 mt-1"
                                 x-text="field.label"
+                                :aria-label="field.label.replace(/ › /g, ', ')"
                             ></legend>
                             <div class="flex flex-wrap gap-x-3 gap-y-1 mt-1">
                                 <template x-for="enumVal in field.enum" :key="enumVal">
@@ -68,14 +70,16 @@
 
                     <!-- Enum > 6: multi-select dropdown -->
                     <template x-if="field.enum && field.enum.length > 6">
-                        <fieldset class="w-full" :aria-label="field.label.replace(/ › /g, ', ')">
+                        <fieldset class="w-full">
                             <legend
                                 class="block text-xs font-mono font-medium text-stone-600 mt-1"
                                 x-text="field.label"
+                                :aria-label="field.label.replace(/ › /g, ', ')"
                             ></legend>
                             <select multiple
                                     x-model="field.enumValues"
                                     :id="id + '-enum-' + field.path"
+                                    :aria-label="field.label.replace(/ › /g, ', ')"
                                     class="w-full text-sm border-stone-300 rounded mt-1 focus:ring-1 focus:ring-amber-600 focus:border-amber-600"
                                     :size="Math.min(field.enum.length, 6)"
                             >
@@ -93,14 +97,16 @@
                                 :for="id + '-' + field.path"
                                 class="block text-xs font-mono font-medium text-stone-600 mt-1"
                                 x-text="field.label"
+                                :aria-label="field.label.replace(/ › /g, ', ')"
                             ></label>
                             <div class="flex gap-1 items-center w-full mt-1">
                                 <!-- Collapsed operator symbol (clickable) -->
                                 <template x-if="!field.showOperator">
                                     <button
                                         type="button"
+                                        data-operator-toggle
                                         @click="toggleOperator(field)"
-                                        class="text-xs text-stone-400 hover:text-amber-700 underline cursor-pointer flex-shrink-0 w-5 text-center"
+                                        class="text-xs text-stone-400 hover:text-amber-700 underline cursor-pointer flex-shrink-0 w-5 text-center focus:outline-none focus:ring-1 focus:ring-amber-600 rounded"
                                         :aria-label="'Change operator, currently ' + getSymbol(field)"
                                         :title="'Operator: ' + getSymbol(field)"
                                         x-text="getSymbol(field)"
@@ -110,7 +116,7 @@
                                 <template x-if="field.showOperator">
                                     <select
                                         x-model="field.operator"
-                                        @change="field.showOperator = false"
+                                        @change="selectOperator(field)"
                                         :aria-label="'Operator for ' + field.label"
                                         class="flex-shrink-0 w-16 text-sm border-stone-300 rounded focus:ring-1 focus:ring-amber-600 focus:border-amber-600"
                                     >

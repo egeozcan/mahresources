@@ -2,9 +2,15 @@ import { generateParamNameForMeta } from './freeFields.js';
 
 /**
  * Recursively flatten a JSON Schema into a list of searchable field descriptors.
+ *
+ * @param {object} schema - Parsed JSON Schema object
+ * @param {string} prefix - Dot-separated path prefix for nested fields
+ * @param {string} labelPrefix - Human-readable label prefix
+ * @param {number} depth - Current recursion depth (max 10)
+ * @returns {Array<{path: string, label: string, type: string, enum: string[]|null}>}
  */
-export function flattenSchema(schema, prefix = '', labelPrefix = '') {
-  if (!schema || schema.type !== 'object' || !schema.properties) {
+export function flattenSchema(schema, prefix = '', labelPrefix = '', depth = 0) {
+  if (depth > 10 || !schema || schema.type !== 'object' || !schema.properties) {
     return [];
   }
 
@@ -16,7 +22,7 @@ export function flattenSchema(schema, prefix = '', labelPrefix = '') {
     const label = labelPrefix ? `${labelPrefix} › ${rawLabel}` : rawLabel;
 
     if (prop.type === 'object' && prop.properties) {
-      fields.push(...flattenSchema(prop, path, label));
+      fields.push(...flattenSchema(prop, path, label, depth + 1));
     } else if (prop.type === 'array') {
       continue;
     } else {
@@ -35,11 +41,15 @@ export function flattenSchema(schema, prefix = '', labelPrefix = '') {
 /**
  * Intersect multiple flattened field lists. Keep only fields present in ALL lists.
  * Type conflicts fall back to "string". Enum conflicts drop the enum.
+ *
+ * @param {Array<Array<{path: string, label: string, type: string, enum: string[]|null}>>} fieldLists
+ * @returns {Array<{path: string, label: string, type: string, enum: string[]|null}>}
  */
 export function intersectFields(fieldLists) {
   if (fieldLists.length === 0) return [];
   if (fieldLists.length === 1) return fieldLists[0];
 
+  // Index first list by path — safe to delete during forward iteration
   const base = new Map(fieldLists[0].map(f => [f.path, { ...f }]));
 
   for (let i = 1; i < fieldLists.length; i++) {
@@ -59,7 +69,10 @@ export function intersectFields(fieldLists) {
         existing.type = 'string';
         existing.enum = null;
       } else if (existing.enum && field.enum) {
-        if (JSON.stringify(existing.enum) !== JSON.stringify(field.enum)) {
+        // Sort before comparing so order doesn't matter
+        const a = [...existing.enum].sort();
+        const b = [...field.enum].sort();
+        if (JSON.stringify(a) !== JSON.stringify(b)) {
           existing.enum = null;
         }
       } else if (existing.enum !== field.enum) {
@@ -110,18 +123,31 @@ function operatorSymbol(code) {
   return symbols[code] || code;
 }
 
+/**
+ * Alpine.js data component for schema-driven search fields.
+ *
+ * @param {object} opts
+ * @param {string} opts.elName - The autocompleter element name to listen for
+ * @param {Array} opts.existingMetaQuery - Pre-parsed MetaQuery from URL
+ * @param {string} opts.id - Unique ID prefix for form elements
+ */
 export function schemaSearchFields({ elName, existingMetaQuery, id }) {
   return {
     elName,
     id,
+    /** @type {Array<{path: string, label: string, type: string, enum: string[]|null, operator: string, value: string, enumValues: string[], showOperator: boolean}>} */
     fields: [],
     hasFields: false,
+    /** Whether fields were just cleared (for aria-live announcement) */
+    fieldsCleared: false,
 
     init() {
       this._existingMeta = existingMetaQuery || [];
     },
 
     handleCategoryChange(items) {
+      const hadFields = this.hasFields;
+
       const schemas = items
         .filter(item => item.MetaSchema)
         .map(item => {
@@ -133,6 +159,7 @@ export function schemaSearchFields({ elName, existingMetaQuery, id }) {
       if (schemas.length === 0) {
         this.fields = [];
         this.hasFields = false;
+        this.fieldsCleared = hadFields;
         return;
       }
 
@@ -155,6 +182,7 @@ export function schemaSearchFields({ elName, existingMetaQuery, id }) {
       });
 
       this.hasFields = this.fields.length > 0;
+      this.fieldsCleared = hadFields && !this.hasFields;
     },
 
     _findExistingValue(path) {
@@ -194,6 +222,24 @@ export function schemaSearchFields({ elName, existingMetaQuery, id }) {
 
     toggleOperator(field) {
       field.showOperator = !field.showOperator;
+      this.$nextTick(() => {
+        const wrapper = this.$el.querySelector(`[data-field-path="${field.path}"]`);
+        if (!wrapper) return;
+        const target = field.showOperator
+          ? wrapper.querySelector('select')
+          : wrapper.querySelector('button[data-operator-toggle]');
+        if (target) target.focus();
+      });
+    },
+
+    selectOperator(field) {
+      field.showOperator = false;
+      this.$nextTick(() => {
+        const wrapper = this.$el.querySelector(`[data-field-path="${field.path}"]`);
+        if (!wrapper) return;
+        const btn = wrapper.querySelector('button[data-operator-toggle]');
+        if (btn) btn.focus();
+      });
     },
 
     getHiddenInputs(field) {
