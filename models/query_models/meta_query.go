@@ -44,8 +44,8 @@ func ParseMeta(input string) ColumnMeta {
 		parsedValue = value == "true"
 	} else if value == "null" {
 		parsedValue = nil
-	} else if strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"") && strings.Count(value, "\"") == 2 {
-		parsedValue = strings.Trim(value, "\"")
+	} else if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
+		parsedValue = value[1 : len(value)-1]
 	} else {
 		float, err := strconv.ParseFloat(value, 64)
 		if err != nil {

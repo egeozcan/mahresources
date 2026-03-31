@@ -66,6 +66,15 @@ func TestParseMetaArray(t *testing.T) {
 				Operation: "EQ",
 			},
 		},
+		{
+			name:  "quoted string with embedded double quote",
+			input: `label:LI:"a"b"`,
+			want: ColumnMeta{
+				Key:       "label",
+				Value:     `a"b`,
+				Operation: "LI",
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
