@@ -220,9 +220,10 @@ export function schemaSearchFields({ elName, existingMetaQuery, initialCategorie
         const current = currentValues.get(field.path);
         let existing = current || this._findExistingValue(field.path);
 
-        // Non-enum fields with multiple URL matches (e.g., weight:GT:5 + weight:LT:10)
-        // can't be represented in a single input. Leave them for freeFields.
-        if (!field.enum && field.type !== 'boolean' && existing && existing.enumValues.length > 0) {
+        // Non-enum fields with multiple URL matches (e.g., weight:GT:5 + weight:LT:10,
+        // or active:EQ:true + active:EQ:false) can't be represented in a single input.
+        // Leave them for freeFields.
+        if (!field.enum && existing && existing.enumValues.length > 0) {
           existing = null;
           unclaimable.add(field.path);
         }

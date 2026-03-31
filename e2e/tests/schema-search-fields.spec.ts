@@ -715,4 +715,26 @@ test.describe('Schema-Driven Search Fields', () => {
     }
     expect(hasCustomKey, 'user-added freeFields row should survive schema category changes').toBe(true);
   });
+
+  // ── 20. Repeated boolean MetaQuery entries stay in freeFields ───────────────
+
+  test('repeated boolean entries (active:EQ:true + active:EQ:false) are preserved in freeFields', async ({
+    groupPage,
+    page,
+  }) => {
+    await page.goto(`/groups?categories=${categoryWithSchemaId}&MetaQuery.0=${encodeURIComponent('active:EQ:true')}&MetaQuery.1=${encodeURIComponent('active:EQ:false')}`);
+    await page.waitForLoadState('load');
+    await page.waitForTimeout(500);
+
+    // freeFields should still show both "active" entries
+    const freeFieldsGroup = page.locator('[role="group"][aria-label="Meta"]');
+    const freeFieldNameInputs = freeFieldsGroup.locator('input[type="text"]');
+    const count = await freeFieldNameInputs.count();
+    let activeCount = 0;
+    for (let i = 0; i < count; i++) {
+      const val = await freeFieldNameInputs.nth(i).inputValue();
+      if (val === 'active') activeCount++;
+    }
+    expect(activeCount, 'freeFields should keep both repeated boolean entries').toBe(2);
+  });
 });
