@@ -176,6 +176,50 @@ func TestMetaQueryMixedBareAndIndexed(t *testing.T) {
 	})
 }
 
+// TestMetaQuerySameKeyOR verifies that multiple MetaQuery entries with the
+// same key and EQ operator are OR'd (match any), not AND'd (match all).
+// This is essential for multi-select enum filters: selecting "red" and "green"
+// should return items matching EITHER value.
+func TestMetaQuerySameKeyOR(t *testing.T) {
+	tc := SetupTestEnv(t)
+	requireJsonPatch(t, tc.DB)
+
+	g1 := &models.Group{Name: "OR Red", Description: "first", Meta: []byte(`{"color":"red"}`)}
+	g2 := &models.Group{Name: "OR Green", Description: "second", Meta: []byte(`{"color":"green"}`)}
+	g3 := &models.Group{Name: "OR Blue", Description: "third", Meta: []byte(`{"color":"blue"}`)}
+	tc.DB.Create(g1)
+	tc.DB.Create(g2)
+	tc.DB.Create(g3)
+
+	t.Run("same-key EQ entries are OR'd, returning items matching any value", func(t *testing.T) {
+		// Two MetaQuery entries for color: should match red OR green
+		reqURL := fmt.Sprintf("/v1/groups?MetaQuery=%s&MetaQuery=%s",
+			url.QueryEscape(`color:EQ:"red"`),
+			url.QueryEscape(`color:EQ:"green"`))
+		resp := tc.MakeRequest(http.MethodGet, reqURL, nil)
+		assert.Equal(t, http.StatusOK, resp.Code)
+
+		var groups []models.Group
+		err := json.Unmarshal(resp.Body.Bytes(), &groups)
+		require.NoError(t, err)
+		assert.Len(t, groups, 2, "Same-key EQ entries should be OR'd — both red and green should match")
+	})
+
+	t.Run("different-key entries are still AND'd", func(t *testing.T) {
+		// color:EQ:"red" AND color:EQ:"red" (same key same value) → should return 1
+		reqURL := fmt.Sprintf("/v1/groups?MetaQuery=%s&MetaQuery=%s",
+			url.QueryEscape(`color:EQ:"red"`),
+			url.QueryEscape(`color:EQ:"red"`))
+		resp := tc.MakeRequest(http.MethodGet, reqURL, nil)
+		assert.Equal(t, http.StatusOK, resp.Code)
+
+		var groups []models.Group
+		err := json.Unmarshal(resp.Body.Bytes(), &groups)
+		require.NoError(t, err)
+		assert.Len(t, groups, 1, "Duplicate same-value entries should still return the matching item")
+	})
+}
+
 // TestMetaQueryFilterViaFormEncoding verifies MetaQuery works when submitted
 // as form-encoded data (as template pages would use).
 func TestMetaQueryFilterViaFormEncoding(t *testing.T) {

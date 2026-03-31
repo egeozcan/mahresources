@@ -5,7 +5,6 @@ import (
 
 	"gorm.io/gorm"
 	"mahresources/models/query_models"
-	"mahresources/models/types"
 )
 
 func NoteQuery(query *query_models.NoteQuery, ignoreSort bool, originalDB *gorm.DB) func(db *gorm.DB) *gorm.DB {
@@ -114,15 +113,7 @@ func NoteQuery(query *query_models.NoteQuery, ignoreSort bool, originalDB *gorm.
 			dbQuery = dbQuery.Where("note_type_id = ?", query.NoteTypeId)
 		}
 
-		if len(query.MetaQuery) > 0 {
-			for _, v := range query.MetaQuery {
-				if v.Key == "" {
-					continue
-				}
-
-				dbQuery = dbQuery.Where(types.JSONQuery("notes.meta").Operation(getOperationType(v.Operation), v.Value, v.Key))
-			}
-		}
+		dbQuery = ApplyMetaQuery(dbQuery, query.MetaQuery, "notes.meta")
 
 		if query.Shared != nil {
 			if *query.Shared {

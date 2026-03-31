@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"mahresources/models/query_models"
+	"mahresources/models/types"
 )
 
 // ErrInvalidDateFilter is a sentinel error for invalid date filter values.
@@ -129,6 +131,63 @@ func ApplyUpdatedDateRange(db *gorm.DB, prefix, before, after string) *gorm.DB {
 		}
 		db = db.Where(prefix+"updated_at >= ?", after)
 	}
+	return db
+}
+
+// ApplyMetaQuery applies MetaQuery filters to a GORM query. Same-key EQ entries
+// are grouped into an OR clause (for multi-select enum semantics), while
+// different-key entries and non-EQ operators are AND'd as before.
+func ApplyMetaQuery(db *gorm.DB, metaQuery []query_models.ColumnMeta, column string) *gorm.DB {
+	if len(metaQuery) == 0 {
+		return db
+	}
+
+	// Group same-key EQ entries for OR semantics
+	type eqGroup struct {
+		values []any
+	}
+	eqGroups := make(map[string]*eqGroup)
+	var nonGrouped []query_models.ColumnMeta
+
+	for _, v := range metaQuery {
+		if v.Key == "" {
+			continue
+		}
+		if v.Operation == "EQ" || v.Operation == "" {
+			g, ok := eqGroups[v.Key]
+			if !ok {
+				g = &eqGroup{}
+				eqGroups[v.Key] = g
+			}
+			g.values = append(g.values, v.Value)
+		} else {
+			nonGrouped = append(nonGrouped, v)
+		}
+	}
+
+	// Apply grouped EQ entries: if a key has multiple values, OR them
+	for key, g := range eqGroups {
+		if len(g.values) == 1 {
+			db = db.Where(types.JSONQuery(column).Operation(types.OperatorEquals, g.values[0], key))
+		} else {
+			// Build OR clause for multiple values
+			orDB := db.Session(&gorm.Session{NewDB: true})
+			for i, val := range g.values {
+				if i == 0 {
+					orDB = orDB.Where(types.JSONQuery(column).Operation(types.OperatorEquals, val, key))
+				} else {
+					orDB = orDB.Or(types.JSONQuery(column).Operation(types.OperatorEquals, val, key))
+				}
+			}
+			db = db.Where(orDB)
+		}
+	}
+
+	// Apply non-grouped entries normally (AND)
+	for _, v := range nonGrouped {
+		db = db.Where(types.JSONQuery(column).Operation(getOperationType(v.Operation), v.Value, v.Key))
+	}
+
 	return db
 }
 

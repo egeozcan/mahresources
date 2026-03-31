@@ -141,15 +141,7 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 			dbQuery = dbQuery.Where("resources.height <= ?", query.MaxHeight)
 		}
 
-		if len(query.MetaQuery) > 0 {
-			for _, v := range query.MetaQuery {
-				if v.Key == "" {
-					continue
-				}
-
-				dbQuery = dbQuery.Where(types.JSONQuery("resources.meta").Operation(getOperationType(v.Operation), v.Value, v.Key))
-			}
-		}
+		dbQuery = ApplyMetaQuery(dbQuery, query.MetaQuery, "resources.meta")
 
 		return dbQuery
 	}

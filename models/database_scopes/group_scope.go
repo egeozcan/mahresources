@@ -177,6 +177,9 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 		}
 
 		if len(query.MetaQuery) > 0 {
+			// Separate parent/child prefixed entries (handled with subqueries)
+			// from regular entries (handled by ApplyMetaQuery with OR grouping).
+			var regularMeta []query_models.ColumnMeta
 			for _, v := range query.MetaQuery {
 				if v.Key == "" {
 					continue
@@ -206,9 +209,10 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 
 					dbQuery = dbQuery.Where("(?) >= 1", subSelect)
 				} else {
-					dbQuery = dbQuery.Where(types.JSONQuery("groups.meta").Operation(getOperationType(v.Operation), v.Value, v.Key))
+					regularMeta = append(regularMeta, v)
 				}
 			}
+			dbQuery = ApplyMetaQuery(dbQuery, regularMeta, "groups.meta")
 		}
 
 		return dbQuery
