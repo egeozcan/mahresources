@@ -15,10 +15,15 @@ export function freeFields({ fields, name, url, jsonOutput, id, title, fromJSON 
     async init() {
       // Listen for schema fields claiming MetaQuery paths — must be registered
       // before any async work to avoid missing events from schemaSearchFields init().
+      // We keep the original field list so we can restore entries when paths are unclaimed.
+      this._originalFields = null;
       window.addEventListener('schema-fields-claimed', (e) => {
         const claimed = new Set(e.detail.paths || []);
-        if (claimed.size > 0 && this.fields) {
-          this.fields = this.fields.filter(f => !claimed.has(f.name));
+        if (this._originalFields === null && this.fields) {
+          this._originalFields = [...this.fields];
+        }
+        if (this._originalFields) {
+          this.fields = this._originalFields.filter(f => !claimed.has(f.name));
         }
       });
 

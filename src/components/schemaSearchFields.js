@@ -181,6 +181,10 @@ export function schemaSearchFields({ elName, existingMetaQuery, initialCategorie
         this.fields = [];
         this.hasFields = false;
         this.fieldsCleared = hadFields;
+        // Release all claimed paths so freeFields can restore them
+        window.dispatchEvent(new CustomEvent('schema-fields-claimed', {
+          detail: { paths: [] },
+        }));
         return;
       }
 

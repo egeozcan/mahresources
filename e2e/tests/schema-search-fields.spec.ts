@@ -586,4 +586,44 @@ test.describe('Schema-Driven Search Fields', () => {
       expect(val, 'freeFields should not show entries owned by schema fields').not.toBe('weight');
     }
   });
+
+  // ── 17. Deselecting last schema category restores freeFields entries ────────
+
+  test('removing the last schema category restores claimed entries to freeFields', async ({
+    groupPage,
+    page,
+  }) => {
+    await groupPage.gotoList();
+    await selectGroupCategory(page, `Schema Cat A ${runId}`);
+
+    const container = schemaFieldsGroup(page);
+
+    // Fill weight in schema fields
+    const weightInput = container.locator('input[type="number"]').first();
+    await weightInput.fill('42');
+
+    // Submit so weight is in the URL
+    await submitFilterForm(page, 'Filter groups');
+
+    // After reload, weight should be in schema fields (not freeFields)
+    const restoredContainer = schemaFieldsGroup(page);
+    await expect(restoredContainer.locator('input[type="number"]').first()).toBeVisible({ timeout: 5000 });
+
+    // Now remove the category
+    await removeGroupCategory(page, `Schema Cat A ${runId}`);
+
+    // Schema fields should be gone
+    await expect(restoredContainer.locator('input[type="number"]')).toHaveCount(0);
+
+    // freeFields should now show the "weight" entry again (restored)
+    const freeFieldsGroup = page.locator('[role="group"][aria-label="Meta"]');
+    const freeFieldNameInputs = freeFieldsGroup.locator('input[type="text"]');
+    const count = await freeFieldNameInputs.count();
+    let hasWeight = false;
+    for (let i = 0; i < count; i++) {
+      const val = await freeFieldNameInputs.nth(i).inputValue();
+      if (val === 'weight') hasWeight = true;
+    }
+    expect(hasWeight, 'freeFields should restore "weight" after schema category is removed').toBe(true);
+  });
 });
