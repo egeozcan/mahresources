@@ -343,6 +343,7 @@ func (tc *translateContext) translateChainedComparison(db *gorm.DB, expr *Compar
 
 // translateChainedMetaComparison handles traversal chains ending in meta.key
 // (e.g., owner.meta.region = "eu", owner.parent.meta.key ~ "val*").
+// Reuses the same numeric-cast/type-filtering logic as translateMetaComparison.
 func (tc *translateContext) translateChainedMetaComparison(db *gorm.DB, expr *ComparisonExpr) (*gorm.DB, error) {
 	parts := expr.Field.Parts
 	metaKey := parts[len(parts)-1].Value
@@ -354,44 +355,90 @@ func (tc *translateContext) translateChainedMetaComparison(db *gorm.DB, expr *Co
 	chainParts = append(chainParts, Token{Value: "_meta_leaf"})
 	steps := tc.buildTraversalChain(chainParts)
 
-	// The innermost subquery compares the meta JSON field on the final joined group.
-	innerAlias := steps[len(steps)-1].alias
-	var jsonExpr string
-	if tc.isPostgres() {
-		jsonExpr = fmt.Sprintf("%s.meta->>'%s'", innerAlias, metaKey)
-	} else {
-		jsonExpr = fmt.Sprintf("json_extract(%s.meta, '$.%s')", innerAlias, metaKey)
-	}
-
-	// Resolve the comparison value as a string (meta fields are dynamically typed)
+	// Resolve the comparison value
 	metaFd := FieldDef{Name: "meta." + metaKey, Type: FieldMeta, Column: "meta." + metaKey}
 	val, err := tc.resolveValue(expr.Value, metaFd)
 	if err != nil {
 		return nil, err
 	}
 
+	// Build the JSON expression with proper numeric handling, matching
+	// translateMetaComparison's behavior exactly.
+	innerAlias := steps[len(steps)-1].alias
+	isNumericVal := isNumericValue(val)
+	var jsonExpr string
+	var numericFilter string // extra WHERE clause for SQLite numeric type filtering
+	if tc.isPostgres() {
+		if isNumericVal {
+			jsonExpr = fmt.Sprintf(
+				"CASE WHEN %s.meta->>'%s' ~ '^-{0,1}[0-9]+(\\.[0-9]+){0,1}$' THEN (%s.meta->>'%s')::numeric ELSE NULL END",
+				innerAlias, metaKey, innerAlias, metaKey,
+			)
+		} else {
+			jsonExpr = fmt.Sprintf("%s.meta->>'%s'", innerAlias, metaKey)
+		}
+	} else {
+		jsonExpr = fmt.Sprintf("json_extract(%s.meta, '$.%s')", innerAlias, metaKey)
+		if isNumericVal {
+			numericFilter = fmt.Sprintf("json_type(%s.meta, '$.%s') IN ('integer', 'real')", innerAlias, metaKey)
+		}
+	}
+
+	// Build the inner WHERE clause using the meta-aware comparison
+	innerWhere, innerVal := tc.buildMetaClause(jsonExpr, expr.Operator, val, isNumericVal, innerAlias, metaKey)
+	if numericFilter != "" {
+		innerWhere = numericFilter + " AND " + innerWhere
+	}
+
 	isNegated := expr.Operator.Type == TokenNeq || expr.Operator.Type == TokenNotLike
 	isChildrenRoot := tc.isChildrenStep(steps[0])
 
 	if isNegated && isChildrenRoot {
-		// Children negation uses NOT EXISTS semantics: flip to positive match,
-		// wrap in NOT IN. Same pattern as translateFKChainScalar.
 		positiveOp := tc.flipOperator(expr.Operator)
-		innerWhere, innerVal := tc.buildScalarClause(jsonExpr, positiveOp, val, metaFd)
-		sql, vals := tc.wrapChainSubqueries(steps, innerWhere, []interface{}{innerVal})
+		posWhere, posVal := tc.buildMetaClause(jsonExpr, positiveOp, val, isNumericVal, innerAlias, metaKey)
+		if numericFilter != "" {
+			posWhere = numericFilter + " AND " + posWhere
+		}
+		sql, vals := tc.wrapChainSubqueries(steps, posWhere, []interface{}{posVal})
 		sql = strings.Replace(sql, steps[0].fkExpr+" IN ", steps[0].fkExpr+" NOT IN ", 1)
 		sql = "(" + sql + " OR " + tc.negatedNullClause(steps[0]) + ")"
 		db = db.Where(sql, vals...)
 		return db, nil
 	}
 
-	innerWhere, innerVal := tc.buildScalarClause(jsonExpr, expr.Operator, val, metaFd)
 	sql, vals := tc.wrapChainSubqueries(steps, innerWhere, []interface{}{innerVal})
 	if isNegated {
 		sql = "(" + sql + " OR " + tc.negatedNullClause(steps[0]) + ")"
 	}
 	db = db.Where(sql, vals...)
 	return db, nil
+}
+
+// buildMetaClause builds a WHERE clause for a meta JSON comparison,
+// handling LIKE, case-insensitive string equality, and numeric comparisons.
+func (tc *translateContext) buildMetaClause(jsonExpr string, op Token, val interface{}, isNumericVal bool, alias string, key string) (string, interface{}) {
+	if op.Type == TokenLike || op.Type == TokenNotLike {
+		// LIKE always operates on text
+		textExpr := jsonExpr
+		if tc.isPostgres() && isNumericVal {
+			textExpr = fmt.Sprintf("%s.meta->>'%s'", alias, key)
+		}
+		likePattern := convertMRQLWildcards(fmt.Sprint(val))
+		likeOp := tc.likeOperator()
+		if op.Type == TokenNotLike {
+			likeOp = "NOT " + likeOp
+		}
+		return textExpr + " " + likeOp + " ? ESCAPE '\\'", likePattern
+	}
+
+	sqlOp := tc.sqlOperator(op)
+
+	// Case-insensitive string equality for non-numeric values
+	if !isNumericVal && (op.Type == TokenEq || op.Type == TokenNeq) {
+		return "LOWER(" + jsonExpr + ") " + sqlOp + " LOWER(?)", val
+	}
+
+	return jsonExpr + " " + sqlOp + " ?", val
 }
 
 // entityTableName returns the database table name for an entity type.

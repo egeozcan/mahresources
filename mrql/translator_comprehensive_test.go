@@ -4770,3 +4770,36 @@ func TestBugfix_TraversalMetaCaseInsensitive(t *testing.T) {
 			len(resources), namesOfResources(resources))
 	}
 }
+
+// Traversal meta numeric comparisons must filter non-numeric values on SQLite
+// and use safe casts on PG, matching direct meta.* behavior.
+func TestBugfix_TraversalMetaNumericFiltering(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Vacation has meta.priority = 3 (numeric). Add a group with a string priority.
+	db.Exec("INSERT INTO groups (id, name, meta, created_at, updated_at) VALUES (300, 'StringPrio', '{\"priority\":\"oops\"}', datetime('now'), datetime('now'))")
+	db.Exec("INSERT INTO resources (id, name, content_type, file_size, meta, created_at, updated_at, owner_id) VALUES (300, 'owned-by-stringprio', 'text/plain', 10, '{}', datetime('now'), datetime('now'), 300)")
+
+	// owner.meta.priority > 2 should match sunset.jpg (owner Vacation, priority=3)
+	// but NOT owned-by-stringprio (owner StringPrio, priority="oops" — not numeric)
+	result := parseAndTranslate(t, `type = "resource" AND owner.meta.priority > 2`, EntityResource, db)
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	for _, r := range resources {
+		if r.Name == "owned-by-stringprio" {
+			t.Errorf("owned-by-stringprio should be excluded (owner has string priority 'oops', not numeric), got: %v", namesOfResources(resources))
+		}
+	}
+	// Should include sunset.jpg (owner Vacation has priority=3 > 2)
+	found := false
+	for _, r := range resources {
+		if r.Name == "sunset.jpg" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected sunset.jpg in results (owner priority=3 > 2), got: %v", namesOfResources(resources))
+	}
+}
