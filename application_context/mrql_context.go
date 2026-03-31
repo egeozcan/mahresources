@@ -220,6 +220,7 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 	var buckets []MRQLBucket
 	totalItems := 0
 	totalKeys := len(keys)
+	lastBucketTruncated := false
 	for _, key := range keys {
 		// Stop materializing buckets if we've hit the global item cap
 		if totalItems >= maxBucketedTotalItems {
@@ -229,8 +230,10 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 		// Reduce per-bucket limit to remaining budget so we never exceed the cap
 		remaining := maxBucketedTotalItems - totalItems
 		bucketParsed := *parsed
+		wasCapped := false
 		if bucketParsed.Limit < 0 || bucketParsed.Limit > remaining {
 			bucketParsed.Limit = remaining
+			wasCapped = true
 		}
 
 		bucketDB, err := mrql.TranslateGroupByBucket(&bucketParsed, ctx.db.WithContext(reqCtx), key)
@@ -275,6 +278,9 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 			totalItems += len(groups)
 		}
 
+		// Track if this bucket was truncated — if so, nextOffset should
+		// point back to it so the next page re-fetches the full bucket.
+		lastBucketTruncated = wasCapped && totalItems >= maxBucketedTotalItems
 		buckets = append(buckets, bucket)
 	}
 
@@ -289,14 +295,18 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 			maxBucketedTotalItems, len(buckets), totalKeys, droppedGroups))
 	}
 
-	// Compute cursor for next page based on actual buckets materialized,
-	// not the requested page size. This ensures the item cap doesn't cause
-	// the next page to skip over un-materialized buckets.
+	// Compute cursor for next page based on actual buckets materialized.
+	// If the last bucket was truncated by the item cap, point back to it
+	// so the next page re-fetches it with the full item limit.
 	offset := 0
 	if parsed.Offset > 0 {
 		offset = parsed.Offset
 	}
-	actualNextOffset := offset + len(buckets)
+	completedBuckets := len(buckets)
+	if lastBucketTruncated && completedBuckets > 0 {
+		completedBuckets-- // don't count the truncated bucket as complete
+	}
+	actualNextOffset := offset + completedBuckets
 	var nextOffset *int
 	if actualNextOffset < len(allKeys) {
 		nextOffset = &actualNextOffset

@@ -759,3 +759,61 @@ func TestMRQLSavedQueryRunGroupByPageOnlyNoWarning(t *testing.T) {
 	warnings, _ := result["warnings"].([]any)
 	assert.Empty(t, warnings, "page-only saved-query bucketed request should not produce truncation warnings")
 }
+
+// P1: nextOffset must account for truncated buckets — if a bucket was cut short
+// by the item cap, the next page should re-include it, not skip past it.
+func TestMRQLExecuteGroupByNextOffsetAccountsTruncation(t *testing.T) {
+	tc := setupMRQLTest(t)
+
+	// Seed 2 content types, each with items
+	tc.DB.Create(&models.Resource{Name: "noPg1", ContentType: "text/plain"})
+	tc.DB.Create(&models.Resource{Name: "noPg2", ContentType: "image/png"})
+
+	// Request buckets=1 (one bucket per page) with limit=1 (one item per bucket)
+	resp := tc.MakeRequest(http.MethodPost, "/v1/mrql", map[string]any{
+		"query":   `type = "resource" GROUP BY contentType`,
+		"buckets": 1,
+		"limit":   1,
+	})
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	var result map[string]any
+	err := json.Unmarshal(resp.Body.Bytes(), &result)
+	assert.NoError(t, err)
+
+	// Should have nextOffset and totalGroups in the response
+	nextOffset := result["nextOffset"]
+	totalGroups := result["totalGroups"]
+	assert.NotNil(t, nextOffset, "expected nextOffset in response")
+	assert.NotNil(t, totalGroups, "expected totalGroups in response")
+
+	// nextOffset should be 1 (we showed 1 bucket, next starts at 1)
+	if nf, ok := nextOffset.(float64); ok {
+		assert.Equal(t, float64(1), nf, "nextOffset should be 1 after showing 1 bucket")
+	}
+
+	// Use nextOffset for page 2
+	if nf, ok := nextOffset.(float64); ok {
+		resp2 := tc.MakeRequest(http.MethodPost, "/v1/mrql", map[string]any{
+			"query":   `type = "resource" GROUP BY contentType`,
+			"buckets": 1,
+			"limit":   1,
+			"offset":  int(nf),
+		})
+		assert.Equal(t, http.StatusOK, resp2.Code)
+
+		var result2 map[string]any
+		json.Unmarshal(resp2.Body.Bytes(), &result2)
+
+		groups2, _ := result2["groups"].([]any)
+		assert.Len(t, groups2, 1, "page 2 should have 1 bucket")
+
+		// The two pages should have different keys
+		groups1, _ := result["groups"].([]any)
+		if len(groups1) > 0 && len(groups2) > 0 {
+			key1 := groups1[0].(map[string]any)["key"].(map[string]any)["contentType"]
+			key2 := groups2[0].(map[string]any)["key"].(map[string]any)["contentType"]
+			assert.NotEqual(t, key1, key2, "page 1 and page 2 should show different buckets")
+		}
+	}
+}

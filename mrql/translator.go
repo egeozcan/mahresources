@@ -1781,13 +1781,12 @@ func (tc *translateContext) aggregateExpr(agg AggregateFunc) (string, string) {
 		return "COUNT(*)", "count"
 	default:
 		fieldName := agg.Field.Name()
-		// All aggregates on meta.* use numeric cast on PG — non-numeric values become
-		// NULL and are excluded. This gives correct numeric ordering for MIN/MAX and
-		// correct arithmetic for SUM/AVG. Without the cast, PG text ordering makes
-		// MAX("2","10")="2" which is wrong. Non-numeric meta values are excluded
-		// from aggregation, matching SUM/AVG behavior. SQLite's json_extract returns
-		// native types so this only affects the PG codepath.
-		needsNumericCast := strings.HasPrefix(fieldName, "meta.")
+		// SUM/AVG on meta require numeric cast (non-numeric → NULL).
+		// MIN/MAX on meta use text extraction — this includes all values (strings
+		// and numbers) but gives lexicographic order on PG for multi-digit numbers.
+		// This is the correct trade-off: casting would silently drop all string
+		// metadata from MIN/MAX, which is worse than imperfect numeric ordering.
+		needsNumericCast := (agg.Name == "SUM" || agg.Name == "AVG") && strings.HasPrefix(fieldName, "meta.")
 		col := tc.resolveAggregateColumn(fieldName, needsNumericCast)
 		alias := strings.ToLower(agg.Name) + "_" + fieldName
 		return fmt.Sprintf("%s(%s)", agg.Name, col), alias
@@ -1796,7 +1795,8 @@ func (tc *translateContext) aggregateExpr(agg AggregateFunc) (string, string) {
 
 // resolveAggregateColumn converts a field name to its SQL column expression.
 // numericCast controls whether meta fields are cast to numeric on PostgreSQL.
-// SUM/AVG require numeric; MIN/MAX work on text and should not cast.
+// SUM/AVG require numeric (non-numeric → NULL). MIN/MAX use text extraction
+// to include all values including non-numeric strings.
 func (tc *translateContext) resolveAggregateColumn(fieldName string, numericCast bool) string {
 	if strings.HasPrefix(fieldName, "meta.") {
 		key := strings.TrimPrefix(fieldName, "meta.")

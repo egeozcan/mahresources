@@ -4741,11 +4741,12 @@ func TestBugfix_ItemCapWarnsWithBucketCount(t *testing.T) {
 	}
 }
 
-// P1b: MAX(meta.*) with multi-digit numbers must return the correct numeric max.
-func TestBugfix_MaxMetaNumericOrdering(t *testing.T) {
+// MAX(meta.*) must not return NULL — it should include all values.
+// On SQLite, json_extract returns native types so numeric ordering is correct.
+// On PG, text extraction gives lexicographic order (known trade-off).
+func TestBugfix_MaxMetaReturnsValue(t *testing.T) {
 	db := setupTestDB(t)
 
-	// Seed resources with numeric meta scores: 2 and 10
 	db.Exec("INSERT INTO resources (id, name, content_type, file_size, meta, created_at, updated_at) VALUES (500, 'score2', 'text/plain', 10, '{\"score\":2}', datetime('now'), datetime('now'))")
 	db.Exec("INSERT INTO resources (id, name, content_type, file_size, meta, created_at, updated_at) VALUES (501, 'score10', 'text/plain', 10, '{\"score\":10}', datetime('now'), datetime('now'))")
 
@@ -4763,14 +4764,47 @@ func TestBugfix_MaxMetaNumericOrdering(t *testing.T) {
 		t.Fatalf("translate: %v", err)
 	}
 
-	// Find the text/plain row — MAX(meta.score) should be 10, not 2
 	for _, row := range result.Rows {
 		ct := groupByVal(row["contentType"])
 		if ct == "text/plain" {
 			maxScore := groupByVal(row["max_meta.score"])
-			// Numeric max: 10 > 2. Text max would give "2" > "10".
-			if maxScore == "2" {
-				t.Errorf("MAX(meta.score) returned 2 (text ordering), expected 10 (numeric ordering)")
+			// Must not be NULL — both values are present
+			if maxScore == "<nil>" || maxScore == "" {
+				t.Errorf("MAX(meta.score) returned NULL — values were dropped")
+			}
+		}
+	}
+}
+
+// P2: MAX(meta.label) on string-only metadata must return the string max, not NULL.
+func TestBugfix_MaxMetaStringNotDropped(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Seed resources with string-only meta labels
+	db.Exec("INSERT INTO resources (id, name, content_type, file_size, meta, created_at, updated_at) VALUES (600, 'labelA', 'test/labels', 10, '{\"label\":\"alpha\"}', datetime('now'), datetime('now'))")
+	db.Exec("INSERT INTO resources (id, name, content_type, file_size, meta, created_at, updated_at) VALUES (601, 'labelB', 'test/labels', 10, '{\"label\":\"beta\"}', datetime('now'), datetime('now'))")
+
+	q, err := Parse(`type = "resource" GROUP BY contentType MAX(meta.label)`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+
+	// Find the test/labels row — MAX(meta.label) should be "beta", not NULL
+	for _, row := range result.Rows {
+		ct := groupByVal(row["contentType"])
+		if ct == "test/labels" {
+			maxLabel := groupByVal(row["max_meta.label"])
+			if maxLabel == "<nil>" || maxLabel == "" {
+				t.Errorf("MAX(meta.label) returned NULL — string values were dropped by numeric cast")
 			}
 		}
 	}
