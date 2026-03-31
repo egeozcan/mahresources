@@ -434,7 +434,7 @@ func TestComplete_NoAggregatesOutsideGroupBy(t *testing.T) {
 		{`ORDER BY name `, 14},
 		{`LIMIT 10 `, 9},
 	}
-	aggNames := []string{"COUNT()", "SUM()", "AVG()", "MIN()", "MAX()"}
+	aggNames := []string{"COUNT()", "SUM(field)", "AVG(field)", "MIN(field)", "MAX(field)"}
 	for _, tc := range queries {
 		sugg := Complete(tc.q, tc.c)
 		for _, s := range sugg {
@@ -459,6 +459,33 @@ func TestComplete_PartialAggregateAfterCount(t *testing.T) {
 		for _, s := range suggestions {
 			if s.Value == "" || s.Type == "" {
 				t.Errorf("suggestion has empty Value or Type: %+v", s)
+			}
+		}
+	}
+}
+
+// Partial field typing in GROUP BY should suggest groupable fields, not type/TEXT.
+func TestComplete_PartialFieldInGroupByExcludesTypeAndText(t *testing.T) {
+	// Cursor at end of partial "con" in GROUP BY context
+	suggestions := Complete(`type = "resource" GROUP BY con`, 30)
+	for _, s := range suggestions {
+		if s.Value == "type" {
+			t.Error("'type' should not be suggested when typing a GROUP BY field")
+		}
+		if s.Value == "TEXT" {
+			t.Error("'TEXT' should not be suggested when typing a GROUP BY field")
+		}
+	}
+}
+
+// After ORDER BY in a GROUP BY query, should NOT suggest aggregates.
+func TestComplete_AfterOrderByInGroupByNoAggregates(t *testing.T) {
+	suggestions := Complete(`type = "resource" GROUP BY contentType COUNT() ORDER BY name `, 61)
+	aggNames := []string{"COUNT()", "SUM(field)", "AVG(field)", "MIN(field)", "MAX(field)"}
+	for _, s := range suggestions {
+		for _, agg := range aggNames {
+			if s.Value == agg {
+				t.Errorf("aggregate %q should not be suggested after ORDER BY", agg)
 			}
 		}
 	}

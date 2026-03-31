@@ -265,14 +265,21 @@ func groupByFieldSuggestions(entityType EntityType) []Suggestion {
 	return suggs
 }
 
-// isInGroupByContext returns true if the token stream contains a GROUP BY keyword.
-func isInGroupByContext(tokens []Token) bool {
+// isInGroupByClause returns true if the cursor is within the GROUP BY clause
+// (between GROUP BY and ORDER BY/LIMIT/OFFSET/EOF). Returns false if we've
+// moved past into ORDER BY or LIMIT territory.
+func isInGroupByClause(tokens []Token) bool {
+	foundGroupBy := false
 	for _, t := range tokens {
 		if t.Type == TokenGroupBy {
-			return true
+			foundGroupBy = true
+		}
+		// Once we see ORDER BY, LIMIT, or OFFSET after GROUP BY, we've left the clause
+		if foundGroupBy && (t.Type == TokenOrderBy || t.Type == TokenLimit || t.Type == TokenOffset) {
+			return false
 		}
 	}
-	return false
+	return foundGroupBy
 }
 
 // suggestionsForContext analyses the token stream and returns the appropriate
@@ -312,10 +319,9 @@ func suggestionsForContext(tokens []Token, entityType EntityType, cursor int) []
 		}
 	}
 
-	// Check for GROUP BY context: if we see TokenGroupBy in the token stream
-	// and we're past the group-by fields, suggest aggregates.
-	if isInGroupByContext(tokens) {
-		// After a field name in GROUP BY context (with space after it),
+	// Check for GROUP BY clause context: between GROUP BY and ORDER BY/LIMIT.
+	if isInGroupByClause(tokens) {
+		// After a field name in GROUP BY clause (with space after it),
 		// suggest aggregates + ORDER BY + LIMIT.
 		if last.Type == TokenIdentifier || last.Type == TokenKwType {
 			if !cursorAtTokenEnd {
@@ -325,10 +331,10 @@ func suggestionsForContext(tokens []Token, entityType EntityType, cursor int) []
 				suggs = append(suggs, Suggestion{Value: "LIMIT", Type: "keyword"})
 				return suggs
 			}
-			// Still typing the field name — suggest fields.
-			return fieldSuggestions(entityType)
+			// Still typing the field name — suggest groupable fields only.
+			return groupByFieldSuggestions(entityType)
 		}
-		// After closing paren in GROUP BY context — suggest more aggregates or ORDER BY/LIMIT.
+		// After closing paren in GROUP BY clause — suggest more aggregates or ORDER BY/LIMIT.
 		if last.Type == TokenRParen {
 			return postAggregateKeywords
 		}
