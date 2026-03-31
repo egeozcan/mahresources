@@ -28,6 +28,7 @@ import { registerBulkSelectionStore, bulkSelectionForms, selectableItem, setupBu
 import { registerSavedSettingStore } from './components/storeConfig.js';
 import { globalSearch } from './components/globalSearch.js';
 import { schemaForm } from './components/schemaForm.js';
+import { schemaSearchFields } from './components/schemaSearchFields.js';
 import { registerLightboxStore } from './components/lightbox.js';
 import { registerEntityPickerStore } from './components/picker/index.js';
 import { registerPasteUploadStore, setupPasteListener } from './components/pasteUpload.js';
@@ -93,6 +94,7 @@ Alpine.data('bulkSelectionForms', bulkSelectionForms);
 Alpine.data('selectableItem', selectableItem);
 Alpine.data('globalSearch', globalSearch);
 Alpine.data('schemaForm', schemaForm);
+Alpine.data('schemaSearchFields', schemaSearchFields);
 Alpine.data('multiSort', multiSort);
 Alpine.data('downloadCockpit', downloadCockpit);
 Alpine.data('compareView', compareView);
