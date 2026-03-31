@@ -303,6 +303,13 @@ func (tc *translateContext) flipOperator(op Token) Token {
 // comparisons (owner.X, parent.X, children.X, owner.parent.X, etc.).
 func (tc *translateContext) translateChainedComparison(db *gorm.DB, expr *ComparisonExpr) (*gorm.DB, error) {
 	parts := expr.Field.Parts
+
+	// Handle meta.key leaf: owner.meta.region, owner.parent.meta.key
+	// Detected when second-to-last part is "meta".
+	if len(parts) >= 3 && parts[len(parts)-2].Value == "meta" {
+		return tc.translateChainedMetaComparison(db, expr)
+	}
+
 	leaf := parts[len(parts)-1].Value
 
 	// Look up the leaf field on the group entity (all traversals resolve to groups)
@@ -328,6 +335,46 @@ func (tc *translateContext) translateChainedComparison(db *gorm.DB, expr *Compar
 
 	// Scalar sub-field
 	return tc.translateFKChainScalar(db, steps, subFd.Column, expr.Operator, val, subFd)
+}
+
+// translateChainedMetaComparison handles traversal chains ending in meta.key
+// (e.g., owner.meta.region = "eu", owner.parent.meta.key ~ "val*").
+func (tc *translateContext) translateChainedMetaComparison(db *gorm.DB, expr *ComparisonExpr) (*gorm.DB, error) {
+	parts := expr.Field.Parts
+	metaKey := parts[len(parts)-1].Value
+
+	// Build FK chain for everything before "meta" (e.g., [owner] or [owner, parent]).
+	// Append a dummy leaf so buildTraversalChain processes all traversal steps.
+	chainParts := make([]Token, 0, len(parts)-1)
+	chainParts = append(chainParts, parts[:len(parts)-2]...)
+	chainParts = append(chainParts, Token{Value: "_meta_leaf"})
+	steps := tc.buildTraversalChain(chainParts)
+
+	// The innermost subquery compares the meta JSON field on the final joined group.
+	innerAlias := steps[len(steps)-1].alias
+	var jsonExpr string
+	if tc.isPostgres() {
+		jsonExpr = fmt.Sprintf("%s.meta->>'%s'", innerAlias, metaKey)
+	} else {
+		jsonExpr = fmt.Sprintf("json_extract(%s.meta, '$.%s')", innerAlias, metaKey)
+	}
+
+	// Resolve the comparison value as a string (meta fields are dynamically typed)
+	metaFd := FieldDef{Name: "meta." + metaKey, Type: FieldMeta, Column: "meta." + metaKey}
+	val, err := tc.resolveValue(expr.Value, metaFd)
+	if err != nil {
+		return nil, err
+	}
+
+	innerWhere, innerVal := tc.buildScalarClause(jsonExpr, expr.Operator, val, metaFd)
+	sql, vals := tc.wrapChainSubqueries(steps, innerWhere, []interface{}{innerVal})
+
+	isNegated := expr.Operator.Type == TokenNeq || expr.Operator.Type == TokenNotLike
+	if isNegated {
+		sql = "(" + sql + " OR " + tc.negatedNullClause(steps[0]) + ")"
+	}
+	db = db.Where(sql, vals...)
+	return db, nil
 }
 
 // entityTableName returns the database table name for an entity type.

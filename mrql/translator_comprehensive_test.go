@@ -4664,3 +4664,62 @@ func TestBugfix_MetaAggregateSafeNumericCast(t *testing.T) {
 		t.Errorf("expected aggregated, got %s", result.Mode)
 	}
 }
+
+// P1: BucketLimit must be clamped to MaxBuckets.
+func TestBugfix_BucketLimitClampedToMax(t *testing.T) {
+	db := setupTestDB(t)
+
+	q, err := Parse(`type = "resource" GROUP BY contentType`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	q.EntityType = EntityResource
+	q.BucketLimit = 5000 // exceeds MaxBuckets
+
+	keys, err := TranslateGroupByKeys(q, db)
+	if err != nil {
+		t.Fatalf("keys: %v", err)
+	}
+	// Even with BucketLimit=5000, should be capped at MaxBuckets+1 (overflow detection)
+	if len(keys) > MaxBuckets+1 {
+		t.Errorf("expected at most %d keys (MaxBuckets+1), got %d", MaxBuckets+1, len(keys))
+	}
+}
+
+// P2: Traversal meta comparisons in WHERE must translate correctly.
+func TestBugfix_TraversalMetaComparisonInWhere(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Vacation has meta.region = "europe". sunset.jpg is owned by Vacation.
+	result := parseAndTranslate(t, `type = "resource" AND owner.meta.region = "europe"`, EntityResource, db)
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(resources) != 1 {
+		t.Errorf("expected 1 resource (sunset.jpg), got %d: %v", len(resources), namesOfResources(resources))
+	}
+	if len(resources) == 1 && resources[0].Name != "sunset.jpg" {
+		t.Errorf("expected sunset.jpg, got %s", resources[0].Name)
+	}
+}
+
+func TestBugfix_TraversalMetaComparisonDeep(t *testing.T) {
+	db := setupTestDB(t)
+
+	// owner.parent.meta.region: report.pdf → Work → parent=Vacation (region=europe)
+	result := parseAndTranslate(t, `type = "resource" AND owner.parent.meta.region = "europe"`, EntityResource, db)
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(resources) != 1 {
+		t.Errorf("expected 1 resource (report.pdf), got %d: %v", len(resources), namesOfResources(resources))
+	}
+	if len(resources) == 1 && resources[0].Name != "report.pdf" {
+		t.Errorf("expected report.pdf, got %s", resources[0].Name)
+	}
+}
