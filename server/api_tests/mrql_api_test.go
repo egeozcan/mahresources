@@ -710,3 +710,52 @@ func TestMRQLExecuteGroupByInlineLimitAndPage(t *testing.T) {
 		assert.NotEqual(t, key1, key2, "pages should have different bucket keys")
 	}
 }
+
+// Bucketed query with page-only (no buckets/limit params) must not show truncation warning.
+func TestMRQLExecuteGroupByPageOnlyNoWarning(t *testing.T) {
+	tc := setupMRQLTest(t)
+
+	tc.DB.Create(&models.Resource{Name: "pageOnly1", ContentType: "text/plain"})
+	tc.DB.Create(&models.Resource{Name: "pageOnly2", ContentType: "image/png"})
+
+	// Send only page=1, no limit or buckets param
+	resp := tc.MakeRequest(http.MethodPost, "/v1/mrql", map[string]any{
+		"query": `type = "resource" GROUP BY contentType`,
+		"page":  1,
+	})
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	var result map[string]any
+	err := json.Unmarshal(resp.Body.Bytes(), &result)
+	assert.NoError(t, err)
+	assert.Equal(t, "bucketed", result["mode"])
+
+	// Should NOT have any warnings — this is a paginated request, not a truncation
+	warnings, _ := result["warnings"].([]any)
+	assert.Empty(t, warnings, "page-only bucketed query should not produce truncation warnings")
+}
+
+// Same test for saved-query path.
+func TestMRQLSavedQueryRunGroupByPageOnlyNoWarning(t *testing.T) {
+	tc := setupMRQLTest(t)
+
+	tc.DB.Create(&models.Resource{Name: "savedPageOnly1", ContentType: "text/plain"})
+	tc.DB.Create(&models.Resource{Name: "savedPageOnly2", ContentType: "image/png"})
+
+	saved := &models.SavedMRQLQuery{
+		Name:  "PageOnlyTest",
+		Query: `type = "resource" GROUP BY contentType`,
+	}
+	tc.DB.Create(saved)
+
+	resp := tc.MakeRequest(http.MethodPost, fmt.Sprintf("/v1/mrql/saved/run?id=%d&page=1", saved.ID), nil)
+	assert.Equal(t, http.StatusOK, resp.Code)
+
+	var result map[string]any
+	err := json.Unmarshal(resp.Body.Bytes(), &result)
+	assert.NoError(t, err)
+	assert.Equal(t, "bucketed", result["mode"])
+
+	warnings, _ := result["warnings"].([]any)
+	assert.Empty(t, warnings, "page-only saved-query bucketed request should not produce truncation warnings")
+}
