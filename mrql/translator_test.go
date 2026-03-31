@@ -129,7 +129,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		{ID: 1, Name: "sunset.jpg", OriginalName: "sunset.jpg", ContentType: "image/jpeg", FileSize: 1024000, Width: 1920, Height: 1080, CreatedAt: now, UpdatedAt: now, Meta: `{"rating":5}`},
 		{ID: 2, Name: "photo_album.png", OriginalName: "photo_album.png", ContentType: "image/png", FileSize: 2048000, Width: 800, Height: 600, CreatedAt: now, UpdatedAt: now, Meta: `{"rating":3}`},
 		{ID: 3, Name: "report.pdf", OriginalName: "report.pdf", ContentType: "application/pdf", FileSize: 512000, CreatedAt: now, UpdatedAt: now, Meta: `{}`},
-		{ID: 4, Name: "untagged_file.txt", OriginalName: "untagged.txt", ContentType: "text/plain", FileSize: 100, CreatedAt: now.Add(-24 * 30 * time.Hour), UpdatedAt: now, Meta: `{}`},
+		{ID: 4, Name: "untagged_file.txt", OriginalName: "untagged.txt", ContentType: "text/plain", FileSize: 100, CreatedAt: now.Add(-24 * 45 * time.Hour), UpdatedAt: now, Meta: `{}`},
 	}
 	for _, r := range resources {
 		db.Create(&r)
