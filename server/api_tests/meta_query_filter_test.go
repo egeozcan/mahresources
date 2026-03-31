@@ -263,6 +263,38 @@ func TestMetaQueryPrefixedSameKeyOR(t *testing.T) {
 		assert.Contains(t, names, "Child of Red")
 		assert.Contains(t, names, "Child of Green")
 	})
+
+	t.Run("child-prefixed same-key EQ entries are OR'd", func(t *testing.T) {
+		// Find parents with a child whose color is red OR green.
+		parentWithRedChild := &models.Group{Name: "Parent With Red Child", Description: "p4", Meta: []byte(`{}`)}
+		tc.DB.Create(parentWithRedChild)
+		parentWithGreenChild := &models.Group{Name: "Parent With Green Child", Description: "p5", Meta: []byte(`{}`)}
+		tc.DB.Create(parentWithGreenChild)
+		parentWithBlueChild := &models.Group{Name: "Parent With Blue Child", Description: "p6", Meta: []byte(`{}`)}
+		tc.DB.Create(parentWithBlueChild)
+
+		tc.DB.Create(&models.Group{Name: "Red Child", Description: "rc", OwnerId: &parentWithRedChild.ID, Meta: []byte(`{"color":"red"}`)})
+		tc.DB.Create(&models.Group{Name: "Green Child", Description: "gc", OwnerId: &parentWithGreenChild.ID, Meta: []byte(`{"color":"green"}`)})
+		tc.DB.Create(&models.Group{Name: "Blue Child", Description: "bc", OwnerId: &parentWithBlueChild.ID, Meta: []byte(`{"color":"blue"}`)})
+
+		reqURL := fmt.Sprintf("/v1/groups?MetaQuery=%s&MetaQuery=%s",
+			url.QueryEscape(`child.color:EQ:"red"`),
+			url.QueryEscape(`child.color:EQ:"green"`))
+		resp := tc.MakeRequest(http.MethodGet, reqURL, nil)
+		assert.Equal(t, http.StatusOK, resp.Code)
+
+		var groups []models.Group
+		err := json.Unmarshal(resp.Body.Bytes(), &groups)
+		require.NoError(t, err)
+
+		assert.Len(t, groups, 2, "child-prefixed same-key EQ should be OR'd")
+		names := make([]string, len(groups))
+		for i, g := range groups {
+			names[i] = g.Name
+		}
+		assert.Contains(t, names, "Parent With Red Child")
+		assert.Contains(t, names, "Parent With Green Child")
+	})
 }
 
 // TestMetaQueryFilterViaFormEncoding verifies MetaQuery works when submitted

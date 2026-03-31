@@ -319,6 +319,23 @@ test.describe('Schema-Driven Search Fields', () => {
     await expect(container.locator('input, select')).toHaveCount(0);
   });
 
+  test('mixing a schema category with a category without MetaSchema hides schema fields', async ({
+    groupPage,
+    page,
+  }) => {
+    await groupPage.gotoList();
+    await selectGroupCategory(page, `Schema Cat A ${runId}`);
+
+    const container = schemaFieldsGroup(page);
+    await expect(container.locator('input, select')).not.toHaveCount(0);
+
+    await selectGroupCategory(page, `Schema Cat None ${runId}`);
+
+    // A missing schema anywhere in the selected set should suppress
+    // schema-driven filters rather than imply they apply to all categories.
+    await expect(container.locator('input, select')).toHaveCount(0);
+  });
+
   // ── 9. Operator override ───────────────────────────────────────────────────
 
   test('clicking the operator symbol, changing it, then submitting reflects new operator in URL', async ({

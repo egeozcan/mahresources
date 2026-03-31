@@ -154,6 +154,16 @@ export function schemaSearchFields({ elName, existingMetaQuery, initialCategorie
       }
     },
 
+    clearFields(hadFields) {
+      this.fields = [];
+      this.hasFields = false;
+      this.fieldsCleared = hadFields;
+      // Release all claimed paths so freeFields can restore them.
+      window.dispatchEvent(new CustomEvent('schema-fields-claimed', {
+        detail: { paths: [] },
+      }));
+    },
+
     handleCategoryChange(items) {
       const hadFields = this.hasFields;
 
@@ -169,22 +179,31 @@ export function schemaSearchFields({ elName, existingMetaQuery, initialCategorie
         });
       }
 
-      const schemas = items
-        .filter(item => item.MetaSchema)
-        .map(item => {
-          try { return JSON.parse(item.MetaSchema); }
-          catch { return null; }
-        })
-        .filter(Boolean);
+      const selectedItems = items || [];
+      if (selectedItems.length === 0) {
+        this.clearFields(hadFields);
+        return;
+      }
+
+      const schemas = [];
+      for (const item of selectedItems) {
+        // If any selected category lacks a usable schema, the safe fallback is
+        // to hide schema-driven filters rather than imply they apply to all.
+        if (!item?.MetaSchema) {
+          this.clearFields(hadFields);
+          return;
+        }
+
+        try {
+          schemas.push(JSON.parse(item.MetaSchema));
+        } catch {
+          this.clearFields(hadFields);
+          return;
+        }
+      }
 
       if (schemas.length === 0) {
-        this.fields = [];
-        this.hasFields = false;
-        this.fieldsCleared = hadFields;
-        // Release all claimed paths so freeFields can restore them
-        window.dispatchEvent(new CustomEvent('schema-fields-claimed', {
-          detail: { paths: [] },
-        }));
+        this.clearFields(hadFields);
         return;
       }
 
