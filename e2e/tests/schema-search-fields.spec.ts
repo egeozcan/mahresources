@@ -643,4 +643,40 @@ test.describe('Schema-Driven Search Fields', () => {
     }
     expect(hasWeight, 'freeFields should restore "weight" after schema category is removed').toBe(true);
   });
+
+  // ── 18. Range queries (multi-match non-enum) stay in freeFields ─────────────
+
+  test('range query (weight:GT:5 + weight:LT:10) is preserved in freeFields, not claimed by schema', async ({
+    groupPage,
+    page,
+  }) => {
+    // Navigate directly with a range query in the URL
+    await page.goto(`/groups?categories=${categoryWithSchemaId}&MetaQuery.0=${encodeURIComponent('weight:GT:5')}&MetaQuery.1=${encodeURIComponent('weight:LT:10')}`);
+    await page.waitForLoadState('load');
+
+    // Wait for Alpine to initialise
+    await page.waitForTimeout(500);
+
+    // The schema weight field should NOT pre-fill (it can't represent a range)
+    const container = schemaFieldsGroup(page);
+    // Schema fields may or may not render — if they do, weight should be empty
+    const schemaWeightInputs = container.locator('input[type="number"]');
+    const schemaCount = await schemaWeightInputs.count();
+    if (schemaCount > 0) {
+      // If schema field is shown, it should be empty (not pre-filled with one of the range values)
+      const firstVal = await schemaWeightInputs.first().inputValue();
+      expect(firstVal, 'schema weight field should be empty for range queries').toBe('');
+    }
+
+    // The freeFields section should still show the two weight entries
+    const freeFieldsGroup = page.locator('[role="group"][aria-label="Meta"]');
+    const freeFieldNameInputs = freeFieldsGroup.locator('input[type="text"]');
+    const count = await freeFieldNameInputs.count();
+    let weightCount = 0;
+    for (let i = 0; i < count; i++) {
+      const val = await freeFieldNameInputs.nth(i).inputValue();
+      if (val === 'weight') weightCount++;
+    }
+    expect(weightCount, 'freeFields should keep both weight range entries').toBe(2);
+  });
 });

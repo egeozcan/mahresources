@@ -210,11 +210,22 @@ export function schemaSearchFields({ elName, existingMetaQuery, initialCategorie
       const fieldLists = schemas.map(s => flattenSchema(s));
       const merged = schemas.length === 1 ? fieldLists[0] : intersectFields(fieldLists);
 
+      // Track paths we can't represent (e.g., range queries on non-enum fields)
+      // so we don't claim them from freeFields.
+      const unclaimable = new Set();
+
       this.fields = merged.map(field => {
         const op = defaultOperator(field);
         // Prefer in-progress values (from current session), fall back to URL state
         const current = currentValues.get(field.path);
-        const existing = current || this._findExistingValue(field.path);
+        let existing = current || this._findExistingValue(field.path);
+
+        // Non-enum fields with multiple URL matches (e.g., weight:GT:5 + weight:LT:10)
+        // can't be represented in a single input. Leave them for freeFields.
+        if (!field.enum && field.type !== 'boolean' && existing && existing.enumValues.length > 0) {
+          existing = null;
+          unclaimable.add(field.path);
+        }
 
         let enumValues = existing ? existing.enumValues : [];
         // For enum fields with a single existing value, _findExistingValue puts
@@ -240,8 +251,12 @@ export function schemaSearchFields({ elName, existingMetaQuery, initialCategorie
 
       // Notify freeFields which paths are claimed by schema fields so it
       // can exclude them and avoid duplicate MetaQuery submissions.
+      // Exclude paths we can't represent (range queries, etc.).
+      const claimedPaths = this.fields
+        .filter(f => !unclaimable.has(f.path))
+        .map(f => f.path);
       window.dispatchEvent(new CustomEvent('schema-fields-claimed', {
-        detail: { paths: this.fields.map(f => f.path) },
+        detail: { paths: claimedPaths },
       }));
     },
 
