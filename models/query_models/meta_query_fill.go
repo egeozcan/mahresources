@@ -51,6 +51,9 @@ func FillMetaQueryFromRequest(request *http.Request, dst interface{}) {
 	}
 
 	if len(parsed) > 0 {
-		field.Set(reflect.ValueOf(parsed))
+		// Append to any values already decoded by gorilla/schema (from indexed
+		// MetaQuery.N params) rather than overwriting them.
+		existing, _ := field.Interface().([]ColumnMeta)
+		field.Set(reflect.ValueOf(append(existing, parsed...)))
 	}
 }

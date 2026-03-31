@@ -124,6 +124,58 @@ func TestMetaQueryFilterResources(t *testing.T) {
 	})
 }
 
+// TestMetaQueryMixedBareAndIndexed verifies that bare MetaQuery=... params
+// (from schemaSearchFields) and indexed MetaQuery.N=... params (from freeFields)
+// are BOTH applied when present in the same request.
+func TestMetaQueryMixedBareAndIndexed(t *testing.T) {
+	tc := SetupTestEnv(t)
+	requireJsonPatch(t, tc.DB)
+
+	// Create groups where only one matches BOTH filters
+	g1 := &models.Group{Name: "Mixed A", Description: "first", Meta: []byte(`{"color":"red","weight":5}`)}
+	g2 := &models.Group{Name: "Mixed B", Description: "second", Meta: []byte(`{"color":"blue","weight":5}`)}
+	g3 := &models.Group{Name: "Mixed C", Description: "third", Meta: []byte(`{"color":"red","weight":99}`)}
+	tc.DB.Create(g1)
+	tc.DB.Create(g2)
+	tc.DB.Create(g3)
+
+	t.Run("bare and indexed MetaQuery params are both applied", func(t *testing.T) {
+		// Simulate form submission with both:
+		//   - bare MetaQuery=weight:EQ:5  (from schemaSearchFields hidden input)
+		//   - indexed MetaQuery.0=color:red (from freeFields hidden input)
+		// Only g1 matches both conditions.
+		reqURL := fmt.Sprintf("/v1/groups?MetaQuery=%s&MetaQuery.0=%s",
+			url.QueryEscape("weight:EQ:5"),
+			url.QueryEscape("color:red"))
+		resp := tc.MakeRequest(http.MethodGet, reqURL, nil)
+		assert.Equal(t, http.StatusOK, resp.Code)
+
+		var groups []models.Group
+		err := json.Unmarshal(resp.Body.Bytes(), &groups)
+		require.NoError(t, err)
+		assert.Len(t, groups, 1, "Both bare MetaQuery and indexed MetaQuery.N should be applied — only g1 matches both")
+		if len(groups) == 1 {
+			assert.Equal(t, g1.ID, groups[0].ID)
+		}
+	})
+
+	t.Run("indexed-only MetaQuery.N still works when no bare MetaQuery present", func(t *testing.T) {
+		reqURL := fmt.Sprintf("/v1/groups?MetaQuery.0=%s&MetaQuery.1=%s",
+			url.QueryEscape("color:red"),
+			url.QueryEscape("weight:EQ:5"))
+		resp := tc.MakeRequest(http.MethodGet, reqURL, nil)
+		assert.Equal(t, http.StatusOK, resp.Code)
+
+		var groups []models.Group
+		err := json.Unmarshal(resp.Body.Bytes(), &groups)
+		require.NoError(t, err)
+		assert.Len(t, groups, 1, "Indexed MetaQuery.N params should work on their own")
+		if len(groups) == 1 {
+			assert.Equal(t, g1.ID, groups[0].ID)
+		}
+	})
+}
+
 // TestMetaQueryFilterViaFormEncoding verifies MetaQuery works when submitted
 // as form-encoded data (as template pages would use).
 func TestMetaQueryFilterViaFormEncoding(t *testing.T) {
