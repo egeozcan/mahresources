@@ -64,6 +64,7 @@ func NewMRQLCmd(c *client.Client, opts *output.Options, page *int) *cobra.Comman
 		fileFlag string
 		limit    int
 		buckets  int
+		offset   int
 	)
 
 	mrqlCmd := &cobra.Command{
@@ -117,6 +118,9 @@ GROUP BY (bucketed — returns grouped entities):
 			if cmd.Flags().Changed("buckets") {
 				body["buckets"] = buckets
 			}
+			if cmd.Flags().Changed("offset") {
+				body["offset"] = offset
+			}
 			if cmd.Flags().Changed("page") {
 				body["page"] = *page
 			}
@@ -134,6 +138,7 @@ GROUP BY (bucketed — returns grouped entities):
 	mrqlCmd.Flags().StringVarP(&fileFlag, "file", "f", "", "Read query from file")
 	mrqlCmd.Flags().IntVar(&limit, "limit", 0, "Items per bucket for GROUP BY, or total items for regular queries")
 	mrqlCmd.Flags().IntVar(&buckets, "buckets", 0, "Groups per page for bucketed GROUP BY queries")
+	mrqlCmd.Flags().IntVar(&offset, "offset", 0, "Bucket offset for cursor-based GROUP BY pagination")
 
 	mrqlCmd.AddCommand(newMRQLSaveCmd(c, opts))
 	mrqlCmd.AddCommand(newMRQLListCmd(c, opts, page))
@@ -226,6 +231,7 @@ func newMRQLRunCmd(c *client.Client, opts *output.Options, page *int) *cobra.Com
 	var (
 		limit   int
 		buckets int
+		offset  int
 	)
 
 	cmd := &cobra.Command{
@@ -245,6 +251,9 @@ func newMRQLRunCmd(c *client.Client, opts *output.Options, page *int) *cobra.Com
 			if cmd.Flags().Changed("buckets") {
 				q.Set("buckets", strconv.Itoa(buckets))
 			}
+			if cmd.Flags().Changed("offset") {
+				q.Set("offset", strconv.Itoa(offset))
+			}
 			if cmd.Flags().Changed("page") {
 				q.Set("page", strconv.Itoa(*page))
 			}
@@ -261,6 +270,7 @@ func newMRQLRunCmd(c *client.Client, opts *output.Options, page *int) *cobra.Com
 
 	cmd.Flags().IntVar(&limit, "limit", 0, "Items per bucket for GROUP BY, or total items for regular queries")
 	cmd.Flags().IntVar(&buckets, "buckets", 0, "Groups per page for bucketed GROUP BY queries")
+	cmd.Flags().IntVar(&offset, "offset", 0, "Bucket offset for cursor-based GROUP BY pagination")
 
 	return cmd
 }
