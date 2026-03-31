@@ -125,8 +125,7 @@ func TranslateGroupByBucket(q *Query, db *gorm.DB, key map[string]any) (*gorm.DB
 		tableName:  entityTableName(entityType),
 	}
 
-	// Use DISTINCT to prevent duplicates when relation JOINs multiply rows.
-	result := db.Table(tc.tableName).Distinct(tc.tableName + ".*")
+	result := db.Table(tc.tableName)
 
 	// Apply WHERE clause from the original query
 	if q.Where != nil {
@@ -168,6 +167,11 @@ func TranslateGroupByBucket(q *Query, db *gorm.DB, key map[string]any) (*gorm.DB
 			result = result.Where(expr+" = ?", val)
 		}
 	}
+
+	// Deduplicate via GROUP BY on primary key — safer than DISTINCT
+	// because PostgreSQL allows ORDER BY on expressions not in SELECT
+	// when they're functionally dependent on the GROUP BY key.
+	result = result.Group(tc.tableName + ".id")
 
 	// Apply per-bucket LIMIT
 	if q.Limit >= 0 {

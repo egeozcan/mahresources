@@ -1781,7 +1781,9 @@ func (tc *translateContext) aggregateExpr(agg AggregateFunc) (string, string) {
 		return "COUNT(*)", "count"
 	default:
 		fieldName := agg.Field.Name()
-		needsNumericCast := agg.Name == "SUM" || agg.Name == "AVG"
+		// All numeric aggregates (SUM/AVG/MIN/MAX) need numeric cast for meta fields
+		// so that MIN/MAX sort numerically, not lexicographically ("10" < "5" in text).
+		needsNumericCast := strings.HasPrefix(fieldName, "meta.")
 		col := tc.resolveAggregateColumn(fieldName, needsNumericCast)
 		alias := strings.ToLower(agg.Name) + "_" + fieldName
 		return fmt.Sprintf("%s(%s)", agg.Name, col), alias

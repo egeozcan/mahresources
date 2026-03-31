@@ -194,7 +194,12 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 
 	var warnings []string
 	if len(keys) > keyLimit {
-		warnings = append(warnings, fmt.Sprintf("Only the first %d groups are shown. Add filters to narrow the result set.", keyLimit))
+		// Only warn about truncation when hitting the MaxBuckets ceiling (unpaginated).
+		// When using paginated bucket limits, the extra key is just a "has next page"
+		// indicator — not a truncation warning.
+		if keyLimit == mrql.MaxBuckets {
+			warnings = append(warnings, fmt.Sprintf("Only the first %d groups are shown. Add filters to narrow the result set.", keyLimit))
+		}
 		keys = keys[:keyLimit]
 	}
 
