@@ -49,6 +49,15 @@ export class SchemaFormMode extends LitElement {
   }
 
   override willUpdate(changed: Map<string, unknown>) {
+    // When Alpine binds with :schema="currentSchema", the value may arrive as
+    // a JSON string (from the API) rather than a parsed object.  Handle both.
+    if (changed.has('schema') && typeof this.schema === 'string') {
+      try {
+        this.schema = JSON.parse(this.schema as unknown as string);
+      } catch {
+        this.schema = {};
+      }
+    }
     if (changed.has('value') || changed.has('schema')) {
       this._data = this.value != null ? (typeof this.value === 'string' ? this._safeParse(this.value) : structuredClone(this.value)) : {};
     }

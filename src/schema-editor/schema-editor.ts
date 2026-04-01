@@ -17,6 +17,22 @@ export class SchemaEditor extends LitElement {
     `,
   ];
 
+  /**
+   * Form and search modes need light DOM so that hidden inputs are visible
+   * to the parent `<form>` element and Tailwind styles are inherited.
+   * Edit mode uses shadow DOM for style isolation inside the modal.
+   *
+   * Note: `createRenderRoot` is called once during first render and cached.
+   * In practice each `<schema-editor>` element has a fixed `mode` attribute
+   * set in the template, so this works correctly.
+   */
+  override createRenderRoot() {
+    if (this.mode === 'edit') {
+      return super.createRenderRoot();
+    }
+    return this;
+  }
+
   @property({ type: String }) mode: 'edit' | 'form' | 'search' = 'edit';
   @property({ type: String }) schema = '';
   @property({ type: String }) value = '';

@@ -77,12 +77,11 @@
                     <template x-if="currentSchema">
                         <div class="border p-4 rounded-md bg-stone-50 mt-5">
                             <h2 class="text-sm font-medium font-mono text-stone-700 mb-3">Meta Data (Schema Enforced)</h2>
-                            <schema-editor
-                                mode="form"
+                            <schema-form-mode
                                 :schema="currentSchema"
                                 value='{{ group.Meta|json }}'
                                 name="Meta"
-                            ></schema-editor>
+                            ></schema-form-mode>
                         </div>
                     </template>
                     <template x-if="!currentSchema">

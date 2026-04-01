@@ -370,8 +370,8 @@ test.describe('Schema Editor Form Mode', () => {
     await page.goto('/group/new');
     await page.waitForLoadState('load');
 
-    // Before selecting a category, the schema-editor form mode should not be present
-    await expect(page.locator('schema-editor[mode="form"]')).not.toBeVisible();
+    // Before selecting a category, the schema-form-mode should not be present
+    await expect(page.locator('schema-form-mode')).not.toBeVisible();
 
     // Select the category using the autocompleter
     const categoryInput = page.getByRole('combobox', { name: 'Category' });
@@ -387,11 +387,11 @@ test.describe('Schema Editor Form Mode', () => {
     // Give Alpine time to propagate the MetaSchema and re-render
     await page.waitForTimeout(500);
 
-    // The schema-editor in form mode should now be visible
-    await expect(page.locator('schema-editor[mode="form"]')).toBeVisible({ timeout: 5000 });
+    // The schema-form-mode should now be visible
+    await expect(page.locator('schema-form-mode')).toBeVisible({ timeout: 5000 });
 
     // It should contain the field names from our schema (rendered in light DOM by form-mode)
-    const schemaEditor = page.locator('schema-editor[mode="form"]');
+    const schemaEditor = page.locator('schema-form-mode');
     await expect(schemaEditor).toContainText('name');
   });
 
@@ -409,7 +409,7 @@ test.describe('Schema Editor Form Mode', () => {
     await option.waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {});
     await page.waitForTimeout(500);
 
-    const schemaEditor = page.locator('schema-editor[mode="form"]');
+    const schemaEditor = page.locator('schema-form-mode');
     await expect(schemaEditor).toBeVisible({ timeout: 5000 });
 
     // "name" (string) — should render a text input
@@ -420,5 +420,64 @@ test.describe('Schema Editor Form Mode', () => {
     // The form-mode renders enums as <select> or radio depending on count
     const statusControl = schemaEditor.locator('select, input[type="radio"]').first();
     await expect(statusControl).toBeVisible({ timeout: 3000 });
+  });
+
+  test('persists Meta data through form submission', async ({ page, apiClient }) => {
+    // Create a category with a simple MetaSchema
+    const catName = `Meta Persist Test ${runId}`;
+    const simpleSchema = JSON.stringify({
+      type: 'object',
+      properties: { color: { type: 'string' } },
+    });
+    const cat = await apiClient.createCategory(catName, undefined, { MetaSchema: simpleSchema });
+    const catId = cat.ID;
+
+    let createdGroupId: number | undefined;
+
+    try {
+      // Navigate to group create page
+      await page.goto('/group/new');
+      await page.waitForLoadState('load');
+
+      // Select the category
+      const categoryInput = page.getByRole('combobox', { name: 'Category' });
+      await categoryInput.click();
+      await categoryInput.fill(catName);
+      const option = page.locator('div[role="option"]:visible').filter({ hasText: catName }).first();
+      await option.waitFor({ timeout: 10000 });
+      await option.click();
+      await option.waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {});
+      await page.waitForTimeout(500);
+
+      // The schema-driven form should appear
+      const formMode = page.locator('schema-form-mode');
+      await expect(formMode).toBeVisible({ timeout: 5000 });
+
+      // Fill in the group name (required)
+      await page.locator('#form-name').fill(`Meta Test Group ${runId}`);
+
+      // Fill in the "color" field rendered by schema-form-mode
+      const colorInput = formMode.locator('input[type="text"]').first();
+      await expect(colorInput).toBeVisible({ timeout: 3000 });
+      await colorInput.fill('blue');
+
+      // Submit the form
+      await page.locator('button[type="submit"]').click();
+
+      // Should redirect to the created group's detail page
+      await page.waitForURL(/\/group\?id=\d+/, { timeout: 10000 });
+      const url = page.url();
+      const idMatch = url.match(/id=(\d+)/);
+      expect(idMatch).not.toBeNull();
+      createdGroupId = parseInt(idMatch![1], 10);
+
+      // Fetch the group via API to verify Meta was persisted
+      const group = await apiClient.getGroup(createdGroupId);
+      const meta = typeof group.Meta === 'string' ? JSON.parse(group.Meta) : group.Meta;
+      expect(meta).toHaveProperty('color', 'blue');
+    } finally {
+      if (createdGroupId) await apiClient.deleteGroup(createdGroupId);
+      await apiClient.deleteCategory(catId);
+    }
   });
 });
