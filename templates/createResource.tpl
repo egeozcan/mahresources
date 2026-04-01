@@ -163,7 +163,41 @@
                     </div>
                 </div>
 
-                {% include "/partials/form/freeFields.tpl" with name="Meta" url='/v1/resources/meta/keys' fromJSON=resource.Meta jsonOutput="true" id=getNextId("freeField") %}
+                {% set initialResourceSchema = "" %}
+                {% if resource.ResourceCategory %}
+                    {% set initialResourceSchema = resource.ResourceCategory.MetaSchema %}
+                {% elif resourceCategories && resourceCategories.0 %}
+                    {% set initialResourceSchema = resourceCategories.0.MetaSchema %}
+                {% endif %}
+
+                <div x-data="{
+                         currentSchema: {{ initialResourceSchema|default:'null' }},
+                         handleCategoryChange(e) {
+                             if (e.detail.value.length > 0) {
+                                 this.currentSchema = e.detail.value[0].MetaSchema;
+                             } else {
+                                 this.currentSchema = null;
+                             }
+                         }
+                    }"
+                    @multiple-input.window="if ($event.detail.name === 'ResourceCategoryId') handleCategoryChange($event)"
+                    class="w-full"
+                >
+                    <template x-if="currentSchema">
+                        <div class="border p-4 rounded-md bg-stone-50 mt-5">
+                            <h2 class="text-sm font-medium font-mono text-stone-700 mb-3">Meta Data (Schema Enforced)</h2>
+                            <schema-editor
+                                mode="form"
+                                :schema="currentSchema"
+                                value='{{ resource.Meta|json }}'
+                                name="Meta"
+                            ></schema-editor>
+                        </div>
+                    </template>
+                    <template x-if="!currentSchema">
+                        {% include "/partials/form/freeFields.tpl" with name="Meta" url='/v1/resources/meta/keys' fromJSON=resource.Meta jsonOutput="true" id=getNextId("freeField") %}
+                    </template>
+                </div>
             </div>
         </div>
     </div>
