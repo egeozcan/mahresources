@@ -1,0 +1,88 @@
+import { LitElement, html, css, nothing } from 'lit';
+import { customElement, property, state } from 'lit/decorators.js';
+import { sharedStyles } from './styles';
+import type { JSONSchema } from './schema-core';
+
+@customElement('schema-editor')
+export class SchemaEditor extends LitElement {
+  static override styles = [
+    sharedStyles,
+    css`
+      :host {
+        display: block;
+      }
+    `,
+  ];
+
+  @property({ type: String }) mode: 'edit' | 'form' | 'search' = 'edit';
+  @property({ type: String }) schema = '';
+  @property({ type: String }) value = '';
+  @property({ type: String }) name = 'Meta';
+  @property({ type: String, attribute: 'meta-query' }) metaQuery = '';
+  @property({ type: String, attribute: 'field-name' }) fieldName = 'MetaQuery';
+
+  @state() private _parsedSchema: JSONSchema | null = null;
+
+  override willUpdate(changed: Map<string, unknown>) {
+    if (changed.has('schema')) {
+      this._parseSchema();
+    }
+  }
+
+  private _parseSchema() {
+    if (!this.schema) {
+      this._parsedSchema = null;
+      return;
+    }
+    try {
+      this._parsedSchema = JSON.parse(this.schema);
+    } catch {
+      this._parsedSchema = null;
+    }
+  }
+
+  // ─── Public API ──────────────────────────────────────────────────────────
+
+  getSchema(): string {
+    return this.schema;
+  }
+
+  getValue(): object {
+    if (!this.value) return {};
+    try {
+      return JSON.parse(this.value);
+    } catch {
+      return {};
+    }
+  }
+
+  validate(): boolean {
+    // Placeholder — will be implemented in form-mode
+    return true;
+  }
+
+  // ─── Render ──────────────────────────────────────────────────────────────
+
+  override render() {
+    if (!this._parsedSchema) {
+      return html`<slot></slot>`;
+    }
+
+    switch (this.mode) {
+      case 'edit':
+        return html`<div class="edit-mode-placeholder">Edit mode — Task 7+</div>`;
+      case 'form':
+        return html`<div class="form-mode-placeholder">Form mode — Task 10+</div>`;
+      case 'search':
+        return html`<div class="search-mode-placeholder">Search mode — Task 12+</div>`;
+      default:
+        return nothing;
+    }
+  }
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'schema-editor': SchemaEditor;
+  }
+}
