@@ -1,6 +1,10 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  test: {
+    include: ['src/**/*.test.ts'],
+    exclude: ['e2e/**', 'node_modules/**'],
+  },
   publicDir: false,
   base: '/public/dist/',
   build: {
