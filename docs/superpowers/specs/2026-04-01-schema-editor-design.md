@@ -357,6 +357,41 @@ Lit components use Shadow DOM by default, which means `<input>` elements inside 
 
 This pattern is standard for form-associated custom elements and avoids the need for the `ElementInternals` API (which has limited browser support for form participation).
 
+## Documentation
+
+### Docs Site Updates
+
+The Docusaurus docs site at `docs-site/` needs updates to cover the visual editor.
+
+**Update existing page: `docs-site/docs/features/meta-schemas.md`**
+
+The current page covers raw JSON schema authoring, common patterns, and form generation. Add a new section covering the visual editor:
+
+- **"Visual Schema Editor" section** — explain the modal-based editor, how to open it from the category/resource-type forms, the three tabs (Edit Schema, Preview Form, Raw JSON), and the tree + detail panel workflow.
+- **"Building a Schema Visually" subsection** — step-by-step walkthrough: add a property, set its type, configure constraints, mark as required, add composition keywords, preview the form.
+- **"Search Integration" subsection** — explain how schemas drive the search filter fields on list pages, how multi-category intersection works, and how schema fields coexist with freeFields.
+- Update the existing "Setting a Schema → Via the UI" section to mention both the raw textarea and the visual editor button.
+- Update "Form Generation" section to reference the unified `<schema-editor>` component.
+
+**No new pages needed** — the visual editor is a feature enhancement to meta schemas, not a separate concept.
+
+### New Screenshots
+
+Add to the screenshot manifest (`docs-site/static/img/screenshot-manifest.json`) and capture:
+
+| Screenshot | Page/Interaction | Description |
+|------------|-----------------|-------------|
+| `schema-editor-modal.png` | Category edit → click "Visual Editor" | Modal open with tree + detail panel, showing a schema with 4-5 properties of mixed types |
+| `schema-editor-preview.png` | Same modal → "Preview Form" tab | The preview form tab showing the rendered form from the same schema |
+| `schema-editor-composition.png` | Same modal → select a oneOf node | Detail panel showing composition keyword editing (oneOf with two variants) |
+| `schema-search-fields.png` | Groups list → select a category with schema | Search form showing schema-driven filter fields with operator toggles |
+
+All screenshots use the standard 1200x800 viewport. The retake-screenshots skill seed data should be updated to include a category with a rich MetaSchema (enum, nested object, composition) to populate these screenshots.
+
+### Seed Data Updates for Screenshots
+
+The retake-screenshots skill's seeding step needs an additional category with a non-trivial MetaSchema. Suggested: the "Person" category (already seeded) should have its MetaSchema set to a schema with ~5 properties including at least one enum, one nested object, and one required field. This ensures the visual editor screenshots show meaningful content.
+
 ## Dependencies
 
 **New npm packages:**
