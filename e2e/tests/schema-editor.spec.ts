@@ -176,6 +176,97 @@ test.describe('Schema Editor Modal', () => {
   });
 });
 
+// ── Edit mode comprehensive tests ────────────────────────────────────────────
+
+test.describe('Schema Editor Edit Mode', () => {
+  const runId = Date.now();
+
+  test('creates schema with multiple property types', async ({ page, apiClient }) => {
+    const cat = await apiClient.createCategory(`Multi Type Test ${runId}`);
+    const catId = cat.ID;
+
+    try {
+      await page.goto(`/category/edit?id=${catId}`);
+      await page.waitForLoadState('load');
+
+      await page.locator('.visual-editor-btn').click();
+      const dialog = schemaEditorDialog(page);
+      await expect(dialog).toBeVisible({ timeout: 5000 });
+
+      // Add first property
+      const addPropertyBtn = dialog.getByRole('button', { name: '+ Property' });
+      await expect(addPropertyBtn).toBeVisible({ timeout: 5000 });
+      await addPropertyBtn.click();
+      await expect(dialog.locator('[role="treeitem"]', { hasText: 'newProperty' })).toBeVisible({ timeout: 5000 });
+
+      // Add second property — the name will be auto-incremented (newProperty1 etc.)
+      await addPropertyBtn.click();
+
+      // Apply and verify both properties exist in the schema
+      await dialog.locator('button', { hasText: 'Apply Schema' }).click();
+      await expect(dialog).not.toBeVisible({ timeout: 3000 });
+
+      const textarea = page.locator('#metaSchemaTextarea');
+      const value = await textarea.inputValue();
+      const schema = JSON.parse(value);
+      expect(Object.keys(schema.properties).length).toBeGreaterThanOrEqual(2);
+    } finally {
+      await apiClient.deleteCategory(catId);
+    }
+  });
+
+  test('preserves complex schema through edit round-trip', async ({ page, apiClient }) => {
+    const complexSchema = JSON.stringify({
+      type: 'object',
+      properties: {
+        name: { type: 'string', minLength: 1, title: 'Full Name' },
+        status: { type: 'string', enum: ['active', 'inactive'] },
+        age: { type: 'integer', minimum: 0, maximum: 150 },
+      },
+      required: ['name'],
+    });
+
+    const cat = await apiClient.createCategory(
+      `Round Trip Test ${runId}`,
+      'Round-trip fidelity test category',
+      { MetaSchema: complexSchema }
+    );
+    const catId = cat.ID;
+
+    try {
+      await page.goto(`/category/edit?id=${catId}`);
+      await page.waitForLoadState('load');
+
+      // Open editor, switch to Raw JSON to verify schema loaded correctly
+      await page.locator('.visual-editor-btn').click();
+      const dialog = schemaEditorDialog(page);
+      await expect(dialog).toBeVisible({ timeout: 5000 });
+
+      await dialog.locator('button', { hasText: 'Raw JSON' }).click();
+      const rawTextarea = dialog.locator('textarea');
+      await expect(rawTextarea).toBeVisible({ timeout: 5000 });
+      const rawContent = await rawTextarea.inputValue();
+      const loaded = JSON.parse(rawContent);
+      expect(loaded.properties.name.minLength).toBe(1);
+      expect(loaded.properties.status.enum).toEqual(['active', 'inactive']);
+      expect(loaded.required).toEqual(['name']);
+
+      // Apply without changes
+      await dialog.locator('button', { hasText: 'Apply Schema' }).click();
+      await expect(dialog).not.toBeVisible({ timeout: 3000 });
+
+      // Verify textarea preserved the schema
+      const finalValue = await page.locator('#metaSchemaTextarea').inputValue();
+      const final = JSON.parse(finalValue);
+      expect(final.properties.name.minLength).toBe(1);
+      expect(final.properties.status.enum).toEqual(['active', 'inactive']);
+      expect(final.required).toEqual(['name']);
+    } finally {
+      await apiClient.deleteCategory(catId);
+    }
+  });
+});
+
 // ── Form mode tests ───────────────────────────────────────────────────────────
 
 test.describe('Schema Editor Form Mode', () => {

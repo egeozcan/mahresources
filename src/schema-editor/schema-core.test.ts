@@ -235,3 +235,35 @@ describe('titleCase', () => {
   it('converts snake_case', () => expect(titleCase('first_name')).toBe('First Name'));
   it('converts kebab-case', () => expect(titleCase('first-name')).toBe('First Name'));
 });
+
+describe('scoreSchemaMatch', () => {
+  it('returns 100 for exact const match', () => {
+    expect(scoreSchemaMatch({ const: 'hello' }, 'hello', {})).toBe(100);
+  });
+  it('returns 0 for const mismatch', () => {
+    expect(scoreSchemaMatch({ const: 'hello' }, 'world', {})).toBe(0);
+  });
+  it('returns 10 for matching type', () => {
+    expect(scoreSchemaMatch({ type: 'string' }, 'hello', {})).toBe(10);
+  });
+  it('returns 0 for type mismatch', () => {
+    expect(scoreSchemaMatch({ type: 'string' }, 42, {})).toBe(0);
+  });
+  it('returns 9 for integer data matching number type', () => {
+    expect(scoreSchemaMatch({ type: 'number' }, 42, {})).toBe(9);
+  });
+  it('scores object by property key overlap', () => {
+    const schema = { type: 'object', properties: { a: {}, b: {}, c: {} } };
+    expect(scoreSchemaMatch(schema, { a: 1, b: 2 }, {})).toBe(12); // 2 matches + 10
+  });
+  it('handles array type with matching type', () => {
+    expect(scoreSchemaMatch({ type: ['string', 'null'] }, 'hello', {})).toBe(10);
+  });
+  it('handles array type with integer/number compat', () => {
+    expect(scoreSchemaMatch({ type: ['number', 'null'] }, 42, {})).toBe(9);
+  });
+  it('resolves $ref before scoring', () => {
+    const root = { $defs: { name: { type: 'string' } } };
+    expect(scoreSchemaMatch({ $ref: '#/$defs/name' }, 'hello', root)).toBe(10);
+  });
+});

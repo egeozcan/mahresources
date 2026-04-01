@@ -1,7 +1,5 @@
-{# Reusable schema editor modal partial.
-   Parameters:
-     textareaId — the id of the MetaSchema textarea to bind to (e.g. "metaSchemaTextarea")
-#}
+{# Reusable schema editor modal partial. #}
+{# Parameters: textareaId — the id of the MetaSchema textarea to bind to (e.g. "metaSchemaTextarea") #}
 <div x-data="schemaEditorModal()">
     <button type="button" class="visual-editor-btn mt-6 inline-flex items-center px-3 py-2 border border-stone-300 shadow-sm text-sm font-medium font-mono rounded-md text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600" @click="openModal('{{ textareaId }}')">
         Visual Editor
