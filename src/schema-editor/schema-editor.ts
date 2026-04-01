@@ -3,6 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { sharedStyles } from './styles';
 import type { JSONSchema } from './schema-core';
 import './modes/edit-mode';
+import './modes/form-mode';
 
 @customElement('schema-editor')
 export class SchemaEditor extends LitElement {
@@ -76,7 +77,15 @@ export class SchemaEditor extends LitElement {
           this.dispatchEvent(new CustomEvent('schema-change', { detail: e.detail, bubbles: true, composed: true }));
         }}></schema-edit-mode>`;
       case 'form':
-        return html`<div class="form-mode-placeholder">Form mode — Task 10+</div>`;
+        return html`<schema-form-mode
+          .schema=${this._parsedSchema}
+          .value=${this.value ? JSON.parse(this.value) : {}}
+          .name=${this.name}
+          @value-change=${(e: CustomEvent) => {
+            this.value = JSON.stringify(e.detail.value);
+            this.dispatchEvent(new CustomEvent('value-change', { detail: e.detail, bubbles: true, composed: true }));
+          }}
+        ></schema-form-mode>`;
       case 'search':
         return html`<div class="search-mode-placeholder">Search mode — Task 12+</div>`;
       default:
