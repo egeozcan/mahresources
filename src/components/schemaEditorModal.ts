@@ -3,6 +3,14 @@
  * Manages open/close state, tab switching, and sync between
  * the <schema-editor> component and the MetaSchema textarea.
  */
+
+// Alpine.js magic properties injected at runtime
+interface AlpineMagics {
+  $nextTick(callback: () => void): void;
+  $refs: Record<string, HTMLElement>;
+  $el: HTMLElement;
+}
+
 export function schemaEditorModal() {
   return {
     open: false,
@@ -23,8 +31,8 @@ export function schemaEditorModal() {
       this.tab = 'edit';
       this.open = true;
       // Trap focus after render
-      this.$nextTick(() => {
-        const modal = this.$refs.modalContent as HTMLElement;
+      (this as unknown as AlpineMagics).$nextTick(() => {
+        const modal = (this as unknown as AlpineMagics).$refs.modalContent as HTMLElement;
         modal?.querySelector<HTMLElement>('[autofocus], button, input, select')?.focus();
       });
     },
@@ -32,7 +40,7 @@ export function schemaEditorModal() {
     closeModal() {
       this.open = false;
       // Return focus to trigger button (it lives in the same x-data root element)
-      this.$el.querySelector<HTMLElement>('.visual-editor-btn')?.focus();
+      (this as unknown as AlpineMagics).$el.querySelector<HTMLElement>('.visual-editor-btn')?.focus();
     },
 
     handleSchemaChange(e: CustomEvent) {
@@ -77,12 +85,12 @@ export function schemaEditorModal() {
       if (e.key === 'ArrowRight') {
         e.preventDefault();
         this.tab = tabs[(idx + 1) % tabs.length] as 'edit' | 'preview' | 'raw';
-        this.$nextTick(() => (e.target as HTMLElement).closest('[role="tablist"]')?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus());
+        (this as unknown as AlpineMagics).$nextTick(() => (e.target as HTMLElement).closest('[role="tablist"]')?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus());
       }
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
         this.tab = tabs[(idx - 1 + tabs.length) % tabs.length] as 'edit' | 'preview' | 'raw';
-        this.$nextTick(() => (e.target as HTMLElement).closest('[role="tablist"]')?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus());
+        (this as unknown as AlpineMagics).$nextTick(() => (e.target as HTMLElement).closest('[role="tablist"]')?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus());
       }
     },
 
