@@ -60,6 +60,7 @@ test.describe('Schema-Driven Search Fields', () => {
   let categoryRefId: number;
   let categoryAllOfId: number;
   let categoryOneOfId: number;
+  let categoryNoTypeId: number;
   let resourceCategoryId: number;
   const runId = Date.now();
 
@@ -226,6 +227,20 @@ test.describe('Schema-Driven Search Fields', () => {
     );
     categoryOneOfId = catOneOf.ID;
 
+    // Category that omits type:"object" but has properties (valid JSON Schema shorthand)
+    const noTypeSchema = JSON.stringify({
+      properties: {
+        nickname: { type: 'string' },
+        score: { type: 'integer' },
+      },
+    });
+    const catNoType = await apiClient.createCategory(
+      `Schema Cat NoType ${runId}`,
+      'Category with properties but no explicit type',
+      { MetaSchema: noTypeSchema }
+    );
+    categoryNoTypeId = catNoType.ID;
+
     // Category with a plain string field (no enum) for string-quoting tests
     const plainStringSchema = JSON.stringify({
       type: 'object',
@@ -262,6 +277,7 @@ test.describe('Schema-Driven Search Fields', () => {
     if (categoryRefId) await apiClient.deleteCategory(categoryRefId).catch(() => {});
     if (categoryAllOfId) await apiClient.deleteCategory(categoryAllOfId).catch(() => {});
     if (categoryOneOfId) await apiClient.deleteCategory(categoryOneOfId).catch(() => {});
+    if (categoryNoTypeId) await apiClient.deleteCategory(categoryNoTypeId).catch(() => {});
     if (resourceCategoryId) await apiClient.deleteResourceCategory(resourceCategoryId).catch(() => {});
   });
 
@@ -1136,5 +1152,19 @@ test.describe('Schema-Driven Search Fields', () => {
     // "wingspan" from variant 1 and "topSpeed" from variant 2 should both appear
     await expect(container.locator('label:has-text("Wingspan")')).toBeVisible();
     await expect(container.locator('label:has-text("Top Speed")')).toBeVisible();
+  });
+
+  // ── 30. Schema without explicit type:"object" still flattens ────────────────
+
+  test('schema with properties but no type:"object" still produces fields', async ({
+    groupPage,
+    page,
+  }) => {
+    await groupPage.gotoList();
+    await selectGroupCategory(page, `Schema Cat NoType ${runId}`);
+
+    const container = schemaFieldsGroup(page);
+    await expect(container.locator('input[type="text"]')).not.toHaveCount(0);
+    await expect(container.locator('input[type="number"]')).not.toHaveCount(0);
   });
 });

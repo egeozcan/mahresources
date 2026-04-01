@@ -85,7 +85,7 @@ export function flattenSchema(schema, prefix = '', labelPrefix = '', depth = 0, 
 
   const root = rootSchema || schema;
   const resolved = resolveSchema(schema, root);
-  if (!resolved || resolved.type !== 'object' || !resolved.properties) {
+  if (!resolved || !resolved.properties) {
     return [];
   }
 
@@ -98,7 +98,7 @@ export function flattenSchema(schema, prefix = '', labelPrefix = '', depth = 0, 
     const rawLabel = prop.title || titleCase(key);
     const label = labelPrefix ? `${labelPrefix} › ${rawLabel}` : rawLabel;
 
-    if (prop.type === 'object' && prop.properties) {
+    if (prop.properties) {
       fields.push(...flattenSchema(prop, path, label, depth + 1, root));
     } else if (prop.type === 'array') {
       continue;
