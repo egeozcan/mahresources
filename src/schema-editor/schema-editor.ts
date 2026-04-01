@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { sharedStyles } from './styles';
 import type { JSONSchema } from './schema-core';
+import './modes/edit-mode';
 
 @customElement('schema-editor')
 export class SchemaEditor extends LitElement {
@@ -70,7 +71,10 @@ export class SchemaEditor extends LitElement {
 
     switch (this.mode) {
       case 'edit':
-        return html`<div class="edit-mode-placeholder">Edit mode — Task 7+</div>`;
+        return html`<schema-edit-mode .schema=${this._parsedSchema} @schema-change=${(e: CustomEvent) => {
+          this.schema = e.detail.schema;
+          this.dispatchEvent(new CustomEvent('schema-change', { detail: e.detail, bubbles: true, composed: true }));
+        }}></schema-edit-mode>`;
       case 'form':
         return html`<div class="form-mode-placeholder">Form mode — Task 10+</div>`;
       case 'search':
