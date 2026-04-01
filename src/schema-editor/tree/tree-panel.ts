@@ -1,4 +1,4 @@
-import { LitElement, html, css } from 'lit';
+import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { classMap } from 'lit/directives/class-map.js';
@@ -101,6 +101,28 @@ export class SchemaTreePanel extends LitElement {
       this._expanded.delete(node.id);
       this.requestUpdate();
     }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const items = this.shadowRoot?.querySelectorAll('[role="treeitem"]');
+      if (items) {
+        const arr = Array.from(items);
+        const idx = arr.findIndex(el => el.getAttribute('aria-selected') === 'true');
+        if (idx < arr.length - 1) {
+          (arr[idx + 1] as HTMLElement).focus();
+        }
+      }
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const items = this.shadowRoot?.querySelectorAll('[role="treeitem"]');
+      if (items) {
+        const arr = Array.from(items);
+        const idx = arr.findIndex(el => el.getAttribute('aria-selected') === 'true');
+        if (idx > 0) {
+          (arr[idx - 1] as HTMLElement).focus();
+        }
+      }
+    }
   }
 
   private _addProperty() {
@@ -145,7 +167,7 @@ export class SchemaTreePanel extends LitElement {
         role="treeitem"
         tabindex=${selected ? '0' : '-1'}
         aria-selected=${selected}
-        aria-expanded=${hasChildren ? String(expanded) : 'undefined'}
+        aria-expanded=${hasChildren ? String(expanded) : nothing}
         @click=${() => this._selectNode(node.id)}
         @dblclick=${() => hasChildren && this._toggleExpand(node.id)}
         @keydown=${(e: KeyboardEvent) => this._handleKeydown(e, node)}

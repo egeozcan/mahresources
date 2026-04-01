@@ -109,6 +109,22 @@ export class SchemaEditMode extends LitElement {
       case 'required':
         selected.required = value;
         break;
+      case 'nullable': {
+        const baseType = selected.type || 'string';
+        if (value) {
+          // Add 'null' to type array
+          const types = Array.isArray(selected.schema.type) ? [...selected.schema.type] : [baseType];
+          if (!types.includes('null')) types.push('null');
+          selected.schema.type = types;
+        } else {
+          // Remove 'null' from type array
+          if (Array.isArray(selected.schema.type)) {
+            const filtered = selected.schema.type.filter((t: string) => t !== 'null');
+            selected.schema.type = filtered.length === 1 ? filtered[0] : filtered;
+          }
+        }
+        break;
+      }
       default:
         if (value === undefined) {
           delete selected.schema[field];
@@ -186,6 +202,30 @@ export class SchemaEditMode extends LitElement {
     this._emitSchemaChange();
   }
 
+  private _handleAddVariant() {
+    const selected = this._findNode(this._selectedId);
+    if (!selected || !selected.compositionKeyword) return;
+    if (!selected.children) selected.children = [];
+    selected.children.push({
+      id: `node-variant-${Date.now()}`,
+      name: `variant${selected.children.length + 1}`,
+      type: 'string',
+      required: false,
+      schema: {},
+    });
+    this.requestUpdate();
+    this._emitSchemaChange();
+  }
+
+  private _handleRemoveVariant(e: CustomEvent) {
+    const selected = this._findNode(this._selectedId);
+    if (!selected?.children) return;
+    const { index } = e.detail;
+    selected.children.splice(index, 1);
+    this.requestUpdate();
+    this._emitSchemaChange();
+  }
+
   private _handleAddDefs() {
     if (!this._root) return;
     if (!this._root.children) this._root.children = [];
@@ -241,6 +281,8 @@ export class SchemaEditMode extends LitElement {
           @node-change=${this._handleNodeChange}
           @node-delete=${this._handleNodeDelete}
           @node-duplicate=${this._handleNodeDuplicate}
+          @add-variant=${this._handleAddVariant}
+          @remove-variant=${this._handleRemoveVariant}
         ></schema-detail-panel>
       </div>
     `;
