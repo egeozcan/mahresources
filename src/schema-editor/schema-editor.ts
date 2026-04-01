@@ -37,6 +37,12 @@ export class SchemaEditor extends LitElement {
       this._parsedSchema = null;
       return;
     }
+    // When Alpine binds with :schema="currentSchema", the value may arrive
+    // as an already-parsed object (not a JSON string).  Handle both cases.
+    if (typeof this.schema === 'object') {
+      this._parsedSchema = this.schema as any;
+      return;
+    }
     try {
       this._parsedSchema = JSON.parse(this.schema);
     } catch {
