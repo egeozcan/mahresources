@@ -11,9 +11,8 @@ import {
   inferSchema,
 } from '../schema-core';
 
-let uniqueIdCounter = 0;
-function generateUniqueId(prefix = 'schema-field'): string {
-  return `${prefix}-${++uniqueIdCounter}`;
+function generateFieldId(prefix: string, path: string): string {
+  return `${prefix}-${path.replace(/[^a-zA-Z0-9]/g, '-')}`;
 }
 
 @customElement('schema-form-mode')
@@ -191,7 +190,7 @@ export class SchemaFormMode extends LitElement {
     }
 
     const onSelectChange = (e: Event) => {
-      const idx = parseInt((e.target as HTMLSelectElement).value);
+      const idx = parseInt((e.target as HTMLSelectElement).value, 10);
       const optSchema = schema.oneOf[idx];
       const newVal = getDefaultValue(optSchema, rootSchema);
       onChange(newVal);
@@ -202,6 +201,7 @@ export class SchemaFormMode extends LitElement {
         ${schema.title ? html`<h4 class="font-bold text-gray-900 text-sm">${schema.title}</h4>` : nothing}
         ${schema.description ? html`<p class="text-xs text-gray-500 mb-2">${schema.description}</p>` : nothing}
         <select class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md mb-2"
+          aria-label=${schema.title ? `Select variant for ${schema.title}` : 'Select variant'}
           @change=${onSelectChange}>
           ${schema.oneOf.map((opt: JSONSchema, idx: number) => {
             let typeLabel = opt.type;
@@ -242,7 +242,7 @@ export class SchemaFormMode extends LitElement {
     }
 
     const onSelectChange = (e: Event) => {
-      const idx = parseInt((e.target as HTMLSelectElement).value);
+      const idx = parseInt((e.target as HTMLSelectElement).value, 10);
       const optSchema = schema.anyOf[idx];
       const newVal = getDefaultValue(optSchema, rootSchema);
       onChange(newVal);
@@ -366,7 +366,7 @@ export class SchemaFormMode extends LitElement {
         ${schema.description ? html`<p class="text-xs text-gray-500 mb-2">${schema.description}</p>` : nothing}
 
         ${schema.properties ? Object.entries(schema.properties).map(([key, propSchema]: [string, any]) => {
-          const fieldId = generateUniqueId(`field-${key}`);
+          const fieldId = generateFieldId('field', key);
           const isRequired = requiredFields.has(key);
 
           return html`
@@ -674,7 +674,7 @@ export class SchemaFormMode extends LitElement {
         if (Array.isArray(schema.type) && schema.type.includes('null')) onChange(null);
         else onChange(undefined);
       } else {
-        onChange(type === 'integer' ? parseInt(val) : parseFloat(val));
+        onChange(type === 'integer' ? parseInt(val, 10) : parseFloat(val));
       }
     };
 

@@ -63,15 +63,24 @@ export function schemaToTree(schema: JSONSchema, name = '', parentRequired: stri
   delete node.schema.required;
   delete node.schema.$defs;
   delete node.schema.definitions;
+  delete node.schema.not;
   // Also strip type — it's stored on node.type and restored in treeToSchema
   delete node.schema.type;
+
+  // `not` keyword → composition node with one child
+  if (schema.not && typeof schema.not === 'object') {
+    node.compositionKeyword = 'not';
+    const child = schemaToTree(schema.not as JSONSchema, 'not');
+    node.children = [...(node.children || []), child];
+  }
 
   // Object with properties → children
   if (schema.properties) {
     const reqSet = schema.required || [];
-    node.children = Object.entries(schema.properties).map(([key, propSchema]) =>
+    const propChildren = Object.entries(schema.properties).map(([key, propSchema]) =>
       schemaToTree(propSchema as JSONSchema, key, reqSet),
     );
+    node.children = [...(node.children || []), ...propChildren];
   }
 
   // $defs / definitions
@@ -108,8 +117,16 @@ export function treeToSchema(node: SchemaNode): JSONSchema {
     delete schema.type;
   }
 
-  // Separate property children from $defs node
-  const propChildren = (node.children || []).filter(c => !c.isDef && c.name !== '$defs');
+  // Serialize `not` composition keyword
+  if (node.compositionKeyword === 'not') {
+    const notChild = (node.children || []).find(c => c.name === 'not');
+    if (notChild) {
+      schema.not = treeToSchema(notChild);
+    }
+  }
+
+  // Separate property children from $defs node and `not` child
+  const propChildren = (node.children || []).filter(c => !c.isDef && c.name !== '$defs' && !(node.compositionKeyword === 'not' && c.name === 'not'));
   const defsNode = (node.children || []).find(c => c.isDef && c.name === '$defs');
 
   // Restore properties (for object type or when type is unset/empty)

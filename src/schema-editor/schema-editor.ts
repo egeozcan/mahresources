@@ -77,16 +77,19 @@ export class SchemaEditor extends LitElement {
           this.schema = e.detail.schema;
           this.dispatchEvent(new CustomEvent('schema-change', { detail: e.detail, bubbles: true, composed: true }));
         }}></schema-edit-mode>`;
-      case 'form':
+      case 'form': {
+        let parsedValue = {};
+        try { parsedValue = this.value ? JSON.parse(this.value) : {}; } catch { /* invalid JSON */ }
         return html`<schema-form-mode
           .schema=${this._parsedSchema}
-          .value=${this.value ? JSON.parse(this.value) : {}}
+          .value=${parsedValue}
           .name=${this.name}
           @value-change=${(e: CustomEvent) => {
             this.value = JSON.stringify(e.detail.value);
             this.dispatchEvent(new CustomEvent('value-change', { detail: e.detail, bubbles: true, composed: true }));
           }}
         ></schema-form-mode>`;
+      }
       case 'search':
         return html`<schema-search-mode
           .schema=${this.schema}

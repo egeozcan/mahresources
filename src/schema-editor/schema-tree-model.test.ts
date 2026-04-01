@@ -151,4 +151,25 @@ describe('schemaToTree / treeToSchema round-trip', () => {
     const output = treeToSchema(tree);
     expect(output).toEqual(schema);
   });
+
+  it('round-trips not keyword', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        value: {
+          not: { type: 'string', minLength: 1 },
+        },
+      },
+    };
+    const tree = schemaToTree(schema);
+    // Verify the tree structure
+    const valueNode = tree.children!.find(c => c.name === 'value')!;
+    expect(valueNode.compositionKeyword).toBe('not');
+    expect(valueNode.children).toHaveLength(1);
+    expect(valueNode.children![0].name).toBe('not');
+    expect(valueNode.children![0].type).toBe('string');
+
+    const output = treeToSchema(tree);
+    expect(output).toEqual(schema);
+  });
 });

@@ -24,8 +24,8 @@ export class SchemaBooleanEditor extends LitElement {
         <h4>Boolean Constraints</h4>
         <div class="grid">
           <div>
-            <label>Default</label>
-            <select .value=${this.schema.default === undefined ? '' : String(this.schema.default)} @change=${(e: Event) => {
+            <label for="bool-default">Default</label>
+            <select id="bool-default" .value=${this.schema.default === undefined ? '' : String(this.schema.default)} @change=${(e: Event) => {
               const v = (e.target as HTMLSelectElement).value;
               this._emit('default', v === '' ? undefined : v === 'true');
             }}>
@@ -35,8 +35,8 @@ export class SchemaBooleanEditor extends LitElement {
             </select>
           </div>
           <div>
-            <label>Const</label>
-            <select .value=${this.schema.const === undefined ? '' : String(this.schema.const)} @change=${(e: Event) => {
+            <label for="bool-const">Const</label>
+            <select id="bool-const" .value=${this.schema.const === undefined ? '' : String(this.schema.const)} @change=${(e: Event) => {
               const v = (e.target as HTMLSelectElement).value;
               this._emit('const', v === '' ? undefined : v === 'true');
             }}>

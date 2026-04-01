@@ -31,28 +31,32 @@ export class SchemaNumberEditor extends LitElement {
         <h4>${this.integerOnly ? 'Integer' : 'Number'} Constraints</h4>
         <div class="grid">
           <div>
-            <label>Minimum</label>
-            <input type="number" step=${step} .value=${this.schema.minimum ?? ''} @change=${(e: Event) => this._emit('minimum', this._parseNum((e.target as HTMLInputElement).value))}>
+            <label for="num-minimum">Minimum</label>
+            <input id="num-minimum" type="number" step=${step} .value=${this.schema.minimum ?? ''} @change=${(e: Event) => this._emit('minimum', this._parseNum((e.target as HTMLInputElement).value))}>
           </div>
           <div>
-            <label>Maximum</label>
-            <input type="number" step=${step} .value=${this.schema.maximum ?? ''} @change=${(e: Event) => this._emit('maximum', this._parseNum((e.target as HTMLInputElement).value))}>
+            <label for="num-maximum">Maximum</label>
+            <input id="num-maximum" type="number" step=${step} .value=${this.schema.maximum ?? ''} @change=${(e: Event) => this._emit('maximum', this._parseNum((e.target as HTMLInputElement).value))}>
           </div>
           <div>
-            <label>Exclusive Minimum</label>
-            <input type="number" step=${step} .value=${this.schema.exclusiveMinimum ?? ''} @change=${(e: Event) => this._emit('exclusiveMinimum', this._parseNum((e.target as HTMLInputElement).value))}>
+            <label for="num-exclusive-minimum">Exclusive Minimum</label>
+            <input id="num-exclusive-minimum" type="number" step=${step} .value=${this.schema.exclusiveMinimum ?? ''} @change=${(e: Event) => this._emit('exclusiveMinimum', this._parseNum((e.target as HTMLInputElement).value))}>
           </div>
           <div>
-            <label>Exclusive Maximum</label>
-            <input type="number" step=${step} .value=${this.schema.exclusiveMaximum ?? ''} @change=${(e: Event) => this._emit('exclusiveMaximum', this._parseNum((e.target as HTMLInputElement).value))}>
+            <label for="num-exclusive-maximum">Exclusive Maximum</label>
+            <input id="num-exclusive-maximum" type="number" step=${step} .value=${this.schema.exclusiveMaximum ?? ''} @change=${(e: Event) => this._emit('exclusiveMaximum', this._parseNum((e.target as HTMLInputElement).value))}>
           </div>
           <div>
-            <label>Multiple Of</label>
-            <input type="number" step=${step} .value=${this.schema.multipleOf ?? ''} @change=${(e: Event) => this._emit('multipleOf', this._parseNum((e.target as HTMLInputElement).value))}>
+            <label for="num-multiple-of">Multiple Of</label>
+            <input id="num-multiple-of" type="number" step=${step} .value=${this.schema.multipleOf ?? ''} @change=${(e: Event) => this._emit('multipleOf', this._parseNum((e.target as HTMLInputElement).value))}>
           </div>
           <div>
-            <label>Default</label>
-            <input type="number" step=${step} .value=${this.schema.default ?? ''} @change=${(e: Event) => this._emit('default', this._parseNum((e.target as HTMLInputElement).value))}>
+            <label for="num-default">Default</label>
+            <input id="num-default" type="number" step=${step} .value=${this.schema.default ?? ''} @change=${(e: Event) => this._emit('default', this._parseNum((e.target as HTMLInputElement).value))}>
+          </div>
+          <div>
+            <label for="num-const">Const</label>
+            <input id="num-const" type="number" step=${step} .value=${this.schema.const ?? ''} @change=${(e: Event) => this._emit('const', this._parseNum((e.target as HTMLInputElement).value))}>
           </div>
         </div>
       </div>

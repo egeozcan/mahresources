@@ -460,7 +460,6 @@ export class SchemaSearchMode extends LitElement {
       <fieldset class="w-full" aria-label=${ariaLabel}>
         <legend class="block text-xs font-mono font-medium text-stone-600 mt-1">${field.label}</legend>
         <select multiple
-                aria-label=${ariaLabel}
                 class="w-full text-sm border-stone-300 rounded mt-1 focus:ring-1 focus:ring-amber-600 focus:border-amber-600"
                 size=${selectSize}
                 @change=${(e: Event) => this._onEnumSelectChange(field, e)}>
@@ -481,8 +480,7 @@ export class SchemaSearchMode extends LitElement {
     return html`
       <div class="w-full">
         <label for=${inputId}
-               class="block text-xs font-mono font-medium text-stone-600 mt-1"
-               aria-label=${ariaLabel}>
+               class="block text-xs font-mono font-medium text-stone-600 mt-1">
           ${field.label}
         </label>
         <div class="flex gap-1 items-center w-full mt-1">
