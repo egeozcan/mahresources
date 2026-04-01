@@ -152,6 +152,96 @@ describe('schemaToTree / treeToSchema round-trip', () => {
     expect(output).toEqual(schema);
   });
 
+  it('round-trips nullable type array', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        name: { type: ['string', 'null'] },
+        age: { type: ['integer', 'null'], minimum: 0 },
+      },
+    };
+    const tree = schemaToTree(schema);
+
+    // Verify node.type holds the base type, node.schema.type holds the full array
+    const nameNode = tree.children!.find(c => c.name === 'name')!;
+    expect(nameNode.type).toBe('string');
+    expect(nameNode.schema.type).toEqual(['string', 'null']);
+
+    const ageNode = tree.children!.find(c => c.name === 'age')!;
+    expect(ageNode.type).toBe('integer');
+    expect(ageNode.schema.type).toEqual(['integer', 'null']);
+
+    const output = treeToSchema(tree);
+    expect(output).toEqual(schema);
+  });
+
+  it('round-trips oneOf with tree structure', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        contact: {
+          oneOf: [
+            { type: 'string', title: 'Email' },
+            { type: 'object', title: 'Phone', properties: { number: { type: 'string' } } },
+          ],
+        },
+      },
+    };
+    const tree = schemaToTree(schema);
+
+    // Verify the contact node has composition structure
+    const contactNode = tree.children!.find(c => c.name === 'contact')!;
+    expect(contactNode.compositionKeyword).toBe('oneOf');
+    expect(contactNode.children).toHaveLength(2);
+    expect(contactNode.children![0].name).toBe('Email');
+    expect(contactNode.children![1].name).toBe('Phone');
+
+    const output = treeToSchema(tree);
+    expect(output).toEqual(schema);
+  });
+
+  it('round-trips $ref with tree structure', () => {
+    const schema = {
+      type: 'object',
+      $defs: {
+        address: { type: 'object', properties: { city: { type: 'string' } } },
+      },
+      properties: {
+        home: { $ref: '#/$defs/address' },
+      },
+    };
+    const tree = schemaToTree(schema);
+
+    // Verify the home node has ref structure
+    const homeNode = tree.children!.find(c => c.name === 'home')!;
+    expect(homeNode.ref).toBe('#/$defs/address');
+    expect(homeNode.type).toBe('');
+
+    const output = treeToSchema(tree);
+    expect(output).toEqual(schema);
+  });
+
+  it('round-trips anyOf at property level', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        value: {
+          anyOf: [
+            { type: 'string' },
+            { type: 'number' },
+          ],
+        },
+      },
+    };
+    const tree = schemaToTree(schema);
+    const valueNode = tree.children!.find(c => c.name === 'value')!;
+    expect(valueNode.compositionKeyword).toBe('anyOf');
+    expect(valueNode.children).toHaveLength(2);
+
+    const output = treeToSchema(tree);
+    expect(output).toEqual(schema);
+  });
+
   it('round-trips not keyword', () => {
     const schema = {
       type: 'object',
