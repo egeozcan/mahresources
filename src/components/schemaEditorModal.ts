@@ -31,8 +31,8 @@ export function schemaEditorModal() {
 
     closeModal() {
       this.open = false;
-      // Return focus to trigger button
-      this._textareaEl?.closest('.meta-schema-field')?.querySelector<HTMLElement>('.visual-editor-btn')?.focus();
+      // Return focus to trigger button (it lives in the same x-data root element)
+      this.$el.querySelector<HTMLElement>('.visual-editor-btn')?.focus();
     },
 
     handleSchemaChange(e: CustomEvent) {
@@ -68,6 +68,21 @@ export function schemaEditorModal() {
     handleKeydown(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         this.closeModal();
+      }
+    },
+
+    handleTabKeydown(e: KeyboardEvent) {
+      const tabs = ['edit', 'preview', 'raw'];
+      const idx = tabs.indexOf(this.tab);
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        this.tab = tabs[(idx + 1) % tabs.length] as 'edit' | 'preview' | 'raw';
+        this.$nextTick(() => (e.target as HTMLElement).closest('[role="tablist"]')?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus());
+      }
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        this.tab = tabs[(idx - 1 + tabs.length) % tabs.length] as 'edit' | 'preview' | 'raw';
+        this.$nextTick(() => (e.target as HTMLElement).closest('[role="tablist"]')?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus());
       }
     },
 
