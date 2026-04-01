@@ -4,6 +4,7 @@ import { sharedStyles } from './styles';
 import type { JSONSchema } from './schema-core';
 import './modes/edit-mode';
 import './modes/form-mode';
+import './modes/search-mode';
 
 @customElement('schema-editor')
 export class SchemaEditor extends LitElement {
@@ -87,7 +88,11 @@ export class SchemaEditor extends LitElement {
           }}
         ></schema-form-mode>`;
       case 'search':
-        return html`<div class="search-mode-placeholder">Search mode — Task 12+</div>`;
+        return html`<schema-search-mode
+          .schema=${this.schema}
+          .metaQuery=${this.metaQuery}
+          .fieldName=${this.fieldName}
+        ></schema-search-mode>`;
       default:
         return nothing;
     }
