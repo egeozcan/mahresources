@@ -35,6 +35,7 @@ export interface Group extends Entity {
   URL?: string;
   CategoryId?: number;
   OwnerId?: number;
+  Meta?: any;
 }
 
 export interface Note extends Entity {
