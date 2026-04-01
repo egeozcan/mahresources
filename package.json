@@ -11,7 +11,9 @@
     "watch": "CompileDaemon -exclude-dir=\".git\" -exclude-dir=\"node_modules\" -command=\"npm run build-css && npm run build-js && mahresources\" -build=\"go build --tags 'json1 fts5'\"",
     "build": "npm run build-css && npm run build-js && go build --tags 'json1 fts5'",
     "build-cli": "go build -o mr ./cmd/mr/",
-    "prepare": "husky"
+    "prepare": "husky",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest"
   },
   "repository": {
     "type": "git",
@@ -33,7 +35,9 @@
     "postcss": "^8.4.35",
     "postcss-cli": "^11.0.0",
     "tailwindcss": "^4.1.18",
-    "vite": "^8.0.0"
+    "typescript": "^6.0.2",
+    "vite": "^8.0.0",
+    "vitest": "^4.1.2"
   },
   "dependencies": {
     "@alpinejs/collapse": "^3.15.4",
@@ -47,6 +51,7 @@
     "@codemirror/state": "^6.5.4",
     "@codemirror/view": "^6.39.13",
     "alpinejs": "^3.15.4",
-    "diff": "^8.0.3"
+    "diff": "^8.0.3",
+    "lit": "^3.3.2"
   }
 }
