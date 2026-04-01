@@ -265,6 +265,84 @@ test.describe('Schema Editor Edit Mode', () => {
       await apiClient.deleteCategory(catId);
     }
   });
+
+  test('adds property to selected nested object, not root', async ({ page, apiClient }) => {
+    const nestedSchema = JSON.stringify({
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        address: {
+          type: 'object',
+          properties: {
+            city: { type: 'string' },
+          },
+        },
+      },
+    });
+
+    const cat = await apiClient.createCategory(
+      `Nested Add Test ${runId}`,
+      undefined,
+      { MetaSchema: nestedSchema }
+    );
+    const catId = cat.ID;
+
+    try {
+      await page.goto(`/category/edit?id=${catId}`);
+      await page.waitForLoadState('load');
+
+      await page.locator('.visual-editor-btn').click();
+      const dialog = schemaEditorDialog(page);
+      await expect(dialog).toBeVisible({ timeout: 5000 });
+
+      // Wait for the edit-mode schema-editor to be ready
+      const schemaEditor = dialog.locator('schema-editor[mode="edit"]');
+      await expect(schemaEditor).toBeVisible({ timeout: 5000 });
+
+      // The address node should be in the tree (Playwright auto-pierces shadow roots)
+      const addressNode = dialog.locator('[role="treeitem"]', { hasText: 'address' });
+      await expect(addressNode).toBeVisible({ timeout: 5000 });
+
+      // Click the address node to select it
+      await addressNode.click();
+
+      // Expand address by clicking the expand icon (triangle) or double-clicking
+      // Double-click toggles expand on nodes that have children
+      await addressNode.dblclick();
+
+      // After expanding, the "city" child should appear
+      const cityNode = dialog.locator('[role="treeitem"]', { hasText: 'city' });
+      await expect(cityNode).toBeVisible({ timeout: 5000 });
+
+      // Click address again to ensure it's selected (dblclick may have changed selection)
+      await addressNode.click();
+
+      // Now click "+ Property" — should add to address, not root
+      const addPropertyBtn = dialog.getByRole('button', { name: '+ Property' });
+      await addPropertyBtn.click();
+
+      // Apply the schema
+      await dialog.locator('button', { hasText: 'Apply Schema' }).click();
+      await expect(dialog).not.toBeVisible({ timeout: 3000 });
+
+      // Parse the result and verify nesting
+      const value = await page.locator('#metaSchemaTextarea').inputValue();
+      const result = JSON.parse(value);
+
+      // Root should still have exactly 2 properties: name + address
+      expect(Object.keys(result.properties)).toHaveLength(2);
+      expect(result.properties).toHaveProperty('name');
+      expect(result.properties).toHaveProperty('address');
+
+      // The new property should be inside address.properties, not at root level
+      const addressProps = result.properties.address.properties;
+      expect(Object.keys(addressProps).length).toBeGreaterThanOrEqual(2); // city + newProperty
+      expect(addressProps).toHaveProperty('city');
+      expect(Object.keys(addressProps)).toContain('newProperty');
+    } finally {
+      await apiClient.deleteCategory(catId);
+    }
+  });
 });
 
 // ── Form mode tests ───────────────────────────────────────────────────────────
