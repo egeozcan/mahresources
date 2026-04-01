@@ -162,7 +162,7 @@ export class SchemaFormMode extends LitElement {
 
     // Array type
     if (type === 'array') {
-      return this._renderArray(schema, data, onChange, rootSchema);
+      return this._renderArray(schema, data, onChange, rootSchema, parentPath);
     }
 
     // Primitive types (string, number, integer, boolean)
@@ -601,7 +601,7 @@ export class SchemaFormMode extends LitElement {
 
   // ─── array ──────────────────────────────────────────────────────────────
 
-  private _renderArray(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema): TemplateResult {
+  private _renderArray(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema, parentPath?: string): TemplateResult {
     if (!Array.isArray(data)) {
       data = [];
       queueMicrotask(() => onChange(data));
@@ -634,13 +634,15 @@ export class SchemaFormMode extends LitElement {
         ${schema.title ? html`<h4 class="font-bold text-gray-900 text-sm">${schema.title}</h4>` : nothing}
 
         <div class="space-y-2">
-          ${data.map((item: any, index: number) => html`
+          ${data.map((item: any, index: number) => {
+            const itemPath = parentPath ? `${parentPath}.${index}` : `${index}`;
+            return html`
             <div class="flex gap-2 items-start">
               <div class="flex-grow">
                 ${this._renderField(schema.items || inferSchema(item), item, (val: any) => {
                   data[index] = val;
                   onChange(data);
-                }, rootSchema)}
+                }, rootSchema, undefined, itemPath)}
               </div>
               <button type="button"
                 title="Remove item"
@@ -655,7 +657,7 @@ export class SchemaFormMode extends LitElement {
                   onChange(data);
                 }}>&times;</button>
             </div>
-          `)}
+          `; })}
         </div>
 
         <div class="flex items-center gap-3">
