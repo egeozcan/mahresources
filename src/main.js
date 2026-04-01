@@ -50,6 +50,7 @@ import { cardActionMenu } from './components/cardActionMenu.js';
 import { mentionTextarea } from './components/mentionTextarea.js';
 import { adminOverview } from './components/adminOverview.js';
 import timeline from './components/timeline.js';
+import { schemaEditorModal } from './components/schemaEditorModal.ts';
 
 // Import utility modules
 import { renderMentions } from './utils/renderMentions.js';
@@ -123,6 +124,7 @@ Alpine.data('cardActionMenu', cardActionMenu);
 Alpine.data('mentionTextarea', mentionTextarea);
 Alpine.data('adminOverview', adminOverview);
 Alpine.data('timeline', timeline);
+Alpine.data('schemaEditorModal', schemaEditorModal);
 
 // Expose Alpine globally for debugging and morph usage
 window.Alpine = Alpine;
