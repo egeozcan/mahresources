@@ -80,19 +80,19 @@ export class SchemaFormMode extends LitElement {
 
     return this._renderField(this.schema, this._data, (val: any) => {
       this._emitChange(val);
-    }, this.schema);
+    }, this.schema, undefined, '');
   }
 
   // ─── Recursive field renderer (port of generateFormElement) ──────────────
 
-  private _renderField(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema, fieldId?: string): TemplateResult | typeof nothing {
+  private _renderField(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema, fieldId?: string, parentPath?: string): TemplateResult | typeof nothing {
     // Handle $ref
     if (schema.$ref) {
       const resolved = resolveRef(schema.$ref, rootSchema);
       if (resolved) {
         const mergedSchema = { ...resolved, ...schema };
         delete mergedSchema.$ref;
-        return this._renderField(mergedSchema, data, onChange, rootSchema, fieldId);
+        return this._renderField(mergedSchema, data, onChange, rootSchema, fieldId, parentPath);
       }
       return html`<div class="text-red-500 text-xs">Unresolvable reference: ${schema.$ref}</div>`;
     }
@@ -110,7 +110,7 @@ export class SchemaFormMode extends LitElement {
         const resolved = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
         if (resolved) merged = mergeSchemas(merged, resolved);
       }
-      return this._renderField(merged, data, onChange, rootSchema, fieldId);
+      return this._renderField(merged, data, onChange, rootSchema, fieldId, parentPath);
     }
 
     // Handle anyOf
@@ -157,7 +157,7 @@ export class SchemaFormMode extends LitElement {
 
     // Object type
     if (type === 'object') {
-      return this._renderObject(schema, data, onChange, rootSchema);
+      return this._renderObject(schema, data, onChange, rootSchema, parentPath);
     }
 
     // Array type
@@ -353,7 +353,7 @@ export class SchemaFormMode extends LitElement {
 
   // ─── object ─────────────────────────────────────────────────────────────
 
-  private _renderObject(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema): TemplateResult {
+  private _renderObject(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema, parentPath?: string): TemplateResult {
     if (typeof data !== 'object' || data === null || Array.isArray(data)) {
       data = {};
       queueMicrotask(() => onChange(data));
@@ -369,7 +369,8 @@ export class SchemaFormMode extends LitElement {
         ${schema.description ? html`<p class="text-xs text-gray-500 mb-2">${schema.description}</p>` : nothing}
 
         ${schema.properties ? Object.entries(schema.properties).map(([key, propSchema]: [string, any]) => {
-          const fieldId = generateFieldId('field', key);
+          const fullPath = parentPath ? `${parentPath}.${key}` : key;
+          const fieldId = generateFieldId('field', fullPath);
           const isRequired = requiredFields.has(key);
 
           return html`
@@ -384,7 +385,7 @@ export class SchemaFormMode extends LitElement {
                 ${this._renderFieldWithAttributes(propSchema, data[key], (val: any) => {
                   data[key] = val;
                   onChange(data);
-                }, rootSchema, fieldId, propSchema.description ? `${fieldId}-desc` : null, isRequired)}
+                }, rootSchema, fieldId, propSchema.description ? `${fieldId}-desc` : null, isRequired, fullPath)}
               </div>
             </div>
           `;
@@ -409,10 +410,11 @@ export class SchemaFormMode extends LitElement {
     fieldId: string,
     describedBy: string | null,
     required: boolean,
+    parentPath?: string,
   ): TemplateResult {
     // We render the field in a wrapper div, then use a Lit directive-like approach
     // to set attributes on the first input/select/textarea child after render.
-    const fieldTemplate = this._renderField(schema, data, onChange, rootSchema, fieldId);
+    const fieldTemplate = this._renderField(schema, data, onChange, rootSchema, fieldId, parentPath);
 
     // Use a container with id-setting approach
     return html`<span class="schema-form-field-wrapper" data-field-id=${fieldId} data-described-by=${describedBy || ''} data-required=${required}
