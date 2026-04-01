@@ -52,15 +52,18 @@ function resolveSchema(schema, rootSchema) {
     return null;
   }
 
-  // Merge allOf
-  if (schema.allOf && Array.isArray(schema.allOf)) {
-    let merged = { ...schema };
-    delete merged.allOf;
-    for (const sub of schema.allOf) {
-      const resolved = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
-      if (resolved) merged = mergeSchemas(merged, resolved);
+  // Merge allOf / oneOf / anyOf — for search we union all variant properties
+  // so users can filter on any field from any variant.
+  for (const keyword of ['allOf', 'oneOf', 'anyOf']) {
+    if (schema[keyword] && Array.isArray(schema[keyword])) {
+      let merged = { ...schema };
+      delete merged[keyword];
+      for (const sub of schema[keyword]) {
+        const resolved = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
+        if (resolved) merged = mergeSchemas(merged, resolved);
+      }
+      return resolveSchema(merged, rootSchema);
     }
-    return resolveSchema(merged, rootSchema);
   }
 
   return schema;

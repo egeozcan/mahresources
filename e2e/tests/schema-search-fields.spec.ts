@@ -59,6 +59,7 @@ test.describe('Schema-Driven Search Fields', () => {
   let categoryNumericEnumId: number;
   let categoryRefId: number;
   let categoryAllOfId: number;
+  let categoryOneOfId: number;
   let resourceCategoryId: number;
   const runId = Date.now();
 
@@ -207,6 +208,24 @@ test.describe('Schema-Driven Search Fields', () => {
     );
     categoryAllOfId = catAllOf.ID;
 
+    // Category with oneOf — two variant objects, search should see union of fields
+    const oneOfSchema = JSON.stringify({
+      type: 'object',
+      properties: {
+        kind: { type: 'string' },
+      },
+      oneOf: [
+        { properties: { wingspan: { type: 'number' } } },
+        { properties: { topSpeed: { type: 'number' } } },
+      ],
+    });
+    const catOneOf = await apiClient.createCategory(
+      `Schema Cat OneOf ${runId}`,
+      'Category with oneOf schema',
+      { MetaSchema: oneOfSchema }
+    );
+    categoryOneOfId = catOneOf.ID;
+
     // Category with a plain string field (no enum) for string-quoting tests
     const plainStringSchema = JSON.stringify({
       type: 'object',
@@ -242,6 +261,7 @@ test.describe('Schema-Driven Search Fields', () => {
     if (categoryNumericEnumId) await apiClient.deleteCategory(categoryNumericEnumId).catch(() => {});
     if (categoryRefId) await apiClient.deleteCategory(categoryRefId).catch(() => {});
     if (categoryAllOfId) await apiClient.deleteCategory(categoryAllOfId).catch(() => {});
+    if (categoryOneOfId) await apiClient.deleteCategory(categoryOneOfId).catch(() => {});
     if (resourceCategoryId) await apiClient.deleteResourceCategory(resourceCategoryId).catch(() => {});
   });
 
@@ -1097,5 +1117,24 @@ test.describe('Schema-Driven Search Fields', () => {
     // allOf merges firstName (string) and age (integer)
     await expect(container.locator('input[type="text"]')).not.toHaveCount(0);
     await expect(container.locator('input[type="number"]')).not.toHaveCount(0);
+  });
+
+  // ── 29. oneOf/anyOf sub-schemas produce union of fields ─────────────────────
+
+  test('oneOf schema produces fields from all variants', async ({
+    groupPage,
+    page,
+  }) => {
+    await groupPage.gotoList();
+    await selectGroupCategory(page, `Schema Cat OneOf ${runId}`);
+
+    const container = schemaFieldsGroup(page);
+
+    // "kind" is a direct property (outside oneOf)
+    await expect(container.locator('input[type="text"]')).not.toHaveCount(0);
+
+    // "wingspan" from variant 1 and "topSpeed" from variant 2 should both appear
+    await expect(container.locator('label:has-text("Wingspan")')).toBeVisible();
+    await expect(container.locator('label:has-text("Top Speed")')).toBeVisible();
   });
 });
