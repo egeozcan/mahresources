@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Schema Editor — Standalone Test</title>
+  <script type="module" src="./schema-editor.ts"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+    h1 { font-size: 18px; }
+    h2 { font-size: 14px; margin-top: 24px; }
+    section { background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    pre { background: #f9fafb; padding: 8px; border-radius: 4px; font-size: 11px; overflow-x: auto; }
+    #event-log { max-height: 200px; overflow-y: auto; }
+  </style>
+</head>
+<body>
+  <h1>Schema Editor — Standalone Test Page</h1>
+  <p>This page loads the <code>&lt;schema-editor&gt;</code> component via Vite dev server. No Go backend or Alpine.js required.</p>
+
+  <h2>Edit Mode</h2>
+  <section>
+    <schema-editor
+      id="editor-edit"
+      mode="edit"
+      schema='{"type":"object","properties":{"name":{"type":"string","minLength":1},"status":{"type":"string","enum":["active","inactive","pending"]},"age":{"type":"integer","minimum":0,"maximum":150},"email":{"type":"string","format":"email"}},"required":["name","status"]}'
+    ></schema-editor>
+  </section>
+
+  <h2>Form Mode</h2>
+  <section>
+    <schema-editor
+      id="editor-form"
+      mode="form"
+      schema='{"type":"object","properties":{"name":{"type":"string","minLength":1},"status":{"type":"string","enum":["active","inactive","pending"]},"age":{"type":"integer","minimum":0}},"required":["name"]}'
+      value='{"name":"Alice","status":"active","age":30}'
+      name="Meta"
+    ></schema-editor>
+  </section>
+
+  <h2>Search Mode</h2>
+  <section>
+    <schema-editor
+      id="editor-search"
+      mode="search"
+      schema='{"type":"object","properties":{"name":{"type":"string"},"status":{"type":"string","enum":["active","inactive","pending"]},"weight":{"type":"number"}}}'
+      meta-query='[]'
+      field-name="MetaQuery"
+    ></schema-editor>
+  </section>
+
+  <h2>Event Log</h2>
+  <section>
+    <pre id="event-log"></pre>
+  </section>
+
+  <script type="module">
+    const log = document.getElementById('event-log');
+    function logEvent(name, detail) {
+      const line = `[${new Date().toISOString().slice(11,19)}] ${name}: ${JSON.stringify(detail)}\n`;
+      log.textContent = line + log.textContent;
+    }
+    document.querySelectorAll('schema-editor').forEach(el => {
+      el.addEventListener('schema-change', e => logEvent('schema-change', e.detail));
+      el.addEventListener('value-change', e => logEvent('value-change', e.detail));
+      el.addEventListener('schema-fields-claimed', e => logEvent('schema-fields-claimed', e.detail));
+    });
+  </script>
+</body>
+</html>
