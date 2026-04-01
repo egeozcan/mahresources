@@ -95,21 +95,19 @@ export class SchemaEditMode extends LitElement {
 
     switch (field) {
       case 'name': {
-        // Prevent duplicate names among $defs siblings
-        if (selected.isDef) {
-          const parentAndIndex = this._findParentOf(this._selectedId);
-          if (parentAndIndex) {
-            const [parent] = parentAndIndex;
-            const siblingNames = new Set(
-              (parent.children || []).filter(c => c.id !== selected.id).map(c => c.name)
-            );
-            if (siblingNames.has(value)) {
-              let deduped = value;
-              let counter = 1;
-              while (siblingNames.has(deduped)) deduped = `${value}${counter++}`;
-              selected.name = deduped;
-              break;
-            }
+        // Prevent duplicate names among all siblings (properties and $defs alike)
+        const parentAndIndex = this._findParentOf(this._selectedId);
+        if (parentAndIndex) {
+          const [parent] = parentAndIndex;
+          const siblingNames = new Set(
+            (parent.children || []).filter(c => c.id !== selected.id).map(c => c.name)
+          );
+          if (siblingNames.has(value)) {
+            let deduped = value;
+            let counter = 1;
+            while (siblingNames.has(deduped)) deduped = `${value}${counter++}`;
+            selected.name = deduped;
+            break;
           }
         }
         selected.name = value;
