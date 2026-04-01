@@ -49,11 +49,21 @@ export function detectDraft(schema: JSONSchema): string | null {
 // ─── Schema → Tree ───────────────────────────────────────────────────────────
 
 export function schemaToTree(schema: JSONSchema, name = '', parentRequired: string[] = []): SchemaNode {
+  // Handle nullable type arrays: ["string", "null"] → base type + preserved array
+  let baseType: string = '';
+  let nullableTypeArray: string[] | null = null;
+  if (Array.isArray(schema.type)) {
+    nullableTypeArray = schema.type;
+    baseType = schema.type.find((t: string) => t !== 'null') || '';
+  } else {
+    baseType = schema.type || '';
+  }
+
   const node: SchemaNode = {
     id: uid(),
     name,
-    // Preserve absence of type — use empty string to signal "no explicit type"
-    type: schema.type || '',
+    // Store the scalar base type for display / switch logic
+    type: baseType,
     required: parentRequired.includes(name),
     schema: { ...schema },
   };
@@ -64,8 +74,32 @@ export function schemaToTree(schema: JSONSchema, name = '', parentRequired: stri
   delete node.schema.$defs;
   delete node.schema.definitions;
   delete node.schema.not;
-  // Also strip type — it's stored on node.type and restored in treeToSchema
-  delete node.schema.type;
+  // Strip type — it's stored on node.type and restored in treeToSchema.
+  // For nullable arrays, preserve the union in node.schema.type so treeToSchema
+  // can emit the correct ["type", "null"] array.
+  if (nullableTypeArray) {
+    node.schema.type = nullableTypeArray;
+  } else {
+    delete node.schema.type;
+  }
+
+  // $ref → reference node
+  if (schema.$ref && typeof schema.$ref === 'string') {
+    node.ref = schema.$ref;
+    delete node.schema.$ref;
+  }
+
+  // oneOf / anyOf / allOf → composition node with variant children
+  for (const kw of ['oneOf', 'anyOf', 'allOf'] as const) {
+    if (Array.isArray(schema[kw])) {
+      node.compositionKeyword = kw;
+      const variants = (schema[kw] as JSONSchema[]).map((variant, i) =>
+        schemaToTree(variant, variant.title || `variant${i + 1}`),
+      );
+      node.children = [...(node.children || []), ...variants];
+      delete node.schema[kw];
+    }
+  }
 
   // `not` keyword → composition node with one child
   if (schema.not && typeof schema.not === 'object') {
@@ -110,11 +144,25 @@ export function schemaToTree(schema: JSONSchema, name = '', parentRequired: stri
 export function treeToSchema(node: SchemaNode): JSONSchema {
   const schema: JSONSchema = { ...node.schema };
 
-  // Restore type only when explicitly set (non-empty)
-  if (node.type) {
+  // Restore type: prefer the union array in node.schema.type (e.g. ["string","null"])
+  // which is kept in sync by the nullable toggle, then fall back to the scalar node.type.
+  if (Array.isArray(node.schema.type)) {
+    schema.type = node.schema.type;
+  } else if (node.type) {
     schema.type = node.type;
   } else {
     delete schema.type;
+  }
+
+  // $ref nodes
+  if (node.ref) {
+    schema.$ref = node.ref;
+  }
+
+  // Composition keywords: oneOf / anyOf / allOf → serialize variant children
+  if (node.compositionKeyword === 'oneOf' || node.compositionKeyword === 'anyOf' || node.compositionKeyword === 'allOf') {
+    const variantChildren = (node.children || []).filter(c => !c.isDef && c.name !== '$defs');
+    schema[node.compositionKeyword] = variantChildren.map(c => treeToSchema(c));
   }
 
   // Serialize `not` composition keyword
@@ -125,8 +173,13 @@ export function treeToSchema(node: SchemaNode): JSONSchema {
     }
   }
 
-  // Separate property children from $defs node and `not` child
-  const propChildren = (node.children || []).filter(c => !c.isDef && c.name !== '$defs' && !(node.compositionKeyword === 'not' && c.name === 'not'));
+  // Separate property children from $defs node, composition variant children, and `not` child
+  const isComposition = node.compositionKeyword === 'oneOf' || node.compositionKeyword === 'anyOf' || node.compositionKeyword === 'allOf';
+  const propChildren = (node.children || []).filter(c =>
+    !c.isDef && c.name !== '$defs'
+    && !(node.compositionKeyword === 'not' && c.name === 'not')
+    && !isComposition  // composition variants are already serialized above
+  );
   const defsNode = (node.children || []).find(c => c.isDef && c.name === '$defs');
 
   // Restore properties (for object type or when type is unset/empty)

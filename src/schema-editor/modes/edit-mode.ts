@@ -105,23 +105,25 @@ export class SchemaEditMode extends LitElement {
           'uniqueItems', 'additionalProperties', 'minProperties', 'maxProperties', 'items', 'enum']) {
           delete selected.schema[key];
         }
+        // Update nullable type array if present (keep "null" but swap the base type)
+        if (Array.isArray(selected.schema.type) && selected.schema.type.includes('null')) {
+          selected.schema.type = [value, 'null'];
+        }
         break;
       case 'required':
         selected.required = value;
         break;
+      case '$ref':
+        selected.ref = value;
+        break;
       case 'nullable': {
         const baseType = selected.type || 'string';
         if (value) {
-          // Add 'null' to type array
-          const types = Array.isArray(selected.schema.type) ? [...selected.schema.type] : [baseType];
-          if (!types.includes('null')) types.push('null');
-          selected.schema.type = types;
+          // Store nullable union in node.schema.type so treeToSchema emits it
+          selected.schema.type = [baseType, 'null'];
         } else {
-          // Remove 'null' from type array
-          if (Array.isArray(selected.schema.type)) {
-            const filtered = selected.schema.type.filter((t: string) => t !== 'null');
-            selected.schema.type = filtered.length === 1 ? filtered[0] : filtered;
-          }
+          // Remove the nullable union — let treeToSchema fall through to node.type
+          delete selected.schema.type;
         }
         break;
       }
@@ -178,10 +180,18 @@ export class SchemaEditMode extends LitElement {
 
   private _handleAddProperty() {
     if (!this._root) return;
-    if (!this._root.children) this._root.children = [];
+
+    // If the selected node is an object, add the property as its child;
+    // otherwise fall back to root.
+    const selected = this._findNode(this._selectedId);
+    const target = (selected && selected.type === 'object' && selected !== this._root)
+      ? selected
+      : this._root;
+
+    if (!target.children) target.children = [];
     let name = 'newProperty';
     let counter = 1;
-    const existing = new Set((this._root.children || []).map(c => c.name));
+    const existing = new Set((target.children || []).map(c => c.name));
     while (existing.has(name)) name = `newProperty${counter++}`;
     const newNode: SchemaNode = {
       id: `node-new-${Date.now()}`,
@@ -191,11 +201,11 @@ export class SchemaEditMode extends LitElement {
       schema: {},
     };
     // Insert before $defs node if present
-    const defsIndex = this._root.children.findIndex(c => c.name === '$defs');
+    const defsIndex = target.children.findIndex(c => c.name === '$defs');
     if (defsIndex >= 0) {
-      this._root.children.splice(defsIndex, 0, newNode);
+      target.children.splice(defsIndex, 0, newNode);
     } else {
-      this._root.children.push(newNode);
+      target.children.push(newNode);
     }
     this._selectedId = newNode.id;
     this.requestUpdate();
@@ -264,13 +274,19 @@ export class SchemaEditMode extends LitElement {
       case 'wrap-anyOf':
       case 'wrap-allOf': {
         const keyword = action.replace('wrap-', '') as 'oneOf' | 'anyOf' | 'allOf';
-        // Wrap the node's schema in a composition keyword
+        // Build the original schema as the first variant
         const currentSchema = { ...node.schema };
         if (node.type) currentSchema.type = node.type;
-        // Clear the node and set it as a composition node
-        node.schema = { [keyword]: [currentSchema, {}] };
+        // Set up the node as a composition node with variant children
+        node.compositionKeyword = keyword;
+        node.schema = {};
         node.type = '';
-        node.children = undefined;
+        node.children = [
+          { id: `node-variant-${Date.now()}-0`, name: currentSchema.title || 'variant1', type: currentSchema.type || '', required: false, schema: currentSchema },
+          { id: `node-variant-${Date.now()}-1`, name: 'variant2', type: 'string', required: false, schema: {} },
+        ];
+        // Clean type from first variant's schema (it's in node.type)
+        delete node.children[0].schema.type;
         break;
       }
       case 'add-if-then-else':
@@ -309,7 +325,7 @@ export class SchemaEditMode extends LitElement {
         defsNode.children!.push(defNode);
         // Replace node with $ref
         node.type = '';
-        node.schema = { $ref: `#/$defs/${defName}` };
+        node.schema = {};
         node.ref = `#/$defs/${defName}`;
         node.children = undefined;
         node.compositionKeyword = undefined;
