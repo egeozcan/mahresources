@@ -23,22 +23,25 @@ export class SchemaEnumEditor extends LitElement {
   }
 
   private _updateValue(index: number, raw: string) {
+    const updated = [...this.values];
     if (this.valueType === 'number' || this.valueType === 'integer') {
-      this.values[index] = this.valueType === 'integer' ? parseInt(raw) : parseFloat(raw);
+      updated[index] = this.valueType === 'integer' ? parseInt(raw) : parseFloat(raw);
     } else {
-      this.values[index] = raw;
+      updated[index] = raw;
     }
+    this.values = updated;
     this._emit();
   }
 
   private _removeValue(index: number) {
-    this.values.splice(index, 1);
+    this.values = this.values.filter((_, i) => i !== index);
     this._emit();
     this.requestUpdate();
   }
 
   private _addValue() {
-    this.values.push(this.valueType === 'number' || this.valueType === 'integer' ? 0 : '');
+    const newVal = (this.valueType === 'number' || this.valueType === 'integer') ? 0 : '';
+    this.values = [...this.values, newVal];
     this._emit();
     this.requestUpdate();
   }

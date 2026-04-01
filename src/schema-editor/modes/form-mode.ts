@@ -383,8 +383,7 @@ export class SchemaFormMode extends LitElement {
                 : nothing}
               <div>
                 ${this._renderFieldWithAttributes(propSchema, data[key], (val: any) => {
-                  data[key] = val;
-                  onChange(data);
+                  onChange({ ...data, [key]: val });
                 }, rootSchema, fieldId, propSchema.description ? `${fieldId}-desc` : null, isRequired, fullPath)}
               </div>
             </div>
@@ -417,8 +416,7 @@ export class SchemaFormMode extends LitElement {
     const fieldTemplate = this._renderField(schema, data, onChange, rootSchema, fieldId, parentPath);
 
     // Use a container with id-setting approach
-    return html`<span class="schema-form-field-wrapper" data-field-id=${fieldId} data-described-by=${describedBy || ''} data-required=${required}
-      @slotchange=${this._setFieldAttributes}>${fieldTemplate}</span>`;
+    return html`<span class="schema-form-field-wrapper" data-field-id=${fieldId} data-described-by=${describedBy || ''} data-required=${required}>${fieldTemplate}</span>`;
   }
 
   override updated() {
@@ -443,10 +441,6 @@ export class SchemaFormMode extends LitElement {
     });
   }
 
-  private _setFieldAttributes() {
-    // no-op: handled by updated() lifecycle
-  }
-
   // ─── additional properties ──────────────────────────────────────────────
 
   private _renderAdditionalProperties(data: any, extraKeys: string[], onChange: (val: any) => void, rootSchema: JSONSchema): TemplateResult {
@@ -456,8 +450,7 @@ export class SchemaFormMode extends LitElement {
       while (data[newKey] !== undefined) {
         newKey = `newField${counter++}`;
       }
-      data[newKey] = '';
-      onChange(data);
+      onChange({ ...data, [newKey]: '' });
     };
 
     return html`
@@ -509,10 +502,8 @@ export class SchemaFormMode extends LitElement {
           input.value = key;
           return;
         }
-        const val = data[key];
-        delete data[key];
-        data[newKey] = val;
-        onChange(data);
+        const { [key]: val, ...rest } = data;
+        onChange({ ...rest, [newKey]: val });
       }
     };
 
@@ -529,8 +520,8 @@ export class SchemaFormMode extends LitElement {
     };
 
     const onRemove = () => {
-      delete data[key];
-      onChange(data);
+      const { [key]: _, ...rest } = data;
+      onChange(rest);
     };
 
     return html`
@@ -548,8 +539,7 @@ export class SchemaFormMode extends LitElement {
         <div class="flex-grow">
           ${typeof propData === 'object' && propData !== null
             ? this._renderField(inferSchema(propData), propData, (val: any) => {
-                data[key] = val;
-                onChange(data);
+                onChange({ ...data, [key]: val });
               }, rootSchema)
             : this._renderExtraValueInput(key, propData, data, onChange)
           }
@@ -576,8 +566,7 @@ export class SchemaFormMode extends LitElement {
     }
 
     const onInput = (e: Event) => {
-      data[key] = (e.target as HTMLInputElement).value;
-      onChange(data);
+      onChange({ ...data, [key]: (e.target as HTMLInputElement).value });
     };
 
     const onBlur = (e: Event) => {
@@ -585,8 +574,7 @@ export class SchemaFormMode extends LitElement {
       let finalVal: any = val;
       try { finalVal = JSON.parse(val); } catch { /* keep as string */ }
       if (data[key] !== finalVal) {
-        data[key] = finalVal;
-        onChange(data);
+        onChange({ ...data, [key]: finalVal });
       }
     };
 
@@ -625,8 +613,7 @@ export class SchemaFormMode extends LitElement {
 
     const onAddItem = () => {
       if (!canAdd) return;
-      data.push(getDefaultValue(schema.items || { type: 'string' }, rootSchema));
-      onChange(data);
+      onChange([...data, getDefaultValue(schema.items || { type: 'string' }, rootSchema)]);
     };
 
     return html`
@@ -640,8 +627,9 @@ export class SchemaFormMode extends LitElement {
             <div class="flex gap-2 items-start">
               <div class="flex-grow">
                 ${this._renderField(schema.items || inferSchema(item), item, (val: any) => {
-                  data[index] = val;
-                  onChange(data);
+                  const updated = [...data];
+                  updated[index] = val;
+                  onChange(updated);
                 }, rootSchema, undefined, itemPath)}
               </div>
               <button type="button"
@@ -653,8 +641,7 @@ export class SchemaFormMode extends LitElement {
                 ?disabled=${!canRemove}
                 @click=${() => {
                   if (!canRemove) return;
-                  data.splice(index, 1);
-                  onChange(data);
+                  onChange(data.filter((_: any, i: number) => i !== index));
                 }}>&times;</button>
             </div>
           `; })}

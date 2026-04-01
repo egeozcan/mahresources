@@ -1,7 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { sharedStyles } from '../styles';
-import { schemaToTree, treeToSchema, detectDraft, resetIdCounter } from '../schema-tree-model';
+import { schemaToTree, treeToSchema, detectDraft } from '../schema-tree-model';
 import type { SchemaNode } from '../schema-tree-model';
 import type { JSONSchema } from '../schema-core';
 import '../tree/tree-panel';
@@ -37,7 +37,6 @@ export class SchemaEditMode extends LitElement {
 
   override willUpdate(changed: Map<string, unknown>) {
     if (changed.has('schema') && this.schema) {
-      resetIdCounter();
       this._root = schemaToTree(this.schema);
       this._draft = detectDraft(this.schema);
       if (this._root && !this._selectedId) {

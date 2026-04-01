@@ -92,6 +92,16 @@ export function schemaEditorModal() {
         this.tab = tabs[(idx - 1 + tabs.length) % tabs.length] as 'edit' | 'preview' | 'raw';
         (this as unknown as AlpineMagics).$nextTick(() => (e.target as HTMLElement).closest('[role="tablist"]')?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus());
       }
+      if (e.key === 'Home') {
+        e.preventDefault();
+        this.tab = 'edit';
+        (this as unknown as AlpineMagics).$nextTick(() => (e.target as HTMLElement).closest('[role="tablist"]')?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus());
+      }
+      if (e.key === 'End') {
+        e.preventDefault();
+        this.tab = 'raw';
+        (this as unknown as AlpineMagics).$nextTick(() => (e.target as HTMLElement).closest('[role="tablist"]')?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus());
+      }
     },
 
     getPropertyCount() {
