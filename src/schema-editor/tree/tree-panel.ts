@@ -271,6 +271,7 @@ export class SchemaTreePanel extends LitElement {
   // ─── Badge helpers ──────────────────────────────────────────────────────────
 
   private _getBadgeClass(node: SchemaNode): string {
+    if (node.isDef) return 'badge badge-def';
     if (node.ref) return 'badge badge-ref';
     if (node.compositionKeyword) return 'badge badge-composition';
     if (node.schema?.enum) return 'badge badge-enum';
@@ -279,6 +280,7 @@ export class SchemaTreePanel extends LitElement {
   }
 
   private _getBadgeText(node: SchemaNode): string {
+    if (node.isDef) return node.type || 'object';
     if (node.ref) return '$ref';
     if (node.compositionKeyword) return node.compositionKeyword;
     if (node.schema?.enum) return 'enum';

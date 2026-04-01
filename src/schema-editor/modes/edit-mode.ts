@@ -117,7 +117,8 @@ export class SchemaEditMode extends LitElement {
         // Reset type-specific constraints
         for (const key of ['minLength', 'maxLength', 'pattern', 'format', 'minimum', 'maximum',
           'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'minItems', 'maxItems',
-          'uniqueItems', 'additionalProperties', 'minProperties', 'maxProperties', 'items', 'enum']) {
+          'uniqueItems', 'additionalProperties', 'minProperties', 'maxProperties',
+          'items', 'enum', 'prefixItems', 'contains', 'patternProperties']) {
           delete selected.schema[key];
         }
         // Update nullable type array if present (keep "null" but swap the base type)

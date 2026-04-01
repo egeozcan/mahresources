@@ -23,12 +23,13 @@ export const sharedStyles = css`
   }
   .badge-string { background: #d1fae5; color: #065f46; }
   .badge-number, .badge-integer { background: #dbeafe; color: #1e40af; }
-  .badge-boolean { background: #fef3c7; color: #92400e; }
+  .badge-boolean { background: #fef9c3; color: #854d0e; }
   .badge-object { background: #e0e7ff; color: #3730a3; }
   .badge-array { background: #ede9fe; color: #5b21b6; }
   .badge-enum { background: #fef3c7; color: #92400e; }
   .badge-composition { background: #fce7f3; color: #9d174d; }
   .badge-ref { background: #f3f4f6; color: #6b7280; }
+  .badge-def { background: #f1f5f9; color: #475569; }
   .badge-conditional { background: #fff1f2; color: #9f1239; }
 
   /* ─── Form elements ───────────────────────── */
