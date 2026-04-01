@@ -61,6 +61,8 @@ test.describe('Schema-Driven Search Fields', () => {
   let categoryAllOfId: number;
   let categoryOneOfId: number;
   let categoryNoTypeId: number;
+  let categoryIntRatingId: number;
+  let categoryRefSiblingId: number;
   let resourceCategoryId: number;
   const runId = Date.now();
 
@@ -241,6 +243,46 @@ test.describe('Schema-Driven Search Fields', () => {
     );
     categoryNoTypeId = catNoType.ID;
 
+    // Category with rating as plain integer (no enum) — for numeric enum merge test
+    const intRatingSchema = JSON.stringify({
+      type: 'object',
+      properties: {
+        rating: { type: 'integer' },
+      },
+    });
+    const catIntRating = await apiClient.createCategory(
+      `Schema Cat IntRating ${runId}`,
+      'Category with plain integer rating',
+      { MetaSchema: intRatingSchema }
+    );
+    categoryIntRatingId = catIntRating.ID;
+
+    // Category with allOf containing $ref + sibling properties
+    const refSiblingSchema = JSON.stringify({
+      definitions: {
+        base: {
+          type: 'object',
+          properties: {
+            id: { type: 'integer' },
+          },
+        },
+      },
+      allOf: [
+        {
+          $ref: '#/definitions/base',
+          properties: {
+            extra: { type: 'string' },
+          },
+        },
+      ],
+    });
+    const catRefSibling = await apiClient.createCategory(
+      `Schema Cat RefSibling ${runId}`,
+      'Category with $ref + sibling properties in allOf',
+      { MetaSchema: refSiblingSchema }
+    );
+    categoryRefSiblingId = catRefSibling.ID;
+
     // Category with a plain string field (no enum) for string-quoting tests
     const plainStringSchema = JSON.stringify({
       type: 'object',
@@ -278,6 +320,8 @@ test.describe('Schema-Driven Search Fields', () => {
     if (categoryAllOfId) await apiClient.deleteCategory(categoryAllOfId).catch(() => {});
     if (categoryOneOfId) await apiClient.deleteCategory(categoryOneOfId).catch(() => {});
     if (categoryNoTypeId) await apiClient.deleteCategory(categoryNoTypeId).catch(() => {});
+    if (categoryIntRatingId) await apiClient.deleteCategory(categoryIntRatingId).catch(() => {});
+    if (categoryRefSiblingId) await apiClient.deleteCategory(categoryRefSiblingId).catch(() => {});
     if (resourceCategoryId) await apiClient.deleteResourceCategory(resourceCategoryId).catch(() => {});
   });
 
@@ -1166,5 +1210,42 @@ test.describe('Schema-Driven Search Fields', () => {
     const container = schemaFieldsGroup(page);
     await expect(container.locator('input[type="text"]')).not.toHaveCount(0);
     await expect(container.locator('input[type="number"]')).not.toHaveCount(0);
+  });
+
+  // ── 31. Enum dropped when numeric types merge with non-enum variant ─────────
+
+  test('numeric enum is dropped when intersected with a non-enum integer variant', async ({
+    groupPage,
+    page,
+  }) => {
+    await groupPage.gotoList();
+
+    // NumEnum has rating: {type:"number", enum:[1,2,3,4,5]}
+    await selectGroupCategory(page, `Schema Cat NumEnum ${runId}`);
+    // IntRating has rating: {type:"integer"} (no enum)
+    await selectGroupCategory(page, `Schema Cat IntRating ${runId}`);
+
+    const container = schemaFieldsGroup(page);
+
+    // Rating should render as a plain number input (enum dropped), not checkboxes
+    await expect(container.locator('input[type="number"]')).not.toHaveCount(0);
+    await expect(container.locator('input[type="checkbox"]')).toHaveCount(0);
+  });
+
+  // ── 32. $ref siblings preserved in allOf items ──────────────────────────────
+
+  test('allOf item with $ref and sibling properties includes both', async ({
+    groupPage,
+    page,
+  }) => {
+    await groupPage.gotoList();
+    await selectGroupCategory(page, `Schema Cat RefSibling ${runId}`);
+
+    const container = schemaFieldsGroup(page);
+
+    // "id" comes from the $ref (definitions.base)
+    await expect(container.locator('label:has-text("Id")')).toBeVisible();
+    // "extra" is a sibling property alongside the $ref
+    await expect(container.locator('label:has-text("Extra")')).toBeVisible();
   });
 });

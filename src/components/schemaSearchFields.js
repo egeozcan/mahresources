@@ -59,7 +59,17 @@ function resolveSchema(schema, rootSchema) {
       let merged = { ...schema };
       delete merged[keyword];
       for (const sub of schema[keyword]) {
-        const resolved = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
+        let resolved;
+        if (sub.$ref) {
+          // Resolve the $ref, then merge sibling properties from the original
+          // sub-schema so { $ref: '...', properties: { extra: ... } } keeps extra.
+          const refResult = resolveRef(sub.$ref, rootSchema);
+          const siblings = { ...sub };
+          delete siblings.$ref;
+          resolved = refResult ? mergeSchemas(refResult, siblings) : siblings;
+        } else {
+          resolved = sub;
+        }
         if (resolved) merged = mergeSchemas(merged, resolved);
       }
       return resolveSchema(merged, rootSchema);
@@ -145,13 +155,17 @@ export function intersectFields(fieldLists) {
       const numericTypes = new Set(['number', 'integer']);
       if (existing.type !== field.type) {
         if (numericTypes.has(existing.type) && numericTypes.has(field.type)) {
-          // integer and number are compatible — merge to number
+          // integer and number are compatible — merge to number,
+          // but still reconcile enums (one side may lack an enum)
           existing.type = 'number';
         } else {
           existing.type = 'string';
           existing.enum = null;
+          continue;
         }
-      } else if (existing.enum && field.enum) {
+      }
+      // Reconcile enums (runs for same-type AND numeric-merge cases)
+      if (existing.enum && field.enum) {
         // Sort before comparing so order doesn't matter
         const a = [...existing.enum].sort();
         const b = [...field.enum].sort();
