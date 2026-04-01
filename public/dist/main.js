@@ -356,20 +356,20 @@ ${n?`Expression: "`+n+`"
         <h4>Object Constraints</h4>
         <div class="grid">
           <div>
-            <label>Additional Properties</label>
-            <select .value=${t} @change=${e=>{let t=e.target.value;this._emit(`additionalProperties`,t===``?void 0:t===`true`)}}>
+            <label for="obj-addl-props">Additional Properties</label>
+            <select id="obj-addl-props" .value=${t} @change=${e=>{let t=e.target.value;this._emit(`additionalProperties`,t===``?void 0:t===`true`)}}>
               <option value="">-- default (true) --</option>
               <option value="true" ?selected=${t===`true`}>Allowed</option>
               <option value="false" ?selected=${t===`false`}>Forbidden</option>
             </select>
           </div>
           <div>
-            <label>Min Properties</label>
-            <input type="number" min="0" .value=${this.schema.minProperties??``} @change=${e=>{let t=e.target.value;this._emit(`minProperties`,t?parseInt(t):void 0)}}>
+            <label for="obj-min-props">Min Properties</label>
+            <input id="obj-min-props" type="number" min="0" .value=${this.schema.minProperties??``} @change=${e=>{let t=e.target.value;this._emit(`minProperties`,t?parseInt(t):void 0)}}>
           </div>
           <div>
-            <label>Max Properties</label>
-            <input type="number" min="0" .value=${this.schema.maxProperties??``} @change=${e=>{let t=e.target.value;this._emit(`maxProperties`,t?parseInt(t):void 0)}}>
+            <label for="obj-max-props">Max Properties</label>
+            <input id="obj-max-props" type="number" min="0" .value=${this.schema.maxProperties??``} @change=${e=>{let t=e.target.value;this._emit(`maxProperties`,t?parseInt(t):void 0)}}>
           </div>
         </div>
       </div>

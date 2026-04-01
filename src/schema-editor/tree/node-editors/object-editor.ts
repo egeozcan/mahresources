@@ -27,8 +27,8 @@ export class SchemaObjectEditor extends LitElement {
         <h4>Object Constraints</h4>
         <div class="grid">
           <div>
-            <label>Additional Properties</label>
-            <select .value=${addlValue} @change=${(e: Event) => {
+            <label for="obj-addl-props">Additional Properties</label>
+            <select id="obj-addl-props" .value=${addlValue} @change=${(e: Event) => {
               const v = (e.target as HTMLSelectElement).value;
               this._emit('additionalProperties', v === '' ? undefined : v === 'true');
             }}>
@@ -38,15 +38,15 @@ export class SchemaObjectEditor extends LitElement {
             </select>
           </div>
           <div>
-            <label>Min Properties</label>
-            <input type="number" min="0" .value=${this.schema.minProperties ?? ''} @change=${(e: Event) => {
+            <label for="obj-min-props">Min Properties</label>
+            <input id="obj-min-props" type="number" min="0" .value=${this.schema.minProperties ?? ''} @change=${(e: Event) => {
               const v = (e.target as HTMLInputElement).value;
               this._emit('minProperties', v ? parseInt(v) : undefined);
             }}>
           </div>
           <div>
-            <label>Max Properties</label>
-            <input type="number" min="0" .value=${this.schema.maxProperties ?? ''} @change=${(e: Event) => {
+            <label for="obj-max-props">Max Properties</label>
+            <input id="obj-max-props" type="number" min="0" .value=${this.schema.maxProperties ?? ''} @change=${(e: Event) => {
               const v = (e.target as HTMLInputElement).value;
               this._emit('maxProperties', v ? parseInt(v) : undefined);
             }}>

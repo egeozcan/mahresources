@@ -55,7 +55,7 @@
                     </div>
                     <!-- Footer -->
                     <div class="flex items-center gap-3 px-4 py-3 border-t border-stone-200 bg-stone-50 rounded-b-lg">
-                        <span class="text-xs text-stone-400 font-mono" x-text="getPropertyCount()"></span>
+                        <span class="text-xs text-stone-600 font-mono" x-text="getPropertyCount()"></span>
                         <div class="flex-1"></div>
                         <button type="button" class="px-4 py-2 border border-stone-300 rounded-md text-sm font-mono text-stone-700 bg-white hover:bg-stone-50" @click="closeModal()">Cancel</button>
                         <button type="button" class="px-4 py-2 border-none rounded-md text-sm font-mono text-white bg-indigo-700 hover:bg-indigo-800" @click="applySchema()">Apply Schema</button>
