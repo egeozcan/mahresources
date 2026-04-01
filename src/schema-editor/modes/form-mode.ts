@@ -85,14 +85,14 @@ export class SchemaFormMode extends LitElement {
 
   // ─── Recursive field renderer (port of generateFormElement) ──────────────
 
-  private _renderField(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema): TemplateResult | typeof nothing {
+  private _renderField(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema, fieldId?: string): TemplateResult | typeof nothing {
     // Handle $ref
     if (schema.$ref) {
       const resolved = resolveRef(schema.$ref, rootSchema);
       if (resolved) {
         const mergedSchema = { ...resolved, ...schema };
         delete mergedSchema.$ref;
-        return this._renderField(mergedSchema, data, onChange, rootSchema);
+        return this._renderField(mergedSchema, data, onChange, rootSchema, fieldId);
       }
       return html`<div class="text-red-500 text-xs">Unresolvable reference: ${schema.$ref}</div>`;
     }
@@ -110,7 +110,7 @@ export class SchemaFormMode extends LitElement {
         const resolved = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
         if (resolved) merged = mergeSchemas(merged, resolved);
       }
-      return this._renderField(merged, data, onChange, rootSchema);
+      return this._renderField(merged, data, onChange, rootSchema, fieldId);
     }
 
     // Handle anyOf
@@ -134,6 +134,7 @@ export class SchemaFormMode extends LitElement {
         onChange(schema.const);
       }
       return html`<input type="text" .value=${String(schema.const)} disabled
+        aria-label="Constant value"
         class="shadow-sm bg-gray-100 block w-full sm:text-sm border-gray-300 rounded-md mt-1 text-gray-500">`;
     }
 
@@ -165,7 +166,7 @@ export class SchemaFormMode extends LitElement {
     }
 
     // Primitive types (string, number, integer, boolean)
-    return this._renderPrimitive(schema, type, data, onChange);
+    return this._renderPrimitive(schema, type, data, onChange, fieldId);
   }
 
   // ─── oneOf ──────────────────────────────────────────────────────────────
@@ -253,6 +254,7 @@ export class SchemaFormMode extends LitElement {
         ${schema.title ? html`<h4 class="font-bold text-gray-900 text-sm">${schema.title}</h4>` : nothing}
         ${schema.description ? html`<p class="text-xs text-gray-500 mb-2">${schema.description}</p>` : nothing}
         <select class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-green-500 focus:border-green-500 sm:text-sm rounded-md mb-2"
+          aria-label=${schema.title ? `Select variant for ${schema.title}` : 'Select variant'}
           @change=${onSelectChange}>
           ${schema.anyOf.map((opt: JSONSchema, idx: number) => {
             let typeLabel = opt.type;
@@ -308,6 +310,7 @@ export class SchemaFormMode extends LitElement {
 
     return html`
       <select class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md mt-1"
+        aria-label=${schema.title ? `Select ${schema.title}` : 'Select value'}
         @change=${onSelectChange}>
         ${isNull ? html`<option value="" selected>-- select --</option>` : nothing}
         ${schema.enum.map((val: any) => html`
@@ -409,7 +412,7 @@ export class SchemaFormMode extends LitElement {
   ): TemplateResult {
     // We render the field in a wrapper div, then use a Lit directive-like approach
     // to set attributes on the first input/select/textarea child after render.
-    const fieldTemplate = this._renderField(schema, data, onChange, rootSchema);
+    const fieldTemplate = this._renderField(schema, data, onChange, rootSchema, fieldId);
 
     // Use a container with id-setting approach
     return html`<span class="schema-form-field-wrapper" data-field-id=${fieldId} data-described-by=${describedBy || ''} data-required=${required}
@@ -480,19 +483,46 @@ export class SchemaFormMode extends LitElement {
 
   private _renderExtraProperty(key: string, data: any, onChange: (val: any) => void, rootSchema: JSONSchema): TemplateResult {
     const propData = data[key];
+    const errorId = generateFieldId('key-error', key);
 
     const onKeyChange = (e: Event) => {
-      const newKey = (e.target as HTMLInputElement).value;
+      const input = e.target as HTMLInputElement;
+      const newKey = input.value;
       if (newKey && newKey !== key) {
         if (data[newKey] !== undefined) {
-          alert('Key already exists');
-          (e.target as HTMLInputElement).value = key;
+          // Show inline error instead of alert
+          input.classList.add('border-red-500');
+          input.classList.remove('border-gray-300');
+          input.setAttribute('aria-invalid', 'true');
+          const errorEl = input.parentElement?.querySelector(`#${errorId}`);
+          if (errorEl) {
+            errorEl.textContent = 'Key already exists';
+            setTimeout(() => {
+              errorEl.textContent = '';
+              input.classList.remove('border-red-500');
+              input.classList.add('border-gray-300');
+              input.removeAttribute('aria-invalid');
+            }, 3000);
+          }
+          input.value = key;
           return;
         }
         const val = data[key];
         delete data[key];
         data[newKey] = val;
         onChange(data);
+      }
+    };
+
+    const onKeyInput = (e: Event) => {
+      // Clear error on next change
+      const input = e.target as HTMLInputElement;
+      const errorEl = input.parentElement?.querySelector(`#${errorId}`);
+      if (errorEl && errorEl.textContent) {
+        errorEl.textContent = '';
+        input.classList.remove('border-red-500');
+        input.classList.add('border-gray-300');
+        input.removeAttribute('aria-invalid');
       }
     };
 
@@ -508,7 +538,10 @@ export class SchemaFormMode extends LitElement {
             class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md"
             placeholder="Key"
             aria-label="Property name"
-            @change=${onKeyChange}>
+            aria-describedby=${errorId}
+            @change=${onKeyChange}
+            @input=${onKeyInput}>
+          <span id=${errorId} class="block text-sm text-red-500 mt-1" role="alert"></span>
         </div>
         <div class="flex-grow">
           ${typeof propData === 'object' && propData !== null
@@ -641,7 +674,7 @@ export class SchemaFormMode extends LitElement {
 
   // ─── primitives ─────────────────────────────────────────────────────────
 
-  private _renderPrimitive(schema: JSONSchema, type: string, data: any, onChange: (val: any) => void): TemplateResult {
+  private _renderPrimitive(schema: JSONSchema, type: string, data: any, onChange: (val: any) => void, fieldId?: string): TemplateResult {
     if (type === 'boolean') {
       return html`
         <input type="checkbox"
@@ -652,14 +685,15 @@ export class SchemaFormMode extends LitElement {
     }
 
     if (type === 'integer' || type === 'number') {
-      return this._renderNumberInput(schema, type, data, onChange);
+      return this._renderNumberInput(schema, type, data, onChange, fieldId);
     }
 
     // String type
-    return this._renderStringInput(schema, data, onChange);
+    return this._renderStringInput(schema, data, onChange, fieldId);
   }
 
-  private _renderNumberInput(schema: JSONSchema, type: string, data: any, onChange: (val: any) => void): TemplateResult {
+  private _renderNumberInput(schema: JSONSchema, type: string, data: any, onChange: (val: any) => void, fieldId?: string): TemplateResult {
+    const errorId = fieldId ? `${fieldId}-error` : undefined;
     const constraints: string[] = [];
     if (schema.minimum !== undefined || schema.exclusiveMinimum !== undefined) {
       constraints.push(schema.exclusiveMinimum !== undefined ? `>${schema.exclusiveMinimum}` : `\u2265${schema.minimum}`);
@@ -679,12 +713,16 @@ export class SchemaFormMode extends LitElement {
     };
 
     const onBlur = (e: Event) => {
-      const val = (e.target as HTMLInputElement).value;
-      const errorSpan = (e.target as HTMLInputElement).parentElement?.querySelector('.schema-form-error');
+      const input = e.target as HTMLInputElement;
+      const val = input.value;
+      const errorSpan = errorId
+        ? (input.closest('div')?.querySelector(`#${errorId}`) as HTMLElement | null)
+        : (input.parentElement?.querySelector('.schema-form-error') as HTMLElement | null);
       if (val === '' || val === undefined || val === null) {
         if (errorSpan) errorSpan.textContent = '';
-        (e.target as HTMLInputElement).classList.remove('border-red-500');
-        (e.target as HTMLInputElement).classList.add('border-gray-300');
+        input.classList.remove('border-red-500');
+        input.classList.add('border-gray-300');
+        input.removeAttribute('aria-invalid');
         return;
       }
       const num = parseFloat(val);
@@ -702,13 +740,15 @@ export class SchemaFormMode extends LitElement {
       }
       if (errorSpan) {
         errorSpan.textContent = error;
-        if (error) {
-          (e.target as HTMLInputElement).classList.add('border-red-500');
-          (e.target as HTMLInputElement).classList.remove('border-gray-300');
-        } else {
-          (e.target as HTMLInputElement).classList.remove('border-red-500');
-          (e.target as HTMLInputElement).classList.add('border-gray-300');
-        }
+      }
+      if (error) {
+        input.classList.add('border-red-500');
+        input.classList.remove('border-gray-300');
+        input.setAttribute('aria-invalid', 'true');
+      } else {
+        input.classList.remove('border-red-500');
+        input.classList.add('border-gray-300');
+        input.removeAttribute('aria-invalid');
       }
     };
 
@@ -720,15 +760,17 @@ export class SchemaFormMode extends LitElement {
           max=${schema.maximum !== undefined ? schema.maximum : nothing}
           .value=${data !== undefined && data !== null ? String(data) : ''}
           class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md mt-1"
+          aria-describedby=${errorId || nothing}
           @input=${onInput}
           @blur=${onBlur}>
         ${constraints.length > 0 ? html`<span class="text-xs text-gray-400 block mt-1">${constraints.join(', ')}</span>` : nothing}
-        <span class="schema-form-error block text-sm text-red-500 mt-1" role="alert"></span>
+        <span class="schema-form-error block text-sm text-red-500 mt-1" id=${errorId || nothing} role="alert"></span>
       </div>
     `;
   }
 
-  private _renderStringInput(schema: JSONSchema, data: any, onChange: (val: any) => void): TemplateResult {
+  private _renderStringInput(schema: JSONSchema, data: any, onChange: (val: any) => void, fieldId?: string): TemplateResult {
+    const errorId = fieldId ? `${fieldId}-error` : undefined;
     let inputType = 'text';
     if (schema.format === 'date') inputType = 'date';
     else if (schema.format === 'date-time') inputType = 'datetime-local';
@@ -749,8 +791,11 @@ export class SchemaFormMode extends LitElement {
     };
 
     const onBlur = (e: Event) => {
-      const val = (e.target as HTMLInputElement).value || '';
-      const errorSpan = (e.target as HTMLInputElement).parentElement?.querySelector('.schema-form-error');
+      const input = e.target as HTMLInputElement;
+      const val = input.value || '';
+      const errorSpan = errorId
+        ? (input.closest('div')?.querySelector(`#${errorId}`) as HTMLElement | null)
+        : (input.parentElement?.querySelector('.schema-form-error') as HTMLElement | null);
       let error = '';
       if (schema.minLength !== undefined && val.length < schema.minLength) {
         error = `Must be at least ${schema.minLength} characters`;
@@ -759,13 +804,15 @@ export class SchemaFormMode extends LitElement {
       }
       if (errorSpan) {
         errorSpan.textContent = error;
-        if (error) {
-          (e.target as HTMLInputElement).classList.add('border-red-500');
-          (e.target as HTMLInputElement).classList.remove('border-gray-300');
-        } else {
-          (e.target as HTMLInputElement).classList.remove('border-red-500');
-          (e.target as HTMLInputElement).classList.add('border-gray-300');
-        }
+      }
+      if (error) {
+        input.classList.add('border-red-500');
+        input.classList.remove('border-gray-300');
+        input.setAttribute('aria-invalid', 'true');
+      } else {
+        input.classList.remove('border-red-500');
+        input.classList.add('border-gray-300');
+        input.removeAttribute('aria-invalid');
       }
     };
 
@@ -777,10 +824,11 @@ export class SchemaFormMode extends LitElement {
           minlength=${schema.minLength !== undefined ? schema.minLength : nothing}
           maxlength=${schema.maxLength !== undefined ? schema.maxLength : nothing}
           class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md mt-1"
+          aria-describedby=${errorId || nothing}
           @input=${onInput}
           @blur=${onBlur}>
         ${hintText ? html`<span class="text-xs text-gray-400 block mt-1">${hintText}</span>` : nothing}
-        <span class="schema-form-error block text-sm text-red-500 mt-1" role="alert"></span>
+        <span class="schema-form-error block text-sm text-red-500 mt-1" id=${errorId || nothing} role="alert"></span>
       </div>
     `;
   }
