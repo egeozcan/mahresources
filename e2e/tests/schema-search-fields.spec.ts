@@ -57,6 +57,8 @@ test.describe('Schema-Driven Search Fields', () => {
   let categoryIntegerWeightId: number;
   let categoryCoercibleEnumId: number;
   let categoryNumericEnumId: number;
+  let categoryRefId: number;
+  let categoryAllOfId: number;
   let resourceCategoryId: number;
   const runId = Date.now();
 
@@ -157,6 +159,54 @@ test.describe('Schema-Driven Search Fields', () => {
     );
     categoryNumericEnumId = catNumericEnum.ID;
 
+    // Category with $ref — uses definitions to define a reusable address type
+    const refSchema = JSON.stringify({
+      type: 'object',
+      definitions: {
+        address: {
+          type: 'object',
+          properties: {
+            city: { type: 'string' },
+            zip: { type: 'string' },
+          },
+        },
+      },
+      properties: {
+        name: { type: 'string' },
+        home: { $ref: '#/definitions/address' },
+      },
+    });
+    const catRef = await apiClient.createCategory(
+      `Schema Cat Ref ${runId}`,
+      'Category with $ref schema',
+      { MetaSchema: refSchema }
+    );
+    categoryRefId = catRef.ID;
+
+    // Category with allOf — merges two schema fragments at top level
+    const allOfSchema = JSON.stringify({
+      allOf: [
+        {
+          type: 'object',
+          properties: {
+            firstName: { type: 'string' },
+          },
+        },
+        {
+          type: 'object',
+          properties: {
+            age: { type: 'integer' },
+          },
+        },
+      ],
+    });
+    const catAllOf = await apiClient.createCategory(
+      `Schema Cat AllOf ${runId}`,
+      'Category with allOf schema',
+      { MetaSchema: allOfSchema }
+    );
+    categoryAllOfId = catAllOf.ID;
+
     // Category with a plain string field (no enum) for string-quoting tests
     const plainStringSchema = JSON.stringify({
       type: 'object',
@@ -190,6 +240,8 @@ test.describe('Schema-Driven Search Fields', () => {
     if (categoryIntegerWeightId) await apiClient.deleteCategory(categoryIntegerWeightId).catch(() => {});
     if (categoryCoercibleEnumId) await apiClient.deleteCategory(categoryCoercibleEnumId).catch(() => {});
     if (categoryNumericEnumId) await apiClient.deleteCategory(categoryNumericEnumId).catch(() => {});
+    if (categoryRefId) await apiClient.deleteCategory(categoryRefId).catch(() => {});
+    if (categoryAllOfId) await apiClient.deleteCategory(categoryAllOfId).catch(() => {});
     if (resourceCategoryId) await apiClient.deleteResourceCategory(resourceCategoryId).catch(() => {});
   });
 
@@ -972,5 +1024,43 @@ test.describe('Schema-Driven Search Fields', () => {
     // Should be rating:EQ:3 (unquoted number), not rating:EQ:"3"
     expect(decoded).toContain('rating:EQ:3');
     expect(decoded).not.toContain('rating:EQ:"3"');
+  });
+
+  // ── 27. $ref properties are resolved and flattened ──────────────────────────
+
+  test('$ref property is resolved into nested fields', async ({
+    groupPage,
+    page,
+  }) => {
+    await groupPage.gotoList();
+    await selectGroupCategory(page, `Schema Cat Ref ${runId}`);
+
+    const container = schemaFieldsGroup(page);
+
+    // "name" is a direct string property
+    const nameInputs = container.locator('input[type="text"]');
+    await expect(nameInputs).not.toHaveCount(0);
+
+    // "home" references definitions.address which has city and zip
+    // These should flatten as home.city and home.zip text inputs
+    // Look for labels containing "Home" and "City" or "Zip"
+    await expect(container.locator('label:has-text("City")')).toBeVisible();
+    await expect(container.locator('label:has-text("Zip")')).toBeVisible();
+  });
+
+  // ── 28. Top-level allOf is merged and flattened ─────────────────────────────
+
+  test('top-level allOf schema produces merged fields', async ({
+    groupPage,
+    page,
+  }) => {
+    await groupPage.gotoList();
+    await selectGroupCategory(page, `Schema Cat AllOf ${runId}`);
+
+    const container = schemaFieldsGroup(page);
+
+    // allOf merges firstName (string) and age (integer)
+    await expect(container.locator('input[type="text"]')).not.toHaveCount(0);
+    await expect(container.locator('input[type="number"]')).not.toHaveCount(0);
   });
 });

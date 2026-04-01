@@ -1,28 +1,102 @@
 import { generateParamNameForMeta } from './freeFields.js';
 
 /**
+ * Resolve a JSON Pointer $ref (e.g., "#/definitions/address") against a root schema.
+ */
+function resolveRef(ref, root) {
+  if (typeof ref !== 'string' || !ref.startsWith('#/')) return null;
+  let current = root;
+  for (const part of ref.split('/').slice(1)) {
+    if (current && typeof current === 'object' && part in current) {
+      current = current[part];
+    } else {
+      return null;
+    }
+  }
+  return current;
+}
+
+/**
+ * Merge two schemas (for allOf). Combines properties and required arrays,
+ * copies other keys from the extension, and strips composition keywords.
+ */
+function mergeSchemas(base, extension) {
+  const merged = { ...base };
+  for (const key in extension) {
+    if (key === 'properties') {
+      merged.properties = { ...(base.properties || {}), ...extension.properties };
+    } else if (key === 'required') {
+      merged.required = [...new Set([...(base.required || []), ...(extension.required || [])])];
+    } else if (!['allOf', 'anyOf', 'oneOf', '$ref'].includes(key)) {
+      merged[key] = extension[key];
+    }
+  }
+  return merged;
+}
+
+/**
+ * Resolve a schema that may use composition keywords ($ref, allOf).
+ * Returns a plain schema with type/properties ready for flattening.
+ */
+function resolveSchema(schema, rootSchema) {
+  if (!schema) return schema;
+
+  // Resolve $ref
+  if (schema.$ref) {
+    const resolved = resolveRef(schema.$ref, rootSchema);
+    if (resolved) {
+      const merged = { ...resolved, ...schema };
+      delete merged.$ref;
+      return resolveSchema(merged, rootSchema);
+    }
+    return null;
+  }
+
+  // Merge allOf
+  if (schema.allOf && Array.isArray(schema.allOf)) {
+    let merged = { ...schema };
+    delete merged.allOf;
+    for (const sub of schema.allOf) {
+      const resolved = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
+      if (resolved) merged = mergeSchemas(merged, resolved);
+    }
+    return resolveSchema(merged, rootSchema);
+  }
+
+  return schema;
+}
+
+/**
  * Recursively flatten a JSON Schema into a list of searchable field descriptors.
+ * Supports $ref, allOf, and nested objects.
  *
  * @param {object} schema - Parsed JSON Schema object
  * @param {string} prefix - Dot-separated path prefix for nested fields
  * @param {string} labelPrefix - Human-readable label prefix
  * @param {number} depth - Current recursion depth (max 10)
+ * @param {object} rootSchema - Top-level schema for $ref resolution
  * @returns {Array<{path: string, label: string, type: string, enum: string[]|null}>}
  */
-export function flattenSchema(schema, prefix = '', labelPrefix = '', depth = 0) {
-  if (depth > 10 || !schema || schema.type !== 'object' || !schema.properties) {
+export function flattenSchema(schema, prefix = '', labelPrefix = '', depth = 0, rootSchema = null) {
+  if (depth > 10 || !schema) return [];
+
+  const root = rootSchema || schema;
+  const resolved = resolveSchema(schema, root);
+  if (!resolved || resolved.type !== 'object' || !resolved.properties) {
     return [];
   }
 
   const fields = [];
 
-  for (const [key, prop] of Object.entries(schema.properties)) {
+  for (const [key, rawProp] of Object.entries(resolved.properties)) {
     const path = prefix ? `${prefix}.${key}` : key;
+    // Resolve $ref on individual properties before inspecting type
+    const prop = resolveSchema(rawProp, root) || rawProp;
     const rawLabel = prop.title || titleCase(key);
     const label = labelPrefix ? `${labelPrefix} › ${rawLabel}` : rawLabel;
 
     if (prop.type === 'object' && prop.properties) {
-      fields.push(...flattenSchema(prop, path, label, depth + 1));
+      fields.push(...flattenSchema(prop, path, label, depth + 1, root));
     } else if (prop.type === 'array') {
       continue;
     } else {
