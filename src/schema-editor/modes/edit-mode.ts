@@ -94,9 +94,27 @@ export class SchemaEditMode extends LitElement {
     const { field, value } = e.detail;
 
     switch (field) {
-      case 'name':
+      case 'name': {
+        // Prevent duplicate names among $defs siblings
+        if (selected.isDef) {
+          const parentAndIndex = this._findParentOf(this._selectedId);
+          if (parentAndIndex) {
+            const [parent] = parentAndIndex;
+            const siblingNames = new Set(
+              (parent.children || []).filter(c => c.id !== selected.id).map(c => c.name)
+            );
+            if (siblingNames.has(value)) {
+              let deduped = value;
+              let counter = 1;
+              while (siblingNames.has(deduped)) deduped = `${value}${counter++}`;
+              selected.name = deduped;
+              break;
+            }
+          }
+        }
         selected.name = value;
         break;
+      }
       case 'type':
         selected.type = value;
         // Reset type-specific constraints
@@ -274,18 +292,30 @@ export class SchemaEditMode extends LitElement {
       case 'wrap-anyOf':
       case 'wrap-allOf': {
         const keyword = action.replace('wrap-', '') as 'oneOf' | 'anyOf' | 'allOf';
-        // Build the original schema as the first variant
-        const currentSchema = { ...node.schema };
-        if (node.type) currentSchema.type = node.type;
-        // Set up the node as a composition node with variant children
+        // Split schema into metadata (stays on wrapper) and type-specific (goes into variant)
+        const metadataKeys = ['title', 'description', 'readOnly', 'writeOnly', 'default', 'examples', 'deprecated'];
+        const metadata: Record<string, any> = {};
+        const typeSchema: Record<string, any> = {};
+        for (const [k, v] of Object.entries(node.schema)) {
+          if (metadataKeys.includes(k)) {
+            metadata[k] = v;
+          } else {
+            typeSchema[k] = v;
+          }
+        }
+        // Build the first variant from the type-specific schema
+        const originalType = node.type;
+        if (originalType) typeSchema.type = originalType;
+        const variantName = node.schema.title || 'variant1';
+        // Set up the node as a composition node, keeping metadata on the wrapper
         node.compositionKeyword = keyword;
-        node.schema = {};
+        node.schema = metadata;
         node.type = '';
         node.children = [
-          { id: `node-variant-${Date.now()}-0`, name: currentSchema.title || 'variant1', type: currentSchema.type || '', required: false, schema: currentSchema },
+          { id: `node-variant-${Date.now()}-0`, name: variantName, type: originalType || '', required: false, schema: typeSchema },
           { id: `node-variant-${Date.now()}-1`, name: 'variant2', type: 'string', required: false, schema: {} },
         ];
-        // Clean type from first variant's schema (it's in node.type)
+        // Clean type from first variant's schema (it's stored in node.type)
         delete node.children[0].schema.type;
         break;
       }
@@ -311,8 +341,11 @@ export class SchemaEditMode extends LitElement {
           };
           this._root.children.push(defsNode);
         }
-        // Create a definition from the node's current schema
-        const defName = node.name || 'extracted';
+        // Create a definition from the node's current schema (deduplicate name)
+        let defName = node.name || 'extracted';
+        let defCounter = 1;
+        const existingDefs = new Set((defsNode.children || []).map(c => c.name));
+        while (existingDefs.has(defName)) defName = `${node.name || 'extracted'}${defCounter++}`;
         const defNode: SchemaNode = {
           id: `node-def-${Date.now()}`,
           name: defName,
@@ -353,9 +386,13 @@ export class SchemaEditMode extends LitElement {
       };
       this._root.children.push(defsNode);
     }
+    let name = 'newDefinition';
+    let counter = 1;
+    const existing = new Set((defsNode.children || []).map(c => c.name));
+    while (existing.has(name)) name = `newDefinition${counter++}`;
     const newDef: SchemaNode = {
       id: `node-def-${Date.now()}`,
-      name: 'newDefinition',
+      name,
       type: 'object',
       required: false,
       schema: {},
