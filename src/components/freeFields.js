@@ -15,10 +15,11 @@ export function freeFields({ fields, name, url, jsonOutput, id, title, fromJSON 
     async init() {
       // Listen for schema fields claiming MetaQuery paths — must be registered
       // before any async work to avoid missing events from schemaSearchFields init().
-      // Track removed entries so they can be restored when paths are unclaimed,
-      // without losing user-added rows that weren't in the original snapshot.
+      // Only search-sidebar freeFields (name="MetaQuery") should respond; bulk-edit
+      // and create/edit forms (name="Meta", jsonOutput=true) must not be affected.
       this._removedBySchema = [];
       window.addEventListener('schema-fields-claimed', (e) => {
+        if (this.name !== 'MetaQuery') return;
         const claimed = new Set(e.detail.paths || []);
         if (!this.fields) return;
 

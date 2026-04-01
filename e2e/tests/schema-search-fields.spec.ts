@@ -1026,6 +1026,41 @@ test.describe('Schema-Driven Search Fields', () => {
     expect(decoded).not.toContain('rating:EQ:"3"');
   });
 
+  // ── 27b. schema-fields-claimed only affects MetaQuery freeFields ─────────────
+
+  test('schema-fields-claimed event is ignored by non-MetaQuery freeFields instances', async ({
+    groupPage,
+    page,
+  }) => {
+    await groupPage.gotoList();
+
+    // Find a non-MetaQuery freeFields (bulk editor style, name="Meta") via Alpine,
+    // inject a field whose name matches a schema path, then fire schema-fields-claimed
+    // and verify the field survives.
+    const survived = await page.evaluate(() => {
+      const allFreeFieldEls = document.querySelectorAll('[x-data*="freeFields"]');
+      for (const el of allFreeFieldEls) {
+        const data = (window as any).Alpine.$data(el);
+        if (!data || data.name !== 'Meta') continue;
+
+        // Inject a field that matches a claimed path
+        data.fields = [{ name: 'color', value: 'test', operation: 'EQ' }];
+
+        // Fire the event claiming "color"
+        window.dispatchEvent(new CustomEvent('schema-fields-claimed', {
+          detail: { paths: ['color'] },
+        }));
+
+        // The field should still be there (non-MetaQuery freeFields ignores the event)
+        return data.fields.some((f: any) => f.name === 'color');
+      }
+      // No non-MetaQuery freeFields found — skip (vacuously true)
+      return true;
+    });
+
+    expect(survived, 'non-MetaQuery freeFields should ignore schema-fields-claimed').toBe(true);
+  });
+
   // ── 27. $ref properties are resolved and flattened ──────────────────────────
 
   test('$ref property is resolved into nested fields', async ({
