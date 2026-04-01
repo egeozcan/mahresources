@@ -20,15 +20,15 @@ export class SchemaRefEditor extends LitElement {
     return html`
       <div class="type-section">
         <h4>$ref Target</h4>
-        <label>Reference</label>
+        <label for="ref-target">Reference</label>
         ${this.defsNames.length > 0
           ? html`
-            <select .value=${this.ref} @change=${(e: Event) => this._emit((e.target as HTMLSelectElement).value)}>
+            <select id="ref-target" .value=${this.ref} @change=${(e: Event) => this._emit((e.target as HTMLSelectElement).value)}>
               <option value="">-- select --</option>
               ${this.defsNames.map(name => html`<option .value=${'#/$defs/' + name} ?selected=${this.ref === '#/$defs/' + name}>${name}</option>`)}
             </select>
           `
-          : html`<input .value=${this.ref} @change=${(e: Event) => this._emit((e.target as HTMLInputElement).value)}>`
+          : html`<input id="ref-target" .value=${this.ref} @change=${(e: Event) => this._emit((e.target as HTMLInputElement).value)}>`
         }
       </div>
     `;
