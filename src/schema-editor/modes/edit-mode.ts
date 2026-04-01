@@ -226,6 +226,101 @@ export class SchemaEditMode extends LitElement {
     this._emitSchemaChange();
   }
 
+  private _handleReorder(e: CustomEvent) {
+    if (!this._root) return;
+    const { draggedId, targetId } = e.detail;
+
+    // Find dragged node's parent and index
+    const draggedInfo = this._findParentOf(draggedId);
+    const targetInfo = this._findParentOf(targetId);
+    if (!draggedInfo || !targetInfo) return;
+
+    const [dragParent, dragIndex] = draggedInfo;
+    const [targetParent, targetIndex] = targetInfo;
+
+    // Only reorder within the same parent
+    if (dragParent !== targetParent) return;
+
+    const [removed] = dragParent.children!.splice(dragIndex, 1);
+    // Recalculate target index after removal
+    const insertIndex = dragParent.children!.findIndex(c => c.id === targetId);
+    if (insertIndex >= 0) {
+      dragParent.children!.splice(insertIndex, 0, removed);
+    } else {
+      dragParent.children!.push(removed);
+    }
+
+    this.requestUpdate();
+    this._emitSchemaChange();
+  }
+
+  private _handleContextAction(e: CustomEvent) {
+    const { nodeId, action } = e.detail;
+    const node = this._findNode(nodeId);
+    if (!node) return;
+
+    switch (action) {
+      case 'wrap-oneOf':
+      case 'wrap-anyOf':
+      case 'wrap-allOf': {
+        const keyword = action.replace('wrap-', '') as 'oneOf' | 'anyOf' | 'allOf';
+        // Wrap the node's schema in a composition keyword
+        const currentSchema = { ...node.schema };
+        if (node.type) currentSchema.type = node.type;
+        // Clear the node and set it as a composition node
+        node.schema = { [keyword]: [currentSchema, {}] };
+        node.type = '';
+        node.children = undefined;
+        break;
+      }
+      case 'add-if-then-else':
+        node.schema.if = { properties: {} };
+        node.schema.then = { properties: {} };
+        node.schema.else = { properties: {} };
+        break;
+      case 'convert-to-ref': {
+        if (!this._root) break;
+        // Find or create $defs node
+        if (!this._root.children) this._root.children = [];
+        let defsNode = this._root.children.find(c => c.name === '$defs');
+        if (!defsNode) {
+          defsNode = {
+            id: `node-defs-${Date.now()}`,
+            name: '$defs',
+            type: 'object',
+            required: false,
+            schema: {},
+            isDef: true,
+            children: [],
+          };
+          this._root.children.push(defsNode);
+        }
+        // Create a definition from the node's current schema
+        const defName = node.name || 'extracted';
+        const defNode: SchemaNode = {
+          id: `node-def-${Date.now()}`,
+          name: defName,
+          type: node.type,
+          required: false,
+          schema: { ...node.schema },
+          isDef: true,
+          children: node.children ? [...node.children] : undefined,
+        };
+        defsNode.children!.push(defNode);
+        // Replace node with $ref
+        node.type = '';
+        node.schema = { $ref: `#/$defs/${defName}` };
+        node.ref = `#/$defs/${defName}`;
+        node.children = undefined;
+        node.compositionKeyword = undefined;
+        break;
+      }
+    }
+
+    this.requestUpdate();
+    this._emitSchemaChange();
+  }
+
   private _handleAddDefs() {
     if (!this._root) return;
     if (!this._root.children) this._root.children = [];
@@ -270,6 +365,8 @@ export class SchemaEditMode extends LitElement {
           @node-select=${this._handleNodeSelect}
           @add-property=${this._handleAddProperty}
           @add-defs=${this._handleAddDefs}
+          @reorder=${this._handleReorder}
+          @context-action=${this._handleContextAction}
         ></schema-tree-panel>
       </div>
       <div class="detail-side">
