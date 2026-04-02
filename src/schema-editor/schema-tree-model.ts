@@ -48,9 +48,12 @@ export function detectDraft(schema: JSONSchema): string | null {
 
 /** Returns the correct definitions key based on the $schema URI. */
 export function getDefsPrefix(schemaUri: string | undefined): string {
-  if (schemaUri && typeof schemaUri === 'string' && schemaUri.includes('draft-04')) {
+  if (!schemaUri || typeof schemaUri !== 'string') return '$defs';
+  // draft-04, draft-06, and draft-07 all use "definitions"
+  if (schemaUri.includes('draft-04') || schemaUri.includes('draft-06') || schemaUri.includes('draft-07')) {
     return 'definitions';
   }
+  // 2019-09, 2020-12, and anything else use "$defs"
   return '$defs';
 }
 
@@ -209,7 +212,7 @@ export function treeToSchema(node: SchemaNode): JSONSchema {
 
   // Restore $defs
   if (defsNode && defsNode.children && defsNode.children.length > 0) {
-    const defsKey = node.schema.$schema?.includes('draft-04') ? 'definitions' : '$defs';
+    const defsKey = getDefsPrefix(node.schema.$schema as string | undefined);
     schema[defsKey] = {};
     for (const defChild of defsNode.children) {
       schema[defsKey][defChild.name] = treeToSchema(defChild);

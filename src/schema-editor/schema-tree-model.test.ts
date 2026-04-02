@@ -469,11 +469,49 @@ describe('Bug fix: draft-04 $ref paths use #/definitions/ not #/$defs/', () => {
     expect(output.properties!.home.$ref).toBe('#/definitions/address');
   });
 
-  it('getDefsPrefix returns "definitions" for draft-04 and "$defs" otherwise', () => {
+  it('getDefsPrefix returns "definitions" for draft-04/06/07 and "$defs" for 2019-09/2020-12/unknown', () => {
     expect(getDefsPrefix('http://json-schema.org/draft-04/schema#')).toBe('definitions');
-    expect(getDefsPrefix('http://json-schema.org/draft-07/schema#')).toBe('$defs');
+    expect(getDefsPrefix('http://json-schema.org/draft-06/schema#')).toBe('definitions');
+    expect(getDefsPrefix('http://json-schema.org/draft-07/schema#')).toBe('definitions');
+    expect(getDefsPrefix('https://json-schema.org/draft/2019-09/schema')).toBe('$defs');
     expect(getDefsPrefix('https://json-schema.org/draft/2020-12/schema')).toBe('$defs');
     expect(getDefsPrefix(undefined)).toBe('$defs');
+  });
+
+  it('round-trips draft-07 schema with definitions (not $defs)', () => {
+    const schema = {
+      $schema: 'http://json-schema.org/draft-07/schema#',
+      type: 'object',
+      definitions: {
+        address: { type: 'object', properties: { city: { type: 'string' } } },
+      },
+      properties: {
+        home: { $ref: '#/definitions/address' },
+      },
+    };
+    const tree = schemaToTree(schema);
+    const output = treeToSchema(tree);
+    expect(output.definitions).toBeDefined();
+    expect(output.$defs).toBeUndefined();
+    expect(output.properties!.home.$ref).toBe('#/definitions/address');
+  });
+
+  it('round-trips draft-06 schema with definitions (not $defs)', () => {
+    const schema = {
+      $schema: 'http://json-schema.org/draft-06/schema#',
+      type: 'object',
+      definitions: {
+        person: { type: 'object', properties: { name: { type: 'string' } } },
+      },
+      properties: {
+        owner: { $ref: '#/definitions/person' },
+      },
+    };
+    const tree = schemaToTree(schema);
+    const output = treeToSchema(tree);
+    expect(output.definitions).toBeDefined();
+    expect(output.$defs).toBeUndefined();
+    expect(output.properties!.owner.$ref).toBe('#/definitions/person');
   });
 
   it('convert-to-ref on draft-04 schema generates #/definitions/ path', () => {
