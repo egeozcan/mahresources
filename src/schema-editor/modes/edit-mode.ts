@@ -151,7 +151,12 @@ export class SchemaEditMode extends LitElement {
         }
         // Update nullable type array if present (keep "null" but swap the base type)
         if (Array.isArray(selected.schema.type) && selected.schema.type.includes('null')) {
-          selected.schema.type = [value, 'null'];
+          if (value === 'null') {
+            // Switching to null type — collapse the union, null IS the type
+            delete selected.schema.type;
+          } else {
+            selected.schema.type = [value, 'null'];
+          }
         }
         break;
       case 'required':
