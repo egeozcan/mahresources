@@ -70,6 +70,49 @@ export class SchemaDetailPanel extends LitElement {
     `;
   }
 
+  /**
+   * Shared header + metadata fields rendered for ALL node types: regular
+   * properties, $ref nodes, composition nodes, and conditional nodes.
+   *
+   * Includes: breadcrumb, property name input, title, description, and
+   * the required checkbox (when not root).
+   */
+  private _renderCommonFields() {
+    if (!this.node) return nothing;
+    const node = this.node;
+    const schema = node.schema;
+
+    return html`
+      <div class="header">
+        <div class="breadcrumb">${this.breadcrumb.slice(0, -1).join(' → ')}${this.breadcrumb.length > 1 ? ' → ' : ''}<span class="current">${this.breadcrumb.at(-1) || 'root'}</span></div>
+        <h3>${this.isRoot ? 'Root Schema' : `Property: ${node.name}`}</h3>
+      </div>
+
+      <div class="grid">
+        ${!this.isRoot ? html`
+          <div>
+            <label for="prop-name">Property Name</label>
+            <input id="prop-name" .value=${node.name} @change=${(e: Event) => this._dispatchChange('name', (e.target as HTMLInputElement).value)}>
+          </div>
+        ` : ''}
+        <div>
+          <label for="prop-title">Title</label>
+          <input id="prop-title" .value=${schema.title || ''} @change=${(e: Event) => this._dispatchChange('title', (e.target as HTMLInputElement).value)}>
+        </div>
+        <div>
+          <label for="prop-desc">Description</label>
+          <input id="prop-desc" .value=${schema.description || ''} @change=${(e: Event) => this._dispatchChange('description', (e.target as HTMLInputElement).value)}>
+        </div>
+      </div>
+
+      ${!this.isRoot ? html`
+        <div class="flags">
+          <label><input type="checkbox" ?checked=${node.required} @change=${(e: Event) => this._dispatchChange('required', (e.target as HTMLInputElement).checked)}> Required</label>
+        </div>
+      ` : ''}
+    `;
+  }
+
   private _renderTypeEditor() {
     if (!this.node) return nothing;
     const schema = this.node.schema;
@@ -107,10 +150,7 @@ export class SchemaDetailPanel extends LitElement {
     // $ref nodes get a special editor
     if (node.ref) {
       return html`
-        <div class="header">
-          <div class="breadcrumb">${this.breadcrumb.join(' → ')}</div>
-          <h3>Reference: ${node.name}</h3>
-        </div>
+        ${this._renderCommonFields()}
         <schema-ref-editor .ref=${node.ref} .defsNames=${this.defsNames} .defsPrefix=${this.defsPrefix} @ref-change=${(e: CustomEvent) => this._dispatchChange('$ref', e.detail.ref)}></schema-ref-editor>
         ${this._renderActions()}
       `;
@@ -119,10 +159,7 @@ export class SchemaDetailPanel extends LitElement {
     // Composition nodes
     if (node.compositionKeyword) {
       return html`
-        <div class="header">
-          <div class="breadcrumb">${this.breadcrumb.join(' → ')}</div>
-          <h3>${node.compositionKeyword}: ${node.name}</h3>
-        </div>
+        ${this._renderCommonFields()}
         <schema-composition-editor .keyword=${node.compositionKeyword} .variants=${node.variants || []}></schema-composition-editor>
         ${this._renderActions()}
       `;
@@ -131,10 +168,7 @@ export class SchemaDetailPanel extends LitElement {
     // Conditional nodes
     if (schema.if) {
       return html`
-        <div class="header">
-          <div class="breadcrumb">${this.breadcrumb.join(' → ')}</div>
-          <h3>Conditional: ${node.name}</h3>
-        </div>
+        ${this._renderCommonFields()}
         <schema-conditional-editor .schema=${schema}></schema-conditional-editor>
         ${this._renderActions()}
       `;
