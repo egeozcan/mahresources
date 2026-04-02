@@ -67,6 +67,11 @@ export class SchemaFormMode extends LitElement {
     }
     if (changed.has('value') || changed.has('schema')) {
       this._data = this.value != null ? (typeof this.value === 'string' ? this._safeParse(this.value) : structuredClone(this.value)) : {};
+      // Keep hidden input in sync when value/schema change externally
+      // (e.g. when Alpine passes currentMeta with pre-existing edits).
+      if (this._hiddenInput) {
+        this._hiddenInput.value = JSON.stringify(this._data);
+      }
     }
   }
 

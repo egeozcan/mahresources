@@ -99,7 +99,9 @@
                         </div>
                     </template>
                     <template x-if="!currentSchema">
-                        {% include "/partials/form/freeFields.tpl" with name="Meta" url='/v1/groups/meta/keys' fromJSON=group.Meta jsonOutput="true" id=getNextId("freeField") %}
+                        <div @value-change="handleMetaChange($event)" :data-current-meta="JSON.stringify(currentMeta)">
+                            {% include "/partials/form/freeFields.tpl" with name="Meta" url='/v1/groups/meta/keys' fromJSON=group.Meta jsonOutput="true" id=getNextId("freeField") %}
+                        </div>
                     </template>
                 </div>
             </div>

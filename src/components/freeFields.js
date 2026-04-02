@@ -55,6 +55,14 @@ export function freeFields({ fields, name, url, jsonOutput, id, title, fromJSON 
                 ])
             )
           );
+          // Sync edits back to parent so currentMeta stays current
+          // when switching between freeFields and schema-form-mode.
+          try {
+            this.$el.dispatchEvent(new CustomEvent('value-change', {
+              detail: { value: JSON.parse(this.jsonText) },
+              bubbles: true,
+            }));
+          } catch { /* ignore parse errors from empty/partial state */ }
         });
       }
 
@@ -70,9 +78,24 @@ export function freeFields({ fields, name, url, jsonOutput, id, title, fromJSON 
         });
       }
 
-      if (this.fromJSON) {
+      // Prefer dynamically-passed currentMeta (from parent wrapper's data attribute)
+      // over the static server-rendered fromJSON, so that edits made in
+      // schema-form-mode are preserved when switching to freeFields.
+      const currentMetaEl = this.$el.closest('[data-current-meta]');
+      const currentMetaAttr = currentMetaEl?.dataset.currentMeta;
+      let initSource = this.fromJSON;
+      if (currentMetaAttr) {
         try {
-          this.fields = Object.entries(this.fromJSON).map((x) => ({
+          const parsed = JSON.parse(currentMetaAttr);
+          if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
+            initSource = parsed;
+          }
+        } catch { /* fall through to fromJSON */ }
+      }
+
+      if (initSource) {
+        try {
+          this.fields = Object.entries(initSource).map((x) => ({
             name: x[0],
             value: JSON.stringify(x[1]),
           }));

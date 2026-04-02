@@ -208,7 +208,9 @@
                         </div>
                     </template>
                     <template x-if="!currentSchema">
-                        {% include "/partials/form/freeFields.tpl" with name="Meta" url='/v1/resources/meta/keys' fromJSON=resource.Meta jsonOutput="true" id=getNextId("freeField") %}
+                        <div @value-change="handleMetaChange($event)" :data-current-meta="JSON.stringify(currentMeta)">
+                            {% include "/partials/form/freeFields.tpl" with name="Meta" url='/v1/resources/meta/keys' fromJSON=resource.Meta jsonOutput="true" id=getNextId("freeField") %}
+                        </div>
                     </template>
                 </div>
             </div>
