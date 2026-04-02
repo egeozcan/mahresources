@@ -121,6 +121,7 @@ export class SchemaEditMode extends LitElement {
 
     switch (field) {
       case 'name': {
+        const oldName = selected.name;
         // Prevent duplicate names among all siblings (properties and $defs alike)
         const parentAndIndex = this._findParentOf(this._selectedId);
         if (parentAndIndex) {
@@ -133,10 +134,30 @@ export class SchemaEditMode extends LitElement {
             let counter = 1;
             while (siblingNames.has(deduped)) deduped = `${value}${counter++}`;
             selected.name = deduped;
+            // Update $ref consumers if this is a definition node
+            if (selected.isDef && this._root) {
+              const originalDefs = this._root.schema._originalDefsKey
+                ? { [this._root.schema._originalDefsKey]: true } as JSONSchema
+                : undefined;
+              const defsPrefix = getDefsPrefix(this._root.schema.$schema as string | undefined, originalDefs);
+              const oldRef = `#/${defsPrefix}/${escapeJsonPointer(oldName)}`;
+              const newRef = `#/${defsPrefix}/${escapeJsonPointer(deduped)}`;
+              this._updateRefsInTree(this._root, oldRef, newRef);
+            }
             break;
           }
         }
         selected.name = value;
+        // Update $ref consumers if this is a definition node
+        if (selected.isDef && this._root) {
+          const originalDefs = this._root.schema._originalDefsKey
+            ? { [this._root.schema._originalDefsKey]: true } as JSONSchema
+            : undefined;
+          const defsPrefix = getDefsPrefix(this._root.schema.$schema as string | undefined, originalDefs);
+          const oldRef = `#/${defsPrefix}/${escapeJsonPointer(oldName)}`;
+          const newRef = `#/${defsPrefix}/${escapeJsonPointer(value)}`;
+          this._updateRefsInTree(this._root, oldRef, newRef);
+        }
         break;
       }
       case 'type':
@@ -149,14 +170,19 @@ export class SchemaEditMode extends LitElement {
           'const', 'default']) {
           delete selected.schema[key];
         }
-        // Update nullable type array if present (keep "null" but swap the base type)
+        // Update type arrays in node.schema.type to stay in sync with scalar node.type
         if (Array.isArray(selected.schema.type) && selected.schema.type.includes('null')) {
+          // Nullable array (e.g. ["string", "null"]) — keep nullable, swap base type
           if (value === 'null') {
             // Switching to null type — collapse the union, null IS the type
             delete selected.schema.type;
           } else {
             selected.schema.type = [value, 'null'];
           }
+        } else if (Array.isArray(selected.schema.type)) {
+          // Non-nullable multi-type array (e.g. ["string", "number"]) —
+          // user picked a single type from the dropdown, replace array with scalar
+          delete selected.schema.type;
         }
         break;
       case 'required':
@@ -203,7 +229,14 @@ export class SchemaEditMode extends LitElement {
     if (!parentAndIndex) return;
     const [parent, index, arr] = parentAndIndex;
     arr.splice(index, 1);
-    this._selectedId = parent.id;
+    // If the parent is the $defs wrapper and it's now empty, the wrapper
+    // disappears from both the tree-panel UI and treeToSchema output.
+    // Select root instead of the invisible ghost wrapper.
+    if (parent.isDef && parent.name === '$defs' && (!parent.children || parent.children.length === 0)) {
+      this._selectedId = this._root!.id;
+    } else {
+      this._selectedId = parent.id;
+    }
     this.requestUpdate();
     this._emitSchemaChange();
   }
@@ -254,6 +287,19 @@ export class SchemaEditMode extends LitElement {
       }
     }
     return null;
+  }
+
+  /** Walk the tree and update any $ref that matches oldRef to newRef */
+  private _updateRefsInTree(node: SchemaNode, oldRef: string, newRef: string) {
+    if (node.ref === oldRef) {
+      node.ref = newRef;
+    }
+    for (const child of node.children || []) {
+      this._updateRefsInTree(child, oldRef, newRef);
+    }
+    for (const variant of node.variants || []) {
+      this._updateRefsInTree(variant, oldRef, newRef);
+    }
   }
 
   private _handleAddProperty() {
