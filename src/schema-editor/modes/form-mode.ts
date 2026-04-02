@@ -76,6 +76,10 @@ export class SchemaFormMode extends LitElement {
 
   private _emitChange(newValue: any) {
     this._data = newValue;
+    // Keep the public `value` property in sync so that a subsequent schema
+    // change (which triggers willUpdate → rehydrate from `this.value`) does
+    // not overwrite the user's in-progress edits.
+    this.value = newValue;
     if (this._hiddenInput) {
       this._hiddenInput.value = JSON.stringify(newValue);
     }
