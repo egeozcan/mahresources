@@ -170,8 +170,13 @@
                     {% set initialResourceSchema = resourceCategories.0.MetaSchema %}
                 {% endif %}
 
-                <div x-data="{
-                         currentSchema: {{ initialResourceSchema|default:'null' }},
+                <div data-initial-schema="{{ initialResourceSchema }}"
+                    x-data="{
+                         currentSchema: null,
+                         init() {
+                             const raw = this.$el.dataset.initialSchema;
+                             if (raw) { this.currentSchema = raw; }
+                         },
                          handleCategoryChange(e) {
                              if (e.detail.value.length > 0) {
                                  this.currentSchema = e.detail.value[0].MetaSchema;
