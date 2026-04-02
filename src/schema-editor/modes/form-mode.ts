@@ -10,6 +10,7 @@ import {
   inferType,
   inferSchema,
 } from '../schema-core';
+import { isLeafSchema } from '../form-mode-helpers';
 
 function generateFieldId(prefix: string, path: string): string {
   return `${prefix}-${path.replace(/[^a-zA-Z0-9]/g, '-')}`;
@@ -94,7 +95,7 @@ export class SchemaFormMode extends LitElement {
 
   // ─── Recursive field renderer (port of generateFormElement) ──────────────
 
-  private _renderField(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema, fieldId?: string, parentPath?: string): TemplateResult | typeof nothing {
+  private _renderField(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema, fieldId?: string, parentPath?: string, describedBy?: string | null, isRequired?: boolean): TemplateResult | typeof nothing {
     // Handle $ref
     if (schema.$ref) {
       const resolved = resolveRef(schema.$ref, rootSchema);
@@ -134,7 +135,7 @@ export class SchemaFormMode extends LitElement {
 
     // Handle enum
     if (schema.enum) {
-      return this._renderEnum(schema, data, onChange);
+      return this._renderEnum(schema, data, onChange, fieldId, describedBy, isRequired);
     }
 
     // Handle const
@@ -143,7 +144,11 @@ export class SchemaFormMode extends LitElement {
         onChange(schema.const);
       }
       return html`<input type="text" .value=${String(schema.const)} disabled
+        id=${fieldId || nothing}
         aria-label="Constant value"
+        aria-describedby=${describedBy || nothing}
+        ?required=${!!isRequired}
+        aria-required=${isRequired ? 'true' : nothing}
         class="shadow-sm bg-gray-100 block w-full sm:text-sm border-gray-300 rounded-md mt-1 text-gray-500">`;
     }
 
@@ -175,7 +180,7 @@ export class SchemaFormMode extends LitElement {
     }
 
     // Primitive types (string, number, integer, boolean)
-    return this._renderPrimitive(schema, type, data, onChange, fieldId);
+    return this._renderPrimitive(schema, type, data, onChange, fieldId, describedBy, isRequired);
   }
 
   // ─── oneOf ──────────────────────────────────────────────────────────────
@@ -301,7 +306,7 @@ export class SchemaFormMode extends LitElement {
 
   // ─── enum ───────────────────────────────────────────────────────────────
 
-  private _renderEnum(schema: JSONSchema, data: any, onChange: (val: any) => void): TemplateResult {
+  private _renderEnum(schema: JSONSchema, data: any, onChange: (val: any) => void, fieldId?: string, describedBy?: string | null, isRequired?: boolean): TemplateResult {
     const hasValue = schema.enum.some((v: any) => v === data);
     const isNull = data === null || data === undefined;
 
@@ -319,7 +324,11 @@ export class SchemaFormMode extends LitElement {
 
     return html`
       <select class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md mt-1"
+        id=${fieldId || nothing}
         aria-label=${schema.title ? `Select ${schema.title}` : 'Select value'}
+        aria-describedby=${describedBy || nothing}
+        ?required=${!!isRequired}
+        aria-required=${isRequired ? 'true' : nothing}
         @change=${onSelectChange}>
         ${isNull ? html`<option value="" selected>-- select --</option>` : nothing}
         ${schema.enum.map((val: any) => html`
@@ -405,10 +414,10 @@ export class SchemaFormMode extends LitElement {
   }
 
   /**
-   * Render a field and set id/aria-describedby/required on the top-level input if applicable.
-   * We do this via a wrapper that uses lit's `ref` pattern, but for light DOM we can
-   * hook `updated` on the rendered elements. Instead, we wrap the generated template
-   * and post-process the first input/select/textarea child.
+   * Render a field and pass id/aria-describedby/required directly to leaf
+   * input renderers. Container types (object, array, composition) do NOT
+   * receive these attributes — applying them to the first descendant input
+   * of a nested sub-form is incorrect.
    */
   private _renderFieldWithAttributes(
     schema: JSONSchema,
@@ -420,34 +429,12 @@ export class SchemaFormMode extends LitElement {
     required: boolean,
     parentPath?: string,
   ): TemplateResult {
-    // We render the field in a wrapper div, then use a Lit directive-like approach
-    // to set attributes on the first input/select/textarea child after render.
-    const fieldTemplate = this._renderField(schema, data, onChange, rootSchema, fieldId, parentPath);
-
-    // Use a container with id-setting approach
-    return html`<span class="schema-form-field-wrapper" data-field-id=${fieldId} data-described-by=${describedBy || ''} data-required=${required}>${fieldTemplate}</span>`;
-  }
-
-  override updated() {
-    // After each render, find wrapper spans and set attributes on their input children
-    const wrappers = this.querySelectorAll('.schema-form-field-wrapper');
-    wrappers.forEach(wrapper => {
-      const fieldId = wrapper.getAttribute('data-field-id');
-      const describedBy = wrapper.getAttribute('data-described-by');
-      const required = wrapper.getAttribute('data-required') === 'true';
-
-      const input = wrapper.querySelector('input, select, textarea');
-      if (input && fieldId) {
-        input.id = fieldId;
-        if (describedBy) {
-          input.setAttribute('aria-describedby', describedBy);
-        }
-        if (required) {
-          (input as HTMLInputElement).required = true;
-          input.setAttribute('aria-required', 'true');
-        }
-      }
-    });
+    if (isLeafSchema(schema)) {
+      // Leaf fields: thread attributes directly into the input renderer
+      return this._renderField(schema, data, onChange, rootSchema, fieldId, parentPath, describedBy, required) as TemplateResult;
+    }
+    // Container fields: render without id/required/aria-describedby on any child input
+    return this._renderField(schema, data, onChange, rootSchema, undefined, parentPath) as TemplateResult;
   }
 
   // ─── additional properties ──────────────────────────────────────────────
@@ -674,25 +661,29 @@ export class SchemaFormMode extends LitElement {
 
   // ─── primitives ─────────────────────────────────────────────────────────
 
-  private _renderPrimitive(schema: JSONSchema, type: string, data: any, onChange: (val: any) => void, fieldId?: string): TemplateResult {
+  private _renderPrimitive(schema: JSONSchema, type: string, data: any, onChange: (val: any) => void, fieldId?: string, describedBy?: string | null, isRequired?: boolean): TemplateResult {
     if (type === 'boolean') {
       return html`
         <input type="checkbox"
+          id=${fieldId || nothing}
           class="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded mt-1"
+          aria-describedby=${describedBy || nothing}
+          ?required=${!!isRequired}
+          aria-required=${isRequired ? 'true' : nothing}
           .checked=${!!data}
           @change=${(e: Event) => onChange((e.target as HTMLInputElement).checked)}>
       `;
     }
 
     if (type === 'integer' || type === 'number') {
-      return this._renderNumberInput(schema, type, data, onChange, fieldId);
+      return this._renderNumberInput(schema, type, data, onChange, fieldId, describedBy, isRequired);
     }
 
     // String type
-    return this._renderStringInput(schema, data, onChange, fieldId);
+    return this._renderStringInput(schema, data, onChange, fieldId, describedBy, isRequired);
   }
 
-  private _renderNumberInput(schema: JSONSchema, type: string, data: any, onChange: (val: any) => void, fieldId?: string): TemplateResult {
+  private _renderNumberInput(schema: JSONSchema, type: string, data: any, onChange: (val: any) => void, fieldId?: string, describedBy?: string | null, isRequired?: boolean): TemplateResult {
     const errorId = fieldId ? `${fieldId}-error` : undefined;
     const constraints: string[] = [];
     if (schema.minimum !== undefined || schema.exclusiveMinimum !== undefined) {
@@ -752,15 +743,20 @@ export class SchemaFormMode extends LitElement {
       }
     };
 
+    const ariaDescParts = [describedBy, errorId].filter(Boolean).join(' ');
+
     return html`
       <div>
         <input type="number"
+          id=${fieldId || nothing}
           step=${type === 'integer' ? '1' : 'any'}
           min=${schema.minimum !== undefined ? schema.minimum : nothing}
           max=${schema.maximum !== undefined ? schema.maximum : nothing}
           .value=${data !== undefined && data !== null ? String(data) : ''}
           class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md mt-1"
-          aria-describedby=${errorId || nothing}
+          aria-describedby=${ariaDescParts || nothing}
+          ?required=${!!isRequired}
+          aria-required=${isRequired ? 'true' : nothing}
           @input=${onInput}
           @blur=${onBlur}>
         ${constraints.length > 0 ? html`<span class="text-xs text-gray-400 block mt-1">${constraints.join(', ')}</span>` : nothing}
@@ -769,7 +765,7 @@ export class SchemaFormMode extends LitElement {
     `;
   }
 
-  private _renderStringInput(schema: JSONSchema, data: any, onChange: (val: any) => void, fieldId?: string): TemplateResult {
+  private _renderStringInput(schema: JSONSchema, data: any, onChange: (val: any) => void, fieldId?: string, describedBy?: string | null, isRequired?: boolean): TemplateResult {
     const errorId = fieldId ? `${fieldId}-error` : undefined;
     let inputType = 'text';
     if (schema.format === 'date') inputType = 'date';
@@ -816,15 +812,20 @@ export class SchemaFormMode extends LitElement {
       }
     };
 
+    const ariaDescParts = [describedBy, errorId].filter(Boolean).join(' ');
+
     return html`
       <div>
         <input type=${inputType}
+          id=${fieldId || nothing}
           .value=${data || ''}
           pattern=${schema.pattern || nothing}
           minlength=${schema.minLength !== undefined ? schema.minLength : nothing}
           maxlength=${schema.maxLength !== undefined ? schema.maxLength : nothing}
           class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md mt-1"
-          aria-describedby=${errorId || nothing}
+          aria-describedby=${ariaDescParts || nothing}
+          ?required=${!!isRequired}
+          aria-required=${isRequired ? 'true' : nothing}
           @input=${onInput}
           @blur=${onBlur}>
         ${hintText ? html`<span class="text-xs text-gray-400 block mt-1">${hintText}</span>` : nothing}
