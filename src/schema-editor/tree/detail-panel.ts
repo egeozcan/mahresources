@@ -177,7 +177,9 @@ export class SchemaDetailPanel extends LitElement {
         ` : ''}
         <label><input type="checkbox" ?checked=${schema.readOnly} @change=${(e: Event) => this._dispatchChange('readOnly', (e.target as HTMLInputElement).checked)}> Read Only</label>
         <label><input type="checkbox" ?checked=${schema.writeOnly} @change=${(e: Event) => this._dispatchChange('writeOnly', (e.target as HTMLInputElement).checked)}> Write Only</label>
-        <label><input type="checkbox" ?checked=${Array.isArray(node.schema.type) && node.schema.type.includes('null')} @change=${(e: Event) => this._dispatchChange('nullable', (e.target as HTMLInputElement).checked)}> Nullable</label>
+        ${!this.isRoot && node.type !== 'null' ? html`
+          <label><input type="checkbox" ?checked=${Array.isArray(node.schema.type) && node.schema.type.includes('null')} @change=${(e: Event) => this._dispatchChange('nullable', (e.target as HTMLInputElement).checked)}> Nullable</label>
+        ` : ''}
       </div>
 
       ${this._renderTypeEditor()}

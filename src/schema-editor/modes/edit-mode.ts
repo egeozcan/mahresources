@@ -4,6 +4,7 @@ import { sharedStyles } from '../styles';
 import { schemaToTree, treeToSchema, detectDraft, getDefsPrefix } from '../schema-tree-model';
 import type { SchemaNode } from '../schema-tree-model';
 import type { JSONSchema } from '../schema-core';
+import { escapeJsonPointer } from '../schema-core';
 import '../tree/tree-panel';
 import '../tree/detail-panel';
 
@@ -162,6 +163,8 @@ export class SchemaEditMode extends LitElement {
       case 'nullable': {
         const baseType = selected.type || 'string';
         if (value) {
+          // Already null type — don't create ["null", "null"]
+          if (baseType === 'null') break;
           // Store nullable union in node.schema.type so treeToSchema emits it
           selected.schema.type = [baseType, 'null'];
         } else {
@@ -438,7 +441,7 @@ export class SchemaEditMode extends LitElement {
         const defsPrefix = getDefsPrefix(this._root?.schema.$schema as string | undefined, originalDefs);
         node.type = '';
         node.schema = {};
-        node.ref = `#/${defsPrefix}/${defName}`;
+        node.ref = `#/${defsPrefix}/${escapeJsonPointer(defName)}`;
         node.children = undefined;
         node.variants = undefined;
         node.compositionKeyword = undefined;
