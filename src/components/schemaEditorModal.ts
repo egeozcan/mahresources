@@ -25,15 +25,25 @@ export function schemaEditorModal() {
 
     openModal(textareaId: string) {
       this._textareaEl = document.getElementById(textareaId) as HTMLTextAreaElement;
-      this.currentSchema = this._textareaEl?.value || '{"type":"object","properties":{}}';
-      this.rawJson = this.currentSchema;
+      const raw = this._textareaEl?.value || '';
+
       try {
-        // Pretty-print for raw tab
-        this.rawJson = JSON.stringify(JSON.parse(this.currentSchema), null, 2);
-      } catch { /* keep as-is */ }
-      this.rawJsonValid = true;
-      this.rawJsonError = '';
-      this.rawJsonDirty = false;
+        const parsed = JSON.parse(raw || '{"type":"object","properties":{}}');
+        this.currentSchema = JSON.stringify(parsed);
+        this.rawJson = JSON.stringify(parsed, null, 2);
+        this.rawJsonValid = true;
+        this.rawJsonError = '';
+        this.rawJsonDirty = false;
+      } catch (e) {
+        // Content is not valid JSON -- show it as-is but mark invalid
+        this.currentSchema = raw;
+        this.rawJson = raw;
+        this.rawJsonValid = false;
+        this.rawJsonError = e instanceof Error ? e.message : 'Invalid JSON';
+        // Mark dirty so Apply is disabled (Apply requires rawJsonValid || !rawJsonDirty)
+        this.rawJsonDirty = true;
+      }
+
       this.tab = 'edit';
       this.open = true;
       // Trap focus after render
