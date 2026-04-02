@@ -105,14 +105,14 @@ export class SchemaFormMode extends LitElement {
 
   // ─── Recursive field renderer (port of generateFormElement) ──────────────
 
-  private _renderField(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema, fieldId?: string, parentPath?: string, describedBy?: string | null, isRequired?: boolean): TemplateResult | typeof nothing {
+  private _renderField(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema, fieldId?: string, parentPath?: string, describedBy?: string | null, isRequired?: boolean, parentRequired?: boolean): TemplateResult | typeof nothing {
     // Handle $ref
     if (schema.$ref) {
       const resolved = resolveRef(schema.$ref, rootSchema);
       if (resolved) {
         const mergedSchema = { ...resolved, ...schema };
         delete mergedSchema.$ref;
-        return this._renderField(mergedSchema, data, onChange, rootSchema, fieldId, parentPath, describedBy, isRequired);
+        return this._renderField(mergedSchema, data, onChange, rootSchema, fieldId, parentPath, describedBy, isRequired, parentRequired);
       }
       return html`<div class="text-red-500 text-xs">Unresolvable reference: ${schema.$ref}</div>`;
     }
@@ -130,7 +130,7 @@ export class SchemaFormMode extends LitElement {
         const resolved = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
         if (resolved) merged = mergeSchemas(merged, resolved);
       }
-      return this._renderField(merged, data, onChange, rootSchema, fieldId, parentPath, describedBy, isRequired);
+      return this._renderField(merged, data, onChange, rootSchema, fieldId, parentPath, describedBy, isRequired, parentRequired);
     }
 
     // Handle anyOf
@@ -181,7 +181,7 @@ export class SchemaFormMode extends LitElement {
 
     // Object type
     if (type === 'object') {
-      return this._renderObject(schema, data, onChange, rootSchema, parentPath);
+      return this._renderObject(schema, data, onChange, rootSchema, parentPath, parentRequired);
     }
 
     // Array type
@@ -381,12 +381,14 @@ export class SchemaFormMode extends LitElement {
 
   // ─── object ─────────────────────────────────────────────────────────────
 
-  private _renderObject(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema, parentPath?: string): TemplateResult {
+  private _renderObject(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema, parentPath?: string, parentRequired?: boolean): TemplateResult {
     if (typeof data !== 'object' || data === null || Array.isArray(data)) {
       data = {};
       queueMicrotask(() => onChange(data));
     }
 
+    // parentRequired defaults to true for root-level objects
+    const effectiveParentRequired = parentRequired !== undefined ? parentRequired : true;
     const requiredFields = new Set<string>(schema.required || []);
     const knownKeys = new Set<string>(schema.properties ? Object.keys(schema.properties) : []);
     const extraKeys = Object.keys(data).filter(k => !knownKeys.has(k));
@@ -399,7 +401,10 @@ export class SchemaFormMode extends LitElement {
         ${schema.properties ? Object.entries(schema.properties).map(([key, propSchema]: [string, any]) => {
           const fullPath = parentPath ? `${parentPath}.${key}` : key;
           const fieldId = generateFieldId('field', fullPath);
-          const isRequired = requiredFields.has(key);
+          // A field's HTML required attribute should only apply when the entire
+          // ancestor chain is required. If the parent object itself is optional,
+          // nested required fields should not block form submission.
+          const isRequired = requiredFields.has(key) && effectiveParentRequired;
 
           return html`
             <div>
@@ -443,8 +448,9 @@ export class SchemaFormMode extends LitElement {
       // Leaf fields: thread attributes directly into the input renderer
       return this._renderField(schema, data, onChange, rootSchema, fieldId, parentPath, describedBy, required) as TemplateResult;
     }
-    // Container fields: render without id/required/aria-describedby on any child input
-    return this._renderField(schema, data, onChange, rootSchema, undefined, parentPath) as TemplateResult;
+    // Container fields: render without id/required/aria-describedby on any child input.
+    // Pass parentRequired so nested objects know whether this ancestor is required.
+    return this._renderField(schema, data, onChange, rootSchema, undefined, parentPath, undefined, undefined, required) as TemplateResult;
   }
 
   // ─── additional properties ──────────────────────────────────────────────

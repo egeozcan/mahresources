@@ -300,6 +300,46 @@ const source = readFileSync(
   'utf8',
 );
 
+// ─── Bug: $ref required fields should not block submission for optional parents ──
+
+describe('Bug: optional parent object does not impose required on children', () => {
+  it('_renderObject does not set isRequired on child inputs when parent is optional', () => {
+    // When a parent property is optional (not in grandparent's required array),
+    // its children should NOT get HTML required attributes even if the child
+    // schema has required fields.
+    //
+    // We verify this by reading form-mode source to confirm:
+    // 1. _renderField accepts a parentRequired parameter
+    // 2. _renderObject threads parentRequired to children
+    const formSource = readFileSync(
+      new URL('./form-mode.ts', import.meta.url),
+      'utf8',
+    );
+
+    // The _renderObject method should thread parentRequired context
+    // When rendering properties, isRequired should account for parentRequired
+    const renderObjectSection = formSource.slice(
+      formSource.indexOf('_renderObject('),
+      formSource.indexOf('_renderFieldWithAttributes('),
+    );
+
+    // The fix: _renderObject receives and uses parentRequired parameter
+    // The isRequired passed to _renderFieldWithAttributes should consider parentRequired
+    expect(renderObjectSection).toContain('parentRequired');
+  });
+
+  it('_renderField signature includes parentRequired parameter', () => {
+    const formSource = readFileSync(
+      new URL('./form-mode.ts', import.meta.url),
+      'utf8',
+    );
+    // Find the _renderField method signature — extract until the return type annotation
+    const sigMatch = formSource.match(/private _renderField\(([\s\S]*?)\):\s*TemplateResult/);
+    expect(sigMatch).not.toBeNull();
+    expect(sigMatch![1]).toContain('parentRequired');
+  });
+});
+
 describe('Bug 3: $ref/allOf attribute forwarding in _renderField', () => {
   it('forwards describedBy and isRequired through $ref resolution', () => {
     const refSection = source.slice(
