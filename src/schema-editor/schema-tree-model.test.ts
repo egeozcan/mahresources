@@ -544,6 +544,90 @@ describe('Bug fix: draft-04 $ref paths use #/definitions/ not #/$defs/', () => {
   });
 });
 
+// ─── Bug: No-$schema schemas with `definitions` get output as `$defs` ──────
+
+describe('Bug fix: schemas without $schema preserve definitions key', () => {
+  it('round-trips schema with definitions and no $schema', () => {
+    const schema = {
+      type: 'object',
+      definitions: {
+        addr: { type: 'object', properties: { city: { type: 'string' } } },
+      },
+      properties: {
+        home: { $ref: '#/definitions/addr' },
+      },
+    };
+    const tree = schemaToTree(schema);
+    const output = treeToSchema(tree);
+    expect(output.definitions).toBeDefined();
+    expect(output.$defs).toBeUndefined();
+    expect(output.properties!.home.$ref).toBe('#/definitions/addr');
+  });
+
+  it('round-trips schema with $defs and no $schema (uses $defs)', () => {
+    const schema = {
+      type: 'object',
+      $defs: {
+        addr: { type: 'object', properties: { city: { type: 'string' } } },
+      },
+      properties: {
+        home: { $ref: '#/$defs/addr' },
+      },
+    };
+    const tree = schemaToTree(schema);
+    const output = treeToSchema(tree);
+    expect(output.$defs).toBeDefined();
+    expect(output.definitions).toBeUndefined();
+    expect(output.properties!.home.$ref).toBe('#/$defs/addr');
+  });
+
+  it('brand-new schema with no defs defaults to $defs when defs are added', () => {
+    // When a schema has neither definitions nor $defs and no $schema,
+    // newly added defs should use the modern $defs key
+    const schema = { type: 'object', properties: { name: { type: 'string' } } };
+    const tree = schemaToTree(schema);
+    // Simulate adding a $defs node with a child
+    const defsNode = {
+      id: 'test-defs',
+      name: '$defs',
+      type: 'object',
+      required: false,
+      schema: {},
+      isDef: true,
+      children: [{
+        id: 'test-def-child',
+        name: 'Email',
+        type: 'string',
+        required: false,
+        schema: { format: 'email' },
+        isDef: true,
+      }],
+    } as SchemaNode;
+    tree.children = [...(tree.children || []), defsNode];
+    const output = treeToSchema(tree);
+    expect(output.$defs).toBeDefined();
+    expect(output.$defs!.Email).toEqual({ type: 'string', format: 'email' });
+  });
+
+  it('getDefsPrefix with originalSchema containing definitions returns definitions', () => {
+    const originalSchema = { definitions: { foo: { type: 'string' } } };
+    expect(getDefsPrefix(undefined, originalSchema)).toBe('definitions');
+  });
+
+  it('getDefsPrefix with originalSchema containing $defs returns $defs', () => {
+    const originalSchema = { $defs: { foo: { type: 'string' } } };
+    expect(getDefsPrefix(undefined, originalSchema)).toBe('$defs');
+  });
+
+  it('getDefsPrefix with $schema still takes precedence over originalSchema', () => {
+    const originalSchema = { $schema: 'http://json-schema.org/draft-07/schema#', definitions: { foo: { type: 'string' } } };
+    expect(getDefsPrefix('http://json-schema.org/draft-07/schema#', originalSchema)).toBe('definitions');
+    // And for a 2020-12 schema that happens to have definitions key:
+    const original2020 = { $schema: 'https://json-schema.org/draft/2020-12/schema', definitions: { foo: { type: 'string' } } };
+    expect(getDefsPrefix('https://json-schema.org/draft/2020-12/schema', original2020)).toBe('$defs');
+  });
+});
+
 // ─── Bug 2: Duplicate node name not deduplicated ─────────────────────────────
 
 describe('Bug fix: duplicate node names are deduplicated', () => {

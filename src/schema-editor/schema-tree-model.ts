@@ -48,15 +48,23 @@ export function detectDraft(schema: JSONSchema): string | null {
   return null;
 }
 
-/** Returns the correct definitions key based on the $schema URI. */
-export function getDefsPrefix(schemaUri: string | undefined): string {
-  if (!schemaUri || typeof schemaUri !== 'string') return '$defs';
-  // draft-04, draft-06, and draft-07 all use "definitions"
-  if (schemaUri.includes('draft-04') || schemaUri.includes('draft-06') || schemaUri.includes('draft-07')) {
-    return 'definitions';
+/** Returns the correct definitions key based on the $schema URI,
+ *  falling back to whichever key the original schema already used. */
+export function getDefsPrefix(schemaUri: string | undefined, originalSchema?: JSONSchema): string {
+  if (schemaUri && typeof schemaUri === 'string') {
+    // draft-04, draft-06, and draft-07 all use "definitions"
+    if (schemaUri.includes('draft-04') || schemaUri.includes('draft-06') || schemaUri.includes('draft-07')) {
+      return 'definitions';
+    }
+    // 2019-09, 2020-12, and anything else use "$defs"
+    return '$defs';
   }
-  // 2019-09, 2020-12, and anything else use "$defs"
-  return '$defs';
+  // No $schema declared — preserve whatever key the original schema used
+  if (originalSchema) {
+    if (originalSchema.definitions && !originalSchema.$defs) return 'definitions';
+    if (originalSchema.$defs) return '$defs';
+  }
+  return '$defs'; // true default for brand-new schemas
 }
 
 // ─── Schema → Tree ───────────────────────────────────────────────────────────
@@ -140,6 +148,9 @@ export function schemaToTree(schema: JSONSchema, name = '', parentRequired: stri
   // $defs / definitions
   const defs = schema.$defs || schema.definitions;
   if (defs && typeof defs === 'object') {
+    // Remember which key the original schema used so treeToSchema can
+    // emit the same key even when $schema is absent.
+    node.schema._originalDefsKey = schema.$defs ? '$defs' : 'definitions';
     const defsNode: SchemaNode = {
       id: uid(),
       name: '$defs',
@@ -217,12 +228,18 @@ export function treeToSchema(node: SchemaNode): JSONSchema {
 
   // Restore $defs
   if (defsNode && defsNode.children && defsNode.children.length > 0) {
-    const defsKey = getDefsPrefix(node.schema.$schema as string | undefined);
+    // Use the stored original key when $schema is absent
+    const originalSchema = node.schema._originalDefsKey
+      ? { [node.schema._originalDefsKey]: true } as JSONSchema
+      : undefined;
+    const defsKey = getDefsPrefix(node.schema.$schema as string | undefined, originalSchema);
     schema[defsKey] = {};
     for (const defChild of defsNode.children) {
       schema[defsKey][defChild.name] = treeToSchema(defChild);
     }
   }
+  // Clean up internal tracking property from output
+  delete schema._originalDefsKey;
 
   return schema;
 }

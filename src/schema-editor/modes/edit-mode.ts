@@ -418,7 +418,10 @@ export class SchemaEditMode extends LitElement {
         };
         defsNode.children!.push(defNode);
         // Replace node with $ref (use correct prefix based on draft version)
-        const defsPrefix = getDefsPrefix(this._root?.schema.$schema as string | undefined);
+        const originalDefs = this._root?.schema._originalDefsKey
+          ? { [this._root.schema._originalDefsKey]: true } as JSONSchema
+          : undefined;
+        const defsPrefix = getDefsPrefix(this._root?.schema.$schema as string | undefined, originalDefs);
         node.type = '';
         node.schema = {};
         node.ref = `#/${defsPrefix}/${defName}`;
@@ -490,7 +493,10 @@ export class SchemaEditMode extends LitElement {
           .node=${selected}
           .breadcrumb=${breadcrumb}
           .defsNames=${this._getDefsNames()}
-          .defsPrefix=${getDefsPrefix(this._root?.schema.$schema as string | undefined)}
+          .defsPrefix=${getDefsPrefix(this._root?.schema.$schema as string | undefined,
+            this._root?.schema._originalDefsKey
+              ? { [this._root.schema._originalDefsKey]: true } as JSONSchema
+              : undefined)}
           .isRoot=${isRoot}
           @node-change=${this._handleNodeChange}
           @node-delete=${this._handleNodeDelete}
