@@ -25,7 +25,9 @@ export class SchemaEnumEditor extends LitElement {
   private _updateValue(index: number, raw: string) {
     const updated = [...this.values];
     if (this.valueType === 'number' || this.valueType === 'integer') {
-      updated[index] = this.valueType === 'integer' ? parseInt(raw) : parseFloat(raw);
+      updated[index] = this.valueType === 'integer' ? parseInt(raw, 10) : parseFloat(raw);
+    } else if (this.valueType === 'boolean') {
+      updated[index] = raw === 'true';
     } else {
       updated[index] = raw;
     }
@@ -40,7 +42,10 @@ export class SchemaEnumEditor extends LitElement {
   }
 
   private _addValue() {
-    const newVal = (this.valueType === 'number' || this.valueType === 'integer') ? 0 : '';
+    let newVal: any;
+    if (this.valueType === 'number' || this.valueType === 'integer') newVal = 0;
+    else if (this.valueType === 'boolean') newVal = false;
+    else newVal = '';
     this.values = [...this.values, newVal];
     this._emit();
     this.requestUpdate();
@@ -53,13 +58,22 @@ export class SchemaEnumEditor extends LitElement {
         ${repeat(this.values, (_v, i) => i, (v, i) => html`
           <div class="enum-row">
             <span class="drag" aria-hidden="true">☰</span>
-            <input
-              .value=${String(v)}
-              type=${this.valueType === 'number' || this.valueType === 'integer' ? 'number' : 'text'}
-              step=${this.valueType === 'integer' ? '1' : 'any'}
-              @change=${(e: Event) => this._updateValue(i, (e.target as HTMLInputElement).value)}
-              aria-label="Enum value ${i + 1}"
-            >
+            ${this.valueType === 'boolean'
+              ? html`<select
+                  .value=${String(v)}
+                  @change=${(e: Event) => this._updateValue(i, (e.target as HTMLSelectElement).value)}
+                  aria-label="Enum value ${i + 1}"
+                >
+                  <option value="true" ?selected=${v === true}>true</option>
+                  <option value="false" ?selected=${v === false}>false</option>
+                </select>`
+              : html`<input
+                  .value=${String(v)}
+                  type=${this.valueType === 'number' || this.valueType === 'integer' ? 'number' : 'text'}
+                  step=${this.valueType === 'integer' ? '1' : 'any'}
+                  @change=${(e: Event) => this._updateValue(i, (e.target as HTMLInputElement).value)}
+                  aria-label="Enum value ${i + 1}"
+                >`}
             <button class="remove" @click=${() => this._removeValue(i)} aria-label="Remove value ${v}">×</button>
           </div>
         `)}
