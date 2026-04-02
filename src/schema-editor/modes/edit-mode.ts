@@ -294,11 +294,32 @@ export class SchemaEditMode extends LitElement {
     if (node.ref === oldRef) {
       node.ref = newRef;
     }
+    // Update raw $ref strings inside node.schema (e.g. if/then/else,
+    // secondary composition keywords that weren't extracted into variants)
+    this._updateRefsInObject(node.schema, oldRef, newRef);
     for (const child of node.children || []) {
       this._updateRefsInTree(child, oldRef, newRef);
     }
     for (const variant of node.variants || []) {
       this._updateRefsInTree(variant, oldRef, newRef);
+    }
+  }
+
+  /** Recursively scan an object for $ref string values and replace matches */
+  private _updateRefsInObject(obj: any, oldRef: string, newRef: string) {
+    if (!obj || typeof obj !== 'object') return;
+    if (Array.isArray(obj)) {
+      for (const item of obj) {
+        this._updateRefsInObject(item, oldRef, newRef);
+      }
+      return;
+    }
+    for (const [key, value] of Object.entries(obj)) {
+      if (key === '$ref' && value === oldRef) {
+        obj[key] = newRef;
+      } else if (typeof value === 'object' && value !== null) {
+        this._updateRefsInObject(value, oldRef, newRef);
+      }
     }
   }
 

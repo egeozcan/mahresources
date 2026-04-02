@@ -320,18 +320,140 @@ describe('Bug 3: deleting last definition selects root, not ghost $defs wrapper'
   });
 });
 
+// ─── Bug 4: Rename must update $ref inside raw sub-schemas (if/then/else, secondary composition) ──
+
+describe('Bug 4: renaming a definition updates $ref inside raw node.schema sub-schemas', () => {
+  beforeEach(() => resetIdCounter());
+
+  it('renaming a definition updates $ref inside raw if/then/else sub-schemas', () => {
+    const schema = {
+      type: 'object' as const,
+      $defs: {
+        addr: { type: 'object' as const, properties: { city: { type: 'string' as const } } },
+      },
+      properties: {
+        kind: { type: 'string' as const, enum: ['home', 'work'] },
+      },
+      if: { properties: { kind: { const: 'home' } } },
+      then: { properties: { address: { $ref: '#/$defs/addr' } } },
+      else: { properties: { address: { $ref: '#/$defs/addr' } } },
+    };
+
+    const tree = schemaToTree(schema);
+
+    // if/then/else stay in tree.schema as raw JSON (not extracted into tree nodes)
+    expect(tree.schema.if).toBeDefined();
+    expect(tree.schema.then).toBeDefined();
+    expect(tree.schema.else).toBeDefined();
+
+    // Simulate rename: addr → location
+    const defsNode = tree.children!.find(c => c.name === '$defs')!;
+    const addrDef = defsNode.children!.find(c => c.name === 'addr')!;
+    addrDef.name = 'location';
+    const oldRef = '#/$defs/addr';
+    const newRef = '#/$defs/location';
+    updateRefsInTree(tree, oldRef, newRef);
+
+    // Verify $ref inside raw then/else was updated
+    expect(tree.schema.then.properties.address.$ref).toBe('#/$defs/location');
+    expect(tree.schema.else.properties.address.$ref).toBe('#/$defs/location');
+
+    // Round-trip should produce valid schema with updated refs
+    const output = treeToSchema(tree);
+    expect(output.$defs).toHaveProperty('location');
+    expect(output.$defs).not.toHaveProperty('addr');
+    expect(output.then.properties.address.$ref).toBe('#/$defs/location');
+    expect(output.else.properties.address.$ref).toBe('#/$defs/location');
+  });
+
+  it('renaming a definition updates $ref inside secondary composition keywords in node.schema', () => {
+    const schema = {
+      type: 'object' as const,
+      $defs: {
+        base: { type: 'object' as const, properties: { id: { type: 'string' as const } } },
+      },
+      properties: {
+        item: {
+          oneOf: [{ type: 'string' as const }],
+          allOf: [{ $ref: '#/$defs/base' }],
+        },
+      },
+    };
+
+    const tree = schemaToTree(schema);
+    // oneOf is extracted into variants; allOf stays in node.schema as secondary keyword
+    const itemNode = tree.children!.find(c => c.name === 'item')!;
+    expect(itemNode.compositionKeyword).toBe('oneOf');
+    expect(itemNode.schema.allOf).toBeDefined();
+    expect(itemNode.schema.allOf[0].$ref).toBe('#/$defs/base');
+
+    // Simulate rename: base → foundation
+    const defsNode = tree.children!.find(c => c.name === '$defs')!;
+    const baseDef = defsNode.children!.find(c => c.name === 'base')!;
+    baseDef.name = 'foundation';
+    const oldRef = '#/$defs/base';
+    const newRef = '#/$defs/foundation';
+    updateRefsInTree(tree, oldRef, newRef);
+
+    // Verify $ref inside raw allOf was updated
+    expect(itemNode.schema.allOf[0].$ref).toBe('#/$defs/foundation');
+
+    // Round-trip should produce valid schema
+    const output = treeToSchema(tree);
+    expect(output.$defs).toHaveProperty('foundation');
+    expect(output.properties!.item.allOf[0].$ref).toBe('#/$defs/foundation');
+  });
+
+  it('edit-mode _updateRefsInTree scans node.schema for raw $ref strings', () => {
+    const src = readFileSync(resolve(__dirname, 'modes/edit-mode.ts'), 'utf-8');
+    const helperBody = extractMethodBody(src, '_updateRefsInTree');
+    expect(helperBody).not.toBeNull();
+    // Must reference node.schema to scan raw sub-schemas
+    expect(helperBody).toMatch(/node\.schema/);
+  });
+
+  it('edit-mode has _updateRefsInObject helper for recursive $ref replacement', () => {
+    const src = readFileSync(resolve(__dirname, 'modes/edit-mode.ts'), 'utf-8');
+    // Must have the helper method
+    expect(src).toContain('_updateRefsInObject');
+    const helperBody = extractMethodBody(src, '_updateRefsInObject');
+    expect(helperBody).not.toBeNull();
+    // Must check for $ref key
+    expect(helperBody).toContain('$ref');
+  });
+});
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-/** Recursively update $ref strings in a tree */
+/** Recursively update $ref strings in a tree — mirrors production _updateRefsInTree */
 function updateRefsInTree(node: SchemaNode, oldRef: string, newRef: string): void {
   if (node.ref === oldRef) {
     node.ref = newRef;
   }
+  updateRefsInObject(node.schema, oldRef, newRef);
   for (const child of node.children || []) {
     updateRefsInTree(child, oldRef, newRef);
   }
   for (const variant of node.variants || []) {
     updateRefsInTree(variant, oldRef, newRef);
+  }
+}
+
+/** Recursively scan an object for $ref strings and replace them */
+function updateRefsInObject(obj: any, oldRef: string, newRef: string): void {
+  if (!obj || typeof obj !== 'object') return;
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      updateRefsInObject(item, oldRef, newRef);
+    }
+    return;
+  }
+  for (const [key, value] of Object.entries(obj)) {
+    if (key === '$ref' && value === oldRef) {
+      obj[key] = newRef;
+    } else if (typeof value === 'object' && value !== null) {
+      updateRefsInObject(value, oldRef, newRef);
+    }
   }
 }
 
