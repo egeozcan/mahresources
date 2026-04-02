@@ -1,5 +1,5 @@
 import type { JSONSchema } from './schema-core';
-import { resolveRef, mergeSchemas } from './schema-core';
+import { resolveRef, mergeSchemas, unescapeJsonPointer } from './schema-core';
 
 /**
  * Determines whether a JSON Schema represents a "leaf" field -- one that
@@ -70,4 +70,53 @@ export function isLeafSchema(schema: JSONSchema, rootSchema?: JSONSchema): boole
 
   // Everything else: string, number, integer, boolean, null, enum, const
   return true;
+}
+
+// ─── Recursive stale-key stripping ──────────────────────────────────────────
+
+/**
+ * Recursively strips keys from `data` that are not declared in the schema's
+ * properties when `additionalProperties` is false.  Handles `$ref` and
+ * `allOf` composition so that nested schemas with strict additional-properties
+ * rules also get cleaned.
+ */
+export function stripStaleKeys(data: any, schema: JSONSchema, rootSchema?: JSONSchema): void {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return;
+
+  // Resolve $ref if present
+  let resolved = schema;
+  if (schema.$ref && rootSchema) {
+    const r = resolveRef(schema.$ref, rootSchema);
+    if (r) {
+      resolved = { ...r, ...schema, $ref: undefined };
+    }
+  }
+
+  // Merge allOf if present
+  if (resolved.allOf && Array.isArray(resolved.allOf)) {
+    let merged: JSONSchema = { ...resolved };
+    delete merged.allOf;
+    for (const sub of resolved.allOf) {
+      const s = sub.$ref && rootSchema ? resolveRef(sub.$ref, rootSchema) || sub : sub;
+      merged = mergeSchemas(merged, s);
+    }
+    resolved = merged;
+  }
+
+  // Strip keys not in declared properties when additionalProperties is false
+  if (resolved.additionalProperties === false) {
+    const allowed = new Set(Object.keys(resolved.properties || {}));
+    for (const key of Object.keys(data)) {
+      if (!allowed.has(key)) delete data[key];
+    }
+  }
+
+  // Recurse into declared properties
+  if (resolved.properties) {
+    for (const [key, propSchema] of Object.entries(resolved.properties)) {
+      if (data[key] && typeof data[key] === 'object' && !Array.isArray(data[key])) {
+        stripStaleKeys(data[key], propSchema as JSONSchema, rootSchema || schema);
+      }
+    }
+  }
 }

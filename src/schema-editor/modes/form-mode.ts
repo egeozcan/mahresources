@@ -10,7 +10,7 @@ import {
   inferType,
   inferSchema,
 } from '../schema-core';
-import { isLeafSchema } from '../form-mode-helpers';
+import { isLeafSchema, stripStaleKeys } from '../form-mode-helpers';
 
 function generateFieldId(prefix: string, path: string): string {
   // Injective encoding: every non-alphanumeric character is replaced with
@@ -68,21 +68,13 @@ export class SchemaFormMode extends LitElement {
     if (changed.has('value') || changed.has('schema')) {
       this._data = this.value != null ? (typeof this.value === 'string' ? this._safeParse(this.value) : structuredClone(this.value)) : {};
 
-      // When the schema changes, strip keys from _data that aren't in the new
-      // schema's properties and aren't allowed by additionalProperties.  This
-      // prevents stale keys from a previous schema (e.g. after a category
-      // switch) from being silently submitted via the hidden input.
-      // Note: guard does NOT require schema.properties — a schema with
-      // additionalProperties:false and NO properties means ALL keys are invalid.
+      // When the schema changes, recursively strip keys from _data that aren't
+      // in the new schema's properties and aren't allowed by
+      // additionalProperties.  This prevents stale keys from a previous schema
+      // (e.g. after a category switch) from being silently submitted via the
+      // hidden input — including nested objects with additionalProperties:false.
       if (changed.has('schema') && this._data && typeof this._data === 'object') {
-        if (this.schema.additionalProperties === false) {
-          const allowedKeys = new Set(Object.keys(this.schema.properties || {}));
-          for (const key of Object.keys(this._data)) {
-            if (!allowedKeys.has(key)) {
-              delete this._data[key];
-            }
-          }
-        }
+        stripStaleKeys(this._data, this.schema, this.schema);
       }
 
       // Keep hidden input in sync when value/schema change externally

@@ -116,15 +116,12 @@ describe('Bug 1 (P1): strip stale meta keys when switching to stricter schema', 
       new URL('./modes/form-mode.ts', import.meta.url),
       'utf8',
     );
-    // After the fix, willUpdate should contain key-stripping logic
-    // when schema changes and additionalProperties is false.
-    // Extract the full willUpdate method body (from 'willUpdate(' to the
-    // next method definition '_safeParse' or '_emitChange')
+    // After the refactor, willUpdate delegates to the recursive
+    // stripStaleKeys helper (which handles additionalProperties internally).
     const startIdx = source.indexOf('willUpdate(');
     const endIdx = source.indexOf('_emitChange(');
     const willUpdateSection = source.slice(startIdx, endIdx);
-    expect(willUpdateSection).toContain('additionalProperties');
-    expect(willUpdateSection).toContain('allowedKeys');
+    expect(willUpdateSection).toContain('stripStaleKeys');
   });
 });
 
@@ -450,15 +447,14 @@ describe('Bug 4 (P2): strip all stale keys for strict schemas without declared p
     const willUpdateSection = source.slice(startIdx, endIdx);
 
     // The OLD (buggy) guard: `this.schema?.properties && this._data`
-    // After the fix, the outer guard must NOT require schema.properties.
-    // The condition checking `schema.properties` must only appear inside
-    // the allowedKeys Set construction, not as the outer if-guard.
+    // After the refactor, willUpdate delegates to stripStaleKeys which
+    // handles additionalProperties internally and does not require
+    // schema.properties as an outer guard.
     expect(willUpdateSection).not.toMatch(
       /if\s*\(\s*changed\.has\(['"]schema['"]\)\s*&&\s*this\.schema\?\.properties/,
     );
 
-    // The fix should still check additionalProperties and use allowedKeys
-    expect(willUpdateSection).toContain('additionalProperties');
-    expect(willUpdateSection).toContain('allowedKeys');
+    // The fix delegates to stripStaleKeys (which handles additionalProperties internally)
+    expect(willUpdateSection).toContain('stripStaleKeys');
   });
 });
