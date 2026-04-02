@@ -13,7 +13,11 @@ import {
 import { isLeafSchema } from '../form-mode-helpers';
 
 function generateFieldId(prefix: string, path: string): string {
-  return `${prefix}-${path.replace(/[^a-zA-Z0-9]/g, '-')}`;
+  // Encode separators distinctly to avoid collisions between paths that
+  // differ only by punctuation (e.g. first_name vs first-name vs first.name).
+  return `${prefix}-${path
+    .replace(/\./g, '--')
+    .replace(/[^a-zA-Z0-9_-]/g, '')}`;
 }
 
 @customElement('schema-form-mode')
