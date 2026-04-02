@@ -327,14 +327,28 @@ export class SchemaEditMode extends LitElement {
     if (!this._root) return;
 
     // If the selected node is object-like, add the property as its child;
-    // otherwise fall back to root. A node is object-like if it has type 'object'
-    // OR if it already has children (e.g. typeless schemas with properties).
+    // otherwise fall back to root. A node is object-like if it has type 'object',
+    // type is empty/typeless, OR if it already has children.
     const selected = this._findNode(this._selectedId);
     const isObjectLike = selected && selected !== this._root && (
       selected.type === 'object' ||
+      selected.type === '' ||
       selected.children != null
     );
     const target = isObjectLike ? selected! : this._root;
+
+    // Auto-convert to object if the target is a non-object type (e.g. string,
+    // integer, array). The user clearly wants to add properties, so the schema
+    // should become an object. Clear type-specific constraints that don't apply.
+    if (target.type !== 'object' && target.type !== '') {
+      target.type = 'object';
+      for (const key of ['minLength', 'maxLength', 'pattern', 'format',
+        'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum',
+        'multipleOf', 'minItems', 'maxItems', 'uniqueItems',
+        'items', 'prefixItems', 'contains', 'enum', 'const', 'default']) {
+        delete target.schema[key];
+      }
+    }
 
     if (!target.children) target.children = [];
     let name = 'newProperty';
