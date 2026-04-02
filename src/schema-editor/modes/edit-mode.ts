@@ -165,6 +165,13 @@ export class SchemaEditMode extends LitElement {
         }
         break;
       }
+      case 'enum':
+        if (Array.isArray(value) && value.length === 0) {
+          delete selected.schema.enum;
+        } else {
+          selected.schema.enum = value;
+        }
+        break;
       default:
         if (value === undefined) {
           delete selected.schema[field];
