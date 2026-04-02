@@ -728,3 +728,64 @@ describe('Bug fix: properties + composition coexist on same node', () => {
     expect(tree.variants![1].name).toBe('WithPhone');
   });
 });
+
+// ─── Bug: Multiple composition keywords round-trip incorrectly ──────────────
+
+describe('Bug fix: multiple composition keywords round-trip correctly', () => {
+  it('round-trips schema with both allOf and oneOf', () => {
+    const schema = {
+      type: 'object',
+      allOf: [
+        { properties: { base: { type: 'string' } } },
+      ],
+      oneOf: [
+        { properties: { a: { type: 'string' } } },
+        { properties: { b: { type: 'number' } } },
+      ],
+    };
+    const tree = schemaToTree(schema);
+    const output = treeToSchema(tree);
+    expect(output.allOf).toHaveLength(1);
+    expect(output.oneOf).toHaveLength(2);
+  });
+
+  it('round-trips schema with allOf, anyOf, and oneOf simultaneously', () => {
+    const schema = {
+      type: 'object',
+      allOf: [
+        { properties: { required_field: { type: 'string' } } },
+      ],
+      anyOf: [
+        { properties: { opt_a: { type: 'string' } } },
+        { properties: { opt_b: { type: 'number' } } },
+      ],
+      oneOf: [
+        { properties: { exclusive_a: { type: 'boolean' } } },
+      ],
+    };
+    const tree = schemaToTree(schema);
+    const output = treeToSchema(tree);
+    expect(output.allOf).toHaveLength(1);
+    expect(output.anyOf).toHaveLength(2);
+    expect(output.oneOf).toHaveLength(1);
+  });
+
+  it('first composition keyword populates variants, others stay in schema', () => {
+    const schema = {
+      type: 'object',
+      allOf: [
+        { properties: { base: { type: 'string' } } },
+      ],
+      oneOf: [
+        { properties: { a: { type: 'string' } } },
+        { properties: { b: { type: 'number' } } },
+      ],
+    };
+    const tree = schemaToTree(schema);
+    // The loop iterates ['oneOf', 'anyOf', 'allOf'] — oneOf is extracted first
+    expect(tree.compositionKeyword).toBe('oneOf');
+    expect(tree.variants).toHaveLength(2);
+    // allOf remains in node.schema as raw JSON (not extracted)
+    expect(tree.schema.allOf).toHaveLength(1);
+  });
+});

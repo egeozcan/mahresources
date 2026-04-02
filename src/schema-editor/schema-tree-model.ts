@@ -103,6 +103,9 @@ export function schemaToTree(schema: JSONSchema, name = '', parentRequired: stri
   }
 
   // oneOf / anyOf / allOf → composition node with variant children (stored in `variants`)
+  // Only extract the FIRST matching keyword into compositionKeyword/variants.
+  // Additional composition keywords stay in node.schema and pass through
+  // treeToSchema via the spread, preserving multi-keyword schemas.
   for (const kw of ['oneOf', 'anyOf', 'allOf'] as const) {
     if (Array.isArray(schema[kw])) {
       node.compositionKeyword = kw;
@@ -111,6 +114,7 @@ export function schemaToTree(schema: JSONSchema, name = '', parentRequired: stri
       );
       node.variants = [...(node.variants || []), ...variantNodes];
       delete node.schema[kw];
+      break;
     }
   }
 
