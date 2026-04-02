@@ -62,11 +62,14 @@
                 {% endif %}
 
                 <div data-initial-schema="{{ initialSchema }}"
+                    data-initial-meta='{{ group.Meta|json }}'
                     x-data="{
                          currentSchema: null,
+                         currentMeta: {},
                          init() {
                              const raw = this.$el.dataset.initialSchema;
                              if (raw) { this.currentSchema = raw; }
+                             try { this.currentMeta = JSON.parse(this.$el.dataset.initialMeta || '{}'); } catch { this.currentMeta = {}; }
                          },
                          handleCategoryChange(e) {
                              if (e.detail.value.length > 0) {
@@ -74,17 +77,23 @@
                              } else {
                                  this.currentSchema = null;
                              }
+                         },
+                         handleMetaChange(e) {
+                             if (e.detail && e.detail.value !== undefined) {
+                                 this.currentMeta = e.detail.value;
+                             }
                          }
                     }"
                     @multiple-input.window="if ($event.detail.name === 'categoryId') handleCategoryChange($event)"
                     class="w-full"
                 >
                     <template x-if="currentSchema">
-                        <div class="border p-4 rounded-md bg-stone-50 mt-5">
+                        <div class="border p-4 rounded-md bg-stone-50 mt-5"
+                            @value-change="handleMetaChange($event)">
                             <h2 class="text-sm font-medium font-mono text-stone-700 mb-3">Meta Data (Schema Enforced)</h2>
                             <schema-form-mode
                                 :schema="currentSchema"
-                                value='{{ group.Meta|json }}'
+                                :value="JSON.stringify(currentMeta)"
                                 name="Meta"
                             ></schema-form-mode>
                         </div>

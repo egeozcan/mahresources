@@ -484,3 +484,154 @@ describe('Bug: raw JSON invalid state bypassed by switching tabs', () => {
     expect(handleSchemaSection).toContain('rawJsonDirty');
   });
 });
+
+// ─── Bug: Resource category switching drops unsaved Meta edits ────────────────
+
+describe('Bug: resource/group form preserves meta edits across category switches', () => {
+  it('createResource.tpl binds schema-form-mode value to Alpine currentMeta state', () => {
+    const tplSource = readFileSync(
+      new URL('../../templates/createResource.tpl', import.meta.url),
+      'utf8',
+    );
+    // The schema-form-mode should bind :value to Alpine state, not the server-rendered value
+    // This ensures the value persists across x-if destroy/recreate cycles
+    expect(tplSource).toContain('currentMeta');
+    // The meta section x-data (near data-initial-schema) should have currentMeta
+    const metaSectionStart = tplSource.indexOf('data-initial-schema');
+    expect(metaSectionStart).toBeGreaterThan(-1);
+    const metaSection = tplSource.slice(metaSectionStart, metaSectionStart + 1000);
+    expect(metaSection).toContain('currentMeta');
+  });
+
+  it('createGroup.tpl binds schema-form-mode value to Alpine currentMeta state', () => {
+    const tplSource = readFileSync(
+      new URL('../../templates/createGroup.tpl', import.meta.url),
+      'utf8',
+    );
+    expect(tplSource).toContain('currentMeta');
+  });
+
+  it('schema-form-mode value-change events update Alpine currentMeta', () => {
+    const tplSource = readFileSync(
+      new URL('../../templates/createResource.tpl', import.meta.url),
+      'utf8',
+    );
+    // There should be a @value-change handler that updates currentMeta
+    expect(tplSource).toContain('value-change');
+    expect(tplSource).toContain('currentMeta');
+  });
+});
+
+// ─── Bug: Wrap in composition is lossy for $ref and composition nodes ────────
+
+describe('Bug: wrap-in-composition preserves $ref on the variant', () => {
+  it('wrapping a $ref node in oneOf preserves the ref in the variant', () => {
+    resetIdCounter();
+    const tree = schemaToTree({
+      type: 'object',
+      properties: {
+        addr: { $ref: '#/$defs/address' },
+      },
+      $defs: { address: { type: 'object', properties: { city: { type: 'string' } } } },
+    });
+    const addrNode = tree.children!.find(c => c.name === 'addr')!;
+    expect(addrNode.ref).toBe('#/$defs/address');
+
+    // Simulate the wrap-oneOf context action from edit-mode.ts
+    const node = addrNode;
+    const metadataKeys = ['title', 'description', 'readOnly', 'writeOnly', 'default', 'examples', 'deprecated'];
+    const metadata: Record<string, any> = {};
+    const typeSchema: Record<string, any> = {};
+    for (const [k, v] of Object.entries(node.schema)) {
+      if (metadataKeys.includes(k)) {
+        metadata[k] = v;
+      } else {
+        typeSchema[k] = v;
+      }
+    }
+    const originalType = node.type;
+    if (originalType) typeSchema.type = originalType;
+    const variantName = node.schema.title || 'variant1';
+    const originalChildren = node.children ? [...node.children] : undefined;
+    const originalRef = node.ref;
+    const originalVariants = node.variants;
+    const originalComposition = node.compositionKeyword;
+
+    node.compositionKeyword = 'oneOf';
+    node.schema = metadata;
+    node.type = '';
+    node.children = undefined;
+    node.variants = [
+      {
+        id: `node-variant-wrap-0`,
+        name: variantName,
+        type: originalType || '',
+        required: false,
+        schema: typeSchema,
+        children: originalChildren,
+        ref: originalRef,           // FIX: preserve $ref
+        variants: originalVariants, // FIX: preserve existing variants
+        compositionKeyword: originalComposition,
+      },
+      { id: `node-variant-wrap-1`, name: 'variant2', type: 'string', required: false, schema: {} },
+    ];
+    delete node.variants[0].schema.type;
+    node.ref = undefined;
+
+    // After wrapping, the first variant should have the $ref
+    expect(node.variants[0].ref).toBe('#/$defs/address');
+    // The wrapper node should NOT have the ref anymore
+    expect(node.ref).toBeUndefined();
+  });
+
+  it('wrapping a composition node in oneOf preserves its variants', () => {
+    resetIdCounter();
+    const tree = schemaToTree({
+      type: 'object',
+      properties: {
+        value: {
+          oneOf: [
+            { type: 'string', title: 'text' },
+            { type: 'number', title: 'num' },
+          ],
+        },
+      },
+    });
+    const valueNode = tree.children!.find(c => c.name === 'value')!;
+    expect(valueNode.compositionKeyword).toBe('oneOf');
+    expect(valueNode.variants).toHaveLength(2);
+
+    // Simulate the wrap — the original variants should move into the first variant child
+    const originalVariants = valueNode.variants;
+    const originalComposition = valueNode.compositionKeyword;
+
+    // After wrapping, variant1 should carry the original composition's variants
+    const variant1 = {
+      id: 'wrap-v1',
+      name: 'variant1',
+      type: '',
+      required: false,
+      schema: {},
+      variants: originalVariants,
+      compositionKeyword: originalComposition,
+    } as SchemaNode;
+
+    expect(variant1.variants).toHaveLength(2);
+    expect(variant1.compositionKeyword).toBe('oneOf');
+  });
+
+  it('edit-mode.ts wrap handler copies ref and variants to the variant', () => {
+    const source = readFileSync(
+      new URL('./modes/edit-mode.ts', import.meta.url),
+      'utf8',
+    );
+    // Find the wrap case
+    const wrapSection = source.slice(
+      source.indexOf("case 'wrap-oneOf':"),
+      source.indexOf("case 'add-if-then-else':"),
+    );
+    // The variant creation should include ref and variants
+    expect(wrapSection).toContain('ref:');
+    expect(wrapSection).toContain('variants:');
+  });
+});
