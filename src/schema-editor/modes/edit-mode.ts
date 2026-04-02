@@ -35,8 +35,19 @@ export class SchemaEditMode extends LitElement {
   @state() private _selectedId = '';
   @state() private _draft: string | null = null;
 
+  /** Tracks the last schema we emitted so we can skip redundant reparses */
+  private _lastEmittedSchema = '';
+
   override willUpdate(changed: Map<string, unknown>) {
     if (changed.has('schema') && this.schema) {
+      // Skip reparse when the incoming schema matches what we just emitted.
+      // Internal edits mutate the tree in-place and then emit; the parent echoes
+      // the schema back as a prop change, which would reparse and regenerate IDs,
+      // causing the selected node to become unfindable.
+      const incoming = JSON.stringify(this.schema);
+      if (incoming === this._lastEmittedSchema) {
+        return;
+      }
       this._root = schemaToTree(this.schema);
       this._draft = detectDraft(this.schema);
       if (this._root && !this._selectedId) {
@@ -75,8 +86,11 @@ export class SchemaEditMode extends LitElement {
   private _emitSchemaChange() {
     if (!this._root) return;
     const schema = treeToSchema(this._root);
+    const serialized = JSON.stringify(schema, null, 2);
+    // Store a compact form for the willUpdate guard comparison
+    this._lastEmittedSchema = JSON.stringify(schema);
     this.dispatchEvent(new CustomEvent('schema-change', {
-      detail: { schema: JSON.stringify(schema, null, 2) },
+      detail: { schema: serialized },
       bubbles: true,
       composed: true,
     }));
@@ -305,12 +319,14 @@ export class SchemaEditMode extends LitElement {
         const originalType = node.type;
         if (originalType) typeSchema.type = originalType;
         const variantName = node.schema.title || 'variant1';
+        // Capture children before overwriting — they belong to the first variant
+        const originalChildren = node.children ? [...node.children] : undefined;
         // Set up the node as a composition node, keeping metadata on the wrapper
         node.compositionKeyword = keyword;
         node.schema = metadata;
         node.type = '';
         node.children = [
-          { id: `node-variant-${Date.now()}-0`, name: variantName, type: originalType || '', required: false, schema: typeSchema },
+          { id: `node-variant-${Date.now()}-0`, name: variantName, type: originalType || '', required: false, schema: typeSchema, children: originalChildren },
           { id: `node-variant-${Date.now()}-1`, name: 'variant2', type: 'string', required: false, schema: {} },
         ];
         // Clean type from first variant's schema (it's stored in node.type)
@@ -352,6 +368,8 @@ export class SchemaEditMode extends LitElement {
           schema: { ...node.schema },
           isDef: true,
           children: node.children ? [...node.children] : undefined,
+          compositionKeyword: node.compositionKeyword,
+          ref: node.ref,
         };
         defsNode.children!.push(defNode);
         // Replace node with $ref
