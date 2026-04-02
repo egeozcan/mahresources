@@ -9,6 +9,16 @@ export interface FlatField {
 
 export type JSONSchema = Record<string, any>;
 
+// ─── JSON Pointer escaping (RFC 6901) ────────────────────────────────────────
+
+export function escapeJsonPointer(token: string): string {
+  return token.replace(/~/g, '~0').replace(/\//g, '~1');
+}
+
+export function unescapeJsonPointer(token: string): string {
+  return token.replace(/~1/g, '/').replace(/~0/g, '~');
+}
+
 // ─── Ref resolution ──────────────────────────────────────────────────────────
 
 export function resolveRef(ref: unknown, root: JSONSchema): JSONSchema | null {
@@ -16,8 +26,9 @@ export function resolveRef(ref: unknown, root: JSONSchema): JSONSchema | null {
   const parts = ref.split('/').slice(1);
   let current: any = root;
   for (const part of parts) {
-    if (current && typeof current === 'object' && part in current) {
-      current = current[part];
+    const unescaped = unescapeJsonPointer(part);
+    if (current && typeof current === 'object' && unescaped in current) {
+      current = current[unescaped];
     } else {
       return null;
     }
