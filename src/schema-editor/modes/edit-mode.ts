@@ -360,7 +360,11 @@ export class SchemaEditMode extends LitElement {
         }
         // Build the first variant from the type-specific schema
         const originalType = node.type;
-        if (originalType) typeSchema.type = originalType;
+        // Only set scalar type if the schema doesn't already contain a nullable
+        // type array (e.g. ["string", "null"]) — that array was copied into
+        // typeSchema by the loop above and must be preserved.
+        const hasNullableArray = Array.isArray(typeSchema.type);
+        if (originalType && !hasNullableArray) typeSchema.type = originalType;
         const variantName = node.schema.title || 'variant1';
         // Capture children, ref, variants, and compositionKeyword before overwriting
         // — they all belong to the first variant
@@ -379,8 +383,12 @@ export class SchemaEditMode extends LitElement {
           { id: `node-variant-${Date.now()}-0`, name: variantName, type: originalType || '', required: false, schema: typeSchema, children: originalChildren, ref: originalRef, variants: originalVariants, compositionKeyword: originalComposition },
           { id: `node-variant-${Date.now()}-1`, name: 'variant2', type: 'string', required: false, schema: {} },
         ];
-        // Clean type from first variant's schema (it's stored in node.type)
-        delete node.variants[0].schema.type;
+        // Clean scalar type from first variant's schema (it's stored in
+        // node.type). Nullable type arrays must stay — treeToSchema needs them
+        // to emit the correct ["type", "null"] union.
+        if (!Array.isArray(node.variants[0].schema.type)) {
+          delete node.variants[0].schema.type;
+        }
         break;
       }
       case 'add-if-then-else':
