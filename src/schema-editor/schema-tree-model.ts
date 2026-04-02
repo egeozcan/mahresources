@@ -11,8 +11,10 @@ export interface SchemaNode {
   required: boolean;
   /** The raw schema keywords for this node (title, description, constraints, etc.) */
   schema: JSONSchema;
-  /** Children: object properties, array items schema, composition variants */
+  /** Children: object properties, $defs node */
   children?: SchemaNode[];
+  /** Composition variant children (oneOf/anyOf/allOf variants), kept separate from property children */
+  variants?: SchemaNode[];
   /** For composition nodes (oneOf/anyOf/allOf): which keyword */
   compositionKeyword?: 'oneOf' | 'anyOf' | 'allOf' | 'not';
   /** For $ref nodes: the ref string */
@@ -100,23 +102,23 @@ export function schemaToTree(schema: JSONSchema, name = '', parentRequired: stri
     delete node.schema.$ref;
   }
 
-  // oneOf / anyOf / allOf → composition node with variant children
+  // oneOf / anyOf / allOf → composition node with variant children (stored in `variants`)
   for (const kw of ['oneOf', 'anyOf', 'allOf'] as const) {
     if (Array.isArray(schema[kw])) {
       node.compositionKeyword = kw;
-      const variants = (schema[kw] as JSONSchema[]).map((variant, i) =>
+      const variantNodes = (schema[kw] as JSONSchema[]).map((variant, i) =>
         schemaToTree(variant, variant.title || `variant${i + 1}`),
       );
-      node.children = [...(node.children || []), ...variants];
+      node.variants = [...(node.variants || []), ...variantNodes];
       delete node.schema[kw];
     }
   }
 
-  // `not` keyword → composition node with one child
+  // `not` keyword → composition node with one variant child
   if (schema.not && typeof schema.not === 'object') {
     node.compositionKeyword = 'not';
     const child = schemaToTree(schema.not as JSONSchema, 'not');
-    node.children = [...(node.children || []), child];
+    node.variants = [...(node.variants || []), child];
   }
 
   // Object with properties → children
@@ -170,26 +172,22 @@ export function treeToSchema(node: SchemaNode): JSONSchema {
     schema.$ref = node.ref;
   }
 
-  // Composition keywords: oneOf / anyOf / allOf → serialize variant children
+  // Composition keywords: oneOf / anyOf / allOf → serialize variant children from `variants`
   if (node.compositionKeyword === 'oneOf' || node.compositionKeyword === 'anyOf' || node.compositionKeyword === 'allOf') {
-    const variantChildren = (node.children || []).filter(c => !c.isDef && c.name !== '$defs');
-    schema[node.compositionKeyword] = variantChildren.map(c => treeToSchema(c));
+    schema[node.compositionKeyword] = (node.variants || []).map(c => treeToSchema(c));
   }
 
-  // Serialize `not` composition keyword
+  // Serialize `not` composition keyword from `variants`
   if (node.compositionKeyword === 'not') {
-    const notChild = (node.children || []).find(c => c.name === 'not');
+    const notChild = (node.variants || []).find(c => c.name === 'not');
     if (notChild) {
       schema.not = treeToSchema(notChild);
     }
   }
 
-  // Separate property children from $defs node, composition variant children, and `not` child
-  const isComposition = node.compositionKeyword === 'oneOf' || node.compositionKeyword === 'anyOf' || node.compositionKeyword === 'allOf';
+  // Property children are always in node.children (separate from variants)
   const propChildren = (node.children || []).filter(c =>
     !c.isDef && c.name !== '$defs'
-    && !(node.compositionKeyword === 'not' && c.name === 'not')
-    && !isComposition  // composition variants are already serialized above
   );
   const defsNode = (node.children || []).find(c => c.isDef && c.name === '$defs');
 

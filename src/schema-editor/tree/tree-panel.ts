@@ -290,15 +290,17 @@ export class SchemaTreePanel extends LitElement {
 
   private _hasChildren(node: SchemaNode): boolean {
     const propChildren = (node.children || []).filter(c => c.name !== '$defs');
-    return propChildren.length > 0;
+    const variantChildren = node.variants || [];
+    return propChildren.length > 0 || variantChildren.length > 0;
   }
 
   private _renderNode(node: SchemaNode, isRoot = false): unknown {
     const propChildren = (node.children || []).filter(c => c.name !== '$defs' && !c.isDef);
+    const variantChildren = node.variants || [];
     const defsNode = (node.children || []).find(c => c.name === '$defs');
     const expanded = this._expanded.has(node.id);
     const selected = this.selectedId === node.id;
-    const hasChildren = propChildren.length > 0;
+    const hasChildren = propChildren.length > 0 || variantChildren.length > 0;
     const isDropTarget = this._dropTargetId === node.id;
 
     return html`
@@ -334,6 +336,7 @@ export class SchemaTreePanel extends LitElement {
       ${hasChildren && expanded
         ? html`<div class="children" role="group">
             ${repeat(propChildren, c => c.id, c => this._renderNode(c))}
+            ${repeat(variantChildren, c => c.id, c => this._renderNode(c))}
           </div>`
         : ''}
       ${isRoot && defsNode && defsNode.children?.length

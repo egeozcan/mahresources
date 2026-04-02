@@ -123,7 +123,7 @@ export class SchemaDetailPanel extends LitElement {
           <div class="breadcrumb">${this.breadcrumb.join(' → ')}</div>
           <h3>${node.compositionKeyword}: ${node.name}</h3>
         </div>
-        <schema-composition-editor .keyword=${node.compositionKeyword} .variants=${node.children || []}></schema-composition-editor>
+        <schema-composition-editor .keyword=${node.compositionKeyword} .variants=${node.variants || []}></schema-composition-editor>
         ${this._renderActions()}
       `;
     }

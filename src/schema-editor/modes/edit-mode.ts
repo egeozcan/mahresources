@@ -63,6 +63,10 @@ export class SchemaEditMode extends LitElement {
       const found = this._findNode(id, child);
       if (found) return found;
     }
+    for (const variant of node.variants || []) {
+      const found = this._findNode(id, variant);
+      if (found) return found;
+    }
     return null;
   }
 
@@ -72,6 +76,10 @@ export class SchemaEditMode extends LitElement {
     if (node.id === id) return current;
     for (const child of node.children || []) {
       const result = this._buildBreadcrumb(id, child, current);
+      if (result.length) return result;
+    }
+    for (const variant of node.variants || []) {
+      const result = this._buildBreadcrumb(id, variant, current);
       if (result.length) return result;
     }
     return [];
@@ -111,9 +119,9 @@ export class SchemaEditMode extends LitElement {
         // Prevent duplicate names among all siblings (properties and $defs alike)
         const parentAndIndex = this._findParentOf(this._selectedId);
         if (parentAndIndex) {
-          const [parent] = parentAndIndex;
+          const [, , arr] = parentAndIndex;
           const siblingNames = new Set(
-            (parent.children || []).filter(c => c.id !== selected.id).map(c => c.name)
+            arr.filter(c => c.id !== selected.id).map(c => c.name)
           );
           if (siblingNames.has(value)) {
             let deduped = value;
@@ -173,8 +181,8 @@ export class SchemaEditMode extends LitElement {
     if (!this._root) return;
     const parentAndIndex = this._findParentOf(this._selectedId);
     if (!parentAndIndex) return;
-    const [parent, index] = parentAndIndex;
-    parent.children!.splice(index, 1);
+    const [parent, index, arr] = parentAndIndex;
+    arr.splice(index, 1);
     this._selectedId = parent.id;
     this.requestUpdate();
     this._emitSchemaChange();
@@ -184,33 +192,46 @@ export class SchemaEditMode extends LitElement {
     if (!this._root) return;
     const parentAndIndex = this._findParentOf(this._selectedId);
     if (!parentAndIndex) return;
-    const [parent, index] = parentAndIndex;
-    const original = parent.children![index];
+    const [, index, arr] = parentAndIndex;
+    const original = arr[index];
     const clone = JSON.parse(JSON.stringify(original));
     // Deduplicate clone name among siblings
     let cloneName = original.name + '_copy';
-    const siblingNames = new Set(parent.children!.map(c => c.name));
+    const siblingNames = new Set(arr.map(c => c.name));
     let counter = 1;
     while (siblingNames.has(cloneName)) {
       cloneName = `${original.name}_copy${counter++}`;
     }
     clone.name = cloneName;
     clone.id = `node-dup-${Date.now()}`;
-    // Regenerate IDs for all children
-    const reId = (n: SchemaNode) => { n.id = `node-dup-${Date.now()}-${Math.random()}`; (n.children || []).forEach(reId); };
+    // Regenerate IDs for all children and variants
+    const reId = (n: SchemaNode) => { n.id = `node-dup-${Date.now()}-${Math.random()}`; (n.children || []).forEach(reId); (n.variants || []).forEach(reId); };
     reId(clone);
-    parent.children!.splice(index + 1, 0, clone);
+    arr.splice(index + 1, 0, clone);
     this._selectedId = clone.id;
     this.requestUpdate();
     this._emitSchemaChange();
   }
 
-  private _findParentOf(id: string, node: SchemaNode | null = this._root): [SchemaNode, number] | null {
-    if (!node || !node.children) return null;
-    for (let i = 0; i < node.children.length; i++) {
-      if (node.children[i].id === id) return [node, i];
-      const found = this._findParentOf(id, node.children[i]);
-      if (found) return found;
+  /**
+   * Finds the parent node of the given id and returns the parent, the index,
+   * and the array (children or variants) that contains the node.
+   */
+  private _findParentOf(id: string, node: SchemaNode | null = this._root): [SchemaNode, number, SchemaNode[]] | null {
+    if (!node) return null;
+    if (node.children) {
+      for (let i = 0; i < node.children.length; i++) {
+        if (node.children[i].id === id) return [node, i, node.children];
+        const found = this._findParentOf(id, node.children[i]);
+        if (found) return found;
+      }
+    }
+    if (node.variants) {
+      for (let i = 0; i < node.variants.length; i++) {
+        if (node.variants[i].id === id) return [node, i, node.variants];
+        const found = this._findParentOf(id, node.variants[i]);
+        if (found) return found;
+      }
     }
     return null;
   }
@@ -252,10 +273,10 @@ export class SchemaEditMode extends LitElement {
   private _handleAddVariant() {
     const selected = this._findNode(this._selectedId);
     if (!selected || !selected.compositionKeyword) return;
-    if (!selected.children) selected.children = [];
-    selected.children.push({
+    if (!selected.variants) selected.variants = [];
+    selected.variants.push({
       id: `node-variant-${Date.now()}`,
-      name: `variant${selected.children.length + 1}`,
+      name: `variant${selected.variants.length + 1}`,
       type: 'string',
       required: false,
       schema: {},
@@ -266,9 +287,9 @@ export class SchemaEditMode extends LitElement {
 
   private _handleRemoveVariant(e: CustomEvent) {
     const selected = this._findNode(this._selectedId);
-    if (!selected?.children) return;
+    if (!selected?.variants) return;
     const { index } = e.detail;
-    selected.children.splice(index, 1);
+    selected.variants.splice(index, 1);
     this.requestUpdate();
     this._emitSchemaChange();
   }
@@ -282,19 +303,19 @@ export class SchemaEditMode extends LitElement {
     const targetInfo = this._findParentOf(targetId);
     if (!draggedInfo || !targetInfo) return;
 
-    const [dragParent, dragIndex] = draggedInfo;
-    const [targetParent, targetIndex] = targetInfo;
+    const [dragParent, dragIndex, dragArr] = draggedInfo;
+    const [targetParent, , targetArr] = targetInfo;
 
-    // Only reorder within the same parent
-    if (dragParent !== targetParent) return;
+    // Only reorder within the same parent and same array (children or variants)
+    if (dragParent !== targetParent || dragArr !== targetArr) return;
 
-    const [removed] = dragParent.children!.splice(dragIndex, 1);
+    const [removed] = dragArr.splice(dragIndex, 1);
     // Recalculate target index after removal
-    const insertIndex = dragParent.children!.findIndex(c => c.id === targetId);
+    const insertIndex = dragArr.findIndex(c => c.id === targetId);
     if (insertIndex >= 0) {
-      dragParent.children!.splice(insertIndex, 0, removed);
+      dragArr.splice(insertIndex, 0, removed);
     } else {
-      dragParent.children!.push(removed);
+      dragArr.push(removed);
     }
 
     this.requestUpdate();
@@ -329,15 +350,17 @@ export class SchemaEditMode extends LitElement {
         // Capture children before overwriting — they belong to the first variant
         const originalChildren = node.children ? [...node.children] : undefined;
         // Set up the node as a composition node, keeping metadata on the wrapper
+        // Property children move into the first variant; variants go in `node.variants`
         node.compositionKeyword = keyword;
         node.schema = metadata;
         node.type = '';
-        node.children = [
+        node.children = undefined;
+        node.variants = [
           { id: `node-variant-${Date.now()}-0`, name: variantName, type: originalType || '', required: false, schema: typeSchema, children: originalChildren },
           { id: `node-variant-${Date.now()}-1`, name: 'variant2', type: 'string', required: false, schema: {} },
         ];
         // Clean type from first variant's schema (it's stored in node.type)
-        delete node.children[0].schema.type;
+        delete node.variants[0].schema.type;
         break;
       }
       case 'add-if-then-else':
@@ -375,6 +398,7 @@ export class SchemaEditMode extends LitElement {
           schema: { ...node.schema },
           isDef: true,
           children: node.children ? [...node.children] : undefined,
+          variants: node.variants ? [...node.variants] : undefined,
           compositionKeyword: node.compositionKeyword,
           ref: node.ref,
         };
@@ -385,6 +409,7 @@ export class SchemaEditMode extends LitElement {
         node.schema = {};
         node.ref = `#/${defsPrefix}/${defName}`;
         node.children = undefined;
+        node.variants = undefined;
         node.compositionKeyword = undefined;
         break;
       }

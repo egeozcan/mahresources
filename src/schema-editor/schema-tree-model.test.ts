@@ -192,9 +192,9 @@ describe('schemaToTree / treeToSchema round-trip', () => {
     // Verify the contact node has composition structure
     const contactNode = tree.children!.find(c => c.name === 'contact')!;
     expect(contactNode.compositionKeyword).toBe('oneOf');
-    expect(contactNode.children).toHaveLength(2);
-    expect(contactNode.children![0].name).toBe('Email');
-    expect(contactNode.children![1].name).toBe('Phone');
+    expect(contactNode.variants).toHaveLength(2);
+    expect(contactNode.variants![0].name).toBe('Email');
+    expect(contactNode.variants![1].name).toBe('Phone');
 
     const output = treeToSchema(tree);
     expect(output).toEqual(schema);
@@ -236,7 +236,7 @@ describe('schemaToTree / treeToSchema round-trip', () => {
     const tree = schemaToTree(schema);
     const valueNode = tree.children!.find(c => c.name === 'value')!;
     expect(valueNode.compositionKeyword).toBe('anyOf');
-    expect(valueNode.children).toHaveLength(2);
+    expect(valueNode.variants).toHaveLength(2);
 
     const output = treeToSchema(tree);
     expect(output).toEqual(schema);
@@ -255,9 +255,9 @@ describe('schemaToTree / treeToSchema round-trip', () => {
     // Verify the tree structure
     const valueNode = tree.children!.find(c => c.name === 'value')!;
     expect(valueNode.compositionKeyword).toBe('not');
-    expect(valueNode.children).toHaveLength(1);
-    expect(valueNode.children![0].name).toBe('not');
-    expect(valueNode.children![0].type).toBe('string');
+    expect(valueNode.variants).toHaveLength(1);
+    expect(valueNode.variants![0].name).toBe('not');
+    expect(valueNode.variants![0].type).toBe('string');
 
     const output = treeToSchema(tree);
     expect(output).toEqual(schema);
@@ -308,15 +308,16 @@ describe('Bug fix: wrapping in composition preserves children', () => {
     const originalChildren = addressNode.children ? [...addressNode.children] : undefined;
 
     // Set up the node as a composition node, keeping metadata on the wrapper
-    // FIX: the variant now gets the original children
+    // FIX: the variant now gets the original children; variants go in `variants`
     addressNode.compositionKeyword = keyword;
     addressNode.schema = metadata;
     addressNode.type = '';
-    addressNode.children = [
+    addressNode.children = undefined;
+    addressNode.variants = [
       { id: `node-variant-0`, name: variantName, type: originalType || '', required: false, schema: typeSchema, children: originalChildren },
       { id: `node-variant-1`, name: 'variant2', type: 'string', required: false, schema: {} },
     ];
-    delete addressNode.children[0].schema.type;
+    delete addressNode.variants[0].schema.type;
 
     // Serialize back
     const output = treeToSchema(tree);
@@ -378,6 +379,7 @@ describe('Bug fix: convert-to-ref preserves compositionKeyword and ref', () => {
       schema: { ...contactNode.schema },
       isDef: true,
       children: contactNode.children ? [...contactNode.children] : undefined,
+      variants: contactNode.variants ? [...contactNode.variants] : undefined,
       // FIX: copy compositionKeyword and ref
       compositionKeyword: contactNode.compositionKeyword,
       ref: contactNode.ref,
@@ -388,6 +390,7 @@ describe('Bug fix: convert-to-ref preserves compositionKeyword and ref', () => {
     contactNode.schema = {};
     contactNode.ref = `#/$defs/${defName}`;
     contactNode.children = undefined;
+    contactNode.variants = undefined;
     contactNode.compositionKeyword = undefined;
 
     // Serialize back
@@ -659,5 +662,69 @@ describe('Bug fix: detail-panel renders actions for all node types', () => {
     const condBlockMatch = source.match(/if\s*\(\s*schema\.if\s*\)\s*\{[\s\S]*?return\s+html`[\s\S]*?`;/);
     expect(condBlockMatch).not.toBeNull();
     expect(condBlockMatch![0]).toContain('_renderActions');
+  });
+});
+
+// ─── Bug: Composition nodes corrupt shared properties on serialize ─────────
+
+describe('Bug fix: properties + composition coexist on same node', () => {
+  it('round-trips schema with both properties and oneOf', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+      },
+      oneOf: [
+        { properties: { email: { type: 'string' } }, required: ['email'] },
+        { properties: { phone: { type: 'string' } }, required: ['phone'] },
+      ],
+    };
+    const tree = schemaToTree(schema);
+    const output = treeToSchema(tree);
+    expect(output.properties).toEqual({ name: { type: 'string' } });
+    expect(output.oneOf).toHaveLength(2);
+    expect(output.oneOf![0].properties.email).toBeDefined();
+    expect(output.oneOf![1].properties.phone).toBeDefined();
+  });
+
+  it('round-trips schema with both properties and anyOf', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        id: { type: 'integer' },
+      },
+      anyOf: [
+        { properties: { label: { type: 'string' } } },
+        { properties: { code: { type: 'number' } } },
+      ],
+    };
+    const tree = schemaToTree(schema);
+    const output = treeToSchema(tree);
+    expect(output.properties).toEqual({ id: { type: 'integer' } });
+    expect(output.anyOf).toHaveLength(2);
+    expect(output.anyOf![0].properties.label).toBeDefined();
+    expect(output.anyOf![1].properties.code).toBeDefined();
+  });
+
+  it('tree separates property children from composition variants', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+      },
+      oneOf: [
+        { type: 'object', title: 'WithEmail', properties: { email: { type: 'string' } } },
+        { type: 'object', title: 'WithPhone', properties: { phone: { type: 'string' } } },
+      ],
+    };
+    const tree = schemaToTree(schema);
+    // Property children should be in children
+    expect(tree.children).toBeDefined();
+    expect(tree.children!.some(c => c.name === 'name')).toBe(true);
+    // Variants should be in variants
+    expect(tree.variants).toBeDefined();
+    expect(tree.variants).toHaveLength(2);
+    expect(tree.variants![0].name).toBe('WithEmail');
+    expect(tree.variants![1].name).toBe('WithPhone');
   });
 });
