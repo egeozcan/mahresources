@@ -50,7 +50,11 @@ export class SchemaEditMode extends LitElement {
       }
       this._root = schemaToTree(this.schema);
       this._draft = detectDraft(this.schema);
-      if (this._root && !this._selectedId) {
+      // Validate selection — if old ID doesn't exist in new tree, select root
+      if (this._selectedId && !this._findNode(this._selectedId)) {
+        this._selectedId = this._root.id;
+      }
+      if (!this._selectedId) {
         this._selectedId = this._root.id;
       }
     }
