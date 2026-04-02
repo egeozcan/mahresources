@@ -67,6 +67,22 @@ export class SchemaFormMode extends LitElement {
     }
     if (changed.has('value') || changed.has('schema')) {
       this._data = this.value != null ? (typeof this.value === 'string' ? this._safeParse(this.value) : structuredClone(this.value)) : {};
+
+      // When the schema changes, strip keys from _data that aren't in the new
+      // schema's properties and aren't allowed by additionalProperties.  This
+      // prevents stale keys from a previous schema (e.g. after a category
+      // switch) from being silently submitted via the hidden input.
+      if (changed.has('schema') && this.schema?.properties && this._data && typeof this._data === 'object') {
+        const allowedKeys = new Set(Object.keys(this.schema.properties));
+        if (this.schema.additionalProperties === false) {
+          for (const key of Object.keys(this._data)) {
+            if (!allowedKeys.has(key)) {
+              delete this._data[key];
+            }
+          }
+        }
+      }
+
       // Keep hidden input in sync when value/schema change externally
       // (e.g. when Alpine passes currentMeta with pre-existing edits).
       if (this._hiddenInput) {
