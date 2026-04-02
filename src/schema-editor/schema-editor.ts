@@ -55,12 +55,23 @@ export class SchemaEditor extends LitElement {
     }
     // When Alpine binds with :schema="currentSchema", the value may arrive
     // as an already-parsed object (not a JSON string).  Handle both cases.
+    // Reject non-plain-objects (arrays, primitives, null) — the visual editor
+    // only makes sense for object schemas.
     if (typeof this.schema === 'object') {
+      if (Array.isArray(this.schema) || this.schema === null) {
+        this._parsedSchema = null;
+        return;
+      }
       this._parsedSchema = this.schema as any;
       return;
     }
     try {
-      this._parsedSchema = JSON.parse(this.schema);
+      const parsed = JSON.parse(this.schema);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        this._parsedSchema = null;
+        return;
+      }
+      this._parsedSchema = parsed;
     } catch {
       this._parsedSchema = null;
     }

@@ -29,11 +29,21 @@ export function schemaEditorModal() {
 
       try {
         const parsed = JSON.parse(raw || '{"type":"object","properties":{}}');
-        this.currentSchema = JSON.stringify(parsed);
-        this.rawJson = JSON.stringify(parsed, null, 2);
-        this.rawJsonValid = true;
-        this.rawJsonError = '';
-        this.rawJsonDirty = false;
+        // Reject non-object JSON (primitives, arrays, null) — the visual
+        // editor only makes sense for object schemas.
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          this.currentSchema = raw;
+          this.rawJson = raw;
+          this.rawJsonValid = false;
+          this.rawJsonError = 'Schema must be a JSON object';
+          this.rawJsonDirty = true;
+        } else {
+          this.currentSchema = JSON.stringify(parsed);
+          this.rawJson = JSON.stringify(parsed, null, 2);
+          this.rawJsonValid = true;
+          this.rawJsonError = '';
+          this.rawJsonDirty = false;
+        }
       } catch (e) {
         // Content is not valid JSON -- show it as-is but mark invalid
         this.currentSchema = raw;
@@ -75,7 +85,13 @@ export function schemaEditorModal() {
     handleRawChange() {
       this.rawJsonDirty = true;
       try {
-        JSON.parse(this.rawJson);
+        const parsed = JSON.parse(this.rawJson);
+        // Reject non-object JSON (primitives, arrays, null)
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          this.rawJsonValid = false;
+          this.rawJsonError = 'Schema must be a JSON object';
+          return;
+        }
         this.rawJsonValid = true;
         this.rawJsonError = '';
         this.currentSchema = this.rawJson;
