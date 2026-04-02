@@ -359,16 +359,19 @@ export class SchemaTreePanel extends LitElement {
 
   private _renderContextMenu(): unknown {
     if (!this._contextMenu) return nothing;
-    const { x, y } = this._contextMenu;
+    const { x, y, nodeId } = this._contextMenu;
+    const isRoot = this.root != null && nodeId === this.root.id;
     return html`
       <div class="context-menu" style="left:${x}px;top:${y}px" @click=${(e: Event) => e.stopPropagation()}>
-        <button class="context-menu-item" @click=${() => this._contextMenuAction('wrap-oneOf')}>Wrap in oneOf</button>
-        <button class="context-menu-item" @click=${() => this._contextMenuAction('wrap-anyOf')}>Wrap in anyOf</button>
-        <button class="context-menu-item" @click=${() => this._contextMenuAction('wrap-allOf')}>Wrap in allOf</button>
-        <div class="context-menu-separator"></div>
-        <button class="context-menu-item" @click=${() => this._contextMenuAction('add-if-then-else')}>Add if/then/else</button>
-        <div class="context-menu-separator"></div>
-        <button class="context-menu-item" @click=${() => this._contextMenuAction('convert-to-ref')}>Convert to $ref</button>
+        ${!isRoot ? html`
+          <button class="context-menu-item" @click=${() => this._contextMenuAction('wrap-oneOf')}>Wrap in oneOf</button>
+          <button class="context-menu-item" @click=${() => this._contextMenuAction('wrap-anyOf')}>Wrap in anyOf</button>
+          <button class="context-menu-item" @click=${() => this._contextMenuAction('wrap-allOf')}>Wrap in allOf</button>
+          <div class="context-menu-separator"></div>
+          <button class="context-menu-item" @click=${() => this._contextMenuAction('add-if-then-else')}>Add if/then/else</button>
+          <div class="context-menu-separator"></div>
+          <button class="context-menu-item" @click=${() => this._contextMenuAction('convert-to-ref')}>Convert to $ref</button>
+        ` : nothing}
       </div>
     `;
   }

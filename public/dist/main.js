@@ -295,15 +295,17 @@ ${n?`Expression: "`+n+`"
                   ${pu(i.children,e=>e.id,e=>this._renderNode(e))}
                 </div>`:``}
           </div>`:``}
-    `}_renderContextMenu(){if(!this._contextMenu)return U;let{x:e,y:t}=this._contextMenu;return V`
+    `}_renderContextMenu(){if(!this._contextMenu)return U;let{x:e,y:t,nodeId:n}=this._contextMenu;return V`
       <div class="context-menu" style="left:${e}px;top:${t}px" @click=${e=>e.stopPropagation()}>
-        <button class="context-menu-item" @click=${()=>this._contextMenuAction(`wrap-oneOf`)}>Wrap in oneOf</button>
-        <button class="context-menu-item" @click=${()=>this._contextMenuAction(`wrap-anyOf`)}>Wrap in anyOf</button>
-        <button class="context-menu-item" @click=${()=>this._contextMenuAction(`wrap-allOf`)}>Wrap in allOf</button>
-        <div class="context-menu-separator"></div>
-        <button class="context-menu-item" @click=${()=>this._contextMenuAction(`add-if-then-else`)}>Add if/then/else</button>
-        <div class="context-menu-separator"></div>
-        <button class="context-menu-item" @click=${()=>this._contextMenuAction(`convert-to-ref`)}>Convert to $ref</button>
+        ${this.root!=null&&n===this.root.id?U:V`
+          <button class="context-menu-item" @click=${()=>this._contextMenuAction(`wrap-oneOf`)}>Wrap in oneOf</button>
+          <button class="context-menu-item" @click=${()=>this._contextMenuAction(`wrap-anyOf`)}>Wrap in anyOf</button>
+          <button class="context-menu-item" @click=${()=>this._contextMenuAction(`wrap-allOf`)}>Wrap in allOf</button>
+          <div class="context-menu-separator"></div>
+          <button class="context-menu-item" @click=${()=>this._contextMenuAction(`add-if-then-else`)}>Add if/then/else</button>
+          <div class="context-menu-separator"></div>
+          <button class="context-menu-item" @click=${()=>this._contextMenuAction(`convert-to-ref`)}>Convert to $ref</button>
+        `}
       </div>
     `}render(){return this.root?V`
       <div class="toolbar">
@@ -324,11 +326,11 @@ ${n?`Expression: "`+n+`"
         <div class="grid">
           <div>
             <label for="str-min-length">Min Length</label>
-            <input id="str-min-length" type="number" min="0" .value=${this.schema.minLength??``} @change=${e=>{let t=e.target.value;this._emit(`minLength`,t?parseInt(t):void 0)}}>
+            <input id="str-min-length" type="number" min="0" .value=${this.schema.minLength??``} @change=${e=>{let t=e.target.value;this._emit(`minLength`,t===``?void 0:parseInt(t,10))}}>
           </div>
           <div>
             <label for="str-max-length">Max Length</label>
-            <input id="str-max-length" type="number" min="0" .value=${this.schema.maxLength??``} @change=${e=>{let t=e.target.value;this._emit(`maxLength`,t?parseInt(t):void 0)}}>
+            <input id="str-max-length" type="number" min="0" .value=${this.schema.maxLength??``} @change=${e=>{let t=e.target.value;this._emit(`maxLength`,t===``?void 0:parseInt(t,10))}}>
           </div>
           <div>
             <label for="str-pattern">Pattern (regex)</label>
@@ -433,11 +435,11 @@ ${n?`Expression: "`+n+`"
           </div>
           <div>
             <label for="obj-min-props">Min Properties</label>
-            <input id="obj-min-props" type="number" min="0" .value=${this.schema.minProperties??``} @change=${e=>{let t=e.target.value;this._emit(`minProperties`,t?parseInt(t):void 0)}}>
+            <input id="obj-min-props" type="number" min="0" .value=${this.schema.minProperties??``} @change=${e=>{let t=e.target.value;this._emit(`minProperties`,t===``?void 0:parseInt(t,10))}}>
           </div>
           <div>
             <label for="obj-max-props">Max Properties</label>
-            <input id="obj-max-props" type="number" min="0" .value=${this.schema.maxProperties??``} @change=${e=>{let t=e.target.value;this._emit(`maxProperties`,t?parseInt(t):void 0)}}>
+            <input id="obj-max-props" type="number" min="0" .value=${this.schema.maxProperties??``} @change=${e=>{let t=e.target.value;this._emit(`maxProperties`,t===``?void 0:parseInt(t,10))}}>
           </div>
         </div>
 
@@ -479,11 +481,11 @@ ${n?`Expression: "`+n+`"
         <div class="grid">
           <div>
             <label for="arr-min-items">Min Items</label>
-            <input id="arr-min-items" type="number" min="0" .value=${this.schema.minItems??``} @change=${e=>{let t=e.target.value;this._emit(`minItems`,t?parseInt(t):void 0)}}>
+            <input id="arr-min-items" type="number" min="0" .value=${this.schema.minItems??``} @change=${e=>{let t=e.target.value;this._emit(`minItems`,t===``?void 0:parseInt(t,10))}}>
           </div>
           <div>
             <label for="arr-max-items">Max Items</label>
-            <input id="arr-max-items" type="number" min="0" .value=${this.schema.maxItems??``} @change=${e=>{let t=e.target.value;this._emit(`maxItems`,t?parseInt(t):void 0)}}>
+            <input id="arr-max-items" type="number" min="0" .value=${this.schema.maxItems??``} @change=${e=>{let t=e.target.value;this._emit(`maxItems`,t===``?void 0:parseInt(t,10))}}>
           </div>
           <div>
             <label><input type="checkbox" ?checked=${this.schema.uniqueItems} @change=${e=>this._emit(`uniqueItems`,e.target.checked||void 0)}> Unique Items</label>
@@ -527,19 +529,26 @@ ${n?`Expression: "`+n+`"
     .enum-row input { flex: 1; }
     .drag { color: #9ca3af; cursor: grab; font-size: 10px; }
     .remove { color: #dc2626; background: none; border: none; font-size: 14px; padding: 0 4px; }
-  `]}_emit(){this.dispatchEvent(new CustomEvent(`enum-change`,{detail:{values:[...this.values]},bubbles:!0,composed:!0}))}_updateValue(e,t){let n=[...this.values];this.valueType===`number`||this.valueType===`integer`?n[e]=this.valueType===`integer`?parseInt(t):parseFloat(t):n[e]=t,this.values=n,this._emit()}_removeValue(e){this.values=this.values.filter((t,n)=>n!==e),this._emit(),this.requestUpdate()}_addValue(){let e=this.valueType===`number`||this.valueType===`integer`?0:``;this.values=[...this.values,e],this._emit(),this.requestUpdate()}render(){return V`
+  `]}_emit(){this.dispatchEvent(new CustomEvent(`enum-change`,{detail:{values:[...this.values]},bubbles:!0,composed:!0}))}_updateValue(e,t){let n=[...this.values];this.valueType===`number`||this.valueType===`integer`?n[e]=this.valueType===`integer`?parseInt(t,10):parseFloat(t):this.valueType===`boolean`?n[e]=t===`true`:n[e]=t,this.values=n,this._emit()}_removeValue(e){this.values=this.values.filter((t,n)=>n!==e),this._emit(),this.requestUpdate()}_addValue(){let e;e=this.valueType===`number`||this.valueType===`integer`?0:this.valueType===`boolean`?!1:``,this.values=[...this.values,e],this._emit(),this.requestUpdate()}render(){return V`
       <div class="type-section">
         <h4>Enum Values</h4>
         ${pu(this.values,(e,t)=>t,(e,t)=>V`
           <div class="enum-row">
             <span class="drag" aria-hidden="true">☰</span>
-            <input
-              .value=${String(e)}
-              type=${this.valueType===`number`||this.valueType===`integer`?`number`:`text`}
-              step=${this.valueType===`integer`?`1`:`any`}
-              @change=${e=>this._updateValue(t,e.target.value)}
-              aria-label="Enum value ${t+1}"
-            >
+            ${this.valueType===`boolean`?V`<select
+                  .value=${String(e)}
+                  @change=${e=>this._updateValue(t,e.target.value)}
+                  aria-label="Enum value ${t+1}"
+                >
+                  <option value="true" ?selected=${e===!0}>true</option>
+                  <option value="false" ?selected=${e===!1}>false</option>
+                </select>`:V`<input
+                  .value=${String(e)}
+                  type=${this.valueType===`number`||this.valueType===`integer`?`number`:`text`}
+                  step=${this.valueType===`integer`?`1`:`any`}
+                  @change=${e=>this._updateValue(t,e.target.value)}
+                  aria-label="Enum value ${t+1}"
+                >`}
             <button class="remove" @click=${()=>this._removeValue(t)} aria-label="Remove value ${e}">×</button>
           </div>
         `)}
@@ -704,7 +713,7 @@ ${n?`Expression: "`+n+`"
         flex: 1;
         overflow: hidden;
       }
-    `]}willUpdate(e){if(e.has(`schema`)&&this.schema){if(JSON.stringify(this.schema)===this._lastEmittedSchema)return;this._root=Ql(this.schema),this._draft=Xl(this.schema),this._root&&!this._selectedId&&(this._selectedId=this._root.id)}}_findNode(e,t=this._root){if(!t)return null;if(t.id===e)return t;for(let n of t.children||[]){let t=this._findNode(e,n);if(t)return t}for(let n of t.variants||[]){let t=this._findNode(e,n);if(t)return t}return null}_buildBreadcrumb(e,t=this._root,n=[]){if(!t)return[];let r=[...n,t.name||`root`];if(t.id===e)return r;for(let n of t.children||[]){let t=this._buildBreadcrumb(e,n,r);if(t.length)return t}for(let n of t.variants||[]){let t=this._buildBreadcrumb(e,n,r);if(t.length)return t}return[]}_getDefsNames(){return this._root?((this._root.children||[]).find(e=>e.name===`$defs`)?.children||[]).map(e=>e.name):[]}_emitSchemaChange(){if(!this._root)return;let e=$l(this._root),t=JSON.stringify(e,null,2);this._lastEmittedSchema=JSON.stringify(e),this.dispatchEvent(new CustomEvent(`schema-change`,{detail:{schema:t},bubbles:!0,composed:!0}))}_handleNodeSelect(e){this._selectedId=e.detail.nodeId}_handleNodeChange(e){let t=this._findNode(this._selectedId);if(!t)return;let{field:n,value:r}=e.detail;switch(n){case`name`:{let e=this._findParentOf(this._selectedId);if(e){let[,,n]=e,i=new Set(n.filter(e=>e.id!==t.id).map(e=>e.name));if(i.has(r)){let e=r,n=1;for(;i.has(e);)e=`${r}${n++}`;t.name=e;break}}t.name=r;break}case`type`:t.type=r;for(let e of[`minLength`,`maxLength`,`pattern`,`format`,`minimum`,`maximum`,`exclusiveMinimum`,`exclusiveMaximum`,`multipleOf`,`minItems`,`maxItems`,`uniqueItems`,`additionalProperties`,`minProperties`,`maxProperties`,`items`,`enum`,`prefixItems`,`contains`,`patternProperties`])delete t.schema[e];Array.isArray(t.schema.type)&&t.schema.type.includes(`null`)&&(t.schema.type=[r,`null`]);break;case`required`:t.required=r;break;case`$ref`:t.ref=r;break;case`nullable`:{let e=t.type||`string`;r?t.schema.type=[e,`null`]:delete t.schema.type;break}default:r===void 0?delete t.schema[n]:t.schema[n]=r}this.requestUpdate(),this._emitSchemaChange()}_handleNodeDelete(){if(!this._root)return;let e=this._findParentOf(this._selectedId);if(!e)return;let[t,n,r]=e;r.splice(n,1),this._selectedId=t.id,this.requestUpdate(),this._emitSchemaChange()}_handleNodeDuplicate(){if(!this._root)return;let e=this._findParentOf(this._selectedId);if(!e)return;let[,t,n]=e,r=n[t],i=JSON.parse(JSON.stringify(r)),a=r.name+`_copy`,o=new Set(n.map(e=>e.name)),s=1;for(;o.has(a);)a=`${r.name}_copy${s++}`;i.name=a,i.id=`node-dup-${Date.now()}`;let c=e=>{e.id=`node-dup-${Date.now()}-${Math.random()}`,(e.children||[]).forEach(c),(e.variants||[]).forEach(c)};c(i),n.splice(t+1,0,i),this._selectedId=i.id,this.requestUpdate(),this._emitSchemaChange()}_findParentOf(e,t=this._root){if(!t)return null;if(t.children)for(let n=0;n<t.children.length;n++){if(t.children[n].id===e)return[t,n,t.children];let r=this._findParentOf(e,t.children[n]);if(r)return r}if(t.variants)for(let n=0;n<t.variants.length;n++){if(t.variants[n].id===e)return[t,n,t.variants];let r=this._findParentOf(e,t.variants[n]);if(r)return r}return null}_handleAddProperty(){if(!this._root)return;let e=this._findNode(this._selectedId),t=e&&e!==this._root&&(e.type===`object`||e.children!=null)?e:this._root;t.children||=[];let n=`newProperty`,r=1,i=new Set((t.children||[]).map(e=>e.name));for(;i.has(n);)n=`newProperty${r++}`;let a={id:`node-new-${Date.now()}`,name:n,type:`string`,required:!1,schema:{}},o=t.children.findIndex(e=>e.name===`$defs`);o>=0?t.children.splice(o,0,a):t.children.push(a),this._selectedId=a.id,this.requestUpdate(),this._emitSchemaChange()}_handleAddVariant(){let e=this._findNode(this._selectedId);!e||!e.compositionKeyword||(e.variants||=[],e.variants.push({id:`node-variant-${Date.now()}`,name:`variant${e.variants.length+1}`,type:`string`,required:!1,schema:{}}),this.requestUpdate(),this._emitSchemaChange())}_handleRemoveVariant(e){let t=this._findNode(this._selectedId);if(!t?.variants)return;let{index:n}=e.detail;t.variants.splice(n,1),this.requestUpdate(),this._emitSchemaChange()}_handleReorder(e){if(!this._root)return;let{draggedId:t,targetId:n}=e.detail,r=this._findParentOf(t),i=this._findParentOf(n);if(!r||!i)return;let[a,o,s]=r,[c,,l]=i;if(a!==c||s!==l)return;let[u]=s.splice(o,1),d=s.findIndex(e=>e.id===n);d>=0?s.splice(d,0,u):s.push(u),this.requestUpdate(),this._emitSchemaChange()}_handleContextAction(e){let{nodeId:t,action:n}=e.detail,r=this._findNode(t);if(r){switch(n){case`wrap-oneOf`:case`wrap-anyOf`:case`wrap-allOf`:{let e=n.replace(`wrap-`,``),t=[`title`,`description`,`readOnly`,`writeOnly`,`default`,`examples`,`deprecated`],i={},a={};for(let[e,n]of Object.entries(r.schema))t.includes(e)?i[e]=n:a[e]=n;let o=r.type;o&&(a.type=o);let s=r.schema.title||`variant1`,c=r.children?[...r.children]:void 0;r.compositionKeyword=e,r.schema=i,r.type=``,r.children=void 0,r.variants=[{id:`node-variant-${Date.now()}-0`,name:s,type:o||``,required:!1,schema:a,children:c},{id:`node-variant-${Date.now()}-1`,name:`variant2`,type:`string`,required:!1,schema:{}}],delete r.variants[0].schema.type;break}case`add-if-then-else`:r.schema.if={properties:{}},r.schema.then={properties:{}},r.schema.else={properties:{}};break;case`convert-to-ref`:{if(!this._root)break;this._root.children||(this._root.children=[]);let e=this._root.children.find(e=>e.name===`$defs`);e||(e={id:`node-defs-${Date.now()}`,name:`$defs`,type:`object`,required:!1,schema:{},isDef:!0,children:[]},this._root.children.push(e));let t=r.name||`extracted`,n=1,i=new Set((e.children||[]).map(e=>e.name));for(;i.has(t);)t=`${r.name||`extracted`}${n++}`;let a={id:`node-def-${Date.now()}`,name:t,type:r.type,required:!1,schema:{...r.schema},isDef:!0,children:r.children?[...r.children]:void 0,variants:r.variants?[...r.variants]:void 0,compositionKeyword:r.compositionKeyword,ref:r.ref};e.children.push(a);let o=Zl(this._root?.schema.$schema);r.type=``,r.schema={},r.ref=`#/${o}/${t}`,r.children=void 0,r.variants=void 0,r.compositionKeyword=void 0;break}}this.requestUpdate(),this._emitSchemaChange()}}_handleAddDefs(){if(!this._root)return;this._root.children||(this._root.children=[]);let e=this._root.children.find(e=>e.name===`$defs`);e||(e={id:`node-defs-${Date.now()}`,name:`$defs`,type:`object`,required:!1,schema:{},isDef:!0,children:[]},this._root.children.push(e));let t=`newDefinition`,n=1,r=new Set((e.children||[]).map(e=>e.name));for(;r.has(t);)t=`newDefinition${n++}`;let i={id:`node-def-${Date.now()}`,name:t,type:`object`,required:!1,schema:{},isDef:!0};e.children.push(i),this._selectedId=i.id,this.requestUpdate(),this._emitSchemaChange()}render(){let e=this._findNode(this._selectedId),t=this._buildBreadcrumb(this._selectedId),n=e===this._root;return V`
+    `]}willUpdate(e){if(e.has(`schema`)&&this.schema){if(JSON.stringify(this.schema)===this._lastEmittedSchema)return;this._root=Ql(this.schema),this._draft=Xl(this.schema),this._root&&!this._selectedId&&(this._selectedId=this._root.id)}}_findNode(e,t=this._root){if(!t)return null;if(t.id===e)return t;for(let n of t.children||[]){let t=this._findNode(e,n);if(t)return t}for(let n of t.variants||[]){let t=this._findNode(e,n);if(t)return t}return null}_buildBreadcrumb(e,t=this._root,n=[]){if(!t)return[];let r=[...n,t.name||`root`];if(t.id===e)return r;for(let n of t.children||[]){let t=this._buildBreadcrumb(e,n,r);if(t.length)return t}for(let n of t.variants||[]){let t=this._buildBreadcrumb(e,n,r);if(t.length)return t}return[]}_getDefsNames(){return this._root?((this._root.children||[]).find(e=>e.name===`$defs`)?.children||[]).map(e=>e.name):[]}_emitSchemaChange(){if(!this._root)return;let e=$l(this._root),t=JSON.stringify(e,null,2);this._lastEmittedSchema=JSON.stringify(e),this.dispatchEvent(new CustomEvent(`schema-change`,{detail:{schema:t},bubbles:!0,composed:!0}))}_handleNodeSelect(e){this._selectedId=e.detail.nodeId}_handleNodeChange(e){let t=this._findNode(this._selectedId);if(!t)return;let{field:n,value:r}=e.detail;switch(n){case`name`:{let e=this._findParentOf(this._selectedId);if(e){let[,,n]=e,i=new Set(n.filter(e=>e.id!==t.id).map(e=>e.name));if(i.has(r)){let e=r,n=1;for(;i.has(e);)e=`${r}${n++}`;t.name=e;break}}t.name=r;break}case`type`:t.type=r;for(let e of[`minLength`,`maxLength`,`pattern`,`format`,`minimum`,`maximum`,`exclusiveMinimum`,`exclusiveMaximum`,`multipleOf`,`minItems`,`maxItems`,`uniqueItems`,`additionalProperties`,`minProperties`,`maxProperties`,`items`,`enum`,`prefixItems`,`contains`,`patternProperties`])delete t.schema[e];Array.isArray(t.schema.type)&&t.schema.type.includes(`null`)&&(t.schema.type=[r,`null`]);break;case`required`:t.required=r;break;case`$ref`:t.ref=r;break;case`nullable`:{let e=t.type||`string`;r?t.schema.type=[e,`null`]:delete t.schema.type;break}case`enum`:Array.isArray(r)&&r.length===0?delete t.schema.enum:t.schema.enum=r;break;default:r===void 0?delete t.schema[n]:t.schema[n]=r}this.requestUpdate(),this._emitSchemaChange()}_handleNodeDelete(){if(!this._root)return;let e=this._findParentOf(this._selectedId);if(!e)return;let[t,n,r]=e;r.splice(n,1),this._selectedId=t.id,this.requestUpdate(),this._emitSchemaChange()}_handleNodeDuplicate(){if(!this._root)return;let e=this._findParentOf(this._selectedId);if(!e)return;let[,t,n]=e,r=n[t],i=JSON.parse(JSON.stringify(r)),a=r.name+`_copy`,o=new Set(n.map(e=>e.name)),s=1;for(;o.has(a);)a=`${r.name}_copy${s++}`;i.name=a,i.id=`node-dup-${Date.now()}`;let c=e=>{e.id=`node-dup-${Date.now()}-${Math.random()}`,(e.children||[]).forEach(c),(e.variants||[]).forEach(c)};c(i),n.splice(t+1,0,i),this._selectedId=i.id,this.requestUpdate(),this._emitSchemaChange()}_findParentOf(e,t=this._root){if(!t)return null;if(t.children)for(let n=0;n<t.children.length;n++){if(t.children[n].id===e)return[t,n,t.children];let r=this._findParentOf(e,t.children[n]);if(r)return r}if(t.variants)for(let n=0;n<t.variants.length;n++){if(t.variants[n].id===e)return[t,n,t.variants];let r=this._findParentOf(e,t.variants[n]);if(r)return r}return null}_handleAddProperty(){if(!this._root)return;let e=this._findNode(this._selectedId),t=e&&e!==this._root&&(e.type===`object`||e.children!=null)?e:this._root;t.children||=[];let n=`newProperty`,r=1,i=new Set((t.children||[]).map(e=>e.name));for(;i.has(n);)n=`newProperty${r++}`;let a={id:`node-new-${Date.now()}`,name:n,type:`string`,required:!1,schema:{}},o=t.children.findIndex(e=>e.name===`$defs`);o>=0?t.children.splice(o,0,a):t.children.push(a),this._selectedId=a.id,this.requestUpdate(),this._emitSchemaChange()}_handleAddVariant(){let e=this._findNode(this._selectedId);!e||!e.compositionKeyword||(e.variants||=[],e.variants.push({id:`node-variant-${Date.now()}`,name:`variant${e.variants.length+1}`,type:`string`,required:!1,schema:{}}),this.requestUpdate(),this._emitSchemaChange())}_handleRemoveVariant(e){let t=this._findNode(this._selectedId);if(!t?.variants)return;let{index:n}=e.detail;t.variants.splice(n,1),this.requestUpdate(),this._emitSchemaChange()}_handleReorder(e){if(!this._root)return;let{draggedId:t,targetId:n}=e.detail,r=this._findParentOf(t),i=this._findParentOf(n);if(!r||!i)return;let[a,o,s]=r,[c,,l]=i;if(a!==c||s!==l)return;let[u]=s.splice(o,1),d=s.findIndex(e=>e.id===n);d>=0?s.splice(d,0,u):s.push(u),this.requestUpdate(),this._emitSchemaChange()}_handleContextAction(e){let{nodeId:t,action:n}=e.detail,r=this._findNode(t);if(r){switch(n){case`wrap-oneOf`:case`wrap-anyOf`:case`wrap-allOf`:{let e=n.replace(`wrap-`,``),t=[`title`,`description`,`readOnly`,`writeOnly`,`default`,`examples`,`deprecated`],i={},a={};for(let[e,n]of Object.entries(r.schema))t.includes(e)?i[e]=n:a[e]=n;let o=r.type;o&&(a.type=o);let s=r.schema.title||`variant1`,c=r.children?[...r.children]:void 0;r.compositionKeyword=e,r.schema=i,r.type=``,r.children=void 0,r.variants=[{id:`node-variant-${Date.now()}-0`,name:s,type:o||``,required:!1,schema:a,children:c},{id:`node-variant-${Date.now()}-1`,name:`variant2`,type:`string`,required:!1,schema:{}}],delete r.variants[0].schema.type;break}case`add-if-then-else`:r.schema.if={properties:{}},r.schema.then={properties:{}},r.schema.else={properties:{}};break;case`convert-to-ref`:{if(!this._root)break;this._root.children||(this._root.children=[]);let e=this._root.children.find(e=>e.name===`$defs`);e||(e={id:`node-defs-${Date.now()}`,name:`$defs`,type:`object`,required:!1,schema:{},isDef:!0,children:[]},this._root.children.push(e));let t=r.name||`extracted`,n=1,i=new Set((e.children||[]).map(e=>e.name));for(;i.has(t);)t=`${r.name||`extracted`}${n++}`;let a={id:`node-def-${Date.now()}`,name:t,type:r.type,required:!1,schema:{...r.schema},isDef:!0,children:r.children?[...r.children]:void 0,variants:r.variants?[...r.variants]:void 0,compositionKeyword:r.compositionKeyword,ref:r.ref};e.children.push(a);let o=Zl(this._root?.schema.$schema);r.type=``,r.schema={},r.ref=`#/${o}/${t}`,r.children=void 0,r.variants=void 0,r.compositionKeyword=void 0;break}}this.requestUpdate(),this._emitSchemaChange()}}_handleAddDefs(){if(!this._root)return;this._root.children||(this._root.children=[]);let e=this._root.children.find(e=>e.name===`$defs`);e||(e={id:`node-defs-${Date.now()}`,name:`$defs`,type:`object`,required:!1,schema:{},isDef:!0,children:[]},this._root.children.push(e));let t=`newDefinition`,n=1,r=new Set((e.children||[]).map(e=>e.name));for(;r.has(t);)t=`newDefinition${n++}`;let i={id:`node-def-${Date.now()}`,name:t,type:`object`,required:!1,schema:{},isDef:!0};e.children.push(i),this._selectedId=i.id,this.requestUpdate(),this._emitSchemaChange()}render(){let e=this._findNode(this._selectedId),t=this._buildBreadcrumb(this._selectedId),n=e===this._root;return V`
       <div class="tree-side">
         <schema-tree-panel
           .root=${this._root}
