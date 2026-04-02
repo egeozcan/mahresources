@@ -74,7 +74,28 @@ export class SchemaFormMode extends LitElement {
       // (e.g. after a category switch) from being silently submitted via the
       // hidden input — including nested objects with additionalProperties:false.
       if (changed.has('schema') && this._data && typeof this._data === 'object') {
+        const before = JSON.stringify(this._data);
         stripStaleKeys(this._data, this.schema, this.schema);
+        const after = JSON.stringify(this._data);
+
+        // If keys were actually stripped, notify the Alpine wrapper so its
+        // currentMeta stays in sync. Without this, the stale keys persist in
+        // currentMeta and get rehydrated when the schema changes again (or
+        // when x-if recreates the component).
+        if (before !== after) {
+          if (this._hiddenInput) {
+            this._hiddenInput.value = after;
+          }
+          // Dispatch after the current Lit update cycle completes to avoid
+          // side-effects during willUpdate.
+          this.updateComplete.then(() => {
+            this.dispatchEvent(new CustomEvent('value-change', {
+              detail: { value: this._data },
+              bubbles: true,
+              composed: true,
+            }));
+          });
+        }
       }
 
       // Keep hidden input in sync when value/schema change externally
