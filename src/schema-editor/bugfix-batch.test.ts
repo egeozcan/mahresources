@@ -383,4 +383,104 @@ describe('Bug 6: generateFieldId produces unique IDs for different separators', 
     const id2 = fn('field', 'address-city');
     expect(id1).not.toBe(id2);
   });
+
+  it('generates distinct IDs for foo/bar vs foobar (slash stripped, no replacement)', () => {
+    const source = readFileSync(
+      new URL('./modes/form-mode.ts', import.meta.url),
+      'utf8',
+    );
+    const fnMatch = source.match(
+      /function\s+generateFieldId\(prefix:\s*string,\s*path:\s*string\):\s*string\s*\{([\s\S]*?)\n\}/
+    );
+    expect(fnMatch).not.toBeNull();
+    const fn = new Function('prefix', 'path', fnMatch![1]) as (prefix: string, path: string) => string;
+
+    const id1 = fn('field', 'foo/bar');
+    const id2 = fn('field', 'foobar');
+    expect(id1).not.toBe(id2);
+  });
+
+  it('generates distinct IDs for address.city vs address--city (dot encoding collides with literal --)', () => {
+    const source = readFileSync(
+      new URL('./modes/form-mode.ts', import.meta.url),
+      'utf8',
+    );
+    const fnMatch = source.match(
+      /function\s+generateFieldId\(prefix:\s*string,\s*path:\s*string\):\s*string\s*\{([\s\S]*?)\n\}/
+    );
+    expect(fnMatch).not.toBeNull();
+    const fn = new Function('prefix', 'path', fnMatch![1]) as (prefix: string, path: string) => string;
+
+    const id1 = fn('field', 'address.city');
+    const id2 = fn('field', 'address--city');
+    expect(id1).not.toBe(id2);
+  });
+
+  it('generates distinct IDs for all separator variations including slash', () => {
+    const source = readFileSync(
+      new URL('./modes/form-mode.ts', import.meta.url),
+      'utf8',
+    );
+    const fnMatch = source.match(
+      /function\s+generateFieldId\(prefix:\s*string,\s*path:\s*string\):\s*string\s*\{([\s\S]*?)\n\}/
+    );
+    expect(fnMatch).not.toBeNull();
+    const fn = new Function('prefix', 'path', fnMatch![1]) as (prefix: string, path: string) => string;
+
+    const paths = ['first_name', 'first-name', 'first.name', 'first/name', 'firstname'];
+    const ids = paths.map(p => fn('field', p));
+    const unique = new Set(ids);
+    expect(unique.size).toBe(paths.length);
+  });
+});
+
+// ─── Bug: rawJsonDirty state prevents Apply bypass via tab switch ──
+
+describe('Bug: raw JSON invalid state bypassed by switching tabs', () => {
+  it('Apply button disabled condition does not reference tab', () => {
+    const tplSource = readFileSync(
+      new URL('../../templates/partials/form/schemaEditorModal.tpl', import.meta.url),
+      'utf8',
+    );
+    // Find the Apply button's :disabled attribute
+    const disabledMatch = tplSource.match(/:disabled="([^"]+)"/);
+    expect(disabledMatch).not.toBeNull();
+    const condition = disabledMatch![1];
+    // The condition should NOT reference 'tab' — it should work on all tabs
+    expect(condition).not.toContain('tab');
+  });
+
+  it('schemaEditorModal component has rawJsonDirty state', () => {
+    const componentSource = readFileSync(
+      new URL('../components/schemaEditorModal.ts', import.meta.url),
+      'utf8',
+    );
+    expect(componentSource).toContain('rawJsonDirty');
+  });
+
+  it('handleRawChange sets rawJsonDirty flag', () => {
+    const componentSource = readFileSync(
+      new URL('../components/schemaEditorModal.ts', import.meta.url),
+      'utf8',
+    );
+    // handleRawChange should set rawJsonDirty to true
+    const handleRawSection = componentSource.slice(
+      componentSource.indexOf('handleRawChange'),
+      componentSource.indexOf('applySchema'),
+    );
+    expect(handleRawSection).toContain('rawJsonDirty');
+  });
+
+  it('handleSchemaChange clears rawJsonDirty flag', () => {
+    const componentSource = readFileSync(
+      new URL('../components/schemaEditorModal.ts', import.meta.url),
+      'utf8',
+    );
+    // handleSchemaChange should clear rawJsonDirty
+    const handleSchemaSection = componentSource.slice(
+      componentSource.indexOf('handleSchemaChange'),
+      componentSource.indexOf('handleRawChange'),
+    );
+    expect(handleSchemaSection).toContain('rawJsonDirty');
+  });
 });

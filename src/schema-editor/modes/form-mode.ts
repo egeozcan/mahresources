@@ -13,11 +13,13 @@ import {
 import { isLeafSchema } from '../form-mode-helpers';
 
 function generateFieldId(prefix: string, path: string): string {
-  // Encode separators distinctly to avoid collisions between paths that
-  // differ only by punctuation (e.g. first_name vs first-name vs first.name).
-  return `${prefix}-${path
-    .replace(/\./g, '--')
-    .replace(/[^a-zA-Z0-9_-]/g, '')}`;
+  // Injective encoding: every non-alphanumeric character is replaced with
+  // _XX (two-digit hex of its char code).  This guarantees distinct paths
+  // always produce distinct IDs — no two different inputs can collide.
+  const encoded = path.replace(/[^a-zA-Z0-9]/g, (ch) => {
+    return '_' + ch.charCodeAt(0).toString(16).padStart(2, '0');
+  });
+  return `${prefix}-${encoded}`;
 }
 
 @customElement('schema-form-mode')
