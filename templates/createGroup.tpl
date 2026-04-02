@@ -69,15 +69,17 @@
                          metaEdited: false,
                          init() {
                              const raw = this.$el.dataset.initialSchema;
-                             if (raw) { this.currentSchema = raw; }
+                             if (raw) {
+                                 try { const p = JSON.parse(raw); if (p && typeof p === 'object') this.currentSchema = raw; } catch {}
+                             }
                              try { this.currentMeta = JSON.parse(this.$el.dataset.initialMeta || '{}'); } catch { this.currentMeta = {}; }
                          },
                          handleCategoryChange(e) {
                              if (e.detail.value.length > 0) {
-                                 this.currentSchema = e.detail.value[0].MetaSchema;
-                             } else {
-                                 this.currentSchema = null;
+                                 const ms = e.detail.value[0].MetaSchema;
+                                 if (ms) { try { const p = JSON.parse(ms); if (p && typeof p === 'object') { this.currentSchema = ms; return; } } catch {} }
                              }
+                             this.currentSchema = null;
                          },
                          handleMetaChange(e) {
                              if (e.detail && e.detail.value !== undefined) {

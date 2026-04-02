@@ -1,5 +1,8 @@
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
+import { fileURLToPath } from 'url';
 import { describe, it, expect } from 'vitest';
-import { resolveRef, mergeSchemas, resolveSchema, flattenSchema, intersectFields, getDefaultValue, scoreSchemaMatch, evaluateCondition, inferType, inferSchema, titleCase } from './schema-core';
+import { resolveRef, mergeSchemas, resolveSchema, flattenSchema, intersectFields, getDefaultValue, scoreSchemaMatch, evaluateCondition, inferType, inferSchema, titleCase, escapeJsonPointer, unescapeJsonPointer } from './schema-core';
 
 describe('resolveRef', () => {
   it('resolves a simple $ref pointer', () => {
@@ -298,5 +301,112 @@ describe('scoreSchemaMatch', () => {
   it('resolves $ref before scoring', () => {
     const root = { $defs: { name: { type: 'string' } } };
     expect(scoreSchemaMatch({ $ref: '#/$defs/name' }, 'hello', root)).toBe(10);
+  });
+});
+
+// ─── Bug 1 (P1): Invalid MetaSchema shows empty box ──────────────────────────
+
+describe('Bug 1: templates validate MetaSchema JSON before setting currentSchema', () => {
+  const thisDir = fileURLToPath(new URL('.', import.meta.url));
+
+  it('createGroup.tpl init() validates JSON with JSON.parse', () => {
+    const tplSource = readFileSync(
+      resolve(thisDir, '../../templates/createGroup.tpl'),
+      'utf8',
+    );
+    // Extract the init() method body
+    const initStart = tplSource.indexOf('init()');
+    const initEnd = tplSource.indexOf('handleCategoryChange');
+    const initBody = tplSource.slice(initStart, initEnd);
+    expect(initBody).toContain('JSON.parse');
+  });
+
+  it('createResource.tpl init() validates JSON with JSON.parse', () => {
+    const tplSource = readFileSync(
+      resolve(thisDir, '../../templates/createResource.tpl'),
+      'utf8',
+    );
+    const initStart = tplSource.indexOf('init()');
+    const initEnd = tplSource.indexOf('handleCategoryChange');
+    const initBody = tplSource.slice(initStart, initEnd);
+    expect(initBody).toContain('JSON.parse');
+  });
+
+  it('createGroup.tpl handleCategoryChange validates MetaSchema JSON', () => {
+    const tplSource = readFileSync(
+      resolve(thisDir, '../../templates/createGroup.tpl'),
+      'utf8',
+    );
+    const handlerStart = tplSource.indexOf('handleCategoryChange');
+    const handlerEnd = tplSource.indexOf('handleMetaChange');
+    const handlerBody = tplSource.slice(handlerStart, handlerEnd);
+    expect(handlerBody).toContain('JSON.parse');
+  });
+
+  it('createResource.tpl handleCategoryChange validates MetaSchema JSON', () => {
+    const tplSource = readFileSync(
+      resolve(thisDir, '../../templates/createResource.tpl'),
+      'utf8',
+    );
+    const handlerStart = tplSource.indexOf('handleCategoryChange');
+    const handlerEnd = tplSource.indexOf('handleMetaChange');
+    const handlerBody = tplSource.slice(handlerStart, handlerEnd);
+    expect(handlerBody).toContain('JSON.parse');
+  });
+});
+
+// ─── Bug 4 (P2): $ref paths not JSON Pointer-escaped ─────────────────────────
+
+describe('escapeJsonPointer', () => {
+  it('escapes ~ before / per RFC 6901', () => {
+    expect(escapeJsonPointer('foo~bar')).toBe('foo~0bar');
+  });
+
+  it('escapes / to ~1', () => {
+    expect(escapeJsonPointer('foo/bar')).toBe('foo~1bar');
+  });
+
+  it('escapes both ~ and / in correct order', () => {
+    expect(escapeJsonPointer('a~/b')).toBe('a~0~1b');
+  });
+
+  it('returns unchanged string when no special chars', () => {
+    expect(escapeJsonPointer('foobar')).toBe('foobar');
+  });
+});
+
+describe('unescapeJsonPointer', () => {
+  it('unescapes ~0 to ~', () => {
+    expect(unescapeJsonPointer('foo~0bar')).toBe('foo~bar');
+  });
+
+  it('unescapes ~1 to /', () => {
+    expect(unescapeJsonPointer('foo~1bar')).toBe('foo/bar');
+  });
+
+  it('unescapes in correct order (~1 before ~0)', () => {
+    expect(unescapeJsonPointer('a~0~1b')).toBe('a~/b');
+  });
+});
+
+describe('resolveRef handles escaped JSON Pointer tokens', () => {
+  it('resolves ref with ~1 (escaped /)', () => {
+    const root = { $defs: { 'foo/bar': { type: 'string' } } };
+    expect(resolveRef('#/$defs/foo~1bar', root)).toEqual({ type: 'string' });
+  });
+
+  it('resolves ref with ~0 (escaped ~)', () => {
+    const root = { $defs: { 'foo~bar': { type: 'number' } } };
+    expect(resolveRef('#/$defs/foo~0bar', root)).toEqual({ type: 'number' });
+  });
+
+  it('resolves ref with both ~0 and ~1', () => {
+    const root = { $defs: { 'a~/b': { type: 'boolean' } } };
+    expect(resolveRef('#/$defs/a~0~1b', root)).toEqual({ type: 'boolean' });
+  });
+
+  it('still resolves simple refs without escaping', () => {
+    const root = { $defs: { simple: { type: 'integer' } } };
+    expect(resolveRef('#/$defs/simple', root)).toEqual({ type: 'integer' });
   });
 });
