@@ -545,6 +545,91 @@ test.describe('Schema Editor Form Mode', () => {
     await expect(statusControl).toBeVisible({ timeout: 3000 });
   });
 
+  test('required $ref and allOf fields get native validation and aria attributes', async ({ page, apiClient }) => {
+    // Descriptions are placed at the property level (sibling to $ref / allOf)
+    // so that propSchema.description is truthy and the description element is rendered.
+    const schema = JSON.stringify({
+      type: 'object',
+      $defs: {
+        email: { type: 'string', format: 'email' },
+      },
+      properties: {
+        contact: {
+          $ref: '#/$defs/email',
+          description: 'Valid email address',
+        },
+        name: {
+          description: 'Full legal name',
+          allOf: [
+            { type: 'string' },
+            { minLength: 1 },
+          ],
+        },
+      },
+      required: ['contact', 'name'],
+    });
+
+    const cat = await apiClient.createCategory(
+      'RefAllOf Attr Test ' + Date.now(),
+      undefined,
+      { MetaSchema: schema },
+    );
+
+    try {
+      await page.goto('/group/new');
+      // Select the category to trigger schema-driven form
+      const categoryInput = page.getByRole('combobox', { name: 'Category' });
+      await categoryInput.click();
+      await categoryInput.fill(cat.Name);
+      const option = page.locator('div[role="option"]:visible').filter({ hasText: cat.Name }).first();
+      await option.waitFor({ timeout: 10000 });
+      await option.click();
+      await page.waitForTimeout(500);
+
+      // Find the schema-form-mode element
+      const formMode = page.locator('schema-form-mode');
+      await expect(formMode).toBeVisible({ timeout: 5000 });
+
+      // ── contact field ($ref to email, description at property level) ──────
+
+      // The $ref resolves to { type: 'string', format: 'email' } → renders as
+      // input[type="email"]. Required + aria attributes must be present.
+      const contactInput = formMode.locator('input[type="email"]');
+      await expect(contactInput).toBeVisible({ timeout: 3000 });
+      await expect(contactInput).toHaveAttribute('required', '');
+      await expect(contactInput).toHaveAttribute('aria-required', 'true');
+      // Must have a non-empty id for label association
+      const contactId = await contactInput.getAttribute('id');
+      expect(contactId).toBeTruthy();
+      // aria-describedby may include multiple IDs (e.g. "field-contact-desc field-contact-error").
+      // Extract the description ID (the "-desc" suffixed one) and locate the element by id attribute.
+      const contactAriaDesc = await contactInput.getAttribute('aria-describedby');
+      expect(contactAriaDesc).toBeTruthy();
+      const contactDescId = contactAriaDesc!.split(' ').find(id => id.endsWith('-desc'));
+      expect(contactDescId).toBeTruthy();
+      const contactDesc = formMode.locator(`[id="${contactDescId}"]`);
+      await expect(contactDesc).toContainText('Valid email address');
+
+      // ── name field (allOf resolved to string, description at property level) ─
+
+      // allOf merges to { type: 'string', minLength: 1 } → renders as input[type="text"].
+      const nameInput = formMode.locator('input[type="text"]').first();
+      await expect(nameInput).toBeVisible({ timeout: 3000 });
+      await expect(nameInput).toHaveAttribute('required', '');
+      await expect(nameInput).toHaveAttribute('aria-required', 'true');
+      const nameId = await nameInput.getAttribute('id');
+      expect(nameId).toBeTruthy();
+      const nameAriaDesc = await nameInput.getAttribute('aria-describedby');
+      expect(nameAriaDesc).toBeTruthy();
+      const nameDescId = nameAriaDesc!.split(' ').find(id => id.endsWith('-desc'));
+      expect(nameDescId).toBeTruthy();
+      const nameDesc = formMode.locator(`[id="${nameDescId}"]`);
+      await expect(nameDesc).toContainText('Full legal name');
+    } finally {
+      await apiClient.deleteCategory(cat.ID);
+    }
+  });
+
   test('persists Meta data through form submission', async ({ page, apiClient }) => {
     // Create a category with a simple MetaSchema
     const catName = `Meta Persist Test ${runId}`;
