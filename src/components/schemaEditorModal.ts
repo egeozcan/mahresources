@@ -18,6 +18,7 @@ export function schemaEditorModal() {
     rawJson: '',
     rawJsonValid: true,
     rawJsonError: '',
+    rawJsonDirty: false,
     currentSchema: '',
     /** The textarea element this modal reads/writes to */
     _textareaEl: null as HTMLTextAreaElement | null,
@@ -32,6 +33,7 @@ export function schemaEditorModal() {
       } catch { /* keep as-is */ }
       this.rawJsonValid = true;
       this.rawJsonError = '';
+      this.rawJsonDirty = false;
       this.tab = 'edit';
       this.open = true;
       // Trap focus after render
@@ -54,14 +56,20 @@ export function schemaEditorModal() {
       } catch {
         this.rawJson = this.currentSchema;
       }
+      // Visual edit overrides raw — clear dirty state
+      this.rawJsonDirty = false;
+      this.rawJsonValid = true;
+      this.rawJsonError = '';
     },
 
     handleRawChange() {
+      this.rawJsonDirty = true;
       try {
         JSON.parse(this.rawJson);
         this.rawJsonValid = true;
         this.rawJsonError = '';
         this.currentSchema = this.rawJson;
+        this.rawJsonDirty = false; // Successfully synced
       } catch (e: any) {
         this.rawJsonValid = false;
         this.rawJsonError = e instanceof Error ? e.message : 'Invalid JSON';
