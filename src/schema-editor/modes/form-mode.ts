@@ -429,7 +429,7 @@ export class SchemaFormMode extends LitElement {
     required: boolean,
     parentPath?: string,
   ): TemplateResult {
-    if (isLeafSchema(schema)) {
+    if (isLeafSchema(schema, rootSchema)) {
       // Leaf fields: thread attributes directly into the input renderer
       return this._renderField(schema, data, onChange, rootSchema, fieldId, parentPath, describedBy, required) as TemplateResult;
     }

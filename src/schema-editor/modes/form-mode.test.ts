@@ -59,8 +59,8 @@ describe('Bug 1: isLeafSchema correctly distinguishes leaf vs container schemas'
     expect(isLeafSchema({ anyOf: [{ type: 'string' }, { type: 'number' }] })).toBe(false);
   });
 
-  it('allOf schema is NOT a leaf', () => {
-    expect(isLeafSchema({ allOf: [{ type: 'string' }, { minLength: 1 }] })).toBe(false);
+  it('allOf resolving to primitive IS a leaf (resolved)', () => {
+    expect(isLeafSchema({ allOf: [{ type: 'string' }, { minLength: 1 }] })).toBe(true);
   });
 
   it('schema with if/then/else is NOT a leaf', () => {
@@ -85,6 +85,38 @@ describe('Bug 1: isLeafSchema correctly distinguishes leaf vs container schemas'
 
   it('type array with array is NOT a leaf', () => {
     expect(isLeafSchema({ type: ['array', 'null'] })).toBe(false);
+  });
+
+  // ─── $ref and allOf resolution tests ─────────────────────────────────────
+
+  it('classifies $ref to string as leaf', () => {
+    const root = { $defs: { email: { type: 'string', format: 'email' } } };
+    expect(isLeafSchema({ $ref: '#/$defs/email' }, root)).toBe(true);
+  });
+
+  it('classifies $ref to object as non-leaf', () => {
+    const root = { $defs: { addr: { type: 'object', properties: { city: { type: 'string' } } } } };
+    expect(isLeafSchema({ $ref: '#/$defs/addr' }, root)).toBe(false);
+  });
+
+  it('classifies allOf resolving to string as leaf', () => {
+    expect(isLeafSchema({ allOf: [{ type: 'string' }, { minLength: 1 }] })).toBe(true);
+  });
+
+  it('classifies allOf resolving to object as non-leaf', () => {
+    expect(isLeafSchema({ allOf: [{ type: 'object' }, { properties: { x: { type: 'string' } } }] })).toBe(false);
+  });
+
+  it('classifies oneOf as non-leaf regardless of content', () => {
+    expect(isLeafSchema({ oneOf: [{ type: 'string' }, { type: 'number' }] })).toBe(false);
+  });
+
+  it('classifies anyOf as non-leaf regardless of content', () => {
+    expect(isLeafSchema({ anyOf: [{ type: 'string' }, { type: 'number' }] })).toBe(false);
+  });
+
+  it('classifies $ref without rootSchema as non-leaf (cannot resolve)', () => {
+    expect(isLeafSchema({ $ref: '#/$defs/email' })).toBe(false);
   });
 });
 
