@@ -32,14 +32,14 @@ export class SchemaStringEditor extends LitElement {
             <label for="str-min-length">Min Length</label>
             <input id="str-min-length" type="number" min="0" .value=${this.schema.minLength ?? ''} @change=${(e: Event) => {
               const v = (e.target as HTMLInputElement).value;
-              this._emit('minLength', v ? parseInt(v) : undefined);
+              this._emit('minLength', v !== '' ? parseInt(v, 10) : undefined);
             }}>
           </div>
           <div>
             <label for="str-max-length">Max Length</label>
             <input id="str-max-length" type="number" min="0" .value=${this.schema.maxLength ?? ''} @change=${(e: Event) => {
               const v = (e.target as HTMLInputElement).value;
-              this._emit('maxLength', v ? parseInt(v) : undefined);
+              this._emit('maxLength', v !== '' ? parseInt(v, 10) : undefined);
             }}>
           </div>
           <div>

@@ -77,14 +77,14 @@ export class SchemaArrayEditor extends LitElement {
             <label for="arr-min-items">Min Items</label>
             <input id="arr-min-items" type="number" min="0" .value=${this.schema.minItems ?? ''} @change=${(e: Event) => {
               const v = (e.target as HTMLInputElement).value;
-              this._emit('minItems', v ? parseInt(v) : undefined);
+              this._emit('minItems', v !== '' ? parseInt(v, 10) : undefined);
             }}>
           </div>
           <div>
             <label for="arr-max-items">Max Items</label>
             <input id="arr-max-items" type="number" min="0" .value=${this.schema.maxItems ?? ''} @change=${(e: Event) => {
               const v = (e.target as HTMLInputElement).value;
-              this._emit('maxItems', v ? parseInt(v) : undefined);
+              this._emit('maxItems', v !== '' ? parseInt(v, 10) : undefined);
             }}>
           </div>
           <div>
