@@ -239,12 +239,15 @@ export class SchemaEditMode extends LitElement {
   private _handleAddProperty() {
     if (!this._root) return;
 
-    // If the selected node is an object, add the property as its child;
-    // otherwise fall back to root.
+    // If the selected node is object-like, add the property as its child;
+    // otherwise fall back to root. A node is object-like if it has type 'object'
+    // OR if it already has children (e.g. typeless schemas with properties).
     const selected = this._findNode(this._selectedId);
-    const target = (selected && selected.type === 'object' && selected !== this._root)
-      ? selected
-      : this._root;
+    const isObjectLike = selected && selected !== this._root && (
+      selected.type === 'object' ||
+      (selected.children != null && selected.children.length > 0)
+    );
+    const target = isObjectLike ? selected! : this._root;
 
     if (!target.children) target.children = [];
     let name = 'newProperty';

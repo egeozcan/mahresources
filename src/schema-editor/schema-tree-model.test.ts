@@ -789,3 +789,90 @@ describe('Bug fix: multiple composition keywords round-trip correctly', () => {
     expect(tree.schema.allOf).toHaveLength(1);
   });
 });
+
+// ─── Bug: + Property mis-targets typeless object nodes ──────────────────────
+
+describe('Bug fix: add-property targets typeless nodes with existing children', () => {
+  it('typeless node with properties gets type="" and has children', () => {
+    // Schema without explicit type:"object" but with properties
+    const schema = {
+      properties: {
+        name: { type: 'string' },
+        age: { type: 'integer' },
+      },
+    };
+    const tree = schemaToTree(schema);
+    // tree.type will be '' (empty string) because no explicit type
+    expect(tree.type).toBe('');
+    expect(tree.children).toHaveLength(2);
+  });
+
+  it('add-property condition should recognize typeless nodes with children as object-like', () => {
+    const schema = {
+      properties: {
+        name: { type: 'string' },
+      },
+    };
+    const tree = schemaToTree(schema);
+    const selected = tree;
+
+    // BUGGY condition from edit-mode.ts line 245:
+    // selected.type === 'object' => false for typeless nodes
+    const buggyIsObject = selected.type === 'object';
+    expect(buggyIsObject).toBe(false); // demonstrates the bug
+
+    // FIXED condition: also check for existing children
+    const fixedIsObject = selected.type === 'object' ||
+      (selected.children != null && selected.children.length > 0);
+    expect(fixedIsObject).toBe(true); // should be true for typeless nodes with children
+  });
+
+  it('add-property to typeless node puts new child in tree.children', () => {
+    const schema = {
+      properties: {
+        name: { type: 'string' },
+      },
+    };
+    const tree = schemaToTree(schema);
+
+    // Simulate the fixed _handleAddProperty logic
+    const selected = tree;
+    const isObjectLike = selected.type === 'object' ||
+      (selected.children != null && selected.children.length > 0);
+    expect(isObjectLike).toBe(true);
+
+    // Add a new property to the target
+    if (!selected.children) selected.children = [];
+    selected.children.push({
+      id: 'test-new',
+      name: 'newProperty',
+      type: 'string',
+      required: false,
+      schema: {},
+    });
+    expect(selected.children).toHaveLength(2);
+
+    // Verify round-trip produces valid schema
+    const output = treeToSchema(tree);
+    expect(Object.keys(output.properties!)).toHaveLength(2);
+    expect(output.properties!.name).toEqual({ type: 'string' });
+    expect(output.properties!.newProperty).toEqual({ type: 'string' });
+  });
+
+  it('edit-mode.ts _handleAddProperty uses children-based check, not just type==="object"', async () => {
+    // Verify the source code has the fix applied
+    const fsModule = 'node:fs', urlModule = 'node:url';
+    const fs: any = await import(/* @vite-ignore */ fsModule);
+    const url: any = await import(/* @vite-ignore */ urlModule);
+    const editModePath = url.fileURLToPath(new URL('./modes/edit-mode.ts', import.meta.url));
+    const source = fs.readFileSync(editModePath, 'utf-8');
+    // The _handleAddProperty method should check children, not just type === 'object'
+    const addPropBlock = source.match(/_handleAddProperty\(\)\s*\{[\s\S]*?\n  \}/);
+    expect(addPropBlock).not.toBeNull();
+    // It should reference .children to check for object-like nodes
+    expect(addPropBlock![0]).toContain('.children');
+    // It should NOT use only `selected.type === 'object'` without also checking children
+    // (i.e., the condition should be broader than just type === 'object')
+    expect(addPropBlock![0]).toMatch(/children.*length|hasChildren/);
+  });
+});
