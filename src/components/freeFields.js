@@ -81,13 +81,17 @@ export function freeFields({ fields, name, url, jsonOutput, id, title, fromJSON 
       // Prefer dynamically-passed currentMeta (from parent wrapper's data attribute)
       // over the static server-rendered fromJSON, so that edits made in
       // schema-form-mode are preserved when switching to freeFields.
+      // Prefer dynamically-passed currentMeta over the static server-rendered
+      // fromJSON.  An empty string means "no edits yet" (use fromJSON); a
+      // non-empty string (including "{}") means the user has edited and this
+      // value is intentional — even an empty object.
       const currentMetaEl = this.$el.closest('[data-current-meta]');
       const currentMetaAttr = currentMetaEl?.dataset.currentMeta;
       let initSource = this.fromJSON;
       if (currentMetaAttr) {
         try {
           const parsed = JSON.parse(currentMetaAttr);
-          if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
+          if (parsed && typeof parsed === 'object') {
             initSource = parsed;
           }
         } catch { /* fall through to fromJSON */ }

@@ -66,6 +66,7 @@
                     x-data="{
                          currentSchema: null,
                          currentMeta: {},
+                         metaEdited: false,
                          init() {
                              const raw = this.$el.dataset.initialSchema;
                              if (raw) { this.currentSchema = raw; }
@@ -81,6 +82,7 @@
                          handleMetaChange(e) {
                              if (e.detail && e.detail.value !== undefined) {
                                  this.currentMeta = e.detail.value;
+                                 this.metaEdited = true;
                              }
                          }
                     }"
@@ -99,7 +101,7 @@
                         </div>
                     </template>
                     <template x-if="!currentSchema">
-                        <div @value-change="handleMetaChange($event)" :data-current-meta="JSON.stringify(currentMeta)">
+                        <div @value-change="handleMetaChange($event)" :data-current-meta="metaEdited ? JSON.stringify(currentMeta) : ''">
                             {% include "/partials/form/freeFields.tpl" with name="Meta" url='/v1/groups/meta/keys' fromJSON=group.Meta jsonOutput="true" id=getNextId("freeField") %}
                         </div>
                     </template>
