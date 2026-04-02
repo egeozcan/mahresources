@@ -345,6 +345,129 @@ test.describe('Schema Editor Edit Mode', () => {
   });
 });
 
+// ── Deletion tests for special node types ────────────────────────────────────
+
+test.describe('Schema Editor Delete Special Nodes', () => {
+  const runId = Date.now();
+
+  test('can delete a composition (oneOf) node from the editor', async ({ page, apiClient }) => {
+    const compositionSchema = JSON.stringify({
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        contact: {
+          oneOf: [
+            { type: 'string', title: 'Email' },
+            { type: 'string', title: 'Phone' },
+          ],
+        },
+      },
+    });
+
+    const cat = await apiClient.createCategory(
+      `Composition Delete Test ${runId}`,
+      undefined,
+      { MetaSchema: compositionSchema }
+    );
+    const catId = cat.ID;
+
+    try {
+      await page.goto(`/category/edit?id=${catId}`);
+      await page.waitForLoadState('load');
+
+      // Open the visual editor
+      await page.locator('.visual-editor-btn').click();
+      const dialog = schemaEditorDialog(page);
+      await expect(dialog).toBeVisible({ timeout: 5000 });
+
+      // Wait for the edit-mode schema-editor to be ready
+      await expect(dialog.locator('schema-editor[mode="edit"]')).toBeVisible({ timeout: 5000 });
+
+      // Click the "contact" node in the tree (it should show a composition badge)
+      const contactNode = dialog.locator('[role="treeitem"]', { hasText: 'contact' });
+      await expect(contactNode).toBeVisible({ timeout: 5000 });
+      await contactNode.click();
+
+      // Verify the "Delete Property" button is visible in the detail panel
+      const deleteBtn = dialog.getByRole('button', { name: 'Delete Property' });
+      await expect(deleteBtn).toBeVisible({ timeout: 5000 });
+
+      // Click "Delete Property"
+      await deleteBtn.click();
+
+      // Apply the schema
+      await dialog.locator('button', { hasText: 'Apply Schema' }).click();
+      await expect(dialog).not.toBeVisible({ timeout: 3000 });
+
+      // Parse the textarea value and verify `contact` is gone but `name` remains
+      const value = await page.locator('#metaSchemaTextarea').inputValue();
+      const schema = JSON.parse(value);
+      expect(schema.properties).toHaveProperty('name');
+      expect(schema.properties).not.toHaveProperty('contact');
+    } finally {
+      await apiClient.deleteCategory(catId);
+    }
+  });
+
+  test('can delete a $ref node from the editor', async ({ page, apiClient }) => {
+    const refSchema = JSON.stringify({
+      type: 'object',
+      $defs: {
+        addr: { type: 'object', properties: { city: { type: 'string' } } },
+      },
+      properties: {
+        name: { type: 'string' },
+        home: { $ref: '#/$defs/addr' },
+      },
+    });
+
+    const cat = await apiClient.createCategory(
+      `Ref Delete Test ${runId}`,
+      undefined,
+      { MetaSchema: refSchema }
+    );
+    const catId = cat.ID;
+
+    try {
+      await page.goto(`/category/edit?id=${catId}`);
+      await page.waitForLoadState('load');
+
+      // Open the visual editor
+      await page.locator('.visual-editor-btn').click();
+      const dialog = schemaEditorDialog(page);
+      await expect(dialog).toBeVisible({ timeout: 5000 });
+
+      // Wait for the edit-mode schema-editor to be ready
+      await expect(dialog.locator('schema-editor[mode="edit"]')).toBeVisible({ timeout: 5000 });
+
+      // Click the "home" node in the tree (should show $ref badge)
+      const homeNode = dialog.locator('[role="treeitem"]', { hasText: 'home' });
+      await expect(homeNode).toBeVisible({ timeout: 5000 });
+      await homeNode.click();
+
+      // Verify the "Delete Property" button is visible in the detail panel
+      const deleteBtn = dialog.getByRole('button', { name: 'Delete Property' });
+      await expect(deleteBtn).toBeVisible({ timeout: 5000 });
+
+      // Click "Delete Property"
+      await deleteBtn.click();
+
+      // Apply the schema
+      await dialog.locator('button', { hasText: 'Apply Schema' }).click();
+      await expect(dialog).not.toBeVisible({ timeout: 3000 });
+
+      // Parse the textarea value and verify `home` is gone, `name` remains, `$defs` still has `addr`
+      const value = await page.locator('#metaSchemaTextarea').inputValue();
+      const schema = JSON.parse(value);
+      expect(schema.properties).toHaveProperty('name');
+      expect(schema.properties).not.toHaveProperty('home');
+      expect(schema.$defs).toHaveProperty('addr');
+    } finally {
+      await apiClient.deleteCategory(catId);
+    }
+  });
+});
+
 // ── Form mode tests ───────────────────────────────────────────────────────────
 
 test.describe('Schema Editor Form Mode', () => {
