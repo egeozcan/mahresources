@@ -72,9 +72,11 @@ export class SchemaFormMode extends LitElement {
       // schema's properties and aren't allowed by additionalProperties.  This
       // prevents stale keys from a previous schema (e.g. after a category
       // switch) from being silently submitted via the hidden input.
-      if (changed.has('schema') && this.schema?.properties && this._data && typeof this._data === 'object') {
-        const allowedKeys = new Set(Object.keys(this.schema.properties));
+      // Note: guard does NOT require schema.properties — a schema with
+      // additionalProperties:false and NO properties means ALL keys are invalid.
+      if (changed.has('schema') && this._data && typeof this._data === 'object') {
         if (this.schema.additionalProperties === false) {
+          const allowedKeys = new Set(Object.keys(this.schema.properties || {}));
           for (const key of Object.keys(this._data)) {
             if (!allowedKeys.has(key)) {
               delete this._data[key];

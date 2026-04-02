@@ -365,3 +365,100 @@ describe('Bug 3 (P2): wrapping nullable field preserves type union', () => {
     expect(prop.anyOf![0].type).toBe('string');
   });
 });
+
+// ─── Bug 4 (P2): Propertyless strict schema fails to strip all stale keys ───
+
+/**
+ * A schema like { "type": "object", "additionalProperties": false } has no
+ * `properties` key at all. The previous fix guarded the entire key-stripping
+ * block with `this.schema.properties`, so for propertyless strict schemas the
+ * block was never entered and all stale keys from _data leaked through the
+ * hidden input.
+ *
+ * The fix moves the `schema.properties` check inside the allowed-keys Set
+ * constructor (defaulting to empty `{}`), so the block fires whenever
+ * additionalProperties === false regardless of whether properties exists.
+ */
+
+/**
+ * Fixed version of stripStaleKeys that handles propertyless strict schemas.
+ */
+function stripStaleKeysFixed(
+  data: Record<string, any>,
+  schema: { properties?: Record<string, any>; additionalProperties?: boolean | object },
+): Record<string, any> {
+  if (!data || typeof data !== 'object') {
+    return data;
+  }
+  const allowsAdditional = schema.additionalProperties !== false;
+  if (allowsAdditional) return data;
+
+  const allowedKeys = new Set(Object.keys(schema.properties || {}));
+  const result: Record<string, any> = {};
+  for (const key of Object.keys(data)) {
+    if (allowedKeys.has(key)) {
+      result[key] = data[key];
+    }
+  }
+  return result;
+}
+
+describe('Bug 4 (P2): strip all stale keys for strict schemas without declared properties', () => {
+  it('strips all keys when schema has additionalProperties:false and no properties', () => {
+    const data = { color: 'red', size: 'large' };
+    const schema = { type: 'object', additionalProperties: false } as any;
+    const result = stripStaleKeysFixed(data, schema);
+    expect(result).toEqual({});
+  });
+
+  it('strips all keys when schema is { additionalProperties: false } with no type', () => {
+    const data = { foo: 1, bar: 2 };
+    const schema = { additionalProperties: false };
+    const result = stripStaleKeysFixed(data, schema);
+    expect(result).toEqual({});
+  });
+
+  it('preserves declared keys when properties exists (no regression)', () => {
+    const data = { weight: 42, stale: 'old' };
+    const schema = {
+      properties: { weight: { type: 'number' } },
+      additionalProperties: false,
+    };
+    const result = stripStaleKeysFixed(data, schema);
+    expect(result).toEqual({ weight: 42 });
+  });
+
+  it('keeps all keys when additionalProperties is not false (no regression)', () => {
+    const data = { color: 'red', extra: 'val' };
+    const schema = { additionalProperties: true } as any;
+    const result = stripStaleKeysFixed(data, schema);
+    expect(result).toEqual({ color: 'red', extra: 'val' });
+  });
+
+  /**
+   * Integration: form-mode.ts willUpdate should strip ALL keys for a
+   * propertyless strict schema. Verify the guard condition changed.
+   */
+  it('form-mode willUpdate does not guard on schema.properties before stripping', () => {
+    const { readFileSync } = require('fs');
+    const source = readFileSync(
+      new URL('./modes/form-mode.ts', import.meta.url),
+      'utf8',
+    );
+    const startIdx = source.indexOf('willUpdate(');
+    const endIdx = source.indexOf('_emitChange(');
+    const willUpdateSection = source.slice(startIdx, endIdx);
+
+    // The OLD (buggy) guard: `this.schema?.properties && this._data`
+    // After the fix, the outer guard must NOT require schema.properties.
+    // The condition checking `schema.properties` must only appear inside
+    // the allowedKeys Set construction, not as the outer if-guard.
+    expect(willUpdateSection).not.toMatch(
+      /if\s*\(\s*changed\.has\(['"]schema['"]\)\s*&&\s*this\.schema\?\.properties/,
+    );
+
+    // The fix should still check additionalProperties and use allowedKeys
+    expect(willUpdateSection).toContain('additionalProperties');
+    expect(willUpdateSection).toContain('allowedKeys');
+  });
+});
