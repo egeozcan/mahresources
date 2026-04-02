@@ -97,7 +97,16 @@ export function stripStaleKeys(data: any, schema: JSONSchema, rootSchema?: JSONS
     let merged: JSONSchema = { ...resolved };
     delete merged.allOf;
     for (const sub of resolved.allOf) {
-      const s = sub.$ref && rootSchema ? resolveRef(sub.$ref, rootSchema) || sub : sub;
+      let s: JSONSchema;
+      if (sub.$ref && rootSchema) {
+        const refResult = resolveRef(sub.$ref, rootSchema);
+        // Merge resolved $ref with sibling properties on the same allOf member
+        const siblings = { ...sub };
+        delete siblings.$ref;
+        s = refResult ? mergeSchemas(refResult, siblings) : siblings;
+      } else {
+        s = sub;
+      }
       merged = mergeSchemas(merged, s);
     }
     resolved = merged;

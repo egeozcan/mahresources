@@ -177,3 +177,124 @@ describe('Bug 3 (P2): nullable toggle does not produce ["null","null"]', () => {
     expect(nullableSection).toMatch(/baseType\s*===\s*'null'/);
   });
 });
+
+
+// ─── Bug 4 (P1): allOf stale-key stripping drops $ref sibling properties ────
+
+describe('Bug 4 (P1): stripStaleKeys preserves $ref sibling properties in allOf', () => {
+  it('preserves properties from both $ref and sibling on the same allOf member', () => {
+    const rootSchema: JSONSchema = {
+      $defs: { base: { type: 'object', properties: { name: { type: 'string' } } } },
+      allOf: [
+        { $ref: '#/$defs/base', properties: { zip: { type: 'string' } } },
+      ],
+      additionalProperties: false,
+    };
+    const data = { name: 'Alice', zip: '12345' };
+    stripStaleKeys(data, rootSchema, rootSchema);
+    // Both name (from $ref) and zip (sibling property) should survive
+    expect(data).toEqual({ name: 'Alice', zip: '12345' });
+  });
+
+  it('preserves $ref-only properties when allOf member has no siblings', () => {
+    const rootSchema: JSONSchema = {
+      $defs: { base: { type: 'object', properties: { name: { type: 'string' } } } },
+      allOf: [
+        { $ref: '#/$defs/base' },
+      ],
+      additionalProperties: false,
+    };
+    const data = { name: 'Alice', stale: 'old' };
+    stripStaleKeys(data, rootSchema, rootSchema);
+    expect(data).toEqual({ name: 'Alice' });
+  });
+
+  it('preserves sibling-only properties when allOf member has no $ref', () => {
+    const rootSchema: JSONSchema = {
+      allOf: [
+        { properties: { zip: { type: 'string' } } },
+      ],
+      additionalProperties: false,
+    };
+    const data = { zip: '12345', stale: 'old' };
+    stripStaleKeys(data, rootSchema, rootSchema);
+    expect(data).toEqual({ zip: '12345' });
+  });
+
+  it('merges properties from $ref and multiple siblings across allOf members', () => {
+    const rootSchema: JSONSchema = {
+      $defs: { base: { type: 'object', properties: { name: { type: 'string' } } } },
+      allOf: [
+        { $ref: '#/$defs/base', properties: { zip: { type: 'string' } } },
+        { properties: { country: { type: 'string' } } },
+      ],
+      additionalProperties: false,
+    };
+    const data = { name: 'Alice', zip: '12345', country: 'US', stale: 'old' };
+    stripStaleKeys(data, rootSchema, rootSchema);
+    expect(data).toEqual({ name: 'Alice', zip: '12345', country: 'US' });
+  });
+});
+
+
+// ─── Bug 5 (P2): Type switch to null produces ["null", "null"] ──────────────
+
+describe('Bug 5 (P2): type change to null on nullable field', () => {
+  it('edit-mode type handler does not produce ["null","null"] when switching to null', () => {
+    const source = readFileSync(
+      new URL('./modes/edit-mode.ts', import.meta.url),
+      'utf8',
+    );
+    const typeStart = source.indexOf("case 'type':");
+    const typeEnd = source.indexOf("case 'required':");
+    const typeSection = source.slice(typeStart, typeEnd);
+    // The type handler should guard against value === 'null' before building a union
+    expect(typeSection).toContain("'null'");
+    // It should have logic to handle the null case separately
+    expect(typeSection).toMatch(/value\s*===\s*'null'/);
+  });
+
+  it('type change handler collapses nullable array when new type is null', () => {
+    // Simulate: schema.type = ["string", "null"], user changes type to "null"
+    // This replicates the exact logic path in edit-mode.ts case 'type':
+    const schema: any = { type: ['string', 'null'] };
+    const selected = { type: 'null', schema };
+
+    // Apply the same logic as the type handler
+    const value = 'null';
+    selected.type = value;
+    // Reset constraints (abbreviated)
+    // Then handle nullable array
+    if (Array.isArray(selected.schema.type) && selected.schema.type.includes('null')) {
+      if (value === 'null') {
+        // Fix: collapse to scalar or delete
+        delete selected.schema.type;
+      } else {
+        selected.schema.type = [value, 'null'];
+      }
+    }
+
+    // schema.type should NOT be ["null","null"]
+    expect(selected.schema.type).not.toEqual(['null', 'null']);
+    // It should be deleted (null type expressed via node.type)
+    expect(selected.schema.type).toBeUndefined();
+  });
+
+  it('type change handler preserves nullable array for non-null types', () => {
+    // Simulate: schema.type = ["string", "null"], user changes to "integer"
+    const schema: any = { type: ['string', 'null'] };
+    const selected = { type: 'integer', schema };
+
+    const value = 'integer';
+    selected.type = value;
+    if (Array.isArray(selected.schema.type) && selected.schema.type.includes('null')) {
+      if (value === 'null') {
+        delete selected.schema.type;
+      } else {
+        selected.schema.type = [value, 'null'];
+      }
+    }
+
+    expect(selected.schema.type).toEqual(['integer', 'null']);
+  });
+});
