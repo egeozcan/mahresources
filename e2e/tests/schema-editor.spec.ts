@@ -630,6 +630,80 @@ test.describe('Schema Editor Form Mode', () => {
     }
   });
 
+  test('resource form handles JS-breaking MetaSchema without XSS', async ({ page, apiClient }) => {
+    // Create a resource category with a MetaSchema that would break JS if injected raw
+    const maliciousSchema = "'; alert('xss'); '";
+    const rcName = 'XSS Resource Test ' + Date.now();
+    const rc = await apiClient.createResourceCategory(rcName, '', { MetaSchema: maliciousSchema });
+
+    try {
+      const jsErrors: string[] = [];
+      page.on('pageerror', (err) => jsErrors.push(err.message));
+
+      // Navigate to resource create page
+      await page.goto('/resource/new');
+      await page.waitForLoadState('load');
+
+      // Select the resource category
+      const categoryInput = page.getByRole('combobox', { name: 'Resource Category' });
+      await categoryInput.click();
+      await categoryInput.fill(rcName);
+      const option = page.locator('div[role="option"]:visible').filter({ hasText: rcName }).first();
+      await option.waitFor({ timeout: 10000 });
+      await option.click();
+      await page.waitForTimeout(500);
+
+      // Page should NOT have crashed — no JS errors, no alert dialog
+      expect(jsErrors).toHaveLength(0);
+
+      // The schema is invalid JSON, so the free-form fallback should be showing
+      // (schema-form-mode won't render for non-JSON MetaSchema)
+
+      // Verify the page is still functional — the form submit button should be visible
+      await expect(page.locator('button[type="submit"]')).toBeVisible();
+
+      // Verify no schema-form-mode rendered (invalid schema should fall back to freeFields)
+      await expect(page.locator('schema-form-mode')).not.toBeVisible();
+    } finally {
+      await apiClient.deleteResourceCategory(rc.ID);
+    }
+  });
+
+  test('resource form renders schema-driven fields from resource category', async ({ page, apiClient }) => {
+    const schema = JSON.stringify({
+      type: 'object',
+      properties: {
+        vendor: { type: 'string' },
+        amount: { type: 'number' },
+      },
+      required: ['vendor'],
+    });
+    const rcName = 'Schema Resource Test ' + Date.now();
+    const rc = await apiClient.createResourceCategory(rcName, '', { MetaSchema: schema });
+
+    try {
+      await page.goto('/resource/new');
+      await page.waitForLoadState('load');
+
+      const categoryInput = page.getByRole('combobox', { name: 'Resource Category' });
+      await categoryInput.click();
+      await categoryInput.fill(rcName);
+      const option = page.locator('div[role="option"]:visible').filter({ hasText: rcName }).first();
+      await option.waitFor({ timeout: 10000 });
+      await option.click();
+      await page.waitForTimeout(500);
+
+      // Schema-driven form should be visible
+      const formMode = page.locator('schema-form-mode');
+      await expect(formMode).toBeVisible({ timeout: 5000 });
+
+      // Should contain the schema field names
+      await expect(formMode).toContainText('vendor');
+    } finally {
+      await apiClient.deleteResourceCategory(rc.ID);
+    }
+  });
+
   test('persists Meta data through form submission', async ({ page, apiClient }) => {
     // Create a category with a simple MetaSchema
     const catName = `Meta Persist Test ${runId}`;
