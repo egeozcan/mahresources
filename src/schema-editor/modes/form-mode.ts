@@ -102,7 +102,7 @@ export class SchemaFormMode extends LitElement {
       if (resolved) {
         const mergedSchema = { ...resolved, ...schema };
         delete mergedSchema.$ref;
-        return this._renderField(mergedSchema, data, onChange, rootSchema, fieldId, parentPath);
+        return this._renderField(mergedSchema, data, onChange, rootSchema, fieldId, parentPath, describedBy, isRequired);
       }
       return html`<div class="text-red-500 text-xs">Unresolvable reference: ${schema.$ref}</div>`;
     }
@@ -120,7 +120,7 @@ export class SchemaFormMode extends LitElement {
         const resolved = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
         if (resolved) merged = mergeSchemas(merged, resolved);
       }
-      return this._renderField(merged, data, onChange, rootSchema, fieldId, parentPath);
+      return this._renderField(merged, data, onChange, rootSchema, fieldId, parentPath, describedBy, isRequired);
     }
 
     // Handle anyOf
