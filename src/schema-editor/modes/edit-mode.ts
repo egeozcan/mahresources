@@ -245,7 +245,7 @@ export class SchemaEditMode extends LitElement {
     const selected = this._findNode(this._selectedId);
     const isObjectLike = selected && selected !== this._root && (
       selected.type === 'object' ||
-      (selected.children != null && selected.children.length > 0)
+      selected.children != null
     );
     const target = isObjectLike ? selected! : this._root;
 
