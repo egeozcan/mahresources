@@ -1,4 +1,4 @@
-import { LitElement, html, css } from 'lit';
+import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { sharedStyles } from '../../styles';
 import type { SchemaNode } from '../../schema-tree-model';
@@ -26,6 +26,12 @@ export class SchemaCompositionEditor extends LitElement {
   }
 
   override render() {
+    // JSON Schema `not` takes a single schema, not an array. Hide add/remove
+    // controls so users cannot create extra variants (which treeToSchema would
+    // silently discard) or remove the sole variant (which would silently drop
+    // the constraint).
+    const isNot = this.keyword === 'not';
+
     return html`
       <div class="type-section">
         <h4>${this.keyword} — ${this.variants.length} variant${this.variants.length !== 1 ? 's' : ''}</h4>
@@ -33,10 +39,10 @@ export class SchemaCompositionEditor extends LitElement {
           <div class="variant">
             <span class="variant-name">${v.schema.title || v.name || `Variant ${i + 1}`}</span>
             <span class="variant-type">(${v.type})</span>
-            <button class="btn btn-danger" @click=${() => this._removeVariant(i)} aria-label="Remove variant ${i + 1}">×</button>
+            ${isNot ? nothing : html`<button class="btn btn-danger" @click=${() => this._removeVariant(i)} aria-label="Remove variant ${i + 1}">×</button>`}
           </div>
         `)}
-        <button class="btn-ghost" @click=${this._addVariant}>+ Add Variant</button>
+        ${isNot ? nothing : html`<button class="btn-ghost" @click=${this._addVariant}>+ Add Variant</button>`}
       </div>
     `;
   }

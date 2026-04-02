@@ -195,9 +195,11 @@ export function treeToSchema(node: SchemaNode): JSONSchema {
     schema[node.compositionKeyword] = (node.variants || []).map(c => treeToSchema(c));
   }
 
-  // Serialize `not` composition keyword from `variants`
+  // Serialize `not` composition keyword from `variants`.
+  // `not` takes a single schema (not an array), so use the first variant.
+  // If variants is empty (the constraint was removed via unwrap), omit `not`.
   if (node.compositionKeyword === 'not') {
-    const notChild = (node.variants || []).find(c => c.name === 'not');
+    const notChild = (node.variants || [])[0];
     if (notChild) {
       schema.not = treeToSchema(notChild);
     }
