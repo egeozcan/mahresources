@@ -213,6 +213,39 @@ describe('getDefaultValue', () => {
   it('returns false for boolean type', () => {
     expect(getDefaultValue({ type: 'boolean' })).toBe(false);
   });
+
+  it('populates all declared properties for object type with properties', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        age: { type: 'integer' },
+        active: { type: 'boolean' },
+      },
+    };
+    const result = getDefaultValue(schema);
+    expect(result).toEqual({ name: '', age: 0, active: false });
+  });
+
+  it('scoreSchemaMatch distinguishes oneOf variants with populated defaults', () => {
+    const variants = [
+      { type: 'object', properties: { journal: { type: 'string' } }, required: ['journal'] },
+      { type: 'object', properties: { conference: { type: 'string' } }, required: ['conference'] },
+    ];
+    const journalData = getDefaultValue(variants[0]);
+    const confData = getDefaultValue(variants[1]);
+    // Each variant's default should score highest against its own schema
+    expect(scoreSchemaMatch(variants[0], journalData, {})).toBeGreaterThan(
+      scoreSchemaMatch(variants[1], journalData, {}),
+    );
+    expect(scoreSchemaMatch(variants[1], confData, {})).toBeGreaterThan(
+      scoreSchemaMatch(variants[0], confData, {}),
+    );
+  });
+
+  it('returns empty object for object type without properties', () => {
+    expect(getDefaultValue({ type: 'object' })).toEqual({});
+  });
 });
 
 describe('evaluateCondition', () => {

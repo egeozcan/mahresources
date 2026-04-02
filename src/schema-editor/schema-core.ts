@@ -181,7 +181,14 @@ export function getDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): an
 
   if (schema.default !== undefined) return schema.default;
   if (schema.const !== undefined) return schema.const;
-  if (schema.type === 'object') return {};
+  if (schema.type === 'object') {
+    if (!schema.properties) return {};
+    const obj: any = {};
+    for (const [key, propSchema] of Object.entries(schema.properties)) {
+      obj[key] = getDefaultValue(propSchema as JSONSchema, rootSchema);
+    }
+    return obj;
+  }
   if (schema.type === 'array') return [];
   if (schema.type === 'boolean') return false;
   if (schema.type === 'number' || schema.type === 'integer') return 0;
