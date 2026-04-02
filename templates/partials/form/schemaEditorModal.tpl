@@ -34,8 +34,9 @@
                         </div>
                     </template>
                     <template x-if="tab === 'raw'">
-                        <div role="tabpanel" id="panel-raw" aria-labelledby="tab-raw" class="h-full">
-                            <textarea x-model="rawJson" @input="handleRawChange()" class="w-full h-full p-4 font-mono text-xs border-none resize-none focus:ring-0" spellcheck="false"></textarea>
+                        <div role="tabpanel" id="panel-raw" aria-labelledby="tab-raw" class="h-full flex flex-col">
+                            <textarea x-model="rawJson" @input="handleRawChange()" class="w-full flex-1 p-4 font-mono text-xs resize-none focus:ring-0" :class="rawJsonValid ? 'border-none' : 'border-2 border-red-500'" spellcheck="false" :aria-invalid="!rawJsonValid"></textarea>
+                            <p x-show="!rawJsonValid" class="text-red-500 text-xs px-4 py-1 bg-red-50" x-text="rawJsonError" role="alert"></p>
                         </div>
                     </template>
                 </div>
@@ -44,7 +45,7 @@
                     <span class="text-xs text-stone-600 font-mono" x-text="getPropertyCount()"></span>
                     <div class="flex-1"></div>
                     <button type="button" class="px-4 py-2 border border-stone-300 rounded-md text-sm font-mono text-stone-700 bg-white hover:bg-stone-50" @click="closeModal()">Cancel</button>
-                    <button type="button" class="px-4 py-2 border-none rounded-md text-sm font-mono text-white bg-indigo-700 hover:bg-indigo-800" @click="applySchema()">Apply Schema</button>
+                    <button type="button" class="px-4 py-2 border-none rounded-md text-sm font-mono text-white" :class="(tab === 'raw' && !rawJsonValid) ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-700 hover:bg-indigo-800'" :disabled="tab === 'raw' && !rawJsonValid" @click="applySchema()">Apply Schema</button>
                 </div>
             </div>
         </div>

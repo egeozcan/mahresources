@@ -16,6 +16,8 @@ export function schemaEditorModal() {
     open: false,
     tab: 'edit' as 'edit' | 'preview' | 'raw',
     rawJson: '',
+    rawJsonValid: true,
+    rawJsonError: '',
     currentSchema: '',
     /** The textarea element this modal reads/writes to */
     _textareaEl: null as HTMLTextAreaElement | null,
@@ -28,6 +30,8 @@ export function schemaEditorModal() {
         // Pretty-print for raw tab
         this.rawJson = JSON.stringify(JSON.parse(this.currentSchema), null, 2);
       } catch { /* keep as-is */ }
+      this.rawJsonValid = true;
+      this.rawJsonError = '';
       this.tab = 'edit';
       this.open = true;
       // Trap focus after render
@@ -55,8 +59,14 @@ export function schemaEditorModal() {
     handleRawChange() {
       try {
         JSON.parse(this.rawJson);
+        this.rawJsonValid = true;
+        this.rawJsonError = '';
         this.currentSchema = this.rawJson;
-      } catch { /* invalid JSON — don't sync */ }
+      } catch (e: any) {
+        this.rawJsonValid = false;
+        this.rawJsonError = e instanceof Error ? e.message : 'Invalid JSON';
+        // Don't update currentSchema — keep last valid
+      }
     },
 
     applySchema() {

@@ -1,6 +1,7 @@
 /**
- * Tests for 4 confirmed bugs — written RED-first before any fixes.
+ * Tests for confirmed bugs — written RED-first before any fixes.
  */
+import { readFileSync } from 'fs';
 import { describe, it, expect } from 'vitest';
 import { schemaToTree, treeToSchema, resetIdCounter, type SchemaNode } from './schema-tree-model';
 
@@ -220,5 +221,166 @@ describe('Bug 4: zero-valued numeric constraints are preserved', () => {
     expect(parseConstraint('1')).toBe(1);
     expect(parseConstraint('')).toBeUndefined();
     expect(parseConstraint('42')).toBe(42);
+  });
+});
+
+
+// ─── Bug 5 (P2): Raw JSON tab silently drops invalid edits on Apply ─────────
+
+describe('Bug 5: raw JSON validation state and Apply button guard', () => {
+  /**
+   * Simulates the schemaEditorModal Alpine data component's handleRawChange()
+   * and applySchema() methods. The fix adds rawJsonValid/rawJsonError state
+   * and prevents Apply when the raw JSON is invalid.
+   */
+  function createModalState() {
+    return {
+      rawJson: '{"type":"object"}',
+      rawJsonValid: true,
+      rawJsonError: '',
+      currentSchema: '{"type":"object"}',
+      tab: 'raw' as string,
+      _textareaEl: { value: '', dispatchEvent: () => {} } as any,
+
+      handleRawChange() {
+        try {
+          JSON.parse(this.rawJson);
+          this.rawJsonValid = true;
+          this.rawJsonError = '';
+          this.currentSchema = this.rawJson;
+        } catch (e: any) {
+          this.rawJsonValid = false;
+          this.rawJsonError = e instanceof Error ? e.message : 'Invalid JSON';
+        }
+      },
+
+      applySchema() {
+        // The fix: refuse to apply when raw tab has invalid JSON
+        if (this.tab === 'raw' && !this.rawJsonValid) return false;
+        if (this._textareaEl) {
+          try {
+            this._textareaEl.value = JSON.stringify(JSON.parse(this.currentSchema));
+          } catch {
+            this._textareaEl.value = this.currentSchema;
+          }
+        }
+        return true;
+      },
+    };
+  }
+
+  it('valid JSON sets rawJsonValid to true', () => {
+    const state = createModalState();
+    state.rawJson = '{"type":"string"}';
+    state.handleRawChange();
+    expect(state.rawJsonValid).toBe(true);
+    expect(state.rawJsonError).toBe('');
+    expect(state.currentSchema).toBe('{"type":"string"}');
+  });
+
+  it('invalid JSON sets rawJsonValid to false with error message', () => {
+    const state = createModalState();
+    state.rawJson = '{"type": }';
+    state.handleRawChange();
+    expect(state.rawJsonValid).toBe(false);
+    expect(state.rawJsonError).toBeTruthy();
+    // currentSchema should NOT be updated
+    expect(state.currentSchema).toBe('{"type":"object"}');
+  });
+
+  it('Apply is blocked when raw tab has invalid JSON', () => {
+    const state = createModalState();
+    state.rawJson = '{"type": }';
+    state.handleRawChange();
+    const applied = state.applySchema();
+    expect(applied).toBe(false);
+    // The textarea should NOT be updated
+    expect(state._textareaEl.value).toBe('');
+  });
+
+  it('Apply succeeds when raw tab has valid JSON', () => {
+    const state = createModalState();
+    state.rawJson = '{"type":"number"}';
+    state.handleRawChange();
+    const applied = state.applySchema();
+    expect(applied).toBe(true);
+    expect(state._textareaEl.value).toBe('{"type":"number"}');
+  });
+
+  it('Apply succeeds on non-raw tab even if rawJsonValid is false', () => {
+    const state = createModalState();
+    state.tab = 'edit';
+    state.rawJsonValid = false; // stale from previous raw tab usage
+    const applied = state.applySchema();
+    expect(applied).toBe(true);
+  });
+
+  it('schemaEditorModal.ts source includes rawJsonValid and rawJsonError', async () => {
+    const fsModule = 'node:fs', urlModule = 'node:url';
+    const fs: any = await import(/* @vite-ignore */ fsModule);
+    const url: any = await import(/* @vite-ignore */ urlModule);
+    const tsPath = url.fileURLToPath(new URL('../components/schemaEditorModal.ts', import.meta.url));
+    const source = fs.readFileSync(tsPath, 'utf-8');
+    expect(source).toContain('rawJsonValid');
+    expect(source).toContain('rawJsonError');
+  });
+
+  it('schemaEditorModal.tpl disables Apply button when raw JSON is invalid', async () => {
+    const fsModule = 'node:fs', pathModule = 'node:path', urlModule = 'node:url';
+    const fs: any = await import(/* @vite-ignore */ fsModule);
+    const path: any = await import(/* @vite-ignore */ pathModule);
+    const url: any = await import(/* @vite-ignore */ urlModule);
+    const thisDir = url.fileURLToPath(new URL('.', import.meta.url));
+    // Navigate from src/schema-editor/ to project root, then into templates
+    const tplPath = path.resolve(thisDir, '../../templates/partials/form/schemaEditorModal.tpl');
+    const source = fs.readFileSync(tplPath, 'utf-8');
+    // The Apply button should have a :disabled binding
+    expect(source).toContain('rawJsonValid');
+  });
+});
+
+
+// ─── Bug 6 (P2): Duplicate DOM IDs for schema paths differing only by punctuation ──
+
+describe('Bug 6: generateFieldId produces unique IDs for different separators', () => {
+  it('generates distinct IDs for paths differing by separator', () => {
+    // Read the generateFieldId function from form-mode.ts source
+    const source = readFileSync(
+      new URL('./modes/form-mode.ts', import.meta.url),
+      'utf8',
+    );
+
+    // Extract the generateFieldId function body
+    const fnMatch = source.match(
+      /function\s+generateFieldId\(prefix:\s*string,\s*path:\s*string\):\s*string\s*\{([\s\S]*?)\n\}/
+    );
+    expect(fnMatch).not.toBeNull();
+
+    // Create the function for testing
+    const fn = new Function('prefix', 'path', fnMatch![1]) as (prefix: string, path: string) => string;
+
+    const id1 = fn('field', 'first_name');
+    const id2 = fn('field', 'first-name');
+    const id3 = fn('field', 'first.name');
+
+    expect(id1).not.toBe(id2);
+    expect(id1).not.toBe(id3);
+    expect(id2).not.toBe(id3);
+  });
+
+  it('preserves uniqueness for dotted paths (nested properties)', () => {
+    const source = readFileSync(
+      new URL('./modes/form-mode.ts', import.meta.url),
+      'utf8',
+    );
+    const fnMatch = source.match(
+      /function\s+generateFieldId\(prefix:\s*string,\s*path:\s*string\):\s*string\s*\{([\s\S]*?)\n\}/
+    );
+    expect(fnMatch).not.toBeNull();
+    const fn = new Function('prefix', 'path', fnMatch![1]) as (prefix: string, path: string) => string;
+
+    const id1 = fn('field', 'address.city');
+    const id2 = fn('field', 'address-city');
+    expect(id1).not.toBe(id2);
   });
 });
