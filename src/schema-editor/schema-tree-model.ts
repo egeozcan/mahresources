@@ -86,7 +86,6 @@ export function schemaToTree(schema: JSONSchema, name = '', parentRequired: stri
   delete node.schema.required;
   delete node.schema.$defs;
   delete node.schema.definitions;
-  delete node.schema.not;
   // Strip type — it's stored on node.type and restored in treeToSchema.
   // For nullable arrays, preserve the union in node.schema.type so treeToSchema
   // can emit the correct ["type", "null"] array.
@@ -118,11 +117,15 @@ export function schemaToTree(schema: JSONSchema, name = '', parentRequired: stri
     }
   }
 
-  // `not` keyword → composition node with one variant child
-  if (schema.not && typeof schema.not === 'object') {
+  // `not` keyword → composition node with one variant child.
+  // Only extract `not` into compositionKeyword/variants if no other composition
+  // keyword was already extracted (first-wins logic). Otherwise leave it in
+  // node.schema so it round-trips via the spread in treeToSchema.
+  if (schema.not && typeof schema.not === 'object' && !node.compositionKeyword) {
     node.compositionKeyword = 'not';
     const child = schemaToTree(schema.not as JSONSchema, 'not');
     node.variants = [...(node.variants || []), child];
+    delete node.schema.not;
   }
 
   // Object with properties → children

@@ -871,9 +871,9 @@ describe('Bug fix: add-property targets typeless nodes with existing children', 
     expect(addPropBlock).not.toBeNull();
     // It should reference .children to check for object-like nodes
     expect(addPropBlock![0]).toContain('.children');
-    // It should NOT use only `selected.type === 'object'` without also checking children
-    // (i.e., the condition should be broader than just type === 'object')
-    expect(addPropBlock![0]).toMatch(/children.*length|hasChildren/);
+    // It should check `children != null` (without requiring length > 0)
+    // so that empty-property objects ({ properties: {} }) are also recognized
+    expect(addPropBlock![0]).toMatch(/children\s*!=\s*null/);
   });
 });
 
@@ -911,5 +911,125 @@ describe('Bug fix: keyboard expand/collapse works on composition-only nodes', ()
     expect(arrowRightMatch![0]).toContain('_hasChildren');
     // It should NOT contain node.children?.length in the ArrowRight condition
     expect(arrowRightMatch![0]).not.toContain('node.children?.length');
+  });
+});
+
+// ─── Bug: `not` overwrites earlier extracted composition keyword ──────────
+
+describe('Bug fix: not keyword respects first-wins composition extraction', () => {
+  it('round-trips schema with oneOf and not', () => {
+    const schema = {
+      type: 'object',
+      oneOf: [
+        { properties: { a: { type: 'string' } } },
+        { properties: { b: { type: 'number' } } },
+      ],
+      not: { required: ['forbidden'] },
+    };
+    const tree = schemaToTree(schema);
+    const output = treeToSchema(tree);
+    expect(output.oneOf).toHaveLength(2);
+    expect(output.not).toEqual({ required: ['forbidden'] });
+  });
+
+  it('round-trips schema with anyOf and not', () => {
+    const schema = {
+      type: 'object',
+      anyOf: [
+        { type: 'string' },
+        { type: 'number' },
+      ],
+      not: { type: 'boolean' },
+    };
+    const tree = schemaToTree(schema);
+    // anyOf should win as compositionKeyword since it's in the loop
+    expect(tree.compositionKeyword).toBe('anyOf');
+    const output = treeToSchema(tree);
+    expect(output.anyOf).toHaveLength(2);
+    expect(output.not).toEqual({ type: 'boolean' });
+  });
+
+  it('round-trips schema with only not (no oneOf/anyOf/allOf)', () => {
+    const schema = {
+      type: 'object',
+      not: { properties: { secret: { type: 'string' } } },
+    };
+    const tree = schemaToTree(schema);
+    expect(tree.compositionKeyword).toBe('not');
+    const output = treeToSchema(tree);
+    expect(output.not).toEqual({ properties: { secret: { type: 'string' } } });
+  });
+
+  it('allOf + not round-trips correctly (allOf wins extraction)', () => {
+    const schema = {
+      type: 'object',
+      allOf: [
+        { properties: { base: { type: 'string' } } },
+      ],
+      not: { required: ['excluded'] },
+    };
+    const tree = schemaToTree(schema);
+    expect(tree.compositionKeyword).toBe('allOf');
+    const output = treeToSchema(tree);
+    expect(output.allOf).toHaveLength(1);
+    expect(output.not).toEqual({ required: ['excluded'] });
+  });
+});
+
+// ─── Bug: + Property misses empty typeless objects ────────────────────────
+
+describe('Bug fix: add-property targets empty typeless object nodes', () => {
+  it('recognizes empty typeless object as add-property target', () => {
+    const schema = { properties: {} };
+    const tree = schemaToTree(schema);
+    expect(tree.type).toBe('');
+    expect(tree.children).toBeDefined();
+    expect(tree.children).toHaveLength(0);
+
+    // The condition in edit-mode should recognize this as object-like
+    const isObjectLike = tree.type === 'object' ||
+      tree.children != null;
+    expect(isObjectLike).toBe(true);
+  });
+
+  it('add-property to empty typeless object adds child to correct node', () => {
+    const schema = { properties: {} };
+    const tree = schemaToTree(schema);
+
+    // Simulate the fixed condition
+    const selected = tree;
+    const isObjectLike = selected.type === 'object' || selected.children != null;
+    expect(isObjectLike).toBe(true);
+
+    // Add a new property
+    if (!selected.children) selected.children = [];
+    selected.children.push({
+      id: 'test-empty-obj',
+      name: 'newProperty',
+      type: 'string',
+      required: false,
+      schema: {},
+    });
+
+    const output = treeToSchema(tree);
+    expect(output.properties).toBeDefined();
+    expect(output.properties!.newProperty).toEqual({ type: 'string' });
+  });
+
+  it('edit-mode.ts uses children != null without requiring length > 0', async () => {
+    const fsModule = 'node:fs', urlModule = 'node:url';
+    const fs: any = await import(/* @vite-ignore */ fsModule);
+    const url: any = await import(/* @vite-ignore */ urlModule);
+    const editModePath = url.fileURLToPath(new URL('./modes/edit-mode.ts', import.meta.url));
+    const source = fs.readFileSync(editModePath, 'utf-8');
+    const addPropBlock = source.match(/_handleAddProperty\(\)\s*\{[\s\S]*?\n  \}/);
+    expect(addPropBlock).not.toBeNull();
+    // The fix: check `children != null` without requiring `.length > 0`
+    // It should NOT have `children.length > 0` as the sole children check
+    // (it's ok to check children != null alone, or children != null without length > 0)
+    const conditionLine = addPropBlock![0].match(/isObjectLike\s*=[\s\S]*?;/);
+    expect(conditionLine).not.toBeNull();
+    // Must not require length > 0 for the children check
+    expect(conditionLine![0]).not.toMatch(/children\s*!=\s*null\s*&&\s*selected\.children\.length\s*>\s*0/);
   });
 });
