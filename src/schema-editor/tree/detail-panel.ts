@@ -41,6 +41,7 @@ export class SchemaDetailPanel extends LitElement {
   @property({ type: Object }) node: SchemaNode | null = null;
   @property({ type: Array }) breadcrumb: string[] = [];
   @property({ type: Array }) defsNames: string[] = [];
+  @property({ type: String }) defsPrefix = '$defs';
   @property({ type: Boolean }) isRoot = false;
 
   private _dispatchChange(field: string, value: any) {
@@ -57,6 +58,16 @@ export class SchemaDetailPanel extends LitElement {
 
   private _dispatchDuplicate() {
     this.dispatchEvent(new CustomEvent('node-duplicate', { bubbles: true, composed: true }));
+  }
+
+  private _renderActions() {
+    if (this.isRoot) return nothing;
+    return html`
+      <div class="actions">
+        <button class="btn btn-danger" @click=${this._dispatchDelete}>Delete Property</button>
+        <button class="btn" @click=${this._dispatchDuplicate}>Duplicate</button>
+      </div>
+    `;
   }
 
   private _renderTypeEditor() {
@@ -100,7 +111,8 @@ export class SchemaDetailPanel extends LitElement {
           <div class="breadcrumb">${this.breadcrumb.join(' → ')}</div>
           <h3>Reference: ${node.name}</h3>
         </div>
-        <schema-ref-editor .ref=${node.ref} .defsNames=${this.defsNames} @ref-change=${(e: CustomEvent) => this._dispatchChange('$ref', e.detail.ref)}></schema-ref-editor>
+        <schema-ref-editor .ref=${node.ref} .defsNames=${this.defsNames} .defsPrefix=${this.defsPrefix} @ref-change=${(e: CustomEvent) => this._dispatchChange('$ref', e.detail.ref)}></schema-ref-editor>
+        ${this._renderActions()}
       `;
     }
 
@@ -112,6 +124,7 @@ export class SchemaDetailPanel extends LitElement {
           <h3>${node.compositionKeyword}: ${node.name}</h3>
         </div>
         <schema-composition-editor .keyword=${node.compositionKeyword} .variants=${node.children || []}></schema-composition-editor>
+        ${this._renderActions()}
       `;
     }
 
@@ -123,6 +136,7 @@ export class SchemaDetailPanel extends LitElement {
           <h3>Conditional: ${node.name}</h3>
         </div>
         <schema-conditional-editor .schema=${schema}></schema-conditional-editor>
+        ${this._renderActions()}
       `;
     }
 
@@ -168,12 +182,7 @@ export class SchemaDetailPanel extends LitElement {
 
       ${this._renderTypeEditor()}
 
-      ${!this.isRoot ? html`
-        <div class="actions">
-          <button class="btn btn-danger" @click=${this._dispatchDelete}>Delete Property</button>
-          <button class="btn" @click=${this._dispatchDuplicate}>Duplicate</button>
-        </div>
-      ` : ''}
+      ${this._renderActions()}
     `;
   }
 }

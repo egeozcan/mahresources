@@ -46,6 +46,14 @@ export function detectDraft(schema: JSONSchema): string | null {
   return null;
 }
 
+/** Returns the correct definitions key based on the $schema URI. */
+export function getDefsPrefix(schemaUri: string | undefined): string {
+  if (schemaUri && typeof schemaUri === 'string' && schemaUri.includes('draft-04')) {
+    return 'definitions';
+  }
+  return '$defs';
+}
+
 // ─── Schema → Tree ───────────────────────────────────────────────────────────
 
 export function schemaToTree(schema: JSONSchema, name = '', parentRequired: string[] = []): SchemaNode {

@@ -1,7 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { sharedStyles } from '../styles';
-import { schemaToTree, treeToSchema, detectDraft } from '../schema-tree-model';
+import { schemaToTree, treeToSchema, detectDraft, getDefsPrefix } from '../schema-tree-model';
 import type { SchemaNode } from '../schema-tree-model';
 import type { JSONSchema } from '../schema-core';
 import '../tree/tree-panel';
@@ -187,7 +187,14 @@ export class SchemaEditMode extends LitElement {
     const [parent, index] = parentAndIndex;
     const original = parent.children![index];
     const clone = JSON.parse(JSON.stringify(original));
-    clone.name = original.name + '_copy';
+    // Deduplicate clone name among siblings
+    let cloneName = original.name + '_copy';
+    const siblingNames = new Set(parent.children!.map(c => c.name));
+    let counter = 1;
+    while (siblingNames.has(cloneName)) {
+      cloneName = `${original.name}_copy${counter++}`;
+    }
+    clone.name = cloneName;
     clone.id = `node-dup-${Date.now()}`;
     // Regenerate IDs for all children
     const reId = (n: SchemaNode) => { n.id = `node-dup-${Date.now()}-${Math.random()}`; (n.children || []).forEach(reId); };
@@ -372,10 +379,11 @@ export class SchemaEditMode extends LitElement {
           ref: node.ref,
         };
         defsNode.children!.push(defNode);
-        // Replace node with $ref
+        // Replace node with $ref (use correct prefix based on draft version)
+        const defsPrefix = getDefsPrefix(this._root?.schema.$schema as string | undefined);
         node.type = '';
         node.schema = {};
-        node.ref = `#/$defs/${defName}`;
+        node.ref = `#/${defsPrefix}/${defName}`;
         node.children = undefined;
         node.compositionKeyword = undefined;
         break;
@@ -443,6 +451,7 @@ export class SchemaEditMode extends LitElement {
           .node=${selected}
           .breadcrumb=${breadcrumb}
           .defsNames=${this._getDefsNames()}
+          .defsPrefix=${getDefsPrefix(this._root?.schema.$schema as string | undefined)}
           .isRoot=${isRoot}
           @node-change=${this._handleNodeChange}
           @node-delete=${this._handleNodeDelete}
