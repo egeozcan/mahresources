@@ -144,7 +144,8 @@ export class SchemaEditMode extends LitElement {
         for (const key of ['minLength', 'maxLength', 'pattern', 'format', 'minimum', 'maximum',
           'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'minItems', 'maxItems',
           'uniqueItems', 'additionalProperties', 'minProperties', 'maxProperties',
-          'items', 'enum', 'prefixItems', 'contains', 'patternProperties']) {
+          'items', 'enum', 'prefixItems', 'contains', 'patternProperties',
+          'const', 'default']) {
           delete selected.schema[key];
         }
         // Update nullable type array if present (keep "null" but swap the base type)
@@ -361,16 +362,21 @@ export class SchemaEditMode extends LitElement {
         const originalType = node.type;
         if (originalType) typeSchema.type = originalType;
         const variantName = node.schema.title || 'variant1';
-        // Capture children before overwriting — they belong to the first variant
+        // Capture children, ref, variants, and compositionKeyword before overwriting
+        // — they all belong to the first variant
         const originalChildren = node.children ? [...node.children] : undefined;
+        const originalRef = node.ref;
+        const originalVariants = node.variants;
+        const originalComposition = node.compositionKeyword;
         // Set up the node as a composition node, keeping metadata on the wrapper
         // Property children move into the first variant; variants go in `node.variants`
         node.compositionKeyword = keyword;
         node.schema = metadata;
         node.type = '';
         node.children = undefined;
+        node.ref = undefined;
         node.variants = [
-          { id: `node-variant-${Date.now()}-0`, name: variantName, type: originalType || '', required: false, schema: typeSchema, children: originalChildren },
+          { id: `node-variant-${Date.now()}-0`, name: variantName, type: originalType || '', required: false, schema: typeSchema, children: originalChildren, ref: originalRef, variants: originalVariants, compositionKeyword: originalComposition },
           { id: `node-variant-${Date.now()}-1`, name: 'variant2', type: 'string', required: false, schema: {} },
         ];
         // Clean type from first variant's schema (it's stored in node.type)

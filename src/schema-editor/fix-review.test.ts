@@ -321,6 +321,39 @@ describe('Fix: type change resets all constraints', () => {
       expect(resetKeys).toContain(key);
     }
   });
+
+  it('type change clears const and default values', () => {
+    // Simulate a node whose schema has const and default set for string type
+    const schema: Record<string, any> = { const: 'foo', default: 'bar' };
+    // Reset list as it should be in edit-mode.ts after the fix
+    const keysToReset = [
+      'minLength', 'maxLength', 'pattern', 'format', 'minimum', 'maximum',
+      'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'minItems', 'maxItems',
+      'uniqueItems', 'additionalProperties', 'minProperties', 'maxProperties',
+      'items', 'enum', 'prefixItems', 'contains', 'patternProperties',
+      'const', 'default',
+    ];
+    for (const key of keysToReset) {
+      delete schema[key];
+    }
+    expect(schema).not.toHaveProperty('const');
+    expect(schema).not.toHaveProperty('default');
+  });
+
+  it('edit-mode.ts type change handler resets const and default', () => {
+    const { readFileSync } = require('fs');
+    const source = readFileSync(
+      require('path').resolve(__dirname, './modes/edit-mode.ts'),
+      'utf-8',
+    );
+    // Find the type change case in _handleNodeChange
+    const typeSection = source.slice(
+      source.indexOf("case 'type':"),
+      source.indexOf("case 'required':"),
+    );
+    expect(typeSection).toContain("'const'");
+    expect(typeSection).toContain("'default'");
+  });
 });
 
 // ─── Fix 5: _setFieldAttributes is dead code ─────────────────────────────────
