@@ -105,11 +105,13 @@ export class SchemaDetailPanel extends LitElement {
         </div>
       </div>
 
-      ${!this.isRoot ? html`
-        <div class="flags">
+      <div class="flags">
+        ${!this.isRoot ? html`
           <label><input type="checkbox" ?checked=${node.required} @change=${(e: Event) => this._dispatchChange('required', (e.target as HTMLInputElement).checked)}> Required</label>
-        </div>
-      ` : ''}
+        ` : ''}
+        <label><input type="checkbox" ?checked=${schema.readOnly} @change=${(e: Event) => this._dispatchChange('readOnly', (e.target as HTMLInputElement).checked)}> Read Only</label>
+        <label><input type="checkbox" ?checked=${schema.writeOnly} @change=${(e: Event) => this._dispatchChange('writeOnly', (e.target as HTMLInputElement).checked)}> Write Only</label>
+      </div>
     `;
   }
 

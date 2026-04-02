@@ -659,11 +659,13 @@ ${n?`Expression: "`+n+`"
         </div>
       </div>
 
-      ${this.isRoot?``:z`
-        <div class="flags">
+      <div class="flags">
+        ${this.isRoot?``:z`
           <label><input type="checkbox" ?checked=${e.required} @change=${e=>this._dispatchChange(`required`,e.target.checked)}> Required</label>
-        </div>
-      `}
+        `}
+        <label><input type="checkbox" ?checked=${t.readOnly} @change=${e=>this._dispatchChange(`readOnly`,e.target.checked)}> Read Only</label>
+        <label><input type="checkbox" ?checked=${t.writeOnly} @change=${e=>this._dispatchChange(`writeOnly`,e.target.checked)}> Write Only</label>
+      </div>
     `}_renderTypeEditor(){if(!this.node)return V;let e=this.node.schema;if(e.enum)return z`<schema-enum-editor .values=${e.enum} .valueType=${this.node.type} @enum-change=${e=>this._dispatchChange(`enum`,e.detail.values)}></schema-enum-editor>`;switch(this.node.type){case`string`:return z`<schema-string-editor .schema=${e} @constraint-change=${e=>this._dispatchChange(e.detail.field,e.detail.value)}></schema-string-editor>`;case`number`:case`integer`:return z`<schema-number-editor .schema=${e} .integerOnly=${this.node.type===`integer`} @constraint-change=${e=>this._dispatchChange(e.detail.field,e.detail.value)}></schema-number-editor>`;case`boolean`:return z`<schema-boolean-editor .schema=${e} @constraint-change=${e=>this._dispatchChange(e.detail.field,e.detail.value)}></schema-boolean-editor>`;case`object`:return z`<schema-object-editor .schema=${e} @constraint-change=${e=>this._dispatchChange(e.detail.field,e.detail.value)}></schema-object-editor>`;case`array`:return z`<schema-array-editor .schema=${e} @constraint-change=${e=>this._dispatchChange(e.detail.field,e.detail.value)}></schema-array-editor>`;default:return V}}render(){if(!this.node)return z`<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#9ca3af;">Select a node from the tree</div>`;let e=this.node,t=e.schema;return e.ref?z`
         ${this._renderCommonFields()}
         <schema-ref-editor .ref=${e.ref} .defsNames=${this.defsNames} .defsPrefix=${this.defsPrefix} @ref-change=${e=>this._dispatchChange(`$ref`,e.detail.ref)}></schema-ref-editor>
