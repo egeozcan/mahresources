@@ -137,7 +137,7 @@ export class SchemaTreePanel extends LitElement {
       e.preventDefault();
       this._selectNode(node.id);
     }
-    if (e.key === 'ArrowRight' && node.children?.length) {
+    if (e.key === 'ArrowRight' && this._hasChildren(node)) {
       e.preventDefault();
       this._expanded.add(node.id);
       this.requestUpdate();

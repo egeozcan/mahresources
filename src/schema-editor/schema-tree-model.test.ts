@@ -876,3 +876,40 @@ describe('Bug fix: add-property targets typeless nodes with existing children', 
     expect(addPropBlock![0]).toMatch(/children.*length|hasChildren/);
   });
 });
+
+// ─── Bug: Keyboard expansion missed variants ────────────────────────────────
+
+describe('Bug fix: keyboard expand/collapse works on composition-only nodes', () => {
+  it('composition-only node has variants but no children', () => {
+    const schema = {
+      oneOf: [
+        { type: 'string', title: 'Option A' },
+        { type: 'number', title: 'Option B' },
+      ],
+    };
+    const tree = schemaToTree(schema);
+    // This node has variants but no property children
+    expect(tree.variants).toHaveLength(2);
+    expect(tree.children).toBeUndefined();
+  });
+
+  it('tree-panel ArrowRight handler uses _hasChildren (checks both children and variants)', async () => {
+    // Verify the source code uses _hasChildren in the ArrowRight handler,
+    // not just node.children?.length
+    const fsModule = 'node:fs', urlModule = 'node:url';
+    const fs: any = await import(/* @vite-ignore */ fsModule);
+    const url: any = await import(/* @vite-ignore */ urlModule);
+    const treePanelPath = url.fileURLToPath(new URL('./tree/tree-panel.ts', import.meta.url));
+    const source = fs.readFileSync(treePanelPath, 'utf-8');
+
+    // Find the ArrowRight handler block
+    const arrowRightMatch = source.match(/ArrowRight[\s\S]*?this\._expanded\.add/);
+    expect(arrowRightMatch).not.toBeNull();
+
+    // It should use _hasChildren (which checks both children and variants)
+    // rather than directly checking node.children?.length
+    expect(arrowRightMatch![0]).toContain('_hasChildren');
+    // It should NOT contain node.children?.length in the ArrowRight condition
+    expect(arrowRightMatch![0]).not.toContain('node.children?.length');
+  });
+});
