@@ -482,9 +482,11 @@ export class SchemaEditMode extends LitElement {
         break;
       }
       case 'add-if-then-else':
-        node.schema.if = { properties: {} };
-        node.schema.then = { properties: {} };
-        node.schema.else = { properties: {} };
+        if (!node.schema.if) {
+          node.schema.if = { properties: {} };
+          node.schema.then = { properties: {} };
+          node.schema.else = { properties: {} };
+        }
         break;
       case 'convert-to-ref': {
         if (!this._root) break;
