@@ -51,15 +51,26 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema): JSONSchem
           const baseType = baseProps[propKey].type;
           const extType = extProps[propKey].type;
           const numericTypes = new Set(['number', 'integer']);
+          const mergedProp = { ...baseProps[propKey], ...extProps[propKey] };
+          // Resolve type conflicts
           if (baseType && extType && baseType !== extType) {
-            // Type conflict — merge to compatible type
-            const resolvedType = (numericTypes.has(baseType) && numericTypes.has(extType))
-              ? 'number' // integer + number = number
-              : 'string'; // incompatible types fall back to string (safe for search)
-            merged.properties[propKey] = { ...baseProps[propKey], ...extProps[propKey], type: resolvedType };
-          } else {
-            merged.properties[propKey] = { ...baseProps[propKey], ...extProps[propKey] };
+            mergedProp.type = (numericTypes.has(baseType) && numericTypes.has(extType))
+              ? 'number'
+              : 'string';
           }
+          // Union enum values from both branches instead of overwriting
+          const baseEnum = baseProps[propKey].enum;
+          const extEnum = extProps[propKey].enum;
+          if (baseEnum && extEnum) {
+            const combined = [...baseEnum];
+            for (const v of extEnum) {
+              if (!combined.some((existing: any) => existing === v && typeof existing === typeof v)) {
+                combined.push(v);
+              }
+            }
+            mergedProp.enum = combined;
+          }
+          merged.properties[propKey] = mergedProp;
         } else {
           merged.properties[propKey] = extProps[propKey];
         }
@@ -146,9 +157,10 @@ export function evaluateCondition(conditionSchema: JSONSchema | null | undefined
   // Top-level enum — data itself must be in the list
   if (conditionSchema.enum && !conditionSchema.enum.includes(data)) return false;
 
-  // Top-level type check (only when there are no properties, to avoid
-  // misinterpreting { type: "object", properties: {...} })
-  if (conditionSchema.type && !conditionSchema.properties) {
+  // Top-level type check — always validate, including when properties exist.
+  // A condition like { type: "object", properties: { x: { const: "a" } } }
+  // should fail if data is a string, not silently pass into the properties loop.
+  if (conditionSchema.type) {
     const actualType = inferType(data);
     const expected = conditionSchema.type;
     if (typeof expected === 'string') {
@@ -164,10 +176,17 @@ export function evaluateCondition(conditionSchema: JSONSchema | null | undefined
   // Top-level numeric constraints
   if (conditionSchema.minimum !== undefined && (typeof data !== 'number' || data < conditionSchema.minimum)) return false;
   if (conditionSchema.maximum !== undefined && (typeof data !== 'number' || data > conditionSchema.maximum)) return false;
+  if (conditionSchema.exclusiveMinimum !== undefined && (typeof data !== 'number' || data <= conditionSchema.exclusiveMinimum)) return false;
+  if (conditionSchema.exclusiveMaximum !== undefined && (typeof data !== 'number' || data >= conditionSchema.exclusiveMaximum)) return false;
 
   // Top-level string constraints
   if (conditionSchema.minLength !== undefined && (typeof data !== 'string' || data.length < conditionSchema.minLength)) return false;
   if (conditionSchema.maxLength !== undefined && (typeof data !== 'string' || data.length > conditionSchema.maxLength)) return false;
+  if (conditionSchema.pattern) {
+    if (typeof data === 'string') {
+      try { if (!new RegExp(conditionSchema.pattern).test(data)) return false; } catch { /* invalid regex — skip */ }
+    }
+  }
 
   // Top-level array constraints
   if (conditionSchema.minItems !== undefined && (!Array.isArray(data) || data.length < conditionSchema.minItems)) return false;
