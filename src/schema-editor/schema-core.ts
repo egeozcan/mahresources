@@ -325,6 +325,21 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
     }
   }
 
+  // Resolve allOf composition so we score against the merged schema.
+  // This handles the common pattern of allOf: [{ $ref: "..." }, { properties: { type: { const: "..." } } }]
+  if (schema.allOf && Array.isArray(schema.allOf)) {
+    let merged: JSONSchema = { ...schema };
+    delete merged.allOf;
+    for (const sub of schema.allOf) {
+      const resolved = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
+      if (resolved) {
+        const siblings = sub.$ref ? (() => { const s = {...sub}; delete s.$ref; return s; })() : {};
+        merged = mergeSchemas(merged, sub.$ref ? mergeSchemas(resolved, siblings) : resolved);
+      }
+    }
+    schema = merged;
+  }
+
   if (schema.const !== undefined) return schema.const === data ? 100 : 0;
 
   const dataType = inferType(data);

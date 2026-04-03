@@ -494,6 +494,40 @@ describe('scoreSchemaMatch', () => {
     const root = { $defs: { name: { type: 'string' } } };
     expect(scoreSchemaMatch({ $ref: '#/$defs/name' }, 'hello', root)).toBe(10);
   });
+
+  // Bug 2: scoreSchemaMatch must resolve allOf-wrapped variant schemas before scoring
+  it('scores allOf-wrapped variant with discriminator correctly', () => {
+    const root = {
+      $defs: { base: { type: 'object', properties: { name: { type: 'string' } } } },
+    };
+    const variant = {
+      allOf: [
+        { $ref: '#/$defs/base' },
+        { properties: { type: { const: 'email' }, address: { type: 'string' } } },
+      ],
+    };
+    const emailData = { name: 'test', type: 'email', address: 'a@b.com' };
+    const phoneData = { name: 'test', type: 'phone', number: '555' };
+
+    // emailData should score high (const match on type='email')
+    expect(scoreSchemaMatch(variant, emailData, root)).toBeGreaterThan(10);
+    // phoneData should score 0 (const mismatch on type)
+    expect(scoreSchemaMatch(variant, phoneData, root)).toBe(0);
+  });
+
+  it('scores allOf-wrapped variant without $ref', () => {
+    const variant = {
+      allOf: [
+        { type: 'object', properties: { name: { type: 'string' } } },
+        { properties: { kind: { const: 'book' } }, required: ['kind'] },
+      ],
+    };
+    const bookData = { name: 'My Book', kind: 'book' };
+    const movieData = { name: 'My Movie', kind: 'movie' };
+
+    expect(scoreSchemaMatch(variant, bookData, {})).toBeGreaterThan(10);
+    expect(scoreSchemaMatch(variant, movieData, {})).toBe(0);
+  });
 });
 
 // ─── Bug 1 (P1): Invalid MetaSchema shows empty box ──────────────────────────
