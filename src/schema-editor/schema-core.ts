@@ -42,7 +42,28 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema): JSONSchem
   const merged: JSONSchema = { ...base };
   for (const key in extension) {
     if (key === 'properties') {
-      merged.properties = { ...(base.properties || {}), ...extension.properties };
+      const baseProps = base.properties || {};
+      const extProps = extension.properties || {};
+      merged.properties = { ...baseProps };
+      for (const propKey in extProps) {
+        if (baseProps[propKey] && extProps[propKey]) {
+          // Both sides declare the same property — check for type conflicts
+          const baseType = baseProps[propKey].type;
+          const extType = extProps[propKey].type;
+          const numericTypes = new Set(['number', 'integer']);
+          if (baseType && extType && baseType !== extType) {
+            // Type conflict — merge to compatible type
+            const resolvedType = (numericTypes.has(baseType) && numericTypes.has(extType))
+              ? 'number' // integer + number = number
+              : 'string'; // incompatible types fall back to string (safe for search)
+            merged.properties[propKey] = { ...baseProps[propKey], ...extProps[propKey], type: resolvedType };
+          } else {
+            merged.properties[propKey] = { ...baseProps[propKey], ...extProps[propKey] };
+          }
+        } else {
+          merged.properties[propKey] = extProps[propKey];
+        }
+      }
     } else if (key === 'required') {
       merged.required = [...new Set([...(base.required || []), ...(extension.required || [])])];
     } else if (!['allOf', 'anyOf', 'oneOf', '$ref'].includes(key)) {
@@ -211,6 +232,10 @@ export function evaluateCondition(conditionSchema: JSONSchema | null | undefined
       if (propSchema.pattern && typeof value === 'string') {
         try { if (!new RegExp(propSchema.pattern).test(value)) return false; } catch { /* invalid regex — skip */ }
       }
+
+      // minItems/maxItems for arrays
+      if (propSchema.minItems !== undefined && (!Array.isArray(value) || value.length < propSchema.minItems)) return false;
+      if (propSchema.maxItems !== undefined && (!Array.isArray(value) || value.length > propSchema.maxItems)) return false;
     }
   }
 
@@ -250,7 +275,8 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
     const matchCount = dataKeys.filter(k => schemaKeys.includes(k)).length;
     let score = matchCount + 10;
 
-    // Boost/penalize based on const/enum discriminator matches
+    // Boost/penalize based on const/enum discriminator matches,
+    // recursing into nested objects for deep discriminators.
     for (const [key, propSchema] of Object.entries(schema.properties)) {
       const ps = propSchema as Record<string, any>;
       const val = (data as Record<string, any>)[key];
@@ -266,6 +292,13 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
       if (ps.enum && Array.isArray(ps.enum)) {
         if (ps.enum.includes(val)) score += 20;
         else return 0; // Value not in allowed enum — cannot match
+      }
+
+      // Recurse into nested objects for deep discriminators
+      if (ps.properties && typeof val === 'object' && val !== null && !Array.isArray(val)) {
+        const nestedScore = scoreSchemaMatch(ps, val, rootSchema);
+        if (nestedScore === 0) return 0; // Nested discriminator mismatch
+        score += nestedScore - 10; // Subtract base score to avoid double-counting
       }
     }
 
