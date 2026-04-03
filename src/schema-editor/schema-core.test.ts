@@ -794,6 +794,40 @@ describe('scoreSchemaMatch', () => {
     // version=1 + mode=fast -> sibling mismatch -> 0
     expect(scoreSchemaMatch(schema, { config: { version: 1, mode: 'fast' } }, {})).toBe(0);
   });
+
+  // Bug: sibling constraints beyond `properties` ignored in scoring
+  it('penalizes missing required fields on property-level sibling without properties', () => {
+    const schema = {
+      type: 'object' as const,
+      properties: {
+        detail: {
+          required: ['role'],
+          anyOf: [
+            { properties: { kind: { const: 'a' } } },
+            { properties: { kind: { const: 'b' } } },
+          ],
+        },
+      },
+    };
+    // Has role + matching kind -> good score
+    const withRole = { detail: { role: 'x', kind: 'b' } };
+    // Missing role + matching kind -> lower score (penalized)
+    const withoutRole = { detail: { kind: 'b' } };
+
+    const scoreWith = scoreSchemaMatch(schema, withRole, {});
+    const scoreWithout = scoreSchemaMatch(schema, withoutRole, {});
+    expect(scoreWith).toBeGreaterThan(scoreWithout);
+  });
+
+  it('scores required without properties at root level', () => {
+    const schema = { type: 'object' as const, required: ['name'] };
+    const withName = { name: 'Alice' };
+    const withoutName = { age: 30 };
+
+    const scoreWith = scoreSchemaMatch(schema, withName, {});
+    const scoreWithout = scoreSchemaMatch(schema, withoutName, {});
+    expect(scoreWith).toBeGreaterThan(scoreWithout);
+  });
 });
 
 // ─── Bug 1 (P1): Invalid MetaSchema shows empty box ──────────────────────────

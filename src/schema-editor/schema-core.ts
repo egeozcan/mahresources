@@ -468,7 +468,10 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
             const siblingSchema: JSONSchema = { ...resolvedProp };
             delete siblingSchema[kw];
 
-            if (siblingSchema.properties) {
+            // Check if sibling has any meaningful constraints (not just metadata)
+            const metadataOnly = ['title', 'description', 'examples', 'deprecated', 'readOnly', 'writeOnly', 'default', '$comment'];
+            const hasSiblingConstraints = Object.keys(siblingSchema).some(k => !metadataOnly.includes(k));
+            if (hasSiblingConstraints) {
               const siblingScore = scoreSchemaMatch(siblingSchema, val, rootSchema);
               if (siblingScore === 0) return 0; // Sibling constraint mismatch
               score += siblingScore - 10; // Subtract base to avoid double-counting
@@ -505,6 +508,17 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
       }
     }
 
+    return score;
+  }
+
+  // Handle object schemas with required but no properties (e.g., sibling schemas)
+  if (dataType === 'object' && schema.required && Array.isArray(schema.required)) {
+    let score = 10;
+    for (const reqKey of schema.required) {
+      if ((data as Record<string, any>)[reqKey] === undefined) {
+        score -= 5;
+      }
+    }
     return score;
   }
 
