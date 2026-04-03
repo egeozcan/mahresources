@@ -92,24 +92,26 @@ export function stripStaleKeys(data: any, schema: JSONSchema, rootSchema?: JSONS
     }
   }
 
-  // Merge allOf if present
-  if (resolved.allOf && Array.isArray(resolved.allOf)) {
-    let merged: JSONSchema = { ...resolved };
-    delete merged.allOf;
-    for (const sub of resolved.allOf) {
-      let s: JSONSchema;
-      if (sub.$ref && rootSchema) {
-        const refResult = resolveRef(sub.$ref, rootSchema);
-        // Merge resolved $ref with sibling properties on the same allOf member
-        const siblings = { ...sub };
-        delete siblings.$ref;
-        s = refResult ? mergeSchemas(refResult, siblings) : siblings;
-      } else {
-        s = sub;
+  // Merge composition keywords if present
+  for (const keyword of ['allOf', 'oneOf', 'anyOf'] as const) {
+    if (resolved[keyword] && Array.isArray(resolved[keyword])) {
+      let merged: JSONSchema = { ...resolved };
+      delete merged[keyword];
+      for (const sub of resolved[keyword]) {
+        let s: JSONSchema;
+        if (sub.$ref && rootSchema) {
+          const refResult = resolveRef(sub.$ref, rootSchema);
+          const siblings = { ...sub };
+          delete siblings.$ref;
+          s = refResult ? mergeSchemas(refResult, siblings) : siblings;
+        } else {
+          s = sub;
+        }
+        merged = mergeSchemas(merged, s);
       }
-      merged = mergeSchemas(merged, s);
+      resolved = merged;
+      break; // Only process the first composition keyword found
     }
-    resolved = merged;
   }
 
   // Strip keys not in declared properties when additionalProperties is false

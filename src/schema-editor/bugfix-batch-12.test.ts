@@ -158,9 +158,10 @@ describe('Bug 2: getPreviewValue handles composition and ref root schemas', () =
     });
     const result = getPreviewValue(schema);
     const parsed = JSON.parse(result);
-    // getDefaultValue merges base + then branch
+    // getDefaultValue evaluates the condition against base defaults:
+    // kind defaults to '' which doesn't match const 'a', so else branch is chosen
     expect(parsed).toHaveProperty('kind');
-    expect(parsed).toHaveProperty('aField');
+    expect(parsed).toHaveProperty('bField');
   });
 
   // Existing behavior should be preserved

@@ -58,10 +58,11 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema): JSONSchem
               ? 'number'
               : 'string';
           }
-          // Union enum values from both branches instead of overwriting
+          // Reconcile enum values from both branches
           const baseEnum = baseProps[propKey].enum;
           const extEnum = extProps[propKey].enum;
           if (baseEnum && extEnum) {
+            // Both have enums — union the allowed values
             const combined = [...baseEnum];
             for (const v of extEnum) {
               if (!combined.some((existing: any) => existing === v && typeof existing === typeof v)) {
@@ -69,6 +70,10 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema): JSONSchem
               }
             }
             mergedProp.enum = combined;
+          } else if ((baseEnum && !extEnum) || (!baseEnum && extEnum)) {
+            // Only one branch has an enum — the other allows any value.
+            // Drop the enum since the unrestricted branch means any value is valid.
+            delete mergedProp.enum;
           }
           merged.properties[propKey] = mergedProp;
         } else {
@@ -369,7 +374,11 @@ export function getDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): an
     delete baseSchema.if;
     delete baseSchema.then;
     delete baseSchema.else;
-    const merged = mergeSchemas(baseSchema, schema.then || {});
+    // Evaluate the condition against the base defaults to pick the right branch
+    const baseDefault = getDefaultValue(baseSchema, rootSchema);
+    const conditionMet = evaluateCondition(schema.if, baseDefault);
+    const branch = conditionMet ? (schema.then || {}) : (schema.else || {});
+    const merged = mergeSchemas(baseSchema, branch);
     return getDefaultValue(merged, rootSchema);
   }
 
