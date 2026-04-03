@@ -265,8 +265,8 @@ export function evaluateCondition(conditionSchema: JSONSchema | null | undefined
       // Skip absent properties — they match vacuously per JSON Schema spec.
       if (value === undefined) continue;
 
-      // Recurse into nested object properties
-      if (propSchema.properties && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      // Recurse into nested object properties or composition schemas
+      if (propSchema.properties || propSchema.allOf || propSchema.anyOf || propSchema.oneOf) {
         if (!evaluateCondition(propSchema, value)) return false;
         continue;
       }
@@ -325,19 +325,22 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
     }
   }
 
-  // Resolve allOf composition so we score against the merged schema.
-  // This handles the common pattern of allOf: [{ $ref: "..." }, { properties: { type: { const: "..." } } }]
-  if (schema.allOf && Array.isArray(schema.allOf)) {
-    let merged: JSONSchema = { ...schema };
-    delete merged.allOf;
-    for (const sub of schema.allOf) {
-      const resolved = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
-      if (resolved) {
-        const siblings = sub.$ref ? (() => { const s = {...sub}; delete s.$ref; return s; })() : {};
-        merged = mergeSchemas(merged, sub.$ref ? mergeSchemas(resolved, siblings) : resolved);
+  // Resolve composition so we score against the merged schema.
+  // Handles patterns like allOf/anyOf/oneOf: [{ $ref: "..." }, { properties: { type: { const: "..." } } }]
+  for (const keyword of ['allOf', 'oneOf', 'anyOf'] as const) {
+    if (schema[keyword] && Array.isArray(schema[keyword])) {
+      let merged: JSONSchema = { ...schema };
+      delete merged[keyword];
+      for (const sub of schema[keyword]) {
+        const resolved = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
+        if (resolved) {
+          const siblings = sub.$ref ? (() => { const s = {...sub}; delete s.$ref; return s; })() : {};
+          merged = mergeSchemas(merged, sub.$ref ? mergeSchemas(resolved, siblings) : resolved);
+        }
       }
+      schema = merged;
+      break; // Only resolve the first composition keyword found
     }
-    schema = merged;
   }
 
   if (schema.const !== undefined) return schema.const === data ? 100 : 0;
