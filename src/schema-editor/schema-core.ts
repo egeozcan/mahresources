@@ -134,7 +134,12 @@ export function resolveSchema(schema: JSONSchema | null, rootSchema: JSONSchema)
             let resolved = sub;
             if (sub.$ref) {
               const r = resolveRef(sub.$ref, rootSchema);
-              if (r) resolved = { ...r, ...sub, $ref: undefined };
+              if (r) {
+                // Properly merge ref target with sibling keywords
+                const siblings: JSONSchema = { ...sub };
+                delete siblings.$ref;
+                resolved = mergeSchemas(r, siblings);
+              }
             }
             // Branch declares the property but without an enum → unrestricted
             const prop = resolved.properties?.[propKey];
