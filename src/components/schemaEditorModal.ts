@@ -11,6 +11,27 @@ interface AlpineMagics {
   $el: HTMLElement;
 }
 
+/**
+ * Compute the correct preview default value for a given schema JSON string.
+ * Returns a JSON-serialized string suitable for the form preview's `value` attribute.
+ */
+export function getPreviewValue(schemaStr: string): string {
+  try {
+    const schema = JSON.parse(schemaStr);
+    switch (schema.type) {
+      case 'string': return JSON.stringify('');
+      case 'number':
+      case 'integer': return JSON.stringify(0);
+      case 'boolean': return JSON.stringify(false);
+      case 'array': return JSON.stringify([]);
+      case 'object':
+      default: return JSON.stringify({});
+    }
+  } catch {
+    return JSON.stringify({});
+  }
+}
+
 export function schemaEditorModal() {
   return {
     open: false,
@@ -146,6 +167,10 @@ export function schemaEditorModal() {
         this.tab = 'raw';
         (this as unknown as AlpineMagics).$nextTick(() => (e.target as HTMLElement).closest('[role="tablist"]')?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus());
       }
+    },
+
+    getPreviewValue() {
+      return getPreviewValue(this.currentSchema);
     },
 
     getPropertyCount() {

@@ -30,7 +30,7 @@
                     </template>
                     <template x-if="tab === 'preview'">
                         <div role="tabpanel" id="panel-preview" aria-labelledby="tab-preview" class="p-6 overflow-y-auto h-full">
-                            <schema-editor mode="form" :schema="currentSchema" value="{}" name="_preview"></schema-editor>
+                            <schema-editor mode="form" :schema="currentSchema" :value="getPreviewValue()" name="_preview"></schema-editor>
                         </div>
                     </template>
                     <template x-if="tab === 'raw'">
