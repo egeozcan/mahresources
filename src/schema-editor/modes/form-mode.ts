@@ -217,7 +217,7 @@ export class SchemaFormMode extends LitElement {
 
     // Object type
     if (type === 'object') {
-      return this._renderObject(schema, data, onChange, rootSchema, parentPath, parentRequired);
+      return this._renderObject(schema, data, onChange, rootSchema, parentPath, parentRequired, isRequired);
     }
 
     // Array type
@@ -417,7 +417,24 @@ export class SchemaFormMode extends LitElement {
 
   // ─── object ─────────────────────────────────────────────────────────────
 
-  private _renderObject(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema, parentPath?: string, parentRequired?: boolean): TemplateResult {
+  private _renderObject(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema, parentPath?: string, parentRequired?: boolean, isRequired?: boolean): TemplateResult {
+    // For optional nested objects whose data is undefined, show an
+    // "Initialize" button instead of auto-creating {}. This prevents
+    // submitting invalid partial payloads like { address: {} } when the
+    // address schema requires city/state but the parent doesn't require address.
+    // Root-level objects (no parentPath) and required objects always auto-create.
+    const isRoot = !parentPath;
+    if (data === undefined && !isRoot && !isRequired) {
+      return html`
+        <div class="mt-1 flex items-center text-sm text-gray-500 italic">
+          <span>Not set</span>
+          <button type="button"
+            class="ml-2 text-xs text-indigo-600 hover:text-indigo-800 underline"
+            @click=${() => { onChange({}); }}>Initialize</button>
+        </div>
+      `;
+    }
+
     if (typeof data !== 'object' || data === null || Array.isArray(data)) {
       data = {};
       queueMicrotask(() => onChange(data));
