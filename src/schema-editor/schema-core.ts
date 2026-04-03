@@ -185,6 +185,24 @@ export function inferSchema(val: unknown): JSONSchema {
 export function evaluateCondition(conditionSchema: JSONSchema | null | undefined, data: any): boolean {
   if (!conditionSchema) return true;
 
+  // ── Composition keywords (allOf, anyOf, oneOf) ────────────────────────
+  // Resolve these recursively, then continue to check any remaining direct
+  // keywords (properties, required, etc.) on the same condition schema.
+
+  if (conditionSchema.allOf && Array.isArray(conditionSchema.allOf)) {
+    for (const sub of conditionSchema.allOf) {
+      if (!evaluateCondition(sub as JSONSchema, data)) return false;
+    }
+  }
+
+  if (conditionSchema.anyOf && Array.isArray(conditionSchema.anyOf)) {
+    if (!conditionSchema.anyOf.some((sub: JSONSchema) => evaluateCondition(sub, data))) return false;
+  }
+
+  if (conditionSchema.oneOf && Array.isArray(conditionSchema.oneOf)) {
+    if (conditionSchema.oneOf.filter((sub: JSONSchema) => evaluateCondition(sub, data)).length !== 1) return false;
+  }
+
   // ── Top-level keyword checks (constrain the data value itself) ──────────
 
   // Top-level const — data itself must equal the value

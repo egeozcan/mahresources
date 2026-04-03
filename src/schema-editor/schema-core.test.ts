@@ -393,6 +393,69 @@ describe('evaluateCondition', () => {
   it('evaluates minLength on non-string value — fails', () => {
     expect(evaluateCondition({ properties: { name: { minLength: 1 } } }, { name: 42 })).toBe(false);
   });
+
+  // Bug 1: evaluateCondition must handle composition keywords (allOf, anyOf, oneOf)
+  describe('composition keywords in conditions', () => {
+    it('evaluates allOf condition — all sub-conditions must match', () => {
+      const cond = {
+        allOf: [
+          { properties: { x: { const: 'a' } } },
+          { required: ['x'] },
+        ],
+      };
+      expect(evaluateCondition(cond, { x: 'a' })).toBe(true);
+      expect(evaluateCondition(cond, { x: 'b' })).toBe(false); // const mismatch
+      expect(evaluateCondition(cond, {})).toBe(false); // required missing
+    });
+
+    it('evaluates anyOf condition — at least one must match', () => {
+      const cond = {
+        anyOf: [
+          { properties: { x: { const: 'a' } } },
+          { properties: { x: { const: 'b' } } },
+        ],
+      };
+      expect(evaluateCondition(cond, { x: 'a' })).toBe(true);
+      expect(evaluateCondition(cond, { x: 'b' })).toBe(true);
+      expect(evaluateCondition(cond, { x: 'c' })).toBe(false);
+    });
+
+    it('evaluates oneOf condition — exactly one must match', () => {
+      const cond = {
+        oneOf: [
+          { properties: { x: { minimum: 0 } } },
+          { properties: { x: { maximum: 10 } } },
+        ],
+      };
+      // x=5 matches both => oneOf fails (not exactly one)
+      expect(evaluateCondition(cond, { x: 5 })).toBe(false);
+      // x=-1 matches only maximum<=10 => oneOf passes
+      expect(evaluateCondition(cond, { x: -1 })).toBe(true);
+      // x=15 matches only minimum>=0 => oneOf passes
+      expect(evaluateCondition(cond, { x: 15 })).toBe(true);
+    });
+
+    it('evaluates nested composition in condition', () => {
+      const cond = {
+        allOf: [
+          { properties: { addr: { properties: { country: { const: 'US' } } } } },
+        ],
+      };
+      expect(evaluateCondition(cond, { addr: { country: 'US' } })).toBe(true);
+      expect(evaluateCondition(cond, { addr: { country: 'UK' } })).toBe(false);
+    });
+
+    it('evaluates composition alongside direct properties', () => {
+      const cond = {
+        allOf: [{ required: ['x'] }],
+        properties: { x: { const: 'a' } },
+      };
+      // allOf requires x present, AND direct properties checks x === 'a'
+      expect(evaluateCondition(cond, { x: 'a' })).toBe(true);
+      expect(evaluateCondition(cond, {})).toBe(false); // allOf fails (required)
+      expect(evaluateCondition(cond, { x: 'b' })).toBe(false); // properties const fails
+    });
+  });
 });
 
 describe('titleCase', () => {
