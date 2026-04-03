@@ -125,10 +125,17 @@ export function evaluateCondition(conditionSchema: JSONSchema | null | undefined
   }
 
   // Check properties constraints
+  // Per JSON Schema spec, property constraints in `if` only apply to properties
+  // that are PRESENT in the data. Absent properties match vacuously — use
+  // `required` to demand their presence.
   if (conditionSchema.properties) {
     for (const key in conditionSchema.properties) {
       const propSchema = conditionSchema.properties[key];
       const value = data?.[key];
+
+      // Skip absent properties — they match vacuously per JSON Schema spec.
+      // Use `required` to demand a property's presence.
+      if (value === undefined) continue;
 
       // const match
       if (propSchema.const !== undefined && value !== propSchema.const) return false;
@@ -142,7 +149,6 @@ export function evaluateCondition(conditionSchema: JSONSchema | null | undefined
         const expectedType = propSchema.type;
         if (typeof expectedType === 'string') {
           if (expectedType !== actualType) {
-            // Allow integer to match number
             if (!(expectedType === 'number' && actualType === 'integer')) return false;
           }
         } else if (Array.isArray(expectedType)) {
@@ -321,10 +327,13 @@ export function flattenSchema(
       }
       // If type is defaulted (no explicit type) and enum exists, infer from enum values
       if (!prop.type && Array.isArray(prop.enum) && prop.enum.length > 0) {
-        const firstVal = prop.enum[0];
-        if (typeof firstVal === 'number') {
-          fieldType = Number.isInteger(firstVal) ? 'integer' : 'number';
-        } else if (typeof firstVal === 'boolean') {
+        // Find the first non-null value to infer type, since null alone isn't searchable
+        const representative = prop.enum.find((v: any) => v !== null) ?? prop.enum[0];
+        if (representative === null) {
+          fieldType = 'null';
+        } else if (typeof representative === 'number') {
+          fieldType = Number.isInteger(representative) ? 'integer' : 'number';
+        } else if (typeof representative === 'boolean') {
           fieldType = 'boolean';
         }
         // string is already the default
