@@ -203,6 +203,7 @@ export function getDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): an
   if (schema.type === 'array') return [];
   if (schema.type === 'boolean') return false;
   if (schema.type === 'number' || schema.type === 'integer') return 0;
+  if (schema.type === 'null') return null;
 
   if (Array.isArray(schema.type)) {
     if (schema.type.includes('string')) return '';
@@ -215,6 +216,15 @@ export function getDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): an
 
   if (schema.oneOf && schema.oneOf.length > 0) return getDefaultValue(schema.oneOf[0], rootSchema);
   if (schema.anyOf && schema.anyOf.length > 0) return getDefaultValue(schema.anyOf[0], rootSchema);
+
+  // Schemas with properties but no explicit type are implicitly objects
+  if (schema.properties) {
+    const obj: any = {};
+    for (const [key, propSchema] of Object.entries(schema.properties)) {
+      obj[key] = getDefaultValue(propSchema as JSONSchema, rootSchema);
+    }
+    return obj;
+  }
 
   return '';
 }

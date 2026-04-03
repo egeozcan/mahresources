@@ -4,6 +4,8 @@
  * the <schema-editor> component and the MetaSchema textarea.
  */
 
+import { getDefaultValue } from '../schema-editor/schema-core';
+
 // Alpine.js magic properties injected at runtime
 interface AlpineMagics {
   $nextTick(callback: () => void): void;
@@ -18,21 +20,8 @@ interface AlpineMagics {
 export function getPreviewValue(schemaStr: string): string {
   try {
     const schema = JSON.parse(schemaStr);
-    let type = schema.type;
-    // Normalize nullable type arrays (e.g. ["string", "null"]) to the base type
-    if (Array.isArray(type)) {
-      type = type.find((t: string) => t !== 'null') || type[0];
-    }
-    switch (type) {
-      case 'string': return JSON.stringify('');
-      case 'number':
-      case 'integer': return JSON.stringify(0);
-      case 'boolean': return JSON.stringify(false);
-      case 'array': return JSON.stringify([]);
-      case 'null': return JSON.stringify(null);
-      case 'object':
-      default: return JSON.stringify({});
-    }
+    const defaultVal = getDefaultValue(schema, schema);
+    return JSON.stringify(defaultVal);
   } catch {
     return JSON.stringify({});
   }

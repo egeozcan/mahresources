@@ -75,17 +75,14 @@ describe('Bug 2: schema preview uses correct default value for non-object schema
     expect(src).toContain('getPreviewValue');
   });
 
-  it('module-level getPreviewValue handles all JSON schema types', () => {
+  it('module-level getPreviewValue delegates to getDefaultValue for full type coverage', () => {
     const src = readSource('../components/schemaEditorModal.ts');
-    // The exported getPreviewValue function should handle all types
+    // The exported getPreviewValue function should delegate to getDefaultValue
+    // which handles all types, composition keywords, and $ref resolution.
     const fnMatch = src.match(/export function getPreviewValue[\s\S]*?\n\}/);
     expect(fnMatch).not.toBeNull();
     const body = fnMatch![0];
-    expect(body).toContain("'string'");
-    expect(body).toContain("'number'");
-    expect(body).toContain("'integer'");
-    expect(body).toContain("'boolean'");
-    expect(body).toContain("'array'");
+    expect(body).toContain('getDefaultValue');
   });
 
   it('template uses getPreviewValue() instead of hardcoded "{}"', () => {
@@ -130,8 +127,10 @@ describe('Bug 2: getPreviewValue returns correct defaults', () => {
     expect(JSON.parse(getPreviewValue('{"type":"array"}'))).toEqual([]);
   });
 
-  it('returns {} when schema has no type (defaults to object)', () => {
-    expect(JSON.parse(getPreviewValue('{"properties":{"x":{"type":"string"}}}'))).toEqual({});
+  it('returns object default when schema has no type but has properties', () => {
+    const result = JSON.parse(getPreviewValue('{"properties":{"x":{"type":"string"}}}'));
+    // getDefaultValue now produces full defaults for implicit object schemas
+    expect(result).toEqual({ x: '' });
   });
 
   it('returns {} for invalid JSON (graceful fallback)', () => {
