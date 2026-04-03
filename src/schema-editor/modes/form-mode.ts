@@ -351,9 +351,29 @@ export class SchemaFormMode extends LitElement {
     delete baseSchema.else;
 
     const conditionMet = evaluateCondition(schema.if, data);
-    const applicable = conditionMet
-      ? mergeSchemas(baseSchema, schema.then || {})
-      : mergeSchemas(baseSchema, schema.else || {});
+    const activeBranch = conditionMet ? (schema.then || {}) : (schema.else || {});
+    const inactiveBranch = conditionMet ? (schema.else || {}) : (schema.then || {});
+    const applicable = mergeSchemas(baseSchema, activeBranch);
+
+    // Strip keys from the inactive branch that don't exist in the base
+    // schema or the active branch.  This prevents stale data from a
+    // previous branch (e.g. "irbApproval" from a `then` branch) from
+    // persisting after the condition changes.
+    if (inactiveBranch.properties && data && typeof data === 'object') {
+      const baseKeys = new Set(Object.keys(baseSchema.properties || {}));
+      const activeKeys = new Set(Object.keys(activeBranch.properties || {}));
+      let cleaned = false;
+      for (const key of Object.keys(inactiveBranch.properties)) {
+        if (!baseKeys.has(key) && !activeKeys.has(key) && key in data) {
+          delete data[key];
+          cleaned = true;
+        }
+      }
+      if (cleaned) {
+        // Propagate the cleanup via onChange after the current render cycle
+        queueMicrotask(() => onChange({ ...data }));
+      }
+    }
 
     return html`<div>${this._renderField(applicable, data, onChange, rootSchema)}</div>`;
   }

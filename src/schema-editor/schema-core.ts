@@ -117,6 +117,41 @@ export function inferSchema(val: unknown): JSONSchema {
 export function evaluateCondition(conditionSchema: JSONSchema | null | undefined, data: any): boolean {
   if (!conditionSchema) return true;
 
+  // ── Top-level keyword checks (constrain the data value itself) ──────────
+
+  // Top-level const — data itself must equal the value
+  if (conditionSchema.const !== undefined && data !== conditionSchema.const) return false;
+
+  // Top-level enum — data itself must be in the list
+  if (conditionSchema.enum && !conditionSchema.enum.includes(data)) return false;
+
+  // Top-level type check (only when there are no properties, to avoid
+  // misinterpreting { type: "object", properties: {...} })
+  if (conditionSchema.type && !conditionSchema.properties) {
+    const actualType = inferType(data);
+    const expected = conditionSchema.type;
+    if (typeof expected === 'string') {
+      if (expected !== actualType) {
+        if (!(expected === 'number' && actualType === 'integer')) return false;
+      }
+    } else if (Array.isArray(expected)) {
+      if (!expected.includes(actualType) &&
+          !(actualType === 'integer' && expected.includes('number'))) return false;
+    }
+  }
+
+  // Top-level numeric constraints
+  if (conditionSchema.minimum !== undefined && (typeof data !== 'number' || data < conditionSchema.minimum)) return false;
+  if (conditionSchema.maximum !== undefined && (typeof data !== 'number' || data > conditionSchema.maximum)) return false;
+
+  // Top-level string constraints
+  if (conditionSchema.minLength !== undefined && (typeof data !== 'string' || data.length < conditionSchema.minLength)) return false;
+  if (conditionSchema.maxLength !== undefined && (typeof data !== 'string' || data.length > conditionSchema.maxLength)) return false;
+
+  // Top-level array constraints
+  if (conditionSchema.minItems !== undefined && (!Array.isArray(data) || data.length < conditionSchema.minItems)) return false;
+  if (conditionSchema.maxItems !== undefined && (!Array.isArray(data) || data.length > conditionSchema.maxItems)) return false;
+
   // Check required — all listed keys must be present and non-undefined
   if (conditionSchema.required && Array.isArray(conditionSchema.required)) {
     for (const key of conditionSchema.required) {
@@ -213,7 +248,37 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
     const dataKeys = Object.keys(data as object);
     const schemaKeys = Object.keys(schema.properties);
     const matchCount = dataKeys.filter(k => schemaKeys.includes(k)).length;
-    return matchCount + 10;
+    let score = matchCount + 10;
+
+    // Boost/penalize based on const/enum discriminator matches
+    for (const [key, propSchema] of Object.entries(schema.properties)) {
+      const ps = propSchema as Record<string, any>;
+      const val = (data as Record<string, any>)[key];
+      if (val === undefined) continue;
+
+      // const match: strong signal for discriminated unions
+      if (ps.const !== undefined) {
+        if (val === ps.const) score += 50;
+        else return 0; // Definite mismatch — this variant cannot match
+      }
+
+      // enum match
+      if (ps.enum && Array.isArray(ps.enum)) {
+        if (ps.enum.includes(val)) score += 20;
+        else return 0; // Value not in allowed enum — cannot match
+      }
+    }
+
+    // Penalize missing required fields
+    if (schema.required && Array.isArray(schema.required)) {
+      for (const reqKey of schema.required) {
+        if ((data as Record<string, any>)[reqKey] === undefined) {
+          score -= 5;
+        }
+      }
+    }
+
+    return score;
   }
 
   return 10;
