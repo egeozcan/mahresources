@@ -21,9 +21,9 @@ export function isLeafSchema(schema: JSONSchema, rootSchema?: JSONSchema): boole
     if (!rootSchema) return false; // cannot resolve without root
     const resolved = resolveRef(schema.$ref, rootSchema);
     if (!resolved) return false;
-    // Merge any sibling properties (e.g. title, description) with resolved
-    const merged: JSONSchema = { ...resolved, ...schema };
-    delete merged.$ref;
+    const siblings: JSONSchema = { ...schema };
+    delete siblings.$ref;
+    const merged = mergeSchemas(resolved, siblings);
     return isLeafSchema(merged, rootSchema);
   }
 
@@ -88,7 +88,9 @@ export function stripStaleKeys(data: any, schema: JSONSchema, rootSchema?: JSONS
   if (schema.$ref && rootSchema) {
     const r = resolveRef(schema.$ref, rootSchema);
     if (r) {
-      resolved = { ...r, ...schema, $ref: undefined };
+      const siblings: JSONSchema = { ...schema };
+      delete siblings.$ref;
+      resolved = mergeSchemas(r, siblings);
     }
   }
 
