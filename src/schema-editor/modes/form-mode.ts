@@ -163,7 +163,15 @@ export class SchemaFormMode extends LitElement {
       let merged: JSONSchema = { ...schema };
       delete merged.allOf;
       for (const sub of schema.allOf) {
-        const resolved = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
+        let resolved: JSONSchema;
+        if (sub.$ref) {
+          const refResult = resolveRef(sub.$ref, rootSchema);
+          const siblings: JSONSchema = { ...sub };
+          delete siblings.$ref;
+          resolved = refResult ? mergeSchemas(refResult, siblings) : siblings;
+        } else {
+          resolved = sub;
+        }
         if (resolved) merged = mergeSchemas(merged, resolved);
       }
       return this._renderField(merged, data, onChange, rootSchema, fieldId, parentPath, describedBy, isRequired, parentRequired);

@@ -299,15 +299,19 @@ export class SchemaSearchMode extends LitElement {
   private _getHiddenInputs(field: SearchField): HiddenInput[] {
     // Enum check FIRST — covers boolean enums too (they use enumValues, not boolValue)
     if (field.enum) {
-      // String enums must be quoted so coercible values like "007", "true", "null"
-      // are preserved as strings. Numeric enums must NOT be quoted.
-      // Escape backslashes and double quotes inside the value before wrapping.
-      const quote = field.type === 'string';
-      return field.enumValues.map(v => ({
-        value: quote
-          ? `${field.path}:EQ:"${String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
-          : `${field.path}:EQ:${v}`,
-      }));
+      // Determine quoting per-value based on the original enum value's type.
+      // String values must be quoted to preserve coercible values like "007".
+      // Numeric, boolean, and null values must NOT be quoted.
+      return field.enumValues.map(v => {
+        // Find the original enum value to check its native type
+        const original = field.enum!.find(ev => String(ev) === v);
+        const isStringTyped = original === undefined || typeof original === 'string';
+        if (isStringTyped) {
+          const escaped = String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          return { value: `${field.path}:EQ:"${escaped}"` };
+        }
+        return { value: `${field.path}:EQ:${v}` };
+      });
     }
 
     // Plain boolean (no enum) — uses boolValue radio state

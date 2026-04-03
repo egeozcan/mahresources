@@ -228,7 +228,15 @@ export function getDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): an
     let merged: JSONSchema = { ...schema };
     delete merged.allOf;
     for (const sub of schema.allOf) {
-      const resolved = sub.$ref ? resolveRef(sub.$ref, rootSchema || schema) : sub;
+      let resolved: JSONSchema;
+      if (sub.$ref) {
+        const refResult = resolveRef(sub.$ref, rootSchema || schema);
+        const siblings: JSONSchema = { ...sub };
+        delete siblings.$ref;
+        resolved = refResult ? mergeSchemas(refResult, siblings) : siblings;
+      } else {
+        resolved = sub;
+      }
       if (resolved) merged = mergeSchemas(merged, resolved);
     }
     return getDefaultValue(merged, rootSchema);
