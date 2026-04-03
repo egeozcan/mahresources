@@ -121,21 +121,26 @@ export function resolveSchema(schema: JSONSchema | null, rootSchema: JSONSchema)
       }
 
       // For oneOf/anyOf (alternatives), drop enum on properties where any
-      // branch didn't declare one — that branch allows any value, so the
-      // enum from other branches is not a universal constraint.
-      // For allOf (intersection), all constraints apply, so enums are kept.
+      // branch DECLARES the property WITHOUT an enum — that branch allows
+      // arbitrary values for that field. Branches that omit the property
+      // entirely (or have additionalProperties: false) are not saying
+      // "any value is fine" — they're saying "this field doesn't exist
+      // in this variant," which doesn't weaken the enum constraint from
+      // branches that do declare it.
       if (keyword !== 'allOf' && merged.properties) {
         for (const [propKey, propSchema] of Object.entries(merged.properties)) {
           if (!(propSchema as JSONSchema).enum) continue;
-          const allBranchesHaveEnum = schema[keyword].every((sub: JSONSchema) => {
+          const anyBranchDeclaresWithoutEnum = schema[keyword].some((sub: JSONSchema) => {
             let resolved = sub;
             if (sub.$ref) {
               const r = resolveRef(sub.$ref, rootSchema);
               if (r) resolved = { ...r, ...sub, $ref: undefined };
             }
-            return resolved.properties?.[propKey]?.enum;
+            // Branch declares the property but without an enum → unrestricted
+            const prop = resolved.properties?.[propKey];
+            return prop && !prop.enum;
           });
-          if (!allBranchesHaveEnum) {
+          if (anyBranchDeclaresWithoutEnum) {
             delete (propSchema as JSONSchema).enum;
           }
         }
