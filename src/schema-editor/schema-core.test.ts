@@ -305,6 +305,21 @@ describe('getDefaultValue', () => {
   it('returns empty object for object type without properties', () => {
     expect(getDefaultValue({ type: 'object' })).toEqual({});
   });
+
+  // Bug 3: getDefaultValue should return first enum value instead of type default
+  it('returns first enum value as default instead of type default', () => {
+    expect(getDefaultValue({ type: 'string', enum: ['active', 'inactive'] })).toBe('active');
+    expect(getDefaultValue({ type: 'integer', enum: [1, 2, 3] })).toBe(1);
+    expect(getDefaultValue({ type: 'boolean', enum: [true] })).toBe(true);
+  });
+
+  it('prefers explicit default over enum[0]', () => {
+    expect(getDefaultValue({ type: 'string', enum: ['a', 'b'], default: 'b' })).toBe('b');
+  });
+
+  it('returns first enum value for string enum without explicit type', () => {
+    expect(getDefaultValue({ enum: ['red', 'green', 'blue'] })).toBe('red');
+  });
 });
 
 describe('evaluateCondition', () => {

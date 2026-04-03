@@ -448,6 +448,9 @@ export function getDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): an
 
   if (schema.default !== undefined) return schema.default;
   if (schema.const !== undefined) return schema.const;
+  if (schema.enum && Array.isArray(schema.enum) && schema.enum.length > 0) {
+    return schema.enum[0];
+  }
   if (schema.type === 'object') {
     if (!schema.properties) return {};
     const obj: any = {};
