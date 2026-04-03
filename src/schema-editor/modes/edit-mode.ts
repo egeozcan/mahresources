@@ -342,6 +342,7 @@ export class SchemaEditMode extends LitElement {
     // should become an object. Clear type-specific constraints that don't apply.
     if (target.type !== 'object' && target.type !== '') {
       target.type = 'object';
+      delete target.schema.type; // Clear any type array (e.g., ["string", "null"])
       for (const key of ['minLength', 'maxLength', 'pattern', 'format',
         'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum',
         'multipleOf', 'minItems', 'maxItems', 'uniqueItems',

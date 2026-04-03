@@ -288,3 +288,61 @@ describe('Bug 2: reject non-object JSON in schema modal and editor', () => {
     });
   });
 });
+
+// ─── Bug: add-property auto-convert misses nullable type arrays ───────────────
+
+describe('Bug: add-property on nullable primitive root clears schema.type array', () => {
+  it('auto-convert sets type to object and removes the stale schema.type array', () => {
+    resetIdCounter();
+    const schema = { type: ['string', 'null'] as any };
+    const tree = schemaToTree(schema);
+    expect(tree.type).toBe('string');
+    expect(tree.schema.type).toEqual(['string', 'null']);
+
+    // Simulate what _handleAddProperty does: set type to 'object'
+    // WITHOUT clearing schema.type — this is the bug state
+    tree.type = 'object';
+    // (intentionally NOT deleting tree.schema.type to demonstrate the bug)
+    tree.children = [{ id: 't1', name: 'prop', type: 'string', required: false, schema: {} }];
+
+    const outputBug = treeToSchema(tree);
+    // Without the fix, schema.type array wins and output is still ["string","null"]
+    expect(outputBug.type).not.toBe('object'); // demonstrates the bug
+  });
+
+  it('after fix: auto-convert deletes schema.type array so object type wins', () => {
+    resetIdCounter();
+    const schema = { type: ['string', 'null'] as any };
+    const tree = schemaToTree(schema);
+    expect(tree.type).toBe('string');
+    expect(tree.schema.type).toEqual(['string', 'null']);
+
+    // Simulate the fixed _handleAddProperty behaviour
+    tree.type = 'object';
+    delete tree.schema.type; // THE FIX
+    tree.children = [{ id: 't1', name: 'prop', type: 'string', required: false, schema: {} }];
+
+    const output = treeToSchema(tree);
+    expect(output.type).toBe('object');
+    expect(output.properties).toHaveProperty('prop');
+  });
+
+  it('auto-convert on nullable integer root also clears schema.type array', () => {
+    resetIdCounter();
+    const schema = { type: ['integer', 'null'] as any, minimum: 0 };
+    const tree = schemaToTree(schema);
+    expect(tree.type).toBe('integer');
+    expect(tree.schema.type).toEqual(['integer', 'null']);
+
+    // Simulate fixed auto-convert
+    tree.type = 'object';
+    delete tree.schema.type;
+    delete tree.schema.minimum;
+    tree.children = [{ id: 't2', name: 'count', type: 'integer', required: false, schema: {} }];
+
+    const output = treeToSchema(tree);
+    expect(output.type).toBe('object');
+    expect(output.properties).toHaveProperty('count');
+    expect(output).not.toHaveProperty('minimum');
+  });
+});
