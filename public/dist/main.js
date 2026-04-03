@@ -826,7 +826,7 @@ ${n?`Expression: "`+n+`"
             @click=${()=>{let n=e.type.find(e=>e!==`null`),r;r=n===`object`?{}:n===`array`?[]:n===`boolean`?!1:n===`number`||n===`integer`?0:``,t(r)}}>Initialize</button>
         `:V}
       </div>
-    `}_renderObject(e,t,n,r,i,a){(typeof t!=`object`||!t||Array.isArray(t))&&(t={},queueMicrotask(()=>n(t)));let o=a===void 0?!0:a,s=new Set(e.required||[]),c=new Set(e.properties?Object.keys(e.properties):[]),l=Object.keys(t).filter(e=>!c.has(e));return z`
+    `}_renderObject(e,t,n,r,i,a){if((typeof t!=`object`||!t||Array.isArray(t))&&(t={},queueMicrotask(()=>n(t))),e.properties){let r=!1;for(let[n,i]of Object.entries(e.properties)){let e=i;t[n]===void 0&&e.type===`boolean`&&(t={...t,[n]:e.default===void 0?!1:e.default},r=!0)}r&&queueMicrotask(()=>n(t))}let o=a===void 0?!0:a,s=new Set(e.required||[]),c=new Set(e.properties?Object.keys(e.properties):[]),l=Object.keys(t).filter(e=>!c.has(e));return z`
       <div class="space-y-4 border-l-2 border-gray-200 pl-4 my-2">
         ${e.title?z`<h4 class="font-bold text-gray-900 text-sm">${e.title}</h4>`:V}
         ${e.description?z`<p class="text-xs text-gray-500 mb-2">${e.description}</p>`:V}
