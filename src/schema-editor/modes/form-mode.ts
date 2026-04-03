@@ -715,13 +715,14 @@ export class SchemaFormMode extends LitElement {
 
   private _renderPrimitive(schema: JSONSchema, type: string, data: any, onChange: (val: any) => void, fieldId?: string, describedBy?: string | null, isRequired?: boolean): TemplateResult {
     if (type === 'boolean') {
+      // Never apply HTML required to checkboxes — a required checkbox is only
+      // valid when checked, but a boolean field always has a value (true/false).
+      // JSON Schema "required" means "must be present", not "must be true".
       return html`
         <input type="checkbox"
           id=${fieldId || nothing}
           class="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded mt-1"
           aria-describedby=${describedBy || nothing}
-          ?required=${!!isRequired}
-          aria-required=${isRequired ? 'true' : nothing}
           .checked=${!!data}
           @change=${(e: Event) => onChange((e.target as HTMLInputElement).checked)}>
       `;
