@@ -213,8 +213,14 @@ export class SchemaSearchMode extends LitElement {
       let enumValues = existing ? existing.enumValues : [];
       // For enum fields with a single existing value, route it into enumValues
       // so the checkbox/select UI shows it as checked.
-      if (field.enum && existing && enumValues.length === 0 && existing.value) {
-        enumValues = [existing.value];
+      // _findExistingValue routes boolean typeof values into boolValue (not value),
+      // so for enum fields we must also check boolValue when value is empty.
+      if (field.enum && existing && enumValues.length === 0) {
+        if (existing.value != null && existing.value !== '') {
+          enumValues = [String(existing.value)];
+        } else if (existing.boolValue !== 'any') {
+          enumValues = [existing.boolValue];
+        }
       }
 
       return {
