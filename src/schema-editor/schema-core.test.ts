@@ -163,6 +163,61 @@ describe('flattenSchema', () => {
     expect(fields[0].path).toBe('name');
   });
 
+  // Bug 2: infer type from enum values when schema omits explicit type
+  it('infers integer type from numeric enum without explicit type', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        code: { enum: [100, 200, 404] },
+      },
+    };
+    const fields = flattenSchema(schema);
+    expect(fields[0].type).toBe('integer');
+  });
+
+  it('infers number type from float enum without explicit type', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        ratio: { enum: [0.5, 1.5, 2.5] },
+      },
+    };
+    const fields = flattenSchema(schema);
+    expect(fields[0].type).toBe('number');
+  });
+
+  it('infers boolean type from boolean enum without explicit type', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        flag: { enum: [true, false] },
+      },
+    };
+    const fields = flattenSchema(schema);
+    expect(fields[0].type).toBe('boolean');
+  });
+
+  it('keeps string default for string enum without explicit type', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        status: { enum: ['active', 'inactive'] },
+      },
+    };
+    const fields = flattenSchema(schema);
+    expect(fields[0].type).toBe('string');
+  });
+
+  it('preserves explicit type even when enum values differ', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        code: { type: 'string', enum: [100, 200, 404] },
+      },
+    };
+    const fields = flattenSchema(schema);
+    expect(fields[0].type).toBe('string');
+  });
 });
 
 describe('intersectFields', () => {

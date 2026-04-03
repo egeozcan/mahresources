@@ -319,6 +319,16 @@ export function flattenSchema(
       if (Array.isArray(fieldType)) {
         fieldType = fieldType.find((t: string) => t !== 'null') || 'string';
       }
+      // If type is defaulted (no explicit type) and enum exists, infer from enum values
+      if (!prop.type && Array.isArray(prop.enum) && prop.enum.length > 0) {
+        const firstVal = prop.enum[0];
+        if (typeof firstVal === 'number') {
+          fieldType = Number.isInteger(firstVal) ? 'integer' : 'number';
+        } else if (typeof firstVal === 'boolean') {
+          fieldType = 'boolean';
+        }
+        // string is already the default
+      }
       fields.push({
         path,
         label,
