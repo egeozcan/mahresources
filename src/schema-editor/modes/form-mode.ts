@@ -484,7 +484,7 @@ export class SchemaFormMode extends LitElement {
           // on its children. childParentRequired propagates to nested objects
           // so their required constraints kick in when data exists.
           const hasData = data[key] !== undefined && data[key] !== null;
-          const childParentRequired = isRequired || (requiredFields.has(key) && hasData);
+          const childParentRequired = isRequired || hasData;
 
           return html`
             <div>

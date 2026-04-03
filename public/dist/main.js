@@ -838,7 +838,7 @@ ${n?`Expression: "`+n+`"
         ${e.title?z`<h4 class="font-bold text-gray-900 text-sm">${e.title}</h4>`:V}
         ${e.description?z`<p class="text-xs text-gray-500 mb-2">${e.description}</p>`:V}
 
-        ${e.properties?Object.entries(e.properties).map(([e,a])=>{let o=i?`${i}.${e}`:e,l=Wu(`field`,o),u=c.has(e)&&s,d=t[e]!==void 0&&t[e]!==null,f=u||c.has(e)&&d;return z`
+        ${e.properties?Object.entries(e.properties).map(([e,a])=>{let o=i?`${i}.${e}`:e,l=Wu(`field`,o),u=c.has(e)&&s,d=t[e]!==void 0&&t[e]!==null,f=u||d;return z`
             <div>
               <label class="block text-sm font-medium text-gray-700" for=${l}>
                 ${a.title||e}${u?z`<span class="text-red-500 ml-1" aria-hidden="true">*</span>`:V}
