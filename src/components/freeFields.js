@@ -131,7 +131,7 @@ export function generateParamNameForMeta({ name, value, operation } = {}) {
   const realValue = getJSONValue(value);
   const valueStr =
     typeof realValue === "string"
-      ? `"${realValue}"`
+      ? `"${realValue.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
       : realValue == null
       ? "null"
       : realValue.toString();
