@@ -213,6 +213,8 @@ Schema-driven filter fields appear alongside the existing free-form metadata fil
 
 **Mixed-type enums with identical string representations** — Enum schemas that contain values of different JSON types which stringify the same way (e.g., `enum: [1, "1"]` or `enum: [null, "null"]`) cannot be distinguished in the search UI. HTML form controls carry string values only, so selecting "1" from such an enum will always submit the non-string variant (numeric `1`). Avoid mixing types that collide when converted to strings; use a single consistent type per enum instead.
 
+**Conditional branch data cleanup with `additionalProperties: true`** — When a schema uses `if/then/else` and the user switches between branches, data from the inactive branch is automatically removed for fields declared exclusively in that branch. For nested objects under shared keys, stale nested keys are only cleaned up when the nested schema sets `additionalProperties: false`. If both branches share an object property whose schema allows additional properties (the default), keys introduced by one branch will persist after switching to the other. To ensure clean branch transitions for nested objects, set `additionalProperties: false` on nested object schemas that differ between branches.
+
 ## Free-Form Metadata
 
 Groups without a Category (or with a Category that has no schema) display a free-form metadata editor. This editor renders dynamic key-value fields where you can add, remove, and edit metadata entries. Each field has a key name and a value. The editor handles type coercion for numeric, boolean, null, and date values automatically.
