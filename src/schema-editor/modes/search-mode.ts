@@ -292,10 +292,11 @@ export class SchemaSearchMode extends LitElement {
     if (field.enum) {
       // String enums must be quoted so coercible values like "007", "true", "null"
       // are preserved as strings. Numeric enums must NOT be quoted.
+      // Escape backslashes and double quotes inside the value before wrapping.
       const quote = field.type === 'string';
       return field.enumValues.map(v => ({
         value: quote
-          ? `${field.path}:EQ:"${v}"`
+          ? `${field.path}:EQ:"${String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
           : `${field.path}:EQ:${v}`,
       }));
     }
@@ -303,9 +304,10 @@ export class SchemaSearchMode extends LitElement {
     if (!field.value && field.value !== '0') return [];
 
     // For string-typed schema fields, always quote the value so the backend
-    // treats it as a string.
+    // treats it as a string. Escape backslashes and double quotes first.
     if (field.type === 'string') {
-      return [{ value: `${field.path}:${field.operator}:"${field.value}"` }];
+      const escaped = field.value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      return [{ value: `${field.path}:${field.operator}:"${escaped}"` }];
     }
 
     return [{ value: generateParamNameForMeta({ name: field.path, value: field.value, operation: field.operator }) }];
@@ -399,9 +401,9 @@ export class SchemaSearchMode extends LitElement {
                  data-key="${fIdx}-h-${hIdx}">
         `)}
 
-        ${field.type === 'boolean' ? this._renderBoolean(field, ariaLabel)
-          : field.enum && field.enum.length <= 6 ? this._renderEnumCheckboxes(field, ariaLabel)
+        ${field.enum && field.enum.length <= 6 ? this._renderEnumCheckboxes(field, ariaLabel)
           : field.enum && field.enum.length > 6 ? this._renderEnumSelect(field, ariaLabel)
+          : field.type === 'boolean' ? this._renderBoolean(field, ariaLabel)
           : this._renderTextInput(field, ariaLabel)}
       </div>
     `;
