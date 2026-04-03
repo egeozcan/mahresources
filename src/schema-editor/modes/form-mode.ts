@@ -355,22 +355,28 @@ export class SchemaFormMode extends LitElement {
     const inactiveBranch = conditionMet ? (schema.else || {}) : (schema.then || {});
     const applicable = mergeSchemas(baseSchema, activeBranch);
 
-    // Strip keys from the inactive branch that don't exist in the base
-    // schema or the active branch.  This prevents stale data from a
-    // previous branch (e.g. "irbApproval" from a `then` branch) from
-    // persisting after the condition changes.
-    if (inactiveBranch.properties && data && typeof data === 'object') {
-      const baseKeys = new Set(Object.keys(baseSchema.properties || {}));
-      const activeKeys = new Set(Object.keys(activeBranch.properties || {}));
-      let cleaned = false;
-      for (const key of Object.keys(inactiveBranch.properties)) {
-        if (!baseKeys.has(key) && !activeKeys.has(key) && key in data) {
-          delete data[key];
-          cleaned = true;
+    // Strip stale keys from the inactive branch. First remove top-level
+    // keys exclusive to the inactive branch, then recursively strip nested
+    // stale keys under shared keys using stripStaleKeys on the merged schema.
+    if (data && typeof data === 'object') {
+      const before = JSON.stringify(data);
+
+      // Remove top-level keys exclusive to the inactive branch
+      if (inactiveBranch.properties) {
+        const baseKeys = new Set(Object.keys(baseSchema.properties || {}));
+        const activeKeys = new Set(Object.keys(activeBranch.properties || {}));
+        for (const key of Object.keys(inactiveBranch.properties)) {
+          if (!baseKeys.has(key) && !activeKeys.has(key) && key in data) {
+            delete data[key];
+          }
         }
       }
-      if (cleaned) {
-        // Propagate the cleanup via onChange after the current render cycle
+
+      // Recursively strip nested stale keys under shared keys
+      // (e.g., both branches have "spec" but with different nested properties)
+      stripStaleKeys(data, applicable, rootSchema);
+
+      if (JSON.stringify(data) !== before) {
         queueMicrotask(() => onChange({ ...data }));
       }
     }

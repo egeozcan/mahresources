@@ -801,7 +801,7 @@ ${n?`Expression: "`+n+`"
           ${this._renderField(e.anyOf[i],t,e=>{n(e)},r)}
         </div>
       </div>
-    `}_renderConditional(e,t,n,r){let i={...e};delete i.if,delete i.then,delete i.else;let a=Vc(e.if,t),o=a?e.then||{}:e.else||{},s=a?e.else||{}:e.then||{},c=L(i,o);if(s.properties&&t&&typeof t==`object`){let e=new Set(Object.keys(i.properties||{})),r=new Set(Object.keys(o.properties||{})),a=!1;for(let n of Object.keys(s.properties))!e.has(n)&&!r.has(n)&&n in t&&(delete t[n],a=!0);a&&queueMicrotask(()=>n({...t}))}return V`<div>${this._renderField(c,t,n,r)}</div>`}_renderEnum(e,t,n,r,i,a){let o=e.enum.some(e=>e===t),s=t==null;return V`
+    `}_renderConditional(e,t,n,r){let i={...e};delete i.if,delete i.then,delete i.else;let a=Vc(e.if,t),o=a?e.then||{}:e.else||{},s=a?e.else||{}:e.then||{},c=L(i,o);if(t&&typeof t==`object`){let e=JSON.stringify(t);if(s.properties){let e=new Set(Object.keys(i.properties||{})),n=new Set(Object.keys(o.properties||{}));for(let r of Object.keys(s.properties))!e.has(r)&&!n.has(r)&&r in t&&delete t[r]}Uu(t,c,r),JSON.stringify(t)!==e&&queueMicrotask(()=>n({...t}))}return V`<div>${this._renderField(c,t,n,r)}</div>`}_renderEnum(e,t,n,r,i,a){let o=e.enum.some(e=>e===t),s=t==null;return V`
       <select class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md mt-1"
         id=${r||U}
         aria-label=${e.title?`Select ${e.title}`:`Select value`}
