@@ -479,6 +479,12 @@ export class SchemaFormMode extends LitElement {
           // ancestor chain is required. If the parent object itself is optional,
           // nested required fields should not block form submission.
           const isRequired = requiredFields.has(key) && effectiveParentRequired;
+          // Once an optional object has data (user clicked Initialize or is
+          // editing existing data), its own required array should be enforced
+          // on its children. childParentRequired propagates to nested objects
+          // so their required constraints kick in when data exists.
+          const hasData = data[key] !== undefined && data[key] !== null;
+          const childParentRequired = isRequired || (requiredFields.has(key) && hasData);
 
           return html`
             <div>
@@ -491,7 +497,7 @@ export class SchemaFormMode extends LitElement {
               <div>
                 ${this._renderFieldWithAttributes(propSchema, data[key], (val: any) => {
                   onChange({ ...data, [key]: val });
-                }, rootSchema, fieldId, propSchema.description ? `${fieldId}-desc` : null, isRequired, fullPath)}
+                }, rootSchema, fieldId, propSchema.description ? `${fieldId}-desc` : null, isRequired, fullPath, childParentRequired)}
               </div>
             </div>
           `;
@@ -517,14 +523,16 @@ export class SchemaFormMode extends LitElement {
     describedBy: string | null,
     required: boolean,
     parentPath?: string,
+    childParentRequired?: boolean,
   ): TemplateResult {
     if (isLeafSchema(schema, rootSchema)) {
       // Leaf fields: thread attributes directly into the input renderer
       return this._renderField(schema, data, onChange, rootSchema, fieldId, parentPath, describedBy, required) as TemplateResult;
     }
     // Container fields: render without id/required/aria-describedby on any child input.
-    // Pass parentRequired so nested objects know whether this ancestor is required.
-    return this._renderField(schema, data, onChange, rootSchema, undefined, parentPath, undefined, undefined, required) as TemplateResult;
+    // Pass childParentRequired (which accounts for data existence on optional objects)
+    // so nested objects enforce their required constraints when data has been provided.
+    return this._renderField(schema, data, onChange, rootSchema, undefined, parentPath, undefined, undefined, childParentRequired !== undefined ? childParentRequired : required) as TemplateResult;
   }
 
   // ─── additional properties ──────────────────────────────────────────────
