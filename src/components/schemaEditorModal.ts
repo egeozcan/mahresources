@@ -18,12 +18,18 @@ interface AlpineMagics {
 export function getPreviewValue(schemaStr: string): string {
   try {
     const schema = JSON.parse(schemaStr);
-    switch (schema.type) {
+    let type = schema.type;
+    // Normalize nullable type arrays (e.g. ["string", "null"]) to the base type
+    if (Array.isArray(type)) {
+      type = type.find((t: string) => t !== 'null') || type[0];
+    }
+    switch (type) {
       case 'string': return JSON.stringify('');
       case 'number':
       case 'integer': return JSON.stringify(0);
       case 'boolean': return JSON.stringify(false);
       case 'array': return JSON.stringify([]);
+      case 'null': return JSON.stringify(null);
       case 'object':
       default: return JSON.stringify({});
     }
