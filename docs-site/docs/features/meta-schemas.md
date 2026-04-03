@@ -209,6 +209,10 @@ When multiple categories are selected, only fields common to all selected catego
 
 Schema-driven filter fields appear alongside the existing free-form metadata filters. The free-form filters are automatically adjusted to exclude fields already covered by the schema filters.
 
+### Known Limitations
+
+**Mixed-type enums with identical string representations** — Enum schemas that contain values of different JSON types which stringify the same way (e.g., `enum: [1, "1"]` or `enum: [null, "null"]`) cannot be distinguished in the search UI. HTML form controls carry string values only, so selecting "1" from such an enum will always submit the non-string variant (numeric `1`). Avoid mixing types that collide when converted to strings; use a single consistent type per enum instead.
+
 ## Free-Form Metadata
 
 Groups without a Category (or with a Category that has no schema) display a free-form metadata editor. This editor renders dynamic key-value fields where you can add, remove, and edit metadata entries. Each field has a key name and a value. The editor handles type coercion for numeric, boolean, null, and date values automatically.

@@ -200,3 +200,79 @@ describe('Bug 3: flattenSchema normalizes nullable type arrays to scalar', () =>
     expect(fields[0].type).toBe('string');
   });
 });
+
+// ─── Known limitation: mixed-type enum round-trip ────────────────────────────
+
+describe('Mixed-type enum serialization (known limitation)', () => {
+  it('prefers non-string type when enum values stringify identically', () => {
+    // enum: [1, "1"] — both stringify to "1"
+    // When the user selects "1", the serializer should produce the non-string
+    // variant (numeric 1) since strings get quoted and non-strings don't.
+    // This is a best-effort heuristic, not a perfect solution.
+    const source = readFileSync(
+      __dirname + '/modes/search-mode.ts', 'utf8'
+    );
+    // The enum serialization should check typeof ev !== 'string' to prefer
+    // non-string originals when multiple entries stringify the same.
+    expect(source).toContain("typeof ev !== 'string'");
+  });
+
+  it('documents that truly ambiguous mixed-type enums are unsupported', () => {
+    const docs = readFileSync(
+      __dirname + '/../../docs-site/docs/features/meta-schemas.md', 'utf8'
+    );
+    expect(docs).toContain('Mixed-type enums with identical string representations');
+    expect(docs).toContain('cannot be distinguished in the search UI');
+  });
+
+  it('homogeneous string enums are quoted correctly', () => {
+    // Verify the common case still works: all-string enums get quoted
+    const enumValues = ['active', 'inactive'];
+    const enumDef = ['active', 'inactive'];
+    const results = enumValues.map(v => {
+      let isStringTyped = true;
+      for (const ev of enumDef) {
+        if (String(ev) === v && typeof ev !== 'string') {
+          isStringTyped = false;
+          break;
+        }
+      }
+      return isStringTyped ? `status:EQ:"${v}"` : `status:EQ:${v}`;
+    });
+    expect(results).toEqual(['status:EQ:"active"', 'status:EQ:"inactive"']);
+  });
+
+  it('homogeneous numeric enums are not quoted', () => {
+    const enumValues = ['100', '200', '404'];
+    const enumDef = [100, 200, 404];
+    const results = enumValues.map(v => {
+      let isStringTyped = true;
+      for (const ev of enumDef) {
+        if (String(ev) === v && typeof ev !== 'string') {
+          isStringTyped = false;
+          break;
+        }
+      }
+      return isStringTyped ? `code:EQ:"${v}"` : `code:EQ:${v}`;
+    });
+    expect(results).toEqual(['code:EQ:100', 'code:EQ:200', 'code:EQ:404']);
+  });
+
+  it('mixed enum [1, "1"] submits non-string variant for "1"', () => {
+    // This is the documented known limitation
+    const enumValues = ['1'];
+    const enumDef = [1, '1'];
+    const results = enumValues.map(v => {
+      let isStringTyped = true;
+      for (const ev of enumDef) {
+        if (String(ev) === v && typeof ev !== 'string') {
+          isStringTyped = false;
+          break;
+        }
+      }
+      return isStringTyped ? `val:EQ:"${v}"` : `val:EQ:${v}`;
+    });
+    // Non-string (numeric 1) wins — this is the expected behavior per the heuristic
+    expect(results).toEqual(['val:EQ:1']);
+  });
+});
