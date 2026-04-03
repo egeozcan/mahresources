@@ -1038,6 +1038,14 @@ ${n?`Expression: "`+n+`"
             <option value=${String(t)} ?selected=${e.enumValues.includes(String(t))}>${t}</option>
           `)}
         </select>
+        ${e.enumValues.length>0?H`
+          <button type="button"
+                  class="text-xs text-stone-400 hover:text-amber-700 mt-1 underline"
+                  aria-label="Clear ${e.label} selection"
+                  @click=${()=>{e.enumValues=[],this.requestUpdate()}}>
+            Clear selection
+          </button>
+        `:W}
       </fieldset>
     `}_renderTextInput(e,t){let n=e.type===`number`||e.type===`integer`?`number`:`text`,r=e.type===`integer`?`1`:`any`,i=`search-${e.path}`,a=Yu(e.operator);return H`
       <div class="w-full">

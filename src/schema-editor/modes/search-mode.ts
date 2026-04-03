@@ -484,6 +484,14 @@ export class SchemaSearchMode extends LitElement {
             <option value=${String(enumVal)} ?selected=${field.enumValues.includes(String(enumVal))}>${enumVal}</option>
           `)}
         </select>
+        ${field.enumValues.length > 0 ? html`
+          <button type="button"
+                  class="text-xs text-stone-400 hover:text-amber-700 mt-1 underline"
+                  aria-label="Clear ${field.label} selection"
+                  @click=${() => { field.enumValues = []; this.requestUpdate(); }}>
+            Clear selection
+          </button>
+        ` : nothing}
       </fieldset>
     `;
   }
