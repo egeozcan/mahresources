@@ -483,6 +483,36 @@ describe('evaluateCondition', () => {
     });
   });
 
+  describe('not keyword in conditions', () => {
+    it('evaluates top-level not condition — data does not match negated schema', () => {
+      const cond = { not: { properties: { x: { const: 'forbidden' } } } };
+      expect(evaluateCondition(cond, { x: 'allowed' })).toBe(true);
+      expect(evaluateCondition(cond, { x: 'forbidden' })).toBe(false);
+    });
+
+    it('evaluates not with required — absent key passes negation', () => {
+      const cond = { not: { required: ['secret'] } };
+      expect(evaluateCondition(cond, {})).toBe(true); // no secret -> not-required passes
+      expect(evaluateCondition(cond, { secret: 'val' })).toBe(false); // has secret -> not-required fails
+    });
+
+    it('evaluates property-level not — property must NOT match sub-schema', () => {
+      const cond = { properties: { x: { not: { type: 'string' } } } };
+      expect(evaluateCondition(cond, { x: 42 })).toBe(true);
+      expect(evaluateCondition(cond, { x: 'hello' })).toBe(false);
+    });
+
+    it('evaluates not combined with other composition keywords', () => {
+      const cond = {
+        allOf: [{ required: ['x'] }],
+        not: { properties: { x: { const: 'bad' } } },
+      };
+      expect(evaluateCondition(cond, { x: 'good' })).toBe(true);
+      expect(evaluateCondition(cond, { x: 'bad' })).toBe(false);
+      expect(evaluateCondition(cond, {})).toBe(false); // required fails
+    });
+  });
+
   describe('$ref resolution in conditions', () => {
     it('resolves top-level $ref in condition', () => {
       const root = { $defs: { isAdult: { properties: { age: { minimum: 18 } } } } };

@@ -216,6 +216,11 @@ export function evaluateCondition(conditionSchema: JSONSchema | null | undefined
     if (conditionSchema.oneOf.filter((sub: JSONSchema) => evaluateCondition(sub, data, rootSchema)).length !== 1) return false;
   }
 
+  if (conditionSchema.not) {
+    // not: the sub-schema must NOT match — if it evaluates true, the condition fails
+    if (evaluateCondition(conditionSchema.not as JSONSchema, data, rootSchema)) return false;
+  }
+
   // ── Top-level keyword checks (constrain the data value itself) ──────────
 
   // Top-level const — data itself must equal the value
@@ -289,7 +294,7 @@ export function evaluateCondition(conditionSchema: JSONSchema | null | undefined
       if (value === undefined) continue;
 
       // Recurse into nested object properties or composition schemas
-      if (propSchema.properties || propSchema.allOf || propSchema.anyOf || propSchema.oneOf) {
+      if (propSchema.properties || propSchema.allOf || propSchema.anyOf || propSchema.oneOf || propSchema.not) {
         if (!evaluateCondition(propSchema, value, rootSchema)) return false;
         continue;
       }
