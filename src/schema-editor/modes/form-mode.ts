@@ -423,14 +423,18 @@ export class SchemaFormMode extends LitElement {
       queueMicrotask(() => onChange(data));
     }
 
-    // Pre-populate undefined boolean properties with false (or the schema default).
+    // Pre-populate undefined REQUIRED boolean properties with false (or the schema default).
     // A checkbox that the user never touches will never fire onChange, so without
     // this the hidden input would submit {} instead of {"active": false}.
+    // Optional booleans stay undefined — only submitted if the user interacts.
     if (schema.properties) {
+      const requiredSet = new Set<string>(schema.required || []);
       let needsUpdate = false;
       for (const [key, propSchema] of Object.entries(schema.properties)) {
         const ps = propSchema as JSONSchema;
-        if (data[key] === undefined && ps.type === 'boolean') {
+        const isBooleanType = ps.type === 'boolean' ||
+          (Array.isArray(ps.type) && ps.type.includes('boolean'));
+        if (data[key] === undefined && isBooleanType && requiredSet.has(key)) {
           data = { ...data, [key]: ps.default !== undefined ? ps.default : false };
           needsUpdate = true;
         }

@@ -284,11 +284,7 @@ export class SchemaSearchMode extends LitElement {
   // ─── Hidden input generation ────────────────────────────────────────────
 
   private _getHiddenInputs(field: SearchField): HiddenInput[] {
-    if (field.type === 'boolean') {
-      if (field.boolValue === 'any') return [];
-      return [{ value: generateParamNameForMeta({ name: field.path, value: field.boolValue, operation: 'EQ' }) }];
-    }
-
+    // Enum check FIRST — covers boolean enums too (they use enumValues, not boolValue)
     if (field.enum) {
       // String enums must be quoted so coercible values like "007", "true", "null"
       // are preserved as strings. Numeric enums must NOT be quoted.
@@ -299,6 +295,12 @@ export class SchemaSearchMode extends LitElement {
           ? `${field.path}:EQ:"${String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
           : `${field.path}:EQ:${v}`,
       }));
+    }
+
+    // Plain boolean (no enum) — uses boolValue radio state
+    if (field.type === 'boolean') {
+      if (field.boolValue === 'any') return [];
+      return [{ value: generateParamNameForMeta({ name: field.path, value: field.boolValue, operation: 'EQ' }) }];
     }
 
     if (!field.value && field.value !== '0') return [];

@@ -256,10 +256,17 @@ export function flattenSchema(
     } else if (prop.type === 'array') {
       continue;
     } else {
+      // Normalize nullable type arrays (e.g. ["string", "null"]) to their
+      // base scalar type so search-mode operators and serialization work.
+      let fieldType = prop.type || 'string';
+      if (Array.isArray(fieldType)) {
+        fieldType = fieldType.find((t: string) => t !== 'null') || 'string';
+      }
+
       fields.push({
         path,
         label,
-        type: prop.type || 'string',
+        type: fieldType,
         enum: Array.isArray(prop.enum) ? prop.enum : null,
       });
     }
