@@ -20,6 +20,8 @@ interface ExistingValue {
   value: string;
   enumValues: string[];
   boolValue: string;
+  /** Original value before coercion — preserves null, false, 0, "" for enum restoration */
+  rawValue?: any;
 }
 
 interface SearchField extends FlatField {
@@ -213,10 +215,13 @@ export class SchemaSearchMode extends LitElement {
       let enumValues = existing ? existing.enumValues : [];
       // For enum fields with a single existing value, route it into enumValues
       // so the checkbox/select UI shows it as checked.
-      // _findExistingValue routes boolean typeof values into boolValue (not value),
-      // so for enum fields we must also check boolValue when value is empty.
+      // _findExistingValue may place the value in .value, .boolValue, or .rawValue
+      // depending on the original type. We check all sources.
       if (field.enum && existing && enumValues.length === 0) {
-        if (existing.value != null && existing.value !== '') {
+        if (existing.rawValue !== undefined) {
+          // rawValue preserves the original value including null, false, 0, ""
+          enumValues = [String(existing.rawValue)];
+        } else if (existing.value != null && existing.value !== '') {
           enumValues = [String(existing.value)];
         } else if (existing.boolValue !== 'any') {
           enumValues = [existing.boolValue];
@@ -276,6 +281,7 @@ export class SchemaSearchMode extends LitElement {
         value: '',
         enumValues: [],
         boolValue: String(m.value),
+        rawValue: m.value,
       };
     }
 
@@ -284,6 +290,7 @@ export class SchemaSearchMode extends LitElement {
       value: m.value != null ? String(m.value) : '',
       enumValues: [],
       boolValue: 'any',
+      rawValue: m.value,
     };
   }
 
