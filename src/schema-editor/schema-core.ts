@@ -425,20 +425,34 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
           resolvedProp = mergeSchemas(r, siblings);
         }
       }
-      // Also resolve allOf/oneOf/anyOf on the property
-      for (const kw of ['allOf', 'oneOf', 'anyOf'] as const) {
-        if (resolvedProp[kw] && Array.isArray(resolvedProp[kw])) {
-          let merged: JSONSchema = { ...resolvedProp };
-          delete merged[kw];
-          for (const sub of resolvedProp[kw]) {
-            const r = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
-            if (r) {
-              const siblings = sub.$ref ? (() => { const s = {...sub}; delete s.$ref; return s; })() : {};
-              merged = mergeSchemas(merged, sub.$ref ? mergeSchemas(r, siblings) : r);
-            }
+
+      // Handle composition on the property schema
+      if (resolvedProp.allOf && Array.isArray(resolvedProp.allOf)) {
+        // allOf: merge all (all constraints apply simultaneously)
+        let merged: JSONSchema = { ...resolvedProp };
+        delete merged.allOf;
+        for (const sub of resolvedProp.allOf) {
+          const r = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
+          if (r) {
+            const siblings = sub.$ref ? (() => { const s = {...sub}; delete s.$ref; return s; })() : {};
+            merged = mergeSchemas(merged, sub.$ref ? mergeSchemas(r, siblings) : r);
           }
-          resolvedProp = merged;
-          break;
+        }
+        resolvedProp = merged;
+      } else if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+        // oneOf/anyOf: score each branch independently, take best
+        for (const kw of ['oneOf', 'anyOf'] as const) {
+          if (resolvedProp[kw] && Array.isArray(resolvedProp[kw])) {
+            let bestBranchScore = -1;
+            for (const sub of resolvedProp[kw]) {
+              const branchScore = scoreSchemaMatch(sub, val, rootSchema);
+              if (branchScore > bestBranchScore) bestBranchScore = branchScore;
+            }
+            if (bestBranchScore === 0) return 0;
+            if (bestBranchScore > 0) score += bestBranchScore - 10;
+            resolvedProp = {}; // Already scored, skip the properties check below
+            break;
+          }
         }
       }
 
