@@ -96,8 +96,11 @@ export function resolveSchema(schema: JSONSchema | null, rootSchema: JSONSchema)
   if (schema.$ref) {
     const resolved = resolveRef(schema.$ref, rootSchema);
     if (resolved) {
-      const merged: JSONSchema = { ...resolved, ...schema };
-      delete merged.$ref;
+      // Use mergeSchemas to properly combine ref target with sibling keywords,
+      // especially properties which need to be merged, not overwritten.
+      const siblings: JSONSchema = { ...schema };
+      delete siblings.$ref;
+      const merged = mergeSchemas(resolved, siblings);
       return resolveSchema(merged, rootSchema);
     }
     return null;

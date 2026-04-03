@@ -146,8 +146,9 @@ export class SchemaFormMode extends LitElement {
     if (schema.$ref) {
       const resolved = resolveRef(schema.$ref, rootSchema);
       if (resolved) {
-        const mergedSchema = { ...resolved, ...schema };
-        delete mergedSchema.$ref;
+        const siblings: JSONSchema = { ...schema };
+        delete siblings.$ref;
+        const mergedSchema = mergeSchemas(resolved, siblings);
         return this._renderField(mergedSchema, data, onChange, rootSchema, fieldId, parentPath, describedBy, isRequired, parentRequired);
       }
       return html`<div class="text-red-500 text-xs">Unresolvable reference: ${schema.$ref}</div>`;
@@ -240,6 +241,10 @@ export class SchemaFormMode extends LitElement {
   // ─── oneOf ──────────────────────────────────────────────────────────────
 
   private _renderOneOf(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema): TemplateResult {
+    // Extract shared sibling properties (declared alongside oneOf on the parent)
+    const sharedProps = schema.properties;
+    const sharedRequired = schema.required;
+
     let activeIndex = 0;
     if (data !== undefined) {
       let maxScore = -1;
@@ -253,17 +258,35 @@ export class SchemaFormMode extends LitElement {
     }
 
     if (data === undefined) {
-      const defaultVal = getDefaultValue(schema.oneOf[activeIndex], rootSchema);
-      // Defer onChange to avoid triggering during render
+      // Merge shared properties with first variant for initial default
+      const merged = sharedProps
+        ? mergeSchemas({ type: 'object', properties: sharedProps, required: sharedRequired }, schema.oneOf[activeIndex])
+        : schema.oneOf[activeIndex];
+      const defaultVal = getDefaultValue(merged, rootSchema);
       queueMicrotask(() => onChange(defaultVal));
     }
 
     const onSelectChange = (e: Event) => {
       const idx = parseInt((e.target as HTMLSelectElement).value, 10);
       const optSchema = schema.oneOf[idx];
-      const newVal = getDefaultValue(optSchema, rootSchema);
-      onChange(newVal);
+      const variantDefault = getDefaultValue(optSchema, rootSchema);
+      // Preserve shared property data when switching variants
+      if (sharedProps && data && typeof data === 'object' && typeof variantDefault === 'object') {
+        const preserved: any = { ...variantDefault };
+        for (const key of Object.keys(sharedProps)) {
+          if (data[key] !== undefined) preserved[key] = data[key];
+        }
+        onChange(preserved);
+      } else {
+        onChange(variantDefault);
+      }
     };
+
+    // Merge shared properties into the active variant for rendering
+    const activeVariant = schema.oneOf[activeIndex];
+    const renderSchema = sharedProps
+      ? mergeSchemas({ type: schema.type || 'object', properties: sharedProps, required: sharedRequired }, activeVariant)
+      : activeVariant;
 
     return html`
       <div class="space-y-2 border-l-4 border-indigo-100 pl-4 py-2 my-2">
@@ -282,7 +305,7 @@ export class SchemaFormMode extends LitElement {
           })}
         </select>
         <div>
-          ${this._renderField(schema.oneOf[activeIndex], data, (val: any) => {
+          ${this._renderField(renderSchema, data, (val: any) => {
             onChange(val);
           }, rootSchema)}
         </div>
@@ -293,6 +316,9 @@ export class SchemaFormMode extends LitElement {
   // ─── anyOf ──────────────────────────────────────────────────────────────
 
   private _renderAnyOf(schema: JSONSchema, data: any, onChange: (val: any) => void, rootSchema: JSONSchema): TemplateResult {
+    const sharedProps = schema.properties;
+    const sharedRequired = schema.required;
+
     let activeIndex = 0;
     if (data !== undefined) {
       let maxScore = -1;
@@ -306,16 +332,32 @@ export class SchemaFormMode extends LitElement {
     }
 
     if (data === undefined) {
-      const defaultVal = getDefaultValue(schema.anyOf[activeIndex], rootSchema);
+      const merged = sharedProps
+        ? mergeSchemas({ type: 'object', properties: sharedProps, required: sharedRequired }, schema.anyOf[activeIndex])
+        : schema.anyOf[activeIndex];
+      const defaultVal = getDefaultValue(merged, rootSchema);
       queueMicrotask(() => onChange(defaultVal));
     }
 
     const onSelectChange = (e: Event) => {
       const idx = parseInt((e.target as HTMLSelectElement).value, 10);
       const optSchema = schema.anyOf[idx];
-      const newVal = getDefaultValue(optSchema, rootSchema);
-      onChange(newVal);
+      const variantDefault = getDefaultValue(optSchema, rootSchema);
+      if (sharedProps && data && typeof data === 'object' && typeof variantDefault === 'object') {
+        const preserved: any = { ...variantDefault };
+        for (const key of Object.keys(sharedProps)) {
+          if (data[key] !== undefined) preserved[key] = data[key];
+        }
+        onChange(preserved);
+      } else {
+        onChange(variantDefault);
+      }
     };
+
+    const activeVariant = schema.anyOf[activeIndex];
+    const renderSchema = sharedProps
+      ? mergeSchemas({ type: schema.type || 'object', properties: sharedProps, required: sharedRequired }, activeVariant)
+      : activeVariant;
 
     return html`
       <div class="space-y-2 border-l-4 border-green-100 pl-4 py-2 my-2">
@@ -334,7 +376,7 @@ export class SchemaFormMode extends LitElement {
           })}
         </select>
         <div>
-          ${this._renderField(schema.anyOf[activeIndex], data, (val: any) => {
+          ${this._renderField(renderSchema, data, (val: any) => {
             onChange(val);
           }, rootSchema)}
         </div>
