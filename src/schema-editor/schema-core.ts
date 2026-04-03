@@ -58,11 +58,10 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema): JSONSchem
               ? 'number'
               : 'string';
           }
-          // Reconcile enum values from both branches
+          // Union enum values when both sides declare them
           const baseEnum = baseProps[propKey].enum;
           const extEnum = extProps[propKey].enum;
           if (baseEnum && extEnum) {
-            // Both have enums — union the allowed values
             const combined = [...baseEnum];
             for (const v of extEnum) {
               if (!combined.some((existing: any) => existing === v && typeof existing === typeof v)) {
@@ -70,11 +69,11 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema): JSONSchem
               }
             }
             mergedProp.enum = combined;
-          } else if ((baseEnum && !extEnum) || (!baseEnum && extEnum)) {
-            // Only one branch has an enum — the other allows any value.
-            // Drop the enum since the unrestricted branch means any value is valid.
-            delete mergedProp.enum;
           }
+          // When only one side has enum, the spread already put whichever
+          // exists on mergedProp. This is correct for allOf (the constraint
+          // applies). For oneOf/anyOf, resolveSchema handles enum dropping
+          // after merging all branches.
           merged.properties[propKey] = mergedProp;
         } else {
           merged.properties[propKey] = extProps[propKey];
@@ -120,6 +119,28 @@ export function resolveSchema(schema: JSONSchema | null, rootSchema: JSONSchema)
         }
         if (resolved) merged = mergeSchemas(merged, resolved);
       }
+
+      // For oneOf/anyOf (alternatives), drop enum on properties where any
+      // branch didn't declare one — that branch allows any value, so the
+      // enum from other branches is not a universal constraint.
+      // For allOf (intersection), all constraints apply, so enums are kept.
+      if (keyword !== 'allOf' && merged.properties) {
+        for (const [propKey, propSchema] of Object.entries(merged.properties)) {
+          if (!(propSchema as JSONSchema).enum) continue;
+          const allBranchesHaveEnum = schema[keyword].every((sub: JSONSchema) => {
+            let resolved = sub;
+            if (sub.$ref) {
+              const r = resolveRef(sub.$ref, rootSchema);
+              if (r) resolved = { ...r, ...sub, $ref: undefined };
+            }
+            return resolved.properties?.[propKey]?.enum;
+          });
+          if (!allBranchesHaveEnum) {
+            delete (propSchema as JSONSchema).enum;
+          }
+        }
+      }
+
       return resolveSchema(merged, rootSchema);
     }
   }
