@@ -302,10 +302,22 @@ export class SchemaSearchMode extends LitElement {
       // Determine quoting per-value based on the original enum value's type.
       // String values must be quoted to preserve coercible values like "007".
       // Numeric, boolean, and null values must NOT be quoted.
+      // Use index-based lookup to avoid ambiguity between e.g., 1 and "1".
       return field.enumValues.map(v => {
-        // Find the original enum value to check its native type
-        const original = field.enum!.find(ev => String(ev) === v);
-        const isStringTyped = original === undefined || typeof original === 'string';
+        // Match by index: enumValues stores String(enum[i]), so find the
+        // original by matching the stringified form at each index. If multiple
+        // enum entries stringify the same way (e.g., 1 and "1"), prefer the
+        // non-string original since strings get quoted and non-strings don't.
+        let isStringTyped = true;
+        for (const ev of field.enum!) {
+          if (String(ev) === v) {
+            if (typeof ev !== 'string') {
+              isStringTyped = false;
+              break;
+            }
+          }
+        }
+        // If no enum entry matched at all, treat as string (safe default)
         if (isStringTyped) {
           const escaped = String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
           return { value: `${field.path}:EQ:"${escaped}"` };

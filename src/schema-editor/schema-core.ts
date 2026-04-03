@@ -134,8 +134,13 @@ export function evaluateCondition(conditionSchema: JSONSchema | null | undefined
       const value = data?.[key];
 
       // Skip absent properties — they match vacuously per JSON Schema spec.
-      // Use `required` to demand a property's presence.
       if (value === undefined) continue;
+
+      // Recurse into nested object properties
+      if (propSchema.properties && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+        if (!evaluateCondition(propSchema, value)) return false;
+        continue;
+      }
 
       // const match
       if (propSchema.const !== undefined && value !== propSchema.const) return false;
