@@ -320,6 +320,17 @@ describe('getDefaultValue', () => {
   it('returns first enum value for string enum without explicit type', () => {
     expect(getDefaultValue({ enum: ['red', 'green', 'blue'] })).toBe('red');
   });
+
+  it('includes both ref and sibling properties in default (mergeSchemas, not spread)', () => {
+    const schema = {
+      $ref: '#/$defs/base',
+      properties: { extra: { type: 'string' } },
+      $defs: { base: { type: 'object', properties: { name: { type: 'string' } } } },
+    };
+    const result = getDefaultValue(schema, schema);
+    expect(result).toHaveProperty('name');
+    expect(result).toHaveProperty('extra');
+  });
 });
 
 describe('evaluateCondition', () => {
@@ -471,6 +482,74 @@ describe('evaluateCondition', () => {
       expect(evaluateCondition(cond, { x: 'b' })).toBe(false); // properties const fails
     });
   });
+
+  describe('$ref resolution in conditions', () => {
+    it('resolves top-level $ref in condition', () => {
+      const root = { $defs: { isAdult: { properties: { age: { minimum: 18 } } } } };
+      expect(evaluateCondition({ $ref: '#/$defs/isAdult' }, { age: 21 }, root)).toBe(true);
+      expect(evaluateCondition({ $ref: '#/$defs/isAdult' }, { age: 15 }, root)).toBe(false);
+    });
+
+    it('resolves property-level $ref in condition', () => {
+      const root = { $defs: { positive: { minimum: 0 } } };
+      const cond = { properties: { x: { $ref: '#/$defs/positive' } } };
+      expect(evaluateCondition(cond, { x: 5 }, root)).toBe(true);
+      expect(evaluateCondition(cond, { x: -1 }, root)).toBe(false);
+    });
+
+    it('resolves $ref with sibling properties in condition', () => {
+      const root = { $defs: { numCheck: { minimum: 0 } } };
+      const cond = { $ref: '#/$defs/numCheck', properties: { x: { const: 'a' } } };
+      // After merging: { minimum: 0, properties: { x: { const: 'a' } } }
+      // data must satisfy minimum >= 0 AND x === 'a'
+      // But data is an object, not a number — so top-level minimum applies to data itself
+      // Actually the ref points to { minimum: 0 }, sibling has properties
+      // The merged condition is { minimum: 0, properties: { x: { const: 'a' } } }
+      // minimum: 0 applies to data itself (which is an object) — that will fail for non-number
+      // Let's use a more realistic example:
+      const root2 = { $defs: { base: { properties: { name: { minLength: 1 } } } } };
+      const cond2 = { $ref: '#/$defs/base', properties: { role: { const: 'admin' } } };
+      // Merged: { properties: { name: { minLength: 1 }, role: { const: 'admin' } } }
+      expect(evaluateCondition(cond2, { name: 'Alice', role: 'admin' }, root2)).toBe(true);
+      expect(evaluateCondition(cond2, { name: 'Alice', role: 'user' }, root2)).toBe(false);
+      expect(evaluateCondition(cond2, { name: '', role: 'admin' }, root2)).toBe(false);
+    });
+
+    it('resolves $ref inside allOf sub-conditions', () => {
+      const root = {
+        $defs: { hasAge: { properties: { age: { minimum: 0 } } } },
+      };
+      const cond = {
+        allOf: [
+          { $ref: '#/$defs/hasAge' },
+          { properties: { name: { minLength: 1 } } },
+        ],
+      };
+      expect(evaluateCondition(cond, { age: 25, name: 'Alice' }, root)).toBe(true);
+      expect(evaluateCondition(cond, { age: -1, name: 'Alice' }, root)).toBe(false);
+    });
+
+    it('passes rootSchema through to recursive calls for nested composition', () => {
+      const root = {
+        $defs: { activeCheck: { required: ['status'], properties: { status: { const: 'active' } } } },
+      };
+      const cond = {
+        anyOf: [
+          { $ref: '#/$defs/activeCheck' },
+          { required: ['override'], properties: { override: { const: true } } },
+        ],
+      };
+      expect(evaluateCondition(cond, { status: 'active' }, root)).toBe(true);
+      expect(evaluateCondition(cond, { override: true }, root)).toBe(true);
+      expect(evaluateCondition(cond, { status: 'inactive' }, root)).toBe(false);
+    });
+
+    it('without rootSchema, $ref is silently skipped (backward compat)', () => {
+      // When rootSchema is not provided, $ref can't be resolved — should not crash
+      const cond = { $ref: '#/$defs/something' };
+      expect(evaluateCondition(cond, { x: 1 })).toBe(true); // unresolvable, passes vacuously
+    });
+  });
 });
 
 describe('titleCase', () => {
@@ -528,6 +607,21 @@ describe('scoreSchemaMatch', () => {
     expect(scoreSchemaMatch(variant, emailData, root)).toBeGreaterThan(10);
     // phoneData should score 0 (const mismatch on type)
     expect(scoreSchemaMatch(variant, phoneData, root)).toBe(0);
+  });
+
+  it('scores $ref + sibling discriminator correctly (mergeSchemas, not spread)', () => {
+    const root = {
+      $defs: { base: { type: 'object', properties: { name: { type: 'string' } } } },
+    };
+    const variant = { $ref: '#/$defs/base', properties: { type: { const: 'email' } } };
+
+    // With correct merge: properties = { name: { type: 'string' }, type: { const: 'email' } }
+    // Score: 2 (name + type match) + 10 base + 50 const = 62
+    // With plain spread: properties = { type: { const: 'email' } }, `name` is lost
+    // Score: 1 (type match) + 10 base + 50 const = 61
+    const score = scoreSchemaMatch(variant, { name: 'test', type: 'email' }, root);
+    expect(score).toBeGreaterThan(61); // proves `name` was in properties (2 key matches, not 1)
+    expect(scoreSchemaMatch(variant, { name: 'test', type: 'phone' }, root)).toBe(0);
   });
 
   it('scores allOf-wrapped variant without $ref', () => {

@@ -392,7 +392,7 @@ export class SchemaFormMode extends LitElement {
     delete baseSchema.then;
     delete baseSchema.else;
 
-    const conditionMet = evaluateCondition(schema.if, data);
+    const conditionMet = evaluateCondition(schema.if, data, rootSchema);
     const activeBranch = conditionMet ? (schema.then || {}) : (schema.else || {});
     const inactiveBranch = conditionMet ? (schema.else || {}) : (schema.then || {});
     const applicable = mergeSchemas(baseSchema, activeBranch);

@@ -185,8 +185,18 @@ export function inferSchema(val: unknown): JSONSchema {
 
 // ─── Condition evaluation ────────────────────────────────────────────────────
 
-export function evaluateCondition(conditionSchema: JSONSchema | null | undefined, data: any): boolean {
+export function evaluateCondition(conditionSchema: JSONSchema | null | undefined, data: any, rootSchema?: JSONSchema): boolean {
   if (!conditionSchema) return true;
+
+  // ── Resolve $ref before any checks ────────────────────────────────────
+  if (conditionSchema.$ref && rootSchema) {
+    const resolved = resolveRef(conditionSchema.$ref, rootSchema);
+    if (resolved) {
+      const siblings: JSONSchema = { ...conditionSchema };
+      delete siblings.$ref;
+      return evaluateCondition(mergeSchemas(resolved, siblings), data, rootSchema);
+    }
+  }
 
   // ── Composition keywords (allOf, anyOf, oneOf) ────────────────────────
   // Resolve these recursively, then continue to check any remaining direct
@@ -194,16 +204,16 @@ export function evaluateCondition(conditionSchema: JSONSchema | null | undefined
 
   if (conditionSchema.allOf && Array.isArray(conditionSchema.allOf)) {
     for (const sub of conditionSchema.allOf) {
-      if (!evaluateCondition(sub as JSONSchema, data)) return false;
+      if (!evaluateCondition(sub as JSONSchema, data, rootSchema)) return false;
     }
   }
 
   if (conditionSchema.anyOf && Array.isArray(conditionSchema.anyOf)) {
-    if (!conditionSchema.anyOf.some((sub: JSONSchema) => evaluateCondition(sub, data))) return false;
+    if (!conditionSchema.anyOf.some((sub: JSONSchema) => evaluateCondition(sub, data, rootSchema))) return false;
   }
 
   if (conditionSchema.oneOf && Array.isArray(conditionSchema.oneOf)) {
-    if (conditionSchema.oneOf.filter((sub: JSONSchema) => evaluateCondition(sub, data)).length !== 1) return false;
+    if (conditionSchema.oneOf.filter((sub: JSONSchema) => evaluateCondition(sub, data, rootSchema)).length !== 1) return false;
   }
 
   // ── Top-level keyword checks (constrain the data value itself) ──────────
@@ -262,15 +272,25 @@ export function evaluateCondition(conditionSchema: JSONSchema | null | undefined
   // `required` to demand their presence.
   if (conditionSchema.properties) {
     for (const key in conditionSchema.properties) {
-      const propSchema = conditionSchema.properties[key];
+      let propSchema = conditionSchema.properties[key];
       const value = data?.[key];
+
+      // Resolve property-level $ref
+      if (propSchema.$ref && rootSchema) {
+        const resolved = resolveRef(propSchema.$ref, rootSchema);
+        if (resolved) {
+          const siblings: JSONSchema = { ...propSchema };
+          delete siblings.$ref;
+          propSchema = mergeSchemas(resolved, siblings);
+        }
+      }
 
       // Skip absent properties — they match vacuously per JSON Schema spec.
       if (value === undefined) continue;
 
       // Recurse into nested object properties or composition schemas
       if (propSchema.properties || propSchema.allOf || propSchema.anyOf || propSchema.oneOf) {
-        if (!evaluateCondition(propSchema, value)) return false;
+        if (!evaluateCondition(propSchema, value, rootSchema)) return false;
         continue;
       }
 
@@ -324,7 +344,9 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
   if (schema.$ref) {
     const resolved = resolveRef(schema.$ref, rootSchema);
     if (resolved) {
-      schema = { ...resolved, ...schema };
+      const siblings: JSONSchema = { ...schema };
+      delete siblings.$ref;
+      schema = mergeSchemas(resolved, siblings);
     }
   }
 
@@ -417,7 +439,9 @@ export function getDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): an
   if (schema.$ref) {
     const resolved = resolveRef(schema.$ref, rootSchema || schema);
     if (resolved) {
-      return getDefaultValue({ ...resolved, ...schema, $ref: undefined }, rootSchema);
+      const siblings: JSONSchema = { ...schema };
+      delete siblings.$ref;
+      return getDefaultValue(mergeSchemas(resolved, siblings), rootSchema);
     }
   }
 
@@ -446,7 +470,7 @@ export function getDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): an
     delete baseSchema.else;
     // Evaluate the condition against the base defaults to pick the right branch
     const baseDefault = getDefaultValue(baseSchema, rootSchema);
-    const conditionMet = evaluateCondition(schema.if, baseDefault);
+    const conditionMet = evaluateCondition(schema.if, baseDefault, rootSchema);
     const branch = conditionMet ? (schema.then || {}) : (schema.else || {});
     const merged = mergeSchemas(baseSchema, branch);
     return getDefaultValue(merged, rootSchema);
