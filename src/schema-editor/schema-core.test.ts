@@ -654,6 +654,43 @@ describe('scoreSchemaMatch', () => {
     expect(scoreSchemaMatch(variant, { name: 'test', type: 'phone' }, root)).toBe(0);
   });
 
+  it('scores nested discriminator behind property-level $ref', () => {
+    const root = {
+      $defs: {
+        typeA: { type: 'object', properties: { kind: { const: 'a' }, aField: { type: 'string' } } },
+        typeB: { type: 'object', properties: { kind: { const: 'b' }, bField: { type: 'string' } } },
+      },
+    };
+    const variantA = { type: 'object', properties: { detail: { $ref: '#/$defs/typeA' } } };
+    const variantB = { type: 'object', properties: { detail: { $ref: '#/$defs/typeB' } } };
+    const dataB = { detail: { kind: 'b', bField: 'test' } };
+
+    expect(scoreSchemaMatch(variantB, dataB, root)).toBeGreaterThan(0);
+    expect(scoreSchemaMatch(variantA, dataB, root)).toBe(0); // kind mismatch
+  });
+
+  it('scores nested discriminator behind property-level allOf', () => {
+    const root = {
+      $defs: { base: { type: 'object', properties: { name: { type: 'string' } } } },
+    };
+    const variant = {
+      type: 'object',
+      properties: {
+        detail: {
+          allOf: [
+            { $ref: '#/$defs/base' },
+            { properties: { kind: { const: 'x' } } },
+          ],
+        },
+      },
+    };
+    const matchData = { detail: { name: 'test', kind: 'x' } };
+    const mismatchData = { detail: { name: 'test', kind: 'y' } };
+
+    expect(scoreSchemaMatch(variant, matchData, root)).toBeGreaterThan(0);
+    expect(scoreSchemaMatch(variant, mismatchData, root)).toBe(0);
+  });
+
   it('scores allOf-wrapped variant without $ref', () => {
     const variant = {
       allOf: [

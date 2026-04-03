@@ -415,9 +415,36 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
         else return 0; // Value not in allowed enum — cannot match
       }
 
+      // Resolve the property schema before checking for nested discriminators
+      let resolvedProp = ps;
+      if (ps.$ref) {
+        const r = resolveRef(ps.$ref, rootSchema);
+        if (r) {
+          const siblings: Record<string, any> = { ...ps };
+          delete siblings.$ref;
+          resolvedProp = mergeSchemas(r, siblings);
+        }
+      }
+      // Also resolve allOf/oneOf/anyOf on the property
+      for (const kw of ['allOf', 'oneOf', 'anyOf'] as const) {
+        if (resolvedProp[kw] && Array.isArray(resolvedProp[kw])) {
+          let merged: JSONSchema = { ...resolvedProp };
+          delete merged[kw];
+          for (const sub of resolvedProp[kw]) {
+            const r = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
+            if (r) {
+              const siblings = sub.$ref ? (() => { const s = {...sub}; delete s.$ref; return s; })() : {};
+              merged = mergeSchemas(merged, sub.$ref ? mergeSchemas(r, siblings) : r);
+            }
+          }
+          resolvedProp = merged;
+          break;
+        }
+      }
+
       // Recurse into nested objects for deep discriminators
-      if (ps.properties && typeof val === 'object' && val !== null && !Array.isArray(val)) {
-        const nestedScore = scoreSchemaMatch(ps, val, rootSchema);
+      if (resolvedProp.properties && typeof val === 'object' && val !== null && !Array.isArray(val)) {
+        const nestedScore = scoreSchemaMatch(resolvedProp, val, rootSchema);
         if (nestedScore === 0) return 0; // Nested discriminator mismatch
         score += nestedScore - 10; // Subtract base score to avoid double-counting
       }
