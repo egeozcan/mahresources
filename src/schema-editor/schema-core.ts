@@ -356,20 +356,40 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
   }
 
   // Resolve composition so we score against the merged schema.
-  // Handles patterns like allOf/anyOf/oneOf: [{ $ref: "..." }, { properties: { type: { const: "..." } } }]
-  for (const keyword of ['allOf', 'oneOf', 'anyOf'] as const) {
-    if (schema[keyword] && Array.isArray(schema[keyword])) {
-      let merged: JSONSchema = { ...schema };
-      delete merged[keyword];
-      for (const sub of schema[keyword]) {
-        const resolved = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
-        if (resolved) {
-          const siblings = sub.$ref ? (() => { const s = {...sub}; delete s.$ref; return s; })() : {};
-          merged = mergeSchemas(merged, sub.$ref ? mergeSchemas(resolved, siblings) : resolved);
-        }
+  // allOf: merge all branches (all constraints apply simultaneously).
+  // oneOf/anyOf: score each branch independently, return best score.
+  if (schema.allOf && Array.isArray(schema.allOf)) {
+    let merged: JSONSchema = { ...schema };
+    delete merged.allOf;
+    for (const sub of schema.allOf) {
+      const resolved = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
+      if (resolved) {
+        const siblings = sub.$ref ? (() => { const s = {...sub}; delete s.$ref; return s; })() : {};
+        merged = mergeSchemas(merged, sub.$ref ? mergeSchemas(resolved, siblings) : resolved);
       }
-      schema = merged;
-      break; // Only resolve the first composition keyword found
+    }
+    schema = merged;
+  } else {
+    for (const kw of ['oneOf', 'anyOf'] as const) {
+      if (schema[kw] && Array.isArray(schema[kw])) {
+        // Collect sibling properties (declared alongside oneOf/anyOf)
+        const siblings: JSONSchema = { ...schema };
+        delete siblings[kw];
+
+        let bestScore = -1;
+        for (const sub of schema[kw]) {
+          const resolved = sub.$ref ? (() => {
+            const r = resolveRef(sub.$ref, rootSchema);
+            const s: JSONSchema = { ...sub }; delete s.$ref;
+            return r ? mergeSchemas(r, s) : s;
+          })() : sub;
+          // Merge branch with sibling properties for scoring
+          const branchSchema = mergeSchemas(siblings, resolved);
+          const branchScore = scoreSchemaMatch(branchSchema, data, rootSchema);
+          if (branchScore > bestScore) bestScore = branchScore;
+        }
+        return bestScore >= 0 ? bestScore : 0;
+      }
     }
   }
 
@@ -441,8 +461,20 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
         resolvedProp = merged;
       } else if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
         // oneOf/anyOf: score each branch independently, take best
+        // Also check sibling constraints (properties alongside the composition keyword)
         for (const kw of ['oneOf', 'anyOf'] as const) {
           if (resolvedProp[kw] && Array.isArray(resolvedProp[kw])) {
+            // Score sibling constraints (properties declared alongside oneOf/anyOf)
+            const siblingSchema: JSONSchema = { ...resolvedProp };
+            delete siblingSchema[kw];
+
+            if (siblingSchema.properties) {
+              const siblingScore = scoreSchemaMatch(siblingSchema, val, rootSchema);
+              if (siblingScore === 0) return 0; // Sibling constraint mismatch
+              score += siblingScore - 10; // Subtract base to avoid double-counting
+            }
+
+            // Score composition branches independently
             let bestBranchScore = -1;
             for (const sub of resolvedProp[kw]) {
               const branchScore = scoreSchemaMatch(sub, val, rootSchema);
@@ -450,7 +482,7 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
             }
             if (bestBranchScore === 0) return 0;
             if (bestBranchScore > 0) score += bestBranchScore - 10;
-            resolvedProp = {}; // Already scored, skip the properties check below
+            resolvedProp = {}; // Both siblings and branches are scored
             break;
           }
         }

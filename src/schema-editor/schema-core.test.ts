@@ -704,6 +704,96 @@ describe('scoreSchemaMatch', () => {
     expect(scoreSchemaMatch(variant, bookData, {})).toBeGreaterThan(10);
     expect(scoreSchemaMatch(variant, movieData, {})).toBe(0);
   });
+
+  // Bug: root-level oneOf/anyOf scoring merges all branches instead of scoring independently
+  it('scores root oneOf branches independently — first branch matches', () => {
+    const schema = {
+      oneOf: [
+        { type: 'object', properties: { kind: { const: 'a' }, aField: { type: 'string' } } },
+        { type: 'object', properties: { kind: { const: 'b' }, bField: { type: 'string' } } },
+      ],
+    };
+    const dataA = { kind: 'a', aField: 'test' };
+    expect(scoreSchemaMatch(schema, dataA, {})).toBeGreaterThan(0);
+  });
+
+  it('scores root oneOf branches independently — last-branch-wins is gone', () => {
+    const schema = {
+      oneOf: [
+        { type: 'object', properties: { kind: { const: 'a' } } },
+        { type: 'object', properties: { kind: { const: 'b' } } },
+      ],
+    };
+    // kind='a' matches first branch, not second
+    expect(scoreSchemaMatch(schema, { kind: 'a' }, {})).toBeGreaterThan(0);
+    // kind='b' matches second branch, not first
+    expect(scoreSchemaMatch(schema, { kind: 'b' }, {})).toBeGreaterThan(0);
+  });
+
+  it('scores root anyOf branches independently', () => {
+    const schema = {
+      anyOf: [
+        { properties: { x: { const: 1 } } },
+        { properties: { x: { const: 2 } } },
+      ],
+    };
+    expect(scoreSchemaMatch(schema, { x: 1 }, {})).toBeGreaterThan(0);
+    expect(scoreSchemaMatch(schema, { x: 2 }, {})).toBeGreaterThan(0);
+    expect(scoreSchemaMatch(schema, { x: 3 }, {})).toBe(0);
+  });
+
+  it('scores root oneOf with sibling properties merges siblings into each branch', () => {
+    const schema = {
+      type: 'object',
+      properties: { shared: { type: 'string' } },
+      oneOf: [
+        { properties: { kind: { const: 'a' } } },
+        { properties: { kind: { const: 'b' } } },
+      ],
+    };
+    // Both kind match and sibling 'shared' property should contribute
+    expect(scoreSchemaMatch(schema, { shared: 'hi', kind: 'a' }, {})).toBeGreaterThan(0);
+    expect(scoreSchemaMatch(schema, { shared: 'hi', kind: 'b' }, {})).toBeGreaterThan(0);
+  });
+
+  // Bug: property-level oneOf/anyOf scoring ignores sibling constraints
+  it('property-level anyOf scoring checks sibling constraints too', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        detail: {
+          properties: { role: { const: 'admin' } },
+          anyOf: [
+            { properties: { level: { const: 'senior' } } },
+            { properties: { level: { const: 'junior' } } },
+          ],
+        },
+      },
+    };
+    // role=admin + level=senior -> both sibling and branch match
+    expect(scoreSchemaMatch(schema, { detail: { role: 'admin', level: 'senior' } }, {})).toBeGreaterThan(0);
+    // role=user + level=senior -> sibling mismatch -> 0
+    expect(scoreSchemaMatch(schema, { detail: { role: 'user', level: 'senior' } }, {})).toBe(0);
+  });
+
+  it('property-level oneOf scoring checks sibling constraints too', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        config: {
+          properties: { version: { const: 2 } },
+          oneOf: [
+            { properties: { mode: { const: 'fast' } } },
+            { properties: { mode: { const: 'slow' } } },
+          ],
+        },
+      },
+    };
+    // version=2 + mode=fast -> match
+    expect(scoreSchemaMatch(schema, { config: { version: 2, mode: 'fast' } }, {})).toBeGreaterThan(0);
+    // version=1 + mode=fast -> sibling mismatch -> 0
+    expect(scoreSchemaMatch(schema, { config: { version: 1, mode: 'fast' } }, {})).toBe(0);
+  });
 });
 
 // ─── Bug 1 (P1): Invalid MetaSchema shows empty box ──────────────────────────
