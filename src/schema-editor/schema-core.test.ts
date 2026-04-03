@@ -162,6 +162,7 @@ describe('flattenSchema', () => {
     expect(fields).toHaveLength(1);
     expect(fields[0].path).toBe('name');
   });
+
 });
 
 describe('intersectFields', () => {
@@ -263,6 +264,79 @@ describe('evaluateCondition', () => {
   it('returns true when enum includes value', () => {
     const cond = { properties: { status: { enum: ['a', 'b'] } } };
     expect(evaluateCondition(cond, { status: 'a' })).toBe(true);
+  });
+
+  // Bug 1: evaluateCondition should handle required, type, range, length, pattern
+  it('evaluates required condition — present', () => {
+    expect(evaluateCondition({ required: ['email'] }, { email: 'a@b.com' })).toBe(true);
+  });
+  it('evaluates required condition — missing', () => {
+    expect(evaluateCondition({ required: ['email'] }, {})).toBe(false);
+  });
+  it('evaluates required condition — undefined value', () => {
+    expect(evaluateCondition({ required: ['email'] }, { email: undefined })).toBe(false);
+  });
+  it('evaluates required-only condition (no properties key)', () => {
+    expect(evaluateCondition({ required: ['x'] }, { x: 1 })).toBe(true);
+    expect(evaluateCondition({ required: ['x'] }, {})).toBe(false);
+  });
+
+  it('evaluates type condition — number match', () => {
+    expect(evaluateCondition({ properties: { age: { type: 'number' } } }, { age: 42 })).toBe(true);
+  });
+  it('evaluates type condition — number mismatch', () => {
+    expect(evaluateCondition({ properties: { age: { type: 'number' } } }, { age: 'old' })).toBe(false);
+  });
+  it('evaluates type condition — integer matches number', () => {
+    expect(evaluateCondition({ properties: { age: { type: 'number' } } }, { age: 7 })).toBe(true);
+  });
+  it('evaluates type condition — array type', () => {
+    expect(evaluateCondition({ properties: { v: { type: ['string', 'null'] } } }, { v: 'hi' })).toBe(true);
+    expect(evaluateCondition({ properties: { v: { type: ['string', 'null'] } } }, { v: 42 })).toBe(false);
+  });
+
+  it('evaluates minimum condition — pass', () => {
+    expect(evaluateCondition({ properties: { age: { minimum: 18 } } }, { age: 21 })).toBe(true);
+  });
+  it('evaluates minimum condition — fail', () => {
+    expect(evaluateCondition({ properties: { age: { minimum: 18 } } }, { age: 15 })).toBe(false);
+  });
+  it('evaluates maximum condition', () => {
+    expect(evaluateCondition({ properties: { age: { maximum: 65 } } }, { age: 70 })).toBe(false);
+    expect(evaluateCondition({ properties: { age: { maximum: 65 } } }, { age: 60 })).toBe(true);
+  });
+  it('evaluates exclusiveMinimum condition', () => {
+    expect(evaluateCondition({ properties: { age: { exclusiveMinimum: 18 } } }, { age: 18 })).toBe(false);
+    expect(evaluateCondition({ properties: { age: { exclusiveMinimum: 18 } } }, { age: 19 })).toBe(true);
+  });
+  it('evaluates exclusiveMaximum condition', () => {
+    expect(evaluateCondition({ properties: { age: { exclusiveMaximum: 65 } } }, { age: 65 })).toBe(false);
+    expect(evaluateCondition({ properties: { age: { exclusiveMaximum: 65 } } }, { age: 64 })).toBe(true);
+  });
+
+  it('evaluates minLength condition', () => {
+    expect(evaluateCondition({ properties: { name: { minLength: 3 } } }, { name: 'ab' })).toBe(false);
+    expect(evaluateCondition({ properties: { name: { minLength: 3 } } }, { name: 'abc' })).toBe(true);
+  });
+  it('evaluates maxLength condition', () => {
+    expect(evaluateCondition({ properties: { name: { maxLength: 5 } } }, { name: 'abcdef' })).toBe(false);
+    expect(evaluateCondition({ properties: { name: { maxLength: 5 } } }, { name: 'abc' })).toBe(true);
+  });
+
+  it('evaluates pattern condition', () => {
+    expect(evaluateCondition({ properties: { code: { pattern: '^[A-Z]{3}$' } } }, { code: 'ABC' })).toBe(true);
+    expect(evaluateCondition({ properties: { code: { pattern: '^[A-Z]{3}$' } } }, { code: 'ab' })).toBe(false);
+  });
+  it('pattern condition ignores non-strings', () => {
+    // pattern only applies to strings; non-string values should not fail on pattern alone
+    expect(evaluateCondition({ properties: { code: { pattern: '^[A-Z]+$' } } }, { code: 42 })).toBe(true);
+  });
+
+  it('evaluates minimum on non-number value — fails', () => {
+    expect(evaluateCondition({ properties: { age: { minimum: 18 } } }, { age: 'old' })).toBe(false);
+  });
+  it('evaluates minLength on non-string value — fails', () => {
+    expect(evaluateCondition({ properties: { name: { minLength: 1 } } }, { name: 42 })).toBe(false);
   });
 });
 

@@ -115,12 +115,59 @@ export function inferSchema(val: unknown): JSONSchema {
 // ─── Condition evaluation ────────────────────────────────────────────────────
 
 export function evaluateCondition(conditionSchema: JSONSchema | null | undefined, data: any): boolean {
-  if (!conditionSchema || !conditionSchema.properties) return true;
-  for (const key in conditionSchema.properties) {
-    const propSchema = conditionSchema.properties[key];
-    if (propSchema.const !== undefined && data?.[key] !== propSchema.const) return false;
-    if (propSchema.enum && !propSchema.enum.includes(data?.[key])) return false;
+  if (!conditionSchema) return true;
+
+  // Check required — all listed keys must be present and non-undefined
+  if (conditionSchema.required && Array.isArray(conditionSchema.required)) {
+    for (const key of conditionSchema.required) {
+      if (data?.[key] === undefined) return false;
+    }
   }
+
+  // Check properties constraints
+  if (conditionSchema.properties) {
+    for (const key in conditionSchema.properties) {
+      const propSchema = conditionSchema.properties[key];
+      const value = data?.[key];
+
+      // const match
+      if (propSchema.const !== undefined && value !== propSchema.const) return false;
+
+      // enum match
+      if (propSchema.enum && !propSchema.enum.includes(value)) return false;
+
+      // type match
+      if (propSchema.type) {
+        const actualType = inferType(value);
+        const expectedType = propSchema.type;
+        if (typeof expectedType === 'string') {
+          if (expectedType !== actualType) {
+            // Allow integer to match number
+            if (!(expectedType === 'number' && actualType === 'integer')) return false;
+          }
+        } else if (Array.isArray(expectedType)) {
+          if (!expectedType.includes(actualType) &&
+              !(actualType === 'integer' && expectedType.includes('number'))) return false;
+        }
+      }
+
+      // minimum/maximum for numbers
+      if (propSchema.minimum !== undefined && (typeof value !== 'number' || value < propSchema.minimum)) return false;
+      if (propSchema.maximum !== undefined && (typeof value !== 'number' || value > propSchema.maximum)) return false;
+      if (propSchema.exclusiveMinimum !== undefined && (typeof value !== 'number' || value <= propSchema.exclusiveMinimum)) return false;
+      if (propSchema.exclusiveMaximum !== undefined && (typeof value !== 'number' || value >= propSchema.exclusiveMaximum)) return false;
+
+      // minLength/maxLength for strings
+      if (propSchema.minLength !== undefined && (typeof value !== 'string' || value.length < propSchema.minLength)) return false;
+      if (propSchema.maxLength !== undefined && (typeof value !== 'string' || value.length > propSchema.maxLength)) return false;
+
+      // pattern for strings
+      if (propSchema.pattern && typeof value === 'string') {
+        try { if (!new RegExp(propSchema.pattern).test(value)) return false; } catch { /* invalid regex — skip */ }
+      }
+    }
+  }
+
   return true;
 }
 
@@ -272,7 +319,6 @@ export function flattenSchema(
       if (Array.isArray(fieldType)) {
         fieldType = fieldType.find((t: string) => t !== 'null') || 'string';
       }
-
       fields.push({
         path,
         label,
