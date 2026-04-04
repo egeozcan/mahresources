@@ -1006,16 +1006,11 @@ func (tc *translateContext) translateInExpr(db *gorm.DB, expr *InExpr) (*gorm.DB
 
 	// Handle meta fields — need json_extract, not qualifiedColumn
 	if fd.Type == FieldMeta {
-		key := strings.TrimPrefix(fd.Name, "meta.")
-		if !isValidMetaKey(key) {
-			return nil, &TranslateError{Message: fmt.Sprintf("invalid meta key %q", key)}
+		segments := metaSubpathSegments(fd.Name)
+		if err := validateMetaSegments(segments); err != nil {
+			return nil, &TranslateError{Message: err.Error()}
 		}
-		var jsonExpr string
-		if tc.isPostgres() {
-			jsonExpr = fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)
-		} else {
-			jsonExpr = fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
-		}
+		jsonExpr := tc.metaJsonExpr(segments)
 		// Case-insensitive IN for string meta values
 		hasStrings := false
 		for _, v := range values {
@@ -1165,12 +1160,8 @@ func (tc *translateContext) translateIsExpr(db *gorm.DB, expr *IsExpr) (*gorm.DB
 		// IS NULL / IS NOT NULL for scalar and meta fields
 		var column string
 		if fd.Type == FieldMeta {
-			key := strings.TrimPrefix(fd.Name, "meta.")
-			if tc.isPostgres() {
-				column = fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)
-			} else {
-				column = fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
-			}
+			segments := metaSubpathSegments(fd.Name)
+			column = tc.metaJsonExpr(segments)
 		} else {
 			column = tc.qualifiedColumn(fd.Column)
 		}
@@ -1191,12 +1182,8 @@ func (tc *translateContext) translateIsExpr(db *gorm.DB, expr *IsExpr) (*gorm.DB
 	// Meta fields need json_extract, not a direct column reference.
 	var column string
 	if fd.Type == FieldMeta {
-		key := strings.TrimPrefix(fd.Name, "meta.")
-		if tc.isPostgres() {
-			column = fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)
-		} else {
-			column = fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
-		}
+		segments := metaSubpathSegments(fd.Name)
+		column = tc.metaJsonExpr(segments)
 	} else {
 		column = tc.qualifiedColumn(fd.Column)
 	}

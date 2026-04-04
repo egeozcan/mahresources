@@ -4960,3 +4960,72 @@ func TestComprehensive_TraversalMetaSubpath(t *testing.T) {
 		})
 	}
 }
+
+func TestComprehensive_MetaSubpathIn(t *testing.T) {
+	db := setupTestDB(t)
+
+	result := parseAndTranslate(t, `type = "resource" AND meta.location.country in ("spain", "france")`, EntityResource, db)
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) != 1 {
+		t.Fatalf("expected 1 resource, got %d (names: %v)", len(resources), namesOfResources(resources))
+	}
+	assertNames(t, namesOfResources(resources), []string{"sunset.jpg"})
+
+	result2 := parseAndTranslate(t, `type = "resource" AND meta.location.country not in ("spain")`, EntityResource, db)
+	var resources2 []testResource
+	if err := result2.Find(&resources2).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources2) != 0 {
+		t.Fatalf("expected 0 resources, got %d (names: %v)", len(resources2), namesOfResources(resources2))
+	}
+}
+
+func TestComprehensive_MetaSubpathIsNull(t *testing.T) {
+	db := setupTestDB(t)
+
+	result := parseAndTranslate(t, `type = "resource" AND meta.location.country is null`, EntityResource, db)
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) != 3 {
+		t.Fatalf("expected 3 resources with null meta.location.country, got %d (names: %v)", len(resources), namesOfResources(resources))
+	}
+
+	result2 := parseAndTranslate(t, `type = "resource" AND meta.location.country is not null`, EntityResource, db)
+	var resources2 []testResource
+	if err := result2.Find(&resources2).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources2) != 1 {
+		t.Fatalf("expected 1 resource, got %d", len(resources2))
+	}
+	assertNames(t, namesOfResources(resources2), []string{"sunset.jpg"})
+}
+
+func TestComprehensive_MetaSubpathIsEmpty(t *testing.T) {
+	db := setupTestDB(t)
+
+	result := parseAndTranslate(t, `type = "resource" AND meta.location.country is empty`, EntityResource, db)
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) != 3 {
+		t.Fatalf("expected 3 resources with empty meta.location.country, got %d (names: %v)", len(resources), namesOfResources(resources))
+	}
+
+	result2 := parseAndTranslate(t, `type = "resource" AND meta.location.country is not empty`, EntityResource, db)
+	var resources2 []testResource
+	if err := result2.Find(&resources2).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources2) != 1 {
+		t.Fatalf("expected 1 resource, got %d", len(resources2))
+	}
+	assertNames(t, namesOfResources(resources2), []string{"sunset.jpg"})
+}
