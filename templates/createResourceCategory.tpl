@@ -13,7 +13,12 @@
     {% include "/partials/form/createFormTextareaInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=resourceCategory.CustomSidebar %}
     {% include "/partials/form/createFormTextareaInput.tpl" with title="Custom Summary" name="CustomSummary" value=resourceCategory.CustomSummary %}
     {% include "/partials/form/createFormTextareaInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=resourceCategory.CustomAvatar %}
-    {% include "/partials/form/createFormTextareaInput.tpl" with title="Meta JSON Schema" name="MetaSchema" value=resourceCategory.MetaSchema big=true %}
+    <div class="flex gap-2 items-start">
+        <div class="flex-1">
+            {% include "/partials/form/createFormTextareaInput.tpl" with title="Meta JSON Schema" name="MetaSchema" value=resourceCategory.MetaSchema big=true id="rcMetaSchemaTextarea" %}
+        </div>
+        {% include "/partials/form/schemaEditorModal.tpl" with textareaId="rcMetaSchemaTextarea" %}
+    </div>
 
     {% include "/partials/form/createFormSubmit.tpl" %}
 </form>

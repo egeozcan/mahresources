@@ -27,8 +27,6 @@ import { freeFields, generateParamNameForMeta, getJSONValue, getJSONOrObjValue }
 import { registerBulkSelectionStore, bulkSelectionForms, selectableItem, setupBulkSelectionListeners } from './components/bulkSelection.js';
 import { registerSavedSettingStore } from './components/storeConfig.js';
 import { globalSearch } from './components/globalSearch.js';
-import { schemaForm } from './components/schemaForm.js';
-import { schemaSearchFields } from './components/schemaSearchFields.js';
 import { registerLightboxStore } from './components/lightbox.js';
 import { registerEntityPickerStore } from './components/picker/index.js';
 import { registerPasteUploadStore, setupPasteListener } from './components/pasteUpload.js';
@@ -50,6 +48,7 @@ import { cardActionMenu } from './components/cardActionMenu.js';
 import { mentionTextarea } from './components/mentionTextarea.js';
 import { adminOverview } from './components/adminOverview.js';
 import timeline from './components/timeline.js';
+import { schemaEditorModal } from './components/schemaEditorModal.ts';
 
 // Import utility modules
 import { renderMentions } from './utils/renderMentions.js';
@@ -57,6 +56,7 @@ import { renderMentions } from './utils/renderMentions.js';
 // Import web components
 import './webcomponents/expandabletext.js';
 import './webcomponents/inlineedit.js';
+import './schema-editor/schema-editor.ts';
 
 // Expose utility functions globally for templates that use them
 window.abortableFetch = abortableFetch;
@@ -93,8 +93,6 @@ Alpine.data('freeFields', freeFields);
 Alpine.data('bulkSelectionForms', bulkSelectionForms);
 Alpine.data('selectableItem', selectableItem);
 Alpine.data('globalSearch', globalSearch);
-Alpine.data('schemaForm', schemaForm);
-Alpine.data('schemaSearchFields', schemaSearchFields);
 Alpine.data('multiSort', multiSort);
 Alpine.data('downloadCockpit', downloadCockpit);
 Alpine.data('compareView', compareView);
@@ -122,6 +120,7 @@ Alpine.data('cardActionMenu', cardActionMenu);
 Alpine.data('mentionTextarea', mentionTextarea);
 Alpine.data('adminOverview', adminOverview);
 Alpine.data('timeline', timeline);
+Alpine.data('schemaEditorModal', schemaEditorModal);
 
 // Expose Alpine globally for debugging and morph usage
 window.Alpine = Alpine;

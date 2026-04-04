@@ -243,6 +243,42 @@
       "viewport": { "width": 1200, "height": 800 },
       "interactions": [],
       "capturedDate": ""
+    },
+    "schema-editor-modal.png": {
+      "page": "/category?id=1",
+      "description": "Schema editor modal showing tree panel with 5 properties and detail panel editing a string property",
+      "seedDependencies": ["categories"],
+      "seedDetails": "Person category with rich MetaSchema (name, email, status enum, age, address object)",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": ["Click Visual Editor button to open modal"],
+      "capturedDate": ""
+    },
+    "schema-editor-preview.png": {
+      "page": "/category?id=1",
+      "description": "Schema editor modal on Preview Form tab showing rendered form fields for the Person schema",
+      "seedDependencies": ["categories"],
+      "seedDetails": "Same as schema-editor-modal",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": ["Click Visual Editor, switch to Preview Form tab"],
+      "capturedDate": ""
+    },
+    "schema-editor-composition.png": {
+      "page": "/category?id=1",
+      "description": "Schema editor modal showing a oneOf composition node with two variants in the detail panel",
+      "seedDependencies": ["categories"],
+      "seedDetails": "Category with schema containing oneOf (email string or phone object)",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": ["Click Visual Editor, select the oneOf node in tree"],
+      "capturedDate": ""
+    },
+    "schema-search-fields.png": {
+      "page": "/groups?categories=1",
+      "description": "Groups list page with schema-driven search fields showing enum checkboxes, text input with operator, and boolean radio",
+      "seedDependencies": ["categories", "groups"],
+      "seedDetails": "Person category selected, schema fields rendered in search sidebar",
+      "viewport": { "width": 1200, "height": 800 },
+      "interactions": ["Select Person category in sidebar"],
+      "capturedDate": ""
     }
   }
 }

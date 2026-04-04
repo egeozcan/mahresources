@@ -61,13 +61,30 @@
                     {% set initialSchema = category.0.MetaSchema %}
                 {% endif %}
 
-                <div x-data="{
-                         currentSchema: {{ initialSchema|default:'null' }},
+                <div data-initial-schema="{{ initialSchema }}"
+                    data-initial-meta='{{ group.Meta|json }}'
+                    x-data="{
+                         currentSchema: null,
+                         currentMeta: {},
+                         metaEdited: false,
+                         init() {
+                             const raw = this.$el.dataset.initialSchema;
+                             if (raw) {
+                                 try { const p = JSON.parse(raw); if (p && typeof p === 'object') this.currentSchema = raw; } catch {}
+                             }
+                             try { this.currentMeta = JSON.parse(this.$el.dataset.initialMeta || '{}'); } catch { this.currentMeta = {}; }
+                         },
                          handleCategoryChange(e) {
                              if (e.detail.value.length > 0) {
-                                 this.currentSchema = e.detail.value[0].MetaSchema;
-                             } else {
-                                 this.currentSchema = null;
+                                 const ms = e.detail.value[0].MetaSchema;
+                                 if (ms) { try { const p = JSON.parse(ms); if (p && typeof p === 'object') { this.currentSchema = ms; return; } } catch {} }
+                             }
+                             this.currentSchema = null;
+                         },
+                         handleMetaChange(e) {
+                             if (e.detail && e.detail.value !== undefined) {
+                                 this.currentMeta = e.detail.value;
+                                 this.metaEdited = true;
                              }
                          }
                     }"
@@ -75,20 +92,20 @@
                     class="w-full"
                 >
                     <template x-if="currentSchema">
-                        <div class="border p-4 rounded-md bg-stone-50 mt-5">
+                        <div class="border p-4 rounded-md bg-stone-50 mt-5"
+                            @value-change="handleMetaChange($event)">
                             <h2 class="text-sm font-medium font-mono text-stone-700 mb-3">Meta Data (Schema Enforced)</h2>
-                            <div x-data="schemaForm({
-                                schema: currentSchema,
-                                value: {{ group.Meta|json }} || {},
-                                name: 'Meta'
-                            })">
-                                <div x-ref="container"></div>
-                                <input type="hidden" :name="name" :value="jsonText">
-                            </div>
+                            <schema-form-mode
+                                :schema="currentSchema"
+                                :value="JSON.stringify(currentMeta)"
+                                name="Meta"
+                            ></schema-form-mode>
                         </div>
                     </template>
                     <template x-if="!currentSchema">
-                        {% include "/partials/form/freeFields.tpl" with name="Meta" url='/v1/groups/meta/keys' fromJSON=group.Meta jsonOutput="true" id=getNextId("freeField") %}
+                        <div @value-change="handleMetaChange($event)" :data-current-meta="metaEdited ? JSON.stringify(currentMeta) : ''">
+                            {% include "/partials/form/freeFields.tpl" with name="Meta" url='/v1/groups/meta/keys' fromJSON=group.Meta jsonOutput="true" id=getNextId("freeField") %}
+                        </div>
                     </template>
                 </div>
             </div>
