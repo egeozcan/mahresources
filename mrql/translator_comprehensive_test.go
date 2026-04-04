@@ -5029,3 +5029,56 @@ func TestComprehensive_MetaSubpathIsEmpty(t *testing.T) {
 	}
 	assertNames(t, namesOfResources(resources2), []string{"sunset.jpg"})
 }
+
+func TestComprehensive_MetaSubpathOrderBy(t *testing.T) {
+	db := setupTestDB(t)
+
+	result := parseAndTranslate(t, `type = "resource" ORDER BY meta.location.country`, EntityResource, db)
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(resources) == 0 {
+		t.Fatal("expected resources, got none")
+	}
+}
+
+func TestComprehensive_MetaSubpathGroupBy(t *testing.T) {
+	db := setupTestDB(t)
+
+	q, err := Parse(`type = "group" GROUP BY meta.settings.visibility COUNT()`)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	q.EntityType = EntityGroup
+	if err := Validate(q); err != nil {
+		t.Fatalf("validation error: %v", err)
+	}
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate error: %v", err)
+	}
+	if len(result.Rows) == 0 {
+		t.Fatal("expected rows, got none")
+	}
+}
+
+func TestComprehensive_MetaSubpathGroupByTraversal(t *testing.T) {
+	db := setupTestDB(t)
+
+	q, err := Parse(`type = "resource" GROUP BY owner.meta.settings.visibility COUNT()`)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	q.EntityType = EntityResource
+	if err := Validate(q); err != nil {
+		t.Fatalf("validation error: %v", err)
+	}
+	result, err := TranslateGroupBy(q, db)
+	if err != nil {
+		t.Fatalf("translate error: %v", err)
+	}
+	if len(result.Rows) == 0 {
+		t.Fatal("expected rows, got none")
+	}
+}

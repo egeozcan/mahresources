@@ -1441,14 +1441,8 @@ func (tc *translateContext) resolveOrderByColumn(f *FieldExpr) string {
 	// SQLite (json_extract preserves numbers). This matches the existing
 	// codebase's meta sort behavior in database_scopes/db_utils.go.
 	if strings.HasPrefix(fieldName, "meta.") {
-		key := strings.TrimPrefix(fieldName, "meta.")
-		if !isValidMetaKey(key) {
-			return tc.tableName + ".meta"
-		}
-		if tc.isPostgres() {
-			return fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)
-		}
-		return fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
+		segments := metaSubpathSegments(fieldName)
+		return tc.metaJsonExpr(segments)
 	}
 
 	fd, ok := LookupField(tc.entityType, fieldName)
@@ -1686,12 +1680,8 @@ func (tc *translateContext) buildGroupByAliasMap(q *Query) map[string]string {
 func (tc *translateContext) groupByFieldExprs(fieldName string) (string, string) {
 	// Meta fields
 	if strings.HasPrefix(fieldName, "meta.") {
-		key := strings.TrimPrefix(fieldName, "meta.")
-		if tc.isPostgres() {
-			expr := fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)
-			return expr, expr
-		}
-		expr := fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
+		segments := metaSubpathSegments(fieldName)
+		expr := tc.metaJsonExpr(segments)
 		return expr, expr
 	}
 
@@ -1799,16 +1789,16 @@ func (tc *translateContext) groupByTraversalJoins(db *gorm.DB, f *FieldExpr, fie
 	parts := f.Parts
 	leaf := parts[len(parts)-1].Value
 
-	// Handle meta.key leaf: owner.meta.abc, owner.parent.meta.xyz
-	// Detect by checking if the second-to-last part is "meta"
-	if len(parts) >= 3 && parts[len(parts)-2].Value == "meta" {
-		metaKey := leaf
-		// Build chain JOINs for everything before "meta"
-		lastAlias := tc.groupByBuildChainJoins(&db, parts[:len(parts)-2], fieldIdx)
-		if tc.isPostgres() {
-			return db, fmt.Sprintf("%s.meta->>'%s'", lastAlias, metaKey)
+	// Handle meta subpath leaf: owner.meta.a.b, owner.parent.meta.x.y.z
+	for i := 1; i < len(parts); i++ {
+		if parts[i].Value == "meta" {
+			segments := make([]string, 0, len(parts)-i-1)
+			for j := i + 1; j < len(parts); j++ {
+				segments = append(segments, parts[j].Value)
+			}
+			lastAlias := tc.groupByBuildChainJoins(&db, parts[:i], fieldIdx)
+			return db, tc.metaJsonExprOn(lastAlias, segments)
 		}
-		return db, fmt.Sprintf("json_extract(%s.meta, '$.%s')", lastAlias, metaKey)
 	}
 
 	// Resolve the leaf field on the group entity (all traversals resolve to groups)
@@ -1883,19 +1873,11 @@ func (tc *translateContext) aggregateExpr(agg AggregateFunc) (string, string) {
 // to include all values including non-numeric strings.
 func (tc *translateContext) resolveAggregateColumn(fieldName string, numericCast bool) string {
 	if strings.HasPrefix(fieldName, "meta.") {
-		key := strings.TrimPrefix(fieldName, "meta.")
-		if tc.isPostgres() {
-			if numericCast {
-				// Safe numeric cast: returns NULL for non-numeric values instead of crashing.
-				// Uses the same guarded CASE pattern as translateMetaComparison.
-				return fmt.Sprintf(
-					"CASE WHEN %s.meta->>'%s' ~ '^-{0,1}[0-9]+(\\.[0-9]+){0,1}$' THEN (%s.meta->>'%s')::numeric ELSE NULL END",
-					tc.tableName, key, tc.tableName, key,
-				)
-			}
-			return fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)
+		segments := metaSubpathSegments(fieldName)
+		if numericCast {
+			return tc.metaNumericExpr(segments)
 		}
-		return fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
+		return tc.metaJsonExpr(segments)
 	}
 
 	fd, ok := LookupField(tc.entityType, fieldName)
