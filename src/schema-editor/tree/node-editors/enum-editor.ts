@@ -29,6 +29,46 @@ export class SchemaEnumEditor extends LitElement {
   /** Whether the editor is in labeled mode */
   @property({ type: Boolean }) labeled = false;
 
+  /** Index of the row currently being dragged */
+  private _dragIndex = -1;
+
+  private _onDragStart(index: number, e: DragEvent) {
+    this._dragIndex = index;
+    e.dataTransfer!.effectAllowed = 'move';
+    (e.target as HTMLElement).closest('.enum-row, .labeled-row')?.classList.add('dragging');
+  }
+
+  private _onDragOver(e: DragEvent) {
+    e.preventDefault();
+    e.dataTransfer!.dropEffect = 'move';
+  }
+
+  private _onDrop(targetIndex: number, e: DragEvent) {
+    e.preventDefault();
+    if (this._dragIndex < 0 || this._dragIndex === targetIndex) return;
+
+    if (this.labeled) {
+      const updated = [...this.entries];
+      const [moved] = updated.splice(this._dragIndex, 1);
+      updated.splice(targetIndex, 0, moved);
+      this.entries = updated;
+    } else {
+      const updated = [...this.values];
+      const [moved] = updated.splice(this._dragIndex, 1);
+      updated.splice(targetIndex, 0, moved);
+      this.values = updated;
+    }
+
+    this._dragIndex = -1;
+    this._emit();
+    this.requestUpdate();
+  }
+
+  private _onDragEnd(e: DragEvent) {
+    this._dragIndex = -1;
+    (e.target as HTMLElement).closest('.enum-row, .labeled-row')?.classList.remove('dragging');
+  }
+
   private _emit() {
     if (this.labeled) {
       this.dispatchEvent(new CustomEvent('enum-change', {
@@ -141,7 +181,11 @@ export class SchemaEnumEditor extends LitElement {
         <h4>Enum Values</h4>
         <button class="convert-btn" @click=${this._convertToLabeled} title="Convert to labeled enum with display names">+ Add Labels</button>
         ${repeat(this.values, (_v, i) => i, (v, i) => html`
-          <div class="enum-row">
+          <div class="enum-row" draggable="true"
+            @dragstart=${(e: DragEvent) => this._onDragStart(i, e)}
+            @dragover=${this._onDragOver}
+            @drop=${(e: DragEvent) => this._onDrop(i, e)}
+            @dragend=${this._onDragEnd}>
             <span class="drag" aria-hidden="true">\u2630</span>
             ${this.valueType === 'boolean'
               ? html`<select
@@ -179,7 +223,11 @@ export class SchemaEnumEditor extends LitElement {
           <span></span>
         </div>
         ${repeat(this.entries, (_e, i) => i, (entry, i) => html`
-          <div class="labeled-row">
+          <div class="labeled-row" draggable="true"
+            @dragstart=${(e: DragEvent) => this._onDragStart(i, e)}
+            @dragover=${this._onDragOver}
+            @drop=${(e: DragEvent) => this._onDrop(i, e)}
+            @dragend=${this._onDragEnd}>
             <span class="drag" aria-hidden="true">\u2630</span>
             ${this.valueType === 'boolean'
               ? html`<select
