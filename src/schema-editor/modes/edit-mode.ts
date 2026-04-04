@@ -170,6 +170,10 @@ export class SchemaEditMode extends LitElement {
           'const', 'default']) {
           delete selected.schema[key];
         }
+        // Also clean up labeled enum oneOf when type changes
+        if (selected.schema.oneOf && !selected.compositionKeyword) {
+          delete selected.schema.oneOf;
+        }
         // Update type arrays in node.schema.type to stay in sync with scalar node.type
         if (Array.isArray(selected.schema.type) && selected.schema.type.includes('null')) {
           // Nullable array (e.g. ["string", "null"]) — keep nullable, swap base type
