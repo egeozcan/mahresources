@@ -5,6 +5,8 @@ export interface FlatField {
   label: string;
   type: string;
   enum: string[] | null;
+  /** Optional labels for enum values (parallel array with `enum`). null if no labels. */
+  enumLabels: string[] | null;
 }
 
 export type JSONSchema = Record<string, any>;
@@ -716,6 +718,30 @@ export function flattenSchema(
     const rawLabel = prop.title || titleCase(key);
     const label = labelPrefix ? `${labelPrefix} › ${rawLabel}` : rawLabel;
 
+    // Labeled enum: oneOf with const+title entries
+    if (isLabeledEnum(prop)) {
+      const entries = getLabeledEnumEntries(prop);
+      let fieldType = prop.type || 'string';
+      if (Array.isArray(fieldType)) {
+        fieldType = fieldType.find((t: string) => t !== 'null') || 'string';
+      }
+      // Infer type from const values if no explicit type
+      if (!prop.type && entries.length > 0) {
+        const representative = entries.find(e => e.value !== null)?.value ?? entries[0].value;
+        if (representative === null) fieldType = 'null';
+        else if (typeof representative === 'number') fieldType = Number.isInteger(representative) ? 'integer' : 'number';
+        else if (typeof representative === 'boolean') fieldType = 'boolean';
+      }
+      fields.push({
+        path,
+        label,
+        type: fieldType,
+        enum: entries.map(e => e.value),
+        enumLabels: entries.map(e => e.label),
+      });
+      continue;
+    }
+
     if (prop.properties) {
       fields.push(...flattenSchema(prop, path, label, depth + 1, root));
     } else if (prop.type === 'array') {
@@ -745,6 +771,7 @@ export function flattenSchema(
         label,
         type: fieldType,
         enum: Array.isArray(prop.enum) ? prop.enum : null,
+        enumLabels: null,
       });
     }
   }
@@ -780,6 +807,7 @@ export function intersectFields(fieldLists: FlatField[][]): FlatField[] {
         } else {
           existing.type = 'string';
           existing.enum = null;
+          existing.enumLabels = null;
           continue;
         }
       }
@@ -788,9 +816,11 @@ export function intersectFields(fieldLists: FlatField[][]): FlatField[] {
         const b = [...field.enum].sort();
         if (JSON.stringify(a) !== JSON.stringify(b)) {
           existing.enum = null;
+          existing.enumLabels = null;
         }
       } else if (existing.enum !== field.enum) {
         existing.enum = null;
+        existing.enumLabels = null;
       }
     }
   }
