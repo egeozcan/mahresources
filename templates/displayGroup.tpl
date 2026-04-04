@@ -10,6 +10,14 @@
 
     {% include "/partials/description.tpl" with description=group.Description descriptionEditUrl="/v1/group/editDescription" descriptionEditId=group.ID %}
 
+    {% if group.Category.MetaSchema && group.Meta %}
+    <schema-editor mode="display"
+        schema='{{ group.Category.MetaSchema }}'
+        value='{{ group.Meta }}'
+        name="{{ group.Category.Name }}">
+    </schema-editor>
+    {% endif %}
+
     {% with hasOwn=(group.OwnNotes || group.OwnGroups || group.OwnResources) %}
 
     <details class="detail-collapsible mb-6" {% if hasOwn %}open{% endif %}>

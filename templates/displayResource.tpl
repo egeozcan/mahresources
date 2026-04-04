@@ -10,6 +10,14 @@
 
     {% include "/partials/description.tpl" with description=resource.Description descriptionEditUrl="/v1/resource/editDescription" descriptionEditId=resource.ID %}
 
+    {% if resource.ResourceCategory.MetaSchema && resource.Meta %}
+    <schema-editor mode="display"
+        schema='{{ resource.ResourceCategory.MetaSchema }}'
+        value='{{ resource.Meta }}'
+        name="{{ resource.ResourceCategory.Name }}">
+    </schema-editor>
+    {% endif %}
+
     <div class="detail-panel" aria-label="Resource metadata">
         <div class="detail-panel-header">
             <h2 class="detail-panel-title">Metadata</h2>
