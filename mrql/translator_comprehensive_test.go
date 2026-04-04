@@ -5082,3 +5082,33 @@ func TestComprehensive_MetaSubpathGroupByTraversal(t *testing.T) {
 		t.Fatal("expected rows, got none")
 	}
 }
+
+func TestComprehensive_MetaSubpathInvalidSegments(t *testing.T) {
+	db := setupTestDB(t)
+
+	invalidQueries := []struct {
+		name  string
+		query string
+	}{
+		{"hyphen in segment", `type = "resource" AND meta.a-b.c = 1`},
+	}
+
+	for _, tt := range invalidQueries {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := Parse(tt.query)
+			if err != nil {
+				// Parser correctly rejected it
+				return
+			}
+			q.EntityType = EntityResource
+			if err := Validate(q); err != nil {
+				// Validator correctly rejected it
+				return
+			}
+			_, err = Translate(q, db)
+			if err == nil {
+				t.Error("expected error for invalid meta segment, got nil")
+			}
+		})
+	}
+}
