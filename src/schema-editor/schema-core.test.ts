@@ -41,12 +41,57 @@ describe('mergeSchemas', () => {
     expect(merged.required).toEqual(['a', 'b']);
   });
 
-  it('does not copy composition keywords', () => {
+  it('preserves composition keywords from extension', () => {
     const base = {};
     const ext = { allOf: [{ type: 'string' }], title: 'test' };
     const merged = mergeSchemas(base, ext);
-    expect(merged).not.toHaveProperty('allOf');
+    expect(merged.allOf).toEqual([{ type: 'string' }]);
     expect(merged.title).toBe('test');
+  });
+
+  it('concats composition keywords when both sides have them', () => {
+    const base = { allOf: [{ required: ['a'] }] };
+    const ext = { allOf: [{ required: ['b'] }] };
+    const merged = mergeSchemas(base, ext);
+    expect(merged.allOf).toEqual([{ required: ['a'] }, { required: ['b'] }]);
+  });
+
+  // Bug 1: enum merging should intersect by default (allOf semantics)
+  it('intersects enum values by default (allOf semantics)', () => {
+    const base = { properties: { color: { type: 'string', enum: ['red', 'blue'] } } };
+    const ext = { properties: { color: { type: 'string', enum: ['blue', 'green'] } } };
+    const merged = mergeSchemas(base, ext);
+    expect(merged.properties.color.enum).toEqual(['blue']);
+  });
+
+  it('preserves empty enum on disjoint intersection (unsatisfiable)', () => {
+    const base = { properties: { x: { enum: ['a'] } } };
+    const ext = { properties: { x: { enum: ['b'] } } };
+    const merged = mergeSchemas(base, ext);
+    expect(merged.properties.x.enum).toEqual([]);
+  });
+
+  it('unions enum values in union mode', () => {
+    const base = { properties: { color: { type: 'string', enum: ['red', 'blue'] } } };
+    const ext = { properties: { color: { type: 'string', enum: ['blue', 'green'] } } };
+    const merged = mergeSchemas(base, ext, 'union');
+    expect(merged.properties.color.enum).toEqual(['red', 'blue', 'green']);
+  });
+
+  // Bug 2: nested object properties should be deep-merged
+  it('deep-merges nested object properties', () => {
+    const base = { properties: { spec: { type: 'object', properties: { weight: { type: 'number' } } } } };
+    const ext = { properties: { spec: { type: 'object', properties: { height: { type: 'number' } } } } };
+    const merged = mergeSchemas(base, ext);
+    expect(merged.properties.spec.properties.weight).toEqual({ type: 'number' });
+    expect(merged.properties.spec.properties.height).toEqual({ type: 'number' });
+  });
+
+  it('deep-merges required arrays on nested objects', () => {
+    const base = { properties: { spec: { required: ['a'] } } };
+    const ext = { properties: { spec: { required: ['b'] } } };
+    const merged = mergeSchemas(base, ext);
+    expect(merged.properties.spec.required).toEqual(['a', 'b']);
   });
 });
 
@@ -102,6 +147,30 @@ describe('resolveSchema', () => {
     const result = resolveSchema(schema, schema);
     expect(result!.properties).toHaveProperty('a');
     expect(result!.properties).toHaveProperty('b');
+  });
+
+  // Bug 1 e2e: allOf enum intersection via resolveSchema
+  it('allOf enum intersection works end-to-end', () => {
+    const schema = {
+      allOf: [
+        { properties: { status: { type: 'string', enum: ['active', 'pending', 'closed'] } } },
+        { properties: { status: { type: 'string', enum: ['pending', 'closed', 'archived'] } } },
+      ],
+    };
+    const resolved = resolveSchema(schema, schema);
+    expect(resolved!.properties.status.enum).toEqual(['pending', 'closed']);
+  });
+
+  // Bug 1: oneOf should union enums, not intersect them
+  it('oneOf enum union works end-to-end', () => {
+    const schema = {
+      oneOf: [
+        { properties: { status: { type: 'string', enum: ['active', 'pending'] } } },
+        { properties: { status: { type: 'string', enum: ['closed', 'archived'] } } },
+      ],
+    };
+    const resolved = resolveSchema(schema, schema);
+    expect(resolved!.properties.status.enum).toEqual(['active', 'pending', 'closed', 'archived']);
   });
 });
 
@@ -217,6 +286,21 @@ describe('flattenSchema', () => {
     };
     const fields = flattenSchema(schema);
     expect(fields[0].type).toBe('string');
+  });
+
+  // Bug 2 e2e: allOf with nested object properties should deep-merge
+  it('returns both fields from allOf nested object', () => {
+    const schema = {
+      type: 'object',
+      allOf: [
+        { properties: { spec: { type: 'object', properties: { weight: { type: 'number' } } } } },
+        { properties: { spec: { type: 'object', properties: { height: { type: 'number' } } } } },
+      ],
+    };
+    const fields = flattenSchema(schema);
+    const paths = fields.map(f => f.path);
+    expect(paths).toContain('spec.weight');
+    expect(paths).toContain('spec.height');
   });
 });
 

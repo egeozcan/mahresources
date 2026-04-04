@@ -38,7 +38,7 @@ export function resolveRef(ref: unknown, root: JSONSchema): JSONSchema | null {
 
 // ─── Schema merging ──────────────────────────────────────────────────────────
 
-export function mergeSchemas(base: JSONSchema, extension: JSONSchema): JSONSchema {
+export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'intersect' | 'union' = 'intersect'): JSONSchema {
   const merged: JSONSchema = { ...base };
   for (const key in extension) {
     if (key === 'properties') {
@@ -47,41 +47,72 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema): JSONSchem
       merged.properties = { ...baseProps };
       for (const propKey in extProps) {
         if (baseProps[propKey] && extProps[propKey]) {
-          // Both sides declare the same property — check for type conflicts
-          const baseType = baseProps[propKey].type;
-          const extType = extProps[propKey].type;
-          const numericTypes = new Set(['number', 'integer']);
-          const mergedProp = { ...baseProps[propKey], ...extProps[propKey] };
-          // Resolve type conflicts
-          if (baseType && extType && baseType !== extType) {
-            mergedProp.type = (numericTypes.has(baseType) && numericTypes.has(extType))
-              ? 'number'
-              : 'string';
-          }
-          // Union enum values when both sides declare them
-          const baseEnum = baseProps[propKey].enum;
-          const extEnum = extProps[propKey].enum;
-          if (baseEnum && extEnum) {
-            const combined = [...baseEnum];
-            for (const v of extEnum) {
-              if (!combined.some((existing: any) => existing === v && typeof existing === typeof v)) {
-                combined.push(v);
+          const baseProp = baseProps[propKey];
+          const extProp = extProps[propKey];
+
+          // Deep merge when both sides have nested properties or required
+          if ((baseProp.properties && extProp.properties) ||
+              (baseProp.required && extProp.required)) {
+            merged.properties[propKey] = mergeSchemas(baseProp, extProp, mode);
+          } else {
+            // Shallow merge with type/enum conflict resolution
+            const baseType = baseProp.type;
+            const extType = extProp.type;
+            const numericTypes = new Set(['number', 'integer']);
+            const mergedProp = { ...baseProp, ...extProp };
+            // Resolve type conflicts
+            if (baseType && extType && baseType !== extType) {
+              mergedProp.type = (numericTypes.has(baseType) && numericTypes.has(extType))
+                ? 'number'
+                : 'string';
+            }
+            // Merge enum values: intersect for allOf (default), union for oneOf/anyOf
+            const baseEnum = baseProp.enum;
+            const extEnum = extProp.enum;
+            if (baseEnum && extEnum) {
+              if (mode === 'union') {
+                const combined = [...baseEnum];
+                for (const v of extEnum) {
+                  if (!combined.some((existing: any) => existing === v && typeof existing === typeof v)) {
+                    combined.push(v);
+                  }
+                }
+                mergedProp.enum = combined;
+              } else {
+                // Intersect: keep only values present in both (allOf semantics)
+                const intersected = baseEnum.filter((v: any) =>
+                  extEnum.some((ev: any) => ev === v && typeof ev === typeof v)
+                );
+                // Preserve the intersection even if empty — an empty enum
+                // means the constraint is unsatisfiable, which is the correct
+                // allOf semantic for disjoint enums.
+                mergedProp.enum = intersected;
               }
             }
-            mergedProp.enum = combined;
+            // When only one side has enum, the spread already put whichever
+            // exists on mergedProp. This is correct for allOf (the constraint
+            // applies). For oneOf/anyOf, resolveSchema handles enum dropping
+            // after merging all branches.
+            merged.properties[propKey] = mergedProp;
           }
-          // When only one side has enum, the spread already put whichever
-          // exists on mergedProp. This is correct for allOf (the constraint
-          // applies). For oneOf/anyOf, resolveSchema handles enum dropping
-          // after merging all branches.
-          merged.properties[propKey] = mergedProp;
         } else {
           merged.properties[propKey] = extProps[propKey];
         }
       }
     } else if (key === 'required') {
       merged.required = [...new Set([...(base.required || []), ...(extension.required || [])])];
-    } else if (!['allOf', 'anyOf', 'oneOf', '$ref'].includes(key)) {
+    } else if (key === '$ref') {
+      // $ref is never copied — it must be resolved before merging
+    } else if (['allOf', 'anyOf', 'oneOf'].includes(key)) {
+      // Composition keywords: if base already has the same keyword, concat.
+      // Otherwise copy from extension. This preserves nested constraints
+      // like spec.allOf:[{required:['height']}] during deep property merge.
+      if (merged[key] && Array.isArray(merged[key])) {
+        merged[key] = [...merged[key], ...extension[key]];
+      } else {
+        merged[key] = extension[key];
+      }
+    } else {
       merged[key] = extension[key];
     }
   }
@@ -120,7 +151,12 @@ export function resolveSchema(schema: JSONSchema | null, rootSchema: JSONSchema)
         } else {
           resolved = sub;
         }
-        if (resolved) merged = mergeSchemas(merged, resolved);
+        if (resolved) {
+          // For oneOf/anyOf, branches are alternatives — union their enums.
+          // For allOf, branches are constraints — intersect (the default).
+          const branchMode = keyword === 'allOf' ? 'intersect' : 'union' as const;
+          merged = mergeSchemas(merged, resolved, branchMode);
+        }
       }
 
       // For oneOf/anyOf (alternatives), drop enum on properties where any
