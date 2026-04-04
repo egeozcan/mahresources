@@ -43,6 +43,8 @@
     --color-green-700: oklch(52.7% 0.154 150.069);
     --color-green-800: oklch(44.8% 0.119 151.328);
     --color-green-900: oklch(39.3% 0.095 152.535);
+    --color-emerald-50: oklch(97.9% 0.021 166.113);
+    --color-emerald-700: oklch(50.8% 0.118 165.612);
     --color-teal-500: oklch(70.4% 0.14 182.503);
     --color-teal-600: oklch(60% 0.118 184.704);
     --color-teal-700: oklch(51.1% 0.096 186.391);
@@ -2285,6 +2287,9 @@
   .bg-blue-600 {
     background-color: var(--color-blue-600);
   }
+  .bg-emerald-50 {
+    background-color: var(--color-emerald-50);
+  }
   .bg-gray-50 {
     background-color: var(--color-gray-50);
   }
@@ -2779,6 +2784,9 @@
   .text-blue-800 {
     color: var(--color-blue-800);
   }
+  .text-emerald-700 {
+    color: var(--color-emerald-700);
+  }
   .text-gray-50 {
     color: var(--color-gray-50);
   }
@@ -2953,6 +2961,9 @@
   }
   .decoration-amber-300 {
     text-decoration-color: var(--color-amber-300);
+  }
+  .decoration-indigo-300 {
+    text-decoration-color: var(--color-indigo-300);
   }
   .placeholder-gray-500 {
     &::placeholder {
@@ -3182,6 +3193,11 @@
       @media (hover: hover) {
         opacity: 100%;
       }
+    }
+  }
+  .last\:mb-0 {
+    &:last-child {
+      margin-bottom: calc(var(--spacing) * 0);
     }
   }
   .hover\:border-amber-300 {

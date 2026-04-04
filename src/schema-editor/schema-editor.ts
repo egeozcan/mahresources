@@ -5,6 +5,7 @@ import type { JSONSchema } from './schema-core';
 import './modes/edit-mode';
 import './modes/form-mode';
 import './modes/search-mode';
+import './modes/display-mode';
 
 @customElement('schema-editor')
 export class SchemaEditor extends LitElement {
@@ -33,7 +34,7 @@ export class SchemaEditor extends LitElement {
     return this;
   }
 
-  @property({ type: String }) mode: 'edit' | 'form' | 'search' = 'edit';
+  @property({ type: String }) mode: 'edit' | 'form' | 'search' | 'display' = 'edit';
   @property({ type: String }) schema = '';
   @property({ type: String }) value = '';
   @property({ type: String }) name = 'Meta';
@@ -129,6 +130,15 @@ export class SchemaEditor extends LitElement {
           .metaQuery=${this.metaQuery}
           .fieldName=${this.fieldName}
         ></schema-search-mode>`;
+      case 'display': {
+        let parsedValue = {};
+        try { parsedValue = this.value ? JSON.parse(this.value) : {}; } catch { /* invalid JSON */ }
+        return html`<schema-display-mode
+          .schema=${this._parsedSchema}
+          .value=${parsedValue}
+          .name=${this.name}
+        ></schema-display-mode>`;
+      }
       default:
         return nothing;
     }
