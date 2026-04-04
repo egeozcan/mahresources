@@ -394,7 +394,7 @@ func (tc *translateContext) translateChainedMetaComparison(db *gorm.DB, expr *Co
 	}
 
 	textExpr := tc.metaJsonTextExprOn(innerAlias, segments)
-	innerWhere, innerVal := tc.buildMetaClauseV2(jsonExpr, textExpr, expr.Operator, val, isNumericVal)
+	innerWhere, innerVal := tc.buildMetaClause(jsonExpr, textExpr, expr.Operator, val, isNumericVal)
 	if numericFilter != "" {
 		innerWhere = numericFilter + " AND " + innerWhere
 	}
@@ -404,7 +404,7 @@ func (tc *translateContext) translateChainedMetaComparison(db *gorm.DB, expr *Co
 
 	if isNegated && isChildrenRoot {
 		positiveOp := tc.flipOperator(expr.Operator)
-		posWhere, posVal := tc.buildMetaClauseV2(jsonExpr, textExpr, positiveOp, val, isNumericVal)
+		posWhere, posVal := tc.buildMetaClause(jsonExpr, textExpr, positiveOp, val, isNumericVal)
 		if numericFilter != "" {
 			posWhere = numericFilter + " AND " + posWhere
 		}
@@ -423,37 +423,10 @@ func (tc *translateContext) translateChainedMetaComparison(db *gorm.DB, expr *Co
 	return db, nil
 }
 
-// buildMetaClause builds a WHERE clause for a meta JSON comparison,
-// handling LIKE, case-insensitive string equality, and numeric comparisons.
-func (tc *translateContext) buildMetaClause(jsonExpr string, op Token, val interface{}, isNumericVal bool, alias string, key string) (string, interface{}) {
-	if op.Type == TokenLike || op.Type == TokenNotLike {
-		// LIKE always operates on text
-		textExpr := jsonExpr
-		if tc.isPostgres() && isNumericVal {
-			textExpr = fmt.Sprintf("%s.meta->>'%s'", alias, key)
-		}
-		likePattern := convertMRQLWildcards(fmt.Sprint(val))
-		likeOp := tc.likeOperator()
-		if op.Type == TokenNotLike {
-			likeOp = "NOT " + likeOp
-		}
-		return textExpr + " " + likeOp + " ? ESCAPE '\\'", likePattern
-	}
-
-	sqlOp := tc.sqlOperator(op)
-
-	// Case-insensitive string equality for non-numeric values
-	if !isNumericVal && (op.Type == TokenEq || op.Type == TokenNeq) {
-		return "LOWER(" + jsonExpr + ") " + sqlOp + " LOWER(?)", val
-	}
-
-	return jsonExpr + " " + sqlOp + " ?", val
-}
-
-// buildMetaClauseV2 builds a WHERE clause for a meta JSON comparison.
-// Unlike buildMetaClause, it receives pre-built JSON and text expressions
-// so it works with both single keys and subpaths.
-func (tc *translateContext) buildMetaClauseV2(jsonExpr string, textExpr string, op Token, val interface{}, isNumericVal bool) (string, interface{}) {
+// buildMetaClause builds a WHERE clause for a meta JSON comparison.
+// It receives pre-built JSON and text expressions so it works with both
+// single keys and subpaths.
+func (tc *translateContext) buildMetaClause(jsonExpr string, textExpr string, op Token, val interface{}, isNumericVal bool) (string, interface{}) {
 	if op.Type == TokenLike || op.Type == TokenNotLike {
 		likePattern := convertMRQLWildcards(fmt.Sprint(val))
 		likeOp := tc.likeOperator()
