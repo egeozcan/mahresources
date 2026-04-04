@@ -6,8 +6,23 @@ import (
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
+	"gorm.io/gorm/schema"
 )
+
+// mockPostgresDialector is a minimal gorm.Dialector that reports its name as "postgres"
+// without requiring an actual database connection.
+type mockPostgresDialector struct{}
+
+func (mockPostgresDialector) Name() string                                                  { return "postgres" }
+func (mockPostgresDialector) Initialize(*gorm.DB) error                                     { return nil }
+func (mockPostgresDialector) Migrator(*gorm.DB) gorm.Migrator                               { return nil }
+func (mockPostgresDialector) DataTypeOf(*schema.Field) string                                { return "" }
+func (mockPostgresDialector) DefaultValueOf(*schema.Field) clause.Expression                 { return nil }
+func (mockPostgresDialector) BindVarTo(clause.Writer, *gorm.Statement, interface{})          {}
+func (mockPostgresDialector) QuoteTo(clause.Writer, string)                                  {}
+func (mockPostgresDialector) Explain(string, ...interface{}) string                          { return "" }
 
 // ---- Minimal model structs for test DB (mirrors models/ but avoids import cycles) ----
 
@@ -1344,5 +1359,85 @@ func TestTranslate_GroupByBucketed_NilValue(t *testing.T) {
 		if r.OwnerID != nil {
 			t.Errorf("nil-owner bucket should not contain resource with owner_id=%v", *r.OwnerID)
 		}
+	}
+}
+
+// newMockPostgresTC creates a translateContext whose isPostgres() returns true.
+func newMockPostgresTC(tableName string) *translateContext {
+	db := &gorm.DB{Config: &gorm.Config{Dialector: mockPostgresDialector{}}}
+	return &translateContext{db: db, tableName: tableName}
+}
+
+// newSQLiteTC creates a translateContext backed by SQLite (no real DB needed,
+// just enough for isPostgres() to return false).
+func newSQLiteTC(tableName string) *translateContext {
+	db, _ := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	return &translateContext{db: db, tableName: tableName}
+}
+
+func TestMetaJsonExpr(t *testing.T) {
+	tests := []struct {
+		name       string
+		segments   []string
+		tableName  string
+		isPostgres bool
+		wantExpr   string
+		wantText   string
+	}{
+		{"single key sqlite", []string{"rating"}, "resources", false,
+			"json_extract(resources.meta, '$.rating')", "json_extract(resources.meta, '$.rating')"},
+		{"single key postgres", []string{"rating"}, "resources", true,
+			"resources.meta->>'rating'", "resources.meta->>'rating'"},
+		{"two-level subpath sqlite", []string{"a", "b"}, "resources", false,
+			"json_extract(resources.meta, '$.a.b')", "json_extract(resources.meta, '$.a.b')"},
+		{"two-level subpath postgres", []string{"a", "b"}, "resources", true,
+			"resources.meta->'a'->>'b'", "resources.meta->'a'->>'b'"},
+		{"three-level subpath postgres", []string{"a", "b", "c"}, "notes", true,
+			"notes.meta->'a'->'b'->>'c'", "notes.meta->'a'->'b'->>'c'"},
+		{"three-level subpath sqlite", []string{"a", "b", "c"}, "groups", false,
+			"json_extract(groups.meta, '$.a.b.c')", "json_extract(groups.meta, '$.a.b.c')"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var tc *translateContext
+			if tt.isPostgres {
+				tc = newMockPostgresTC(tt.tableName)
+			} else {
+				tc = newSQLiteTC(tt.tableName)
+			}
+			gotExpr := tc.metaJsonExpr(tt.segments)
+			if gotExpr != tt.wantExpr {
+				t.Errorf("metaJsonExpr: got %q, want %q", gotExpr, tt.wantExpr)
+			}
+			gotText := tc.metaJsonTextExpr(tt.segments)
+			if gotText != tt.wantText {
+				t.Errorf("metaJsonTextExpr: got %q, want %q", gotText, tt.wantText)
+			}
+		})
+	}
+}
+
+func TestValidateMetaSegments(t *testing.T) {
+	tests := []struct {
+		name     string
+		segments []string
+		wantErr  bool
+	}{
+		{"single valid", []string{"rating"}, false},
+		{"multi valid", []string{"a", "b", "c"}, false},
+		{"underscores", []string{"config_v2", "host"}, false},
+		{"hyphen invalid", []string{"a-b", "c"}, true},
+		{"space invalid", []string{"a b"}, true},
+		{"empty segment invalid", []string{"a", ""}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateMetaSegments(tt.segments)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateMetaSegments(%v) err=%v, wantErr=%v", tt.segments, err, tt.wantErr)
+			}
+		})
 	}
 }

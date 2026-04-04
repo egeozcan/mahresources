@@ -799,6 +799,98 @@ func isValidMetaKey(key string) bool {
 	return metaKeyPattern.MatchString(key)
 }
 
+// validateMetaSegments checks that each segment in a meta subpath is safe for
+// interpolation into JSON extraction paths.
+func validateMetaSegments(segments []string) error {
+	for _, seg := range segments {
+		if !isValidMetaKey(seg) {
+			return fmt.Errorf("invalid meta key segment %q: must contain only alphanumeric characters and underscores", seg)
+		}
+	}
+	return nil
+}
+
+// metaSubpathSegments extracts the subpath segments from a meta field name.
+// "meta.a.b.c" → ["a", "b", "c"]
+func metaSubpathSegments(fieldName string) []string {
+	return strings.Split(strings.TrimPrefix(fieldName, "meta."), ".")
+}
+
+// metaJsonExpr builds the JSON extraction expression for a meta subpath.
+// On SQLite: json_extract(table.meta, '$.a.b.c')
+// On Postgres: table.meta->'a'->'b'->>'c'  (text extraction on final key)
+func (tc *translateContext) metaJsonExpr(segments []string) string {
+	return tc.metaJsonExprOn(tc.tableName, segments)
+}
+
+// metaJsonExprOn builds the JSON extraction expression using a specific table alias.
+func (tc *translateContext) metaJsonExprOn(alias string, segments []string) string {
+	if tc.isPostgres() {
+		return pgJsonTextPath(alias, segments)
+	}
+	return sqliteJsonPath(alias, segments)
+}
+
+// metaJsonTextExpr returns a text-typed JSON extraction expression.
+func (tc *translateContext) metaJsonTextExpr(segments []string) string {
+	return tc.metaJsonExpr(segments)
+}
+
+// metaJsonTextExprOn returns a text-typed JSON extraction expression for a specific alias.
+func (tc *translateContext) metaJsonTextExprOn(alias string, segments []string) string {
+	return tc.metaJsonExprOn(alias, segments)
+}
+
+// metaNumericExpr builds a safe numeric cast expression for a meta subpath.
+func (tc *translateContext) metaNumericExpr(segments []string) string {
+	return tc.metaNumericExprOn(tc.tableName, segments)
+}
+
+// metaNumericExprOn builds a safe numeric cast expression using a specific table alias.
+func (tc *translateContext) metaNumericExprOn(alias string, segments []string) string {
+	if tc.isPostgres() {
+		textExpr := pgJsonTextPath(alias, segments)
+		return fmt.Sprintf(
+			"CASE WHEN %s ~ '^-{0,1}[0-9]+(\\.[0-9]+){0,1}$' THEN (%s)::numeric ELSE NULL END",
+			textExpr, textExpr,
+		)
+	}
+	return sqliteJsonPath(alias, segments)
+}
+
+// metaTypeFilterOn returns a WHERE clause filtering to numeric JSON type rows (SQLite only).
+func (tc *translateContext) metaTypeFilterOn(alias string, segments []string) string {
+	if tc.isPostgres() {
+		return ""
+	}
+	path := "$." + strings.Join(segments, ".")
+	return fmt.Sprintf("json_type(%s.meta, '%s') IN ('integer', 'real')", alias, path)
+}
+
+// pgJsonTextPath builds Postgres chained arrow JSON path: table.meta->'a'->'b'->>'c'
+func pgJsonTextPath(alias string, segments []string) string {
+	if len(segments) == 1 {
+		return fmt.Sprintf("%s.meta->>'%s'", alias, segments[0])
+	}
+	var b strings.Builder
+	b.WriteString(alias)
+	b.WriteString(".meta")
+	for i, seg := range segments {
+		if i == len(segments)-1 {
+			b.WriteString("->>'" + seg + "'")
+		} else {
+			b.WriteString("->'" + seg + "'")
+		}
+	}
+	return b.String()
+}
+
+// sqliteJsonPath builds SQLite json_extract path: json_extract(table.meta, '$.a.b.c')
+func sqliteJsonPath(alias string, segments []string) string {
+	path := "$." + strings.Join(segments, ".")
+	return fmt.Sprintf("json_extract(%s.meta, '%s')", alias, path)
+}
+
 // isNumericValue returns true if the value is a numeric Go type.
 func isNumericValue(val interface{}) bool {
 	switch val.(type) {
