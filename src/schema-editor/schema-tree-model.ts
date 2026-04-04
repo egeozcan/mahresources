@@ -1,4 +1,5 @@
 import type { JSONSchema } from './schema-core';
+import { isLabeledEnum } from './schema-core';
 
 // ─── Schema Node ─────────────────────────────────────────────────────────────
 
@@ -113,15 +114,19 @@ export function schemaToTree(schema: JSONSchema, name = '', parentRequired: stri
   // Only extract the FIRST matching keyword into compositionKeyword/variants.
   // Additional composition keywords stay in node.schema and pass through
   // treeToSchema via the spread, preserving multi-keyword schemas.
-  for (const kw of ['oneOf', 'anyOf', 'allOf'] as const) {
-    if (Array.isArray(schema[kw])) {
-      node.compositionKeyword = kw;
-      const variantNodes = (schema[kw] as JSONSchema[]).map((variant, i) =>
-        schemaToTree(variant, variant.title || `variant${i + 1}`),
-      );
-      node.variants = [...(node.variants || []), ...variantNodes];
-      delete node.schema[kw];
-      break;
+  // Skip labeled enums (oneOf with const+title entries) — those stay in node.schema
+  // so the enum editor can see and edit them directly.
+  if (!isLabeledEnum(schema)) {
+    for (const kw of ['oneOf', 'anyOf', 'allOf'] as const) {
+      if (Array.isArray(schema[kw])) {
+        node.compositionKeyword = kw;
+        const variantNodes = (schema[kw] as JSONSchema[]).map((variant, i) =>
+          schemaToTree(variant, variant.title || `variant${i + 1}`),
+        );
+        node.variants = [...(node.variants || []), ...variantNodes];
+        delete node.schema[kw];
+        break;
+      }
     }
   }
 

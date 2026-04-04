@@ -2,6 +2,8 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { sharedStyles } from '../styles';
 import type { SchemaNode } from '../schema-tree-model';
+import { isLabeledEnum } from '../schema-core';
+import type { EnumEntry } from './node-editors/enum-editor';
 
 // Import all node editors (registers them as custom elements)
 import './node-editors/string-editor';
@@ -119,9 +121,39 @@ export class SchemaDetailPanel extends LitElement {
     if (!this.node) return nothing;
     const schema = this.node.schema;
 
-    // Enum editor is type-independent (any type can have enum)
+    // Labeled enum: oneOf with const+title entries
+    if (isLabeledEnum(schema)) {
+      const entries: EnumEntry[] = (schema.oneOf as any[]).map((e: any) => ({
+        value: e.const,
+        label: e.title || '',
+      }));
+      return html`<schema-enum-editor
+        .entries=${entries}
+        .labeled=${true}
+        .valueType=${this.node.type}
+        @enum-change=${(e: CustomEvent) => {
+          if (e.detail.labeled) {
+            this._dispatchChange('labeledEnum', e.detail.entries);
+          } else {
+            this._dispatchChange('enum', e.detail.values);
+          }
+        }}
+      ></schema-enum-editor>`;
+    }
+
+    // Plain enum editor (any type can have enum)
     if (schema.enum) {
-      return html`<schema-enum-editor .values=${schema.enum} .valueType=${this.node.type} @enum-change=${(e: CustomEvent) => this._dispatchChange('enum', e.detail.values)}></schema-enum-editor>`;
+      return html`<schema-enum-editor
+        .values=${schema.enum}
+        .valueType=${this.node.type}
+        @enum-change=${(e: CustomEvent) => {
+          if (e.detail.labeled) {
+            this._dispatchChange('labeledEnum', e.detail.entries);
+          } else {
+            this._dispatchChange('enum', e.detail.values);
+          }
+        }}
+      ></schema-enum-editor>`;
     }
 
     switch (this.node.type) {

@@ -210,7 +210,27 @@ export class SchemaEditMode extends LitElement {
         } else {
           selected.schema.enum = value;
         }
+        // Clean up oneOf from previous labeled enum state
+        if (selected.schema.oneOf && !selected.compositionKeyword) {
+          delete selected.schema.oneOf;
+        }
         break;
+      case 'labeledEnum': {
+        // Convert entries to oneOf + const + title schema
+        const entries = value as Array<{ value: any; label: string }>;
+        if (entries.length === 0) {
+          delete selected.schema.oneOf;
+          delete selected.schema.enum;
+        } else {
+          delete selected.schema.enum;
+          selected.schema.oneOf = entries.map(e => {
+            const entry: any = { const: e.value };
+            if (e.label) entry.title = e.label;
+            return entry;
+          });
+        }
+        break;
+      }
       default:
         if (value === undefined) {
           delete selected.schema[field];
