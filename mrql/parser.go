@@ -290,7 +290,7 @@ func (p *parser) parseFieldExpr() (Node, error) {
 }
 
 // maxFieldParts is the maximum number of parts in a dotted field expression.
-const maxFieldParts = 5
+const maxFieldParts = 8
 
 // parseField reads a field name: IDENT (. IDENT)* with up to maxFieldParts parts.
 func (p *parser) parseField() (*FieldExpr, error) {

@@ -785,9 +785,9 @@ func TestParserMaxDepthField(t *testing.T) {
 }
 
 func TestParserTooDeepFieldRejected(t *testing.T) {
-	_, err := Parse(`a.b.c.d.e.f = "test"`)
+	_, err := Parse(`a.b.c.d.e.f.g.h.i = "test"`)
 	if err == nil {
-		t.Fatal("expected error for 6-part field, got nil")
+		t.Fatal("expected error for 9-part field, got nil")
 	}
 	if !strings.Contains(err.Error(), "too deep") {
 		t.Fatalf("expected 'too deep' error, got: %v", err)
@@ -1138,6 +1138,51 @@ func TestParser_GroupByMetaTraversalLeaf(t *testing.T) {
 		// Aggregate
 		if len(q.GroupBy.Aggregates) != 1 || q.GroupBy.Aggregates[0].Name != "COUNT" {
 			t.Errorf("expected 1 COUNT aggregate, got %v", q.GroupBy.Aggregates)
+		}
+	})
+}
+
+func TestParser_MetaSubpathParsing(t *testing.T) {
+	t.Run("meta.a.b parses to 3 parts", func(t *testing.T) {
+		q, err := Parse(`meta.a.b = 1`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		comp := q.Where.(*ComparisonExpr)
+		if len(comp.Field.Parts) != 3 {
+			t.Errorf("expected 3 parts, got %d", len(comp.Field.Parts))
+		}
+		if comp.Field.Name() != "meta.a.b" {
+			t.Errorf("expected 'meta.a.b', got %q", comp.Field.Name())
+		}
+	})
+
+	t.Run("meta.a.b.c.d parses to 5 parts", func(t *testing.T) {
+		q, err := Parse(`meta.a.b.c.d = "x"`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		comp := q.Where.(*ComparisonExpr)
+		if len(comp.Field.Parts) != 5 {
+			t.Errorf("expected 5 parts, got %d", len(comp.Field.Parts))
+		}
+	})
+
+	t.Run("8-part chain parses successfully", func(t *testing.T) {
+		q, err := Parse(`parent.parent.parent.parent.meta.a.b.c = 1`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		comp := q.Where.(*ComparisonExpr)
+		if len(comp.Field.Parts) != 8 {
+			t.Errorf("expected 8 parts, got %d", len(comp.Field.Parts))
+		}
+	})
+
+	t.Run("9-part chain rejected", func(t *testing.T) {
+		_, err := Parse(`parent.parent.parent.parent.parent.meta.a.b.c = 1`)
+		if err == nil {
+			t.Fatal("expected error for 9-part chain, got nil")
 		}
 	})
 }
