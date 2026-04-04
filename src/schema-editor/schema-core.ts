@@ -677,16 +677,6 @@ export function isLabeledEnum(schema: JSONSchema): boolean {
 }
 
 /**
- * Given a labeled-enum schema, returns the label for a specific value.
- * Falls back to stringifying the value if no title is found.
- */
-export function getLabeledEnumTitle(schema: JSONSchema, value: any): string {
-  if (!schema.oneOf) return String(value);
-  const entry = schema.oneOf.find((e: JSONSchema) => e.const === value);
-  return entry?.title || String(value);
-}
-
-/**
  * Extracts the enum values and labels from a labeled-enum schema.
  * Returns an array of { value, label } objects.
  */
@@ -820,6 +810,11 @@ export function intersectFields(fieldLists: FlatField[][]): FlatField[] {
         if (JSON.stringify(a) !== JSON.stringify(b)) {
           existing.enum = null;
           existing.enumLabels = null;
+        } else if (existing.enumLabels || field.enumLabels) {
+          // Enums match but labels may differ — drop labels if they don't match
+          if (JSON.stringify(existing.enumLabels) !== JSON.stringify(field.enumLabels)) {
+            existing.enumLabels = null;
+          }
         }
       } else if (existing.enum !== field.enum) {
         existing.enum = null;
