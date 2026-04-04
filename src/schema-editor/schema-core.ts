@@ -655,6 +655,44 @@ export function titleCase(key: string): string {
     .replace(/\b\w/g, c => c.toUpperCase());
 }
 
+// ─── Labeled enum detection ─────────────────────────────────────────────────
+
+/**
+ * Returns true when a schema represents a "labeled enum" — a `oneOf` array
+ * where every entry is a simple `{ const, title?, description? }` object
+ * with no complex subschema keywords.
+ */
+export function isLabeledEnum(schema: JSONSchema): boolean {
+  if (!schema.oneOf || !Array.isArray(schema.oneOf) || schema.oneOf.length === 0) return false;
+  const complexKeys = new Set(['type', 'properties', 'items', 'oneOf', 'anyOf', 'allOf', 'if', '$ref', 'enum']);
+  return schema.oneOf.every((entry: JSONSchema) => {
+    if (!entry || typeof entry !== 'object' || entry.const === undefined) return false;
+    return !Object.keys(entry).some(k => complexKeys.has(k));
+  });
+}
+
+/**
+ * Given a labeled-enum schema, returns the label for a specific value.
+ * Falls back to stringifying the value if no title is found.
+ */
+export function getLabeledEnumTitle(schema: JSONSchema, value: any): string {
+  if (!schema.oneOf) return String(value);
+  const entry = schema.oneOf.find((e: JSONSchema) => e.const === value);
+  return entry?.title || String(value);
+}
+
+/**
+ * Extracts the enum values and labels from a labeled-enum schema.
+ * Returns an array of { value, label } objects.
+ */
+export function getLabeledEnumEntries(schema: JSONSchema): Array<{ value: any; label: string }> {
+  if (!schema.oneOf) return [];
+  return schema.oneOf.map((entry: JSONSchema) => ({
+    value: entry.const,
+    label: entry.title || String(entry.const),
+  }));
+}
+
 // ─── Schema flattening (for search mode) ─────────────────────────────────────
 
 export function flattenSchema(
