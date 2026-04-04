@@ -854,3 +854,32 @@ func TestValidate_GroupByMultipleAggregateOrderKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestValidate_MetaSubpathFields(t *testing.T) {
+	valid := []struct {
+		name  string
+		input string
+	}{
+		{"meta.a.b on resource", `type = "resource" AND meta.a.b = 1`},
+		{"meta.a.b.c on note", `type = "note" AND meta.a.b.c = "x"`},
+		{"meta.a.b on group", `type = "group" AND meta.a.b = 1`},
+		{"owner.meta.a.b on resource", `type = "resource" AND owner.meta.a.b = 1`},
+		{"parent.meta.a.b on group", `type = "group" AND parent.meta.a.b = 1`},
+		{"parent.parent.meta.a.b.c on group", `type = "group" AND parent.parent.meta.a.b.c = "x"`},
+		{"owner.parent.meta.a.b on resource", `type = "resource" AND owner.parent.meta.a.b = 1`},
+		{"order by meta.a.b", `type = "resource" ORDER BY meta.a.b`},
+		{"group by meta.a.b", `type = "resource" GROUP BY meta.a.b COUNT()`},
+		{"group by owner.meta.a.b", `type = "resource" GROUP BY owner.meta.a.b COUNT()`},
+	}
+	for _, tt := range valid {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := Parse(tt.input)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			if err := Validate(q); err != nil {
+				t.Errorf("expected valid, got error: %v", err)
+			}
+		})
+	}
+}

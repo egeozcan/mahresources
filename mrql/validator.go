@@ -550,9 +550,9 @@ func validateTraversalChain(f *FieldExpr, entityType EntityType) error {
 	for i := 1; i < len(f.Parts)-1; i++ {
 		part := f.Parts[i].Value
 
-		// meta.key leaf: the rest of the chain is a meta field reference, not traversal
-		if part == "meta" && i == len(f.Parts)-2 {
-			// owner.meta.abc → valid (meta.abc is the leaf on the target group)
+		// meta subpath leaf: once we see "meta", everything after it is the JSON
+		// subpath — stop validating intermediates. Handles owner.meta.a.b.c etc.
+		if part == "meta" && i < len(f.Parts)-1 {
 			return nil
 		}
 
