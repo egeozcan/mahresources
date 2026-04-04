@@ -9,6 +9,8 @@ import {
   evaluateCondition,
   inferType,
   inferSchema,
+  isLabeledEnum,
+  getLabeledEnumEntries,
 } from '../schema-core';
 import { isLeafSchema, stripStaleKeys } from '../form-mode-helpers';
 
@@ -152,6 +154,11 @@ export class SchemaFormMode extends LitElement {
         return this._renderField(mergedSchema, data, onChange, rootSchema, fieldId, parentPath, describedBy, isRequired, parentRequired);
       }
       return html`<div class="text-red-500 text-xs">Unresolvable reference: ${schema.$ref}</div>`;
+    }
+
+    // Handle labeled enum (oneOf with const+title)
+    if (isLabeledEnum(schema)) {
+      return this._renderLabeledEnum(schema, data, onChange, fieldId, describedBy, isRequired);
     }
 
     // Handle oneOf
@@ -455,6 +462,45 @@ export class SchemaFormMode extends LitElement {
         ${isNull ? html`<option value="" selected>-- select --</option>` : nothing}
         ${schema.enum.map((val: any) => html`
           <option value=${val} ?selected=${val === data}>${val}</option>
+        `)}
+        ${!isNull && !hasValue ? html`
+          <option value=${data} selected>${data} (current)</option>
+        ` : nothing}
+      </select>
+    `;
+  }
+
+  // ─── labeled enum (oneOf + const + title) ──────────────────────────────
+
+  private _renderLabeledEnum(schema: JSONSchema, data: any, onChange: (val: any) => void, fieldId?: string, describedBy?: string | null, isRequired?: boolean): TemplateResult {
+    const entries = getLabeledEnumEntries(schema);
+    const hasValue = entries.some(e => e.value === data);
+    const isNull = data === null || data === undefined;
+
+    const onSelectChange = (e: Event) => {
+      const valStr = (e.target as HTMLSelectElement).value;
+      // Find matching entry by stringified value
+      const match = entries.find(entry => String(entry.value) === valStr);
+      if (match !== undefined) {
+        onChange(match.value);
+      } else if (schema.type === 'integer' || schema.type === 'number') {
+        onChange(parseFloat(valStr));
+      } else {
+        onChange(valStr);
+      }
+    };
+
+    return html`
+      <select class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md mt-1"
+        id=${fieldId || nothing}
+        aria-label=${schema.title ? `Select ${schema.title}` : 'Select value'}
+        aria-describedby=${describedBy || nothing}
+        ?required=${!!isRequired}
+        aria-required=${isRequired ? 'true' : nothing}
+        @change=${onSelectChange}>
+        ${isNull ? html`<option value="" selected>-- select --</option>` : nothing}
+        ${entries.map(entry => html`
+          <option value=${entry.value} ?selected=${entry.value === data}>${entry.label}</option>
         `)}
         ${!isNull && !hasValue ? html`
           <option value=${data} selected>${data} (current)</option>

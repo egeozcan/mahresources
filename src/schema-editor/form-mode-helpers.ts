@@ -1,5 +1,5 @@
 import type { JSONSchema } from './schema-core';
-import { resolveRef, mergeSchemas, unescapeJsonPointer } from './schema-core';
+import { resolveRef, mergeSchemas, unescapeJsonPointer, isLabeledEnum } from './schema-core';
 
 /**
  * Determines whether a JSON Schema represents a "leaf" field -- one that
@@ -26,6 +26,9 @@ export function isLeafSchema(schema: JSONSchema, rootSchema?: JSONSchema): boole
     const merged = mergeSchemas(resolved, siblings);
     return isLeafSchema(merged, rootSchema);
   }
+
+  // Labeled enum (oneOf with const+title) renders as a simple dropdown — it's a leaf
+  if (isLabeledEnum(schema)) return true;
 
   // oneOf / anyOf render variant selectors with nested sub-forms — never a leaf
   if (schema.oneOf && Array.isArray(schema.oneOf)) return false;
