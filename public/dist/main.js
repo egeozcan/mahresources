@@ -1085,14 +1085,14 @@ ${n?`Expression: "`+n+`"
       <fieldset class="w-full" aria-label=${t}>
         <legend class="block text-xs font-mono font-medium text-stone-600 mt-1">${e.label}</legend>
         <div class="flex flex-wrap gap-x-3 gap-y-1 mt-1">
-          ${e.enum.map(t=>V`
-            <label class="text-sm flex items-center gap-1">
-              <input type="checkbox" .value=${String(t)}
-                     .checked=${e.enumValues.includes(String(t))}
-                     @change=${n=>this._onEnumCheckboxChange(e,String(t),n.target.checked)}>
-              <span>${t}</span>
-            </label>
-          `)}
+          ${e.enum.map((t,n)=>{let r=e.enumLabels?.[n]||String(t);return V`
+              <label class="text-sm flex items-center gap-1">
+                <input type="checkbox" .value=${String(t)}
+                       .checked=${e.enumValues.includes(String(t))}
+                       @change=${n=>this._onEnumCheckboxChange(e,String(t),n.target.checked)}>
+                <span>${r}</span>
+              </label>
+            `})}
         </div>
       </fieldset>
     `}_renderEnumSelect(e,t){let n=Math.min(e.enum.length,6);return V`
@@ -1102,9 +1102,9 @@ ${n?`Expression: "`+n+`"
                 class="w-full text-sm border-stone-300 rounded mt-1 focus:ring-1 focus:ring-amber-600 focus:border-amber-600"
                 size=${n}
                 @change=${t=>this._onEnumSelectChange(e,t)}>
-          ${e.enum.map(t=>V`
-            <option value=${String(t)} ?selected=${e.enumValues.includes(String(t))}>${t}</option>
-          `)}
+          ${e.enum.map((t,n)=>{let r=e.enumLabels?.[n]||String(t);return V`
+              <option value=${String(t)} ?selected=${e.enumValues.includes(String(t))}>${r}</option>
+            `})}
         </select>
         ${e.enumValues.length>0?V`
           <button type="button"

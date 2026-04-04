@@ -474,14 +474,17 @@ export class SchemaSearchMode extends LitElement {
       <fieldset class="w-full" aria-label=${ariaLabel}>
         <legend class="block text-xs font-mono font-medium text-stone-600 mt-1">${field.label}</legend>
         <div class="flex flex-wrap gap-x-3 gap-y-1 mt-1">
-          ${field.enum!.map(enumVal => html`
-            <label class="text-sm flex items-center gap-1">
-              <input type="checkbox" .value=${String(enumVal)}
-                     .checked=${field.enumValues.includes(String(enumVal))}
-                     @change=${(e: Event) => this._onEnumCheckboxChange(field, String(enumVal), (e.target as HTMLInputElement).checked)}>
-              <span>${enumVal}</span>
-            </label>
-          `)}
+          ${field.enum!.map((enumVal, idx) => {
+            const displayLabel = field.enumLabels?.[idx] || String(enumVal);
+            return html`
+              <label class="text-sm flex items-center gap-1">
+                <input type="checkbox" .value=${String(enumVal)}
+                       .checked=${field.enumValues.includes(String(enumVal))}
+                       @change=${(e: Event) => this._onEnumCheckboxChange(field, String(enumVal), (e.target as HTMLInputElement).checked)}>
+                <span>${displayLabel}</span>
+              </label>
+            `;
+          })}
         </div>
       </fieldset>
     `;
@@ -496,9 +499,12 @@ export class SchemaSearchMode extends LitElement {
                 class="w-full text-sm border-stone-300 rounded mt-1 focus:ring-1 focus:ring-amber-600 focus:border-amber-600"
                 size=${selectSize}
                 @change=${(e: Event) => this._onEnumSelectChange(field, e)}>
-          ${field.enum!.map(enumVal => html`
-            <option value=${String(enumVal)} ?selected=${field.enumValues.includes(String(enumVal))}>${enumVal}</option>
-          `)}
+          ${field.enum!.map((enumVal, idx) => {
+            const displayLabel = field.enumLabels?.[idx] || String(enumVal);
+            return html`
+              <option value=${String(enumVal)} ?selected=${field.enumValues.includes(String(enumVal))}>${displayLabel}</option>
+            `;
+          })}
         </select>
         ${field.enumValues.length > 0 ? html`
           <button type="button"
