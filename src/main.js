@@ -4,6 +4,29 @@ import morph from '@alpinejs/morph';
 import collapse from '@alpinejs/collapse';
 import focus from '@alpinejs/focus';
 
+// Workaround: Alpine's x-trap (focus-trap) doesn't support shadow DOM.
+// focus-trap's checkFocusIn handler uses composedPath()[0] to get the actual
+// focused element inside shadow DOM, then checks container.contains() which
+// fails across shadow boundaries. This causes focus to be stolen from shadow
+// DOM inputs back to light DOM elements. We intercept focusin in capture phase
+// (before focus-trap's handler) and stop propagation when focus is legitimately
+// going to a shadow DOM element inside a trap container.
+document.addEventListener('focusin', (e) => {
+  const target = e.target;
+  if (!(target instanceof HTMLElement) || !target.shadowRoot) return;
+  if (e.composedPath()[0] === target) return;
+  let el = target;
+  while (el) {
+    for (const attr of el.attributes) {
+      if (attr.name === 'x-trap' || attr.name.startsWith('x-trap.')) {
+        e.stopImmediatePropagation();
+        return;
+      }
+    }
+    el = el.parentElement;
+  }
+}, true);
+
 // Import utility functions and expose them globally
 import {
   abortableFetch,
