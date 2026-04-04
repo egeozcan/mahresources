@@ -251,7 +251,7 @@
       "seedDetails": "Person category with rich MetaSchema (name, email, status enum, age, address object)",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": ["Click Visual Editor button to open modal"],
-      "capturedDate": ""
+      "capturedDate": "2026-04-04"
     },
     "schema-editor-preview.png": {
       "page": "/category?id=1",
@@ -260,16 +260,16 @@
       "seedDetails": "Same as schema-editor-modal",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": ["Click Visual Editor, switch to Preview Form tab"],
-      "capturedDate": ""
+      "capturedDate": "2026-04-04"
     },
     "schema-editor-composition.png": {
-      "page": "/category?id=1",
+      "page": "/category?id=2",
       "description": "Schema editor modal showing a oneOf composition node with two variants in the detail panel",
       "seedDependencies": ["categories"],
-      "seedDetails": "Category with schema containing oneOf (email string or phone object)",
+      "seedDetails": "Location category with schema containing oneOf contact (Email Contact or Phone Contact)",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": ["Click Visual Editor, select the oneOf node in tree"],
-      "capturedDate": ""
+      "capturedDate": "2026-04-04"
     },
     "schema-search-fields.png": {
       "page": "/groups?categories=1",
@@ -278,7 +278,7 @@
       "seedDetails": "Person category selected, schema fields rendered in search sidebar",
       "viewport": { "width": 1200, "height": 800 },
       "interactions": ["Select Person category in sidebar"],
-      "capturedDate": ""
+      "capturedDate": "2026-04-04"
     }
   }
 }

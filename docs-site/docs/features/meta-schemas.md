@@ -201,7 +201,7 @@ When a Category has a schema defined, the list page search form automatically re
 ![Schema Search Fields](/img/schema-search-fields.png)
 
 - **String fields** render as text inputs with a LIKE operator by default
-- **Number fields** render as numeric inputs with comparison operators (=, ≠, >, ≥, <, ≤)
+- **Number fields** render as numeric inputs with comparison operators (`=`, `≠`, `>`, `≥`, `<`, `≤`)
 - **Enum fields** render as checkboxes (≤6 values) or multi-select dropdowns (>6 values)
 - **Boolean fields** render as three-state radio buttons (Any / Yes / No)
 
