@@ -904,51 +904,27 @@ func isNumericValue(val interface{}) bool {
 
 // translateMetaComparison handles meta.key comparisons using json_extract.
 func (tc *translateContext) translateMetaComparison(db *gorm.DB, fd FieldDef, op Token, val interface{}) (*gorm.DB, error) {
-	// Extract the key from "meta.key"
-	key := strings.TrimPrefix(fd.Name, "meta.")
+	segments := metaSubpathSegments(fd.Name)
 
-	if !isValidMetaKey(key) {
-		return nil, &TranslateError{
-			Message: fmt.Sprintf("invalid meta key %q: must contain only alphanumeric characters and underscores", key),
-			Pos:     0,
-		}
+	if err := validateMetaSegments(segments); err != nil {
+		return nil, &TranslateError{Message: err.Error(), Pos: 0}
 	}
 
-	// Build the JSON extraction expression per database dialect.
 	isNumericVal := isNumericValue(val)
 	var jsonExpr string
-	if tc.isPostgres() {
-		if isNumericVal {
-			// Safe numeric cast: returns NULL for non-numeric values instead of crashing.
-			// This handles schemaless metadata where the same key may hold mixed types.
-			// Use {0,1} instead of ? in the regex — GORM interprets ? as a parameter placeholder.
-			jsonExpr = fmt.Sprintf(
-				"CASE WHEN %s.meta->>'%s' ~ '^-{0,1}[0-9]+(\\.[0-9]+){0,1}$' THEN (%s.meta->>'%s')::numeric ELSE NULL END",
-				tc.tableName, key, tc.tableName, key,
-			)
-		} else {
-			jsonExpr = fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)
+	if isNumericVal {
+		jsonExpr = tc.metaNumericExpr(segments)
+		if filter := tc.metaTypeFilterOn(tc.tableName, segments); filter != "" {
+			db = db.Where(filter)
 		}
 	} else {
-		if isNumericVal {
-			// SQLite: json_extract returns native types, but string values compare
-			// incorrectly with numbers (strings > numbers in SQLite affinity).
-			// Filter to only rows where the JSON type is numeric.
-			jsonExpr = fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
-			db = db.Where(fmt.Sprintf("json_type(%s.meta, '$.%s') IN ('integer', 'real')", tc.tableName, key))
-		} else {
-			jsonExpr = fmt.Sprintf("json_extract(%s.meta, '$.%s')", tc.tableName, key)
-		}
+		jsonExpr = tc.metaJsonExpr(segments)
 	}
 
 	sqlOp := tc.sqlOperator(op)
 
 	if op.Type == TokenLike || op.Type == TokenNotLike {
-		// LIKE always operates on text — use the text expression on Postgres
-		textExpr := jsonExpr
-		if tc.isPostgres() && isNumericVal {
-			textExpr = fmt.Sprintf("%s.meta->>'%s'", tc.tableName, key)
-		}
+		textExpr := tc.metaJsonTextExpr(segments)
 		likePattern := convertMRQLWildcards(fmt.Sprint(val))
 		likeOp := tc.likeOperator()
 		if op.Type == TokenNotLike {
@@ -958,8 +934,6 @@ func (tc *translateContext) translateMetaComparison(db *gorm.DB, fd FieldDef, op
 		return db, nil
 	}
 
-	// For string equality/inequality on meta fields, use case-insensitive comparison
-	// to match the language's general case-insensitive rule.
 	if !isNumericVal && (op.Type == TokenEq || op.Type == TokenNeq) {
 		db = db.Where("LOWER("+jsonExpr+") "+sqlOp+" LOWER(?)", val)
 		return db, nil

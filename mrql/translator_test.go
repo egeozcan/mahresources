@@ -128,7 +128,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	parentGroupID := uint(1)
 	workGroupID := uint(2)
 	groups := []testGroup{
-		{ID: 1, Name: "Vacation", Meta: `{"region":"europe","priority":3}`},
+		{ID: 1, Name: "Vacation", Meta: `{"region":"europe","priority":3,"settings":{"visibility":"public","nested":{"deep":"value"}}}`},
 		{ID: 2, Name: "Work", OwnerID: &parentGroupID, Meta: `{}`},
 		{ID: 3, Name: "Archive", Meta: `{}`},
 		{ID: 4, Name: "Sub-Work", OwnerID: &workGroupID, Meta: `{}`},
@@ -141,7 +141,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	// Resources
 	now := time.Now()
 	resources := []testResource{
-		{ID: 1, Name: "sunset.jpg", OriginalName: "sunset.jpg", ContentType: "image/jpeg", FileSize: 1024000, Width: 1920, Height: 1080, CreatedAt: now, UpdatedAt: now, Meta: `{"rating":5}`},
+		{ID: 1, Name: "sunset.jpg", OriginalName: "sunset.jpg", ContentType: "image/jpeg", FileSize: 1024000, Width: 1920, Height: 1080, CreatedAt: now, UpdatedAt: now, Meta: `{"rating":5,"location":{"country":"spain","city":"barcelona","coords":{"lat":41.3851}}}`},
 		{ID: 2, Name: "photo_album.png", OriginalName: "photo_album.png", ContentType: "image/png", FileSize: 2048000, Width: 800, Height: 600, CreatedAt: now, UpdatedAt: now, Meta: `{"rating":3}`},
 		{ID: 3, Name: "report.pdf", OriginalName: "report.pdf", ContentType: "application/pdf", FileSize: 512000, CreatedAt: now, UpdatedAt: now, Meta: `{}`},
 		{ID: 4, Name: "untagged_file.txt", OriginalName: "untagged.txt", ContentType: "text/plain", FileSize: 100, CreatedAt: now.Add(-24 * 45 * time.Hour), UpdatedAt: now, Meta: `{}`},
@@ -152,7 +152,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 
 	// Notes
 	notes := []testNote{
-		{ID: 1, Name: "Meeting notes", CreatedAt: now, UpdatedAt: now, Meta: `{"priority":"high"}`},
+		{ID: 1, Name: "Meeting notes", CreatedAt: now, UpdatedAt: now, Meta: `{"priority":"high","details":{"room":"A1","floor":2}}`},
 		{ID: 2, Name: "Todo list", CreatedAt: now, UpdatedAt: now, Meta: `{"priority":"low","count":7}`},
 	}
 	for _, n := range notes {
