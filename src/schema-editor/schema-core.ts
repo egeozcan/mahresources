@@ -633,7 +633,10 @@ export function getDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): an
     if (schema.type.includes('null')) return null;
   }
 
-  if (schema.oneOf && schema.oneOf.length > 0) return getDefaultValue(schema.oneOf[0], rootSchema);
+  if (schema.oneOf && schema.oneOf.length > 0) {
+    if (isLabeledEnum(schema)) return schema.oneOf[0].const;
+    return getDefaultValue(schema.oneOf[0], rootSchema);
+  }
   if (schema.anyOf && schema.anyOf.length > 0) return getDefaultValue(schema.anyOf[0], rootSchema);
 
   // Schemas with properties but no explicit type are implicitly objects
