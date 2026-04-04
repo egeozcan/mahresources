@@ -309,6 +309,7 @@ export class ApiClient {
     tags?: number[];
     groups?: number[];
     url?: string;
+    meta?: string;
   }): Promise<Group> {
     const formData = new URLSearchParams();
     formData.append('name', data.name);
@@ -316,6 +317,7 @@ export class ApiClient {
     formData.append('categoryId', data.categoryId.toString());
     if (data.ownerId) formData.append('ownerId', data.ownerId.toString());
     if (data.url) formData.append('URL', data.url);
+    if (data.meta) formData.append('Meta', data.meta);
     if (data.tags) {
       data.tags.forEach(tagId => formData.append('tags', tagId.toString()));
     }

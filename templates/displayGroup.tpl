@@ -13,7 +13,7 @@
     {% if group.Category.MetaSchema && group.Meta %}
     <schema-editor mode="display"
         schema='{{ group.Category.MetaSchema }}'
-        value='{{ group.Meta }}'
+        value='{{ group.Meta|json }}'
         name="{{ group.Category.Name }}">
     </schema-editor>
     {% endif %}

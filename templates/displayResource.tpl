@@ -13,7 +13,7 @@
     {% if resource.ResourceCategory.MetaSchema && resource.Meta %}
     <schema-editor mode="display"
         schema='{{ resource.ResourceCategory.MetaSchema }}'
-        value='{{ resource.Meta }}'
+        value='{{ resource.Meta|json }}'
         name="{{ resource.ResourceCategory.Name }}">
     </schema-editor>
     {% endif %}
