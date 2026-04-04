@@ -4912,3 +4912,51 @@ func TestComprehensive_MetaSubpathComparison(t *testing.T) {
 		})
 	}
 }
+
+func TestComprehensive_TraversalMetaSubpath(t *testing.T) {
+	db := setupTestDB(t)
+
+	tests := []struct {
+		name       string
+		query      string
+		entityType EntityType
+		wantCount  int
+		wantNames  []string
+	}{
+		{"owner.meta subpath string", `type = "resource" AND owner.meta.settings.visibility = "public"`, EntityResource, 1, []string{"sunset.jpg"}},
+		{"owner.meta deep subpath", `type = "resource" AND owner.meta.settings.nested.deep = "value"`, EntityResource, 1, []string{"sunset.jpg"}},
+		{"parent.meta subpath", `type = "group" AND parent.meta.settings.visibility = "public"`, EntityGroup, 2, []string{"Work", "Photos"}},
+		{"owner.parent.meta subpath", `type = "resource" AND owner.parent.meta.settings.visibility = "public"`, EntityResource, 1, []string{"report.pdf"}},
+		{"owner.meta subpath case insensitive", `type = "resource" AND owner.meta.settings.visibility = "PUBLIC"`, EntityResource, 1, []string{"sunset.jpg"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := parseAndTranslate(t, tt.query, tt.entityType, db)
+			switch tt.entityType {
+			case EntityResource:
+				var resources []testResource
+				if err := result.Find(&resources).Error; err != nil {
+					t.Fatalf("query error: %v", err)
+				}
+				if len(resources) != tt.wantCount {
+					t.Fatalf("expected %d, got %d (names: %v)", tt.wantCount, len(resources), namesOfResources(resources))
+				}
+				if tt.wantNames != nil {
+					assertNames(t, namesOfResources(resources), tt.wantNames)
+				}
+			case EntityGroup:
+				var groups []testGroup
+				if err := result.Find(&groups).Error; err != nil {
+					t.Fatalf("query error: %v", err)
+				}
+				if len(groups) != tt.wantCount {
+					t.Fatalf("expected %d, got %d (names: %v)", tt.wantCount, len(groups), namesOfGroups(groups))
+				}
+				if tt.wantNames != nil {
+					assertNames(t, namesOfGroups(groups), tt.wantNames)
+				}
+			}
+		})
+	}
+}

@@ -308,10 +308,12 @@ func (tc *translateContext) flipOperator(op Token) Token {
 func (tc *translateContext) translateChainedComparison(db *gorm.DB, expr *ComparisonExpr) (*gorm.DB, error) {
 	parts := expr.Field.Parts
 
-	// Handle meta.key leaf: owner.meta.region, owner.parent.meta.key
-	// Detected when second-to-last part is "meta".
-	if len(parts) >= 3 && parts[len(parts)-2].Value == "meta" {
-		return tc.translateChainedMetaComparison(db, expr)
+	// Handle meta subpath leaf: owner.meta.region, owner.meta.a.b.c
+	// Detected when any part (after root) is "meta" — everything after it is the subpath.
+	for i := 1; i < len(parts); i++ {
+		if parts[i].Value == "meta" {
+			return tc.translateChainedMetaComparison(db, expr)
+		}
 	}
 
 	leaf := parts[len(parts)-1].Value
@@ -341,51 +343,58 @@ func (tc *translateContext) translateChainedComparison(db *gorm.DB, expr *Compar
 	return tc.translateFKChainScalar(db, steps, subFd.Column, expr.Operator, val, subFd)
 }
 
-// translateChainedMetaComparison handles traversal chains ending in meta.key
-// (e.g., owner.meta.region = "eu", owner.parent.meta.key ~ "val*").
-// Reuses the same numeric-cast/type-filtering logic as translateMetaComparison.
+// translateChainedMetaComparison handles traversal chains ending in meta subpath
+// (e.g., owner.meta.region = "eu", owner.meta.a.b.c ~ "val*").
+// Reuses the shared meta JSON helpers for consistent behavior.
 func (tc *translateContext) translateChainedMetaComparison(db *gorm.DB, expr *ComparisonExpr) (*gorm.DB, error) {
 	parts := expr.Field.Parts
-	metaKey := parts[len(parts)-1].Value
+
+	// Find the "meta" part in the chain
+	metaIdx := -1
+	for i := 1; i < len(parts); i++ {
+		if parts[i].Value == "meta" {
+			metaIdx = i
+			break
+		}
+	}
+
+	// Extract subpath segments (everything after "meta")
+	segments := make([]string, 0, len(parts)-metaIdx-1)
+	for i := metaIdx + 1; i < len(parts); i++ {
+		segments = append(segments, parts[i].Value)
+	}
+
+	if err := validateMetaSegments(segments); err != nil {
+		return nil, &TranslateError{Message: err.Error(), Pos: parts[metaIdx+1].Pos}
+	}
 
 	// Build FK chain for everything before "meta" (e.g., [owner] or [owner, parent]).
 	// Append a dummy leaf so buildTraversalChain processes all traversal steps.
-	chainParts := make([]Token, 0, len(parts)-1)
-	chainParts = append(chainParts, parts[:len(parts)-2]...)
+	chainParts := make([]Token, 0, metaIdx+1)
+	chainParts = append(chainParts, parts[:metaIdx]...)
 	chainParts = append(chainParts, Token{Value: "_meta_leaf"})
 	steps := tc.buildTraversalChain(chainParts)
 
 	// Resolve the comparison value
-	metaFd := FieldDef{Name: "meta." + metaKey, Type: FieldMeta, Column: "meta." + metaKey}
+	metaFd := FieldDef{Name: "meta." + strings.Join(segments, "."), Type: FieldMeta, Column: "meta." + strings.Join(segments, ".")}
 	val, err := tc.resolveValue(expr.Value, metaFd)
 	if err != nil {
 		return nil, err
 	}
 
-	// Build the JSON expression with proper numeric handling, matching
-	// translateMetaComparison's behavior exactly.
 	innerAlias := steps[len(steps)-1].alias
 	isNumericVal := isNumericValue(val)
 	var jsonExpr string
-	var numericFilter string // extra WHERE clause for SQLite numeric type filtering
-	if tc.isPostgres() {
-		if isNumericVal {
-			jsonExpr = fmt.Sprintf(
-				"CASE WHEN %s.meta->>'%s' ~ '^-{0,1}[0-9]+(\\.[0-9]+){0,1}$' THEN (%s.meta->>'%s')::numeric ELSE NULL END",
-				innerAlias, metaKey, innerAlias, metaKey,
-			)
-		} else {
-			jsonExpr = fmt.Sprintf("%s.meta->>'%s'", innerAlias, metaKey)
-		}
+	var numericFilter string
+	if isNumericVal {
+		jsonExpr = tc.metaNumericExprOn(innerAlias, segments)
+		numericFilter = tc.metaTypeFilterOn(innerAlias, segments)
 	} else {
-		jsonExpr = fmt.Sprintf("json_extract(%s.meta, '$.%s')", innerAlias, metaKey)
-		if isNumericVal {
-			numericFilter = fmt.Sprintf("json_type(%s.meta, '$.%s') IN ('integer', 'real')", innerAlias, metaKey)
-		}
+		jsonExpr = tc.metaJsonExprOn(innerAlias, segments)
 	}
 
-	// Build the inner WHERE clause using the meta-aware comparison
-	innerWhere, innerVal := tc.buildMetaClause(jsonExpr, expr.Operator, val, isNumericVal, innerAlias, metaKey)
+	textExpr := tc.metaJsonTextExprOn(innerAlias, segments)
+	innerWhere, innerVal := tc.buildMetaClauseV2(jsonExpr, textExpr, expr.Operator, val, isNumericVal)
 	if numericFilter != "" {
 		innerWhere = numericFilter + " AND " + innerWhere
 	}
@@ -395,7 +404,7 @@ func (tc *translateContext) translateChainedMetaComparison(db *gorm.DB, expr *Co
 
 	if isNegated && isChildrenRoot {
 		positiveOp := tc.flipOperator(expr.Operator)
-		posWhere, posVal := tc.buildMetaClause(jsonExpr, positiveOp, val, isNumericVal, innerAlias, metaKey)
+		posWhere, posVal := tc.buildMetaClauseV2(jsonExpr, textExpr, positiveOp, val, isNumericVal)
 		if numericFilter != "" {
 			posWhere = numericFilter + " AND " + posWhere
 		}
@@ -434,6 +443,28 @@ func (tc *translateContext) buildMetaClause(jsonExpr string, op Token, val inter
 	sqlOp := tc.sqlOperator(op)
 
 	// Case-insensitive string equality for non-numeric values
+	if !isNumericVal && (op.Type == TokenEq || op.Type == TokenNeq) {
+		return "LOWER(" + jsonExpr + ") " + sqlOp + " LOWER(?)", val
+	}
+
+	return jsonExpr + " " + sqlOp + " ?", val
+}
+
+// buildMetaClauseV2 builds a WHERE clause for a meta JSON comparison.
+// Unlike buildMetaClause, it receives pre-built JSON and text expressions
+// so it works with both single keys and subpaths.
+func (tc *translateContext) buildMetaClauseV2(jsonExpr string, textExpr string, op Token, val interface{}, isNumericVal bool) (string, interface{}) {
+	if op.Type == TokenLike || op.Type == TokenNotLike {
+		likePattern := convertMRQLWildcards(fmt.Sprint(val))
+		likeOp := tc.likeOperator()
+		if op.Type == TokenNotLike {
+			likeOp = "NOT " + likeOp
+		}
+		return textExpr + " " + likeOp + " ? ESCAPE '\\'", likePattern
+	}
+
+	sqlOp := tc.sqlOperator(op)
+
 	if !isNumericVal && (op.Type == TokenEq || op.Type == TokenNeq) {
 		return "LOWER(" + jsonExpr + ") " + sqlOp + " LOWER(?)", val
 	}
