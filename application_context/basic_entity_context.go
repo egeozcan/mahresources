@@ -3,11 +3,14 @@ package application_context
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/server/interfaces"
 	"strings"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type EntityWriter[T interfaces.BasicEntityReader] struct {
@@ -101,4 +104,62 @@ func (w *EntityWriter[T]) UpdateDescription(id uint, description string) error {
 	}
 
 	return nil
+}
+
+// buildNestedJSON builds a nested JSON object from a dot-separated path and a JSON value.
+// For example, path="cooking.time" and value=30 produces {"cooking":{"time":30}}.
+func buildNestedJSON(path string, value json.RawMessage) (string, error) {
+	parts := strings.Split(path, ".")
+	if !json.Valid(value) {
+		return "", fmt.Errorf("value is not valid JSON")
+	}
+	result := string(value)
+	for i := len(parts) - 1; i >= 0; i-- {
+		keyJSON, _ := json.Marshal(parts[i])
+		result = fmt.Sprintf("{%s:%s}", string(keyJSON), result)
+	}
+	return result, nil
+}
+
+// UpdateMetaAtPath performs a deep-merge of a single value at a dot-notation path
+// into the entity's Meta column. It returns the full updated meta JSON.
+func (w *EntityWriter[T]) UpdateMetaAtPath(id uint, path string, value json.RawMessage) (json.RawMessage, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, errors.New("path must not be empty")
+	}
+
+	patch, err := buildNestedJSON(path, value)
+	if err != nil {
+		return nil, err
+	}
+
+	entity := new(T)
+	stmt := &gorm.Statement{DB: w.ctx.db}
+	_ = stmt.Parse(entity)
+	tableName := stmt.Table
+
+	var metaExpr clause.Expr
+	if w.ctx.Config.DbType == constants.DbTypePosgres {
+		metaExpr = gorm.Expr("COALESCE(meta, '{}'::jsonb) || ?::jsonb", patch)
+	} else {
+		metaExpr = gorm.Expr("json_patch(COALESCE(meta, '{}'), ?)", patch)
+	}
+
+	result := w.ctx.db.Table(tableName).Where("id = ?", id).Update("meta", metaExpr)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	// Read back the full updated meta.
+	// SQLite returns text columns as string, not []byte, so scan into string first.
+	var metaStr string
+	row := w.ctx.db.Table(tableName).Where("id = ?", id).Select("meta").Row()
+	if err := row.Scan(&metaStr); err != nil {
+		return nil, err
+	}
+
+	return json.RawMessage(metaStr), nil
 }
