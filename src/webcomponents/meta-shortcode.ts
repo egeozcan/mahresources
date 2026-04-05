@@ -136,67 +136,40 @@ export class MetaShortcode extends LitElement {
   }
 
   private _renderValue(value: any, schema: JSONSchema | null): TemplateResult | string {
-    const xDisplay = schema?.['x-display'] as string | undefined;
-    if (xDisplay?.startsWith('plugin:')) {
-      return this._renderPluginDisplay(value, xDisplay);
+    // Check x-display and labeled enum on the raw schema first.
+    // These must run before resolveSchema which merges oneOf branches.
+    const rawXDisplay = schema?.['x-display'] as string | undefined;
+    if (rawXDisplay?.startsWith('plugin:')) {
+      return this._renderPluginDisplay(value, rawXDisplay);
     }
-
-    if (xDisplay) {
-      const renderer = getBuiltinRenderer(xDisplay);
-      if (renderer) {
-        return html`<span>${renderer.render(value)}</span>`;
-      }
+    if (rawXDisplay) {
+      const renderer = getBuiltinRenderer(rawXDisplay);
+      if (renderer) return html`<span>${renderer.render(value)}</span>`;
     }
 
     if (value != null && typeof value === 'object' && !Array.isArray(value)) {
       const shape = detectShape(value);
-      if (shape) {
-        return html`<span>${shape.render(value)}</span>`;
-      }
+      if (shape) return html`<span>${shape.render(value)}</span>`;
     }
 
     if (schema) {
-      // Check labeled enum on the raw schema BEFORE resolving composition,
-      // since resolveSchema merges oneOf branches and loses the structure.
-      if (isLabeledEnum(schema)) {
-        const entries = getLabeledEnumEntries(schema);
-        const entry = entries.find(e => e.value === value);
-        const label = entry ? entry.label : String(value);
-        const tooltip = entry ? String(value) : '';
-        return html`<span
-          class="inline-block text-xs px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-medium"
-          title=${tooltip || nothing}
-        >${label}</span>`;
-      }
+      // Check labeled enum on raw schema (resolveSchema merges oneOf away).
+      if (isLabeledEnum(schema)) return this._renderLabeledEnum(value, schema);
+      if (Array.isArray(schema.enum)) return this._renderPlainEnum(value);
 
-      // Plain enum — green pill
-      if (Array.isArray(schema.enum)) {
-        return html`<span
-          class="inline-block text-xs px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium"
-        >${String(value)}</span>`;
-      }
-
-      // Resolve composition (allOf, $ref, etc.) for type/format/enum metadata.
-      // Done after raw-schema enum checks so direct oneOf structure is preserved above.
+      // Resolve composition ($ref, allOf, oneOf, anyOf) for full metadata.
       const resolved = resolveSchema(schema, schema);
       if (resolved) schema = resolved;
 
-      // Re-check enums after resolution — composition may have surfaced them.
-      if (isLabeledEnum(schema)) {
-        const entries = getLabeledEnumEntries(schema);
-        const entry = entries.find(e => e.value === value);
-        const label = entry ? entry.label : String(value);
-        const tooltip = entry ? String(value) : '';
-        return html`<span
-          class="inline-block text-xs px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-medium"
-          title=${tooltip || nothing}
-        >${label}</span>`;
+      // Re-check after resolution: x-display, enums, then type.
+      const xDisplay = schema['x-display'] as string | undefined;
+      if (xDisplay?.startsWith('plugin:')) return this._renderPluginDisplay(value, xDisplay);
+      if (xDisplay) {
+        const renderer = getBuiltinRenderer(xDisplay);
+        if (renderer) return html`<span>${renderer.render(value)}</span>`;
       }
-      if (Array.isArray(schema.enum)) {
-        return html`<span
-          class="inline-block text-xs px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium"
-        >${String(value)}</span>`;
-      }
+      if (isLabeledEnum(schema)) return this._renderLabeledEnum(value, schema);
+      if (Array.isArray(schema.enum)) return this._renderPlainEnum(value);
 
       const type = Array.isArray(schema.type)
         ? schema.type.find((t: string) => t !== 'null') || 'string'
@@ -212,6 +185,23 @@ export class MetaShortcode extends LitElement {
       return JSON.stringify(value);
     }
     return String(value);
+  }
+
+  private _renderLabeledEnum(value: any, schema: JSONSchema): TemplateResult {
+    const entries = getLabeledEnumEntries(schema);
+    const entry = entries.find(e => e.value === value);
+    const label = entry ? entry.label : String(value);
+    const tooltip = entry ? String(value) : '';
+    return html`<span
+      class="inline-block text-xs px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-medium"
+      title=${tooltip || nothing}
+    >${label}</span>`;
+  }
+
+  private _renderPlainEnum(value: any): TemplateResult {
+    return html`<span
+      class="inline-block text-xs px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium"
+    >${String(value)}</span>`;
   }
 
   private _renderPluginDisplay(value: any, xDisplay: string): TemplateResult {

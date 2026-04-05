@@ -164,6 +164,40 @@ func resolveLeafSchema(node map[string]any, root map[string]any, value map[strin
 		delete(merged, "$ref")
 		return resolveLeafSchema(merged, root, value)
 	}
+	// Resolve $ref inside composition branches so the client doesn't need
+	// the root $defs. The branches themselves are preserved (not merged).
+	for _, keyword := range []string{"allOf", "oneOf", "anyOf"} {
+		branches, ok := node[keyword].([]any)
+		if !ok {
+			continue
+		}
+		changed := false
+		resolved := make([]any, len(branches))
+		for i, branch := range branches {
+			if branchMap, ok := branch.(map[string]any); ok {
+				if ref, ok := branchMap["$ref"].(string); ok {
+					if refTarget := followRef(ref, root); refTarget != nil {
+						merged := shallowMergeSchema(refTarget, branchMap)
+						delete(merged, "$ref")
+						resolved[i] = merged
+						changed = true
+						continue
+					}
+				}
+			}
+			resolved[i] = branch
+		}
+		if changed {
+			// Copy node to avoid mutating the original schema tree
+			copy := make(map[string]any, len(node))
+			for k, v := range node {
+				copy[k] = v
+			}
+			copy[keyword] = resolved
+			node = copy
+		}
+	}
+
 	// Resolve if/then/else
 	if _, ok := node["if"].(map[string]any); ok {
 		base := make(map[string]any)
