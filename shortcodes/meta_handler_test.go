@@ -376,6 +376,44 @@ func TestExtractSchemaSliceIfThenElseTypeSafe(t *testing.T) {
 	require.NotEmpty(t, sliceNum2, "numField should resolve when kind is number 1 (then branch)")
 }
 
+func TestExtractSchemaSliceIfThenElseObjectConst(t *testing.T) {
+	// Object-valued const should not panic
+	schema := `{
+		"type":"object",
+		"properties":{"config":{"type":"object"}},
+		"if":{"properties":{"config":{"const":{"mode":"advanced"}}}},
+		"then":{"properties":{"extra":{"type":"string","title":"Extra"}}},
+		"else":{"properties":{"basic":{"type":"string","title":"Basic"}}}
+	}`
+
+	// Should not panic regardless of match result
+	assert.NotPanics(t, func() {
+		extractSchemaSlice(schema, "extra", json.RawMessage(`{"config":{"mode":"advanced"}}`))
+	})
+	assert.NotPanics(t, func() {
+		extractSchemaSlice(schema, "basic", json.RawMessage(`{"config":{"mode":"simple"}}`))
+	})
+}
+
+func TestExtractSchemaSliceUnsupportedConditionMergesBoth(t *testing.T) {
+	// Conditions the Go evaluator can't handle should merge both branches
+	// so the field is at least discoverable (graceful degradation).
+	schema := `{
+		"type":"object",
+		"properties":{"score":{"type":"integer"}},
+		"if":{"properties":{"score":{"minimum":50}}},
+		"then":{"properties":{"pass":{"type":"boolean","title":"Pass"}}},
+		"else":{"properties":{"retry":{"type":"boolean","title":"Retry"}}}
+	}`
+
+	// "minimum" is not supported by evaluateSimpleCondition — both branches
+	// should be merged so both fields are discoverable.
+	slicePass := extractSchemaSlice(schema, "pass", json.RawMessage(`{"score":80}`))
+	sliceRetry := extractSchemaSlice(schema, "retry", json.RawMessage(`{"score":80}`))
+	assert.NotEmpty(t, slicePass, "pass should be discoverable via fallback merge")
+	assert.NotEmpty(t, sliceRetry, "retry should also be discoverable via fallback merge")
+}
+
 func TestExtractSchemaSliceNotFound(t *testing.T) {
 	schema := `{"type":"object","properties":{"a":{"type":"string"}}}`
 	slice := extractSchemaSlice(schema, "b.c", nil)

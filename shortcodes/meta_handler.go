@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"reflect"
 	"strings"
 )
 
@@ -159,18 +160,31 @@ func resolveSchemaNodeImpl(node map[string]any, root map[string]any, value map[s
 	}
 
 	// Resolve if/then/else using the entity value.
-	if ifSchema, ok := node["if"].(map[string]any); ok && value != nil {
+	if _, ok := node["if"].(map[string]any); ok {
 		base := make(map[string]any)
 		for k, v := range node {
 			if k != "if" && k != "then" && k != "else" {
 				base[k] = v
 			}
 		}
-		if evaluateSimpleCondition(ifSchema, value) {
+		matched, supported := tryEvaluateCondition(node["if"].(map[string]any), value)
+		if supported {
+			// Condition was evaluable — pick the active branch.
+			if matched {
+				if thenSchema, ok := node["then"].(map[string]any); ok {
+					base = shallowMergeSchema(base, thenSchema)
+				}
+			} else {
+				if elseSchema, ok := node["else"].(map[string]any); ok {
+					base = shallowMergeSchema(base, elseSchema)
+				}
+			}
+		} else {
+			// Condition uses unsupported features — merge both branches
+			// so all possible properties are discoverable.
 			if thenSchema, ok := node["then"].(map[string]any); ok {
 				base = shallowMergeSchema(base, thenSchema)
 			}
-		} else {
 			if elseSchema, ok := node["else"].(map[string]any); ok {
 				base = shallowMergeSchema(base, elseSchema)
 			}
@@ -212,64 +226,61 @@ func resolveSchemaNodeImpl(node map[string]any, root map[string]any, value map[s
 	return node
 }
 
-// evaluateSimpleCondition checks whether an if-schema's property constraints
-// match the current value. Supports properties with const and enum checks,
-// which covers the vast majority of if/then/else usage in practice.
-// Comparisons are type-aware: JSON numbers (float64), strings, and booleans
-// are compared by Go type and value, matching the TypeScript evaluateCondition
-// semantics where 1 !== "1".
-func evaluateSimpleCondition(ifSchema map[string]any, value map[string]any) bool {
+// tryEvaluateCondition attempts to evaluate an if-schema condition against
+// the current value. Returns (matched, true) if the condition was evaluable,
+// or (false, false) if it uses unsupported features (in which case the caller
+// should merge both branches as a safe fallback).
+//
+// Supported: properties with const and enum checks (the vast majority of
+// if/then/else usage). Unsupported: required, minimum/maximum, minLength,
+// pattern, $ref, allOf/anyOf/oneOf/not in conditions, etc.
+func tryEvaluateCondition(ifSchema map[string]any, value map[string]any) (matched bool, supported bool) {
+	if value == nil {
+		return false, false
+	}
 	props, ok := ifSchema["properties"].(map[string]any)
 	if !ok {
-		return false
+		// No properties block — condition uses something we can't evaluate.
+		return false, false
 	}
 	for key, constraint := range props {
 		constraintMap, ok := constraint.(map[string]any)
 		if !ok {
-			return false
+			return false, false
 		}
 		actual, exists := value[key]
 		if !exists {
-			return false
+			return false, true // Missing property → condition not met
 		}
-		// Check const — type-aware comparison via reflect.DeepEqual
-		if constVal, ok := constraintMap["const"]; ok {
-			if !jsonValuesEqual(actual, constVal) {
-				return false
+		hasCheck := false
+		// Check const
+		if constVal, hasConst := constraintMap["const"]; hasConst {
+			hasCheck = true
+			if !reflect.DeepEqual(actual, constVal) {
+				return false, true
 			}
 		}
-		// Check enum — actual must match at least one enum value
-		if enumVal, ok := constraintMap["enum"].([]any); ok {
+		// Check enum
+		if enumVal, hasEnum := constraintMap["enum"].([]any); hasEnum {
+			hasCheck = true
 			found := false
 			for _, e := range enumVal {
-				if jsonValuesEqual(actual, e) {
+				if reflect.DeepEqual(actual, e) {
 					found = true
 					break
 				}
 			}
 			if !found {
-				return false
+				return false, true
 			}
 		}
+		// If the constraint has keys we don't understand (minimum, pattern, etc.),
+		// report as unsupported so the caller merges both branches.
+		if !hasCheck {
+			return false, false
+		}
 	}
-	return true
-}
-
-// jsonValuesEqual compares two values from json.Unmarshal using Go type
-// equality. This ensures "1" (string) != 1 (float64) != true (bool),
-// matching JSON Schema and the TypeScript evaluateCondition semantics.
-func jsonValuesEqual(a, b any) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	// Both values come from json.Unmarshal, so their types are limited to:
-	// string, float64, bool, nil, map[string]any, []any.
-	// Direct == works for string, float64, bool. For maps/slices we'd need
-	// deep comparison, but const/enum values are almost always primitives.
-	return a == b
+	return true, true
 }
 
 // followRef resolves a local JSON pointer ref like "#/$defs/Address" or
