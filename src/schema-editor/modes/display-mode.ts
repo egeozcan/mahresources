@@ -3,6 +3,8 @@ import { customElement, property, state } from 'lit/decorators.js';
 import type { JSONSchema } from '../schema-core';
 import {
   resolveSchema,
+  evaluateCondition,
+  mergeSchemas,
   isLabeledEnum,
   getLabeledEnumEntries,
   titleCase,
@@ -58,7 +60,21 @@ function flattenForDisplay(
   depth = 0,
 ): DisplayField[] {
   if (depth > 3 || !schema) return [];
-  const resolved = resolveSchema(schema, root);
+  let resolved = resolveSchema(schema, root);
+  if (!resolved) return [];
+
+  // Apply if/then/else using the entity value to pick the active branch.
+  if (resolved.if && value != null) {
+    const base: JSONSchema = { ...resolved };
+    delete base.if;
+    delete base.then;
+    delete base.else;
+    const branch = evaluateCondition(resolved.if, value, root)
+      ? (resolved.then || {})
+      : (resolved.else || {});
+    resolved = mergeSchemas(base, branch as JSONSchema);
+  }
+
   if (!resolved?.properties) return [];
 
   const fields: DisplayField[] = [];

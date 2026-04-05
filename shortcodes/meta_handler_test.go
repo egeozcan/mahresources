@@ -129,7 +129,7 @@ func TestRenderMetaObjectValue(t *testing.T) {
 
 func TestExtractSchemaSlice(t *testing.T) {
 	schema := `{"type":"object","properties":{"a":{"type":"object","properties":{"b":{"type":"string","title":"B Field"}}}}}`
-	slice := extractSchemaSlice(schema, "a.b")
+	slice := extractSchemaSlice(schema, "a.b", nil)
 	require.NotEmpty(t, slice)
 	var parsed map[string]any
 	err := json.Unmarshal([]byte(slice), &parsed)
@@ -140,7 +140,7 @@ func TestExtractSchemaSlice(t *testing.T) {
 
 func TestExtractSchemaSliceWithRef(t *testing.T) {
 	schema := `{"type":"object","properties":{"home":{"$ref":"#/$defs/Address"}},"$defs":{"Address":{"type":"object","properties":{"zip":{"type":"string","title":"ZIP Code"}}}}}`
-	slice := extractSchemaSlice(schema, "home.zip")
+	slice := extractSchemaSlice(schema, "home.zip", nil)
 	require.NotEmpty(t, slice)
 	var parsed map[string]any
 	err := json.Unmarshal([]byte(slice), &parsed)
@@ -151,7 +151,7 @@ func TestExtractSchemaSliceWithRef(t *testing.T) {
 
 func TestExtractSchemaSliceWithRefAtLeaf(t *testing.T) {
 	schema := `{"type":"object","properties":{"addr":{"$ref":"#/$defs/Addr"}},"$defs":{"Addr":{"type":"object","title":"Address","properties":{"city":{"type":"string"}}}}}`
-	slice := extractSchemaSlice(schema, "addr")
+	slice := extractSchemaSlice(schema, "addr", nil)
 	require.NotEmpty(t, slice)
 	var parsed map[string]any
 	err := json.Unmarshal([]byte(slice), &parsed)
@@ -163,7 +163,7 @@ func TestExtractSchemaSliceWithRefAtLeaf(t *testing.T) {
 func TestExtractSchemaSliceWithAllOf(t *testing.T) {
 	schema := `{"type":"object","properties":{"item":{"allOf":[{"type":"object","properties":{"name":{"type":"string","title":"Name"}}},{"properties":{"price":{"type":"number","title":"Price"}}}]}}}`
 	// item.name should resolve through the allOf merge
-	slice := extractSchemaSlice(schema, "item.name")
+	slice := extractSchemaSlice(schema, "item.name", nil)
 	require.NotEmpty(t, slice)
 	var parsed map[string]any
 	err := json.Unmarshal([]byte(slice), &parsed)
@@ -171,7 +171,7 @@ func TestExtractSchemaSliceWithAllOf(t *testing.T) {
 	assert.Equal(t, "string", parsed["type"])
 
 	// item.price from second allOf branch
-	slice2 := extractSchemaSlice(schema, "item.price")
+	slice2 := extractSchemaSlice(schema, "item.price", nil)
 	require.NotEmpty(t, slice2)
 	var parsed2 map[string]any
 	err = json.Unmarshal([]byte(slice2), &parsed2)
@@ -193,14 +193,14 @@ func TestExtractSchemaSliceNestedRefThenAllOf(t *testing.T) {
 			}
 		}
 	}`
-	slice := extractSchemaSlice(schema, "item.name")
+	slice := extractSchemaSlice(schema, "item.name", nil)
 	require.NotEmpty(t, slice)
 	var parsed map[string]any
 	require.NoError(t, json.Unmarshal([]byte(slice), &parsed))
 	assert.Equal(t, "string", parsed["type"])
 	assert.Equal(t, "Name", parsed["title"])
 
-	slice2 := extractSchemaSlice(schema, "item.price")
+	slice2 := extractSchemaSlice(schema, "item.price", nil)
 	require.NotEmpty(t, slice2)
 	var parsed2 map[string]any
 	require.NoError(t, json.Unmarshal([]byte(slice2), &parsed2))
@@ -220,14 +220,14 @@ func TestExtractSchemaSliceOneOf(t *testing.T) {
 			}
 		}
 	}`
-	slice := extractSchemaSlice(schema, "contact.email")
+	slice := extractSchemaSlice(schema, "contact.email", nil)
 	require.NotEmpty(t, slice, "should find email through oneOf")
 	var parsed map[string]any
 	require.NoError(t, json.Unmarshal([]byte(slice), &parsed))
 	assert.Equal(t, "string", parsed["type"])
 	assert.Equal(t, "Email", parsed["title"])
 
-	slice2 := extractSchemaSlice(schema, "contact.phone")
+	slice2 := extractSchemaSlice(schema, "contact.phone", nil)
 	require.NotEmpty(t, slice2, "should find phone through oneOf")
 }
 
@@ -243,7 +243,7 @@ func TestExtractSchemaSliceAnyOf(t *testing.T) {
 			}
 		}
 	}`
-	slice := extractSchemaSlice(schema, "data.width")
+	slice := extractSchemaSlice(schema, "data.width", nil)
 	require.NotEmpty(t, slice, "should find width through anyOf")
 	var parsed map[string]any
 	require.NoError(t, json.Unmarshal([]byte(slice), &parsed))
@@ -264,14 +264,14 @@ func TestExtractSchemaSliceRefInsideAllOf(t *testing.T) {
 		},
 		"$defs":{"Base":{"type":"object","properties":{"id":{"type":"integer","title":"ID"}}}}
 	}`
-	slice := extractSchemaSlice(schema, "full.id")
+	slice := extractSchemaSlice(schema, "full.id", nil)
 	require.NotEmpty(t, slice, "should resolve $ref inside allOf")
 	var parsed map[string]any
 	require.NoError(t, json.Unmarshal([]byte(slice), &parsed))
 	assert.Equal(t, "integer", parsed["type"])
 	assert.Equal(t, "ID", parsed["title"])
 
-	slice2 := extractSchemaSlice(schema, "full.extra")
+	slice2 := extractSchemaSlice(schema, "full.extra", nil)
 	require.NotEmpty(t, slice2, "should find extra alongside $ref branch")
 }
 
@@ -290,13 +290,13 @@ func TestExtractSchemaSliceAllOfPlusOneOf(t *testing.T) {
 			}
 		}
 	}`
-	sliceID := extractSchemaSlice(schema, "item.id")
+	sliceID := extractSchemaSlice(schema, "item.id", nil)
 	require.NotEmpty(t, sliceID, "id from allOf must resolve")
 
-	sliceColor := extractSchemaSlice(schema, "item.color")
+	sliceColor := extractSchemaSlice(schema, "item.color", nil)
 	require.NotEmpty(t, sliceColor, "color from oneOf must also resolve")
 
-	sliceSize := extractSchemaSlice(schema, "item.size")
+	sliceSize := extractSchemaSlice(schema, "item.size", nil)
 	require.NotEmpty(t, sliceSize, "size from oneOf must also resolve")
 }
 
@@ -314,27 +314,53 @@ func TestExtractSchemaSliceOverlappingBranches(t *testing.T) {
 			}
 		}
 	}`
-	slice := extractSchemaSlice(schema, "contact.address.street")
+	slice := extractSchemaSlice(schema, "contact.address.street", nil)
 	require.NotEmpty(t, slice, "street must survive merge with zip branch")
 	var parsed map[string]any
 	require.NoError(t, json.Unmarshal([]byte(slice), &parsed))
 	assert.Equal(t, "string", parsed["type"])
 	assert.Equal(t, "Street", parsed["title"])
 
-	slice2 := extractSchemaSlice(schema, "contact.address.zip")
+	slice2 := extractSchemaSlice(schema, "contact.address.zip", nil)
 	require.NotEmpty(t, slice2, "zip must survive merge with street branch")
 	var parsed2 map[string]any
 	require.NoError(t, json.Unmarshal([]byte(slice2), &parsed2))
 	assert.Equal(t, "ZIP", parsed2["title"])
 }
 
+func TestExtractSchemaSliceIfThenElse(t *testing.T) {
+	schema := `{
+		"type":"object",
+		"properties":{
+			"kind":{"type":"string","enum":["a","b"]}
+		},
+		"if":{"properties":{"kind":{"const":"a"}}},
+		"then":{"properties":{"aField":{"type":"string","title":"A Field"}}},
+		"else":{"properties":{"bField":{"type":"string","title":"B Field"}}}
+	}`
+
+	// When kind=a, aField should resolve
+	sliceA := extractSchemaSlice(schema, "aField", json.RawMessage(`{"kind":"a","aField":"x"}`))
+	require.NotEmpty(t, sliceA, "aField should resolve when kind=a")
+	var parsedA map[string]any
+	require.NoError(t, json.Unmarshal([]byte(sliceA), &parsedA))
+	assert.Equal(t, "A Field", parsedA["title"])
+
+	// When kind=b, bField should resolve
+	sliceB := extractSchemaSlice(schema, "bField", json.RawMessage(`{"kind":"b","bField":"y"}`))
+	require.NotEmpty(t, sliceB, "bField should resolve when kind=b")
+	var parsedB map[string]any
+	require.NoError(t, json.Unmarshal([]byte(sliceB), &parsedB))
+	assert.Equal(t, "B Field", parsedB["title"])
+}
+
 func TestExtractSchemaSliceNotFound(t *testing.T) {
 	schema := `{"type":"object","properties":{"a":{"type":"string"}}}`
-	slice := extractSchemaSlice(schema, "b.c")
+	slice := extractSchemaSlice(schema, "b.c", nil)
 	assert.Equal(t, "", slice)
 }
 
 func TestExtractSchemaSliceEmptySchema(t *testing.T) {
-	slice := extractSchemaSlice("", "a.b")
+	slice := extractSchemaSlice("", "a.b", nil)
 	assert.Equal(t, "", slice)
 }

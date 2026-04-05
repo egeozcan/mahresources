@@ -26,7 +26,7 @@ func RenderMetaShortcode(sc Shortcode, ctx MetaShortcodeContext) string {
 	hideEmpty := sc.Attrs["hide-empty"] == "true"
 
 	valueJSON := extractValueAtPath(ctx.Meta, path)
-	schemaSlice := extractSchemaSlice(ctx.MetaSchema, path)
+	schemaSlice := extractSchemaSlice(ctx.MetaSchema, path, ctx.Meta)
 
 	return fmt.Sprintf(
 		`<meta-shortcode data-path="%s" data-editable="%t" data-hide-empty="%t" data-entity-type="%s" data-entity-id="%d" data-schema="%s" data-value="%s"></meta-shortcode>`,
@@ -75,9 +75,9 @@ func extractValueAtPath(metaRaw json.RawMessage, path string) string {
 
 // extractSchemaSlice navigates a JSON Schema by dot-notation path through
 // nested "properties" and returns the JSON-encoded sub-schema, or "" if not found.
-// Handles $ref (local JSON pointer refs like #/$defs/Foo or #/definitions/Foo)
-// and allOf (merges all branches) so that composed schemas resolve correctly.
-func extractSchemaSlice(schemaStr string, path string) string {
+// Handles $ref, allOf, oneOf, anyOf, and if/then/else (using entityMeta to
+// evaluate conditions). entityMeta may be nil if no value context is available.
+func extractSchemaSlice(schemaStr string, path string, entityMeta json.RawMessage) string {
 	if schemaStr == "" {
 		return ""
 	}
@@ -87,11 +87,18 @@ func extractSchemaSlice(schemaStr string, path string) string {
 		return ""
 	}
 
+	// Parse entity meta for if/then/else condition evaluation.
+	var metaValue map[string]any
+	if len(entityMeta) > 0 {
+		_ = json.Unmarshal(entityMeta, &metaValue)
+	}
+
 	parts := strings.Split(path, ".")
 	current := root
+	currentValue := metaValue
 
 	for _, part := range parts {
-		resolved := resolveSchemaNode(current, root)
+		resolved := resolveSchemaNodeWithValue(current, root, currentValue)
 		if resolved == nil {
 			return ""
 		}
@@ -104,10 +111,18 @@ func extractSchemaSlice(schemaStr string, path string) string {
 			return ""
 		}
 		current = sub
+		// Descend into the value too for next-level condition evaluation
+		if currentValue != nil {
+			if nested, ok := currentValue[part].(map[string]any); ok {
+				currentValue = nested
+			} else {
+				currentValue = nil
+			}
+		}
 	}
 
-	// Resolve the leaf node too (it might be a $ref)
-	resolved := resolveSchemaNode(current, root)
+	// Resolve the leaf node too (it might be a $ref or conditional)
+	resolved := resolveSchemaNodeWithValue(current, root, currentValue)
 	if resolved == nil {
 		resolved = current
 	}
@@ -119,23 +134,20 @@ func extractSchemaSlice(schemaStr string, path string) string {
 	return string(encoded)
 }
 
-// resolveSchemaNode recursively resolves $ref, allOf, oneOf, and anyOf on a
-// schema node. For allOf all branches are merged (all constraints apply).
-// For oneOf/anyOf all branches' properties are merged so that any property
-// reachable through any branch can be found — we don't have data to pick the
-// "right" branch at schema-extraction time, and merging is safe because we
-// only need to locate property definitions for display/edit rendering.
-// Recursion is capped at depth 10 to prevent infinite $ref loops.
-func resolveSchemaNode(node map[string]any, root map[string]any) map[string]any {
-	return resolveSchemaNodeDepth(node, root, 0)
+// resolveSchemaNodeWithValue recursively resolves $ref, allOf, oneOf, anyOf,
+// and if/then/else on a schema node. The value parameter carries the entity
+// data at the current schema level for evaluating if/then/else conditions.
+// It may be nil if no value context is available.
+func resolveSchemaNodeWithValue(node map[string]any, root map[string]any, value map[string]any) map[string]any {
+	return resolveSchemaNodeImpl(node, root, value, 0)
 }
 
-func resolveSchemaNodeDepth(node map[string]any, root map[string]any, depth int) map[string]any {
+func resolveSchemaNodeImpl(node map[string]any, root map[string]any, value map[string]any, depth int) map[string]any {
 	if node == nil || depth > 10 {
 		return node
 	}
 
-	// Resolve $ref first, then recurse on the result
+	// Resolve $ref first, then recurse on the result.
 	if ref, ok := node["$ref"].(string); ok {
 		resolved := followRef(ref, root)
 		if resolved == nil {
@@ -143,11 +155,31 @@ func resolveSchemaNodeDepth(node map[string]any, root map[string]any, depth int)
 		}
 		merged := shallowMergeSchema(resolved, node)
 		delete(merged, "$ref")
-		return resolveSchemaNodeDepth(merged, root, depth+1)
+		return resolveSchemaNodeImpl(merged, root, value, depth+1)
+	}
+
+	// Resolve if/then/else using the entity value.
+	if ifSchema, ok := node["if"].(map[string]any); ok && value != nil {
+		base := make(map[string]any)
+		for k, v := range node {
+			if k != "if" && k != "then" && k != "else" {
+				base[k] = v
+			}
+		}
+		if evaluateSimpleCondition(ifSchema, value) {
+			if thenSchema, ok := node["then"].(map[string]any); ok {
+				base = shallowMergeSchema(base, thenSchema)
+			}
+		} else {
+			if elseSchema, ok := node["else"].(map[string]any); ok {
+				base = shallowMergeSchema(base, elseSchema)
+			}
+		}
+		return resolveSchemaNodeImpl(base, root, value, depth+1)
 	}
 
 	// Resolve all composition keywords present on this node.
-	resolved := false
+	composed := false
 	merged := make(map[string]any)
 	for k, v := range node {
 		if k == "allOf" || k == "oneOf" || k == "anyOf" {
@@ -160,24 +192,65 @@ func resolveSchemaNodeDepth(node map[string]any, root map[string]any, depth int)
 		if !ok {
 			continue
 		}
-		resolved = true
+		composed = true
 		for _, branch := range branches {
 			branchMap, ok := branch.(map[string]any)
 			if !ok {
 				continue
 			}
-			r := resolveSchemaNodeDepth(branchMap, root, depth+1)
+			r := resolveSchemaNodeImpl(branchMap, root, value, depth+1)
 			if r == nil {
 				r = branchMap
 			}
 			merged = shallowMergeSchema(merged, r)
 		}
 	}
-	if resolved {
+	if composed {
 		return merged
 	}
 
 	return node
+}
+
+// evaluateSimpleCondition checks whether an if-schema's property constraints
+// match the current value. Supports properties with const and enum checks,
+// which covers the vast majority of if/then/else usage in practice.
+func evaluateSimpleCondition(ifSchema map[string]any, value map[string]any) bool {
+	props, ok := ifSchema["properties"].(map[string]any)
+	if !ok {
+		return false
+	}
+	for key, constraint := range props {
+		constraintMap, ok := constraint.(map[string]any)
+		if !ok {
+			return false
+		}
+		actual, exists := value[key]
+		if !exists {
+			return false
+		}
+		// Check const
+		if constVal, ok := constraintMap["const"]; ok {
+			if fmt.Sprintf("%v", actual) != fmt.Sprintf("%v", constVal) {
+				return false
+			}
+		}
+		// Check enum
+		if enumVal, ok := constraintMap["enum"].([]any); ok {
+			found := false
+			actualStr := fmt.Sprintf("%v", actual)
+			for _, e := range enumVal {
+				if fmt.Sprintf("%v", e) == actualStr {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // followRef resolves a local JSON pointer ref like "#/$defs/Address" or
