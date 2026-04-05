@@ -12,8 +12,10 @@ import (
 const luaDisplayRenderTimeout = 5 * time.Second
 
 // DisplayRenderContext holds all context passed to the Lua render function.
+// Value is typed as any because metadata fields can be objects, arrays,
+// strings, numbers, booleans, or null.
 type DisplayRenderContext struct {
-	Value      map[string]any `json:"value"`
+	Value      any            `json:"value"`
 	Schema     map[string]any `json:"schema"`
 	FieldPath  string         `json:"field_path"`
 	FieldLabel string         `json:"field_label"`

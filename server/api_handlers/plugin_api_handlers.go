@@ -301,7 +301,7 @@ func GetPluginDisplayRenderHandler(ctx *application_context.MahresourcesContext)
 
 		var req struct {
 			Type       string         `json:"type"`
-			Value      map[string]any `json:"value"`
+			Value      any            `json:"value"`
 			Schema     map[string]any `json:"schema"`
 			FieldPath  string         `json:"field_path"`
 			FieldLabel string         `json:"field_label"`
