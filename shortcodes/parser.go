@@ -1,0 +1,78 @@
+package shortcodes
+
+import (
+	"regexp"
+	"strings"
+)
+
+// Shortcode represents a parsed shortcode occurrence in text.
+type Shortcode struct {
+	Name  string            // e.g., "meta" or "plugin:my-plugin:rating"
+	Attrs map[string]string // e.g., {"path": "cooking.time", "editable": "true"}
+	Raw   string            // original matched text including brackets
+	Start int               // byte offset in input
+	End   int               // byte offset end (exclusive)
+}
+
+// shortcodePattern matches [name ...attrs] where name is "meta" or "plugin:word:word".
+var shortcodePattern = regexp.MustCompile(
+	`\[(meta|plugin:[a-z][a-z0-9-]*:[a-z][a-z0-9-]*)\s*([^\]]*)\]`,
+)
+
+// attrPattern matches key="value", key='value', or key=value pairs.
+var attrPattern = regexp.MustCompile(
+	`([a-zA-Z][a-zA-Z0-9_-]*)=(?:"([^"]*)"|'([^']*)'|(\S+))`,
+)
+
+// Parse scans input for shortcode patterns and returns all matches.
+func Parse(input string) []Shortcode {
+	matches := shortcodePattern.FindAllStringSubmatchIndex(input, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	result := make([]Shortcode, 0, len(matches))
+	for _, m := range matches {
+		fullStart, fullEnd := m[0], m[1]
+		name := input[m[2]:m[3]]
+		attrStr := ""
+		if m[4] >= 0 && m[5] >= 0 {
+			attrStr = input[m[4]:m[5]]
+		}
+
+		attrs := parseAttrs(strings.TrimSpace(attrStr))
+
+		result = append(result, Shortcode{
+			Name:  name,
+			Attrs: attrs,
+			Raw:   input[fullStart:fullEnd],
+			Start: fullStart,
+			End:   fullEnd,
+		})
+	}
+
+	return result
+}
+
+// parseAttrs extracts key=value pairs from an attribute string.
+func parseAttrs(s string) map[string]string {
+	attrs := make(map[string]string)
+	if s == "" {
+		return attrs
+	}
+
+	matches := attrPattern.FindAllStringSubmatch(s, -1)
+	for _, m := range matches {
+		key := m[1]
+		val := m[2]
+		if val == "" {
+			val = m[3]
+		}
+		if val == "" {
+			val = m[4]
+		}
+		attrs[key] = val
+	}
+
+	return attrs
+}
