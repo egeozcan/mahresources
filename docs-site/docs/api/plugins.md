@@ -256,6 +256,34 @@ Returns `text/html` content. The block's type must start with `plugin:<pluginNam
 
 See [Custom Block Types](../features/custom-block-types.md#plugin-block-render-endpoint) for details on how plugin block rendering works.
 
+## Plugin Display Rendering
+
+```
+POST /v1/plugins/{pluginName}/display/render
+```
+
+Renders a plugin-defined display type as an HTML fragment. The schema-driven metadata display component calls this endpoint when a schema property has `x-display: "plugin:<pluginName>:<type>"`.
+
+**Request body** (JSON):
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string | Yes | The display type name (without the `plugin:<name>:` prefix) |
+| `value` | object | Yes | The metadata value to render |
+| `schema` | object | No | The JSON Schema of the property |
+| `field_path` | string | No | Dot-notation path of the field |
+| `field_label` | string | No | Display label of the field |
+
+```bash
+curl -X POST "http://localhost:8181/v1/plugins/my-plugin/display/render" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"color-swatch","value":{"hex":"#4f46e5","name":"Indigo"}}'
+```
+
+Returns `text/html` content. The plugin must have registered the display type via `mah.display_type()`, otherwise a `500` error is returned. Render timeout is 5 seconds.
+
+See [Plugin Lua API](../features/plugin-lua-api.md#mahdisplay_type----custom-display-renderers) for how to register display types.
+
 ## Plugin Pages
 
 ```

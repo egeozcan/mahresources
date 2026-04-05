@@ -194,6 +194,104 @@ The editor supports `oneOf`, `anyOf`, `allOf`, and `$ref` for advanced schema pa
 
 ![Schema Composition](/img/schema-editor-composition.png)
 
+## Detail View Display
+
+When a Category has a schema defined and a Group (or Resource) has metadata, the detail page renders a structured metadata panel just below the description. This replaces the need to scroll to the sidebar JSON table.
+
+### Smart Hybrid Layout
+
+Fields are displayed in a responsive grid layout:
+
+- **Short values** (strings, numbers, booleans, enums) appear in a multi-column grid
+- **Long values** (text exceeding ~80 characters, arrays) appear in full-width rows below the grid
+- **Empty/null fields** are hidden by default, with a "Show N hidden fields" toggle at the bottom
+
+### Type-Aware Rendering
+
+Each field renders according to its schema type:
+
+| Schema Type | Display |
+|-------------|---------|
+| `string` | Plain text |
+| `string` with `format: "email"` | Clickable `mailto:` link |
+| `string` with `format: "uri"` | Clickable link |
+| `string` with `format: "date"` | Formatted date |
+| `string` with `enum` | Colored pill/badge |
+| `string` with labeled enum (`oneOf` + `const` + `title`) | Pill showing the human-readable title |
+| `integer` / `number` | Monospace text |
+| `boolean` | "Yes" / "No" |
+| `array` of scalars | Inline pills |
+| Nested `object` | Flattened with dot notation (e.g., "Address > City") |
+
+### Labels and Tooltips
+
+- If a property has a `title` field, it is used as the display label (falling back to the raw key name)
+- If a property has a `description` field, it appears as a tooltip on hover over the label
+- Clicking a label copies the dot-notation meta path (e.g., `address.city`)
+- Clicking a value copies the value to the clipboard
+
+### Built-in Shape Detection
+
+Object values are automatically detected and rendered as smart widgets when they match well-known shapes:
+
+| Shape | Detection Keys | Display |
+|-------|---------------|---------|
+| **URL / Location** | `href` + `host` or `hostname` | Clickable link with host subtitle |
+| **GeoLocation** | `latitude` + `longitude` (or `lat` + `lng`) | Coordinates with OpenStreetMap link |
+| **Date Range** | `start` + `end` (both valid dates) | Formatted range "Mar 15, 2024 — Apr 1, 2024" |
+| **Dimensions** | `width` + `height` (both numbers) | "1920 x 1080" |
+
+Shape detection runs automatically. To override it, use the `x-display` annotation (see below).
+
+### The `x-display` Schema Annotation
+
+Add `x-display` to any schema property to control how it renders in the detail view:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "location": {
+      "type": "object",
+      "x-display": "geo",
+      "properties": { "lat": { "type": "number" }, "lng": { "type": "number" } }
+    },
+    "raw_data": {
+      "type": "object",
+      "x-display": "raw",
+      "properties": { "href": { "type": "string" }, "host": { "type": "string" } }
+    }
+  }
+}
+```
+
+**Built-in values:**
+
+| Value | Effect |
+|-------|--------|
+| `"url"` | Force URL renderer |
+| `"geo"` | Force GeoLocation renderer |
+| `"daterange"` | Force Date Range renderer |
+| `"dimensions"` | Force Dimensions renderer |
+| `"raw"` or `"none"` | Opt out of shape detection; show as key-value grid |
+
+**Plugin values:** `x-display` values starting with `plugin:` route to a plugin's custom renderer. See [Plugin Lua API](./plugin-lua-api.md#mahdisplay_type----custom-display-renderers) for details.
+
+```json
+{
+  "images": {
+    "type": "object",
+    "x-display": "plugin:my-plugin:image-grid"
+  }
+}
+```
+
+When `x-display` is set on an object property, the object is NOT flattened into individual fields. Instead, the entire object is passed to the renderer as a whole.
+
+### Sidebar JSON Table
+
+The raw JSON table in the sidebar remains available for power users and for fields not covered by the schema. The structured metadata panel does not replace it.
+
 ## Search Integration
 
 When a Category has a schema defined, the list page search form automatically renders typed filter fields based on the schema properties.

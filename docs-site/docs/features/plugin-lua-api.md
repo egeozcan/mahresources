@@ -690,6 +690,73 @@ function init()
 end
 ```
 
+## mah.display_type -- Custom Display Renderers
+
+Register a custom display renderer for the schema-driven metadata display on detail views. When a schema property has `"x-display": "plugin:<pluginName>:<type>"`, the plugin's render function is called to produce the HTML.
+
+### mah.display_type(config)
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `config.type` | string | Yes | Display type name (lowercase, alphanumeric and hyphens, max 50 chars). Automatically prefixed as `plugin:<pluginName>:<type>` |
+| `config.label` | string | Yes | Human-readable label for this renderer |
+| `config.render` | function | Yes | Lua function that returns an HTML string |
+
+### Render Function
+
+The `render` function receives a context table:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ctx.value` | table | The object value from the entity's metadata |
+| `ctx.schema` | table | The JSON Schema of the property |
+| `ctx.field_path` | string | Dot-notation path (e.g., `"images"`) |
+| `ctx.field_label` | string | Display label (e.g., `"Image Gallery"`) |
+| `ctx.settings` | table | Plugin settings key-value pairs |
+
+The function must return an HTML string. The HTML is rendered inside the metadata panel on the detail page, inheriting Tailwind CSS classes from the host page.
+
+The render endpoint is `POST /v1/plugins/{pluginName}/display/render` with a 5-second timeout.
+
+### Schema Usage
+
+Add `x-display` to a property in the Category's MetaSchema:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "gallery": {
+      "type": "object",
+      "x-display": "plugin:my-plugin:image-grid",
+      "properties": { "images": { "type": "array" } }
+    }
+  }
+}
+```
+
+When `x-display` is set on an object property, the object is passed whole to the renderer (not flattened into individual fields).
+
+### Example
+
+```lua
+function init()
+    mah.display_type({
+        type = "color-swatch",
+        label = "Color Swatch",
+        render = function(ctx)
+            local hex = ctx.value.hex or "#000000"
+            local name = ctx.value.name or hex
+            return '<div style="display:flex;align-items:center;gap:8px;">'
+                .. '<div style="width:24px;height:24px;border-radius:4px;background:'
+                .. mah.html_escape(hex) .. ';border:1px solid #e5e7eb;"></div>'
+                .. '<span>' .. mah.html_escape(name) .. '</span>'
+                .. '</div>'
+        end
+    })
+end
+```
+
 ## mah.get_setting(key)
 
 Returns the value of a plugin setting, or `nil` if not set.
