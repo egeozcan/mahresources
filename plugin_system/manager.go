@@ -87,6 +87,7 @@ type PluginManager struct {
 	apiEndpoints map[string]map[string]*APIEndpoint // pluginName -> "METHOD:path" -> handler
 	blockTypes   map[string][]*PluginBlockType      // pluginName -> block types
 	displayTypes map[string][]*PluginDisplayType   // pluginName -> display types
+	shortcodes   map[string][]*PluginShortcode     // pluginName -> shortcodes
 	mu         sync.RWMutex
 	vmLocks    map[*lua.LState]*sync.Mutex
 	dbProvider atomic.Value
@@ -132,6 +133,7 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 		apiEndpoints:    make(map[string]map[string]*APIEndpoint),
 		blockTypes:      make(map[string][]*PluginBlockType),
 		displayTypes:    make(map[string][]*PluginDisplayType),
+		shortcodes:      make(map[string][]*PluginShortcode),
 		vmLocks:         make(map[*lua.LState]*sync.Mutex),
 		pluginSettings:  make(map[string]map[string]any),
 		actionJobs:      make(map[string]*ActionJob),
@@ -518,6 +520,28 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		return 0
 	}))
 
+	mahMod.RawSetString("shortcode", L.NewFunction(func(L *lua.LState) int {
+		tbl := L.CheckTable(1)
+		sc, err := parseShortcodeTable(L, tbl, *pluginNamePtr)
+		if err != nil {
+			L.ArgError(1, err.Error())
+			return 0
+		}
+		sc.State = L
+
+		pm.mu.Lock()
+		for _, existing := range pm.shortcodes[*pluginNamePtr] {
+			if existing.TypeName == sc.TypeName {
+				pm.mu.Unlock()
+				L.ArgError(1, fmt.Sprintf("duplicate shortcode %q", sc.TypeName))
+				return 0
+			}
+		}
+		pm.shortcodes[*pluginNamePtr] = append(pm.shortcodes[*pluginNamePtr], sc)
+		pm.mu.Unlock()
+		return 0
+	}))
+
 	mahMod.RawSetString("api", L.NewFunction(func(L *lua.LState) int {
 		method := strings.ToUpper(L.CheckString(1))
 		path := L.CheckString(2)
@@ -835,6 +859,9 @@ func (pm *PluginManager) DisablePlugin(name string) error {
 	// Remove display types for this plugin.
 	delete(pm.displayTypes, name)
 
+	// Remove shortcodes for this plugin.
+	delete(pm.shortcodes, name)
+
 	// Remove API endpoints for this plugin.
 	delete(pm.apiEndpoints, name)
 
@@ -1008,6 +1035,7 @@ func (pm *PluginManager) Close() {
 	pm.actions = nil
 	pm.blockTypes = nil
 	pm.displayTypes = nil
+	pm.shortcodes = nil
 	pm.apiEndpoints = nil
 	pm.vmLocks = nil
 }
