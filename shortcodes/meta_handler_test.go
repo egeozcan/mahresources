@@ -568,6 +568,31 @@ func TestExtractSchemaSliceConditionTypeArray(t *testing.T) {
 	assert.NotEmpty(t, sliceThen3, "thenF should resolve when code is null")
 }
 
+func TestExtractSchemaSliceRefInsideOneOfBranch(t *testing.T) {
+	// A leaf with oneOf where a branch uses $ref — the $ref must be resolved
+	// in the leaf slice since the client doesn't have root $defs.
+	schema := `{
+		"type":"object",
+		"properties":{
+			"status":{
+				"oneOf":[
+					{"$ref":"#/$defs/Draft"},
+					{"const":"published","title":"Published"}
+				]
+			}
+		},
+		"$defs":{"Draft":{"const":"draft","title":"Draft"}}
+	}`
+
+	slice := extractSchemaSlice(schema, "status", nil)
+	require.NotEmpty(t, slice)
+	// The resolved slice should contain the inlined Draft definition,
+	// not a dangling $ref
+	assert.NotContains(t, slice, "$ref")
+	assert.Contains(t, slice, "Draft")
+	assert.Contains(t, slice, "Published")
+}
+
 func TestExtractSchemaSliceNotFound(t *testing.T) {
 	schema := `{"type":"object","properties":{"a":{"type":"string"}}}`
 	slice := extractSchemaSlice(schema, "b.c", nil)
