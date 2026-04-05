@@ -3,7 +3,7 @@ import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { detectShape, getBuiltinRenderer } from '../schema-editor/display-renderers';
 import type { JSONSchema } from '../schema-editor/schema-core';
-import { titleCase, getDefaultValue, isLabeledEnum, getLabeledEnumEntries } from '../schema-editor/schema-core';
+import { titleCase, getDefaultValue, isLabeledEnum, getLabeledEnumEntries, resolveSchema } from '../schema-editor/schema-core';
 
 @customElement('meta-shortcode')
 export class MetaShortcode extends LitElement {
@@ -156,7 +156,8 @@ export class MetaShortcode extends LitElement {
     }
 
     if (schema) {
-      // Labeled enum (oneOf with const+title) — pill with label
+      // Check labeled enum on the raw schema BEFORE resolving composition,
+      // since resolveSchema merges oneOf branches and loses the structure.
       if (isLabeledEnum(schema)) {
         const entries = getLabeledEnumEntries(schema);
         const entry = entries.find(e => e.value === value);
@@ -174,6 +175,11 @@ export class MetaShortcode extends LitElement {
           class="inline-block text-xs px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium"
         >${String(value)}</span>`;
       }
+
+      // Resolve composition (allOf, $ref, etc.) for type/format metadata.
+      // Done after enum checks so oneOf labeled-enum structure is preserved above.
+      const resolved = resolveSchema(schema, schema);
+      if (resolved) schema = resolved;
 
       const type = Array.isArray(schema.type)
         ? schema.type.find((t: string) => t !== 'null') || 'string'

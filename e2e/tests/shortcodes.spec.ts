@@ -191,9 +191,9 @@ test.describe('Shortcode system', () => {
     const shortcodes = page.locator('meta-shortcode[data-path="cooking.difficulty"]');
     await expect(shortcodes).toHaveCount(2, { timeout: 5000 });
 
-    // Verify that both expected values appear on the page
-    await expect(page.locator('meta-shortcode[data-path="cooking.difficulty"]', { hasText: 'easy' })).toBeVisible({ timeout: 5000 });
-    await expect(page.locator('meta-shortcode[data-path="cooking.difficulty"]', { hasText: 'medium' })).toBeVisible();
+    // Verify that both expected labels appear (labeled enum renders title, not raw value)
+    await expect(page.locator('meta-shortcode[data-path="cooking.difficulty"]', { hasText: 'Easy' })).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('meta-shortcode[data-path="cooking.difficulty"]', { hasText: 'Medium' })).toBeVisible();
   });
 });
 
