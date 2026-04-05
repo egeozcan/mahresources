@@ -283,7 +283,10 @@ export class MetaShortcode extends LitElement {
   }
 
   private _enterEditMode() {
-    this._editValue = this._value;
+    const current = this._value;
+    // For missing fields, initialize with the schema default so saving
+    // without touching the control submits valid JSON instead of undefined.
+    this._editValue = current !== undefined ? current : this._defaultValue(this._schema || {});
     this._editing = true;
   }
 
@@ -295,7 +298,10 @@ export class MetaShortcode extends LitElement {
   private async _save() {
     this._saving = true;
 
-    const value = this._editValue !== undefined ? this._editValue : this._value;
+    let value = this._editValue !== undefined ? this._editValue : this._value;
+    if (value === undefined) {
+      value = this._defaultValue(this._schema || {});
+    }
     const valueJSON = JSON.stringify(value);
 
     const formData = new FormData();
