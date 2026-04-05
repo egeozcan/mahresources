@@ -163,7 +163,7 @@ export class MetaShortcode extends LitElement {
 
       // Re-check after resolution: x-display, enums, then type.
       const xDisplay = schema['x-display'] as string | undefined;
-      if (xDisplay?.startsWith('plugin:')) return this._renderPluginDisplay(value, xDisplay);
+      if (xDisplay?.startsWith('plugin:')) return this._renderPluginDisplay(value, xDisplay, schema);
       if (xDisplay) {
         const renderer = getBuiltinRenderer(xDisplay);
         if (renderer) return html`<span>${renderer.render(value)}</span>`;
@@ -204,7 +204,7 @@ export class MetaShortcode extends LitElement {
     >${String(value)}</span>`;
   }
 
-  private _renderPluginDisplay(value: any, xDisplay: string): TemplateResult {
+  private _renderPluginDisplay(value: any, xDisplay: string, resolvedSchema?: JSONSchema | null): TemplateResult {
     if (this._pluginHtml !== null) {
       const wrapper = document.createElement('span');
       wrapper.innerHTML = this._pluginHtml;
@@ -216,14 +216,13 @@ export class MetaShortcode extends LitElement {
 
     const parts = xDisplay.split(':');
     if (parts.length < 3) {
-      // Malformed x-display (e.g., "plugin:name" missing type) — fall back to raw value
       return typeof value === 'object' ? html`${JSON.stringify(value)}` : html`${String(value)}`;
     }
-    this._fetchPluginDisplay(parts[1], parts[2], value);
+    this._fetchPluginDisplay(parts[1], parts[2], value, resolvedSchema ?? this._schema);
     return html`<span class="text-stone-400 text-xs animate-pulse">Loading...</span>`;
   }
 
-  private async _fetchPluginDisplay(pluginName: string, typeName: string, value: any) {
+  private async _fetchPluginDisplay(pluginName: string, typeName: string, value: any, schema?: JSONSchema | null) {
     const version = ++this._pluginFetchVersion;
     try {
       const resp = await fetch(`/v1/plugins/${pluginName}/display/render`, {
@@ -232,7 +231,7 @@ export class MetaShortcode extends LitElement {
         body: JSON.stringify({
           type: typeName,
           value,
-          schema: this._schema || {},
+          schema: schema || {},
           field_path: this.path,
           field_label: this._label,
         }),

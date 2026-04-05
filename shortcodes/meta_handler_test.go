@@ -590,6 +590,27 @@ func TestExtractSchemaSliceConditionalBranchWithRef(t *testing.T) {
 	assert.Contains(t, slice, "Advanced Detail")
 }
 
+func TestExtractSchemaSliceNestedRefInCompositionBranch(t *testing.T) {
+	// oneOf branch contains allOf with a nested $ref
+	schema := `{
+		"type":"object",
+		"properties":{
+			"item":{
+				"oneOf":[
+					{"allOf":[{"$ref":"#/$defs/Base"},{"properties":{"extra":{"type":"boolean"}}}]},
+					{"const":"none","title":"None"}
+				]
+			}
+		},
+		"$defs":{"Base":{"const":"full","title":"Full Item"}}
+	}`
+
+	slice := extractSchemaSlice(schema, "item", nil)
+	require.NotEmpty(t, slice)
+	assert.NotContains(t, slice, "$ref", "nested $ref inside allOf inside oneOf must be resolved")
+	assert.Contains(t, slice, "Full Item")
+}
+
 func TestExtractSchemaSliceRefInsideOneOfBranch(t *testing.T) {
 	// A leaf with oneOf where a branch uses $ref — the $ref must be resolved
 	// in the leaf slice since the client doesn't have root $defs.
