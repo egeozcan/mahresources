@@ -106,14 +106,12 @@ func (w *EntityWriter[T]) UpdateDescription(id uint, description string) error {
 	return nil
 }
 
-// UpdateMetaAtPath atomically sets a single value at a dot-notation path in the
-// entity's Meta column, creating intermediate objects as needed and preserving
-// sibling fields at every level. Uses a single atomic UPDATE statement to avoid
-// concurrent-request clobber.
-//
-// SQLite: json_patch (RFC 7396 recursive merge).
-// Postgres: chained jsonb_set calls that ensure each intermediate path segment
-// exists before setting the leaf value.
+// UpdateMetaAtPath sets a single value at a dot-notation path in the entity's
+// Meta column, creating intermediate objects as needed and preserving sibling
+// fields at every level. Uses a transaction with row-level locking (Postgres
+// FOR UPDATE, SQLite implicit write lock) to prevent concurrent clobber.
+// Behavior is identical on both databases — null stores JSON null, intermediate
+// scalars/arrays are overwritten to objects.
 func (w *EntityWriter[T]) UpdateMetaAtPath(id uint, path string, value json.RawMessage) (json.RawMessage, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, errors.New("path must not be empty")
@@ -126,110 +124,76 @@ func (w *EntityWriter[T]) UpdateMetaAtPath(id uint, path string, value json.RawM
 	stmt := &gorm.Statement{DB: w.ctx.db}
 	_ = stmt.Parse(entity)
 	tableName := stmt.Table
-
 	parts := strings.Split(path, ".")
 
-	var metaExpr clause.Expr
-	if w.ctx.Config.DbType == constants.DbTypePosgres {
-		metaExpr = buildPostgresDeepSet(parts, value)
-	} else {
-		patch := buildNestedJSON(parts, value)
-		metaExpr = gorm.Expr("json_patch(COALESCE(meta, '{}'), ?)", patch)
+	var newVal any
+	if err := json.Unmarshal(value, &newVal); err != nil {
+		return nil, fmt.Errorf("invalid value JSON: %w", err)
 	}
 
-	result := w.ctx.db.Table(tableName).Where("id = ?", id).Update("meta", metaExpr)
-	if result.Error != nil {
-		return nil, result.Error
-	}
-	if result.RowsAffected == 0 {
-		return nil, gorm.ErrRecordNotFound
-	}
+	var updatedJSON json.RawMessage
 
-	// Read back the full updated meta.
-	var metaStr string
-	row := w.ctx.db.Table(tableName).Where("id = ?", id).Select("meta").Row()
-	if err := row.Scan(&metaStr); err != nil {
-		return nil, err
-	}
-
-	return json.RawMessage(metaStr), nil
-}
-
-// buildNestedJSON builds a nested JSON patch from dot-notation path parts and value.
-// E.g., ["cooking","time"] + 30 → {"cooking":{"time":30}}
-func buildNestedJSON(parts []string, value json.RawMessage) string {
-	result := string(value)
-	for i := len(parts) - 1; i >= 0; i-- {
-		keyJSON, _ := json.Marshal(parts[i])
-		result = fmt.Sprintf("{%s:%s}", string(keyJSON), result)
-	}
-	return result
-}
-
-// buildPostgresDeepSet builds an atomic jsonb_set expression chain for Postgres.
-// For path [a, b, c] and value V, it generates:
-//
-//	jsonb_set(
-//	  jsonb_set(
-//	    jsonb_set(COALESCE(meta, '{}'), '{a}', COALESCE(meta->'a', '{}'), true),
-//	    '{a,b}', COALESCE(meta#>'{a,b}', '{}'), true),
-//	  '{a,b,c}', V::jsonb, true)
-//
-// Each intermediate step ensures the parent object exists (preserving its
-// contents if present, creating {} if absent). The leaf sets the final value.
-// Because it's a single UPDATE expression, it's atomic — concurrent requests
-// to different paths don't clobber each other.
-func buildPostgresDeepSet(parts []string, value json.RawMessage) clause.Expr {
-	// pgPath formats a Postgres text[] literal: ["a","b"] → {a,b}
-	pgPath := func(segs []string) string {
-		return "{" + strings.Join(segs, ",") + "}"
-	}
-
-	// Single-segment path: just set the key directly.
-	if len(parts) == 1 {
-		return gorm.Expr(
-			"jsonb_set(COALESCE(meta, '{}'::jsonb), ?::text[], ?::jsonb, true)",
-			pgPath(parts), string(value),
-		)
-	}
-
-	// Multi-segment: build the SQL and args dynamically.
-	// Structure (for path a.b.c, value V):
-	//   jsonb_set(                                          ← leaf
-	//     jsonb_set(                                        ← ensure a.b
-	//       jsonb_set(COALESCE(meta, '{}'),                 ← ensure a
-	//         '{a}', COALESCE(meta->'a', '{}'), true),
-	//       '{a,b}', COALESCE(meta#>'{a,b}', '{}'), true),
-	//     '{a,b,c}', V::jsonb, true)
-
-	var sql strings.Builder
-	var args []any
-
-	// Open all jsonb_set calls: one for each intermediate + one for the leaf
-	for i := 0; i < len(parts); i++ {
-		sql.WriteString("jsonb_set(")
-	}
-
-	// Innermost base
-	sql.WriteString("COALESCE(meta, '{}'::jsonb)")
-
-	// Close intermediate ensures (all but the last segment)
-	for i := 0; i < len(parts)-1; i++ {
-		p := pgPath(parts[:i+1])
-		if i == 0 {
-			// Single-key access: meta->'key'
-			sql.WriteString(", ?::text[], COALESCE(meta->?, '{}'::jsonb), true)")
-			args = append(args, p, parts[0])
-		} else {
-			// Multi-key access: meta#>'{a,b}'
-			sql.WriteString(", ?::text[], COALESCE(meta#>?::text[], '{}'::jsonb), true)")
-			args = append(args, p, p)
+	err := w.ctx.db.Transaction(func(tx *gorm.DB) error {
+		// Lock the row to serialize concurrent writes.
+		// Postgres: FOR UPDATE provides row-level lock.
+		// SQLite: write lock is acquired on the UPDATE; the short window
+		// between SELECT and UPDATE is acceptable for a single-user app.
+		var metaStr *string
+		q := tx.Table(tableName).Where("id = ?", id).Select("meta")
+		if w.ctx.Config.DbType == constants.DbTypePosgres {
+			q = q.Clauses(clause.Locking{Strength: "UPDATE"})
 		}
+		if err := q.Row().Scan(&metaStr); err != nil {
+			return gorm.ErrRecordNotFound
+		}
+
+		var meta map[string]any
+		if metaStr != nil && *metaStr != "" {
+			if err := json.Unmarshal([]byte(*metaStr), &meta); err != nil {
+				meta = make(map[string]any)
+			}
+		} else {
+			meta = make(map[string]any)
+		}
+
+		setNestedValue(meta, parts, newVal)
+
+		encoded, err := json.Marshal(meta)
+		if err != nil {
+			return err
+		}
+
+		result := tx.Table(tableName).Where("id = ?", id).Update("meta", string(encoded))
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+
+		updatedJSON = encoded
+		return nil
+	})
+
+	return updatedJSON, err
+}
+
+// setNestedValue sets a value at a dot-notation path in a map,
+// creating intermediate objects as needed and preserving siblings.
+// If an intermediate key exists as a non-object (scalar, array), it is
+// overwritten with an empty object so the deeper path can be created.
+func setNestedValue(m map[string]any, parts []string, value any) {
+	current := m
+	for i, part := range parts {
+		if i == len(parts)-1 {
+			current[part] = value
+			return
+		}
+		next, ok := current[part].(map[string]any)
+		if !ok {
+			next = make(map[string]any)
+			current[part] = next
+		}
+		current = next
 	}
-
-	// Close the leaf jsonb_set
-	sql.WriteString(", ?::text[], ?::jsonb, true)")
-	args = append(args, pgPath(parts), string(value))
-
-	return gorm.Expr(sql.String(), args...)
 }

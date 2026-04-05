@@ -234,6 +234,60 @@ func TestEditMeta_NonExistentEntity(t *testing.T) {
 	assert.NotEqual(t, http.StatusOK, resp.Code)
 }
 
+func TestEditMeta_NullValueStoresNull(t *testing.T) {
+	tc := SetupTestEnv(t)
+	requireJsonPatch(t, tc.DB)
+
+	group := &models.Group{
+		Name: "Null Test",
+		Meta: types.JSON(`{"cooking":{"time":30,"difficulty":"easy"}}`),
+	}
+	tc.DB.Create(group)
+
+	// Setting a field to null should store JSON null, not delete the key
+	resp := tc.MakeFormRequest(http.MethodPost,
+		fmt.Sprintf("/v1/group/editMeta?id=%d", group.ID),
+		url.Values{"path": {"cooking.time"}, "value": {"null"}},
+	)
+	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &body))
+	meta := body["meta"].(map[string]any)
+	cooking := meta["cooking"].(map[string]any)
+
+	// time should exist as null, not be deleted
+	_, exists := cooking["time"]
+	assert.True(t, exists, "cooking.time should exist (as null)")
+	assert.Nil(t, cooking["time"], "cooking.time should be null")
+	assert.Equal(t, "easy", cooking["difficulty"], "sibling preserved")
+}
+
+func TestEditMeta_OverwritesScalarIntermediate(t *testing.T) {
+	tc := SetupTestEnv(t)
+	requireJsonPatch(t, tc.DB)
+
+	group := &models.Group{
+		Name: "Scalar Overwrite Test",
+		Meta: types.JSON(`{"cooking":"just a string"}`),
+	}
+	tc.DB.Create(group)
+
+	// cooking is a scalar, but we're setting cooking.time — should reshape cooking into an object
+	resp := tc.MakeFormRequest(http.MethodPost,
+		fmt.Sprintf("/v1/group/editMeta?id=%d", group.ID),
+		url.Values{"path": {"cooking.time"}, "value": {"30"}},
+	)
+	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &body))
+	meta := body["meta"].(map[string]any)
+	cooking, ok := meta["cooking"].(map[string]any)
+	require.True(t, ok, "cooking should now be an object, not a scalar")
+	assert.Equal(t, float64(30), cooking["time"])
+}
+
 func TestEditMeta_InvalidJSON(t *testing.T) {
 	tc := SetupTestEnv(t)
 
