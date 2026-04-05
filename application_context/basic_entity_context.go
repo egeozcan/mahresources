@@ -193,9 +193,10 @@ func readMergeWrite(ctx context.Context, conn *sql.Conn, tableName string, id ui
 	if err := conn.QueryRowContext(ctx, "SELECT meta FROM "+tableName+" WHERE id = ?", id).Scan(&metaStr); err != nil {
 		return nil, gorm.ErrRecordNotFound
 	}
-	return mergeAndUpdate(ctx, func(query string, args ...any) (sql.Result, error) {
+	return mergeAndWrite(ctx, func(query string, args ...any) (sql.Result, error) {
 		return conn.ExecContext(ctx, query, args...)
-	}, tableName, id, parts, newVal, metaStr)
+	}, "UPDATE "+tableName+" SET meta = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		parts, newVal, metaStr, id)
 }
 
 // readMergeWriteTx performs a locked read-modify-write on a *sql.Tx (Postgres).
@@ -204,13 +205,15 @@ func readMergeWriteTx(ctx context.Context, tx *sql.Tx, tableName string, id uint
 	if err := tx.QueryRowContext(ctx, "SELECT meta FROM "+tableName+" WHERE id = $1 FOR UPDATE", id).Scan(&metaStr); err != nil {
 		return nil, gorm.ErrRecordNotFound
 	}
-	return mergeAndUpdate(ctx, func(query string, args ...any) (sql.Result, error) {
+	return mergeAndWrite(ctx, func(query string, args ...any) (sql.Result, error) {
 		return tx.ExecContext(ctx, query, args...)
-	}, tableName, id, parts, newVal, metaStr)
+	}, "UPDATE "+tableName+" SET meta = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+		parts, newVal, metaStr, id)
 }
 
-// mergeAndUpdate parses the current meta, applies setNestedValue, and writes back.
-func mergeAndUpdate(_ context.Context, exec func(string, ...any) (sql.Result, error), tableName string, id uint, parts []string, newVal any, metaStr *string) (json.RawMessage, error) {
+// mergeAndWrite parses the current meta, applies setNestedValue, and executes
+// the caller-provided UPDATE statement with the encoded JSON and entity ID.
+func mergeAndWrite(_ context.Context, exec func(string, ...any) (sql.Result, error), updateSQL string, parts []string, newVal any, metaStr *string, id uint) (json.RawMessage, error) {
 	var meta map[string]any
 	if metaStr != nil && *metaStr != "" {
 		if err := json.Unmarshal([]byte(*metaStr), &meta); err != nil {
@@ -227,7 +230,7 @@ func mergeAndUpdate(_ context.Context, exec func(string, ...any) (sql.Result, er
 		return nil, err
 	}
 
-	result, err := exec("UPDATE "+tableName+" SET meta = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", string(encoded), id)
+	result, err := exec(updateSQL, string(encoded), id)
 	if err != nil {
 		return nil, err
 	}
