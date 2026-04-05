@@ -132,14 +132,17 @@ export class SchemaDisplayMode extends LitElement {
   @state() private _showEmpty = false;
   @state() private _pluginHtml: Record<string, string> = {};
   @state() private _pluginErrors: Record<string, boolean> = {};
+  private _pluginFetchVersion = 0;
 
   private _metaUpdateHandler = (e: Event) => {
     const meta = (e as CustomEvent).detail?.meta;
     if (meta != null) {
       this.value = meta;
-      // Clear plugin display cache so they re-fetch with the new values
+      // Clear plugin display cache and advance version so in-flight
+      // responses from before the update are discarded.
       this._pluginHtml = {};
       this._pluginErrors = {};
+      this._pluginFetchVersion++;
     }
   };
 
@@ -389,6 +392,7 @@ export class SchemaDisplayMode extends LitElement {
   }
 
   private async _fetchPluginDisplay(key: string, pluginName: string, typeName: string, field: DisplayField) {
+    const version = ++this._pluginFetchVersion;
     try {
       const resp = await fetch(`/v1/plugins/${pluginName}/display/render`, {
         method: 'POST',
@@ -403,9 +407,13 @@ export class SchemaDisplayMode extends LitElement {
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const htmlStr = await resp.text();
-      this._pluginHtml = { ...this._pluginHtml, [key]: htmlStr };
+      if (version === this._pluginFetchVersion) {
+        this._pluginHtml = { ...this._pluginHtml, [key]: htmlStr };
+      }
     } catch {
-      this._pluginErrors = { ...this._pluginErrors, [key]: true };
+      if (version === this._pluginFetchVersion) {
+        this._pluginErrors = { ...this._pluginErrors, [key]: true };
+      }
     }
   }
 
