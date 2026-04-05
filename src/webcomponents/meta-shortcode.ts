@@ -3,7 +3,7 @@ import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { detectShape, getBuiltinRenderer } from '../schema-editor/display-renderers';
 import type { JSONSchema } from '../schema-editor/schema-core';
-import { titleCase } from '../schema-editor/schema-core';
+import { titleCase, getDefaultValue } from '../schema-editor/schema-core';
 
 @customElement('meta-shortcode')
 export class MetaShortcode extends LitElement {
@@ -228,7 +228,7 @@ export class MetaShortcode extends LitElement {
           ? html`<schema-editor
               mode="form"
               .schema=${JSON.stringify(schema)}
-              .value=${JSON.stringify(value ?? this._defaultValue(schema))}
+              .value=${JSON.stringify(value ?? getDefaultValue(schema))}
               name="_meta_shortcode_value"
               @value-change=${this._onFormValueChange}
             ></schema-editor>`
@@ -272,21 +272,11 @@ export class MetaShortcode extends LitElement {
     }
   }
 
-  private _defaultValue(schema: JSONSchema): any {
-    const type = schema.type;
-    if (type === 'object') return {};
-    if (type === 'array') return [];
-    if (type === 'string') return '';
-    if (type === 'number' || type === 'integer') return 0;
-    if (type === 'boolean') return false;
-    return null;
-  }
-
   private _enterEditMode() {
     const current = this._value;
     // For missing fields, initialize with the schema default so saving
     // without touching the control submits valid JSON instead of undefined.
-    this._editValue = current !== undefined ? current : this._defaultValue(this._schema || {});
+    this._editValue = current !== undefined ? current : getDefaultValue(this._schema || {});
     this._editing = true;
   }
 
@@ -300,7 +290,7 @@ export class MetaShortcode extends LitElement {
 
     let value = this._editValue !== undefined ? this._editValue : this._value;
     if (value === undefined) {
-      value = this._defaultValue(this._schema || {});
+      value = getDefaultValue(this._schema || {});
     }
     const valueJSON = JSON.stringify(value);
 
