@@ -179,6 +179,102 @@ func TestExtractSchemaSliceWithAllOf(t *testing.T) {
 	assert.Equal(t, "number", parsed2["type"])
 }
 
+func TestExtractSchemaSliceNestedRefThenAllOf(t *testing.T) {
+	// $ref target itself uses allOf
+	schema := `{
+		"type":"object",
+		"properties":{"item":{"$ref":"#/$defs/Item"}},
+		"$defs":{
+			"Item":{
+				"allOf":[
+					{"type":"object","properties":{"name":{"type":"string","title":"Name"}}},
+					{"properties":{"price":{"type":"number","title":"Price"}}}
+				]
+			}
+		}
+	}`
+	slice := extractSchemaSlice(schema, "item.name")
+	require.NotEmpty(t, slice)
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal([]byte(slice), &parsed))
+	assert.Equal(t, "string", parsed["type"])
+	assert.Equal(t, "Name", parsed["title"])
+
+	slice2 := extractSchemaSlice(schema, "item.price")
+	require.NotEmpty(t, slice2)
+	var parsed2 map[string]any
+	require.NoError(t, json.Unmarshal([]byte(slice2), &parsed2))
+	assert.Equal(t, "number", parsed2["type"])
+}
+
+func TestExtractSchemaSliceOneOf(t *testing.T) {
+	// Property defined through oneOf — extract from whichever branch has it
+	schema := `{
+		"type":"object",
+		"properties":{
+			"contact":{
+				"oneOf":[
+					{"type":"object","properties":{"email":{"type":"string","title":"Email"}}},
+					{"type":"object","properties":{"phone":{"type":"string","title":"Phone"}}}
+				]
+			}
+		}
+	}`
+	slice := extractSchemaSlice(schema, "contact.email")
+	require.NotEmpty(t, slice, "should find email through oneOf")
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal([]byte(slice), &parsed))
+	assert.Equal(t, "string", parsed["type"])
+	assert.Equal(t, "Email", parsed["title"])
+
+	slice2 := extractSchemaSlice(schema, "contact.phone")
+	require.NotEmpty(t, slice2, "should find phone through oneOf")
+}
+
+func TestExtractSchemaSliceAnyOf(t *testing.T) {
+	schema := `{
+		"type":"object",
+		"properties":{
+			"data":{
+				"anyOf":[
+					{"type":"object","properties":{"width":{"type":"integer"}}},
+					{"type":"object","properties":{"label":{"type":"string"}}}
+				]
+			}
+		}
+	}`
+	slice := extractSchemaSlice(schema, "data.width")
+	require.NotEmpty(t, slice, "should find width through anyOf")
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal([]byte(slice), &parsed))
+	assert.Equal(t, "integer", parsed["type"])
+}
+
+func TestExtractSchemaSliceRefInsideAllOf(t *testing.T) {
+	// allOf with a $ref inside one branch
+	schema := `{
+		"type":"object",
+		"properties":{
+			"full":{
+				"allOf":[
+					{"$ref":"#/$defs/Base"},
+					{"properties":{"extra":{"type":"boolean","title":"Extra"}}}
+				]
+			}
+		},
+		"$defs":{"Base":{"type":"object","properties":{"id":{"type":"integer","title":"ID"}}}}
+	}`
+	slice := extractSchemaSlice(schema, "full.id")
+	require.NotEmpty(t, slice, "should resolve $ref inside allOf")
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal([]byte(slice), &parsed))
+	assert.Equal(t, "integer", parsed["type"])
+	assert.Equal(t, "ID", parsed["title"])
+
+	slice2 := extractSchemaSlice(schema, "full.extra")
+	require.NotEmpty(t, slice2, "should find extra alongside $ref branch")
+}
+
 func TestExtractSchemaSliceNotFound(t *testing.T) {
 	schema := `{"type":"object","properties":{"a":{"type":"string"}}}`
 	slice := extractSchemaSlice(schema, "b.c")

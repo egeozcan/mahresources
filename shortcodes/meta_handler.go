@@ -119,40 +119,51 @@ func extractSchemaSlice(schemaStr string, path string) string {
 	return string(encoded)
 }
 
-// resolveSchemaNode resolves $ref and merges allOf on a schema node.
-// Returns the resolved schema, or the input unchanged if no resolution needed.
+// resolveSchemaNode recursively resolves $ref, allOf, oneOf, and anyOf on a
+// schema node. For allOf all branches are merged (all constraints apply).
+// For oneOf/anyOf all branches' properties are merged so that any property
+// reachable through any branch can be found — we don't have data to pick the
+// "right" branch at schema-extraction time, and merging is safe because we
+// only need to locate property definitions for display/edit rendering.
+// Recursion is capped at depth 10 to prevent infinite $ref loops.
 func resolveSchemaNode(node map[string]any, root map[string]any) map[string]any {
-	if node == nil {
-		return nil
+	return resolveSchemaNodeDepth(node, root, 0)
+}
+
+func resolveSchemaNodeDepth(node map[string]any, root map[string]any, depth int) map[string]any {
+	if node == nil || depth > 10 {
+		return node
 	}
 
-	// Resolve $ref
+	// Resolve $ref first, then recurse on the result
 	if ref, ok := node["$ref"].(string); ok {
 		resolved := followRef(ref, root)
 		if resolved == nil {
 			return nil
 		}
-		// Merge sibling keywords from the $ref node into the resolved schema
 		merged := shallowMergeSchema(resolved, node)
 		delete(merged, "$ref")
-		return merged
+		return resolveSchemaNodeDepth(merged, root, depth+1)
 	}
 
-	// Resolve allOf: merge all branches
-	if allOf, ok := node["allOf"].([]any); ok {
+	// Resolve composition keywords: allOf, oneOf, anyOf
+	for _, keyword := range []string{"allOf", "oneOf", "anyOf"} {
+		branches, ok := node[keyword].([]any)
+		if !ok {
+			continue
+		}
 		merged := make(map[string]any)
-		// Copy non-allOf keys from the parent
 		for k, v := range node {
-			if k != "allOf" {
+			if k != keyword {
 				merged[k] = v
 			}
 		}
-		for _, branch := range allOf {
+		for _, branch := range branches {
 			branchMap, ok := branch.(map[string]any)
 			if !ok {
 				continue
 			}
-			resolved := resolveSchemaNode(branchMap, root)
+			resolved := resolveSchemaNodeDepth(branchMap, root, depth+1)
 			if resolved == nil {
 				resolved = branchMap
 			}
