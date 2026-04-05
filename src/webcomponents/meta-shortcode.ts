@@ -22,6 +22,31 @@ export class MetaShortcode extends LitElement {
   @state() private _pluginHtml: string | null = null;
   @state() private _pluginError = false;
 
+  private _metaUpdateHandler = (e: Event) => {
+    const detail = (e as CustomEvent).detail;
+    if (detail?.entityType === this.entityType && detail?.entityId === this.entityId && detail?.meta) {
+      // Another meta-shortcode on the same entity saved — refresh our value
+      const parts = this.path.split('.');
+      let current: any = detail.meta;
+      for (const part of parts) {
+        if (current == null || typeof current !== 'object') { current = undefined; break; }
+        current = current[part];
+      }
+      this._currentValue = current;
+      this.valueStr = current !== undefined ? JSON.stringify(current) : '';
+    }
+  };
+
+  override connectedCallback() {
+    super.connectedCallback();
+    document.addEventListener('meta-shortcode-updated', this._metaUpdateHandler);
+  }
+
+  override disconnectedCallback() {
+    document.removeEventListener('meta-shortcode-updated', this._metaUpdateHandler);
+    super.disconnectedCallback();
+  }
+
   override createRenderRoot() {
     return this;
   }
@@ -288,6 +313,11 @@ export class MetaShortcode extends LitElement {
       this._editing = false;
       this._flash = 'success';
       setTimeout(() => { this._flash = null; }, 1000);
+
+      // Notify other meta-shortcode elements on the same entity to refresh
+      document.dispatchEvent(new CustomEvent('meta-shortcode-updated', {
+        detail: { entityType: this.entityType, entityId: this.entityId, meta: result.meta },
+      }));
     } catch (err) {
       console.error('Meta shortcode save error:', err);
       this._flash = 'error';

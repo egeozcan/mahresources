@@ -4,13 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/server/interfaces"
 	"strings"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type EntityWriter[T interfaces.BasicEntityReader] struct {
@@ -106,31 +104,16 @@ func (w *EntityWriter[T]) UpdateDescription(id uint, description string) error {
 	return nil
 }
 
-// buildNestedJSON builds a nested JSON object from a dot-separated path and a JSON value.
-// For example, path="cooking.time" and value=30 produces {"cooking":{"time":30}}.
-func buildNestedJSON(path string, value json.RawMessage) (string, error) {
-	parts := strings.Split(path, ".")
-	if !json.Valid(value) {
-		return "", fmt.Errorf("value is not valid JSON")
-	}
-	result := string(value)
-	for i := len(parts) - 1; i >= 0; i-- {
-		keyJSON, _ := json.Marshal(parts[i])
-		result = fmt.Sprintf("{%s:%s}", string(keyJSON), result)
-	}
-	return result, nil
-}
-
 // UpdateMetaAtPath performs a deep-merge of a single value at a dot-notation path
-// into the entity's Meta column. It returns the full updated meta JSON.
+// into the entity's Meta column. It reads the current meta, sets the value at the
+// path (creating intermediate objects as needed), and writes back the result.
+// Returns the full updated meta JSON.
 func (w *EntityWriter[T]) UpdateMetaAtPath(id uint, path string, value json.RawMessage) (json.RawMessage, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, errors.New("path must not be empty")
 	}
-
-	patch, err := buildNestedJSON(path, value)
-	if err != nil {
-		return nil, err
+	if !json.Valid(value) {
+		return nil, fmt.Errorf("value is not valid JSON")
 	}
 
 	entity := new(T)
@@ -138,14 +121,39 @@ func (w *EntityWriter[T]) UpdateMetaAtPath(id uint, path string, value json.RawM
 	_ = stmt.Parse(entity)
 	tableName := stmt.Table
 
-	var metaExpr clause.Expr
-	if w.ctx.Config.DbType == constants.DbTypePosgres {
-		metaExpr = gorm.Expr("COALESCE(meta, '{}'::jsonb) || ?::jsonb", patch)
-	} else {
-		metaExpr = gorm.Expr("json_patch(COALESCE(meta, '{}'), ?)", patch)
+	// Read current meta.
+	var metaStr *string
+	row := w.ctx.db.Table(tableName).Where("id = ?", id).Select("meta").Row()
+	if err := row.Scan(&metaStr); err != nil {
+		return nil, gorm.ErrRecordNotFound
 	}
 
-	result := w.ctx.db.Table(tableName).Where("id = ?", id).Update("meta", metaExpr)
+	var meta map[string]any
+	if metaStr != nil && *metaStr != "" {
+		if err := json.Unmarshal([]byte(*metaStr), &meta); err != nil {
+			meta = make(map[string]any)
+		}
+	} else {
+		meta = make(map[string]any)
+	}
+
+	// Parse the new value.
+	var newVal any
+	if err := json.Unmarshal(value, &newVal); err != nil {
+		return nil, fmt.Errorf("invalid value JSON: %w", err)
+	}
+
+	// Set the value at the path, creating intermediate objects as needed.
+	parts := strings.Split(path, ".")
+	setNestedValue(meta, parts, newVal)
+
+	updatedJSON, err := json.Marshal(meta)
+	if err != nil {
+		return nil, err
+	}
+
+	// Write back.
+	result := w.ctx.db.Table(tableName).Where("id = ?", id).Update("meta", string(updatedJSON))
 	if result.Error != nil {
 		return nil, result.Error
 	}
@@ -153,13 +161,23 @@ func (w *EntityWriter[T]) UpdateMetaAtPath(id uint, path string, value json.RawM
 		return nil, gorm.ErrRecordNotFound
 	}
 
-	// Read back the full updated meta.
-	// SQLite returns text columns as string, not []byte, so scan into string first.
-	var metaStr string
-	row := w.ctx.db.Table(tableName).Where("id = ?", id).Select("meta").Row()
-	if err := row.Scan(&metaStr); err != nil {
-		return nil, err
-	}
+	return updatedJSON, nil
+}
 
-	return json.RawMessage(metaStr), nil
+// setNestedValue sets a value at a dot-notation path in a map,
+// creating intermediate objects as needed and preserving siblings.
+func setNestedValue(m map[string]any, parts []string, value any) {
+	current := m
+	for i, part := range parts {
+		if i == len(parts)-1 {
+			current[part] = value
+			return
+		}
+		next, ok := current[part].(map[string]any)
+		if !ok {
+			next = make(map[string]any)
+			current[part] = next
+		}
+		current = next
+	}
 }

@@ -29,14 +29,14 @@ func RenderMetaShortcode(sc Shortcode, ctx MetaShortcodeContext) string {
 	schemaSlice := extractSchemaSlice(ctx.MetaSchema, path)
 
 	return fmt.Sprintf(
-		`<meta-shortcode data-path="%s" data-editable="%t" data-hide-empty="%t" data-entity-type="%s" data-entity-id="%d" data-schema='%s' data-value='%s'></meta-shortcode>`,
+		`<meta-shortcode data-path="%s" data-editable="%t" data-hide-empty="%t" data-entity-type="%s" data-entity-id="%d" data-schema="%s" data-value="%s"></meta-shortcode>`,
 		html.EscapeString(path),
 		editable,
 		hideEmpty,
 		html.EscapeString(ctx.EntityType),
 		ctx.EntityID,
-		schemaSlice,
-		valueJSON,
+		html.EscapeString(schemaSlice),
+		html.EscapeString(valueJSON),
 	)
 }
 

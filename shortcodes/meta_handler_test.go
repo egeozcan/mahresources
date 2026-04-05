@@ -28,11 +28,13 @@ func TestRenderMetaBasic(t *testing.T) {
 	assert.Contains(t, result, `data-path="cooking.time"`)
 	assert.Contains(t, result, `data-entity-type="group"`)
 	assert.Contains(t, result, `data-entity-id="42"`)
-	assert.Contains(t, result, `data-value='30'`)
+	assert.Contains(t, result, `data-value="30"`)
 	assert.Contains(t, result, `data-editable="false"`)
 	assert.Contains(t, result, `data-hide-empty="false"`)
-	assert.Contains(t, result, `"type":"integer"`)
-	assert.Contains(t, result, `"title":"Cooking Time"`)
+	// Schema slice is HTML-escaped in the attribute
+	assert.Contains(t, result, `data-schema="`)
+	assert.Contains(t, result, `integer`)
+	assert.Contains(t, result, `Cooking Time`)
 }
 
 func TestRenderMetaEditable(t *testing.T) {
@@ -52,7 +54,7 @@ func TestRenderMetaEditable(t *testing.T) {
 	}, ctx)
 
 	assert.Contains(t, result, `data-editable="true"`)
-	assert.Contains(t, result, `data-value='"test"'`)
+	assert.Contains(t, result, `data-value="&#34;test&#34;"`)
 }
 
 func TestRenderMetaMissingPath(t *testing.T) {
@@ -85,7 +87,7 @@ func TestRenderMetaEmptyValue(t *testing.T) {
 	}, ctx)
 
 	assert.Contains(t, result, `data-path="nonexistent"`)
-	assert.Contains(t, result, `data-value=''`)
+	assert.Contains(t, result, `data-value=""`)
 }
 
 func TestRenderMetaHideEmpty(t *testing.T) {
@@ -121,7 +123,8 @@ func TestRenderMetaObjectValue(t *testing.T) {
 	}, ctx)
 
 	assert.Contains(t, result, `data-path="loc"`)
-	assert.Contains(t, result, `"lat"`)
+	// Value is HTML-escaped JSON: {"lat":1.5,"lng":2.5} → {&#34;lat&#34;:1.5,&#34;lng&#34;:2.5}
+	assert.Contains(t, result, `lat`)
 }
 
 func TestExtractSchemaSlice(t *testing.T) {

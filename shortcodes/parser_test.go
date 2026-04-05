@@ -71,3 +71,10 @@ func TestParseSingleQuotedValues(t *testing.T) {
 	require.Len(t, result, 1)
 	assert.Equal(t, "cooking.time", result[0].Attrs["path"])
 }
+
+func TestParsePluginNameWithUnderscore(t *testing.T) {
+	result := Parse(`[plugin:my_plugin:star_rating max="5"]`)
+	require.Len(t, result, 1)
+	assert.Equal(t, "plugin:my_plugin:star_rating", result[0].Name)
+	assert.Equal(t, "5", result[0].Attrs["max"])
+}

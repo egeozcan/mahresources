@@ -21,7 +21,7 @@ type PluginShortcode struct {
 	State      *lua.LState
 }
 
-var validShortcodeName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,49}$`)
+var validShortcodeName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,49}$`)
 
 func parseShortcodeTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*PluginShortcode, error) {
 	sc := &PluginShortcode{PluginName: pluginName}
