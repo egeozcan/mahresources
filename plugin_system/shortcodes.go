@@ -146,5 +146,5 @@ func (pm *PluginManager) RenderShortcode(pluginName, fullTypeName, entityType st
 		return string(str), nil
 	}
 
-	return "", nil
+	return "", fmt.Errorf("shortcode %q render function must return a string, got %s", fullTypeName, ret.Type())
 }

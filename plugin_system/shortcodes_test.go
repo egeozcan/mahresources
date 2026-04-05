@@ -102,6 +102,44 @@ func TestShortcodeRenderContext(t *testing.T) {
 	assert.Equal(t, "resource:42", html)
 }
 
+func TestShortcodeNonStringReturnErrors(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "sc-badret", `
+		plugin = { name = "sc-badret", version = "1.0" }
+		function init()
+			mah.shortcode({
+				name = "nilret",
+				label = "Nil Return",
+				render = function(ctx) return nil end
+			})
+			mah.shortcode({
+				name = "numret",
+				label = "Number Return",
+				render = function(ctx) return 42 end
+			})
+			mah.shortcode({
+				name = "boolret",
+				label = "Bool Return",
+				render = function(ctx) return true end
+			})
+		end
+	`)
+
+	pm, err := NewPluginManager(dir)
+	require.NoError(t, err)
+	defer pm.Close()
+	require.NoError(t, pm.EnablePlugin("sc-badret"))
+
+	_, err = pm.RenderShortcode("sc-badret", "plugin:sc-badret:nilret", "group", 1, json.RawMessage(`{}`), nil)
+	assert.Error(t, err, "nil return should be an error")
+
+	_, err = pm.RenderShortcode("sc-badret", "plugin:sc-badret:numret", "group", 1, json.RawMessage(`{}`), nil)
+	assert.Error(t, err, "number return should be an error")
+
+	_, err = pm.RenderShortcode("sc-badret", "plugin:sc-badret:boolret", "group", 1, json.RawMessage(`{}`), nil)
+	assert.Error(t, err, "boolean return should be an error")
+}
+
 func TestShortcodeDuplicate(t *testing.T) {
 	dir := t.TempDir()
 	writePlugin(t, dir, "sc-dup", `

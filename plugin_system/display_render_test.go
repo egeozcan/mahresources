@@ -123,3 +123,46 @@ end
 	require.NoError(t, err)
 	assert.Equal(t, "<em>none</em>", html)
 }
+
+func TestRenderDisplayNonStringReturnErrors(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "display-badret", `
+plugin = { name = "display-badret", version = "1.0" }
+function init()
+    mah.display_type({
+        type = "nilret",
+        label = "Nil Return",
+        render = function(ctx) return nil end
+    })
+    mah.display_type({
+        type = "numret",
+        label = "Number Return",
+        render = function(ctx) return 42 end
+    })
+    mah.display_type({
+        type = "boolret",
+        label = "Bool Return",
+        render = function(ctx) return true end
+    })
+end
+`)
+	pm, err := NewPluginManager(dir)
+	require.NoError(t, err)
+	defer pm.Close()
+	require.NoError(t, pm.EnablePlugin("display-badret"))
+
+	_, err = pm.RenderDisplay("display-badret", "plugin:display-badret:nilret", DisplayRenderContext{
+		Value: "test", FieldPath: "x", FieldLabel: "X",
+	})
+	assert.Error(t, err, "nil return should be an error")
+
+	_, err = pm.RenderDisplay("display-badret", "plugin:display-badret:numret", DisplayRenderContext{
+		Value: "test", FieldPath: "x", FieldLabel: "X",
+	})
+	assert.Error(t, err, "number return should be an error")
+
+	_, err = pm.RenderDisplay("display-badret", "plugin:display-badret:boolret", DisplayRenderContext{
+		Value: "test", FieldPath: "x", FieldLabel: "X",
+	})
+	assert.Error(t, err, "boolean return should be an error")
+}

@@ -88,7 +88,7 @@ func (pm *PluginManager) RenderDisplay(pluginName, fullTypeName string, ctx Disp
 		return string(str), nil
 	}
 
-	return "", nil
+	return "", fmt.Errorf("display type %q render function must return a string, got %s", fullTypeName, ret.Type())
 }
 
 // GetPluginDisplayType returns a specific plugin display type by full name, or nil.
