@@ -491,6 +491,40 @@ func TestExtractSchemaSlicePropertyLevelUnsupportedKeyword(t *testing.T) {
 	assert.NotEmpty(t, sliceY, "y should also be discoverable via fallback merge")
 }
 
+func TestExtractSchemaSliceConditionTypeCheck(t *testing.T) {
+	// if: {properties: {code: {type: "string"}}} should NOT match {code: 42}
+	schema := `{
+		"type":"object",
+		"if":{"properties":{"code":{"type":"string"}}},
+		"then":{"properties":{"strField":{"type":"string","title":"Str"}}},
+		"else":{"properties":{"numField":{"type":"string","title":"Num"}}}
+	}`
+
+	// code is a number — should take else branch
+	sliceNum := extractSchemaSlice(schema, "numField", json.RawMessage(`{"code":42}`))
+	assert.NotEmpty(t, sliceNum, "numField should resolve when code is number (else branch)")
+
+	sliceStr := extractSchemaSlice(schema, "strField", json.RawMessage(`{"code":42}`))
+	assert.Empty(t, sliceStr, "strField should NOT resolve when code is number")
+
+	// code is a string — should take then branch
+	sliceStr2 := extractSchemaSlice(schema, "strField", json.RawMessage(`{"code":"hello"}`))
+	assert.NotEmpty(t, sliceStr2, "strField should resolve when code is string (then branch)")
+}
+
+func TestExtractSchemaSliceConditionTopLevelType(t *testing.T) {
+	// Top-level if: {type: "string"} — should evaluate, not fall back
+	schema := `{
+		"if":{"type":"object"},
+		"then":{"type":"object","properties":{"objField":{"type":"string","title":"Obj"}}},
+		"else":{"type":"object","properties":{"otherField":{"type":"string","title":"Other"}}}
+	}`
+
+	// Value is an object — should take then branch
+	slice := extractSchemaSlice(schema, "objField", json.RawMessage(`{"objField":"x"}`))
+	assert.NotEmpty(t, slice, "objField should resolve when value is object (then branch)")
+}
+
 func TestExtractSchemaSliceNotFound(t *testing.T) {
 	schema := `{"type":"object","properties":{"a":{"type":"string"}}}`
 	slice := extractSchemaSlice(schema, "b.c", nil)

@@ -267,6 +267,23 @@ func tryEvaluateCondition(ifSchema map[string]any, value map[string]any) (matche
 		}
 	}
 
+	// Top-level type check: if: {type: "string"} checks the value's type.
+	// For leaf values (wrapped as {"_self": val}), check the _self value.
+	// For object values, the value itself is always a map (type "object").
+	if typeVal, ok := ifSchema["type"].(string); ok {
+		selfVal, hasSelf := value["_self"]
+		if hasSelf {
+			if !jsonValueMatchesType(selfVal, typeVal) {
+				return false, true
+			}
+		} else {
+			// value is always map[string]any here, so only "object" matches
+			if typeVal != "object" {
+				return false, true
+			}
+		}
+	}
+
 	// Direct const check (leaf-level conditional: if: {const: "draft"}).
 	// For leaf values, the caller wraps the primitive as {"_self": value}.
 	if constVal, ok := ifSchema["const"]; ok {
@@ -336,8 +353,39 @@ func tryEvaluateCondition(ifSchema map[string]any, value map[string]any) (matche
 				return false, true
 			}
 		}
+		if typeVal, hasType := constraintMap["type"].(string); hasType {
+			if !jsonValueMatchesType(actual, typeVal) {
+				return false, true
+			}
+		}
 	}
 	return true, true
+}
+
+// jsonValueMatchesType checks whether a json.Unmarshal value matches a JSON
+// Schema type keyword. Values from json.Unmarshal are: string, float64, bool,
+// nil, map[string]any, []any.
+func jsonValueMatchesType(v any, schemaType string) bool {
+	switch schemaType {
+	case "string":
+		_, ok := v.(string)
+		return ok
+	case "number", "integer":
+		_, ok := v.(float64)
+		return ok
+	case "boolean":
+		_, ok := v.(bool)
+		return ok
+	case "null":
+		return v == nil
+	case "object":
+		_, ok := v.(map[string]any)
+		return ok
+	case "array":
+		_, ok := v.([]any)
+		return ok
+	}
+	return false
 }
 
 // followRef resolves a local JSON pointer ref like "#/$defs/Address" or
