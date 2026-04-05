@@ -117,6 +117,12 @@ func (w *EntityWriter[T]) UpdateMetaAtPath(id uint, path string, value json.RawM
 	if strings.TrimSpace(path) == "" {
 		return nil, errors.New("path must not be empty")
 	}
+	parts := strings.Split(path, ".")
+	for _, p := range parts {
+		if p == "" {
+			return nil, fmt.Errorf("invalid path %q: empty segment", path)
+		}
+	}
 	if !json.Valid(value) {
 		return nil, fmt.Errorf("value is not valid JSON")
 	}
@@ -125,7 +131,6 @@ func (w *EntityWriter[T]) UpdateMetaAtPath(id uint, path string, value json.RawM
 	stmt := &gorm.Statement{DB: w.ctx.db}
 	_ = stmt.Parse(entity)
 	tableName := stmt.Table
-	parts := strings.Split(path, ".")
 
 	var newVal any
 	if err := json.Unmarshal(value, &newVal); err != nil {

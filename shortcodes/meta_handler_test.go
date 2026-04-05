@@ -138,6 +138,47 @@ func TestExtractSchemaSlice(t *testing.T) {
 	assert.Equal(t, "B Field", parsed["title"])
 }
 
+func TestExtractSchemaSliceWithRef(t *testing.T) {
+	schema := `{"type":"object","properties":{"home":{"$ref":"#/$defs/Address"}},"$defs":{"Address":{"type":"object","properties":{"zip":{"type":"string","title":"ZIP Code"}}}}}`
+	slice := extractSchemaSlice(schema, "home.zip")
+	require.NotEmpty(t, slice)
+	var parsed map[string]any
+	err := json.Unmarshal([]byte(slice), &parsed)
+	require.NoError(t, err)
+	assert.Equal(t, "string", parsed["type"])
+	assert.Equal(t, "ZIP Code", parsed["title"])
+}
+
+func TestExtractSchemaSliceWithRefAtLeaf(t *testing.T) {
+	schema := `{"type":"object","properties":{"addr":{"$ref":"#/$defs/Addr"}},"$defs":{"Addr":{"type":"object","title":"Address","properties":{"city":{"type":"string"}}}}}`
+	slice := extractSchemaSlice(schema, "addr")
+	require.NotEmpty(t, slice)
+	var parsed map[string]any
+	err := json.Unmarshal([]byte(slice), &parsed)
+	require.NoError(t, err)
+	assert.Equal(t, "object", parsed["type"])
+	assert.Equal(t, "Address", parsed["title"])
+}
+
+func TestExtractSchemaSliceWithAllOf(t *testing.T) {
+	schema := `{"type":"object","properties":{"item":{"allOf":[{"type":"object","properties":{"name":{"type":"string","title":"Name"}}},{"properties":{"price":{"type":"number","title":"Price"}}}]}}}`
+	// item.name should resolve through the allOf merge
+	slice := extractSchemaSlice(schema, "item.name")
+	require.NotEmpty(t, slice)
+	var parsed map[string]any
+	err := json.Unmarshal([]byte(slice), &parsed)
+	require.NoError(t, err)
+	assert.Equal(t, "string", parsed["type"])
+
+	// item.price from second allOf branch
+	slice2 := extractSchemaSlice(schema, "item.price")
+	require.NotEmpty(t, slice2)
+	var parsed2 map[string]any
+	err = json.Unmarshal([]byte(slice2), &parsed2)
+	require.NoError(t, err)
+	assert.Equal(t, "number", parsed2["type"])
+}
+
 func TestExtractSchemaSliceNotFound(t *testing.T) {
 	schema := `{"type":"object","properties":{"a":{"type":"string"}}}`
 	slice := extractSchemaSlice(schema, "b.c")

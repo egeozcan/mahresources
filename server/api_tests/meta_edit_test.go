@@ -288,6 +288,21 @@ func TestEditMeta_OverwritesScalarIntermediate(t *testing.T) {
 	assert.Equal(t, float64(30), cooking["time"])
 }
 
+func TestEditMeta_RejectsMalformedPaths(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	group := tc.CreateDummyGroup("path-validation")
+
+	for _, badPath := range []string{"a..b", ".a", "a.", ".", "..", "a...b"} {
+		resp := tc.MakeFormRequest(http.MethodPost,
+			fmt.Sprintf("/v1/group/editMeta?id=%d", group.ID),
+			url.Values{"path": {badPath}, "value": {"1"}},
+		)
+		assert.Equal(t, http.StatusBadRequest, resp.Code,
+			"path %q should be rejected", badPath)
+	}
+}
+
 func TestEditMeta_InvalidJSON(t *testing.T) {
 	tc := SetupTestEnv(t)
 
