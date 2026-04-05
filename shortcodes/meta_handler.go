@@ -128,14 +128,14 @@ func extractSchemaSlice(schemaStr string, path string, entityMeta json.RawMessag
 		}
 	}
 
-	// Resolve the leaf node — pass currentValue for object conditionals,
-	// or use rawValue for leaf-level conditionals on primitive fields.
+	// Resolve the leaf node for $ref and if/then/else only.
+	// Do NOT resolve oneOf/anyOf/allOf on the leaf — the client needs those
+	// intact for labeled-enum detection and display rendering.
 	leafValue := currentValue
 	if leafValue == nil && rawValue != nil {
-		// Primitive value at this path — wrap for leaf conditional evaluation
 		leafValue = map[string]any{"_self": rawValue}
 	}
-	resolved := resolveSchemaNodeWithValue(current, root, leafValue)
+	resolved := resolveLeafSchema(current, root, leafValue)
 	if resolved == nil {
 		resolved = current
 	}
@@ -145,6 +145,55 @@ func extractSchemaSlice(schemaStr string, path string, entityMeta json.RawMessag
 		return ""
 	}
 	return string(encoded)
+}
+
+// resolveLeafSchema resolves only $ref and if/then/else on a leaf schema node,
+// preserving oneOf/anyOf/allOf so the client can detect labeled enums and other
+// composition-based display patterns.
+func resolveLeafSchema(node map[string]any, root map[string]any, value map[string]any) map[string]any {
+	if node == nil {
+		return nil
+	}
+	// Resolve $ref
+	if ref, ok := node["$ref"].(string); ok {
+		resolved := followRef(ref, root)
+		if resolved == nil {
+			return nil
+		}
+		merged := shallowMergeSchema(resolved, node)
+		delete(merged, "$ref")
+		return resolveLeafSchema(merged, root, value)
+	}
+	// Resolve if/then/else
+	if _, ok := node["if"].(map[string]any); ok {
+		base := make(map[string]any)
+		for k, v := range node {
+			if k != "if" && k != "then" && k != "else" {
+				base[k] = v
+			}
+		}
+		matched, supported := tryEvaluateCondition(node["if"].(map[string]any), value)
+		if supported {
+			if matched {
+				if thenSchema, ok := node["then"].(map[string]any); ok {
+					base = shallowMergeSchema(base, thenSchema)
+				}
+			} else {
+				if elseSchema, ok := node["else"].(map[string]any); ok {
+					base = shallowMergeSchema(base, elseSchema)
+				}
+			}
+		} else {
+			if thenSchema, ok := node["then"].(map[string]any); ok {
+				base = shallowMergeSchema(base, thenSchema)
+			}
+			if elseSchema, ok := node["else"].(map[string]any); ok {
+				base = shallowMergeSchema(base, elseSchema)
+			}
+		}
+		return base
+	}
+	return node
 }
 
 // resolveSchemaNodeWithValue recursively resolves $ref, allOf, oneOf, anyOf,

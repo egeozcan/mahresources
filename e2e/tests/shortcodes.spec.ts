@@ -18,7 +18,14 @@ test.describe('Shortcode system', () => {
         title: 'Cooking',
         properties: {
           time: { type: 'integer', title: 'Cooking Time' },
-          difficulty: { type: 'string', title: 'Difficulty' },
+          difficulty: {
+            title: 'Difficulty',
+            oneOf: [
+              { const: 'easy', title: 'Easy' },
+              { const: 'medium', title: 'Medium' },
+              { const: 'hard', title: 'Hard' },
+            ],
+          },
           servings: { type: 'integer', title: 'Servings' },
         },
       },
@@ -88,13 +95,16 @@ test.describe('Shortcode system', () => {
     await expect(shortcode).toContainText('30');
   });
 
-  test('[meta path="cooking.difficulty"] renders its value', async ({ page }) => {
+  test('[meta path="cooking.difficulty"] renders labeled enum as pill', async ({ page }) => {
     await page.goto(`/group?id=${groupId}`);
     await page.waitForLoadState('load');
 
     const shortcode = page.locator('meta-shortcode[data-path="cooking.difficulty"]').first();
     await expect(shortcode).toBeVisible({ timeout: 5000 });
-    await expect(shortcode).toContainText('easy');
+    // Should render the label "Easy" (not raw value "easy") in a pill
+    const pill = shortcode.locator('.rounded-full');
+    await expect(pill).toBeVisible({ timeout: 3000 });
+    await expect(pill).toContainText('Easy');
   });
 
   test('[meta path="x" hide-empty="true"] hides when value is absent', async ({ page }) => {

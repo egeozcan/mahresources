@@ -3,7 +3,7 @@ import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { detectShape, getBuiltinRenderer } from '../schema-editor/display-renderers';
 import type { JSONSchema } from '../schema-editor/schema-core';
-import { titleCase, getDefaultValue } from '../schema-editor/schema-core';
+import { titleCase, getDefaultValue, isLabeledEnum, getLabeledEnumEntries } from '../schema-editor/schema-core';
 
 @customElement('meta-shortcode')
 export class MetaShortcode extends LitElement {
@@ -156,6 +156,25 @@ export class MetaShortcode extends LitElement {
     }
 
     if (schema) {
+      // Labeled enum (oneOf with const+title) — pill with label
+      if (isLabeledEnum(schema)) {
+        const entries = getLabeledEnumEntries(schema);
+        const entry = entries.find(e => e.value === value);
+        const label = entry ? entry.label : String(value);
+        const tooltip = entry ? String(value) : '';
+        return html`<span
+          class="inline-block text-xs px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-medium"
+          title=${tooltip || nothing}
+        >${label}</span>`;
+      }
+
+      // Plain enum — green pill
+      if (Array.isArray(schema.enum)) {
+        return html`<span
+          class="inline-block text-xs px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium"
+        >${String(value)}</span>`;
+      }
+
       const type = Array.isArray(schema.type)
         ? schema.type.find((t: string) => t !== 'null') || 'string'
         : schema.type || 'string';
