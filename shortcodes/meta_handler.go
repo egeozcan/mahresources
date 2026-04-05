@@ -97,6 +97,8 @@ func extractSchemaSlice(schemaStr string, path string, entityMeta json.RawMessag
 	parts := strings.Split(path, ".")
 	current := root
 	currentValue := metaValue
+	// rawValue tracks the value at the current path as any (including primitives)
+	var rawValue any = metaValue
 
 	for _, part := range parts {
 		resolved := resolveSchemaNodeWithValue(current, root, currentValue)
@@ -112,18 +114,27 @@ func extractSchemaSlice(schemaStr string, path string, entityMeta json.RawMessag
 			return ""
 		}
 		current = sub
-		// Descend into the value too for next-level condition evaluation
+		// Descend into the value for next-level condition evaluation
 		if currentValue != nil {
+			rawValue = currentValue[part]
 			if nested, ok := currentValue[part].(map[string]any); ok {
 				currentValue = nested
 			} else {
 				currentValue = nil
 			}
+		} else {
+			rawValue = nil
 		}
 	}
 
-	// Resolve the leaf node too (it might be a $ref or conditional)
-	resolved := resolveSchemaNodeWithValue(current, root, currentValue)
+	// Resolve the leaf node — pass currentValue for object conditionals,
+	// or use rawValue for leaf-level conditionals on primitive fields.
+	leafValue := currentValue
+	if leafValue == nil && rawValue != nil {
+		// Primitive value at this path — wrap for leaf conditional evaluation
+		leafValue = map[string]any{"_self": rawValue}
+	}
+	resolved := resolveSchemaNodeWithValue(current, root, leafValue)
 	if resolved == nil {
 		resolved = current
 	}
@@ -226,21 +237,64 @@ func resolveSchemaNodeImpl(node map[string]any, root map[string]any, value map[s
 	return node
 }
 
+// supportedIfKeys lists top-level keys in an if-schema that this evaluator
+// understands. Any other key (required, $ref, allOf, not, etc.) triggers
+// the unsupported fallback.
+var supportedIfKeys = map[string]bool{
+	"properties": true,
+	"const":      true,
+	"enum":       true,
+	"type":       true, // ignored for evaluation but not unsupported
+}
+
 // tryEvaluateCondition attempts to evaluate an if-schema condition against
 // the current value. Returns (matched, true) if the condition was evaluable,
 // or (false, false) if it uses unsupported features (in which case the caller
 // should merge both branches as a safe fallback).
 //
-// Supported: properties with const and enum checks (the vast majority of
-// if/then/else usage). Unsupported: required, minimum/maximum, minLength,
-// pattern, $ref, allOf/anyOf/oneOf/not in conditions, etc.
+// Supported: direct const/enum on the value, or properties with const/enum
+// checks. Unsupported: required, minimum/maximum, pattern, $ref, allOf, etc.
 func tryEvaluateCondition(ifSchema map[string]any, value map[string]any) (matched bool, supported bool) {
 	if value == nil {
 		return false, false
 	}
+
+	// Check for unsupported top-level keys — if any are present alongside
+	// supported ones, we can't trust our partial evaluation.
+	for k := range ifSchema {
+		if !supportedIfKeys[k] {
+			return false, false
+		}
+	}
+
+	// Direct const check (leaf-level conditional: if: {const: "draft"}).
+	// For leaf values, the caller wraps the primitive as {"_self": value}.
+	if constVal, ok := ifSchema["const"]; ok {
+		selfVal, hasSelf := value["_self"]
+		if hasSelf {
+			return reflect.DeepEqual(selfVal, constVal), true
+		}
+		// const at object level — not standard, unsupported
+		return false, false
+	}
+
+	// Direct enum check (leaf-level conditional).
+	if enumVal, ok := ifSchema["enum"].([]any); ok {
+		selfVal, hasSelf := value["_self"]
+		if hasSelf {
+			for _, e := range enumVal {
+				if reflect.DeepEqual(selfVal, e) {
+					return true, true
+				}
+			}
+			return false, true
+		}
+		return false, false
+	}
+
+	// Properties-based check.
 	props, ok := ifSchema["properties"].(map[string]any)
 	if !ok {
-		// No properties block — condition uses something we can't evaluate.
 		return false, false
 	}
 	for key, constraint := range props {
@@ -250,17 +304,15 @@ func tryEvaluateCondition(ifSchema map[string]any, value map[string]any) (matche
 		}
 		actual, exists := value[key]
 		if !exists {
-			return false, true // Missing property → condition not met
+			return false, true
 		}
 		hasCheck := false
-		// Check const
 		if constVal, hasConst := constraintMap["const"]; hasConst {
 			hasCheck = true
 			if !reflect.DeepEqual(actual, constVal) {
 				return false, true
 			}
 		}
-		// Check enum
 		if enumVal, hasEnum := constraintMap["enum"].([]any); hasEnum {
 			hasCheck = true
 			found := false
@@ -274,8 +326,6 @@ func tryEvaluateCondition(ifSchema map[string]any, value map[string]any) (matche
 				return false, true
 			}
 		}
-		// If the constraint has keys we don't understand (minimum, pattern, etc.),
-		// report as unsupported so the caller merges both branches.
 		if !hasCheck {
 			return false, false
 		}

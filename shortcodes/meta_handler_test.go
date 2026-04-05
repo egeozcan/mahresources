@@ -414,6 +414,51 @@ func TestExtractSchemaSliceUnsupportedConditionMergesBoth(t *testing.T) {
 	assert.NotEmpty(t, sliceRetry, "retry should also be discoverable via fallback merge")
 }
 
+func TestExtractSchemaSliceLeafConditional(t *testing.T) {
+	// A leaf property has if/then/else based on its own value
+	schema := `{
+		"type":"object",
+		"properties":{
+			"status":{
+				"type":"string",
+				"if":{"const":"draft"},
+				"then":{"title":"Draft Status","description":"This is a draft"},
+				"else":{"title":"Published Status","description":"This is published"}
+			}
+		}
+	}`
+
+	slice := extractSchemaSlice(schema, "status", json.RawMessage(`{"status":"draft"}`))
+	require.NotEmpty(t, slice)
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal([]byte(slice), &parsed))
+	assert.Equal(t, "Draft Status", parsed["title"])
+
+	slice2 := extractSchemaSlice(schema, "status", json.RawMessage(`{"status":"published"}`))
+	require.NotEmpty(t, slice2)
+	var parsed2 map[string]any
+	require.NoError(t, json.Unmarshal([]byte(slice2), &parsed2))
+	assert.Equal(t, "Published Status", parsed2["title"])
+}
+
+func TestExtractSchemaSliceConditionWithMixedKeywords(t *testing.T) {
+	// const + required in same condition — should fall back to merge-both
+	// because required is unsupported
+	schema := `{
+		"type":"object",
+		"if":{"required":["flag"],"properties":{"kind":{"const":"a"}}},
+		"then":{"properties":{"aField":{"type":"string","title":"A"}}},
+		"else":{"properties":{"bField":{"type":"string","title":"B"}}}
+	}`
+
+	// Even though kind=a matches, required:["flag"] is unsupported —
+	// should merge both branches, not trust the const-only match
+	sliceA := extractSchemaSlice(schema, "aField", json.RawMessage(`{"kind":"a"}`))
+	sliceB := extractSchemaSlice(schema, "bField", json.RawMessage(`{"kind":"a"}`))
+	assert.NotEmpty(t, sliceA, "aField should be discoverable via fallback merge")
+	assert.NotEmpty(t, sliceB, "bField should also be discoverable via fallback merge")
+}
+
 func TestExtractSchemaSliceNotFound(t *testing.T) {
 	schema := `{"type":"object","properties":{"a":{"type":"string"}}}`
 	slice := extractSchemaSlice(schema, "b.c", nil)
