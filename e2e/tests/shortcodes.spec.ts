@@ -32,6 +32,7 @@ test.describe('Shortcode system', () => {
     '[meta path="cooking.difficulty"]',
     '[meta path="cooking.servings" hide-empty="true"]',
     '[meta path="cooking.time" editable="true"]',
+    '[meta path="cooking.servings" editable="true"]',
     '</div>',
   ].join('\n');
 
@@ -140,6 +141,25 @@ test.describe('Shortcode system', () => {
     // Cancel to close
     await cancelButton.click();
     await expect(saveButton).not.toBeVisible();
+  });
+
+  test('saving an untouched missing editable field creates it with schema default', async ({ apiClient }) => {
+    // Create a fresh group with no servings field
+    const freshGroup = await apiClient.createGroup({
+      name: `Untouched Save Test ${Date.now()}`,
+      categoryId,
+      meta: JSON.stringify({ cooking: { time: 10 } }),
+    });
+
+    // Use the editMeta API with value "0" (what getDefaultValue returns for integer)
+    // This verifies the backend accepts a valid default for a previously-missing path
+    const resp = await apiClient.editMeta('group', freshGroup.ID, 'cooking.servings', 0);
+    expect(resp.ok).toBe(true);
+    expect(resp.meta.cooking.servings).toBe(0);
+    // Existing field preserved
+    expect(resp.meta.cooking.time).toBe(10);
+
+    await apiClient.deleteGroup(freshGroup.ID);
   });
 
   test('regular HTML alongside shortcodes renders correctly', async ({ page }) => {
