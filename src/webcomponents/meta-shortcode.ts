@@ -21,6 +21,7 @@ export class MetaShortcode extends LitElement {
   @state() private _flash: 'success' | 'error' | null = null;
   @state() private _pluginHtml: string | null = null;
   @state() private _pluginError = false;
+  private _pluginFetchVersion = 0;
 
   private _metaUpdateHandler = (e: Event) => {
     const detail = (e as CustomEvent).detail;
@@ -187,6 +188,7 @@ export class MetaShortcode extends LitElement {
   }
 
   private async _fetchPluginDisplay(pluginName: string, typeName: string, value: any) {
+    const version = ++this._pluginFetchVersion;
     try {
       const resp = await fetch(`/v1/plugins/${pluginName}/display/render`, {
         method: 'POST',
@@ -200,9 +202,15 @@ export class MetaShortcode extends LitElement {
         }),
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      this._pluginHtml = await resp.text();
+      const html = await resp.text();
+      // Discard if a newer fetch was started (value changed while in-flight)
+      if (version === this._pluginFetchVersion) {
+        this._pluginHtml = html;
+      }
     } catch {
-      this._pluginError = true;
+      if (version === this._pluginFetchVersion) {
+        this._pluginError = true;
+      }
     }
   }
 

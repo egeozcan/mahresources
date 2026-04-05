@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -133,11 +134,21 @@ func (w *EntityWriter[T]) UpdateMetaAtPath(id uint, path string, value json.RawM
 
 	var updatedJSON json.RawMessage
 
-	err := w.ctx.db.Transaction(func(tx *gorm.DB) error {
-		// Lock the row to serialize concurrent writes.
-		// Postgres: FOR UPDATE provides row-level lock.
-		// SQLite: write lock is acquired on the UPDATE; the short window
-		// between SELECT and UPDATE is acceptable for a single-user app.
+	// Serialize concurrent writes to the same row.
+	// Postgres: FOR UPDATE on the SELECT locks the row.
+	// SQLite: BEGIN IMMEDIATE (via LevelSerializable) acquires the write lock
+	// up front so overlapping transactions queue instead of racing.
+	txOpts := &sql.TxOptions{}
+	if w.ctx.Config.DbType != constants.DbTypePosgres {
+		txOpts.Isolation = sql.LevelSerializable
+	}
+
+	tx := w.ctx.db.Begin(txOpts)
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+
+	err := func() error {
 		var metaStr *string
 		q := tx.Table(tableName).Where("id = ?", id).Select("meta")
 		if w.ctx.Config.DbType == constants.DbTypePosgres {
@@ -173,9 +184,14 @@ func (w *EntityWriter[T]) UpdateMetaAtPath(id uint, path string, value json.RawM
 
 		updatedJSON = encoded
 		return nil
-	})
+	}()
 
-	return updatedJSON, err
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	return updatedJSON, tx.Commit().Error
 }
 
 // setNestedValue sets a value at a dot-notation path in a map,
