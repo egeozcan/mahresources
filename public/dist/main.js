@@ -1184,22 +1184,24 @@ ${n?`Expression: "`+n+`"
         </div>
       </div>
     `}_renderShortField(e){return H`
-      <div class="group relative cursor-pointer"
-        @click=${()=>this._copyValue(e.value)}>
-        <div class="text-[10px] font-mono uppercase text-stone-400 tracking-wider mb-1"
+      <div class="group relative">
+        <div class="text-[10px] font-mono uppercase text-stone-400 tracking-wider mb-1 cursor-pointer hover:text-stone-600"
           style="letter-spacing: 0.05em;"
           title=${e.description||W}
+          @click=${()=>this._copyText(e.path)}
         >${e.label}</div>
-        <div class="text-sm text-stone-900">${this._renderValue(e)}</div>
+        <div class="text-sm text-stone-900 cursor-pointer"
+          @click=${()=>this._copyValue(e.value)}>${this._renderValue(e)}</div>
       </div>
     `}_renderLongField(e){return H`
-      <div class="mb-3 last:mb-0 cursor-pointer"
-        @click=${()=>this._copyValue(e.value)}>
-        <div class="text-[10px] font-mono uppercase text-stone-400 tracking-wider mb-1"
+      <div class="mb-3 last:mb-0">
+        <div class="text-[10px] font-mono uppercase text-stone-400 tracking-wider mb-1 cursor-pointer hover:text-stone-600"
           style="letter-spacing: 0.05em;"
           title=${e.description||W}
+          @click=${()=>this._copyText(e.path)}
         >${e.label}</div>
-        <div class="text-sm text-stone-900">${this._renderValue(e)}</div>
+        <div class="text-sm text-stone-900 cursor-pointer"
+          @click=${()=>this._copyValue(e.value)}>${this._renderValue(e)}</div>
       </div>
     `}_renderValue(e){if(e.isEmpty)return H`<span class="text-stone-300">\u2014</span>`;let t=e.value;if(e.enumLabels&&e.enum){let n=e.enum.indexOf(t),r=n>=0&&e.enumLabels[n]?e.enumLabels[n]:String(t);return H`<span
         class="inline-block text-xs px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-medium"
@@ -1214,7 +1216,17 @@ ${n?`Expression: "`+n+`"
           @click=${e=>e.stopPropagation()}
         >${t}</a>`;if(e.format===`date`||e.format===`date-time`)try{return new Date(t).toLocaleDateString(void 0,{year:`numeric`,month:`short`,day:`numeric`})}catch{return t}}return e.type===`array`&&Array.isArray(t)?t.length===0?H`<span class="text-stone-300">\u2014</span>`:t.every(e=>typeof e!=`object`||!e)?H`${t.map((e,t)=>H`<span
           class="inline-block text-xs px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 font-medium mr-1 mb-1"
-        >${String(e)}</span>`)}`:H`<pre class="text-xs font-mono text-stone-600 bg-stone-50 p-2 rounded overflow-x-auto">${JSON.stringify(t,null,2)}</pre>`:typeof t==`object`&&t&&!Array.isArray(t)?H`<pre class="text-xs font-mono text-stone-600 bg-stone-50 p-2 rounded overflow-x-auto">${JSON.stringify(t,null,2)}</pre>`:e.isLong&&typeof t==`string`?H`<span style="white-space: pre-wrap;">${t}</span>`:String(t??``)}_copyValue(e){if(e==null)return;let t=typeof e==`object`?JSON.stringify(e):String(e);navigator.clipboard?.writeText(t).catch(()=>{})}};X([q({type:Object})],id.prototype,`schema`,void 0),X([q({type:Object})],id.prototype,`value`,void 0),X([q({type:String})],id.prototype,`name`,void 0),X([J()],id.prototype,`_showEmpty`,void 0),id=X([K(`schema-display-mode`)],id);var $=class extends G{constructor(...e){super(...e),this.mode=`edit`,this.schema=``,this.value=``,this.name=`Meta`,this.metaQuery=``,this.fieldName=`MetaQuery`,this._parsedSchema=null}static{this.styles=[Y,B`
+        >${String(e)}</span>`)}`:H`${t.map((e,t)=>H`
+        ${t>0?H`<hr class="my-2 border-stone-100">`:W}
+        ${this._renderObjectValue(e)}
+      `)}`:typeof t==`object`&&t&&!Array.isArray(t)?this._renderObjectValue(t):e.isLong&&typeof t==`string`?H`<span style="white-space: pre-wrap;">${t}</span>`:String(t??``)}_renderObjectValue(e){let t=Object.entries(e).filter(([,e])=>!ed(e));return t.length===0?H`<span class="text-stone-300">\u2014</span>`:H`
+      <div class="grid gap-x-4 gap-y-1 bg-stone-50 rounded p-2" style="grid-template-columns: auto 1fr;">
+        ${t.map(([e,t])=>{let n=typeof t==`object`&&t?JSON.stringify(t):String(t);return H`
+            <span class="text-[10px] font-mono uppercase text-stone-400 tracking-wider self-baseline" style="letter-spacing:0.05em;">${Hc(e)}</span>
+            <span class="text-sm text-stone-700 break-all self-baseline">${n}</span>
+          `})}
+      </div>
+    `}_copyText(e){navigator.clipboard?.writeText(e).catch(()=>{})}_copyValue(e){if(e==null)return;let t=typeof e==`object`?JSON.stringify(e):String(e);navigator.clipboard?.writeText(t).catch(()=>{})}};X([q({type:Object})],id.prototype,`schema`,void 0),X([q({type:Object})],id.prototype,`value`,void 0),X([q({type:String})],id.prototype,`name`,void 0),X([J()],id.prototype,`_showEmpty`,void 0),id=X([K(`schema-display-mode`)],id);var $=class extends G{constructor(...e){super(...e),this.mode=`edit`,this.schema=``,this.value=``,this.name=`Meta`,this.metaQuery=``,this.fieldName=`MetaQuery`,this._parsedSchema=null}static{this.styles=[Y,B`
       :host {
         display: block;
       }

@@ -177,26 +177,28 @@ export class SchemaDisplayMode extends LitElement {
 
   private _renderShortField(field: DisplayField): TemplateResult {
     return html`
-      <div class="group relative cursor-pointer"
-        @click=${() => this._copyValue(field.value)}>
-        <div class="text-[10px] font-mono uppercase text-stone-400 tracking-wider mb-1"
+      <div class="group relative">
+        <div class="text-[10px] font-mono uppercase text-stone-400 tracking-wider mb-1 cursor-pointer hover:text-stone-600"
           style="letter-spacing: 0.05em;"
           title=${field.description || nothing}
+          @click=${() => this._copyText(field.path)}
         >${field.label}</div>
-        <div class="text-sm text-stone-900">${this._renderValue(field)}</div>
+        <div class="text-sm text-stone-900 cursor-pointer"
+          @click=${() => this._copyValue(field.value)}>${this._renderValue(field)}</div>
       </div>
     `;
   }
 
   private _renderLongField(field: DisplayField): TemplateResult {
     return html`
-      <div class="mb-3 last:mb-0 cursor-pointer"
-        @click=${() => this._copyValue(field.value)}>
-        <div class="text-[10px] font-mono uppercase text-stone-400 tracking-wider mb-1"
+      <div class="mb-3 last:mb-0">
+        <div class="text-[10px] font-mono uppercase text-stone-400 tracking-wider mb-1 cursor-pointer hover:text-stone-600"
           style="letter-spacing: 0.05em;"
           title=${field.description || nothing}
+          @click=${() => this._copyText(field.path)}
         >${field.label}</div>
-        <div class="text-sm text-stone-900">${this._renderValue(field)}</div>
+        <div class="text-sm text-stone-900 cursor-pointer"
+          @click=${() => this._copyValue(field.value)}>${this._renderValue(field)}</div>
       </div>
     `;
   }
@@ -260,7 +262,7 @@ export class SchemaDisplayMode extends LitElement {
       }
     }
 
-    // Array of scalars
+    // Array
     if (field.type === 'array' && Array.isArray(val)) {
       if (val.length === 0) return html`<span class="text-stone-300">\u2014</span>`;
       const allScalar = val.every(v => typeof v !== 'object' || v === null);
@@ -269,12 +271,16 @@ export class SchemaDisplayMode extends LitElement {
           class="inline-block text-xs px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 font-medium mr-1 mb-1"
         >${String(v)}</span>`)}`;
       }
-      return html`<pre class="text-xs font-mono text-stone-600 bg-stone-50 p-2 rounded overflow-x-auto">${JSON.stringify(val, null, 2)}</pre>`;
+      // Array of objects — render each as a key-value sub-grid
+      return html`${val.map((item, i) => html`
+        ${i > 0 ? html`<hr class="my-2 border-stone-100">` : nothing}
+        ${this._renderObjectValue(item)}
+      `)}`;
     }
 
-    // Object — render as formatted JSON
+    // Object — render as inline key-value grid
     if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
-      return html`<pre class="text-xs font-mono text-stone-600 bg-stone-50 p-2 rounded overflow-x-auto">${JSON.stringify(val, null, 2)}</pre>`;
+      return this._renderObjectValue(val);
     }
 
     // Default — plain string
@@ -283,6 +289,28 @@ export class SchemaDisplayMode extends LitElement {
     }
 
     return String(val ?? '');
+  }
+
+  private _renderObjectValue(obj: Record<string, any>): TemplateResult {
+    const entries = Object.entries(obj).filter(([, v]) => !isEmptyValue(v));
+    if (entries.length === 0) return html`<span class="text-stone-300">\u2014</span>`;
+    return html`
+      <div class="grid gap-x-4 gap-y-1 bg-stone-50 rounded p-2" style="grid-template-columns: auto 1fr;">
+        ${entries.map(([k, v]) => {
+          const display = typeof v === 'object' && v !== null
+            ? JSON.stringify(v)
+            : String(v);
+          return html`
+            <span class="text-[10px] font-mono uppercase text-stone-400 tracking-wider self-baseline" style="letter-spacing:0.05em;">${titleCase(k)}</span>
+            <span class="text-sm text-stone-700 break-all self-baseline">${display}</span>
+          `;
+        })}
+      </div>
+    `;
+  }
+
+  private _copyText(text: string) {
+    navigator.clipboard?.writeText(text).catch(() => {});
   }
 
   private _copyValue(val: any) {
