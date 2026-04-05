@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,7 +12,6 @@ import (
 	"strings"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type EntityWriter[T interfaces.BasicEntityReader] struct {
@@ -135,63 +135,108 @@ func (w *EntityWriter[T]) UpdateMetaAtPath(id uint, path string, value json.RawM
 	var updatedJSON json.RawMessage
 
 	// Serialize concurrent writes to the same row.
-	// Postgres: FOR UPDATE on the SELECT locks the row.
-	// SQLite: BEGIN IMMEDIATE (via LevelSerializable) acquires the write lock
-	// up front so overlapping transactions queue instead of racing.
-	txOpts := &sql.TxOptions{}
+	// Postgres: GORM transaction with SELECT ... FOR UPDATE.
+	// SQLite: mattn/go-sqlite3 ignores TxOptions.Isolation, so we use a raw
+	// *sql.Conn with BEGIN IMMEDIATE to acquire the write lock up front.
 	if w.ctx.Config.DbType != constants.DbTypePosgres {
-		txOpts.Isolation = sql.LevelSerializable
-	}
-
-	tx := w.ctx.db.Begin(txOpts)
-	if tx.Error != nil {
-		return nil, tx.Error
-	}
-
-	err := func() error {
-		var metaStr *string
-		q := tx.Table(tableName).Where("id = ?", id).Select("meta")
-		if w.ctx.Config.DbType == constants.DbTypePosgres {
-			q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+		sqlDB, err := w.ctx.db.DB()
+		if err != nil {
+			return nil, err
 		}
-		if err := q.Row().Scan(&metaStr); err != nil {
-			return gorm.ErrRecordNotFound
+		ctx := context.Background()
+		conn, err := sqlDB.Conn(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer conn.Close()
+
+		if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+			return nil, err
 		}
 
-		var meta map[string]any
-		if metaStr != nil && *metaStr != "" {
-			if err := json.Unmarshal([]byte(*metaStr), &meta); err != nil {
-				meta = make(map[string]any)
-			}
-		} else {
+		updatedJSON, err = readMergeWrite(ctx, conn, tableName, id, parts, newVal)
+		if err != nil {
+			conn.ExecContext(ctx, "ROLLBACK")
+			return nil, err
+		}
+		if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+			return nil, err
+		}
+	} else {
+		sqlDB, err := w.ctx.db.DB()
+		if err != nil {
+			return nil, err
+		}
+		ctx := context.Background()
+		sqlTx, err := sqlDB.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		// Lock the row with FOR UPDATE.
+		updatedJSON, err = readMergeWriteTx(ctx, sqlTx, tableName, id, parts, newVal)
+		if err != nil {
+			sqlTx.Rollback()
+			return nil, err
+		}
+		if err := sqlTx.Commit(); err != nil {
+			return nil, err
+		}
+	}
+
+	return updatedJSON, nil
+}
+
+// readMergeWrite performs a locked read-modify-write on a raw *sql.Conn (SQLite).
+func readMergeWrite(ctx context.Context, conn *sql.Conn, tableName string, id uint, parts []string, newVal any) (json.RawMessage, error) {
+	var metaStr *string
+	if err := conn.QueryRowContext(ctx, "SELECT meta FROM "+tableName+" WHERE id = ?", id).Scan(&metaStr); err != nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return mergeAndUpdate(ctx, func(query string, args ...any) (sql.Result, error) {
+		return conn.ExecContext(ctx, query, args...)
+	}, tableName, id, parts, newVal, metaStr)
+}
+
+// readMergeWriteTx performs a locked read-modify-write on a *sql.Tx (Postgres).
+func readMergeWriteTx(ctx context.Context, tx *sql.Tx, tableName string, id uint, parts []string, newVal any) (json.RawMessage, error) {
+	var metaStr *string
+	if err := tx.QueryRowContext(ctx, "SELECT meta FROM "+tableName+" WHERE id = $1 FOR UPDATE", id).Scan(&metaStr); err != nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return mergeAndUpdate(ctx, func(query string, args ...any) (sql.Result, error) {
+		return tx.ExecContext(ctx, query, args...)
+	}, tableName, id, parts, newVal, metaStr)
+}
+
+// mergeAndUpdate parses the current meta, applies setNestedValue, and writes back.
+func mergeAndUpdate(_ context.Context, exec func(string, ...any) (sql.Result, error), tableName string, id uint, parts []string, newVal any, metaStr *string) (json.RawMessage, error) {
+	var meta map[string]any
+	if metaStr != nil && *metaStr != "" {
+		if err := json.Unmarshal([]byte(*metaStr), &meta); err != nil {
 			meta = make(map[string]any)
 		}
+	} else {
+		meta = make(map[string]any)
+	}
 
-		setNestedValue(meta, parts, newVal)
+	setNestedValue(meta, parts, newVal)
 
-		encoded, err := json.Marshal(meta)
-		if err != nil {
-			return err
-		}
-
-		result := tx.Table(tableName).Where("id = ?", id).Update("meta", string(encoded))
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return gorm.ErrRecordNotFound
-		}
-
-		updatedJSON = encoded
-		return nil
-	}()
-
+	encoded, err := json.Marshal(meta)
 	if err != nil {
-		tx.Rollback()
 		return nil, err
 	}
 
-	return updatedJSON, tx.Commit().Error
+	result, err := exec("UPDATE "+tableName+" SET meta = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", string(encoded), id)
+	if err != nil {
+		return nil, err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	return encoded, nil
 }
 
 // setNestedValue sets a value at a dot-notation path in a map,
