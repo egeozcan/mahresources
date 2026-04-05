@@ -303,6 +303,23 @@ func TestEditMeta_RejectsMalformedPaths(t *testing.T) {
 	}
 }
 
+func TestEditMeta_CorruptMetaReturnsError(t *testing.T) {
+	tc := SetupTestEnv(t)
+	requireJsonPatch(t, tc.DB)
+
+	group := tc.CreateDummyGroup("corrupt-meta")
+	// Corrupt the meta column directly
+	tc.DB.Exec("UPDATE groups SET meta = 'not valid json{{{' WHERE id = ?", group.ID)
+
+	resp := tc.MakeFormRequest(http.MethodPost,
+		fmt.Sprintf("/v1/group/editMeta?id=%d", group.ID),
+		url.Values{"path": {"foo"}, "value": {"1"}},
+	)
+	// Should fail rather than silently wiping the corrupt data
+	assert.NotEqual(t, http.StatusOK, resp.Code,
+		"editing meta on a row with corrupt JSON should fail, not silently overwrite")
+}
+
 func TestEditMeta_InvalidJSON(t *testing.T) {
 	tc := SetupTestEnv(t)
 

@@ -228,7 +228,7 @@ func mergeAndWrite(_ context.Context, exec func(string, ...any) (sql.Result, err
 	var meta map[string]any
 	if metaStr != nil && *metaStr != "" {
 		if err := json.Unmarshal([]byte(*metaStr), &meta); err != nil {
-			meta = make(map[string]any)
+			return nil, fmt.Errorf("existing meta is corrupt JSON: %w", err)
 		}
 	} else {
 		meta = make(map[string]any)
