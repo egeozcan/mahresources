@@ -51,6 +51,7 @@ const LONG_STRING_THRESHOLD = 80;
 
 function classifyAsLong(field: DisplayField): boolean {
   if (field.type === 'array') return true;
+  if (typeof field.value === 'object' && field.value !== null && !Array.isArray(field.value)) return true;
   if (typeof field.value === 'string' && field.value.length > LONG_STRING_THRESHOLD) return true;
   return false;
 }
@@ -268,6 +269,11 @@ export class SchemaDisplayMode extends LitElement {
           class="inline-block text-xs px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 font-medium mr-1 mb-1"
         >${String(v)}</span>`)}`;
       }
+      return html`<pre class="text-xs font-mono text-stone-600 bg-stone-50 p-2 rounded overflow-x-auto">${JSON.stringify(val, null, 2)}</pre>`;
+    }
+
+    // Object — render as formatted JSON
+    if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
       return html`<pre class="text-xs font-mono text-stone-600 bg-stone-50 p-2 rounded overflow-x-auto">${JSON.stringify(val, null, 2)}</pre>`;
     }
 
