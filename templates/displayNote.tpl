@@ -3,9 +3,7 @@
 {% block body %}
     {% plugin_slot "note_detail_before" %}
     <div x-data="{ entity: {{ note|json }} }" data-paste-context='{"type":"note","id":{{ note.ID }},"ownerId":{{ note.OwnerId|default:"null" }},"name":"{{ note.Name|escapejs }}"}'>
-        {% autoescape off %}
-            {{ note.NoteType.CustomHeader }}
-        {% endautoescape %}
+        {% process_shortcodes note.NoteType.CustomHeader note %}
     </div>
 
     <div class="meta-strip">
@@ -44,9 +42,7 @@
     admin-authored HTML templates.{% endcomment %}
     <div class="sidebar-group">
         <div x-data="{ entity: {{ note|json }} }">
-            {% autoescape off %} {# KAN-6: by design — internal network app, all users trusted #}
-                {{ note.NoteType.CustomSidebar }}
-            {% endautoescape %}
+            {% process_shortcodes note.NoteType.CustomSidebar note %}
         </div>
         {% include "/partials/ownerDisplay.tpl" with owner=note.Owner %}
     </div>

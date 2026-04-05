@@ -34,7 +34,7 @@
                     {% endif %}
                     {% if entity.ResourceCategory %}
                     <span class="card-meta-item">
-                        {% autoescape off %}{{ entity.ResourceCategory.CustomAvatar }}{% endautoescape %}
+                        {% process_shortcodes entity.ResourceCategory.CustomAvatar entity %}
                         <a href="/resourceCategory?id={{ entity.ResourceCategory.ID }}" class="card-meta-link">{{ entity.ResourceCategory.Name }}</a>
                     </span>
                     {% endif %}
@@ -42,9 +42,7 @@
             </div>
         </header>
 
-        {% autoescape off %}
-            {{ entity.ResourceCategory.CustomSummary }}
-        {% endautoescape %}
+        {% process_shortcodes entity.ResourceCategory.CustomSummary entity %}
 
         {% if entity.Description %}
         <div class="card-description">

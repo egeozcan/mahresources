@@ -3,9 +3,7 @@
 {% block body %}
     {% plugin_slot "group_detail_before" %}
     <div x-data="{ entity: {{ group|json }} }" data-paste-context='{"type":"group","id":{{ group.ID }},"name":"{{ group.Name|escapejs }}"}'>
-        {% autoescape off %}
-            {{ group.Category.CustomHeader }}
-        {% endautoescape %}
+        {% process_shortcodes group.Category.CustomHeader group %}
     </div>
 
     {% include "/partials/description.tpl" with description=group.Description descriptionEditUrl="/v1/group/editDescription" descriptionEditId=group.ID %}
@@ -56,9 +54,7 @@
     admin-authored HTML templates.{% endcomment %}
     <div class="sidebar-group">
         <div x-data="{ entity: {{ group|json }} }">
-            {% autoescape off %} {# KAN-6: by design — internal network app, all users trusted #}
-                {{ group.Category.CustomSidebar }}
-            {% endautoescape %}
+            {% process_shortcodes group.Category.CustomSidebar group %}
         </div>
         {% if group.Owner %}{% include "/partials/ownerDisplay.tpl" with owner=group.Owner %}{% endif %}
         <a href="/group/tree?containing={{ group.ID }}" class="block text-sm text-amber-700 hover:text-amber-900 mb-2">Show in Tree</a>

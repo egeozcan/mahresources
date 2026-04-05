@@ -56,9 +56,7 @@
             <a class="card-url" target="_blank" referrerpolicy="no-referrer" href="{{ entity.URL|printUrl }}" aria-label="External link: {{ entity.URL|printUrl }}">{{ entity.URL|printUrl }}</a>
         {% endif %}
 
-        {% autoescape off %}
-            {{ entity.Category.CustomSummary }}
-        {% endautoescape %}
+        {% process_shortcodes entity.Category.CustomSummary entity %}
 
         {% if !reverse && relation && relation.Description && !noRelDescription %}
             <a target="_blank" href="/relation?id={{ relation.ID }}" referrerpolicy="no-referrer" class="card-description block">

@@ -3,9 +3,7 @@
 {% block body %}
     {% plugin_slot "resource_detail_before" %}
     <div x-data="{ entity: {{ resource|json }} }">
-        {% autoescape off %}
-            {{ resource.ResourceCategory.CustomHeader }}
-        {% endautoescape %}
+        {% process_shortcodes resource.ResourceCategory.CustomHeader resource %}
     </div>
 
     {% include "/partials/description.tpl" with description=resource.Description descriptionEditUrl="/v1/resource/editDescription" descriptionEditId=resource.ID %}
@@ -232,9 +230,7 @@
     admin-authored HTML templates.{% endcomment %}
     <div class="sidebar-group">
         <div x-data="{ entity: {{ resource|json }} }">
-            {% autoescape off %} {# KAN-6: by design — internal network app, all users trusted #}
-                {{ resource.ResourceCategory.CustomSidebar }}
-            {% endautoescape %}
+            {% process_shortcodes resource.ResourceCategory.CustomSidebar resource %}
         </div>
         {% include "/partials/ownerDisplay.tpl" with owner=resource.Owner %}
         <p>{{ resource.FileSize | humanReadableSize }}</p>

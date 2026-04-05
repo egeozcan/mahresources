@@ -4,7 +4,7 @@
     {% endif %}
     <header class="card-header">
         <div class="card-avatar">
-            {% autoescape off %}{{ entity.NoteType.CustomAvatar }}{% endautoescape %}
+            {% process_shortcodes entity.NoteType.CustomAvatar entity %}
             {% if not entity.NoteType.CustomAvatar %}
                 {% include "partials/avatar.tpl" with initials=entity.Initials() %}
             {% endif %}
@@ -13,9 +13,7 @@
             <h3 class="card-title">
                 <a href="/note?id={{ entity.ID }}">{{ entity.Name }}</a>
             </h3>
-            {% autoescape off %}
-                {{ entity.NoteType.CustomSummary }}
-            {% endautoescape %}
+            {% process_shortcodes entity.NoteType.CustomSummary entity %}
         </div>
     </header>
 
