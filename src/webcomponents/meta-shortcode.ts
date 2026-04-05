@@ -34,6 +34,9 @@ export class MetaShortcode extends LitElement {
       }
       this._currentValue = current;
       this.valueStr = current !== undefined ? JSON.stringify(current) : '';
+      // Clear plugin display cache so it re-fetches with the new value
+      this._pluginHtml = null;
+      this._pluginError = false;
     }
   };
 
