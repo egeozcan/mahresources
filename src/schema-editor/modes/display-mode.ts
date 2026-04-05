@@ -2,22 +2,12 @@ import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { JSONSchema } from '../schema-core';
 import {
-  resolveRef,
+  resolveSchema,
   isLabeledEnum,
   getLabeledEnumEntries,
   titleCase,
 } from '../schema-core';
 import { detectShape, getBuiltinRenderer } from '../display-renderers';
-
-/** Resolved schema — follows $ref chains and merges allOf. */
-function resolveSchema(schema: JSONSchema, root: JSONSchema): JSONSchema | null {
-  if (!schema) return null;
-  if (schema.$ref) {
-    const resolved = resolveRef(schema.$ref, root);
-    return resolved ? resolveSchema(resolved, root) : null;
-  }
-  return schema;
-}
 
 interface DisplayField {
   path: string;
