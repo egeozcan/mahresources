@@ -146,29 +146,34 @@ func resolveSchemaNodeDepth(node map[string]any, root map[string]any, depth int)
 		return resolveSchemaNodeDepth(merged, root, depth+1)
 	}
 
-	// Resolve composition keywords: allOf, oneOf, anyOf
+	// Resolve all composition keywords present on this node.
+	resolved := false
+	merged := make(map[string]any)
+	for k, v := range node {
+		if k == "allOf" || k == "oneOf" || k == "anyOf" {
+			continue
+		}
+		merged[k] = v
+	}
 	for _, keyword := range []string{"allOf", "oneOf", "anyOf"} {
 		branches, ok := node[keyword].([]any)
 		if !ok {
 			continue
 		}
-		merged := make(map[string]any)
-		for k, v := range node {
-			if k != keyword {
-				merged[k] = v
-			}
-		}
+		resolved = true
 		for _, branch := range branches {
 			branchMap, ok := branch.(map[string]any)
 			if !ok {
 				continue
 			}
-			resolved := resolveSchemaNodeDepth(branchMap, root, depth+1)
-			if resolved == nil {
-				resolved = branchMap
+			r := resolveSchemaNodeDepth(branchMap, root, depth+1)
+			if r == nil {
+				r = branchMap
 			}
-			merged = shallowMergeSchema(merged, resolved)
+			merged = shallowMergeSchema(merged, r)
 		}
+	}
+	if resolved {
 		return merged
 	}
 

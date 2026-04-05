@@ -275,6 +275,31 @@ func TestExtractSchemaSliceRefInsideAllOf(t *testing.T) {
 	require.NotEmpty(t, slice2, "should find extra alongside $ref branch")
 }
 
+func TestExtractSchemaSliceAllOfPlusOneOf(t *testing.T) {
+	// Node carries both allOf and oneOf — both must be resolved.
+	schema := `{
+		"type":"object",
+		"properties":{
+			"item":{
+				"type":"object",
+				"allOf":[{"properties":{"id":{"type":"integer","title":"ID"}}}],
+				"oneOf":[
+					{"properties":{"color":{"type":"string","title":"Color"}}},
+					{"properties":{"size":{"type":"integer","title":"Size"}}}
+				]
+			}
+		}
+	}`
+	sliceID := extractSchemaSlice(schema, "item.id")
+	require.NotEmpty(t, sliceID, "id from allOf must resolve")
+
+	sliceColor := extractSchemaSlice(schema, "item.color")
+	require.NotEmpty(t, sliceColor, "color from oneOf must also resolve")
+
+	sliceSize := extractSchemaSlice(schema, "item.size")
+	require.NotEmpty(t, sliceSize, "size from oneOf must also resolve")
+}
+
 func TestExtractSchemaSliceOverlappingBranches(t *testing.T) {
 	// Two allOf branches both define "address" with different child properties.
 	// Both children must be reachable after merge.
