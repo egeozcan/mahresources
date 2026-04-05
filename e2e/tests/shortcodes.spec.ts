@@ -234,3 +234,89 @@ test.describe('Shortcode editMeta API', () => {
     expect((result.meta.cooking as any).time).toBe(45);
   });
 });
+
+test.describe('Shortcode if/then/else schema', () => {
+  let catId: number;
+  let groupA: number;
+  let groupB: number;
+
+  const conditionalSchema = JSON.stringify({
+    type: 'object',
+    properties: {
+      kind: { type: 'string', enum: ['a', 'b'], title: 'Kind' },
+    },
+    if: { properties: { kind: { const: 'a' } } },
+    then: { properties: { aField: { type: 'string', title: 'A Field' } } },
+    else: { properties: { bField: { type: 'string', title: 'B Field' } } },
+  });
+
+  test.beforeAll(async ({ apiClient }) => {
+    const cat = await apiClient.createCategory(
+      `Conditional Schema ${Date.now()}`,
+      'Tests if/then/else schema resolution',
+      {
+        MetaSchema: conditionalSchema,
+        CustomSidebar: '[meta path="aField"] [meta path="bField"]',
+      },
+    );
+    catId = cat.ID;
+
+    const gA = await apiClient.createGroup({
+      name: `Kind A ${Date.now()}`,
+      categoryId: catId,
+      meta: JSON.stringify({ kind: 'a', aField: 'alpha' }),
+    });
+    groupA = gA.ID;
+
+    const gB = await apiClient.createGroup({
+      name: `Kind B ${Date.now()}`,
+      categoryId: catId,
+      meta: JSON.stringify({ kind: 'b', bField: 'beta' }),
+    });
+    groupB = gB.ID;
+  });
+
+  test('shortcode renders conditional field from active then-branch', async ({ page }) => {
+    await page.goto(`/group?id=${groupA}`);
+    await page.waitForLoadState('load');
+
+    // aField shortcode should have schema data (from then-branch)
+    const aShortcode = page.locator('meta-shortcode[data-path="aField"]');
+    await expect(aShortcode).toBeVisible({ timeout: 5000 });
+    await expect(aShortcode).toContainText('alpha');
+
+    // data-schema should contain the resolved schema (not empty)
+    const schemaAttr = await aShortcode.getAttribute('data-schema');
+    expect(schemaAttr).toBeTruthy();
+    expect(schemaAttr).toContain('A Field');
+  });
+
+  test('shortcode renders conditional field from active else-branch', async ({ page }) => {
+    await page.goto(`/group?id=${groupB}`);
+    await page.waitForLoadState('load');
+
+    const bShortcode = page.locator('meta-shortcode[data-path="bField"]');
+    await expect(bShortcode).toBeVisible({ timeout: 5000 });
+    await expect(bShortcode).toContainText('beta');
+
+    const schemaAttr = await bShortcode.getAttribute('data-schema');
+    expect(schemaAttr).toBeTruthy();
+    expect(schemaAttr).toContain('B Field');
+  });
+
+  test('detail-view metadata panel shows conditional field', async ({ page }) => {
+    await page.goto(`/group?id=${groupA}`);
+    await page.waitForLoadState('load');
+
+    // The schema-editor display panel should show aField from the then-branch
+    const metadataPanel = page.locator('[aria-label="Schema metadata"]');
+    await expect(metadataPanel).toBeVisible({ timeout: 5000 });
+    await expect(metadataPanel).toContainText('alpha');
+  });
+
+  test.afterAll(async ({ apiClient }) => {
+    if (groupB) await apiClient.deleteGroup(groupB);
+    if (groupA) await apiClient.deleteGroup(groupA);
+    if (catId) await apiClient.deleteCategory(catId);
+  });
+});
