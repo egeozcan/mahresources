@@ -82,6 +82,7 @@ import { renderMentions } from './utils/renderMentions.js';
 // Import web components
 import './webcomponents/expandabletext.js';
 import './webcomponents/inlineedit.js';
+import './webcomponents/meta-shortcode.ts';
 import './schema-editor/schema-editor.ts';
 
 // Expose utility functions globally for templates that use them

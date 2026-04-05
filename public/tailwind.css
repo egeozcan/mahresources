@@ -496,6 +496,9 @@
   .my-0\.5 {
     margin-block: calc(var(--spacing) * 0.5);
   }
+  .my-1 {
+    margin-block: calc(var(--spacing) * 1);
+  }
   .my-2 {
     margin-block: calc(var(--spacing) * 2);
   }
