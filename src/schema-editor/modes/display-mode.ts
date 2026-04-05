@@ -133,6 +133,26 @@ export class SchemaDisplayMode extends LitElement {
   @state() private _pluginHtml: Record<string, string> = {};
   @state() private _pluginErrors: Record<string, boolean> = {};
 
+  private _metaUpdateHandler = (e: Event) => {
+    const meta = (e as CustomEvent).detail?.meta;
+    if (meta != null) {
+      this.value = meta;
+      // Clear plugin display cache so they re-fetch with the new values
+      this._pluginHtml = {};
+      this._pluginErrors = {};
+    }
+  };
+
+  override connectedCallback() {
+    super.connectedCallback();
+    document.addEventListener('meta-shortcode-updated', this._metaUpdateHandler);
+  }
+
+  override disconnectedCallback() {
+    document.removeEventListener('meta-shortcode-updated', this._metaUpdateHandler);
+    super.disconnectedCallback();
+  }
+
   // Light DOM to inherit Tailwind styles
   override createRenderRoot() {
     return this;
