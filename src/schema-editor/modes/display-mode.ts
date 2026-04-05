@@ -88,9 +88,14 @@ function flattenForDisplay(
     if (xDisplay && prop.properties) {
       // fall through to emit as single field
     } else if (prop.properties) {
-      // Nested object with properties — flatten recursively
-      fields.push(...flattenForDisplay(prop, value, root, path, label, depth + 1));
-      continue;
+      // If the value matches a known shape, keep it whole for the renderer pipeline
+      if (val != null && typeof val === 'object' && !Array.isArray(val) && detectShape(val)) {
+        // fall through to emit as single field (shape detection in _renderValue)
+      } else {
+        // Nested object with properties — flatten recursively
+        fields.push(...flattenForDisplay(prop, value, root, path, label, depth + 1));
+        continue;
+      }
     }
 
     // Determine type
