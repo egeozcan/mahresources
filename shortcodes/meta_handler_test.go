@@ -354,6 +354,28 @@ func TestExtractSchemaSliceIfThenElse(t *testing.T) {
 	assert.Equal(t, "B Field", parsedB["title"])
 }
 
+func TestExtractSchemaSliceIfThenElseTypeSafe(t *testing.T) {
+	// const: 1 (number) should NOT match kind: "1" (string)
+	schema := `{
+		"type":"object",
+		"properties":{"kind":{"type":"integer"}},
+		"if":{"properties":{"kind":{"const":1}}},
+		"then":{"properties":{"numField":{"type":"string","title":"Num Field"}}},
+		"else":{"properties":{"otherField":{"type":"string","title":"Other Field"}}}
+	}`
+
+	// kind is the string "1", not the number 1 — should take else branch
+	sliceOther := extractSchemaSlice(schema, "otherField", json.RawMessage(`{"kind":"1"}`))
+	require.NotEmpty(t, sliceOther, "otherField should resolve when kind is string '1' (else branch)")
+
+	sliceNum := extractSchemaSlice(schema, "numField", json.RawMessage(`{"kind":"1"}`))
+	assert.Empty(t, sliceNum, "numField should NOT resolve when kind is string '1'")
+
+	// kind is the number 1 — should take then branch
+	sliceNum2 := extractSchemaSlice(schema, "numField", json.RawMessage(`{"kind":1}`))
+	require.NotEmpty(t, sliceNum2, "numField should resolve when kind is number 1 (then branch)")
+}
+
 func TestExtractSchemaSliceNotFound(t *testing.T) {
 	schema := `{"type":"object","properties":{"a":{"type":"string"}}}`
 	slice := extractSchemaSlice(schema, "b.c", nil)

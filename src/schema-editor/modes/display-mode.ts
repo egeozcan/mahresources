@@ -63,16 +63,19 @@ function flattenForDisplay(
   let resolved = resolveSchema(schema, root);
   if (!resolved) return [];
 
-  // Apply if/then/else using the entity value to pick the active branch.
+  // Apply if/then/else using the value at this nesting level.
   if (resolved.if && value != null) {
-    const base: JSONSchema = { ...resolved };
-    delete base.if;
-    delete base.then;
-    delete base.else;
-    const branch = evaluateCondition(resolved.if, value, root)
-      ? (resolved.then || {})
-      : (resolved.else || {});
-    resolved = mergeSchemas(base, branch as JSONSchema);
+    const localValue = prefix ? getNestedValue(value, prefix) : value;
+    if (localValue != null) {
+      const base: JSONSchema = { ...resolved };
+      delete base.if;
+      delete base.then;
+      delete base.else;
+      const branch = evaluateCondition(resolved.if, localValue, root)
+        ? (resolved.then || {})
+        : (resolved.else || {});
+      resolved = mergeSchemas(base, branch as JSONSchema);
+    }
   }
 
   if (!resolved?.properties) return [];

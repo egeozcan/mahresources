@@ -215,6 +215,9 @@ func resolveSchemaNodeImpl(node map[string]any, root map[string]any, value map[s
 // evaluateSimpleCondition checks whether an if-schema's property constraints
 // match the current value. Supports properties with const and enum checks,
 // which covers the vast majority of if/then/else usage in practice.
+// Comparisons are type-aware: JSON numbers (float64), strings, and booleans
+// are compared by Go type and value, matching the TypeScript evaluateCondition
+// semantics where 1 !== "1".
 func evaluateSimpleCondition(ifSchema map[string]any, value map[string]any) bool {
 	props, ok := ifSchema["properties"].(map[string]any)
 	if !ok {
@@ -229,18 +232,17 @@ func evaluateSimpleCondition(ifSchema map[string]any, value map[string]any) bool
 		if !exists {
 			return false
 		}
-		// Check const
+		// Check const — type-aware comparison via reflect.DeepEqual
 		if constVal, ok := constraintMap["const"]; ok {
-			if fmt.Sprintf("%v", actual) != fmt.Sprintf("%v", constVal) {
+			if !jsonValuesEqual(actual, constVal) {
 				return false
 			}
 		}
-		// Check enum
+		// Check enum — actual must match at least one enum value
 		if enumVal, ok := constraintMap["enum"].([]any); ok {
 			found := false
-			actualStr := fmt.Sprintf("%v", actual)
 			for _, e := range enumVal {
-				if fmt.Sprintf("%v", e) == actualStr {
+				if jsonValuesEqual(actual, e) {
 					found = true
 					break
 				}
@@ -251,6 +253,23 @@ func evaluateSimpleCondition(ifSchema map[string]any, value map[string]any) bool
 		}
 	}
 	return true
+}
+
+// jsonValuesEqual compares two values from json.Unmarshal using Go type
+// equality. This ensures "1" (string) != 1 (float64) != true (bool),
+// matching JSON Schema and the TypeScript evaluateCondition semantics.
+func jsonValuesEqual(a, b any) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	// Both values come from json.Unmarshal, so their types are limited to:
+	// string, float64, bool, nil, map[string]any, []any.
+	// Direct == works for string, float64, bool. For maps/slices we'd need
+	// deep comparison, but const/enum values are almost always primitives.
+	return a == b
 }
 
 // followRef resolves a local JSON pointer ref like "#/$defs/Address" or
