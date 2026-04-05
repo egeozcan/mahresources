@@ -190,7 +190,7 @@ curl http://localhost:8181/v1/notes/meta/keys
 
 ## Inline Editing
 
-Edit note name or description with minimal payload.
+Edit note name, description, or a single metadata field with minimal payload.
 
 ### Edit Name
 
@@ -203,6 +203,47 @@ POST /v1/note/editName?id={id}
 ```
 POST /v1/note/editDescription?id={id}
 ```
+
+### Edit Meta
+
+Edit a single metadata field at a dot-notation path using deep merge.
+
+```
+POST /v1/note/editMeta?id={id}
+```
+
+#### Query Parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `id` | **Required.** Note ID |
+
+#### Form Fields
+
+| Field | Description |
+|-------|-------------|
+| `path` | Dot-notation path into the Meta field (e.g., `attendees.count`, `location`) |
+| `value` | JSON-encoded value to set at that path |
+
+#### Response
+
+```json
+{"ok": true, "id": 123, "meta": {"attendees": {"count": 5}, "location": "Room A"}}
+```
+
+#### Behavior
+
+- Creates intermediate objects as needed
+- Preserves sibling fields at every nesting level
+- If the path does not exist, it is created
+- If an intermediate key holds a scalar, it is overwritten to become an object
+- Returns the full updated meta in the response
+
+#### Errors
+
+- 400: Missing ID, missing path, missing value, invalid JSON, malformed path (empty segments)
+- 404: Note not found
+- 500: Corrupt existing meta
 
 ## Bulk Operations
 

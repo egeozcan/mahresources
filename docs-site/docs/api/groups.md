@@ -381,6 +381,47 @@ POST /v1/group/editName?id={id}
 POST /v1/group/editDescription?id={id}
 ```
 
+### Edit Meta
+
+Edit a single metadata field at a dot-notation path using deep merge.
+
+```
+POST /v1/group/editMeta?id={id}
+```
+
+#### Query Parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `id` | **Required.** Group ID |
+
+#### Form Fields
+
+| Field | Description |
+|-------|-------------|
+| `path` | Dot-notation path into the Meta field (e.g., `cooking.time`, `address.city`) |
+| `value` | JSON-encoded value to set at that path |
+
+#### Response
+
+```json
+{"ok": true, "id": 123, "meta": {"cooking": {"time": 30, "difficulty": "easy"}}}
+```
+
+#### Behavior
+
+- Creates intermediate objects as needed (e.g., setting `a.b.c` on empty meta creates the full chain)
+- Preserves sibling fields at every nesting level
+- If the path does not exist, it is created
+- If an intermediate key holds a scalar, it is overwritten to become an object
+- Returns the full updated meta in the response
+
+#### Errors
+
+- 400: Missing ID, missing path, missing value, invalid JSON, malformed path (empty segments)
+- 404: Group not found
+- 500: Corrupt existing meta
+
 ---
 
 # Group Relations API

@@ -757,6 +757,71 @@ function init()
 end
 ```
 
+## mah.shortcode -- Custom Shortcodes
+
+Register a custom shortcode that can be used in category Custom render locations. Call during `init()`.
+
+### mah.shortcode(table)
+
+```lua
+mah.shortcode({
+    name = "rating",              -- required, lowercase kebab-case
+    label = "Star Rating",        -- required, display label
+    render = function(ctx)        -- required, returns HTML string
+        local max = tonumber(ctx.attrs.max) or 5
+        return "<span>" .. string.rep("★", max) .. "</span>"
+    end
+})
+```
+
+Usage in a Custom field: `[plugin:my-plugin:rating max="5"]`
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | Shortcode name (lowercase kebab-case, max 50 chars). Automatically prefixed as `plugin:<pluginName>:<name>` |
+| `label` | string | Yes | Human-readable display label |
+| `render` | function | Yes | Lua function that returns an HTML string |
+
+### Render Context
+
+The `render` function receives a single `ctx` table:
+
+| Field | Description |
+|-------|-------------|
+| `ctx.entity_type` | `"group"`, `"resource"`, or `"note"` |
+| `ctx.entity_id` | Entity ID |
+| `ctx.value` | Entity's full Meta as a Lua table |
+| `ctx.attrs` | Shortcode attributes as a key-value table |
+| `ctx.settings` | Plugin settings key-value pairs |
+
+### Name Rules
+
+Must match `^[a-z][a-z0-9_-]{0,49}$`. The system expands the shortcode name to `plugin:<plugin-name>:<shortcode-name>` automatically.
+
+### Execution
+
+Server-side at template render time. 5-second timeout per render call. Returned HTML is inlined directly into the page. Use `mah.html_escape(str)` when rendering user-supplied content.
+
+### Example
+
+```lua
+function init()
+    mah.shortcode({
+        name = "rating",
+        label = "Star Rating",
+        render = function(ctx)
+            local value = tonumber(ctx.attrs.value) or 0
+            local max = tonumber(ctx.attrs.max) or 5
+            local stars = string.rep("★", value) .. string.rep("☆", max - value)
+            return '<span title="' .. value .. '/' .. max .. '" class="text-yellow-500">'
+                .. stars .. '</span>'
+        end
+    })
+end
+```
+
 ## mah.get_setting(key)
 
 Returns the value of a plugin setting, or `nil` if not set.

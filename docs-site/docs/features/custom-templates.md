@@ -240,6 +240,49 @@ The CustomAvatar template controls how the entity appears when linked:
 4. Add your templates in the appropriate fields
 5. Click **Submit**
 
+## Shortcodes
+
+Shortcodes let you embed dynamic, schema-aware metadata widgets in Custom render locations. Instead of writing Alpine.js/Pongo2 template code to display entity metadata, you can use the `[meta]` shortcode syntax.
+
+**Syntax:** `[meta path="dotted.path" editable=true hide-empty=true]`
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `path` | Yes | — | Dot-notation path into the entity's Meta field (e.g., `cooking.time`, `address.city`) |
+| `editable` | No | `false` | Shows a pencil edit button; clicking opens a schema-aware form |
+| `hide-empty` | No | `false` | Hides the shortcode entirely when the value is absent |
+
+### How It Works
+
+- The server expands `[meta]` shortcodes into `<meta-shortcode>` custom elements at render time
+- The client hydrates them using the same schema-editor rendering pipeline as the main metadata panel
+- When `editable=true`, clicking the pencil opens a form using the category's MetaSchema for that path
+- If the path is in the MetaSchema, rendering is schema-aware (type formatting, enum pills, shape detection, x-display)
+- If no schema exists for the path, falls back to a plain value display and free-text editor
+
+### Examples
+
+```
+[meta path="cooking.time"]
+[meta path="cooking.difficulty" editable=true]
+[meta path="cooking.servings" hide-empty=true]
+```
+
+Mixing with HTML:
+
+```html
+<div class="flex gap-4">
+  <strong>Cook time:</strong> [meta path="cooking.time"]
+  <strong>Difficulty:</strong> [meta path="cooking.difficulty"]
+</div>
+```
+
+### Plugin Shortcodes
+
+Plugins can register custom shortcodes via `mah.shortcode()`. Usage: `[plugin:plugin-name:shortcode-name attr="value"]`. See the [Plugin Lua API docs](./plugin-lua-api.md) for registration details.
+
 ## Styling Tips
 
 ### Use Tailwind CSS
