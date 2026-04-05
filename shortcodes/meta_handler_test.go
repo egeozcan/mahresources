@@ -611,6 +611,29 @@ func TestExtractSchemaSliceNestedRefInCompositionBranch(t *testing.T) {
 	assert.Contains(t, slice, "Full Item")
 }
 
+func TestExtractSchemaSliceRefInProperties(t *testing.T) {
+	// Leaf schema has properties with $ref — must be inlined
+	schema := `{
+		"type":"object",
+		"properties":{
+			"address":{
+				"type":"object",
+				"properties":{
+					"street":{"$ref":"#/$defs/StreetType"},
+					"city":{"type":"string","title":"City"}
+				}
+			}
+		},
+		"$defs":{"StreetType":{"type":"string","title":"Street Name","maxLength":100}}
+	}`
+
+	slice := extractSchemaSlice(schema, "address", nil)
+	require.NotEmpty(t, slice)
+	assert.NotContains(t, slice, "$ref", "properties.$ref must be inlined")
+	assert.Contains(t, slice, "Street Name")
+	assert.Contains(t, slice, "City")
+}
+
 func TestExtractSchemaSliceRefInsideOneOfBranch(t *testing.T) {
 	// A leaf with oneOf where a branch uses $ref — the $ref must be resolved
 	// in the leaf slice since the client doesn't have root $defs.

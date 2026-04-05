@@ -136,13 +136,9 @@ export class MetaShortcode extends LitElement {
   }
 
   private _renderValue(value: any, schema: JSONSchema | null): TemplateResult | string {
-    // Check x-display and labeled enum on the raw schema first.
-    // These must run before resolveSchema which merges oneOf branches.
+    // Check built-in x-display on raw schema (these only use the value, not schema metadata).
     const rawXDisplay = schema?.['x-display'] as string | undefined;
-    if (rawXDisplay?.startsWith('plugin:')) {
-      return this._renderPluginDisplay(value, rawXDisplay);
-    }
-    if (rawXDisplay) {
+    if (rawXDisplay && !rawXDisplay.startsWith('plugin:')) {
       const renderer = getBuiltinRenderer(rawXDisplay);
       if (renderer) return html`<span>${renderer.render(value)}</span>`;
     }
@@ -161,8 +157,8 @@ export class MetaShortcode extends LitElement {
       const resolved = resolveSchema(schema, schema);
       if (resolved) schema = resolved;
 
-      // Re-check after resolution: x-display, enums, then type.
-      const xDisplay = schema['x-display'] as string | undefined;
+      // After resolution: x-display (including plugin), enums, then type.
+      const xDisplay = (rawXDisplay || schema['x-display']) as string | undefined;
       if (xDisplay?.startsWith('plugin:')) return this._renderPluginDisplay(value, xDisplay, schema);
       if (xDisplay) {
         const renderer = getBuiltinRenderer(xDisplay);

@@ -164,9 +164,9 @@ func resolveLeafSchema(node map[string]any, root map[string]any, value map[strin
 		delete(merged, "$ref")
 		return resolveLeafSchema(merged, root, value)
 	}
-	// Recursively resolve $ref inside composition branches so the client
-	// doesn't need the root $defs. The branch structure is preserved.
-	node = inlineRefsInBranches(node, root)
+	// Recursively resolve $ref everywhere in the leaf (composition branches,
+	// properties, items) so the client doesn't need the root $defs.
+	node = inlineRefsDeep(node, root)
 
 	// Resolve if/then/else
 	if _, ok := node["if"].(map[string]any); ok {
@@ -201,44 +201,57 @@ func resolveLeafSchema(node map[string]any, root map[string]any, value map[strin
 	return node
 }
 
-// inlineRefsInBranches recursively walks a schema node's composition branches
-// (allOf, oneOf, anyOf) and resolves any $ref found at any depth.
-func inlineRefsInBranches(node map[string]any, root map[string]any) map[string]any {
-	result := make(map[string]any, len(node))
-	for k, v := range node {
-		result[k] = v
-	}
-	for _, keyword := range []string{"allOf", "oneOf", "anyOf"} {
-		branches, ok := result[keyword].([]any)
-		if !ok {
-			continue
-		}
-		newBranches := make([]any, len(branches))
-		for i, branch := range branches {
-			if branchMap, ok := branch.(map[string]any); ok {
-				newBranches[i] = inlineRefsDeep(branchMap, root)
-			} else {
-				newBranches[i] = branch
-			}
-		}
-		result[keyword] = newBranches
-	}
-	return result
-}
-
-// inlineRefsDeep resolves all $ref in a schema node and its composition
-// branches recursively. Returns the original node if no refs were found.
+// inlineRefsDeep resolves all $ref in a schema node recursively — in
+// composition branches (allOf/oneOf/anyOf), properties, and items.
 func inlineRefsDeep(node map[string]any, root map[string]any) map[string]any {
 	// Resolve direct $ref
 	if ref, ok := node["$ref"].(string); ok {
 		if refTarget := followRef(ref, root); refTarget != nil {
 			merged := shallowMergeSchema(refTarget, node)
 			delete(merged, "$ref")
-			return inlineRefsDeep(merged, root) // recurse in case target has refs
+			return inlineRefsDeep(merged, root)
 		}
 	}
+
+	result := make(map[string]any, len(node))
+	for k, v := range node {
+		result[k] = v
+	}
+
 	// Recurse into composition branches
-	return inlineRefsInBranches(node, root)
+	for _, keyword := range []string{"allOf", "oneOf", "anyOf"} {
+		if branches, ok := result[keyword].([]any); ok {
+			newBranches := make([]any, len(branches))
+			for i, branch := range branches {
+				if branchMap, ok := branch.(map[string]any); ok {
+					newBranches[i] = inlineRefsDeep(branchMap, root)
+				} else {
+					newBranches[i] = branch
+				}
+			}
+			result[keyword] = newBranches
+		}
+	}
+
+	// Recurse into properties
+	if props, ok := result["properties"].(map[string]any); ok {
+		newProps := make(map[string]any, len(props))
+		for k, v := range props {
+			if propSchema, ok := v.(map[string]any); ok {
+				newProps[k] = inlineRefsDeep(propSchema, root)
+			} else {
+				newProps[k] = v
+			}
+		}
+		result["properties"] = newProps
+	}
+
+	// Recurse into items
+	if items, ok := result["items"].(map[string]any); ok {
+		result["items"] = inlineRefsDeep(items, root)
+	}
+
+	return result
 }
 
 // resolveSchemaNodeWithValue recursively resolves $ref, allOf, oneOf, anyOf,
