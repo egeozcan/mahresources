@@ -634,6 +634,32 @@ func TestExtractSchemaSliceRefInProperties(t *testing.T) {
 	assert.Contains(t, slice, "City")
 }
 
+func TestExtractSchemaSliceRefInChildConditional(t *testing.T) {
+	// A leaf property's child has if/then with $ref in the then-branch
+	schema := `{
+		"type":"object",
+		"properties":{
+			"address":{
+				"type":"object",
+				"properties":{
+					"zip":{
+						"type":"string",
+						"if":{"const":"12345"},
+						"then":{"$ref":"#/$defs/SpecialZip"},
+						"else":{"title":"Normal ZIP"}
+					}
+				}
+			}
+		},
+		"$defs":{"SpecialZip":{"title":"Special ZIP","pattern":"^\\d{5}-\\d{4}$"}}
+	}`
+
+	slice := extractSchemaSlice(schema, "address", nil)
+	require.NotEmpty(t, slice)
+	assert.NotContains(t, slice, "$ref", "$ref inside child if/then must be inlined")
+	assert.Contains(t, slice, "Special ZIP")
+}
+
 func TestExtractSchemaSliceRefInsideOneOfBranch(t *testing.T) {
 	// A leaf with oneOf where a branch uses $ref — the $ref must be resolved
 	// in the leaf slice since the client doesn't have root $defs.

@@ -251,6 +251,13 @@ func inlineRefsDeep(node map[string]any, root map[string]any) map[string]any {
 		result["items"] = inlineRefsDeep(items, root)
 	}
 
+	// Recurse into if/then/else branches
+	for _, keyword := range []string{"if", "then", "else"} {
+		if branch, ok := result[keyword].(map[string]any); ok {
+			result[keyword] = inlineRefsDeep(branch, root)
+		}
+	}
+
 	return result
 }
 
