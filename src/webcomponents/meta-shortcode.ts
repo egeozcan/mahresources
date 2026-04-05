@@ -183,9 +183,11 @@ export class MetaShortcode extends LitElement {
     }
 
     const parts = xDisplay.split(':');
-    if (parts.length >= 3) {
-      this._fetchPluginDisplay(parts[1], parts[2], value);
+    if (parts.length < 3) {
+      // Malformed x-display (e.g., "plugin:name" missing type) — fall back to raw value
+      return typeof value === 'object' ? html`${JSON.stringify(value)}` : html`${String(value)}`;
     }
+    this._fetchPluginDisplay(parts[1], parts[2], value);
     return html`<span class="text-stone-400 text-xs animate-pulse">Loading...</span>`;
   }
 
