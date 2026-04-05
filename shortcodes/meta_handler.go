@@ -203,8 +203,9 @@ func followRef(ref string, root map[string]any) map[string]any {
 	return result
 }
 
-// shallowMergeSchema merges src into dst. For "properties", sub-keys are
-// merged rather than overwritten. Other keys use last-writer-wins.
+// mergeSchemas deep-merges src into dst. "properties" maps are merged
+// recursively so that overlapping property keys combine their children
+// rather than one branch replacing the other.
 func shallowMergeSchema(dst, src map[string]any) map[string]any {
 	result := make(map[string]any, len(dst)+len(src))
 	for k, v := range dst {
@@ -212,7 +213,6 @@ func shallowMergeSchema(dst, src map[string]any) map[string]any {
 	}
 	for k, v := range src {
 		if k == "properties" {
-			// Merge properties maps
 			dstProps, _ := result["properties"].(map[string]any)
 			srcProps, _ := v.(map[string]any)
 			if dstProps == nil {
@@ -223,6 +223,14 @@ func shallowMergeSchema(dst, src map[string]any) map[string]any {
 					merged[pk] = pv
 				}
 				for pk, pv := range srcProps {
+					// If both sides define the same property as objects,
+					// recursively merge so nested children from both survive.
+					if existing, ok := merged[pk].(map[string]any); ok {
+						if srcChild, ok := pv.(map[string]any); ok {
+							merged[pk] = shallowMergeSchema(existing, srcChild)
+							continue
+						}
+					}
 					merged[pk] = pv
 				}
 				result["properties"] = merged

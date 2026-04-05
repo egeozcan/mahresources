@@ -275,6 +275,34 @@ func TestExtractSchemaSliceRefInsideAllOf(t *testing.T) {
 	require.NotEmpty(t, slice2, "should find extra alongside $ref branch")
 }
 
+func TestExtractSchemaSliceOverlappingBranches(t *testing.T) {
+	// Two allOf branches both define "address" with different child properties.
+	// Both children must be reachable after merge.
+	schema := `{
+		"type":"object",
+		"properties":{
+			"contact":{
+				"allOf":[
+					{"type":"object","properties":{"address":{"type":"object","properties":{"street":{"type":"string","title":"Street"}}}}},
+					{"properties":{"address":{"properties":{"zip":{"type":"string","title":"ZIP"}}}}}
+				]
+			}
+		}
+	}`
+	slice := extractSchemaSlice(schema, "contact.address.street")
+	require.NotEmpty(t, slice, "street must survive merge with zip branch")
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal([]byte(slice), &parsed))
+	assert.Equal(t, "string", parsed["type"])
+	assert.Equal(t, "Street", parsed["title"])
+
+	slice2 := extractSchemaSlice(schema, "contact.address.zip")
+	require.NotEmpty(t, slice2, "zip must survive merge with street branch")
+	var parsed2 map[string]any
+	require.NoError(t, json.Unmarshal([]byte(slice2), &parsed2))
+	assert.Equal(t, "ZIP", parsed2["title"])
+}
+
 func TestExtractSchemaSliceNotFound(t *testing.T) {
 	schema := `{"type":"object","properties":{"a":{"type":"string"}}}`
 	slice := extractSchemaSlice(schema, "b.c")
