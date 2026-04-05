@@ -850,6 +850,48 @@ export class ApiClient {
     return this.handleResponse<Resource>(response);
   }
 
+  // Update a category (e.g. to change Custom* fields or MetaSchema)
+  async updateCategory(
+    id: number,
+    options: Partial<Category> & { name?: string }
+  ): Promise<Category> {
+    const formData = new URLSearchParams();
+    formData.append('ID', id.toString());
+    if (options.name) formData.append('name', options.name);
+    if (options.Name) formData.append('name', options.Name);
+    if (options.Description !== undefined) formData.append('Description', options.Description);
+    if (options.CustomHeader !== undefined) formData.append('CustomHeader', options.CustomHeader);
+    if (options.CustomSidebar !== undefined) formData.append('CustomSidebar', options.CustomSidebar);
+    if (options.CustomSummary !== undefined) formData.append('CustomSummary', options.CustomSummary);
+    if (options.CustomAvatar !== undefined) formData.append('CustomAvatar', options.CustomAvatar);
+    if (options.MetaSchema !== undefined) formData.append('MetaSchema', options.MetaSchema);
+
+    return this.postRetry<Category>(`${this.baseUrl}/v1/category`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+  }
+
+  // Edit a single meta field at a dot-notation path
+  async editMeta(
+    entityType: 'group' | 'resource' | 'note',
+    entityId: number,
+    path: string,
+    value: any
+  ): Promise<{ ok: boolean; id: number; meta: Record<string, any> }> {
+    const formData = new URLSearchParams();
+    formData.append('path', path);
+    formData.append('value', typeof value === 'string' ? value : JSON.stringify(value));
+
+    return this.postRetry<{ ok: boolean; id: number; meta: Record<string, any> }>(
+      `${this.baseUrl}/v1/${entityType}/editMeta?id=${entityId}`,
+      {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        data: formData.toString(),
+      }
+    );
+  }
+
   // Add resources to a note by updating the note
   async addResourcesToNote(noteId: number, resourceIds: number[]): Promise<Note> {
     // First get the note to preserve its name (uses existing getNote method)
