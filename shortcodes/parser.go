@@ -1,3 +1,6 @@
+// Package shortcodes provides parsing and rendering of shortcode markup embedded in text.
+// Shortcodes use a bracket syntax, e.g. [meta path="cooking.time"] or
+// [plugin:my-plugin:rating value="5"], and are expanded into HTML by their respective handlers.
 package shortcodes
 
 import (
@@ -25,6 +28,9 @@ var attrPattern = regexp.MustCompile(
 )
 
 // Parse scans input for shortcode patterns and returns all matches.
+// Only the built-in "meta" shortcode and plugin shortcodes with lowercase kebab-case
+// names (format "plugin:plugin-name:shortcode-name") are recognized; all other
+// bracket expressions are left unchanged.
 func Parse(input string) []Shortcode {
 	matches := shortcodePattern.FindAllStringSubmatchIndex(input, -1)
 	if len(matches) == 0 {
@@ -55,6 +61,8 @@ func Parse(input string) []Shortcode {
 }
 
 // parseAttrs extracts key=value pairs from an attribute string.
+// Attribute values may be double-quoted, single-quoted, or unquoted.
+// When a key appears more than once, the last value wins.
 func parseAttrs(s string) map[string]string {
 	attrs := make(map[string]string)
 	if s == "" {
