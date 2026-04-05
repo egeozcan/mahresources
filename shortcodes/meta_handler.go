@@ -225,7 +225,8 @@ func resolveLeafSchema(node map[string]any, root map[string]any, value map[strin
 				base = shallowMergeSchema(base, elseSchema)
 			}
 		}
-		return base
+		// Re-resolve in case the merged branch introduced $ref or composition.
+		return resolveLeafSchema(base, root, value)
 	}
 	return node
 }

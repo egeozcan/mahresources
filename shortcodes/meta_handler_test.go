@@ -568,6 +568,28 @@ func TestExtractSchemaSliceConditionTypeArray(t *testing.T) {
 	assert.NotEmpty(t, sliceThen3, "thenF should resolve when code is null")
 }
 
+func TestExtractSchemaSliceConditionalBranchWithRef(t *testing.T) {
+	// then-branch introduces a $ref that must be resolved before returning
+	schema := `{
+		"type":"object",
+		"properties":{
+			"mode":{"type":"string"},
+			"detail":{
+				"type":"string",
+				"if":{"const":"advanced"},
+				"then":{"$ref":"#/$defs/AdvDetail"},
+				"else":{"title":"Basic Detail"}
+			}
+		},
+		"$defs":{"AdvDetail":{"title":"Advanced Detail","description":"full detail"}}
+	}`
+
+	slice := extractSchemaSlice(schema, "detail", json.RawMessage(`{"mode":"x","detail":"advanced"}`))
+	require.NotEmpty(t, slice)
+	assert.NotContains(t, slice, "$ref", "branch $ref must be resolved")
+	assert.Contains(t, slice, "Advanced Detail")
+}
+
 func TestExtractSchemaSliceRefInsideOneOfBranch(t *testing.T) {
 	// A leaf with oneOf where a branch uses $ref — the $ref must be resolved
 	// in the leaf slice since the client doesn't have root $defs.
