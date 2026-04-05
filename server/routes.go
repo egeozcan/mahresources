@@ -1,16 +1,20 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
 	"github.com/flosch/pongo2/v4"
 	"github.com/gorilla/mux"
 	"mahresources/application_context"
+	"mahresources/constants"
 	"mahresources/models"
+	"mahresources/plugin_system"
 	"mahresources/server/api_handlers"
 	"mahresources/server/template_handlers"
 	"mahresources/server/template_handlers/template_context_providers"
+	"mahresources/shortcodes"
 )
 
 type templateInformation struct {
@@ -126,6 +130,13 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 			ctx["pluginBulkActions"] = pm.GetActionsForPlacement("group", "bulk", nil)
 		}
 
+		// For JSON responses, process shortcodes in Custom* fields since the
+		// pongo2 template (and its {% process_shortcodes %} tag) won't execute.
+		if strings.HasSuffix(request.URL.Path, ".json") ||
+			strings.Contains(request.Header.Get("Accept"), constants.JSON) {
+			processShortcodesForJSON(ctx, pm)
+		}
+
 		return ctx
 	}
 }
@@ -148,6 +159,66 @@ func buildEntityDataFromEntity(entity any, entityType string) map[string]any {
 		}
 	}
 	return data
+}
+
+// processShortcodesForJSON processes shortcode markup in Custom* fields of
+// entity categories/types so that JSON API consumers (e.g., the lightbox)
+// receive expanded HTML instead of raw [meta ...] shortcode text.
+// Only called for JSON responses — HTML responses use the process_shortcodes template tag.
+func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManager) {
+	mainEntity := ctx["mainEntity"]
+	entityType, _ := ctx["mainEntityType"].(string)
+	if mainEntity == nil || entityType == "" {
+		return
+	}
+
+	var pluginRenderer shortcodes.PluginRenderer
+	if pm != nil {
+		pluginRenderer = func(pluginName string, sc shortcodes.Shortcode, mctx shortcodes.MetaShortcodeContext) (string, error) {
+			return pm.RenderShortcode(pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs)
+		}
+	}
+
+	switch entityType {
+	case "resource":
+		if r, ok := mainEntity.(*models.Resource); ok && r.ResourceCategory != nil {
+			metaCtx := shortcodes.MetaShortcodeContext{
+				EntityType: "resource",
+				EntityID:   r.ID,
+				Meta:       json.RawMessage(r.Meta),
+				MetaSchema: r.ResourceCategory.MetaSchema,
+			}
+			r.ResourceCategory.CustomHeader = shortcodes.Process(r.ResourceCategory.CustomHeader, metaCtx, pluginRenderer)
+			r.ResourceCategory.CustomSidebar = shortcodes.Process(r.ResourceCategory.CustomSidebar, metaCtx, pluginRenderer)
+			r.ResourceCategory.CustomSummary = shortcodes.Process(r.ResourceCategory.CustomSummary, metaCtx, pluginRenderer)
+			r.ResourceCategory.CustomAvatar = shortcodes.Process(r.ResourceCategory.CustomAvatar, metaCtx, pluginRenderer)
+		}
+	case "group":
+		if g, ok := mainEntity.(*models.Group); ok && g.Category != nil {
+			metaCtx := shortcodes.MetaShortcodeContext{
+				EntityType: "group",
+				EntityID:   g.ID,
+				Meta:       json.RawMessage(g.Meta),
+				MetaSchema: g.Category.MetaSchema,
+			}
+			g.Category.CustomHeader = shortcodes.Process(g.Category.CustomHeader, metaCtx, pluginRenderer)
+			g.Category.CustomSidebar = shortcodes.Process(g.Category.CustomSidebar, metaCtx, pluginRenderer)
+			g.Category.CustomSummary = shortcodes.Process(g.Category.CustomSummary, metaCtx, pluginRenderer)
+			g.Category.CustomAvatar = shortcodes.Process(g.Category.CustomAvatar, metaCtx, pluginRenderer)
+		}
+	case "note":
+		if n, ok := mainEntity.(*models.Note); ok && n.NoteType != nil {
+			metaCtx := shortcodes.MetaShortcodeContext{
+				EntityType: "note",
+				EntityID:   n.ID,
+				Meta:       json.RawMessage(n.Meta),
+			}
+			n.NoteType.CustomHeader = shortcodes.Process(n.NoteType.CustomHeader, metaCtx, pluginRenderer)
+			n.NoteType.CustomSidebar = shortcodes.Process(n.NoteType.CustomSidebar, metaCtx, pluginRenderer)
+			n.NoteType.CustomSummary = shortcodes.Process(n.NoteType.CustomSummary, metaCtx, pluginRenderer)
+			n.NoteType.CustomAvatar = shortcodes.Process(n.NoteType.CustomAvatar, metaCtx, pluginRenderer)
+		}
+	}
 }
 
 func registerRoutes(router *mux.Router, appContext *application_context.MahresourcesContext) {
