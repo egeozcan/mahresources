@@ -459,6 +459,38 @@ func TestExtractSchemaSliceConditionWithMixedKeywords(t *testing.T) {
 	assert.NotEmpty(t, sliceB, "bField should also be discoverable via fallback merge")
 }
 
+func TestExtractSchemaSliceConditionVacuousMatch(t *testing.T) {
+	// Missing properties should match vacuously (per JSON Schema spec),
+	// so {} should take the then-branch when if only constrains "kind".
+	schema := `{
+		"type":"object",
+		"if":{"properties":{"kind":{"const":"a"}}},
+		"then":{"properties":{"thenField":{"type":"string","title":"Then"}}},
+		"else":{"properties":{"elseField":{"type":"string","title":"Else"}}}
+	}`
+
+	slice := extractSchemaSlice(schema, "thenField", json.RawMessage(`{}`))
+	assert.NotEmpty(t, slice, "thenField should resolve for {} (vacuous match)")
+
+	sliceElse := extractSchemaSlice(schema, "elseField", json.RawMessage(`{}`))
+	assert.Empty(t, sliceElse, "elseField should NOT resolve for {} (vacuous match picks then)")
+}
+
+func TestExtractSchemaSlicePropertyLevelUnsupportedKeyword(t *testing.T) {
+	// const + minLength on the same property — should fall back to merge-both
+	schema := `{
+		"type":"object",
+		"if":{"properties":{"code":{"const":"A","minLength":2}}},
+		"then":{"properties":{"x":{"type":"string","title":"X"}}},
+		"else":{"properties":{"y":{"type":"string","title":"Y"}}}
+	}`
+
+	sliceX := extractSchemaSlice(schema, "x", json.RawMessage(`{"code":"A"}`))
+	sliceY := extractSchemaSlice(schema, "y", json.RawMessage(`{"code":"A"}`))
+	assert.NotEmpty(t, sliceX, "x should be discoverable via fallback merge")
+	assert.NotEmpty(t, sliceY, "y should also be discoverable via fallback merge")
+}
+
 func TestExtractSchemaSliceNotFound(t *testing.T) {
 	schema := `{"type":"object","properties":{"a":{"type":"string"}}}`
 	slice := extractSchemaSlice(schema, "b.c", nil)

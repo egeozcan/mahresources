@@ -302,19 +302,29 @@ func tryEvaluateCondition(ifSchema map[string]any, value map[string]any) (matche
 		if !ok {
 			return false, false
 		}
+
+		// Check for unsupported property-level keywords. If anything
+		// beyond const/enum/type is present, we can't trust partial eval.
+		for ck := range constraintMap {
+			if ck != "const" && ck != "enum" && ck != "type" {
+				return false, false
+			}
+		}
+
 		actual, exists := value[key]
 		if !exists {
-			return false, true
+			// Per JSON Schema, absent properties match vacuously —
+			// only "required" (a top-level keyword, not in properties)
+			// makes absence a failure, and we already reject required
+			// via the supportedIfKeys whitelist.
+			continue
 		}
-		hasCheck := false
 		if constVal, hasConst := constraintMap["const"]; hasConst {
-			hasCheck = true
 			if !reflect.DeepEqual(actual, constVal) {
 				return false, true
 			}
 		}
 		if enumVal, hasEnum := constraintMap["enum"].([]any); hasEnum {
-			hasCheck = true
 			found := false
 			for _, e := range enumVal {
 				if reflect.DeepEqual(actual, e) {
@@ -325,9 +335,6 @@ func tryEvaluateCondition(ifSchema map[string]any, value map[string]any) (matche
 			if !found {
 				return false, true
 			}
-		}
-		if !hasCheck {
-			return false, false
 		}
 	}
 	return true, true
