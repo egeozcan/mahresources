@@ -3,9 +3,16 @@
 package api_tests
 
 import (
+	"encoding/json"
+	"fmt"
+	"mahresources/models"
+	"mahresources/models/types"
 	"net/http"
 	"net/url"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPG_TagCreate(t *testing.T) {
@@ -50,6 +57,96 @@ func TestPG_NoteWithOwner(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("create note with owner: expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
+}
+
+func TestPG_EditMeta_SimpleField(t *testing.T) {
+	tc := SetupPostgresTestEnv(t)
+
+	group := &models.Group{
+		Name: "PG Meta Group",
+		Meta: types.JSON(`{"cooking":{"difficulty":"easy"}}`),
+	}
+	tc.DB.Create(group)
+
+	resp := tc.MakeFormRequest(http.MethodPost,
+		fmt.Sprintf("/v1/group/editMeta?id=%d", group.ID),
+		url.Values{"path": {"cooking.time"}, "value": {"30"}},
+	)
+	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &body))
+	meta := body["meta"].(map[string]any)
+	cooking := meta["cooking"].(map[string]any)
+	assert.Equal(t, float64(30), cooking["time"])
+	assert.Equal(t, "easy", cooking["difficulty"])
+}
+
+func TestPG_EditMeta_DeepPath(t *testing.T) {
+	tc := SetupPostgresTestEnv(t)
+
+	group := &models.Group{Name: "PG Deep Path", Meta: types.JSON(`{}`)}
+	tc.DB.Create(group)
+
+	resp := tc.MakeFormRequest(http.MethodPost,
+		fmt.Sprintf("/v1/group/editMeta?id=%d", group.ID),
+		url.Values{"path": {"a.b.c"}, "value": {`"deep"`}},
+	)
+	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &body))
+	meta := body["meta"].(map[string]any)
+	a := meta["a"].(map[string]any)
+	b := a["b"].(map[string]any)
+	assert.Equal(t, "deep", b["c"])
+}
+
+func TestPG_EditMeta_NullValue(t *testing.T) {
+	tc := SetupPostgresTestEnv(t)
+
+	group := &models.Group{
+		Name: "PG Null Test",
+		Meta: types.JSON(`{"x":1,"y":2}`),
+	}
+	tc.DB.Create(group)
+
+	resp := tc.MakeFormRequest(http.MethodPost,
+		fmt.Sprintf("/v1/group/editMeta?id=%d", group.ID),
+		url.Values{"path": {"x"}, "value": {"null"}},
+	)
+	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &body))
+	meta := body["meta"].(map[string]any)
+	_, exists := meta["x"]
+	assert.True(t, exists, "x should exist as null")
+	assert.Nil(t, meta["x"])
+	assert.Equal(t, float64(2), meta["y"])
+}
+
+func TestPG_EditMeta_OverwritesScalar(t *testing.T) {
+	tc := SetupPostgresTestEnv(t)
+
+	group := &models.Group{
+		Name: "PG Scalar Overwrite",
+		Meta: types.JSON(`{"cooking":"just a string"}`),
+	}
+	tc.DB.Create(group)
+
+	resp := tc.MakeFormRequest(http.MethodPost,
+		fmt.Sprintf("/v1/group/editMeta?id=%d", group.ID),
+		url.Values{"path": {"cooking.time"}, "value": {"30"}},
+	)
+	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &body))
+	meta := body["meta"].(map[string]any)
+	cooking, ok := meta["cooking"].(map[string]any)
+	require.True(t, ok, "cooking should be an object now")
+	assert.Equal(t, float64(30), cooking["time"])
 }
 
 func TestPG_BulkDeleteEmpty(t *testing.T) {
