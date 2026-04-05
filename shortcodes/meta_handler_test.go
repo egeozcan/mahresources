@@ -525,6 +525,26 @@ func TestExtractSchemaSliceConditionTopLevelType(t *testing.T) {
 	assert.NotEmpty(t, slice, "objField should resolve when value is object (then branch)")
 }
 
+func TestExtractSchemaSliceConditionIntegerVsNumber(t *testing.T) {
+	schema := `{
+		"type":"object",
+		"if":{"properties":{"val":{"type":"integer"}}},
+		"then":{"properties":{"intField":{"type":"string","title":"Int"}}},
+		"else":{"properties":{"floatField":{"type":"string","title":"Float"}}}
+	}`
+
+	// 3.14 is not an integer — should take else branch
+	slice := extractSchemaSlice(schema, "floatField", json.RawMessage(`{"val":3.14}`))
+	assert.NotEmpty(t, slice, "floatField should resolve when val is 3.14 (else)")
+
+	sliceInt := extractSchemaSlice(schema, "intField", json.RawMessage(`{"val":3.14}`))
+	assert.Empty(t, sliceInt, "intField should NOT resolve when val is 3.14")
+
+	// 5 is an integer — should take then branch
+	sliceInt2 := extractSchemaSlice(schema, "intField", json.RawMessage(`{"val":5}`))
+	assert.NotEmpty(t, sliceInt2, "intField should resolve when val is 5 (then)")
+}
+
 func TestExtractSchemaSliceNotFound(t *testing.T) {
 	schema := `{"type":"object","properties":{"a":{"type":"string"}}}`
 	slice := extractSchemaSlice(schema, "b.c", nil)

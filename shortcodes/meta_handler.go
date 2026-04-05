@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"math"
 	"reflect"
 	"strings"
 )
@@ -370,9 +371,12 @@ func jsonValueMatchesType(v any, schemaType string) bool {
 	case "string":
 		_, ok := v.(string)
 		return ok
-	case "number", "integer":
+	case "number":
 		_, ok := v.(float64)
 		return ok
+	case "integer":
+		f, ok := v.(float64)
+		return ok && f == math.Trunc(f)
 	case "boolean":
 		_, ok := v.(bool)
 		return ok
