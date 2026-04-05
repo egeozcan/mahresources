@@ -196,7 +196,10 @@ func (w *EntityWriter[T]) UpdateMetaAtPath(id uint, path string, value json.RawM
 func readMergeWrite(ctx context.Context, conn *sql.Conn, tableName string, id uint, parts []string, newVal any) (json.RawMessage, error) {
 	var metaStr *string
 	if err := conn.QueryRowContext(ctx, "SELECT meta FROM "+tableName+" WHERE id = ?", id).Scan(&metaStr); err != nil {
-		return nil, gorm.ErrRecordNotFound
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, gorm.ErrRecordNotFound
+		}
+		return nil, err
 	}
 	return mergeAndWrite(ctx, func(query string, args ...any) (sql.Result, error) {
 		return conn.ExecContext(ctx, query, args...)
@@ -208,7 +211,10 @@ func readMergeWrite(ctx context.Context, conn *sql.Conn, tableName string, id ui
 func readMergeWriteTx(ctx context.Context, tx *sql.Tx, tableName string, id uint, parts []string, newVal any) (json.RawMessage, error) {
 	var metaStr *string
 	if err := tx.QueryRowContext(ctx, "SELECT meta FROM "+tableName+" WHERE id = $1 FOR UPDATE", id).Scan(&metaStr); err != nil {
-		return nil, gorm.ErrRecordNotFound
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, gorm.ErrRecordNotFound
+		}
+		return nil, err
 	}
 	return mergeAndWrite(ctx, func(query string, args ...any) (sql.Result, error) {
 		return tx.ExecContext(ctx, query, args...)
