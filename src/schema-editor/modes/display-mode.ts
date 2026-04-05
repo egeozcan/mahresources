@@ -7,6 +7,7 @@ import {
   getLabeledEnumEntries,
   titleCase,
 } from '../schema-core';
+import { detectShape, getBuiltinRenderer } from '../display-renderers';
 
 /** Resolved schema — follows $ref chains and merges allOf. */
 function resolveSchema(schema: JSONSchema, root: JSONSchema): JSONSchema | null {
@@ -29,6 +30,7 @@ interface DisplayField {
   isLong: boolean;
   enum: any[] | null;
   enumLabels: string[] | null;
+  xDisplay: string;
 }
 
 function getNestedValue(obj: any, path: string): any {
@@ -79,8 +81,14 @@ function flattenForDisplay(
     const format = prop.format || '';
     const val = getNestedValue(value, path);
 
-    // Nested object with properties — flatten recursively
-    if (prop.properties) {
+    // Read x-display annotation
+    const xDisplay = (rawProp['x-display'] || prop['x-display'] || '') as string;
+
+    // If x-display is set on an object, do NOT flatten — emit as whole field
+    if (xDisplay && prop.properties) {
+      // fall through to emit as single field
+    } else if (prop.properties) {
+      // Nested object with properties — flatten recursively
       fields.push(...flattenForDisplay(prop, value, root, path, label, depth + 1));
       continue;
     }
@@ -109,6 +117,7 @@ function flattenForDisplay(
       isLong: false,
       enum: enumValues,
       enumLabels,
+      xDisplay,
     };
     field.isLong = classifyAsLong(field);
     fields.push(field);
@@ -124,6 +133,8 @@ export class SchemaDisplayMode extends LitElement {
   @property({ type: String }) name = '';
 
   @state() private _showEmpty = false;
+  @state() private _pluginHtml: Record<string, string> = {};
+  @state() private _pluginErrors: Record<string, boolean> = {};
 
   // Light DOM to inherit Tailwind styles
   override createRenderRoot() {
@@ -209,6 +220,30 @@ export class SchemaDisplayMode extends LitElement {
     }
 
     const val = field.value;
+
+    // ── Renderer pipeline ──────────────────────────────────────────────
+    const xd = field.xDisplay;
+
+    // 1. Plugin renderer (x-display: "plugin:name:type")
+    if (xd.startsWith('plugin:')) {
+      return this._renderPluginDisplay(field);
+    }
+
+    // 2. Forced built-in renderer (x-display: "url", "geo", etc.)
+    if (xd && xd !== 'raw' && xd !== 'none') {
+      const renderer = getBuiltinRenderer(xd);
+      if (renderer) return renderer.render(val);
+    }
+
+    // 3. Opt-out: x-display "raw" or "none" skips shape detection
+    // (falls through to existing object/scalar handling below)
+
+    // 4. Auto shape detection for objects (when no x-display set)
+    if (!xd && typeof val === 'object' && val !== null && !Array.isArray(val)) {
+      const detected = detectShape(val);
+      if (detected) return detected.render(val);
+    }
+    // ── End renderer pipeline ──────────────────────────────────────────
 
     // Enum with labels — pill with tooltip
     if (field.enumLabels && field.enum) {
@@ -307,6 +342,54 @@ export class SchemaDisplayMode extends LitElement {
         })}
       </div>
     `;
+  }
+
+  private _renderPluginDisplay(field: DisplayField): TemplateResult {
+    const key = field.path;
+
+    if (this._pluginHtml[key] !== undefined) {
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = this._pluginHtml[key];
+      return html`${wrapper}`;
+    }
+
+    if (this._pluginErrors[key]) {
+      if (typeof field.value === 'object' && field.value !== null) {
+        return this._renderObjectValue(field.value);
+      }
+      return html`<span class="text-stone-400 text-xs italic">Render error</span>`;
+    }
+
+    const parts = field.xDisplay.split(':');
+    if (parts.length < 3) {
+      return this._renderObjectValue(field.value);
+    }
+    const pluginName = parts[1];
+    const typeName = parts[2];
+
+    this._fetchPluginDisplay(key, pluginName, typeName, field);
+    return html`<span class="text-stone-400 text-xs animate-pulse">Loading...</span>`;
+  }
+
+  private async _fetchPluginDisplay(key: string, pluginName: string, typeName: string, field: DisplayField) {
+    try {
+      const resp = await fetch(`/v1/plugins/${pluginName}/display/render`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: typeName,
+          value: field.value,
+          schema: {},
+          field_path: field.path,
+          field_label: field.label,
+        }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const htmlStr = await resp.text();
+      this._pluginHtml = { ...this._pluginHtml, [key]: htmlStr };
+    } catch {
+      this._pluginErrors = { ...this._pluginErrors, [key]: true };
+    }
   }
 
   private _copyText(text: string) {
