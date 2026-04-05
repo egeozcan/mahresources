@@ -417,6 +417,11 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 		api_handlers.GetPluginBlockRenderHandler(appContext),
 	)
 
+	// Plugin display render endpoint (must be before the catch-all)
+	router.Methods(http.MethodPost).Path("/v1/plugins/{pluginName}/display/render").HandlerFunc(
+		api_handlers.GetPluginDisplayRenderHandler(appContext),
+	)
+
 	// Plugin JSON API endpoints (handler validates methods and returns JSON errors)
 	router.PathPrefix("/v1/plugins/").HandlerFunc(api_handlers.PluginAPIHandler(appContext))
 

@@ -86,6 +86,7 @@ type PluginManager struct {
 	actions      map[string][]ActionRegistration // pluginName -> actions
 	apiEndpoints map[string]map[string]*APIEndpoint // pluginName -> "METHOD:path" -> handler
 	blockTypes   map[string][]*PluginBlockType      // pluginName -> block types
+	displayTypes map[string][]*PluginDisplayType   // pluginName -> display types
 	mu         sync.RWMutex
 	vmLocks    map[*lua.LState]*sync.Mutex
 	dbProvider atomic.Value
@@ -130,6 +131,7 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 		actions:         make(map[string][]ActionRegistration),
 		apiEndpoints:    make(map[string]map[string]*APIEndpoint),
 		blockTypes:      make(map[string][]*PluginBlockType),
+		displayTypes:    make(map[string][]*PluginDisplayType),
 		vmLocks:         make(map[*lua.LState]*sync.Mutex),
 		pluginSettings:  make(map[string]map[string]any),
 		actionJobs:      make(map[string]*ActionJob),
@@ -494,6 +496,28 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		return 0
 	}))
 
+	mahMod.RawSetString("display_type", L.NewFunction(func(L *lua.LState) int {
+		tbl := L.CheckTable(1)
+		dt, err := parseDisplayTypeTable(L, tbl, *pluginNamePtr)
+		if err != nil {
+			L.ArgError(1, err.Error())
+			return 0
+		}
+		dt.State = L
+
+		pm.mu.Lock()
+		for _, existing := range pm.displayTypes[*pluginNamePtr] {
+			if existing.TypeName == dt.TypeName {
+				pm.mu.Unlock()
+				L.ArgError(1, fmt.Sprintf("duplicate display type %q", dt.TypeName))
+				return 0
+			}
+		}
+		pm.displayTypes[*pluginNamePtr] = append(pm.displayTypes[*pluginNamePtr], dt)
+		pm.mu.Unlock()
+		return 0
+	}))
+
 	mahMod.RawSetString("api", L.NewFunction(func(L *lua.LState) int {
 		method := strings.ToUpper(L.CheckString(1))
 		path := L.CheckString(2)
@@ -808,6 +832,9 @@ func (pm *PluginManager) DisablePlugin(name string) error {
 	}
 	delete(pm.blockTypes, name)
 
+	// Remove display types for this plugin.
+	delete(pm.displayTypes, name)
+
 	// Remove API endpoints for this plugin.
 	delete(pm.apiEndpoints, name)
 
@@ -980,6 +1007,7 @@ func (pm *PluginManager) Close() {
 	pm.menuItems = nil
 	pm.actions = nil
 	pm.blockTypes = nil
+	pm.displayTypes = nil
 	pm.apiEndpoints = nil
 	pm.vmLocks = nil
 }

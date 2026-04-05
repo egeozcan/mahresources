@@ -283,6 +283,59 @@ func GetPluginBlockRenderHandler(ctx *application_context.MahresourcesContext) f
 	}
 }
 
+// GetPluginDisplayRenderHandler renders a plugin display type's HTML.
+func GetPluginDisplayRenderHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		pm := ctx.PluginManager()
+		if pm == nil {
+			http.Error(w, "plugins not available", http.StatusServiceUnavailable)
+			return
+		}
+
+		vars := mux.Vars(r)
+		pluginName := vars["pluginName"]
+		if pluginName == "" {
+			http.Error(w, "plugin name required", http.StatusBadRequest)
+			return
+		}
+
+		var req struct {
+			Type       string         `json:"type"`
+			Value      map[string]any `json:"value"`
+			Schema     map[string]any `json:"schema"`
+			FieldPath  string         `json:"field_path"`
+			FieldLabel string         `json:"field_label"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.Type == "" {
+			http.Error(w, "type is required", http.StatusBadRequest)
+			return
+		}
+
+		fullTypeName := "plugin:" + pluginName + ":" + req.Type
+
+		renderCtx := plugin_system.DisplayRenderContext{
+			Value:      req.Value,
+			Schema:     req.Schema,
+			FieldPath:  req.FieldPath,
+			FieldLabel: req.FieldLabel,
+			Settings:   pm.GetPluginSettings(pluginName),
+		}
+
+		htmlStr, err := pm.RenderDisplay(pluginName, fullTypeName, renderCtx)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(htmlStr))
+	}
+}
+
 // pluginAPIMaxBodySize is the maximum request body size for plugin API endpoints.
 const pluginAPIMaxBodySize = 1 << 20 // 1MB
 
