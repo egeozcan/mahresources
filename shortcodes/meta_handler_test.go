@@ -545,6 +545,29 @@ func TestExtractSchemaSliceConditionIntegerVsNumber(t *testing.T) {
 	assert.NotEmpty(t, sliceInt2, "intField should resolve when val is 5 (then)")
 }
 
+func TestExtractSchemaSliceConditionTypeArray(t *testing.T) {
+	schema := `{
+		"type":"object",
+		"if":{"properties":{"code":{"type":["string","null"]}}},
+		"then":{"properties":{"thenF":{"type":"string","title":"Then"}}},
+		"else":{"properties":{"elseF":{"type":"string","title":"Else"}}}
+	}`
+
+	// 42 is not string or null — should take else
+	sliceElse := extractSchemaSlice(schema, "elseF", json.RawMessage(`{"code":42}`))
+	assert.NotEmpty(t, sliceElse, "elseF should resolve when code is number")
+	sliceThen := extractSchemaSlice(schema, "thenF", json.RawMessage(`{"code":42}`))
+	assert.Empty(t, sliceThen, "thenF should NOT resolve when code is number")
+
+	// "hello" is string — should take then
+	sliceThen2 := extractSchemaSlice(schema, "thenF", json.RawMessage(`{"code":"hello"}`))
+	assert.NotEmpty(t, sliceThen2, "thenF should resolve when code is string")
+
+	// null is null — should take then
+	sliceThen3 := extractSchemaSlice(schema, "thenF", json.RawMessage(`{"code":null}`))
+	assert.NotEmpty(t, sliceThen3, "thenF should resolve when code is null")
+}
+
 func TestExtractSchemaSliceNotFound(t *testing.T) {
 	schema := `{"type":"object","properties":{"a":{"type":"string"}}}`
 	slice := extractSchemaSlice(schema, "b.c", nil)

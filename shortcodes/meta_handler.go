@@ -268,19 +268,19 @@ func tryEvaluateCondition(ifSchema map[string]any, value map[string]any) (matche
 		}
 	}
 
-	// Top-level type check: if: {type: "string"} checks the value's type.
-	// For leaf values (wrapped as {"_self": val}), check the _self value.
-	// For object values, the value itself is always a map (type "object").
-	if typeVal, ok := ifSchema["type"].(string); ok {
-		selfVal, hasSelf := value["_self"]
-		if hasSelf {
-			if !jsonValueMatchesType(selfVal, typeVal) {
-				return false, true
-			}
-		} else {
-			// value is always map[string]any here, so only "object" matches
-			if typeVal != "object" {
-				return false, true
+	// Top-level type check: if: {type: "string"} or {type: ["string","null"]}.
+	if typeRaw, hasType := ifSchema["type"]; hasType {
+		types := normalizeTypeList(typeRaw)
+		if len(types) > 0 {
+			selfVal, hasSelf := value["_self"]
+			if hasSelf {
+				if !jsonValueMatchesAnyType(selfVal, types) {
+					return false, true
+				}
+			} else {
+				if !jsonValueMatchesAnyType(value, types) {
+					return false, true
+				}
 			}
 		}
 	}
@@ -354,8 +354,9 @@ func tryEvaluateCondition(ifSchema map[string]any, value map[string]any) (matche
 				return false, true
 			}
 		}
-		if typeVal, hasType := constraintMap["type"].(string); hasType {
-			if !jsonValueMatchesType(actual, typeVal) {
+		if typeRaw, hasType := constraintMap["type"]; hasType {
+			types := normalizeTypeList(typeRaw)
+			if len(types) > 0 && !jsonValueMatchesAnyType(actual, types) {
 				return false, true
 			}
 		}
@@ -388,6 +389,34 @@ func jsonValueMatchesType(v any, schemaType string) bool {
 	case "array":
 		_, ok := v.([]any)
 		return ok
+	}
+	return false
+}
+
+// normalizeTypeList converts a JSON Schema type value (string or []any)
+// into a []string of type names.
+func normalizeTypeList(typeRaw any) []string {
+	if s, ok := typeRaw.(string); ok {
+		return []string{s}
+	}
+	if arr, ok := typeRaw.([]any); ok {
+		types := make([]string, 0, len(arr))
+		for _, v := range arr {
+			if s, ok := v.(string); ok {
+				types = append(types, s)
+			}
+		}
+		return types
+	}
+	return nil
+}
+
+// jsonValueMatchesAnyType returns true if v matches any of the given types.
+func jsonValueMatchesAnyType(v any, types []string) bool {
+	for _, t := range types {
+		if jsonValueMatchesType(v, t) {
+			return true
+		}
 	}
 	return false
 }
