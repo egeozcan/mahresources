@@ -31,6 +31,7 @@ interface DisplayField {
   enum: any[] | null;
   enumLabels: string[] | null;
   xDisplay: string;
+  rawSchema: JSONSchema;
 }
 
 function getNestedValue(obj: any, path: string): any {
@@ -123,6 +124,7 @@ function flattenForDisplay(
       enum: enumValues,
       enumLabels,
       xDisplay,
+      rawSchema: prop,
     };
     field.isLong = classifyAsLong(field);
     fields.push(field);
@@ -384,7 +386,7 @@ export class SchemaDisplayMode extends LitElement {
         body: JSON.stringify({
           type: typeName,
           value: field.value,
-          schema: {},
+          schema: field.rawSchema || {},
           field_path: field.path,
           field_label: field.label,
         }),
