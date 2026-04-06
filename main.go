@@ -477,53 +477,50 @@ func main() {
 // This runs before AutoMigrate so it uses raw SQL (the table may not have the
 // NOT NULL constraint yet).
 func resolveDefaultResourceCategory(db *gorm.DB, dbType string) uint {
-	// Check if the resources table exists at all (fresh database)
+	// Check if the resource_categories table exists at all (fresh database)
 	var tableExists int64
 	if dbType == constants.DbTypePosgres {
-		db.Raw("SELECT count(*) FROM information_schema.tables WHERE table_name = 'resources'").Scan(&tableExists)
+		db.Raw("SELECT count(*) FROM information_schema.tables WHERE table_name = 'resource_categories'").Scan(&tableExists)
 	} else {
-		db.Raw("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='resources'").Scan(&tableExists)
+		db.Raw("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='resource_categories'").Scan(&tableExists)
 	}
 	if tableExists == 0 {
-		// Fresh database — AutoMigrate will create tables. Return 1; AddInitialData
-		// will handle creating the default category.
+		// Fresh database — table doesn't exist yet. AutoMigrate will create it,
+		// then AddInitialData will create the default category. Return 1 as the
+		// expected ID; the actual row creation happens after AutoMigrate.
 		return 1
 	}
 
-	// 1. Check if category with ID 1 exists
-	var id1Exists int64
-	db.Raw("SELECT count(*) FROM resource_categories WHERE id = 1").Scan(&id1Exists)
-	if id1Exists > 0 {
-		return 1
-	}
-
-	// 2. Check if a category named "Default" exists
+	// 1. Prefer a category explicitly named "Default" — this is the canonical default
+	//    regardless of what ID it was assigned.
 	var defaultId uint
 	db.Raw("SELECT id FROM resource_categories WHERE name = 'Default' LIMIT 1").Scan(&defaultId)
 	if defaultId != 0 {
 		return defaultId
 	}
 
-	// 3. Create the default category
+	// 2. No "Default" category exists. Create one with ID 1 if possible.
 	if dbType == constants.DbTypePosgres {
 		db.Exec("INSERT INTO resource_categories (id, name, description, created_at, updated_at) VALUES (1, 'Default', 'Default resource category.', NOW(), NOW()) ON CONFLICT (id) DO NOTHING")
 	} else {
 		db.Exec("INSERT OR IGNORE INTO resource_categories (id, name, description, created_at, updated_at) VALUES (1, 'Default', 'Default resource category.', datetime('now'), datetime('now'))")
 	}
 
-	// Verify it was created with ID 1 (could fail on Postgres if sequence is past 1)
-	db.Raw("SELECT count(*) FROM resource_categories WHERE id = 1").Scan(&id1Exists)
-	if id1Exists > 0 {
-		return 1
+	// Check if the insert succeeded (it may conflict if ID 1 is occupied by another category)
+	db.Raw("SELECT id FROM resource_categories WHERE name = 'Default' LIMIT 1").Scan(&defaultId)
+	if defaultId != 0 {
+		return defaultId
 	}
 
-	// Fallback: create without explicit ID and return whatever ID was assigned
+	// 3. ID 1 was occupied by a non-Default category. Create without explicit ID.
 	if dbType == constants.DbTypePosgres {
-		var newId uint
-		db.Raw("INSERT INTO resource_categories (name, description, created_at, updated_at) VALUES ('Default', 'Default resource category.', NOW(), NOW()) RETURNING id").Scan(&newId)
-		if newId != 0 {
-			return newId
-		}
+		db.Raw("INSERT INTO resource_categories (name, description, created_at, updated_at) VALUES ('Default', 'Default resource category.', NOW(), NOW()) RETURNING id").Scan(&defaultId)
+	} else {
+		db.Exec("INSERT INTO resource_categories (name, description, created_at, updated_at) VALUES ('Default', 'Default resource category.', datetime('now'), datetime('now'))")
+		db.Raw("SELECT id FROM resource_categories WHERE name = 'Default' LIMIT 1").Scan(&defaultId)
+	}
+	if defaultId != 0 {
+		return defaultId
 	}
 
 	// Should not reach here, but return 1 as last resort

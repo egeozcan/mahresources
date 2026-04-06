@@ -34,6 +34,7 @@ func statusCodeForError(err error, fallback int) int {
 		"is not in a",
 		"must be",
 		"cannot be",
+		"cannot delete",
 		"attempt to write",
 		"readonly database",
 	}

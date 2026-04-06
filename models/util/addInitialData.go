@@ -50,24 +50,22 @@ func AddInitialData(db *gorm.DB) {
 		}
 	}
 
-	var resourceCategoryCount int64
-	db.Model(&models.ResourceCategory{}).Count(&resourceCategoryCount)
+	// Ensure a "Default" resource category always exists. This is required because
+	// ResourceCategoryId is NOT NULL — every resource must have a valid category.
+	var defaultRCExists int64
+	db.Model(&models.ResourceCategory{}).Where("name = ?", "Default").Count(&defaultRCExists)
+	if defaultRCExists == 0 {
+		defaultResourceCategory := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}
+		db.Create(defaultResourceCategory)
 
-	if resourceCategoryCount == 0 {
-		var resourceCount int64
-		db.Model(&models.Resource{}).Count(&resourceCount)
+		// Backfill any resources that still have NULL category (legacy data)
+		var totalRemaining int64
+		db.Model(&models.Resource{}).Where("resource_category_id IS NULL").Count(&totalRemaining)
 
-		if resourceCount > 0 {
-			defaultResourceCategory := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}
-			db.Create(defaultResourceCategory)
-
-			var totalRemaining int64
-			db.Model(&models.Resource{}).Where("resource_category_id IS NULL").Count(&totalRemaining)
-
+		if totalRemaining > 0 {
 			logMigrationProgress(db, fmt.Sprintf("Resource category migration: starting (%d resources to update)", totalRemaining),
 				map[string]interface{}{"total": totalRemaining})
 
-			// Batch update to avoid a single massive transaction on large databases
 			var totalUpdated int64
 			for {
 				result := db.Exec(

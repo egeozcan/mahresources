@@ -207,48 +207,51 @@ test.describe('Resource Category Custom Template Rendering', () => {
     await expect(editPanel.locator('text=Custom Sidebar Content')).toBeVisible();
   });
 
-  test('should not show category section in lightbox for resources without a category', async ({ apiClient, page }) => {
-    // Create a resource without a category via apiClient - use the owner group so it's properly visible
-    const noCatResource = await apiClient.createResource({
+  test('should show default category in lightbox for resources created without explicit category', async ({ apiClient, page }) => {
+    // Create a resource without an explicit category — it should get the default category
+    const defaultCatResource = await apiClient.createResource({
       filePath: path.join(__dirname, '../test-assets/sample-image-31.png'),
-      name: `No Category Resource ${testRunId}`,
+      name: `Default Category Resource ${testRunId}`,
       ownerId: ownerGroupId,
     });
-    const noCatResourceId = noCatResource.ID;
+    const defaultCatResourceId = defaultCatResource.ID;
 
     try {
-      // Verify the resource exists via API
-      const fetched = await apiClient.getResource(noCatResourceId);
-      expect(fetched.ID).toBe(noCatResourceId);
+      // Verify the resource exists and has a category
+      const fetched = await apiClient.getResource(defaultCatResourceId);
+      expect(fetched.ID).toBe(defaultCatResourceId);
+      expect(fetched.resourceCategoryId).toBeGreaterThan(0);
 
-      // Navigate to resources filtered to our specific resource to avoid pagination issues
-      await page.goto(`/resources?Ids=${noCatResourceId}&pageSize=100`);
+      // Navigate to resources filtered to our specific resource
+      await page.goto(`/resources?Ids=${defaultCatResourceId}&pageSize=100`);
       await page.waitForLoadState('load');
 
       // Find the lightbox-item anchor for this specific resource
-      const imageLink = page.locator(`a[data-resource-id="${noCatResourceId}"]`);
+      const imageLink = page.locator(`a[data-resource-id="${defaultCatResourceId}"]`);
       await expect(imageLink).toBeVisible({ timeout: 10000 });
       await imageLink.click();
 
       const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
       await expect(lightbox).toBeVisible();
 
-      // Open edit panel (use exact text to avoid matching "Edit Tags" button)
+      // Open edit panel
       const editButton = lightbox.locator('button[title="Edit resource"]');
       await editButton.click();
 
       const editPanel = lightbox.locator('[data-edit-panel]');
       await expect(editPanel).toBeVisible();
 
-      // Wait for resource details to load
       await page.waitForTimeout(500);
 
-      // Category section should NOT be visible
+      // Category section should be visible with the "Default" category
       const categoryLabel = editPanel.locator('label:has-text("Category")');
-      await expect(categoryLabel).not.toBeVisible();
+      await expect(categoryLabel).toBeVisible();
+
+      const categoryLink = editPanel.locator('a:has-text("Default")');
+      await expect(categoryLink).toBeVisible();
     } finally {
-      if (noCatResourceId) {
-        await apiClient.deleteResource(noCatResourceId).catch(() => {});
+      if (defaultCatResourceId) {
+        await apiClient.deleteResource(defaultCatResourceId).catch(() => {});
       }
     }
   });
