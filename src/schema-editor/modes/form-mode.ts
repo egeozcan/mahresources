@@ -296,7 +296,7 @@ export class SchemaFormMode extends LitElement {
       : activeVariant;
 
     return html`
-      <div class="space-y-2 border-l-4 border-indigo-100 pl-4 py-2 my-2">
+      <div class="schema-nesting space-y-2 border-l-4 border-indigo-100 pl-4 py-2 my-2">
         ${schema.title ? html`<h4 class="font-bold text-gray-900 text-sm">${schema.title}</h4>` : nothing}
         ${schema.description ? html`<p class="text-xs text-gray-500 mb-2">${schema.description}</p>` : nothing}
         <select class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md mb-2"
@@ -367,7 +367,7 @@ export class SchemaFormMode extends LitElement {
       : activeVariant;
 
     return html`
-      <div class="space-y-2 border-l-4 border-green-100 pl-4 py-2 my-2">
+      <div class="schema-nesting space-y-2 border-l-4 border-green-100 pl-4 py-2 my-2">
         ${schema.title ? html`<h4 class="font-bold text-gray-900 text-sm">${schema.title}</h4>` : nothing}
         ${schema.description ? html`<p class="text-xs text-gray-500 mb-2">${schema.description}</p>` : nothing}
         <select class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-green-500 focus:border-green-500 sm:text-sm rounded-md mb-2"
@@ -590,7 +590,7 @@ export class SchemaFormMode extends LitElement {
     const extraKeys = Object.keys(data).filter(k => !knownKeys.has(k));
 
     return html`
-      <div class="space-y-4 border-l-2 border-gray-200 pl-4 my-2">
+      <div class="schema-nesting space-y-4 border-l-2 border-gray-200 pl-4 my-2">
         ${schema.title ? html`<h4 class="font-bold text-gray-900 text-sm">${schema.title}</h4>` : nothing}
         ${schema.description ? html`<p class="text-xs text-gray-500 mb-2">${schema.description}</p>` : nothing}
 
@@ -741,8 +741,8 @@ export class SchemaFormMode extends LitElement {
     };
 
     return html`
-      <div class="flex gap-2 items-start mb-2 bg-white p-2 rounded border border-gray-200 shadow-sm">
-        <div class="w-1/3">
+      <div class="schema-extra-prop flex gap-2 items-start mb-2 bg-white p-2 rounded border border-gray-200 shadow-sm">
+        <div class="schema-extra-key w-1/3">
           <input type="text" .value=${key}
             class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md"
             placeholder="Key"
@@ -833,7 +833,7 @@ export class SchemaFormMode extends LitElement {
     };
 
     return html`
-      <div class="space-y-2 border-l-2 border-indigo-200 pl-4 py-2 my-2">
+      <div class="schema-nesting space-y-2 border-l-2 border-indigo-200 pl-4 py-2 my-2">
         ${schema.title ? html`<h4 class="font-bold text-gray-900 text-sm">${schema.title}</h4>` : nothing}
 
         <div class="space-y-2">

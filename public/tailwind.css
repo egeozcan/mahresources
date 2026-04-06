@@ -4665,6 +4665,20 @@
     padding-right: 2.5rem;
   }
 }
+@layer components {
+  .schema-nesting .schema-nesting {
+    padding-left: 0.5rem;
+  }
+  .schema-nesting .schema-nesting .schema-nesting {
+    padding-left: 0.25rem;
+  }
+  .schema-nesting .schema-nesting .schema-nesting .schema-extra-prop {
+    flex-direction: column;
+  }
+  .schema-nesting .schema-nesting .schema-nesting .schema-extra-prop > .schema-extra-key {
+    width: 100%;
+  }
+}
 @layer base {
   input:where([type='text']),input:where(:not([type])),input:where([type='email']),input:where([type='url']),input:where([type='password']),input:where([type='number']),input:where([type='date']),input:where([type='datetime-local']),input:where([type='month']),input:where([type='search']),input:where([type='tel']),input:where([type='time']),input:where([type='week']),select:where([multiple]),textarea,select {
     appearance: none;

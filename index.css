@@ -50,3 +50,22 @@
   }
 
 }
+
+/* Reduce left padding on deeply nested schema form containers to prevent
+   content from becoming too narrow at 3+ levels of nesting. */
+@layer components {
+  .schema-nesting .schema-nesting {
+    padding-left: 0.5rem;
+  }
+  .schema-nesting .schema-nesting .schema-nesting {
+    padding-left: 0.25rem;
+  }
+
+  /* Stack extra property key/value vertically at depth 3+ */
+  .schema-nesting .schema-nesting .schema-nesting .schema-extra-prop {
+    flex-direction: column;
+  }
+  .schema-nesting .schema-nesting .schema-nesting .schema-extra-prop > .schema-extra-key {
+    width: 100%;
+  }
+}

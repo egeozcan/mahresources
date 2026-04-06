@@ -938,7 +938,7 @@ ${n?`Expression: "`+n+`"
         ?required=${!!s}
         aria-required=${s?`true`:W}
         class="shadow-sm bg-gray-100 block w-full sm:text-sm border-gray-300 rounded-md mt-1 text-gray-500">`;let l=e.type;if(Array.isArray(l)){let e=Jc(t);l=l.includes(e)?e:l.find(e=>e!==`null`)||l[0]}return l||=Jc(t),l===`null`?this._renderNull(e,n):l===`object`?this._renderObject(e,t,n,r,a,c,s):l===`array`?this._renderArray(e,t,n,r,a):this._renderPrimitive(e,l,t,n,i,o,s)}_renderOneOf(e,t,n,r){let i=e.properties,a=e.required,o=0;if(t!==void 0){let n=-1;e.oneOf.forEach((e,i)=>{let a=Xc(e,t,r);a>n&&(n=a,o=i)})}if(t===void 0){let t=R(i?I({type:`object`,properties:i,required:a},e.oneOf[o]):e.oneOf[o],r);queueMicrotask(()=>n(t))}let s=a=>{let o=parseInt(a.target.value,10),s=e.oneOf[o],c=R(s,r);if(i&&t&&typeof t==`object`&&typeof c==`object`){let e={...c};for(let n of Object.keys(i))t[n]!==void 0&&(e[n]=t[n]);n(e)}else n(c)},c=e.oneOf[o],l=i?I({type:e.type||`object`,properties:i,required:a},c):c;return H`
-      <div class="space-y-2 border-l-4 border-indigo-100 pl-4 py-2 my-2">
+      <div class="schema-nesting space-y-2 border-l-4 border-indigo-100 pl-4 py-2 my-2">
         ${e.title?H`<h4 class="font-bold text-gray-900 text-sm">${e.title}</h4>`:W}
         ${e.description?H`<p class="text-xs text-gray-500 mb-2">${e.description}</p>`:W}
         <select class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md mb-2"
@@ -953,7 +953,7 @@ ${n?`Expression: "`+n+`"
         </div>
       </div>
     `}_renderAnyOf(e,t,n,r){let i=e.properties,a=e.required,o=0;if(t!==void 0){let n=-1;e.anyOf.forEach((e,i)=>{let a=Xc(e,t,r);a>n&&(n=a,o=i)})}if(t===void 0){let t=R(i?I({type:`object`,properties:i,required:a},e.anyOf[o]):e.anyOf[o],r);queueMicrotask(()=>n(t))}let s=a=>{let o=parseInt(a.target.value,10),s=e.anyOf[o],c=R(s,r);if(i&&t&&typeof t==`object`&&typeof c==`object`){let e={...c};for(let n of Object.keys(i))t[n]!==void 0&&(e[n]=t[n]);n(e)}else n(c)},c=e.anyOf[o],l=i?I({type:e.type||`object`,properties:i,required:a},c):c;return H`
-      <div class="space-y-2 border-l-4 border-green-100 pl-4 py-2 my-2">
+      <div class="schema-nesting space-y-2 border-l-4 border-green-100 pl-4 py-2 my-2">
         ${e.title?H`<h4 class="font-bold text-gray-900 text-sm">${e.title}</h4>`:W}
         ${e.description?H`<p class="text-xs text-gray-500 mb-2">${e.description}</p>`:W}
         <select class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-green-500 focus:border-green-500 sm:text-sm rounded-md mb-2"
@@ -1016,7 +1016,7 @@ ${n?`Expression: "`+n+`"
             @click=${()=>{n({})}}>Initialize</button>
         </div>
       `;if((typeof t!=`object`||!t||Array.isArray(t))&&(t={},queueMicrotask(()=>n(t))),e.properties){let r=new Set(e.required||[]),i=!1;for(let[n,a]of Object.entries(e.properties)){let e=a,o=e.type===`boolean`||Array.isArray(e.type)&&e.type.includes(`boolean`);t[n]===void 0&&o&&r.has(n)&&(t={...t,[n]:e.default===void 0?!1:e.default},i=!0)}i&&queueMicrotask(()=>n(t))}let s=a===void 0?!0:a,c=new Set(e.required||[]),l=new Set(e.properties?Object.keys(e.properties):[]),u=Object.keys(t).filter(e=>!l.has(e));return H`
-      <div class="space-y-4 border-l-2 border-gray-200 pl-4 my-2">
+      <div class="schema-nesting space-y-4 border-l-2 border-gray-200 pl-4 my-2">
         ${e.title?H`<h4 class="font-bold text-gray-900 text-sm">${e.title}</h4>`:W}
         ${e.description?H`<p class="text-xs text-gray-500 mb-2">${e.description}</p>`:W}
 
@@ -1055,8 +1055,8 @@ ${n?`Expression: "`+n+`"
           @click=${()=>{let t=`newField`,r=1;for(;e[t]!==void 0;)t=`newField${r++}`;n({...e,[t]:``})}}>Add Field</button>
       </div>
     `}_renderExtraProperty(e,t,n,r){let i=t[e],a=dd(`key-error`,e);return H`
-      <div class="flex gap-2 items-start mb-2 bg-white p-2 rounded border border-gray-200 shadow-sm">
-        <div class="w-1/3">
+      <div class="schema-extra-prop flex gap-2 items-start mb-2 bg-white p-2 rounded border border-gray-200 shadow-sm">
+        <div class="schema-extra-key w-1/3">
           <input type="text" .value=${e}
             class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md"
             placeholder="Key"
@@ -1081,7 +1081,7 @@ ${n?`Expression: "`+n+`"
         @input=${t=>{r({...n,[e]:t.target.value})}}
         @blur=${t=>{let i=t.target.value,a=i;try{a=JSON.parse(i)}catch{}n[e]!==a&&r({...n,[e]:a})}}>
     `}_renderArray(e,t,n,r,i){Array.isArray(t)||(t=[],queueMicrotask(()=>n(t)));let a=e.minItems!==void 0,o=e.maxItems!==void 0,s=!a||t.length>e.minItems,c=!o||t.length<e.maxItems,l=`${t.length} item${t.length===1?``:`s`}`,u=!1;if(a||o){let n=e.minItems||0,r=e.maxItems===void 0?`∞`:e.maxItems;l+=` (${n}-${r})`,(a&&t.length<e.minItems||o&&t.length>e.maxItems)&&(u=!0)}return H`
-      <div class="space-y-2 border-l-2 border-indigo-200 pl-4 py-2 my-2">
+      <div class="schema-nesting space-y-2 border-l-2 border-indigo-200 pl-4 py-2 my-2">
         ${e.title?H`<h4 class="font-bold text-gray-900 text-sm">${e.title}</h4>`:W}
 
         <div class="space-y-2">
