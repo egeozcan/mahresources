@@ -1260,7 +1260,7 @@ ${n?`Expression: "`+n+`"
           title=${e.description||W}
           @click=${()=>this._copyText(e.path)}
         >${e.label}</div>
-        <div class="text-sm text-stone-900 cursor-pointer"
+        <div class="text-sm text-stone-900 cursor-pointer break-all"
           @click=${()=>this._copyValue(e.value)}>${this._renderValue(e)}</div>
       </div>
     `}_renderLongField(e){return H`
@@ -1270,7 +1270,7 @@ ${n?`Expression: "`+n+`"
           title=${e.description||W}
           @click=${()=>this._copyText(e.path)}
         >${e.label}</div>
-        <div class="text-sm text-stone-900 cursor-pointer"
+        <div class="text-sm text-stone-900 cursor-pointer break-all"
           @click=${()=>this._copyValue(e.value)}>${this._renderValue(e)}</div>
       </div>
     `}_renderValue(e){if(e.isEmpty)return H`<span class="text-stone-300">\u2014</span>`;let t=e.value,n=e.xDisplay;if(n.startsWith(`plugin:`))return this._renderPluginDisplay(e);if(n&&n!==`raw`&&n!==`none`){let e=vu(n);if(e)return e.render(t)}if(!n&&typeof t==`object`&&t&&!Array.isArray(t)){let e=yu(t);if(e)return e.render(t)}if(e.enumLabels&&e.enum){let n=e.enum.indexOf(t),r=n>=0&&e.enumLabels[n]?e.enumLabels[n]:String(t);return H`<span

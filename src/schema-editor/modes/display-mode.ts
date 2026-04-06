@@ -235,7 +235,7 @@ export class SchemaDisplayMode extends LitElement {
           title=${field.description || nothing}
           @click=${() => this._copyText(field.path)}
         >${field.label}</div>
-        <div class="text-sm text-stone-900 cursor-pointer"
+        <div class="text-sm text-stone-900 cursor-pointer break-all"
           @click=${() => this._copyValue(field.value)}>${this._renderValue(field)}</div>
       </div>
     `;
@@ -249,7 +249,7 @@ export class SchemaDisplayMode extends LitElement {
           title=${field.description || nothing}
           @click=${() => this._copyText(field.path)}
         >${field.label}</div>
-        <div class="text-sm text-stone-900 cursor-pointer"
+        <div class="text-sm text-stone-900 cursor-pointer break-all"
           @click=${() => this._copyValue(field.value)}>${this._renderValue(field)}</div>
       </div>
     `;
