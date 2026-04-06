@@ -2928,6 +2928,9 @@
       color: color-mix(in oklab, var(--color-white) 70%, transparent);
     }
   }
+  .text-yellow-500 {
+    color: var(--color-yellow-500);
+  }
   .text-yellow-600 {
     color: var(--color-yellow-600);
   }

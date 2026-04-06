@@ -321,14 +321,14 @@ export class MetaShortcode extends LitElement {
     }
     const valueJSON = JSON.stringify(value);
 
-    const formData = new FormData();
-    formData.append('path', this.path);
-    formData.append('value', valueJSON);
+    const body = new URLSearchParams();
+    body.append('path', this.path);
+    body.append('value', valueJSON);
 
     try {
       const resp = await fetch(
         `/v1/${this.entityType}/editMeta?id=${this.entityId}`,
-        { method: 'POST', body: formData }
+        { method: 'POST', body }
       );
 
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
