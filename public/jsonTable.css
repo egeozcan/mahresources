@@ -1,8 +1,11 @@
+/* ===== Metadata table — amber/stone theme ===== */
+
 .tableContainer {
     overflow: auto;
     max-width: 100%;
 }
 
+/* --- Fullscreen overlay --- */
 .tableContainer.expanded {
     position: fixed;
     top: 0;
@@ -12,90 +15,218 @@
     background: #fff;
     overflow: auto;
     z-index: 100;
+    padding: 1.5rem;
 }
 
-.tableContainer.expanded > * {
-    padding: 1rem;
+.tableContainer.expanded > .metaTableInner {
+    max-width: 1200px;
+    margin: 0 auto;
 }
 
+/* --- Header bar (title + expand button) --- */
+.metaHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem 0.5rem 0;
+}
+
+.metaHeader .sidebar-group-title {
+    margin: 0;
+}
+
+.metaExpandBtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    color: #78716c;
+    background: transparent;
+    border: 1px solid #d6d3d1;
+    border-radius: 6px;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    transition: border-color 120ms ease, color 120ms ease;
+    flex-shrink: 0;
+}
+
+.metaExpandBtn:hover {
+    border-color: #b45309;
+    color: #b45309;
+}
+
+.metaExpandBtn:focus-visible {
+    outline: 2px solid #b45309;
+    outline-offset: 2px;
+}
+
+.metaExpandBtn:focus:not(:focus-visible) {
+    outline: none;
+}
+
+.metaExpandBtn svg {
+    flex-shrink: 0;
+}
+
+/* --- Base table --- */
 .jsonTable {
     border-spacing: 0;
     width: 100%;
-    border: 1px solid #e7e5e4;
     border-collapse: collapse;
-    border-left-width: 0;
     overflow: auto;
     font-family: 'IBM Plex Mono', monospace;
 }
 
 .jsonTable .jsonTable {
-    border-bottom-width: 0;
+    border: 1px solid #e7e5e4;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: 0.375rem;
 }
 
+/* --- Rows --- */
 .jsonTable tr {
-    border-left: 2px solid #e7e5e4;
+    border-left: 2px solid transparent;
+    transition: border-color 120ms ease;
 }
 
 .jsonTable tr:hover {
-    border-left-color: #57534e;
+    border-left-color: #b45309;
 }
 
+.jsonTable tr:hover > th,
+.jsonTable tr:hover > td {
+    background: #fafaf9;
+}
+
+/* --- Cells --- */
 .jsonTable, .jsonTable tbody, .jsonTable tr, .jsonTable th, .jsonTable td {
     margin: 0;
     padding: 0;
-    vertical-align: text-top;
+    vertical-align: top;
 }
 
 .jsonTable th, .jsonTable td {
-    border-bottom: 1px solid #e7e5e4;
     text-align: left;
-    padding: 3px;
-}
-
-.jsonTable tr.hasSubTable > th, .jsonTable tr tr.hasSubTable td {
-    padding: 3px 3px 0 3px;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid #f5f5f4;
 }
 
 .jsonTable th {
     background: #f5f5f4;
+    color: #57534e;
+    font-size: 0.75rem;
+    font-weight: 500;
+    word-break: break-all;
 }
 
 .jsonTable td {
     background: #fff;
+    color: #292524;
+    font-size: 0.8125rem;
+    position: relative;
+    word-break: break-all;
 }
 
 .jsonTable td.odd {
     background: #fafaf9;
 }
 
-.jsonTable tr:last-child > th, .jsonTable tr:last-child > td {
+.jsonTable tr:last-child > th,
+.jsonTable tr:last-child > td {
     border-bottom: none;
 }
 
-.jsonTable .jsonTable > tbody > tr > th:first-child, .jsonTable .jsonTable > tbody > tr > td:first-child {
-    padding-left: 9px;
+/* Nested subtable header cells slightly lighter */
+.jsonTable .jsonTable > tbody > tr > th {
+    background: #fafaf9;
 }
 
-.jsonTable td.subTableCell {
-    padding: 0 !important;
+.jsonTable tr.hasSubTable > th {
+    padding-bottom: 0;
 }
 
-.tableContainer > div {
-    margin-bottom: 20px;
-}
-
-.toggler {
+/* --- Collapsed state buttons --- */
+.metaToggler {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6875rem;
+    color: #78716c;
+    background: #f5f5f4;
+    border: 1px solid #e7e5e4;
+    border-radius: 6px;
+    padding: 0.1875rem 0.5rem;
     cursor: pointer;
     display: inline-block;
-    font-size: 1.3rem;
     user-select: none;
-    padding: 0.2rem 0.2rem;
-    background: white;
-    margin: 0.3rem 0.6rem;
-    border-radius: 0.7rem;
-    border: 1px solid #b45309;
+    transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
 }
 
+.metaToggler:hover {
+    border-color: #d6d3d1;
+    background: #fafaf9;
+    color: #57534e;
+}
+
+.metaToggler.expanded {
+    background: #fff;
+    border-color: #b45309;
+    color: #b45309;
+}
+
+.metaToggler:focus-visible {
+    outline: 2px solid #b45309;
+    outline-offset: 2px;
+}
+
+.metaToggler:focus:not(:focus-visible) {
+    outline: none;
+}
+
+/* --- Type-specific value styles --- */
+.metaVal--id {
+    color: #a8a29e;
+    font-size: 0.75rem;
+}
+
+.metaVal--date {
+    color: #78716c;
+}
+
+.metaVal--bool {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.75rem;
+}
+
+.metaVal--bool-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.metaVal--bool-dot--on {
+    background: #10b981;
+}
+
+.metaVal--bool-dot--off {
+    background: #d6d3d1;
+}
+
+.metaVal--url {
+    color: #b45309;
+    text-decoration: none;
+    font-size: 0.8125rem;
+    word-break: break-all;
+}
+
+.metaVal--url:hover {
+    text-decoration: underline;
+}
+
+/* --- Empty table --- */
 .emptyTable::after {
     display: block;
     content: "No data";
@@ -103,10 +234,38 @@
     text-align: center;
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.75rem;
+    text-transform: uppercase;
     letter-spacing: 0.025em;
     color: #a8a29e;
 }
 
-.jsonTable th:hover, .jsonTable td:hover {
-    background: #f5f5f4;
+/* --- Copy flash animation --- */
+@keyframes copy-flash {
+    0% { background: #fef3c7; }
+    100% { background: transparent; }
+}
+
+.copy-flash {
+    animation: copy-flash 300ms ease-out;
+}
+
+.copyTooltip {
+    position: absolute;
+    top: -0.25rem;
+    right: 0.5rem;
+    background: #44403c;
+    color: #fff;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6875rem;
+    padding: 0.1875rem 0.5rem;
+    border-radius: 4px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 150ms;
+    z-index: 10;
+    white-space: nowrap;
+}
+
+.copyTooltip.show {
+    opacity: 1;
 }
