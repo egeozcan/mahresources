@@ -268,6 +268,113 @@ function escapeKey(key) {
     return `["${key.replaceAll('"', '\\"')}"]`;
 }
 
+// ===== Type detection helpers =====
+
+const BOOLEAN_KEY_PATTERN = /^(active|enabled|disabled|visible|hidden|deleted|verified|published|is_|has_|can_|show_)/;
+
+/**
+ * Detect if a numeric value is likely a timestamp.
+ * Values > 1e11 are milliseconds, values between 1e9 and 1e11 are seconds.
+ */
+function isTimestamp(val) {
+    return typeof val === "number" && val > 1e9 && val < 1e13;
+}
+
+/**
+ * Detect if a key + value pair represents a boolean-like field.
+ * Only triggers for 0/1 values when the key matches known patterns.
+ */
+function isBooleanLike(key, val) {
+    return (val === 0 || val === 1) && BOOLEAN_KEY_PATTERN.test(key);
+}
+
+/**
+ * Detect if a key represents an ID field.
+ */
+function isIdKey(key) {
+    return key === "id" || key === "parent" || key.endsWith("_id");
+}
+
+/**
+ * Format a timestamp value as a human-readable date string.
+ * Values > 1e11 treated as milliseconds, otherwise seconds.
+ */
+function formatTimestamp(val) {
+    const ms = val > 1e11 ? val : val * 1000;
+    const date = new Date(ms);
+    const now = new Date();
+    const diffMs = Math.abs(now - date);
+    const isRecent = diffMs < 86400000; // 24 hours
+    const hasTime = date.getHours() !== 0 || date.getMinutes() !== 0;
+
+    if (isRecent || hasTime) {
+        return date.toLocaleDateString(undefined, {
+            year: 'numeric', month: 'short', day: 'numeric',
+            hour: 'numeric', minute: 'numeric',
+        });
+    }
+
+    return date.toLocaleDateString(undefined, {
+        year: 'numeric', month: 'short', day: 'numeric',
+    });
+}
+
+/**
+ * Truncate a URL for display: strip protocol, show domain + path start.
+ */
+function truncateUrl(url) {
+    try {
+        const u = new URL(url);
+        const host = u.hostname.replace(/^www\./, '');
+        const path = u.pathname;
+        const display = host + (path.length > 1 ? path : '');
+        return display.length > 40 ? display.substring(0, 37) + '...' : display;
+    } catch {
+        return url;
+    }
+}
+
+// ===== Type-aware element creators =====
+
+function createDateElement(val) {
+    const span = document.createElement("span");
+    span.className = "metaVal--date";
+    span.textContent = formatTimestamp(val);
+    span.title = new Date(val > 1e11 ? val : val * 1000).toISOString();
+    return span;
+}
+
+function createBoolElement(val) {
+    const span = document.createElement("span");
+    span.className = "metaVal--bool";
+
+    const dot = document.createElement("span");
+    dot.className = "metaVal--bool-dot " + (val ? "metaVal--bool-dot--on" : "metaVal--bool-dot--off");
+
+    span.appendChild(dot);
+    span.appendChild(document.createTextNode(val ? " yes" : " no"));
+    return span;
+}
+
+function createIdElement(val) {
+    const span = document.createElement("span");
+    span.className = "metaVal--id";
+    span.textContent = String(val);
+    return span;
+}
+
+function createUrlElement(url) {
+    const a = document.createElement("a");
+    a.className = "metaVal--url";
+    a.href = url;
+    a.title = url;
+    a.textContent = truncateUrl(url);
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.addEventListener("click", (e) => e.stopPropagation()); // don't trigger copy
+    return a;
+}
+
 /**
  * Get all keys from an array of objects
  *
