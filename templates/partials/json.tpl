@@ -12,16 +12,23 @@
         x-effect="document.body.classList.toggle('overflow-hidden', expanded)"
         @click="(e) => {if(!e.shiftKey) return; expanded = !expanded; e.preventDefault();}"
 >
-    <button
-            x-show="jsonData && (jsonData.length || Object.keys(jsonData).length)"
-            class="
-                inline-flex justify-center
-                py-2 px-4
-                border border-transparent
-                shadow-sm text-sm font-mono font-medium rounded-md text-white
-                bg-amber-700 hover:bg-amber-800"
-            @click.prevent="expanded = !expanded"
-            x-text="expanded ? 'Minimize' : 'Fullscreen'">
-    </button>
-    <div x-init="$el.appendChild(renderJsonTable(keys ? pick(jsonData, ...keys.split(',')) : jsonData))"></div>
+    <div class="metaHeader">
+        <h2 class="sidebar-group-title">{{ metaTitle|default:"Meta Data" }}</h2>
+        <button
+                x-show="jsonData && (Array.isArray(jsonData) ? jsonData.length : Object.keys(jsonData).length)"
+                class="metaExpandBtn"
+                @click.prevent="expanded = !expanded"
+                :aria-label="expanded ? 'Minimize metadata view' : 'Expand metadata to fullscreen'"
+                :aria-expanded="expanded.toString()"
+        >
+            <template x-if="!expanded">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"/></svg>
+            </template>
+            <template x-if="expanded">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4"/></svg>
+            </template>
+            <span x-text="expanded ? 'Minimize' : 'Expand'"></span>
+        </button>
+    </div>
+    <div class="metaTableInner" x-init="$el.appendChild(renderJsonTable(keys ? pick(jsonData, ...keys.split(',')) : jsonData))"></div>
 </div>

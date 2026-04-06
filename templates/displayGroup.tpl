@@ -65,7 +65,6 @@
     </div>
 
     <div class="sidebar-group">
-        {% include "/partials/sideTitle.tpl" with title="Meta Data" %}
         {% include "/partials/json.tpl" with jsonData=group.Meta %}
     </div>
 
