@@ -1,22 +1,54 @@
 import { updateClipboard } from './index.js';
 
-const plusEmoji = "➕";
-const minusEmoji = "➖";
-
-export function renderJsonTable(data, path = ["$"]) {
+export function renderJsonTable(data, path = ["$"], key = "") {
     if (Array.isArray(data)) {
         return generateArrayTable(data, path);
     }
 
     if (data instanceof Date) {
-        return data.toLocaleDateString();
+        return createDateElement(data.getTime());
     }
 
-    if (typeof data === "object" && data !== undefined) {
+    if (typeof data === "object" && data !== undefined && data !== null) {
         return generateObjectTable(data, path);
     }
 
+    // --- Type-aware rendering for primitives ---
+
+    // Boolean
+    if (typeof data === "boolean") {
+        return createBoolElement(data);
+    }
+
+    // Boolean-like (0/1 with matching key name)
+    if (isBooleanLike(key, data)) {
+        return createBoolElement(!!data);
+    }
+
+    // Timestamp
+    if (isTimestamp(data)) {
+        return createDateElement(data);
+    }
+
+    // ID field
+    if (isIdKey(key) && (typeof data === "number" || typeof data === "string")) {
+        return createIdElement(data);
+    }
+
     if (typeof data === "string") {
+        // data: URI image
+        if (data.indexOf("data:image") === 0) {
+            const img = document.createElement("img");
+            img.src = data;
+            return img;
+        }
+
+        // URL
+        if (data.startsWith("http://") || data.startsWith("https://")) {
+            return createUrlElement(data);
+        }
+
+        // Long string → expandable text
         const node = document.createElement("expandable-text");
         node.innerHTML = escapeHTML(data);
         return node;
@@ -44,15 +76,37 @@ function generateObjectTable(obj, path = ["$"]) {
     table.classList.add("objectTable", "jsonTable");
     table.appendChild(tbody);
 
-    // Use event delegation for copy-on-click instead of per-cell listeners
+    // Event delegation for copy-on-click with flash + tooltip feedback
     table.addEventListener("click", (e) => {
-        if (e.target.matches("button") || e.target.matches("expandable-text")) {
+        if (e.target.closest("button") || e.target.closest("expandable-text") || e.target.closest("a")) {
             return;
         }
         const titled = findTitledAncestor(e.target, table);
         if (titled) {
             updateClipboard(titled.title);
             e.stopPropagation();
+
+            // Flash animation
+            const cell = e.target.closest("th, td") || titled;
+            cell.classList.remove("copy-flash");
+            void cell.offsetWidth;
+            cell.classList.add("copy-flash");
+            cell.addEventListener("animationend", () => cell.classList.remove("copy-flash"), { once: true });
+
+            // Tooltip
+            const existing = cell.querySelector(".copyTooltip");
+            if (existing) existing.remove();
+            const tooltip = document.createElement("div");
+            tooltip.className = "copyTooltip";
+            tooltip.textContent = "Copied!";
+            tooltip.setAttribute("role", "status");
+            tooltip.setAttribute("aria-live", "polite");
+            cell.appendChild(tooltip);
+            requestAnimationFrame(() => tooltip.classList.add("show"));
+            setTimeout(() => {
+                tooltip.classList.remove("show");
+                setTimeout(() => tooltip.remove(), 150);
+            }, 1500);
         }
     });
 
@@ -61,7 +115,7 @@ function generateObjectTable(obj, path = ["$"]) {
         const header = document.createElement("th");
         const subPath = [...path, escapeKey(key)];
         const pathText = subPath.join("");
-        const content = renderJsonTable(obj[key], subPath);
+        const content = renderJsonTable(obj[key], subPath, key);
 
         row.appendChild(header);
         header.innerHTML = escapeHTML(key);
@@ -70,27 +124,31 @@ function generateObjectTable(obj, path = ["$"]) {
 
         if (typeof content === "string") {
             const contentCell = row.insertCell();
-
             contentCell.innerHTML = escapeHTML(content);
-        } else if (content?.matches?.("expandable-text")) {
-            const contentCell = row.insertCell();
 
-            contentCell.appendChild(content);
-
-        } else {
+        } else if (content instanceof HTMLElement && content.matches?.("table")) {
+            // Nested table (array or object) — collapsible
             row.classList.add("hasSubTable");
             content.classList.add("subTable");
             content.title = pathText;
             header.colSpan = 2;
 
+            // Determine label for the toggler
+            const val = obj[key];
+            let toggleLabel;
+            if (Array.isArray(val)) {
+                toggleLabel = val.length === 0 ? "empty" : `${val.length} item${val.length !== 1 ? 's' : ''}`;
+            } else {
+                const keyCount = Object.keys(val || {}).length;
+                toggleLabel = keyCount === 0 ? "empty" : `${keyCount} key${keyCount !== 1 ? 's' : ''}`;
+            }
+
             const toggler = document.createElement("button");
-
             toggler.title = "Click to expand/collapse, shift-click to expand/collapse all subtables";
-            toggler.classList.add("toggler");
-            toggler.innerHTML = plusEmoji;
+            toggler.classList.add("metaToggler");
+            toggler.textContent = `${toggleLabel} \u2014 show`;
             toggler.tabIndex = 0;
-
-            header.appendChild(toggler);
+            toggler.setAttribute("aria-expanded", "false");
 
             const listener = (e) => {
                 e.preventDefault();
@@ -98,22 +156,24 @@ function generateObjectTable(obj, path = ["$"]) {
 
                 const isHidden = content.classList.toggle("hidden");
 
-                // if the shift key is pressed, expand/contract all subtables
                 if (e.shiftKey) {
                     const subTables = content.querySelectorAll(".subTable");
-
-                    // expand all subtables, update the toggler emoji
-                    subTables.forEach(table => {
-                        table.classList.toggle("hidden", isHidden);
-
-                        if (table.previousElementSibling && table.previousElementSibling.matches(".toggler")) {
-                            table.previousElementSibling.innerHTML = isHidden ? plusEmoji : minusEmoji;
+                    subTables.forEach(st => {
+                        st.classList.toggle("hidden", isHidden);
+                        const prevToggler = st.previousElementSibling;
+                        if (prevToggler && prevToggler.matches(".metaToggler")) {
+                            const prevLabel = prevToggler.textContent.split(" \u2014 ")[0];
+                            prevToggler.textContent = `${prevLabel} \u2014 ${isHidden ? 'show' : 'hide'}`;
+                            prevToggler.classList.toggle("expanded", !isHidden);
+                            prevToggler.setAttribute("aria-expanded", String(!isHidden));
                         }
                     });
                 }
 
-                toggler.innerHTML = isHidden ? plusEmoji : minusEmoji;
-            }
+                toggler.textContent = `${toggleLabel} \u2014 ${isHidden ? 'show' : 'hide'}`;
+                toggler.classList.toggle("expanded", !isHidden);
+                toggler.setAttribute("aria-expanded", String(!isHidden));
+            };
 
             toggler.addEventListener("click", listener);
             toggler.addEventListener("keydown", (e) => {
@@ -123,7 +183,20 @@ function generateObjectTable(obj, path = ["$"]) {
             });
 
             content.classList.add("hidden");
+            header.appendChild(toggler);
             header.appendChild(content);
+
+        } else if (content instanceof HTMLElement) {
+            // Non-table element (expandable-text, typed value span, img, etc.)
+            const contentCell = row.insertCell();
+            contentCell.appendChild(content);
+
+        } else {
+            // Plain string fallback
+            const contentCell = row.insertCell();
+            if (typeof content === "string") {
+                contentCell.innerHTML = escapeHTML(content);
+            }
         }
     });
 
@@ -142,15 +215,35 @@ function generateArrayTable(arr, path = ["$"]) {
         return table;
     }
 
-    // Use event delegation for copy-on-click instead of per-cell listeners
+    // Event delegation for copy-on-click with flash + tooltip feedback
     table.addEventListener("click", (e) => {
-        if (e.target.matches("button") || e.target.matches("expandable-text")) {
+        if (e.target.closest("button") || e.target.closest("expandable-text") || e.target.closest("a")) {
             return;
         }
         const titled = findTitledAncestor(e.target, table);
         if (titled) {
             updateClipboard(titled.title);
             e.stopPropagation();
+
+            const cell = e.target.closest("th, td") || titled;
+            cell.classList.remove("copy-flash");
+            void cell.offsetWidth;
+            cell.classList.add("copy-flash");
+            cell.addEventListener("animationend", () => cell.classList.remove("copy-flash"), { once: true });
+
+            const existing = cell.querySelector(".copyTooltip");
+            if (existing) existing.remove();
+            const tooltip = document.createElement("div");
+            tooltip.className = "copyTooltip";
+            tooltip.textContent = "Copied!";
+            tooltip.setAttribute("role", "status");
+            tooltip.setAttribute("aria-live", "polite");
+            cell.appendChild(tooltip);
+            requestAnimationFrame(() => tooltip.classList.add("show"));
+            setTimeout(() => {
+                tooltip.classList.remove("show");
+                setTimeout(() => tooltip.remove(), 150);
+            }, 1500);
         }
     });
 
@@ -168,9 +261,7 @@ function generateArrayTable(arr, path = ["$"]) {
 
             if (typeof content === "string") {
                 contentCell.innerHTML = escapeHTML(content);
-            } else if (content?.matches?.("expandable-text")) {
-                contentCell.appendChild(content);
-            } else {
+            } else if (content instanceof HTMLElement) {
                 content.title = pathText;
                 contentCell.appendChild(content);
             }
@@ -197,16 +288,14 @@ function generateArrayTable(arr, path = ["$"]) {
             const contentCell = row.insertCell();
             const subPath = [...path, escapeKey(idx), escapeKey(title)];
             const pathText = subPath.join("");
-            const content = renderJsonTable(el[title], subPath);
+            const content = renderJsonTable(el[title], subPath, title);
 
             contentCell.classList.add(cellClass);
             contentCell.title = pathText;
 
             if (typeof content === "string") {
                 contentCell.innerHTML = escapeHTML(content);
-            } else if (content?.matches?.("expandable-text")) {
-                contentCell.appendChild(content);
-            } else {
+            } else if (content instanceof HTMLElement) {
                 contentCell.appendChild(content);
                 content.title = pathText;
             }
