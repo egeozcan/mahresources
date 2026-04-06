@@ -6,38 +6,72 @@ class ExpandableText extends HTMLElement {
         this.attachShadow({ mode: 'open' });
         this.uniqueId = `expandable-${Math.random().toString(36).substring(2, 11)}`;
 
-        // Append styles immediately
         const style = document.createElement('style');
         style.textContent = `
-          .container {
-            font-family: Arial, sans-serif;
-          }
-          button {
-            cursor: pointer;
+          :host {
             display: inline;
-            margin-left: 1rem;
           }
-          button + button {
-            margin-left: 0.5rem;
+          .container {
+            font-family: 'IBM Plex Mono', monospace;
+            color: #292524;
           }
-          button:focus {
-            outline: 2px solid #4f46e5;
+          .ellipsis {
+            color: #a8a29e;
+          }
+          .toggle {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.6875rem;
+            color: #b45309;
+            background: none;
+            border: none;
+            cursor: pointer;
+            margin-left: 0.375rem;
+            padding: 0;
+            font-weight: 500;
+          }
+          .toggle:hover {
+            text-decoration: underline;
+          }
+          .toggle:focus-visible {
+            outline: 2px solid #b45309;
             outline-offset: 2px;
             border-radius: 2px;
           }
-          button:focus:not(:focus-visible) {
+          .toggle:focus:not(:focus-visible) {
             outline: none;
           }
-          button:focus-visible {
-            outline: 2px solid #4f46e5;
+          .copy-btn {
+            font-size: 0;
+            color: #a8a29e;
+            background: none;
+            border: none;
+            cursor: pointer;
+            margin-left: 0.375rem;
+            padding: 0.125rem;
+            opacity: 0;
+            transition: opacity 120ms;
+            vertical-align: middle;
+          }
+          :host(:hover) .copy-btn,
+          .copy-btn:focus-visible {
+            opacity: 1;
+          }
+          .copy-btn:hover {
+            color: #57534e;
+          }
+          .copy-btn:focus-visible {
+            outline: 2px solid #b45309;
             outline-offset: 2px;
             border-radius: 2px;
+            opacity: 1;
+          }
+          .copy-btn:focus:not(:focus-visible) {
+            outline: none;
           }
         `;
         this.shadowRoot.appendChild(style);
 
         // Hidden slot suppresses light DOM from the accessibility tree
-        // Without this, screen readers double-announce the text content
         const hiddenSlot = document.createElement('slot');
         hiddenSlot.style.display = 'none';
         hiddenSlot.setAttribute('aria-hidden', 'true');
@@ -45,8 +79,6 @@ class ExpandableText extends HTMLElement {
     }
 
     disconnectedCallback() {
-        // Remove the dynamically created container to prevent duplicate rendering
-        // if the element is later re-connected
         if (this._container) {
             this._container.remove();
             this._container = null;
@@ -54,73 +86,71 @@ class ExpandableText extends HTMLElement {
     }
 
     connectedCallback() {
-        // Guard against duplicate rendering if already connected
         if (this._container) return;
 
         const container = document.createElement('span');
         container.setAttribute('class', 'container');
         this._container = container;
 
-        // Get the full text from the slot
         const fullText = this.textContent.trim();
 
-        // Show only the first 30 characters initially
-        const previewText = fullText.length > 30 ? fullText.substring(0, 30) : fullText;
-
         const previewSpan = document.createElement('span');
-        previewSpan.textContent = previewText;
-
         const fullTextSpan = document.createElement('span');
         fullTextSpan.id = this.uniqueId;
         fullTextSpan.textContent = fullText;
-        fullTextSpan.style.display = 'none'; // Initially hidden
+        fullTextSpan.style.display = 'none';
         fullTextSpan.setAttribute('aria-hidden', 'true');
 
-        // Create the toggle button (inline) only if the text is longer than 30 characters
-        let button = null;
-        let copyButton = null;
+        if (fullText.length > 30) {
+            previewSpan.textContent = fullText.substring(0, 30);
+
+            const ellipsis = document.createElement('span');
+            ellipsis.className = 'ellipsis';
+            ellipsis.textContent = '...';
+            previewSpan.appendChild(ellipsis);
+        } else {
+            previewSpan.textContent = fullText;
+        }
+
+        container.appendChild(previewSpan);
+        container.appendChild(fullTextSpan);
 
         if (fullText.length > 30) {
-            button = document.createElement('button');
-            button.type = 'button';
-            button.textContent = 'Read more';
-            button.setAttribute('aria-expanded', 'false');
-            button.setAttribute('aria-controls', this.uniqueId);
+            const toggleBtn = document.createElement('button');
+            toggleBtn.type = 'button';
+            toggleBtn.className = 'toggle';
+            toggleBtn.textContent = 'show more';
+            toggleBtn.setAttribute('aria-expanded', 'false');
+            toggleBtn.setAttribute('aria-controls', this.uniqueId);
 
-            // Handle the expand/collapse logic
-            button.addEventListener('click', () => {
+            toggleBtn.addEventListener('click', () => {
                 const isExpanded = fullTextSpan.style.display !== 'none';
                 if (!isExpanded) {
                     fullTextSpan.style.display = 'inline';
                     fullTextSpan.setAttribute('aria-hidden', 'false');
                     previewSpan.style.display = 'none';
-                    button.textContent = 'Read less';
-                    button.setAttribute('aria-expanded', 'true');
+                    toggleBtn.textContent = 'show less';
+                    toggleBtn.setAttribute('aria-expanded', 'true');
                 } else {
                     fullTextSpan.style.display = 'none';
                     fullTextSpan.setAttribute('aria-hidden', 'true');
                     previewSpan.style.display = 'inline';
-                    button.textContent = 'Read more';
-                    button.setAttribute('aria-expanded', 'false');
+                    toggleBtn.textContent = 'show more';
+                    toggleBtn.setAttribute('aria-expanded', 'false');
                 }
             });
 
-            copyButton = document.createElement('button');
-            copyButton.type = 'button';
-            copyButton.textContent = 'Copy';
-            copyButton.setAttribute('aria-label', 'Copy text to clipboard');
-            copyButton.addEventListener('click', () => {
+            const copyBtn = document.createElement('button');
+            copyBtn.type = 'button';
+            copyBtn.className = 'copy-btn';
+            copyBtn.setAttribute('aria-label', 'Copy text to clipboard');
+            copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M5 11H3.5A1.5 1.5 0 012 9.5V3.5A1.5 1.5 0 013.5 2h6A1.5 1.5 0 0111 3.5V5"/></svg>';
+            copyBtn.addEventListener('click', () => {
                 updateClipboard(fullText);
             });
-        }
 
-        // Append elements to the shadow DOM
-        container.appendChild(previewSpan);
-        container.appendChild(fullTextSpan);
-
-        if (button && copyButton) {
-            container.appendChild(button);
-            container.appendChild(copyButton);
+            container.appendChild(toggleBtn);
+            container.appendChild(copyBtn);
         }
 
         this.shadowRoot.appendChild(container);
