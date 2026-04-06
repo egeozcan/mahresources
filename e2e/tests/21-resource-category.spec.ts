@@ -256,3 +256,36 @@ test.describe('Resource Category Custom Template Rendering', () => {
     }
   });
 });
+
+test.describe('Default Category Protection', () => {
+  test('should not show delete button on the default category page', async ({ page, apiClient }) => {
+    // Find the default category (named "Default")
+    const categories = await apiClient.getResourceCategories();
+    const defaultCat = categories.find((c: any) => c.Name === 'Default');
+    expect(defaultCat, 'Default category should exist').toBeTruthy();
+
+    await page.goto(`/resourceCategory?id=${defaultCat.ID}`);
+    await page.waitForLoadState('load');
+
+    // The page should render without a delete button/form
+    const deleteButton = page.locator('button:has-text("Delete"), input[value="Delete"]');
+    await expect(deleteButton).not.toBeVisible();
+  });
+
+  test('should show delete button on non-default category page', async ({ resourceCategoryPage, page }) => {
+    const catId = await resourceCategoryPage.create(
+      'Deletable Category',
+      'This category should have a delete button'
+    );
+
+    await page.goto(`/resourceCategory?id=${catId}`);
+    await page.waitForLoadState('load');
+
+    // Non-default categories should have a delete action
+    const deleteButton = page.locator('button:has-text("Delete"), input[value="Delete"]');
+    await expect(deleteButton).toBeVisible();
+
+    // Cleanup
+    await resourceCategoryPage.delete(catId);
+  });
+});
