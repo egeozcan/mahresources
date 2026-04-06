@@ -109,7 +109,7 @@ func ResourceCategoryContextProvider(context *application_context.MahresourcesCo
 			return addErrContext(err, baseContext)
 		}
 
-		return pongo2.Context{
+		result := pongo2.Context{
 			"pageTitle":        "Resource Category: " + resourceCategory.Name,
 			"prefix":           "Resource Category",
 			"resourceCategory": resourceCategory,
@@ -118,13 +118,19 @@ func ResourceCategoryContextProvider(context *application_context.MahresourcesCo
 				Name: "Edit",
 				Url:  "/resourceCategory/edit?id=" + strconv.Itoa(int(query.ID)),
 			},
-			"deleteAction": template_entities.Entry{
+			"mainEntity":     resourceCategory,
+			"mainEntityType": "resourceCategory",
+		}
+
+		// Only show delete action for non-default categories
+		if resourceCategory.ID != context.DefaultResourceCategoryID {
+			result["deleteAction"] = template_entities.Entry{
 				Name: "Delete",
 				Url:  "/v1/resourceCategory/delete",
 				ID:   resourceCategory.ID,
-			},
-			"mainEntity":     resourceCategory,
-			"mainEntityType": "resourceCategory",
-		}.Update(baseContext)
+			}
+		}
+
+		return result.Update(baseContext)
 	}
 }

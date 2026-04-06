@@ -502,6 +502,8 @@ func resolveDefaultResourceCategory(db *gorm.DB, dbType string) uint {
 	// 2. No "Default" category exists. Create one with ID 1 if possible.
 	if dbType == constants.DbTypePosgres {
 		db.Exec("INSERT INTO resource_categories (id, name, description, created_at, updated_at) VALUES (1, 'Default', 'Default resource category.', NOW(), NOW()) ON CONFLICT (id) DO NOTHING")
+		// Advance the sequence past 1 so the next auto-ID insert doesn't collide.
+		db.Exec("SELECT setval(pg_get_serial_sequence('resource_categories', 'id'), GREATEST(nextval(pg_get_serial_sequence('resource_categories', 'id')), (SELECT COALESCE(MAX(id), 0) + 1 FROM resource_categories)))")
 	} else {
 		db.Exec("INSERT OR IGNORE INTO resource_categories (id, name, description, created_at, updated_at) VALUES (1, 'Default', 'Default resource category.', datetime('now'), datetime('now'))")
 	}
