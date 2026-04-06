@@ -927,7 +927,6 @@ components:
                 resourceCategory:
                     $ref: '#/components/schemas/ResourceCategory'
                 resourceCategoryId:
-                    nullable: true
                     type: integer
                 series:
                     $ref: '#/components/schemas/Series'

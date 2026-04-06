@@ -66,7 +66,14 @@ func createTestContext(t *testing.T) *MahresourcesContext {
 	sqlDB, _ := db.DB()
 	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
 
-	return NewMahresourcesContext(fs, db, readOnlyDB, config)
+	ctx := NewMahresourcesContext(fs, db, readOnlyDB, config)
+
+	// Ensure default resource category exists
+	defaultRC := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}
+	defaultRC.ID = 1
+	db.FirstOrCreate(defaultRC, 1)
+
+	return ctx
 }
 
 func getMeTheFileOrPanic(path string) io.ReadSeeker {
@@ -156,6 +163,11 @@ func TestAddResource_ConcurrentSameHash(t *testing.T) {
 	if testCtx == nil {
 		t.Fatal("Failed to create test context")
 	}
+
+	// Ensure default resource category exists
+	defaultRC := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}
+	defaultRC.ID = 1
+	db.FirstOrCreate(defaultRC, 1)
 
 	// Create a group to serve as owner for the resources
 	ownerGroup := &models.Group{Name: "test-owner", Description: "test owner group"}

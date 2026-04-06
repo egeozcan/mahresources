@@ -26,8 +26,8 @@ type Resource struct {
 	Category         string     `gorm:"index"`
 	ContentType      string     `gorm:"index"`
 	ContentCategory    string            `gorm:"index"`
-	ResourceCategoryId *uint             `gorm:"index" json:"resourceCategoryId"`
-	ResourceCategory   *ResourceCategory `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"resourceCategory,omitempty"`
+	ResourceCategoryId uint              `gorm:"index;not null;default:1" json:"resourceCategoryId"`
+	ResourceCategory   *ResourceCategory `gorm:"constraint:OnUpdate:CASCADE;" json:"resourceCategory,omitempty"`
 	SeriesID           *uint             `gorm:"index" json:"seriesId"`
 	Series             *Series           `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"series,omitempty"`
 	OwnMeta            types.JSON        `json:"ownMeta"`

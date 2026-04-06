@@ -102,20 +102,21 @@ func (ctx *MahresourcesContext) UpdateResourceCategory(query *query_models.Resou
 }
 
 func (ctx *MahresourcesContext) DeleteResourceCategory(resourceCategoryId uint) error {
+	if resourceCategoryId == ctx.DefaultResourceCategoryID {
+		return errors.New("cannot delete the default resource category")
+	}
+
 	var resourceCategory models.ResourceCategory
 	if err := ctx.db.First(&resourceCategory, resourceCategoryId).Error; err != nil {
 		return err
 	}
 	resourceCategoryName := resourceCategory.Name
 
-	// Wrap in a transaction so that if the Delete fails, the SET NULL on
-	// resources is rolled back (otherwise resources lose their category_id
-	// but the category still exists).
+	// Wrap in a transaction so that if the reassignment fails, nothing changes.
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
-		// Do NOT use Select(clause.Associations) — ResourceCategory's only association
-		// is Resources, and deleting a category must SET NULL (not cascade-delete them).
-		// Explicitly clear ResourceCategoryId since SQLite FK constraints don't fire reliably.
-		if err := tx.Model(&models.Resource{}).Where("resource_category_id = ?", resourceCategoryId).Update("resource_category_id", nil).Error; err != nil {
+		// Reassign resources to the default category instead of setting NULL.
+		// Done explicitly since SQLite FK constraints don't fire reliably.
+		if err := tx.Model(&models.Resource{}).Where("resource_category_id = ?", resourceCategoryId).Update("resource_category_id", ctx.DefaultResourceCategoryID).Error; err != nil {
 			return err
 		}
 

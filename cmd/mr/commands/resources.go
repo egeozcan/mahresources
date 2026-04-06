@@ -27,7 +27,7 @@ type resourceResponse struct {
 	Height             uint      `json:"Height"`
 	Hash               string    `json:"Hash"`
 	OwnerId            *uint     `json:"OwnerId"`
-	ResourceCategoryId *uint     `json:"ResourceCategoryId"`
+	ResourceCategoryId uint      `json:"ResourceCategoryId"`
 	SeriesID           *uint     `json:"SeriesID"`
 	CreatedAt          time.Time `json:"CreatedAt"`
 	UpdatedAt          time.Time `json:"UpdatedAt"`

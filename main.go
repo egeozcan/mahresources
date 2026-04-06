@@ -16,6 +16,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
+	"gorm.io/gorm"
 	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/hash_worker"
@@ -236,6 +237,24 @@ func main() {
 		}
 	}
 
+	// Pre-migration: resolve/create default resource category and backfill NULLs.
+	// This must happen before AutoMigrate adds the NOT NULL constraint on resource_category_id.
+	context.DefaultResourceCategoryID = resolveDefaultResourceCategory(db, context.Config.DbType)
+	var nullRCCount int64
+	db.Raw("SELECT count(*) FROM resources WHERE resource_category_id IS NULL").Scan(&nullRCCount)
+	if nullRCCount > 0 {
+		log.Printf("Pre-migration: backfilling %d resources with NULL resource_category_id → %d", nullRCCount, context.DefaultResourceCategoryID)
+		for {
+			result := db.Exec(
+				"UPDATE resources SET resource_category_id = ? WHERE id IN (SELECT id FROM resources WHERE resource_category_id IS NULL LIMIT 10000)",
+				context.DefaultResourceCategoryID,
+			)
+			if result.Error != nil || result.RowsAffected == 0 {
+				break
+			}
+		}
+	}
+
 	// Disable foreign keys during AutoMigrate for SQLite.
 	// SQLite can't ALTER TABLE to add constraints, so GORM recreates the table
 	// (create temp, copy, drop original, rename). The DROP fails if other tables
@@ -451,4 +470,63 @@ func main() {
 	}
 
 	log.Println("Server exited cleanly")
+}
+
+// resolveDefaultResourceCategory finds or creates the default resource category
+// and returns its ID. It checks: ID 1, then name "Default", then creates one.
+// This runs before AutoMigrate so it uses raw SQL (the table may not have the
+// NOT NULL constraint yet).
+func resolveDefaultResourceCategory(db *gorm.DB, dbType string) uint {
+	// Check if the resources table exists at all (fresh database)
+	var tableExists int64
+	if dbType == constants.DbTypePosgres {
+		db.Raw("SELECT count(*) FROM information_schema.tables WHERE table_name = 'resources'").Scan(&tableExists)
+	} else {
+		db.Raw("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='resources'").Scan(&tableExists)
+	}
+	if tableExists == 0 {
+		// Fresh database — AutoMigrate will create tables. Return 1; AddInitialData
+		// will handle creating the default category.
+		return 1
+	}
+
+	// 1. Check if category with ID 1 exists
+	var id1Exists int64
+	db.Raw("SELECT count(*) FROM resource_categories WHERE id = 1").Scan(&id1Exists)
+	if id1Exists > 0 {
+		return 1
+	}
+
+	// 2. Check if a category named "Default" exists
+	var defaultId uint
+	db.Raw("SELECT id FROM resource_categories WHERE name = 'Default' LIMIT 1").Scan(&defaultId)
+	if defaultId != 0 {
+		return defaultId
+	}
+
+	// 3. Create the default category
+	if dbType == constants.DbTypePosgres {
+		db.Exec("INSERT INTO resource_categories (id, name, description, created_at, updated_at) VALUES (1, 'Default', 'Default resource category.', NOW(), NOW()) ON CONFLICT (id) DO NOTHING")
+	} else {
+		db.Exec("INSERT OR IGNORE INTO resource_categories (id, name, description, created_at, updated_at) VALUES (1, 'Default', 'Default resource category.', datetime('now'), datetime('now'))")
+	}
+
+	// Verify it was created with ID 1 (could fail on Postgres if sequence is past 1)
+	db.Raw("SELECT count(*) FROM resource_categories WHERE id = 1").Scan(&id1Exists)
+	if id1Exists > 0 {
+		return 1
+	}
+
+	// Fallback: create without explicit ID and return whatever ID was assigned
+	if dbType == constants.DbTypePosgres {
+		var newId uint
+		db.Raw("INSERT INTO resource_categories (name, description, created_at, updated_at) VALUES ('Default', 'Default resource category.', NOW(), NOW()) RETURNING id").Scan(&newId)
+		if newId != 0 {
+			return newId
+		}
+	}
+
+	// Should not reach here, but return 1 as last resort
+	log.Println("Warning: could not resolve default resource category, using ID 1")
+	return 1
 }

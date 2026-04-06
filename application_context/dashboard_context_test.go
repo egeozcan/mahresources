@@ -47,7 +47,14 @@ func setupTestContext(t *testing.T) *MahresourcesContext {
 	config := &MahresourcesConfig{
 		DbType: constants.DbTypeSqlite,
 	}
-	return NewMahresourcesContext(nil, db, readOnlyDB, config)
+	ctx := NewMahresourcesContext(nil, db, readOnlyDB, config)
+
+	// Ensure default resource category exists
+	defaultRC := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}
+	defaultRC.ID = 1
+	db.FirstOrCreate(defaultRC, 1)
+
+	return ctx
 }
 
 // TestGetRecentActivity_NoDuplicatesForNewEntities verifies that newly created

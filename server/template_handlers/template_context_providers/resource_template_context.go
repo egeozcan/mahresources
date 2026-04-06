@@ -144,6 +144,20 @@ func ResourceCreateContextProvider(context *application_context.MahresourcesCont
 				tplContext["groups"] = groups
 				tplContext["tags"] = tags
 				tplContext["notes"] = notes
+
+				// Pre-select the resource category (from query or default)
+				rcId := resourceTpl.ResourceCategoryId
+				if rcId == 0 {
+					rcId = context.DefaultResourceCategoryID
+				}
+				if rc, rcErr := context.GetResourceCategory(rcId); rcErr == nil {
+					tplContext["resourceCategories"] = &[]*models.ResourceCategory{rc}
+				}
+			} else {
+				// Decode failed — still pre-select the default category
+				if rc, rcErr := context.GetResourceCategory(context.DefaultResourceCategoryID); rcErr == nil {
+					tplContext["resourceCategories"] = &[]*models.ResourceCategory{rc}
+				}
 			}
 
 			return tplContext
@@ -169,8 +183,8 @@ func ResourceCreateContextProvider(context *application_context.MahresourcesCont
 		tplContext["groups"] = &resource.Groups
 		tplContext["notes"] = &resource.Notes
 
-		if resource.ResourceCategoryId != nil {
-			resourceCategory, err := context.GetResourceCategory(*resource.ResourceCategoryId)
+		if resource.ResourceCategoryId != 0 {
+			resourceCategory, err := context.GetResourceCategory(resource.ResourceCategoryId)
 			if err == nil {
 				tplContext["resourceCategories"] = &[]*models.ResourceCategory{resourceCategory}
 			}

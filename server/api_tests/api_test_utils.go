@@ -90,6 +90,12 @@ func SetupTestEnv(t *testing.T) *TestContext {
 
 	appCtx := application_context.NewMahresourcesContext(fs, db, readOnlyDB, config)
 
+	// Ensure default resource category exists and set the resolved ID
+	defaultRC := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}
+	defaultRC.ID = 1
+	db.FirstOrCreate(defaultRC, 1)
+	appCtx.DefaultResourceCategoryID = defaultRC.ID
+
 	// Create request handler using the actual server setup
 	// CreateServer takes altFs as map[string]string
 	serverInstance := server.CreateServer(appCtx, fs, altFsPaths)

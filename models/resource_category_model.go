@@ -11,7 +11,7 @@ type ResourceCategory struct {
 
 	Name        string      `gorm:"uniqueIndex:unique_resource_category_name"`
 	Description string      `gorm:"index"`
-	Resources   []*Resource `gorm:"foreignKey:ResourceCategoryId;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+	Resources   []*Resource `gorm:"foreignKey:ResourceCategoryId;constraint:OnUpdate:CASCADE;"`
 
 	// CustomHeader is used in the resource category page
 	CustomHeader string `gorm:"type:text"`

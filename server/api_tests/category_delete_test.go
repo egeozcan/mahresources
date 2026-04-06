@@ -66,18 +66,25 @@ func TestDeleteResourceCategoryDoesNotDeleteResources(t *testing.T) {
 	// Verify the resource has the category
 	var check models.Resource
 	assert.NoError(t, tc.DB.First(&check, resourceID).Error)
-	assert.NotNil(t, check.ResourceCategoryId)
-	assert.Equal(t, rc.ID, *check.ResourceCategoryId)
+	assert.Equal(t, rc.ID, check.ResourceCategoryId)
 
 	// Delete the resource category
 	err = tc.AppCtx.DeleteResourceCategory(rc.ID)
 	assert.NoError(t, err)
 
-	// The resource should still exist with ResourceCategoryId set to NULL
+	// The resource should still exist with ResourceCategoryId reassigned to the default category
 	var afterDelete models.Resource
 	err = tc.DB.First(&afterDelete, resourceID).Error
 	assert.NoError(t, err,
 		"resource should still exist after its resource category is deleted")
-	assert.Nil(t, afterDelete.ResourceCategoryId,
-		"ResourceCategoryId should be set to NULL after resource category deletion")
+	assert.Equal(t, tc.AppCtx.DefaultResourceCategoryID, afterDelete.ResourceCategoryId,
+		"ResourceCategoryId should be set to the default category after resource category deletion")
+}
+
+func TestDeleteDefaultResourceCategory_Rejected(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	err := tc.AppCtx.DeleteResourceCategory(tc.AppCtx.DefaultResourceCategoryID)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot delete the default resource category")
 }

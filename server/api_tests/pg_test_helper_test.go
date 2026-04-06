@@ -81,6 +81,13 @@ func SetupPostgresTestEnv(t *testing.T) *TestContext {
 	readOnlyDB := sqlx.NewDb(sqlDB, "postgres")
 
 	appCtx := application_context.NewMahresourcesContext(fs, db, readOnlyDB, config)
+
+	// Ensure default resource category exists
+	defaultRC := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}
+	defaultRC.ID = 1
+	db.FirstOrCreate(defaultRC, 1)
+	appCtx.DefaultResourceCategoryID = defaultRC.ID
+
 	serverInstance := server.CreateServer(appCtx, fs, altFsPaths)
 
 	return &TestContext{

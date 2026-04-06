@@ -894,7 +894,7 @@ func TestResourceEditPartialJSONPreservesResourceCategoryId(t *testing.T) {
 	// Verify category is set
 	var before models.Resource
 	tc.DB.First(&before, res.ID)
-	if !assert.NotNil(t, before.ResourceCategoryId, "setup: resource should have ResourceCategoryId") {
+	if !assert.NotEqual(t, uint(0), before.ResourceCategoryId, "setup: resource should have ResourceCategoryId") {
 		return
 	}
 
@@ -908,10 +908,8 @@ func TestResourceEditPartialJSONPreservesResourceCategoryId(t *testing.T) {
 	var after models.Resource
 	tc.DB.First(&after, res.ID)
 	assert.Equal(t, "Updated", after.Description)
-	if assert.NotNil(t, after.ResourceCategoryId,
-		"Editing only description should not clear ResourceCategoryId") {
-		assert.Equal(t, rc.ID, *after.ResourceCategoryId)
-	}
+	assert.Equal(t, rc.ID, after.ResourceCategoryId,
+		"Editing only description should not clear ResourceCategoryId")
 }
 
 func TestResourceEditPartialJSONPreservesDimensions(t *testing.T) {

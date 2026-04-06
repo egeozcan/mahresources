@@ -52,7 +52,15 @@ func createCoverageTestContext(t *testing.T, cacheName string) *MahresourcesCont
 	fs := afero.NewMemMapFs()
 	sqlDB, _ := db.DB()
 	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
-	return NewMahresourcesContext(fs, db, readOnlyDB, config)
+	ctx := NewMahresourcesContext(fs, db, readOnlyDB, config)
+
+	// Ensure default resource category exists and set the resolved ID
+	defaultRC := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}
+	defaultRC.ID = 1
+	db.FirstOrCreate(defaultRC, 1)
+	ctx.DefaultResourceCategoryID = defaultRC.ID
+
+	return ctx
 }
 
 // =============================================
@@ -353,7 +361,7 @@ func TestDeleteResourceCategory_NullsResourceReferences(t *testing.T) {
 	// Create a resource with that category
 	res := &models.Resource{
 		Name:               "Categorized Resource",
-		ResourceCategoryId: &rc.ID,
+		ResourceCategoryId: rc.ID,
 	}
 	if err := ctx.db.Create(res).Error; err != nil {
 		t.Fatalf("Create resource: %v", err)
@@ -364,13 +372,14 @@ func TestDeleteResourceCategory_NullsResourceReferences(t *testing.T) {
 		t.Fatalf("DeleteResourceCategory: %v", err)
 	}
 
-	// Verify resource still exists but ResourceCategoryId is nil
+	// Verify resource still exists with ResourceCategoryId set to default
 	var resCheck models.Resource
 	if err := ctx.db.First(&resCheck, res.ID).Error; err != nil {
 		t.Fatalf("Resource should still exist: %v", err)
 	}
-	if resCheck.ResourceCategoryId != nil {
-		t.Error("Resource's ResourceCategoryId should be nil after category deletion")
+	if resCheck.ResourceCategoryId != ctx.DefaultResourceCategoryID {
+		t.Errorf("Resource's ResourceCategoryId should be %d (default) after category deletion, got %d",
+			ctx.DefaultResourceCategoryID, resCheck.ResourceCategoryId)
 	}
 }
 

@@ -51,7 +51,14 @@ func createBlockTestContext(t *testing.T) *MahresourcesContext {
 	sqlDB, _ := db.DB()
 	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
 
-	return NewMahresourcesContext(fs, db, readOnlyDB, config)
+	ctx := NewMahresourcesContext(fs, db, readOnlyDB, config)
+
+	// Ensure default resource category exists
+	defaultRC := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}
+	defaultRC.ID = 1
+	db.FirstOrCreate(defaultRC, 1)
+
+	return ctx
 }
 
 // createTestNote is a helper that creates a note for testing

@@ -187,6 +187,10 @@ type MahresourcesContext struct {
 	ftsEnabled bool
 	// pluginManager manages Lua plugin loading and hook execution
 	pluginManager *plugin_system.PluginManager
+	// DefaultResourceCategoryID is the resolved ID of the default resource category.
+	// Set at startup; used as the fallback when no category is specified and as the
+	// reassignment target when a category is deleted.
+	DefaultResourceCategoryID uint
 }
 
 func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.DB, config *MahresourcesConfig) *MahresourcesContext {
@@ -234,8 +238,9 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 			ResourceHashLock:             resourceHashLock,
 			VersionUploadLock:            versionUploadLock,
 		},
-		searchCache: searchCache,
-		icsCache:    icsCache,
+		searchCache:               searchCache,
+		icsCache:                  icsCache,
+		DefaultResourceCategoryID: 1,
 	}
 
 	// Initialize download manager with timeout config

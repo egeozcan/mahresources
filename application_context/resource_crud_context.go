@@ -244,7 +244,7 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 		resource.OriginalLocation = resourceQuery.OriginalLocation
 		resource.Category = resourceQuery.Category
 		resource.ContentCategory = resourceQuery.ContentCategory
-		resource.ResourceCategoryId = uintPtrOrNil(resourceQuery.ResourceCategoryId)
+		resource.ResourceCategoryId = ctx.resourceCategoryIdOrDefault(resourceQuery.ResourceCategoryId)
 		if resourceQuery.Width != 0 {
 			resource.Width = resourceQuery.Width
 		}
@@ -322,14 +322,14 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 			resource.Series = nil
 		}
 
-		if err := tx.Save(resource).Error; err != nil {
+		if err := tx.Save(&resource).Error; err != nil {
 			return err
 		}
 
 		// Explicitly persist OwnMeta to ensure it's saved even if GORM's
 		// Save doesn't detect the change on the JSON field
 		if resource.SeriesID != nil || seriesChanged {
-			if err := tx.Model(resource).Update("own_meta", resource.OwnMeta).Error; err != nil {
+			if err := tx.Model(&resource).Update("own_meta", resource.OwnMeta).Error; err != nil {
 				return err
 			}
 		}
@@ -419,4 +419,11 @@ func uintPtrOrNil(v uint) *uint {
 		return nil
 	}
 	return &v
+}
+
+func (ctx *MahresourcesContext) resourceCategoryIdOrDefault(v uint) uint {
+	if v == 0 {
+		return ctx.DefaultResourceCategoryID
+	}
+	return v
 }

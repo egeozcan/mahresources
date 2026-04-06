@@ -56,7 +56,14 @@ func createAdminTestContext(t *testing.T, cacheName string) *MahresourcesContext
 	fs := afero.NewMemMapFs()
 	sqlDB, _ := db.DB()
 	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
-	return NewMahresourcesContext(fs, db, readOnlyDB, config)
+	ctx := NewMahresourcesContext(fs, db, readOnlyDB, config)
+
+	// Ensure default resource category exists
+	defaultRC := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}
+	defaultRC.ID = 1
+	db.FirstOrCreate(defaultRC, 1)
+
+	return ctx
 }
 
 // ---- Task 2 tests ----
