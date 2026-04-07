@@ -444,6 +444,9 @@ func CreateResourceCategoryHandler(writer interfaces.ResourceCategoryWriter) htt
 				if !fieldWasSent("MetaSchema") {
 					editor.MetaSchema = existing.MetaSchema
 				}
+				if !fieldWasSent("AutoDetectRules") {
+					editor.AutoDetectRules = existing.AutoDetectRules
+				}
 			}
 			result, err = writer.UpdateResourceCategory(&editor)
 		} else {

@@ -56,13 +56,14 @@ func (ctx *MahresourcesContext) CreateResourceCategory(query *query_models.Resou
 	}
 
 	resourceCategory := models.ResourceCategory{
-		Name:          query.Name,
-		Description:   query.Description,
-		CustomHeader:  query.CustomHeader,
-		CustomSidebar: query.CustomSidebar,
-		CustomSummary: query.CustomSummary,
-		CustomAvatar:  query.CustomAvatar,
-		MetaSchema:    query.MetaSchema,
+		Name:            query.Name,
+		Description:     query.Description,
+		CustomHeader:    query.CustomHeader,
+		CustomSidebar:   query.CustomSidebar,
+		CustomSummary:   query.CustomSummary,
+		CustomAvatar:    query.CustomAvatar,
+		MetaSchema:      query.MetaSchema,
+		AutoDetectRules: query.AutoDetectRules,
 	}
 
 	if err := ctx.db.Create(&resourceCategory).Error; err != nil {
@@ -90,6 +91,7 @@ func (ctx *MahresourcesContext) UpdateResourceCategory(query *query_models.Resou
 	resourceCategory.CustomSummary = query.CustomSummary
 	resourceCategory.CustomAvatar = query.CustomAvatar
 	resourceCategory.MetaSchema = query.MetaSchema
+	resourceCategory.AutoDetectRules = query.AutoDetectRules
 
 	if err := ctx.db.Save(&resourceCategory).Error; err != nil {
 		return nil, friendlyUniqueError("resource category", err)

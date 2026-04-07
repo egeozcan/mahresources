@@ -112,13 +112,14 @@ func buildResourceCategory(creator *query_models.ResourceCategoryCreator) (model
 		return models.ResourceCategory{}, errors.New("resource category name must be non-empty")
 	}
 	return models.ResourceCategory{
-		Name:          creator.Name,
-		Description:   creator.Description,
-		CustomHeader:  creator.CustomHeader,
-		CustomSidebar: creator.CustomSidebar,
-		CustomSummary: creator.CustomSummary,
-		CustomAvatar:  creator.CustomAvatar,
-		MetaSchema:    creator.MetaSchema,
+		Name:            creator.Name,
+		Description:     creator.Description,
+		CustomHeader:    creator.CustomHeader,
+		CustomSidebar:   creator.CustomSidebar,
+		CustomSummary:   creator.CustomSummary,
+		CustomAvatar:    creator.CustomAvatar,
+		MetaSchema:      creator.MetaSchema,
+		AutoDetectRules: creator.AutoDetectRules,
 	}, nil
 }
 

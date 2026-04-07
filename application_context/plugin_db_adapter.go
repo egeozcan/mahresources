@@ -510,7 +510,8 @@ func resourceCategoryToMap(rc *models.ResourceCategory) map[string]any {
 		"custom_sidebar": rc.CustomSidebar,
 		"custom_summary": rc.CustomSummary,
 		"custom_avatar":  rc.CustomAvatar,
-		"meta_schema":    rc.MetaSchema,
+		"meta_schema":       rc.MetaSchema,
+		"auto_detect_rules": rc.AutoDetectRules,
 	}
 }
 
@@ -850,8 +851,9 @@ func (a *pluginDBAdapter) CreateResourceCategory(opts map[string]any) (map[strin
 		CustomHeader:  getStringOpt(opts, "custom_header"),
 		CustomSidebar: getStringOpt(opts, "custom_sidebar"),
 		CustomSummary: getStringOpt(opts, "custom_summary"),
-		CustomAvatar:  getStringOpt(opts, "custom_avatar"),
-		MetaSchema:    getStringOpt(opts, "meta_schema"),
+		CustomAvatar:    getStringOpt(opts, "custom_avatar"),
+		MetaSchema:      getStringOpt(opts, "meta_schema"),
+		AutoDetectRules: getStringOpt(opts, "auto_detect_rules"),
 	}
 	rc, err := a.ctx.CreateResourceCategory(creator)
 	if err != nil {
@@ -868,8 +870,9 @@ func (a *pluginDBAdapter) UpdateResourceCategory(id uint, opts map[string]any) (
 			CustomHeader:  getStringOpt(opts, "custom_header"),
 			CustomSidebar: getStringOpt(opts, "custom_sidebar"),
 			CustomSummary: getStringOpt(opts, "custom_summary"),
-			CustomAvatar:  getStringOpt(opts, "custom_avatar"),
-			MetaSchema:    getStringOpt(opts, "meta_schema"),
+			CustomAvatar:    getStringOpt(opts, "custom_avatar"),
+			MetaSchema:      getStringOpt(opts, "meta_schema"),
+			AutoDetectRules: getStringOpt(opts, "auto_detect_rules"),
 		},
 		ID: id,
 	}
@@ -896,8 +899,9 @@ func (a *pluginDBAdapter) PatchResourceCategory(id uint, opts map[string]any) (m
 			CustomHeader:  patchString(opts, "custom_header", rc.CustomHeader),
 			CustomSidebar: patchString(opts, "custom_sidebar", rc.CustomSidebar),
 			CustomSummary: patchString(opts, "custom_summary", rc.CustomSummary),
-			CustomAvatar:  patchString(opts, "custom_avatar", rc.CustomAvatar),
-			MetaSchema:    patchString(opts, "meta_schema", rc.MetaSchema),
+			CustomAvatar:    patchString(opts, "custom_avatar", rc.CustomAvatar),
+			MetaSchema:      patchString(opts, "meta_schema", rc.MetaSchema),
+			AutoDetectRules: patchString(opts, "auto_detect_rules", rc.AutoDetectRules),
 		},
 		ID: id,
 	}
