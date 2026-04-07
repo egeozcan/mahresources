@@ -145,19 +145,15 @@ func ResourceCreateContextProvider(context *application_context.MahresourcesCont
 				tplContext["tags"] = tags
 				tplContext["notes"] = notes
 
-				// Pre-select the resource category (from query or default)
+				// Pre-select the resource category only if explicitly specified
 				rcId := resourceTpl.ResourceCategoryId
-				if rcId == 0 {
-					rcId = context.DefaultResourceCategoryID
-				}
-				if rc, rcErr := context.GetResourceCategory(rcId); rcErr == nil {
-					tplContext["resourceCategories"] = &[]*models.ResourceCategory{rc}
+				if rcId != 0 {
+					if rc, rcErr := context.GetResourceCategory(rcId); rcErr == nil {
+						tplContext["resourceCategories"] = &[]*models.ResourceCategory{rc}
+					}
 				}
 			} else {
-				// Decode failed — still pre-select the default category
-				if rc, rcErr := context.GetResourceCategory(context.DefaultResourceCategoryID); rcErr == nil {
-					tplContext["resourceCategories"] = &[]*models.ResourceCategory{rc}
-				}
+				// Decode failed — no pre-selection for new resources
 			}
 
 			return tplContext

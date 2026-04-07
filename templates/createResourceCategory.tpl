@@ -86,6 +86,8 @@
         {% include "/partials/form/schemaEditorModal.tpl" with textareaId="rcMetaSchemaTextarea" %}
     </div>
 
+    {% include "/partials/form/createFormTextareaInput.tpl" with title="Auto-Detect Rules" name="AutoDetectRules" value=resourceCategory.AutoDetectRules big=true %}
+
     {% include "/partials/form/createFormSubmit.tpl" %}
 </form>
 {% endblock %}
