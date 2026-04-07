@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
@@ -334,6 +335,16 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 	h.Write(fileBytes)
 	hash := hex.EncodeToString(h.Sum(nil))
 
+	// Decode image dimensions for auto-detect rules (same as AddResource)
+	var width, height int
+	if strings.HasPrefix(fileMime.String(), "image/") {
+		if img, _, decErr := image.Decode(bytes.NewReader(fileBytes)); decErr == nil {
+			bounds := img.Bounds()
+			width = bounds.Max.X
+			height = bounds.Max.Y
+		}
+	}
+
 	hookData := map[string]any{
 		"id":          float64(0),
 		"name":        fileName,
@@ -371,6 +382,8 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		Description:        resourceQuery.Description,
 		OriginalLocation:   resourceQuery.OriginalLocation,
 		OriginalName:       resourceQuery.OriginalName,
+		Width:              uint(width),
+		Height:             uint(height),
 	}
 
 	tx := ctx.db.Begin()
