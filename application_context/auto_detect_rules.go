@@ -79,3 +79,87 @@ func ValidateAutoDetectRules(rules string) error {
 
 	return nil
 }
+
+// Match checks if a resource matches this rule.
+// Returns (matched, evaluatedCount). evaluatedCount counts fields that actually
+// participated in the match (not skipped due to missing dimensions).
+func (r *AutoDetectRule) Match(contentType string, width, height uint, fileSize int64) (bool, int) {
+	found := false
+	for _, ct := range r.ContentTypes {
+		if ct == contentType {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return false, 0
+	}
+	evaluated := 1 // contentTypes
+
+	hasDimensions := width > 0 && height > 0
+
+	if r.Width != nil {
+		if hasDimensions {
+			evaluated++
+			if !r.Width.contains(float64(width)) {
+				return false, 0
+			}
+		}
+	}
+
+	if r.Height != nil {
+		if hasDimensions {
+			evaluated++
+			if !r.Height.contains(float64(height)) {
+				return false, 0
+			}
+		}
+	}
+
+	if r.AspectRatio != nil {
+		if hasDimensions {
+			evaluated++
+			if !r.AspectRatio.contains(float64(width) / float64(height)) {
+				return false, 0
+			}
+		}
+	}
+
+	if r.FileSize != nil {
+		evaluated++
+		if !r.FileSize.contains(float64(fileSize)) {
+			return false, 0
+		}
+	}
+
+	if r.PixelCount != nil {
+		if hasDimensions {
+			evaluated++
+			if !r.PixelCount.contains(float64(width) * float64(height)) {
+				return false, 0
+			}
+		}
+	}
+
+	if r.BytesPerPixel != nil {
+		if hasDimensions {
+			evaluated++
+			pixels := float64(width) * float64(height)
+			if !r.BytesPerPixel.contains(float64(fileSize) / pixels) {
+				return false, 0
+			}
+		}
+	}
+
+	return true, evaluated
+}
+
+func (r *RangeRule) contains(value float64) bool {
+	if r.Min != nil && value < *r.Min {
+		return false
+	}
+	if r.Max != nil && value > *r.Max {
+		return false
+	}
+	return true
+}
