@@ -43,6 +43,13 @@ function isEmptyValue(val: any): boolean {
 }
 
 const LONG_STRING_THRESHOLD = 80;
+const MAX_RENDER_DEPTH = 3;
+
+declare global {
+  interface Window {
+    renderJsonTable?: (data: any) => HTMLElement;
+  }
+}
 
 function classifyAsLong(field: DisplayField): boolean {
   if (field.type === 'array') return true;
@@ -350,13 +357,13 @@ export class SchemaDisplayMode extends LitElement {
       // Array of objects — render each as a key-value sub-grid
       return html`${val.map((item, i) => html`
         ${i > 0 ? html`<hr class="my-2 border-stone-100">` : nothing}
-        ${this._renderObjectValue(item)}
+        ${this._renderObjectValue(item, 0)}
       `)}`;
     }
 
     // Object — render as inline key-value grid
     if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
-      return this._renderObjectValue(val);
+      return this._renderObjectValue(val, 0);
     }
 
     // Default — plain string
@@ -367,22 +374,57 @@ export class SchemaDisplayMode extends LitElement {
     return String(val ?? '');
   }
 
-  private _renderObjectValue(obj: Record<string, any>): TemplateResult {
+  private _renderObjectValue(obj: Record<string, any>, depth: number): TemplateResult {
     const entries = Object.entries(obj).filter(([, v]) => !isEmptyValue(v));
     if (entries.length === 0) return html`<span class="text-stone-300">\u2014</span>`;
     return html`
       <div class="grid gap-x-4 gap-y-1 bg-stone-50 rounded p-2" style="grid-template-columns: auto 1fr;">
-        ${entries.map(([k, v]) => {
-          const display = typeof v === 'object' && v !== null
-            ? JSON.stringify(v)
-            : String(v);
-          return html`
+        ${entries.map(([k, v]) => html`
             <span class="text-[10px] font-mono uppercase text-stone-400 tracking-wider self-baseline" style="letter-spacing:0.05em;">${titleCase(k)}</span>
-            <span class="text-sm text-stone-700 break-all self-baseline">${display}</span>
-          `;
-        })}
+            <span class="text-sm text-stone-700 break-all self-baseline">${this._renderNestedValue(v, depth)}</span>
+          `)}
       </div>
     `;
+  }
+
+  private _renderNestedValue(v: any, depth: number): TemplateResult | string {
+    if (v === null || v === undefined) return html`<span class="text-stone-300">\u2014</span>`;
+
+    // Scalars
+    if (typeof v !== 'object') {
+      if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+      return String(v);
+    }
+
+    // At max depth, delegate to renderJsonTable if available, else JSON.stringify
+    if (depth >= MAX_RENDER_DEPTH) {
+      if (window.renderJsonTable) {
+        const container = document.createElement('div');
+        container.appendChild(window.renderJsonTable(v));
+        return html`${container}`;
+      }
+      return JSON.stringify(v);
+    }
+
+    // Array
+    if (Array.isArray(v)) {
+      if (v.length === 0) return html`<span class="text-stone-300">\u2014</span>`;
+      const allScalar = v.every(item => typeof item !== 'object' || item === null);
+      if (allScalar) {
+        return html`${v.map(item => html`<span
+          class="inline-block text-xs px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 font-medium mr-1 mb-1"
+        >${String(item)}</span>`)}`;
+      }
+      return html`${v.map((item, i) => html`
+        ${i > 0 ? html`<hr class="my-2 border-stone-100">` : nothing}
+        ${typeof item === 'object' && item !== null
+          ? this._renderObjectValue(item, depth + 1)
+          : html`<span>${String(item)}</span>`}
+      `)}`;
+    }
+
+    // Object
+    return this._renderObjectValue(v, depth + 1);
   }
 
   private _renderPluginDisplay(field: DisplayField): TemplateResult {
