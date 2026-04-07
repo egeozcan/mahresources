@@ -22,6 +22,7 @@ export interface ResourceCategory extends Entity {
   CustomSummary?: string;
   CustomAvatar?: string;
   MetaSchema?: string;
+  AutoDetectRules?: string;
 }
 
 export interface NoteType extends Entity {
@@ -76,6 +77,7 @@ export interface Resource extends Entity {
   Meta?: Record<string, unknown>;
   seriesId?: number;
   ownMeta?: Record<string, unknown>;
+  resourceCategoryId?: number;
 }
 
 export interface SearchResult {
@@ -253,6 +255,7 @@ export class ApiClient {
       CustomSummary?: string;
       CustomAvatar?: string;
       MetaSchema?: string;
+      AutoDetectRules?: string;
     }
   ): Promise<ResourceCategory> {
     const formData = new URLSearchParams();
@@ -263,6 +266,7 @@ export class ApiClient {
     if (options?.CustomSummary) formData.append('CustomSummary', options.CustomSummary);
     if (options?.CustomAvatar) formData.append('CustomAvatar', options.CustomAvatar);
     if (options?.MetaSchema) formData.append('MetaSchema', options.MetaSchema);
+    if (options?.AutoDetectRules) formData.append('AutoDetectRules', options.AutoDetectRules);
 
     return this.postRetry<ResourceCategory>(`${this.baseUrl}/v1/resourceCategory`, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
