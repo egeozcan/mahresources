@@ -56,6 +56,60 @@ test.describe('Auto-detect resource category', () => {
     }
   });
 
+  test('browser form submission auto-detects category for PNG upload', async ({ page, apiClient }) => {
+    // Navigate to the resource create form
+    await page.goto('/resource/new');
+    await page.waitForLoadState('load');
+
+    // Attach a PNG file (unique image not used by other tests)
+    const testFilePath = path.join(__dirname, '../test-assets/sample-image-39.png');
+    const fileInput = page.locator('input[type="file"]');
+    await fileInput.setInputFiles(testFilePath);
+
+    // Fill in a resource name
+    const resourceName = `auto-detect-browser-${testRunId}`;
+    await page.locator('input[name="Name"]').fill(resourceName);
+
+    // Do NOT select a category — leave it empty for auto-detection
+
+    // Submit the form
+    await page.locator('button[type="submit"]:has-text("Save")').click();
+    await page.waitForLoadState('load');
+
+    // Wait for any redirects to settle
+    await page.waitForTimeout(1000);
+
+    // Extract the resource ID from the redirect URL
+    const url = page.url();
+    let resourceId = 0;
+    if (url.includes('/resource?id=')) {
+      resourceId = parseInt(new URL(url).searchParams.get('id') || '0');
+    } else if (url.includes('/resources')) {
+      // If redirected to list, find the resource
+      const resourceLink = page.locator(`a:has-text("${resourceName}")`).first();
+      if (await resourceLink.isVisible()) {
+        await resourceLink.click();
+        await page.waitForLoadState('load');
+        resourceId = parseInt(new URL(page.url()).searchParams.get('id') || '0');
+      }
+    }
+
+    expect(resourceId, 'Should have been redirected to the created resource').toBeGreaterThan(0);
+
+    try {
+      // Verify the category is displayed on the resource detail page
+      // The template shows the category name as a link under "Resource Category"
+      const categoryLink = page.locator(`a:has-text("Auto PNG ${testRunId}")`);
+      await expect(categoryLink).toBeVisible({ timeout: 5000 });
+
+      // Also verify via API that the resourceCategoryId matches
+      const detail = await apiClient.getResource(resourceId);
+      expect(detail.resourceCategoryId).toBe(categoryId);
+    } finally {
+      await apiClient.deleteResource(resourceId);
+    }
+  });
+
   test('category autocompleter allows empty selection on resource create form', async ({ page }) => {
     await page.goto('/resource/new');
     await page.waitForLoadState('load');

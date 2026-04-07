@@ -1,8 +1,13 @@
 package application_context
 
 import (
+	"bytes"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"mahresources/models"
+	"mahresources/models/query_models"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
@@ -243,4 +248,91 @@ func TestDetectResourceCategory_SkippedFieldsDontCountForTiebreak(t *testing.T) 
 
 	got := ctx.detectResourceCategory("application/pdf", 0, 0, 50000)
 	assert.Equal(t, withFileSize.ID, got)
+}
+
+// --- AddLocalResource auto-detect test ---
+
+// setupLocalResourceDetectContext creates a context with enough models migrated
+// for AddLocalResource to work end-to-end (it touches ResourceVersion, Tags,
+// Groups, Notes, Series, etc. in addition to Resource and ResourceCategory).
+func setupLocalResourceDetectContext(t *testing.T) *MahresourcesContext {
+	t.Helper()
+	dbName := fmt.Sprintf("file:%s?mode=memory&cache=private", t.Name())
+	db, err := gorm.Open(sqlite.Open(dbName), &gorm.Config{})
+	require.NoError(t, err)
+
+	err = db.AutoMigrate(
+		&models.Resource{},
+		&models.ResourceCategory{},
+		&models.ResourceVersion{},
+		&models.Tag{},
+		&models.Note{},
+		&models.Group{},
+		&models.Series{},
+		&models.LogEntry{},
+		&models.Category{},
+		&models.NoteType{},
+		&models.PluginKV{},
+	)
+	require.NoError(t, err)
+
+	defaultRC := &models.ResourceCategory{Name: "Default", Description: "Default"}
+	defaultRC.ID = 1
+	db.FirstOrCreate(defaultRC, 1)
+
+	fs := afero.NewMemMapFs()
+	sqlDB, _ := db.DB()
+	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
+	ctx := NewMahresourcesContext(fs, db, readOnlyDB, &MahresourcesConfig{})
+	ctx.DefaultResourceCategoryID = defaultRC.ID
+	return ctx
+}
+
+// createTestPNG returns PNG bytes for a small image with the given dimensions.
+func createTestPNG(t *testing.T, width, height int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			img.Set(x, y, color.RGBA{R: uint8((x * 7) % 256), G: uint8((y * 13) % 256), B: 100, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	require.NoError(t, png.Encode(&buf, img))
+	return buf.Bytes()
+}
+
+func TestAddLocalResource_AutoDetectsCategory(t *testing.T) {
+	ctx := setupLocalResourceDetectContext(t)
+
+	// Create a resource category with auto-detect rules for PNGs
+	cat := models.ResourceCategory{Name: "PNG Images", AutoDetectRules: `{"contentTypes":["image/png"],"priority":10}`}
+	require.NoError(t, ctx.db.Create(&cat).Error)
+
+	// Set up an alt filesystem (AddLocalResource calls GetFsForStorageLocation
+	// with &PathName; when PathName is non-empty it looks in altFileSystems)
+	altFs := afero.NewMemMapFs()
+	ctx.altFileSystems["testfs"] = altFs
+
+	// Write a valid PNG file to the alt filesystem
+	pngBytes := createTestPNG(t, 80, 60)
+	require.NoError(t, afero.WriteFile(altFs, "/test-image.png", pngBytes, 0644))
+
+	// Call AddLocalResource with ResourceCategoryId=0 (should trigger auto-detect)
+	resource, err := ctx.AddLocalResource("test-image.png", &query_models.ResourceFromLocalCreator{
+		ResourceQueryBase: query_models.ResourceQueryBase{
+			Name:               "Auto Detect Local PNG",
+			ResourceCategoryId: 0,
+		},
+		LocalPath: "/test-image.png",
+		PathName:  "testfs",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resource)
+
+	// Verify the resource got the auto-detected category, not the default
+	assert.Equal(t, cat.ID, resource.ResourceCategoryId, "AddLocalResource should auto-detect category for PNG")
+	assert.Equal(t, "image/png", resource.ContentType)
+	assert.Equal(t, uint(80), resource.Width)
+	assert.Equal(t, uint(60), resource.Height)
 }

@@ -940,6 +940,8 @@ components:
             type: object
         ResourceCategory:
             properties:
+                AutoDetectRules:
+                    type: string
                 CreatedAt:
                     format: date-time
                     readOnly: true
@@ -972,6 +974,8 @@ components:
             type: object
         ResourceCategoryEditor:
             properties:
+                AutoDetectRules:
+                    type: string
                 CustomAvatar:
                     type: string
                 CustomHeader:
