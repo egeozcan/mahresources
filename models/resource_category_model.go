@@ -23,6 +23,8 @@ type ResourceCategory struct {
 	CustomAvatar string `gorm:"type:text"`
 	// MetaSchema is a JSON schema for the meta field of resources in this category
 	MetaSchema string `gorm:"type:text"`
+	// AutoDetectRules is a JSON rule set for auto-detecting this category on upload
+	AutoDetectRules string `gorm:"type:text"`
 }
 
 func (c ResourceCategory) GetId() uint {
