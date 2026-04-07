@@ -2,7 +2,7 @@
 
 ## Summary
 
-Automatically assign a `ResourceCategory` to uploaded resources based on their shape — content type, dimensions, file size, and derived signals like aspect ratio. Categories define detection rules alongside their existing `MetaSchema`. Detection fires only when the uploader doesn't specify a category.
+Automatically assign a `ResourceCategory` to uploaded resources based on their shape — content type, dimensions, file size, and derived signals like aspect ratio. Categories define detection rules alongside their existing `MetaSchema`. Detection fires when the uploader doesn't specify a category, or specifies the default category.
 
 ## Data Model
 
@@ -16,7 +16,7 @@ One new text column. No new columns on `Resource`. No new tables.
 
 ### Rule JSON schema
 
-All fields optional. All conditions are AND — a resource must satisfy every specified field to match.
+`contentTypes` is **required** — it is the primary gate that prevents rules from becoming unintended catchalls. All other fields are optional. All conditions are AND — a resource must satisfy every specified field to match.
 
 ```json
 {
@@ -33,7 +33,7 @@ All fields optional. All conditions are AND — a resource must satisfy every sp
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `contentTypes` | `[]string` | Resource's ContentType must be in this list |
+| `contentTypes` | `[]string` | **Required.** Resource's ContentType must be in this list |
 | `width` | `{min?, max?}` | Resource width in pixels (inclusive bounds) |
 | `height` | `{min?, max?}` | Resource height in pixels (inclusive bounds) |
 | `aspectRatio` | `{min?, max?}` | float64(Width) / float64(Height) |
@@ -49,30 +49,36 @@ All derived from data already available at upload time — no new computation be
 | Signal | Source | Available for |
 |--------|--------|---------------|
 | `ContentType` | `mimetype.DetectReader` (already computed) | All resources |
-| `Width`, `Height` | `image.Decode` (already computed for images) | Images only |
+| `Width`, `Height` | `image.Decode` (already computed) | Decodable images only (see note) |
 | `FileSize` | `fileInfo.Size()` (already computed) | All resources |
-| `aspectRatio` | `Width / Height` (derived) | Images only (Width > 0 && Height > 0) |
-| `pixelCount` | `Width * Height` (derived) | Images only |
-| `bytesPerPixel` | `FileSize / pixelCount` (derived) | Images only |
+| `aspectRatio` | `Width / Height` (derived) | Decodable images only (Width > 0 && Height > 0) |
+| `pixelCount` | `Width * Height` (derived) | Decodable images only |
+| `bytesPerPixel` | `FileSize / pixelCount` (derived) | Decodable images only |
+
+**Dimension availability note:** Go's `image.Decode` supports JPEG, PNG, GIF, WebP, BMP, and TIFF. Formats like HEIC and SVG are detected by `mimetype` (so `contentTypes` matching works) but do **not** get dimensions at upload time. For those formats, dimension-dependent rule fields are skipped (non-applicable). The byte-buffer upload path (`AddResource` ~line 357) also does not decode images — only the file-based upload path (~line 703) does. Detection should run in both paths, but dimension-based rules only evaluate when dimensions are actually available.
+
+This means rules for HEIC, SVG, or resources uploaded via the byte-buffer path should rely on `contentTypes` and `fileSize` only — not dimension-derived fields.
 
 ## Detection Logic
 
 ### When detection fires
 
-Only when `ResourceCategoryId == 0` (the uploader did not specify a category). If any explicit category is provided — including the default — detection is skipped entirely and no DB query for rules occurs.
+When `ResourceCategoryId == 0` (not specified) **or** `ResourceCategoryId == DefaultResourceCategoryID` (the default). If an explicit non-default category is provided, detection is skipped entirely and no DB query for rules occurs.
+
+**Why include the default:** The browser upload form (`createResource.tpl`) pre-selects the default category and requires a selection (`min=1` on the autocompleter). This means the primary HTML upload path always sends a category ID. If detection only fired on `0`, it would never activate from the browser. Treating the default as "auto-detect eligible" is safe: if rules find a better match the resource gets a more specific category; if no rules match, it stays on Default — the same outcome as before.
 
 ### Evaluation flow
 
 1. Query `ResourceCategory` rows where `auto_detect_rules != ''`
 2. Parse each category's rules JSON
 3. Match the resource's properties against each rule:
-   - `contentTypes`: resource's ContentType must be in the array
+   - `contentTypes` (**required**): resource's ContentType must be in the array. If it doesn't match, the rule fails immediately — no other fields are evaluated.
    - Numeric range fields: resource's value must be >= `min` (if set) and <= `max` (if set)
-   - **Non-applicable signals are skipped, not failed.** If a resource has no dimensions (Width=0 or Height=0), any rule field that depends on dimensions (`width`, `height`, `aspectRatio`, `pixelCount`, `bytesPerPixel`) is treated as not specified — it doesn't cause a match failure.
+   - **Non-applicable signals are skipped, not failed.** If a resource has no dimensions (Width=0 or Height=0), any rule field that depends on dimensions (`width`, `height`, `aspectRatio`, `pixelCount`, `bytesPerPixel`) is treated as not specified — it doesn't cause a match failure. However, skipped fields do not count toward the specificity tiebreaker.
 4. Collect all matching categories
 5. Select winner:
    - Highest `priority`
-   - Tie: most rule fields specified (more specific wins)
+   - Tie: most rule fields that **actually evaluated** (not skipped) — more specific wins
    - Still tied: lowest category ID (deterministic)
 6. If no category matches, fall back to `DefaultResourceCategoryID`
 
@@ -84,7 +90,7 @@ Called from the two upload paths in `resource_upload_context.go`:
 - `AddResource` (~line 367) — byte-buffer upload path
 - File-based upload path (~line 730)
 
-Both currently call `resourceCategoryIdOrDefault`. The change: when `ResourceCategoryId == 0`, call `detectResourceCategory` instead of returning the default directly. When `ResourceCategoryId != 0`, use it as-is (no change, no DB query).
+Both currently call `resourceCategoryIdOrDefault`. The change: when `ResourceCategoryId == 0` or `== DefaultResourceCategoryID`, call `detectResourceCategory`. If detection returns a match, use it; otherwise fall back to `DefaultResourceCategoryID`. When `ResourceCategoryId` is any other non-zero value, use it as-is (no change, no DB query).
 
 ### No cache
 
@@ -99,11 +105,11 @@ Detection fires on upload only. No retroactive re-classification of existing res
 When a `ResourceCategory` is created or updated with non-empty `AutoDetectRules`:
 
 1. **Valid JSON** — must parse as an object
-2. **Known fields only** — reject unknown keys (catches typos like `"contenTypes"`)
-3. **Type correctness** — `contentTypes` must be a string array, numeric fields must be `{"min": number, "max": number}` objects with at least one bound, `priority` must be an integer
-4. **Sensibility warnings** — if the rule specifies dimension-dependent fields but `contentTypes` only contains types that never have dimensions (e.g. `["application/pdf", "text/csv"]`), return a warning. The category still saves — the warning is informational.
+2. **`contentTypes` required** — must be a non-empty string array. This is the primary gate that prevents rules from becoming unintended catchalls.
+3. **Known fields only** — reject unknown keys (catches typos like `"contenTypes"`)
+4. **Type correctness** — numeric fields must be `{"min": number, "max": number}` objects with at least one bound, `priority` must be an integer
 
-Validation lives in the `CreateResourceCategory` / `EditResourceCategory` context functions, same layer as other field validation.
+Validation lives in the `CreateResourceCategory` / `EditResourceCategory` context functions, same layer as other field validation. Validation errors are hard errors — the category does not save.
 
 ## UI Changes
 
@@ -121,8 +127,6 @@ One new textarea after the MetaSchema field:
 
 No rule builder UI, no visual editor — raw JSON textarea matching the MetaSchema pattern.
 
-Sensibility warnings display as a non-blocking note below the textarea on save.
-
 ### `displayResourceCategory.tpl`
 
 No changes. Auto-detect rules are configuration, not display content.
@@ -138,24 +142,25 @@ No changes. Auto-detect rules are configuration, not display content.
 ### Unit tests
 
 - Detection function: matching logic for each field type
-- Priority resolution and tie-breaking (most specific, then lowest ID)
-- Non-applicable field skipping (PDF matching a rule with dimension fields)
+- Priority resolution and tie-breaking (most evaluated fields, then lowest ID)
+- Non-applicable field skipping: skipped fields don't count toward specificity tiebreaker
 - No-match fallback to default category
-- Rule validation: valid rules, invalid JSON, unknown fields, type errors, sensibility warnings
+- Rule validation: valid rules, invalid JSON, unknown fields, type errors, missing contentTypes
 
 ### API tests
 
 - Create category with rules, upload resource without specifying category → correct category assigned
-- Upload resource with explicit category → detection skipped, explicit category used
-- Rule validation on category create/update (invalid JSON, unknown fields)
+- Upload resource with default category → detection fires, correct category assigned
+- Upload resource with explicit non-default category → detection skipped, explicit category used
+- Rule validation on category create/update (invalid JSON, unknown fields, missing contentTypes)
 - Partial update preserves AutoDetectRules when not sent
 - Clearing AutoDetectRules with empty string
 
 ### E2E tests
 
 - Create category with auto-detect rules via the form
-- Upload resource without specifying category → lands in correct category
-- Upload resource with explicit category → not overridden
+- Upload resource with default category → auto-detected into correct category
+- Upload resource with explicit non-default category → not overridden
 
 ## Examples
 
@@ -163,7 +168,7 @@ No changes. Auto-detect rules are configuration, not display content.
 
 ```json
 {
-  "contentTypes": ["image/jpeg", "image/heic", "image/webp"],
+  "contentTypes": ["image/jpeg", "image/webp"],
   "pixelCount": { "min": 2000000 },
   "bytesPerPixel": { "max": 6 },
   "priority": 10
@@ -172,7 +177,16 @@ No changes. Auto-detect rules are configuration, not display content.
 
 MetaSchema: `{"type":"object","properties":{"camera":{"type":"string"},"location":{"type":"string"}}}`
 
-Matches: large JPEGs/HEICs typical of camera photos. The `bytesPerPixel` cap excludes unusually heavy images (scans).
+Matches: large JPEGs/WebPs typical of camera photos. The `bytesPerPixel` cap excludes unusually heavy images (scans).
+
+Note: HEIC is omitted because Go's `image.Decode` doesn't support it — dimension-based rules would be skipped, making every HEIC match regardless of size. A separate content-type-only rule could catch HEICs if desired:
+
+```json
+{
+  "contentTypes": ["image/heic"],
+  "priority": 8
+}
+```
 
 ### "Screenshot" category
 
@@ -191,14 +205,22 @@ Matches: PNGs at common screen aspect ratios (16:10 to 16:9), at least 1MP. Lowe
 
 ```json
 {
-  "contentTypes": ["image/png", "image/svg+xml"],
+  "contentTypes": ["image/png"],
   "width": { "max": 512 },
   "fileSize": { "max": 100000 },
   "priority": 8
 }
 ```
 
-Matches: small PNGs and SVGs under 100KB.
+Matches: small PNGs under 512px wide and 100KB. SVGs are excluded because they don't get dimensions via `image.Decode` — a separate content-type-only rule could catch them:
+
+```json
+{
+  "contentTypes": ["image/svg+xml"],
+  "fileSize": { "max": 100000 },
+  "priority": 8
+}
+```
 
 ### "Video" category
 
