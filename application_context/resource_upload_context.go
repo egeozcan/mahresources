@@ -375,7 +375,7 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		Category:           resourceQuery.Category,
 		ContentType:        fileMime.String(),
 		ContentCategory:    resourceQuery.ContentCategory,
-		ResourceCategoryId: ctx.resourceCategoryIdOrDefault(resourceQuery.ResourceCategoryId),
+		ResourceCategoryId: ctx.resolveResourceCategory(resourceQuery.ResourceCategoryId, fileMime.String(), uint(width), uint(height), int64(len(fileBytes))),
 		FileSize:           int64(len(fileBytes)),
 		OwnerId:            uintPtrOrNil(resourceQuery.OwnerId),
 		StorageLocation:    &resourceQuery.PathName,
@@ -559,6 +559,32 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 
 	hash := hex.EncodeToString(h.Sum(nil))
 
+	// Pre-compute image dimensions and file size before acquiring lock/transaction,
+	// so that resolveResourceCategory can query the DB without conflicting with
+	// the transaction's connection.
+	preWidth := 0
+	preHeight := 0
+	if strings.HasPrefix(fileMime.String(), "image/") {
+		if _, err = tempFile.Seek(0, io.SeekStart); err != nil {
+			return nil, err
+		}
+		if img, _, decErr := image.Decode(tempFile); decErr == nil {
+			bounds := img.Bounds()
+			preWidth = bounds.Max.X
+			preHeight = bounds.Max.Y
+		}
+	}
+	preFileInfo, err := tempFile.Stat()
+	if err != nil {
+		return nil, err
+	}
+	preFileSize := preFileInfo.Size()
+	resolvedCategoryID := ctx.resolveResourceCategory(resourceQuery.ResourceCategoryId, fileMime.String(), uint(preWidth), uint(preHeight), preFileSize)
+
+	if _, err = tempFile.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+
 	// Acquire per-hash lock to prevent race condition where two simultaneous uploads
 	// with the same hash both pass the "existing resource" check before either commits
 	ctx.locks.ResourceHashLock.Acquire(hash)
@@ -710,25 +736,10 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 		return nil, err
 	}
 
-	width := 0
-	height := 0
-
-	// if it's an image, add the width and height to the meta
-	if strings.HasPrefix(fileMime.String(), "image/") {
-		img, _, err := image.Decode(tempFile)
-		if err == nil {
-			bounds := img.Bounds()
-			width = bounds.Max.X
-			height = bounds.Max.Y
-		}
-	}
-
-	fileInfo, err := tempFile.Stat()
-	if err != nil {
-		tx.Rollback()
-		return nil, err
-	}
-	fileSize := fileInfo.Size()
+	// Use pre-computed dimensions and file size (computed before the transaction)
+	width := preWidth
+	height := preHeight
+	fileSize := preFileSize
 
 	res := &models.Resource{
 		Name:               name,
@@ -740,7 +751,7 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 		Category:           resourceQuery.Category,
 		ContentType:        fileMime.String(),
 		ContentCategory:    resourceQuery.ContentCategory,
-		ResourceCategoryId: ctx.resourceCategoryIdOrDefault(resourceQuery.ResourceCategoryId),
+		ResourceCategoryId: resolvedCategoryID,
 		FileSize:           fileSize,
 		OwnerId:            uintPtrOrNil(resourceQuery.OwnerId),
 		Description:        resourceQuery.Description,

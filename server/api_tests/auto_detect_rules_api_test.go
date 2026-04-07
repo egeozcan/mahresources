@@ -1,9 +1,16 @@
 package api_tests
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"mahresources/models"
+	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -58,4 +65,88 @@ func TestUpdateResourceCategory_ClearsAutoDetectRules(t *testing.T) {
 	var check models.ResourceCategory
 	tc.DB.First(&check, rc.ID)
 	assert.Equal(t, "", check.AutoDetectRules)
+}
+
+func createTestPNG(t *testing.T, width, height int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			img.Set(x, y, color.RGBA{R: 100, G: 150, B: 200, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	require.NoError(t, png.Encode(&buf, img))
+	return buf.Bytes()
+}
+
+func TestUploadResource_AutoDetectsCategory(t *testing.T) {
+	tc := SetupTestEnv(t)
+	photosCat := &models.ResourceCategory{
+		Name:            "Wide PNGs",
+		AutoDetectRules: `{"contentTypes":["image/png"],"width":{"min":500},"priority":10}`,
+	}
+	tc.DB.Create(photosCat)
+
+	imgBytes := createTestPNG(t, 800, 600)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("resource", "test.png")
+	require.NoError(t, err)
+	_, err = part.Write(imgBytes)
+	require.NoError(t, err)
+	require.NoError(t, writer.WriteField("Name", "auto-detect test"))
+	require.NoError(t, writer.Close())
+
+	req, _ := http.NewRequest(http.MethodPost, "/v1/resource", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Accept", "application/json")
+	rr := httptest.NewRecorder()
+	tc.Router.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resources []models.Resource
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resources))
+	require.Len(t, resources, 1)
+
+	var res models.Resource
+	tc.DB.First(&res, resources[0].ID)
+	assert.Equal(t, photosCat.ID, res.ResourceCategoryId,
+		"resource should be auto-detected into Wide PNGs category")
+}
+
+func TestUploadResource_ExplicitCategorySkipsDetection(t *testing.T) {
+	tc := SetupTestEnv(t)
+	photosCat := &models.ResourceCategory{
+		Name:            "Wide PNGs",
+		AutoDetectRules: `{"contentTypes":["image/png"],"width":{"min":500},"priority":10}`,
+	}
+	tc.DB.Create(photosCat)
+
+	imgBytes := createTestPNG(t, 800, 600)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("resource", "test.png")
+	require.NoError(t, err)
+	_, err = part.Write(imgBytes)
+	require.NoError(t, err)
+	require.NoError(t, writer.WriteField("Name", "explicit-category test"))
+	require.NoError(t, writer.WriteField("ResourceCategoryId", fmt.Sprintf("%d", tc.AppCtx.DefaultResourceCategoryID)))
+	require.NoError(t, writer.Close())
+
+	req, _ := http.NewRequest(http.MethodPost, "/v1/resource", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Accept", "application/json")
+	rr := httptest.NewRecorder()
+	tc.Router.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resources []models.Resource
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resources))
+	require.Len(t, resources, 1)
+
+	var res models.Resource
+	tc.DB.First(&res, resources[0].ID)
+	assert.Equal(t, tc.AppCtx.DefaultResourceCategoryID, res.ResourceCategoryId,
+		"explicit category should not be overridden by auto-detect")
 }

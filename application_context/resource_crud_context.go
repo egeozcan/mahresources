@@ -427,3 +427,12 @@ func (ctx *MahresourcesContext) resourceCategoryIdOrDefault(v uint) uint {
 	}
 	return v
 }
+
+// resolveResourceCategory determines the category for a resource.
+// If v == 0 (not specified), runs auto-detection. Otherwise uses v as-is.
+func (ctx *MahresourcesContext) resolveResourceCategory(v uint, contentType string, width, height uint, fileSize int64) uint {
+	if v != 0 {
+		return v
+	}
+	return ctx.detectResourceCategory(contentType, width, height, fileSize)
+}
