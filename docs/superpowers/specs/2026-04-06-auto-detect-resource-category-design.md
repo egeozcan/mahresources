@@ -2,7 +2,7 @@
 
 ## Summary
 
-Automatically assign a `ResourceCategory` to uploaded resources based on their shape — content type, dimensions, file size, and derived signals like aspect ratio. Categories define detection rules alongside their existing `MetaSchema`. Detection fires when the uploader doesn't specify a category, or specifies the default category.
+Automatically assign a `ResourceCategory` to uploaded resources based on their shape — content type, dimensions, file size, and derived signals like aspect ratio. Categories define detection rules alongside their existing `MetaSchema`. Detection fires when the uploader doesn't specify a category.
 
 ## Data Model
 
@@ -55,17 +55,19 @@ All derived from data already available at upload time — no new computation be
 | `pixelCount` | `Width * Height` (derived) | Decodable images only |
 | `bytesPerPixel` | `FileSize / pixelCount` (derived) | Decodable images only |
 
-**Dimension availability note:** Go's `image.Decode` supports JPEG, PNG, GIF, WebP, BMP, and TIFF. Formats like HEIC and SVG are detected by `mimetype` (so `contentTypes` matching works) but do **not** get dimensions at upload time. For those formats, dimension-dependent rule fields are skipped (non-applicable). The byte-buffer upload path (`AddResource` ~line 357) also does not decode images — only the file-based upload path (~line 703) does. Detection should run in both paths, but dimension-based rules only evaluate when dimensions are actually available.
+**Dimension availability note:** Go's `image.Decode` supports JPEG, PNG, GIF, WebP, BMP, and TIFF. Formats like HEIC and SVG are detected by `mimetype` (so `contentTypes` matching works) but do **not** get dimensions at upload time. For those formats, dimension-dependent rule fields are skipped (non-applicable).
 
-This means rules for HEIC, SVG, or resources uploaded via the byte-buffer path should rely on `contentTypes` and `fileSize` only — not dimension-derived fields.
+**Both upload paths must decode dimensions.** The file-based upload path (~line 703) already calls `image.Decode` for dimensions. The byte-buffer upload path (`AddResource` ~line 357) currently does not — it must be updated to decode images the same way (via `image.Decode(bytes.NewReader(fileBytes))`). This ensures identical decodable images get the same category regardless of upload path.
+
+Rules for HEIC, SVG, or other non-decodable formats should rely on `contentTypes` and `fileSize` only — not dimension-derived fields.
 
 ## Detection Logic
 
 ### When detection fires
 
-When `ResourceCategoryId == 0` (not specified) **or** `ResourceCategoryId == DefaultResourceCategoryID` (the default). If an explicit non-default category is provided, detection is skipped entirely and no DB query for rules occurs.
+Only when `ResourceCategoryId == 0` (not specified). If any explicit category is provided — including the default — detection is skipped entirely and no DB query for rules occurs. This preserves the user's ability to intentionally keep a resource in Default even when matching rules exist.
 
-**Why include the default:** The browser upload form (`createResource.tpl`) pre-selects the default category and requires a selection (`min=1` on the autocompleter). This means the primary HTML upload path always sends a category ID. If detection only fired on `0`, it would never activate from the browser. Treating the default as "auto-detect eligible" is safe: if rules find a better match the resource gets a more specific category; if no rules match, it stays on Default — the same outcome as before.
+**Form change required:** The browser upload form (`createResource.tpl`) currently pre-selects the default category and requires a selection (`min=1` on the autocompleter). To make auto-detection reachable from the browser, change the autocompleter to `min=0` and remove the pre-selection of the default category. When the user leaves the category empty, `ResourceCategoryId=0` is sent, triggering auto-detection. When they explicitly select any category (including Default), that choice is respected.
 
 ### Evaluation flow
 
@@ -90,7 +92,7 @@ Called from the two upload paths in `resource_upload_context.go`:
 - `AddResource` (~line 367) — byte-buffer upload path
 - File-based upload path (~line 730)
 
-Both currently call `resourceCategoryIdOrDefault`. The change: when `ResourceCategoryId == 0` or `== DefaultResourceCategoryID`, call `detectResourceCategory`. If detection returns a match, use it; otherwise fall back to `DefaultResourceCategoryID`. When `ResourceCategoryId` is any other non-zero value, use it as-is (no change, no DB query).
+Both currently call `resourceCategoryIdOrDefault`. The change: when `ResourceCategoryId == 0`, call `detectResourceCategory`. If detection returns a match, use it; otherwise fall back to `DefaultResourceCategoryID`. When `ResourceCategoryId != 0`, use it as-is (no change, no DB query).
 
 ### No cache
 
@@ -127,6 +129,12 @@ One new textarea after the MetaSchema field:
 
 No rule builder UI, no visual editor — raw JSON textarea matching the MetaSchema pattern.
 
+### `createResource.tpl`
+
+Change the resource category autocompleter from `min=1` to `min=0` and remove the pre-selection of the default category. This makes the category field optional — when left empty, `ResourceCategoryId=0` is sent and auto-detection fires. When the user selects any category (including Default), that choice is respected.
+
+The `resource_template_context.go` pre-selection logic (~line 148-158) should stop pre-selecting the default category when no category is specified. It should only pre-select when the resource already has a category (edit mode) or when the URL query explicitly includes a `ResourceCategoryId`.
+
 ### `displayResourceCategory.tpl`
 
 No changes. Auto-detect rules are configuration, not display content.
@@ -150,8 +158,9 @@ No changes. Auto-detect rules are configuration, not display content.
 ### API tests
 
 - Create category with rules, upload resource without specifying category → correct category assigned
-- Upload resource with default category → detection fires, correct category assigned
+- Upload resource with explicit default category → detection skipped, default category used
 - Upload resource with explicit non-default category → detection skipped, explicit category used
+- Both upload paths (byte-buffer and file-based) produce same category for same decodable image
 - Rule validation on category create/update (invalid JSON, unknown fields, missing contentTypes)
 - Partial update preserves AutoDetectRules when not sent
 - Clearing AutoDetectRules with empty string
@@ -159,8 +168,9 @@ No changes. Auto-detect rules are configuration, not display content.
 ### E2E tests
 
 - Create category with auto-detect rules via the form
-- Upload resource with default category → auto-detected into correct category
-- Upload resource with explicit non-default category → not overridden
+- Upload resource without selecting a category → auto-detected into correct category
+- Upload resource with explicit category (including Default) → not overridden
+- Category autocompleter allows empty selection on resource create form
 
 ## Examples
 
