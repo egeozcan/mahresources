@@ -57,7 +57,13 @@ All derived from data already available at upload time — no new computation be
 
 **Dimension availability note:** Go's `image.Decode` supports JPEG, PNG, GIF, WebP, BMP, and TIFF. Formats like HEIC and SVG are detected by `mimetype` (so `contentTypes` matching works) but do **not** get dimensions at upload time. For those formats, dimension-dependent rule fields are skipped (non-applicable).
 
-**Both upload paths must decode dimensions.** The file-based upload path (~line 703) already calls `image.Decode` for dimensions. The byte-buffer upload path (`AddResource` ~line 357) currently does not — it must be updated to decode images the same way (via `image.Decode(bytes.NewReader(fileBytes))`). This ensures identical decodable images get the same category regardless of upload path.
+**Both upload functions must decode dimensions.** There are three upload entry points in `resource_upload_context.go`:
+
+- `AddResource` (line 491) — file-based upload (browser form, paste). Already calls `image.Decode` at line 705 and sets Width/Height. Already calls `resourceCategoryIdOrDefault` at line 730.
+- `AddLocalResource` (line 286) — local-path import. Does **not** decode dimensions — builds the Resource at line 357 without Width/Height. Calls `resourceCategoryIdOrDefault` at line 367. **Must be updated** to decode images via `image.Decode(bytes.NewReader(fileBytes))` before building the Resource.
+- `AddRemoteResource` (line 172) — remote URL download. Delegates to `AddLocalResource`, so inherits its behavior.
+
+Both `AddResource` and `AddLocalResource` must decode dimensions consistently so identical decodable images get the same category regardless of upload path.
 
 Rules for HEIC, SVG, or other non-decodable formats should rely on `contentTypes` and `fileSize` only — not dimension-derived fields.
 
@@ -88,11 +94,11 @@ Only when `ResourceCategoryId == 0` (not specified). If any explicit category is
 
 A new function: `detectResourceCategory(contentType string, width, height uint, fileSize int64) uint`
 
-Called from the two upload paths in `resource_upload_context.go`:
-- `AddResource` (~line 367) — byte-buffer upload path
-- File-based upload path (~line 730)
+Called from both upload functions in `resource_upload_context.go` that set `ResourceCategoryId`:
+- `AddLocalResource` (line 286) — local-path and remote imports. Currently calls `resourceCategoryIdOrDefault` at line 367.
+- `AddResource` (line 491) — file-based uploads (browser form, paste). Currently calls `resourceCategoryIdOrDefault` at line 730.
 
-Both currently call `resourceCategoryIdOrDefault`. The change: when `ResourceCategoryId == 0`, call `detectResourceCategory`. If detection returns a match, use it; otherwise fall back to `DefaultResourceCategoryID`. When `ResourceCategoryId != 0`, use it as-is (no change, no DB query).
+Both currently call `resourceCategoryIdOrDefault`. The change: when `ResourceCategoryId == 0`, call `detectResourceCategory` instead of returning the default directly. If detection returns a match, use it; otherwise fall back to `DefaultResourceCategoryID`. When `ResourceCategoryId != 0`, use it as-is (no change, no DB query).
 
 ### No cache
 
