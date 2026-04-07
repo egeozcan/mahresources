@@ -1,9 +1,16 @@
 package application_context
 
 import (
+	"fmt"
+	"mahresources/models"
 	"testing"
 
+	"github.com/jmoiron/sqlx"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 func TestValidateAutoDetectRules_EmptyString(t *testing.T) {
@@ -133,4 +140,107 @@ func TestMatchAutoDetectRule_PixelCount(t *testing.T) {
 	assert.True(t, matched)
 	matched, _ = rule.Match("image/jpeg", 800, 600, 500000)
 	assert.False(t, matched)
+}
+
+// --- detectResourceCategory tests ---
+
+func setupDetectTestContext(t *testing.T) *MahresourcesContext {
+	t.Helper()
+	dbName := fmt.Sprintf("file:%s?mode=memory&cache=private", t.Name())
+	db, err := gorm.Open(sqlite.Open(dbName), &gorm.Config{})
+	require.NoError(t, err)
+	err = db.AutoMigrate(&models.ResourceCategory{}, &models.Resource{}, &models.LogEntry{})
+	require.NoError(t, err)
+
+	defaultRC := &models.ResourceCategory{Name: "Default", Description: "Default"}
+	defaultRC.ID = 1
+	db.FirstOrCreate(defaultRC, 1)
+
+	sqlDB, _ := db.DB()
+	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
+	ctx := NewMahresourcesContext(afero.NewMemMapFs(), db, readOnlyDB, &MahresourcesConfig{})
+	ctx.DefaultResourceCategoryID = defaultRC.ID
+	return ctx
+}
+
+func TestDetectResourceCategory_MatchesRule(t *testing.T) {
+	ctx := setupDetectTestContext(t)
+	cat := models.ResourceCategory{Name: "Photos", AutoDetectRules: `{"contentTypes":["image/jpeg"],"priority":1}`}
+	require.NoError(t, ctx.db.Create(&cat).Error)
+
+	got := ctx.detectResourceCategory("image/jpeg", 1920, 1080, 500000)
+	assert.Equal(t, cat.ID, got)
+}
+
+func TestDetectResourceCategory_NoMatch_ReturnsDefault(t *testing.T) {
+	ctx := setupDetectTestContext(t)
+	cat := models.ResourceCategory{Name: "Photos", AutoDetectRules: `{"contentTypes":["image/jpeg"],"priority":1}`}
+	require.NoError(t, ctx.db.Create(&cat).Error)
+
+	got := ctx.detectResourceCategory("application/pdf", 0, 0, 50000)
+	assert.Equal(t, ctx.DefaultResourceCategoryID, got)
+}
+
+func TestDetectResourceCategory_HighestPriorityWins(t *testing.T) {
+	ctx := setupDetectTestContext(t)
+	lowPriority := models.ResourceCategory{Name: "LowPriority", AutoDetectRules: `{"contentTypes":["image/jpeg"],"priority":1}`}
+	highPriority := models.ResourceCategory{Name: "HighPriority", AutoDetectRules: `{"contentTypes":["image/jpeg"],"priority":10}`}
+	require.NoError(t, ctx.db.Create(&lowPriority).Error)
+	require.NoError(t, ctx.db.Create(&highPriority).Error)
+
+	got := ctx.detectResourceCategory("image/jpeg", 1920, 1080, 500000)
+	assert.Equal(t, highPriority.ID, got)
+}
+
+func TestDetectResourceCategory_TieBreakByEvaluatedFields(t *testing.T) {
+	ctx := setupDetectTestContext(t)
+	minW := float64(100)
+	// Both have same priority, but "Detailed" evaluates more fields (contentTypes + width = 2 vs contentTypes = 1)
+	basic := models.ResourceCategory{Name: "Basic", AutoDetectRules: `{"contentTypes":["image/jpeg"],"priority":5}`}
+	detailed := models.ResourceCategory{Name: "Detailed", AutoDetectRules: `{"contentTypes":["image/jpeg"],"width":{"min":100},"priority":5}`}
+	require.NoError(t, ctx.db.Create(&basic).Error)
+	require.NoError(t, ctx.db.Create(&detailed).Error)
+	_ = minW // just for clarity
+
+	got := ctx.detectResourceCategory("image/jpeg", 1920, 1080, 500000)
+	assert.Equal(t, detailed.ID, got)
+}
+
+func TestDetectResourceCategory_TieBreakByLowestID(t *testing.T) {
+	ctx := setupDetectTestContext(t)
+	// Same priority, same evaluated fields (just contentTypes) -- lower ID wins
+	catA := models.ResourceCategory{Name: "CatA", AutoDetectRules: `{"contentTypes":["image/jpeg"],"priority":5}`}
+	catB := models.ResourceCategory{Name: "CatB", AutoDetectRules: `{"contentTypes":["image/jpeg"],"priority":5}`}
+	require.NoError(t, ctx.db.Create(&catA).Error)
+	require.NoError(t, ctx.db.Create(&catB).Error)
+	// catA was created first, so it should have a lower ID
+	require.Less(t, catA.ID, catB.ID)
+
+	got := ctx.detectResourceCategory("image/jpeg", 0, 0, 500000)
+	assert.Equal(t, catA.ID, got)
+}
+
+func TestDetectResourceCategory_NoRulesExist(t *testing.T) {
+	ctx := setupDetectTestContext(t)
+	// No categories with AutoDetectRules
+	cat := models.ResourceCategory{Name: "Plain"}
+	require.NoError(t, ctx.db.Create(&cat).Error)
+
+	got := ctx.detectResourceCategory("image/jpeg", 1920, 1080, 500000)
+	assert.Equal(t, ctx.DefaultResourceCategoryID, got)
+}
+
+func TestDetectResourceCategory_SkippedFieldsDontCountForTiebreak(t *testing.T) {
+	ctx := setupDetectTestContext(t)
+	// Both match PDFs (no dimensions). "WithWidth" has a width rule but it gets
+	// skipped because PDFs have no dimensions (evaluated=1). "WithFileSize" has
+	// a fileSize rule that is always evaluated (evaluated=2). Same priority,
+	// so fileSize category should win via evaluated count.
+	withWidth := models.ResourceCategory{Name: "WithWidth", AutoDetectRules: `{"contentTypes":["application/pdf"],"width":{"min":100},"priority":5}`}
+	withFileSize := models.ResourceCategory{Name: "WithFileSize", AutoDetectRules: `{"contentTypes":["application/pdf"],"fileSize":{"min":1000},"priority":5}`}
+	require.NoError(t, ctx.db.Create(&withWidth).Error)
+	require.NoError(t, ctx.db.Create(&withFileSize).Error)
+
+	got := ctx.detectResourceCategory("application/pdf", 0, 0, 50000)
+	assert.Equal(t, withFileSize.ID, got)
 }

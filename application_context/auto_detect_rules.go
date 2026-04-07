@@ -3,6 +3,8 @@ package application_context
 import (
 	"encoding/json"
 	"fmt"
+	"log"
+	"mahresources/models"
 	"math"
 )
 
@@ -162,4 +164,55 @@ func (r *RangeRule) contains(value float64) bool {
 		return false
 	}
 	return true
+}
+
+// detectResourceCategory queries all categories with auto-detect rules and
+// returns the best matching category ID for the given resource properties.
+// Returns DefaultResourceCategoryID if no rules match.
+func (ctx *MahresourcesContext) detectResourceCategory(contentType string, width, height uint, fileSize int64) uint {
+	var categories []models.ResourceCategory
+	if err := ctx.db.Where("auto_detect_rules != '' AND auto_detect_rules IS NOT NULL").Find(&categories).Error; err != nil {
+		log.Printf("auto-detect: error loading categories with rules: %v", err)
+		return ctx.DefaultResourceCategoryID
+	}
+
+	if len(categories) == 0 {
+		return ctx.DefaultResourceCategoryID
+	}
+
+	type candidate struct {
+		id        uint
+		priority  int
+		evaluated int
+	}
+
+	var best *candidate
+	for _, cat := range categories {
+		var rule AutoDetectRule
+		if err := json.Unmarshal([]byte(cat.AutoDetectRules), &rule); err != nil {
+			log.Printf("auto-detect: invalid rules for category %d (%s): %v", cat.ID, cat.Name, err)
+			continue
+		}
+
+		matched, evaluated := rule.Match(contentType, width, height, fileSize)
+		if !matched {
+			continue
+		}
+
+		c := &candidate{id: cat.ID, priority: rule.Priority, evaluated: evaluated}
+		if best == nil {
+			best = c
+		} else if c.priority > best.priority {
+			best = c
+		} else if c.priority == best.priority && c.evaluated > best.evaluated {
+			best = c
+		} else if c.priority == best.priority && c.evaluated == best.evaluated && c.id < best.id {
+			best = c
+		}
+	}
+
+	if best == nil {
+		return ctx.DefaultResourceCategoryID
+	}
+	return best.id
 }
