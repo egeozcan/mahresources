@@ -1322,22 +1322,27 @@ ${n?`Expression: "`+n+`"
           @click=${e=>e.stopPropagation()}
         >${t}</a>`;if(e.format===`date`||e.format===`date-time`)try{return new Date(t).toLocaleDateString(void 0,{year:`numeric`,month:`short`,day:`numeric`})}catch{return t}}return e.type===`array`&&Array.isArray(t)?t.length===0?H`<span class="text-stone-300">\u2014</span>`:t.every(e=>typeof e!=`object`||!e)?H`${t.map((e,t)=>H`<span
           class="inline-block text-xs px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 font-medium mr-1 mb-1"
-        >${String(e)}</span>`)}`:H`${t.map((e,t)=>H`
-        ${t>0?H`<hr class="my-2 border-stone-100">`:W}
-        ${this._renderObjectValue(e,0)}
-      `)}`:typeof t==`object`&&t&&!Array.isArray(t)?this._renderObjectValue(t,0):e.isLong&&typeof t==`string`?H`<span style="white-space: pre-wrap;">${t}</span>`:String(t??``)}_renderObjectValue(e,t){let n=Object.entries(e).filter(([,e])=>!yd(e));return n.length===0?H`<span class="text-stone-300">\u2014</span>`:H`
-      <div class="grid gap-x-4 gap-y-1 bg-stone-50 rounded p-2" style="grid-template-columns: auto 1fr;">
-        ${n.map(([e,n])=>H`
-            <span class="text-[10px] font-mono uppercase text-stone-400 tracking-wider self-baseline" style="letter-spacing:0.05em;">${Zc(e)}</span>
-            <span class="text-sm text-stone-700 break-all self-baseline">${this._renderNestedValue(n,t)}</span>
-          `)}
-      </div>
-    `}_renderNestedValue(e,t){if(e==null)return H`<span class="text-stone-300">\u2014</span>`;if(typeof e!=`object`)return typeof e==`boolean`?e?`Yes`:`No`:String(e);if(t>=xd){if(window.renderJsonTable){let t=document.createElement(`div`);return t.appendChild(window.renderJsonTable(e)),H`${t}`}return JSON.stringify(e)}return Array.isArray(e)?e.length===0?H`<span class="text-stone-300">\u2014</span>`:e.every(e=>typeof e!=`object`||!e)?H`${e.map(e=>H`<span
-          class="inline-block text-xs px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 font-medium mr-1 mb-1"
-        >${String(e)}</span>`)}`:H`${e.map((e,n)=>H`
+        >${String(e)}</span>`)}`:H`${t.map((t,n)=>H`
         ${n>0?H`<hr class="my-2 border-stone-100">`:W}
-        ${typeof e==`object`&&e?this._renderObjectValue(e,t+1):H`<span>${String(e)}</span>`}
-      `)}`:this._renderObjectValue(e,t+1)}_renderPluginDisplay(e){let t=e.path;if(this._pluginHtml[t]!==void 0){let e=document.createElement(`div`);return e.innerHTML=this._pluginHtml[t],H`${e}`}if(this._pluginErrors[t])return typeof e.value==`object`&&e.value!==null?this._renderObjectValue(e.value):H`<span class="text-stone-400 text-xs italic">Render error</span>`;let n=e.xDisplay.split(`:`);if(n.length<3)return this._renderValue({...e,xDisplay:``});let r=n[1],i=n[2];return this._fetchPluginDisplay(t,r,i,e),H`<span class="text-stone-400 text-xs animate-pulse">Loading...</span>`}async _fetchPluginDisplay(e,t,n,r){let i=this._pluginFetchVersions[e]=(this._pluginFetchVersions[e]||0)+1;try{let a=await fetch(`/v1/plugins/${t}/display/render`,{method:`POST`,headers:{"Content-Type":`application/json`},body:JSON.stringify({type:n,value:r.value,schema:r.rawSchema||{},field_path:r.path,field_label:r.label})});if(!a.ok)throw Error(`HTTP ${a.status}`);let o=await a.text();i===this._pluginFetchVersions[e]&&(this._pluginHtml={...this._pluginHtml,[e]:o})}catch{i===this._pluginFetchVersions[e]&&(this._pluginErrors={...this._pluginErrors,[e]:!0})}}_copyText(e){navigator.clipboard?.writeText(e).catch(()=>{})}_copyValue(e){if(e==null)return;let t=typeof e==`object`?JSON.stringify(e):String(e);navigator.clipboard?.writeText(t).catch(()=>{})}};Y([q({type:Object})],wd.prototype,`schema`,void 0),Y([q({type:Object})],wd.prototype,`value`,void 0),Y([q({type:String})],wd.prototype,`name`,void 0),Y([J()],wd.prototype,`_showEmpty`,void 0),Y([J()],wd.prototype,`_pluginHtml`,void 0),Y([J()],wd.prototype,`_pluginErrors`,void 0),wd=Y([K(`schema-display-mode`)],wd);var $=class extends G{constructor(...e){super(...e),this.mode=`edit`,this.schema=``,this.value=``,this.name=`Meta`,this.metaQuery=``,this.fieldName=`MetaQuery`,this._parsedSchema=null}static{this.styles=[Z,B`
+        ${this._renderObjectValue(t,0,`${e.path}[${n}]`)}
+      `)}`:typeof t==`object`&&t&&!Array.isArray(t)?this._renderObjectValue(t,0,e.path):e.isLong&&typeof t==`string`?H`<span style="white-space: pre-wrap;">${t}</span>`:String(t??``)}_renderObjectValue(e,t,n=``){let r=Object.entries(e).filter(([,e])=>!yd(e));return r.length===0?H`<span class="text-stone-300">\u2014</span>`:H`
+      <div class="grid gap-x-4 gap-y-1 bg-stone-50 rounded p-2" style="grid-template-columns: auto 1fr;">
+        ${r.map(([e,r])=>{let i=n?`${n}.${e}`:e;return H`
+            <span class="text-[10px] font-mono uppercase text-stone-400 tracking-wider self-baseline cursor-pointer hover:text-stone-600" style="letter-spacing:0.05em;"
+              title=${i}
+              @click=${e=>{e.stopPropagation(),this._copyText(i)}}
+            >${Zc(e)}</span>
+            <span class="text-sm text-stone-700 break-all self-baseline cursor-pointer"
+              @click=${e=>{e.stopPropagation(),this._copyValue(r)}}
+            >${this._renderNestedValue(r,t,i)}</span>
+          `})}
+      </div>
+    `}_renderNestedValue(e,t,n){if(e==null)return H`<span class="text-stone-300">\u2014</span>`;if(typeof e!=`object`)return typeof e==`boolean`?e?`Yes`:`No`:String(e);if(t>=xd){if(window.renderJsonTable){let t=document.createElement(`div`);return t.appendChild(window.renderJsonTable(e)),H`${t}`}return JSON.stringify(e)}return Array.isArray(e)?e.length===0?H`<span class="text-stone-300">\u2014</span>`:e.every(e=>typeof e!=`object`||!e)?H`${e.map(e=>H`<span
+          class="inline-block text-xs px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 font-medium mr-1 mb-1"
+        >${String(e)}</span>`)}`:H`${e.map((e,r)=>H`
+        ${r>0?H`<hr class="my-2 border-stone-100">`:W}
+        ${typeof e==`object`&&e?this._renderObjectValue(e,t+1,`${n}[${r}]`):H`<span>${String(e)}</span>`}
+      `)}`:this._renderObjectValue(e,t+1,n)}_renderPluginDisplay(e){let t=e.path;if(this._pluginHtml[t]!==void 0){let e=document.createElement(`div`);return e.innerHTML=this._pluginHtml[t],H`${e}`}if(this._pluginErrors[t])return typeof e.value==`object`&&e.value!==null?this._renderObjectValue(e.value,0,e.path):H`<span class="text-stone-400 text-xs italic">Render error</span>`;let n=e.xDisplay.split(`:`);if(n.length<3)return this._renderValue({...e,xDisplay:``});let r=n[1],i=n[2];return this._fetchPluginDisplay(t,r,i,e),H`<span class="text-stone-400 text-xs animate-pulse">Loading...</span>`}async _fetchPluginDisplay(e,t,n,r){let i=this._pluginFetchVersions[e]=(this._pluginFetchVersions[e]||0)+1;try{let a=await fetch(`/v1/plugins/${t}/display/render`,{method:`POST`,headers:{"Content-Type":`application/json`},body:JSON.stringify({type:n,value:r.value,schema:r.rawSchema||{},field_path:r.path,field_label:r.label})});if(!a.ok)throw Error(`HTTP ${a.status}`);let o=await a.text();i===this._pluginFetchVersions[e]&&(this._pluginHtml={...this._pluginHtml,[e]:o})}catch{i===this._pluginFetchVersions[e]&&(this._pluginErrors={...this._pluginErrors,[e]:!0})}}_copyText(e){navigator.clipboard?.writeText(e).catch(()=>{})}_copyValue(e){if(e==null)return;let t=typeof e==`object`?JSON.stringify(e):String(e);navigator.clipboard?.writeText(t).catch(()=>{})}};Y([q({type:Object})],wd.prototype,`schema`,void 0),Y([q({type:Object})],wd.prototype,`value`,void 0),Y([q({type:String})],wd.prototype,`name`,void 0),Y([J()],wd.prototype,`_showEmpty`,void 0),Y([J()],wd.prototype,`_pluginHtml`,void 0),Y([J()],wd.prototype,`_pluginErrors`,void 0),wd=Y([K(`schema-display-mode`)],wd);var $=class extends G{constructor(...e){super(...e),this.mode=`edit`,this.schema=``,this.value=``,this.name=`Meta`,this.metaQuery=``,this.fieldName=`MetaQuery`,this._parsedSchema=null}static{this.styles=[Z,B`
       :host {
         display: block;
       }

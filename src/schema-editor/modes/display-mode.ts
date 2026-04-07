@@ -357,13 +357,13 @@ export class SchemaDisplayMode extends LitElement {
       // Array of objects — render each as a key-value sub-grid
       return html`${val.map((item, i) => html`
         ${i > 0 ? html`<hr class="my-2 border-stone-100">` : nothing}
-        ${this._renderObjectValue(item, 0)}
+        ${this._renderObjectValue(item, 0, `${field.path}[${i}]`)}
       `)}`;
     }
 
     // Object — render as inline key-value grid
     if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
-      return this._renderObjectValue(val, 0);
+      return this._renderObjectValue(val, 0, field.path);
     }
 
     // Default — plain string
@@ -374,20 +374,28 @@ export class SchemaDisplayMode extends LitElement {
     return String(val ?? '');
   }
 
-  private _renderObjectValue(obj: Record<string, any>, depth: number): TemplateResult {
+  private _renderObjectValue(obj: Record<string, any>, depth: number, path = ''): TemplateResult {
     const entries = Object.entries(obj).filter(([, v]) => !isEmptyValue(v));
     if (entries.length === 0) return html`<span class="text-stone-300">\u2014</span>`;
     return html`
       <div class="grid gap-x-4 gap-y-1 bg-stone-50 rounded p-2" style="grid-template-columns: auto 1fr;">
-        ${entries.map(([k, v]) => html`
-            <span class="text-[10px] font-mono uppercase text-stone-400 tracking-wider self-baseline" style="letter-spacing:0.05em;">${titleCase(k)}</span>
-            <span class="text-sm text-stone-700 break-all self-baseline">${this._renderNestedValue(v, depth)}</span>
-          `)}
+        ${entries.map(([k, v]) => {
+          const keyPath = path ? `${path}.${k}` : k;
+          return html`
+            <span class="text-[10px] font-mono uppercase text-stone-400 tracking-wider self-baseline cursor-pointer hover:text-stone-600" style="letter-spacing:0.05em;"
+              title=${keyPath}
+              @click=${(e: Event) => { e.stopPropagation(); this._copyText(keyPath); }}
+            >${titleCase(k)}</span>
+            <span class="text-sm text-stone-700 break-all self-baseline cursor-pointer"
+              @click=${(e: Event) => { e.stopPropagation(); this._copyValue(v); }}
+            >${this._renderNestedValue(v, depth, keyPath)}</span>
+          `;
+        })}
       </div>
     `;
   }
 
-  private _renderNestedValue(v: any, depth: number): TemplateResult | string {
+  private _renderNestedValue(v: any, depth: number, path: string): TemplateResult | string {
     if (v === null || v === undefined) return html`<span class="text-stone-300">\u2014</span>`;
 
     // Scalars
@@ -418,13 +426,13 @@ export class SchemaDisplayMode extends LitElement {
       return html`${v.map((item, i) => html`
         ${i > 0 ? html`<hr class="my-2 border-stone-100">` : nothing}
         ${typeof item === 'object' && item !== null
-          ? this._renderObjectValue(item, depth + 1)
+          ? this._renderObjectValue(item, depth + 1, `${path}[${i}]`)
           : html`<span>${String(item)}</span>`}
       `)}`;
     }
 
     // Object
-    return this._renderObjectValue(v, depth + 1);
+    return this._renderObjectValue(v, depth + 1, path);
   }
 
   private _renderPluginDisplay(field: DisplayField): TemplateResult {
@@ -438,7 +446,7 @@ export class SchemaDisplayMode extends LitElement {
 
     if (this._pluginErrors[key]) {
       if (typeof field.value === 'object' && field.value !== null) {
-        return this._renderObjectValue(field.value);
+        return this._renderObjectValue(field.value, 0, field.path);
       }
       return html`<span class="text-stone-400 text-xs italic">Render error</span>`;
     }
