@@ -1190,16 +1190,16 @@ local function render_bar_chart(ctx)
     end
     if max_val == 0 then max_val = 1 end
 
-    local parts = { '<div class="py-1.5"><div class="space-y-1 text-sm">' }
+    local parts = { '<div class="py-1.5 max-w-full overflow-hidden"><div class="space-y-1 text-sm">' }
     for _, e in ipairs(entries) do
         local pct = (e.value / max_val) * 100
         parts[#parts + 1] = string.format(
-            '<div class="flex items-center gap-2">'
-            .. '<span class="w-20 text-right text-stone-600 truncate">%s</span>'
-            .. '<div class="flex-1 bg-stone-100 rounded-full h-5 overflow-hidden">'
+            '<div class="flex items-center gap-1">'
+            .. '<span class="w-16 shrink-0 text-right text-stone-600 truncate text-xs">%s</span>'
+            .. '<div class="flex-1 min-w-0 bg-stone-100 rounded-full h-4 overflow-hidden">'
             .. '<div class="h-full rounded-full" style="width: %.1f%%; background-color: %s"></div>'
             .. '</div>'
-            .. '<span class="w-12 text-right font-mono text-xs text-stone-500">%s</span>'
+            .. '<span class="w-10 shrink-0 text-right font-mono text-xs text-stone-500">%s</span>'
             .. '</div>',
             html_escape(e.label), pct, html_escape(color),
             html_escape(format_number(e.value))
@@ -1462,7 +1462,7 @@ local function render_timeline_chart(ctx)
     ))
 
     local parts = {
-        '<div class="py-1.5 text-sm">',
+        '<div class="py-1.5 text-sm overflow-hidden max-w-full">',
         '<div class="flex text-xs text-stone-400 mb-1">',
         '<span>' .. html_escape(min_label) .. '</span>',
         '<span class="ml-auto">' .. html_escape(max_label) .. '</span>',
@@ -1476,9 +1476,9 @@ local function render_timeline_chart(ctx)
         width_pct = math.max(width_pct, 1) -- Minimum 1% width for visibility
 
         parts[#parts + 1] = string.format(
-            '<div class="flex items-center gap-2">'
-            .. '<a href="/%s?id=%d" class="w-28 truncate text-blue-600 hover:underline text-xs">%s</a>'
-            .. '<div class="flex-1 relative h-4 bg-stone-100 rounded">'
+            '<div class="flex items-center gap-1">'
+            .. '<a href="/%s?id=%d" class="w-20 shrink-0 truncate text-blue-600 hover:underline text-xs">%s</a>'
+            .. '<div class="flex-1 min-w-0 relative h-4 bg-stone-100 rounded">'
             .. '<div class="absolute h-full rounded bg-amber-500" style="left: %.1f%%; width: %.1f%%"></div>'
             .. '</div>'
             .. '</div>',

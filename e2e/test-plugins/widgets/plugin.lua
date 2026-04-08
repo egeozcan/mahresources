@@ -319,15 +319,15 @@ local function render_activity(ctx)
     for _, item in ipairs(trimmed) do
         -- Extract YYYY-MM-DD HH:MM from the ISO8601 string.
         local date_str = ""
-        if item.updated_at and #item.updated_at >= 16 then
-            date_str = item.updated_at:sub(1, 16):gsub("T", " ")
+        if item.updated_at and #item.updated_at >= 10 then
+            date_str = item.updated_at:sub(1, 10)
         end
 
         parts[#parts + 1] = string.format(
-            '<div class="flex items-center gap-2 text-sm">'
-            .. '<span class="text-gray-400">%s</span>'
-            .. '<a href="/%s?id=%d" class="text-blue-600 hover:underline truncate">%s</a>'
-            .. '<span class="text-gray-400 text-xs whitespace-nowrap ml-auto">%s</span>'
+            '<div class="flex items-center gap-2 text-sm max-w-full">'
+            .. '<span class="text-gray-400 shrink-0">%s</span>'
+            .. '<a href="/%s?id=%d" class="text-blue-600 hover:underline truncate min-w-0">%s</a>'
+            .. '<span class="text-gray-400 text-xs whitespace-nowrap shrink-0">%s</span>'
             .. '</div>',
             item.icon,
             item.type_path,

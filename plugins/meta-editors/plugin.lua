@@ -158,13 +158,13 @@ local function render_slider(ctx)
 
     local xdata = build_xdata(ctx, tonumber(val) or 0)
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="flex items-center gap-2 text-sm py-1.5">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div x-data="%s" class="flex items-center gap-2 text-sm py-1.5 max-w-full">', html_escape(xdata))
     if label then
-        parts[#parts + 1] = string.format('<span class="text-stone-600">%s</span>', html_escape(label))
+        parts[#parts + 1] = string.format('<span class="text-stone-600 shrink-0">%s</span>', html_escape(label))
     end
-    parts[#parts + 1] = '<span x-text="val" class="font-mono font-bold w-8 text-right"></span>'
+    parts[#parts + 1] = '<span x-text="val" class="font-mono font-bold w-8 text-right shrink-0"></span>'
     parts[#parts + 1] = string.format(
-        '<input type="range" :min="%s" :max="%s" :step="%s" x-model.number="val" @change="save(val)" class="flex-1 accent-amber-700">',
+        '<input type="range" :min="%s" :max="%s" :step="%s" x-model.number="val" @change="save(val)" class="flex-1 min-w-0 accent-amber-700">',
         html_escape(min), html_escape(max), html_escape(step)
     )
     parts[#parts + 1] = string.format('<span class="text-stone-400 text-xs">/ %s</span>', html_escape(max))
@@ -533,13 +533,13 @@ local function render_date_range(ctx)
     )
 
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="inline-flex items-center gap-2 text-sm py-1.5">', html_escape(xdata))
-    parts[#parts + 1] = string.format('<span class="text-stone-600">%s</span>', html_escape(start_label))
+    parts[#parts + 1] = string.format('<div x-data="%s" class="flex flex-wrap items-center gap-2 text-sm py-1.5 max-w-full">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<span class="text-stone-600 shrink-0">%s</span>', html_escape(start_label))
     parts[#parts + 1] = '<input type="date" :value="(val && val.start) || \'\'" @change="saveRange(\'start\', $event.target.value)" '
-        .. 'class="px-2 py-1 border border-stone-300 rounded text-sm font-mono focus:outline-none focus:ring-1 focus:ring-amber-500">'
-    parts[#parts + 1] = string.format('<span class="text-stone-600">%s</span>', html_escape(end_label))
+        .. 'class="px-2 py-1 border border-stone-300 rounded text-sm font-mono focus:outline-none focus:ring-1 focus:ring-amber-500 min-w-0">'
+    parts[#parts + 1] = string.format('<span class="text-stone-600 shrink-0">%s</span>', html_escape(end_label))
     parts[#parts + 1] = '<input type="date" :value="(val && val.end) || \'\'" @change="saveRange(\'end\', $event.target.value)" '
-        .. 'class="px-2 py-1 border border-stone-300 rounded text-sm font-mono focus:outline-none focus:ring-1 focus:ring-amber-500">'
+        .. 'class="px-2 py-1 border border-stone-300 rounded text-sm font-mono focus:outline-none focus:ring-1 focus:ring-amber-500 min-w-0">'
     parts[#parts + 1] = save_indicators()
     parts[#parts + 1] = '</div>'
     return table.concat(parts, "\n")
