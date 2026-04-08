@@ -1299,10 +1299,11 @@ local function render_pie_chart(ctx)
     for _, e in ipairs(entries) do total = total + e.value end
     if total == 0 then total = 1 end
 
-    -- radius = 15.915 gives circumference ~= 100
-    local radius = 15.915
+    -- For solid pie: r=9, stroke-width=18 → outer edge = 9+9 = 18 (fits viewBox 36x36)
+    -- For donut: r=14, stroke-width=6 → outer edge = 14+3 = 17 (fits viewBox 36x36)
+    local radius = is_donut and 14 or 9
+    local stroke_width = is_donut and 6 or (radius * 2)
     local circumference = 2 * math.pi * radius
-    local stroke_width = is_donut and 8 or radius
 
     -- Build SVG circles
     local circles = {}
