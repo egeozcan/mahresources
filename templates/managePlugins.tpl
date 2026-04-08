@@ -26,12 +26,12 @@
                     <p class="text-sm text-stone-600 mt-1 whitespace-pre-line">{{ plugin.Description }}</p>
                     {% endif %}
                 </div>
-                <div class="flex gap-2 shrink-0">
+                <div class="flex gap-2 shrink-0 ml-auto">
                     <form method="POST"
                           action="{% if plugin.Enabled %}/v1/plugin/disable{% else %}/v1/plugin/enable{% endif %}">
                         <input type="hidden" name="name" value="{{ plugin.Name }}">
                         <button type="submit"
-                                class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 {% if plugin.Enabled %}text-white bg-red-700 hover:bg-red-800 focus:ring-red-600{% else %}text-white bg-amber-700 hover:bg-amber-800 focus:ring-amber-600{% endif %}"
+                                class="inline-flex justify-center py-2 px-4 border shadow-sm text-sm font-medium font-mono rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 {% if plugin.Enabled %}border-stone-300 text-stone-700 bg-white hover:bg-stone-50 focus:ring-amber-600{% else %}border-transparent text-white bg-amber-700 hover:bg-amber-800 focus:ring-amber-600{% endif %}"
                                 data-testid="plugin-toggle-{{ plugin.Name }}">
                             {% if plugin.Enabled %}Disable{% else %}Enable{% endif %}
                         </button>
@@ -41,7 +41,7 @@
                           onsubmit="return confirm('Purge all stored data for {{ plugin.Name }}? This cannot be undone.')">
                         <input type="hidden" name="name" value="{{ plugin.Name }}">
                         <button type="submit"
-                                class="inline-flex justify-center py-2 px-4 border border-stone-300 rounded-md shadow-sm text-sm font-medium font-mono text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600"
+                                class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-red-700 hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600"
                                 data-testid="plugin-purge-{{ plugin.Name }}">
                             Purge Data
                         </button>
