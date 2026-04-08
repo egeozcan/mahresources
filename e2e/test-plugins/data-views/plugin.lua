@@ -1,0 +1,1516 @@
+-- Data Views plugin for mahresources
+-- Provides 17 data-viewing shortcodes for rich display of meta values,
+-- charts, tables, and more.
+-- Usage in templates: [plugin:data-views:shortcode-name attr="value"]
+
+plugin = {
+    name = "data-views",
+    version = "1.0",
+    description = "17 data viewing shortcodes for rich display of meta values, charts, tables, and more.\n"
+        .. "\n"
+        .. "[plugin:data-views:badge] -- Styled pill badge from meta value. Attrs: path, values, colors, labels.\n"
+        .. "[plugin:data-views:format] -- Formatted display (currency, percent, date, etc). Attrs: path, type, currency, decimals, prefix, suffix.\n"
+        .. "[plugin:data-views:stat-card] -- KPI card with large number and icon. Attrs: path, label, type, icon.\n"
+        .. "[plugin:data-views:meter] -- Horizontal gauge with color zones. Attrs: path, min, max, low, high, label.\n"
+        .. "[plugin:data-views:sparkline] -- Inline SVG chart (line/bar/area). Attrs: path, type, height, width, color.\n"
+        .. "[plugin:data-views:table] -- Table of owned entities. Attrs: type, cols, labels, limit.\n"
+        .. "[plugin:data-views:list] -- Render meta array as list. Attrs: path, style (bullet/numbered/comma/pill).\n"
+        .. "[plugin:data-views:count-badge] -- Count items matching a condition. Attrs: path, count-where, eq, neq, label, icon, type.\n"
+        .. "[plugin:data-views:embed] -- Embed resource content in code block. Attrs: resource-id, path, max-lines.\n"
+        .. "[plugin:data-views:image] -- Display image from meta. Attrs: path, width, height, rounded.\n"
+        .. "[plugin:data-views:qr-code] -- Code 128 barcode from meta value. Attrs: path, size.\n"
+        .. "[plugin:data-views:link-preview] -- Styled link card. Attrs: path.\n"
+        .. "[plugin:data-views:json-tree] -- Expandable JSON tree. Attrs: path, expanded.\n"
+        .. "[plugin:data-views:bar-chart] -- Horizontal bar chart. Attrs: path, label-key, value-key, color.\n"
+        .. "[plugin:data-views:pie-chart] -- SVG pie/donut chart. Attrs: path, label-key, value-key, size, donut, colors.\n"
+        .. "[plugin:data-views:conditional] -- Conditionally render content. Attrs: path, eq/neq/gt/lt/contains/empty/not-empty, content, html, class.\n"
+        .. "[plugin:data-views:timeline-chart] -- Horizontal timeline of owned entities. Attrs: type, date-path, limit.",
+}
+
+-- ---------------------------------------------------------------------------
+-- Shared Helpers
+-- ---------------------------------------------------------------------------
+
+--- Escape HTML special characters.
+local function html_escape(str)
+    if str == nil then return "" end
+    str = tostring(str)
+    str = str:gsub("&", "&amp;")
+    str = str:gsub("<", "&lt;")
+    str = str:gsub(">", "&gt;")
+    str = str:gsub('"', "&quot;")
+    str = str:gsub("'", "&#39;")
+    return str
+end
+
+--- Navigate a dot-separated path inside a table.
+local function get_nested(tbl, path)
+    if not tbl or not path then return nil end
+    local current = tbl
+    for segment in path:gmatch("[^%.]+") do
+        if type(current) ~= "table" then return nil end
+        current = current[segment]
+    end
+    return current
+end
+
+--- Split comma-separated string into an array.
+local function parse_csv(str)
+    local result = {}
+    if not str or str == "" then return result end
+    for item in str:gmatch("[^,]+") do
+        result[#result + 1] = item:match("^%s*(.-)%s*$")
+    end
+    return result
+end
+
+--- Lua value to JSON string for HTML embedding.
+local function json_value(val)
+    if val == nil then return "null" end
+    local t = type(val)
+    if t == "boolean" then return val and "true" or "false" end
+    if t == "number" then return tostring(val) end
+    if t == "string" then return mah.json.encode(val) end
+    if t == "table" then return mah.json.encode(val) end
+    return "null"
+end
+
+--- Clamp a number.
+local function clamp(n, lo, hi)
+    if n < lo then return lo end
+    if n > hi then return hi end
+    return n
+end
+
+-- ---------------------------------------------------------------------------
+-- Formatting Helpers
+-- ---------------------------------------------------------------------------
+
+--- Add thousands separators: 1234567.89 -> "1,234,567.89"
+local function format_number(n, decimals)
+    if not n then return "0" end
+    n = tonumber(n)
+    if not n then return "0" end
+
+    local formatted
+    if decimals then
+        formatted = string.format("%." .. decimals .. "f", n)
+    else
+        -- Auto: remove trailing zeros after decimal
+        formatted = string.format("%.2f", n)
+        formatted = formatted:gsub("%.?0+$", "")
+        if formatted == "" then formatted = "0" end
+    end
+
+    -- Insert thousands separators in the integer part.
+    local int_part, dec_part = formatted:match("^(-?%d+)(%.?.*)$")
+    if not int_part then return formatted end
+    int_part = int_part:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""):gsub("^(-),", "-%1")
+    return int_part .. dec_part
+end
+
+--- Human-readable file size.
+local function format_filesize(bytes)
+    bytes = tonumber(bytes)
+    if not bytes then return "0 B" end
+    local units = {"B", "KB", "MB", "GB", "TB"}
+    local i = 1
+    local val = bytes
+    while val >= 1024 and i < #units do
+        val = val / 1024
+        i = i + 1
+    end
+    if i == 1 then return string.format("%d B", val) end
+    return string.format("%.1f %s", val, units[i])
+end
+
+--- Duration: 3661 -> "1h 1m 1s"
+local function format_duration(seconds)
+    seconds = tonumber(seconds)
+    if not seconds then return "0s" end
+    seconds = math.floor(seconds)
+    if seconds < 0 then seconds = 0 end
+    local h = math.floor(seconds / 3600)
+    local m = math.floor((seconds % 3600) / 60)
+    local s = seconds % 60
+    local parts = {}
+    if h > 0 then parts[#parts + 1] = h .. "h" end
+    if m > 0 then parts[#parts + 1] = m .. "m" end
+    if s > 0 or #parts == 0 then parts[#parts + 1] = s .. "s" end
+    return table.concat(parts, " ")
+end
+
+--- ISO date string -> "Jan 15, 2024"
+local function format_date(iso)
+    if not iso or type(iso) ~= "string" then return "" end
+    local y, mo, d = iso:match("(%d%d%d%d)-(%d%d)-(%d%d)")
+    if not y then return iso end
+    local months = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"}
+    local mi = tonumber(mo)
+    if mi and mi >= 1 and mi <= 12 then
+        return string.format("%s %d, %s", months[mi], tonumber(d), y)
+    end
+    return iso
+end
+
+--- Unified formatter dispatcher.
+local function format_value(val, fmt_type, attrs)
+    attrs = attrs or {}
+    if val == nil then return "" end
+    local result
+    if fmt_type == "currency" then
+        local sym = attrs["currency"] or "$"
+        local dec = tonumber(attrs["decimals"]) or 2
+        result = sym .. format_number(val, dec)
+    elseif fmt_type == "percent" then
+        local dec = tonumber(attrs["decimals"]) or 1
+        result = format_number(tonumber(val) or 0, dec) .. "%"
+    elseif fmt_type == "date" then
+        result = format_date(tostring(val))
+    elseif fmt_type == "filesize" then
+        result = format_filesize(val)
+    elseif fmt_type == "number" then
+        local dec = tonumber(attrs["decimals"])
+        result = format_number(val, dec)
+    elseif fmt_type == "duration" then
+        result = format_duration(val)
+    else
+        result = tostring(val)
+    end
+
+    local prefix = attrs["prefix"] or ""
+    local suffix = attrs["suffix"] or ""
+    return prefix .. result .. suffix
+end
+
+-- ---------------------------------------------------------------------------
+-- SVG Icon Helpers
+-- ---------------------------------------------------------------------------
+
+local ICONS = {
+    chart = '<svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="8" rx="0.5"/><rect x="12" y="6" width="3" height="12" rx="0.5"/><rect x="17" y="3" width="3" height="15" rx="0.5"/></svg>',
+    users = '<svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 014-4h4a4 4 0 014 4v2"/><circle cx="17" cy="9" r="3"/><path d="M21 21v-2a3 3 0 00-3-3h-1"/></svg>',
+    files = '<svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2h10l6 6v14H4V2z"/><path d="M14 2v6h6"/></svg>',
+    clock = '<svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',
+    check = '<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8l4 4 6-7"/></svg>',
+    file = '<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 1h7l3 3v11H3V1z"/><path d="M10 1v3h3"/></svg>',
+    note = '<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 1h10v14H3V1z"/><path d="M5 5h6M5 8h6M5 11h3"/></svg>',
+    folder = '<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 3h5l2 2h7v9H1V3z"/></svg>',
+    star = '<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1l2.2 4.5 5 .7-3.6 3.5.9 5L8 12.4 3.5 14.7l.9-5L.8 6.2l5-.7z"/></svg>',
+    globe = '<svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10A15.3 15.3 0 0112 2z"/></svg>',
+    external = '<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 9v4H3V4h4"/><path d="M8 8L14 2m0 0h-4m4 0v4"/></svg>',
+}
+
+local function get_icon(name, size_class)
+    local svg = ICONS[name]
+    if not svg then return "" end
+    if size_class then
+        svg = svg:gsub('class="[^"]*"', 'class="' .. size_class .. '"', 1)
+    end
+    return svg
+end
+
+-- ---------------------------------------------------------------------------
+-- Default color palette for charts
+-- ---------------------------------------------------------------------------
+
+local DEFAULT_COLORS = {"#d97706", "#3b82f6", "#ef4444", "#22c55e", "#8b5cf6", "#ec4899", "#06b6d4", "#6b7280"}
+
+-- ---------------------------------------------------------------------------
+-- Base64 Decoder (for embed shortcode)
+-- ---------------------------------------------------------------------------
+
+local b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+local b64lookup = {}
+for i = 1, #b64chars do
+    b64lookup[b64chars:byte(i)] = i - 1
+end
+
+local function base64_decode(data)
+    if not data then return "" end
+    data = data:gsub("[^" .. b64chars .. "=]", "")
+    local result = {}
+    local i = 1
+    while i <= #data do
+        local a = b64lookup[data:byte(i)] or 0
+        local b = b64lookup[data:byte(i + 1)] or 0
+        local c = b64lookup[data:byte(i + 2)] or 0
+        local d = b64lookup[data:byte(i + 3)] or 0
+        local n = a * 262144 + b * 4096 + c * 64 + d
+        result[#result + 1] = string.char(
+            math.floor(n / 65536) % 256,
+            math.floor(n / 256) % 256,
+            n % 256
+        )
+        i = i + 4
+    end
+    local str = table.concat(result)
+    -- Trim padding bytes
+    local pad = data:match("(=+)$")
+    if pad then
+        str = str:sub(1, #str - #pad)
+    end
+    return str
+end
+
+-- ---------------------------------------------------------------------------
+-- Code 128 Barcode (for qr-code shortcode)
+-- ---------------------------------------------------------------------------
+
+-- Code 128 patterns: each character is encoded as 6 alternating bar/space widths.
+-- Code Set B covers ASCII 32-127 (printable characters).
+local CODE128_PATTERNS = {
+    [0]  = {2,1,2,2,2,2}, [1]  = {2,2,2,1,2,2}, [2]  = {2,2,2,2,2,1},
+    [3]  = {1,2,1,2,2,3}, [4]  = {1,2,1,3,2,2}, [5]  = {1,3,1,2,2,2},
+    [6]  = {1,2,2,2,1,3}, [7]  = {1,2,2,3,1,2}, [8]  = {1,3,2,2,1,2},
+    [9]  = {2,2,1,2,1,3}, [10] = {2,2,1,3,1,2}, [11] = {2,3,1,2,1,2},
+    [12] = {1,1,2,2,3,2}, [13] = {1,2,2,1,3,2}, [14] = {1,2,2,2,3,1},
+    [15] = {1,1,3,2,2,2}, [16] = {1,2,3,1,2,2}, [17] = {1,2,3,2,2,1},
+    [18] = {2,2,3,2,1,1}, [19] = {2,2,1,1,3,2}, [20] = {2,2,1,2,3,1},
+    [21] = {2,1,3,2,1,2}, [22] = {2,2,3,1,1,2}, [23] = {3,1,2,1,3,1},
+    [24] = {3,1,1,2,2,2}, [25] = {3,2,1,1,2,2}, [26] = {3,2,1,2,2,1},
+    [27] = {3,1,2,2,1,2}, [28] = {3,2,2,1,1,2}, [29] = {3,2,2,2,1,1},
+    [30] = {2,1,2,1,2,3}, [31] = {2,1,2,3,2,1}, [32] = {2,3,2,1,2,1},
+    [33] = {1,1,1,3,2,3}, [34] = {1,3,1,1,2,3}, [35] = {1,3,1,3,2,1},
+    [36] = {1,1,2,3,1,3}, [37] = {1,3,2,1,1,3}, [38] = {1,3,2,3,1,1},
+    [39] = {2,1,1,3,1,3}, [40] = {2,3,1,1,1,3}, [41] = {2,3,1,3,1,1},
+    [42] = {1,1,2,1,3,3}, [43] = {1,1,2,3,3,1}, [44] = {1,3,2,1,3,1},
+    [45] = {1,1,3,1,2,3}, [46] = {1,1,3,3,2,1}, [47] = {1,3,3,1,2,1},
+    [48] = {3,1,3,1,2,1}, [49] = {2,1,1,3,3,1}, [50] = {2,3,1,1,3,1},
+    [51] = {2,1,3,1,1,3}, [52] = {2,1,3,3,1,1}, [53] = {2,1,3,1,3,1},
+    [54] = {3,1,1,1,2,3}, [55] = {3,1,1,3,2,1}, [56] = {3,3,1,1,2,1},
+    [57] = {3,1,2,1,1,3}, [58] = {3,1,2,3,1,1}, [59] = {3,3,2,1,1,1},
+    [60] = {2,1,1,2,1,3}, [61] = {2,1,1,2,3,1}, [62] = {2,3,1,2,1,1},
+    [63] = {1,2,1,1,2,3}, [64] = {1,2,1,3,2,1}, [65] = {1,2,1,1,3,2},  -- Note: 65 is not used directly
+    -- Special codes
+    [66] = {1,2,3,1,1,2}, [67] = {1,2,1,2,3,1}, [68] = {1,1,1,2,2,3},  -- Note: 65-68 are less common
+    [69] = {1,2,2,3,1,1}, [70] = {1,1,3,2,1,2}, [71] = {2,1,2,2,1,3},
+    [72] = {2,1,2,2,3,1}, [73] = {2,1,1,1,3,2}, [74] = {3,2,1,2,1,1},
+    [75] = {3,1,1,2,1,2}, [76] = {1,1,2,2,1,3}, [77] = {1,1,2,2,3,1},
+    [78] = {1,3,2,2,1,1}, [79] = {2,2,1,1,2,3}, [80] = {2,2,1,3,1,1},  -- Note: corrections may be needed
+    [81] = {3,2,1,1,1,2}, [82] = {3,1,1,1,3,1}, [83] = {1,1,3,1,1,3},
+    [84] = {1,3,1,1,1,3}, [85] = {1,3,1,3,1,1}, [86] = {1,1,1,3,1,3},
+    [87] = {1,3,1,1,3,1}, [88] = {1,1,1,3,3,1}, [89] = {3,1,1,1,1,3},
+    [90] = {3,1,1,3,1,1}, [91] = {3,3,1,1,1,1}, [92] = {3,1,4,1,1,1},
+    [93] = {2,2,1,4,1,1}, [94] = {4,3,1,1,1,1}, [95] = {1,1,1,2,2,4},
+    [96] = {1,1,1,4,2,2}, [97] = {1,2,1,1,2,4}, [98] = {1,2,1,4,2,1},
+    [99] = {1,4,1,1,2,2}, [100] = {1,4,1,2,2,1}, [101] = {2,4,1,2,1,1},
+    [102] = {2,2,1,1,4,1}, [103] = {2,1,1,2,4,1},
+    -- Start codes
+    [104] = {2,1,1,4,1,2}, -- Start Code B
+    [105] = {2,1,4,1,1,2}, -- Start Code A (unused here)
+    [106] = {2,3,3,1,1,1,2}, -- Stop (7 elements)
+}
+
+--- Encode text as Code 128 Set B and return SVG string.
+local function code128_svg(text, height)
+    if not text or text == "" then return "" end
+    height = height or 50
+
+    -- Start Code B = 104
+    local codes = {104}
+    local checksum = 104
+
+    for i = 1, #text do
+        local byte = text:byte(i)
+        local code_val = byte - 32
+        if code_val < 0 or code_val > 95 then
+            code_val = 0 -- Replace unprintable with space
+        end
+        codes[#codes + 1] = code_val
+        checksum = checksum + code_val * i
+    end
+
+    -- Checksum
+    codes[#codes + 1] = checksum % 103
+    -- Stop code
+    codes[#codes + 1] = 106
+
+    -- Build bars
+    local bars = {}
+    local x = 0
+    local quiet_zone = 10 -- Quiet zone width
+
+    x = quiet_zone
+    for _, code in ipairs(codes) do
+        local pattern = CODE128_PATTERNS[code]
+        if pattern then
+            for j = 1, #pattern do
+                local w = pattern[j]
+                if j % 2 == 1 then
+                    -- Bar (odd positions are bars)
+                    bars[#bars + 1] = string.format(
+                        '<rect x="%d" y="0" width="%d" height="%d" fill="currentColor"/>',
+                        x, w, height
+                    )
+                end
+                x = x + w
+            end
+        end
+    end
+
+    local total_width = x + quiet_zone
+    return string.format(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" class="inline-block" style="width: auto; height: %dpx;">'
+        .. '%s</svg>',
+        total_width, height, height,
+        table.concat(bars)
+    )
+end
+
+-- ---------------------------------------------------------------------------
+-- JSON Tree Renderer (recursive, for json-tree shortcode)
+-- ---------------------------------------------------------------------------
+
+local function render_json_tree(val, depth, max_expand, path_prefix)
+    depth = depth or 0
+    max_expand = max_expand or 2
+    path_prefix = path_prefix or "root"
+
+    if val == nil then
+        return '<span class="text-stone-400">null</span>'
+    end
+
+    local t = type(val)
+
+    if t == "string" then
+        return '<span class="text-green-700">&quot;' .. html_escape(val) .. '&quot;</span>'
+    elseif t == "number" then
+        return '<span class="text-blue-700">' .. tostring(val) .. '</span>'
+    elseif t == "boolean" then
+        return '<span class="text-purple-700">' .. tostring(val) .. '</span>'
+    elseif t ~= "table" then
+        return '<span class="text-stone-400">' .. html_escape(tostring(val)) .. '</span>'
+    end
+
+    -- Determine if array or object
+    local is_array = false
+    local count = 0
+    for k, _ in pairs(val) do
+        count = count + 1
+        if type(k) ~= "number" then
+            is_array = false
+            break
+        end
+        is_array = true
+    end
+
+    if count == 0 then
+        if is_array then return '<span class="text-stone-400">[]</span>' end
+        return '<span class="text-stone-400">{}</span>'
+    end
+
+    local expanded = depth < max_expand
+    local toggle_id = path_prefix:gsub("[^%w]", "_")
+    local open_bracket = is_array and "[" or "{"
+    local close_bracket = is_array and "]" or "}"
+
+    local parts = {}
+    parts[#parts + 1] = string.format(
+        '<span class="cursor-pointer select-none text-stone-500 hover:text-stone-800" '
+        .. '@click="%s = !%s">',
+        toggle_id, toggle_id
+    )
+    parts[#parts + 1] = string.format(
+        '<span x-text="%s ? \'\\u25BC\' : \'\\u25B6\'" class="inline-block w-3 text-[10px]"></span>',
+        toggle_id
+    )
+    parts[#parts + 1] = '<span class="text-stone-500">' .. open_bracket .. '</span>'
+    parts[#parts + 1] = string.format(
+        '<span x-show="!%s" class="text-stone-400"> %d items... </span>',
+        toggle_id, count
+    )
+    parts[#parts + 1] = '</span>'
+    parts[#parts + 1] = string.format('<div x-show="%s" class="ml-4 border-l border-stone-200 pl-2">', toggle_id)
+
+    -- Sort keys for objects
+    local keys = {}
+    if is_array then
+        for i = 1, #val do keys[#keys + 1] = i end
+    else
+        for k, _ in pairs(val) do keys[#keys + 1] = k end
+        table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+    end
+
+    for _, k in ipairs(keys) do
+        local v = val[k]
+        local child_path = path_prefix .. "_" .. tostring(k)
+        parts[#parts + 1] = '<div>'
+        if not is_array then
+            parts[#parts + 1] = '<span class="text-stone-800 font-bold">' .. html_escape(tostring(k)) .. '</span>: '
+        else
+            parts[#parts + 1] = '<span class="text-stone-400">' .. tostring(k - 1) .. ': </span>'
+        end
+        parts[#parts + 1] = render_json_tree(v, depth + 1, max_expand, child_path)
+        parts[#parts + 1] = '</div>'
+    end
+
+    parts[#parts + 1] = '</div>'
+    parts[#parts + 1] = '<span class="text-stone-500">' .. close_bracket .. '</span>'
+
+    return table.concat(parts)
+end
+
+--- Build the x-data initialization object for the JSON tree (expanded state).
+local function build_tree_state(val, depth, max_expand, path_prefix)
+    depth = depth or 0
+    max_expand = max_expand or 2
+    path_prefix = path_prefix or "root"
+    local entries = {}
+
+    if type(val) == "table" then
+        local count = 0
+        for _ in pairs(val) do count = count + 1 end
+        if count > 0 then
+            local toggle_id = path_prefix:gsub("[^%w]", "_")
+            local expanded = depth < max_expand
+            entries[#entries + 1] = toggle_id .. ": " .. (expanded and "true" or "false")
+
+            for k, v in pairs(val) do
+                local child_path = path_prefix .. "_" .. tostring(k)
+                local child_entries = build_tree_state(v, depth + 1, max_expand, child_path)
+                if child_entries ~= "" then
+                    entries[#entries + 1] = child_entries
+                end
+            end
+        end
+    end
+
+    return table.concat(entries, ", ")
+end
+
+-- ---------------------------------------------------------------------------
+-- Error helper
+-- ---------------------------------------------------------------------------
+
+local function shortcode_error(name, msg)
+    return string.format(
+        '<div class="py-1.5"><span class="text-sm text-red-500">%s: %s</span></div>',
+        html_escape(name), html_escape(msg)
+    )
+end
+
+-- ---------------------------------------------------------------------------
+-- 1. badge
+-- ---------------------------------------------------------------------------
+
+local function render_badge(ctx)
+    local attrs = ctx.attrs or {}
+    local path = attrs["path"]
+    if not path then return shortcode_error("badge", '"path" attribute is required') end
+
+    local val = get_nested(ctx.value, path)
+    if val == nil then return '<div class="py-1.5"></div>' end
+    val = tostring(val)
+
+    local values = parse_csv(attrs["values"] or "")
+    local colors = parse_csv(attrs["colors"] or "")
+    local labels = parse_csv(attrs["labels"] or "")
+
+    -- Find matching index
+    local idx = nil
+    for i, v in ipairs(values) do
+        if v == val then idx = i; break end
+    end
+
+    local color = idx and colors[idx] or "#6b7280"
+    local label = idx and labels[idx] or val
+
+    return string.format(
+        '<div class="py-1.5">'
+        .. '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border" '
+        .. 'style="background-color: %s20; color: %s; border-color: %s">%s</span>'
+        .. '</div>',
+        html_escape(color), html_escape(color), html_escape(color), html_escape(label)
+    )
+end
+
+-- ---------------------------------------------------------------------------
+-- 2. format
+-- ---------------------------------------------------------------------------
+
+local function render_format(ctx)
+    local attrs = ctx.attrs or {}
+    local path = attrs["path"]
+    if not path then return shortcode_error("format", '"path" attribute is required') end
+
+    local val = get_nested(ctx.value, path)
+    local fmt_type = attrs["type"]
+    if not fmt_type then return shortcode_error("format", '"type" attribute is required') end
+
+    local formatted = format_value(val, fmt_type, attrs)
+    return string.format(
+        '<div class="py-1.5"><span class="font-mono text-sm">%s</span></div>',
+        html_escape(formatted)
+    )
+end
+
+-- ---------------------------------------------------------------------------
+-- 3. stat-card
+-- ---------------------------------------------------------------------------
+
+local function render_stat_card(ctx)
+    local attrs = ctx.attrs or {}
+    local path = attrs["path"]
+    if not path then return shortcode_error("stat-card", '"path" attribute is required') end
+
+    local val = get_nested(ctx.value, path)
+    local label = attrs["label"] or path
+    local fmt_type = attrs["type"] or "number"
+    local icon_name = attrs["icon"] or "chart"
+
+    local formatted = format_value(val, fmt_type, attrs)
+    local icon_svg = get_icon(icon_name)
+
+    return string.format(
+        '<div class="py-1.5">'
+        .. '<div class="inline-flex flex-col items-center rounded-lg border border-stone-200 px-6 py-4 text-center">'
+        .. '<div class="text-stone-400 mb-1">%s</div>'
+        .. '<div class="text-2xl font-bold font-mono">%s</div>'
+        .. '<div class="text-xs text-stone-500 mt-0.5">%s</div>'
+        .. '</div></div>',
+        icon_svg, html_escape(formatted), html_escape(label)
+    )
+end
+
+-- ---------------------------------------------------------------------------
+-- 4. meter
+-- ---------------------------------------------------------------------------
+
+local function render_meter(ctx)
+    local attrs = ctx.attrs or {}
+    local path = attrs["path"]
+    if not path then return shortcode_error("meter", '"path" attribute is required') end
+
+    local val = tonumber(get_nested(ctx.value, path)) or 0
+    local min_val = tonumber(attrs["min"]) or 0
+    local max_val = tonumber(attrs["max"]) or 100
+    local low = tonumber(attrs["low"]) or 30
+    local high = tonumber(attrs["high"]) or 70
+    local label = attrs["label"] or path
+
+    local range = max_val - min_val
+    if range <= 0 then range = 1 end
+
+    local val_pct = clamp(((val - min_val) / range) * 100, 0, 100)
+    local low_pct = clamp(((low - min_val) / range) * 100, 0, 100)
+    local high_pct = clamp(((high - min_val) / range) * 100, 0, 100)
+
+    return string.format(
+        '<div class="py-1.5 text-sm">'
+        .. '<div class="flex items-center justify-between mb-0.5">'
+        .. '<span class="text-stone-600">%s</span>'
+        .. '<span class="font-mono font-bold">%s</span>'
+        .. '</div>'
+        .. '<div class="relative h-3 rounded-full overflow-hidden bg-stone-200">'
+        .. '<div class="absolute inset-0 rounded-full" style="background: linear-gradient(to right, '
+        .. '#ef4444 0%%, #ef4444 %.1f%%, #f59e0b %.1f%%, #f59e0b %.1f%%, #22c55e %.1f%%, #22c55e 100%%)"></div>'
+        .. '<div class="absolute top-0 h-full w-1 bg-stone-800 rounded" style="left: %.1f%%"></div>'
+        .. '</div></div>',
+        html_escape(label), html_escape(tostring(val)),
+        low_pct, low_pct, high_pct, high_pct,
+        val_pct
+    )
+end
+
+-- ---------------------------------------------------------------------------
+-- 5. sparkline
+-- ---------------------------------------------------------------------------
+
+local function render_sparkline(ctx)
+    local attrs = ctx.attrs or {}
+    local path = attrs["path"]
+    if not path then return shortcode_error("sparkline", '"path" attribute is required') end
+
+    local data = get_nested(ctx.value, path)
+    if type(data) ~= "table" or #data == 0 then
+        return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No data</span></div>'
+    end
+
+    local chart_type = attrs["type"] or "line"
+    local height = tonumber(attrs["height"]) or 24
+    local width = tonumber(attrs["width"]) or 100
+    local color = attrs["color"] or "#d97706"
+
+    -- Convert to numbers
+    local values = {}
+    for _, v in ipairs(data) do
+        local n = tonumber(v)
+        if n then values[#values + 1] = n end
+    end
+    if #values == 0 then
+        return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No data</span></div>'
+    end
+
+    local min_v, max_v = values[1], values[1]
+    for _, v in ipairs(values) do
+        if v < min_v then min_v = v end
+        if v > max_v then max_v = v end
+    end
+    local v_range = max_v - min_v
+    if v_range == 0 then v_range = 1 end
+
+    local padding = 1
+
+    if chart_type == "bar" then
+        local bar_w = (width - padding * 2) / #values
+        local gap = math.max(0.5, bar_w * 0.1)
+        bar_w = bar_w - gap
+        local rects = {}
+        for i, v in ipairs(values) do
+            local h = ((v - min_v) / v_range) * (height - padding * 2)
+            if h < 1 then h = 1 end
+            local x = padding + (i - 1) * (bar_w + gap)
+            local y = height - padding - h
+            rects[#rects + 1] = string.format(
+                '<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="%s" rx="0.5"/>',
+                x, y, bar_w, h, html_escape(color)
+            )
+        end
+        return string.format(
+            '<div class="py-1.5"><svg width="%d" height="%d" class="inline-block align-middle">%s</svg></div>',
+            width, height, table.concat(rects)
+        )
+    end
+
+    -- Line or area: build points
+    local points = {}
+    for i, v in ipairs(values) do
+        local x = padding + ((i - 1) / math.max(1, #values - 1)) * (width - padding * 2)
+        local y = padding + (1 - (v - min_v) / v_range) * (height - padding * 2)
+        points[#points + 1] = string.format("%.1f,%.1f", x, y)
+    end
+    local points_str = table.concat(points, " ")
+
+    if chart_type == "area" then
+        -- Close the polygon at the bottom
+        local first_x = padding
+        local last_x = padding + ((#values - 1) / math.max(1, #values - 1)) * (width - padding * 2)
+        local area_points = points_str
+            .. string.format(" %.1f,%d %d,%d", last_x, height - padding, first_x, height - padding)
+        return string.format(
+            '<div class="py-1.5"><svg width="%d" height="%d" class="inline-block align-middle">'
+            .. '<polygon points="%s" fill="%s" fill-opacity="0.2" stroke="none"/>'
+            .. '<polyline points="%s" fill="none" stroke="%s" stroke-width="1.5"/>'
+            .. '</svg></div>',
+            width, height,
+            area_points, html_escape(color),
+            points_str, html_escape(color)
+        )
+    end
+
+    -- Default: line
+    return string.format(
+        '<div class="py-1.5"><svg width="%d" height="%d" class="inline-block align-middle">'
+        .. '<polyline points="%s" fill="none" stroke="%s" stroke-width="1.5"/>'
+        .. '</svg></div>',
+        width, height, points_str, html_escape(color)
+    )
+end
+
+-- ---------------------------------------------------------------------------
+-- 6. table
+-- ---------------------------------------------------------------------------
+
+local function render_table(ctx)
+    local attrs = ctx.attrs or {}
+    local entity_type = attrs["type"] or "notes"
+    local cols = parse_csv(attrs["cols"] or "name,updated_at")
+    local labels = parse_csv(attrs["labels"] or "")
+    local limit = tonumber(attrs["limit"]) or 10
+
+    -- Fill missing labels with column names
+    for i = #labels + 1, #cols do
+        labels[i] = cols[i]
+    end
+
+    -- Query entities
+    local query_fn
+    local type_path
+    if entity_type == "resources" then
+        query_fn = mah.db.query_resources
+        type_path = "resource"
+    elseif entity_type == "groups" then
+        query_fn = mah.db.query_groups
+        type_path = "group"
+    else
+        query_fn = mah.db.query_notes
+        type_path = "note"
+    end
+
+    local items = query_fn({
+        owner_id = ctx.entity_id,
+        limit = limit,
+        sort_by = {"updated_at desc"},
+    })
+
+    if not items or #items == 0 then
+        return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No data</span></div>'
+    end
+
+    local parts = {
+        '<div class="py-1.5">',
+        '<table class="w-full text-sm border-collapse">',
+        '<thead><tr class="border-b border-stone-200">',
+    }
+    for _, label in ipairs(labels) do
+        parts[#parts + 1] = string.format(
+            '<th class="text-left py-1 px-2 font-semibold text-stone-600">%s</th>',
+            html_escape(label)
+        )
+    end
+    parts[#parts + 1] = '</tr></thead><tbody>'
+
+    for _, item in ipairs(items) do
+        local item_meta = nil
+        parts[#parts + 1] = '<tr class="border-b border-stone-100 hover:bg-stone-50">'
+        for _, col in ipairs(cols) do
+            local cell_val
+            if col:sub(1, 5) == "meta." then
+                -- Decode meta JSON and navigate path
+                if item_meta == nil then
+                    if item.meta and item.meta ~= "" then
+                        local ok, decoded = pcall(mah.json.decode, item.meta)
+                        item_meta = ok and decoded or false
+                    else
+                        item_meta = false
+                    end
+                end
+                if item_meta then
+                    local meta_path = col:sub(6)
+                    cell_val = get_nested(item_meta, meta_path)
+                end
+            else
+                cell_val = item[col]
+            end
+
+            if type(cell_val) == "table" then
+                cell_val = mah.json.encode(cell_val)
+            end
+
+            local display = html_escape(tostring(cell_val or ""))
+
+            if col == "name" then
+                parts[#parts + 1] = string.format(
+                    '<td class="py-1 px-2"><a href="/%s?id=%d" class="text-blue-600 hover:underline">%s</a></td>',
+                    type_path, item.id, display
+                )
+            else
+                parts[#parts + 1] = string.format(
+                    '<td class="py-1 px-2 text-stone-500">%s</td>',
+                    display
+                )
+            end
+        end
+        parts[#parts + 1] = '</tr>'
+    end
+
+    parts[#parts + 1] = '</tbody></table></div>'
+    return table.concat(parts, "\n")
+end
+
+-- ---------------------------------------------------------------------------
+-- 7. list
+-- ---------------------------------------------------------------------------
+
+local function render_list(ctx)
+    local attrs = ctx.attrs or {}
+    local path = attrs["path"]
+    if not path then return shortcode_error("list", '"path" attribute is required') end
+
+    local data = get_nested(ctx.value, path)
+    if type(data) ~= "table" or #data == 0 then
+        return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No items</span></div>'
+    end
+
+    local style = attrs["style"] or "bullet"
+
+    --- Extract display text from an item
+    local function item_text(item)
+        if type(item) ~= "table" then return tostring(item) end
+        -- Try common fields
+        for _, key in ipairs({"name", "text", "title", "label"}) do
+            if item[key] then return tostring(item[key]) end
+        end
+        -- Fall back to first string value
+        for _, v in pairs(item) do
+            if type(v) == "string" then return v end
+        end
+        return mah.json.encode(item)
+    end
+
+    if style == "comma" then
+        local texts = {}
+        for _, item in ipairs(data) do
+            texts[#texts + 1] = html_escape(item_text(item))
+        end
+        return string.format(
+            '<div class="py-1.5"><span class="text-sm">%s</span></div>',
+            table.concat(texts, ", ")
+        )
+    end
+
+    if style == "pill" then
+        local parts = { '<div class="py-1.5"><div class="flex flex-wrap gap-1">' }
+        for _, item in ipairs(data) do
+            parts[#parts + 1] = string.format(
+                '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-stone-100 text-stone-700 border border-stone-200">%s</span>',
+                html_escape(item_text(item))
+            )
+        end
+        parts[#parts + 1] = '</div></div>'
+        return table.concat(parts)
+    end
+
+    -- bullet or numbered
+    local tag = style == "numbered" and "ol" or "ul"
+    local list_class = style == "numbered" and "list-decimal" or "list-disc"
+    local parts = { string.format('<div class="py-1.5"><%s class="%s list-inside text-sm space-y-0.5">', tag, list_class) }
+    for _, item in ipairs(data) do
+        parts[#parts + 1] = '<li>' .. html_escape(item_text(item)) .. '</li>'
+    end
+    parts[#parts + 1] = string.format('</%s></div>', tag)
+    return table.concat(parts)
+end
+
+-- ---------------------------------------------------------------------------
+-- 8. count-badge
+-- ---------------------------------------------------------------------------
+
+local function render_count_badge(ctx)
+    local attrs = ctx.attrs or {}
+    local path = attrs["path"]
+    local entity_type = attrs["type"]
+    local label = attrs["label"] or ""
+    local icon_name = attrs["icon"]
+    local count = 0
+
+    if entity_type then
+        -- Entity count mode
+        local count_fn
+        if entity_type == "resources" then
+            count_fn = mah.db.count_resources
+        elseif entity_type == "groups" then
+            count_fn = mah.db.count_groups
+        elseif entity_type == "notes" then
+            count_fn = mah.db.count_notes
+        end
+        if count_fn then
+            count = count_fn({ owner_id = ctx.entity_id }) or 0
+        end
+    elseif path then
+        -- Meta array mode
+        local data = get_nested(ctx.value, path)
+        if type(data) == "table" then
+            local count_where = attrs["count-where"]
+            local eq_val = attrs["eq"]
+            local neq_val = attrs["neq"]
+
+            if count_where then
+                for _, item in ipairs(data) do
+                    if type(item) == "table" then
+                        local field_val = tostring(item[count_where] or "")
+                        if eq_val and field_val == eq_val then
+                            count = count + 1
+                        elseif neq_val and field_val ~= neq_val then
+                            count = count + 1
+                        end
+                    end
+                end
+            else
+                count = #data
+            end
+        end
+    else
+        return shortcode_error("count-badge", '"path" or "type" attribute is required')
+    end
+
+    local icon_svg = icon_name and get_icon(icon_name) or ""
+
+    return string.format(
+        '<div class="py-1.5">'
+        .. '<span class="inline-flex items-center gap-1 text-sm font-medium text-stone-600">'
+        .. '%s<span class="font-mono font-bold">%d</span>'
+        .. '<span>%s</span></span></div>',
+        icon_svg, count, html_escape(label)
+    )
+end
+
+-- ---------------------------------------------------------------------------
+-- 9. embed
+-- ---------------------------------------------------------------------------
+
+local function render_embed(ctx)
+    local attrs = ctx.attrs or {}
+    local resource_id = tonumber(attrs["resource-id"])
+    local max_lines = tonumber(attrs["max-lines"])
+
+    if not resource_id and attrs["path"] then
+        resource_id = tonumber(get_nested(ctx.value, attrs["path"]))
+    end
+
+    if not resource_id then
+        return shortcode_error("embed", '"resource-id" or "path" attribute is required')
+    end
+
+    local data = mah.db.get_resource_data(resource_id)
+    if not data or not data.data then
+        return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">Resource not found</span></div>'
+    end
+
+    local content = base64_decode(data.data)
+
+    -- Truncate by lines if needed
+    local truncated = false
+    if max_lines and max_lines > 0 then
+        local lines = {}
+        local line_count = 0
+        for line in (content .. "\n"):gmatch("(.-)\n") do
+            line_count = line_count + 1
+            if line_count > max_lines then
+                truncated = true
+                break
+            end
+            lines[#lines + 1] = line
+        end
+        if truncated then
+            content = table.concat(lines, "\n")
+        end
+    end
+
+    local suffix = truncated and '\n<span class="text-stone-400 italic">... (truncated)</span>' or ""
+
+    return string.format(
+        '<div class="py-1.5">'
+        .. '<pre class="bg-stone-50 border border-stone-200 rounded p-3 text-xs font-mono overflow-x-auto max-h-80 overflow-y-auto whitespace-pre-wrap">%s%s</pre>'
+        .. '</div>',
+        html_escape(content), suffix
+    )
+end
+
+-- ---------------------------------------------------------------------------
+-- 10. image
+-- ---------------------------------------------------------------------------
+
+local function render_image(ctx)
+    local attrs = ctx.attrs or {}
+    local path = attrs["path"]
+    if not path then return shortcode_error("image", '"path" attribute is required') end
+
+    local val = get_nested(ctx.value, path)
+    if val == nil then
+        return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No image</span></div>'
+    end
+
+    local w = tonumber(attrs["width"]) or 100
+    local h = tonumber(attrs["height"]) or 100
+    local rounded = attrs["rounded"] == "true"
+    local alt = html_escape(attrs["alt"] or path)
+    local rounded_class = rounded and "rounded-full" or "rounded"
+
+    local src
+    if type(val) == "number" or (type(val) == "string" and val:match("^%d+$")) then
+        -- Resource ID
+        src = string.format("/v1/resource/preview?id=%s&width=%d&height=%d", tostring(val), w, h)
+    elseif type(val) == "string" and val:match("^https?://") then
+        -- External URL
+        src = val
+    else
+        -- Treat as resource ID string or path
+        src = tostring(val)
+    end
+
+    return string.format(
+        '<div class="py-1.5">'
+        .. '<img src="%s" width="%d" height="%d" alt="%s" class="object-cover %s" loading="lazy" />'
+        .. '</div>',
+        html_escape(src), w, h, alt, rounded_class
+    )
+end
+
+-- ---------------------------------------------------------------------------
+-- 11. qr-code (Code 128 barcode)
+-- ---------------------------------------------------------------------------
+
+local function render_qr_code(ctx)
+    local attrs = ctx.attrs or {}
+    local path = attrs["path"]
+    if not path then return shortcode_error("qr-code", '"path" attribute is required') end
+
+    local val = get_nested(ctx.value, path)
+    if val == nil then
+        return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No value</span></div>'
+    end
+
+    local text = tostring(val)
+    local size = tonumber(attrs["size"]) or 50
+
+    local barcode_svg = code128_svg(text, size)
+    if barcode_svg == "" then
+        return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">Cannot encode value</span></div>'
+    end
+
+    return string.format(
+        '<div class="py-1.5">'
+        .. '<div class="inline-block border border-stone-200 rounded p-2 bg-white">%s</div>'
+        .. '<div class="text-xs text-stone-500 mt-1 font-mono">%s</div>'
+        .. '</div>',
+        barcode_svg, html_escape(text)
+    )
+end
+
+-- ---------------------------------------------------------------------------
+-- 12. link-preview
+-- ---------------------------------------------------------------------------
+
+local function render_link_preview(ctx)
+    local attrs = ctx.attrs or {}
+    local path = attrs["path"]
+    if not path then return shortcode_error("link-preview", '"path" attribute is required') end
+
+    local val = get_nested(ctx.value, path)
+    if val == nil then
+        return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No link</span></div>'
+    end
+
+    local url, domain
+    if type(val) == "table" then
+        url = val.href or val.url or ""
+        domain = val.host or val.domain or ""
+    else
+        url = tostring(val)
+        domain = url:match("https?://([^/]+)") or url
+    end
+
+    if url == "" then
+        return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No link</span></div>'
+    end
+
+    return string.format(
+        '<div class="py-1.5">'
+        .. '<a href="%s" target="_blank" rel="noopener" '
+        .. 'class="flex items-center gap-3 p-3 border border-stone-200 rounded-lg hover:bg-stone-50 transition-colors text-sm no-underline">'
+        .. '<span class="shrink-0 text-stone-400">%s</span>'
+        .. '<span class="min-w-0 flex-1">'
+        .. '<span class="block font-medium text-stone-800 truncate">%s</span>'
+        .. '<span class="block text-xs text-stone-500">%s</span>'
+        .. '</span>'
+        .. '<span class="shrink-0 ml-auto text-stone-400">%s</span>'
+        .. '</a></div>',
+        html_escape(url),
+        get_icon("globe", "w-8 h-8"),
+        html_escape(url),
+        html_escape(domain),
+        get_icon("external", "w-4 h-4")
+    )
+end
+
+-- ---------------------------------------------------------------------------
+-- 13. json-tree
+-- ---------------------------------------------------------------------------
+
+local function render_json_tree_shortcode(ctx)
+    local attrs = ctx.attrs or {}
+    local path = attrs["path"]
+    if not path then return shortcode_error("json-tree", '"path" attribute is required') end
+
+    local val = get_nested(ctx.value, path)
+    if val == nil then
+        return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No data</span></div>'
+    end
+
+    -- If val is a string, try to decode as JSON
+    if type(val) == "string" then
+        local ok, decoded = pcall(mah.json.decode, val)
+        if ok then val = decoded end
+    end
+
+    local max_expand = tonumber(attrs["expanded"]) or 2
+
+    local state = build_tree_state(val, 0, max_expand, "root")
+    local tree_html = render_json_tree(val, 0, max_expand, "root")
+
+    return string.format(
+        '<div class="py-1.5" x-data="{ %s }"><div class="font-mono text-xs">%s</div></div>',
+        state, tree_html
+    )
+end
+
+-- ---------------------------------------------------------------------------
+-- 14. bar-chart
+-- ---------------------------------------------------------------------------
+
+local function render_bar_chart(ctx)
+    local attrs = ctx.attrs or {}
+    local path = attrs["path"]
+    if not path then return shortcode_error("bar-chart", '"path" attribute is required') end
+
+    local data = get_nested(ctx.value, path)
+    if type(data) ~= "table" then
+        return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No data</span></div>'
+    end
+
+    local color = attrs["color"] or "#d97706"
+    local label_key = attrs["label-key"]
+    local value_key = attrs["value-key"]
+
+    -- Extract label/value pairs
+    local entries = {}
+
+    -- Check if it's an array of objects or a plain object
+    local is_array = #data > 0
+
+    if is_array and label_key and value_key then
+        for _, item in ipairs(data) do
+            if type(item) == "table" then
+                local lbl = tostring(item[label_key] or "")
+                local val = tonumber(item[value_key]) or 0
+                entries[#entries + 1] = { label = lbl, value = val }
+            end
+        end
+    else
+        -- Plain object: keys as labels, values as numbers
+        local keys = {}
+        for k, _ in pairs(data) do keys[#keys + 1] = k end
+        table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+        for _, k in ipairs(keys) do
+            local val = tonumber(data[k]) or 0
+            entries[#entries + 1] = { label = tostring(k), value = val }
+        end
+    end
+
+    if #entries == 0 then
+        return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No data</span></div>'
+    end
+
+    -- Find max value for scaling
+    local max_val = 0
+    for _, e in ipairs(entries) do
+        if e.value > max_val then max_val = e.value end
+    end
+    if max_val == 0 then max_val = 1 end
+
+    local parts = { '<div class="py-1.5"><div class="space-y-1 text-sm">' }
+    for _, e in ipairs(entries) do
+        local pct = (e.value / max_val) * 100
+        parts[#parts + 1] = string.format(
+            '<div class="flex items-center gap-2">'
+            .. '<span class="w-20 text-right text-stone-600 truncate">%s</span>'
+            .. '<div class="flex-1 bg-stone-100 rounded-full h-5 overflow-hidden">'
+            .. '<div class="h-full rounded-full" style="width: %.1f%%; background-color: %s"></div>'
+            .. '</div>'
+            .. '<span class="w-12 text-right font-mono text-xs text-stone-500">%s</span>'
+            .. '</div>',
+            html_escape(e.label), pct, html_escape(color),
+            html_escape(format_number(e.value))
+        )
+    end
+    parts[#parts + 1] = '</div></div>'
+    return table.concat(parts, "\n")
+end
+
+-- ---------------------------------------------------------------------------
+-- 15. pie-chart
+-- ---------------------------------------------------------------------------
+
+local function render_pie_chart(ctx)
+    local attrs = ctx.attrs or {}
+    local path = attrs["path"]
+    if not path then return shortcode_error("pie-chart", '"path" attribute is required') end
+
+    local data = get_nested(ctx.value, path)
+    if type(data) ~= "table" then
+        return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No data</span></div>'
+    end
+
+    local size = tonumber(attrs["size"]) or 120
+    local is_donut = attrs["donut"] == "true"
+    local label_key = attrs["label-key"]
+    local value_key = attrs["value-key"]
+    local colors = parse_csv(attrs["colors"] or "")
+    if #colors == 0 then colors = DEFAULT_COLORS end
+
+    -- Extract entries
+    local entries = {}
+    local is_array = #data > 0
+
+    if is_array and label_key and value_key then
+        for _, item in ipairs(data) do
+            if type(item) == "table" then
+                local lbl = tostring(item[label_key] or "")
+                local val = tonumber(item[value_key]) or 0
+                if val > 0 then
+                    entries[#entries + 1] = { label = lbl, value = val }
+                end
+            end
+        end
+    else
+        local keys = {}
+        for k, _ in pairs(data) do keys[#keys + 1] = k end
+        table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+        for _, k in ipairs(keys) do
+            local val = tonumber(data[k]) or 0
+            if val > 0 then
+                entries[#entries + 1] = { label = tostring(k), value = val }
+            end
+        end
+    end
+
+    if #entries == 0 then
+        return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No data</span></div>'
+    end
+
+    -- Calculate total
+    local total = 0
+    for _, e in ipairs(entries) do total = total + e.value end
+    if total == 0 then total = 1 end
+
+    -- radius = 15.915 gives circumference ~= 100
+    local radius = 15.915
+    local circumference = 2 * math.pi * radius
+    local stroke_width = is_donut and 8 or radius
+
+    -- Build SVG circles
+    local circles = {}
+    local offset = 25 -- Start at 12 o'clock (stroke-dashoffset trick)
+
+    for i, e in ipairs(entries) do
+        local segment_pct = (e.value / total) * circumference
+        local color_idx = ((i - 1) % #colors) + 1
+        circles[#circles + 1] = string.format(
+            '<circle cx="18" cy="18" r="%.3f" fill="none" stroke="%s" stroke-width="%s" '
+            .. 'stroke-dasharray="%.3f %.3f" stroke-dashoffset="%.3f" transform="rotate(-90 18 18)"/>',
+            radius, html_escape(colors[color_idx]), stroke_width,
+            segment_pct, circumference - segment_pct, offset
+        )
+        offset = offset - segment_pct
+    end
+
+    -- Build legend
+    local legend = {}
+    for i, e in ipairs(entries) do
+        local color_idx = ((i - 1) % #colors) + 1
+        legend[#legend + 1] = string.format(
+            '<div class="flex items-center gap-1">'
+            .. '<span class="w-3 h-3 rounded-sm inline-block shrink-0" style="background:%s"></span>'
+            .. '<span class="truncate">%s (%s)</span>'
+            .. '</div>',
+            html_escape(colors[color_idx]),
+            html_escape(e.label),
+            html_escape(format_number(e.value))
+        )
+    end
+
+    return string.format(
+        '<div class="py-1.5"><div class="inline-flex items-start gap-4">'
+        .. '<svg width="%d" height="%d" viewBox="0 0 36 36">%s</svg>'
+        .. '<div class="text-xs space-y-1">%s</div>'
+        .. '</div></div>',
+        size, size, table.concat(circles), table.concat(legend)
+    )
+end
+
+-- ---------------------------------------------------------------------------
+-- 16. conditional
+-- ---------------------------------------------------------------------------
+
+local function render_conditional(ctx)
+    local attrs = ctx.attrs or {}
+    local path = attrs["path"]
+    if not path then return shortcode_error("conditional", '"path" attribute is required') end
+
+    local val = get_nested(ctx.value, path)
+
+    -- Evaluate condition
+    local condition_met = false
+
+    if attrs["eq"] then
+        condition_met = tostring(val or "") == attrs["eq"]
+    elseif attrs["neq"] then
+        condition_met = tostring(val or "") ~= attrs["neq"]
+    elseif attrs["gt"] then
+        condition_met = (tonumber(val) or 0) > (tonumber(attrs["gt"]) or 0)
+    elseif attrs["lt"] then
+        condition_met = (tonumber(val) or 0) < (tonumber(attrs["lt"]) or 0)
+    elseif attrs["contains"] then
+        condition_met = tostring(val or ""):find(attrs["contains"], 1, true) ~= nil
+    elseif attrs["empty"] then
+        condition_met = val == nil or val == ""
+    elseif attrs["not-empty"] then
+        condition_met = val ~= nil and val ~= ""
+    end
+
+    if not condition_met then return "" end
+
+    -- Render content
+    local output
+    if attrs["html"] then
+        -- Intentionally unescaped for trusted admin content
+        output = attrs["html"]
+    elseif attrs["content"] then
+        output = html_escape(attrs["content"])
+    else
+        return ""
+    end
+
+    local css_class = attrs["class"]
+    if css_class then
+        return string.format(
+            '<div class="py-1.5"><div class="%s">%s</div></div>',
+            html_escape(css_class), output
+        )
+    end
+
+    return string.format('<div class="py-1.5">%s</div>', output)
+end
+
+-- ---------------------------------------------------------------------------
+-- 17. timeline-chart
+-- ---------------------------------------------------------------------------
+
+local function render_timeline_chart(ctx)
+    local attrs = ctx.attrs or {}
+    local entity_type = attrs["type"] or "groups"
+    local date_path = attrs["date-path"] or "timeline"
+    local limit = tonumber(attrs["limit"]) or 10
+
+    -- Query entities
+    local query_fn
+    local type_path
+    if entity_type == "resources" then
+        query_fn = mah.db.query_resources
+        type_path = "resource"
+    elseif entity_type == "notes" then
+        query_fn = mah.db.query_notes
+        type_path = "note"
+    else
+        query_fn = mah.db.query_groups
+        type_path = "group"
+    end
+
+    local items = query_fn({
+        owner_id = ctx.entity_id,
+        limit = limit,
+        sort_by = {"updated_at desc"},
+    })
+
+    if not items or #items == 0 then
+        return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No data</span></div>'
+    end
+
+    -- Parse ISO date to epoch-ish number for comparison (YYYYMMDD as integer)
+    local function date_to_num(iso)
+        if not iso or type(iso) ~= "string" then return nil end
+        local y, m, d = iso:match("(%d%d%d%d)-(%d%d)-(%d%d)")
+        if not y then return nil end
+        return tonumber(y) * 10000 + tonumber(m) * 100 + tonumber(d)
+    end
+
+    -- Extract timeline data from each entity's meta
+    local timeline_entries = {}
+    local global_min = nil
+    local global_max = nil
+
+    for _, item in ipairs(items) do
+        local item_meta = nil
+        if item.meta and item.meta ~= "" then
+            local ok, decoded = pcall(mah.json.decode, item.meta)
+            if ok then item_meta = decoded end
+        end
+
+        if item_meta then
+            local timeline_data = get_nested(item_meta, date_path)
+            if type(timeline_data) == "table" then
+                local start_date = timeline_data.start or timeline_data["start_date"] or timeline_data[1]
+                local end_date = timeline_data["end"] or timeline_data["end_date"] or timeline_data[2]
+                local start_num = date_to_num(tostring(start_date or ""))
+                local end_num = date_to_num(tostring(end_date or ""))
+
+                if start_num and end_num then
+                    timeline_entries[#timeline_entries + 1] = {
+                        id = item.id,
+                        name = item.name or "(untitled)",
+                        start_num = start_num,
+                        end_num = end_num,
+                        start_str = tostring(start_date),
+                        end_str = tostring(end_date),
+                    }
+                    if not global_min or start_num < global_min then global_min = start_num end
+                    if not global_max or end_num > global_max then global_max = end_num end
+                end
+            end
+        end
+    end
+
+    if #timeline_entries == 0 then
+        return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No timeline data</span></div>'
+    end
+
+    local range = global_max - global_min
+    if range <= 0 then range = 1 end
+
+    -- Format range labels
+    local min_label = format_date(string.format("%04d-%02d-%02d",
+        math.floor(global_min / 10000),
+        math.floor((global_min % 10000) / 100),
+        global_min % 100
+    ))
+    local max_label = format_date(string.format("%04d-%02d-%02d",
+        math.floor(global_max / 10000),
+        math.floor((global_max % 10000) / 100),
+        global_max % 100
+    ))
+
+    local parts = {
+        '<div class="py-1.5 text-sm">',
+        '<div class="flex text-xs text-stone-400 mb-1">',
+        '<span>' .. html_escape(min_label) .. '</span>',
+        '<span class="ml-auto">' .. html_escape(max_label) .. '</span>',
+        '</div>',
+        '<div class="space-y-1">',
+    }
+
+    for _, entry in ipairs(timeline_entries) do
+        local start_pct = ((entry.start_num - global_min) / range) * 100
+        local width_pct = ((entry.end_num - entry.start_num) / range) * 100
+        width_pct = math.max(width_pct, 1) -- Minimum 1% width for visibility
+
+        parts[#parts + 1] = string.format(
+            '<div class="flex items-center gap-2">'
+            .. '<a href="/%s?id=%d" class="w-28 truncate text-blue-600 hover:underline text-xs">%s</a>'
+            .. '<div class="flex-1 relative h-4 bg-stone-100 rounded">'
+            .. '<div class="absolute h-full rounded bg-amber-500" style="left: %.1f%%; width: %.1f%%"></div>'
+            .. '</div>'
+            .. '</div>',
+            type_path, entry.id, html_escape(entry.name),
+            start_pct, width_pct
+        )
+    end
+
+    parts[#parts + 1] = '</div></div>'
+    return table.concat(parts, "\n")
+end
+
+-- ---------------------------------------------------------------------------
+-- Plugin initialization
+-- ---------------------------------------------------------------------------
+
+function init()
+    mah.shortcode({ name = "badge",          label = "Status Badge",       render = render_badge })
+    mah.shortcode({ name = "format",         label = "Formatted Value",    render = render_format })
+    mah.shortcode({ name = "stat-card",      label = "Stat Card",          render = render_stat_card })
+    mah.shortcode({ name = "meter",          label = "Meter Gauge",        render = render_meter })
+    mah.shortcode({ name = "sparkline",      label = "Sparkline Chart",    render = render_sparkline })
+    mah.shortcode({ name = "table",          label = "Entity Table",       render = render_table })
+    mah.shortcode({ name = "list",           label = "List Display",       render = render_list })
+    mah.shortcode({ name = "count-badge",    label = "Count Badge",        render = render_count_badge })
+    mah.shortcode({ name = "embed",          label = "Resource Embed",     render = render_embed })
+    mah.shortcode({ name = "image",          label = "Image Display",      render = render_image })
+    mah.shortcode({ name = "qr-code",        label = "Barcode",            render = render_qr_code })
+    mah.shortcode({ name = "link-preview",   label = "Link Preview",       render = render_link_preview })
+    mah.shortcode({ name = "json-tree",      label = "JSON Tree",          render = render_json_tree_shortcode })
+    mah.shortcode({ name = "bar-chart",      label = "Bar Chart",          render = render_bar_chart })
+    mah.shortcode({ name = "pie-chart",      label = "Pie Chart",          render = render_pie_chart })
+    mah.shortcode({ name = "conditional",    label = "Conditional Content", render = render_conditional })
+    mah.shortcode({ name = "timeline-chart", label = "Timeline Chart",     render = render_timeline_chart })
+end
