@@ -1088,7 +1088,7 @@ local function render_qr_code(ctx)
         .. '</div>'
         .. '<div class="text-xs text-stone-500 mt-1 font-mono truncate">%s</div>'
         .. '</div>',
-        json_value(text), size, json_value(fg), json_value(bg),
+        html_escape(json_value(text)), size, html_escape(json_value(fg)), html_escape(json_value(bg)),
         html_escape(text)
     )
 end
@@ -1336,9 +1336,9 @@ local function render_pie_chart(ctx)
     end
 
     return string.format(
-        '<div class="py-1.5"><div class="inline-flex items-start gap-4">'
-        .. '<svg width="%d" height="%d" viewBox="0 0 36 36">%s</svg>'
-        .. '<div class="text-xs space-y-1">%s</div>'
+        '<div class="py-1.5 max-w-full overflow-hidden"><div class="flex flex-wrap items-start gap-3">'
+        .. '<svg class="shrink-0" width="%d" height="%d" viewBox="0 0 36 36">%s</svg>'
+        .. '<div class="text-xs space-y-1 min-w-0">%s</div>'
         .. '</div></div>',
         size, size, table.concat(circles), table.concat(legend)
     )
