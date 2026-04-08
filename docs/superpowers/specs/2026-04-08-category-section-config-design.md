@@ -201,9 +201,9 @@ The resolver must handle: null/empty input (all defaults), partial JSON (missing
 
 ### Template Context Integration
 
-`group_template_context.go` calls `ResolveGroupSectionConfig(group.Category.SectionConfig)` and adds result as `sc` to the template context.
+`group_template_context.go`: check `group.CategoryId != nil && group.Category != nil` before accessing `group.Category.SectionConfig`. If the group has no category, pass `nil` to the resolver — which already returns all-defaults for nil input. This ensures uncategorized groups render identically to today.
 
-`resource_template_context.go` calls `ResolveResourceSectionConfig(resource.ResourceCategory.SectionConfig)` and adds result as `sc` to the template context.
+`resource_template_context.go`: same nil check on `resource.ResourceCategoryID` / `resource.ResourceCategory` before accessing `SectionConfig`.
 
 ### Breadcrumb Suppression
 
