@@ -9,7 +9,7 @@ plugin = {
     description = "Adds 5 shortcodes for use in category CustomHeader, CustomSidebar, and CustomSummary slots.\n"
         .. "\n"
         .. "[plugin:widgets:summary] — Entity counts (resources, notes, sub-groups). Attrs: show, style.\n"
-        .. "[plugin:widgets:gallery] — Thumbnail grid of images (owned, then related). Attrs: count, cols, content-type.\n"
+        .. "[plugin:widgets:gallery] — Thumbnail grid of images (owned, then related). Attrs: count, cols, content-type, size (sm/md/lg).\n"
         .. "[plugin:widgets:progress] — Progress bar from meta field values. Attrs: field, complete, type, label.\n"
         .. "[plugin:widgets:activity] — Timeline of recently updated owned entities. Attrs: count, type.\n"
         .. "[plugin:widgets:tree] — Group hierarchy (ancestors and children). Attrs: direction, depth.",
@@ -157,7 +157,21 @@ local function render_gallery(ctx)
         return '<p class="text-sm text-gray-400 italic">No images found</p>'
     end
 
-    local parts = { string.format('<div class="grid grid-cols-%d gap-2">', cols) }
+    -- size attr: "sm" (48px, good for cards/summaries), "md" (default, 96px), "lg" (200px)
+    local size = attrs["size"] or "md"
+    local thumb_px = 96
+    local thumb_class = "h-24 w-24"
+    if size == "sm" then
+        thumb_px = 48
+        thumb_class = "h-12 w-12"
+    elseif size == "lg" then
+        thumb_px = 200
+        thumb_class = "h-48 w-48"
+    end
+
+    local parts = { string.format(
+        '<div class="flex flex-wrap gap-1" data-lightbox-source="/resources" data-lightbox-param-name="OwnerId" data-lightbox-param-value="%d">',
+        ctx.entity_id) }
     for _, r in ipairs(resources) do
         local name = html_escape(r.name or "")
         local ct = html_escape(r.content_type or "image/jpeg")
@@ -170,9 +184,9 @@ local function render_gallery(ctx)
             .. ' data-content-type="%s"'
             .. ' data-resource-name="%s"'
             .. ' data-resource-hash="%s">'
-            .. '<img src="/v1/resource/preview?id=%d&width=200&height=200&v=%s" '
+            .. '<img src="/v1/resource/preview?id=%d&width=%d&height=%d&v=%s" '
             .. 'loading="lazy" alt="%s" '
-            .. 'class="rounded object-cover w-full aspect-square" />'
+            .. 'class="rounded object-cover %s" />'
             .. '</a>',
             r.id, hash, ct,
             r.id, ct,
@@ -180,7 +194,9 @@ local function render_gallery(ctx)
             ct,
             name,
             hash,
-            r.id, hash, name
+            r.id, thumb_px, thumb_px, hash,
+            name,
+            thumb_class
         )
     end
     parts[#parts + 1] = '</div>'
