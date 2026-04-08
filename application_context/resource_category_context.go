@@ -7,6 +7,7 @@ import (
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
+	"mahresources/models/types"
 	"strings"
 )
 
@@ -69,6 +70,9 @@ func (ctx *MahresourcesContext) CreateResourceCategory(query *query_models.Resou
 		MetaSchema:      query.MetaSchema,
 		AutoDetectRules: query.AutoDetectRules,
 	}
+	if query.SectionConfig != "" {
+		resourceCategory.SectionConfig = types.JSON(query.SectionConfig)
+	}
 
 	if err := ctx.db.Create(&resourceCategory).Error; err != nil {
 		return nil, friendlyUniqueError("resource category", err)
@@ -100,6 +104,11 @@ func (ctx *MahresourcesContext) UpdateResourceCategory(query *query_models.Resou
 	resourceCategory.CustomAvatar = query.CustomAvatar
 	resourceCategory.MetaSchema = query.MetaSchema
 	resourceCategory.AutoDetectRules = query.AutoDetectRules
+	if query.SectionConfig != "" {
+		resourceCategory.SectionConfig = types.JSON(query.SectionConfig)
+	} else {
+		resourceCategory.SectionConfig = nil
+	}
 
 	if err := ctx.db.Save(&resourceCategory).Error; err != nil {
 		return nil, friendlyUniqueError("resource category", err)

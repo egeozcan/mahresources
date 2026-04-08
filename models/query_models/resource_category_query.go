@@ -10,6 +10,7 @@ type ResourceCategoryCreator struct {
 	CustomAvatar    string
 	MetaSchema      string
 	AutoDetectRules string
+	SectionConfig   string
 }
 
 type ResourceCategoryEditor struct {

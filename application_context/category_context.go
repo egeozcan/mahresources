@@ -7,6 +7,7 @@ import (
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
+	"mahresources/models/types"
 	"strings"
 )
 
@@ -80,6 +81,9 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 		CustomAvatar:  categoryQuery.CustomAvatar,
 		MetaSchema:    categoryQuery.MetaSchema,
 	}
+	if categoryQuery.SectionConfig != "" {
+		category.SectionConfig = types.JSON(categoryQuery.SectionConfig)
+	}
 
 	if err := ctx.db.Create(&category).Error; err != nil {
 		return nil, friendlyUniqueError("category", err)
@@ -128,6 +132,11 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 	category.CustomSummary = categoryQuery.CustomSummary
 	category.CustomAvatar = categoryQuery.CustomAvatar
 	category.MetaSchema = categoryQuery.MetaSchema
+	if categoryQuery.SectionConfig != "" {
+		category.SectionConfig = types.JSON(categoryQuery.SectionConfig)
+	} else {
+		category.SectionConfig = nil
+	}
 
 	if err := ctx.db.Save(&category).Error; err != nil {
 		return nil, friendlyUniqueError("category", err)

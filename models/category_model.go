@@ -1,6 +1,7 @@
 package models
 
 import (
+	"mahresources/models/types"
 	"time"
 )
 
@@ -23,6 +24,8 @@ type Category struct {
 	CustomAvatar string `gorm:"type:text"`
 	// MetaSchema is a JSON schema for the meta field of groups in this category
 	MetaSchema string `gorm:"type:text"`
+	// SectionConfig is a JSON config controlling which sections are visible on group detail pages
+	SectionConfig types.JSON `json:"sectionConfig"`
 }
 
 func (c Category) GetId() uint {

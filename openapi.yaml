@@ -69,6 +69,10 @@ components:
                     format: date-time
                     readOnly: true
                     type: string
+                sectionConfig:
+                    additionalProperties: true
+                    description: Arbitrary JSON data
+                    type: object
             type: object
         CategoryEditor:
             properties:
@@ -87,6 +91,8 @@ components:
                 MetaSchema:
                     type: string
                 Name:
+                    type: string
+                SectionConfig:
                     type: string
             type: object
         CategoryPartial:
@@ -971,6 +977,10 @@ components:
                     format: date-time
                     readOnly: true
                     type: string
+                sectionConfig:
+                    additionalProperties: true
+                    description: Arbitrary JSON data
+                    type: object
             type: object
         ResourceCategoryEditor:
             properties:
@@ -991,6 +1001,8 @@ components:
                 MetaSchema:
                     type: string
                 Name:
+                    type: string
+                SectionConfig:
                     type: string
             type: object
         ResourceCategoryPartial:
