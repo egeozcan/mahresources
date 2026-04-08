@@ -31,7 +31,7 @@
                           action="{% if plugin.Enabled %}/v1/plugin/disable{% else %}/v1/plugin/enable{% endif %}">
                         <input type="hidden" name="name" value="{{ plugin.Name }}">
                         <button type="submit"
-                                class="btn {% if plugin.Enabled %}btn-danger{% else %}btn-primary{% endif %}"
+                                class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 {% if plugin.Enabled %}text-white bg-red-700 hover:bg-red-800 focus:ring-red-600{% else %}text-white bg-amber-700 hover:bg-amber-800 focus:ring-amber-600{% endif %}"
                                 data-testid="plugin-toggle-{{ plugin.Name }}">
                             {% if plugin.Enabled %}Disable{% else %}Enable{% endif %}
                         </button>
@@ -40,7 +40,8 @@
                     <form method="POST" action="/v1/plugin/purge-data"
                           onsubmit="return confirm('Purge all stored data for {{ plugin.Name }}? This cannot be undone.')">
                         <input type="hidden" name="name" value="{{ plugin.Name }}">
-                        <button type="submit" class="btn btn-outline text-sm"
+                        <button type="submit"
+                                class="inline-flex justify-center py-2 px-4 border border-stone-300 rounded-md shadow-sm text-sm font-medium font-mono text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600"
                                 data-testid="plugin-purge-{{ plugin.Name }}">
                             Purge Data
                         </button>
@@ -120,7 +121,9 @@
                 </div>
                 {% endfor %}
 
-                <button type="submit" class="btn btn-primary" data-testid="save-settings-{{ plugin.Name }}">
+                <button type="submit"
+                        class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600"
+                        data-testid="save-settings-{{ plugin.Name }}">
                     Save Settings
                 </button>
                 <span x-show="saved" x-transition role="status" class="text-amber-700 text-sm ml-2">Saved!</span>
