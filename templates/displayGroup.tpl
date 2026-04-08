@@ -6,8 +6,11 @@
         {% process_shortcodes group.Category.CustomHeader group %}
     </div>
 
+    {% if sc.Description %}
     {% include "/partials/description.tpl" with description=group.Description descriptionEditUrl="/v1/group/editDescription" descriptionEditId=group.ID %}
+    {% endif %}
 
+    {% if sc.MetaSchemaDisplay %}
     {% if group.Category.MetaSchema && group.Meta %}
     <schema-editor mode="display"
         schema='{{ group.Category.MetaSchema }}'
@@ -15,35 +18,59 @@
         name="{{ group.Category.Name }}">
     </schema-editor>
     {% endif %}
+    {% endif %}
 
     {% with hasOwn=(group.OwnNotes || group.OwnGroups || group.OwnResources) %}
 
-    <details class="detail-collapsible mb-6" {% if hasOwn %}open{% endif %}>
+    {% if sc.OwnEntities.State != "off" %}
+    <details class="detail-collapsible mb-6" {% if sc.OwnEntities.State == "open" %}open{% elif sc.OwnEntities.State == "collapsed" %}{% elif hasOwn %}open{% endif %}>
         <summary>Own Entities</summary>
         <div class="detail-panel-body">
+            {% if sc.OwnEntities.OwnNotes %}
             {% include "/partials/seeAll.tpl" with entities=group.OwnNotes subtitle="Notes" formAction="/notes" addAction="/note/new" formID=group.ID formParamName="ownerId" templateName="note" %}
+            {% endif %}
+            {% if sc.OwnEntities.OwnGroups %}
             {% include "/partials/seeAll.tpl" with entities=group.OwnGroups subtitle="Sub-Groups" formAction="/groups" addAction="/group/new" formID=group.ID formParamName="ownerId" templateName="group" %}
+            {% endif %}
+            {% if sc.OwnEntities.OwnResources %}
             {% include "/partials/seeAll.tpl" with entities=group.OwnResources subtitle="Resources" formAction="/resources" addAction="/resource/new" formID=group.ID formParamName="ownerId" templateName="resource" %}
+            {% endif %}
         </div>
     </details>
+    {% endif %}
 
-    <details class="detail-collapsible mb-6" {% if !hasOwn %}open{% endif %}>
+    {% if sc.RelatedEntities.State != "off" %}
+    <details class="detail-collapsible mb-6" {% if sc.RelatedEntities.State == "open" %}open{% elif sc.RelatedEntities.State == "collapsed" %}{% elif !hasOwn %}open{% endif %}>
         <summary>Related Entities</summary>
         <div class="detail-panel-body">
+            {% if sc.RelatedEntities.RelatedGroups %}
             {% include "/partials/seeAll.tpl" with entities=group.RelatedGroups subtitle="Related Groups" formAction="/groups" addAction="/group/new" formID=group.ID formParamName="groups" templateName="group" %}
+            {% endif %}
+            {% if sc.RelatedEntities.RelatedResources %}
             {% include "/partials/seeAll.tpl" with entities=group.RelatedResources subtitle="Related Resources" formAction="/resources" addAction="/resource/new" formID=group.ID formParamName="groups" addFormSecondParamName="ownerid" addFormSecondParamValue=group.OwnerId templateName="resource" %}
+            {% endif %}
+            {% if sc.RelatedEntities.RelatedNotes %}
             {% include "/partials/seeAll.tpl" with entities=group.RelatedNotes subtitle="Related Notes" formAction="/notes" addAction="/note/new" formID=group.ID formParamName="groups" templateName="note" %}
+            {% endif %}
         </div>
     </details>
+    {% endif %}
 
     {% endwith %}
-    <details class="detail-collapsible mb-6"{% if group.Relationships || group.BackRelations %} open{% endif %}>
+
+    {% if sc.Relations.State != "off" %}
+    <details class="detail-collapsible mb-6"{% if sc.Relations.State == "open" %} open{% elif sc.Relations.State == "collapsed" %}{% elif group.Relationships || group.BackRelations %} open{% endif %}>
         <summary>Relations</summary>
         <div class="detail-panel-body">
+            {% if sc.Relations.ForwardRelations %}
             {% include "/partials/seeAll.tpl" with entities=group.Relationships subtitle="Relations" formID=group.ID formAction="/relations" formParamName="FromGroupId" addAction="/relation/new" templateName="relation" %}
+            {% endif %}
+            {% if sc.Relations.ReverseRelations %}
             {% include "/partials/seeAll.tpl" with entities=group.BackRelations subtitle="Reverse Relations" formID=group.ID formAction="/relations" formParamName="ToGroupId" addAction="/relation/new" templateName="relation_reverse" %}
+            {% endif %}
         </div>
     </details>
+    {% endif %}
     {% plugin_slot "group_detail_after" %}
 {% endblock %}
 
@@ -56,18 +83,23 @@
         <div x-data="{ entity: {{ group|json }} }">
             {% process_shortcodes group.Category.CustomSidebar group %}
         </div>
-        {% if group.Owner %}{% include "/partials/ownerDisplay.tpl" with owner=group.Owner %}{% endif %}
-        <a href="/group/tree?containing={{ group.ID }}" class="block text-sm text-amber-700 hover:text-amber-900 mb-2">Show in Tree</a>
+        {% if sc.Owner %}{% if group.Owner %}{% include "/partials/ownerDisplay.tpl" with owner=group.Owner %}{% endif %}{% endif %}
+        {% if sc.TreeLink %}<a href="/group/tree?containing={{ group.ID }}" class="block text-sm text-amber-700 hover:text-amber-900 mb-2">Show in Tree</a>{% endif %}
     </div>
 
+    {% if sc.Tags %}
     <div class="sidebar-group">
         {% include "/partials/tagList.tpl" with tags=group.Tags addTagUrl='/v1/groups/addTags' id=group.ID %}
     </div>
+    {% endif %}
 
+    {% if sc.MetaJson %}
     <div class="sidebar-group">
         {% include "/partials/json.tpl" with jsonData=group.Meta %}
     </div>
+    {% endif %}
 
+    {% if sc.Merge %}
     <div class="sidebar-group">
         <form
             x-data="confirmAction({ message: 'Selected groups will be deleted and merged to {{ group.Name|escapejs }}. Are you sure?' })"
@@ -82,7 +114,9 @@
             <div class="mt-2">{% include "/partials/form/searchButton.tpl" with text="Merge" %}</div>
         </form>
     </div>
+    {% endif %}
 
+    {% if sc.Clone %}
     <div class="sidebar-group">
         <form
             x-data="confirmAction({ message: 'Clone this group and all its associations?' })"
@@ -95,6 +129,7 @@
             <div class="mt-2">{% include "/partials/form/searchButton.tpl" with text="Clone" %}</div>
         </form>
     </div>
+    {% endif %}
 
     <div class="sidebar-group">
         {% include "partials/pluginActionsSidebar.tpl" with entityId=group.ID entityType="group" %}
