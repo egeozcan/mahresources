@@ -12,35 +12,41 @@
 
     {% for plugin in plugins %}
     <div class="card mb-4" data-testid="plugin-card-{{ plugin.Name }}">
-        <div class="card-header flex items-center justify-between">
-            <div>
-                <h2 class="text-lg font-semibold">{{ plugin.Name }}
-                    <span class="text-sm text-stone-500 font-normal">v{{ plugin.Version }}</span>
-                </h2>
-                {% if plugin.Description %}
-                <p class="text-sm text-stone-600">{{ plugin.Description }}</p>
-                {% endif %}
-            </div>
-            <div class="flex gap-2">
-                <form method="POST"
-                      action="{% if plugin.Enabled %}/v1/plugin/disable{% else %}/v1/plugin/enable{% endif %}">
-                    <input type="hidden" name="name" value="{{ plugin.Name }}">
-                    <button type="submit"
-                            class="btn {% if plugin.Enabled %}btn-danger{% else %}btn-primary{% endif %}"
-                            data-testid="plugin-toggle-{{ plugin.Name }}">
-                        {% if plugin.Enabled %}Disable{% else %}Enable{% endif %}
-                    </button>
-                </form>
-                {% if not plugin.Enabled %}
-                <form method="POST" action="/v1/plugin/purge-data"
-                      onsubmit="return confirm('Purge all stored data for {{ plugin.Name }}? This cannot be undone.')">
-                    <input type="hidden" name="name" value="{{ plugin.Name }}">
-                    <button type="submit" class="btn btn-outline text-sm"
-                            data-testid="plugin-purge-{{ plugin.Name }}">
-                        Purge Data
-                    </button>
-                </form>
-                {% endif %}
+        <div class="card-header">
+            <div class="flex items-start justify-between gap-4">
+                <div class="min-w-0">
+                    <div class="flex items-center gap-2">
+                        <h2 class="text-lg font-semibold">{{ plugin.Name }}</h2>
+                        <span class="card-badge">v{{ plugin.Version }}</span>
+                        {% if plugin.Enabled %}
+                        <span class="card-badge card-badge--relation">Enabled</span>
+                        {% endif %}
+                    </div>
+                    {% if plugin.Description %}
+                    <p class="text-sm text-stone-600 mt-1 whitespace-pre-line">{{ plugin.Description }}</p>
+                    {% endif %}
+                </div>
+                <div class="flex gap-2 shrink-0">
+                    <form method="POST"
+                          action="{% if plugin.Enabled %}/v1/plugin/disable{% else %}/v1/plugin/enable{% endif %}">
+                        <input type="hidden" name="name" value="{{ plugin.Name }}">
+                        <button type="submit"
+                                class="btn {% if plugin.Enabled %}btn-danger{% else %}btn-primary{% endif %}"
+                                data-testid="plugin-toggle-{{ plugin.Name }}">
+                            {% if plugin.Enabled %}Disable{% else %}Enable{% endif %}
+                        </button>
+                    </form>
+                    {% if not plugin.Enabled %}
+                    <form method="POST" action="/v1/plugin/purge-data"
+                          onsubmit="return confirm('Purge all stored data for {{ plugin.Name }}? This cannot be undone.')">
+                        <input type="hidden" name="name" value="{{ plugin.Name }}">
+                        <button type="submit" class="btn btn-outline text-sm"
+                                data-testid="plugin-purge-{{ plugin.Name }}">
+                            Purge Data
+                        </button>
+                    </form>
+                    {% endif %}
+                </div>
             </div>
         </div>
 

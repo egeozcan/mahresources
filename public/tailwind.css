@@ -2770,6 +2770,9 @@
   .whitespace-pre {
     white-space: pre;
   }
+  .whitespace-pre-line {
+    white-space: pre-line;
+  }
   .\!text-white {
     color: var(--color-white) !important;
   }

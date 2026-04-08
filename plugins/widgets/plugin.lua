@@ -6,12 +6,13 @@
 plugin = {
     name = "widgets",
     version = "1.0",
-    description = "Adds 5 shortcodes for use in category CustomHeader/CustomSidebar/CustomSummary slots. "
-        .. "[plugin:widgets:summary] shows entity counts (resources, notes, sub-groups). "
-        .. "[plugin:widgets:gallery count=\"8\" cols=\"4\"] renders a thumbnail grid of owned images. "
-        .. "[plugin:widgets:progress field=\"status\" complete=\"done\" type=\"notes\"] shows a progress bar based on meta field values. "
-        .. "[plugin:widgets:activity count=\"5\"] lists recently updated owned entities. "
-        .. "[plugin:widgets:tree direction=\"both\" depth=\"3\"] visualizes the group hierarchy (ancestors and children).",
+    description = "Adds 5 shortcodes for use in category CustomHeader, CustomSidebar, and CustomSummary slots.\n"
+        .. "\n"
+        .. "[plugin:widgets:summary] — Entity counts (resources, notes, sub-groups). Attrs: show, style.\n"
+        .. "[plugin:widgets:gallery] — Thumbnail grid of owned images. Attrs: count, cols, content-type.\n"
+        .. "[plugin:widgets:progress] — Progress bar from meta field values. Attrs: field, complete, type, label.\n"
+        .. "[plugin:widgets:activity] — Timeline of recently updated owned entities. Attrs: count, type.\n"
+        .. "[plugin:widgets:tree] — Group hierarchy (ancestors and children). Attrs: direction, depth.",
 }
 
 -- ---------------------------------------------------------------------------
