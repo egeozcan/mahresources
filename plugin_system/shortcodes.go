@@ -13,12 +13,46 @@ import (
 
 const luaShortcodeRenderTimeout = 5 * time.Second
 
+// ShortcodeDocAttr describes a single shortcode attribute for documentation.
+type ShortcodeDocAttr struct {
+	Name        string
+	Type        string
+	Required    bool
+	Default     string
+	Description string
+}
+
+// ShortcodeDocExample is a usage example for shortcode documentation.
+type ShortcodeDocExample struct {
+	Title string
+	Code  string
+	Notes string
+}
+
+// PluginDoc is a general documentation entry registered via mah.doc().
+// It lets plugins document any feature (actions, pages, settings, etc.).
+type PluginDoc struct {
+	PluginName  string
+	Name        string // URL slug, e.g. "colorize"
+	Label       string
+	Description string
+	Category    string // e.g. "Action", "Page", "" for custom
+	Attrs       []ShortcodeDocAttr
+	Examples    []ShortcodeDocExample
+	Notes       []string
+}
+
 type PluginShortcode struct {
 	PluginName string
 	TypeName   string // full: plugin:<pluginName>:<name>
 	Label      string
 	Render     *lua.LFunction
 	State      *lua.LState
+	// Documentation (optional). A shortcode is "documented" when Description is non-empty.
+	Description string
+	Attrs       []ShortcodeDocAttr
+	Examples    []ShortcodeDocExample
+	Notes       []string
 }
 
 var validShortcodeName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,49}$`)
@@ -52,7 +86,86 @@ func parseShortcodeTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Pl
 		sc.Render = fn
 	}
 
+	// Optional documentation fields.
+	if v := tbl.RawGetString("description"); v != lua.LNil {
+		sc.Description = v.String()
+	}
+
+	if v := tbl.RawGetString("attrs"); v != lua.LNil {
+		if attrsTbl, ok := v.(*lua.LTable); ok {
+			sc.Attrs = parseDocAttrs(attrsTbl)
+		}
+	}
+
+	if v := tbl.RawGetString("examples"); v != lua.LNil {
+		if exTbl, ok := v.(*lua.LTable); ok {
+			sc.Examples = parseDocExamples(exTbl)
+		}
+	}
+
+	if v := tbl.RawGetString("notes"); v != lua.LNil {
+		if notesTbl, ok := v.(*lua.LTable); ok {
+			notesTbl.ForEach(func(_, val lua.LValue) {
+				if s, ok := val.(lua.LString); ok {
+					sc.Notes = append(sc.Notes, string(s))
+				}
+			})
+		}
+	}
+
 	return sc, nil
+}
+
+func parseDocAttrs(tbl *lua.LTable) []ShortcodeDocAttr {
+	var attrs []ShortcodeDocAttr
+	tbl.ForEach(func(_, val lua.LValue) {
+		row, ok := val.(*lua.LTable)
+		if !ok {
+			return
+		}
+		attr := ShortcodeDocAttr{}
+		if v := row.RawGetString("name"); v != lua.LNil {
+			attr.Name = v.String()
+		}
+		if v := row.RawGetString("type"); v != lua.LNil {
+			attr.Type = v.String()
+		}
+		if v := row.RawGetString("required"); v != lua.LNil {
+			if b, ok := v.(lua.LBool); ok {
+				attr.Required = bool(b)
+			}
+		}
+		if v := row.RawGetString("default"); v != lua.LNil {
+			attr.Default = v.String()
+		}
+		if v := row.RawGetString("description"); v != lua.LNil {
+			attr.Description = v.String()
+		}
+		attrs = append(attrs, attr)
+	})
+	return attrs
+}
+
+func parseDocExamples(tbl *lua.LTable) []ShortcodeDocExample {
+	var examples []ShortcodeDocExample
+	tbl.ForEach(func(_, val lua.LValue) {
+		row, ok := val.(*lua.LTable)
+		if !ok {
+			return
+		}
+		ex := ShortcodeDocExample{}
+		if v := row.RawGetString("title"); v != lua.LNil {
+			ex.Title = v.String()
+		}
+		if v := row.RawGetString("code"); v != lua.LNil {
+			ex.Code = v.String()
+		}
+		if v := row.RawGetString("notes"); v != lua.LNil {
+			ex.Notes = v.String()
+		}
+		examples = append(examples, ex)
+	})
+	return examples
 }
 
 func (pm *PluginManager) GetPluginShortcode(fullTypeName string) *PluginShortcode {

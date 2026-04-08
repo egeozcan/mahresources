@@ -88,6 +88,7 @@ type PluginManager struct {
 	blockTypes   map[string][]*PluginBlockType      // pluginName -> block types
 	displayTypes map[string][]*PluginDisplayType   // pluginName -> display types
 	shortcodes   map[string][]*PluginShortcode     // pluginName -> shortcodes
+	docs         map[string][]*PluginDoc           // pluginName -> general doc entries
 	mu         sync.RWMutex
 	vmLocks    map[*lua.LState]*sync.Mutex
 	dbProvider atomic.Value
@@ -134,6 +135,7 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 		blockTypes:      make(map[string][]*PluginBlockType),
 		displayTypes:    make(map[string][]*PluginDisplayType),
 		shortcodes:      make(map[string][]*PluginShortcode),
+		docs:            make(map[string][]*PluginDoc),
 		vmLocks:         make(map[*lua.LState]*sync.Mutex),
 		pluginSettings:  make(map[string]map[string]any),
 		actionJobs:      make(map[string]*ActionJob),
@@ -542,6 +544,81 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		return 0
 	}))
 
+	mahMod.RawSetString("doc", L.NewFunction(func(L *lua.LState) int {
+		tbl := L.CheckTable(1)
+
+		doc := &PluginDoc{PluginName: *pluginNamePtr}
+
+		if v := tbl.RawGetString("name"); v == lua.LNil {
+			L.ArgError(1, "missing required field 'name'")
+			return 0
+		} else if str, ok := v.(lua.LString); !ok {
+			L.ArgError(1, fmt.Sprintf("'name' must be a string, got %s", v.Type()))
+			return 0
+		} else {
+			raw := string(str)
+			if !validShortcodeName.MatchString(raw) {
+				L.ArgError(1, fmt.Sprintf("invalid doc name %q: must match [a-z][a-z0-9_-]{0,49}", raw))
+				return 0
+			}
+			doc.Name = raw
+		}
+
+		if v := tbl.RawGetString("label"); v == lua.LNil {
+			L.ArgError(1, "missing required field 'label'")
+			return 0
+		} else {
+			doc.Label = v.String()
+		}
+
+		if v := tbl.RawGetString("description"); v != lua.LNil {
+			doc.Description = v.String()
+		}
+		if v := tbl.RawGetString("category"); v != lua.LNil {
+			doc.Category = v.String()
+		}
+		if v := tbl.RawGetString("attrs"); v != lua.LNil {
+			if attrsTbl, ok := v.(*lua.LTable); ok {
+				doc.Attrs = parseDocAttrs(attrsTbl)
+			}
+		}
+		if v := tbl.RawGetString("examples"); v != lua.LNil {
+			if exTbl, ok := v.(*lua.LTable); ok {
+				doc.Examples = parseDocExamples(exTbl)
+			}
+		}
+		if v := tbl.RawGetString("notes"); v != lua.LNil {
+			if notesTbl, ok := v.(*lua.LTable); ok {
+				notesTbl.ForEach(func(_, val lua.LValue) {
+					if s, ok := val.(lua.LString); ok {
+						doc.Notes = append(doc.Notes, string(s))
+					}
+				})
+			}
+		}
+
+		pm.mu.Lock()
+		// Check name uniqueness against other docs.
+		for _, existing := range pm.docs[*pluginNamePtr] {
+			if existing.Name == doc.Name {
+				pm.mu.Unlock()
+				L.ArgError(1, fmt.Sprintf("duplicate doc entry %q", doc.Name))
+				return 0
+			}
+		}
+		// Check name uniqueness against shortcodes.
+		for _, sc := range pm.shortcodes[*pluginNamePtr] {
+			if shortcodeName(sc) == doc.Name {
+				pm.mu.Unlock()
+				L.ArgError(1, fmt.Sprintf("doc name %q conflicts with shortcode of the same name", doc.Name))
+				return 0
+			}
+		}
+		pm.docs[*pluginNamePtr] = append(pm.docs[*pluginNamePtr], doc)
+		pm.mu.Unlock()
+		return 0
+	}))
+
 	mahMod.RawSetString("api", L.NewFunction(func(L *lua.LState) int {
 		method := strings.ToUpper(L.CheckString(1))
 		path := L.CheckString(2)
@@ -859,8 +936,9 @@ func (pm *PluginManager) DisablePlugin(name string) error {
 	// Remove display types for this plugin.
 	delete(pm.displayTypes, name)
 
-	// Remove shortcodes for this plugin.
+	// Remove shortcodes and general docs for this plugin.
 	delete(pm.shortcodes, name)
+	delete(pm.docs, name)
 
 	// Remove API endpoints for this plugin.
 	delete(pm.apiEndpoints, name)
@@ -949,12 +1027,16 @@ func (pm *PluginManager) GetPages() []PageRegistration {
 // HasPage checks if a plugin has registered a page at the given path.
 func (pm *PluginManager) HasPage(pluginName, path string) bool {
 	pm.mu.RLock()
-	defer pm.mu.RUnlock()
 	if pages, ok := pm.pages[pluginName]; ok {
-		_, exists := pages[path]
-		return exists
+		if _, exists := pages[path]; exists {
+			pm.mu.RUnlock()
+			return true
+		}
 	}
-	return false
+	pm.mu.RUnlock()
+
+	// Check auto-generated docs pages.
+	return pm.HasDocsPage(pluginName, path)
 }
 
 // GetBlockTypes returns all plugin-registered block types.

@@ -15,6 +15,7 @@ type pluginDisplay struct {
 	Version     string
 	Description string
 	Enabled     bool
+	HasDocs     bool
 	Settings    []plugin_system.SettingDefinition
 	Values      map[string]any
 }
@@ -53,6 +54,7 @@ func PluginManageContextProvider(appCtx *application_context.MahresourcesContext
 				Name:        dp.Name,
 				Version:     dp.Version,
 				Description: dp.Description,
+				HasDocs:     pm.PluginHasDocs(dp.Name),
 				Settings:    dp.Settings,
 				Values:      make(map[string]any),
 			}

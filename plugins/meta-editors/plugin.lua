@@ -6,25 +6,7 @@
 plugin = {
     name = "meta-editors",
     version = "1.0",
-    description = "Provides 17 interactive shortcodes for editing entity meta fields inline.\n"
-        .. "\n"
-        .. "[plugin:meta-editors:slider] — Numeric slider input. Attrs: path, min, max, step, label.\n"
-        .. "[plugin:meta-editors:stepper] — Increment/decrement buttons. Attrs: path, min, max, step.\n"
-        .. "[plugin:meta-editors:star-rating] — Clickable star rating. Attrs: path, max.\n"
-        .. "[plugin:meta-editors:toggle] — Boolean toggle switch. Attrs: path, label.\n"
-        .. "[plugin:meta-editors:multi-select] — Toggleable pill chips. Attrs: path, options, labels.\n"
-        .. "[plugin:meta-editors:button-group] — Single-select button group. Attrs: path, options, labels.\n"
-        .. "[plugin:meta-editors:color-picker] — Color swatch palette. Attrs: path, colors.\n"
-        .. "[plugin:meta-editors:tags-input] — Add/remove string tags. Attrs: path, placeholder.\n"
-        .. "[plugin:meta-editors:textarea] — Auto-saving textarea. Attrs: path, rows, placeholder.\n"
-        .. "[plugin:meta-editors:date-picker] — Date input. Attrs: path, label.\n"
-        .. "[plugin:meta-editors:date-range] — Start/end date pair. Attrs: path, start-label, end-label.\n"
-        .. "[plugin:meta-editors:status-badge] — Cycling status badge. Attrs: path, options, colors, labels.\n"
-        .. "[plugin:meta-editors:progress-input] — Clickable progress bar. Attrs: path, label.\n"
-        .. "[plugin:meta-editors:key-value] — Key-value pair editor. Attrs: path.\n"
-        .. "[plugin:meta-editors:checklist] — Checklist with checkboxes. Attrs: path.\n"
-        .. "[plugin:meta-editors:url-input] — URL input with validation. Attrs: path, placeholder, label.\n"
-        .. "[plugin:meta-editors:markdown] — Monospace textarea. Attrs: path, rows, placeholder.",
+    description = "17 interactive shortcodes for editing entity meta fields inline.",
 }
 
 -- ---------------------------------------------------------------------------
@@ -821,21 +803,347 @@ function init()
     mah.inject("page_bottom", render_save_helper)
 
     -- Register all 17 shortcodes
-    mah.shortcode({ name = "slider",         label = "Slider",           render = render_slider })
-    mah.shortcode({ name = "stepper",        label = "Stepper",          render = render_stepper })
-    mah.shortcode({ name = "star-rating",    label = "Star Rating",      render = render_star_rating })
-    mah.shortcode({ name = "toggle",         label = "Toggle",           render = render_toggle })
-    mah.shortcode({ name = "multi-select",   label = "Multi Select",     render = render_multi_select })
-    mah.shortcode({ name = "button-group",   label = "Button Group",     render = render_button_group })
-    mah.shortcode({ name = "color-picker",   label = "Color Picker",     render = render_color_picker })
-    mah.shortcode({ name = "tags-input",     label = "Tags Input",       render = render_tags_input })
-    mah.shortcode({ name = "textarea",       label = "Textarea",         render = render_textarea })
-    mah.shortcode({ name = "date-picker",    label = "Date Picker",      render = render_date_picker })
-    mah.shortcode({ name = "date-range",     label = "Date Range",       render = render_date_range })
-    mah.shortcode({ name = "status-badge",   label = "Status Badge",     render = render_status_badge })
-    mah.shortcode({ name = "progress-input", label = "Progress Input",   render = render_progress_input })
-    mah.shortcode({ name = "key-value",      label = "Key-Value Editor", render = render_key_value })
-    mah.shortcode({ name = "checklist",      label = "Checklist",        render = render_checklist })
-    mah.shortcode({ name = "url-input",      label = "URL Input",        render = render_url_input })
-    mah.shortcode({ name = "markdown",       label = "Markdown Editor",  render = render_markdown })
+
+    mah.shortcode({
+        name = "slider",
+        label = "Slider",
+        render = render_slider,
+        description = "A numeric slider input for editing a meta field value. Displays the current value and saves changes immediately when the slider is released.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field (e.g. 'settings.volume')" },
+            { name = "min", type = "number", default = "0", description = "Minimum slider value" },
+            { name = "max", type = "number", default = "100", description = "Maximum slider value" },
+            { name = "step", type = "number", default = "1", description = "Step increment between values" },
+            { name = "label", type = "string", description = "Optional label displayed before the slider" },
+        },
+        examples = {
+            { title = "Basic slider", code = '[plugin:meta-editors:slider path="review.rating"]' },
+            { title = "Custom range with step", code = '[plugin:meta-editors:slider path="settings.volume" min="0" max="100" step="5"]' },
+            { title = "Labeled slider", code = '[plugin:meta-editors:slider path="settings.brightness" min="0" max="255" label="Brightness"]' },
+        },
+        notes = {
+            "Changes are saved immediately when the slider is released (on change, not on input).",
+            "The current numeric value is displayed to the left of the slider, and the max value to the right.",
+        },
+    })
+
+    mah.shortcode({
+        name = "stepper",
+        label = "Stepper",
+        render = render_stepper,
+        description = "Increment/decrement buttons for editing a numeric meta field. The value is clamped between min and max.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field (e.g. 'inventory.count')" },
+            { name = "min", type = "number", default = "0", description = "Minimum allowed value" },
+            { name = "max", type = "number", default = "100", description = "Maximum allowed value" },
+            { name = "step", type = "number", default = "1", description = "Amount to increment or decrement per click" },
+        },
+        examples = {
+            { title = "Basic stepper", code = '[plugin:meta-editors:stepper path="inventory.count"]' },
+            { title = "Custom range", code = '[plugin:meta-editors:stepper path="settings.priority" min="1" max="10"]' },
+            { title = "Large steps", code = '[plugin:meta-editors:stepper path="budget.amount" min="0" max="10000" step="100"]' },
+        },
+        notes = {
+            "The minus button is disabled when the value reaches min; the plus button is disabled at max.",
+            "Each click saves immediately.",
+        },
+    })
+
+    mah.shortcode({
+        name = "star-rating",
+        label = "Star Rating",
+        render = render_star_rating,
+        description = "A clickable star rating widget. Click a star to set the rating, or click the current rating again to reset to zero.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field (e.g. 'review.rating')" },
+            { name = "max", type = "number", default = "5", description = "Number of stars to display" },
+        },
+        examples = {
+            { title = "Default 5-star rating", code = '[plugin:meta-editors:star-rating path="review.rating"]' },
+            { title = "10-star rating", code = '[plugin:meta-editors:star-rating path="review.score" max="10"]' },
+        },
+        notes = {
+            "Clicking the currently selected star resets the rating to 0.",
+            "Stars highlight on hover to preview the selection.",
+        },
+    })
+
+    mah.shortcode({
+        name = "toggle",
+        label = "Toggle",
+        render = render_toggle,
+        description = "A boolean toggle switch for editing a true/false meta field. Click to flip between on and off.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field (e.g. 'settings.notifications')" },
+            { name = "label", type = "string", description = "Optional label displayed before the toggle" },
+        },
+        examples = {
+            { title = "Basic toggle", code = '[plugin:meta-editors:toggle path="settings.notifications"]' },
+            { title = "Labeled toggle", code = '[plugin:meta-editors:toggle path="settings.darkMode" label="Dark Mode"]' },
+        },
+        notes = {
+            "The toggle stores a boolean value (true/false).",
+            "Changes are saved immediately on click.",
+        },
+    })
+
+    mah.shortcode({
+        name = "multi-select",
+        label = "Multi Select",
+        render = render_multi_select,
+        description = "Toggleable pill chips for selecting multiple values from a predefined set. The selected values are stored as a JSON array.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field (e.g. 'project.tags')" },
+            { name = "options", type = "CSV", required = true, description = "Comma-separated list of selectable values" },
+            { name = "labels", type = "CSV", description = "Comma-separated display labels corresponding to each option (defaults to option values)" },
+        },
+        examples = {
+            { title = "Basic multi-select", code = '[plugin:meta-editors:multi-select path="project.tags" options="frontend,backend,design,devops"]' },
+            { title = "With custom labels", code = '[plugin:meta-editors:multi-select path="recipe.diet" options="gf,df,v,vg" labels="Gluten Free,Dairy Free,Vegetarian,Vegan"]' },
+        },
+        notes = {
+            "Clicking a selected pill deselects it; clicking an unselected pill adds it.",
+            "The stored value is a JSON array of selected option strings.",
+        },
+    })
+
+    mah.shortcode({
+        name = "button-group",
+        label = "Button Group",
+        render = render_button_group,
+        description = "A single-select button group for choosing one value from a set of options. Buttons are displayed inline as a segmented control.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field (e.g. 'settings.theme')" },
+            { name = "options", type = "CSV", required = true, description = "Comma-separated list of selectable values" },
+            { name = "labels", type = "CSV", description = "Comma-separated display labels corresponding to each option (defaults to option values)" },
+        },
+        examples = {
+            { title = "Basic button group", code = '[plugin:meta-editors:button-group path="settings.priority" options="low,medium,high"]' },
+            { title = "With custom labels", code = '[plugin:meta-editors:button-group path="settings.size" options="sm,md,lg,xl" labels="Small,Medium,Large,Extra Large"]' },
+        },
+        notes = {
+            "Only one option can be selected at a time.",
+            "The stored value is a single string matching the selected option.",
+        },
+    })
+
+    mah.shortcode({
+        name = "color-picker",
+        label = "Color Picker",
+        render = render_color_picker,
+        description = "A color swatch palette for picking a hex color value. Displays circular color buttons with a checkmark on the selected color.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field (e.g. 'display.accentColor')" },
+            { name = "colors", type = "CSV", default = "#ef4444,#f59e0b,#22c55e,#3b82f6,#8b5cf6,#ec4899,#6b7280,#000000", description = "Comma-separated list of hex color values to display as swatches" },
+        },
+        examples = {
+            { title = "Default palette", code = '[plugin:meta-editors:color-picker path="display.accentColor"]' },
+            { title = "Custom palette", code = '[plugin:meta-editors:color-picker path="label.color" colors="#dc2626,#ea580c,#ca8a04,#16a34a,#2563eb,#7c3aed"]' },
+        },
+        notes = {
+            "The stored value is a hex color string (e.g. '#3b82f6').",
+            "A white checkmark appears inside the selected swatch.",
+        },
+    })
+
+    mah.shortcode({
+        name = "tags-input",
+        label = "Tags Input",
+        render = render_tags_input,
+        description = "An input field for adding and removing string tags. Tags are displayed as removable pills and stored as a JSON array.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field (e.g. 'article.keywords')" },
+            { name = "placeholder", type = "string", default = "Add tag...", description = "Placeholder text for the input field" },
+        },
+        examples = {
+            { title = "Basic tags input", code = '[plugin:meta-editors:tags-input path="article.keywords"]' },
+            { title = "Custom placeholder", code = '[plugin:meta-editors:tags-input path="project.technologies" placeholder="Add technology..."]' },
+        },
+        notes = {
+            "Press Enter to add a tag. Duplicate tags are ignored.",
+            "Click the x button on a tag pill to remove it.",
+            "The stored value is a JSON array of strings.",
+        },
+    })
+
+    mah.shortcode({
+        name = "textarea",
+        label = "Textarea",
+        render = render_textarea,
+        description = "A resizable textarea for editing longer text values. Auto-saves with a 500ms debounce after the user stops typing.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field (e.g. 'notes.description')" },
+            { name = "rows", type = "number", default = "3", description = "Number of visible text rows" },
+            { name = "placeholder", type = "string", default = "", description = "Placeholder text shown when the field is empty" },
+        },
+        examples = {
+            { title = "Basic textarea", code = '[plugin:meta-editors:textarea path="notes.description"]' },
+            { title = "Taller with placeholder", code = '[plugin:meta-editors:textarea path="review.comments" rows="6" placeholder="Write your review..."]' },
+        },
+        notes = {
+            "Saves automatically 500ms after the user stops typing (debounced).",
+            "The textarea is vertically resizable.",
+        },
+    })
+
+    mah.shortcode({
+        name = "date-picker",
+        label = "Date Picker",
+        render = render_date_picker,
+        description = "A native date input field for editing a date meta field. Saves the selected date as a string in YYYY-MM-DD format.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field (e.g. 'event.startDate')" },
+            { name = "label", type = "string", description = "Optional label displayed before the date input" },
+        },
+        examples = {
+            { title = "Basic date picker", code = '[plugin:meta-editors:date-picker path="event.startDate"]' },
+            { title = "Labeled date picker", code = '[plugin:meta-editors:date-picker path="task.deadline" label="Deadline"]' },
+        },
+        notes = {
+            "Uses the browser's native date picker.",
+            "The stored value is a date string in YYYY-MM-DD format.",
+        },
+    })
+
+    mah.shortcode({
+        name = "date-range",
+        label = "Date Range",
+        render = render_date_range,
+        description = "A pair of date inputs for editing a start and end date. Stores the values as a JSON object with 'start' and 'end' keys.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field (e.g. 'event.dates')" },
+            { name = "start-label", type = "string", default = "From", description = "Label displayed before the start date input" },
+            { name = "end-label", type = "string", default = "To", description = "Label displayed before the end date input" },
+        },
+        examples = {
+            { title = "Basic date range", code = '[plugin:meta-editors:date-range path="event.dates"]' },
+            { title = "Custom labels", code = '[plugin:meta-editors:date-range path="project.timeline" start-label="Start" end-label="End"]' },
+        },
+        notes = {
+            "The stored value is a JSON object: {\"start\": \"YYYY-MM-DD\", \"end\": \"YYYY-MM-DD\"}.",
+            "Each date input saves independently when changed.",
+        },
+    })
+
+    mah.shortcode({
+        name = "status-badge",
+        label = "Status Badge",
+        render = render_status_badge,
+        description = "A clickable status badge that cycles through a set of predefined statuses. Each status can have its own color and display label.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field (e.g. 'task.status')" },
+            { name = "options", type = "CSV", required = true, description = "Comma-separated list of status values to cycle through" },
+            { name = "colors", type = "CSV", default = "#9ca3af,#f59e0b,#22c55e", description = "Comma-separated hex colors for each status (matched by index)" },
+            { name = "labels", type = "CSV", description = "Comma-separated display labels for each status (defaults to option values)" },
+        },
+        examples = {
+            { title = "Task status", code = '[plugin:meta-editors:status-badge path="task.status" options="todo,in_progress,done" colors="#9ca3af,#f59e0b,#22c55e" labels="To Do,In Progress,Done"]' },
+            { title = "Priority badge", code = '[plugin:meta-editors:status-badge path="issue.priority" options="low,medium,high,critical" colors="#6b7280,#3b82f6,#f59e0b,#ef4444"]' },
+        },
+        notes = {
+            "Click the badge to advance to the next status in the cycle.",
+            "After the last status, it wraps around to the first.",
+            "The badge background uses a light tint of the status color.",
+        },
+    })
+
+    mah.shortcode({
+        name = "progress-input",
+        label = "Progress Input",
+        render = render_progress_input,
+        description = "A clickable progress bar for setting a percentage value (0-100). Click anywhere on the bar to set the progress.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field (e.g. 'task.completion')" },
+            { name = "label", type = "string", default = "Progress", description = "Label displayed above the progress bar" },
+        },
+        examples = {
+            { title = "Basic progress bar", code = '[plugin:meta-editors:progress-input path="task.completion"]' },
+            { title = "Custom label", code = '[plugin:meta-editors:progress-input path="course.progress" label="Course Progress"]' },
+        },
+        notes = {
+            "Click position on the bar determines the percentage (0-100).",
+            "The stored value is an integer percentage.",
+        },
+    })
+
+    mah.shortcode({
+        name = "key-value",
+        label = "Key-Value Editor",
+        render = render_key_value,
+        description = "An editor for managing key-value pairs stored as a JSON object. Supports adding new pairs and removing existing ones.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field (e.g. 'config.env')" },
+        },
+        examples = {
+            { title = "Environment variables", code = '[plugin:meta-editors:key-value path="config.env"]' },
+            { title = "Custom metadata", code = '[plugin:meta-editors:key-value path="contact.socialLinks"]' },
+        },
+        notes = {
+            "Type a key and value, then press Enter or click + to add the pair.",
+            "Click x next to a pair to remove it.",
+            "The stored value is a JSON object with string keys and values.",
+        },
+    })
+
+    mah.shortcode({
+        name = "checklist",
+        label = "Checklist",
+        render = render_checklist,
+        description = "A checklist with checkboxes for managing a list of items. Each item has a text label and a done/not-done state.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field (e.g. 'task.steps')" },
+        },
+        examples = {
+            { title = "Task checklist", code = '[plugin:meta-editors:checklist path="task.steps"]' },
+            { title = "Shopping list", code = '[plugin:meta-editors:checklist path="shopping.items"]' },
+        },
+        notes = {
+            "Type an item and press Enter or click + to add it.",
+            "Click a checkbox to toggle its done state. Completed items show strikethrough text.",
+            "Click x to remove an item.",
+            "The stored value is a JSON array of objects: [{\"text\": \"...\", \"done\": true/false}, ...].",
+        },
+    })
+
+    mah.shortcode({
+        name = "url-input",
+        label = "URL Input",
+        render = render_url_input,
+        description = "A URL input field with real-time validation and an open-link button. Auto-saves valid URLs with a 500ms debounce.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field (e.g. 'contact.website')" },
+            { name = "placeholder", type = "string", default = "https://...", description = "Placeholder text for the input field" },
+            { name = "label", type = "string", description = "Optional label displayed before the input" },
+        },
+        examples = {
+            { title = "Basic URL input", code = '[plugin:meta-editors:url-input path="contact.website"]' },
+            { title = "Labeled with placeholder", code = '[plugin:meta-editors:url-input path="project.repository" label="Repository" placeholder="https://github.com/..."]' },
+        },
+        notes = {
+            "Only valid URLs are saved (validated via the URL constructor).",
+            "A clickable link icon appears when the URL is valid, opening the link in a new tab.",
+            "Saves automatically 500ms after the user stops typing (debounced).",
+        },
+    })
+
+    mah.shortcode({
+        name = "markdown",
+        label = "Markdown Editor",
+        render = render_markdown,
+        description = "A monospace textarea for editing markdown or code content. Auto-saves with a 500ms debounce after the user stops typing.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field (e.g. 'notes.body')" },
+            { name = "rows", type = "number", default = "5", description = "Number of visible text rows" },
+            { name = "placeholder", type = "string", default = "Write markdown...", description = "Placeholder text shown when the field is empty" },
+        },
+        examples = {
+            { title = "Basic markdown editor", code = '[plugin:meta-editors:markdown path="notes.body"]' },
+            { title = "Taller with custom placeholder", code = '[plugin:meta-editors:markdown path="project.readme" rows="10" placeholder="# Project Title"]' },
+        },
+        notes = {
+            "Uses a monospace font to distinguish it from the regular textarea shortcode.",
+            "Saves automatically 500ms after the user stops typing (debounced).",
+            "The textarea is vertically resizable.",
+        },
+    })
 end

@@ -6,26 +6,7 @@
 plugin = {
     name = "data-views",
     version = "1.0",
-    description = "18 data viewing shortcodes for rich display of meta values, charts, tables, and more.\n"
-        .. "\n"
-        .. "[plugin:data-views:badge] -- Styled pill badge from meta value. Attrs: path, values, colors, labels.\n"
-        .. "[plugin:data-views:format] -- Formatted display (currency, percent, date, etc). Attrs: path, type, currency, decimals, prefix, suffix.\n"
-        .. "[plugin:data-views:stat-card] -- KPI card with large number and icon. Attrs: path, label, type, icon.\n"
-        .. "[plugin:data-views:meter] -- Horizontal gauge with color zones. Attrs: path, min, max, low, high, label.\n"
-        .. "[plugin:data-views:sparkline] -- Inline SVG chart (line/bar/area). Attrs: path, type, height, width, color.\n"
-        .. "[plugin:data-views:table] -- Table of owned entities. Attrs: type, cols, labels, limit.\n"
-        .. "[plugin:data-views:list] -- Render meta array as list. Attrs: path, style (bullet/numbered/comma/pill).\n"
-        .. "[plugin:data-views:count-badge] -- Count items matching a condition. Attrs: path, count-where, eq, neq, label, icon, type.\n"
-        .. "[plugin:data-views:embed] -- Embed resource content in code block. Attrs: resource-id, path, max-lines.\n"
-        .. "[plugin:data-views:image] -- Display image from meta. Attrs: path, width, height, rounded.\n"
-        .. "[plugin:data-views:barcode] -- Code 128 barcode from meta value. Attrs: path, size.\n"
-        .. "[plugin:data-views:qr-code] -- QR code from meta value. Attrs: path, size, color, bg.\n"
-        .. "[plugin:data-views:link-preview] -- Styled link card. Attrs: path.\n"
-        .. "[plugin:data-views:json-tree] -- Expandable JSON tree. Attrs: path, expanded.\n"
-        .. "[plugin:data-views:bar-chart] -- Horizontal bar chart. Attrs: path, label-key, value-key, color.\n"
-        .. "[plugin:data-views:pie-chart] -- SVG pie/donut chart. Attrs: path, label-key, value-key, size, donut, colors.\n"
-        .. "[plugin:data-views:conditional] -- Conditionally render content. Attrs: path, eq/neq/gt/lt/contains/empty/not-empty, content, html, class.\n"
-        .. "[plugin:data-views:timeline-chart] -- Horizontal timeline of owned entities. Attrs: type, date-path, limit.",
+    description = "18 data viewing shortcodes for rich display of meta values, charts, tables, and more.",
 }
 
 -- ---------------------------------------------------------------------------
@@ -1665,22 +1646,449 @@ end
 function init()
     -- Inject QR code generator script
     mah.inject("page_bottom", render_qr_script)
-    mah.shortcode({ name = "badge",          label = "Status Badge",       render = render_badge })
-    mah.shortcode({ name = "format",         label = "Formatted Value",    render = render_format })
-    mah.shortcode({ name = "stat-card",      label = "Stat Card",          render = render_stat_card })
-    mah.shortcode({ name = "meter",          label = "Meter Gauge",        render = render_meter })
-    mah.shortcode({ name = "sparkline",      label = "Sparkline Chart",    render = render_sparkline })
-    mah.shortcode({ name = "table",          label = "Entity Table",       render = render_table })
-    mah.shortcode({ name = "list",           label = "List Display",       render = render_list })
-    mah.shortcode({ name = "count-badge",    label = "Count Badge",        render = render_count_badge })
-    mah.shortcode({ name = "embed",          label = "Resource Embed",     render = render_embed })
-    mah.shortcode({ name = "image",          label = "Image Display",      render = render_image })
-    mah.shortcode({ name = "barcode",         label = "Barcode",            render = render_barcode })
-    mah.shortcode({ name = "qr-code",        label = "QR Code",            render = render_qr_code })
-    mah.shortcode({ name = "link-preview",   label = "Link Preview",       render = render_link_preview })
-    mah.shortcode({ name = "json-tree",      label = "JSON Tree",          render = render_json_tree_shortcode })
-    mah.shortcode({ name = "bar-chart",      label = "Bar Chart",          render = render_bar_chart })
-    mah.shortcode({ name = "pie-chart",      label = "Pie Chart",          render = render_pie_chart })
-    mah.shortcode({ name = "conditional",    label = "Conditional Content", render = render_conditional })
-    mah.shortcode({ name = "timeline-chart", label = "Timeline Chart",     render = render_timeline_chart })
+
+    -- 1. badge
+    mah.shortcode({
+        name = "badge",
+        label = "Status Badge",
+        render = render_badge,
+        description = "Display a colored pill badge based on a meta field value. Map specific values to colors and labels for visual status indicators.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field (e.g. 'status' or 'project.phase')" },
+            { name = "values", type = "CSV", description = "Comma-separated values to match against" },
+            { name = "colors", type = "CSV", description = "Comma-separated hex colors corresponding to each value" },
+            { name = "labels", type = "CSV", description = "Comma-separated display labels corresponding to each value" },
+        },
+        examples = {
+            { title = "Basic status badge", code = '[plugin:data-views:badge path="status"]', notes = "Shows the raw value as a gray badge." },
+            { title = "Mapped with colors", code = '[plugin:data-views:badge path="status" values="active,archived,draft" colors="#22c55e,#6b7280,#f59e0b" labels="Active,Archived,Draft"]' },
+            { title = "Nested field", code = '[plugin:data-views:badge path="project.phase" values="planning,building,done" colors="#3b82f6,#d97706,#22c55e"]' },
+        },
+        notes = {
+            "Unmatched values display as gray (#6b7280) badges with the raw value as label.",
+            "Colors use hex format (#rrggbb).",
+            "If the field is nil, an empty spacer is rendered.",
+        },
+    })
+
+    -- 2. format
+    mah.shortcode({
+        name = "format",
+        label = "Formatted Value",
+        render = render_format,
+        description = "Display a meta field value with a specific format such as currency, percent, date, filesize, number, or duration.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field" },
+            { name = "type", type = "string", required = true, description = "Format type: 'currency', 'percent', 'date', 'filesize', 'number', or 'duration'" },
+            { name = "currency", type = "string", default = "$", description = "Currency symbol (only for type=currency)" },
+            { name = "decimals", type = "number", description = "Number of decimal places (default 2 for currency, 1 for percent)" },
+            { name = "prefix", type = "string", default = "", description = "Text prepended to the formatted value" },
+            { name = "suffix", type = "string", default = "", description = "Text appended to the formatted value" },
+        },
+        examples = {
+            { title = "Currency", code = '[plugin:data-views:format path="budget.amount" type="currency"]', notes = "Displays as $1,234.56." },
+            { title = "Percent with suffix", code = '[plugin:data-views:format path="score" type="percent" suffix=" complete"]' },
+            { title = "File size", code = '[plugin:data-views:format path="metrics.disk_usage" type="filesize"]' },
+        },
+        notes = {
+            "Supported types: currency, percent, date, filesize, number, duration.",
+            "Nil values render as empty string.",
+            "The result is displayed in monospace font.",
+        },
+    })
+
+    -- 3. stat-card
+    mah.shortcode({
+        name = "stat-card",
+        label = "Stat Card",
+        render = render_stat_card,
+        description = "Display a KPI card with a large formatted number, label, and icon. Useful for dashboards and summary views.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field containing the value" },
+            { name = "label", type = "string", description = "Display label below the value (defaults to the path)" },
+            { name = "type", type = "string", default = "number", description = "Format type for the value: 'currency', 'percent', 'date', 'filesize', 'number', or 'duration'" },
+            { name = "icon", type = "string", default = "chart", description = "Icon name: 'chart', 'users', 'files', 'clock', 'check', 'file', 'note', 'folder', 'star'" },
+            { name = "currency", type = "string", default = "$", description = "Currency symbol (only for type=currency)" },
+            { name = "decimals", type = "number", description = "Number of decimal places for the formatted value" },
+            { name = "prefix", type = "string", default = "", description = "Text prepended to the formatted value" },
+            { name = "suffix", type = "string", default = "", description = "Text appended to the formatted value" },
+        },
+        examples = {
+            { title = "Basic stat card", code = '[plugin:data-views:stat-card path="metrics.total_users" label="Total Users" icon="users"]' },
+            { title = "Revenue card", code = '[plugin:data-views:stat-card path="budget.amount" label="Revenue" type="currency" icon="chart"]' },
+            { title = "Completion percentage", code = '[plugin:data-views:stat-card path="progress" label="Complete" type="percent" icon="check"]' },
+        },
+        notes = {
+            "The card renders inline with a border, centered icon, large value, and small label.",
+            "Format attrs (currency, decimals, prefix, suffix) are passed through to the format_value function.",
+        },
+    })
+
+    -- 4. meter
+    mah.shortcode({
+        name = "meter",
+        label = "Meter Gauge",
+        render = render_meter,
+        description = "Display a horizontal gauge bar with red/yellow/green color zones and a position indicator. Ideal for scores, progress, or threshold values.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the numeric meta field" },
+            { name = "min", type = "number", default = "0", description = "Minimum value of the range" },
+            { name = "max", type = "number", default = "100", description = "Maximum value of the range" },
+            { name = "low", type = "number", default = "30", description = "Threshold below which the zone is red" },
+            { name = "high", type = "number", default = "70", description = "Threshold above which the zone is green" },
+            { name = "label", type = "string", description = "Display label (defaults to the path)" },
+        },
+        examples = {
+            { title = "Basic meter", code = '[plugin:data-views:meter path="score"]', notes = "Uses default 0-100 range with 30/70 thresholds." },
+            { title = "Custom range", code = '[plugin:data-views:meter path="metrics.temperature" min="0" max="200" low="60" high="150" label="Temperature"]' },
+            { title = "Percentage meter", code = '[plugin:data-views:meter path="progress" label="Progress" high="80"]' },
+        },
+        notes = {
+            "The gauge background shows a gradient: red (0 to low), yellow (low to high), green (high to max).",
+            "A dark vertical indicator marks the current value position.",
+            "Non-numeric values are treated as 0.",
+        },
+    })
+
+    -- 5. sparkline
+    mah.shortcode({
+        name = "sparkline",
+        label = "Sparkline Chart",
+        render = render_sparkline,
+        description = "Render a compact inline SVG chart from an array of numbers. Supports line, area, and bar chart types.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to a meta field containing an array of numbers" },
+            { name = "type", type = "string", default = "line", description = "Chart type: 'line', 'area', or 'bar'" },
+            { name = "height", type = "number", default = "24", description = "SVG height in pixels" },
+            { name = "width", type = "number", default = "100", description = "SVG width in pixels" },
+            { name = "color", type = "CSS color", default = "#d97706", description = "Stroke or fill color" },
+        },
+        examples = {
+            { title = "Line sparkline", code = '[plugin:data-views:sparkline path="metrics.monthly"]' },
+            { title = "Bar sparkline", code = '[plugin:data-views:sparkline path="metrics.monthly" type="bar" color="#3b82f6"]' },
+            { title = "Large area chart", code = '[plugin:data-views:sparkline path="metrics.monthly" type="area" width="200" height="40" color="#22c55e"]' },
+        },
+        notes = {
+            "The data must be an array of numbers (e.g. [10, 20, 15, 30]).",
+            "Non-numeric array entries are silently skipped.",
+            "If all values are equal, the chart renders a flat line/bar.",
+        },
+    })
+
+    -- 6. table
+    mah.shortcode({
+        name = "table",
+        label = "Entity Table",
+        render = render_table,
+        description = "Display a table of entities (notes, resources, or groups) owned by the current group. Columns can reference entity fields or meta sub-fields.",
+        attrs = {
+            { name = "type", type = "string", default = "notes", description = "Entity type to query: 'notes', 'resources', or 'groups'" },
+            { name = "cols", type = "CSV", default = "name,updated_at", description = "Comma-separated column names. Use 'meta.path' for meta fields" },
+            { name = "labels", type = "CSV", description = "Comma-separated column headers (defaults to column names)" },
+            { name = "limit", type = "number", default = "10", description = "Maximum number of rows to display" },
+        },
+        examples = {
+            { title = "Notes table", code = '[plugin:data-views:table type="notes" cols="name,updated_at" limit="5"]' },
+            { title = "Resources with meta columns", code = '[plugin:data-views:table type="resources" cols="name,meta.status,meta.score" labels="Name,Status,Score"]' },
+            { title = "Groups table", code = '[plugin:data-views:table type="groups" cols="name,meta.budget.amount" labels="Name,Budget" limit="20"]' },
+        },
+        notes = {
+            "Name columns render as clickable links to the entity.",
+            "Results are sorted by updated_at descending.",
+            "Meta columns use 'meta.' prefix followed by a dot-path into the decoded meta JSON.",
+        },
+    })
+
+    -- 7. list
+    mah.shortcode({
+        name = "list",
+        label = "List Display",
+        render = render_list,
+        description = "Render a meta array as a formatted list. Supports bullet, numbered, comma-separated, and pill styles.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to a meta field containing an array" },
+            { name = "style", type = "string", default = "bullet", description = "List style: 'bullet', 'numbered', 'comma', or 'pill'" },
+        },
+        examples = {
+            { title = "Bullet list", code = '[plugin:data-views:list path="tags"]' },
+            { title = "Pill badges", code = '[plugin:data-views:list path="tags" style="pill"]' },
+            { title = "Comma-separated", code = '[plugin:data-views:list path="contributors" style="comma"]' },
+        },
+        notes = {
+            "For arrays of objects, display text is extracted from 'name', 'text', 'title', or 'label' fields, falling back to the first string value.",
+            "Empty arrays render as 'No items'.",
+        },
+    })
+
+    -- 8. count-badge
+    mah.shortcode({
+        name = "count-badge",
+        label = "Count Badge",
+        render = render_count_badge,
+        description = "Display a count of owned entities or items in a meta array, with optional filtering. Useful for showing relationship counts or conditional tallies.",
+        attrs = {
+            { name = "type", type = "string", description = "Entity type to count: 'notes', 'resources', or 'groups'. Counts entities owned by the current group" },
+            { name = "path", type = "string", description = "Dot-path to a meta array to count items from (alternative to type)" },
+            { name = "count-where", type = "string", description = "Field name within array objects to filter on (requires path)" },
+            { name = "eq", type = "string", description = "Count only items where count-where field equals this value" },
+            { name = "neq", type = "string", description = "Count only items where count-where field does not equal this value" },
+            { name = "label", type = "string", default = "", description = "Text label displayed after the count" },
+            { name = "icon", type = "string", description = "Icon name: 'chart', 'users', 'files', 'clock', 'check', 'file', 'note', 'folder', 'star'" },
+        },
+        examples = {
+            { title = "Count owned notes", code = '[plugin:data-views:count-badge type="notes" label="notes" icon="note"]' },
+            { title = "Count array items", code = '[plugin:data-views:count-badge path="tags" label="tags"]' },
+            { title = "Filtered count", code = '[plugin:data-views:count-badge path="tasks" count-where="status" eq="done" label="completed"]' },
+        },
+        notes = {
+            "Either 'type' or 'path' is required, but not both.",
+            "When using 'type', counts entities owned by the current group via the database.",
+            "When using 'path' with 'count-where', items must be objects with the specified field.",
+        },
+    })
+
+    -- 9. embed
+    mah.shortcode({
+        name = "embed",
+        label = "Resource Embed",
+        render = render_embed,
+        description = "Embed the content of a resource (text file) in a scrollable code block. The resource can be specified directly by ID or looked up from a meta field.",
+        attrs = {
+            { name = "resource-id", type = "number", description = "ID of the resource to embed" },
+            { name = "path", type = "string", description = "Dot-path to a meta field containing the resource ID (alternative to resource-id)" },
+            { name = "max-lines", type = "number", description = "Truncate content after this many lines" },
+        },
+        examples = {
+            { title = "Embed by ID", code = '[plugin:data-views:embed resource-id="42"]' },
+            { title = "Embed from meta field", code = '[plugin:data-views:embed path="config_file_id" max-lines="50"]' },
+        },
+        notes = {
+            "Either 'resource-id' or 'path' is required.",
+            "Content is base64-decoded from the resource data.",
+            "Truncated content shows a '... (truncated)' indicator.",
+            "Best suited for text-based resources (code, config, logs).",
+        },
+    })
+
+    -- 10. image
+    mah.shortcode({
+        name = "image",
+        label = "Image Display",
+        render = render_image,
+        description = "Display an image from a meta field. The field can contain a resource ID (uses thumbnail preview), an external URL, or a direct image path.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field containing a resource ID, URL, or image path" },
+            { name = "width", type = "number", default = "100", description = "Image display width in pixels" },
+            { name = "height", type = "number", default = "100", description = "Image display height in pixels" },
+            { name = "rounded", type = "boolean", default = "false", description = "Use circular clipping (true) or standard rounded corners (false)" },
+            { name = "alt", type = "string", description = "Alt text for the image (defaults to the path)" },
+        },
+        examples = {
+            { title = "Avatar from resource ID", code = '[plugin:data-views:image path="avatar_id" width="48" height="48" rounded="true"]' },
+            { title = "Thumbnail", code = '[plugin:data-views:image path="cover_image" width="200" height="150"]' },
+            { title = "External image", code = '[plugin:data-views:image path="logo_url" alt="Company Logo"]' },
+        },
+        notes = {
+            "Numeric values and numeric strings are treated as resource IDs and use the preview endpoint.",
+            "URLs starting with http:// or https:// are used directly.",
+            "Images are lazy-loaded and use object-cover fit.",
+        },
+    })
+
+    -- 11. barcode
+    mah.shortcode({
+        name = "barcode",
+        label = "Barcode",
+        render = render_barcode,
+        description = "Generate a Code 128 barcode SVG from a meta field value. Displays the barcode with the encoded text below it.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field containing the text to encode" },
+            { name = "size", type = "number", default = "50", description = "Height of the barcode in pixels" },
+        },
+        examples = {
+            { title = "Product barcode", code = '[plugin:data-views:barcode path="sku"]' },
+            { title = "Larger barcode", code = '[plugin:data-views:barcode path="serial_number" size="80"]' },
+        },
+        notes = {
+            "Uses Code 128 encoding, which supports ASCII characters 0-127.",
+            "Values that cannot be encoded display a 'Cannot encode value' message.",
+            "The barcode SVG scales to fit its container width.",
+        },
+    })
+
+    -- 12. qr-code
+    mah.shortcode({
+        name = "qr-code",
+        label = "QR Code",
+        render = render_qr_code,
+        description = "Generate a QR code SVG from a meta field value. Rendered client-side via an injected JavaScript QR encoder.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field containing the text to encode" },
+            { name = "size", type = "number", default = "128", description = "Width and height of the QR code in pixels" },
+            { name = "color", type = "CSS color", default = "#000000", description = "Foreground (module) color" },
+            { name = "bg", type = "CSS color", default = "#ffffff", description = "Background color" },
+        },
+        examples = {
+            { title = "Basic QR code", code = '[plugin:data-views:qr-code path="url"]' },
+            { title = "Styled QR code", code = '[plugin:data-views:qr-code path="url" size="200" color="#1e40af" bg="#f0f9ff"]' },
+            { title = "Small QR", code = '[plugin:data-views:qr-code path="serial_number" size="80"]' },
+        },
+        notes = {
+            "Supports byte-mode encoding for versions 1-10 (up to ~174 characters).",
+            "Uses error correction level L (7% recovery).",
+            "Requires JavaScript to render; shows 'Loading QR...' placeholder until ready.",
+            "The encoded text is displayed below the QR code.",
+        },
+    })
+
+    -- 13. link-preview
+    mah.shortcode({
+        name = "link-preview",
+        label = "Link Preview",
+        render = render_link_preview,
+        description = "Display a styled link card with a globe icon, URL, domain, and external-link indicator. The meta field can be a URL string or an object with href/url and host/domain fields.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to a meta field containing a URL string or link object ({href, host})" },
+        },
+        examples = {
+            { title = "Simple URL", code = '[plugin:data-views:link-preview path="website"]' },
+            { title = "Nested link object", code = '[plugin:data-views:link-preview path="project.homepage"]', notes = "Works with string URLs or objects like {href: '...', host: '...'}." },
+        },
+        notes = {
+            "String values are parsed to extract the domain automatically.",
+            "Object values can use 'href' or 'url' for the link, and 'host' or 'domain' for the display domain.",
+            "Links open in a new tab with rel='noopener'.",
+        },
+    })
+
+    -- 14. json-tree
+    mah.shortcode({
+        name = "json-tree",
+        label = "JSON Tree",
+        render = render_json_tree_shortcode,
+        description = "Render a meta field as an expandable/collapsible JSON tree. Useful for inspecting nested data structures interactively.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field to display as a tree" },
+            { name = "expanded", type = "number", default = "2", description = "Number of nesting levels to expand by default" },
+        },
+        examples = {
+            { title = "Expand 2 levels", code = '[plugin:data-views:json-tree path="config"]' },
+            { title = "Fully collapsed", code = '[plugin:data-views:json-tree path="metrics" expanded="0"]' },
+            { title = "Deep expansion", code = '[plugin:data-views:json-tree path="nested.data" expanded="5"]' },
+        },
+        notes = {
+            "String values that contain valid JSON are automatically decoded.",
+            "Uses Alpine.js for interactive expand/collapse toggle.",
+            "Arrays show their length; objects show their key count when collapsed.",
+        },
+    })
+
+    -- 15. bar-chart
+    mah.shortcode({
+        name = "bar-chart",
+        label = "Bar Chart",
+        render = render_bar_chart,
+        description = "Display a horizontal bar chart from a meta object or array of objects. Keys become labels and values become bar widths, scaled to the maximum.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field containing data (object or array of objects)" },
+            { name = "color", type = "CSS color", default = "#d97706", description = "Bar fill color" },
+            { name = "label-key", type = "string", description = "Field name for labels when data is an array of objects" },
+            { name = "value-key", type = "string", description = "Field name for values when data is an array of objects" },
+        },
+        examples = {
+            { title = "From object", code = '[plugin:data-views:bar-chart path="scores"]', notes = "Object keys become labels, values become bars (e.g. {math: 90, science: 75})." },
+            { title = "From array of objects", code = '[plugin:data-views:bar-chart path="departments" label-key="name" value-key="budget" color="#3b82f6"]' },
+            { title = "Custom color", code = '[plugin:data-views:bar-chart path="metrics.breakdown" color="#22c55e"]' },
+        },
+        notes = {
+            "For plain objects, keys are sorted alphabetically.",
+            "For arrays, both label-key and value-key must be specified.",
+            "Bars are scaled relative to the maximum value (largest bar = 100% width).",
+            "Non-numeric values are treated as 0.",
+        },
+    })
+
+    -- 16. pie-chart
+    mah.shortcode({
+        name = "pie-chart",
+        label = "Pie Chart",
+        render = render_pie_chart,
+        description = "Display an SVG pie or donut chart with a color legend from a meta object or array of objects. Segments are proportional to their values.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field containing data (object or array of objects)" },
+            { name = "size", type = "number", default = "120", description = "Width and height of the chart in pixels" },
+            { name = "donut", type = "boolean", default = "false", description = "Render as a donut chart with a hollow center" },
+            { name = "label-key", type = "string", description = "Field name for labels when data is an array of objects" },
+            { name = "value-key", type = "string", description = "Field name for values when data is an array of objects" },
+            { name = "colors", type = "CSV", description = "Comma-separated hex colors for segments (cycles through a default palette if not specified)" },
+        },
+        examples = {
+            { title = "Pie from object", code = '[plugin:data-views:pie-chart path="budget.breakdown"]', notes = "Object keys become legend labels (e.g. {rent: 1200, food: 400, transport: 200})." },
+            { title = "Donut chart", code = '[plugin:data-views:pie-chart path="budget.breakdown" donut="true" size="150"]' },
+            { title = "Custom colors", code = '[plugin:data-views:pie-chart path="categories" label-key="name" value-key="count" colors="#ef4444,#3b82f6,#22c55e"]' },
+        },
+        notes = {
+            "Zero and negative values are excluded from the chart.",
+            "Default color palette: amber, blue, red, green, violet, pink, cyan, gray.",
+            "Colors cycle if there are more segments than colors provided.",
+            "Legend shows each segment label with its numeric value.",
+        },
+    })
+
+    -- 17. conditional
+    mah.shortcode({
+        name = "conditional",
+        label = "Conditional Content",
+        render = render_conditional,
+        description = "Conditionally render content based on a meta field value. Supports equality, comparison, contains, and empty/not-empty checks.",
+        attrs = {
+            { name = "path", type = "string", required = true, description = "Dot-path to the meta field to evaluate" },
+            { name = "eq", type = "string", description = "Show content when field equals this value" },
+            { name = "neq", type = "string", description = "Show content when field does not equal this value" },
+            { name = "gt", type = "number", description = "Show content when field is greater than this value" },
+            { name = "lt", type = "number", description = "Show content when field is less than this value" },
+            { name = "contains", type = "string", description = "Show content when field contains this substring" },
+            { name = "empty", type = "boolean", description = "Show content when field is nil or empty string" },
+            { name = "not-empty", type = "boolean", description = "Show content when field is not nil and not empty string" },
+            { name = "content", type = "string", description = "Text content to display (HTML-escaped)" },
+            { name = "html", type = "string", description = "Raw HTML content to display (not escaped, for trusted admin content)" },
+            { name = "class", type = "string", description = "CSS class to apply to the wrapper div" },
+        },
+        examples = {
+            { title = "Show when active", code = '[plugin:data-views:conditional path="status" eq="active" content="This item is active"]' },
+            { title = "Warning for high values", code = '[plugin:data-views:conditional path="score" gt="90" html="<span class=\'text-red-600 font-bold\'>High score alert</span>" class="bg-red-50 p-2 rounded"]' },
+            { title = "Show when field exists", code = '[plugin:data-views:conditional path="notes" not-empty="true" content="Has notes attached"]' },
+        },
+        notes = {
+            "Only one condition operator can be used per shortcode.",
+            "If neither 'content' nor 'html' is provided, nothing is rendered even when the condition is met.",
+            "The 'html' attr is intentionally unescaped for trusted admin content.",
+            "Numeric comparisons (gt, lt) treat non-numeric values as 0.",
+        },
+    })
+
+    -- 18. timeline-chart
+    mah.shortcode({
+        name = "timeline-chart",
+        label = "Timeline Chart",
+        render = render_timeline_chart,
+        description = "Display a horizontal timeline (Gantt-style) of owned entities. Each entity's meta must contain a date range object with start and end dates.",
+        attrs = {
+            { name = "type", type = "string", default = "groups", description = "Entity type to query: 'groups', 'notes', or 'resources'" },
+            { name = "date-path", type = "string", default = "timeline", description = "Dot-path within each entity's meta to the date range object" },
+            { name = "limit", type = "number", default = "10", description = "Maximum number of entities to display" },
+        },
+        examples = {
+            { title = "Project timeline", code = '[plugin:data-views:timeline-chart type="groups" date-path="timeline"]', notes = "Each owned group needs meta like {timeline: {start: \"2025-01-01\", end: \"2025-06-30\"}}." },
+            { title = "Note milestones", code = '[plugin:data-views:timeline-chart type="notes" date-path="schedule" limit="20"]' },
+            { title = "Resource availability", code = '[plugin:data-views:timeline-chart type="resources" date-path="dates"]' },
+        },
+        notes = {
+            "Date range objects support keys: start/start_date or [1] for start, end/end_date or [2] for end.",
+            "Dates must be in ISO format (YYYY-MM-DD).",
+            "Entities without valid date ranges in their meta are silently skipped.",
+            "Entity names link to their detail pages.",
+            "Bars have a minimum 1% width for visibility.",
+        },
+    })
 end

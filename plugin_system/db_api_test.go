@@ -85,6 +85,20 @@ func (m *mockQuerier) CreateResourceFromURL(url string, options map[string]any) 
 	}, nil
 }
 
+func (m *mockQuerier) AddResourceVersionFromURL(resourceID uint, url string, comment string) (map[string]any, error) {
+	if resourceID == 0 {
+		return nil, fmt.Errorf("resource not found")
+	}
+	return map[string]any{
+		"id":             float64(99),
+		"resource_id":    float64(resourceID),
+		"version_number": float64(2),
+		"content_type":   "image/jpeg",
+		"file_size":      float64(12345),
+		"hash":           "abc123",
+	}, nil
+}
+
 func (m *mockQuerier) CreateResourceFromData(base64Data string, options map[string]any) (map[string]any, error) {
 	if base64Data == "" {
 		return nil, fmt.Errorf("empty data")
@@ -658,5 +672,66 @@ end
 	html := mgr.RenderSlot("test", map[string]any{})
 	if html != "base64_error" {
 		t.Errorf("expected 'base64_error', got %q", html)
+	}
+}
+
+func TestDbApi_AddResourceVersionFromURL(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "db-test", `
+plugin = { name = "db-test", version = "1.0", description = "db api test" }
+function init()
+    mah.inject("test", function(ctx)
+        local ver, err = mah.db.add_resource_version_from_url(1, "https://example.com/result.jpg", "AI edit")
+        if ver then
+            return tostring(ver.id) .. "|" .. tostring(ver.resource_id) .. "|v" .. tostring(ver.version_number)
+        end
+        return "error:" .. (err or "unknown")
+    end)
+end
+`)
+	mgr, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+	mgr.SetEntityQuerier(&mockQuerier{})
+
+	if err := mgr.EnablePlugin("db-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	html := mgr.RenderSlot("test", map[string]any{})
+	if html != "99|1|v2" {
+		t.Errorf("expected '99|1|v2', got %q", html)
+	}
+}
+
+func TestDbApi_AddResourceVersionFromURLNoProvider(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "db-test", `
+plugin = { name = "db-test", version = "1.0", description = "db api test" }
+function init()
+    mah.inject("test", function(ctx)
+        local ver, err = mah.db.add_resource_version_from_url(1, "https://example.com/result.jpg")
+        if ver then
+            return "ok"
+        end
+        return "error:" .. (err or "unknown")
+    end)
+end
+`)
+	mgr, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	if err := mgr.EnablePlugin("db-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	html := mgr.RenderSlot("test", map[string]any{})
+	if html != "error:database not available" {
+		t.Errorf("expected 'error:database not available', got %q", html)
 	}
 }

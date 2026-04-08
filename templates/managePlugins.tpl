@@ -25,6 +25,9 @@
                     {% if plugin.Description %}
                     <p class="text-sm text-stone-600 mt-1 whitespace-pre-line">{{ plugin.Description }}</p>
                     {% endif %}
+                    {% if plugin.HasDocs %}
+                    <a href="/plugins/{{ plugin.Name }}/docs" class="text-sm text-amber-700 hover:underline mt-1 inline-block" data-testid="plugin-docs-{{ plugin.Name }}">View documentation</a>
+                    {% endif %}
                 </div>
                 <div class="flex gap-2 shrink-0">
                     <form method="POST"

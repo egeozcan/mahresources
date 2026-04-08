@@ -27,6 +27,8 @@ type EntityQuerier interface {
 	// Resource creation
 	CreateResourceFromURL(url string, options map[string]any) (map[string]any, error)
 	CreateResourceFromData(base64Data string, options map[string]any) (map[string]any, error)
+	// Resource versioning
+	AddResourceVersionFromURL(resourceID uint, url string, comment string) (map[string]any, error)
 }
 
 // EntityWriter provides write access to entities for plugins.
@@ -419,6 +421,27 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			opts = luaTableToGoMap(optTbl)
 		}
 		result, err := db.CreateResourceFromData(base64Data, opts)
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+		L.Push(goToLuaTable(L, result))
+		return 1
+	}))
+
+	// mah.db.add_resource_version_from_url(resource_id, url, comment) -> table or (nil, error)
+	dbMod.RawSetString("add_resource_version_from_url", L.NewFunction(func(L *lua.LState) int {
+		db := pm.getDbProvider()
+		if db == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("database not available"))
+			return 2
+		}
+		resourceID := uint(L.CheckNumber(1))
+		url := L.CheckString(2)
+		comment := L.OptString(3, "")
+		result, err := db.AddResourceVersionFromURL(resourceID, url, comment)
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))

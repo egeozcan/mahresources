@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -69,6 +70,20 @@ func (a *pluginDBAdapter) GetResourceData(id uint) (map[string]any, error) {
 			tags[i] = map[string]any{"id": float64(t.ID), "name": t.Name}
 		}
 		result["tags"] = tags
+	}
+	if len(resource.Groups) > 0 {
+		groups := make([]any, len(resource.Groups))
+		for i, g := range resource.Groups {
+			groups[i] = map[string]any{"id": float64(g.ID), "name": g.Name}
+		}
+		result["groups"] = groups
+	}
+	if len(resource.Notes) > 0 {
+		notes := make([]any, len(resource.Notes))
+		for i, n := range resource.Notes {
+			notes[i] = map[string]any{"id": float64(n.ID), "name": n.Name}
+		}
+		result["notes"] = notes
 	}
 	return result, nil
 }
@@ -390,6 +405,73 @@ func (a *pluginDBAdapter) CreateResourceFromData(base64Data string, options map[
 		return nil, err
 	}
 	return resourceToMap(resource), nil
+}
+
+func (a *pluginDBAdapter) AddResourceVersionFromURL(resourceID uint, rawURL string, comment string) (map[string]any, error) {
+	lower := strings.ToLower(rawURL)
+	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
+		return nil, fmt.Errorf("unsupported URL scheme (only http and https are allowed)")
+	}
+
+	connectTimeout := a.ctx.Config.RemoteResourceConnectTimeout
+	overallTimeout := a.ctx.Config.RemoteResourceOverallTimeout
+	client := createRemoteResourceHTTPClient(connectTimeout, overallTimeout)
+
+	resp, err := client.Get(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("remote URL returned HTTP %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Derive filename from URL path
+	parsed, _ := url.Parse(rawURL)
+	filename := "version_upload"
+	if parsed != nil && parsed.Path != "" {
+		parts := strings.Split(parsed.Path, "/")
+		if last := parts[len(parts)-1]; last != "" {
+			filename = last
+		}
+	}
+
+	file := &bytesMultipartFile{Reader: bytes.NewReader(data)}
+	header := &multipart.FileHeader{
+		Filename: filename,
+		Size:     int64(len(data)),
+	}
+
+	version, err := a.ctx.UploadNewVersion(resourceID, file, header, comment)
+	if err != nil {
+		return nil, err
+	}
+
+	return versionToMap(version), nil
+}
+
+// bytesMultipartFile wraps bytes.Reader to satisfy multipart.File.
+type bytesMultipartFile struct {
+	*bytes.Reader
+}
+
+func (b *bytesMultipartFile) Close() error { return nil }
+
+func versionToMap(v *models.ResourceVersion) map[string]any {
+	return map[string]any{
+		"id":             float64(v.ID),
+		"resource_id":    float64(v.ResourceID),
+		"version_number": float64(v.VersionNumber),
+		"content_type":   v.ContentType,
+		"file_size":      float64(v.FileSize),
+		"hash":           v.Hash,
+	}
 }
 
 // resourceToMap converts a Resource model to a map suitable for Lua.
@@ -1340,5 +1422,8 @@ func applyResourceOptions(base *query_models.ResourceQueryBase, options map[stri
 				base.Groups = append(base.Groups, uint(id))
 			}
 		}
+	}
+	if meta, ok := options["meta"].(string); ok {
+		base.Meta = meta
 	}
 }

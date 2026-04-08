@@ -6,13 +6,7 @@
 plugin = {
     name = "widgets",
     version = "1.0",
-    description = "Adds 5 shortcodes for use in category CustomHeader, CustomSidebar, and CustomSummary slots.\n"
-        .. "\n"
-        .. "[plugin:widgets:summary] — Entity counts (resources, notes, sub-groups). Attrs: show, style.\n"
-        .. "[plugin:widgets:gallery] — Thumbnail grid of images (owned, then related). Attrs: count, cols, content-type, size (sm/md/lg).\n"
-        .. "[plugin:widgets:progress] — Progress bar from meta field values. Attrs: field, complete, type, label.\n"
-        .. "[plugin:widgets:activity] — Timeline of recently updated owned entities. Attrs: count, type.\n"
-        .. "[plugin:widgets:tree] — Group hierarchy (ancestors and children). Attrs: direction, depth.",
+    description = "5 shortcodes for category CustomHeader, CustomSidebar, and CustomSummary slots.",
 }
 
 -- ---------------------------------------------------------------------------
@@ -472,9 +466,112 @@ end
 -- ---------------------------------------------------------------------------
 
 function init()
-    mah.shortcode({ name = "summary",  label = "Entity Summary",     render = render_summary })
-    mah.shortcode({ name = "gallery",  label = "Resource Gallery",   render = render_gallery })
-    mah.shortcode({ name = "progress", label = "Progress Bar",       render = render_progress })
-    mah.shortcode({ name = "activity", label = "Recent Activity",    render = render_activity })
-    mah.shortcode({ name = "tree",     label = "Group Hierarchy",    render = render_tree })
+    mah.shortcode({
+        name = "summary",
+        label = "Entity Summary",
+        render = render_summary,
+        description = "Display counts of owned resources, notes, and sub-groups. Use in category CustomHeader, CustomSidebar, or CustomSummary slots.",
+        attrs = {
+            { name = "show", type = "CSV", default = "resources,notes,groups", description = "Which entity types to display (comma-separated: resources, notes, groups)" },
+            { name = "style", type = "string", default = "compact", description = "Display style: 'compact' (flex row) or 'cards' (grid of rounded cards)" },
+        },
+        examples = {
+            { title = "Default summary", code = '[plugin:widgets:summary]', notes = "Shows all three entity counts in compact style." },
+            { title = "Cards with only resources and notes", code = '[plugin:widgets:summary show="resources,notes" style="cards"]' },
+            { title = "Groups count only", code = '[plugin:widgets:summary show="groups"]' },
+        },
+        notes = {
+            "Shows zero counts rather than hiding empty types.",
+            "If no valid types are listed in 'show', displays a 'No stats to display' message.",
+        },
+    })
+
+    mah.shortcode({
+        name = "gallery",
+        label = "Resource Gallery",
+        render = render_gallery,
+        description = "Display a thumbnail grid of image resources. Shows owned resources first, falling back to related resources for groups.",
+        attrs = {
+            { name = "count", type = "number", default = "8", description = "Maximum number of thumbnails to display (1-100)" },
+            { name = "cols", type = "number", default = "4", description = "Number of grid columns (1-12)" },
+            { name = "content-type", type = "string", default = "image/", description = "Content-type prefix filter for resources (e.g. 'image/', 'image/png')" },
+            { name = "size", type = "string", default = "md", description = "Thumbnail size: 'sm' (48px), 'md' (96px), or 'lg' (200px)" },
+        },
+        examples = {
+            { title = "Default image gallery", code = '[plugin:widgets:gallery]', notes = "Shows up to 8 image thumbnails at medium size." },
+            { title = "Large thumbnails, more images", code = '[plugin:widgets:gallery count="12" size="lg"]' },
+            { title = "Only PNG files in a 2-column layout", code = '[plugin:widgets:gallery content-type="image/png" cols="2"]' },
+        },
+        notes = {
+            "Tries owned resources first; if none are found and the entity is a group, falls back to related resources.",
+            "Thumbnails are clickable and integrate with the lightbox viewer.",
+            "Count is clamped to 1-100 and cols to 1-12.",
+        },
+    })
+
+    mah.shortcode({
+        name = "progress",
+        label = "Progress Bar",
+        render = render_progress,
+        description = "Show a completion progress bar based on a JSON meta field across owned entities. Counts how many entities have the field set to the complete value.",
+        attrs = {
+            { name = "field", type = "string", required = true, description = "Dot-separated path to the JSON meta field to check (e.g. 'status', 'review.state')" },
+            { name = "complete", type = "string", default = "done", description = "The meta field value that indicates completion" },
+            { name = "type", type = "string", default = "notes", description = "Entity type to scan: 'notes', 'resources', or 'groups'" },
+            { name = "label", type = "string", description = "Custom label text below the progress bar (default: 'N/M complete')" },
+        },
+        examples = {
+            { title = "Track note completion by status field", code = '[plugin:widgets:progress field="status"]', notes = "Counts notes where meta.status == \"done\"." },
+            { title = "Track resource review with custom complete value", code = '[plugin:widgets:progress field="review.state" complete="approved" type="resources"]' },
+            { title = "Custom label", code = '[plugin:widgets:progress field="status" label="Tasks finished"]' },
+        },
+        notes = {
+            "The 'field' attribute is required; omitting it renders an error message.",
+            "Supports dot-separated paths for nested meta fields (e.g. 'review.state').",
+            "Scans up to 100 owned entities of the specified type.",
+        },
+    })
+
+    mah.shortcode({
+        name = "activity",
+        label = "Recent Activity",
+        render = render_activity,
+        description = "Display a timeline of recently updated owned entities, sorted by last update time.",
+        attrs = {
+            { name = "count", type = "number", default = "5", description = "Maximum number of items to show (1-20)" },
+            { name = "type", type = "string", default = "all", description = "Entity type filter: 'all', 'resources', 'notes', or 'groups'" },
+        },
+        examples = {
+            { title = "Default recent activity", code = '[plugin:widgets:activity]', notes = "Shows the 5 most recently updated owned entities of all types." },
+            { title = "Last 10 updated resources", code = '[plugin:widgets:activity count="10" type="resources"]' },
+            { title = "Recent notes only", code = '[plugin:widgets:activity type="notes"]' },
+        },
+        notes = {
+            "Items are sorted by updated_at descending across all requested entity types.",
+            "Each item links to its detail page and shows the update date.",
+            "Count is clamped to 1-20.",
+        },
+    })
+
+    mah.shortcode({
+        name = "tree",
+        label = "Group Hierarchy",
+        render = render_tree,
+        description = "Render a hierarchical tree of ancestor and/or child groups. Only available on group entities.",
+        attrs = {
+            { name = "direction", type = "string", default = "both", description = "Which direction to traverse: 'up' (ancestors only), 'down' (children only), or 'both'" },
+            { name = "depth", type = "number", default = "3", description = "Maximum traversal depth (1-10)" },
+        },
+        examples = {
+            { title = "Full hierarchy", code = '[plugin:widgets:tree]', notes = "Shows ancestors above and children below the current group." },
+            { title = "Children only, deeper traversal", code = '[plugin:widgets:tree direction="down" depth="5"]' },
+            { title = "Ancestors only", code = '[plugin:widgets:tree direction="up"]' },
+        },
+        notes = {
+            "Only works on group entities; renders a message on other entity types.",
+            "Tracks visited nodes to prevent infinite loops in circular ownership.",
+            "The current group is rendered in bold; other groups are clickable links.",
+            "Depth is clamped to 1-10.",
+        },
+    })
 end

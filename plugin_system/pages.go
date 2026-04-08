@@ -26,17 +26,18 @@ func (pm *PluginManager) HandlePage(pluginName, path string, ctx PageContext) (s
 	}
 
 	pm.mu.RLock()
-	pages, ok := pm.pages[pluginName]
-	if !ok {
-		pm.mu.RUnlock()
-		return "", fmt.Errorf("no plugin %q registered", pluginName)
-	}
-	entry, ok := pages[path]
-	if !ok {
-		pm.mu.RUnlock()
-		return "", fmt.Errorf("no page %q registered for plugin %q", path, pluginName)
+	pages := pm.pages[pluginName]
+	var entry pageEntry
+	var found bool
+	if pages != nil {
+		entry, found = pages[path]
 	}
 	pm.mu.RUnlock()
+
+	// Fall through to auto-generated docs pages.
+	if !found {
+		return pm.HandleDocsPage(pluginName, path)
+	}
 
 	L := entry.state
 	mu := pm.VMLock(L)
