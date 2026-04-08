@@ -158,7 +158,7 @@ local function render_slider(ctx)
 
     local xdata = build_xdata(ctx, tonumber(val) or 0)
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="flex items-center gap-2 text-sm">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div x-data="%s" class="flex items-center gap-2 text-sm py-1.5">', html_escape(xdata))
     if label then
         parts[#parts + 1] = string.format('<span class="text-stone-600">%s</span>', html_escape(label))
     end
@@ -199,7 +199,7 @@ local function render_stepper(ctx)
     )
 
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="inline-flex items-center gap-1 text-sm">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div x-data="%s" class="inline-flex items-center gap-1 text-sm py-1.5">', html_escape(xdata))
     parts[#parts + 1] = '<button @click="val = Math.max(min, val - step); save(val)" :disabled="val <= min" '
         .. 'class="w-7 h-7 rounded border border-stone-300 text-stone-600 hover:bg-stone-100 disabled:opacity-30">'
         .. '&#8722;</button>'
@@ -241,7 +241,7 @@ local function render_star_rating(ctx)
         .. '</svg>'
 
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="inline-flex items-center gap-0.5">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div x-data="%s" class="inline-flex items-center gap-0.5 py-1.5">', html_escape(xdata))
     parts[#parts + 1] = '<template x-for="i in max" :key="i">'
     parts[#parts + 1] = '<button @click="save(i === val ? 0 : i)" @mouseenter="hover = i" @mouseleave="hover = 0" '
         .. 'class="p-0 focus:outline-none" :aria-label="\'Rate \' + i + \' of \' + max">'
@@ -268,7 +268,7 @@ local function render_toggle(ctx)
     local xdata = build_xdata(ctx, val)
 
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="inline-flex items-center gap-2 text-sm">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div x-data="%s" class="inline-flex items-center gap-2 text-sm py-1.5">', html_escape(xdata))
     if label then
         parts[#parts + 1] = string.format('<span class="text-stone-600">%s</span>', html_escape(label))
     end
@@ -309,7 +309,7 @@ local function render_multi_select(ctx)
     )
 
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="flex flex-wrap gap-1">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div x-data="%s" class="flex flex-wrap gap-1 py-1.5">', html_escape(xdata))
     parts[#parts + 1] = '<template x-for="(opt, idx) in options" :key="opt">'
     parts[#parts + 1] = '<button @click="toggle(opt)" '
         .. ':class="val.includes(opt) ? \'bg-amber-100 text-amber-800 border-amber-300\' : \'bg-white text-stone-600 border-stone-300\'" '
@@ -346,7 +346,7 @@ local function render_button_group(ctx)
     )
 
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="inline-flex rounded-md shadow-sm text-sm">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div x-data="%s" class="inline-flex rounded-md shadow-sm text-sm py-1.5">', html_escape(xdata))
     parts[#parts + 1] = '<template x-for="(opt, idx) in options" :key="opt">'
     parts[#parts + 1] = '<button @click="save(opt)" '
         .. ':class="val === opt ? \'bg-amber-700 text-white border-amber-700 z-10\' : \'bg-white text-stone-700 border-stone-300 hover:bg-stone-50\'" '
@@ -384,7 +384,7 @@ local function render_color_picker(ctx)
     )
 
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="flex flex-wrap gap-1">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div x-data="%s" class="flex flex-wrap gap-1 py-1.5">', html_escape(xdata))
     parts[#parts + 1] = '<template x-for="c in colors" :key="c">'
     parts[#parts + 1] = '<button @click="save(c)" '
         .. ':style="\'background-color:\' + c" '
@@ -425,7 +425,7 @@ local function render_tags_input(ctx)
     )
 
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="text-sm">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div x-data="%s" class="text-sm py-1.5">', html_escape(xdata))
     parts[#parts + 1] = '<div class="flex flex-wrap gap-1 mb-1">'
     parts[#parts + 1] = '<template x-for="(tag, i) in val" :key="i">'
     parts[#parts + 1] = '<span class="inline-flex items-center gap-0.5 px-2 py-0.5 bg-stone-100 text-stone-700 rounded text-xs">'
@@ -470,7 +470,7 @@ local function render_textarea(ctx)
     )
 
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="text-sm">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div x-data="%s" class="text-sm py-1.5">', html_escape(xdata))
     parts[#parts + 1] = string.format(
         '<textarea x-model="val" @input="debounced()" rows="%s" placeholder="%s" '
         .. 'class="w-full px-2 py-1 border border-stone-300 rounded text-sm resize-y focus:outline-none focus:ring-1 focus:ring-amber-500"></textarea>',
@@ -496,7 +496,7 @@ local function render_date_picker(ctx)
     local xdata = build_xdata(ctx, val)
 
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="inline-flex items-center gap-2 text-sm">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div x-data="%s" class="inline-flex items-center gap-2 text-sm py-1.5">', html_escape(xdata))
     if label then
         parts[#parts + 1] = string.format('<span class="text-stone-600">%s</span>', html_escape(label))
     end
@@ -533,7 +533,7 @@ local function render_date_range(ctx)
     )
 
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="inline-flex items-center gap-2 text-sm">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div x-data="%s" class="inline-flex items-center gap-2 text-sm py-1.5">', html_escape(xdata))
     parts[#parts + 1] = string.format('<span class="text-stone-600">%s</span>', html_escape(start_label))
     parts[#parts + 1] = '<input type="date" :value="(val && val.start) || \'\'" @change="saveRange(\'start\', $event.target.value)" '
         .. 'class="px-2 py-1 border border-stone-300 rounded text-sm font-mono focus:outline-none focus:ring-1 focus:ring-amber-500">'
@@ -574,7 +574,7 @@ local function render_status_badge(ctx)
     )
 
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="inline-flex items-center gap-1">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div x-data="%s" class="inline-flex items-center gap-1 py-1.5">', html_escape(xdata))
     parts[#parts + 1] = '<button @click="next()" '
         .. ':style="\'background-color:\' + getColor() + \'20; color:\' + getColor() + \'; border-color:\' + getColor()" '
         .. 'class="px-2 py-0.5 rounded-full text-xs font-semibold border cursor-pointer transition-colors" '
@@ -609,7 +609,7 @@ local function render_progress_input(ctx)
     )
 
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="text-sm">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div x-data="%s" class="text-sm py-1.5">', html_escape(xdata))
     parts[#parts + 1] = '<div class="flex items-center gap-2 mb-0.5">'
     parts[#parts + 1] = string.format('<span class="text-stone-600">%s</span>', html_escape(label))
     parts[#parts + 1] = '<span class="font-mono font-bold text-xs" x-text="(val || 0) + \'%\'"></span>'
@@ -648,7 +648,7 @@ local function render_key_value(ctx)
     )
 
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="text-sm">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div x-data="%s" class="text-sm py-1.5">', html_escape(xdata))
     parts[#parts + 1] = '<template x-for="[k,v] in entries()" :key="k">'
     parts[#parts + 1] = '<div class="flex items-center gap-1 mb-1">'
         .. '<span class="font-mono text-xs bg-stone-100 px-1.5 py-0.5 rounded" x-text="k"></span>'
@@ -693,7 +693,7 @@ local function render_checklist(ctx)
     )
 
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="text-sm">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div x-data="%s" class="text-sm py-1.5">', html_escape(xdata))
     parts[#parts + 1] = '<template x-for="(item, i) in (val || [])" :key="i">'
     parts[#parts + 1] = '<div class="flex items-center gap-1.5 mb-1">'
         .. '<input type="checkbox" :checked="item.done" @change="toggleItem(i)" '
@@ -739,7 +739,7 @@ local function render_url_input(ctx)
     )
 
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" x-init="checkValid()" class="text-sm">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div x-data="%s" x-init="checkValid()" class="text-sm py-1.5">', html_escape(xdata))
     parts[#parts + 1] = '<div class="flex items-center gap-1">'
     if label then
         parts[#parts + 1] = string.format('<span class="text-stone-600">%s</span>', html_escape(label))
@@ -784,7 +784,7 @@ local function render_markdown(ctx)
     )
 
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="text-sm">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div x-data="%s" class="text-sm py-1.5">', html_escape(xdata))
     parts[#parts + 1] = string.format(
         '<textarea x-model="val" @input="debounced()" rows="%s" placeholder="%s" '
         .. 'class="w-full px-2 py-1 border border-stone-300 rounded text-sm font-mono resize-y focus:outline-none focus:ring-1 focus:ring-amber-500"></textarea>',

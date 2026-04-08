@@ -95,7 +95,7 @@ local function render_summary(ctx)
 
     -- Compact style: single flex row.
     if style == "compact" then
-        local parts = { '<div class="flex items-center gap-4 text-sm text-gray-600">' }
+        local parts = { '<div class="flex items-center gap-4 text-sm text-gray-600 py-1.5">' }
         for _, s in ipairs(stats) do
             parts[#parts + 1] = string.format(
                 '<span class="flex items-center gap-1">%s <strong>%d</strong> %s</span>',
@@ -108,7 +108,7 @@ local function render_summary(ctx)
 
     -- Cards style: grid of rounded cards.
     local cols = #stats
-    local parts = { string.format('<div class="grid grid-cols-%d gap-3">', cols) }
+    local parts = { string.format('<div class="grid grid-cols-%d gap-3 py-1.5">', cols) }
     for _, s in ipairs(stats) do
         parts[#parts + 1] = string.format(
             '<div class="rounded-lg border border-gray-200 p-4 text-center">'
@@ -170,7 +170,7 @@ local function render_gallery(ctx)
     end
 
     local parts = { string.format(
-        '<div class="flex flex-wrap gap-1" data-lightbox-source="/resources" data-lightbox-param-name="OwnerId" data-lightbox-param-value="%d">',
+        '<div class="flex flex-wrap gap-1 py-1.5" data-lightbox-source="/resources" data-lightbox-param-name="OwnerId" data-lightbox-param-value="%d">',
         ctx.entity_id) }
     for _, r in ipairs(resources) do
         local name = html_escape(r.name or "")
@@ -315,7 +315,7 @@ local function render_activity(ctx)
         trimmed[#trimmed + 1] = items[i]
     end
 
-    local parts = { '<div class="space-y-2">' }
+    local parts = { '<div class="space-y-2 py-1.5">' }
     for _, item in ipairs(trimmed) do
         -- Extract YYYY-MM-DD HH:MM from the ISO8601 string.
         local date_str = ""
@@ -416,7 +416,7 @@ local function render_tree(ctx)
     end
 
     -- Build the tree HTML.
-    local html_parts = { '<ul class="text-sm space-y-1">' }
+    local html_parts = { '<ul class="text-sm space-y-1 py-1.5">' }
 
     if direction == "up" or direction == "both" then
         local ancestors = collect_ancestors()
