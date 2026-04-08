@@ -1,5 +1,5 @@
 <fieldset class="rounded-lg border border-stone-200 bg-stone-50/50 p-4 sm:p-6 space-y-4"
-         x-data="sectionConfigForm('{{ sectionConfigValue|escapejs }}', '{{ sectionConfigType }}')">
+         x-data="sectionConfigForm('{{ sectionConfigValue.String|escapejs }}', '{{ sectionConfigType }}')">
     <legend class="text-base font-semibold font-mono text-stone-800 px-2">Section Visibility</legend>
 
     <input type="hidden" name="SectionConfig" :value="JSON.stringify(config)">

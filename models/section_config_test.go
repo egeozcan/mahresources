@@ -32,9 +32,9 @@ func TestResolveGroupSectionConfig_NilInput(t *testing.T) {
 	assert.True(t, cfg.Relations.ReverseRelations)
 
 	// All states should default to CollapsibleDefault
-	assert.Equal(t, CollapsibleDefault, cfg.OwnEntities.State)
-	assert.Equal(t, CollapsibleDefault, cfg.RelatedEntities.State)
-	assert.Equal(t, CollapsibleDefault, cfg.Relations.State)
+	assert.Equal(t, string(CollapsibleDefault), cfg.OwnEntities.State)
+	assert.Equal(t, string(CollapsibleDefault), cfg.RelatedEntities.State)
+	assert.Equal(t, string(CollapsibleDefault), cfg.Relations.State)
 }
 
 func TestResolveGroupSectionConfig_EmptyJSON(t *testing.T) {
@@ -58,9 +58,9 @@ func TestResolveGroupSectionConfig_EmptyJSON(t *testing.T) {
 	assert.True(t, cfg.RelatedEntities.RelatedNotes)
 	assert.True(t, cfg.Relations.ForwardRelations)
 	assert.True(t, cfg.Relations.ReverseRelations)
-	assert.Equal(t, CollapsibleDefault, cfg.OwnEntities.State)
-	assert.Equal(t, CollapsibleDefault, cfg.RelatedEntities.State)
-	assert.Equal(t, CollapsibleDefault, cfg.Relations.State)
+	assert.Equal(t, string(CollapsibleDefault), cfg.OwnEntities.State)
+	assert.Equal(t, string(CollapsibleDefault), cfg.RelatedEntities.State)
+	assert.Equal(t, string(CollapsibleDefault), cfg.Relations.State)
 }
 
 func TestResolveGroupSectionConfig_PartialJSON(t *testing.T) {
@@ -81,7 +81,7 @@ func TestResolveGroupSectionConfig_PartialJSON(t *testing.T) {
 	assert.True(t, cfg.MetaSchemaDisplay)
 
 	// Explicit state should be preserved
-	assert.Equal(t, CollapsibleCollapsed, cfg.OwnEntities.State)
+	assert.Equal(t, string(CollapsibleCollapsed), cfg.OwnEntities.State)
 
 	// Unset nested bools should default to true
 	assert.True(t, cfg.OwnEntities.OwnNotes)
@@ -89,9 +89,9 @@ func TestResolveGroupSectionConfig_PartialJSON(t *testing.T) {
 	assert.True(t, cfg.OwnEntities.OwnResources)
 
 	// Unset sections should get all defaults
-	assert.Equal(t, CollapsibleDefault, cfg.RelatedEntities.State)
+	assert.Equal(t, string(CollapsibleDefault), cfg.RelatedEntities.State)
 	assert.True(t, cfg.RelatedEntities.RelatedGroups)
-	assert.Equal(t, CollapsibleDefault, cfg.Relations.State)
+	assert.Equal(t, string(CollapsibleDefault), cfg.Relations.State)
 	assert.True(t, cfg.Relations.ForwardRelations)
 }
 
@@ -136,17 +136,17 @@ func TestResolveGroupSectionConfig_CompleteJSON(t *testing.T) {
 	assert.False(t, cfg.Description)
 	assert.False(t, cfg.MetaSchemaDisplay)
 
-	assert.Equal(t, CollapsibleOpen, cfg.OwnEntities.State)
+	assert.Equal(t, string(CollapsibleOpen), cfg.OwnEntities.State)
 	assert.False(t, cfg.OwnEntities.OwnNotes)
 	assert.False(t, cfg.OwnEntities.OwnGroups)
 	assert.False(t, cfg.OwnEntities.OwnResources)
 
-	assert.Equal(t, CollapsibleCollapsed, cfg.RelatedEntities.State)
+	assert.Equal(t, string(CollapsibleCollapsed), cfg.RelatedEntities.State)
 	assert.False(t, cfg.RelatedEntities.RelatedGroups)
 	assert.False(t, cfg.RelatedEntities.RelatedResources)
 	assert.False(t, cfg.RelatedEntities.RelatedNotes)
 
-	assert.Equal(t, CollapsibleOff, cfg.Relations.State)
+	assert.Equal(t, string(CollapsibleOff), cfg.Relations.State)
 	assert.False(t, cfg.Relations.ForwardRelations)
 	assert.False(t, cfg.Relations.ReverseRelations)
 }
@@ -165,10 +165,10 @@ func TestResolveGroupSectionConfig_InvalidJSON(t *testing.T) {
 	assert.True(t, cfg.Breadcrumb)
 	assert.True(t, cfg.Description)
 	assert.True(t, cfg.MetaSchemaDisplay)
-	assert.Equal(t, CollapsibleDefault, cfg.OwnEntities.State)
+	assert.Equal(t, string(CollapsibleDefault), cfg.OwnEntities.State)
 	assert.True(t, cfg.OwnEntities.OwnNotes)
-	assert.Equal(t, CollapsibleDefault, cfg.RelatedEntities.State)
-	assert.Equal(t, CollapsibleDefault, cfg.Relations.State)
+	assert.Equal(t, string(CollapsibleDefault), cfg.RelatedEntities.State)
+	assert.Equal(t, string(CollapsibleDefault), cfg.Relations.State)
 }
 
 func TestResolveResourceSectionConfig_NilInput(t *testing.T) {
@@ -193,7 +193,7 @@ func TestResolveResourceSectionConfig_NilInput(t *testing.T) {
 	assert.True(t, cfg.MetaSchemaDisplay)
 
 	// State should default
-	assert.Equal(t, CollapsibleDefault, cfg.TechnicalDetails.State)
+	assert.Equal(t, string(CollapsibleDefault), cfg.TechnicalDetails.State)
 }
 
 func TestResolveResourceSectionConfig_EmptyJSON(t *testing.T) {
@@ -216,7 +216,7 @@ func TestResolveResourceSectionConfig_EmptyJSON(t *testing.T) {
 	assert.True(t, cfg.Breadcrumb)
 	assert.True(t, cfg.Description)
 	assert.True(t, cfg.MetaSchemaDisplay)
-	assert.Equal(t, CollapsibleDefault, cfg.TechnicalDetails.State)
+	assert.Equal(t, string(CollapsibleDefault), cfg.TechnicalDetails.State)
 }
 
 func TestResolveResourceSectionConfig_PartialJSON(t *testing.T) {
@@ -244,7 +244,7 @@ func TestResolveResourceSectionConfig_PartialJSON(t *testing.T) {
 	assert.True(t, cfg.MetaSchemaDisplay)
 
 	// Explicit state preserved
-	assert.Equal(t, CollapsibleOpen, cfg.TechnicalDetails.State)
+	assert.Equal(t, string(CollapsibleOpen), cfg.TechnicalDetails.State)
 }
 
 func TestResolveResourceSectionConfig_CompleteJSON(t *testing.T) {
@@ -287,7 +287,7 @@ func TestResolveResourceSectionConfig_CompleteJSON(t *testing.T) {
 	assert.False(t, cfg.Breadcrumb)
 	assert.False(t, cfg.Description)
 	assert.False(t, cfg.MetaSchemaDisplay)
-	assert.Equal(t, CollapsibleCollapsed, cfg.TechnicalDetails.State)
+	assert.Equal(t, string(CollapsibleCollapsed), cfg.TechnicalDetails.State)
 }
 
 func TestResolveResourceSectionConfig_InvalidJSON(t *testing.T) {
@@ -311,13 +311,13 @@ func TestResolveResourceSectionConfig_InvalidJSON(t *testing.T) {
 	assert.True(t, cfg.Breadcrumb)
 	assert.True(t, cfg.Description)
 	assert.True(t, cfg.MetaSchemaDisplay)
-	assert.Equal(t, CollapsibleDefault, cfg.TechnicalDetails.State)
+	assert.Equal(t, string(CollapsibleDefault), cfg.TechnicalDetails.State)
 }
 
 func TestResolveGroupSectionConfig_EmptyStateString(t *testing.T) {
 	input := types.JSON(`{"ownEntities": {"state": ""}}`)
 	cfg := ResolveGroupSectionConfig(&input)
-	if cfg.OwnEntities.State != CollapsibleDefault {
+	if cfg.OwnEntities.State != string(CollapsibleDefault) {
 		t.Errorf("Empty state string should default, got %q", cfg.OwnEntities.State)
 	}
 }

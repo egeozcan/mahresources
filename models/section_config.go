@@ -32,23 +32,23 @@ type GroupSectionConfig struct {
 }
 
 type GroupOwnEntitiesConfig struct {
-	State        CollapsibleState `json:"state"`
-	OwnNotes     bool             `json:"ownNotes"`
-	OwnGroups    bool             `json:"ownGroups"`
-	OwnResources bool             `json:"ownResources"`
+	State        string `json:"state"` // plain string so pongo2 comparisons work
+	OwnNotes     bool   `json:"ownNotes"`
+	OwnGroups    bool   `json:"ownGroups"`
+	OwnResources bool   `json:"ownResources"`
 }
 
 type GroupRelatedEntitiesConfig struct {
-	State            CollapsibleState `json:"state"`
-	RelatedGroups    bool             `json:"relatedGroups"`
-	RelatedResources bool             `json:"relatedResources"`
-	RelatedNotes     bool             `json:"relatedNotes"`
+	State            string `json:"state"` // plain string so pongo2 comparisons work
+	RelatedGroups    bool   `json:"relatedGroups"`
+	RelatedResources bool   `json:"relatedResources"`
+	RelatedNotes     bool   `json:"relatedNotes"`
 }
 
 type GroupRelationsConfig struct {
-	State            CollapsibleState `json:"state"`
-	ForwardRelations bool             `json:"forwardRelations"`
-	ReverseRelations bool             `json:"reverseRelations"`
+	State            string `json:"state"` // plain string so pongo2 comparisons work
+	ForwardRelations bool   `json:"forwardRelations"`
+	ReverseRelations bool   `json:"reverseRelations"`
 }
 
 // ResourceSectionConfig controls which sections are visible on a resource detail page.
@@ -73,7 +73,7 @@ type ResourceSectionConfig struct {
 }
 
 type ResourceTechnicalDetailsConfig struct {
-	State CollapsibleState `json:"state"`
+	State string `json:"state"` // plain string so pongo2 comparisons work
 }
 
 // --- raw (pointer-based) intermediates for unmarshaling ---
@@ -146,11 +146,11 @@ func boolDefault(p *bool, def bool) bool {
 	return *p
 }
 
-func stateDefault(p *CollapsibleState, def CollapsibleState) CollapsibleState {
+func stateDefault(p *CollapsibleState, def CollapsibleState) string {
 	if p == nil || *p == "" {
-		return def
+		return string(def)
 	}
-	return *p
+	return string(*p)
 }
 
 // --- resolvers ---
@@ -160,13 +160,13 @@ func stateDefault(p *CollapsibleState, def CollapsibleState) CollapsibleState {
 func ResolveGroupSectionConfig(data *types.JSON) GroupSectionConfig {
 	defaults := GroupSectionConfig{
 		OwnEntities: GroupOwnEntitiesConfig{
-			State: CollapsibleDefault, OwnNotes: true, OwnGroups: true, OwnResources: true,
+			State: string(CollapsibleDefault), OwnNotes: true, OwnGroups: true, OwnResources: true,
 		},
 		RelatedEntities: GroupRelatedEntitiesConfig{
-			State: CollapsibleDefault, RelatedGroups: true, RelatedResources: true, RelatedNotes: true,
+			State: string(CollapsibleDefault), RelatedGroups: true, RelatedResources: true, RelatedNotes: true,
 		},
 		Relations: GroupRelationsConfig{
-			State: CollapsibleDefault, ForwardRelations: true, ReverseRelations: true,
+			State: string(CollapsibleDefault), ForwardRelations: true, ReverseRelations: true,
 		},
 		Tags: true, MetaJson: true, Merge: true, Clone: true, TreeLink: true,
 		Owner: true, Breadcrumb: true, Description: true, MetaSchemaDisplay: true,
@@ -232,7 +232,7 @@ func ResolveGroupSectionConfig(data *types.JSON) GroupSectionConfig {
 // missing keys with defaults (bools default to true, states to "default").
 func ResolveResourceSectionConfig(data *types.JSON) ResourceSectionConfig {
 	defaults := ResourceSectionConfig{
-		TechnicalDetails:  ResourceTechnicalDetailsConfig{State: CollapsibleDefault},
+		TechnicalDetails:  ResourceTechnicalDetailsConfig{State: string(CollapsibleDefault)},
 		MetadataGrid:      true,
 		Notes:             true,
 		Groups:            true,
