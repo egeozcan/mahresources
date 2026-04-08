@@ -518,11 +518,11 @@ local function render_badge(ctx)
     local label = idx and labels[idx] or val
 
     return string.format(
-        '<div class="py-1.5">'
+        '<div title="Badge: %s" class="py-1.5">'
         .. '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border" '
         .. 'style="background-color: %s20; color: %s; border-color: %s">%s</span>'
         .. '</div>',
-        html_escape(color), html_escape(color), html_escape(color), html_escape(label)
+        html_escape(path), html_escape(color), html_escape(color), html_escape(color), html_escape(label)
     )
 end
 
@@ -541,8 +541,8 @@ local function render_format(ctx)
 
     local formatted = format_value(val, fmt_type, attrs)
     return string.format(
-        '<div class="py-1.5"><span class="font-mono text-sm">%s</span></div>',
-        html_escape(formatted)
+        '<div title="Formatted: %s (%s)" class="py-1.5"><span class="font-mono text-sm">%s</span></div>',
+        html_escape(path), html_escape(fmt_type), html_escape(formatted)
     )
 end
 
@@ -564,13 +564,13 @@ local function render_stat_card(ctx)
     local icon_svg = get_icon(icon_name)
 
     return string.format(
-        '<div class="py-1.5">'
+        '<div title="Stat: %s (%s)" class="py-1.5">'
         .. '<div class="inline-flex flex-col items-center rounded-lg border border-stone-200 px-6 py-4 text-center">'
         .. '<div class="text-stone-400 mb-1">%s</div>'
         .. '<div class="text-2xl font-bold font-mono">%s</div>'
         .. '<div class="text-xs text-stone-500 mt-0.5">%s</div>'
         .. '</div></div>',
-        icon_svg, html_escape(formatted), html_escape(label)
+        html_escape(path), html_escape(label), icon_svg, html_escape(formatted), html_escape(label)
     )
 end
 
@@ -598,7 +598,7 @@ local function render_meter(ctx)
     local high_pct = clamp(((high - min_val) / range) * 100, 0, 100)
 
     return string.format(
-        '<div class="py-1.5 text-sm">'
+        '<div title="Meter: %s (%s-%s)" class="py-1.5 text-sm">'
         .. '<div class="flex items-center justify-between mb-0.5">'
         .. '<span class="text-stone-600">%s</span>'
         .. '<span class="font-mono font-bold">%s</span>'
@@ -608,6 +608,7 @@ local function render_meter(ctx)
         .. '#ef4444 0%%, #ef4444 %.1f%%, #f59e0b %.1f%%, #f59e0b %.1f%%, #22c55e %.1f%%, #22c55e 100%%)"></div>'
         .. '<div class="absolute top-0 h-full w-1 bg-stone-800 rounded" style="left: %.1f%%"></div>'
         .. '</div></div>',
+        html_escape(path), html_escape(tostring(min_val)), html_escape(tostring(max_val)),
         html_escape(label), html_escape(tostring(val)),
         low_pct, low_pct, high_pct, high_pct,
         val_pct
@@ -669,8 +670,8 @@ local function render_sparkline(ctx)
             )
         end
         return string.format(
-            '<div class="py-1.5"><svg width="%d" height="%d" class="inline-block align-middle">%s</svg></div>',
-            width, height, table.concat(rects)
+            '<div title="Sparkline: %s (%s)" class="py-1.5"><svg width="%d" height="%d" class="inline-block align-middle">%s</svg></div>',
+            html_escape(path), html_escape(chart_type), width, height, table.concat(rects)
         )
     end
 
@@ -690,10 +691,11 @@ local function render_sparkline(ctx)
         local area_points = points_str
             .. string.format(" %.1f,%d %d,%d", last_x, height - padding, first_x, height - padding)
         return string.format(
-            '<div class="py-1.5"><svg width="%d" height="%d" class="inline-block align-middle">'
+            '<div title="Sparkline: %s (%s)" class="py-1.5"><svg width="%d" height="%d" class="inline-block align-middle">'
             .. '<polygon points="%s" fill="%s" fill-opacity="0.2" stroke="none"/>'
             .. '<polyline points="%s" fill="none" stroke="%s" stroke-width="1.5"/>'
             .. '</svg></div>',
+            html_escape(path), html_escape(chart_type),
             width, height,
             area_points, html_escape(color),
             points_str, html_escape(color)
@@ -702,10 +704,10 @@ local function render_sparkline(ctx)
 
     -- Default: line
     return string.format(
-        '<div class="py-1.5"><svg width="%d" height="%d" class="inline-block align-middle">'
+        '<div title="Sparkline: %s (%s)" class="py-1.5"><svg width="%d" height="%d" class="inline-block align-middle">'
         .. '<polyline points="%s" fill="none" stroke="%s" stroke-width="1.5"/>'
         .. '</svg></div>',
-        width, height, points_str, html_escape(color)
+        html_escape(path), html_escape(chart_type), width, height, points_str, html_escape(color)
     )
 end
 
@@ -750,7 +752,7 @@ local function render_table(ctx)
     end
 
     local parts = {
-        '<div class="py-1.5">',
+        string.format('<div title="Table: owned %s" class="py-1.5">', html_escape(entity_type)),
         '<table class="w-full text-sm border-collapse">',
         '<thead><tr class="border-b border-stone-200">',
     }
@@ -840,19 +842,21 @@ local function render_list(ctx)
         return mah.json.encode(item)
     end
 
+    local title_text = string.format("List: %s (%s)", path, style)
+
     if style == "comma" then
         local texts = {}
         for _, item in ipairs(data) do
             texts[#texts + 1] = html_escape(item_text(item))
         end
         return string.format(
-            '<div class="py-1.5"><span class="text-sm">%s</span></div>',
-            table.concat(texts, ", ")
+            '<div title="%s" class="py-1.5"><span class="text-sm">%s</span></div>',
+            html_escape(title_text), table.concat(texts, ", ")
         )
     end
 
     if style == "pill" then
-        local parts = { '<div class="py-1.5"><div class="flex flex-wrap gap-1">' }
+        local parts = { string.format('<div title="%s" class="py-1.5"><div class="flex flex-wrap gap-1">', html_escape(title_text)) }
         for _, item in ipairs(data) do
             parts[#parts + 1] = string.format(
                 '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-stone-100 text-stone-700 border border-stone-200">%s</span>',
@@ -866,7 +870,7 @@ local function render_list(ctx)
     -- bullet or numbered
     local tag = style == "numbered" and "ol" or "ul"
     local list_class = style == "numbered" and "list-decimal" or "list-disc"
-    local parts = { string.format('<div class="py-1.5"><%s class="%s list-inside text-sm space-y-0.5">', tag, list_class) }
+    local parts = { string.format('<div title="%s" class="py-1.5"><%s class="%s list-inside text-sm space-y-0.5">', html_escape(title_text), tag, list_class) }
     for _, item in ipairs(data) do
         parts[#parts + 1] = '<li>' .. html_escape(item_text(item)) .. '</li>'
     end
@@ -927,13 +931,14 @@ local function render_count_badge(ctx)
     end
 
     local icon_svg = icon_name and get_icon(icon_name) or ""
+    local title_text = path and string.format("Count: %s", path) or string.format("Count: owned %s", entity_type)
 
     return string.format(
-        '<div class="py-1.5">'
+        '<div title="%s" class="py-1.5">'
         .. '<span class="inline-flex items-center gap-1 text-sm font-medium text-stone-600">'
         .. '%s<span class="font-mono font-bold">%d</span>'
         .. '<span>%s</span></span></div>',
-        icon_svg, count, html_escape(label)
+        html_escape(title_text), icon_svg, count, html_escape(label)
     )
 end
 
@@ -980,12 +985,15 @@ local function render_embed(ctx)
     end
 
     local suffix = truncated and '\n<span class="text-stone-400 italic">... (truncated)</span>' or ""
+    local title_text = attrs["path"]
+        and string.format("Embed: %s", attrs["path"])
+        or string.format("Embed: resource %d", resource_id)
 
     return string.format(
-        '<div class="py-1.5">'
+        '<div title="%s" class="py-1.5">'
         .. '<pre class="bg-stone-50 border border-stone-200 rounded p-3 text-xs font-mono overflow-x-auto max-h-80 overflow-y-auto whitespace-pre-wrap">%s%s</pre>'
         .. '</div>',
-        html_escape(content), suffix
+        html_escape(title_text), html_escape(content), suffix
     )
 end
 
@@ -1022,10 +1030,10 @@ local function render_image(ctx)
     end
 
     return string.format(
-        '<div class="py-1.5">'
+        '<div title="Image: %s" class="py-1.5">'
         .. '<img src="%s" width="%d" height="%d" alt="%s" class="object-cover %s" loading="lazy" />'
         .. '</div>',
-        html_escape(src), w, h, alt, rounded_class
+        html_escape(path), html_escape(src), w, h, alt, rounded_class
     )
 end
 
@@ -1052,11 +1060,11 @@ local function render_barcode(ctx)
     end
 
     return string.format(
-        '<div class="py-1.5 max-w-full overflow-hidden">'
+        '<div title="Barcode: %s" class="py-1.5 max-w-full overflow-hidden">'
         .. '<div class="border border-stone-200 rounded p-2 bg-white max-w-full overflow-hidden">%s</div>'
         .. '<div class="text-xs text-stone-500 mt-1 font-mono truncate">%s</div>'
         .. '</div>',
-        barcode_svg, html_escape(text)
+        html_escape(path), barcode_svg, html_escape(text)
     )
 end
 
@@ -1081,13 +1089,14 @@ local function render_qr_code(ctx)
 
     -- Render a placeholder that Alpine fills via the injected QR encoder
     return string.format(
-        '<div class="py-1.5 max-w-full overflow-hidden">'
+        '<div title="QR Code: %s" class="py-1.5 max-w-full overflow-hidden">'
         .. '<div class="inline-block border border-stone-200 rounded p-2 bg-white max-w-full overflow-hidden"'
         .. ' x-data x-init="if(window.__dvQR){$el.innerHTML=window.__dvQR(%s,%d,%s,%s)}">'
         .. '<span class="text-xs text-stone-400">Loading QR...</span>'
         .. '</div>'
         .. '<div class="text-xs text-stone-500 mt-1 font-mono truncate">%s</div>'
         .. '</div>',
+        html_escape(path),
         html_escape(json_value(text)), size, html_escape(json_value(fg)), html_escape(json_value(bg)),
         html_escape(text)
     )
@@ -1121,7 +1130,7 @@ local function render_link_preview(ctx)
     end
 
     return string.format(
-        '<div class="py-1.5">'
+        '<div title="Link: %s" class="py-1.5">'
         .. '<a href="%s" target="_blank" rel="noopener" '
         .. 'class="flex items-center gap-3 p-3 border border-stone-200 rounded-lg hover:bg-stone-50 transition-colors text-sm no-underline">'
         .. '<span class="shrink-0 text-stone-400">%s</span>'
@@ -1131,6 +1140,7 @@ local function render_link_preview(ctx)
         .. '</span>'
         .. '<span class="shrink-0 ml-auto text-stone-400">%s</span>'
         .. '</a></div>',
+        html_escape(path),
         html_escape(url),
         get_icon("globe", "w-8 h-8"),
         html_escape(url),
@@ -1164,9 +1174,10 @@ local function render_json_tree_shortcode(ctx)
     local state = build_tree_state(val, 0, max_expand, "root")
     local tree_html = render_json_tree(val, 0, max_expand, "root")
 
+    local title_text = path and string.format("JSON: %s", path) or "JSON: full meta"
     return string.format(
-        '<div class="py-1.5" x-data="{ %s }"><div class="font-mono text-xs">%s</div></div>',
-        state, tree_html
+        '<div title="%s" class="py-1.5" x-data="{ %s }"><div class="font-mono text-xs">%s</div></div>',
+        html_escape(title_text), state, tree_html
     )
 end
 
@@ -1224,7 +1235,7 @@ local function render_bar_chart(ctx)
     end
     if max_val == 0 then max_val = 1 end
 
-    local parts = { '<div class="py-1.5 max-w-full overflow-hidden"><div class="space-y-1 text-sm">' }
+    local parts = { string.format('<div title="Bar chart: %s" class="py-1.5 max-w-full overflow-hidden"><div class="space-y-1 text-sm">', html_escape(path)) }
     for _, e in ipairs(entries) do
         local pct = (e.value / max_val) * 100
         parts[#parts + 1] = string.format(
@@ -1337,11 +1348,11 @@ local function render_pie_chart(ctx)
     end
 
     return string.format(
-        '<div class="py-1.5 max-w-full overflow-hidden"><div class="flex flex-wrap items-start gap-3">'
+        '<div title="Pie chart: %s" class="py-1.5 max-w-full overflow-hidden"><div class="flex flex-wrap items-start gap-3">'
         .. '<svg class="shrink-0" width="%d" height="%d" viewBox="0 0 36 36">%s</svg>'
         .. '<div class="text-xs space-y-1 min-w-0">%s</div>'
         .. '</div></div>',
-        size, size, table.concat(circles), table.concat(legend)
+        html_escape(path), size, size, table.concat(circles), table.concat(legend)
     )
 end
 
@@ -1377,6 +1388,19 @@ local function render_conditional(ctx)
 
     if not condition_met then return "" end
 
+    -- Build title
+    local operator = ""
+    local cond_value = ""
+    if attrs["eq"] then operator = "eq"; cond_value = attrs["eq"]
+    elseif attrs["neq"] then operator = "neq"; cond_value = attrs["neq"]
+    elseif attrs["gt"] then operator = "gt"; cond_value = attrs["gt"]
+    elseif attrs["lt"] then operator = "lt"; cond_value = attrs["lt"]
+    elseif attrs["contains"] then operator = "contains"; cond_value = attrs["contains"]
+    elseif attrs["empty"] then operator = "empty"; cond_value = ""
+    elseif attrs["not-empty"] then operator = "not-empty"; cond_value = ""
+    end
+    local title_text = string.format("Conditional: %s %s %s", path, operator, cond_value)
+
     -- Render content
     local output
     if attrs["html"] then
@@ -1391,12 +1415,12 @@ local function render_conditional(ctx)
     local css_class = attrs["class"]
     if css_class then
         return string.format(
-            '<div class="py-1.5"><div class="%s">%s</div></div>',
-            html_escape(css_class), output
+            '<div title="%s" class="py-1.5"><div class="%s">%s</div></div>',
+            html_escape(title_text), html_escape(css_class), output
         )
     end
 
-    return string.format('<div class="py-1.5">%s</div>', output)
+    return string.format('<div title="%s" class="py-1.5">%s</div>', html_escape(title_text), output)
 end
 
 -- ---------------------------------------------------------------------------
@@ -1497,7 +1521,7 @@ local function render_timeline_chart(ctx)
     ))
 
     local parts = {
-        '<div class="py-1.5 text-sm overflow-hidden max-w-full">',
+        string.format('<div title="Timeline: owned %s" class="py-1.5 text-sm overflow-hidden max-w-full">', html_escape(entity_type)),
         '<div class="flex text-xs text-stone-400 mb-1">',
         '<span>' .. html_escape(min_label) .. '</span>',
         '<span class="ml-auto">' .. html_escape(max_label) .. '</span>',

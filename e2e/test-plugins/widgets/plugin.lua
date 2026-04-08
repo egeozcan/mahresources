@@ -95,7 +95,7 @@ local function render_summary(ctx)
 
     -- Compact style: single flex row.
     if style == "compact" then
-        local parts = { '<div class="flex items-center gap-4 text-sm text-gray-600 py-1.5">' }
+        local parts = { '<div title="Entity summary: resources, notes, groups" class="flex items-center gap-4 text-sm text-gray-600 py-1.5">' }
         for _, s in ipairs(stats) do
             parts[#parts + 1] = string.format(
                 '<span class="flex items-center gap-1">%s <strong>%d</strong> %s</span>',
@@ -108,7 +108,7 @@ local function render_summary(ctx)
 
     -- Cards style: grid of rounded cards.
     local cols = #stats
-    local parts = { string.format('<div class="grid grid-cols-%d gap-3 py-1.5">', cols) }
+    local parts = { string.format('<div title="Entity summary: resources, notes, groups" class="grid grid-cols-%d gap-3 py-1.5">', cols) }
     for _, s in ipairs(stats) do
         parts[#parts + 1] = string.format(
             '<div class="rounded-lg border border-gray-200 p-4 text-center">'
@@ -170,8 +170,8 @@ local function render_gallery(ctx)
     end
 
     local parts = { string.format(
-        '<div class="flex flex-wrap gap-1 py-1.5" data-lightbox-source="/resources" data-lightbox-param-name="OwnerId" data-lightbox-param-value="%d">',
-        ctx.entity_id) }
+        '<div title="Gallery: images (content-type: %s)" class="flex flex-wrap gap-1 py-1.5" data-lightbox-source="/resources" data-lightbox-param-name="OwnerId" data-lightbox-param-value="%d">',
+        html_escape(ct), ctx.entity_id) }
     for _, r in ipairs(resources) do
         local name = html_escape(r.name or "")
         local ct = html_escape(r.content_type or "image/jpeg")
@@ -251,12 +251,14 @@ local function render_progress(ctx)
 
     local label_text = custom_label or string.format("%d/%d complete", done, total)
 
+    local title_text = string.format("Progress: %s (%d/%d)", field, done, total)
+
     return string.format(
-        '<div class="bg-gray-200 rounded-full h-4 overflow-hidden">'
+        '<div title="%s" class="bg-gray-200 rounded-full h-4 overflow-hidden">'
         .. '<div class="bg-blue-500 h-full rounded-full transition-all" style="width: %d%%"></div>'
         .. '</div>'
         .. '<p class="text-sm text-gray-600 mt-1">%s</p>',
-        percent, html_escape(label_text)
+        html_escape(title_text), percent, html_escape(label_text)
     )
 end
 
@@ -315,7 +317,7 @@ local function render_activity(ctx)
         trimmed[#trimmed + 1] = items[i]
     end
 
-    local parts = { '<div class="space-y-2 py-1.5">' }
+    local parts = { '<div title="Recent activity (owned entities)" class="space-y-2 py-1.5">' }
     for _, item in ipairs(trimmed) do
         -- Extract YYYY-MM-DD HH:MM from the ISO8601 string.
         local date_str = ""
@@ -416,7 +418,7 @@ local function render_tree(ctx)
     end
 
     -- Build the tree HTML.
-    local html_parts = { '<ul class="text-sm space-y-1 py-1.5">' }
+    local html_parts = { '<ul title="Group hierarchy" class="text-sm space-y-1 py-1.5">' }
 
     if direction == "up" or direction == "both" then
         local ancestors = collect_ancestors()

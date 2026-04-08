@@ -157,8 +157,9 @@ local function render_slider(ctx)
     local label = ctx.attrs.label
 
     local xdata = build_xdata(ctx, tonumber(val) or 0)
+    local title_text = string.format("Edit: %s (range %s-%s)", ctx.attrs.path, min, max)
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="flex items-center gap-2 text-sm py-1.5 max-w-full">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div title="%s" x-data="%s" class="flex items-center gap-2 text-sm py-1.5 max-w-full">', html_escape(title_text), html_escape(xdata))
     if label then
         parts[#parts + 1] = string.format('<span class="text-stone-600 shrink-0">%s</span>', html_escape(label))
     end
@@ -198,8 +199,9 @@ local function render_stepper(ctx)
         html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
     )
 
+    local title_text = string.format("Edit: %s (range %s-%s)", ctx.attrs.path, min, max)
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="inline-flex items-center gap-1 text-sm py-1.5">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div title="%s" x-data="%s" class="inline-flex items-center gap-1 text-sm py-1.5">', html_escape(title_text), html_escape(xdata))
     parts[#parts + 1] = '<button @click="val = Math.max(min, val - step); save(val)" :disabled="val <= min" '
         .. 'class="w-7 h-7 rounded border border-stone-300 text-stone-600 hover:bg-stone-100 disabled:opacity-30">'
         .. '&#8722;</button>'
@@ -240,8 +242,9 @@ local function render_star_rating(ctx)
         .. '<path d="M10 1l2.39 4.84L17.3 6.7l-3.65 3.56.86 5.02L10 13.07l-4.51 2.21.86-5.02L2.7 6.7l4.91-.86L10 1z"/>'
         .. '</svg>'
 
+    local title_text = string.format("Edit: %s (1-%s stars)", ctx.attrs.path, max)
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="inline-flex items-center gap-0.5 py-1.5">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div title="%s" x-data="%s" class="inline-flex items-center gap-0.5 py-1.5">', html_escape(title_text), html_escape(xdata))
     parts[#parts + 1] = '<template x-for="i in max" :key="i">'
     parts[#parts + 1] = '<button @click="save(i === val ? 0 : i)" @mouseenter="hover = i" @mouseleave="hover = 0" '
         .. 'class="p-0 focus:outline-none" :aria-label="\'Rate \' + i + \' of \' + max">'
@@ -267,8 +270,9 @@ local function render_toggle(ctx)
 
     local xdata = build_xdata(ctx, val)
 
+    local title_text = string.format("Edit: %s (toggle)", ctx.attrs.path)
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="inline-flex items-center gap-2 text-sm py-1.5">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div title="%s" x-data="%s" class="inline-flex items-center gap-2 text-sm py-1.5">', html_escape(title_text), html_escape(xdata))
     if label then
         parts[#parts + 1] = string.format('<span class="text-stone-600">%s</span>', html_escape(label))
     end
@@ -308,8 +312,9 @@ local function render_multi_select(ctx)
         html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
     )
 
+    local title_text = string.format("Edit: %s (multi-select)", ctx.attrs.path)
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="flex flex-wrap gap-1 py-1.5">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div title="%s" x-data="%s" class="flex flex-wrap gap-1 py-1.5">', html_escape(title_text), html_escape(xdata))
     parts[#parts + 1] = '<template x-for="(opt, idx) in options" :key="opt">'
     parts[#parts + 1] = '<button @click="toggle(opt)" '
         .. ':class="val.includes(opt) ? \'bg-amber-100 text-amber-800 border-amber-300\' : \'bg-white text-stone-600 border-stone-300\'" '
@@ -345,8 +350,9 @@ local function render_button_group(ctx)
         html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
     )
 
+    local title_text = string.format("Edit: %s (select one)", ctx.attrs.path)
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="inline-flex rounded-md shadow-sm text-sm py-1.5">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div title="%s" x-data="%s" class="inline-flex rounded-md shadow-sm text-sm py-1.5">', html_escape(title_text), html_escape(xdata))
     parts[#parts + 1] = '<template x-for="(opt, idx) in options" :key="opt">'
     parts[#parts + 1] = '<button @click="save(opt)" '
         .. ':class="val === opt ? \'bg-amber-700 text-white border-amber-700 z-10\' : \'bg-white text-stone-700 border-stone-300 hover:bg-stone-50\'" '
@@ -383,8 +389,9 @@ local function render_color_picker(ctx)
         html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
     )
 
+    local title_text = string.format("Edit: %s (color)", ctx.attrs.path)
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="flex flex-wrap gap-1 py-1.5">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div title="%s" x-data="%s" class="flex flex-wrap gap-1 py-1.5">', html_escape(title_text), html_escape(xdata))
     parts[#parts + 1] = '<template x-for="c in colors" :key="c">'
     parts[#parts + 1] = '<button @click="save(c)" '
         .. ':style="\'background-color:\' + c" '
@@ -424,8 +431,9 @@ local function render_tags_input(ctx)
         html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
     )
 
+    local title_text = string.format("Edit: %s (tags)", ctx.attrs.path)
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="text-sm py-1.5">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div title="%s" x-data="%s" class="text-sm py-1.5">', html_escape(title_text), html_escape(xdata))
     parts[#parts + 1] = '<div class="flex flex-wrap gap-1 mb-1">'
     parts[#parts + 1] = '<template x-for="(tag, i) in val" :key="i">'
     parts[#parts + 1] = '<span class="inline-flex items-center gap-0.5 px-2 py-0.5 bg-stone-100 text-stone-700 rounded text-xs">'
@@ -469,8 +477,9 @@ local function render_textarea(ctx)
         html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
     )
 
+    local title_text = string.format("Edit: %s (text)", ctx.attrs.path)
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="text-sm py-1.5">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div title="%s" x-data="%s" class="text-sm py-1.5">', html_escape(title_text), html_escape(xdata))
     parts[#parts + 1] = string.format(
         '<textarea x-model="val" @input="debounced()" rows="%s" placeholder="%s" '
         .. 'class="w-full px-2 py-1 border border-stone-300 rounded text-sm resize-y focus:outline-none focus:ring-1 focus:ring-amber-500"></textarea>',
@@ -495,8 +504,9 @@ local function render_date_picker(ctx)
 
     local xdata = build_xdata(ctx, val)
 
+    local title_text = string.format("Edit: %s (date)", ctx.attrs.path)
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="inline-flex items-center gap-2 text-sm py-1.5">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div title="%s" x-data="%s" class="inline-flex items-center gap-2 text-sm py-1.5">', html_escape(title_text), html_escape(xdata))
     if label then
         parts[#parts + 1] = string.format('<span class="text-stone-600">%s</span>', html_escape(label))
     end
@@ -532,8 +542,9 @@ local function render_date_range(ctx)
         html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
     )
 
+    local title_text = string.format("Edit: %s (date range)", ctx.attrs.path)
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="flex flex-wrap items-center gap-2 text-sm py-1.5 max-w-full">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div title="%s" x-data="%s" class="flex flex-wrap items-center gap-2 text-sm py-1.5 max-w-full">', html_escape(title_text), html_escape(xdata))
     parts[#parts + 1] = string.format('<span class="text-stone-600 shrink-0">%s</span>', html_escape(start_label))
     parts[#parts + 1] = '<input type="date" :value="(val && val.start) || \'\'" @change="saveRange(\'start\', $event.target.value)" '
         .. 'class="px-2 py-1 border border-stone-300 rounded text-sm font-mono focus:outline-none focus:ring-1 focus:ring-amber-500 min-w-0">'
@@ -573,8 +584,9 @@ local function render_status_badge(ctx)
         html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
     )
 
+    local title_text = string.format("Edit: %s (status)", ctx.attrs.path)
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="inline-flex items-center gap-1 py-1.5">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div title="%s" x-data="%s" class="inline-flex items-center gap-1 py-1.5">', html_escape(title_text), html_escape(xdata))
     parts[#parts + 1] = '<button @click="next()" '
         .. ':style="\'background-color:\' + getColor() + \'20; color:\' + getColor() + \'; border-color:\' + getColor()" '
         .. 'class="px-2 py-0.5 rounded-full text-xs font-semibold border cursor-pointer transition-colors" '
@@ -608,8 +620,9 @@ local function render_progress_input(ctx)
         html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
     )
 
+    local title_text = string.format("Edit: %s (progress %%)", ctx.attrs.path)
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="text-sm py-1.5">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div title="%s" x-data="%s" class="text-sm py-1.5">', html_escape(title_text), html_escape(xdata))
     parts[#parts + 1] = '<div class="flex items-center gap-2 mb-0.5">'
     parts[#parts + 1] = string.format('<span class="text-stone-600">%s</span>', html_escape(label))
     parts[#parts + 1] = '<span class="font-mono font-bold text-xs" x-text="(val || 0) + \'%\'"></span>'
@@ -647,8 +660,9 @@ local function render_key_value(ctx)
         html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
     )
 
+    local title_text = string.format("Edit: %s (key-value pairs)", ctx.attrs.path)
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="text-sm py-1.5">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div title="%s" x-data="%s" class="text-sm py-1.5">', html_escape(title_text), html_escape(xdata))
     parts[#parts + 1] = '<template x-for="[k,v] in entries()" :key="k">'
     parts[#parts + 1] = '<div class="flex items-center gap-1 mb-1">'
         .. '<span class="font-mono text-xs bg-stone-100 px-1.5 py-0.5 rounded" x-text="k"></span>'
@@ -692,8 +706,9 @@ local function render_checklist(ctx)
         html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
     )
 
+    local title_text = string.format("Edit: %s (checklist)", ctx.attrs.path)
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="text-sm py-1.5">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div title="%s" x-data="%s" class="text-sm py-1.5">', html_escape(title_text), html_escape(xdata))
     parts[#parts + 1] = '<template x-for="(item, i) in (val || [])" :key="i">'
     parts[#parts + 1] = '<div class="flex items-center gap-1.5 mb-1">'
         .. '<input type="checkbox" :checked="item.done" @change="toggleItem(i)" '
@@ -738,8 +753,9 @@ local function render_url_input(ctx)
         html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
     )
 
+    local title_text = string.format("Edit: %s (URL)", ctx.attrs.path)
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" x-init="checkValid()" class="text-sm py-1.5">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div title="%s" x-data="%s" x-init="checkValid()" class="text-sm py-1.5">', html_escape(title_text), html_escape(xdata))
     parts[#parts + 1] = '<div class="flex items-center gap-1">'
     if label then
         parts[#parts + 1] = string.format('<span class="text-stone-600">%s</span>', html_escape(label))
@@ -783,8 +799,9 @@ local function render_markdown(ctx)
         html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
     )
 
+    local title_text = string.format("Edit: %s (markdown)", ctx.attrs.path)
     local parts = {}
-    parts[#parts + 1] = string.format('<div x-data="%s" class="text-sm py-1.5">', html_escape(xdata))
+    parts[#parts + 1] = string.format('<div title="%s" x-data="%s" class="text-sm py-1.5">', html_escape(title_text), html_escape(xdata))
     parts[#parts + 1] = string.format(
         '<textarea x-model="val" @input="debounced()" rows="%s" placeholder="%s" '
         .. 'class="w-full px-2 py-1 border border-stone-300 rounded text-sm font-mono resize-y focus:outline-none focus:ring-1 focus:ring-amber-500"></textarea>',
