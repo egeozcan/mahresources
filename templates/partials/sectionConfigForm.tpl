@@ -40,7 +40,7 @@
             <div class="space-y-2 rounded-md border border-stone-200 bg-white p-3">
                 <div class="flex items-center gap-3">
                     <h3 class="text-sm font-semibold font-mono text-stone-700">Own Entities</h3>
-                    <select x-model="config.ownEntities.state"
+                    <select x-model="config.ownEntities.state" aria-label="Own Entities visibility"
                             class="text-sm rounded border-stone-300 bg-stone-50 text-stone-700 focus:ring-amber-600 focus:border-amber-600">
                         <option value="default">Default</option>
                         <option value="open">Open</option>
@@ -72,7 +72,7 @@
             <div class="space-y-2 rounded-md border border-stone-200 bg-white p-3">
                 <div class="flex items-center gap-3">
                     <h3 class="text-sm font-semibold font-mono text-stone-700">Related Entities</h3>
-                    <select x-model="config.relatedEntities.state"
+                    <select x-model="config.relatedEntities.state" aria-label="Related Entities visibility"
                             class="text-sm rounded border-stone-300 bg-stone-50 text-stone-700 focus:ring-amber-600 focus:border-amber-600">
                         <option value="default">Default</option>
                         <option value="open">Open</option>
@@ -104,7 +104,7 @@
             <div class="space-y-2 rounded-md border border-stone-200 bg-white p-3">
                 <div class="flex items-center gap-3">
                     <h3 class="text-sm font-semibold font-mono text-stone-700">Relations</h3>
-                    <select x-model="config.relations.state"
+                    <select x-model="config.relations.state" aria-label="Relations visibility"
                             class="text-sm rounded border-stone-300 bg-stone-50 text-stone-700 focus:ring-amber-600 focus:border-amber-600">
                         <option value="default">Default</option>
                         <option value="open">Open</option>
@@ -136,7 +136,7 @@
             <div class="space-y-2 rounded-md border border-stone-200 bg-white p-3">
                 <div class="flex items-center gap-3">
                     <h3 class="text-sm font-semibold font-mono text-stone-700">Technical Details</h3>
-                    <select x-model="config.technicalDetails.state"
+                    <select x-model="config.technicalDetails.state" aria-label="Technical Details visibility"
                             class="text-sm rounded border-stone-300 bg-stone-50 text-stone-700 focus:ring-amber-600 focus:border-amber-600">
                         <option value="default">Default</option>
                         <option value="open">Open</option>
