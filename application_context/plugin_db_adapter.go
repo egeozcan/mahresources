@@ -10,6 +10,7 @@ import (
 	"mahresources/models/query_models"
 	"mahresources/plugin_system"
 	"net/url"
+	"time"
 	"strings"
 )
 
@@ -148,31 +149,30 @@ func queryOffset(filter map[string]any) int {
 	return offset
 }
 
-func (a *pluginDBAdapter) QueryNotes(filter map[string]any) ([]map[string]any, error) {
-	limit := queryLimit(filter)
-	offset := queryOffset(filter)
+func buildNoteQuery(filter map[string]any) *query_models.NoteQuery {
 	query := &query_models.NoteQuery{}
 	if name, ok := filter["name"].(string); ok {
 		query.Name = name
 	}
-	notes, err := a.ctx.GetNotes(offset, limit, query)
-	if err != nil {
-		return nil, err
+	if oid := getUintOpt(filter, "owner_id"); oid > 0 {
+		query.OwnerId = oid
 	}
-	results := make([]map[string]any, len(notes))
-	for i, n := range notes {
-		results[i] = map[string]any{
-			"id":          float64(n.ID),
-			"name":        n.Name,
-			"description": n.Description,
-		}
+	if ntid := getUintOpt(filter, "note_type_id"); ntid > 0 {
+		query.NoteTypeId = ntid
 	}
-	return results, nil
+	if tags := getUintSliceOpt(filter, "tags"); len(tags) > 0 {
+		query.Tags = tags
+	}
+	if groups := getUintSliceOpt(filter, "groups"); len(groups) > 0 {
+		query.Groups = groups
+	}
+	if sortBy := getStringSliceOpt(filter, "sort_by"); len(sortBy) > 0 {
+		query.SortBy = sortBy
+	}
+	return query
 }
 
-func (a *pluginDBAdapter) QueryResources(filter map[string]any) ([]map[string]any, error) {
-	limit := queryLimit(filter)
-	offset := queryOffset(filter)
+func buildResourceQuery(filter map[string]any) *query_models.ResourceSearchQuery {
 	query := &query_models.ResourceSearchQuery{}
 	if name, ok := filter["name"].(string); ok {
 		query.Name = name
@@ -180,17 +180,95 @@ func (a *pluginDBAdapter) QueryResources(filter map[string]any) ([]map[string]an
 	if ct, ok := filter["content_type"].(string); ok {
 		query.ContentType = ct
 	}
+	if oid := getUintOpt(filter, "owner_id"); oid > 0 {
+		query.OwnerId = oid
+	}
+	if rcid := getUintOpt(filter, "resource_category_id"); rcid > 0 {
+		query.ResourceCategoryId = rcid
+	}
+	if tags := getUintSliceOpt(filter, "tags"); len(tags) > 0 {
+		query.Tags = tags
+	}
+	if groups := getUintSliceOpt(filter, "groups"); len(groups) > 0 {
+		query.Groups = groups
+	}
+	if sortBy := getStringSliceOpt(filter, "sort_by"); len(sortBy) > 0 {
+		query.SortBy = sortBy
+	}
+	return query
+}
+
+func buildGroupQuery(filter map[string]any) *query_models.GroupQuery {
+	query := &query_models.GroupQuery{}
+	if name, ok := filter["name"].(string); ok {
+		query.Name = name
+	}
+	if oid := getUintOpt(filter, "owner_id"); oid > 0 {
+		query.OwnerId = oid
+	}
+	if cid := getUintOpt(filter, "category_id"); cid > 0 {
+		query.CategoryId = cid
+	}
+	if tags := getUintSliceOpt(filter, "tags"); len(tags) > 0 {
+		query.Tags = tags
+	}
+	if sortBy := getStringSliceOpt(filter, "sort_by"); len(sortBy) > 0 {
+		query.SortBy = sortBy
+	}
+	return query
+}
+
+func (a *pluginDBAdapter) QueryNotes(filter map[string]any) ([]map[string]any, error) {
+	limit := queryLimit(filter)
+	offset := queryOffset(filter)
+	query := buildNoteQuery(filter)
+	notes, err := a.ctx.GetNotes(offset, limit, query)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]map[string]any, len(notes))
+	for i, n := range notes {
+		m := map[string]any{
+			"id":          float64(n.ID),
+			"name":        n.Name,
+			"description": n.Description,
+			"meta":        string(n.Meta),
+			"created_at":  n.CreatedAt.Format(time.RFC3339),
+			"updated_at":  n.UpdatedAt.Format(time.RFC3339),
+		}
+		if n.OwnerId != nil {
+			m["owner_id"] = float64(*n.OwnerId)
+		}
+		results[i] = m
+	}
+	return results, nil
+}
+
+func (a *pluginDBAdapter) QueryResources(filter map[string]any) ([]map[string]any, error) {
+	limit := queryLimit(filter)
+	offset := queryOffset(filter)
+	query := buildResourceQuery(filter)
 	resources, err := a.ctx.GetResources(offset, limit, query)
 	if err != nil {
 		return nil, err
 	}
 	results := make([]map[string]any, len(resources))
 	for i, r := range resources {
-		results[i] = map[string]any{
-			"id":           float64(r.ID),
-			"name":         r.Name,
-			"content_type": r.ContentType,
+		m := map[string]any{
+			"id":                float64(r.ID),
+			"name":              r.Name,
+			"description":       r.Description,
+			"content_type":      r.ContentType,
+			"meta":              string(r.Meta),
+			"original_filename": r.OriginalName,
+			"hash":              r.Hash,
+			"created_at":        r.CreatedAt.Format(time.RFC3339),
+			"updated_at":        r.UpdatedAt.Format(time.RFC3339),
 		}
+		if r.OwnerId != nil {
+			m["owner_id"] = float64(*r.OwnerId)
+		}
+		results[i] = m
 	}
 	return results, nil
 }
@@ -198,23 +276,42 @@ func (a *pluginDBAdapter) QueryResources(filter map[string]any) ([]map[string]an
 func (a *pluginDBAdapter) QueryGroups(filter map[string]any) ([]map[string]any, error) {
 	limit := queryLimit(filter)
 	offset := queryOffset(filter)
-	query := &query_models.GroupQuery{}
-	if name, ok := filter["name"].(string); ok {
-		query.Name = name
-	}
+	query := buildGroupQuery(filter)
 	groups, err := a.ctx.GetGroups(offset, limit, query)
 	if err != nil {
 		return nil, err
 	}
 	results := make([]map[string]any, len(groups))
 	for i, g := range groups {
-		results[i] = map[string]any{
+		m := map[string]any{
 			"id":          float64(g.ID),
 			"name":        g.Name,
 			"description": g.Description,
+			"meta":        string(g.Meta),
+			"created_at":  g.CreatedAt.Format(time.RFC3339),
+			"updated_at":  g.UpdatedAt.Format(time.RFC3339),
 		}
+		if g.OwnerId != nil {
+			m["owner_id"] = float64(*g.OwnerId)
+		}
+		results[i] = m
 	}
 	return results, nil
+}
+
+func (a *pluginDBAdapter) CountNotes(filter map[string]any) (int64, error) {
+	query := buildNoteQuery(filter)
+	return a.ctx.GetNoteCount(query)
+}
+
+func (a *pluginDBAdapter) CountResources(filter map[string]any) (int64, error) {
+	query := buildResourceQuery(filter)
+	return a.ctx.GetResourceCount(query)
+}
+
+func (a *pluginDBAdapter) CountGroups(filter map[string]any) (int64, error) {
+	query := buildGroupQuery(filter)
+	return a.ctx.GetGroupsCount(query)
 }
 
 const maxResourceFileSize = 50 * 1024 * 1024 // 50MB
@@ -382,6 +479,31 @@ func getUintSliceOpt(opts map[string]any, key string) []uint {
 		for _, item := range v {
 			if id, ok := item.(float64); ok && id > 0 {
 				result = append(result, uint(id))
+			}
+		}
+		return result
+	}
+	return nil
+}
+
+// getStringSliceOpt extracts a []string from an options map.
+// Handles both []any (proper arrays) and map[string]any (Lua tables with
+// integer keys that luaTableToGoMap parses as maps).
+func getStringSliceOpt(opts map[string]any, key string) []string {
+	switch v := opts[key].(type) {
+	case []any:
+		result := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				result = append(result, s)
+			}
+		}
+		return result
+	case map[string]any:
+		result := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				result = append(result, s)
 			}
 		}
 		return result

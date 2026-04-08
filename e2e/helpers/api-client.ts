@@ -360,6 +360,7 @@ export class ApiClient {
     resources?: number[];
     startDate?: string;
     endDate?: string;
+    meta?: string;
   }): Promise<Note> {
     const formData = new URLSearchParams();
     formData.append('Name', data.name);
@@ -368,6 +369,7 @@ export class ApiClient {
     if (data.noteTypeId) formData.append('NoteTypeId', data.noteTypeId.toString());
     if (data.startDate) formData.append('startDate', data.startDate);
     if (data.endDate) formData.append('endDate', data.endDate);
+    if (data.meta) formData.append('Meta', data.meta);
     if (data.tags) {
       data.tags.forEach(tagId => formData.append('tags', tagId.toString()));
     }

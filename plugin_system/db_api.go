@@ -18,6 +18,10 @@ type EntityQuerier interface {
 	QueryNotes(filter map[string]any) ([]map[string]any, error)
 	QueryResources(filter map[string]any) ([]map[string]any, error)
 	QueryGroups(filter map[string]any) ([]map[string]any, error)
+	// Count queries — same filters as Query* but return count only
+	CountNotes(filter map[string]any) (int64, error)
+	CountResources(filter map[string]any) (int64, error)
+	CountGroups(filter map[string]any) (int64, error)
 	// Resource file data — returns base64 content and MIME type
 	GetResourceFileData(id uint) (string, string, error)
 	// Resource creation
@@ -303,6 +307,60 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			tbl.RawSetInt(i+1, goToLuaTable(L, item))
 		}
 		L.Push(tbl)
+		return 1
+	}))
+
+	// mah.db.count_notes({owner_id = 5}) -> number
+	dbMod.RawSetString("count_notes", L.NewFunction(func(L *lua.LState) int {
+		db := pm.getDbProvider()
+		if db == nil {
+			L.Push(lua.LNumber(0))
+			return 1
+		}
+		filterTable := L.OptTable(1, L.NewTable())
+		filter := luaTableToGoMap(filterTable)
+		count, err := db.CountNotes(filter)
+		if err != nil {
+			L.Push(lua.LNumber(0))
+			return 1
+		}
+		L.Push(lua.LNumber(count))
+		return 1
+	}))
+
+	// mah.db.count_resources({owner_id = 5, content_type = "image/%"}) -> number
+	dbMod.RawSetString("count_resources", L.NewFunction(func(L *lua.LState) int {
+		db := pm.getDbProvider()
+		if db == nil {
+			L.Push(lua.LNumber(0))
+			return 1
+		}
+		filterTable := L.OptTable(1, L.NewTable())
+		filter := luaTableToGoMap(filterTable)
+		count, err := db.CountResources(filter)
+		if err != nil {
+			L.Push(lua.LNumber(0))
+			return 1
+		}
+		L.Push(lua.LNumber(count))
+		return 1
+	}))
+
+	// mah.db.count_groups({owner_id = 5}) -> number
+	dbMod.RawSetString("count_groups", L.NewFunction(func(L *lua.LState) int {
+		db := pm.getDbProvider()
+		if db == nil {
+			L.Push(lua.LNumber(0))
+			return 1
+		}
+		filterTable := L.OptTable(1, L.NewTable())
+		filter := luaTableToGoMap(filterTable)
+		count, err := db.CountGroups(filter)
+		if err != nil {
+			L.Push(lua.LNumber(0))
+			return 1
+		}
+		L.Push(lua.LNumber(count))
 		return 1
 	}))
 

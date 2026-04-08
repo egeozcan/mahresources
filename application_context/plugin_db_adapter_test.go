@@ -4,6 +4,7 @@ package application_context
 
 import (
 	"testing"
+	"time"
 )
 
 func TestPluginDBAdapter_GroupCRUD(t *testing.T) {
@@ -550,4 +551,202 @@ func TestPluginDBAdapter_TagRelationships(t *testing.T) {
 	adapter.DeleteNote(noteId)
 	adapter.DeleteTag(tagId)
 	adapter.DeleteGroup(groupId)
+}
+
+func TestPluginDBAdapter_QueryWithOwnerID(t *testing.T) {
+	ctx := createTestContext(t)
+	adapter := &pluginDBAdapter{ctx: ctx}
+
+	// Create parent group
+	parent, err := adapter.CreateGroup(map[string]any{"name": "Parent"})
+	if err != nil {
+		t.Fatalf("CreateGroup failed: %v", err)
+	}
+	parentId := parent["id"].(float64)
+
+	// Create child groups
+	child1, _ := adapter.CreateGroup(map[string]any{"name": "Child 1", "owner_id": parentId})
+	child1Id := uint(child1["id"].(float64))
+	adapter.CreateGroup(map[string]any{"name": "Child 2", "owner_id": parentId})
+
+	// Create unowned group
+	adapter.CreateGroup(map[string]any{"name": "Orphan"})
+
+	// Query groups by owner_id
+	results, err := adapter.QueryGroups(map[string]any{"owner_id": parentId})
+	if err != nil {
+		t.Fatalf("QueryGroups failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 owned groups, got %d", len(results))
+	}
+
+	// Create owned note
+	adapter.CreateNote(map[string]any{"name": "Owned Note", "owner_id": float64(child1Id)})
+	adapter.CreateNote(map[string]any{"name": "Unowned Note"})
+
+	noteResults, err := adapter.QueryNotes(map[string]any{"owner_id": float64(child1Id)})
+	if err != nil {
+		t.Fatalf("QueryNotes failed: %v", err)
+	}
+	if len(noteResults) != 1 {
+		t.Fatalf("expected 1 owned note, got %d", len(noteResults))
+	}
+	if noteResults[0]["name"] != "Owned Note" {
+		t.Errorf("expected 'Owned Note', got %v", noteResults[0]["name"])
+	}
+}
+
+func TestPluginDBAdapter_QueryRichReturnFields(t *testing.T) {
+	ctx := createTestContext(t)
+	adapter := &pluginDBAdapter{ctx: ctx}
+
+	// Create a group with meta
+	result, _ := adapter.CreateGroup(map[string]any{
+		"name": "Rich Group",
+		"meta": `{"key":"value"}`,
+	})
+	groupId := result["id"].(float64)
+
+	results, err := adapter.QueryGroups(map[string]any{"name": "Rich Group"})
+	if err != nil {
+		t.Fatalf("QueryGroups failed: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected at least 1 result")
+	}
+	r := results[0]
+
+	// Check rich fields
+	if r["meta"] != `{"key":"value"}` {
+		t.Errorf("expected meta, got %v", r["meta"])
+	}
+	if _, ok := r["created_at"].(string); !ok {
+		t.Error("expected created_at string")
+	}
+	if _, ok := r["updated_at"].(string); !ok {
+		t.Error("expected updated_at string")
+	}
+
+	// Verify created_at is a valid RFC3339 time
+	if ts, ok := r["created_at"].(string); ok {
+		if _, err := time.Parse(time.RFC3339, ts); err != nil {
+			t.Errorf("created_at not valid RFC3339: %v", err)
+		}
+	}
+
+	// Create a note with owner and check owner_id is returned
+	adapter.CreateNote(map[string]any{"name": "Owned Note", "owner_id": groupId})
+	noteResults, _ := adapter.QueryNotes(map[string]any{"owner_id": groupId})
+	if len(noteResults) > 0 {
+		if oid, ok := noteResults[0]["owner_id"].(float64); !ok || oid != groupId {
+			t.Errorf("expected owner_id=%v, got %v", groupId, noteResults[0]["owner_id"])
+		}
+	}
+}
+
+func TestPluginDBAdapter_CountFunctions(t *testing.T) {
+	ctx := createTestContext(t)
+	adapter := &pluginDBAdapter{ctx: ctx}
+
+	// Create parent group
+	parent, _ := adapter.CreateGroup(map[string]any{"name": "Count Parent"})
+	parentId := parent["id"].(float64)
+
+	// Create child entities
+	adapter.CreateGroup(map[string]any{"name": "Count Child 1", "owner_id": parentId})
+	adapter.CreateGroup(map[string]any{"name": "Count Child 2", "owner_id": parentId})
+	adapter.CreateNote(map[string]any{"name": "Count Note 1", "owner_id": parentId})
+	adapter.CreateNote(map[string]any{"name": "Count Note 2", "owner_id": parentId})
+	adapter.CreateNote(map[string]any{"name": "Count Note 3", "owner_id": parentId})
+
+	// Count groups
+	gc, err := adapter.CountGroups(map[string]any{"owner_id": parentId})
+	if err != nil {
+		t.Fatalf("CountGroups failed: %v", err)
+	}
+	if gc != 2 {
+		t.Errorf("expected 2 groups, got %d", gc)
+	}
+
+	// Count notes
+	nc, err := adapter.CountNotes(map[string]any{"owner_id": parentId})
+	if err != nil {
+		t.Fatalf("CountNotes failed: %v", err)
+	}
+	if nc != 3 {
+		t.Errorf("expected 3 notes, got %d", nc)
+	}
+
+	// Count resources (should be 0)
+	rc, err := adapter.CountResources(map[string]any{"owner_id": parentId})
+	if err != nil {
+		t.Fatalf("CountResources failed: %v", err)
+	}
+	if rc != 0 {
+		t.Errorf("expected 0 resources, got %d", rc)
+	}
+
+	// Count without filter returns all
+	allGroups, _ := adapter.CountGroups(map[string]any{})
+	if allGroups < 3 { // parent + 2 children minimum
+		t.Errorf("expected at least 3 total groups, got %d", allGroups)
+	}
+}
+
+func TestPluginDBAdapter_QueryResourcesRichFields(t *testing.T) {
+	ctx := createTestContext(t)
+	adapter := &pluginDBAdapter{ctx: ctx}
+
+	// Create a parent group to own the resource
+	parent, _ := adapter.CreateGroup(map[string]any{"name": "Res Owner"})
+	parentId := parent["id"].(float64)
+
+	// Create a resource
+	resource, err := adapter.CreateResourceFromData(
+		"SGVsbG8=", // "Hello"
+		map[string]any{"name": "test-rich.txt", "owner_id": parentId},
+	)
+	if err != nil {
+		t.Fatalf("CreateResourceFromData failed: %v", err)
+	}
+	resourceId := resource["id"].(float64)
+
+	// Query all resources (the test DB starts empty, so this should find ours)
+	results, err := adapter.QueryResources(map[string]any{"limit": float64(100)})
+	if err != nil {
+		t.Fatalf("QueryResources failed: %v", err)
+	}
+
+	// Find our resource in results
+	var r map[string]any
+	for _, res := range results {
+		if res["id"] == resourceId {
+			r = res
+			break
+		}
+	}
+	if r == nil {
+		t.Fatal("created resource not found in query results")
+	}
+
+	// Check rich fields present
+	if _, ok := r["description"]; !ok {
+		t.Error("expected description field")
+	}
+	if _, ok := r["meta"]; !ok {
+		t.Error("expected meta field")
+	}
+	if _, ok := r["original_filename"]; !ok {
+		t.Error("expected original_filename field")
+	}
+	if _, ok := r["hash"]; !ok {
+		t.Error("expected hash field")
+	}
+	if _, ok := r["created_at"].(string); !ok {
+		t.Error("expected created_at string")
+	}
+	if _, ok := r["updated_at"].(string); !ok {
+		t.Error("expected updated_at string")
+	}
 }
