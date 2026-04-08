@@ -351,9 +351,9 @@ local function code128_svg(text, height)
 
     local total_width = x + quiet_zone
     return string.format(
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" class="inline-block" style="width: auto; height: %dpx;">'
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" class="inline-block" style="max-width: 100%%; height: auto;">'
         .. '%s</svg>',
-        total_width, height, height,
+        total_width, height,
         table.concat(bars)
     )
 end
@@ -1051,9 +1051,9 @@ local function render_qr_code(ctx)
     end
 
     return string.format(
-        '<div class="py-1.5">'
-        .. '<div class="inline-block border border-stone-200 rounded p-2 bg-white">%s</div>'
-        .. '<div class="text-xs text-stone-500 mt-1 font-mono">%s</div>'
+        '<div class="py-1.5 max-w-full overflow-hidden">'
+        .. '<div class="border border-stone-200 rounded p-2 bg-white max-w-full overflow-hidden">%s</div>'
+        .. '<div class="text-xs text-stone-500 mt-1 font-mono truncate">%s</div>'
         .. '</div>',
         barcode_svg, html_escape(text)
     )
