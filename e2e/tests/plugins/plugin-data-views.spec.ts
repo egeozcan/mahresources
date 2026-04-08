@@ -34,7 +34,8 @@ test.describe('Data-views plugin shortcodes', () => {
           '[plugin:data-views:json-tree path="config"]',
           '[plugin:data-views:image path="avatar" width="64" height="64" rounded="true"]',
           '[plugin:data-views:table type="notes" cols="name,updated_at" labels="Name,Updated"]',
-          '[plugin:data-views:qr-code path="website" size="80"]',
+          '[plugin:data-views:barcode path="website" size="80"]',
+          '[plugin:data-views:qr-code path="website" size="100"]',
         ].join('\n'),
       },
     );

@@ -6,7 +6,7 @@
 plugin = {
     name = "data-views",
     version = "1.0",
-    description = "17 data viewing shortcodes for rich display of meta values, charts, tables, and more.\n"
+    description = "18 data viewing shortcodes for rich display of meta values, charts, tables, and more.\n"
         .. "\n"
         .. "[plugin:data-views:badge] -- Styled pill badge from meta value. Attrs: path, values, colors, labels.\n"
         .. "[plugin:data-views:format] -- Formatted display (currency, percent, date, etc). Attrs: path, type, currency, decimals, prefix, suffix.\n"
@@ -18,7 +18,8 @@ plugin = {
         .. "[plugin:data-views:count-badge] -- Count items matching a condition. Attrs: path, count-where, eq, neq, label, icon, type.\n"
         .. "[plugin:data-views:embed] -- Embed resource content in code block. Attrs: resource-id, path, max-lines.\n"
         .. "[plugin:data-views:image] -- Display image from meta. Attrs: path, width, height, rounded.\n"
-        .. "[plugin:data-views:qr-code] -- Code 128 barcode from meta value. Attrs: path, size.\n"
+        .. "[plugin:data-views:barcode] -- Code 128 barcode from meta value. Attrs: path, size.\n"
+        .. "[plugin:data-views:qr-code] -- QR code from meta value. Attrs: path, size, color, bg.\n"
         .. "[plugin:data-views:link-preview] -- Styled link card. Attrs: path.\n"
         .. "[plugin:data-views:json-tree] -- Expandable JSON tree. Attrs: path, expanded.\n"
         .. "[plugin:data-views:bar-chart] -- Horizontal bar chart. Attrs: path, label-key, value-key, color.\n"
@@ -1029,13 +1030,13 @@ local function render_image(ctx)
 end
 
 -- ---------------------------------------------------------------------------
--- 11. qr-code (Code 128 barcode)
+-- 11a. barcode (Code 128)
 -- ---------------------------------------------------------------------------
 
-local function render_qr_code(ctx)
+local function render_barcode(ctx)
     local attrs = ctx.attrs or {}
     local path = attrs["path"]
-    if not path then return shortcode_error("qr-code", '"path" attribute is required') end
+    if not path then return shortcode_error("barcode", '"path" attribute is required') end
 
     local val = get_nested(ctx.value, path)
     if val == nil then
@@ -1056,6 +1057,39 @@ local function render_qr_code(ctx)
         .. '<div class="text-xs text-stone-500 mt-1 font-mono truncate">%s</div>'
         .. '</div>',
         barcode_svg, html_escape(text)
+    )
+end
+
+-- ---------------------------------------------------------------------------
+-- 11b. qr-code (actual QR code via client-side JS)
+-- ---------------------------------------------------------------------------
+
+local function render_qr_code(ctx)
+    local attrs = ctx.attrs or {}
+    local path = attrs["path"]
+    if not path then return shortcode_error("qr-code", '"path" attribute is required') end
+
+    local val = get_nested(ctx.value, path)
+    if val == nil then
+        return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No value</span></div>'
+    end
+
+    local text = tostring(val)
+    local size = tonumber(attrs["size"]) or 128
+    local fg = attrs["color"] or "#000000"
+    local bg = attrs["bg"] or "#ffffff"
+
+    -- Render a placeholder that Alpine fills via the injected QR encoder
+    return string.format(
+        '<div class="py-1.5 max-w-full overflow-hidden">'
+        .. '<div class="inline-block border border-stone-200 rounded p-2 bg-white max-w-full overflow-hidden"'
+        .. ' x-data x-init="if(window.__dvQR){$el.innerHTML=window.__dvQR(%s,%d,%s,%s)}">'
+        .. '<span class="text-xs text-stone-400">Loading QR...</span>'
+        .. '</div>'
+        .. '<div class="text-xs text-stone-500 mt-1 font-mono truncate">%s</div>'
+        .. '</div>',
+        json_value(text), size, json_value(fg), json_value(bg),
+        html_escape(text)
     )
 end
 
@@ -1492,10 +1526,120 @@ local function render_timeline_chart(ctx)
 end
 
 -- ---------------------------------------------------------------------------
+-- Page-bottom injection: QR code generator
+-- ---------------------------------------------------------------------------
+
+local function render_qr_script(ctx)
+    return [=[<script>
+if(!window.__dvQR){
+// Minimal QR Code generator - byte mode, EC level L, versions 1-10
+// Returns SVG string
+window.__dvQR=function(text,size,fg,bg){
+fg=fg||'#000';bg=bg||'#fff';size=size||128;
+// Galois field tables for GF(256) with polynomial 0x11d
+var EXP=new Uint8Array(256),LOG=new Uint8Array(256),v=1;
+for(var i=0;i<255;i++){EXP[i]=v;LOG[v]=i;v=(v<<1)^(v>=128?0x11d:0);}
+EXP[255]=EXP[0];
+function gfMul(a,b){return a&&b?EXP[(LOG[a]+LOG[b])%255]:0;}
+// Reed-Solomon
+function rsEncode(data,ecLen){
+var gen=[1];
+for(var i=0;i<ecLen;i++){var ng=new Array(gen.length+1);ng[0]=gen[0];
+for(var j=1;j<gen.length;j++)ng[j]=gen[j]^gfMul(gen[j-1],EXP[i]);
+ng[gen.length]=gfMul(gen[gen.length-1],EXP[i]);gen=ng;}
+var rem=new Uint8Array(ecLen);
+for(var i=0;i<data.length;i++){var f=rem[0]^data[i];
+for(var j=0;j<ecLen-1;j++)rem[j]=rem[j+1]^gfMul(f,gen[j+1]);
+rem[ecLen-1]=gfMul(f,gen[ecLen]);}
+return rem;}
+// Version info: [total codewords, ec codewords per block, num blocks]
+var VERS=[[0],[26,7,1],[44,10,1],[70,15,1],[100,20,1],[134,26,1],[172,18,2],[196,20,2],[242,24,2],[292,30,2],[346,18,2]];
+// Find version
+var dataBytes=text.length+3;// mode+length+data+terminator overhead
+var ver=1;for(;ver<=10;ver++){var vi=VERS[ver];var cap=vi[0]-vi[1]*vi[2];if(dataBytes<=cap)break;}
+if(ver>10)return '<span style="color:red;font-size:10px">Text too long for QR</span>';
+var modCnt=17+ver*4,ecPerBlk=VERS[ver][1],numBlk=VERS[ver][2],totalCW=VERS[ver][0];
+var dataCW=totalCW-ecPerBlk*numBlk;
+// Encode data (byte mode)
+var bits=[];
+function pushBits(val,len){for(var i=len-1;i>=0;i--)bits.push((val>>i)&1);}
+pushBits(4,4);// byte mode indicator
+pushBits(text.length,ver<=9?8:16);
+for(var i=0;i<text.length;i++)pushBits(text.charCodeAt(i),8);
+pushBits(0,Math.min(4,dataCW*8-bits.length));// terminator
+while(bits.length%8)bits.push(0);// byte align
+while(bits.length<dataCW*8){bits.push(1,1,1,0,1,1,0,0);if(bits.length<dataCW*8)bits.push(0,0,0,1,0,0,0,1);}
+var dataArr=new Uint8Array(dataCW);
+for(var i=0;i<dataCW;i++){var b=0;for(var j=0;j<8;j++)b=(b<<1)|bits[i*8+j];dataArr[i]=b;}
+// Split into blocks and compute EC
+var blkSize=Math.floor(dataCW/numBlk),extra=dataCW%numBlk;
+var dataBlocks=[],ecBlocks=[];
+var offset=0;
+for(var b=0;b<numBlk;b++){var sz=blkSize+(b>=numBlk-extra?1:0);
+dataBlocks.push(dataArr.slice(offset,offset+sz));offset+=sz;
+ecBlocks.push(rsEncode(dataBlocks[b],ecPerBlk));}
+// Interleave
+var codewords=[];
+for(var i=0;i<blkSize+1;i++)for(var b=0;b<numBlk;b++)if(i<dataBlocks[b].length)codewords.push(dataBlocks[b][i]);
+for(var i=0;i<ecPerBlk;i++)for(var b=0;b<numBlk;b++)codewords.push(ecBlocks[b][i]);
+// Create matrix
+var N=modCnt,mat=[];for(var i=0;i<N;i++){mat[i]=new Uint8Array(N);}
+var reserved=[];for(var i=0;i<N;i++){reserved[i]=new Uint8Array(N);}
+// Place finder patterns
+function finder(r,c){for(var dr=-1;dr<=7;dr++)for(var dc=-1;dc<=7;dc++){
+var rr=r+dr,cc=c+dc;if(rr<0||rr>=N||cc<0||cc>=N)continue;
+var v=(dr>=0&&dr<=6&&(dc==0||dc==6))||(dc>=0&&dc<=6&&(dr==0||dr==6))||(dr>=2&&dr<=4&&dc>=2&&dc<=4)?1:0;
+mat[rr][cc]=v;reserved[rr][cc]=1;}}
+finder(0,0);finder(0,N-7);finder(N-7,0);
+// Timing patterns
+for(var i=8;i<N-8;i++){if(!reserved[6][i]){mat[6][i]=i%2==0?1:0;reserved[6][i]=1;}
+if(!reserved[i][6]){mat[i][6]=i%2==0?1:0;reserved[i][6]=1;}}
+// Alignment pattern (version>=2)
+if(ver>=2){var aPos=[0,0,0,0,0,0,0];// simplified: single alignment
+var ap=ver==2?18:ver==3?22:ver==4?26:ver==5?30:ver==6?34:ver==7?22:ver==8?24:ver==9?26:28;
+for(var dr=-2;dr<=2;dr++)for(var dc=-2;dc<=2;dc++){
+if(!reserved[ap+dr][ap+dc]){
+mat[ap+dr][ap+dc]=(Math.abs(dr)==2||Math.abs(dc)==2||(!dr&&!dc))?1:0;
+reserved[ap+dr][ap+dc]=1;}}}
+// Format info area reserved
+for(var i=0;i<9;i++){if(i<N)reserved[8][i]=1;if(i<N)reserved[i][8]=1;
+reserved[8][N-1-i]=1;reserved[N-1-i][8]=1;}
+reserved[8][8]=1;mat[N-8][8]=1;reserved[N-8][8]=1;// dark module
+// Place data bits
+var bitIdx=0,allBits=[];
+for(var i=0;i<codewords.length;i++)for(var j=7;j>=0;j--)allBits.push((codewords[i]>>j)&1);
+var upward=true;for(var col=N-1;col>=1;col-=2){
+if(col==6)col=5;// skip timing
+for(var cnt=0;cnt<N;cnt++){var row=upward?N-1-cnt:cnt;
+for(var dc=0;dc<=1;dc++){var c=col-dc;
+if(!reserved[row][c]){mat[row][c]=bitIdx<allBits.length?allBits[bitIdx]:0;bitIdx++;}}}
+upward=!upward;}
+// Apply mask 0 (checkerboard)
+for(var r=0;r<N;r++)for(var c=0;c<N;c++)if(!reserved[r][c])if((r+c)%2==0)mat[r][c]^=1;
+// Format bits for mask 0, EC level L = 0b01, mask 0b000 → format bits = 0x77c4
+var fmtBits=0x77c4;
+for(var i=0;i<6;i++)mat[8][i]=(fmtBits>>(14-i))&1;
+mat[8][7]=(fmtBits>>8)&1;mat[8][8]=(fmtBits>>7)&1;mat[7][8]=(fmtBits>>6)&1;
+for(var i=0;i<6;i++)mat[5-i][8]=(fmtBits>>(i))&1;
+for(var i=0;i<8;i++)mat[8][N-8+i]=(fmtBits>>(14-i))&1;
+for(var i=0;i<7;i++)mat[N-1-i][8]=(fmtBits>>i)&1;
+// Render SVG
+var cellSize=size/N;
+var rects='<rect width="'+size+'" height="'+size+'" fill="'+bg+'"/>';
+for(var r=0;r<N;r++)for(var c=0;c<N;c++)if(mat[r][c])
+rects+='<rect x="'+(c*cellSize).toFixed(2)+'" y="'+(r*cellSize).toFixed(2)+'" width="'+Math.ceil(cellSize)+'" height="'+Math.ceil(cellSize)+'" fill="'+fg+'"/>';
+return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '+size+' '+size+'" style="max-width:100%;height:auto;width:'+size+'px"><'+rects+'</svg>';
+};}
+</script>]=]
+end
+
+-- ---------------------------------------------------------------------------
 -- Plugin initialization
 -- ---------------------------------------------------------------------------
 
 function init()
+    -- Inject QR code generator script
+    mah.inject("page_bottom", render_qr_script)
     mah.shortcode({ name = "badge",          label = "Status Badge",       render = render_badge })
     mah.shortcode({ name = "format",         label = "Formatted Value",    render = render_format })
     mah.shortcode({ name = "stat-card",      label = "Stat Card",          render = render_stat_card })
@@ -1506,7 +1650,8 @@ function init()
     mah.shortcode({ name = "count-badge",    label = "Count Badge",        render = render_count_badge })
     mah.shortcode({ name = "embed",          label = "Resource Embed",     render = render_embed })
     mah.shortcode({ name = "image",          label = "Image Display",      render = render_image })
-    mah.shortcode({ name = "qr-code",        label = "Barcode",            render = render_qr_code })
+    mah.shortcode({ name = "barcode",         label = "Barcode",            render = render_barcode })
+    mah.shortcode({ name = "qr-code",        label = "QR Code",            render = render_qr_code })
     mah.shortcode({ name = "link-preview",   label = "Link Preview",       render = render_link_preview })
     mah.shortcode({ name = "json-tree",      label = "JSON Tree",          render = render_json_tree_shortcode })
     mah.shortcode({ name = "bar-chart",      label = "Bar Chart",          render = render_bar_chart })
