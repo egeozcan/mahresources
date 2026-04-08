@@ -9,7 +9,7 @@ plugin = {
     description = "Adds 5 shortcodes for use in category CustomHeader, CustomSidebar, and CustomSummary slots.\n"
         .. "\n"
         .. "[plugin:widgets:summary] — Entity counts (resources, notes, sub-groups). Attrs: show, style.\n"
-        .. "[plugin:widgets:gallery] — Thumbnail grid of owned images. Attrs: count, cols, content-type.\n"
+        .. "[plugin:widgets:gallery] — Thumbnail grid of images (owned, then related). Attrs: count, cols, content-type.\n"
         .. "[plugin:widgets:progress] — Progress bar from meta field values. Attrs: field, complete, type, label.\n"
         .. "[plugin:widgets:activity] — Timeline of recently updated owned entities. Attrs: count, type.\n"
         .. "[plugin:widgets:tree] — Group hierarchy (ancestors and children). Attrs: direction, depth.",
@@ -131,17 +131,27 @@ local function render_gallery(ctx)
     local attrs = ctx.attrs or {}
     local count = tonumber(attrs["count"]) or 8
     local cols = tonumber(attrs["cols"]) or 4
-    local ct = attrs["content-type"] or "image/%"
+    local ct = attrs["content-type"] or "image/"
 
     count = clamp(count, 1, 100)
     cols = clamp(cols, 1, 12)
 
+    -- Try owned resources first, fall back to related resources.
     local resources = mah.db.query_resources({
         owner_id = ctx.entity_id,
         content_type = ct,
         limit = count,
         sort_by = { "updated_at desc" },
     })
+
+    if (not resources or #resources == 0) and ctx.entity_type == "group" then
+        resources = mah.db.query_resources({
+            groups = { ctx.entity_id },
+            content_type = ct,
+            limit = count,
+            sort_by = { "updated_at desc" },
+        })
+    end
 
     if not resources or #resources == 0 then
         return '<p class="text-sm text-gray-400 italic">No images found</p>'
@@ -151,7 +161,7 @@ local function render_gallery(ctx)
     for _, r in ipairs(resources) do
         local name = html_escape(r.name or "")
         parts[#parts + 1] = string.format(
-            '<a href="/v1/resource?id=%d">'
+            '<a href="/resource?id=%d">'
             .. '<img src="/v1/resource/thumbnail?id=%d&width=200&height=200" '
             .. 'loading="lazy" alt="%s" '
             .. 'class="rounded object-cover w-full aspect-square" />'
@@ -253,13 +263,13 @@ local function render_activity(ctx)
     end
 
     if atype == "all" or atype == "resources" then
-        collect("resource", "\xF0\x9F\x93\x84", mah.db.query_resources)  -- U+1F4C4
+        collect("resource", ICON_FILE, mah.db.query_resources)
     end
     if atype == "all" or atype == "notes" then
-        collect("note", "\xF0\x9F\x93\x9D", mah.db.query_notes)  -- U+1F4DD
+        collect("note", ICON_NOTE, mah.db.query_notes)
     end
     if atype == "all" or atype == "groups" then
-        collect("group", "\xF0\x9F\x93\x81", mah.db.query_groups)  -- U+1F4C1
+        collect("group", ICON_FOLDER, mah.db.query_groups)
     end
 
     if #items == 0 then
@@ -286,7 +296,7 @@ local function render_activity(ctx)
         parts[#parts + 1] = string.format(
             '<div class="flex items-center gap-2 text-sm">'
             .. '<span class="text-gray-400">%s</span>'
-            .. '<a href="/v1/%s?id=%d" class="text-blue-600 hover:underline truncate">%s</a>'
+            .. '<a href="/%s?id=%d" class="text-blue-600 hover:underline truncate">%s</a>'
             .. '<span class="text-gray-400 text-xs whitespace-nowrap ml-auto">%s</span>'
             .. '</div>',
             item.icon,
@@ -325,7 +335,7 @@ local function render_tree(ctx)
             return string.format('<span class="font-bold">%s</span>', html_escape(group.name or "(untitled)"))
         end
         return string.format(
-            '<a href="/v1/group?id=%d" class="text-blue-600 hover:underline">%s</a>',
+            '<a href="/group?id=%d" class="text-blue-600 hover:underline">%s</a>',
             group.id, html_escape(group.name or "(untitled)")
         )
     end

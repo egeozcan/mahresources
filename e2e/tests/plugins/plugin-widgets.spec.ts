@@ -86,10 +86,10 @@ test.describe('Widgets plugin shortcodes', () => {
     await page.waitForLoadState('load');
 
     // Activity links render in the sidebar as /v1/note?id= and /v1/group?id= links
-    const activityNoteLink = page.locator('a[href*="/v1/note?id="]');
+    const activityNoteLink = page.locator('a[href*="/note?id="]');
     await expect(activityNoteLink.first()).toBeVisible({ timeout: 5000 });
 
-    const activityGroupLink = page.locator('a[href*="/v1/group?id="]');
+    const activityGroupLink = page.locator('a[href*="/group?id="]');
     await expect(activityGroupLink.first()).toBeVisible({ timeout: 5000 });
   });
 
@@ -102,7 +102,7 @@ test.describe('Widgets plugin shortcodes', () => {
     await expect(boldNode).toBeVisible({ timeout: 5000 });
 
     // The tree should show child groups as links under a nested <ul>
-    const childLinks = page.locator('.sidebar-group ul ul a[href*="/v1/group?id="]');
+    const childLinks = page.locator('.sidebar-group ul ul a[href*="/group?id="]');
     await expect(childLinks).toHaveCount(2, { timeout: 5000 });
   });
 
@@ -115,7 +115,7 @@ test.describe('Widgets plugin shortcodes', () => {
     await expect(boldNode.first()).toBeVisible({ timeout: 5000 });
 
     // Should have a link to the parent group in the tree
-    const parentLink = page.locator(`.sidebar-group a[href="/v1/group?id=${parentGroupId}"]`);
+    const parentLink = page.locator(`.sidebar-group ul a[href="/group?id=${parentGroupId}"]`);
     await expect(parentLink).toBeVisible({ timeout: 5000 });
   });
 });
