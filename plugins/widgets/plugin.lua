@@ -160,13 +160,27 @@ local function render_gallery(ctx)
     local parts = { string.format('<div class="grid grid-cols-%d gap-2">', cols) }
     for _, r in ipairs(resources) do
         local name = html_escape(r.name or "")
+        local ct = html_escape(r.content_type or "image/jpeg")
+        local hash = html_escape(r.hash or "")
         parts[#parts + 1] = string.format(
-            '<a href="/resource?id=%d">'
-            .. '<img src="/v1/resource/thumbnail?id=%d&width=200&height=200" '
+            '<a href="/v1/resource/view?id=%d&v=%s#%s"'
+            .. ' @click.prevent="$store.lightbox.openFromClick($event, %d, \'%s\')"'
+            .. ' data-lightbox-item'
+            .. ' data-resource-id="%d"'
+            .. ' data-content-type="%s"'
+            .. ' data-resource-name="%s"'
+            .. ' data-resource-hash="%s">'
+            .. '<img src="/v1/resource/thumbnail?id=%d&width=200&height=200&v=%s" '
             .. 'loading="lazy" alt="%s" '
             .. 'class="rounded object-cover w-full aspect-square" />'
             .. '</a>',
-            r.id, r.id, name
+            r.id, hash, ct,
+            r.id, ct,
+            r.id,
+            ct,
+            name,
+            hash,
+            r.id, hash, name
         )
     end
     parts[#parts + 1] = '</div>'
