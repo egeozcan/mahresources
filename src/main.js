@@ -75,6 +75,7 @@ import { mentionTextarea } from './components/mentionTextarea.js';
 import { adminOverview } from './components/adminOverview.js';
 import timeline from './components/timeline.js';
 import { schemaEditorModal } from './components/schemaEditorModal.ts';
+import { sectionConfigForm } from './components/sectionConfigForm.js';
 
 // Import utility modules
 import { renderMentions } from './utils/renderMentions.js';
@@ -148,6 +149,7 @@ Alpine.data('mentionTextarea', mentionTextarea);
 Alpine.data('adminOverview', adminOverview);
 Alpine.data('timeline', timeline);
 Alpine.data('schemaEditorModal', schemaEditorModal);
+Alpine.data('sectionConfigForm', sectionConfigForm);
 
 // Expose Alpine globally for debugging and morph usage
 window.Alpine = Alpine;

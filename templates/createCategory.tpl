@@ -86,6 +86,8 @@
         {% include "/partials/form/schemaEditorModal.tpl" with textareaId="metaSchemaTextarea" %}
     </div>
 
+    {% include "/partials/sectionConfigForm.tpl" with sectionConfigValue=category.SectionConfig sectionConfigType="group" %}
+
     {% include "/partials/form/createFormSubmit.tpl" %}
 </form>
 {% endblock %}
