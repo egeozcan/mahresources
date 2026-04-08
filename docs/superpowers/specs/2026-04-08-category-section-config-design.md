@@ -101,6 +101,28 @@ SectionConfig types.JSON `json:"sectionConfig"`
 }
 ```
 
+## Write Path Changes
+
+The new `SectionConfig` field must be threaded through the full create/update pipeline, not just added to the models.
+
+### Query DTOs
+
+Add `SectionConfig string` to both:
+- `CategoryCreator` in `models/query_models/category_query.go`
+- `ResourceCategoryCreator` in `models/query_models/resource_category_query.go`
+
+The field is a `string` in the DTO (received as JSON string from forms), then converted to `types.JSON` when building the model.
+
+### Handler Factory (`server/api_handlers/handler_factory.go`)
+
+In the `CreateCategoryHandler` field-preservation logic (around line 335), add `SectionConfig` to the `fieldWasSent()` check list so that partial updates don't clobber the existing value. Same for the resource category handler.
+
+### Application Context
+
+In `application_context/category_context.go` `CreateCategory()` (line 49) and `UpdateCategory()`: include `SectionConfig` when building the `models.Category` struct. Convert the string DTO value to `types.JSON`.
+
+In `application_context/resource_category_context.go` `CreateResourceCategory()` (line 49) and update: same treatment for `models.ResourceCategory`.
+
 ## Go Implementation
 
 ### Config Structs (`models/section_config.go`)
@@ -183,6 +205,15 @@ The resolver must handle: null/empty input (all defaults), partial JSON (missing
 
 `resource_template_context.go` calls `ResolveResourceSectionConfig(resource.ResourceCategory.SectionConfig)` and adds result as `sc` to the template context.
 
+### Breadcrumb Suppression
+
+Breadcrumbs are rendered by `templates/partials/title.tpl`, which checks `{% if breadcrumb && breadcrumb.HomeUrl %}`. The detail templates do not render breadcrumbs themselves. To suppress breadcrumbs when `sc.Breadcrumb` is `false`:
+
+- In `group_template_context.go` (around line 326): after resolving the section config, conditionally omit the `"breadcrumb"` key from the template context.
+- In `resource_template_context.go` (around line 342): same — skip setting `result["breadcrumb"]` when breadcrumb is off.
+
+This is cleaner than adding `sc` awareness to `title.tpl`, since `title.tpl` is shared across all entity types.
+
 ## Template Changes
 
 ### On/off sections
@@ -218,7 +249,7 @@ Note: `"default"` preserves the template's built-in state — the `{% else %}` b
 
 | Template Section | Config Key | Type |
 |---|---|---|
-| Breadcrumb | `sc.Breadcrumb` | on/off |
+| Breadcrumb | `sc.Breadcrumb` | on/off (context provider level) |
 | Description | `sc.Description` | on/off |
 | MetaSchema display | `sc.MetaSchemaDisplay` | on/off |
 | Own Entities block | `sc.OwnEntities.State` | collapsible |
@@ -241,13 +272,17 @@ Note: `"default"` preserves the template's built-in state — the `{% else %}` b
 
 ### Sections to wrap — Resource detail (`displayResource.tpl`)
 
+**Metadata panel wrapper:** In `displayResource.tpl` (line 19), the metadata grid and technical details share a parent `<div class="detail-panel">`. When both `sc.MetadataGrid` and `sc.TechnicalDetails.State` are off, the parent panel must also be hidden to avoid an empty shell. Wrap the outer panel in: `{% if sc.MetadataGrid or sc.TechnicalDetails.State != "off" %}`.
+
 | Template Section | Config Key | Type |
 |---|---|---|
-| Breadcrumb | `sc.Breadcrumb` | on/off |
-| Description | `sc.Description` | on/off |
+| Breadcrumb | `sc.Breadcrumb` | on/off (context provider level) |
+| Description (prominent, line 9) | `sc.Description` | on/off |
+| Description (technical details, line 144) | follows `sc.TechnicalDetails.State` | hidden when technical details is off |
 | MetaSchema display | `sc.MetaSchemaDisplay` | on/off |
-| Metadata grid | `sc.MetadataGrid` | on/off |
-| Technical Details | `sc.TechnicalDetails.State` | collapsible |
+| Metadata panel (outer wrapper, line 19) | `sc.MetadataGrid or sc.TechnicalDetails.State != "off"` | derived |
+| Metadata grid (inside panel) | `sc.MetadataGrid` | on/off |
+| Technical Details (inside panel) | `sc.TechnicalDetails.State` | collapsible |
 | Notes | `sc.Notes` | on/off |
 | Groups | `sc.Groups` | on/off |
 | Series | `sc.Series` | on/off |
