@@ -17,18 +17,18 @@ const (
 
 // GroupSectionConfig controls which sections are visible on a group detail page.
 type GroupSectionConfig struct {
-	OwnEntities     GroupOwnEntitiesConfig     `json:"ownEntities"`
-	RelatedEntities GroupRelatedEntitiesConfig  `json:"relatedEntities"`
-	Relations       GroupRelationsConfig        `json:"relations"`
-	Tags            bool                        `json:"tags"`
-	MetaJson        bool                        `json:"metaJson"`
-	Merge           bool                        `json:"merge"`
-	Clone           bool                        `json:"clone"`
-	TreeLink        bool                        `json:"treeLink"`
-	Owner           bool                        `json:"owner"`
-	Breadcrumb      bool                        `json:"breadcrumb"`
-	Description     bool                        `json:"description"`
-	MetaSchemaDisplay bool                      `json:"metaSchemaDisplay"`
+	OwnEntities       GroupOwnEntitiesConfig     `json:"ownEntities"`
+	RelatedEntities   GroupRelatedEntitiesConfig `json:"relatedEntities"`
+	Relations         GroupRelationsConfig       `json:"relations"`
+	Tags              bool                       `json:"tags"`
+	MetaJson          bool                       `json:"metaJson"`
+	Merge             bool                       `json:"merge"`
+	Clone             bool                       `json:"clone"`
+	TreeLink          bool                       `json:"treeLink"`
+	Owner             bool                       `json:"owner"`
+	Breadcrumb        bool                       `json:"breadcrumb"`
+	Description       bool                       `json:"description"`
+	MetaSchemaDisplay bool                       `json:"metaSchemaDisplay"`
 }
 
 type GroupOwnEntitiesConfig struct {
@@ -53,23 +53,23 @@ type GroupRelationsConfig struct {
 
 // ResourceSectionConfig controls which sections are visible on a resource detail page.
 type ResourceSectionConfig struct {
-	TechnicalDetails ResourceTechnicalDetailsConfig `json:"technicalDetails"`
-	MetadataGrid     bool                           `json:"metadataGrid"`
-	Notes            bool                           `json:"notes"`
-	Groups           bool                           `json:"groups"`
-	Series           bool                           `json:"series"`
-	SimilarResources bool                           `json:"similarResources"`
-	Versions         bool                           `json:"versions"`
-	Tags             bool                           `json:"tags"`
-	MetaJson         bool                           `json:"metaJson"`
-	PreviewImage     bool                           `json:"previewImage"`
-	ImageOperations  bool                           `json:"imageOperations"`
-	CategoryLink     bool                           `json:"categoryLink"`
-	FileSize         bool                           `json:"fileSize"`
-	Owner            bool                           `json:"owner"`
-	Breadcrumb       bool                           `json:"breadcrumb"`
-	Description      bool                           `json:"description"`
-	MetaSchemaDisplay bool                          `json:"metaSchemaDisplay"`
+	TechnicalDetails  ResourceTechnicalDetailsConfig `json:"technicalDetails"`
+	MetadataGrid      bool                           `json:"metadataGrid"`
+	Notes             bool                           `json:"notes"`
+	Groups            bool                           `json:"groups"`
+	Series            bool                           `json:"series"`
+	SimilarResources  bool                           `json:"similarResources"`
+	Versions          bool                           `json:"versions"`
+	Tags              bool                           `json:"tags"`
+	MetaJson          bool                           `json:"metaJson"`
+	PreviewImage      bool                           `json:"previewImage"`
+	ImageOperations   bool                           `json:"imageOperations"`
+	CategoryLink      bool                           `json:"categoryLink"`
+	FileSize          bool                           `json:"fileSize"`
+	Owner             bool                           `json:"owner"`
+	Breadcrumb        bool                           `json:"breadcrumb"`
+	Description       bool                           `json:"description"`
+	MetaSchemaDisplay bool                           `json:"metaSchemaDisplay"`
 }
 
 type ResourceTechnicalDetailsConfig struct {
@@ -79,18 +79,18 @@ type ResourceTechnicalDetailsConfig struct {
 // --- raw (pointer-based) intermediates for unmarshaling ---
 
 type rawGroupSectionConfig struct {
-	OwnEntities     *rawGroupOwnEntities     `json:"ownEntities"`
-	RelatedEntities *rawGroupRelatedEntities  `json:"relatedEntities"`
-	Relations       *rawGroupRelations        `json:"relations"`
-	Tags            *bool                     `json:"tags"`
-	MetaJson        *bool                     `json:"metaJson"`
-	Merge           *bool                     `json:"merge"`
-	Clone           *bool                     `json:"clone"`
-	TreeLink        *bool                     `json:"treeLink"`
-	Owner           *bool                     `json:"owner"`
-	Breadcrumb      *bool                     `json:"breadcrumb"`
-	Description     *bool                     `json:"description"`
-	MetaSchemaDisplay *bool                   `json:"metaSchemaDisplay"`
+	OwnEntities       *rawGroupOwnEntities     `json:"ownEntities"`
+	RelatedEntities   *rawGroupRelatedEntities `json:"relatedEntities"`
+	Relations         *rawGroupRelations       `json:"relations"`
+	Tags              *bool                    `json:"tags"`
+	MetaJson          *bool                    `json:"metaJson"`
+	Merge             *bool                    `json:"merge"`
+	Clone             *bool                    `json:"clone"`
+	TreeLink          *bool                    `json:"treeLink"`
+	Owner             *bool                    `json:"owner"`
+	Breadcrumb        *bool                    `json:"breadcrumb"`
+	Description       *bool                    `json:"description"`
+	MetaSchemaDisplay *bool                    `json:"metaSchemaDisplay"`
 }
 
 type rawGroupOwnEntities struct {
@@ -114,23 +114,23 @@ type rawGroupRelations struct {
 }
 
 type rawResourceSectionConfig struct {
-	TechnicalDetails *rawResourceTechnicalDetails `json:"technicalDetails"`
-	MetadataGrid     *bool                        `json:"metadataGrid"`
-	Notes            *bool                        `json:"notes"`
-	Groups           *bool                        `json:"groups"`
-	Series           *bool                        `json:"series"`
-	SimilarResources *bool                        `json:"similarResources"`
-	Versions         *bool                        `json:"versions"`
-	Tags             *bool                        `json:"tags"`
-	MetaJson         *bool                        `json:"metaJson"`
-	PreviewImage     *bool                        `json:"previewImage"`
-	ImageOperations  *bool                        `json:"imageOperations"`
-	CategoryLink     *bool                        `json:"categoryLink"`
-	FileSize         *bool                        `json:"fileSize"`
-	Owner            *bool                        `json:"owner"`
-	Breadcrumb       *bool                        `json:"breadcrumb"`
-	Description      *bool                        `json:"description"`
-	MetaSchemaDisplay *bool                       `json:"metaSchemaDisplay"`
+	TechnicalDetails  *rawResourceTechnicalDetails `json:"technicalDetails"`
+	MetadataGrid      *bool                        `json:"metadataGrid"`
+	Notes             *bool                        `json:"notes"`
+	Groups            *bool                        `json:"groups"`
+	Series            *bool                        `json:"series"`
+	SimilarResources  *bool                        `json:"similarResources"`
+	Versions          *bool                        `json:"versions"`
+	Tags              *bool                        `json:"tags"`
+	MetaJson          *bool                        `json:"metaJson"`
+	PreviewImage      *bool                        `json:"previewImage"`
+	ImageOperations   *bool                        `json:"imageOperations"`
+	CategoryLink      *bool                        `json:"categoryLink"`
+	FileSize          *bool                        `json:"fileSize"`
+	Owner             *bool                        `json:"owner"`
+	Breadcrumb        *bool                        `json:"breadcrumb"`
+	Description       *bool                        `json:"description"`
+	MetaSchemaDisplay *bool                        `json:"metaSchemaDisplay"`
 }
 
 type rawResourceTechnicalDetails struct {
@@ -147,7 +147,7 @@ func boolDefault(p *bool, def bool) bool {
 }
 
 func stateDefault(p *CollapsibleState, def CollapsibleState) CollapsibleState {
-	if p == nil {
+	if p == nil || *p == "" {
 		return def
 	}
 	return *p
@@ -232,22 +232,22 @@ func ResolveGroupSectionConfig(data *types.JSON) GroupSectionConfig {
 // missing keys with defaults (bools default to true, states to "default").
 func ResolveResourceSectionConfig(data *types.JSON) ResourceSectionConfig {
 	defaults := ResourceSectionConfig{
-		TechnicalDetails: ResourceTechnicalDetailsConfig{State: CollapsibleDefault},
-		MetadataGrid:     true,
-		Notes:            true,
-		Groups:           true,
-		Series:           true,
-		SimilarResources: true,
-		Versions:         true,
-		Tags:             true,
-		MetaJson:         true,
-		PreviewImage:     true,
-		ImageOperations:  true,
-		CategoryLink:     true,
-		FileSize:         true,
-		Owner:            true,
-		Breadcrumb:       true,
-		Description:      true,
+		TechnicalDetails:  ResourceTechnicalDetailsConfig{State: CollapsibleDefault},
+		MetadataGrid:      true,
+		Notes:             true,
+		Groups:            true,
+		Series:            true,
+		SimilarResources:  true,
+		Versions:          true,
+		Tags:              true,
+		MetaJson:          true,
+		PreviewImage:      true,
+		ImageOperations:   true,
+		CategoryLink:      true,
+		FileSize:          true,
+		Owner:             true,
+		Breadcrumb:        true,
+		Description:       true,
 		MetaSchemaDisplay: true,
 	}
 

@@ -313,3 +313,11 @@ func TestResolveResourceSectionConfig_InvalidJSON(t *testing.T) {
 	assert.True(t, cfg.MetaSchemaDisplay)
 	assert.Equal(t, CollapsibleDefault, cfg.TechnicalDetails.State)
 }
+
+func TestResolveGroupSectionConfig_EmptyStateString(t *testing.T) {
+	input := types.JSON(`{"ownEntities": {"state": ""}}`)
+	cfg := ResolveGroupSectionConfig(&input)
+	if cfg.OwnEntities.State != CollapsibleDefault {
+		t.Errorf("Empty state string should default, got %q", cfg.OwnEntities.State)
+	}
+}

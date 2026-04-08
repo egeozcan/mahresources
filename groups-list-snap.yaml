@@ -1,0 +1,994 @@
+- generic [active] [ref=e1]:
+  - link "Skip to main content" [ref=e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - banner [ref=e3]:
+    - navigation "Main" [ref=e4]:
+      - generic [ref=e5]:
+        - link "Dashboard" [ref=e6] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Notes" [ref=e7] [cursor=pointer]:
+          - /url: /notes
+        - link "Resources" [ref=e8] [cursor=pointer]:
+          - /url: /resources
+        - link "Tags" [ref=e9] [cursor=pointer]:
+          - /url: /tags
+        - link "Groups" [ref=e10] [cursor=pointer]:
+          - /url: /groups
+        - link "MRQL" [ref=e11] [cursor=pointer]:
+          - /url: /mrql
+        - button "Admin" [ref=e13] [cursor=pointer]:
+          - generic [ref=e14]: Admin
+          - img [ref=e15]
+        - button "Plugins" [ref=e18] [cursor=pointer]:
+          - generic [ref=e19]: Plugins
+          - img [ref=e20]
+    - generic [ref=e22]:
+      - button "Open search dialog" [ref=e24]:
+        - img [ref=e25]
+        - generic [ref=e27]: Search
+        - generic [ref=e28]: ⌘K
+      - button "Settings" [ref=e30]: ⚙
+  - generic [ref=e32]:
+    - heading "Groups" [level=1] [ref=e33]:
+      - generic [ref=e34]: Groups
+    - link "Add" [ref=e35] [cursor=pointer]:
+      - /url: /group/new
+  - generic [ref=e36]:
+    - complementary [ref=e37]:
+      - form "Filter groups" [ref=e38]:
+        - generic [ref=e39]:
+          - heading "Tags" [level=2] [ref=e40]
+          - link "kkkkk (2)" [ref=e42] [cursor=pointer]:
+            - /url: /groups?tags=11
+            - generic [ref=e43]: kkkkk (2)
+        - generic [ref=e44]:
+          - heading "Sort" [level=2] [ref=e45]
+          - group "Sort options" [ref=e46]:
+            - generic [ref=e47]:
+              - combobox "Sort column 1" [ref=e48]:
+                - option "-- Column --" [selected]
+                - option "Created"
+                - option "Name"
+                - option "Updated"
+                - option "Custom Property"
+              - 'button "Sort direction: descending" [ref=e49]':
+                - generic [ref=e50]: ↓
+              - generic [ref=e51]:
+                - button "Move sort 1 up" [disabled] [ref=e52]:
+                  - generic [ref=e53]: ▲
+                - button "Move sort 1 down" [disabled] [ref=e54]:
+                  - generic [ref=e55]: ▼
+              - button "Remove sort 1" [ref=e56]:
+                - generic [ref=e57]: ✕
+            - button "Add another sort criteria" [ref=e58]: + Add Sort
+        - generic [ref=e59]:
+          - heading "Filter" [level=2] [ref=e60]
+          - generic [ref=e61]: Name
+          - searchbox "Name" [ref=e62]
+          - generic [ref=e63] [cursor=pointer]:
+            - checkbox "Search Parents For Name" [ref=e64]
+            - generic [ref=e65]: Search Parents For Name
+          - generic [ref=e66] [cursor=pointer]:
+            - checkbox "Search Children For Name" [ref=e67]
+            - generic [ref=e68]: Search Children For Name
+          - generic [ref=e69]: Description
+          - searchbox "Description" [ref=e70]
+          - generic [ref=e71]: URL
+          - searchbox "URL" [ref=e72]
+          - generic [ref=e73]:
+            - generic [ref=e74]: Tags
+            - combobox "Tags" [ref=e76]
+            - status [ref=e77]
+          - generic [ref=e78] [cursor=pointer]:
+            - checkbox "Search Parents For Tags" [ref=e79]
+            - generic [ref=e80]: Search Parents For Tags
+          - generic [ref=e81] [cursor=pointer]:
+            - checkbox "Search Children For Tags" [ref=e82]
+            - generic [ref=e83]: Search Children For Tags
+          - generic [ref=e84]:
+            - generic [ref=e85]: Categories
+            - combobox "Categories" [ref=e87]
+            - status [ref=e88]
+          - generic:
+            - generic:
+              - group "Schema fields"
+          - generic [ref=e90]:
+            - generic [ref=e91]: Notes
+            - combobox "Notes" [ref=e93]
+            - status [ref=e94]
+          - generic [ref=e95]:
+            - generic [ref=e96]: Resources
+            - combobox "Resources" [ref=e98]
+            - status [ref=e99]
+          - generic [ref=e100]:
+            - generic [ref=e101]: Groups
+            - combobox "Groups" [ref=e103]
+            - status [ref=e104]
+          - generic [ref=e105]:
+            - generic [ref=e106]: Owner
+            - combobox "Owner" [ref=e108]
+            - status [ref=e109]
+          - group "Meta" [ref=e110]:
+            - paragraph [ref=e111]: Meta
+            - button "Add new field" [ref=e112]: + Add Field
+          - generic [ref=e113]: Created Before
+          - textbox "Created Before" [ref=e114]
+          - generic [ref=e115]: Created After
+          - textbox "Created After" [ref=e116]
+          - button "Apply Filters" [ref=e118]
+    - main [ref=e119]:
+      - group "Display options" [ref=e120]:
+        - link "List" [ref=e121] [cursor=pointer]:
+          - /url: /groups
+        - link "Text" [ref=e122] [cursor=pointer]:
+          - /url: /groups/text
+        - link "Tree" [ref=e123] [cursor=pointer]:
+          - /url: /group/tree
+        - link "Timeline" [ref=e124] [cursor=pointer]:
+          - /url: /groups/timeline
+      - button "Select All" [ref=e127]
+      - generic [ref=e128]:
+        - article [ref=e129]:
+          - checkbox "Select Gallery Demo" [ref=e130] [cursor=pointer]
+          - generic [ref=e131]:
+            - generic [ref=e135]:
+              - heading "Gallery Demo" [level=3] [ref=e136]:
+                - link "Gallery Demo" [ref=e137] [cursor=pointer]:
+                  - /url: /group?id=978
+              - generic [ref=e138]:
+                - generic [ref=e139]:
+                  - generic [ref=e140]: "Updated:"
+                  - text: 2026-04-08 08:22
+                - generic [ref=e141]:
+                  - generic [ref=e142]: "Created:"
+                  - text: 2026-04-08 08:22
+              - link "Gallery Test" [ref=e144] [cursor=pointer]:
+                - /url: /groups?categories=517
+            - generic [ref=e145]:
+              - generic [ref=e146]:
+                - img [ref=e148]
+                - link "test-image-4.png" [ref=e151] [cursor=pointer]:
+                  - /url: /resource?id=98
+                - generic [ref=e152]: 2026-04-08 08:23
+              - generic [ref=e153]:
+                - img [ref=e155]
+                - link "test-image-3.png" [ref=e158] [cursor=pointer]:
+                  - /url: /resource?id=97
+                - generic [ref=e159]: 2026-04-08 08:23
+              - generic [ref=e160]:
+                - img [ref=e162]
+                - link "test-image-2.png" [ref=e165] [cursor=pointer]:
+                  - /url: /resource?id=96
+                - generic [ref=e166]: 2026-04-08 08:23
+            - list [ref=e167]:
+              - listitem [ref=e168]: Gallery Demo
+            - generic [ref=e169]:
+              - link "test-image-4.png" [ref=e170]:
+                - /url: /v1/resource/view?id=98&v=7e7ed7fe0d3c4696b72e4df6672ab36be5dc3f2a#image/png
+                - img "test-image-4.png" [ref=e171]
+              - link "test-image-3.png" [ref=e172]:
+                - /url: /v1/resource/view?id=97&v=7cb9651f83f0b8dbf524c7170f73faa638e222bd#image/png
+                - img "test-image-3.png" [ref=e173]
+              - link "test-image-2.png" [ref=e174]:
+                - /url: /v1/resource/view?id=96&v=2dd06bf80bf105521ef10eb3e9c60b2f8f454330#image/png
+                - img "test-image-2.png" [ref=e175]
+              - link "test-image-1.png" [ref=e176]:
+                - /url: /v1/resource/view?id=95&v=34dcd6881a6b5f1359ff06390720194b162ebbaa#image/png
+                - img "test-image-1.png" [ref=e177]
+        - article [ref=e178]:
+          - checkbox "Select Instagram Explore" [ref=e179] [cursor=pointer]
+          - generic [ref=e180]:
+            - generic [ref=e184]:
+              - heading "Instagram Explore" [level=3] [ref=e185]:
+                - link "Instagram Explore" [ref=e186] [cursor=pointer]:
+                  - /url: /group?id=977
+              - generic [ref=e187]:
+                - generic [ref=e188]:
+                  - generic [ref=e189]: "Updated:"
+                  - text: 2026-04-06 03:09
+                - generic [ref=e190]:
+                  - generic [ref=e191]: "Created:"
+                  - text: 2026-04-05 06:17
+              - link "Bookmark" [ref=e193] [cursor=pointer]:
+                - /url: /groups?categories=516
+            - generic [ref=e195]:
+              - generic [ref=e198]:
+                - link "https://www.instagram.com/stories/" [ref=e199] [cursor=pointer]:
+                  - /url: https://www.instagram.com/stories/
+                - generic [ref=e200]: www.instagram.com
+              - button "Edit URL Details" [ref=e201] [cursor=pointer]:
+                - img [ref=e202]
+            - generic [ref=e205]:
+              - generic [ref=e206]:
+                - img [ref=e207]
+                - strong [ref=e210]: "0"
+                - text: Resources
+              - generic [ref=e211]:
+                - img [ref=e212]
+                - strong [ref=e215]: "0"
+                - text: Notes
+              - generic [ref=e216]:
+                - img [ref=e217]
+                - strong [ref=e219]: "0"
+                - text: Groups
+            - generic [ref=e220]:
+              - generic [ref=e221]:
+                - img [ref=e222]
+                - strong [ref=e225]: "0"
+                - text: Resources
+              - generic [ref=e226]:
+                - img [ref=e227]
+                - strong [ref=e230]: "0"
+                - text: Notes
+              - generic [ref=e231]:
+                - img [ref=e232]
+                - strong [ref=e234]: "0"
+                - text: Groups
+            - text: "— Entity counts (resources, notes, sub-groups). Attrs: show, style."
+            - paragraph [ref=e235]: No images found
+            - text: "— Thumbnail grid of owned images. Attrs: count, cols, content-type."
+            - paragraph [ref=e236]: "progress: \"field\" attribute is required"
+            - text: "— Progress bar from meta field values. Attrs: field, complete, type, label."
+            - paragraph [ref=e237]: No recent activity
+            - text: "— Timeline of recently updated owned entities. Attrs: count, type."
+            - list [ref=e238]:
+              - listitem [ref=e239]: Instagram Explore
+            - text: "— Group hierarchy (ancestors and children). Attrs: direction, depth."
+            - generic "Double-click to edit" [ref=e242]:
+              - paragraph [ref=e243]: Bookmarked page
+        - article [ref=e244]:
+          - checkbox "Select sdf" [ref=e245] [cursor=pointer]
+          - generic [ref=e250]:
+            - heading "sdf" [level=3] [ref=e251]:
+              - link "sdf" [ref=e252] [cursor=pointer]:
+                - /url: /group?id=976
+            - generic [ref=e253]:
+              - generic [ref=e254]:
+                - generic [ref=e255]: "Updated:"
+                - text: 2026-04-04 22:24
+              - generic [ref=e256]:
+                - generic [ref=e257]: "Created:"
+                - text: 2026-04-04 22:24
+            - link "Person-meta-test" [ref=e259] [cursor=pointer]:
+              - /url: /groups?categories=515
+        - article [ref=e260]:
+          - checkbox "Select kokokokok" [ref=e261] [cursor=pointer]
+          - generic [ref=e262]:
+            - generic [ref=e266]:
+              - heading "kokokokok" [level=3] [ref=e267]:
+                - link "kokokokok" [ref=e268] [cursor=pointer]:
+                  - /url: /group?id=975
+              - generic [ref=e269]:
+                - generic [ref=e270]:
+                  - generic [ref=e271]: "Updated:"
+                  - text: 2026-03-30 07:08
+                - generic [ref=e272]:
+                  - generic [ref=e273]: "Created:"
+                  - text: 2026-03-30 07:08
+              - link "TestCat" [ref=e275] [cursor=pointer]:
+                - /url: /groups?categories=466
+            - link "kkkkk" [ref=e277] [cursor=pointer]:
+              - /url: /groups?tags=11
+        - article [ref=e278]:
+          - checkbox "Select Action Test Group 1773603263804" [ref=e279] [cursor=pointer]
+          - generic [ref=e284]:
+            - heading "Action Test Group 1773603263804" [level=3] [ref=e285]:
+              - link "Action Test Group 1773603263804" [ref=e286] [cursor=pointer]:
+                - /url: /group?id=974
+            - generic [ref=e287]:
+              - generic [ref=e288]:
+                - generic [ref=e289]: "Updated:"
+                - text: 2026-03-15 20:33
+              - generic [ref=e290]:
+                - generic [ref=e291]: "Created:"
+                - text: 2026-03-15 20:33
+            - link "Action Test Category 1773603263804" [ref=e293] [cursor=pointer]:
+              - /url: /groups?categories=514
+        - article [ref=e294]:
+          - checkbox "Select Action Test Group 1773603212407" [ref=e295] [cursor=pointer]
+          - generic [ref=e300]:
+            - heading "Action Test Group 1773603212407" [level=3] [ref=e301]:
+              - link "Action Test Group 1773603212407" [ref=e302] [cursor=pointer]:
+                - /url: /group?id=973
+            - generic [ref=e303]:
+              - generic [ref=e304]:
+                - generic [ref=e305]: "Updated:"
+                - text: 2026-03-15 20:32
+              - generic [ref=e306]:
+                - generic [ref=e307]: "Created:"
+                - text: 2026-03-15 20:32
+            - link "Action Test Category 1773603212407" [ref=e309] [cursor=pointer]:
+              - /url: /groups?categories=513
+        - article [ref=e310]:
+          - checkbox "Select Action Test Group 1773603184024" [ref=e311] [cursor=pointer]
+          - generic [ref=e316]:
+            - heading "Action Test Group 1773603184024" [level=3] [ref=e317]:
+              - link "Action Test Group 1773603184024" [ref=e318] [cursor=pointer]:
+                - /url: /group?id=972
+            - generic [ref=e319]:
+              - generic [ref=e320]:
+                - generic [ref=e321]: "Updated:"
+                - text: 2026-03-15 20:32
+              - generic [ref=e322]:
+                - generic [ref=e323]: "Created:"
+                - text: 2026-03-15 20:32
+            - link "Action Test Category 1773603184024" [ref=e325] [cursor=pointer]:
+              - /url: /groups?categories=512
+        - article [ref=e326]:
+          - checkbox "Select Action Test Group 1773603096406" [ref=e327] [cursor=pointer]
+          - generic [ref=e332]:
+            - heading "Action Test Group 1773603096406" [level=3] [ref=e333]:
+              - link "Action Test Group 1773603096406" [ref=e334] [cursor=pointer]:
+                - /url: /group?id=971
+            - generic [ref=e335]:
+              - generic [ref=e336]:
+                - generic [ref=e337]: "Updated:"
+                - text: 2026-03-15 20:31
+              - generic [ref=e338]:
+                - generic [ref=e339]: "Created:"
+                - text: 2026-03-15 20:31
+            - link "Action Test Category 1773603096406" [ref=e341] [cursor=pointer]:
+              - /url: /groups?categories=511
+        - article [ref=e342]:
+          - checkbox "Select Action Test Group 1773603069278" [ref=e343] [cursor=pointer]
+          - generic [ref=e348]:
+            - heading "Action Test Group 1773603069278" [level=3] [ref=e349]:
+              - link "Action Test Group 1773603069278" [ref=e350] [cursor=pointer]:
+                - /url: /group?id=970
+            - generic [ref=e351]:
+              - generic [ref=e352]:
+                - generic [ref=e353]: "Updated:"
+                - text: 2026-03-15 20:31
+              - generic [ref=e354]:
+                - generic [ref=e355]: "Created:"
+                - text: 2026-03-15 20:31
+            - link "Action Test Category 1773603069278" [ref=e357] [cursor=pointer]:
+              - /url: /groups?categories=510
+        - article [ref=e358]:
+          - checkbox "Select Action Test Group 1773603117286" [ref=e359] [cursor=pointer]
+          - generic [ref=e364]:
+            - heading "Action Test Group 1773603117286" [level=3] [ref=e365]:
+              - link "Action Test Group 1773603117286" [ref=e366] [cursor=pointer]:
+                - /url: /group?id=969
+            - generic [ref=e367]:
+              - generic [ref=e368]:
+                - generic [ref=e369]: "Updated:"
+                - text: 2026-03-15 20:30
+              - generic [ref=e370]:
+                - generic [ref=e371]: "Created:"
+                - text: 2026-03-15 20:30
+            - link "Action Test Category 1773603117286" [ref=e373] [cursor=pointer]:
+              - /url: /groups?categories=509
+        - article [ref=e374]:
+          - checkbox "Select Action Test Group 1773603132695" [ref=e375] [cursor=pointer]
+          - generic [ref=e380]:
+            - heading "Action Test Group 1773603132695" [level=3] [ref=e381]:
+              - link "Action Test Group 1773603132695" [ref=e382] [cursor=pointer]:
+                - /url: /group?id=968
+            - generic [ref=e383]:
+              - generic [ref=e384]:
+                - generic [ref=e385]: "Updated:"
+                - text: 2026-03-15 20:30
+              - generic [ref=e386]:
+                - generic [ref=e387]: "Created:"
+                - text: 2026-03-15 20:30
+            - link "Action Test Category 1773603132695" [ref=e389] [cursor=pointer]:
+              - /url: /groups?categories=508
+        - article [ref=e390]:
+          - checkbox "Select Action Test Group 1773603120656" [ref=e391] [cursor=pointer]
+          - generic [ref=e396]:
+            - heading "Action Test Group 1773603120656" [level=3] [ref=e397]:
+              - link "Action Test Group 1773603120656" [ref=e398] [cursor=pointer]:
+                - /url: /group?id=967
+            - generic [ref=e399]:
+              - generic [ref=e400]:
+                - generic [ref=e401]: "Updated:"
+                - text: 2026-03-15 20:30
+              - generic [ref=e402]:
+                - generic [ref=e403]: "Created:"
+                - text: 2026-03-15 20:30
+            - link "Action Test Category 1773603120656" [ref=e405] [cursor=pointer]:
+              - /url: /groups?categories=507
+        - article [ref=e406]:
+          - checkbox "Select Action Test Group 1773603081986" [ref=e407] [cursor=pointer]
+          - generic [ref=e412]:
+            - heading "Action Test Group 1773603081986" [level=3] [ref=e413]:
+              - link "Action Test Group 1773603081986" [ref=e414] [cursor=pointer]:
+                - /url: /group?id=966
+            - generic [ref=e415]:
+              - generic [ref=e416]:
+                - generic [ref=e417]: "Updated:"
+                - text: 2026-03-15 20:30
+              - generic [ref=e418]:
+                - generic [ref=e419]: "Created:"
+                - text: 2026-03-15 20:30
+            - link "Action Test Category 1773603081986" [ref=e421] [cursor=pointer]:
+              - /url: /groups?categories=506
+        - article [ref=e422]:
+          - checkbox "Select Action Test Group 1773603080887" [ref=e423] [cursor=pointer]
+          - generic [ref=e428]:
+            - heading "Action Test Group 1773603080887" [level=3] [ref=e429]:
+              - link "Action Test Group 1773603080887" [ref=e430] [cursor=pointer]:
+                - /url: /group?id=965
+            - generic [ref=e431]:
+              - generic [ref=e432]:
+                - generic [ref=e433]: "Updated:"
+                - text: 2026-03-15 20:30
+              - generic [ref=e434]:
+                - generic [ref=e435]: "Created:"
+                - text: 2026-03-15 20:30
+            - link "Action Test Category 1773603080887" [ref=e437] [cursor=pointer]:
+              - /url: /groups?categories=505
+        - article [ref=e438]:
+          - checkbox "Select Action Test Group 1773603039462" [ref=e439] [cursor=pointer]
+          - generic [ref=e444]:
+            - heading "Action Test Group 1773603039462" [level=3] [ref=e445]:
+              - link "Action Test Group 1773603039462" [ref=e446] [cursor=pointer]:
+                - /url: /group?id=964
+            - generic [ref=e447]:
+              - generic [ref=e448]:
+                - generic [ref=e449]: "Updated:"
+                - text: 2026-03-15 20:29
+              - generic [ref=e450]:
+                - generic [ref=e451]: "Created:"
+                - text: 2026-03-15 20:29
+            - link "Action Test Category 1773603039462" [ref=e453] [cursor=pointer]:
+              - /url: /groups?categories=504
+        - article [ref=e454]:
+          - checkbox "Select Action Test Group 1773602998175" [ref=e455] [cursor=pointer]
+          - generic [ref=e460]:
+            - heading "Action Test Group 1773602998175" [level=3] [ref=e461]:
+              - link "Action Test Group 1773602998175" [ref=e462] [cursor=pointer]:
+                - /url: /group?id=963
+            - generic [ref=e463]:
+              - generic [ref=e464]:
+                - generic [ref=e465]: "Updated:"
+                - text: 2026-03-15 20:29
+              - generic [ref=e466]:
+                - generic [ref=e467]: "Created:"
+                - text: 2026-03-15 20:29
+            - link "Action Test Category 1773602998175" [ref=e469] [cursor=pointer]:
+              - /url: /groups?categories=503
+        - article [ref=e470]:
+          - checkbox "Select Action Test Group 1773603018083" [ref=e471] [cursor=pointer]
+          - generic [ref=e476]:
+            - heading "Action Test Group 1773603018083" [level=3] [ref=e477]:
+              - link "Action Test Group 1773603018083" [ref=e478] [cursor=pointer]:
+                - /url: /group?id=962
+            - generic [ref=e479]:
+              - generic [ref=e480]:
+                - generic [ref=e481]: "Updated:"
+                - text: 2026-03-15 20:29
+              - generic [ref=e482]:
+                - generic [ref=e483]: "Created:"
+                - text: 2026-03-15 20:29
+            - link "Action Test Category 1773603018083" [ref=e485] [cursor=pointer]:
+              - /url: /groups?categories=502
+        - article [ref=e486]:
+          - checkbox "Select Action Test Group 1773603003769" [ref=e487] [cursor=pointer]
+          - generic [ref=e492]:
+            - heading "Action Test Group 1773603003769" [level=3] [ref=e493]:
+              - link "Action Test Group 1773603003769" [ref=e494] [cursor=pointer]:
+                - /url: /group?id=961
+            - generic [ref=e495]:
+              - generic [ref=e496]:
+                - generic [ref=e497]: "Updated:"
+                - text: 2026-03-15 20:29
+              - generic [ref=e498]:
+                - generic [ref=e499]: "Created:"
+                - text: 2026-03-15 20:29
+            - link "Action Test Category 1773603003769" [ref=e501] [cursor=pointer]:
+              - /url: /groups?categories=501
+        - article [ref=e502]:
+          - checkbox "Select Action Test Group 1773603045406" [ref=e503] [cursor=pointer]
+          - generic [ref=e508]:
+            - heading "Action Test Group 1773603045406" [level=3] [ref=e509]:
+              - link "Action Test Group 1773603045406" [ref=e510] [cursor=pointer]:
+                - /url: /group?id=960
+            - generic [ref=e511]:
+              - generic [ref=e512]:
+                - generic [ref=e513]: "Updated:"
+                - text: 2026-03-15 20:29
+              - generic [ref=e514]:
+                - generic [ref=e515]: "Created:"
+                - text: 2026-03-15 20:29
+            - link "Action Test Category 1773603045406" [ref=e517] [cursor=pointer]:
+              - /url: /groups?categories=500
+        - article [ref=e518]:
+          - checkbox "Select Action Test Group 1773602966822" [ref=e519] [cursor=pointer]
+          - generic [ref=e524]:
+            - heading "Action Test Group 1773602966822" [level=3] [ref=e525]:
+              - link "Action Test Group 1773602966822" [ref=e526] [cursor=pointer]:
+                - /url: /group?id=959
+            - generic [ref=e527]:
+              - generic [ref=e528]:
+                - generic [ref=e529]: "Updated:"
+                - text: 2026-03-15 20:28
+              - generic [ref=e530]:
+                - generic [ref=e531]: "Created:"
+                - text: 2026-03-15 20:28
+            - link "Action Test Category 1773602966822" [ref=e533] [cursor=pointer]:
+              - /url: /groups?categories=499
+        - article [ref=e534]:
+          - checkbox "Select Action Test Group 1773602935206" [ref=e535] [cursor=pointer]
+          - generic [ref=e540]:
+            - heading "Action Test Group 1773602935206" [level=3] [ref=e541]:
+              - link "Action Test Group 1773602935206" [ref=e542] [cursor=pointer]:
+                - /url: /group?id=958
+            - generic [ref=e543]:
+              - generic [ref=e544]:
+                - generic [ref=e545]: "Updated:"
+                - text: 2026-03-15 20:28
+              - generic [ref=e546]:
+                - generic [ref=e547]: "Created:"
+                - text: 2026-03-15 20:28
+            - link "Action Test Category 1773602935206" [ref=e549] [cursor=pointer]:
+              - /url: /groups?categories=498
+        - article [ref=e550]:
+          - checkbox "Select Action Test Group 1773602989180" [ref=e551] [cursor=pointer]
+          - generic [ref=e556]:
+            - heading "Action Test Group 1773602989180" [level=3] [ref=e557]:
+              - link "Action Test Group 1773602989180" [ref=e558] [cursor=pointer]:
+                - /url: /group?id=957
+            - generic [ref=e559]:
+              - generic [ref=e560]:
+                - generic [ref=e561]: "Updated:"
+                - text: 2026-03-15 20:28
+              - generic [ref=e562]:
+                - generic [ref=e563]: "Created:"
+                - text: 2026-03-15 20:28
+            - link "Action Test Category 1773602989180" [ref=e565] [cursor=pointer]:
+              - /url: /groups?categories=497
+        - article [ref=e566]:
+          - checkbox "Select Action Test Group 1773602931323" [ref=e567] [cursor=pointer]
+          - generic [ref=e572]:
+            - heading "Action Test Group 1773602931323" [level=3] [ref=e573]:
+              - link "Action Test Group 1773602931323" [ref=e574] [cursor=pointer]:
+                - /url: /group?id=956
+            - generic [ref=e575]:
+              - generic [ref=e576]:
+                - generic [ref=e577]: "Updated:"
+                - text: 2026-03-15 20:28
+              - generic [ref=e578]:
+                - generic [ref=e579]: "Created:"
+                - text: 2026-03-15 20:28
+            - link "Action Test Category 1773602931323" [ref=e581] [cursor=pointer]:
+              - /url: /groups?categories=496
+        - article [ref=e582]:
+          - checkbox "Select Action Test Group 1773602924292" [ref=e583] [cursor=pointer]
+          - generic [ref=e588]:
+            - heading "Action Test Group 1773602924292" [level=3] [ref=e589]:
+              - link "Action Test Group 1773602924292" [ref=e590] [cursor=pointer]:
+                - /url: /group?id=955
+            - generic [ref=e591]:
+              - generic [ref=e592]:
+                - generic [ref=e593]: "Updated:"
+                - text: 2026-03-15 20:28
+              - generic [ref=e594]:
+                - generic [ref=e595]: "Created:"
+                - text: 2026-03-15 20:28
+            - link "Action Test Category 1773602924292" [ref=e597] [cursor=pointer]:
+              - /url: /groups?categories=495
+        - article [ref=e598]:
+          - checkbox "Select Action Test Group 1773602899934" [ref=e599] [cursor=pointer]
+          - generic [ref=e604]:
+            - heading "Action Test Group 1773602899934" [level=3] [ref=e605]:
+              - link "Action Test Group 1773602899934" [ref=e606] [cursor=pointer]:
+                - /url: /group?id=954
+            - generic [ref=e607]:
+              - generic [ref=e608]:
+                - generic [ref=e609]: "Updated:"
+                - text: 2026-03-15 20:27
+              - generic [ref=e610]:
+                - generic [ref=e611]: "Created:"
+                - text: 2026-03-15 20:27
+            - link "Action Test Category 1773602899934" [ref=e613] [cursor=pointer]:
+              - /url: /groups?categories=494
+        - article [ref=e614]:
+          - checkbox "Select Action Test Group 1773602631430" [ref=e615] [cursor=pointer]
+          - generic [ref=e620]:
+            - heading "Action Test Group 1773602631430" [level=3] [ref=e621]:
+              - link "Action Test Group 1773602631430" [ref=e622] [cursor=pointer]:
+                - /url: /group?id=953
+            - generic [ref=e623]:
+              - generic [ref=e624]:
+                - generic [ref=e625]: "Updated:"
+                - text: 2026-03-15 20:23
+              - generic [ref=e626]:
+                - generic [ref=e627]: "Created:"
+                - text: 2026-03-15 20:23
+            - link "Action Test Category 1773602631430" [ref=e629] [cursor=pointer]:
+              - /url: /groups?categories=493
+        - article [ref=e630]:
+          - checkbox "Select Action Test Group 1773602673359" [ref=e631] [cursor=pointer]
+          - generic [ref=e636]:
+            - heading "Action Test Group 1773602673359" [level=3] [ref=e637]:
+              - link "Action Test Group 1773602673359" [ref=e638] [cursor=pointer]:
+                - /url: /group?id=952
+            - generic [ref=e639]:
+              - generic [ref=e640]:
+                - generic [ref=e641]: "Updated:"
+                - text: 2026-03-15 20:23
+              - generic [ref=e642]:
+                - generic [ref=e643]: "Created:"
+                - text: 2026-03-15 20:23
+            - link "Action Test Category 1773602673359" [ref=e645] [cursor=pointer]:
+              - /url: /groups?categories=492
+        - article [ref=e646]:
+          - checkbox "Select Action Test Group 1773602658131" [ref=e647] [cursor=pointer]
+          - generic [ref=e652]:
+            - heading "Action Test Group 1773602658131" [level=3] [ref=e653]:
+              - link "Action Test Group 1773602658131" [ref=e654] [cursor=pointer]:
+                - /url: /group?id=951
+            - generic [ref=e655]:
+              - generic [ref=e656]:
+                - generic [ref=e657]: "Updated:"
+                - text: 2026-03-15 20:23
+              - generic [ref=e658]:
+                - generic [ref=e659]: "Created:"
+                - text: 2026-03-15 20:23
+            - link "Action Test Category 1773602658131" [ref=e661] [cursor=pointer]:
+              - /url: /groups?categories=491
+        - article [ref=e662]:
+          - checkbox "Select Action Test Group 1773602519333" [ref=e663] [cursor=pointer]
+          - generic [ref=e668]:
+            - heading "Action Test Group 1773602519333" [level=3] [ref=e669]:
+              - link "Action Test Group 1773602519333" [ref=e670] [cursor=pointer]:
+                - /url: /group?id=950
+            - generic [ref=e671]:
+              - generic [ref=e672]:
+                - generic [ref=e673]: "Updated:"
+                - text: 2026-03-15 20:21
+              - generic [ref=e674]:
+                - generic [ref=e675]: "Created:"
+                - text: 2026-03-15 20:21
+            - link "Action Test Category 1773602519333" [ref=e677] [cursor=pointer]:
+              - /url: /groups?categories=490
+        - article [ref=e678]:
+          - checkbox "Select Action Test Group 1773602527178" [ref=e679] [cursor=pointer]
+          - generic [ref=e684]:
+            - heading "Action Test Group 1773602527178" [level=3] [ref=e685]:
+              - link "Action Test Group 1773602527178" [ref=e686] [cursor=pointer]:
+                - /url: /group?id=949
+            - generic [ref=e687]:
+              - generic [ref=e688]:
+                - generic [ref=e689]: "Updated:"
+                - text: 2026-03-15 20:21
+              - generic [ref=e690]:
+                - generic [ref=e691]: "Created:"
+                - text: 2026-03-15 20:21
+            - link "Action Test Category 1773602527178" [ref=e693] [cursor=pointer]:
+              - /url: /groups?categories=489
+        - article [ref=e694]:
+          - checkbox "Select Action Test Group 1773602542822" [ref=e695] [cursor=pointer]
+          - generic [ref=e700]:
+            - heading "Action Test Group 1773602542822" [level=3] [ref=e701]:
+              - link "Action Test Group 1773602542822" [ref=e702] [cursor=pointer]:
+                - /url: /group?id=948
+            - generic [ref=e703]:
+              - generic [ref=e704]:
+                - generic [ref=e705]: "Updated:"
+                - text: 2026-03-15 20:21
+              - generic [ref=e706]:
+                - generic [ref=e707]: "Created:"
+                - text: 2026-03-15 20:21
+            - link "Action Test Category 1773602542822" [ref=e709] [cursor=pointer]:
+              - /url: /groups?categories=488
+        - article [ref=e710]:
+          - checkbox "Select Action Test Group 1773602543235" [ref=e711] [cursor=pointer]
+          - generic [ref=e716]:
+            - heading "Action Test Group 1773602543235" [level=3] [ref=e717]:
+              - link "Action Test Group 1773602543235" [ref=e718] [cursor=pointer]:
+                - /url: /group?id=947
+            - generic [ref=e719]:
+              - generic [ref=e720]:
+                - generic [ref=e721]: "Updated:"
+                - text: 2026-03-15 20:21
+              - generic [ref=e722]:
+                - generic [ref=e723]: "Created:"
+                - text: 2026-03-15 20:21
+            - link "Action Test Category 1773602543235" [ref=e725] [cursor=pointer]:
+              - /url: /groups?categories=487
+        - article [ref=e726]:
+          - checkbox "Select Action Test Group 1773602475966" [ref=e727] [cursor=pointer]
+          - generic [ref=e732]:
+            - heading "Action Test Group 1773602475966" [level=3] [ref=e733]:
+              - link "Action Test Group 1773602475966" [ref=e734] [cursor=pointer]:
+                - /url: /group?id=946
+            - generic [ref=e735]:
+              - generic [ref=e736]:
+                - generic [ref=e737]: "Updated:"
+                - text: 2026-03-15 20:20
+              - generic [ref=e738]:
+                - generic [ref=e739]: "Created:"
+                - text: 2026-03-15 20:20
+            - link "Action Test Category 1773602475966" [ref=e741] [cursor=pointer]:
+              - /url: /groups?categories=486
+        - article [ref=e742]:
+          - checkbox "Select Action Test Group 1773602518594" [ref=e743] [cursor=pointer]
+          - generic [ref=e748]:
+            - heading "Action Test Group 1773602518594" [level=3] [ref=e749]:
+              - link "Action Test Group 1773602518594" [ref=e750] [cursor=pointer]:
+                - /url: /group?id=945
+            - generic [ref=e751]:
+              - generic [ref=e752]:
+                - generic [ref=e753]: "Updated:"
+                - text: 2026-03-15 20:20
+              - generic [ref=e754]:
+                - generic [ref=e755]: "Created:"
+                - text: 2026-03-15 20:20
+            - link "Action Test Category 1773602518594" [ref=e757] [cursor=pointer]:
+              - /url: /groups?categories=485
+        - article [ref=e758]:
+          - checkbox "Select Action Test Group 1773602484732" [ref=e759] [cursor=pointer]
+          - generic [ref=e764]:
+            - heading "Action Test Group 1773602484732" [level=3] [ref=e765]:
+              - link "Action Test Group 1773602484732" [ref=e766] [cursor=pointer]:
+                - /url: /group?id=944
+            - generic [ref=e767]:
+              - generic [ref=e768]:
+                - generic [ref=e769]: "Updated:"
+                - text: 2026-03-15 20:20
+              - generic [ref=e770]:
+                - generic [ref=e771]: "Created:"
+                - text: 2026-03-15 20:20
+            - link "Action Test Category 1773602484732" [ref=e773] [cursor=pointer]:
+              - /url: /groups?categories=484
+        - article [ref=e774]:
+          - checkbox "Select Action Test Group 1773602439464" [ref=e775] [cursor=pointer]
+          - generic [ref=e780]:
+            - heading "Action Test Group 1773602439464" [level=3] [ref=e781]:
+              - link "Action Test Group 1773602439464" [ref=e782] [cursor=pointer]:
+                - /url: /group?id=943
+            - generic [ref=e783]:
+              - generic [ref=e784]:
+                - generic [ref=e785]: "Updated:"
+                - text: 2026-03-15 20:20
+              - generic [ref=e786]:
+                - generic [ref=e787]: "Created:"
+                - text: 2026-03-15 20:20
+            - link "Action Test Category 1773602439464" [ref=e789] [cursor=pointer]:
+              - /url: /groups?categories=483
+        - article [ref=e790]:
+          - checkbox "Select Action Test Group 1773602470190" [ref=e791] [cursor=pointer]
+          - generic [ref=e796]:
+            - heading "Action Test Group 1773602470190" [level=3] [ref=e797]:
+              - link "Action Test Group 1773602470190" [ref=e798] [cursor=pointer]:
+                - /url: /group?id=942
+            - generic [ref=e799]:
+              - generic [ref=e800]:
+                - generic [ref=e801]: "Updated:"
+                - text: 2026-03-15 20:20
+              - generic [ref=e802]:
+                - generic [ref=e803]: "Created:"
+                - text: 2026-03-15 20:20
+            - link "Action Test Category 1773602470190" [ref=e805] [cursor=pointer]:
+              - /url: /groups?categories=482
+        - article [ref=e806]:
+          - checkbox "Select Action Test Group 1773602420604" [ref=e807] [cursor=pointer]
+          - generic [ref=e812]:
+            - heading "Action Test Group 1773602420604" [level=3] [ref=e813]:
+              - link "Action Test Group 1773602420604" [ref=e814] [cursor=pointer]:
+                - /url: /group?id=941
+            - generic [ref=e815]:
+              - generic [ref=e816]:
+                - generic [ref=e817]: "Updated:"
+                - text: 2026-03-15 20:19
+              - generic [ref=e818]:
+                - generic [ref=e819]: "Created:"
+                - text: 2026-03-15 20:19
+            - link "Action Test Category 1773602420604" [ref=e821] [cursor=pointer]:
+              - /url: /groups?categories=481
+        - article [ref=e822]:
+          - checkbox "Select Action Test Group 1773602476692" [ref=e823] [cursor=pointer]
+          - generic [ref=e828]:
+            - heading "Action Test Group 1773602476692" [level=3] [ref=e829]:
+              - link "Action Test Group 1773602476692" [ref=e830] [cursor=pointer]:
+                - /url: /group?id=940
+            - generic [ref=e831]:
+              - generic [ref=e832]:
+                - generic [ref=e833]: "Updated:"
+                - text: 2026-03-15 20:19
+              - generic [ref=e834]:
+                - generic [ref=e835]: "Created:"
+                - text: 2026-03-15 20:19
+            - link "Action Test Category 1773602476692" [ref=e837] [cursor=pointer]:
+              - /url: /groups?categories=480
+        - article [ref=e838]:
+          - checkbox "Select Action Test Group 1773602425893" [ref=e839] [cursor=pointer]
+          - generic [ref=e844]:
+            - heading "Action Test Group 1773602425893" [level=3] [ref=e845]:
+              - link "Action Test Group 1773602425893" [ref=e846] [cursor=pointer]:
+                - /url: /group?id=939
+            - generic [ref=e847]:
+              - generic [ref=e848]:
+                - generic [ref=e849]: "Updated:"
+                - text: 2026-03-15 20:19
+              - generic [ref=e850]:
+                - generic [ref=e851]: "Created:"
+                - text: 2026-03-15 20:19
+            - link "Action Test Category 1773602425893" [ref=e853] [cursor=pointer]:
+              - /url: /groups?categories=479
+        - article [ref=e854]:
+          - checkbox "Select Action Test Group 1773602423299" [ref=e855] [cursor=pointer]
+          - generic [ref=e860]:
+            - heading "Action Test Group 1773602423299" [level=3] [ref=e861]:
+              - link "Action Test Group 1773602423299" [ref=e862] [cursor=pointer]:
+                - /url: /group?id=938
+            - generic [ref=e863]:
+              - generic [ref=e864]:
+                - generic [ref=e865]: "Updated:"
+                - text: 2026-03-15 20:19
+              - generic [ref=e866]:
+                - generic [ref=e867]: "Created:"
+                - text: 2026-03-15 20:19
+            - link "Action Test Category 1773602423299" [ref=e869] [cursor=pointer]:
+              - /url: /groups?categories=478
+        - article [ref=e870]:
+          - checkbox "Select Action Test Group 1773602393357" [ref=e871] [cursor=pointer]
+          - generic [ref=e876]:
+            - heading "Action Test Group 1773602393357" [level=3] [ref=e877]:
+              - link "Action Test Group 1773602393357" [ref=e878] [cursor=pointer]:
+                - /url: /group?id=937
+            - generic [ref=e879]:
+              - generic [ref=e880]:
+                - generic [ref=e881]: "Updated:"
+                - text: 2026-03-15 20:19
+              - generic [ref=e882]:
+                - generic [ref=e883]: "Created:"
+                - text: 2026-03-15 20:19
+            - link "Action Test Category 1773602393357" [ref=e885] [cursor=pointer]:
+              - /url: /groups?categories=477
+        - article [ref=e886]:
+          - checkbox "Select Action Test Group 1773602364409" [ref=e887] [cursor=pointer]
+          - generic [ref=e892]:
+            - heading "Action Test Group 1773602364409" [level=3] [ref=e893]:
+              - link "Action Test Group 1773602364409" [ref=e894] [cursor=pointer]:
+                - /url: /group?id=936
+            - generic [ref=e895]:
+              - generic [ref=e896]:
+                - generic [ref=e897]: "Updated:"
+                - text: 2026-03-15 20:18
+              - generic [ref=e898]:
+                - generic [ref=e899]: "Created:"
+                - text: 2026-03-15 20:18
+            - link "Action Test Category 1773602364409" [ref=e901] [cursor=pointer]:
+              - /url: /groups?categories=476
+        - article [ref=e902]:
+          - checkbox "Select Action Test Group 1773602343550" [ref=e903] [cursor=pointer]
+          - generic [ref=e908]:
+            - heading "Action Test Group 1773602343550" [level=3] [ref=e909]:
+              - link "Action Test Group 1773602343550" [ref=e910] [cursor=pointer]:
+                - /url: /group?id=935
+            - generic [ref=e911]:
+              - generic [ref=e912]:
+                - generic [ref=e913]: "Updated:"
+                - text: 2026-03-15 20:18
+              - generic [ref=e914]:
+                - generic [ref=e915]: "Created:"
+                - text: 2026-03-15 20:18
+            - link "Action Test Category 1773602343550" [ref=e917] [cursor=pointer]:
+              - /url: /groups?categories=475
+        - article [ref=e918]:
+          - checkbox "Select Action Test Group 1773602319418" [ref=e919] [cursor=pointer]
+          - generic [ref=e924]:
+            - heading "Action Test Group 1773602319418" [level=3] [ref=e925]:
+              - link "Action Test Group 1773602319418" [ref=e926] [cursor=pointer]:
+                - /url: /group?id=934
+            - generic [ref=e927]:
+              - generic [ref=e928]:
+                - generic [ref=e929]: "Updated:"
+                - text: 2026-03-15 20:18
+              - generic [ref=e930]:
+                - generic [ref=e931]: "Created:"
+                - text: 2026-03-15 20:18
+            - link "Action Test Category 1773602319418" [ref=e933] [cursor=pointer]:
+              - /url: /groups?categories=474
+        - article [ref=e934]:
+          - checkbox "Select Action Test Group 1773602392573" [ref=e935] [cursor=pointer]
+          - generic [ref=e940]:
+            - heading "Action Test Group 1773602392573" [level=3] [ref=e941]:
+              - link "Action Test Group 1773602392573" [ref=e942] [cursor=pointer]:
+                - /url: /group?id=933
+            - generic [ref=e943]:
+              - generic [ref=e944]:
+                - generic [ref=e945]: "Updated:"
+                - text: 2026-03-15 20:18
+              - generic [ref=e946]:
+                - generic [ref=e947]: "Created:"
+                - text: 2026-03-15 20:18
+            - link "Action Test Category 1773602392573" [ref=e949] [cursor=pointer]:
+              - /url: /groups?categories=473
+        - article [ref=e950]:
+          - checkbox "Select wwww" [ref=e951] [cursor=pointer]
+          - generic [ref=e952]:
+            - generic [ref=e956]:
+              - heading "wwww" [level=3] [ref=e957]:
+                - link "wwww" [ref=e958] [cursor=pointer]:
+                  - /url: /group?id=932
+              - generic [ref=e959]:
+                - generic [ref=e960]:
+                  - generic [ref=e961]: "Updated:"
+                  - text: 2026-03-02 20:58
+                - generic [ref=e962]:
+                  - generic [ref=e963]: "Created:"
+                  - text: 2026-03-02 20:56
+              - link "Person" [ref=e965] [cursor=pointer]:
+                - /url: /groups?categories=1
+            - text: qweqweqweqweqwe
+        - article [ref=e966]:
+          - checkbox "Select abcdef" [ref=e967] [cursor=pointer]
+          - generic [ref=e972]:
+            - heading "abcdef" [level=3] [ref=e973]:
+              - link "abcdef" [ref=e974] [cursor=pointer]:
+                - /url: /group?id=931
+            - generic [ref=e975]:
+              - generic [ref=e976]:
+                - generic [ref=e977]: "Updated:"
+                - text: 2026-03-11 05:22
+              - generic [ref=e978]:
+                - generic [ref=e979]: "Created:"
+                - text: 2026-02-21 11:06
+        - article [ref=e980]:
+          - checkbox "Select" [ref=e981] [cursor=pointer]
+          - generic [ref=e986]:
+            - heading [level=3]:
+              - link:
+                - /url: /group?id=924
+            - generic [ref=e987]:
+              - generic [ref=e988]:
+                - generic [ref=e989]: "Updated:"
+                - text: 2026-02-14 17:47
+              - generic [ref=e990]:
+                - generic [ref=e991]: "Created:"
+                - text: 2026-02-14 17:47
+        - article [ref=e992]:
+          - checkbox "Select A11y Test Group 2 1768729993179-ocwbla" [ref=e993] [cursor=pointer]
+          - generic [ref=e994]:
+            - generic [ref=e998]:
+              - heading "A11y Test Group 2 1768729993179-ocwbla" [level=3] [ref=e999]:
+                - link "A11y Test Group 2 1768729993179-ocwbla" [ref=e1000] [cursor=pointer]:
+                  - /url: /group?id=919
+              - generic [ref=e1001]:
+                - generic [ref=e1002]:
+                  - generic [ref=e1003]: "Updated:"
+                  - text: 2026-01-18 10:53
+                - generic [ref=e1004]:
+                  - generic [ref=e1005]: "Created:"
+                  - text: 2026-01-18 10:53
+              - link "A11y Test Category 1768729993179-ocwbla" [ref=e1007] [cursor=pointer]:
+                - /url: /groups?categories=472
+            - generic "Double-click to edit" [ref=e1010]:
+              - paragraph [ref=e1011]: Second group for accessibility tests
+  - contentinfo [ref=e1012]:
+    - navigation "Pagination" [ref=e1013]:
+      - generic [ref=e1014]:
+        - link "Page 1" [ref=e1015] [cursor=pointer]:
+          - /url: /groups?page=1
+          - text: "1"
+        - link "Page 2" [ref=e1016] [cursor=pointer]:
+          - /url: /groups?page=2
+          - text: "2"
+        - link "Page 3" [ref=e1017] [cursor=pointer]:
+          - /url: /groups?page=3
+          - text: "3"
+        - generic [ref=e1018]: ...
+        - link "Page 18" [ref=e1019] [cursor=pointer]:
+          - /url: /groups?page=18
+          - text: "18"
+        - link "Page 19" [ref=e1020] [cursor=pointer]:
+          - /url: /groups?page=19
+          - text: "19"
+        - link "Page 20" [ref=e1021] [cursor=pointer]:
+          - /url: /groups?page=20
+          - text: "20"
+      - link "Next page" [ref=e1023] [cursor=pointer]:
+        - /url: /groups?page=2
+        - text: Next
+        - img [ref=e1024]
+  - button "Open jobs panel" [ref=e1026]:
+    - img [ref=e1027]
+  - status [ref=e1029]
+  - status [ref=e1030]
+  - status [ref=e1031]
+  - status [ref=e1032]
