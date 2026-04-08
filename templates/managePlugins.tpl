@@ -13,7 +13,7 @@
     {% for plugin in plugins %}
     <div class="card mb-4" data-testid="plugin-card-{{ plugin.Name }}">
         <div class="card-header">
-            <div class="flex items-start justify-between gap-4">
+            <div class="flex items-start justify-between gap-4 w-full">
                 <div class="min-w-0">
                     <div class="flex items-center gap-2">
                         <h2 class="text-lg font-semibold">{{ plugin.Name }}</h2>
@@ -26,7 +26,7 @@
                     <p class="text-sm text-stone-600 mt-1 whitespace-pre-line">{{ plugin.Description }}</p>
                     {% endif %}
                 </div>
-                <div class="flex gap-2 shrink-0 ml-auto">
+                <div class="flex gap-2 shrink-0">
                     <form method="POST"
                           action="{% if plugin.Enabled %}/v1/plugin/disable{% else %}/v1/plugin/enable{% endif %}">
                         <input type="hidden" name="name" value="{{ plugin.Name }}">
