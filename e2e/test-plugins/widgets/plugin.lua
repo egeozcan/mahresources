@@ -170,7 +170,7 @@ local function render_gallery(ctx)
             .. ' data-content-type="%s"'
             .. ' data-resource-name="%s"'
             .. ' data-resource-hash="%s">'
-            .. '<img src="/v1/resource/thumbnail?id=%d&width=200&height=200&v=%s" '
+            .. '<img src="/v1/resource/preview?id=%d&width=200&height=200&v=%s" '
             .. 'loading="lazy" alt="%s" '
             .. 'class="rounded object-cover w-full aspect-square" />'
             .. '</a>',
