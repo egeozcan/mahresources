@@ -192,6 +192,11 @@ func NoteCreateContextProvider(context *application_context.MahresourcesContext)
 					tplContext["owner"] = []*models.Group{owner}
 				}
 
+				if noteQuery.NoteTypeId != 0 {
+					noteTypes, _ := context.GetNoteTypesWithIds([]uint{noteQuery.NoteTypeId})
+					tplContext["noteType"] = noteTypes
+				}
+
 				tplContext["groups"] = groups
 				tplContext["tags"] = tags
 			}

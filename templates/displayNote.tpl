@@ -6,8 +6,8 @@
         {% process_shortcodes note.NoteType.CustomHeader note %}
     </div>
 
-    {% if sc.Timestamps %}
     <div class="meta-strip">
+        {% if sc.Timestamps %}
         {% if note.StartDate %}
         <div class="meta-strip-item">
             <span class="meta-strip-label">Started</span>
@@ -20,11 +20,11 @@
             <span class="meta-strip-value">{{ dereference(note.EndDate)|date:"2006-01-02 15:04" }}</span>
         </div>
         {% endif %}
+        {% endif %}
         <div class="meta-strip-item">
             <a class="text-amber-700 hover:text-amber-800 text-sm font-medium" href="/note/text?id={{ note.ID }}">Wide display</a>
         </div>
     </div>
-    {% endif %}
 
     {% if sc.Content %}
     {# Show description only when no blocks exist (syncFirstTextBlockToDescription copies first text block into Description). #}
