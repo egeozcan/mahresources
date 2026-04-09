@@ -127,7 +127,7 @@ Embeds MRQL query results inline. Executes a query and renders the results in on
 
 **For aggregated GROUP BY queries:** Always renders as an HTML table of aggregated rows (column headers from the GROUP BY fields and aggregate functions).
 
-**For bucketed GROUP BY queries:** Renders collapsible bucket groups, each with a header showing the key values and count, and the items inside rendered using the specified format.
+**For bucketed GROUP BY queries:** Renders bucket groups, each with a header bar showing the key values and item count, followed by the items rendered using the specified format.
 
 ### Nesting
 

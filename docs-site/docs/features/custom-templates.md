@@ -319,11 +319,17 @@ The `sectionConfig` is a JSON object. Each key corresponds to a section on the d
   "groups": true,
   "tags": true,
   "versions": true,
-  "similar": true,
+  "similarResources": true,
   "series": true,
   "metaJson": true,
   "metaSchemaDisplay": true,
   "description": true,
+  "previewImage": true,
+  "imageOperations": true,
+  "categoryLink": true,
+  "fileSize": true,
+  "owner": true,
+  "breadcrumb": true,
   "technicalDetails": {
     "state": "default"
   }
@@ -358,7 +364,7 @@ To hide a section, set its key to `false`. For example, to hide timestamps and t
 
 ## Custom MRQL Result Templates
 
-Categories, Resource Categories, and Note Types can define a `customMRQLResult` field containing a Pongo2/shortcode template that controls how entities of that type render in `[mrql]` shortcode results.
+Categories, Resource Categories, and Note Types can define a `customMRQLResult` field containing a shortcode template that controls how entities of that type render in `[mrql]` shortcode results. The template is processed by the shortcode engine (not Pongo2), so `[meta]`, `[property]`, and nested `[mrql]` shortcodes work, but `{{ }}` expressions do not.
 
 ### How It Works
 

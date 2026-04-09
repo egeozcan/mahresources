@@ -160,7 +160,7 @@ Resources connect to other entities in several ways:
 
 ## Auto-Detect Rules
 
-Resource Categories can define auto-detect rules that automatically assign a category when a resource is uploaded. When rules are configured, the resource category selection becomes optional on the upload form — the system matches the uploaded file's properties against all defined rules and picks the best match.
+Resource Categories can define auto-detect rules that automatically assign a category when a resource is uploaded. The resource category field is always optional on the upload form — when omitted, the system matches the uploaded file's properties against all defined rules and picks the best match. If no rules match, the system default category is used.
 
 ### Rule Format
 
