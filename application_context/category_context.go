@@ -134,8 +134,6 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 	category.MetaSchema = categoryQuery.MetaSchema
 	if categoryQuery.SectionConfig != "" {
 		category.SectionConfig = types.JSON(categoryQuery.SectionConfig)
-	} else {
-		category.SectionConfig = nil
 	}
 
 	if err := ctx.db.Save(&category).Error; err != nil {

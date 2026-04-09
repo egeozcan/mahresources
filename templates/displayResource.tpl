@@ -149,7 +149,7 @@
                             >⧉</button></dd>
                         </div>
                         {% endif %}
-                        {% if resource.Description %}
+                        {% if sc.Description && resource.Description %}
                         <div class="group relative bg-stone-50 border border-stone-200 hover:border-stone-300 rounded-lg px-4 py-3 col-span-2 md:col-span-3">
                             <dt class="text-xs text-stone-500 font-mono">Description</dt>
                             <dd class="text-sm mt-0.5 font-sans">{{ resource.Description }}

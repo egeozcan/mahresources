@@ -106,8 +106,6 @@ func (ctx *MahresourcesContext) UpdateResourceCategory(query *query_models.Resou
 	resourceCategory.AutoDetectRules = query.AutoDetectRules
 	if query.SectionConfig != "" {
 		resourceCategory.SectionConfig = types.JSON(query.SectionConfig)
-	} else {
-		resourceCategory.SectionConfig = nil
 	}
 
 	if err := ctx.db.Save(&resourceCategory).Error; err != nil {

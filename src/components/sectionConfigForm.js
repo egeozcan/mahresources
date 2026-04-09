@@ -15,7 +15,7 @@ export function sectionConfigForm(initialJson, type) {
     };
     const defaults = type === 'group' ? groupDefaults : resourceDefaults;
     let parsed = {};
-    try { parsed = initialJson ? JSON.parse(initialJson) : {}; } catch { parsed = {}; }
+    try { parsed = initialJson ? JSON.parse(initialJson) || {} : {}; } catch { parsed = {}; }
     // Deep merge: defaults first, then parsed overrides
     const config = JSON.parse(JSON.stringify(defaults));
     for (const [k, v] of Object.entries(parsed)) {
