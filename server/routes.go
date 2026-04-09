@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"mahresources/server/api_handlers"
 	"mahresources/server/template_handlers"
 	"mahresources/server/template_handlers/template_context_providers"
+	template_filters "mahresources/server/template_handlers/template_filters"
 	"mahresources/shortcodes"
 )
 
@@ -99,11 +101,21 @@ var templates = map[string]templateInformation{
 
 func wrapContextWithPlugins(appContext *application_context.MahresourcesContext, ctxFn func(request *http.Request) pongo2.Context) func(request *http.Request) pongo2.Context {
 	pm := appContext.PluginManager()
-	if pm == nil {
-		return ctxFn
-	}
 	return func(request *http.Request) pongo2.Context {
 		ctx := ctxFn(request)
+
+		// Always set — needed for [mrql] shortcodes even without plugins
+		ctx["_appContext"] = appContext
+		ctx["_requestContext"] = request.Context()
+
+		if pm == nil {
+			if strings.HasSuffix(request.URL.Path, ".json") ||
+				strings.Contains(request.Header.Get("Accept"), constants.JSON) {
+				processShortcodesForJSON(ctx, nil, appContext, request.Context())
+			}
+			return ctx
+		}
+
 		ctx["_pluginManager"] = pm
 		ctx["currentPath"] = request.URL.Path
 		ctx["pluginMenuItems"] = pm.GetMenuItems()
@@ -134,7 +146,7 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		// pongo2 template (and its {% process_shortcodes %} tag) won't execute.
 		if strings.HasSuffix(request.URL.Path, ".json") ||
 			strings.Contains(request.Header.Get("Accept"), constants.JSON) {
-			processShortcodesForJSON(ctx, pm)
+			processShortcodesForJSON(ctx, pm, appContext, request.Context())
 		}
 
 		return ctx
@@ -165,7 +177,7 @@ func buildEntityDataFromEntity(entity any, entityType string) map[string]any {
 // entity categories/types so that JSON API consumers (e.g., the lightbox)
 // receive expanded HTML instead of raw [meta ...] shortcode text.
 // Only called for JSON responses — HTML responses use the process_shortcodes template tag.
-func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManager) {
+func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManager, appCtx *application_context.MahresourcesContext, reqCtx context.Context) {
 	mainEntity := ctx["mainEntity"]
 	entityType, _ := ctx["mainEntityType"].(string)
 	if mainEntity == nil || entityType == "" {
@@ -179,6 +191,11 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 		}
 	}
 
+	var executor shortcodes.QueryExecutor
+	if appCtx != nil {
+		executor = template_filters.BuildQueryExecutor(appCtx)
+	}
+
 	switch entityType {
 	case "resource":
 		if r, ok := mainEntity.(*models.Resource); ok && r.ResourceCategory != nil {
@@ -187,11 +204,12 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 				EntityID:   r.ID,
 				Meta:       json.RawMessage(r.Meta),
 				MetaSchema: r.ResourceCategory.MetaSchema,
+				Entity:     r,
 			}
-			r.ResourceCategory.CustomHeader = shortcodes.Process(r.ResourceCategory.CustomHeader, metaCtx, pluginRenderer)
-			r.ResourceCategory.CustomSidebar = shortcodes.Process(r.ResourceCategory.CustomSidebar, metaCtx, pluginRenderer)
-			r.ResourceCategory.CustomSummary = shortcodes.Process(r.ResourceCategory.CustomSummary, metaCtx, pluginRenderer)
-			r.ResourceCategory.CustomAvatar = shortcodes.Process(r.ResourceCategory.CustomAvatar, metaCtx, pluginRenderer)
+			r.ResourceCategory.CustomHeader = shortcodes.Process(reqCtx, r.ResourceCategory.CustomHeader, metaCtx, pluginRenderer, executor)
+			r.ResourceCategory.CustomSidebar = shortcodes.Process(reqCtx, r.ResourceCategory.CustomSidebar, metaCtx, pluginRenderer, executor)
+			r.ResourceCategory.CustomSummary = shortcodes.Process(reqCtx, r.ResourceCategory.CustomSummary, metaCtx, pluginRenderer, executor)
+			r.ResourceCategory.CustomAvatar = shortcodes.Process(reqCtx, r.ResourceCategory.CustomAvatar, metaCtx, pluginRenderer, executor)
 		}
 	case "group":
 		if g, ok := mainEntity.(*models.Group); ok && g.Category != nil {
@@ -200,11 +218,12 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 				EntityID:   g.ID,
 				Meta:       json.RawMessage(g.Meta),
 				MetaSchema: g.Category.MetaSchema,
+				Entity:     g,
 			}
-			g.Category.CustomHeader = shortcodes.Process(g.Category.CustomHeader, metaCtx, pluginRenderer)
-			g.Category.CustomSidebar = shortcodes.Process(g.Category.CustomSidebar, metaCtx, pluginRenderer)
-			g.Category.CustomSummary = shortcodes.Process(g.Category.CustomSummary, metaCtx, pluginRenderer)
-			g.Category.CustomAvatar = shortcodes.Process(g.Category.CustomAvatar, metaCtx, pluginRenderer)
+			g.Category.CustomHeader = shortcodes.Process(reqCtx, g.Category.CustomHeader, metaCtx, pluginRenderer, executor)
+			g.Category.CustomSidebar = shortcodes.Process(reqCtx, g.Category.CustomSidebar, metaCtx, pluginRenderer, executor)
+			g.Category.CustomSummary = shortcodes.Process(reqCtx, g.Category.CustomSummary, metaCtx, pluginRenderer, executor)
+			g.Category.CustomAvatar = shortcodes.Process(reqCtx, g.Category.CustomAvatar, metaCtx, pluginRenderer, executor)
 		}
 	case "note":
 		if n, ok := mainEntity.(*models.Note); ok && n.NoteType != nil {
@@ -212,11 +231,12 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 				EntityType: "note",
 				EntityID:   n.ID,
 				Meta:       json.RawMessage(n.Meta),
+				Entity:     n,
 			}
-			n.NoteType.CustomHeader = shortcodes.Process(n.NoteType.CustomHeader, metaCtx, pluginRenderer)
-			n.NoteType.CustomSidebar = shortcodes.Process(n.NoteType.CustomSidebar, metaCtx, pluginRenderer)
-			n.NoteType.CustomSummary = shortcodes.Process(n.NoteType.CustomSummary, metaCtx, pluginRenderer)
-			n.NoteType.CustomAvatar = shortcodes.Process(n.NoteType.CustomAvatar, metaCtx, pluginRenderer)
+			n.NoteType.CustomHeader = shortcodes.Process(reqCtx, n.NoteType.CustomHeader, metaCtx, pluginRenderer, executor)
+			n.NoteType.CustomSidebar = shortcodes.Process(reqCtx, n.NoteType.CustomSidebar, metaCtx, pluginRenderer, executor)
+			n.NoteType.CustomSummary = shortcodes.Process(reqCtx, n.NoteType.CustomSummary, metaCtx, pluginRenderer, executor)
+			n.NoteType.CustomAvatar = shortcodes.Process(reqCtx, n.NoteType.CustomAvatar, metaCtx, pluginRenderer, executor)
 		}
 	}
 }

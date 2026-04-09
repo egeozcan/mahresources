@@ -1,11 +1,13 @@
 package template_filters
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"reflect"
 
 	"github.com/flosch/pongo2/v4"
+	"mahresources/application_context"
 	"mahresources/plugin_system"
 	"mahresources/shortcodes"
 )
@@ -50,7 +52,22 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 		}
 	}
 
-	result := shortcodes.Process(content, *metaCtx, pluginRenderer)
+	var executor shortcodes.QueryExecutor
+	if appCtxVal, ok := ctx.Public["_appContext"]; ok && appCtxVal != nil {
+		if appCtx, ok := appCtxVal.(*application_context.MahresourcesContext); ok && appCtx != nil {
+			executor = BuildQueryExecutor(appCtx)
+		}
+	}
+
+	// Use request context if available, otherwise background
+	reqCtx := context.Background()
+	if reqCtxVal, ok := ctx.Public["_requestContext"]; ok && reqCtxVal != nil {
+		if rc, ok := reqCtxVal.(context.Context); ok {
+			reqCtx = rc
+		}
+	}
+
+	result := shortcodes.Process(reqCtx, content, *metaCtx, pluginRenderer, executor)
 	if _, writeErr := writer.WriteString(result); writeErr != nil {
 		return ctx.Error(fmt.Sprintf("process_shortcodes: write error: %s", writeErr), nil)
 	}
@@ -107,6 +124,7 @@ func buildMetaContext(entity any) *shortcodes.MetaShortcodeContext {
 		EntityID:   id,
 		Meta:       metaJSON,
 		MetaSchema: metaSchema,
+		Entity:     entity,
 	}
 }
 
