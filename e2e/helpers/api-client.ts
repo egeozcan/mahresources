@@ -32,6 +32,8 @@ export interface NoteType extends Entity {
   CustomSidebar?: string;
   CustomSummary?: string;
   CustomAvatar?: string;
+  MetaSchema?: string;
+  SectionConfig?: string;
 }
 
 export interface Group extends Entity {
@@ -289,10 +291,20 @@ export class ApiClient {
   }
 
   // NoteType operations
-  async createNoteType(name: string, description?: string): Promise<NoteType> {
+  async createNoteType(
+    name: string,
+    description?: string,
+    options?: Partial<NoteType>
+  ): Promise<NoteType> {
     const formData = new URLSearchParams();
     formData.append('name', name);
     if (description) formData.append('Description', description);
+    if (options?.CustomHeader) formData.append('CustomHeader', options.CustomHeader);
+    if (options?.CustomSidebar) formData.append('CustomSidebar', options.CustomSidebar);
+    if (options?.CustomSummary) formData.append('CustomSummary', options.CustomSummary);
+    if (options?.CustomAvatar) formData.append('CustomAvatar', options.CustomAvatar);
+    if (options?.MetaSchema) formData.append('MetaSchema', options.MetaSchema);
+    if (options?.SectionConfig) formData.append('SectionConfig', options.SectionConfig);
 
     return this.postRetry<NoteType>(`${this.baseUrl}/v1/note/noteType`, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
