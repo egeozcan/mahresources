@@ -78,6 +78,7 @@
         {% include "/partials/form/createFormTextareaInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=noteType.CustomSidebar %}
         {% include "/partials/form/createFormTextareaInput.tpl" with title="Custom Summary" name="CustomSummary" value=noteType.CustomSummary %}
         {% include "/partials/form/createFormTextareaInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=noteType.CustomAvatar %}
+        {% include "/partials/form/createFormTextareaInput.tpl" with title="Custom MRQL Result" name="CustomMRQLResult" value=noteType.CustomMRQLResult %}
     </fieldset>
     <div class="flex gap-2 items-start">
         <div class="flex-1">
