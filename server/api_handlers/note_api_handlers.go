@@ -268,6 +268,12 @@ func GetAddNoteTypeHandler(ctx interfaces.NoteTypeWriter) func(writer http.Respo
 					if _, sent := raw["CustomAvatar"]; !sent {
 						editor.CustomAvatar = existing.CustomAvatar
 					}
+					if _, sent := raw["MetaSchema"]; !sent {
+						editor.MetaSchema = existing.MetaSchema
+					}
+					if _, sent := raw["SectionConfig"]; !sent {
+						editor.SectionConfig = string(existing.SectionConfig)
+					}
 				}
 			}
 		} else {
@@ -294,6 +300,12 @@ func GetAddNoteTypeHandler(ctx interfaces.NoteTypeWriter) func(writer http.Respo
 					}
 					if editor.CustomAvatar == "" && !formHasField(request, "CustomAvatar") {
 						editor.CustomAvatar = existing.CustomAvatar
+					}
+					if editor.MetaSchema == "" && !formHasField(request, "MetaSchema") {
+						editor.MetaSchema = existing.MetaSchema
+					}
+					if editor.SectionConfig == "" && !formHasField(request, "SectionConfig") {
+						editor.SectionConfig = string(existing.SectionConfig)
 					}
 				}
 			}
