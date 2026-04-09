@@ -353,6 +353,9 @@ func CreateCategoryHandler(ctx interfaces.CategoryCRUDReader) http.HandlerFunc {
 				if !fieldWasSent("MetaSchema") {
 					editor.MetaSchema = existing.MetaSchema
 				}
+				if !fieldWasSent("SectionConfig") {
+					editor.SectionConfig = string(existing.SectionConfig)
+				}
 			}
 			result, err = ctx.UpdateCategory(&editor)
 		} else {
@@ -446,6 +449,9 @@ func CreateResourceCategoryHandler(writer interfaces.ResourceCategoryWriter) htt
 				}
 				if !fieldWasSent("AutoDetectRules") {
 					editor.AutoDetectRules = existing.AutoDetectRules
+				}
+				if !fieldWasSent("SectionConfig") {
+					editor.SectionConfig = string(existing.SectionConfig)
 				}
 			}
 			result, err = writer.UpdateResourceCategory(&editor)

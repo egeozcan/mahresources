@@ -316,7 +316,15 @@ func ResourceContextProvider(context *application_context.MahresourcesContext) f
 			"mainEntityType": "resource",
 		}
 
-		if resource.OwnerId != nil {
+		var sectionConfig models.ResourceSectionConfig
+		if resource.ResourceCategory != nil {
+			sectionConfig = models.ResolveResourceSectionConfig(&resource.ResourceCategory.SectionConfig)
+		} else {
+			sectionConfig = models.ResolveResourceSectionConfig(nil)
+		}
+		result["sc"] = sectionConfig
+
+		if resource.OwnerId != nil && sectionConfig.Breadcrumb {
 			parents, err := context.FindParentsOfGroup(*resource.OwnerId)
 
 			if err != nil {

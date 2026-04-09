@@ -14,6 +14,7 @@ export interface Category extends Entity {
   CustomSummary?: string;
   CustomAvatar?: string;
   MetaSchema?: string;
+  SectionConfig?: string;
 }
 
 export interface ResourceCategory extends Entity {
@@ -23,6 +24,7 @@ export interface ResourceCategory extends Entity {
   CustomAvatar?: string;
   MetaSchema?: string;
   AutoDetectRules?: string;
+  SectionConfig?: string;
 }
 
 export interface NoteType extends Entity {
@@ -229,6 +231,7 @@ export class ApiClient {
     if (options?.CustomSummary) formData.append('CustomSummary', options.CustomSummary);
     if (options?.CustomAvatar) formData.append('CustomAvatar', options.CustomAvatar);
     if (options?.MetaSchema) formData.append('MetaSchema', options.MetaSchema);
+    if (options?.SectionConfig) formData.append('SectionConfig', options.SectionConfig);
 
     return this.postRetry<Category>(`${this.baseUrl}/v1/category`, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -256,6 +259,7 @@ export class ApiClient {
       CustomAvatar?: string;
       MetaSchema?: string;
       AutoDetectRules?: string;
+      SectionConfig?: string;
     }
   ): Promise<ResourceCategory> {
     const formData = new URLSearchParams();
@@ -267,6 +271,7 @@ export class ApiClient {
     if (options?.CustomAvatar) formData.append('CustomAvatar', options.CustomAvatar);
     if (options?.MetaSchema) formData.append('MetaSchema', options.MetaSchema);
     if (options?.AutoDetectRules) formData.append('AutoDetectRules', options.AutoDetectRules);
+    if (options?.SectionConfig) formData.append('SectionConfig', options.SectionConfig);
 
     return this.postRetry<ResourceCategory>(`${this.baseUrl}/v1/resourceCategory`, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

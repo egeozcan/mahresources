@@ -309,10 +309,18 @@ func groupContextProviderImpl(context interfaces.GroupReader) func(request *http
 			prefix = "Uncategorized"
 		}
 
-		return pongo2.Context{
+		var sectionConfig models.GroupSectionConfig
+		if group.Category != nil {
+			sectionConfig = models.ResolveGroupSectionConfig(&group.Category.SectionConfig)
+		} else {
+			sectionConfig = models.ResolveGroupSectionConfig(nil)
+		}
+
+		result := pongo2.Context{
 			"pageTitle": "Group: " + group.GetName(),
 			"prefix":    prefix,
 			"group":     group,
+			"sc":        sectionConfig,
 			"action": template_entities.Entry{
 				Name: "Edit",
 				Url:  "/group/edit?id=" + strconv.Itoa(int(query.ID)),
@@ -323,12 +331,17 @@ func groupContextProviderImpl(context interfaces.GroupReader) func(request *http
 			},
 			"mainEntity":     group,
 			"mainEntityType": "group",
-			"breadcrumb": pongo2.Context{
+		}
+
+		if sectionConfig.Breadcrumb {
+			result["breadcrumb"] = pongo2.Context{
 				"HomeName": "Groups",
 				"HomeUrl":  "groups",
 				"Entries":  breadcrumbEls,
-			},
-		}.Update(baseContext)
+			}
+		}
+
+		return result.Update(baseContext)
 	}
 }
 

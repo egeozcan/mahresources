@@ -1,6 +1,7 @@
 package models
 
 import (
+	"mahresources/models/types"
 	"time"
 )
 
@@ -25,6 +26,8 @@ type ResourceCategory struct {
 	MetaSchema string `gorm:"type:text"`
 	// AutoDetectRules is a JSON rule set for auto-detecting this category on upload
 	AutoDetectRules string `gorm:"type:text"`
+	// SectionConfig is a JSON config controlling which sections are visible on resource detail pages
+	SectionConfig types.JSON `json:"sectionConfig"`
 }
 
 func (c ResourceCategory) GetId() uint {

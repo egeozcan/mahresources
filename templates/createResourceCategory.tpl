@@ -88,6 +88,8 @@
 
     {% include "/partials/form/createFormTextareaInput.tpl" with title="Auto-Detect Rules" name="AutoDetectRules" value=resourceCategory.AutoDetectRules big=true %}
 
+    {% include "/partials/sectionConfigForm.tpl" with sectionConfigValue=resourceCategory.SectionConfig sectionConfigType="resource" %}
+
     {% include "/partials/form/createFormSubmit.tpl" %}
 </form>
 {% endblock %}

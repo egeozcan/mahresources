@@ -6,8 +6,11 @@
         {% process_shortcodes resource.ResourceCategory.CustomHeader resource %}
     </div>
 
+    {% if sc.Description %}
     {% include "/partials/description.tpl" with description=resource.Description descriptionEditUrl="/v1/resource/editDescription" descriptionEditId=resource.ID %}
+    {% endif %}
 
+    {% if sc.MetaSchemaDisplay %}
     {% if resource.ResourceCategory.MetaSchema && resource.Meta %}
     <schema-editor mode="display"
         schema='{{ resource.ResourceCategory.MetaSchema }}'
@@ -15,12 +18,15 @@
         name="{{ resource.ResourceCategory.Name }}">
     </schema-editor>
     {% endif %}
+    {% endif %}
 
+    {% if sc.MetadataGrid || sc.TechnicalDetails.State != "off" %}
     <div class="detail-panel" aria-label="Resource metadata">
         <div class="detail-panel-header">
             <h2 class="detail-panel-title">Metadata</h2>
         </div>
         <div class="detail-panel-body">
+            {% if sc.MetadataGrid %}
             <dl class="grid grid-cols-2 md:grid-cols-3 gap-3" x-data>
                 {% if resource.Name %}
                 <div class="group relative bg-stone-50 border border-stone-200 hover:border-stone-300 rounded-lg px-4 py-3">
@@ -58,6 +64,7 @@
                     >⧉</button></dd>
                 </div>
                 {% endif %}
+                {% if sc.Timestamps %}
                 <div class="group relative bg-stone-50 border border-stone-200 hover:border-stone-300 rounded-lg px-4 py-3">
                     <dt class="text-xs text-stone-500 font-mono">Created</dt>
                     <dd class="text-sm mt-0.5">{{ resource.CreatedAt|date:"Jan 02, 2006 15:04" }}
@@ -78,8 +85,11 @@
                         @click="updateClipboard('{{ resource.UpdatedAt|date:"2006-01-02T15:04:05Z07:00" }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
                     >⧉</button></dd>
                 </div>
+                {% endif %}
             </dl>
-            <details class="detail-collapsible mt-3">
+            {% endif %}
+            {% if sc.TechnicalDetails.State != "off" %}
+            <details class="detail-collapsible mt-3" {% if sc.TechnicalDetails.State == "open" %}open{% endif %}>
                 <summary>Technical Details</summary>
                 <div class="detail-panel-body">
                     <dl class="grid grid-cols-2 md:grid-cols-3 gap-3" x-data>
@@ -141,7 +151,7 @@
                             >⧉</button></dd>
                         </div>
                         {% endif %}
-                        {% if resource.Description %}
+                        {% if sc.Description && resource.Description %}
                         <div class="group relative bg-stone-50 border border-stone-200 hover:border-stone-300 rounded-lg px-4 py-3 col-span-2 md:col-span-3">
                             <dt class="text-xs text-stone-500 font-mono">Description</dt>
                             <dd class="text-sm mt-0.5 font-sans">{{ resource.Description }}
@@ -156,12 +166,19 @@
                     </dl>
                 </div>
             </details>
+            {% endif %}
         </div>
     </div>
+    {% endif %}
 
+    {% if sc.Notes %}
     {% include "/partials/seeAll.tpl" with entities=resource.Notes subtitle="Notes" formAction="/notes" formID=resource.ID formParamName="resources" templateName="note" %}
+    {% endif %}
+    {% if sc.Groups %}
     {% include "/partials/seeAll.tpl" with entities=resource.Groups subtitle="Groups" formAction="/groups" formID=resource.ID formParamName="resources" templateName="group" %}
+    {% endif %}
 
+    {% if sc.Series %}
     {% if resource.Series %}
     <div class="detail-panel">
         <div class="detail-panel-header">
@@ -187,7 +204,9 @@
         {% endif %}
     </div>
     {% endif %}
+    {% endif %}
 
+    {% if sc.SimilarResources %}
     {% if similarResources %}
         <div class="detail-panel">
             <div class="detail-panel-header">
@@ -218,8 +237,11 @@
             <div class="mt-2">{% include "/partials/form/searchButton.tpl" with text="Merge Others To This" %}</div>
         </form>
     {% endif %}
+    {% endif %}
 
+    {% if sc.Versions %}
     {% include "/partials/versionPanel.tpl" with versions=versions currentVersionId=resource.CurrentVersionID resourceId=resource.ID %}
+    {% endif %}
     {% plugin_slot "resource_detail_after" %}
 {% endblock %}
 
@@ -232,24 +254,35 @@
         <div x-data="{ entity: {{ resource|json }} }">
             {% process_shortcodes resource.ResourceCategory.CustomSidebar resource %}
         </div>
+        {% if sc.Owner %}
         {% include "/partials/ownerDisplay.tpl" with owner=resource.Owner %}
+        {% endif %}
+        {% if sc.FileSize %}
         <p>{{ resource.FileSize | humanReadableSize }}</p>
+        {% endif %}
     </div>
 
+    {% if sc.PreviewImage %}
     <div class="sidebar-group">
         <a href="/v1/resource/view?id={{ resource.ID }}&v={{ resource.Hash }}#{{ resource.ContentType }}">
             <img height="300" src="/v1/resource/preview?id={{ resource.ID }}&height=300&v={{ resource.Hash }}" alt="Preview of {{ resource.Name }}">
         </a>
     </div>
+    {% endif %}
 
     <div class="sidebar-group">
+        {% if sc.Tags %}
         {% include "/partials/tagList.tpl" with tags=resource.Tags addTagUrl='/v1/resources/addTags' id=resource.ID %}
+        {% endif %}
+        {% if sc.CategoryLink %}
         {% if resource.ResourceCategory %}
             {% include "/partials/sideTitle.tpl" with title="Resource Category" %}
             <a href="/resourceCategory?id={{ resource.ResourceCategory.ID }}">{{ resource.ResourceCategory.Name }}</a>
         {% endif %}
+        {% endif %}
     </div>
 
+    {% if sc.ImageOperations %}
     {% if isImage %}
     <div class="sidebar-group">
         {% include "/partials/sideTitle.tpl" with title="Update Dimensions" %}
@@ -265,10 +298,13 @@
         </form>
     </div>
     {% endif %}
+    {% endif %}
 
+    {% if sc.MetaJson %}
     <div class="sidebar-group">
         {% include "/partials/json.tpl" with jsonData=resource.Meta %}
     </div>
+    {% endif %}
 
     <div class="sidebar-group">
         {% include "partials/pluginActionsSidebar.tpl" with entityId=resource.ID entityType="resource" %}
