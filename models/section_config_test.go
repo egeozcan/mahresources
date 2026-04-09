@@ -321,3 +321,94 @@ func TestResolveGroupSectionConfig_EmptyStateString(t *testing.T) {
 		t.Errorf("Empty state string should default, got %q", cfg.OwnEntities.State)
 	}
 }
+
+func TestResolveNoteSectionConfig_NilInput(t *testing.T) {
+	cfg := ResolveNoteSectionConfig(nil)
+
+	assert.True(t, cfg.Content)
+	assert.True(t, cfg.Groups)
+	assert.True(t, cfg.Resources)
+	assert.True(t, cfg.Timestamps)
+	assert.True(t, cfg.Tags)
+	assert.True(t, cfg.MetaJson)
+	assert.True(t, cfg.MetaSchemaDisplay)
+	assert.True(t, cfg.Owner)
+	assert.True(t, cfg.NoteTypeLink)
+	assert.True(t, cfg.Share)
+}
+
+func TestResolveNoteSectionConfig_EmptyJSON(t *testing.T) {
+	input := types.JSON(`{}`)
+	cfg := ResolveNoteSectionConfig(&input)
+
+	assert.True(t, cfg.Content)
+	assert.True(t, cfg.Groups)
+	assert.True(t, cfg.Resources)
+	assert.True(t, cfg.Timestamps)
+	assert.True(t, cfg.Tags)
+	assert.True(t, cfg.MetaJson)
+	assert.True(t, cfg.MetaSchemaDisplay)
+	assert.True(t, cfg.Owner)
+	assert.True(t, cfg.NoteTypeLink)
+	assert.True(t, cfg.Share)
+}
+
+func TestResolveNoteSectionConfig_PartialJSON(t *testing.T) {
+	input := types.JSON(`{"tags": false, "content": false}`)
+	cfg := ResolveNoteSectionConfig(&input)
+
+	assert.False(t, cfg.Tags)
+	assert.False(t, cfg.Content)
+
+	assert.True(t, cfg.Groups)
+	assert.True(t, cfg.Resources)
+	assert.True(t, cfg.Timestamps)
+	assert.True(t, cfg.MetaJson)
+	assert.True(t, cfg.MetaSchemaDisplay)
+	assert.True(t, cfg.Owner)
+	assert.True(t, cfg.NoteTypeLink)
+	assert.True(t, cfg.Share)
+}
+
+func TestResolveNoteSectionConfig_CompleteJSON(t *testing.T) {
+	input := types.JSON(`{
+		"content": false,
+		"groups": false,
+		"resources": false,
+		"timestamps": false,
+		"tags": false,
+		"metaJson": false,
+		"metaSchemaDisplay": false,
+		"owner": false,
+		"noteTypeLink": false,
+		"share": false
+	}`)
+	cfg := ResolveNoteSectionConfig(&input)
+
+	assert.False(t, cfg.Content)
+	assert.False(t, cfg.Groups)
+	assert.False(t, cfg.Resources)
+	assert.False(t, cfg.Timestamps)
+	assert.False(t, cfg.Tags)
+	assert.False(t, cfg.MetaJson)
+	assert.False(t, cfg.MetaSchemaDisplay)
+	assert.False(t, cfg.Owner)
+	assert.False(t, cfg.NoteTypeLink)
+	assert.False(t, cfg.Share)
+}
+
+func TestResolveNoteSectionConfig_InvalidJSON(t *testing.T) {
+	input := types.JSON(`{{{invalid`)
+	cfg := ResolveNoteSectionConfig(&input)
+
+	assert.True(t, cfg.Content)
+	assert.True(t, cfg.Groups)
+	assert.True(t, cfg.Resources)
+	assert.True(t, cfg.Timestamps)
+	assert.True(t, cfg.Tags)
+	assert.True(t, cfg.MetaJson)
+	assert.True(t, cfg.MetaSchemaDisplay)
+	assert.True(t, cfg.Owner)
+	assert.True(t, cfg.NoteTypeLink)
+	assert.True(t, cfg.Share)
+}

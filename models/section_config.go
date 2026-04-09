@@ -296,3 +296,62 @@ func ResolveResourceSectionConfig(data *types.JSON) ResourceSectionConfig {
 
 	return cfg
 }
+
+// NoteSectionConfig controls which sections are visible on a note detail page.
+type NoteSectionConfig struct {
+	Content           bool `json:"content"`
+	Groups            bool `json:"groups"`
+	Resources         bool `json:"resources"`
+	Timestamps        bool `json:"timestamps"`
+	Tags              bool `json:"tags"`
+	MetaJson          bool `json:"metaJson"`
+	MetaSchemaDisplay bool `json:"metaSchemaDisplay"`
+	Owner             bool `json:"owner"`
+	NoteTypeLink      bool `json:"noteTypeLink"`
+	Share             bool `json:"share"`
+}
+
+type rawNoteSectionConfig struct {
+	Content           *bool `json:"content"`
+	Groups            *bool `json:"groups"`
+	Resources         *bool `json:"resources"`
+	Timestamps        *bool `json:"timestamps"`
+	Tags              *bool `json:"tags"`
+	MetaJson          *bool `json:"metaJson"`
+	MetaSchemaDisplay *bool `json:"metaSchemaDisplay"`
+	Owner             *bool `json:"owner"`
+	NoteTypeLink      *bool `json:"noteTypeLink"`
+	Share             *bool `json:"share"`
+}
+
+// ResolveNoteSectionConfig parses JSON into a NoteSectionConfig, filling
+// missing keys with defaults (all bools default to true).
+func ResolveNoteSectionConfig(data *types.JSON) NoteSectionConfig {
+	defaults := NoteSectionConfig{
+		Content: true, Groups: true, Resources: true, Timestamps: true,
+		Tags: true, MetaJson: true, MetaSchemaDisplay: true,
+		Owner: true, NoteTypeLink: true, Share: true,
+	}
+
+	if data == nil || len(*data) == 0 {
+		return defaults
+	}
+
+	var raw rawNoteSectionConfig
+	if err := json.Unmarshal([]byte(*data), &raw); err != nil {
+		return defaults
+	}
+
+	return NoteSectionConfig{
+		Content:           boolDefault(raw.Content, true),
+		Groups:            boolDefault(raw.Groups, true),
+		Resources:         boolDefault(raw.Resources, true),
+		Timestamps:        boolDefault(raw.Timestamps, true),
+		Tags:              boolDefault(raw.Tags, true),
+		MetaJson:          boolDefault(raw.MetaJson, true),
+		MetaSchemaDisplay: boolDefault(raw.MetaSchemaDisplay, true),
+		Owner:             boolDefault(raw.Owner, true),
+		NoteTypeLink:      boolDefault(raw.NoteTypeLink, true),
+		Share:             boolDefault(raw.Share, true),
+	}
+}
