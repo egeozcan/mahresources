@@ -9,6 +9,8 @@ export class MRQLPage {
   readonly savedQueriesSection: Locator;
   readonly errorAlert: Locator;
   readonly validationError: Locator;
+  readonly docsButton: Locator;
+  readonly docsPanel: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -19,6 +21,8 @@ export class MRQLPage {
     this.savedQueriesSection = page.locator('section[aria-label="Saved queries"]');
     this.errorAlert = page.locator('[role="alert"]');
     this.validationError = page.locator('section[aria-label="MRQL query editor"] [role="alert"]');
+    this.docsButton = page.locator('[aria-controls="mrql-docs-panel"]');
+    this.docsPanel = page.locator('#mrql-docs-panel');
   }
 
   async navigate() {
@@ -26,6 +30,17 @@ export class MRQLPage {
     await this.page.waitForLoadState('load');
     // Wait for CodeMirror to initialize
     await this.editorContainer.locator('.cm-editor').waitFor({ state: 'visible', timeout: 15000 });
+  }
+
+  /**
+   * Open the docs panel (idempotent — does nothing if already open).
+   */
+  async openDocs() {
+    const expanded = await this.docsButton.getAttribute('aria-expanded');
+    if (expanded !== 'true') {
+      await this.docsButton.click();
+    }
+    await this.docsPanel.waitFor({ state: 'visible', timeout: 5000 });
   }
 
   /**

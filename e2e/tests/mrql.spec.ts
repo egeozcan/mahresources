@@ -183,6 +183,71 @@ test.describe('MRQL Page', () => {
   });
 });
 
+test.describe('MRQL Docs Panel', () => {
+  const expectedHeadings = [
+    'Syntax Overview',
+    'Entity Types',
+    'Common Fields',
+    'Resource Fields',
+    'Note Fields',
+    'Group Fields',
+    'Operators',
+    'Wildcards in',
+    'Full-Text Search',
+    'Existence Checks',
+    'Set Membership',
+    'Boolean Logic',
+    'Relative Dates',
+    'Date Functions',
+    'File Size Units',
+    'String Escaping',
+    'Traversal',
+    'Cross-Entity Queries',
+    'ORDER BY / LIMIT / OFFSET',
+    'GROUP BY',
+    'Examples',
+  ];
+
+  test('docs panel shows all section headings', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+    await mrql.openDocs();
+
+    const headings = mrql.docsPanel.locator('h3');
+    const count = await headings.count();
+    expect(count).toBe(expectedHeadings.length);
+
+    for (const heading of expectedHeadings) {
+      await expect(mrql.docsPanel.locator('h3', { hasText: heading }).first()).toBeVisible();
+    }
+  });
+
+  test('docs panel renders example code blocks', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+    await mrql.openDocs();
+
+    const preBlocks = mrql.docsPanel.locator('pre');
+    const preCount = await preBlocks.count();
+    // At least 20 pre blocks across all sections
+    expect(preCount).toBeGreaterThanOrEqual(20);
+
+    // Spot-check a few example blocks
+    await expect(mrql.docsPanel.locator('pre', { hasText: 'contentType ~ "image/*"' })).toBeVisible();
+    await expect(mrql.docsPanel.locator('pre', { hasText: 'TEXT ~ "quarterly earnings"' })).toBeVisible();
+  });
+
+  test('openDocs is idempotent', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+
+    // Call openDocs twice — panel should stay open
+    await mrql.openDocs();
+    await mrql.openDocs();
+    await expect(mrql.docsPanel).toBeVisible();
+  });
+});
+
 test.describe('MRQL GROUP BY', () => {
   // Track created entity IDs for cleanup
   let categoryId: number;

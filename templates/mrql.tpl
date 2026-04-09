@@ -31,7 +31,9 @@
             </div>
             <div>
                 <h3 class="font-semibold text-stone-700">Entity Types</h3>
-                <p>Filter by entity type with <code class="bg-stone-200 px-1 rounded">type = resource|note|group</code>. Omit for cross-entity search.</p>
+                <p class="text-xs">Filter by entity type with <code class="bg-stone-200 px-1 rounded">type = resource|note|group</code>. Omit for cross-entity search.</p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND name ~ "photo"</pre>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = note AND tags = "todo"</pre>
             </div>
             <div>
                 <h3 class="font-semibold text-stone-700">Common Fields</h3>
@@ -44,11 +46,12 @@
                     <code class="bg-stone-200 px-1 rounded">tags</code>,
                     <code class="bg-stone-200 px-1 rounded">meta.*</code>
                 </p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">name ~ "budget" AND created > -30d</pre>
             </div>
             <div>
                 <h3 class="font-semibold text-stone-700">Resource Fields</h3>
                 <p class="text-xs">
-                    <code class="bg-stone-200 px-1 rounded">groups</code>,
+                    <code class="bg-stone-200 px-1 rounded">groups</code> / <code class="bg-stone-200 px-1 rounded">group</code>,
                     <code class="bg-stone-200 px-1 rounded">owner</code>,
                     <code class="bg-stone-200 px-1 rounded">category</code>,
                     <code class="bg-stone-200 px-1 rounded">contentType</code>,
@@ -58,14 +61,16 @@
                     <code class="bg-stone-200 px-1 rounded">originalName</code>,
                     <code class="bg-stone-200 px-1 rounded">hash</code>
                 </p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND contentType ~ "image/*" AND fileSize > 5mb</pre>
             </div>
             <div>
                 <h3 class="font-semibold text-stone-700">Note Fields</h3>
                 <p class="text-xs">
-                    <code class="bg-stone-200 px-1 rounded">groups</code>,
+                    <code class="bg-stone-200 px-1 rounded">groups</code> / <code class="bg-stone-200 px-1 rounded">group</code>,
                     <code class="bg-stone-200 px-1 rounded">owner</code>,
                     <code class="bg-stone-200 px-1 rounded">noteType</code>
                 </p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = note AND owner = "Project Alpha" AND noteType = "2"</pre>
             </div>
             <div>
                 <h3 class="font-semibold text-stone-700">Group Fields</h3>
@@ -74,6 +79,7 @@
                     <code class="bg-stone-200 px-1 rounded">parent</code>,
                     <code class="bg-stone-200 px-1 rounded">children</code>
                 </p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = group AND parent IS EMPTY</pre>
             </div>
             <div>
                 <h3 class="font-semibold text-stone-700">Operators</h3>
@@ -85,8 +91,11 @@
                     <code class="bg-stone-200 px-1 rounded">&gt;</code> <code class="bg-stone-200 px-1 rounded">&gt;=</code> <code class="bg-stone-200 px-1 rounded">&lt;</code> <code class="bg-stone-200 px-1 rounded">&lt;=</code> comparison,
                     <code class="bg-stone-200 px-1 rounded">IS EMPTY</code>,
                     <code class="bg-stone-200 px-1 rounded">IS NULL</code>,
-                    <code class="bg-stone-200 px-1 rounded">IN ("a", "b")</code>
+                    <code class="bg-stone-200 px-1 rounded">IN ("a", "b")</code>.
+                    All string comparisons are case-insensitive.
                 </p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">name = "Report"</pre>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">fileSize > 1mb AND width >= 1920</pre>
             </div>
             <div>
                 <h3 class="font-semibold text-stone-700">Wildcards in <code class="bg-stone-200 px-1 rounded">~</code></h3>
@@ -94,12 +103,87 @@
                 Use <code class="bg-stone-200 px-1 rounded">*</code> (any characters) and <code class="bg-stone-200 px-1 rounded">?</code> (single character) for anchored patterns: <code>name ~ "project*"</code> matches only names starting with "project".</p>
             </div>
             <div>
+                <h3 class="font-semibold text-stone-700">Full-Text Search</h3>
+                <p class="text-xs"><code class="bg-stone-200 px-1 rounded">TEXT ~ "phrase"</code> searches across name, description, and content. Uses indexed full-text search when available, falls back to name/description substring match otherwise.</p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">TEXT ~ "quarterly earnings"</pre>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = note AND TEXT ~ "action items" ORDER BY created DESC</pre>
+            </div>
+            <div>
+                <h3 class="font-semibold text-stone-700">Existence Checks</h3>
+                <p class="text-xs"><code class="bg-stone-200 px-1 rounded">IS EMPTY</code> / <code class="bg-stone-200 px-1 rounded">IS NOT EMPTY</code> &mdash; empty string or null for scalar fields, no associations for relation fields.
+                <code class="bg-stone-200 px-1 rounded">IS NULL</code> / <code class="bg-stone-200 px-1 rounded">IS NOT NULL</code> &mdash; true null check; missing <code class="bg-stone-200 px-1 rounded">meta.*</code> keys read as NULL.</p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND description IS EMPTY</pre>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">meta.rating IS NOT NULL</pre>
+            </div>
+            <div>
+                <h3 class="font-semibold text-stone-700">Set Membership</h3>
+                <p class="text-xs"><code class="bg-stone-200 px-1 rounded">IN (...)</code> / <code class="bg-stone-200 px-1 rounded">NOT IN (...)</code>. Not supported on traversal chains/subfields (e.g. <code>owner.tags IN (...)</code> is invalid, but <code>tags IN (...)</code> and <code>groups IN (...)</code> work).</p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">contentType IN ("image/png", "image/jpeg", "image/webp")</pre>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND NOT (tags IN ("draft", "archived"))</pre>
+            </div>
+            <div>
+                <h3 class="font-semibold text-stone-700">Boolean Logic</h3>
+                <p class="text-xs"><code class="bg-stone-200 px-1 rounded">AND</code>, <code class="bg-stone-200 px-1 rounded">OR</code>, <code class="bg-stone-200 px-1 rounded">NOT</code> with parentheses. Precedence: NOT &gt; AND &gt; OR.</p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND (tags = "photo" OR tags = "video")</pre>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND NOT tags = "archived"</pre>
+            </div>
+            <div>
+                <h3 class="font-semibold text-stone-700">Relative Dates</h3>
+                <p class="text-xs">
+                    <code class="bg-stone-200 px-1 rounded">-Nd</code> days,
+                    <code class="bg-stone-200 px-1 rounded">-Nw</code> weeks,
+                    <code class="bg-stone-200 px-1 rounded">-Nm</code> months,
+                    <code class="bg-stone-200 px-1 rounded">-Ny</code> years.
+                </p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">created > -7d</pre>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">updated < -1y</pre>
+            </div>
+            <div>
+                <h3 class="font-semibold text-stone-700">Date Functions</h3>
+                <p class="text-xs">
+                    <code class="bg-stone-200 px-1 rounded">NOW()</code>,
+                    <code class="bg-stone-200 px-1 rounded">START_OF_DAY()</code>,
+                    <code class="bg-stone-200 px-1 rounded">START_OF_WEEK()</code>,
+                    <code class="bg-stone-200 px-1 rounded">START_OF_MONTH()</code>,
+                    <code class="bg-stone-200 px-1 rounded">START_OF_YEAR()</code>
+                </p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">created >= START_OF_WEEK()</pre>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">created >= START_OF_YEAR() AND updated < START_OF_MONTH()</pre>
+            </div>
+            <div>
+                <h3 class="font-semibold text-stone-700">File Size Units</h3>
+                <p class="text-xs">
+                    <code class="bg-stone-200 px-1 rounded">kb</code> (1,024),
+                    <code class="bg-stone-200 px-1 rounded">mb</code> (1,048,576),
+                    <code class="bg-stone-200 px-1 rounded">gb</code> (1,073,741,824)
+                    &mdash; case-insensitive.
+                </p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">fileSize > 10mb</pre>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">fileSize < 500kb</pre>
+            </div>
+            <div>
+                <h3 class="font-semibold text-stone-700">String Escaping</h3>
+                <p class="text-xs">Strings are double-quoted. Use <code class="bg-stone-200 px-1 rounded">\"</code> for a literal quote and <code class="bg-stone-200 px-1 rounded">\\</code> for a backslash.</p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">name = "O\"Brien"</pre>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">originalName ~ "C:\\Users\\*"</pre>
+            </div>
+            <div>
                 <h3 class="font-semibold text-stone-700">Traversal</h3>
-                <p class="text-xs">Use dotted paths to filter by related group properties:
-                <code class="bg-stone-200 px-1 rounded">owner.tags = "x"</code>,
-                <code class="bg-stone-200 px-1 rounded">owner.parent.name = "y"</code>,
-                <code class="bg-stone-200 px-1 rounded">parent.parent.tags = "z"</code>.
-                Chain up to 5 levels deep.</p>
+                <p class="text-xs">Use dotted paths to filter by related group properties. Chain up to 8 parts. <code class="bg-stone-200 px-1 rounded">IN</code> is not supported on traversal chains (use <code class="bg-stone-200 px-1 rounded">=</code> or <code class="bg-stone-200 px-1 rounded">!=</code> instead). <code class="bg-stone-200 px-1 rounded">IS EMPTY</code> is not supported on traversal subfields like <code>owner.name IS EMPTY</code> (use the base field <code>owner IS EMPTY</code> instead).</p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND owner.tags = "active"</pre>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND owner.parent.name = "Acme Corp"</pre>
+            </div>
+            <div>
+                <h3 class="font-semibold text-stone-700">Cross-Entity Queries</h3>
+                <p class="text-xs">Omit <code class="bg-stone-200 px-1 rounded">type</code> to search resources, notes, and groups simultaneously. Only common fields (<code class="bg-stone-200 px-1 rounded">id</code>, <code class="bg-stone-200 px-1 rounded">name</code>, <code class="bg-stone-200 px-1 rounded">description</code>, <code class="bg-stone-200 px-1 rounded">created</code>, <code class="bg-stone-200 px-1 rounded">updated</code>, <code class="bg-stone-200 px-1 rounded">tags</code>) are valid &mdash; entity-specific fields will be rejected. GROUP BY requires an explicit <code class="bg-stone-200 px-1 rounded">type</code>. ORDER BY is limited to <code class="bg-stone-200 px-1 rounded">name</code>, <code class="bg-stone-200 px-1 rounded">created</code>, <code class="bg-stone-200 px-1 rounded">updated</code>.</p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">name ~ "budget*" LIMIT 30</pre>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">tags = "urgent" LIMIT 50</pre>
+            </div>
+            <div>
+                <h3 class="font-semibold text-stone-700">ORDER BY / LIMIT / OFFSET</h3>
+                <p class="text-xs">Sort by scalar or <code class="bg-stone-200 px-1 rounded">meta.*</code> fields. Relation and traversal fields are not sortable. Multiple ORDER BY columns supported. In bucketed GROUP BY, ORDER BY applies within each bucket.</p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource ORDER BY created DESC LIMIT 20</pre>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = note ORDER BY updated ASC, name ASC LIMIT 50 OFFSET 100</pre>
             </div>
             <div>
                 <h3 class="font-semibold text-stone-700">GROUP BY</h3>
@@ -121,8 +205,11 @@
                 <pre class="bg-stone-100 p-2 rounded overflow-x-auto">type = resource AND contentType ~ "image" AND fileSize > 1MB</pre>
                 <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = note AND tags = "todo" ORDER BY updated DESC</pre>
                 <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">name ~ "project" AND created > -30d</pre>
+                <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = resource AND tags IS EMPTY AND created >= START_OF_WEEK()</pre>
+                <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = resource AND contentType IN ("image/png", "image/jpeg") AND width >= 1920</pre>
                 <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = resource GROUP BY contentType COUNT() ORDER BY count DESC</pre>
                 <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = resource GROUP BY meta.source COUNT() SUM(fileSize)</pre>
+                <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">TEXT ~ "quarterly review" LIMIT 30</pre>
             </div>
         </div>
 
