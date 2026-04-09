@@ -4,13 +4,14 @@ type ResourceCategoryCreator struct {
 	Name        string
 	Description string
 
-	CustomHeader    string
-	CustomSidebar   string
-	CustomSummary   string
-	CustomAvatar    string
-	MetaSchema      string
-	AutoDetectRules string
-	SectionConfig   string
+	CustomHeader     string
+	CustomSidebar    string
+	CustomSummary    string
+	CustomAvatar     string
+	CustomMRQLResult string
+	MetaSchema       string
+	AutoDetectRules  string
+	SectionConfig    string
 }
 
 type ResourceCategoryEditor struct {

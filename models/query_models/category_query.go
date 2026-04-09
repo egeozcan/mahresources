@@ -4,12 +4,13 @@ type CategoryCreator struct {
 	Name        string
 	Description string
 
-	CustomHeader  string
-	CustomSidebar string
-	CustomSummary string
-	CustomAvatar  string
-	MetaSchema    string
-	SectionConfig string
+	CustomHeader     string
+	CustomSidebar    string
+	CustomSummary    string
+	CustomAvatar     string
+	CustomMRQLResult string
+	MetaSchema       string
+	SectionConfig    string
 }
 
 type CategoryEditor struct {

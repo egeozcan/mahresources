@@ -4,6 +4,7 @@
 package shortcodes
 
 import (
+	"html"
 	"regexp"
 	"strings"
 )
@@ -70,6 +71,10 @@ func parseAttrs(s string) map[string]string {
 	if s == "" {
 		return attrs
 	}
+
+	// Unescape HTML entities so shortcodes work after markdown processing.
+	// Markdown converts " to &quot; which breaks attribute parsing.
+	s = html.UnescapeString(s)
 
 	matches := attrPattern.FindAllStringSubmatch(s, -1)
 	for _, m := range matches {

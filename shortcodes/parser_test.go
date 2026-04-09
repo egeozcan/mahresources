@@ -118,3 +118,19 @@ func TestParseMRQLBucketsAttr(t *testing.T) {
 	assert.Equal(t, "3", result[0].Attrs["buckets"])
 	assert.Equal(t, "5", result[0].Attrs["limit"])
 }
+
+func TestParseHTMLEntityEncodedAttrs(t *testing.T) {
+	// After markdown processing, " becomes &quot; — parser must handle this
+	result := Parse(`[property path=&quot;Name&quot;]`)
+	assert.Len(t, result, 1)
+	assert.Equal(t, "property", result[0].Name)
+	assert.Equal(t, "Name", result[0].Attrs["path"])
+}
+
+func TestParseMRQLWithHTMLEntityQuotes(t *testing.T) {
+	// MRQL query with &quot; from markdown processing
+	result := Parse(`[mrql query=&quot;type = 'resource'&quot; limit=&quot;10&quot;]`)
+	assert.Len(t, result, 1)
+	assert.Equal(t, "type = 'resource'", result[0].Attrs["query"])
+	assert.Equal(t, "10", result[0].Attrs["limit"])
+}
