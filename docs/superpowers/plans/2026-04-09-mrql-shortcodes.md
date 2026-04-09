@@ -1804,31 +1804,45 @@ func convertGroupedResultItems(result *application_context.MRQLGroupedResult, ap
 }
 ```
 
-- [ ] **Step 3: Check that `_appContext` and `_requestContext` are available in the pongo2 context**
+- [ ] **Step 3: Set `_appContext` and `_requestContext` in the pongo2 context**
 
-Search for where the pongo2 template context is populated:
+These must be set **independently of the plugin manager** so built-in `[mrql]` shortcodes work even when plugins are disabled. The current `wrapContextWithPlugins` in `server/routes.go:100` returns the raw context function when `pm == nil`, skipping all context enrichment.
 
-Run: `grep -rn "_appContext\|_requestContext" server/`
-
-If these keys are not currently set in the template context, they need to be added. Check `server/routes.go` or `server/template_handlers/` for where the pongo2 context is built. Look for where `_pluginManager` is set — `_appContext` and `_requestContext` should be set in the same place.
-
-If `_appContext` is not already set, find the function that sets `_pluginManager` and add:
+Update `wrapContextWithPlugins` to always set `_appContext` and `_requestContext`, regardless of whether plugins are enabled. Change the function:
 
 ```go
-ctx["_appContext"] = appContext
+func wrapContextWithPlugins(appContext *application_context.MahresourcesContext, ctxFn func(request *http.Request) pongo2.Context) func(request *http.Request) pongo2.Context {
+	pm := appContext.PluginManager()
+	return func(request *http.Request) pongo2.Context {
+		ctx := ctxFn(request)
+
+		// Always set app context and request context — needed for [mrql] shortcodes
+		// even when plugins are disabled.
+		ctx["_appContext"] = appContext
+		ctx["_requestContext"] = request.Context()
+
+		if pm == nil {
+			// Still process shortcodes for JSON even without plugins
+			if strings.HasSuffix(request.URL.Path, ".json") ||
+				strings.Contains(request.Header.Get("Accept"), constants.JSON) {
+				processShortcodesForJSON(ctx, nil, appContext, request.Context())
+			}
+			return ctx
+		}
+
+		ctx["_pluginManager"] = pm
+		ctx["currentPath"] = request.URL.Path
+		ctx["pluginMenuItems"] = pm.GetMenuItems()
+		ctx["hasPluginManager"] = true
+
+		// ... rest of plugin-specific context stays the same ...
 ```
 
-Similarly for `_requestContext`, find where the HTTP request is available and add:
-
-```go
-ctx["_requestContext"] = request.Context()
-```
-
-These must be set wherever the template context is built for entity display pages.
+This ensures `_appContext` and `_requestContext` are always available in the template context.
 
 - [ ] **Step 4: Update `processShortcodesForJSON` in `server/routes.go`**
 
-Update the function to pass `context.Background()`, `Entity`, and `QueryExecutor`. The `processShortcodesForJSON` function needs the application context. Check its call site to see if `appContext` is available.
+Update the function to accept the request context and application context. The caller (`wrapContextWithPlugins`) has access to `request.Context()` and `appContext` — pass them through.
 
 Update `server/routes.go`. Change the function signature and body:
 
@@ -1837,7 +1851,7 @@ Update `server/routes.go`. Change the function signature and body:
 // entity categories/types so that JSON API consumers (e.g., the lightbox)
 // receive expanded HTML instead of raw [meta ...] shortcode text.
 // Only called for JSON responses — HTML responses use the process_shortcodes template tag.
-func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManager, appCtx *application_context.MahresourcesContext) {
+func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManager, appCtx *application_context.MahresourcesContext, reqCtx context.Context) {
 	mainEntity := ctx["mainEntity"]
 	entityType, _ := ctx["mainEntityType"].(string)
 	if mainEntity == nil || entityType == "" {
@@ -1855,8 +1869,6 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 	if appCtx != nil {
 		executor = template_filters.BuildQueryExecutor(appCtx)
 	}
-
-	reqCtx := context.Background() // routes.go doesn't have the HTTP request here; use Background
 
 	switch entityType {
 	case "resource":
@@ -1904,9 +1916,19 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 }
 ```
 
-Then update all call sites of `processShortcodesForJSON` to pass the additional `appCtx` parameter. Search for calls with: `grep -rn "processShortcodesForJSON" server/`
+Then update the remaining call site of `processShortcodesForJSON` in `wrapContextWithPlugins` (the plugin-enabled branch, currently line 137). Change:
 
-For each call site, add the `appCtx` parameter. The application context should be available in the same scope where `pm` (plugin manager) is accessed.
+```go
+processShortcodesForJSON(ctx, pm)
+```
+
+to:
+
+```go
+processShortcodesForJSON(ctx, pm, appContext, request.Context())
+```
+
+Both call sites (plugin-enabled and plugin-disabled branches) now pass `appContext` and `request.Context()`.
 
 - [ ] **Step 5: Verify the application builds**
 
@@ -2088,20 +2110,17 @@ git commit -m "feat: add shortcode processing to description partial"
 - Modify: `src/components/mrqlEditor.js`
 - Modify: `templates/mrql.tpl`
 
-- [ ] **Step 1: Add `render` parameter to `mrqlExecuteRequest`**
+- [ ] **Step 1: Read `render` from the query string, not the JSON body**
 
-In `server/api_handlers/mrql_api_handlers.go`, add to the `mrqlExecuteRequest` struct:
+The MRQL API uses `tryFillStructValuesFromRequest` which decodes JSON into the struct — query parameters are ignored during JSON decoding. Since `render=1` is a presentation concern (not a query parameter), it should be read from the URL query string independently.
+
+In `server/api_handlers/mrql_api_handlers.go`, do NOT add `render` to the `mrqlExecuteRequest` struct. Instead, read it directly from the URL in the handler:
 
 ```go
-type mrqlExecuteRequest struct {
-	Query   string `json:"query" schema:"query"`
-	Limit   int    `json:"limit" schema:"limit"`
-	Buckets int    `json:"buckets" schema:"buckets"`
-	Page    int    `json:"page" schema:"page"`
-	Offset  int    `json:"offset" schema:"offset"`
-	Render  bool   `json:"render" schema:"render"` // render=1 enables server-side custom template rendering
-}
+render := request.URL.Query().Get("render") == "1"
 ```
+
+This goes in `GetExecuteMRQLHandler` after parsing the request body, before encoding the response.
 
 - [ ] **Step 2: Add rendering logic to `GetExecuteMRQLHandler`**
 
@@ -2173,13 +2192,16 @@ Add the same field to `models/note_model.go` and `models/group_model.go`.
 
 - [ ] **Step 4: Add rendering logic to the MRQL handler**
 
-In `server/api_handlers/mrql_api_handlers.go`, in `GetExecuteMRQLHandler`, add rendering after the query executes but before JSON encoding. After `result, err := ctx.ExecuteMRQL(...)`:
+In `server/api_handlers/mrql_api_handlers.go`, in `GetExecuteMRQLHandler`, add rendering after the query executes but before JSON encoding. Read `render` from the query string (not the parsed body), then apply:
 
 ```go
-		if req.Render {
+		render := request.URL.Query().Get("render") == "1"
+		if render {
 			renderMRQLCustomTemplates(ctx, result, request.Context())
 		}
 ```
+
+Apply the same pattern in `GetRunSavedMRQLQueryHandler` for saved query execution.
 
 Add the helper function:
 
@@ -2255,13 +2277,13 @@ Note: `BuildQueryExecutor` needs to be exported (capital B) in `shortcode_query_
 
 - [ ] **Step 5: Update `mrqlEditor.js` to pass `render=1`**
 
-In `src/components/mrqlEditor.js`, update the `execute` method to always pass `render: true` in the request body (line 302):
+In `src/components/mrqlEditor.js`, update the `execute` method to pass `render=1` as a URL query parameter (line 299):
 
 ```javascript
-        const resp = await fetch('/v1/mrql', {
+        const resp = await fetch('/v1/mrql?render=1', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query, render: true }),
+          body: JSON.stringify({ query }),
         });
 ```
 
