@@ -259,6 +259,7 @@ export class ApiClient {
       CustomAvatar?: string;
       MetaSchema?: string;
       AutoDetectRules?: string;
+      SectionConfig?: string;
     }
   ): Promise<ResourceCategory> {
     const formData = new URLSearchParams();
