@@ -6,6 +6,17 @@
 
 Add two new built-in shortcodes — `[mrql]` and `[property]` — that enable embedding live MRQL query results and entity field values directly in note descriptions, group descriptions, and other shortcode-processed content. Custom rendering templates per category/type allow full control over how results appear.
 
+## Integration Points
+
+Shortcodes are already processed wherever `{% process_shortcodes %}` is used in templates. The new `[mrql]` and `[property]` shortcodes work anywhere shortcodes work today. The key integration points:
+
+- **Note descriptions** — the `note_display.html` template already processes shortcodes on `note.Description`.
+- **Group descriptions** — the `group_display.html` template already processes shortcodes on `group.Description`.
+- **Resource descriptions** — the `resource_display.html` template already processes shortcodes on `resource.Description`.
+- **MRQL results page** — new integration: result entities rendered with custom templates when their category defines `CustomMRQLResult`.
+
+The template filter (`shortcode_tag.go`) must be updated to pass the new `QueryExecutor` callback and populate the `Entity` field on `MetaShortcodeContext`. This is the single wiring point — all existing `{% process_shortcodes %}` call sites automatically gain `[mrql]` and `[property]` support.
+
 ## New Built-in Shortcodes
 
 ### `[property]` Shortcode
@@ -19,7 +30,13 @@ Accesses entity model fields from the current entity context.
 ```
 
 - Uses the existing `MetaShortcodeContext`, extended with a full `Entity` field.
-- Outputs raw values: strings as-is, numbers/bools as string form, slices as comma-separated, nested objects as JSON.
+- **HTML-escaped by default.** All output is passed through `html.EscapeString()` to prevent markup injection. An optional `raw="true"` attribute opts into unescaped output for cases where the field intentionally contains HTML.
+- Outputs: strings as escaped text, numbers/bools as string form, slices as comma-separated (each element escaped), nested objects as JSON.
+
+```
+[property path="Name"]                  <!-- escaped -->
+[property path="Description" raw="true"] <!-- unescaped, opt-in -->
+```
 
 ### `[mrql]` Shortcode
 
@@ -40,13 +57,16 @@ Executes an MRQL query and renders results inline.
 | `limit`   | Max results to render (default: 20) |
 | `format`  | Rendering format: `table`, `list`, `compact`, `custom` |
 
-**Format resolution order:**
+**Format resolution:**
 
-1. If `format` attribute is explicitly set, use that format.
-2. If not set and the result entity's category/type has a `CustomMRQLResult` template, use custom.
-3. If not set and no custom template exists, use the default rendering (same as MRQL page results).
+Format applies at the **result set level**, not per item:
 
-Each result item resolves its format independently — a single result set can have mixed rendering when items span multiple categories.
+1. If `format` attribute is explicitly set, use that format for the entire result set.
+2. If not set, use the default rendering (same as MRQL page results).
+
+**Exception — custom templates:** When using the default rendering or `format="custom"`, each result item checks its own category/type for a `CustomMRQLResult` template. Items with a custom template render using it; items without one fall back to the default row rendering. This is the only case where mixed rendering occurs within a single result set.
+
+Set-level formats like `table` render the entire result set as a unified table — individual row customization does not apply.
 
 ## Architecture
 
@@ -55,15 +75,20 @@ Each result item resolves its format independently — a single result set can h
 **New callback type** (follows the existing `PluginRenderer` pattern):
 
 ```go
-type QueryExecutor func(query string, savedName string, limit int) (*QueryResult, error)
+type QueryExecutor func(ctx context.Context, query string, savedName string, limit int) (*QueryResult, error)
 ```
+
+The callback receives `context.Context` for request-scoped timeout and cancellation — MRQL execution already uses `MRQLQueryTimeout` and the executor must propagate that.
 
 **New result types:**
 
 ```go
 type QueryResult struct {
     EntityType string
-    Items      []QueryResultItem
+    Mode       string              // "flat", "aggregated", or "bucketed"
+    Items      []QueryResultItem   // flat mode
+    Rows       []map[string]any    // aggregated mode (GROUP BY with aggregates)
+    Groups     []QueryResultGroup  // bucketed mode (GROUP BY without aggregates)
 }
 
 type QueryResultItem struct {
@@ -74,12 +99,17 @@ type QueryResultItem struct {
     MetaSchema       string
     CustomMRQLResult string
 }
+
+type QueryResultGroup struct {
+    Key   map[string]any
+    Items []QueryResultItem
+}
 ```
 
 **Updated `Process()` signature:**
 
 ```go
-func Process(input string, ctx MetaShortcodeContext, renderer PluginRenderer, executor QueryExecutor) string
+func Process(ctx context.Context, input string, mctx MetaShortcodeContext, renderer PluginRenderer, executor QueryExecutor) string
 ```
 
 The `executor` can be nil — if nil, `[mrql]` shortcodes are left as-is (same pattern as `renderer`).
@@ -99,12 +129,14 @@ type MetaShortcodeContext struct {
 ### Rendering Flow for `[mrql]`
 
 1. Parse shortcode attributes.
-2. Call `QueryExecutor` with query/saved name + limit.
-3. For each result item, build a child `MetaShortcodeContext` from the item.
-4. Resolve format per item (explicit format > custom template > default).
-5. If custom: process the `CustomMRQLResult` template through `Process()` recursively with the item's context, same renderer/executor.
-6. If default/table/list/compact: render with the built-in format.
-7. Wrap all rendered items in a container element.
+2. Call `QueryExecutor` with context, query/saved name, and limit.
+3. Branch on result mode:
+   - **Flat:** for each result item, build a child `MetaShortcodeContext`. Apply format resolution (explicit format > custom template per item > default).
+   - **Aggregated:** render rows as a table (columns from aggregate keys/values). Custom templates do not apply — aggregated results are summary data, not entities.
+   - **Bucketed:** render each group header (key), then render items within each group using the same flat-mode logic.
+4. If custom: process the `CustomMRQLResult` template through `Process()` recursively with the item's context, same renderer/executor.
+5. If set-level format (table/list/compact): render the entire result set uniformly.
+6. Wrap all rendered output in a container element.
 
 ## Database Model Changes
 
