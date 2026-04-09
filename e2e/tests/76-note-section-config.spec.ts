@@ -173,6 +173,92 @@ test.describe.serial('Note Section Config - No NoteType fallback', () => {
   });
 });
 
+test.describe.serial('Note Section Config - Timestamps off keeps Wide display link', () => {
+  let noteTypeId: number;
+  let noteId: number;
+
+  test.beforeAll(async ({ apiClient }) => {
+    const noteType = await apiClient.createNoteType(
+      `SC Timestamps Off NT ${Date.now()}`,
+      'Note type with timestamps hidden',
+      {
+        SectionConfig: JSON.stringify({
+          timestamps: false,
+        }),
+      }
+    );
+    noteTypeId = noteType.ID;
+
+    const note = await apiClient.createNote({
+      name: `SC Timestamps Note ${Date.now()}`,
+      description: 'Timestamps hidden but wide display should work',
+      noteTypeId,
+      startDate: '2026-01-01T00:00',
+    });
+    noteId = note.ID;
+  });
+
+  test.afterAll(async ({ apiClient }) => {
+    await apiClient.deleteNote(noteId).catch(() => {});
+    await apiClient.deleteNoteType(noteTypeId).catch(() => {});
+  });
+
+  test('should hide start/end dates but keep Wide display link', async ({ page }) => {
+    await page.goto(`/note?id=${noteId}`);
+    await page.waitForLoadState('load');
+
+    // Wide display link should still be visible
+    const wideLink = page.locator('a:text-is("Wide display")');
+    await expect(wideLink).toHaveCount(1);
+
+    // Start date label inside meta-strip should not be shown
+    const startedLabel = page.locator('.meta-strip-label:text-is("Started")');
+    await expect(startedLabel).toHaveCount(0);
+  });
+});
+
+test.describe.serial('Note Section Config - NoteType preselected via deep link', () => {
+  let noteTypeId: number;
+
+  test.beforeAll(async ({ apiClient }) => {
+    const noteType = await apiClient.createNoteType(
+      `SC Preselect NT ${Date.now()}`,
+      'Note type for deep link test',
+      {
+        MetaSchema: JSON.stringify({
+          type: 'object',
+          properties: {
+            status: { type: 'string', title: 'Status' },
+          },
+        }),
+      }
+    );
+    noteTypeId = noteType.ID;
+  });
+
+  test.afterAll(async ({ apiClient }) => {
+    await apiClient.deleteNoteType(noteTypeId).catch(() => {});
+  });
+
+  test('should preselect note type from query param', async ({ page }) => {
+    await page.goto(`/note/new?NoteTypeId=${noteTypeId}`);
+    await page.waitForLoadState('load');
+
+    // The NoteType autocompleter should have a hidden input with the preselected ID
+    const hiddenInput = page.locator('input[type="hidden"][name="NoteTypeId"][value="' + noteTypeId + '"]');
+    await expect(hiddenInput).toHaveCount(1);
+  });
+
+  test('should show schema-enforced meta editor when note type has schema', async ({ page }) => {
+    await page.goto(`/note/new?NoteTypeId=${noteTypeId}`);
+    await page.waitForLoadState('load');
+
+    // The schema form mode should be rendered (not freeFields)
+    const schemaForm = page.locator('schema-form-mode');
+    await expect(schemaForm).toHaveCount(1);
+  });
+});
+
 test.describe.serial('Note Section Config - Form persistence', () => {
   test('should preserve section config after save', async ({ page, apiClient }) => {
     await page.goto('/noteType/new');
