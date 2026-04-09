@@ -1,6 +1,8 @@
 package shortcodes
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 )
 
@@ -10,11 +12,50 @@ import (
 // Returns rendered HTML or an error (in which case the original text is preserved).
 type PluginRenderer func(pluginName string, sc Shortcode, ctx MetaShortcodeContext) (string, error)
 
+// QueryExecutor is a callback that executes an MRQL query and returns results.
+// query is the raw MRQL expression, savedName is an optional saved query name,
+// limit caps the number of returned items, and buckets controls grouping bucket count.
+type QueryExecutor func(ctx context.Context, query string, savedName string, limit int, buckets int) (*QueryResult, error)
+
+// QueryResult holds the output of a QueryExecutor call.
+type QueryResult struct {
+	EntityType string
+	Mode       string
+	Items      []QueryResultItem
+	Rows       []map[string]any
+	Groups     []QueryResultGroup
+}
+
+// QueryResultItem represents a single entity returned by a query.
+type QueryResultItem struct {
+	EntityType       string
+	EntityID         uint
+	Entity           any
+	Meta             json.RawMessage
+	MetaSchema       string
+	CustomMRQLResult string
+}
+
+// QueryResultGroup is a bucket of QueryResultItems sharing a common key.
+type QueryResultGroup struct {
+	Key   map[string]any
+	Items []QueryResultItem
+}
+
+// maxRecursionDepth limits how deeply [mrql] shortcodes may nest inside each
+// other's output to prevent runaway recursive expansion.
+const maxRecursionDepth = 2
+
 // Process parses shortcodes in input and replaces them with rendered HTML.
-// Built-in "meta" shortcodes are handled directly.
+// Built-in "meta" and "property" shortcodes are handled directly.
+// "mrql" shortcodes use the provided executor callback (left as-is if nil).
 // Plugin shortcodes (starting with "plugin:") use the provided renderer callback.
 // If renderer is nil, plugin shortcodes are left as-is.
-func Process(input string, ctx MetaShortcodeContext, renderer PluginRenderer) string {
+func Process(reqCtx context.Context, input string, ctx MetaShortcodeContext, renderer PluginRenderer, executor QueryExecutor) string {
+	return processWithDepth(reqCtx, input, ctx, renderer, executor, 0)
+}
+
+func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeContext, renderer PluginRenderer, executor QueryExecutor, depth int) string {
 	shortcodes := Parse(input)
 	if len(shortcodes) == 0 {
 		return input
@@ -29,9 +70,18 @@ func Process(input string, ctx MetaShortcodeContext, renderer PluginRenderer) st
 
 		var replacement string
 
-		if sc.Name == "meta" {
+		switch {
+		case sc.Name == "meta":
 			replacement = RenderMetaShortcode(sc, ctx)
-		} else if strings.HasPrefix(sc.Name, "plugin:") {
+		case sc.Name == "property":
+			replacement = RenderPropertyShortcode(sc, ctx)
+		case sc.Name == "mrql":
+			if executor != nil && depth < maxRecursionDepth {
+				replacement = RenderMRQLShortcode(reqCtx, sc, ctx, renderer, executor, depth)
+			} else {
+				replacement = sc.Raw
+			}
+		case strings.HasPrefix(sc.Name, "plugin:"):
 			if renderer != nil {
 				parts := strings.SplitN(sc.Name, ":", 3)
 				if len(parts) == 3 {

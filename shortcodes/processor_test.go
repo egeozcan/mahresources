@@ -1,6 +1,7 @@
 package shortcodes
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -9,7 +10,7 @@ import (
 )
 
 func TestProcessNoShortcodes(t *testing.T) {
-	result := Process("<div>hello</div>", MetaShortcodeContext{}, nil)
+	result := Process(context.Background(), "<div>hello</div>", MetaShortcodeContext{}, nil, nil)
 	assert.Equal(t, "<div>hello</div>", result)
 }
 
@@ -23,7 +24,7 @@ func TestProcessMetaShortcode(t *testing.T) {
 		Meta:       metaJSON,
 	}
 
-	result := Process(`before [meta path="name"] after`, ctx, nil)
+	result := Process(context.Background(), `before [meta path="name"] after`, ctx, nil, nil)
 	assert.Contains(t, result, "before ")
 	assert.Contains(t, result, "<meta-shortcode")
 	assert.Contains(t, result, " after")
@@ -41,7 +42,7 @@ func TestProcessMixedHTMLAndShortcodes(t *testing.T) {
 	}
 
 	input := `<div class="flex gap-2">[meta path="a"]<span>sep</span>[meta path="b"]</div>`
-	result := Process(input, ctx, nil)
+	result := Process(context.Background(), input, ctx, nil, nil)
 	assert.Contains(t, result, `<div class="flex gap-2">`)
 	assert.Contains(t, result, `<span>sep</span>`)
 	assert.Contains(t, result, `data-path="a"`)
@@ -59,7 +60,7 @@ func TestProcessPluginShortcode(t *testing.T) {
 		Meta:       []byte(`{}`),
 	}
 
-	result := Process(`[plugin:test:widget size="large"]`, ctx, renderer)
+	result := Process(context.Background(), `[plugin:test:widget size="large"]`, ctx, renderer, nil)
 	assert.Equal(t, "<div>plugin output</div>", result)
 }
 
@@ -75,6 +76,16 @@ func TestProcessPluginShortcodeError(t *testing.T) {
 	}
 
 	// On error, the original shortcode text is preserved
-	result := Process(`[plugin:test:widget]`, ctx, renderer)
+	result := Process(context.Background(), `[plugin:test:widget]`, ctx, renderer, nil)
 	assert.Equal(t, `[plugin:test:widget]`, result)
+}
+
+func TestProcessWithNilExecutor(t *testing.T) {
+	ctx := MetaShortcodeContext{
+		EntityType: "group",
+		EntityID:   1,
+		Meta:       []byte(`{}`),
+	}
+	result := Process(context.Background(), "<p>hello</p>", ctx, nil, nil)
+	assert.Equal(t, "<p>hello</p>", result)
 }
