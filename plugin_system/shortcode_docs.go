@@ -1,9 +1,13 @@
 package plugin_system
 
 import (
+	"encoding/json"
 	"fmt"
 	"html"
+	"log"
 	"strings"
+
+	"mahresources/shortcodes"
 )
 
 // docItem is the unified representation used by the docs renderer.
@@ -129,7 +133,7 @@ func (pm *PluginManager) HandleDocsPage(pluginName, path string) (string, error)
 				if i < len(items)-1 {
 					next = &items[i+1]
 				}
-				return renderDocsDetail(pluginName, item, prev, next), nil
+				return renderDocsDetail(pm, pluginName, item, prev, next), nil
 			}
 		}
 	}
@@ -140,6 +144,30 @@ func (pm *PluginManager) HandleDocsPage(pluginName, path string) (string, error)
 // ---------------------------------------------------------------------------
 // HTML generation
 // ---------------------------------------------------------------------------
+
+// renderExamplePreview attempts to render a shortcode example with its example data.
+// Returns the rendered HTML or empty string if rendering fails or the code doesn't match.
+func renderExamplePreview(pm *PluginManager, pluginName, fullTypeName string, ex ShortcodeDocExample) string {
+	// Parse the shortcode from the example code to extract attrs
+	parsed := shortcodes.Parse(ex.Code)
+	if len(parsed) != 1 || parsed[0].Name != fullTypeName {
+		return ""
+	}
+
+	metaJSON, err := json.Marshal(ex.ExampleData)
+	if err != nil {
+		log.Printf("[plugin] docs preview: failed to marshal example data for %s: %v", fullTypeName, err)
+		return ""
+	}
+
+	result, err := pm.renderShortcodeForDocs(pluginName, fullTypeName, metaJSON, parsed[0].Attrs)
+	if err != nil {
+		log.Printf("[plugin] docs preview: render failed for %s: %v", fullTypeName, err)
+		return ""
+	}
+
+	return result
+}
 
 func renderDocsIndex(pluginName string, items []docItem) string {
 	var b strings.Builder
@@ -225,7 +253,7 @@ func renderDocsIndex(pluginName string, items []docItem) string {
 	return b.String()
 }
 
-func renderDocsDetail(pluginName string, item docItem, prev, next *docItem) string {
+func renderDocsDetail(pm *PluginManager, pluginName string, item docItem, prev, next *docItem) string {
 	var b strings.Builder
 
 	b.WriteString(`<div class="max-w-4xl mx-auto px-4 py-8">`)
@@ -321,6 +349,8 @@ func renderDocsDetail(pluginName string, item docItem, prev, next *docItem) stri
 
 	// Examples
 	if len(item.Examples) > 0 {
+		fullTypeName := "plugin:" + pluginName + ":" + item.Name
+
 		b.WriteString(`<div class="mt-8"><h2 class="text-lg font-semibold text-stone-800 mb-3">Examples</h2>`)
 		b.WriteString(`<div class="space-y-4">`)
 
@@ -332,6 +362,17 @@ func renderDocsDetail(pluginName string, item docItem, prev, next *docItem) stri
 				b.WriteString(`<h3 class="text-sm font-medium text-stone-700">`)
 				b.WriteString(html.EscapeString(ex.Title))
 				b.WriteString(`</h3></div>`)
+			}
+
+			// Render live preview if example_data is provided and this is a shortcode
+			if item.Category == "Shortcode" && ex.ExampleData != nil && pm != nil {
+				if preview := renderExamplePreview(pm, pluginName, fullTypeName, ex); preview != "" {
+					b.WriteString(`<div class="px-4 py-3 border-b border-stone-200 bg-stone-50/50">`)
+					b.WriteString(`<div class="text-[10px] font-medium text-stone-400 uppercase tracking-wider mb-2">Preview</div>`)
+					b.WriteString(`<div>`)
+					b.WriteString(preview)
+					b.WriteString(`</div></div>`)
+				}
 			}
 
 			b.WriteString(`<pre class="p-4 text-xs font-mono text-stone-700 bg-white overflow-x-auto whitespace-pre-wrap">`)

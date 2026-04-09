@@ -476,9 +476,12 @@ function init()
             { name = "style", type = "string", default = "compact", description = "Display style: 'compact' (flex row) or 'cards' (grid of rounded cards)" },
         },
         examples = {
-            { title = "Default summary", code = '[plugin:widgets:summary]', notes = "Shows all three entity counts in compact style." },
-            { title = "Cards with only resources and notes", code = '[plugin:widgets:summary show="resources,notes" style="cards"]' },
-            { title = "Groups count only", code = '[plugin:widgets:summary show="groups"]' },
+            { title = "Default summary", code = '[plugin:widgets:summary]', notes = "Shows all three entity counts in compact style.",
+              example_data = {} },
+            { title = "Cards with only resources and notes", code = '[plugin:widgets:summary show="resources,notes" style="cards"]',
+              example_data = {} },
+            { title = "Groups count only", code = '[plugin:widgets:summary show="groups"]',
+              example_data = {} },
         },
         notes = {
             "Shows zero counts rather than hiding empty types.",
@@ -498,9 +501,12 @@ function init()
             { name = "size", type = "string", default = "md", description = "Thumbnail size: 'sm' (48px), 'md' (96px), or 'lg' (200px)" },
         },
         examples = {
-            { title = "Default image gallery", code = '[plugin:widgets:gallery]', notes = "Shows up to 8 image thumbnails at medium size." },
-            { title = "Large thumbnails, more images", code = '[plugin:widgets:gallery count="12" size="lg"]' },
-            { title = "Only PNG files in a 2-column layout", code = '[plugin:widgets:gallery content-type="image/png" cols="2"]' },
+            { title = "Default image gallery", code = '[plugin:widgets:gallery]', notes = "Shows up to 8 image thumbnails at medium size.",
+              example_data = {} },
+            { title = "Large thumbnails, more images", code = '[plugin:widgets:gallery count="12" size="lg"]',
+              example_data = {} },
+            { title = "Only PNG files in a 2-column layout", code = '[plugin:widgets:gallery content-type="image/png" cols="2"]',
+              example_data = {} },
         },
         notes = {
             "Tries owned resources first; if none are found and the entity is a group, falls back to related resources.",
@@ -521,9 +527,12 @@ function init()
             { name = "label", type = "string", description = "Custom label text below the progress bar (default: 'N/M complete')" },
         },
         examples = {
-            { title = "Track note completion by status field", code = '[plugin:widgets:progress field="status"]', notes = "Counts notes where meta.status == \"done\"." },
-            { title = "Track resource review with custom complete value", code = '[plugin:widgets:progress field="review.state" complete="approved" type="resources"]' },
-            { title = "Custom label", code = '[plugin:widgets:progress field="status" label="Tasks finished"]' },
+            { title = "Track note completion by status field", code = '[plugin:widgets:progress field="status"]', notes = "Counts notes where meta.status == \"done\".",
+              example_data = {} },
+            { title = "Track resource review with custom complete value", code = '[plugin:widgets:progress field="review.state" complete="approved" type="resources"]',
+              example_data = {} },
+            { title = "Custom label", code = '[plugin:widgets:progress field="status" label="Tasks finished"]',
+              example_data = {} },
         },
         notes = {
             "The 'field' attribute is required; omitting it renders an error message.",
@@ -542,9 +551,12 @@ function init()
             { name = "type", type = "string", default = "all", description = "Entity type filter: 'all', 'resources', 'notes', or 'groups'" },
         },
         examples = {
-            { title = "Default recent activity", code = '[plugin:widgets:activity]', notes = "Shows the 5 most recently updated owned entities of all types." },
-            { title = "Last 10 updated resources", code = '[plugin:widgets:activity count="10" type="resources"]' },
-            { title = "Recent notes only", code = '[plugin:widgets:activity type="notes"]' },
+            { title = "Default recent activity", code = '[plugin:widgets:activity]', notes = "Shows the 5 most recently updated owned entities of all types.",
+              example_data = {} },
+            { title = "Last 10 updated resources", code = '[plugin:widgets:activity count="10" type="resources"]',
+              example_data = {} },
+            { title = "Recent notes only", code = '[plugin:widgets:activity type="notes"]',
+              example_data = {} },
         },
         notes = {
             "Items are sorted by updated_at descending across all requested entity types.",

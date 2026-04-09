@@ -525,3 +525,242 @@ func TestDocsCleanupOnDisableGeneral(t *testing.T) {
 	assert.False(t, pm.HasDocsPage("cleanup-gen", "docs"))
 	assert.False(t, pm.HasDocsPage("cleanup-gen", "docs/feat"))
 }
+
+func TestExampleDataParsing(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "ex-data", `
+		plugin = { name = "ex-data", version = "1.0" }
+		function init()
+			mah.shortcode({
+				name = "badge",
+				label = "Badge",
+				render = function(ctx)
+					local val = ctx.value and ctx.value["status"] or "unknown"
+					return "<span>" .. val .. "</span>"
+				end,
+				description = "A test badge.",
+				examples = {
+					{
+						title = "With data",
+						code = '[plugin:ex-data:badge path="status"]',
+						example_data = { status = "active", nested = { key = "val" } },
+					},
+					{
+						title = "No data",
+						code = '[plugin:ex-data:badge path="status"]',
+					},
+				},
+			})
+		end
+	`)
+
+	pm, err := NewPluginManager(dir)
+	require.NoError(t, err)
+	defer pm.Close()
+	require.NoError(t, pm.EnablePlugin("ex-data"))
+
+	sc := pm.GetPluginShortcode("plugin:ex-data:badge")
+	require.NotNil(t, sc)
+	require.Len(t, sc.Examples, 2)
+
+	assert.Equal(t, map[string]any{"status": "active", "nested": map[string]any{"key": "val"}}, sc.Examples[0].ExampleData)
+	assert.Nil(t, sc.Examples[1].ExampleData)
+}
+
+func TestDocsDetailWithPreview(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "preview", `
+		plugin = { name = "preview", version = "1.0" }
+		function init()
+			mah.shortcode({
+				name = "badge",
+				label = "Badge",
+				render = function(ctx)
+					local val = ctx.value and ctx.value["status"] or "unknown"
+					return "<span class='badge'>status:" .. val .. "</span>"
+				end,
+				description = "Badge with preview.",
+				examples = {
+					{
+						title = "With preview",
+						code = '[plugin:preview:badge path="status"]',
+						example_data = { status = "active" },
+					},
+					{
+						title = "Code only",
+						code = '[plugin:preview:badge path="status"]',
+					},
+				},
+			})
+		end
+	`)
+
+	pm, err := NewPluginManager(dir)
+	require.NoError(t, err)
+	defer pm.Close()
+	require.NoError(t, pm.EnablePlugin("preview"))
+
+	html, err := pm.HandleDocsPage("preview", "docs/badge")
+	require.NoError(t, err)
+
+	// Preview rendered output should appear for the first example
+	assert.Contains(t, html, "status:active")
+	assert.Contains(t, html, "Preview")
+
+	// Code blocks should still be present for both examples
+	assert.Contains(t, html, "With preview")
+	assert.Contains(t, html, "Code only")
+
+	// The second example (no example_data) should NOT have a preview
+	// Count occurrences of "Preview" label — should be exactly 1
+	assert.Equal(t, 1, strings.Count(html, ">Preview<"))
+}
+
+func TestDocsPreviewRenderError(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "err-preview", `
+		plugin = { name = "err-preview", version = "1.0" }
+		function init()
+			mah.shortcode({
+				name = "boom",
+				label = "Boom",
+				render = function(ctx) error("intentional error") end,
+				description = "A shortcode that errors.",
+				examples = {
+					{
+						title = "Should not crash",
+						code = '[plugin:err-preview:boom]',
+						example_data = { anything = true },
+					},
+				},
+			})
+		end
+	`)
+
+	pm, err := NewPluginManager(dir)
+	require.NoError(t, err)
+	defer pm.Close()
+	require.NoError(t, pm.EnablePlugin("err-preview"))
+
+	html, err := pm.HandleDocsPage("err-preview", "docs/boom")
+	require.NoError(t, err)
+
+	// Page should render successfully, just without preview
+	assert.Contains(t, html, "Should not crash")
+	assert.NotContains(t, html, ">Preview<")
+}
+
+func TestDocsPreviewEmptyExampleData(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "empty-data", `
+		plugin = { name = "empty-data", version = "1.0" }
+		function init()
+			mah.shortcode({
+				name = "widget",
+				label = "Widget",
+				render = function(ctx)
+					return "<div class='widget'>rendered</div>"
+				end,
+				description = "A widget.",
+				examples = {
+					{
+						title = "Empty data preview",
+						code = '[plugin:empty-data:widget]',
+						example_data = {},
+					},
+				},
+			})
+		end
+	`)
+
+	pm, err := NewPluginManager(dir)
+	require.NoError(t, err)
+	defer pm.Close()
+	require.NoError(t, pm.EnablePlugin("empty-data"))
+
+	html, err := pm.HandleDocsPage("empty-data", "docs/widget")
+	require.NoError(t, err)
+
+	// Empty example_data (non-nil) should still trigger preview
+	assert.Contains(t, html, ">Preview<")
+	assert.Contains(t, html, "rendered")
+}
+
+func TestDocsPreviewContextHasPreviewFlag(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "flag-check", `
+		plugin = { name = "flag-check", version = "1.0" }
+		function init()
+			mah.shortcode({
+				name = "check",
+				label = "Check",
+				render = function(ctx)
+					if ctx.preview then
+						return "<span>PREVIEW_MODE</span>"
+					end
+					return "<span>NORMAL_MODE</span>"
+				end,
+				description = "Checks preview flag.",
+				examples = {
+					{
+						title = "Flag test",
+						code = '[plugin:flag-check:check]',
+						example_data = {},
+					},
+				},
+			})
+		end
+	`)
+
+	pm, err := NewPluginManager(dir)
+	require.NoError(t, err)
+	defer pm.Close()
+	require.NoError(t, pm.EnablePlugin("flag-check"))
+
+	html, err := pm.HandleDocsPage("flag-check", "docs/check")
+	require.NoError(t, err)
+
+	assert.Contains(t, html, "PREVIEW_MODE")
+	assert.NotContains(t, html, "NORMAL_MODE")
+}
+
+func TestDocsPreviewSkipsMismatchedCode(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "mismatch", `
+		plugin = { name = "mismatch", version = "1.0" }
+		function init()
+			mah.shortcode({
+				name = "alpha",
+				label = "Alpha",
+				render = function(ctx) return "<span>alpha</span>" end,
+				description = "Alpha shortcode.",
+				examples = {
+					{
+						title = "Mismatched code",
+						code = '[plugin:mismatch:beta path="x"]',
+						example_data = { x = "test" },
+					},
+				},
+			})
+			mah.shortcode({
+				name = "beta",
+				label = "Beta",
+				render = function(ctx) return "<span>beta</span>" end,
+				description = "Beta shortcode.",
+			})
+		end
+	`)
+
+	pm, err := NewPluginManager(dir)
+	require.NoError(t, err)
+	defer pm.Close()
+	require.NoError(t, pm.EnablePlugin("mismatch"))
+
+	html, err := pm.HandleDocsPage("mismatch", "docs/alpha")
+	require.NoError(t, err)
+
+	// Alpha's example has code referencing beta — preview should be skipped
+	assert.NotContains(t, html, ">Preview<")
+	// But the code block should still be shown
+	assert.Contains(t, html, "Mismatched code")
+}

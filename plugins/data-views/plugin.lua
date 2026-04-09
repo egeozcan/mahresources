@@ -1660,9 +1660,12 @@ function init()
             { name = "labels", type = "CSV", description = "Comma-separated display labels corresponding to each value" },
         },
         examples = {
-            { title = "Basic status badge", code = '[plugin:data-views:badge path="status"]', notes = "Shows the raw value as a gray badge." },
-            { title = "Mapped with colors", code = '[plugin:data-views:badge path="status" values="active,archived,draft" colors="#22c55e,#6b7280,#f59e0b" labels="Active,Archived,Draft"]' },
-            { title = "Nested field", code = '[plugin:data-views:badge path="project.phase" values="planning,building,done" colors="#3b82f6,#d97706,#22c55e"]' },
+            { title = "Basic status badge", code = '[plugin:data-views:badge path="status"]', notes = "Shows the raw value as a gray badge.",
+              example_data = { status = "active" } },
+            { title = "Mapped with colors", code = '[plugin:data-views:badge path="status" values="active,archived,draft" colors="#22c55e,#6b7280,#f59e0b" labels="Active,Archived,Draft"]',
+              example_data = { status = "active" } },
+            { title = "Nested field", code = '[plugin:data-views:badge path="project.phase" values="planning,building,done" colors="#3b82f6,#d97706,#22c55e"]',
+              example_data = { project = { phase = "building" } } },
         },
         notes = {
             "Unmatched values display as gray (#6b7280) badges with the raw value as label.",
@@ -1686,9 +1689,12 @@ function init()
             { name = "suffix", type = "string", default = "", description = "Text appended to the formatted value" },
         },
         examples = {
-            { title = "Currency", code = '[plugin:data-views:format path="budget.amount" type="currency"]', notes = "Displays as $1,234.56." },
-            { title = "Percent with suffix", code = '[plugin:data-views:format path="score" type="percent" suffix=" complete"]' },
-            { title = "File size", code = '[plugin:data-views:format path="metrics.disk_usage" type="filesize"]' },
+            { title = "Currency", code = '[plugin:data-views:format path="budget.amount" type="currency"]', notes = "Displays as $1,234.56.",
+              example_data = { budget = { amount = 1234.56 } } },
+            { title = "Percent with suffix", code = '[plugin:data-views:format path="score" type="percent" suffix=" complete"]',
+              example_data = { score = 73.5 } },
+            { title = "File size", code = '[plugin:data-views:format path="metrics.disk_usage" type="filesize"]',
+              example_data = { metrics = { disk_usage = 1073741824 } } },
         },
         notes = {
             "Supported types: currency, percent, date, filesize, number, duration.",
@@ -1714,9 +1720,12 @@ function init()
             { name = "suffix", type = "string", default = "", description = "Text appended to the formatted value" },
         },
         examples = {
-            { title = "Basic stat card", code = '[plugin:data-views:stat-card path="metrics.total_users" label="Total Users" icon="users"]' },
-            { title = "Revenue card", code = '[plugin:data-views:stat-card path="budget.amount" label="Revenue" type="currency" icon="chart"]' },
-            { title = "Completion percentage", code = '[plugin:data-views:stat-card path="progress" label="Complete" type="percent" icon="check"]' },
+            { title = "Basic stat card", code = '[plugin:data-views:stat-card path="metrics.total_users" label="Total Users" icon="users"]',
+              example_data = { metrics = { total_users = 1284 } } },
+            { title = "Revenue card", code = '[plugin:data-views:stat-card path="budget.amount" label="Revenue" type="currency" icon="chart"]',
+              example_data = { budget = { amount = 42500 } } },
+            { title = "Completion percentage", code = '[plugin:data-views:stat-card path="progress" label="Complete" type="percent" icon="check"]',
+              example_data = { progress = 73.5 } },
         },
         notes = {
             "The card renders inline with a border, centered icon, large value, and small label.",
@@ -1739,9 +1748,12 @@ function init()
             { name = "label", type = "string", description = "Display label (defaults to the path)" },
         },
         examples = {
-            { title = "Basic meter", code = '[plugin:data-views:meter path="score"]', notes = "Uses default 0-100 range with 30/70 thresholds." },
-            { title = "Custom range", code = '[plugin:data-views:meter path="metrics.temperature" min="0" max="200" low="60" high="150" label="Temperature"]' },
-            { title = "Percentage meter", code = '[plugin:data-views:meter path="progress" label="Progress" high="80"]' },
+            { title = "Basic meter", code = '[plugin:data-views:meter path="score"]', notes = "Uses default 0-100 range with 30/70 thresholds.",
+              example_data = { score = 72 } },
+            { title = "Custom range", code = '[plugin:data-views:meter path="metrics.temperature" min="0" max="200" low="60" high="150" label="Temperature"]',
+              example_data = { metrics = { temperature = 145 } } },
+            { title = "Percentage meter", code = '[plugin:data-views:meter path="progress" label="Progress" high="80"]',
+              example_data = { progress = 85 } },
         },
         notes = {
             "The gauge background shows a gradient: red (0 to low), yellow (low to high), green (high to max).",
@@ -1764,9 +1776,12 @@ function init()
             { name = "color", type = "CSS color", default = "#d97706", description = "Stroke or fill color" },
         },
         examples = {
-            { title = "Line sparkline", code = '[plugin:data-views:sparkline path="metrics.monthly"]' },
-            { title = "Bar sparkline", code = '[plugin:data-views:sparkline path="metrics.monthly" type="bar" color="#3b82f6"]' },
-            { title = "Large area chart", code = '[plugin:data-views:sparkline path="metrics.monthly" type="area" width="200" height="40" color="#22c55e"]' },
+            { title = "Line sparkline", code = '[plugin:data-views:sparkline path="metrics.monthly"]',
+              example_data = { metrics = { monthly = {10, 25, 18, 32, 28, 40, 35} } } },
+            { title = "Bar sparkline", code = '[plugin:data-views:sparkline path="metrics.monthly" type="bar" color="#3b82f6"]',
+              example_data = { metrics = { monthly = {10, 25, 18, 32, 28, 40, 35} } } },
+            { title = "Large area chart", code = '[plugin:data-views:sparkline path="metrics.monthly" type="area" width="200" height="40" color="#22c55e"]',
+              example_data = { metrics = { monthly = {10, 25, 18, 32, 28, 40, 35} } } },
         },
         notes = {
             "The data must be an array of numbers (e.g. [10, 20, 15, 30]).",
@@ -1810,9 +1825,12 @@ function init()
             { name = "style", type = "string", default = "bullet", description = "List style: 'bullet', 'numbered', 'comma', or 'pill'" },
         },
         examples = {
-            { title = "Bullet list", code = '[plugin:data-views:list path="tags"]' },
-            { title = "Pill badges", code = '[plugin:data-views:list path="tags" style="pill"]' },
-            { title = "Comma-separated", code = '[plugin:data-views:list path="contributors" style="comma"]' },
+            { title = "Bullet list", code = '[plugin:data-views:list path="tags"]',
+              example_data = { tags = {"frontend", "backend", "design"} } },
+            { title = "Pill badges", code = '[plugin:data-views:list path="tags" style="pill"]',
+              example_data = { tags = {"frontend", "backend", "design"} } },
+            { title = "Comma-separated", code = '[plugin:data-views:list path="contributors" style="comma"]',
+              example_data = { contributors = {"Alice", "Bob", "Carol"} } },
         },
         notes = {
             "For arrays of objects, display text is extracted from 'name', 'text', 'title', or 'label' fields, falling back to the first string value.",
@@ -1837,8 +1855,10 @@ function init()
         },
         examples = {
             { title = "Count owned notes", code = '[plugin:data-views:count-badge type="notes" label="notes" icon="note"]' },
-            { title = "Count array items", code = '[plugin:data-views:count-badge path="tags" label="tags"]' },
-            { title = "Filtered count", code = '[plugin:data-views:count-badge path="tasks" count-where="status" eq="done" label="completed"]' },
+            { title = "Count array items", code = '[plugin:data-views:count-badge path="tags" label="tags"]',
+              example_data = { tags = {"lua", "go", "js", "html", "css"} } },
+            { title = "Filtered count", code = '[plugin:data-views:count-badge path="tasks" count-where="status" eq="done" label="completed"]',
+              example_data = { tasks = {{status = "done"}, {status = "pending"}, {status = "done"}} } },
         },
         notes = {
             "Either 'type' or 'path' is required, but not both.",
@@ -1886,7 +1906,8 @@ function init()
         examples = {
             { title = "Avatar from resource ID", code = '[plugin:data-views:image path="avatar_id" width="48" height="48" rounded="true"]' },
             { title = "Thumbnail", code = '[plugin:data-views:image path="cover_image" width="200" height="150"]' },
-            { title = "External image", code = '[plugin:data-views:image path="logo_url" alt="Company Logo"]' },
+            { title = "External image", code = '[plugin:data-views:image path="logo_url" alt="Company Logo"]',
+              example_data = { logo_url = "https://placehold.co/100x100?text=Logo" } },
         },
         notes = {
             "Numeric values and numeric strings are treated as resource IDs and use the preview endpoint.",
@@ -1906,8 +1927,10 @@ function init()
             { name = "size", type = "number", default = "50", description = "Height of the barcode in pixels" },
         },
         examples = {
-            { title = "Product barcode", code = '[plugin:data-views:barcode path="sku"]' },
-            { title = "Larger barcode", code = '[plugin:data-views:barcode path="serial_number" size="80"]' },
+            { title = "Product barcode", code = '[plugin:data-views:barcode path="sku"]',
+              example_data = { sku = "ABC-12345-XY" } },
+            { title = "Larger barcode", code = '[plugin:data-views:barcode path="serial_number" size="80"]',
+              example_data = { serial_number = "SN-2024-00042" } },
         },
         notes = {
             "Uses Code 128 encoding, which supports ASCII characters 0-127.",
@@ -1929,9 +1952,12 @@ function init()
             { name = "bg", type = "CSS color", default = "#ffffff", description = "Background color" },
         },
         examples = {
-            { title = "Basic QR code", code = '[plugin:data-views:qr-code path="url"]' },
-            { title = "Styled QR code", code = '[plugin:data-views:qr-code path="url" size="200" color="#1e40af" bg="#f0f9ff"]' },
-            { title = "Small QR", code = '[plugin:data-views:qr-code path="serial_number" size="80"]' },
+            { title = "Basic QR code", code = '[plugin:data-views:qr-code path="url"]',
+              example_data = { url = "https://example.com" } },
+            { title = "Styled QR code", code = '[plugin:data-views:qr-code path="url" size="200" color="#1e40af" bg="#f0f9ff"]',
+              example_data = { url = "https://example.com" } },
+            { title = "Small QR", code = '[plugin:data-views:qr-code path="serial_number" size="80"]',
+              example_data = { serial_number = "SN-2024-00042" } },
         },
         notes = {
             "Supports byte-mode encoding for versions 1-10 (up to ~174 characters).",
@@ -1951,8 +1977,10 @@ function init()
             { name = "path", type = "string", required = true, description = "Dot-path to a meta field containing a URL string or link object ({href, host})" },
         },
         examples = {
-            { title = "Simple URL", code = '[plugin:data-views:link-preview path="website"]' },
-            { title = "Nested link object", code = '[plugin:data-views:link-preview path="project.homepage"]', notes = "Works with string URLs or objects like {href: '...', host: '...'}." },
+            { title = "Simple URL", code = '[plugin:data-views:link-preview path="website"]',
+              example_data = { website = "https://github.com/example/project" } },
+            { title = "Nested link object", code = '[plugin:data-views:link-preview path="project.homepage"]', notes = "Works with string URLs or objects like {href: '...', host: '...'}.",
+              example_data = { project = { homepage = "https://docs.example.com" } } },
         },
         notes = {
             "String values are parsed to extract the domain automatically.",
@@ -1972,9 +2000,12 @@ function init()
             { name = "expanded", type = "number", default = "2", description = "Number of nesting levels to expand by default" },
         },
         examples = {
-            { title = "Expand 2 levels", code = '[plugin:data-views:json-tree path="config"]' },
-            { title = "Fully collapsed", code = '[plugin:data-views:json-tree path="metrics" expanded="0"]' },
-            { title = "Deep expansion", code = '[plugin:data-views:json-tree path="nested.data" expanded="5"]' },
+            { title = "Expand 2 levels", code = '[plugin:data-views:json-tree path="config"]',
+              example_data = { config = { theme = "dark", features = { search = true, export = false }, limits = { max_upload = 50 } } } },
+            { title = "Fully collapsed", code = '[plugin:data-views:json-tree path="metrics" expanded="0"]',
+              example_data = { metrics = { cpu = 45.2, memory = 2048, requests = { total = 15000, errors = 23 } } } },
+            { title = "Deep expansion", code = '[plugin:data-views:json-tree path="nested.data" expanded="5"]',
+              example_data = { nested = { data = { level1 = { level2 = { value = "deep" } } } } } },
         },
         notes = {
             "String values that contain valid JSON are automatically decoded.",
@@ -1996,9 +2027,12 @@ function init()
             { name = "value-key", type = "string", description = "Field name for values when data is an array of objects" },
         },
         examples = {
-            { title = "From object", code = '[plugin:data-views:bar-chart path="scores"]', notes = "Object keys become labels, values become bars (e.g. {math: 90, science: 75})." },
-            { title = "From array of objects", code = '[plugin:data-views:bar-chart path="departments" label-key="name" value-key="budget" color="#3b82f6"]' },
-            { title = "Custom color", code = '[plugin:data-views:bar-chart path="metrics.breakdown" color="#22c55e"]' },
+            { title = "From object", code = '[plugin:data-views:bar-chart path="scores"]', notes = "Object keys become labels, values become bars (e.g. {math: 90, science: 75}).",
+              example_data = { scores = { math = 90, science = 75, english = 88, history = 65 } } },
+            { title = "From array of objects", code = '[plugin:data-views:bar-chart path="departments" label-key="name" value-key="budget" color="#3b82f6"]',
+              example_data = { departments = {{name = "Engineering", budget = 450000}, {name = "Marketing", budget = 280000}, {name = "Sales", budget = 320000}} } },
+            { title = "Custom color", code = '[plugin:data-views:bar-chart path="metrics.breakdown" color="#22c55e"]',
+              example_data = { metrics = { breakdown = { frontend = 42, backend = 58, infrastructure = 23 } } } },
         },
         notes = {
             "For plain objects, keys are sorted alphabetically.",
@@ -2023,9 +2057,12 @@ function init()
             { name = "colors", type = "CSV", description = "Comma-separated hex colors for segments (cycles through a default palette if not specified)" },
         },
         examples = {
-            { title = "Pie from object", code = '[plugin:data-views:pie-chart path="budget.breakdown"]', notes = "Object keys become legend labels (e.g. {rent: 1200, food: 400, transport: 200})." },
-            { title = "Donut chart", code = '[plugin:data-views:pie-chart path="budget.breakdown" donut="true" size="150"]' },
-            { title = "Custom colors", code = '[plugin:data-views:pie-chart path="categories" label-key="name" value-key="count" colors="#ef4444,#3b82f6,#22c55e"]' },
+            { title = "Pie from object", code = '[plugin:data-views:pie-chart path="budget.breakdown"]', notes = "Object keys become legend labels (e.g. {rent: 1200, food: 400, transport: 200}).",
+              example_data = { budget = { breakdown = { rent = 1200, food = 400, transport = 200, utilities = 150 } } } },
+            { title = "Donut chart", code = '[plugin:data-views:pie-chart path="budget.breakdown" donut="true" size="150"]',
+              example_data = { budget = { breakdown = { rent = 1200, food = 400, transport = 200, utilities = 150 } } } },
+            { title = "Custom colors", code = '[plugin:data-views:pie-chart path="categories" label-key="name" value-key="count" colors="#ef4444,#3b82f6,#22c55e"]',
+              example_data = { categories = {{name = "Books", count = 45}, {name = "Videos", count = 32}, {name = "Articles", count = 28}} } },
         },
         notes = {
             "Zero and negative values are excluded from the chart.",
@@ -2055,9 +2092,12 @@ function init()
             { name = "class", type = "string", description = "CSS class to apply to the wrapper div" },
         },
         examples = {
-            { title = "Show when active", code = '[plugin:data-views:conditional path="status" eq="active" content="This item is active"]' },
-            { title = "Warning for high values", code = '[plugin:data-views:conditional path="score" gt="90" html="<span class=\'text-red-600 font-bold\'>High score alert</span>" class="bg-red-50 p-2 rounded"]' },
-            { title = "Show when field exists", code = '[plugin:data-views:conditional path="notes" not-empty="true" content="Has notes attached"]' },
+            { title = "Show when active", code = '[plugin:data-views:conditional path="status" eq="active" content="This item is active"]',
+              example_data = { status = "active" } },
+            { title = "Warning for high values", code = '[plugin:data-views:conditional path="score" gt="90" html="<span class=\'text-red-600 font-bold\'>High score alert</span>" class="bg-red-50 p-2 rounded"]',
+              example_data = { score = 95 } },
+            { title = "Show when field exists", code = '[plugin:data-views:conditional path="notes" not-empty="true" content="Has notes attached"]',
+              example_data = { notes = "Has some notes" } },
         },
         notes = {
             "Only one condition operator can be used per shortcode.",

@@ -70,7 +70,16 @@ end
 
 --- Build the x-data JSON object for a shortcode.
 --- Returns the string to place inside x-data="...".
+--- In preview mode (ctx.preview == true), save() is a visual-only no-op
+--- that updates the local value and shows the "Saved" indicator without any API calls.
 local function build_xdata(ctx, initial_value)
+    if ctx.preview then
+        return string.format(
+            '{ val: %s, saving: false, saved: false, save(v) { '
+            .. 'this.val = v; this.saved = true; setTimeout(() => this.saved = false, 1500); } }',
+            json_value(initial_value)
+        )
+    end
     return string.format(
         '{ val: %s, saving: false, saved: false, async save(v) { '
         .. 'this.saving = true; '
@@ -817,9 +826,9 @@ function init()
             { name = "label", type = "string", description = "Optional label displayed before the slider" },
         },
         examples = {
-            { title = "Basic slider", code = '[plugin:meta-editors:slider path="review.rating"]' },
-            { title = "Custom range with step", code = '[plugin:meta-editors:slider path="settings.volume" min="0" max="100" step="5"]' },
-            { title = "Labeled slider", code = '[plugin:meta-editors:slider path="settings.brightness" min="0" max="255" label="Brightness"]' },
+            { title = "Basic slider", code = '[plugin:meta-editors:slider path="review.rating"]', example_data = {review={rating=50}} },
+            { title = "Custom range with step", code = '[plugin:meta-editors:slider path="settings.volume" min="0" max="100" step="5"]', example_data = {settings={volume=65}} },
+            { title = "Labeled slider", code = '[plugin:meta-editors:slider path="settings.brightness" min="0" max="255" label="Brightness"]', example_data = {settings={brightness=180}} },
         },
         notes = {
             "Changes are saved immediately when the slider is released (on change, not on input).",
@@ -839,9 +848,9 @@ function init()
             { name = "step", type = "number", default = "1", description = "Amount to increment or decrement per click" },
         },
         examples = {
-            { title = "Basic stepper", code = '[plugin:meta-editors:stepper path="inventory.count"]' },
-            { title = "Custom range", code = '[plugin:meta-editors:stepper path="settings.priority" min="1" max="10"]' },
-            { title = "Large steps", code = '[plugin:meta-editors:stepper path="budget.amount" min="0" max="10000" step="100"]' },
+            { title = "Basic stepper", code = '[plugin:meta-editors:stepper path="inventory.count"]', example_data = {inventory={count=7}} },
+            { title = "Custom range", code = '[plugin:meta-editors:stepper path="settings.priority" min="1" max="10"]', example_data = {settings={priority=5}} },
+            { title = "Large steps", code = '[plugin:meta-editors:stepper path="budget.amount" min="0" max="10000" step="100"]', example_data = {budget={amount=2500}} },
         },
         notes = {
             "The minus button is disabled when the value reaches min; the plus button is disabled at max.",
@@ -859,8 +868,8 @@ function init()
             { name = "max", type = "number", default = "5", description = "Number of stars to display" },
         },
         examples = {
-            { title = "Default 5-star rating", code = '[plugin:meta-editors:star-rating path="review.rating"]' },
-            { title = "10-star rating", code = '[plugin:meta-editors:star-rating path="review.score" max="10"]' },
+            { title = "Default 5-star rating", code = '[plugin:meta-editors:star-rating path="review.rating"]', example_data = {review={rating=4}} },
+            { title = "10-star rating", code = '[plugin:meta-editors:star-rating path="review.score" max="10"]', example_data = {review={score=7}} },
         },
         notes = {
             "Clicking the currently selected star resets the rating to 0.",
@@ -878,8 +887,8 @@ function init()
             { name = "label", type = "string", description = "Optional label displayed before the toggle" },
         },
         examples = {
-            { title = "Basic toggle", code = '[plugin:meta-editors:toggle path="settings.notifications"]' },
-            { title = "Labeled toggle", code = '[plugin:meta-editors:toggle path="settings.darkMode" label="Dark Mode"]' },
+            { title = "Basic toggle", code = '[plugin:meta-editors:toggle path="settings.notifications"]', example_data = {settings={notifications=true}} },
+            { title = "Labeled toggle", code = '[plugin:meta-editors:toggle path="settings.darkMode" label="Dark Mode"]', example_data = {settings={darkMode=false}} },
         },
         notes = {
             "The toggle stores a boolean value (true/false).",
@@ -898,8 +907,8 @@ function init()
             { name = "labels", type = "CSV", description = "Comma-separated display labels corresponding to each option (defaults to option values)" },
         },
         examples = {
-            { title = "Basic multi-select", code = '[plugin:meta-editors:multi-select path="project.tags" options="frontend,backend,design,devops"]' },
-            { title = "With custom labels", code = '[plugin:meta-editors:multi-select path="recipe.diet" options="gf,df,v,vg" labels="Gluten Free,Dairy Free,Vegetarian,Vegan"]' },
+            { title = "Basic multi-select", code = '[plugin:meta-editors:multi-select path="project.tags" options="frontend,backend,design,devops"]', example_data = {project={tags={"frontend","design"}}} },
+            { title = "With custom labels", code = '[plugin:meta-editors:multi-select path="recipe.diet" options="gf,df,v,vg" labels="Gluten Free,Dairy Free,Vegetarian,Vegan"]', example_data = {recipe={diet={"gf","v"}}} },
         },
         notes = {
             "Clicking a selected pill deselects it; clicking an unselected pill adds it.",
@@ -918,8 +927,8 @@ function init()
             { name = "labels", type = "CSV", description = "Comma-separated display labels corresponding to each option (defaults to option values)" },
         },
         examples = {
-            { title = "Basic button group", code = '[plugin:meta-editors:button-group path="settings.priority" options="low,medium,high"]' },
-            { title = "With custom labels", code = '[plugin:meta-editors:button-group path="settings.size" options="sm,md,lg,xl" labels="Small,Medium,Large,Extra Large"]' },
+            { title = "Basic button group", code = '[plugin:meta-editors:button-group path="settings.priority" options="low,medium,high"]', example_data = {settings={priority="medium"}} },
+            { title = "With custom labels", code = '[plugin:meta-editors:button-group path="settings.size" options="sm,md,lg,xl" labels="Small,Medium,Large,Extra Large"]', example_data = {settings={size="md"}} },
         },
         notes = {
             "Only one option can be selected at a time.",
@@ -937,8 +946,8 @@ function init()
             { name = "colors", type = "CSV", default = "#ef4444,#f59e0b,#22c55e,#3b82f6,#8b5cf6,#ec4899,#6b7280,#000000", description = "Comma-separated list of hex color values to display as swatches" },
         },
         examples = {
-            { title = "Default palette", code = '[plugin:meta-editors:color-picker path="display.accentColor"]' },
-            { title = "Custom palette", code = '[plugin:meta-editors:color-picker path="label.color" colors="#dc2626,#ea580c,#ca8a04,#16a34a,#2563eb,#7c3aed"]' },
+            { title = "Default palette", code = '[plugin:meta-editors:color-picker path="display.accentColor"]', example_data = {display={accentColor="#3b82f6"}} },
+            { title = "Custom palette", code = '[plugin:meta-editors:color-picker path="label.color" colors="#dc2626,#ea580c,#ca8a04,#16a34a,#2563eb,#7c3aed"]', example_data = {label={color="#2563eb"}} },
         },
         notes = {
             "The stored value is a hex color string (e.g. '#3b82f6').",
@@ -956,8 +965,8 @@ function init()
             { name = "placeholder", type = "string", default = "Add tag...", description = "Placeholder text for the input field" },
         },
         examples = {
-            { title = "Basic tags input", code = '[plugin:meta-editors:tags-input path="article.keywords"]' },
-            { title = "Custom placeholder", code = '[plugin:meta-editors:tags-input path="project.technologies" placeholder="Add technology..."]' },
+            { title = "Basic tags input", code = '[plugin:meta-editors:tags-input path="article.keywords"]', example_data = {article={keywords={"lua","plugins","shortcodes"}}} },
+            { title = "Custom placeholder", code = '[plugin:meta-editors:tags-input path="project.technologies" placeholder="Add technology..."]', example_data = {project={technologies={"Go","TypeScript"}}} },
         },
         notes = {
             "Press Enter to add a tag. Duplicate tags are ignored.",
@@ -977,8 +986,8 @@ function init()
             { name = "placeholder", type = "string", default = "", description = "Placeholder text shown when the field is empty" },
         },
         examples = {
-            { title = "Basic textarea", code = '[plugin:meta-editors:textarea path="notes.description"]' },
-            { title = "Taller with placeholder", code = '[plugin:meta-editors:textarea path="review.comments" rows="6" placeholder="Write your review..."]' },
+            { title = "Basic textarea", code = '[plugin:meta-editors:textarea path="notes.description"]', example_data = {notes={description="Sample description text"}} },
+            { title = "Taller with placeholder", code = '[plugin:meta-editors:textarea path="review.comments" rows="6" placeholder="Write your review..."]', example_data = {review={comments="This is a review comment"}} },
         },
         notes = {
             "Saves automatically 500ms after the user stops typing (debounced).",
@@ -996,8 +1005,8 @@ function init()
             { name = "label", type = "string", description = "Optional label displayed before the date input" },
         },
         examples = {
-            { title = "Basic date picker", code = '[plugin:meta-editors:date-picker path="event.startDate"]' },
-            { title = "Labeled date picker", code = '[plugin:meta-editors:date-picker path="task.deadline" label="Deadline"]' },
+            { title = "Basic date picker", code = '[plugin:meta-editors:date-picker path="event.startDate"]', example_data = {event={startDate="2024-06-15"}} },
+            { title = "Labeled date picker", code = '[plugin:meta-editors:date-picker path="task.deadline" label="Deadline"]', example_data = {task={deadline="2025-01-31"}} },
         },
         notes = {
             "Uses the browser's native date picker.",
@@ -1016,8 +1025,8 @@ function init()
             { name = "end-label", type = "string", default = "To", description = "Label displayed before the end date input" },
         },
         examples = {
-            { title = "Basic date range", code = '[plugin:meta-editors:date-range path="event.dates"]' },
-            { title = "Custom labels", code = '[plugin:meta-editors:date-range path="project.timeline" start-label="Start" end-label="End"]' },
+            { title = "Basic date range", code = '[plugin:meta-editors:date-range path="event.dates"]', example_data = {event={dates={start="2024-06-15",["end"]="2024-06-20"}}} },
+            { title = "Custom labels", code = '[plugin:meta-editors:date-range path="project.timeline" start-label="Start" end-label="End"]', example_data = {project={timeline={start="2025-01-01",["end"]="2025-06-30"}}} },
         },
         notes = {
             "The stored value is a JSON object: {\"start\": \"YYYY-MM-DD\", \"end\": \"YYYY-MM-DD\"}.",
@@ -1037,8 +1046,8 @@ function init()
             { name = "labels", type = "CSV", description = "Comma-separated display labels for each status (defaults to option values)" },
         },
         examples = {
-            { title = "Task status", code = '[plugin:meta-editors:status-badge path="task.status" options="todo,in_progress,done" colors="#9ca3af,#f59e0b,#22c55e" labels="To Do,In Progress,Done"]' },
-            { title = "Priority badge", code = '[plugin:meta-editors:status-badge path="issue.priority" options="low,medium,high,critical" colors="#6b7280,#3b82f6,#f59e0b,#ef4444"]' },
+            { title = "Task status", code = '[plugin:meta-editors:status-badge path="task.status" options="todo,in_progress,done" colors="#9ca3af,#f59e0b,#22c55e" labels="To Do,In Progress,Done"]', example_data = {task={status="in_progress"}} },
+            { title = "Priority badge", code = '[plugin:meta-editors:status-badge path="issue.priority" options="low,medium,high,critical" colors="#6b7280,#3b82f6,#f59e0b,#ef4444"]', example_data = {issue={priority="medium"}} },
         },
         notes = {
             "Click the badge to advance to the next status in the cycle.",
@@ -1057,8 +1066,8 @@ function init()
             { name = "label", type = "string", default = "Progress", description = "Label displayed above the progress bar" },
         },
         examples = {
-            { title = "Basic progress bar", code = '[plugin:meta-editors:progress-input path="task.completion"]' },
-            { title = "Custom label", code = '[plugin:meta-editors:progress-input path="course.progress" label="Course Progress"]' },
+            { title = "Basic progress bar", code = '[plugin:meta-editors:progress-input path="task.completion"]', example_data = {task={completion=65}} },
+            { title = "Custom label", code = '[plugin:meta-editors:progress-input path="course.progress" label="Course Progress"]', example_data = {course={progress=40}} },
         },
         notes = {
             "Click position on the bar determines the percentage (0-100).",
@@ -1075,8 +1084,8 @@ function init()
             { name = "path", type = "string", required = true, description = "Dot-path to the meta field (e.g. 'config.env')" },
         },
         examples = {
-            { title = "Environment variables", code = '[plugin:meta-editors:key-value path="config.env"]' },
-            { title = "Custom metadata", code = '[plugin:meta-editors:key-value path="contact.socialLinks"]' },
+            { title = "Environment variables", code = '[plugin:meta-editors:key-value path="config.env"]', example_data = {config={env={NODE_ENV="production",PORT="3000"}}} },
+            { title = "Custom metadata", code = '[plugin:meta-editors:key-value path="contact.socialLinks"]', example_data = {contact={socialLinks={github="octocat",twitter="example"}}} },
         },
         notes = {
             "Type a key and value, then press Enter or click + to add the pair.",
@@ -1094,8 +1103,8 @@ function init()
             { name = "path", type = "string", required = true, description = "Dot-path to the meta field (e.g. 'task.steps')" },
         },
         examples = {
-            { title = "Task checklist", code = '[plugin:meta-editors:checklist path="task.steps"]' },
-            { title = "Shopping list", code = '[plugin:meta-editors:checklist path="shopping.items"]' },
+            { title = "Task checklist", code = '[plugin:meta-editors:checklist path="task.steps"]', example_data = {task={steps={{text="Design schema",done=true},{text="Write tests",done=false},{text="Implement",done=false}}}} },
+            { title = "Shopping list", code = '[plugin:meta-editors:checklist path="shopping.items"]', example_data = {shopping={items={{text="Eggs",done=true},{text="Milk",done=false}}}} },
         },
         notes = {
             "Type an item and press Enter or click + to add it.",
@@ -1116,8 +1125,8 @@ function init()
             { name = "label", type = "string", description = "Optional label displayed before the input" },
         },
         examples = {
-            { title = "Basic URL input", code = '[plugin:meta-editors:url-input path="contact.website"]' },
-            { title = "Labeled with placeholder", code = '[plugin:meta-editors:url-input path="project.repository" label="Repository" placeholder="https://github.com/..."]' },
+            { title = "Basic URL input", code = '[plugin:meta-editors:url-input path="contact.website"]', example_data = {contact={website="https://example.com"}} },
+            { title = "Labeled with placeholder", code = '[plugin:meta-editors:url-input path="project.repository" label="Repository" placeholder="https://github.com/..."]', example_data = {project={repository="https://github.com/example/repo"}} },
         },
         notes = {
             "Only valid URLs are saved (validated via the URL constructor).",
@@ -1137,8 +1146,8 @@ function init()
             { name = "placeholder", type = "string", default = "Write markdown...", description = "Placeholder text shown when the field is empty" },
         },
         examples = {
-            { title = "Basic markdown editor", code = '[plugin:meta-editors:markdown path="notes.body"]' },
-            { title = "Taller with custom placeholder", code = '[plugin:meta-editors:markdown path="project.readme" rows="10" placeholder="# Project Title"]' },
+            { title = "Basic markdown editor", code = '[plugin:meta-editors:markdown path="notes.body"]', example_data = {notes={body="# Hello\nSample **markdown** content."}} },
+            { title = "Taller with custom placeholder", code = '[plugin:meta-editors:markdown path="project.readme" rows="10" placeholder="# Project Title"]', example_data = {project={readme="# Project\nDescription here."}} },
         },
         notes = {
             "Uses a monospace font to distinguish it from the regular textarea shortcode.",
