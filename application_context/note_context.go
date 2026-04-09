@@ -11,6 +11,7 @@ import (
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
+	"mahresources/models/types"
 	"mahresources/server/interfaces"
 )
 
@@ -397,6 +398,10 @@ func (ctx *MahresourcesContext) CreateOrUpdateNoteType(query *query_models.NoteT
 	noteType.CustomSidebar = query.CustomSidebar
 	noteType.CustomSummary = query.CustomSummary
 	noteType.CustomAvatar = query.CustomAvatar
+	noteType.MetaSchema = query.MetaSchema
+	if query.SectionConfig != "" {
+		noteType.SectionConfig = types.JSON(query.SectionConfig)
+	}
 	if err := ctx.db.Save(&noteType).Error; err != nil {
 		return nil, err
 	}

@@ -47,6 +47,8 @@ type NoteTypeEditor struct {
 	CustomSidebar string
 	CustomSummary string
 	CustomAvatar  string
+	MetaSchema    string
+	SectionConfig string
 }
 
 type NoteTypeQuery struct {

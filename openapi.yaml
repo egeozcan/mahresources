@@ -716,12 +716,18 @@ components:
                 ID:
                     readOnly: true
                     type: integer
+                MetaSchema:
+                    type: string
                 Name:
                     type: string
                 Notes:
                     items:
                         $ref: '#/components/schemas/NotePartial'
                     type: array
+                SectionConfig:
+                    additionalProperties: true
+                    description: Arbitrary JSON data
+                    type: object
                 UpdatedAt:
                     format: date-time
                     readOnly: true
@@ -741,7 +747,11 @@ components:
                     type: string
                 ID:
                     type: integer
+                MetaSchema:
+                    type: string
                 Name:
+                    type: string
+                SectionConfig:
                     type: string
             type: object
         NoteTypePartial:
