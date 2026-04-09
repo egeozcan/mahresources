@@ -68,28 +68,28 @@ local function parse_csv(str)
     return arr
 end
 
---- Build the x-data JSON object for a shortcode.
---- Returns the string to place inside x-data="...".
---- In preview mode (ctx.preview == true), save() is a visual-only no-op
---- that updates the local value and shows the "Saved" indicator without any API calls.
-local function build_xdata(ctx, initial_value)
+--- Build the JavaScript save function string for a meta-editor's x-data.
+--- In preview mode, returns a visual-only no-op that updates state without API calls.
+local function build_save_fn(ctx)
     if ctx.preview then
-        return string.format(
-            '{ val: %s, saving: false, saved: false, save(v) { '
-            .. 'this.val = v; this.saved = true; setTimeout(() => this.saved = false, 1500); } }',
-            json_value(initial_value)
-        )
+        return 'save(v) { this.val = v; this.saved = true; setTimeout(() => this.saved = false, 1500); }'
     end
     return string.format(
-        '{ val: %s, saving: false, saved: false, async save(v) { '
+        'async save(v) { '
         .. 'this.saving = true; '
         .. 'try { await window.__metaEditorsSave(\'%s\', %d, \'%s\', v); this.val = v; this.saved = true; setTimeout(() => this.saved = false, 1500); } '
         .. 'catch(e) { console.error(e); } '
-        .. 'this.saving = false; } }',
-        json_value(initial_value),
-        html_escape(ctx.entity_type),
-        ctx.entity_id,
-        html_escape(ctx.attrs.path)
+        .. 'this.saving = false; }',
+        html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
+    )
+end
+
+--- Build the x-data JSON object for a shortcode.
+--- Returns the string to place inside x-data="...".
+local function build_xdata(ctx, initial_value)
+    return string.format(
+        '{ val: %s, saving: false, saved: false, %s }',
+        json_value(initial_value), build_save_fn(ctx)
     )
 end
 
@@ -180,14 +180,10 @@ local function render_stepper(ctx)
     local step = ctx.attrs.step or "1"
 
     local xdata = string.format(
-        '{ val: %s, saving: false, saved: false, min: %s, max: %s, step: %s, async save(v) { '
-        .. 'this.saving = true; '
-        .. 'try { await window.__metaEditorsSave(\'%s\', %d, \'%s\', v); this.val = v; this.saved = true; setTimeout(() => this.saved = false, 1500); } '
-        .. 'catch(e) { console.error(e); } '
-        .. 'this.saving = false; } }',
+        '{ val: %s, saving: false, saved: false, min: %s, max: %s, step: %s, %s }',
         json_value(tonumber(val) or 0),
         html_escape(min), html_escape(max), html_escape(step),
-        html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
+        build_save_fn(ctx)
     )
 
     local title_text = string.format("Edit: %s (range %s-%s)", ctx.attrs.path, min, max)
@@ -218,13 +214,9 @@ local function render_star_rating(ctx)
     local max = ctx.attrs.max or "5"
 
     local xdata = string.format(
-        '{ val: %s, saving: false, saved: false, hover: 0, max: %s, async save(v) { '
-        .. 'this.saving = true; '
-        .. 'try { await window.__metaEditorsSave(\'%s\', %d, \'%s\', v); this.val = v; this.saved = true; setTimeout(() => this.saved = false, 1500); } '
-        .. 'catch(e) { console.error(e); } '
-        .. 'this.saving = false; } }',
+        '{ val: %s, saving: false, saved: false, hover: 0, max: %s, %s }',
         json_value(tonumber(val) or 0), html_escape(max),
-        html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
+        build_save_fn(ctx)
     )
 
     local star_svg = '<svg class="w-5 h-5" viewBox="0 0 20 20" '
@@ -294,13 +286,9 @@ local function render_multi_select(ctx)
     local xdata = string.format(
         '{ val: %s, saving: false, saved: false, options: %s, labels: %s, '
         .. 'toggle(opt) { let a = [...this.val]; let i = a.indexOf(opt); if(i>=0) a.splice(i,1); else a.push(opt); this.save(a); }, '
-        .. 'async save(v) { '
-        .. 'this.saving = true; '
-        .. 'try { await window.__metaEditorsSave(\'%s\', %d, \'%s\', v); this.val = v; this.saved = true; setTimeout(() => this.saved = false, 1500); } '
-        .. 'catch(e) { console.error(e); } '
-        .. 'this.saving = false; } }',
+        .. '%s }',
         json_value(val), json_value(options), json_value(labels),
-        html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
+        build_save_fn(ctx)
     )
 
     local title_text = string.format("Edit: %s (multi-select)", ctx.attrs.path)
@@ -331,14 +319,9 @@ local function render_button_group(ctx)
     local labels = parse_csv(ctx.attrs.labels or "")
 
     local xdata = string.format(
-        '{ val: %s, saving: false, saved: false, options: %s, labels: %s, '
-        .. 'async save(v) { '
-        .. 'this.saving = true; '
-        .. 'try { await window.__metaEditorsSave(\'%s\', %d, \'%s\', v); this.val = v; this.saved = true; setTimeout(() => this.saved = false, 1500); } '
-        .. 'catch(e) { console.error(e); } '
-        .. 'this.saving = false; } }',
+        '{ val: %s, saving: false, saved: false, options: %s, labels: %s, %s }',
         json_value(val), json_value(options), json_value(labels),
-        html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
+        build_save_fn(ctx)
     )
 
     local title_text = string.format("Edit: %s (select one)", ctx.attrs.path)
@@ -370,14 +353,9 @@ local function render_color_picker(ctx)
     local colors = parse_csv(ctx.attrs.colors or DEFAULT_COLORS)
 
     local xdata = string.format(
-        '{ val: %s, saving: false, saved: false, colors: %s, '
-        .. 'async save(v) { '
-        .. 'this.saving = true; '
-        .. 'try { await window.__metaEditorsSave(\'%s\', %d, \'%s\', v); this.val = v; this.saved = true; setTimeout(() => this.saved = false, 1500); } '
-        .. 'catch(e) { console.error(e); } '
-        .. 'this.saving = false; } }',
+        '{ val: %s, saving: false, saved: false, colors: %s, %s }',
         json_value(val), json_value(colors),
-        html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
+        build_save_fn(ctx)
     )
 
     local title_text = string.format("Edit: %s (color)", ctx.attrs.path)
@@ -413,13 +391,9 @@ local function render_tags_input(ctx)
         '{ val: %s, saving: false, saved: false, input: \'\',' .. ' '
         .. 'add() { let t = this.input.trim(); if (t && !this.val.includes(t)) { let a = [...this.val, t]; this.save(a); } this.input = \'\'; }, '
         .. 'remove(i) { let a = [...this.val]; a.splice(i, 1); this.save(a); }, '
-        .. 'async save(v) { '
-        .. 'this.saving = true; '
-        .. 'try { await window.__metaEditorsSave(\'%s\', %d, \'%s\', v); this.val = v; this.saved = true; setTimeout(() => this.saved = false, 1500); } '
-        .. 'catch(e) { console.error(e); } '
-        .. 'this.saving = false; } }',
+        .. '%s }',
         json_value(val),
-        html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
+        build_save_fn(ctx)
     )
 
     local title_text = string.format("Edit: %s (tags)", ctx.attrs.path)
@@ -459,13 +433,9 @@ local function render_textarea(ctx)
     local xdata = string.format(
         '{ val: %s, saving: false, saved: false, timer: null, '
         .. 'debounced() { clearTimeout(this.timer); this.timer = setTimeout(() => this.save(this.val), 500); }, '
-        .. 'async save(v) { '
-        .. 'this.saving = true; '
-        .. 'try { await window.__metaEditorsSave(\'%s\', %d, \'%s\', v); this.val = v; this.saved = true; setTimeout(() => this.saved = false, 1500); } '
-        .. 'catch(e) { console.error(e); } '
-        .. 'this.saving = false; } }',
+        .. '%s }',
         json_value(val),
-        html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
+        build_save_fn(ctx)
     )
 
     local title_text = string.format("Edit: %s (text)", ctx.attrs.path)
@@ -524,13 +494,9 @@ local function render_date_range(ctx)
     local xdata = string.format(
         '{ val: %s, saving: false, saved: false, '
         .. 'saveRange(key, v) { let obj = Object.assign({}, this.val || {}); obj[key] = v; this.save(obj); }, '
-        .. 'async save(v) { '
-        .. 'this.saving = true; '
-        .. 'try { await window.__metaEditorsSave(\'%s\', %d, \'%s\', v); this.val = v; this.saved = true; setTimeout(() => this.saved = false, 1500); } '
-        .. 'catch(e) { console.error(e); } '
-        .. 'this.saving = false; } }',
+        .. '%s }',
         json_value(val),
-        html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
+        build_save_fn(ctx)
     )
 
     local title_text = string.format("Edit: %s (date range)", ctx.attrs.path)
@@ -566,13 +532,9 @@ local function render_status_badge(ctx)
         .. 'next() { let i = this.options.indexOf(this.val); let n = (i + 1) %% this.options.length; this.save(this.options[n]); }, '
         .. 'getColor() { let i = this.options.indexOf(this.val); return i >= 0 ? this.colors[i] : this.colors[0]; }, '
         .. 'getLabel() { let i = this.options.indexOf(this.val); return i >= 0 ? (this.labels[i] || this.options[i]) : (this.val || this.labels[0] || this.options[0]); }, '
-        .. 'async save(v) { '
-        .. 'this.saving = true; '
-        .. 'try { await window.__metaEditorsSave(\'%s\', %d, \'%s\', v); this.val = v; this.saved = true; setTimeout(() => this.saved = false, 1500); } '
-        .. 'catch(e) { console.error(e); } '
-        .. 'this.saving = false; } }',
+        .. '%s }',
         json_value(val), json_value(options), json_value(colors), json_value(labels),
-        html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
+        build_save_fn(ctx)
     )
 
     local title_text = string.format("Edit: %s (status)", ctx.attrs.path)
@@ -602,13 +564,9 @@ local function render_progress_input(ctx)
     local xdata = string.format(
         '{ val: %s, saving: false, saved: false, '
         .. 'setFromClick(e) { let rect = e.currentTarget.getBoundingClientRect(); let pct = Math.round(((e.clientX - rect.left) / rect.width) * 100); pct = Math.max(0, Math.min(100, pct)); this.save(pct); }, '
-        .. 'async save(v) { '
-        .. 'this.saving = true; '
-        .. 'try { await window.__metaEditorsSave(\'%s\', %d, \'%s\', v); this.val = v; this.saved = true; setTimeout(() => this.saved = false, 1500); } '
-        .. 'catch(e) { console.error(e); } '
-        .. 'this.saving = false; } }',
+        .. '%s }',
         json_value(tonumber(val) or 0),
-        html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
+        build_save_fn(ctx)
     )
 
     local title_text = string.format("Edit: %s (progress %%)", ctx.attrs.path)
@@ -642,13 +600,9 @@ local function render_key_value(ctx)
         .. 'addPair() { if (!this.newKey.trim()) return; let obj = Object.assign({}, this.val || {}); obj[this.newKey.trim()] = this.newVal; this.save(obj); this.newKey = \'\'; this.newVal = \'\'; }, '
         .. 'removePair(k) { let obj = Object.assign({}, this.val || {}); delete obj[k]; this.save(obj); }, '
         .. 'entries() { return Object.entries(this.val || {}); }, '
-        .. 'async save(v) { '
-        .. 'this.saving = true; '
-        .. 'try { await window.__metaEditorsSave(\'%s\', %d, \'%s\', v); this.val = v; this.saved = true; setTimeout(() => this.saved = false, 1500); } '
-        .. 'catch(e) { console.error(e); } '
-        .. 'this.saving = false; } }',
+        .. '%s }',
         json_value(val),
-        html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
+        build_save_fn(ctx)
     )
 
     local title_text = string.format("Edit: %s (key-value pairs)", ctx.attrs.path)
@@ -688,13 +642,9 @@ local function render_checklist(ctx)
         .. 'addItem() { if (!this.newItem.trim()) return; let a = [...(this.val || []), {text: this.newItem.trim(), done: false}]; this.save(a); this.newItem = \'\'; }, '
         .. 'toggleItem(i) { let a = JSON.parse(JSON.stringify(this.val || [])); a[i].done = !a[i].done; this.save(a); }, '
         .. 'removeItem(i) { let a = [...(this.val || [])]; a.splice(i, 1); this.save(a); }, '
-        .. 'async save(v) { '
-        .. 'this.saving = true; '
-        .. 'try { await window.__metaEditorsSave(\'%s\', %d, \'%s\', v); this.val = v; this.saved = true; setTimeout(() => this.saved = false, 1500); } '
-        .. 'catch(e) { console.error(e); } '
-        .. 'this.saving = false; } }',
+        .. '%s }',
         json_value(val),
-        html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
+        build_save_fn(ctx)
     )
 
     local title_text = string.format("Edit: %s (checklist)", ctx.attrs.path)
@@ -735,13 +685,9 @@ local function render_url_input(ctx)
         '{ val: %s, saving: false, saved: false, timer: null, valid: false, '
         .. 'debounced() { clearTimeout(this.timer); try { new URL(this.val); this.valid = true; } catch { this.valid = false; } this.timer = setTimeout(() => { if (this.valid) this.save(this.val); }, 500); }, '
         .. 'checkValid() { try { new URL(this.val); this.valid = true; } catch { this.valid = false; } }, '
-        .. 'async save(v) { '
-        .. 'this.saving = true; '
-        .. 'try { await window.__metaEditorsSave(\'%s\', %d, \'%s\', v); this.val = v; this.saved = true; setTimeout(() => this.saved = false, 1500); } '
-        .. 'catch(e) { console.error(e); } '
-        .. 'this.saving = false; } }',
+        .. '%s }',
         json_value(val),
-        html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
+        build_save_fn(ctx)
     )
 
     local title_text = string.format("Edit: %s (URL)", ctx.attrs.path)
@@ -781,13 +727,9 @@ local function render_markdown(ctx)
     local xdata = string.format(
         '{ val: %s, saving: false, saved: false, timer: null, '
         .. 'debounced() { clearTimeout(this.timer); this.timer = setTimeout(() => this.save(this.val), 500); }, '
-        .. 'async save(v) { '
-        .. 'this.saving = true; '
-        .. 'try { await window.__metaEditorsSave(\'%s\', %d, \'%s\', v); this.val = v; this.saved = true; setTimeout(() => this.saved = false, 1500); } '
-        .. 'catch(e) { console.error(e); } '
-        .. 'this.saving = false; } }',
+        .. '%s }',
         json_value(val),
-        html_escape(ctx.entity_type), ctx.entity_id, html_escape(ctx.attrs.path)
+        build_save_fn(ctx)
     )
 
     local title_text = string.format("Edit: %s (markdown)", ctx.attrs.path)
