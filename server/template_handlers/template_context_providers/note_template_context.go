@@ -252,10 +252,18 @@ func NoteContextProvider(context *application_context.MahresourcesContext) func(
 			shareBaseUrl = fmt.Sprintf("http://%s:%s", context.Config.ShareBindAddress, context.Config.SharePort)
 		}
 
+		var sectionConfig models.NoteSectionConfig
+		if note.NoteType != nil {
+			sectionConfig = models.ResolveNoteSectionConfig(&note.NoteType.SectionConfig)
+		} else {
+			sectionConfig = models.ResolveNoteSectionConfig(nil)
+		}
+
 		return pongo2.Context{
 			"pageTitle": "Note: " + note.GetName(),
 			"prefix":    "Note",
 			"note":      note,
+			"sc":        sectionConfig,
 			"action": template_entities.Entry{
 				Name: "Edit",
 				Url:  "/note/edit?id=" + strconv.Itoa(int(query.ID)),
