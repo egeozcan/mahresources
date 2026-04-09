@@ -268,6 +268,9 @@ func GetAddNoteTypeHandler(ctx interfaces.NoteTypeWriter) func(writer http.Respo
 					if _, sent := raw["CustomAvatar"]; !sent {
 						editor.CustomAvatar = existing.CustomAvatar
 					}
+					if _, sent := raw["CustomMRQLResult"]; !sent {
+						editor.CustomMRQLResult = existing.CustomMRQLResult
+					}
 					if _, sent := raw["MetaSchema"]; !sent {
 						editor.MetaSchema = existing.MetaSchema
 					}

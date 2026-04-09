@@ -108,6 +108,77 @@ func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, 
 	}
 }
 
+// renderMRQLGroupedCustomTemplates processes CustomMRQLResult templates for bucketed
+// GROUP BY results. Aggregated results have no entities so they're skipped.
+func renderMRQLGroupedCustomTemplates(appCtx *application_context.MahresourcesContext, result *application_context.MRQLGroupedResult, reqCtx context.Context) {
+	if result.Mode != "bucketed" {
+		return // aggregated results are summary rows, not entities
+	}
+
+	executor := template_filters.BuildQueryExecutor(appCtx)
+
+	for bIdx := range result.Groups {
+		bucket := &result.Groups[bIdx]
+		switch items := bucket.Items.(type) {
+		case []models.Resource:
+			for i := range items {
+				r := &items[i]
+				if r.ResourceCategory == nil && r.ResourceCategoryId > 0 {
+					cat, _ := appCtx.GetResourceCategory(r.ResourceCategoryId)
+					if cat != nil {
+						r.ResourceCategory = cat
+					}
+				}
+				if r.ResourceCategory != nil && r.ResourceCategory.CustomMRQLResult != "" {
+					mctx := shortcodes.MetaShortcodeContext{
+						EntityType: "resource", EntityID: r.ID,
+						Meta: json.RawMessage(r.Meta), MetaSchema: r.ResourceCategory.MetaSchema,
+						Entity: r,
+					}
+					r.RenderedHTML = shortcodes.Process(reqCtx, r.ResourceCategory.CustomMRQLResult, mctx, nil, executor)
+				}
+			}
+			bucket.Items = items
+		case []models.Note:
+			for i := range items {
+				n := &items[i]
+				if n.NoteType == nil && n.NoteTypeId != nil && *n.NoteTypeId > 0 {
+					nt, _ := appCtx.GetNoteType(*n.NoteTypeId)
+					if nt != nil {
+						n.NoteType = nt
+					}
+				}
+				if n.NoteType != nil && n.NoteType.CustomMRQLResult != "" {
+					mctx := shortcodes.MetaShortcodeContext{
+						EntityType: "note", EntityID: n.ID,
+						Meta: json.RawMessage(n.Meta), Entity: n,
+					}
+					n.RenderedHTML = shortcodes.Process(reqCtx, n.NoteType.CustomMRQLResult, mctx, nil, executor)
+				}
+			}
+			bucket.Items = items
+		case []models.Group:
+			for i := range items {
+				g := &items[i]
+				if g.Category == nil && g.CategoryId != nil && *g.CategoryId > 0 {
+					cat, _ := appCtx.GetCategory(*g.CategoryId)
+					if cat != nil {
+						g.Category = cat
+					}
+				}
+				if g.Category != nil && g.Category.CustomMRQLResult != "" {
+					mctx := shortcodes.MetaShortcodeContext{
+						EntityType: "group", EntityID: g.ID,
+						Meta: json.RawMessage(g.Meta), Entity: g,
+					}
+					g.RenderedHTML = shortcodes.Process(reqCtx, g.Category.CustomMRQLResult, mctx, nil, executor)
+				}
+			}
+			bucket.Items = items
+		}
+	}
+}
+
 // GetExecuteMRQLHandler handles POST /v1/mrql — execute an MRQL query.
 func GetExecuteMRQLHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
@@ -187,6 +258,11 @@ func GetExecuteMRQLHandler(ctx *application_context.MahresourcesContext) func(ht
 			if err != nil {
 				http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 				return
+			}
+
+			render := request.URL.Query().Get("render") == "1"
+			if render {
+				renderMRQLGroupedCustomTemplates(ctx, grouped, request.Context())
 			}
 
 			writer.Header().Set("Content-Type", constants.JSON)
@@ -451,6 +527,11 @@ func GetRunSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) f
 			if err != nil {
 				http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 				return
+			}
+
+			render := request.URL.Query().Get("render") == "1"
+			if render {
+				renderMRQLGroupedCustomTemplates(ctx, grouped, request.Context())
 			}
 
 			writer.Header().Set("Content-Type", constants.JSON)

@@ -3,9 +3,11 @@ package template_filters
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"mahresources/application_context"
 	"mahresources/models"
+	"mahresources/mrql"
 	"mahresources/shortcodes"
 )
 
@@ -19,6 +21,7 @@ func BuildQueryExecutor(appCtx *application_context.MahresourcesContext) shortco
 }
 
 // executeMRQLForShortcode runs an MRQL query and converts the result into shortcode types.
+// It detects GROUP BY queries and routes them through ExecuteMRQLGrouped.
 func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context.MahresourcesContext, query string, savedName string, limit int, buckets int) (*shortcodes.QueryResult, error) {
 	// Resolve saved query name to query string
 	actualQuery := query
@@ -30,20 +33,50 @@ func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context
 		actualQuery = saved.Query
 	}
 
+	// Parse to detect GROUP BY
+	parsed, err := mrql.Parse(actualQuery)
+	if err != nil {
+		return nil, err
+	}
+	if err := mrql.Validate(parsed); err != nil {
+		return nil, err
+	}
+
+	// Apply limit override
+	if limit > 0 {
+		parsed.Limit = limit
+	}
+
+	// GROUP BY queries use the grouped execution path
+	if parsed.GroupBy != nil {
+		entityType := mrql.ExtractEntityType(parsed)
+		if entityType == mrql.EntityUnspecified {
+			return nil, fmt.Errorf("GROUP BY requires an explicit entity type")
+		}
+		parsed.EntityType = entityType
+
+		if buckets > 0 {
+			parsed.BucketLimit = buckets
+		}
+
+		grouped, err := appCtx.ExecuteMRQLGrouped(reqCtx, parsed)
+		if err != nil {
+			return nil, err
+		}
+		return convertGroupedResultItems(grouped, appCtx), nil
+	}
+
+	// Non-grouped: flat query
 	result, err := appCtx.ExecuteMRQL(reqCtx, actualQuery, limit, 0)
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert to shortcode result types
 	qr := &shortcodes.QueryResult{
 		EntityType: result.EntityType,
 		Mode:       "flat",
 	}
-
-	// Collect all entities and preload their categories
-	items := convertResultItems(result, appCtx)
-	qr.Items = items
+	qr.Items = convertResultItems(result, appCtx)
 
 	return qr, nil
 }
