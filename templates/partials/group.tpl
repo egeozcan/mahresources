@@ -60,13 +60,13 @@
 
         {% if !reverse && relation && relation.Description && !noRelDescription %}
             <a target="_blank" href="/relation?id={{ relation.ID }}" referrerpolicy="no-referrer" class="card-description block">
-                {% include "partials/description.tpl" with description=relation.Description preview=!fullText %}
+                {% include "partials/description.tpl" with description=relation.Description descriptionEntity=relation preview=!fullText %}
             </a>
         {% endif %}
 
         {% if !noDescription %}
             <div class="card-description">
-                {% include "partials/description.tpl" with description=entity.Description preview=!fullText %}
+                {% include "partials/description.tpl" with description=entity.Description descriptionEntity=entity preview=!fullText %}
             </div>
         {% endif %}
 

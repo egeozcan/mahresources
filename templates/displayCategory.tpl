@@ -1,7 +1,7 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
-    {% include "/partials/description.tpl" with description=category.Description descriptionEditUrl="/v1/category/editDescription" descriptionEditId=category.ID preview=false %}
+    {% include "/partials/description.tpl" with description=category.Description descriptionEntity=category descriptionEditUrl="/v1/category/editDescription" descriptionEditId=category.ID preview=false %}
 
     {% if category.Groups %}
     <div class="meta-strip">

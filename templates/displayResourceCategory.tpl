@@ -1,7 +1,7 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
-    {% include "/partials/description.tpl" with description=resourceCategory.Description descriptionEditUrl="/v1/resourceCategory/editDescription" descriptionEditId=resourceCategory.ID preview=false %}
+    {% include "/partials/description.tpl" with description=resourceCategory.Description descriptionEntity=resourceCategory descriptionEditUrl="/v1/resourceCategory/editDescription" descriptionEditId=resourceCategory.ID preview=false %}
 
     {% if resources %}
     <div class="meta-strip">

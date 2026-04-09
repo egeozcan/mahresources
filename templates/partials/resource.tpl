@@ -46,7 +46,7 @@
 
         {% if entity.Description %}
         <div class="card-description">
-            {% include "partials/description.tpl" with description=entity.Description preview=true %}
+            {% include "partials/description.tpl" with description=entity.Description descriptionEntity=entity preview=true %}
         </div>
         {% endif %}
 

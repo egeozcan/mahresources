@@ -8,7 +8,7 @@
         <div class="contents" @dblclick="editing = !!descriptionEditUrl" title="Double-click to edit">
             {% autoescape off %}
                 {% if description %}
-                    {% if !preview %}{{ description|markdown2|render_mentions }}{% endif %}
+                    {% if !preview %}{% process_shortcodes description|markdown2|render_mentions descriptionEntity %}{% endif %}
                     {% if preview %}{{ description|markdown|render_mentions|truncatechars_html:250 }}{% endif %}
                 {% else %}
                     <p class="text-stone-500 italic">No description</p>

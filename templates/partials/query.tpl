@@ -25,7 +25,7 @@
 
         {% if !noDescription && entity.Text %}
         <div class="card-description">
-            {% include "partials/description.tpl" with description=entity.Text preview=true %}
+            {% include "partials/description.tpl" with description=entity.Text descriptionEntity=entity preview=true %}
         </div>
         {% endif %}
     </div>

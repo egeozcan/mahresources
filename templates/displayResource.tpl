@@ -7,7 +7,7 @@
     </div>
 
     {% if sc.Description %}
-    {% include "/partials/description.tpl" with description=resource.Description descriptionEditUrl="/v1/resource/editDescription" descriptionEditId=resource.ID %}
+    {% include "/partials/description.tpl" with description=resource.Description descriptionEntity=resource descriptionEditUrl="/v1/resource/editDescription" descriptionEditId=resource.ID %}
     {% endif %}
 
     {% if sc.MetaSchemaDisplay %}

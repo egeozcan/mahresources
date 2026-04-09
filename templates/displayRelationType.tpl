@@ -3,7 +3,7 @@
 {% block body %}
 
 {% include "/partials/subtitle.tpl" with title=relationType.Name alternativeTitle="RelationType" %}
-{% include "/partials/description.tpl" with description=relationType.Description descriptionEditUrl="/v1/relationType/editDescription" descriptionEditId=relationType.ID %}
+{% include "/partials/description.tpl" with description=relationType.Description descriptionEntity=relationType descriptionEditUrl="/v1/relationType/editDescription" descriptionEditId=relationType.ID %}
 
 <div class="detail-panel">
     <div class="detail-panel-header">

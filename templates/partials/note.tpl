@@ -18,7 +18,7 @@
     </header>
 
     <div class="card-description">
-        {% include "partials/description.tpl" with description=entity.Description descriptionEditUrl="/v1/note/editDescription" descriptionEditId=entity.ID preview=true %}
+        {% include "partials/description.tpl" with description=entity.Description descriptionEntity=entity descriptionEditUrl="/v1/note/editDescription" descriptionEditId=entity.ID preview=true %}
     </div>
 
     {% if entity.Tags %}

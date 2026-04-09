@@ -35,7 +35,7 @@
                 .finally(() => this.loading = false)
             }
         }">
-        {% include "/partials/description.tpl" with description=query.Description descriptionEditUrl="/v1/query/editDescription" descriptionEditId=query.ID preview=false %}
+        {% include "/partials/description.tpl" with description=query.Description descriptionEntity=query descriptionEditUrl="/v1/query/editDescription" descriptionEditId=query.ID preview=false %}
         <code x-ref="query" class="query-code">
             {{ query.Text }}
         </code>
