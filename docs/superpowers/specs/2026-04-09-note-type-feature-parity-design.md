@@ -150,6 +150,7 @@ The wide-display route for notes. Must also respect SectionConfig:
 - `sc.NoteTypeLink` — note type sidebar link
 - `sc.Tags` — tags sidebar
 - `sc.MetaJson` — meta JSON sidebar
+- `sc.MetaSchemaDisplay` — schema-rendered metadata (sidebar)
 
 This ensures SectionConfig behaves consistently across both note detail routes.
 
@@ -166,6 +167,8 @@ Add a note template context provider (following the pattern in `server/template_
 1. Resolves `NoteSectionConfig` from `note.NoteType.SectionConfig`
 2. Passes it as `sc` to the template
 3. Used by both `displayNote.tpl` and `displayNoteText.tpl`
+
+**Nil NoteType fallback:** Notes without a NoteType are valid in the current app. When `note.NoteType == nil`, call `ResolveNoteSectionConfig(nil)` which returns all-defaults (everything enabled). This matches how `ResolveGroupSectionConfig(nil)` and `ResolveResourceSectionConfig(nil)` already handle nil categories.
 
 ## 8. Frontend
 
