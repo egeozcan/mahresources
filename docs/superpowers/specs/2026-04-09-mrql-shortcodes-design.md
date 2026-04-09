@@ -8,11 +8,13 @@ Add two new built-in shortcodes — `[mrql]` and `[property]` — that enable em
 
 ## Integration Points
 
-The new `[mrql]` and `[property]` shortcodes work anywhere `{% process_shortcodes %}` is used. Two changes are needed to wire them up:
+The new `[mrql]` and `[property]` shortcodes work anywhere `shortcodes.Process()` is called. There are **two distinct call sites** that both need updating:
 
-**1. Shortcode filter wiring** — the template filter (`shortcode_tag.go`) must be updated to pass the new `QueryExecutor` callback and populate the `Entity` field on `MetaShortcodeContext`. All existing `{% process_shortcodes %}` call sites automatically gain `[mrql]` and `[property]` support.
+**1. Template filter** (`shortcode_tag.go`) — the `{% process_shortcodes %}` Pongo2 tag. Must be updated to pass the new `QueryExecutor` callback and populate the `Entity` field on `MetaShortcodeContext`. All existing template-side `{% process_shortcodes %}` usages automatically gain `[mrql]` and `[property]` support.
 
-**2. Description partial** — the shared `templates/partials/description.tpl` currently applies `markdown2|render_mentions` but does **not** call `process_shortcodes`. This partial must be updated to add shortcode processing to the filter chain so that shortcodes in note, group, and resource descriptions are expanded. This is a template change, not a Go change.
+**2. Route-level shortcode processing** (`server/routes.go`, `processShortcodesForEntity`) — processes CustomHeader, CustomSidebar, CustomSummary, and CustomAvatar fields directly via `shortcodes.Process()` for JSON/API consumers (lightbox, etc.). This call site must also be updated with the `QueryExecutor` callback and `Entity` context, or `[mrql]`/`[property]` shortcodes in custom category fields will silently fail for API consumers.
+
+**3. Description partial** — the shared `templates/partials/description.tpl` currently applies `markdown2|render_mentions` but does **not** call `process_shortcodes`. This partial must be updated to add shortcode processing to the filter chain so that shortcodes in note, group, and resource descriptions are expanded. This is a template change, not a Go change.
 
 **MRQL results page** — new integration, handled differently (see MRQL Page Integration section below).
 
