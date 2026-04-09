@@ -20,6 +20,9 @@ type NoteType struct {
 	CustomSummary string `gorm:"type:text"`
 	// CustomAvatar is used when linking to a note with this type
 	CustomAvatar string `gorm:"type:text"`
+	// CustomMRQLResult is a template (HTML + shortcodes) for rendering notes of this
+	// type in MRQL query results.
+	CustomMRQLResult string `gorm:"type:text"`
 	// MetaSchema defines the JSON Schema for notes of this type
 	MetaSchema string `gorm:"type:text"`
 	// SectionConfig controls which sections are visible on note detail pages

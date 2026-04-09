@@ -22,6 +22,10 @@ type Category struct {
 	CustomSummary string `gorm:"type:text"`
 	// CustomAvatar is used when linking to a group with this category
 	CustomAvatar string `gorm:"type:text"`
+	// CustomMRQLResult is a template (HTML + shortcodes) for rendering entities of this
+	// category in MRQL query results. When set, used as default rendering in [mrql] shortcodes
+	// and on the MRQL results page.
+	CustomMRQLResult string `gorm:"type:text"`
 	// MetaSchema is a JSON schema for the meta field of groups in this category
 	MetaSchema string `gorm:"type:text"`
 	// SectionConfig is a JSON config controlling which sections are visible on group detail pages

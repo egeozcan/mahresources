@@ -22,6 +22,9 @@ type ResourceCategory struct {
 	CustomSummary string `gorm:"type:text"`
 	// CustomAvatar is used when linking to resources with this category
 	CustomAvatar string `gorm:"type:text"`
+	// CustomMRQLResult is a template (HTML + shortcodes) for rendering resources of this
+	// category in MRQL query results.
+	CustomMRQLResult string `gorm:"type:text"`
 	// MetaSchema is a JSON schema for the meta field of resources in this category
 	MetaSchema string `gorm:"type:text"`
 	// AutoDetectRules is a JSON rule set for auto-detecting this category on upload

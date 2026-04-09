@@ -48,6 +48,8 @@ components:
                     type: string
                 CustomHeader:
                     type: string
+                CustomMRQLResult:
+                    type: string
                 CustomSidebar:
                     type: string
                 CustomSummary:
@@ -707,6 +709,8 @@ components:
                     type: string
                 CustomHeader:
                     type: string
+                CustomMRQLResult:
+                    type: string
                 CustomSidebar:
                     type: string
                 CustomSummary:
@@ -965,6 +969,8 @@ components:
                 CustomAvatar:
                     type: string
                 CustomHeader:
+                    type: string
+                CustomMRQLResult:
                     type: string
                 CustomSidebar:
                     type: string
