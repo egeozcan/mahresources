@@ -50,10 +50,23 @@ type mrqlSavedQueryRequest struct {
 	Description string `json:"description" schema:"description"`
 }
 
+// buildPluginRenderer creates a PluginRenderer from the app context's plugin manager.
+// Returns nil if plugins are disabled — shortcodes.Process handles nil gracefully.
+func buildPluginRenderer(appCtx *application_context.MahresourcesContext) shortcodes.PluginRenderer {
+	pm := appCtx.PluginManager()
+	if pm == nil {
+		return nil
+	}
+	return func(pluginName string, sc shortcodes.Shortcode, mctx shortcodes.MetaShortcodeContext) (string, error) {
+		return pm.RenderShortcode(pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs)
+	}
+}
+
 // renderMRQLCustomTemplates processes CustomMRQLResult templates for each result entity
 // and populates the RenderedHTML field when a template is configured.
 func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, result *application_context.MRQLResult, reqCtx context.Context) {
 	executor := template_filters.BuildQueryExecutor(appCtx)
+	pluginRenderer := buildPluginRenderer(appCtx)
 
 	for i := range result.Resources {
 		r := &result.Resources[i]
@@ -69,7 +82,7 @@ func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, 
 				Meta: json.RawMessage(r.Meta), MetaSchema: r.ResourceCategory.MetaSchema,
 				Entity: r,
 			}
-			r.RenderedHTML = shortcodes.Process(reqCtx, r.ResourceCategory.CustomMRQLResult, mctx, nil, executor)
+			r.RenderedHTML = shortcodes.Process(reqCtx, r.ResourceCategory.CustomMRQLResult, mctx, pluginRenderer, executor)
 		}
 	}
 
@@ -84,9 +97,10 @@ func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, 
 		if n.NoteType != nil && n.NoteType.CustomMRQLResult != "" {
 			mctx := shortcodes.MetaShortcodeContext{
 				EntityType: "note", EntityID: n.ID,
-				Meta: json.RawMessage(n.Meta), Entity: n,
+				Meta: json.RawMessage(n.Meta), MetaSchema: n.NoteType.MetaSchema,
+				Entity: n,
 			}
-			n.RenderedHTML = shortcodes.Process(reqCtx, n.NoteType.CustomMRQLResult, mctx, nil, executor)
+			n.RenderedHTML = shortcodes.Process(reqCtx, n.NoteType.CustomMRQLResult, mctx, pluginRenderer, executor)
 		}
 	}
 
@@ -101,9 +115,10 @@ func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, 
 		if g.Category != nil && g.Category.CustomMRQLResult != "" {
 			mctx := shortcodes.MetaShortcodeContext{
 				EntityType: "group", EntityID: g.ID,
-				Meta: json.RawMessage(g.Meta), Entity: g,
+				Meta: json.RawMessage(g.Meta), MetaSchema: g.Category.MetaSchema,
+				Entity: g,
 			}
-			g.RenderedHTML = shortcodes.Process(reqCtx, g.Category.CustomMRQLResult, mctx, nil, executor)
+			g.RenderedHTML = shortcodes.Process(reqCtx, g.Category.CustomMRQLResult, mctx, pluginRenderer, executor)
 		}
 	}
 }
@@ -116,6 +131,7 @@ func renderMRQLGroupedCustomTemplates(appCtx *application_context.MahresourcesCo
 	}
 
 	executor := template_filters.BuildQueryExecutor(appCtx)
+	pluginRenderer := buildPluginRenderer(appCtx)
 
 	for bIdx := range result.Groups {
 		bucket := &result.Groups[bIdx]
@@ -135,7 +151,7 @@ func renderMRQLGroupedCustomTemplates(appCtx *application_context.MahresourcesCo
 						Meta: json.RawMessage(r.Meta), MetaSchema: r.ResourceCategory.MetaSchema,
 						Entity: r,
 					}
-					r.RenderedHTML = shortcodes.Process(reqCtx, r.ResourceCategory.CustomMRQLResult, mctx, nil, executor)
+					r.RenderedHTML = shortcodes.Process(reqCtx, r.ResourceCategory.CustomMRQLResult, mctx, pluginRenderer, executor)
 				}
 			}
 			bucket.Items = items
@@ -151,9 +167,10 @@ func renderMRQLGroupedCustomTemplates(appCtx *application_context.MahresourcesCo
 				if n.NoteType != nil && n.NoteType.CustomMRQLResult != "" {
 					mctx := shortcodes.MetaShortcodeContext{
 						EntityType: "note", EntityID: n.ID,
-						Meta: json.RawMessage(n.Meta), Entity: n,
+						Meta: json.RawMessage(n.Meta), MetaSchema: n.NoteType.MetaSchema,
+						Entity: n,
 					}
-					n.RenderedHTML = shortcodes.Process(reqCtx, n.NoteType.CustomMRQLResult, mctx, nil, executor)
+					n.RenderedHTML = shortcodes.Process(reqCtx, n.NoteType.CustomMRQLResult, mctx, pluginRenderer, executor)
 				}
 			}
 			bucket.Items = items
@@ -169,9 +186,10 @@ func renderMRQLGroupedCustomTemplates(appCtx *application_context.MahresourcesCo
 				if g.Category != nil && g.Category.CustomMRQLResult != "" {
 					mctx := shortcodes.MetaShortcodeContext{
 						EntityType: "group", EntityID: g.ID,
-						Meta: json.RawMessage(g.Meta), Entity: g,
+						Meta: json.RawMessage(g.Meta), MetaSchema: g.Category.MetaSchema,
+						Entity: g,
 					}
-					g.RenderedHTML = shortcodes.Process(reqCtx, g.Category.CustomMRQLResult, mctx, nil, executor)
+					g.RenderedHTML = shortcodes.Process(reqCtx, g.Category.CustomMRQLResult, mctx, pluginRenderer, executor)
 				}
 			}
 			bucket.Items = items
