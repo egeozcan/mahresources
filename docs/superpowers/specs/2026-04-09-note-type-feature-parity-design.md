@@ -120,6 +120,14 @@ Mirror `createCategory.tpl`:
 - Add MetaSchema textarea with schema editor modal
 - Include `sectionConfigForm.tpl` with `sectionConfigType="note"`
 
+### `createNote.tpl`
+
+Add schema-aware meta editor, mirroring `createGroup.tpl` lines 57-110:
+- When a NoteType with MetaSchema is selected, show `<schema-form-mode>` instead of freeFields
+- Listen for the NoteType autocompleter's `multiple-input` event to get MetaSchema from the selected type
+- Fall back to freeFields when no schema is available
+- This replaces the current raw `freeFields.tpl` include on line 81
+
 ### `displayNote.tpl`
 
 Wrap each section in `{% if sc.X %}` conditionals:
@@ -134,11 +142,30 @@ Wrap each section in `{% if sc.X %}` conditionals:
 - `sc.MetaSchemaDisplay` — schema display sidebar (new section)
 - `sc.Share` — share/actions sidebar
 
+### `displayNoteText.tpl`
+
+The wide-display route for notes. Must also respect SectionConfig:
+- `sc.Content` — description/block editor (the main body)
+- `sc.Owner` — owner sidebar
+- `sc.NoteTypeLink` — note type sidebar link
+- `sc.Tags` — tags sidebar
+- `sc.MetaJson` — meta JSON sidebar
+
+This ensures SectionConfig behaves consistently across both note detail routes.
+
+### `listNotes.tpl` and `listNotesTimeline.tpl`
+
+Add `schemaSearchFields` support, mirroring `listGroups.tpl` and `listGroupsTimeline.tpl`:
+- When a NoteType is selected in the search sidebar, extract its MetaSchema
+- Render schema-driven search fields alongside the existing freeFields
+- The schema-driven search feature (2026-03-31 spec) explicitly excluded notes because NoteType had no MetaSchema; this lifts that restriction
+
 ### Note Template Context
 
 Add a note template context provider (following the pattern in `server/template_handlers/group_template_context.go`) that:
 1. Resolves `NoteSectionConfig` from `note.NoteType.SectionConfig`
 2. Passes it as `sc` to the template
+3. Used by both `displayNote.tpl` and `displayNoteText.tpl`
 
 ## 8. Frontend
 
@@ -168,7 +195,20 @@ const defaults = type === 'group' ? groupDefaults : type === 'note' ? noteDefaul
 - Shared sidebar items (tags, metaJson, owner) already in the common sidebar section
 - In the shared "Main Content" section: for notes, show `content` (description + blocks) instead of `description`, show `metaSchemaDisplay` and `timestamps` as normal, hide `breadcrumb` (notes don't have breadcrumbs)
 
-## 9. Files Changed
+## 9. Plugin DB Adapter
+
+Update `application_context/plugin_db_adapter.go`:
+
+### `noteTypeToMap` (line 722)
+Add `meta_schema` and `section_config` fields to the map output, matching `categoryToMap` and `resourceCategoryToMap`.
+
+### `CreateNoteType` / `UpdateNoteType` / `PatchNoteType` (lines 1121-1177)
+Pass `MetaSchema` and `SectionConfig` through to the `NoteTypeEditor`, matching how category CRUD handles these fields.
+
+### `plugin_system/db_api.go`
+No interface changes needed — the EntityWriter methods already accept `map[string]any`, so the new fields flow through naturally.
+
+## 10. Files Changed
 
 | File | Change |
 |------|--------|
@@ -177,14 +217,23 @@ const defaults = type === 'group' ? groupDefaults : type === 'note' ? noteDefaul
 | `models/query_models/note_query.go` | Add MetaSchema, SectionConfig to NoteTypeEditor |
 | `server/api_handlers/note_api_handlers.go` | Partial-update pre-fill for new fields |
 | `application_context/note_type_context.go` (or equivalent) | Pass new fields in create/update |
+| `application_context/plugin_db_adapter.go` | noteTypeToMap + Create/Update/Patch for new fields |
 | `server/template_handlers/note_template_context.go` (new or existing) | Resolve and pass sc |
 | `templates/createNoteType.tpl` | Schema editor, section config form, reference docs |
+| `templates/createNote.tpl` | Schema-aware meta editor (schema-form-mode / freeFields toggle) |
 | `templates/displayNote.tpl` | Section config conditionals |
+| `templates/displayNoteText.tpl` | Section config conditionals |
+| `templates/listNotes.tpl` | schemaSearchFields for NoteType MetaSchema |
+| `templates/listNotesTimeline.tpl` | schemaSearchFields for NoteType MetaSchema |
 | `src/components/sectionConfigForm.js` | Note defaults |
 | `templates/partials/sectionConfigForm.tpl` | Note-specific form sections |
 
-## 10. Testing
+## 11. Testing
 
 - E2E tests for section config toggles on note detail pages (mirroring `e2e/tests/75-section-config.spec.ts`)
-- E2E tests for MetaSchema on note types
+- E2E tests for section config on the wide-display route (`displayNoteText.tpl`)
+- E2E tests for MetaSchema on note types (schema editor in create/edit form)
+- E2E tests for schema-aware meta editor on note create/edit form
+- E2E tests for schemaSearchFields on note list pages
 - Go unit tests for `ResolveNoteSectionConfig` with various JSON inputs
+- Plugin adapter tests for noteType CRUD with meta_schema and section_config
