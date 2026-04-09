@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"errors"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"mahresources/models"
@@ -73,13 +74,14 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 	}
 
 	category := models.Category{
-		Name:          categoryQuery.Name,
-		Description:   categoryQuery.Description,
-		CustomHeader:  categoryQuery.CustomHeader,
-		CustomSidebar: categoryQuery.CustomSidebar,
-		CustomSummary: categoryQuery.CustomSummary,
-		CustomAvatar:  categoryQuery.CustomAvatar,
-		MetaSchema:    categoryQuery.MetaSchema,
+		Name:             categoryQuery.Name,
+		Description:      categoryQuery.Description,
+		CustomHeader:     categoryQuery.CustomHeader,
+		CustomSidebar:    categoryQuery.CustomSidebar,
+		CustomSummary:    categoryQuery.CustomSummary,
+		CustomAvatar:     categoryQuery.CustomAvatar,
+		CustomMRQLResult: categoryQuery.CustomMRQLResult,
+		MetaSchema:       categoryQuery.MetaSchema,
 	}
 	if categoryQuery.SectionConfig != "" {
 		category.SectionConfig = types.JSON(categoryQuery.SectionConfig)
@@ -131,6 +133,7 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 	category.CustomSidebar = categoryQuery.CustomSidebar
 	category.CustomSummary = categoryQuery.CustomSummary
 	category.CustomAvatar = categoryQuery.CustomAvatar
+	category.CustomMRQLResult = categoryQuery.CustomMRQLResult
 	category.MetaSchema = categoryQuery.MetaSchema
 	if categoryQuery.SectionConfig != "" {
 		category.SectionConfig = types.JSON(categoryQuery.SectionConfig)

@@ -350,6 +350,9 @@ func CreateCategoryHandler(ctx interfaces.CategoryCRUDReader) http.HandlerFunc {
 				if !fieldWasSent("CustomAvatar") {
 					editor.CustomAvatar = existing.CustomAvatar
 				}
+				if !fieldWasSent("CustomMRQLResult") {
+					editor.CustomMRQLResult = existing.CustomMRQLResult
+				}
 				if !fieldWasSent("MetaSchema") {
 					editor.MetaSchema = existing.MetaSchema
 				}
@@ -443,6 +446,9 @@ func CreateResourceCategoryHandler(writer interfaces.ResourceCategoryWriter) htt
 				}
 				if !fieldWasSent("CustomAvatar") {
 					editor.CustomAvatar = existing.CustomAvatar
+				}
+				if !fieldWasSent("CustomMRQLResult") {
+					editor.CustomMRQLResult = existing.CustomMRQLResult
 				}
 				if !fieldWasSent("MetaSchema") {
 					editor.MetaSchema = existing.MetaSchema

@@ -61,14 +61,15 @@ func (ctx *MahresourcesContext) CreateResourceCategory(query *query_models.Resou
 	}
 
 	resourceCategory := models.ResourceCategory{
-		Name:            query.Name,
-		Description:     query.Description,
-		CustomHeader:    query.CustomHeader,
-		CustomSidebar:   query.CustomSidebar,
-		CustomSummary:   query.CustomSummary,
-		CustomAvatar:    query.CustomAvatar,
-		MetaSchema:      query.MetaSchema,
-		AutoDetectRules: query.AutoDetectRules,
+		Name:             query.Name,
+		Description:      query.Description,
+		CustomHeader:     query.CustomHeader,
+		CustomSidebar:    query.CustomSidebar,
+		CustomSummary:    query.CustomSummary,
+		CustomAvatar:     query.CustomAvatar,
+		CustomMRQLResult: query.CustomMRQLResult,
+		MetaSchema:       query.MetaSchema,
+		AutoDetectRules:  query.AutoDetectRules,
 	}
 	if query.SectionConfig != "" {
 		resourceCategory.SectionConfig = types.JSON(query.SectionConfig)
@@ -102,6 +103,7 @@ func (ctx *MahresourcesContext) UpdateResourceCategory(query *query_models.Resou
 	resourceCategory.CustomSidebar = query.CustomSidebar
 	resourceCategory.CustomSummary = query.CustomSummary
 	resourceCategory.CustomAvatar = query.CustomAvatar
+	resourceCategory.CustomMRQLResult = query.CustomMRQLResult
 	resourceCategory.MetaSchema = query.MetaSchema
 	resourceCategory.AutoDetectRules = query.AutoDetectRules
 	if query.SectionConfig != "" {
