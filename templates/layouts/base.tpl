@@ -53,7 +53,7 @@
     {% include "/partials/title.tpl" %}
     <div class="content pb-16{% if hideSidebar %} content--no-sidebar{% endif %}" id="main-content">
         <aside class="sidebar">
-            {% if mainEntity %}
+            {% if mainEntity && (!sc || sc.Timestamps) %}
             <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-stone-600 font-mono">Updated: </span>{{ mainEntity.UpdatedAt|date:"2006-01-02 15:04" }}</small>
             <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-stone-600 font-mono">Created: </span>{{ mainEntity.CreatedAt|date:"2006-01-02 15:04" }}</small>
             {% endif %}

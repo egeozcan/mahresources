@@ -26,6 +26,11 @@
                 Schema Display
             </label>
             <label class="flex items-center gap-2 text-sm text-stone-700">
+                <input type="checkbox" x-model="config.timestamps"
+                       class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
+                Timestamps
+            </label>
+            <label class="flex items-center gap-2 text-sm text-stone-700">
                 <input type="checkbox" x-model="config.breadcrumb"
                        class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
                 Breadcrumb

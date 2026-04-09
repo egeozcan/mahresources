@@ -64,6 +64,7 @@
                     >⧉</button></dd>
                 </div>
                 {% endif %}
+                {% if sc.Timestamps %}
                 <div class="group relative bg-stone-50 border border-stone-200 hover:border-stone-300 rounded-lg px-4 py-3">
                     <dt class="text-xs text-stone-500 font-mono">Created</dt>
                     <dd class="text-sm mt-0.5">{{ resource.CreatedAt|date:"Jan 02, 2006 15:04" }}
@@ -84,6 +85,7 @@
                         @click="updateClipboard('{{ resource.UpdatedAt|date:"2006-01-02T15:04:05Z07:00" }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
                     >⧉</button></dd>
                 </div>
+                {% endif %}
             </dl>
             {% endif %}
             {% if sc.TechnicalDetails.State != "off" %}

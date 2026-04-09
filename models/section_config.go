@@ -21,6 +21,7 @@ type GroupSectionConfig struct {
 	RelatedEntities   GroupRelatedEntitiesConfig `json:"relatedEntities"`
 	Relations         GroupRelationsConfig       `json:"relations"`
 	Tags              bool                       `json:"tags"`
+	Timestamps        bool                       `json:"timestamps"`
 	MetaJson          bool                       `json:"metaJson"`
 	Merge             bool                       `json:"merge"`
 	Clone             bool                       `json:"clone"`
@@ -55,6 +56,7 @@ type GroupRelationsConfig struct {
 type ResourceSectionConfig struct {
 	TechnicalDetails  ResourceTechnicalDetailsConfig `json:"technicalDetails"`
 	MetadataGrid      bool                           `json:"metadataGrid"`
+	Timestamps        bool                           `json:"timestamps"`
 	Notes             bool                           `json:"notes"`
 	Groups            bool                           `json:"groups"`
 	Series            bool                           `json:"series"`
@@ -83,6 +85,7 @@ type rawGroupSectionConfig struct {
 	RelatedEntities   *rawGroupRelatedEntities `json:"relatedEntities"`
 	Relations         *rawGroupRelations       `json:"relations"`
 	Tags              *bool                    `json:"tags"`
+	Timestamps        *bool                    `json:"timestamps"`
 	MetaJson          *bool                    `json:"metaJson"`
 	Merge             *bool                    `json:"merge"`
 	Clone             *bool                    `json:"clone"`
@@ -116,6 +119,7 @@ type rawGroupRelations struct {
 type rawResourceSectionConfig struct {
 	TechnicalDetails  *rawResourceTechnicalDetails `json:"technicalDetails"`
 	MetadataGrid      *bool                        `json:"metadataGrid"`
+	Timestamps        *bool                        `json:"timestamps"`
 	Notes             *bool                        `json:"notes"`
 	Groups            *bool                        `json:"groups"`
 	Series            *bool                        `json:"series"`
@@ -168,7 +172,7 @@ func ResolveGroupSectionConfig(data *types.JSON) GroupSectionConfig {
 		Relations: GroupRelationsConfig{
 			State: string(CollapsibleDefault), ForwardRelations: true, ReverseRelations: true,
 		},
-		Tags: true, MetaJson: true, Merge: true, Clone: true, TreeLink: true,
+		Tags: true, Timestamps: true, MetaJson: true, Merge: true, Clone: true, TreeLink: true,
 		Owner: true, Breadcrumb: true, Description: true, MetaSchemaDisplay: true,
 	}
 
@@ -183,6 +187,7 @@ func ResolveGroupSectionConfig(data *types.JSON) GroupSectionConfig {
 
 	cfg := GroupSectionConfig{
 		Tags:              boolDefault(raw.Tags, true),
+		Timestamps:        boolDefault(raw.Timestamps, true),
 		MetaJson:          boolDefault(raw.MetaJson, true),
 		Merge:             boolDefault(raw.Merge, true),
 		Clone:             boolDefault(raw.Clone, true),
@@ -234,6 +239,7 @@ func ResolveResourceSectionConfig(data *types.JSON) ResourceSectionConfig {
 	defaults := ResourceSectionConfig{
 		TechnicalDetails:  ResourceTechnicalDetailsConfig{State: string(CollapsibleDefault)},
 		MetadataGrid:      true,
+		Timestamps:        true,
 		Notes:             true,
 		Groups:            true,
 		Series:            true,
@@ -262,6 +268,7 @@ func ResolveResourceSectionConfig(data *types.JSON) ResourceSectionConfig {
 
 	cfg := ResourceSectionConfig{
 		MetadataGrid:      boolDefault(raw.MetadataGrid, true),
+		Timestamps:        boolDefault(raw.Timestamps, true),
 		Notes:             boolDefault(raw.Notes, true),
 		Groups:            boolDefault(raw.Groups, true),
 		Series:            boolDefault(raw.Series, true),
