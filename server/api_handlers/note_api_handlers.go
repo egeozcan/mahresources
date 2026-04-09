@@ -304,6 +304,9 @@ func GetAddNoteTypeHandler(ctx interfaces.NoteTypeWriter) func(writer http.Respo
 					if editor.CustomAvatar == "" && !formHasField(request, "CustomAvatar") {
 						editor.CustomAvatar = existing.CustomAvatar
 					}
+					if editor.CustomMRQLResult == "" && !formHasField(request, "CustomMRQLResult") {
+						editor.CustomMRQLResult = existing.CustomMRQLResult
+					}
 					if editor.MetaSchema == "" && !formHasField(request, "MetaSchema") {
 						editor.MetaSchema = existing.MetaSchema
 					}
