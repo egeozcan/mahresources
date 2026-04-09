@@ -21,13 +21,22 @@ import (
 var registerOnce sync.Once
 
 // registerSQLiteDriver registers a custom SQLite driver that applies PRAGMAs
-// (foreign_keys, busy_timeout) on every new connection via ConnectHook.
+// (journal_mode, synchronous, foreign_keys, busy_timeout) on every new connection via ConnectHook.
 // This ensures ALL connections in Go's connection pool have the correct settings,
 // not just the first one.
 func registerSQLiteDriver() {
 	registerOnce.Do(func() {
 		sql.Register("sqlite3_pragmas", &sqlite3.SQLiteDriver{
 			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+				// WAL mode allows concurrent readers while writing, preventing
+				// the locking contention that occurs with the default DELETE journal mode.
+				if _, err := conn.Exec("PRAGMA journal_mode = WAL", nil); err != nil {
+					return err
+				}
+				// synchronous=NORMAL is safe with WAL and avoids a full fsync on every commit.
+				if _, err := conn.Exec("PRAGMA synchronous = NORMAL", nil); err != nil {
+					return err
+				}
 				if _, err := conn.Exec("PRAGMA foreign_keys = ON", nil); err != nil {
 					return err
 				}
