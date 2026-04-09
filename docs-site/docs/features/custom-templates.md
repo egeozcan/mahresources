@@ -242,46 +242,158 @@ The CustomAvatar template controls how the entity appears when linked:
 
 ## Shortcodes
 
-Shortcodes let you embed dynamic, schema-aware metadata widgets in Custom render locations. Instead of writing Alpine.js/Pongo2 template code to display entity metadata, you can use the `[meta]` shortcode syntax.
+Shortcodes let you embed dynamic content in custom templates without writing Alpine.js or Pongo2 code. Three built-in shortcodes are available:
 
-**Syntax:** `[meta path="dotted.path" editable=true hide-empty=true]`
+- **`[meta]`** -- Schema-aware metadata display with optional inline editing
+- **`[property]`** -- Entity field values (Name, CreatedAt, etc.)
+- **`[mrql]`** -- Inline MRQL query results in various formats
 
-### Attributes
+Plugins can also register custom shortcodes via `mah.shortcode()`.
 
-| Attribute | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `path` | Yes | — | Dot-notation path into the entity's Meta field (e.g., `cooking.time`, `address.city`) |
-| `editable` | No | `false` | Shows a pencil edit button; clicking opens a schema-aware form |
-| `hide-empty` | No | `false` | Hides the shortcode entirely when the value is absent |
+See the [Shortcodes](./shortcodes.md) page for full syntax, attributes, and examples.
+
+## Section Configuration
+
+Categories, Resource Categories, and Note Types can define a `sectionConfig` JSON field that controls which sections appear on entity detail pages.
 
 ### How It Works
 
-- The server expands `[meta]` shortcodes into `<meta-shortcode>` custom elements at render time
-- The client hydrates them using the same schema-editor rendering pipeline as the main metadata panel
-- When `editable=true`, clicking the pencil opens a form using the category's MetaSchema for that path
-- If the path is in the MetaSchema, rendering is schema-aware (type formatting, enum pills, shape detection, x-display)
-- If no schema exists for the path, falls back to a plain value display and free-text editor
+When a category has a `sectionConfig` set, the detail page for entities in that category shows or hides sections accordingly. Any section not mentioned in the config defaults to visible. An empty config (or no config) shows all sections.
 
-### Examples
+### Setting via the UI
 
+1. Navigate to **Categories**, **Resource Categories**, or **Note Types**
+2. Create or edit an entry
+3. Use the **Section Visibility** form to toggle sections on/off
+4. Save
+
+### JSON Format
+
+The `sectionConfig` is a JSON object. Each key corresponds to a section on the detail page. Boolean keys default to `true` (visible). Object keys support a `state` field with collapsible behavior.
+
+**Collapsible states:**
+
+| State | Behavior |
+|-------|----------|
+| `"default"` | Follows the application default |
+| `"open"` | Initially expanded |
+| `"collapsed"` | Initially collapsed |
+| `"off"` | Hidden entirely |
+
+### Group Sections (via Category)
+
+```json
+{
+  "tags": true,
+  "timestamps": true,
+  "metaJson": true,
+  "metaSchemaDisplay": true,
+  "description": true,
+  "ownEntities": {
+    "state": "default",
+    "ownNotes": true,
+    "ownGroups": true,
+    "ownResources": true
+  },
+  "relatedEntities": {
+    "state": "default",
+    "relatedNotes": true,
+    "relatedGroups": true,
+    "relatedResources": true
+  },
+  "relations": {
+    "state": "default",
+    "forwardRelations": true,
+    "reverseRelations": true
+  }
+}
 ```
-[meta path="cooking.time"]
-[meta path="cooking.difficulty" editable=true]
-[meta path="cooking.servings" hide-empty=true]
+
+### Resource Sections (via Resource Category)
+
+```json
+{
+  "metadataGrid": true,
+  "timestamps": true,
+  "notes": true,
+  "groups": true,
+  "tags": true,
+  "versions": true,
+  "similar": true,
+  "series": true,
+  "metaJson": true,
+  "metaSchemaDisplay": true,
+  "description": true,
+  "technicalDetails": {
+    "state": "default"
+  }
+}
 ```
 
-Mixing with HTML:
+### Note Sections (via Note Type)
+
+```json
+{
+  "content": true,
+  "groups": true,
+  "resources": true,
+  "timestamps": true,
+  "tags": true,
+  "metaJson": true,
+  "metaSchemaDisplay": true,
+  "owner": true,
+  "noteTypeLink": true,
+  "share": true
+}
+```
+
+To hide a section, set its key to `false`. For example, to hide timestamps and the raw JSON sidebar on notes:
+
+```json
+{
+  "timestamps": false,
+  "metaJson": false
+}
+```
+
+## Custom MRQL Result Templates
+
+Categories, Resource Categories, and Note Types can define a `customMRQLResult` field containing a Pongo2/shortcode template that controls how entities of that type render in `[mrql]` shortcode results.
+
+### How It Works
+
+1. Set the `customMRQLResult` field on a Category, Resource Category, or Note Type
+2. When an `[mrql]` shortcode query returns entities of that type, the custom template is used instead of the default card layout
+3. The template has access to the entity context, so shortcodes like `[meta]` and `[property]` work inside it
+
+### Setting via the UI
+
+1. Navigate to **Categories**, **Resource Categories**, or **Note Types**
+2. Create or edit an entry
+3. Enter a template in the **Custom MRQL Result** textarea
+4. Save
+
+### Example
+
+A Category with this `customMRQLResult`:
 
 ```html
-<div class="flex gap-4">
-  <strong>Cook time:</strong> [meta path="cooking.time"]
-  <strong>Difficulty:</strong> [meta path="cooking.difficulty"]
+<div class="flex items-center gap-2 p-2 border rounded">
+  <strong>[property path="Name"]</strong>
+  <span class="text-sm text-stone-500">[meta path="status"]</span>
 </div>
 ```
 
-### Plugin Shortcodes
+When an `[mrql]` query returns groups in this category, each result renders using this template instead of the default link card.
 
-Plugins can register custom shortcodes via `mah.shortcode()`. Usage: `[plugin:plugin-name:shortcode-name attr="value"]`. See the [Plugin Lua API docs](./plugin-lua-api.md) for registration details.
+### Format Auto-Resolution
+
+When no explicit `format` is set on the `[mrql]` shortcode:
+- If any returned entity has a `customMRQLResult`, custom rendering is used
+- Entities without a custom template fall back to the default card layout
+- Use `format="custom"` to explicitly request custom rendering
+
+See [Shortcodes](./shortcodes.md) for all `[mrql]` format options.
 
 ## Styling Tips
 
@@ -317,7 +429,7 @@ If a template does not render correctly:
 
 ## MetaSchema for Validation
 
-Categories and Resource Categories support a **MetaSchema** field -- a JSON Schema that validates metadata. Note Types do not support MetaSchema. This is separate from templates but works well together:
+Categories, Resource Categories, and Note Types support a **MetaSchema** field -- a JSON Schema that validates metadata. This is separate from templates but works well together:
 
 1. Define a MetaSchema to ensure required fields exist
 2. Create templates that rely on those fields

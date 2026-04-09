@@ -5,11 +5,11 @@ title: Meta Schemas
 
 # Meta Schemas
 
-Categories and Resource Categories can define a JSON Schema in their `metaSchema` field. The schema validates the `meta` field of entities in that category and drives structured form generation in the UI.
+Categories, Resource Categories, and Note Types can define a JSON Schema in their `metaSchema` field. The schema validates the `meta` field of entities in that category and drives structured form generation in the UI.
 
 ## How It Works
 
-1. An administrator creates a Category (or Resource Category) with a `metaSchema` field containing a JSON Schema document
+1. An administrator creates a Category, Resource Category, or Note Type with a `metaSchema` field containing a JSON Schema document
 2. When creating or editing a Group (or Resource) in that Category, the UI renders form fields matching the schema instead of free-form key-value inputs
 3. The schema validates metadata on save
 
@@ -19,9 +19,9 @@ Categories and Resource Categories can define a JSON Schema in their `metaSchema
 |-------------|-----------------|-----------|
 | Category | `metaSchema` | Group `meta` fields |
 | Resource Category | `metaSchema` | Resource `meta` fields |
-| Note Type | (none) | Not supported |
+| Note Type | `metaSchema` | Note `meta` fields |
 
-Note Types do not have a `metaSchema` field. They support custom HTML templates but not schema-driven metadata validation.
+All three entity types support MetaSchema. When set, the UI renders structured form fields and a schema-aware metadata panel on the entity detail page.
 
 ## Schema Format
 
@@ -115,7 +115,7 @@ The `metaSchema` field stores a standard JSON Schema document as a string:
 
 ### Via the UI
 
-1. Navigate to **Categories** (or **Resource Categories**)
+1. Navigate to **Categories**, **Resource Categories**, or **Note Types**
 2. Create or edit a Category
 3. Enter the JSON Schema in the **Meta Schema** field, or click **Visual Editor** to build the schema interactively
 4. Save
@@ -135,7 +135,7 @@ curl -X POST http://localhost:8181/v1/category \
 
 ## Form Generation
 
-When a Category has a schema defined, the Group create/edit form replaces free-form metadata inputs with structured fields:
+When a Category has a schema defined, the Group, Resource, or Note create/edit form replaces free-form metadata inputs with structured fields:
 
 - `string` properties render as text inputs
 - `string` with `format: "email"` renders as an email input
@@ -156,7 +156,7 @@ Instead of writing JSON Schema by hand, you can use the visual editor to build s
 
 ### Opening the Editor
 
-1. Navigate to **Categories** (or **Resource Categories**)
+1. Navigate to **Categories**, **Resource Categories**, or **Note Types**
 2. Create or edit a Category
 3. Click the **Visual Editor** button next to the Meta Schema field
 4. The editor opens in a modal with three tabs

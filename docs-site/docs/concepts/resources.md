@@ -158,6 +158,90 @@ Resources connect to other entities in several ways:
 - Tags enable cross-cutting organization
 - Many-to-many relationship
 
+## Auto-Detect Rules
+
+Resource Categories can define auto-detect rules that automatically assign a category when a resource is uploaded. When rules are configured, the resource category selection becomes optional on the upload form — the system matches the uploaded file's properties against all defined rules and picks the best match.
+
+### Rule Format
+
+The `autoDetectRules` field is a JSON object on the Resource Category:
+
+```json
+{
+  "contentTypes": ["image/jpeg", "image/png"],
+  "width": {"min": 1920},
+  "height": {"min": 1080},
+  "priority": 10
+}
+```
+
+### Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `contentTypes` | Yes | Array of MIME types to match (exact match) |
+| `width` | No | Image width in pixels (`min`, `max`, or both) |
+| `height` | No | Image height in pixels (`min`, `max`, or both) |
+| `aspectRatio` | No | Width/height ratio (`min`, `max`, or both) |
+| `fileSize` | No | File size in bytes (`min`, `max`, or both) |
+| `pixelCount` | No | Total pixels, width x height (`min`, `max`, or both) |
+| `bytesPerPixel` | No | File size divided by pixel count (`min`, `max`, or both) |
+| `priority` | No | Integer priority for tiebreaking (default 0, higher wins) |
+
+Range fields use `{"min": N}`, `{"max": N}`, or `{"min": N, "max": N}`. At least one bound is required if the field is present.
+
+### Matching Behavior
+
+- The `contentTypes` field must match exactly (no wildcards)
+- Dimension-based fields (width, height, aspectRatio, pixelCount, bytesPerPixel) are skipped when dimensions are unavailable (e.g., non-image files), rather than failing the match
+- If multiple categories match, the winner is selected by: highest priority, then most fields evaluated (specificity), then lowest category ID
+- If no rules match, the system default category is used
+
+### Examples
+
+**High-resolution photos:**
+```json
+{
+  "contentTypes": ["image/jpeg", "image/png", "image/webp"],
+  "width": {"min": 3000},
+  "height": {"min": 2000},
+  "priority": 10
+}
+```
+
+**Small icons:**
+```json
+{
+  "contentTypes": ["image/png", "image/svg+xml"],
+  "width": {"max": 256},
+  "height": {"max": 256},
+  "priority": 5
+}
+```
+
+**PDF documents:**
+```json
+{
+  "contentTypes": ["application/pdf"]
+}
+```
+
+**Large video files:**
+```json
+{
+  "contentTypes": ["video/mp4", "video/webm"],
+  "fileSize": {"min": 104857600},
+  "priority": 5
+}
+```
+
+### Setting via the UI
+
+1. Navigate to **Resource Categories**
+2. Create or edit a category
+3. Enter the JSON rules in the **Auto-Detect Rules** field
+4. Save — validation runs on save and rejects invalid rules
+
 ## API Operations
 
 For full API details -- creating, querying, and bulk operations on Resources -- see [API: Resources](../api/resources.md).

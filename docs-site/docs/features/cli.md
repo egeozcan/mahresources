@@ -543,6 +543,31 @@ mr plugin purge-data <name>
 mr plugins list
 ```
 
+### admin
+
+Show server health, data statistics, and diagnostic information.
+
+```bash
+# Show all statistics
+mr admin
+
+# Server health only
+mr admin --server-only
+
+# Data statistics only
+mr admin --data-only
+
+# Raw JSON output
+mr admin --json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--server-only` | Show server health metrics only (uptime, memory, DB connections) |
+| `--data-only` | Show data statistics only (entity counts, storage, growth) |
+
+The default output (no flags) shows all sections: server health, entity counts, storage breakdown, growth trends, configuration summary, content type distribution, orphan statistics, similarity stats, and log stats.
+
 ## Scripting Examples
 
 ### Tag all PNGs in a group
