@@ -728,6 +728,8 @@ func noteTypeToMap(nt *models.NoteType) map[string]any {
 		"custom_sidebar": nt.CustomSidebar,
 		"custom_summary": nt.CustomSummary,
 		"custom_avatar":  nt.CustomAvatar,
+		"meta_schema":    nt.MetaSchema,
+		"section_config": string(nt.SectionConfig),
 	}
 }
 
@@ -1127,6 +1129,8 @@ func (a *pluginDBAdapter) CreateNoteType(opts map[string]any) (map[string]any, e
 		CustomSidebar: getStringOpt(opts, "custom_sidebar"),
 		CustomSummary: getStringOpt(opts, "custom_summary"),
 		CustomAvatar:  getStringOpt(opts, "custom_avatar"),
+		MetaSchema:    getStringOpt(opts, "meta_schema"),
+		SectionConfig: getStringOpt(opts, "section_config"),
 	}
 	nt, err := a.ctx.CreateOrUpdateNoteType(editor)
 	if err != nil {
@@ -1144,6 +1148,8 @@ func (a *pluginDBAdapter) UpdateNoteType(id uint, opts map[string]any) (map[stri
 		CustomSidebar: getStringOpt(opts, "custom_sidebar"),
 		CustomSummary: getStringOpt(opts, "custom_summary"),
 		CustomAvatar:  getStringOpt(opts, "custom_avatar"),
+		MetaSchema:    getStringOpt(opts, "meta_schema"),
+		SectionConfig: getStringOpt(opts, "section_config"),
 	}
 	nt, err := a.ctx.CreateOrUpdateNoteType(editor)
 	if err != nil {
@@ -1169,6 +1175,8 @@ func (a *pluginDBAdapter) PatchNoteType(id uint, opts map[string]any) (map[strin
 		CustomSidebar: patchString(opts, "custom_sidebar", nt.CustomSidebar),
 		CustomSummary: patchString(opts, "custom_summary", nt.CustomSummary),
 		CustomAvatar:  patchString(opts, "custom_avatar", nt.CustomAvatar),
+		MetaSchema:    patchString(opts, "meta_schema", nt.MetaSchema),
+		SectionConfig: patchString(opts, "section_config", string(nt.SectionConfig)),
 	}
 	result, err := a.ctx.CreateOrUpdateNoteType(editor)
 	if err != nil {
