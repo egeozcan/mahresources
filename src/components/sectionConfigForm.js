@@ -13,7 +13,12 @@ export function sectionConfigForm(initialJson, type) {
         previewImage: true, imageOperations: true, categoryLink: true,
         fileSize: true, owner: true, breadcrumb: true, description: true, metaSchemaDisplay: true,
     };
-    const defaults = type === 'group' ? groupDefaults : resourceDefaults;
+    const noteDefaults = {
+        content: true, groups: true, resources: true, timestamps: true,
+        tags: true, metaJson: true, metaSchemaDisplay: true,
+        owner: true, noteTypeLink: true, share: true,
+    };
+    const defaults = type === 'group' ? groupDefaults : type === 'note' ? noteDefaults : resourceDefaults;
     let parsed = {};
     try { parsed = initialJson ? JSON.parse(initialJson) || {} : {}; } catch { parsed = {}; }
     // Deep merge: defaults first, then parsed overrides

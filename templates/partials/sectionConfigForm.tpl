@@ -8,6 +8,7 @@
         Control which sections are visible on detail pages for
         <template x-if="type === 'group'"><span>groups</span></template>
         <template x-if="type === 'resource'"><span>resources</span></template>
+        <template x-if="type === 'note'"><span>notes</span></template>
         in this category.
     </p>
 
@@ -15,11 +16,20 @@
     <div class="space-y-2">
         <h3 class="text-sm font-semibold font-mono text-stone-700">Main Content</h3>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <label class="flex items-center gap-2 text-sm text-stone-700">
-                <input type="checkbox" x-model="config.description"
-                       class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
-                Description
-            </label>
+            <template x-if="type !== 'note'">
+                <label class="flex items-center gap-2 text-sm text-stone-700">
+                    <input type="checkbox" x-model="config.description"
+                           class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
+                    Description
+                </label>
+            </template>
+            <template x-if="type === 'note'">
+                <label class="flex items-center gap-2 text-sm text-stone-700">
+                    <input type="checkbox" x-model="config.content"
+                           class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
+                    Content (description &amp; blocks)
+                </label>
+            </template>
             <label class="flex items-center gap-2 text-sm text-stone-700">
                 <input type="checkbox" x-model="config.metaSchemaDisplay"
                        class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
@@ -30,11 +40,13 @@
                        class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
                 Timestamps
             </label>
-            <label class="flex items-center gap-2 text-sm text-stone-700">
-                <input type="checkbox" x-model="config.breadcrumb"
-                       class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
-                Breadcrumb
-            </label>
+            <template x-if="type !== 'note'">
+                <label class="flex items-center gap-2 text-sm text-stone-700">
+                    <input type="checkbox" x-model="config.breadcrumb"
+                           class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
+                    Breadcrumb
+                </label>
+            </template>
         </div>
     </div>
 
@@ -185,6 +197,25 @@
         </div>
     </template>
 
+    {# ── Note: Associations ── #}
+    <template x-if="type === 'note'">
+        <div class="space-y-2">
+            <h3 class="text-sm font-semibold font-mono text-stone-700">Associations</h3>
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <label class="flex items-center gap-2 text-sm text-stone-700">
+                    <input type="checkbox" x-model="config.groups"
+                           class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
+                    Groups
+                </label>
+                <label class="flex items-center gap-2 text-sm text-stone-700">
+                    <input type="checkbox" x-model="config.resources"
+                           class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
+                    Resources
+                </label>
+            </div>
+        </div>
+    </template>
+
     {# ── Sidebar ── #}
     <div class="space-y-2">
         <h3 class="text-sm font-semibold font-mono text-stone-700">Sidebar</h3>
@@ -262,6 +293,22 @@
                     <input type="checkbox" x-model="config.fileSize"
                            class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
                     File Size
+                </label>
+            </template>
+
+            {# Note-specific sidebar items #}
+            <template x-if="type === 'note'">
+                <label class="flex items-center gap-2 text-sm text-stone-700">
+                    <input type="checkbox" x-model="config.noteTypeLink"
+                           class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
+                    Note Type Link
+                </label>
+            </template>
+            <template x-if="type === 'note'">
+                <label class="flex items-center gap-2 text-sm text-stone-700">
+                    <input type="checkbox" x-model="config.share"
+                           class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
+                    Share &amp; Actions
                 </label>
             </template>
         </div>
