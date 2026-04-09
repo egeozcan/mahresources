@@ -17,11 +17,11 @@ type Shortcode struct {
 	End   int               // byte offset end (exclusive)
 }
 
-// shortcodePattern matches [name ...attrs] where name is "meta" or "plugin:word:word".
-// Plugin name segments allow lowercase letters, digits, hyphens, and underscores
-// to match the plugin system's naming conventions.
+// shortcodePattern matches [name ...attrs] where name is "meta", "property", "mrql",
+// or "plugin:word:word". Plugin name segments allow lowercase letters, digits, hyphens,
+// and underscores to match the plugin system's naming conventions.
 var shortcodePattern = regexp.MustCompile(
-	`\[(meta|plugin:[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*)\s*([^\]]*)\]`,
+	`\[(meta|property|mrql|plugin:[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*)\s*([^\]]*)\]`,
 )
 
 // attrPattern matches key="value", key='value', or key=value pairs.

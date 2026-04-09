@@ -78,3 +78,43 @@ func TestParsePluginNameWithUnderscore(t *testing.T) {
 	assert.Equal(t, "plugin:my_plugin:star_rating", result[0].Name)
 	assert.Equal(t, "5", result[0].Attrs["max"])
 }
+
+func TestParsePropertyShortcode(t *testing.T) {
+	result := Parse(`before [property path="Name"] after`)
+	assert.Len(t, result, 1)
+	assert.Equal(t, "property", result[0].Name)
+	assert.Equal(t, "Name", result[0].Attrs["path"])
+	assert.Equal(t, `[property path="Name"]`, result[0].Raw)
+}
+
+func TestParsePropertyRawAttr(t *testing.T) {
+	result := Parse(`[property path="Description" raw="true"]`)
+	assert.Len(t, result, 1)
+	assert.Equal(t, "property", result[0].Name)
+	assert.Equal(t, "Description", result[0].Attrs["path"])
+	assert.Equal(t, "true", result[0].Attrs["raw"])
+}
+
+func TestParseMRQLQueryShortcode(t *testing.T) {
+	result := Parse(`[mrql query="type = 'resource'" limit="10" format="table"]`)
+	assert.Len(t, result, 1)
+	assert.Equal(t, "mrql", result[0].Name)
+	assert.Equal(t, "type = 'resource'", result[0].Attrs["query"])
+	assert.Equal(t, "10", result[0].Attrs["limit"])
+	assert.Equal(t, "table", result[0].Attrs["format"])
+}
+
+func TestParseMRQLSavedShortcode(t *testing.T) {
+	result := Parse(`[mrql saved="my-query" format="custom"]`)
+	assert.Len(t, result, 1)
+	assert.Equal(t, "mrql", result[0].Name)
+	assert.Equal(t, "my-query", result[0].Attrs["saved"])
+	assert.Equal(t, "custom", result[0].Attrs["format"])
+}
+
+func TestParseMRQLBucketsAttr(t *testing.T) {
+	result := Parse(`[mrql query="type = 'resource' GROUP BY category" buckets="3" limit="5"]`)
+	assert.Len(t, result, 1)
+	assert.Equal(t, "3", result[0].Attrs["buckets"])
+	assert.Equal(t, "5", result[0].Attrs["limit"])
+}
