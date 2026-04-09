@@ -40,6 +40,9 @@ type Resource struct {
 	CurrentVersionID *uint              `json:"currentVersionId"`
 	CurrentVersion   *ResourceVersion   `gorm:"foreignKey:CurrentVersionID" json:"currentVersion,omitempty"`
 	Versions         []ResourceVersion  `gorm:"foreignKey:ResourceID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"versions,omitempty"`
+
+	// RenderedHTML is a transient field populated by the API when render=1 is set.
+	RenderedHTML string `gorm:"-" json:"renderedHTML,omitempty"`
 }
 
 func (r Resource) GetCleanLocation() string {

@@ -34,6 +34,9 @@ type Group struct {
 	Tags       []*Tag `gorm:"many2many:group_tags;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	CategoryId *uint
 	Category   *Category `gorm:"foreignKey:CategoryId;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+
+	// RenderedHTML is a transient field populated by the API when render=1 is set.
+	RenderedHTML string `gorm:"-" json:"renderedHTML,omitempty"`
 }
 
 func (g Group) GetId() uint {

@@ -223,6 +223,8 @@ components:
                     format: date-time
                     readOnly: true
                     type: string
+                renderedHTML:
+                    type: string
             type: object
         GroupEditor:
             properties:
@@ -552,6 +554,8 @@ components:
                     items:
                         $ref: '#/components/schemas/NoteBlockPartial'
                     type: array
+                renderedHTML:
+                    type: string
                 shareToken:
                     nullable: true
                     type: string
@@ -944,6 +948,8 @@ components:
                     additionalProperties: true
                     description: Arbitrary JSON data
                     type: object
+                renderedHTML:
+                    type: string
                 resourceCategory:
                     $ref: '#/components/schemas/ResourceCategory'
                 resourceCategoryId:

@@ -24,6 +24,9 @@ type Note struct {
 	NoteTypeId  *uint
 	ShareToken  *string      `gorm:"uniqueIndex;size:32" json:"shareToken,omitempty"`
 	Blocks      []*NoteBlock `gorm:"foreignKey:NoteID" json:"blocks,omitempty"`
+
+	// RenderedHTML is a transient field populated by the API when render=1 is set.
+	RenderedHTML string `gorm:"-" json:"renderedHTML,omitempty"`
 }
 
 func (a Note) GetId() uint {

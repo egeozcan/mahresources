@@ -296,7 +296,7 @@ export function mrqlEditor() {
       this.result = null;
 
       try {
-        const resp = await fetch('/v1/mrql', {
+        const resp = await fetch('/v1/mrql?render=1', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ query }),

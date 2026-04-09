@@ -1,6 +1,7 @@
 package api_handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"mahresources/models"
 	"mahresources/mrql"
 	"mahresources/server/http_utils"
+	"mahresources/server/template_handlers/template_filters"
+	"mahresources/shortcodes"
 )
 
 // -- Request/response types for MRQL endpoints --
@@ -45,6 +48,64 @@ type mrqlSavedQueryRequest struct {
 	Name        string `json:"name" schema:"name"`
 	Query       string `json:"query" schema:"query"`
 	Description string `json:"description" schema:"description"`
+}
+
+// renderMRQLCustomTemplates processes CustomMRQLResult templates for each result entity
+// and populates the RenderedHTML field when a template is configured.
+func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, result *application_context.MRQLResult, reqCtx context.Context) {
+	executor := template_filters.BuildQueryExecutor(appCtx)
+
+	for i := range result.Resources {
+		r := &result.Resources[i]
+		if r.ResourceCategory == nil && r.ResourceCategoryId > 0 {
+			cat, _ := appCtx.GetResourceCategory(r.ResourceCategoryId)
+			if cat != nil {
+				r.ResourceCategory = cat
+			}
+		}
+		if r.ResourceCategory != nil && r.ResourceCategory.CustomMRQLResult != "" {
+			mctx := shortcodes.MetaShortcodeContext{
+				EntityType: "resource", EntityID: r.ID,
+				Meta: json.RawMessage(r.Meta), MetaSchema: r.ResourceCategory.MetaSchema,
+				Entity: r,
+			}
+			r.RenderedHTML = shortcodes.Process(reqCtx, r.ResourceCategory.CustomMRQLResult, mctx, nil, executor)
+		}
+	}
+
+	for i := range result.Notes {
+		n := &result.Notes[i]
+		if n.NoteType == nil && n.NoteTypeId != nil && *n.NoteTypeId > 0 {
+			nt, _ := appCtx.GetNoteType(*n.NoteTypeId)
+			if nt != nil {
+				n.NoteType = nt
+			}
+		}
+		if n.NoteType != nil && n.NoteType.CustomMRQLResult != "" {
+			mctx := shortcodes.MetaShortcodeContext{
+				EntityType: "note", EntityID: n.ID,
+				Meta: json.RawMessage(n.Meta), Entity: n,
+			}
+			n.RenderedHTML = shortcodes.Process(reqCtx, n.NoteType.CustomMRQLResult, mctx, nil, executor)
+		}
+	}
+
+	for i := range result.Groups {
+		g := &result.Groups[i]
+		if g.Category == nil && g.CategoryId != nil && *g.CategoryId > 0 {
+			cat, _ := appCtx.GetCategory(*g.CategoryId)
+			if cat != nil {
+				g.Category = cat
+			}
+		}
+		if g.Category != nil && g.Category.CustomMRQLResult != "" {
+			mctx := shortcodes.MetaShortcodeContext{
+				EntityType: "group", EntityID: g.ID,
+				Meta: json.RawMessage(g.Meta), Entity: g,
+			}
+			g.RenderedHTML = shortcodes.Process(reqCtx, g.Category.CustomMRQLResult, mctx, nil, executor)
+		}
+	}
 }
 
 // GetExecuteMRQLHandler handles POST /v1/mrql — execute an MRQL query.
@@ -138,6 +199,11 @@ func GetExecuteMRQLHandler(ctx *application_context.MahresourcesContext) func(ht
 		if err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
+		}
+
+		render := request.URL.Query().Get("render") == "1"
+		if render {
+			renderMRQLCustomTemplates(ctx, result, request.Context())
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
@@ -396,6 +462,11 @@ func GetRunSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) f
 		if err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
+		}
+
+		render := request.URL.Query().Get("render") == "1"
+		if render {
+			renderMRQLCustomTemplates(ctx, result, request.Context())
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)

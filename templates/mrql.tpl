@@ -369,18 +369,25 @@
                                 </div>
                                 <div class="p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                                     <template x-for="entity in (bucket.items || [])" :key="entity.ID">
-                                        <a :href="'/' + result.entityType + '?id=' + entity.ID"
-                                           class="block p-2 bg-white border border-stone-100 rounded hover:border-amber-400 hover:shadow-sm transition-colors">
-                                            <div class="flex items-start gap-2">
-                                                <template x-if="entity.ContentType && entity.ContentType.startsWith('image/')">
-                                                    <img :src="'/v1/resource/preview?id=' + entity.ID + '&width=64&height=64'" :alt="entity.Name" class="w-8 h-8 rounded object-cover flex-shrink-0" loading="lazy" />
-                                                </template>
-                                                <div class="min-w-0 flex-1">
-                                                    <p class="text-sm font-medium text-stone-900 truncate" x-text="entity.Name"></p>
-                                                    <p class="text-xs text-stone-500 mt-0.5" x-text="entity.ContentType || entity.Description || ''"></p>
-                                                </div>
-                                            </div>
-                                        </a>
+                                        <div>
+                                            <template x-if="entity.renderedHTML">
+                                                <div x-html="entity.renderedHTML"></div>
+                                            </template>
+                                            <template x-if="!entity.renderedHTML">
+                                                <a :href="'/' + result.entityType + '?id=' + entity.ID"
+                                                   class="block p-2 bg-white border border-stone-100 rounded hover:border-amber-400 hover:shadow-sm transition-colors">
+                                                    <div class="flex items-start gap-2">
+                                                        <template x-if="entity.ContentType && entity.ContentType.startsWith('image/')">
+                                                            <img :src="'/v1/resource/preview?id=' + entity.ID + '&width=64&height=64'" :alt="entity.Name" class="w-8 h-8 rounded object-cover flex-shrink-0" loading="lazy" />
+                                                        </template>
+                                                        <div class="min-w-0 flex-1">
+                                                            <p class="text-sm font-medium text-stone-900 truncate" x-text="entity.Name"></p>
+                                                            <p class="text-xs text-stone-500 mt-0.5" x-text="entity.ContentType || entity.Description || ''"></p>
+                                                        </div>
+                                                    </div>
+                                                </a>
+                                            </template>
+                                        </div>
                                     </template>
                                 </div>
                             </div>
@@ -399,18 +406,25 @@
                         <h3 class="text-sm font-semibold font-mono text-amber-800 mb-2" x-show="result.entityType !== 'resource' && result.entityType !== 'note' && result.entityType !== 'group'">Resources</h3>
                         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                             <template x-for="entity in result.resources" :key="entity.ID">
-                                <a :href="'/resource?id=' + entity.ID"
-                                   class="block p-3 bg-white border border-stone-200 rounded-md hover:border-amber-400 hover:shadow-sm transition-colors">
-                                    <div class="flex items-start gap-2">
-                                        <template x-if="entity.ContentType && entity.ContentType.startsWith('image/')">
-                                            <img :src="'/v1/resource/preview?id=' + entity.ID + '&width=96&height=96'" :alt="entity.Name" class="w-12 h-12 rounded object-cover flex-shrink-0" loading="lazy" />
-                                        </template>
-                                        <div class="min-w-0 flex-1">
-                                            <p class="text-sm font-medium text-stone-900 truncate" x-text="entity.Name"></p>
-                                            <p class="text-xs text-stone-500 mt-0.5" x-text="entity.ContentType || ''"></p>
-                                        </div>
-                                    </div>
-                                </a>
+                                <div>
+                                    <template x-if="entity.renderedHTML">
+                                        <div x-html="entity.renderedHTML"></div>
+                                    </template>
+                                    <template x-if="!entity.renderedHTML">
+                                        <a :href="'/resource?id=' + entity.ID"
+                                           class="block p-3 bg-white border border-stone-200 rounded-md hover:border-amber-400 hover:shadow-sm transition-colors">
+                                            <div class="flex items-start gap-2">
+                                                <template x-if="entity.ContentType && entity.ContentType.startsWith('image/')">
+                                                    <img :src="'/v1/resource/preview?id=' + entity.ID + '&width=96&height=96'" :alt="entity.Name" class="w-12 h-12 rounded object-cover flex-shrink-0" loading="lazy" />
+                                                </template>
+                                                <div class="min-w-0 flex-1">
+                                                    <p class="text-sm font-medium text-stone-900 truncate" x-text="entity.Name"></p>
+                                                    <p class="text-xs text-stone-500 mt-0.5" x-text="entity.ContentType || ''"></p>
+                                                </div>
+                                            </div>
+                                        </a>
+                                    </template>
+                                </div>
                             </template>
                         </div>
                     </div>
@@ -422,13 +436,20 @@
                         <h3 class="text-sm font-semibold font-mono text-amber-800 mb-2" x-show="result.entityType !== 'resource' && result.entityType !== 'note' && result.entityType !== 'group'">Notes</h3>
                         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                             <template x-for="entity in result.notes" :key="entity.ID">
-                                <a :href="'/note?id=' + entity.ID"
-                                   class="block p-3 bg-white border border-stone-200 rounded-md hover:border-amber-400 hover:shadow-sm transition-colors">
-                                    <div class="min-w-0">
-                                        <p class="text-sm font-medium text-stone-900 truncate" x-text="entity.Name"></p>
-                                        <p class="text-xs text-stone-500 mt-0.5 line-clamp-2" x-text="entity.Description || ''"></p>
-                                    </div>
-                                </a>
+                                <div>
+                                    <template x-if="entity.renderedHTML">
+                                        <div x-html="entity.renderedHTML"></div>
+                                    </template>
+                                    <template x-if="!entity.renderedHTML">
+                                        <a :href="'/note?id=' + entity.ID"
+                                           class="block p-3 bg-white border border-stone-200 rounded-md hover:border-amber-400 hover:shadow-sm transition-colors">
+                                            <div class="min-w-0">
+                                                <p class="text-sm font-medium text-stone-900 truncate" x-text="entity.Name"></p>
+                                                <p class="text-xs text-stone-500 mt-0.5 line-clamp-2" x-text="entity.Description || ''"></p>
+                                            </div>
+                                        </a>
+                                    </template>
+                                </div>
                             </template>
                         </div>
                     </div>
@@ -440,13 +461,20 @@
                         <h3 class="text-sm font-semibold font-mono text-amber-800 mb-2" x-show="result.entityType !== 'resource' && result.entityType !== 'note' && result.entityType !== 'group'">Groups</h3>
                         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                             <template x-for="entity in result.groups" :key="entity.ID">
-                                <a :href="'/group?id=' + entity.ID"
-                                   class="block p-3 bg-white border border-stone-200 rounded-md hover:border-amber-400 hover:shadow-sm transition-colors">
-                                    <div class="min-w-0">
-                                        <p class="text-sm font-medium text-stone-900 truncate" x-text="entity.Name"></p>
-                                        <p class="text-xs text-stone-500 mt-0.5 line-clamp-2" x-text="entity.Description || ''"></p>
-                                    </div>
-                                </a>
+                                <div>
+                                    <template x-if="entity.renderedHTML">
+                                        <div x-html="entity.renderedHTML"></div>
+                                    </template>
+                                    <template x-if="!entity.renderedHTML">
+                                        <a :href="'/group?id=' + entity.ID"
+                                           class="block p-3 bg-white border border-stone-200 rounded-md hover:border-amber-400 hover:shadow-sm transition-colors">
+                                            <div class="min-w-0">
+                                                <p class="text-sm font-medium text-stone-900 truncate" x-text="entity.Name"></p>
+                                                <p class="text-xs text-stone-500 mt-0.5 line-clamp-2" x-text="entity.Description || ''"></p>
+                                            </div>
+                                        </a>
+                                    </template>
+                                </div>
                             </template>
                         </div>
                     </div>
