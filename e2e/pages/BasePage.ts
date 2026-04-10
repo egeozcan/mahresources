@@ -21,6 +21,27 @@ export class BasePage {
     await this.descriptionInput.fill(description);
   }
 
+  /** Set a CodeMirror editor's content by field name, updating both the editor and hidden input */
+  async fillCodeEditor(fieldName: string, text: string) {
+    const hiddenInput = this.page.locator(`input[type="hidden"][name="${fieldName}"]`);
+    await hiddenInput.waitFor({ state: 'attached' });
+    const container = hiddenInput.locator('..');
+    await container.locator('.cm-editor').first().waitFor({ state: 'visible' });
+
+    await this.page.evaluate(({ name, value }) => {
+      const input = document.querySelector(`input[type="hidden"][name="${name}"]`) as HTMLInputElement;
+      if (!input) return;
+      input.value = value;
+      const editorContainer = input.parentElement?.querySelector('.cm-editor')?.parentElement as any;
+      if (editorContainer?._cmView) {
+        const view = editorContainer._cmView;
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: value }
+        });
+      }
+    }, { name: fieldName, value: text });
+  }
+
   async save() {
     // Use extended timeout for form submission + server processing + redirect
     await this.saveButton.click({ timeout: 30000 });

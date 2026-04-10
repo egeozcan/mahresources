@@ -405,6 +405,18 @@ Saved queries can be:
 - **Deleted** by hovering a query and clicking the Delete button
 - **Updated** via the API (`PUT /v1/mrql/saved?id=N`)
 
+## Server-Side Rendering
+
+The MRQL execute endpoints (`POST /v1/mrql` and `POST /v1/mrql/saved/run`) accept a `render=1` query parameter. When set, the server processes each result entity's `CustomMRQLResult` template (if defined on its Category, Resource Category, or Note Type) and populates a `renderedHTML` field in the JSON response.
+
+```bash
+curl -X POST "http://localhost:8181/v1/mrql?render=1" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "type = resource AND tags = \"photos\""}'
+```
+
+Entities without a `CustomMRQLResult` template omit the `renderedHTML` field from the JSON response. The `/mrql` web UI uses this field to display custom-rendered results inline.
+
 ## Examples Cookbook
 
 ### Finding resources by type and size

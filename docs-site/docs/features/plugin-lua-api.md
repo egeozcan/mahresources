@@ -85,22 +85,42 @@ All IDs are numbers (float64 in Lua). Returns `nil` on error or not found.
 
 | Function | Filter Fields | Result Fields |
 |----------|--------------|---------------|
-| `mah.db.query_notes(filter)` | `name`, `limit`, `offset` | `id`, `name`, `description` |
-| `mah.db.query_resources(filter)` | `name`, `content_type`, `limit`, `offset` | `id`, `name`, `content_type` |
-| `mah.db.query_groups(filter)` | `name`, `limit`, `offset` | `id`, `name`, `description` |
+| `mah.db.query_notes(filter)` | `name`, `owner_id`, `note_type_id`, `tags`, `groups`, `sort_by`, `limit`, `offset` | `id`, `name`, `description`, `meta`, `owner_id`, `created_at`, `updated_at` |
+| `mah.db.query_resources(filter)` | `name`, `content_type`, `owner_id`, `resource_category_id`, `tags`, `groups`, `sort_by`, `limit`, `offset` | `id`, `name`, `description`, `content_type`, `original_filename`, `hash`, `meta`, `owner_id`, `created_at`, `updated_at` |
+| `mah.db.query_groups(filter)` | `name`, `owner_id`, `category_id`, `tags`, `sort_by`, `limit`, `offset` | `id`, `name`, `description`, `meta`, `owner_id`, `created_at`, `updated_at` |
 
 **Limits**: Default 20, maximum 100. **Offset**: Default 0, maximum 10,000.
+
+Filter field types: `tags` and `groups` accept arrays of numeric IDs. `sort_by` accepts an array of sort strings (e.g., `{"created_at desc", "name"}`).
 
 ```lua
 local images = mah.db.query_resources({
     content_type = "image/jpeg",
+    owner_id = 5,
+    tags = {1, 3},
+    sort_by = {"created_at desc"},
     limit = 50,
     offset = 0
 })
 
 for _, img in ipairs(images) do
-    print(img.id, img.name)
+    print(img.id, img.name, img.created_at)
 end
+```
+
+### Count Functions
+
+Return the total number of matching entities as a number. Accept the same filter fields as the corresponding query functions (excluding `limit` and `offset`).
+
+| Function | Description |
+|----------|-------------|
+| `mah.db.count_notes(filter)` | Count notes matching filter |
+| `mah.db.count_resources(filter)` | Count resources matching filter |
+| `mah.db.count_groups(filter)` | Count groups matching filter |
+
+```lua
+local total = mah.db.count_resources({ owner_id = 5, content_type = "image/%" })
+local tagged = mah.db.count_notes({ tags = {1} })
 ```
 
 ### Resource File Access
@@ -821,6 +841,44 @@ function init()
     })
 end
 ```
+
+## mah.doc -- General Plugin Documentation
+
+Register a documentation entry for any plugin feature (actions, pages, settings, or custom categories). Entries appear on the plugin's documentation page alongside shortcode docs. Call during `init()`.
+
+### mah.doc(table)
+
+```lua
+mah.doc({
+    name = "colorize",              -- required, lowercase kebab-case
+    label = "Colorize Action",      -- required, display label
+    description = "Colorize a black and white image using AI.",
+    category = "Action",            -- optional grouping label
+    attrs = {                       -- optional parameter docs
+        { name = "model", type = "string", required = false, description = "AI model to use", default = "default" }
+    },
+    examples = {                    -- optional usage examples
+        { title = "Basic usage", code = "Select a B&W image and run the action" }
+    },
+    notes = {                       -- optional notes
+        "Requires an API key in plugin settings."
+    }
+})
+```
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | URL slug (lowercase kebab-case, max 50 chars, must match `^[a-z][a-z0-9_-]{0,49}$`) |
+| `label` | string | Yes | Human-readable display label |
+| `description` | string | No | Feature description |
+| `category` | string | No | Grouping label (e.g. "Action", "Page") |
+| `attrs` | table | No | Array of `{name, type, required, description, default}` parameter docs |
+| `examples` | table | No | Array of `{title, code, notes, example_data}` usage examples |
+| `notes` | table | No | Array of note strings |
+
+Doc entry names must be unique within a plugin and must not conflict with shortcode names in the same plugin.
 
 ## mah.get_setting(key)
 

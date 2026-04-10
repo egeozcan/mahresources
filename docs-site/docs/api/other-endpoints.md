@@ -2,9 +2,9 @@
 sidebar_position: 5
 ---
 
-# Tags, Categories, Queries & More
+# Tags, Categories, Queries, MRQL & More
 
-This page covers Tags, Categories, Resource Categories, Queries, Search, Logs, and Download Queue endpoints.
+This page covers Tags, Categories, Resource Categories, Queries, MRQL, Search, Logs, and Download Queue endpoints.
 
 ---
 
@@ -795,3 +795,142 @@ Each returns an array of strings representing all metadata keys in use:
 ```json
 ["author", "source", "date_created", "location"]
 ```
+
+---
+
+## MRQL API
+
+Execute, validate, and manage [MRQL](/features/mrql) queries. See the [MRQL feature page](/features/mrql) for the full query language reference.
+
+### Execute Query
+
+```
+POST /v1/mrql
+```
+
+#### Request Body
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `query` | string | MRQL query expression (required) |
+| `limit` | integer | Max results (flat) or items per bucket (grouped) |
+| `page` | integer | Page number |
+| `buckets` | integer | Buckets per page (grouped mode only) |
+| `offset` | integer | Direct offset for cursor-based bucket paging |
+
+#### Query Parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `render=1` | Process `CustomMRQLResult` templates server-side and populate `renderedHTML` on each entity |
+
+#### Example
+
+```bash
+curl -X POST http://localhost:8181/v1/mrql \
+  -H "Content-Type: application/json" \
+  -d '{"query": "type = resource AND tags = \"photo\" ORDER BY created DESC", "limit": 20}'
+```
+
+Returns an `MRQLResult` for flat queries (with `resources`, `notes`, `groups` arrays) or an `MRQLGroupedResult` for GROUP BY queries (with `mode`, `buckets`, and `rows` fields).
+
+### Validate Query
+
+```
+POST /v1/mrql/validate
+```
+
+#### Request Body
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `query` | string | MRQL query expression |
+
+#### Response
+
+```json
+{
+  "valid": true,
+  "errors": []
+}
+```
+
+When invalid, `errors` contains objects with position and message details.
+
+### Autocomplete
+
+```
+POST /v1/mrql/complete
+```
+
+#### Request Body
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `query` | string | Partial MRQL query |
+| `cursor` | integer | Cursor position in the query string |
+
+Returns context-aware completion suggestions for the cursor position.
+
+### List Saved Queries
+
+```
+GET /v1/mrql/saved
+GET /v1/mrql/saved?id=N
+```
+
+Without `id`, returns a paginated list of all saved MRQL queries. With `id`, returns a single saved query.
+
+| Parameter | Description |
+|-----------|-------------|
+| `id` | Saved query ID (returns single query) |
+| `all=1` | Return all saved queries without pagination |
+| `page` | Page number for paginated listing |
+
+### Create Saved Query
+
+```
+POST /v1/mrql/saved
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Query name |
+| `query` | string | Yes | MRQL query expression |
+| `description` | string | No | Query description |
+
+Returns 201 with the created saved query object.
+
+### Update Saved Query
+
+```
+PUT /v1/mrql/saved?id=N
+```
+
+Same body fields as create. Returns the updated saved query.
+
+### Delete Saved Query
+
+```
+POST /v1/mrql/saved/delete?id=N
+```
+
+Returns `{"id": N}` on success.
+
+### Run Saved Query
+
+```
+POST /v1/mrql/saved/run
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `id` | Saved query ID |
+| `name` | Saved query name (fallback if `id` not found) |
+| `limit` | Max results |
+| `page` | Page number |
+| `buckets` | Buckets per page (grouped mode) |
+| `offset` | Direct offset |
+| `render=1` | Process `CustomMRQLResult` templates server-side |
+
+Looks up the saved query by ID first, then by name. Revalidates the saved query before execution (schema changes may have invalidated it since save time). Returns the same response format as the execute endpoint.

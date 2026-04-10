@@ -45,10 +45,10 @@ export class NoteTypePage extends BasePage {
       await this.fillDescription(description);
     }
     if (options?.customHeader) {
-      await this.page.locator('textarea[name="CustomHeader"]').fill(options.customHeader);
+      await this.fillCodeEditor('CustomHeader', options.customHeader);
     }
     if (options?.customSidebar) {
-      await this.page.locator('textarea[name="CustomSidebar"]').fill(options.customSidebar);
+      await this.fillCodeEditor('CustomSidebar', options.customSidebar);
     }
     await this.save();
 

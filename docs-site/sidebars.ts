@@ -70,6 +70,7 @@ const sidebars: SidebarsConfig = {
         'features/plugin-actions',
         'features/plugin-hooks',
         'features/plugin-lua-api',
+        'features/built-in-plugins',
         'features/shortcodes',
         'features/mentions',
         'features/timeline-view',

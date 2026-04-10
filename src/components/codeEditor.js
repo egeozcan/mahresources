@@ -67,6 +67,9 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '' } = {})
         parent: container,
       });
 
+      // Make the scrollable region keyboard-focusable (axe: scrollable-region-focusable)
+      this.view.scrollDOM.tabIndex = 0;
+
       // Expose the view on the container for test automation
       container._cmView = this.view;
 
@@ -75,6 +78,8 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '' } = {})
         this.loadSQL(dbType);
       } else if (mode === 'html') {
         this.loadHTML();
+      } else if (mode === 'json') {
+        this.loadJSON();
       }
     },
 
@@ -102,6 +107,13 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '' } = {})
       const { html } = await import('@codemirror/lang-html');
       this.view.dispatch({
         effects: this.langCompartment.reconfigure(html({ autoCloseTags: false })),
+      });
+    },
+
+    async loadJSON() {
+      const { json } = await import('@codemirror/lang-json');
+      this.view.dispatch({
+        effects: this.langCompartment.reconfigure(json()),
       });
     },
 

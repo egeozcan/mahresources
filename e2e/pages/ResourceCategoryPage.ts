@@ -48,19 +48,19 @@ export class ResourceCategoryPage extends BasePage {
       await this.fillDescription(description);
     }
     if (options?.customHeader) {
-      await this.page.locator('textarea[name="CustomHeader"]').fill(options.customHeader);
+      await this.fillCodeEditor('CustomHeader', options.customHeader);
     }
     if (options?.customSidebar) {
-      await this.page.locator('textarea[name="CustomSidebar"]').fill(options.customSidebar);
+      await this.fillCodeEditor('CustomSidebar', options.customSidebar);
     }
     if (options?.customSummary) {
-      await this.page.locator('textarea[name="CustomSummary"]').fill(options.customSummary);
+      await this.fillCodeEditor('CustomSummary', options.customSummary);
     }
     if (options?.customAvatar) {
-      await this.page.locator('textarea[name="CustomAvatar"]').fill(options.customAvatar);
+      await this.fillCodeEditor('CustomAvatar', options.customAvatar);
     }
     if (options?.metaSchema) {
-      await this.page.locator('textarea[name="MetaSchema"]').fill(options.metaSchema);
+      await this.fillCodeEditor('MetaSchema', options.metaSchema);
     }
     await this.save();
 

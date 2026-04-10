@@ -5,7 +5,7 @@
     </label>
     <div class="mt-1 sm:mt-0 sm:col-span-2"
          x-data="codeEditor({ mode: '{{ mode }}', dbType: '{{ dbType }}', label: '{{ title }}' })">
-        <input type="hidden" name="{{ name }}" x-ref="hiddenInput" value="{{ value }}">
+        <input type="hidden" id="{{ field_id }}" name="{{ name }}" x-ref="hiddenInput" value="{{ value }}">
         <div x-ref="editorContainer" class="border border-stone-300 rounded-md overflow-hidden"></div>
     </div>
 </div>

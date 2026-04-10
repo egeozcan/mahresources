@@ -22,7 +22,7 @@ Attribute values can be double-quoted, single-quoted, or unquoted. When a key ap
 
 ## Processing
 
-Shortcodes are processed via the `process_shortcodes` Pongo2 template tag. All four custom template fields (CustomHeader, CustomSidebar, CustomSummary, CustomAvatar) and CustomMRQLResult templates automatically process shortcodes.
+Shortcodes are processed via the `process_shortcodes` Pongo2 template tag. The five custom template fields (CustomHeader, CustomSidebar, CustomSummary, CustomAvatar, CustomMRQLResult) process shortcodes automatically. Entity description fields also process shortcodes on detail pages; truncated previews in list views do not.
 
 ## `[meta]` -- Metadata Display
 
