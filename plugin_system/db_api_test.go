@@ -792,3 +792,35 @@ func (m *mockMRQLExecutor) ExecuteMRQL(ctx context.Context, query string, opts M
 		Items:      []map[string]any{{"id": float64(1), "name": "test"}},
 	}, nil
 }
+
+func TestResolveRootScopeOwnerlessNonGroup(t *testing.T) {
+	sentinel := ^uint(0) >> 1
+	mq := &mockQuerier{}
+
+	// Resource ID 1 exists in mockQuerier but has no owner_id field.
+	// Root scope should return sentinel, not the raw resource ID.
+	result := resolveRootScope(mq, 1, "resource")
+	assert.Equal(t, sentinel, result, "ownerless resource root scope should be sentinel")
+
+	// Note ID 1 — same behavior
+	result = resolveRootScope(mq, 1, "note")
+	assert.Equal(t, sentinel, result, "ownerless note root scope should be sentinel")
+
+	// Group ID 1 — groups are valid owner_id targets, so ownerless group
+	// should return the group ID itself
+	result = resolveRootScope(mq, 1, "group")
+	assert.Equal(t, uint(1), result, "ownerless group root scope should be the group ID")
+}
+
+func TestResolveParentScopeOwnerlessNonGroup(t *testing.T) {
+	sentinel := ^uint(0) >> 1
+	mq := &mockQuerier{}
+
+	// Resource with no owner_id — sentinel
+	result := resolveParentScope(mq, 1, "resource")
+	assert.Equal(t, sentinel, result, "ownerless resource parent scope should be sentinel")
+
+	// Note with no owner_id — sentinel
+	result = resolveParentScope(mq, 1, "note")
+	assert.Equal(t, sentinel, result, "ownerless note parent scope should be sentinel")
+}

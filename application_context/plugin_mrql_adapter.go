@@ -231,7 +231,18 @@ func (a *pluginMRQLAdapter) resolveScope(scope string, entityID uint, entityType
 		}
 		return current // hit depth limit, use last found
 	default: // "entity" or empty
-		return entityID
+		// owner_id always points to a group. For group entities, the ID is
+		// a valid owner_id. For resources/notes, look up the entity's owner.
+		if entityType == "group" {
+			return entityID
+		}
+		if entityID > 0 {
+			ownerID := a.lookupOwnerID(entityID, entityType)
+			if ownerID > 0 {
+				return ownerID
+			}
+		}
+		return ^uint(0) >> 1
 	}
 }
 
