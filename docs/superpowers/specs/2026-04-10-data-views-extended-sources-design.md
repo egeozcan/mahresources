@@ -144,9 +144,9 @@ New function `mah.db.mrql_query(query, opts)` registered in `plugin_system/db_ap
 }
 ```
 
-Each item in flat/bucketed results includes all entity fields (same set as `ctx.entity`) plus `Meta` as a nested table.
+Each item in flat/bucketed results includes all entity fields plus `Meta` as a nested table. **Key naming convention:** MRQL result items use lowercase/camelCase keys (`name`, `fileSize`, `contentType`, `meta`) matching MRQL field names and the existing table/list renderer conventions. This differs from `ctx.entity` which uses Go-style PascalCase (`Name`, `FileSize`, `ContentType`). The Lua bridge normalizes keys when converting `MRQLResult` items to Lua tables — the shortcode author always sees lowercase keys in MRQL results and PascalCase keys in `ctx.entity`.
 
-**Error handling:** Returns `nil, error_string`. The `resolve_data_source` helper renders a styled error div matching the built-in `[mrql]` shortcode error style.
+**Error handling:** Returns `nil, error_string`. Each shortcode's render function (the caller of `resolve_data_source`) is responsible for rendering a styled error div when the helper returns an error (see caller pattern in the Data Source Resolution section).
 
 **Go implementation:** Requires a new `MRQLExecutor` interface in `plugin_system/db_api.go`, following the same lazy-injection pattern as `EntityQuerier`, `KVStore`, and `PluginLogger`:
 
