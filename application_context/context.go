@@ -272,6 +272,8 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 			pm.SetEntityWriter(adapter)
 			pm.SetPluginLogger(adapter)
 			pm.SetKVStore(adapter)
+			mrqlAdapter := &pluginMRQLAdapter{ctx: ctx}
+			pm.SetMRQLExecutor(mrqlAdapter)
 		}
 	}
 

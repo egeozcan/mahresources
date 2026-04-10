@@ -693,3 +693,216 @@ func (ctx *MahresourcesContext) DeleteSavedMRQLQuery(id uint) error {
 	}
 	return err
 }
+
+// ExecuteSingleEntityWithScope executes a single-entity MRQL query with an
+// optional owner_id scope filter applied at the GORM level before execution.
+// This ensures LIMIT, ORDER BY, and pagination operate on the scoped dataset.
+// When scopeID is 0, no scope filter is applied (equivalent to global scope).
+func (ctx *MahresourcesContext) ExecuteSingleEntityWithScope(reqCtx context.Context, q *mrql.Query, entityType mrql.EntityType, opts mrql.TranslateOptions, scopeID uint) (*MRQLResult, error) {
+	q.EntityType = entityType
+
+	queryCtx, cancel := context.WithTimeout(reqCtx, MRQLQueryTimeout)
+	defer cancel()
+
+	db, err := mrql.TranslateWithOptions(q, ctx.db.WithContext(queryCtx), opts)
+	if err != nil {
+		return nil, err
+	}
+
+	if q.Limit < 0 {
+		db = db.Limit(defaultMRQLLimit)
+	}
+
+	// Apply scope filter BEFORE execution so LIMIT/ORDER operate on scoped data
+	if scopeID > 0 {
+		db = db.Where("owner_id = ?", scopeID)
+	}
+
+	result := &MRQLResult{EntityType: entityType.String()}
+
+	switch entityType {
+	case mrql.EntityResource:
+		var resources []models.Resource
+		if err := db.Find(&resources).Error; err != nil {
+			return nil, err
+		}
+		result.Resources = resources
+	case mrql.EntityNote:
+		var notes []models.Note
+		if err := db.Find(&notes).Error; err != nil {
+			return nil, err
+		}
+		result.Notes = notes
+	case mrql.EntityGroup:
+		var groups []models.Group
+		if err := db.Find(&groups).Error; err != nil {
+			return nil, err
+		}
+		result.Groups = groups
+	}
+
+	return result, nil
+}
+
+// ExecuteMRQLGroupedWithScope executes a GROUP BY MRQL query with an optional
+// owner_id scope filter applied at the GORM level before aggregation/bucketing.
+// When scopeID is 0, delegates to the unscoped ExecuteMRQLGrouped.
+func (ctx *MahresourcesContext) ExecuteMRQLGroupedWithScope(reqCtx context.Context, parsed *mrql.Query, scopeID uint) (*MRQLGroupedResult, error) {
+	if scopeID == 0 {
+		return ctx.ExecuteMRQLGrouped(reqCtx, parsed)
+	}
+
+	queryCtx, cancel := context.WithTimeout(reqCtx, MRQLQueryTimeout)
+	defer cancel()
+
+	if parsed.Limit < 0 {
+		parsed.Limit = defaultMRQLLimit
+	}
+
+	if len(parsed.GroupBy.Aggregates) > 0 {
+		return ctx.executeAggregatedQueryScoped(queryCtx, parsed, scopeID)
+	}
+
+	if parsed.Limit > maxBucketedTotalItems {
+		parsed.Limit = maxBucketedTotalItems
+	}
+	return ctx.executeBucketedQueryScoped(queryCtx, parsed, scopeID)
+}
+
+// executeAggregatedQueryScoped is like executeAggregatedQuery but injects an
+// owner_id scope filter on the GORM DB before passing it to TranslateGroupBy.
+func (ctx *MahresourcesContext) executeAggregatedQueryScoped(reqCtx context.Context, parsed *mrql.Query, scopeID uint) (*MRQLGroupedResult, error) {
+	db := ctx.db.WithContext(reqCtx).Where("owner_id = ?", scopeID)
+	gbResult, err := mrql.TranslateGroupBy(parsed, db)
+	if err != nil {
+		return nil, err
+	}
+
+	if gbResult.Rows == nil {
+		gbResult.Rows = []map[string]any{}
+	}
+
+	return &MRQLGroupedResult{
+		EntityType: parsed.EntityType.String(),
+		Mode:       gbResult.Mode,
+		Rows:       gbResult.Rows,
+	}, nil
+}
+
+// executeBucketedQueryScoped is like executeBucketedQuery but injects an
+// owner_id scope filter on the GORM DB for both key discovery and bucket
+// materialization.
+func (ctx *MahresourcesContext) executeBucketedQueryScoped(reqCtx context.Context, parsed *mrql.Query, scopeID uint) (*MRQLGroupedResult, error) {
+	db := ctx.db.WithContext(reqCtx).Where("owner_id = ?", scopeID)
+
+	allKeys, err := mrql.TranslateGroupByKeys(parsed, db)
+	if err != nil {
+		return nil, err
+	}
+
+	var warnings []string
+
+	isPaginated := parsed.BucketLimit >= 0 || parsed.Offset >= 0
+	if len(allKeys) > mrql.MaxBuckets {
+		allKeys = allKeys[:mrql.MaxBuckets]
+		if !isPaginated {
+			warnings = append(warnings, fmt.Sprintf("Only the first %d groups are shown. Add filters to narrow the result set.", mrql.MaxBuckets))
+		}
+	}
+
+	keys := allKeys
+	if parsed.Offset > 0 {
+		if parsed.Offset >= len(keys) {
+			keys = nil
+		} else {
+			keys = keys[parsed.Offset:]
+		}
+	}
+	pageSize := len(keys)
+	if parsed.BucketLimit >= 0 && parsed.BucketLimit < pageSize {
+		pageSize = parsed.BucketLimit
+	}
+	keys = keys[:pageSize]
+
+	var buckets []MRQLBucket
+	totalItems := 0
+	totalKeys := len(keys)
+	for _, key := range keys {
+		if totalItems >= maxBucketedTotalItems {
+			break
+		}
+
+		// Inject scope on each bucket's DB too
+		bucketDB, err := mrql.TranslateGroupByBucket(parsed, ctx.db.WithContext(reqCtx).Where("owner_id = ?", scopeID), key)
+		if err != nil {
+			return nil, err
+		}
+
+		publicKey := make(map[string]any, len(key))
+		for k, v := range key {
+			if strings.HasPrefix(k, "_gbid_") {
+				friendlyKey := strings.TrimPrefix(k, "_gbid_") + "_id"
+				publicKey[friendlyKey] = v
+			} else {
+				publicKey[k] = v
+			}
+		}
+		bucket := MRQLBucket{Key: publicKey}
+
+		switch parsed.EntityType {
+		case mrql.EntityResource:
+			var resources []models.Resource
+			if err := bucketDB.Find(&resources).Error; err != nil {
+				return nil, err
+			}
+			bucket.Items = resources
+			totalItems += len(resources)
+		case mrql.EntityNote:
+			var notes []models.Note
+			if err := bucketDB.Find(&notes).Error; err != nil {
+				return nil, err
+			}
+			bucket.Items = notes
+			totalItems += len(notes)
+		case mrql.EntityGroup:
+			var groups []models.Group
+			if err := bucketDB.Find(&groups).Error; err != nil {
+				return nil, err
+			}
+			bucket.Items = groups
+			totalItems += len(groups)
+		}
+
+		buckets = append(buckets, bucket)
+	}
+
+	if buckets == nil {
+		buckets = []MRQLBucket{}
+	}
+
+	if totalItems >= maxBucketedTotalItems && len(buckets) < totalKeys {
+		droppedGroups := totalKeys - len(buckets)
+		warnings = append(warnings, fmt.Sprintf(
+			"Results truncated at %d items (%d of %d groups shown, %d groups omitted). Narrow your query or add a filter.",
+			maxBucketedTotalItems, len(buckets), totalKeys, droppedGroups))
+	}
+
+	offset := 0
+	if parsed.Offset > 0 {
+		offset = parsed.Offset
+	}
+	actualNextOffset := offset + len(buckets)
+	var nextOffset *int
+	if actualNextOffset < len(allKeys) {
+		nextOffset = &actualNextOffset
+	}
+
+	return &MRQLGroupedResult{
+		EntityType:  parsed.EntityType.String(),
+		Mode:        "bucketed",
+		Groups:      buckets,
+		Warnings:    warnings,
+		NextOffset:  nextOffset,
+		TotalGroups: len(allKeys),
+	}, nil
+}
