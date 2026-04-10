@@ -2,8 +2,11 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '' } = {})
   return {
     view: null,
     langCompartment: null,
+    formatError: '',
+    _formatErrorTimer: null,
 
     async init() {
+      this.mode = mode;
       const hiddenInput = this.$refs.hiddenInput;
       const container = this.$refs.editorContainer;
       const initialValue = hiddenInput.value || '';
@@ -117,7 +120,39 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '' } = {})
       });
     },
 
+    async formatContent() {
+      if (!this.view) return;
+      const content = this.view.state.doc.toString();
+      if (!content.trim()) return;
+
+      this.formatError = '';
+      let formatted;
+
+      try {
+        if (this.mode === 'json') {
+          formatted = JSON.stringify(JSON.parse(content), null, 2);
+        } else if (this.mode === 'html') {
+          const { formatHtml } = await import('../utils/formatHtml.js');
+          formatted = formatHtml(content);
+        } else {
+          return;
+        }
+      } catch (err) {
+        this.formatError = err.message || 'Formatting failed';
+        if (this._formatErrorTimer) clearTimeout(this._formatErrorTimer);
+        this._formatErrorTimer = setTimeout(() => { this.formatError = ''; }, 4000);
+        return;
+      }
+
+      if (formatted === content) return;
+
+      this.view.dispatch({
+        changes: { from: 0, to: this.view.state.doc.length, insert: formatted },
+      });
+    },
+
     destroy() {
+      if (this._formatErrorTimer) clearTimeout(this._formatErrorTimer);
       if (this.view) {
         this.view.destroy();
         this.view = null;
