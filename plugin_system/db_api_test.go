@@ -1,9 +1,14 @@
 package plugin_system
 
 import (
+	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type mockQuerier struct{}
@@ -734,4 +739,56 @@ end
 	if html != "error:database not available" {
 		t.Errorf("expected 'error:database not available', got %q", html)
 	}
+}
+
+func TestMRQLQueryLuaFunction(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "mrql-test", `
+		plugin = { name = "mrql-test", version = "1.0" }
+		function init()
+			mah.shortcode({
+				name = "mrqltest",
+				label = "MRQL Test",
+				render = function(ctx)
+					local result, err = mah.db.mrql_query("type=resource", {
+						scope_entity_id = 0,
+						scope = "global",
+						limit = 5,
+					})
+					if err then return "error:" .. err end
+					if result == nil then return "nil" end
+					return result.mode .. ":" .. result.entity_type
+				end
+			})
+		end
+	`)
+
+	pm, err := NewPluginManager(dir)
+	require.NoError(t, err)
+	defer pm.Close()
+
+	pm.SetMRQLExecutor(&mockMRQLExecutor{})
+	require.NoError(t, pm.EnablePlugin("mrql-test"))
+
+	html, err := pm.RenderShortcode(
+		context.Background(),
+		"mrql-test",
+		"plugin:mrql-test:mrqltest",
+		"group", 1,
+		json.RawMessage(`{}`),
+		map[string]string{},
+		nil,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "flat:resource", html)
+}
+
+type mockMRQLExecutor struct{}
+
+func (m *mockMRQLExecutor) ExecuteMRQL(ctx context.Context, query string, opts MRQLExecOptions) (*MRQLResult, error) {
+	return &MRQLResult{
+		EntityType: "resource",
+		Mode:       "flat",
+		Items:      []map[string]any{{"id": float64(1), "name": "test"}},
+	}, nil
 }

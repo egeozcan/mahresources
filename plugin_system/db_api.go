@@ -738,7 +738,216 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		return 1
 	}))
 
+	// mah.db.mrql_query(query, opts) -> result_table or (nil, error_string)
+	dbMod.RawSetString("mrql_query", L.NewFunction(func(L *lua.LState) int {
+		executor := pm.getMRQLExecutor()
+		if executor == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("MRQL executor not available"))
+			return 2
+		}
+
+		query := L.CheckString(1)
+		optsTbl := L.OptTable(2, L.NewTable())
+		optsMap := luaTableToGoMap(optsTbl)
+
+		// Extract options
+		limit := 20
+		if v, ok := optsMap["limit"].(float64); ok && v > 0 {
+			limit = int(v)
+		}
+		buckets := 5
+		if v, ok := optsMap["buckets"].(float64); ok && v > 0 {
+			buckets = int(v)
+		}
+
+		// Scope resolution
+		var scopeID uint
+		scopeEntityID := uint(0)
+		if v, ok := optsMap["scope_entity_id"].(float64); ok {
+			scopeEntityID = uint(v)
+		}
+		scopeStr := "entity"
+		if v, ok := optsMap["scope"].(string); ok && v != "" {
+			scopeStr = v
+		}
+
+		// Sentinel that matches no real owner_id — used when a non-global
+		// scope cannot be resolved, to guarantee empty results instead of
+		// fanning out to the entire dataset.
+		unresolvedSentinel := ^uint(0) >> 1
+
+		switch scopeStr {
+		case "global":
+			scopeID = 0
+		case "parent":
+			db := pm.getDbProvider()
+			if db == nil || scopeEntityID == 0 {
+				scopeID = unresolvedSentinel
+			} else {
+				entityType := ""
+				if v, ok := optsMap["entity_type"].(string); ok {
+					entityType = v
+				}
+				scopeID = resolveParentScope(db, scopeEntityID, entityType)
+			}
+		case "root":
+			db := pm.getDbProvider()
+			if db == nil || scopeEntityID == 0 {
+				scopeID = unresolvedSentinel
+			} else {
+				entityType := ""
+				if v, ok := optsMap["entity_type"].(string); ok {
+					entityType = v
+				}
+				scopeID = resolveRootScope(db, scopeEntityID, entityType)
+			}
+		default: // "entity"
+			scopeID = scopeEntityID
+		}
+
+		execOpts := MRQLExecOptions{
+			Limit:   limit,
+			Buckets: buckets,
+			ScopeID: scopeID,
+		}
+
+		// Check cache
+		reqCtx := L.Context()
+		if reqCtx == nil {
+			reqCtx = context.Background()
+		}
+		cacheKey := MRQLCacheKey(query, scopeID, limit, buckets)
+		if cache := MRQLCacheFromContext(reqCtx); cache != nil {
+			if cached, ok := cache.Get(cacheKey); ok {
+				L.Push(mrqlResultToLua(L, cached))
+				return 1
+			}
+		}
+
+		result, err := executor.ExecuteMRQL(reqCtx, query, execOpts)
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+
+		// Cache the result
+		if cache := MRQLCacheFromContext(reqCtx); cache != nil {
+			cache.Put(cacheKey, result)
+		}
+
+		L.Push(mrqlResultToLua(L, result))
+		return 1
+	}))
+
 	mahMod.RawSetString("db", dbMod)
+}
+
+// resolveParentScope looks up the owner_id of an entity.
+func resolveParentScope(db EntityQuerier, entityID uint, entityType string) uint {
+	var data map[string]any
+	var err error
+	switch entityType {
+	case "group":
+		data, err = db.GetGroupData(entityID)
+	case "resource":
+		data, err = db.GetResourceData(entityID)
+	case "note":
+		data, err = db.GetNoteData(entityID)
+	default:
+		data, err = db.GetGroupData(entityID)
+	}
+	if err != nil || data == nil {
+		return ^uint(0) >> 1 // sentinel: ensures empty results
+	}
+	if ownerID, ok := data["owner_id"].(float64); ok && ownerID > 0 {
+		return uint(ownerID)
+	}
+	return ^uint(0) >> 1
+}
+
+// resolveRootScope walks the ownership chain to find the root.
+// entityType is needed for the first hop (resource/note/group have different
+// lookup methods), after which we walk groups only.
+func resolveRootScope(db EntityQuerier, entityID uint, entityType string) uint {
+	// First hop: look up the entity's owner using its actual type
+	ownerID := lookupOwnerViaQuerier(db, entityID, entityType)
+	if ownerID == 0 {
+		// Entity has no owner — root falls back to entity itself
+		return entityID
+	}
+	current := ownerID
+	for i := 0; i < 50; i++ {
+		data, err := db.GetGroupData(current)
+		if err != nil || data == nil {
+			return current
+		}
+		parentID, ok := data["owner_id"].(float64)
+		if !ok || parentID <= 0 {
+			return current
+		}
+		current = uint(parentID)
+	}
+	return current
+}
+
+// lookupOwnerViaQuerier returns the owner_id of an entity using EntityQuerier.
+func lookupOwnerViaQuerier(db EntityQuerier, entityID uint, entityType string) uint {
+	var data map[string]any
+	var err error
+	switch entityType {
+	case "resource":
+		data, err = db.GetResourceData(entityID)
+	case "note":
+		data, err = db.GetNoteData(entityID)
+	default:
+		data, err = db.GetGroupData(entityID)
+	}
+	if err != nil || data == nil {
+		return 0
+	}
+	if ownerID, ok := data["owner_id"].(float64); ok && ownerID > 0 {
+		return uint(ownerID)
+	}
+	return 0
+}
+
+// mrqlResultToLua converts an MRQLResult to a Lua table.
+func mrqlResultToLua(L *lua.LState, result *MRQLResult) *lua.LTable {
+	tbl := L.NewTable()
+	tbl.RawSetString("mode", lua.LString(result.Mode))
+	tbl.RawSetString("entity_type", lua.LString(result.EntityType))
+
+	switch result.Mode {
+	case "flat":
+		items := L.NewTable()
+		for i, item := range result.Items {
+			items.RawSetInt(i+1, goToLuaTable(L, item))
+		}
+		tbl.RawSetString("items", items)
+	case "aggregated":
+		rows := L.NewTable()
+		for i, row := range result.Rows {
+			rows.RawSetInt(i+1, goToLuaTable(L, row))
+		}
+		tbl.RawSetString("rows", rows)
+	case "bucketed":
+		groups := L.NewTable()
+		for i, g := range result.Groups {
+			groupTbl := L.NewTable()
+			groupTbl.RawSetString("key", goToLuaTable(L, g.Key))
+			items := L.NewTable()
+			for j, item := range g.Items {
+				items.RawSetInt(j+1, goToLuaTable(L, item))
+			}
+			groupTbl.RawSetString("items", items)
+			groups.RawSetInt(i+1, groupTbl)
+		}
+		tbl.RawSetString("groups", groups)
+	}
+
+	return tbl
 }
 
 // luaTableToUintSlice converts a Lua table (array of numbers) to []uint.
