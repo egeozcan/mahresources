@@ -43,7 +43,19 @@ end
 
 When building the Lua shortcode context in `plugin_system/shortcodes.go`, a new `entity` sub-table is populated using reflection on `MetaShortcodeContext.Entity` (same approach as the existing `RenderPropertyShortcode`).
 
-**Plumbing required:** Currently `RenderShortcode()` only receives `entityType`, `entityID`, `meta`, and `attrs` — it does not receive the full entity object. The signature must be extended to accept the entity (or the full `MetaShortcodeContext`), and the call sites in `shortcode_tag.go` (line 49) and `server/routes.go` (line 189) must be updated to pass it through. The `PluginRenderer` callback type in `shortcodes/processor.go` must also be updated.
+**Plumbing required:** Two changes to `RenderShortcode()`:
+
+1. **Entity object:** Currently receives only `entityType`, `entityID`, `meta`, and `attrs`. Must be extended to accept the entity object (or the full `MetaShortcodeContext`) so `ctx.entity` can be built.
+
+2. **Request context:** Currently builds its Lua timeout from `context.Background()` (`shortcodes.go:244`). Must accept a `context.Context` parameter so that (a) the request-scoped MRQL cache is accessible to `mah.db.mrql_query()`, and (b) the Lua timeout derives from the request context rather than a detached one.
+
+**Call sites that must be updated** (all currently pass individual fields, not the entity or reqCtx):
+- `server/routes.go:190` — route-level plugin renderer closure
+- `server/api_handlers/mrql_api_handlers.go:61` — MRQL API custom template rendering
+- `server/template_handlers/template_filters/shortcode_tag.go:50` — template filter closure
+- `plugin_system/shortcodes_test.go` — test calls (6 sites)
+
+The `PluginRenderer` callback type in `shortcodes/processor.go:13` already carries the full `MetaShortcodeContext` — it does **not** need changing. Only the `pm.RenderShortcode()` method signature and its call sites need updating.
 
 ### Fields Exposed
 
@@ -68,11 +80,15 @@ When building the Lua shortcode context in `plugin_system/shortcodes.go`, a new 
 
 ### Usage Examples
 
+All examples use existing plugin attribute names. No new attributes are introduced for `field`-based data sources — `field` replaces `path` as the data source, and all other attributes work identically.
+
 ```
-[plugin:data-views:stat-card field="FileSize" format="filesize" label="Size"]
-[plugin:data-views:badge field="ContentType" labels="image/*:Image,video/*:Video" colors="image/*:blue,video/*:purple"]
-[plugin:data-views:format field="CreatedAt" format="date"]
+[plugin:data-views:stat-card field="FileSize" type="filesize" label="Size"]
+[plugin:data-views:badge field="ContentType" values="image/png,video/mp4" labels="Image,Video" colors="blue,purple"]
+[plugin:data-views:format field="CreatedAt" type="date"]
 ```
+
+**Attribute mapping:** `stat-card` and `format` use `type` for formatting (not `format`). `badge` uses positional `values`/`labels`/`colors` CSV lists (not key:value wildcard mappings). These match the current plugin contract in `plugin.lua`.
 
 ## MRQL Query API
 
@@ -100,9 +116,9 @@ New function `mah.db.mrql_query(query, opts)` registered in `plugin_system/db_ap
     { ID=1, Name="...", Description="...", Meta={...}, entity_type="resource", ... },
   },
 
-  -- aggregated mode:
+  -- aggregated mode (key names match MRQL output aliases: lowercase):
   rows = {
-    { contentType="image/png", COUNT=42, SUM_fileSize=1024000 },
+    { contentType="image/png", count=42, sum_fileSize=1024000 },
   },
 
   -- bucketed mode:
@@ -116,14 +132,37 @@ Each item in flat/bucketed results includes all entity fields (same set as `ctx.
 
 **Error handling:** Returns `nil, error_string`. The `resolve_data_source` helper renders a styled error div matching the built-in `[mrql]` shortcode error style.
 
-**Go implementation:** Reuses the existing `QueryExecutor` pipeline — parses MRQL, applies scoping, executes via GORM, converts to Lua tables.
+**Go implementation:** Requires a new `MRQLExecutor` interface in `plugin_system/db_api.go`, following the same lazy-injection pattern as `EntityQuerier`, `KVStore`, and `PluginLogger`:
+
+```go
+// MRQLExecutor provides MRQL query execution for plugins.
+type MRQLExecutor interface {
+    ExecuteMRQL(ctx context.Context, query string, limit int, buckets int) (*MRQLResult, error)
+}
+
+// MRQLResult mirrors shortcodes.QueryResult in a plugin_system-safe form.
+type MRQLResult struct {
+    EntityType string
+    Mode       string              // "flat", "aggregated", "bucketed"
+    Items      []map[string]any
+    Rows       []map[string]any
+    Groups     []MRQLResultGroup
+}
+
+type MRQLResultGroup struct {
+    Key   map[string]any
+    Items []map[string]any
+}
+```
+
+Injected via `pm.SetMRQLExecutor(executor)` during application startup (same as `SetEntityQuerier`). The adapter implementation in `application_context` wraps the existing MRQL parse/translate/execute pipeline. The `mah.db.mrql_query()` Lua function calls `pm.getMRQLExecutor()` at invocation time.
 
 ### Usage Examples
 
 ```
-[plugin:data-views:table mrql="type=resource" columns="Name,ContentType,FileSize"]
+[plugin:data-views:table mrql="type=resource" cols="name,contentType,fileSize"]
 [plugin:data-views:pie-chart mrql="type=resource GROUP BY contentType COUNT()"]
-[plugin:data-views:stat-card mrql="type=resource GROUP BY category COUNT()" aggregate="COUNT" label="Total Resources"]
+[plugin:data-views:stat-card mrql="type=resource GROUP BY category COUNT()" aggregate="count" label="Total Resources"]
 [plugin:data-views:list mrql="type=note LIMIT 10"]
 ```
 
@@ -192,7 +231,7 @@ Entity property lookups (`ctx.entity`) are not cached — they're already in mem
 
 ### Single-Value Shortcodes
 
-Work with `path`, `field`, and `mrql` in aggregated mode. For aggregated results, single-value shortcodes require an explicit `aggregate` attribute (e.g., `aggregate="COUNT"`, `aggregate="SUM_fileSize"`) to select which value from the result row to use. This is necessary because aggregated rows are `map[string]any` with no guaranteed key order, and queries may return multiple rows without explicit ORDER BY. If `aggregate` is omitted, the shortcode renders an error hint. If the query returns multiple rows, only the first row is used (author should use `LIMIT 1` or a single-group query for deterministic results):
+Work with `path`, `field`, and `mrql` in aggregated mode. For aggregated results, single-value shortcodes require an explicit `aggregate` attribute (e.g., `aggregate="count"`, `aggregate="sum_fileSize"`) to select which value from the result row to use. This is necessary because aggregated rows are `map[string]any` with no guaranteed key order, and queries may return multiple rows without explicit ORDER BY. If `aggregate` is omitted, the shortcode renders an error hint. If the query returns multiple rows, only the first row is used (author should use `LIMIT 1` or a single-group query for deterministic results):
 
 | Shortcode | `path` | `field` | `mrql` (aggregated) |
 |-----------|--------|---------|---------------------|
@@ -233,10 +272,14 @@ The `resolve_data_source` helper normalizes results so each render function gets
 
 | File | Change |
 |------|--------|
-| `plugin_system/shortcodes.go` | Extend `RenderShortcode()` to accept full entity object; build `ctx.entity` Lua table via reflection |
-| `plugin_system/db_api.go` | Register `mah.db.mrql_query()` function with scope resolution and request-context cache lookup |
-| `server/routes.go` | Create request-scoped MRQL cache; pass entity object through to plugin renderer closure |
-| `server/template_handlers/template_filters/shortcode_tag.go` | Update `pluginRenderer` closure to forward `MetaShortcodeContext.Entity` to `RenderShortcode()` |
-| `shortcodes/processor.go` | Update `PluginRenderer` callback signature to include entity object |
-| `plugins/data-views/plugin.lua` | Add `resolve_data_source` helper with `aggregate` selector; update all render functions |
+| `plugin_system/db_api.go` | Define `MRQLExecutor` interface and `MRQLResult` types; add `SetMRQLExecutor()`/`getMRQLExecutor()` injection; register `mah.db.mrql_query()` Lua function |
+| `plugin_system/shortcodes.go` | Extend `RenderShortcode()` signature to accept `context.Context` and entity object; build `ctx.entity` Lua table via reflection; derive Lua timeout from request context instead of `context.Background()` |
+| `plugin_system/shortcodes_test.go` | Update 6 test call sites for new `RenderShortcode()` signature |
+| `server/routes.go` | Create request-scoped MRQL cache in request context; update `pluginRenderer` closure to pass entity + reqCtx to `RenderShortcode()` |
+| `server/api_handlers/mrql_api_handlers.go` | Update `pluginRenderer` closure (line 61) to pass entity + reqCtx to `RenderShortcode()` |
+| `server/template_handlers/template_filters/shortcode_tag.go` | Update `pluginRenderer` closure (line 50) to pass entity + reqCtx to `RenderShortcode()` |
+| `application_context/` | Implement `MRQLExecutor` adapter wrapping existing MRQL parse/translate/execute pipeline; call `pm.SetMRQLExecutor()` during startup |
+| `plugins/data-views/plugin.lua` | Add `resolve_data_source` helper with `aggregate` selector; update all render functions to use it |
 | `mrql/scoping.go` (new) | Scope resolution logic (entity/parent/root ID lookup) and GORM scope application |
+
+**Note:** `PluginRenderer` callback type in `shortcodes/processor.go:13` already carries the full `MetaShortcodeContext` and does not need changing.
