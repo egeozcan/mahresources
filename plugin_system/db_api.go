@@ -1,6 +1,8 @@
 package plugin_system
 
 import (
+	"context"
+
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -153,6 +155,47 @@ func (pm *PluginManager) getDbWriter() EntityWriter {
 		return nil
 	}
 	return v.(EntityWriter)
+}
+
+// MRQLExecutor provides MRQL query execution for plugins.
+type MRQLExecutor interface {
+	ExecuteMRQL(ctx context.Context, query string, opts MRQLExecOptions) (*MRQLResult, error)
+}
+
+// MRQLExecOptions carries execution parameters including scope.
+type MRQLExecOptions struct {
+	Limit   int  // max items (default 20)
+	Buckets int  // max GROUP BY buckets (default 5)
+	ScopeID uint // resolved owner_id for scoping (0 = no scope filter)
+}
+
+// MRQLResult holds query results in a plugin_system-safe form (no model imports).
+type MRQLResult struct {
+	EntityType string
+	Mode       string // "flat", "aggregated", "bucketed"
+	Items      []map[string]any
+	Rows       []map[string]any
+	Groups     []MRQLResultGroup
+}
+
+// MRQLResultGroup is a bucket of items sharing a common key.
+type MRQLResultGroup struct {
+	Key   map[string]any
+	Items []map[string]any
+}
+
+// SetMRQLExecutor sets the MRQL query executor for plugins.
+func (pm *PluginManager) SetMRQLExecutor(me MRQLExecutor) {
+	pm.mrqlExecutor.Store(me)
+}
+
+// getMRQLExecutor returns the current MRQLExecutor, or nil if not yet set.
+func (pm *PluginManager) getMRQLExecutor() MRQLExecutor {
+	v := pm.mrqlExecutor.Load()
+	if v == nil {
+		return nil
+	}
+	return v.(MRQLExecutor)
 }
 
 // registerDbModule registers the mah.db sub-table in the Lua VM.
