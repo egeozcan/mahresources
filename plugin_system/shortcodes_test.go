@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -60,11 +61,13 @@ func TestShortcodeRendering(t *testing.T) {
 	require.NoError(t, pm.EnablePlugin("sc-render"))
 
 	html, err := pm.RenderShortcode(
+		context.Background(),
 		"sc-render",
 		"plugin:sc-render:stars",
 		"group", 1,
 		json.RawMessage(`{"rating": 4}`),
 		map[string]string{"max": "3"},
+		nil,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "<span>★★★</span>", html)
@@ -92,11 +95,13 @@ func TestShortcodeRenderContext(t *testing.T) {
 	require.NoError(t, pm.EnablePlugin("sc-ctx"))
 
 	html, err := pm.RenderShortcode(
+		context.Background(),
 		"sc-ctx",
 		"plugin:sc-ctx:info",
 		"resource", 42,
 		json.RawMessage(`{}`),
 		map[string]string{},
+		nil,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "resource:42", html)
@@ -130,13 +135,13 @@ func TestShortcodeNonStringReturnErrors(t *testing.T) {
 	defer pm.Close()
 	require.NoError(t, pm.EnablePlugin("sc-badret"))
 
-	_, err = pm.RenderShortcode("sc-badret", "plugin:sc-badret:nilret", "group", 1, json.RawMessage(`{}`), nil)
+	_, err = pm.RenderShortcode(context.Background(), "sc-badret", "plugin:sc-badret:nilret", "group", 1, json.RawMessage(`{}`), nil, nil)
 	assert.Error(t, err, "nil return should be an error")
 
-	_, err = pm.RenderShortcode("sc-badret", "plugin:sc-badret:numret", "group", 1, json.RawMessage(`{}`), nil)
+	_, err = pm.RenderShortcode(context.Background(), "sc-badret", "plugin:sc-badret:numret", "group", 1, json.RawMessage(`{}`), nil, nil)
 	assert.Error(t, err, "number return should be an error")
 
-	_, err = pm.RenderShortcode("sc-badret", "plugin:sc-badret:boolret", "group", 1, json.RawMessage(`{}`), nil)
+	_, err = pm.RenderShortcode(context.Background(), "sc-badret", "plugin:sc-badret:boolret", "group", 1, json.RawMessage(`{}`), nil, nil)
 	assert.Error(t, err, "boolean return should be an error")
 }
 
@@ -209,4 +214,45 @@ func TestShortcodeCleanupOnDisable(t *testing.T) {
 
 	require.NoError(t, pm.DisablePlugin("sc-cleanup"))
 	assert.Nil(t, pm.GetPluginShortcode("plugin:sc-cleanup:temp"))
+}
+
+func TestShortcodeEntityContext(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "sc-entity", `
+		plugin = { name = "sc-entity", version = "1.0" }
+		function init()
+			mah.shortcode({
+				name = "entfield",
+				label = "Entity Field",
+				render = function(ctx)
+					if ctx.entity == nil then return "no entity" end
+					return tostring(ctx.entity.Name) .. ":" .. tostring(ctx.entity.FileSize)
+				end
+			})
+		end
+	`)
+
+	pm, err := NewPluginManager(dir)
+	require.NoError(t, err)
+	defer pm.Close()
+
+	require.NoError(t, pm.EnablePlugin("sc-entity"))
+
+	html, err := pm.RenderShortcode(
+		context.Background(),
+		"sc-entity",
+		"plugin:sc-entity:entfield",
+		"resource", 1,
+		json.RawMessage(`{"rating": 5}`),
+		map[string]string{},
+		&testResourceEntity{Name: "photo.jpg", FileSize: 1024},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "photo.jpg:1024", html)
+}
+
+type testResourceEntity struct {
+	Name        string
+	FileSize    int64
+	ContentType string
 }

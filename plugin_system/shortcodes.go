@@ -2,9 +2,11 @@ package plugin_system
 
 import (
 	"context"
+	"database/sql/driver"
 	"encoding/json"
 	"fmt"
 	"log"
+	"reflect"
 	"regexp"
 	"time"
 
@@ -187,7 +189,7 @@ func (pm *PluginManager) GetPluginShortcode(fullTypeName string) *PluginShortcod
 	return nil
 }
 
-func (pm *PluginManager) RenderShortcode(pluginName, fullTypeName, entityType string, entityID uint, meta json.RawMessage, attrs map[string]string) (string, error) {
+func (pm *PluginManager) RenderShortcode(reqCtx context.Context, pluginName, fullTypeName, entityType string, entityID uint, meta json.RawMessage, attrs map[string]string, entity any) (string, error) {
 	if pm.closed.Load() {
 		return "", fmt.Errorf("plugin manager is closed")
 	}
@@ -239,9 +241,13 @@ func (pm *PluginManager) RenderShortcode(pluginName, fullTypeName, entityType st
 		"settings":    settings,
 	}
 
+	if entity != nil {
+		ctxData["entity"] = entityToMap(entity)
+	}
+
 	tbl := goToLuaTable(L, ctxData)
 
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), luaShortcodeRenderTimeout)
+	timeoutCtx, cancel := context.WithTimeout(reqCtx, luaShortcodeRenderTimeout)
 	L.SetContext(timeoutCtx)
 
 	err := L.CallByParam(lua.P{
@@ -266,6 +272,76 @@ func (pm *PluginManager) RenderShortcode(pluginName, fullTypeName, entityType st
 	}
 
 	return "", fmt.Errorf("shortcode %q render function must return a string, got %s", fullTypeName, ret.Type())
+}
+
+// entityToMap converts an entity struct to a map[string]any using reflection.
+func entityToMap(entity any) map[string]any {
+	v := reflect.ValueOf(entity)
+	if v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return nil
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return nil
+	}
+
+	result := make(map[string]any)
+	t := v.Type()
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		fv := v.Field(i)
+		val := entityFieldValue(fv)
+		if val != nil {
+			result[field.Name] = val
+		}
+	}
+	return result
+}
+
+// entityFieldValue extracts a Lua-compatible value from a reflect.Value.
+func entityFieldValue(fv reflect.Value) any {
+	if fv.Kind() == reflect.Ptr {
+		if fv.IsNil() {
+			return nil
+		}
+		fv = fv.Elem()
+	}
+
+	iface := fv.Interface()
+
+	if t, ok := iface.(time.Time); ok {
+		return t.Format(time.RFC3339)
+	}
+	if raw, ok := iface.(json.RawMessage); ok {
+		return string(raw)
+	}
+	if v, ok := iface.(driver.Valuer); ok {
+		if dbVal, err := v.Value(); err == nil {
+			if s, ok := dbVal.(string); ok {
+				return s
+			}
+		}
+	}
+
+	switch fv.Kind() {
+	case reflect.String:
+		return fv.String()
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return float64(fv.Int())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return float64(fv.Uint())
+	case reflect.Float32, reflect.Float64:
+		return fv.Float()
+	case reflect.Bool:
+		return fv.Bool()
+	default:
+		return nil
+	}
 }
 
 // renderShortcodeForDocs renders a shortcode in documentation preview mode.

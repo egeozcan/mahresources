@@ -47,7 +47,7 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 	if pmVal, ok := ctx.Public["_pluginManager"]; ok && pmVal != nil {
 		if pm, ok := pmVal.(*plugin_system.PluginManager); ok && pm != nil {
 			pluginRenderer = func(pluginName string, sc shortcodes.Shortcode, mctx shortcodes.MetaShortcodeContext) (string, error) {
-				return pm.RenderShortcode(pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs)
+				return pm.RenderShortcode(context.Background(), pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs, nil)
 			}
 		}
 	}

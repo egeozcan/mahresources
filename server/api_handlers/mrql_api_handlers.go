@@ -58,7 +58,7 @@ func buildPluginRenderer(appCtx *application_context.MahresourcesContext) shortc
 		return nil
 	}
 	return func(pluginName string, sc shortcodes.Shortcode, mctx shortcodes.MetaShortcodeContext) (string, error) {
-		return pm.RenderShortcode(pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs)
+		return pm.RenderShortcode(context.Background(), pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs, nil)
 	}
 }
 
