@@ -50,6 +50,7 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 			reqCtx = rc
 		}
 	}
+	reqCtx = plugin_system.WithMRQLCache(reqCtx)
 
 	var pluginRenderer shortcodes.PluginRenderer
 	if pmVal, ok := ctx.Public["_pluginManager"]; ok && pmVal != nil {

@@ -178,6 +178,7 @@ func buildEntityDataFromEntity(entity any, entityType string) map[string]any {
 // receive expanded HTML instead of raw [meta ...] shortcode text.
 // Only called for JSON responses — HTML responses use the process_shortcodes template tag.
 func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManager, appCtx *application_context.MahresourcesContext, reqCtx context.Context) {
+	reqCtx = plugin_system.WithMRQLCache(reqCtx)
 	mainEntity := ctx["mainEntity"]
 	entityType, _ := ctx["mainEntityType"].(string)
 	if mainEntity == nil || entityType == "" {

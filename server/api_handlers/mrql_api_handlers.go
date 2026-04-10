@@ -11,6 +11,7 @@ import (
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/mrql"
+	"mahresources/plugin_system"
 	"mahresources/server/http_utils"
 	"mahresources/server/template_handlers/template_filters"
 	"mahresources/shortcodes"
@@ -65,6 +66,7 @@ func buildPluginRenderer(appCtx *application_context.MahresourcesContext, reqCtx
 // renderMRQLCustomTemplates processes CustomMRQLResult templates for each result entity
 // and populates the RenderedHTML field when a template is configured.
 func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, result *application_context.MRQLResult, reqCtx context.Context) {
+	reqCtx = plugin_system.WithMRQLCache(reqCtx)
 	executor := template_filters.BuildQueryExecutor(appCtx)
 	pluginRenderer := buildPluginRenderer(appCtx, reqCtx)
 
