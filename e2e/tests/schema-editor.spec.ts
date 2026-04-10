@@ -832,4 +832,101 @@ test.describe('Schema Editor Display Mode', () => {
       await apiClient.deleteCategory(cat.ID);
     }
   });
+
+  test('renders x-color on labeled enum pills', async ({ page, apiClient }) => {
+    const schema = JSON.stringify({
+      type: 'object',
+      properties: {
+        priority: {
+          type: 'integer',
+          oneOf: [
+            { const: 0, title: 'low', 'x-color': '#22c55e' },
+            { const: 1, title: 'medium', 'x-color': '#eab308' },
+            { const: 2, title: 'high', 'x-color': '#ef4444' },
+          ],
+        },
+      },
+    });
+
+    const catName = `Display x-color Test ${runId}`;
+    const cat = await apiClient.createCategory(catName, undefined, { MetaSchema: schema });
+
+    let groupId: number | undefined;
+    try {
+      const group = await apiClient.createGroup({
+        name: `x-color Display Group ${runId}`,
+        categoryId: cat.ID,
+        meta: JSON.stringify({ priority: 2 }),
+      });
+      groupId = group.ID;
+
+      await page.goto(`/group?id=${groupId}`);
+      await page.waitForLoadState('load');
+
+      const displayMode = page.locator('schema-display-mode');
+      await expect(displayMode).toBeVisible({ timeout: 5000 });
+
+      // The pill should use the x-color (#ef4444 for "high") as inline style
+      const pill = displayMode.locator('span', { hasText: 'high' });
+      await expect(pill).toBeVisible({ timeout: 3000 });
+      const style = await pill.getAttribute('style');
+      expect(style).toContain('#ef4444');
+    } finally {
+      if (groupId) await apiClient.deleteGroup(groupId);
+      await apiClient.deleteCategory(cat.ID);
+    }
+  });
+
+  test('preserves x-color through visual editor round-trip', async ({ page, apiClient }) => {
+    const schema = JSON.stringify({
+      type: 'object',
+      properties: {
+        priority: {
+          type: 'integer',
+          oneOf: [
+            { const: 0, title: 'low', 'x-color': '#22c55e' },
+            { const: 1, title: 'medium', 'x-color': '#eab308' },
+            { const: 2, title: 'high', 'x-color': '#ef4444' },
+          ],
+        },
+      },
+    });
+
+    const catName = `x-color Round Trip ${runId}`;
+    const cat = await apiClient.createCategory(catName, undefined, { MetaSchema: schema });
+
+    try {
+      await page.goto(`/category/edit?id=${cat.ID}`);
+      await page.waitForLoadState('load');
+
+      // Open the visual editor
+      await page.locator('.visual-editor-btn').click();
+      const dialog = schemaEditorDialog(page);
+      await expect(dialog).toBeVisible({ timeout: 5000 });
+
+      // Select the "priority" property
+      const priorityNode = dialog.locator('[role="treeitem"]', { hasText: 'priority' });
+      await expect(priorityNode).toBeVisible({ timeout: 5000 });
+      await priorityNode.click();
+
+      // Verify color inputs are visible in the enum editor
+      const colorInputs = dialog.locator('schema-enum-editor input[type="color"]');
+      await expect(colorInputs.first()).toBeVisible({ timeout: 3000 });
+      expect(await colorInputs.count()).toBe(3);
+
+      // Apply without changes
+      await dialog.locator('button', { hasText: 'Apply Schema' }).click();
+      await expect(dialog).not.toBeVisible({ timeout: 3000 });
+
+      // Verify x-color was preserved
+      const value = await page.locator('#metaSchemaTextarea').inputValue();
+      const result = JSON.parse(value);
+      const oneOf = result.properties.priority.oneOf;
+      expect(oneOf[0]['x-color']).toBe('#22c55e');
+      expect(oneOf[1]['x-color']).toBe('#eab308');
+      expect(oneOf[2]['x-color']).toBe('#ef4444');
+    } finally {
+      await apiClient.deleteCategory(cat.ID);
+    }
+  });
 });

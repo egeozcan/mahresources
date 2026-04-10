@@ -6,6 +6,7 @@ import { sharedStyles } from '../../styles';
 export interface EnumEntry {
   value: any;
   label: string;
+  color?: string;
 }
 
 @customElement('schema-enum-editor')
@@ -15,8 +16,12 @@ export class SchemaEnumEditor extends LitElement {
     .enum-row input { flex: 1; }
     .drag { color: #9ca3af; cursor: grab; font-size: 10px; }
     .remove { color: #dc2626; background: none; border: none; font-size: 14px; padding: 0 4px; }
-    .label-header { display: grid; grid-template-columns: 20px 1fr 1fr 24px; gap: 6px; margin-bottom: 4px; font-size: 11px; color: #6b7280; font-weight: 600; }
-    .labeled-row { display: grid; grid-template-columns: 20px 1fr 1fr 24px; gap: 6px; margin-bottom: 6px; align-items: center; }
+    .label-header { display: grid; grid-template-columns: 20px 1fr 1fr 28px 24px; gap: 6px; margin-bottom: 4px; font-size: 11px; color: #6b7280; font-weight: 600; }
+    .labeled-row { display: grid; grid-template-columns: 20px 1fr 1fr 28px 24px; gap: 6px; margin-bottom: 6px; align-items: center; }
+    .color-input { width: 28px; height: 24px; padding: 0; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; background: none; }
+    .color-input::-webkit-color-swatch-wrapper { padding: 1px; }
+    .color-input::-webkit-color-swatch { border: none; border-radius: 2px; }
+    .color-clear { width: 28px; height: 24px; padding: 0; border: 1px dashed #d1d5db; border-radius: 4px; cursor: pointer; background: none; font-size: 10px; color: #9ca3af; }
     .convert-btn { font-size: 12px; color: #4f46e5; background: none; border: 1px solid #c7d2fe; border-radius: 4px; padding: 4px 10px; cursor: pointer; margin-bottom: 8px; }
     .convert-btn:hover { background: #eef2ff; }
   `];
@@ -134,6 +139,13 @@ export class SchemaEnumEditor extends LitElement {
     this._emit();
   }
 
+  private _updateEntryColor(index: number, color: string) {
+    const updated = [...this.entries];
+    updated[index] = { ...updated[index], color: color || undefined };
+    this.entries = updated;
+    this._emit();
+  }
+
   private _removeEntry(index: number) {
     this.entries = this.entries.filter((_, i) => i !== index);
     if (this.entries.length === 0) {
@@ -220,6 +232,7 @@ export class SchemaEnumEditor extends LitElement {
           <span></span>
           <span>Value</span>
           <span>Label</span>
+          <span>Color</span>
           <span></span>
         </div>
         ${repeat(this.entries, (_e, i) => i, (entry, i) => html`
@@ -251,6 +264,17 @@ export class SchemaEnumEditor extends LitElement {
               placeholder="Display label"
               @change=${(e: Event) => this._updateEntryLabel(i, (e.target as HTMLInputElement).value)}
               aria-label="Label for value ${entry.value}">
+            ${entry.color
+              ? html`<input type="color" class="color-input"
+                  .value=${entry.color}
+                  @input=${(e: Event) => this._updateEntryColor(i, (e.target as HTMLInputElement).value)}
+                  @dblclick=${() => this._updateEntryColor(i, '')}
+                  title="Color for ${entry.label || entry.value} (double-click to remove)"
+                  aria-label="Color for value ${entry.value}">`
+              : html`<button class="color-clear"
+                  @click=${() => this._updateEntryColor(i, '#6366f1')}
+                  title="Add color"
+                  aria-label="Add color for value ${entry.value}">+</button>`}
             <button class="remove" @click=${() => this._removeEntry(i)} aria-label="Remove value ${entry.value}">\u00d7</button>
           </div>
         `)}

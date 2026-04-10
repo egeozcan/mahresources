@@ -22,6 +22,7 @@ interface DisplayField {
   isLong: boolean;
   enum: any[] | null;
   enumLabels: string[] | null;
+  enumColors: (string | undefined)[] | null;
   xDisplay: string;
   rawSchema: JSONSchema;
 }
@@ -124,11 +125,14 @@ function flattenForDisplay(
     // Labeled enum detection — check rawProp first (resolveSchema destroys oneOf)
     let enumValues: any[] | null = null;
     let enumLabels: string[] | null = null;
+    let enumColors: (string | undefined)[] | null = null;
     const enumSource = isLabeledEnum(rawProp) ? rawProp : prop;
     if (isLabeledEnum(enumSource)) {
       const entries = getLabeledEnumEntries(enumSource);
       enumValues = entries.map(e => e.value);
       enumLabels = entries.map(e => e.label);
+      const colors = entries.map(e => e.color);
+      if (colors.some(c => c)) enumColors = colors;
     } else if (Array.isArray(prop.enum)) {
       enumValues = prop.enum;
     }
@@ -140,6 +144,7 @@ function flattenForDisplay(
       isLong: false,
       enum: enumValues,
       enumLabels,
+      enumColors,
       xDisplay,
       rawSchema: prop,
     };
@@ -299,6 +304,14 @@ export class SchemaDisplayMode extends LitElement {
       const idx = field.enum.indexOf(val);
       const label = idx >= 0 && field.enumLabels[idx] ? field.enumLabels[idx] : String(val);
       const tooltip = idx >= 0 && field.enumLabels[idx] ? String(val) : '';
+      const color = idx >= 0 && field.enumColors?.[idx];
+      if (color) {
+        return html`<span
+          class="inline-block text-xs px-2.5 py-0.5 rounded-full font-medium"
+          style=${`background: color-mix(in srgb, ${color} 15%, white); color: ${color}`}
+          title=${tooltip || nothing}
+        >${label}</span>`;
+      }
       return html`<span
         class="inline-block text-xs px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-medium"
         title=${tooltip || nothing}

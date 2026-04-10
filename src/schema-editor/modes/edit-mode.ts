@@ -221,7 +221,7 @@ export class SchemaEditMode extends LitElement {
         break;
       case 'labeledEnum': {
         // Convert entries to oneOf + const + title schema
-        const entries = value as Array<{ value: any; label: string }>;
+        const entries = value as Array<{ value: any; label: string; color?: string }>;
         if (entries.length === 0) {
           delete selected.schema.oneOf;
           delete selected.schema.enum;
@@ -230,6 +230,7 @@ export class SchemaEditMode extends LitElement {
           selected.schema.oneOf = entries.map(e => {
             const entry: any = { const: e.value };
             if (e.label) entry.title = e.label;
+            if (e.color) entry['x-color'] = e.color;
             return entry;
           });
         }

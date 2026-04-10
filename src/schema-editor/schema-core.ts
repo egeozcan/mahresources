@@ -680,11 +680,12 @@ export function isLabeledEnum(schema: JSONSchema): boolean {
  * Extracts the enum values and labels from a labeled-enum schema.
  * Returns an array of { value, label } objects.
  */
-export function getLabeledEnumEntries(schema: JSONSchema): Array<{ value: any; label: string }> {
+export function getLabeledEnumEntries(schema: JSONSchema): Array<{ value: any; label: string; color?: string }> {
   if (!schema.oneOf) return [];
   return schema.oneOf.map((entry: JSONSchema) => ({
     value: entry.const,
     label: entry.title || String(entry.const),
+    ...(entry['x-color'] ? { color: entry['x-color'] } : {}),
   }));
 }
 

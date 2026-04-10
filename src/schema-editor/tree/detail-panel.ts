@@ -126,6 +126,7 @@ export class SchemaDetailPanel extends LitElement {
       const entries: EnumEntry[] = (schema.oneOf as any[]).map((e: any) => ({
         value: e.const,
         label: e.title || '',
+        ...(e['x-color'] ? { color: e['x-color'] } : {}),
       }));
       return html`<schema-enum-editor
         .entries=${entries}
