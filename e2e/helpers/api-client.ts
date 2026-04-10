@@ -845,6 +845,10 @@ export class ApiClient {
       const response = await this.request.post(`${this.baseUrl}/v1/plugin/enable`, {
         form: { name },
       });
+      if (response.status() === 400) {
+        const text = await response.text();
+        if (text.includes('already enabled')) return;
+      }
       await this.handleVoidResponse(response);
     });
   }

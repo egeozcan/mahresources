@@ -120,11 +120,11 @@ test.describe('Inline tag editor keyboard accessibility', () => {
     const combobox = await openTagEditor(page);
 
     // Wait for results to load and first option to be highlighted
-    const firstOption = page.locator('.card-tags [role="option"]').first();
-    await expect(firstOption).toBeVisible({ timeout: 3000 });
+    const selectedOption = page.locator('.card-tags [role="option"][aria-selected="true"]');
+    await expect(selectedOption).toBeVisible({ timeout: 3000 });
 
-    // Get the name of the first option so we can verify it was selected
-    const firstName = await firstOption.textContent();
+    // Get the name of the highlighted option so we can verify it was selected
+    const firstName = (await selectedOption.textContent())?.trim();
 
     // Press Enter with empty input — should select the highlighted tag, NOT navigate
     await combobox.press('Enter');
