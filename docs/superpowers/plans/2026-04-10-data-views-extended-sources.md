@@ -239,9 +239,15 @@ func entityFieldValue(fv reflect.Value) any {
 	if raw, ok := iface.(json.RawMessage); ok {
 		return string(raw)
 	}
-	// fmt.Stringer (covers types.URL, url.URL, and similar wrapper types)
-	if s, ok := iface.(fmt.Stringer); ok {
-		return s.String()
+	// driver.Valuer (covers types.URL and similar DB wrapper types that
+	// serialize to a string). types.URL is a defined type over url.URL
+	// with Scan/Value but no String(), so fmt.Stringer does not work.
+	if v, ok := iface.(driver.Valuer); ok {
+		if dbVal, err := v.Value(); err == nil {
+			if s, ok := dbVal.(string); ok {
+				return s
+			}
+		}
 	}
 
 	switch fv.Kind() {
@@ -261,7 +267,7 @@ func entityFieldValue(fv reflect.Value) any {
 }
 ```
 
-Add `"reflect"`, `"time"`, and `"fmt"` to the imports (fmt is needed for the `fmt.Stringer` check on types like `types.URL`).
+Add `"reflect"`, `"time"`, and `"database/sql/driver"` to the imports (driver.Valuer is needed for types like `types.URL` which serialize to strings via their `Value()` method).
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1171,7 +1177,11 @@ In `plugin_system/db_api.go`, inside `registerDbModule`, before `mahMod.RawSetSt
 		case "root":
 			db := pm.getDbProvider()
 			if db != nil && scopeEntityID > 0 {
-				scopeID = resolveRootScope(db, scopeEntityID)
+				entityType := ""
+				if v, ok := optsMap["entity_type"].(string); ok {
+					entityType = v
+				}
+				scopeID = resolveRootScope(db, scopeEntityID, entityType)
 			}
 		default: // "entity"
 			scopeID = scopeEntityID
@@ -1240,20 +1250,49 @@ func resolveParentScope(db EntityQuerier, entityID uint, entityType string) uint
 }
 
 // resolveRootScope walks the ownership chain to find the root.
-func resolveRootScope(db EntityQuerier, entityID uint) uint {
-	current := entityID
+// entityType is needed for the first hop (resource/note/group have different
+// lookup methods), after which we walk groups only.
+func resolveRootScope(db EntityQuerier, entityID uint, entityType string) uint {
+	// First hop: look up the entity's owner using its actual type
+	ownerID := lookupOwnerViaQuerier(db, entityID, entityType)
+	if ownerID == 0 {
+		// Entity has no owner — root falls back to entity itself
+		return entityID
+	}
+	current := ownerID
 	for i := 0; i < 50; i++ {
 		data, err := db.GetGroupData(current)
 		if err != nil || data == nil {
 			return current
 		}
-		ownerID, ok := data["owner_id"].(float64)
-		if !ok || ownerID <= 0 {
+		parentID, ok := data["owner_id"].(float64)
+		if !ok || parentID <= 0 {
 			return current
 		}
-		current = uint(ownerID)
+		current = uint(parentID)
 	}
 	return current
+}
+
+// lookupOwnerViaQuerier returns the owner_id of an entity using EntityQuerier.
+func lookupOwnerViaQuerier(db EntityQuerier, entityID uint, entityType string) uint {
+	var data map[string]any
+	var err error
+	switch entityType {
+	case "resource":
+		data, err = db.GetResourceData(entityID)
+	case "note":
+		data, err = db.GetNoteData(entityID)
+	default:
+		data, err = db.GetGroupData(entityID)
+	}
+	if err != nil || data == nil {
+		return 0
+	}
+	if ownerID, ok := data["owner_id"].(float64); ok && ownerID > 0 {
+		return uint(ownerID)
+	}
+	return 0
 }
 
 // mrqlResultToLua converts an MRQLResult to a Lua table.
