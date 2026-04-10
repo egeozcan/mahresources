@@ -1161,13 +1161,19 @@ In `plugin_system/db_api.go`, inside `registerDbModule`, before `mahMod.RawSetSt
 			scopeStr = v
 		}
 
+		// Sentinel that matches no real owner_id — used when a non-global
+		// scope cannot be resolved, to guarantee empty results instead of
+		// fanning out to the entire dataset.
+		unresolvedSentinel := ^uint(0) >> 1
+
 		switch scopeStr {
 		case "global":
 			scopeID = 0
 		case "parent":
-			// Look up parent via EntityQuerier
 			db := pm.getDbProvider()
-			if db != nil && scopeEntityID > 0 {
+			if db == nil || scopeEntityID == 0 {
+				scopeID = unresolvedSentinel
+			} else {
 				entityType := ""
 				if v, ok := optsMap["entity_type"].(string); ok {
 					entityType = v
@@ -1176,7 +1182,9 @@ In `plugin_system/db_api.go`, inside `registerDbModule`, before `mahMod.RawSetSt
 			}
 		case "root":
 			db := pm.getDbProvider()
-			if db != nil && scopeEntityID > 0 {
+			if db == nil || scopeEntityID == 0 {
+				scopeID = unresolvedSentinel
+			} else {
 				entityType := ""
 				if v, ok := optsMap["entity_type"].(string); ok {
 					entityType = v
