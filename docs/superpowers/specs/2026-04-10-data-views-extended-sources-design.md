@@ -43,6 +43,8 @@ end
 
 When building the Lua shortcode context in `plugin_system/shortcodes.go`, a new `entity` sub-table is populated using reflection on `MetaShortcodeContext.Entity` (same approach as the existing `RenderPropertyShortcode`).
 
+**Plumbing required:** Currently `RenderShortcode()` only receives `entityType`, `entityID`, `meta`, and `attrs` — it does not receive the full entity object. The signature must be extended to accept the entity (or the full `MetaShortcodeContext`), and the call sites in `shortcode_tag.go` (line 49) and `server/routes.go` (line 189) must be updated to pass it through. The `PluginRenderer` callback type in `shortcodes/processor.go` must also be updated.
+
 ### Fields Exposed
 
 | Field | Resource | Note | Group | Lua Type |
@@ -121,13 +123,15 @@ Each item in flat/bucketed results includes all entity fields (same set as `ctx.
 ```
 [plugin:data-views:table mrql="type=resource" columns="Name,ContentType,FileSize"]
 [plugin:data-views:pie-chart mrql="type=resource GROUP BY contentType COUNT()"]
-[plugin:data-views:stat-card mrql="type=resource COUNT()" label="Total Resources"]
+[plugin:data-views:stat-card mrql="type=resource GROUP BY category COUNT()" aggregate="COUNT" label="Total Resources"]
 [plugin:data-views:list mrql="type=note LIMIT 10"]
 ```
 
+**Note:** MRQL aggregates (COUNT, SUM, etc.) require a GROUP BY clause. For total counts without grouping, use the existing `mah.db.count_resources()` / `mah.db.count_notes()` / `mah.db.count_groups()` Lua functions directly (these are already available and don't need MRQL).
+
 ## Scoping Mechanism
 
-MRQL queries are scoped by injecting an `AND owner=<id>` condition at the AST level after parsing, before translation. This avoids string manipulation and injection issues.
+MRQL queries are scoped by applying a direct `owner_id = <scopeID>` filter at the translator level (GORM scope), not at the AST level. This is necessary because the MRQL `owner` field resolves to owner group **name** matching (via `translateRelationComparison` in `translator.go:624`), not ID matching. Injecting `owner = 42` at the AST would try to find entities whose owner is named "42".
 
 ### Scope Resolution
 
@@ -140,26 +144,23 @@ MRQL queries are scoped by injecting an `AND owner=<id>` condition at the AST le
 
 ### Edge Cases
 
-- Entity has no owner + `scope="parent"` → falls back to global (no results is a natural outcome)
+- Entity has no owner + `scope="parent"` → returns empty results (not global). Unresolvable scopes never fan out.
 - `scope="root"` on entity with no owner → same as `scope="entity"`
 - `scope="root"` traversal capped at 50 hops to prevent cycles
 - Scoping is most meaningful on Group detail pages (groups own things). On Resource/Note pages, `scope="entity"` filters to things owned by that entity, which is usually empty but correct.
 
-### AST Injection
+### Translator-Level FK Filter
 
-After parsing the MRQL query, wrap the existing `Where` node:
+After parsing and validating the MRQL query, the scope filter is applied as a GORM scope during translation — a direct FK condition on the entity table, bypassing the MRQL field resolution:
 
 ```go
-parsed := mrql.Parse(query)
+// Applied in the translator, after normal WHERE translation
 if scopeID != 0 {
-    ownerFilter := &ComparisonExpr{Field: "owner", Op: "=", Value: scopeID}
-    if parsed.Where != nil {
-        parsed.Where = &BinaryExpr{Left: ownerFilter, Op: AND, Right: parsed.Where}
-    } else {
-        parsed.Where = ownerFilter
-    }
+    db = db.Where("owner_id = ?", scopeID)
 }
 ```
+
+This runs alongside (AND'd with) any user-specified filters in the MRQL query. It uses the raw `owner_id` column, avoiding the name-based traversal that `owner = "..."` triggers.
 
 ### Usage Examples
 
@@ -175,12 +176,13 @@ Duplicate MRQL queries within a single page render hit the DB only once.
 
 ### Implementation
 
-A `map[string]*QueryResult` created at the start of `shortcodes.Process()`:
+The cache is stored in the request context (`context.Context`), not inside `shortcodes.Process()`. This is necessary because `Process()` is called multiple times per page render — once each for CustomHeader, CustomSidebar, CustomSummary, and CustomAvatar (4 calls per entity in `server/routes.go:209-239`, plus the template filter call in `shortcode_tag.go`). A cache scoped to `Process()` would miss duplicates across these calls.
 
-1. Created when `Process()` is called — one cache per page render
-2. Passed to the plugin renderer closure, which passes it to `mah.db.mrql_query()`
-3. On each `mrql_query` call: build cache key → check map → return cached or execute and store
-4. Garbage collected when `Process()` returns — no cross-request leakage
+**Lifecycle:**
+1. Created in the HTTP handler (or route setup) and stored in the request context via `context.WithValue`
+2. The `mah.db.mrql_query()` Go function retrieves the cache from the request context
+3. On each call: build cache key → check map → return cached or execute and store
+4. Garbage collected when the request ends — no cross-request leakage
 
 **Cache key format:** `fmt.Sprintf("%s|%d|%d|%d", normalizedQuery, scopeID, limit, buckets)`
 
@@ -190,7 +192,7 @@ Entity property lookups (`ctx.entity`) are not cached — they're already in mem
 
 ### Single-Value Shortcodes
 
-Work with `path`, `field`, and `mrql` in aggregated mode. For aggregated results, single-value shortcodes use the first aggregate column (COUNT, SUM, AVG, MIN, MAX) from the first row — not the group-by column:
+Work with `path`, `field`, and `mrql` in aggregated mode. For aggregated results, single-value shortcodes require an explicit `aggregate` attribute (e.g., `aggregate="COUNT"`, `aggregate="SUM_fileSize"`) to select which value from the result row to use. This is necessary because aggregated rows are `map[string]any` with no guaranteed key order, and queries may return multiple rows without explicit ORDER BY. If `aggregate` is omitted, the shortcode renders an error hint. If the query returns multiple rows, only the first row is used (author should use `LIMIT 1` or a single-group query for deterministic results):
 
 | Shortcode | `path` | `field` | `mrql` (aggregated) |
 |-----------|--------|---------|---------------------|
@@ -231,8 +233,10 @@ The `resolve_data_source` helper normalizes results so each render function gets
 
 | File | Change |
 |------|--------|
-| `plugin_system/shortcodes.go` | Add `ctx.entity` table building via reflection |
-| `plugin_system/db_api.go` | Register `mah.db.mrql_query()` function |
-| `shortcodes/processor.go` | Add per-render query cache, pass to renderer |
-| `plugins/data-views/plugin.lua` | Add `resolve_data_source` helper, update all render functions |
-| `mrql/scoping.go` (new) | AST-level scope injection logic |
+| `plugin_system/shortcodes.go` | Extend `RenderShortcode()` to accept full entity object; build `ctx.entity` Lua table via reflection |
+| `plugin_system/db_api.go` | Register `mah.db.mrql_query()` function with scope resolution and request-context cache lookup |
+| `server/routes.go` | Create request-scoped MRQL cache; pass entity object through to plugin renderer closure |
+| `server/template_handlers/template_filters/shortcode_tag.go` | Update `pluginRenderer` closure to forward `MetaShortcodeContext.Entity` to `RenderShortcode()` |
+| `shortcodes/processor.go` | Update `PluginRenderer` callback signature to include entity object |
+| `plugins/data-views/plugin.lua` | Add `resolve_data_source` helper with `aggregate` selector; update all render functions |
+| `mrql/scoping.go` (new) | Scope resolution logic (entity/parent/root ID lookup) and GORM scope application |
