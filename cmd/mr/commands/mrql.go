@@ -65,6 +65,7 @@ func NewMRQLCmd(c *client.Client, opts *output.Options, page *int) *cobra.Comman
 		limit    int
 		buckets  int
 		offset   int
+		render   bool
 	)
 
 	mrqlCmd := &cobra.Command{
@@ -84,7 +85,12 @@ GROUP BY (aggregated — returns computed rows):
 
 GROUP BY (bucketed — returns grouped entities):
   mr mrql 'type = resource GROUP BY contentType LIMIT 5'
-  mr mrql --buckets 10 --page 2 'type = resource GROUP BY contentType LIMIT 5'`,
+  mr mrql --buckets 10 --page 2 'type = resource GROUP BY contentType LIMIT 5'
+
+Rendering:
+  mr mrql --render 'type = resource AND tags = "photo"'
+  The --render flag requests server-side template rendering using CustomMRQLResult
+  templates. Results include a renderedHTML field when a template is configured.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var queryText string
 
@@ -125,8 +131,14 @@ GROUP BY (bucketed — returns grouped entities):
 				body["page"] = *page
 			}
 
+			var q url.Values
+			if render {
+				q = url.Values{}
+				q.Set("render", "1")
+			}
+
 			var raw json.RawMessage
-			if err := c.Post("/v1/mrql", nil, body, &raw); err != nil {
+			if err := c.Post("/v1/mrql", q, body, &raw); err != nil {
 				return err
 			}
 
@@ -139,6 +151,7 @@ GROUP BY (bucketed — returns grouped entities):
 	mrqlCmd.Flags().IntVar(&limit, "limit", 0, "Items per bucket for GROUP BY, or total items for regular queries")
 	mrqlCmd.Flags().IntVar(&buckets, "buckets", 0, "Groups per page for bucketed GROUP BY queries")
 	mrqlCmd.Flags().IntVar(&offset, "offset", 0, "Bucket offset for cursor-based GROUP BY pagination")
+	mrqlCmd.Flags().BoolVar(&render, "render", false, "Request server-side template rendering via CustomMRQLResult")
 
 	mrqlCmd.AddCommand(newMRQLSaveCmd(c, opts))
 	mrqlCmd.AddCommand(newMRQLListCmd(c, opts, page))
@@ -232,6 +245,7 @@ func newMRQLRunCmd(c *client.Client, opts *output.Options, page *int) *cobra.Com
 		limit   int
 		buckets int
 		offset  int
+		render  bool
 	)
 
 	cmd := &cobra.Command{
@@ -257,6 +271,9 @@ func newMRQLRunCmd(c *client.Client, opts *output.Options, page *int) *cobra.Com
 			if cmd.Flags().Changed("page") {
 				q.Set("page", strconv.Itoa(*page))
 			}
+			if render {
+				q.Set("render", "1")
+			}
 
 			var raw json.RawMessage
 			if err := c.Post("/v1/mrql/saved/run", q, nil, &raw); err != nil {
@@ -271,6 +288,7 @@ func newMRQLRunCmd(c *client.Client, opts *output.Options, page *int) *cobra.Com
 	cmd.Flags().IntVar(&limit, "limit", 0, "Items per bucket for GROUP BY, or total items for regular queries")
 	cmd.Flags().IntVar(&buckets, "buckets", 0, "Groups per page for bucketed GROUP BY queries")
 	cmd.Flags().IntVar(&offset, "offset", 0, "Bucket offset for cursor-based GROUP BY pagination")
+	cmd.Flags().BoolVar(&render, "render", false, "Request server-side template rendering via CustomMRQLResult")
 
 	return cmd
 }

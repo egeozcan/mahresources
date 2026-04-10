@@ -100,6 +100,28 @@ test.describe('Category delete', () => {
   });
 });
 
+test.describe('Category create with new fields', () => {
+  const suffix = Date.now();
+  let catId: number;
+
+  test.afterAll(() => {
+    const cli = createCliRunner();
+    if (catId) cli.run('category', 'delete', String(catId));
+  });
+
+  test('create category with section-config and custom-mrql-result', async ({ cli }) => {
+    const sectionConfig = '{"resources":false}';
+    const customMRQL = '<div>{{ entity.Name }}</div>';
+    const cat = cli.runJson<Category>('category', 'create',
+      '--name', `cat-fields-${suffix}`,
+      '--section-config', sectionConfig,
+      '--custom-mrql-result', customMRQL
+    );
+    expect(cat.ID).toBeGreaterThan(0);
+    catId = cat.ID;
+  });
+});
+
 test.describe('Category create without required name', () => {
   test('create category without --name fails', async ({ cli }) => {
     cli.runExpectError('category', 'create');

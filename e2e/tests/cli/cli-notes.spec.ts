@@ -368,6 +368,30 @@ test.describe('Note single delete', () => {
   });
 });
 
+test.describe('Note edit-meta', () => {
+  const suffix = Date.now();
+  let noteId: number;
+
+  test.beforeAll(() => {
+    const cli = createCliRunner();
+    const note = cli.runJson<Note>('note', 'create', '--name', `meta-edit-note-${suffix}`, '--meta', '{"existing":"value"}');
+    noteId = note.ID;
+  });
+
+  test.afterAll(() => {
+    const cli = createCliRunner();
+    cli.run('note', 'delete', String(noteId));
+  });
+
+  test('edit-meta sets a new field', async ({ cli }) => {
+    cli.runOrFail('note', 'edit-meta', String(noteId), 'newField', '"hello"');
+    const note = cli.runJson<any>('note', 'get', String(noteId));
+    const meta = typeof note.Meta === 'string' ? JSON.parse(note.Meta) : note.Meta;
+    expect(meta.newField).toBe('hello');
+    expect(meta.existing).toBe('value');
+  });
+});
+
 test.describe('Note create without required name', () => {
   test('create note without --name fails', async ({ cli }) => {
     cli.runExpectError('note', 'create');

@@ -45,6 +45,7 @@ func NewGroupCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd.AddCommand(newGroupDeleteCmd(c, opts))
 	cmd.AddCommand(newGroupEditNameCmd(c, opts))
 	cmd.AddCommand(newGroupEditDescriptionCmd(c, opts))
+	cmd.AddCommand(newGroupEditMetaCmd(c, opts))
 	cmd.AddCommand(newGroupParentsCmd(c, opts))
 	cmd.AddCommand(newGroupChildrenCmd(c, opts))
 	cmd.AddCommand(newGroupCloneCmd(c, opts))
@@ -234,6 +235,43 @@ func newGroupEditDescriptionCmd(c *client.Client, opts *output.Options) *cobra.C
 				output.PrintSingle(*opts, nil, raw)
 			} else {
 				output.PrintMessage("Group description updated successfully.")
+			}
+			return nil
+		},
+	}
+}
+
+func newGroupEditMetaCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "edit-meta <id> <path> <value>",
+		Short: "Edit a single metadata field by JSON path",
+		Long: `Edit a single metadata field using deep-merge-by-path.
+
+The path is a dot-separated JSON path (e.g., "address.city") and the value
+is a JSON literal (e.g., '"Berlin"', '42', '{"nested":"obj"}').
+
+Examples:
+  mr group edit-meta 5 status '"active"'
+  mr group edit-meta 5 address.city '"Berlin"'
+  mr group edit-meta 5 scores '[1,2,3]'`,
+		Args: cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			q := url.Values{}
+			q.Set("id", args[0])
+
+			form := url.Values{}
+			form.Set("path", args[1])
+			form.Set("value", args[2])
+
+			var raw json.RawMessage
+			if err := c.PostForm("/v1/group/editMeta", q, form, &raw); err != nil {
+				return err
+			}
+
+			if opts.JSON {
+				output.PrintSingle(*opts, nil, raw)
+			} else {
+				output.PrintMessage("Group metadata updated successfully.")
 			}
 			return nil
 		},

@@ -81,7 +81,7 @@ func newNoteTypeGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newNoteTypeCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
-	var name, description, customHeader, customSidebar, customSummary, customAvatar string
+	var name, description, customHeader, customSidebar, customSummary, customAvatar, metaSchema, sectionConfig, customMRQLResult string
 
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -102,6 +102,15 @@ func newNoteTypeCreateCmd(c *client.Client, opts *output.Options) *cobra.Command
 			}
 			if customAvatar != "" {
 				body["CustomAvatar"] = customAvatar
+			}
+			if metaSchema != "" {
+				body["MetaSchema"] = metaSchema
+			}
+			if sectionConfig != "" {
+				body["SectionConfig"] = sectionConfig
+			}
+			if customMRQLResult != "" {
+				body["CustomMRQLResult"] = customMRQLResult
 			}
 
 			var raw json.RawMessage
@@ -130,13 +139,16 @@ func newNoteTypeCreateCmd(c *client.Client, opts *output.Options) *cobra.Command
 	cmd.Flags().StringVar(&customSidebar, "custom-sidebar", "", "Custom sidebar HTML")
 	cmd.Flags().StringVar(&customSummary, "custom-summary", "", "Custom summary HTML")
 	cmd.Flags().StringVar(&customAvatar, "custom-avatar", "", "Custom avatar HTML")
+	cmd.Flags().StringVar(&metaSchema, "meta-schema", "", "JSON Schema defining the metadata structure for notes of this type")
+	cmd.Flags().StringVar(&sectionConfig, "section-config", "", "JSON controlling which sections are visible on note detail pages")
+	cmd.Flags().StringVar(&customMRQLResult, "custom-mrql-result", "", "Pongo2 template for rendering notes of this type in MRQL results")
 
 	return cmd
 }
 
 func newNoteTypeEditCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var id uint
-	var name, description, customHeader, customSidebar, customSummary, customAvatar string
+	var name, description, customHeader, customSidebar, customSummary, customAvatar, metaSchema, sectionConfig, customMRQLResult string
 
 	cmd := &cobra.Command{
 		Use:   "edit",
@@ -161,6 +173,15 @@ func newNoteTypeEditCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			if cmd.Flags().Changed("custom-avatar") {
 				body["CustomAvatar"] = customAvatar
 			}
+			if cmd.Flags().Changed("meta-schema") {
+				body["MetaSchema"] = metaSchema
+			}
+			if cmd.Flags().Changed("section-config") {
+				body["SectionConfig"] = sectionConfig
+			}
+			if cmd.Flags().Changed("custom-mrql-result") {
+				body["CustomMRQLResult"] = customMRQLResult
+			}
 
 			var raw json.RawMessage
 			if err := c.Post("/v1/note/noteType/edit", nil, body, &raw); err != nil {
@@ -184,6 +205,9 @@ func newNoteTypeEditCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd.Flags().StringVar(&customSidebar, "custom-sidebar", "", "Custom sidebar HTML")
 	cmd.Flags().StringVar(&customSummary, "custom-summary", "", "Custom summary HTML")
 	cmd.Flags().StringVar(&customAvatar, "custom-avatar", "", "Custom avatar HTML")
+	cmd.Flags().StringVar(&metaSchema, "meta-schema", "", "JSON Schema defining the metadata structure for notes of this type")
+	cmd.Flags().StringVar(&sectionConfig, "section-config", "", "JSON controlling which sections are visible on note detail pages")
+	cmd.Flags().StringVar(&customMRQLResult, "custom-mrql-result", "", "Pongo2 template for rendering notes of this type in MRQL results")
 
 	return cmd
 }

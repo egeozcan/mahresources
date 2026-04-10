@@ -85,6 +85,7 @@ func NewResourceCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd.AddCommand(newResourceDeleteCmd(c, opts))
 	cmd.AddCommand(newResourceEditNameCmd(c, opts))
 	cmd.AddCommand(newResourceEditDescriptionCmd(c, opts))
+	cmd.AddCommand(newResourceEditMetaCmd(c, opts))
 	cmd.AddCommand(newResourceUploadCmd(c, opts))
 	cmd.AddCommand(newResourceDownloadCmd(c, opts))
 	cmd.AddCommand(newResourcePreviewCmd(c, opts))
@@ -321,6 +322,43 @@ func newResourceEditDescriptionCmd(c *client.Client, opts *output.Options) *cobr
 				output.PrintSingle(*opts, nil, raw)
 			} else {
 				output.PrintMessage("Resource description updated successfully.")
+			}
+			return nil
+		},
+	}
+}
+
+func newResourceEditMetaCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "edit-meta <id> <path> <value>",
+		Short: "Edit a single metadata field by JSON path",
+		Long: `Edit a single metadata field using deep-merge-by-path.
+
+The path is a dot-separated JSON path (e.g., "address.city") and the value
+is a JSON literal (e.g., '"Berlin"', '42', '{"nested":"obj"}').
+
+Examples:
+  mr resource edit-meta 5 status '"active"'
+  mr resource edit-meta 5 address.city '"Berlin"'
+  mr resource edit-meta 5 scores '[1,2,3]'`,
+		Args: cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			q := url.Values{}
+			q.Set("id", args[0])
+
+			form := url.Values{}
+			form.Set("path", args[1])
+			form.Set("value", args[2])
+
+			var raw json.RawMessage
+			if err := c.PostForm("/v1/resource/editMeta", q, form, &raw); err != nil {
+				return err
+			}
+
+			if opts.JSON {
+				output.PrintSingle(*opts, nil, raw)
+			} else {
+				output.PrintMessage("Resource metadata updated successfully.")
 			}
 			return nil
 		},

@@ -115,3 +115,25 @@ test.describe('Note Type create without required name', () => {
     cli.runExpectError('note-type', 'create');
   });
 });
+
+test.describe('NoteType create with new fields', () => {
+  const suffix = Date.now();
+  let ntId: number;
+
+  test.afterAll(() => {
+    const cli = createCliRunner();
+    if (ntId) cli.run('note-type', 'delete', String(ntId));
+  });
+
+  test('create note type with meta-schema and section-config', async ({ cli }) => {
+    const schema = '{"type":"object","properties":{"status":{"type":"string"}}}';
+    const sectionConfig = '{"resources":false}';
+    const nt = cli.runJson<NoteType>('note-type', 'create',
+      '--name', `nt-fields-${suffix}`,
+      '--meta-schema', schema,
+      '--section-config', sectionConfig
+    );
+    expect(nt.ID).toBeGreaterThan(0);
+    ntId = nt.ID;
+  });
+});

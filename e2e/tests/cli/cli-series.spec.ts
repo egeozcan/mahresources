@@ -151,6 +151,29 @@ test.describe('Series remove-resource with non-existent ID', () => {
   });
 });
 
+test.describe('Series edit-name subcommand', () => {
+  const suffix = Date.now();
+  let seriesId: number;
+
+  test.beforeAll(() => {
+    const cli = createCliRunner();
+    const series = cli.runJson<Series>('series', 'create', '--name', `editname-series-${suffix}`);
+    seriesId = series.ID;
+  });
+
+  test.afterAll(() => {
+    const cli = createCliRunner();
+    cli.run('series', 'delete', String(seriesId));
+  });
+
+  test('edit-name updates the series name', async ({ cli }) => {
+    const newName = `editname-series-${suffix}-renamed`;
+    cli.runOrFail('series', 'edit-name', String(seriesId), newName);
+    const series = cli.runJson<Series>('series', 'get', String(seriesId));
+    expect(series.Name).toBe(newName);
+  });
+});
+
 test.describe('Series create without required name', () => {
   test('create series without --name fails', async ({ cli }) => {
     cli.runExpectError('series', 'create');

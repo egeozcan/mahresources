@@ -379,6 +379,30 @@ test.describe('Group single delete', () => {
   });
 });
 
+test.describe('Group edit-meta', () => {
+  const suffix = Date.now();
+  let groupId: number;
+
+  test.beforeAll(() => {
+    const cli = createCliRunner();
+    const group = cli.runJson<Group>('group', 'create', '--name', `meta-edit-grp-${suffix}`, '--category-id', '1', '--meta', '{"existing":"value"}');
+    groupId = group.ID;
+  });
+
+  test.afterAll(() => {
+    const cli = createCliRunner();
+    cli.run('group', 'delete', String(groupId));
+  });
+
+  test('edit-meta sets a new field', async ({ cli }) => {
+    cli.runOrFail('group', 'edit-meta', String(groupId), 'newField', '"hello"');
+    const group = cli.runJson<any>('group', 'get', String(groupId));
+    const meta = typeof group.Meta === 'string' ? JSON.parse(group.Meta) : group.Meta;
+    expect(meta.newField).toBe('hello');
+    expect(meta.existing).toBe('value');
+  });
+});
+
 test.describe('Group create without required name', () => {
   test('create group without --name fails', async ({ cli }) => {
     cli.runExpectError('group', 'create');

@@ -37,6 +37,7 @@ func NewNoteCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd.AddCommand(newNoteDeleteCmd(c, opts))
 	cmd.AddCommand(newNoteEditNameCmd(c, opts))
 	cmd.AddCommand(newNoteEditDescriptionCmd(c, opts))
+	cmd.AddCommand(newNoteEditMetaCmd(c, opts))
 	cmd.AddCommand(newNoteShareCmd(c, opts))
 	cmd.AddCommand(newNoteUnshareCmd(c, opts))
 
@@ -232,6 +233,43 @@ func newNoteEditDescriptionCmd(c *client.Client, opts *output.Options) *cobra.Co
 				output.PrintSingle(*opts, nil, raw)
 			} else {
 				output.PrintMessage("Note description updated successfully.")
+			}
+			return nil
+		},
+	}
+}
+
+func newNoteEditMetaCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "edit-meta <id> <path> <value>",
+		Short: "Edit a single metadata field by JSON path",
+		Long: `Edit a single metadata field using deep-merge-by-path.
+
+The path is a dot-separated JSON path (e.g., "address.city") and the value
+is a JSON literal (e.g., '"Berlin"', '42', '{"nested":"obj"}').
+
+Examples:
+  mr note edit-meta 5 status '"active"'
+  mr note edit-meta 5 address.city '"Berlin"'
+  mr note edit-meta 5 scores '[1,2,3]'`,
+		Args: cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			q := url.Values{}
+			q.Set("id", args[0])
+
+			form := url.Values{}
+			form.Set("path", args[1])
+			form.Set("value", args[2])
+
+			var raw json.RawMessage
+			if err := c.PostForm("/v1/note/editMeta", q, form, &raw); err != nil {
+				return err
+			}
+
+			if opts.JSON {
+				output.PrintSingle(*opts, nil, raw)
+			} else {
+				output.PrintMessage("Note metadata updated successfully.")
 			}
 			return nil
 		},

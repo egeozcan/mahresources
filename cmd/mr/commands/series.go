@@ -34,6 +34,7 @@ func NewSeriesCmd(c *client.Client, opts *output.Options, page *int) *cobra.Comm
 	seriesCmd.AddCommand(newSeriesCreateCmd(c, opts))
 	seriesCmd.AddCommand(newSeriesEditCmd(c, opts))
 	seriesCmd.AddCommand(newSeriesDeleteCmd(c, opts))
+	seriesCmd.AddCommand(newSeriesEditNameCmd(c, opts))
 	seriesCmd.AddCommand(newSeriesRemoveResourceCmd(c, opts))
 	seriesCmd.AddCommand(newSeriesListCmd(c, opts, page))
 
@@ -166,6 +167,33 @@ func newSeriesDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
 				output.PrintSingle(*opts, nil, raw)
 			} else {
 				output.PrintMessage("Series deleted successfully.")
+			}
+			return nil
+		},
+	}
+}
+
+func newSeriesEditNameCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "edit-name <id> <new-name>",
+		Short: "Edit a series name",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			q := url.Values{}
+			q.Set("id", args[0])
+
+			form := url.Values{}
+			form.Set("Name", args[1])
+
+			var raw json.RawMessage
+			if err := c.PostForm("/v1/series/editName", q, form, &raw); err != nil {
+				return err
+			}
+
+			if opts.JSON {
+				output.PrintSingle(*opts, nil, raw)
+			} else {
+				output.PrintMessage("Series name updated successfully.")
 			}
 			return nil
 		},

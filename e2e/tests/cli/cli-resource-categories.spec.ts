@@ -100,6 +100,28 @@ test.describe('Resource Category delete', () => {
   });
 });
 
+test.describe('ResourceCategory create with new fields', () => {
+  const suffix = Date.now();
+  let catId: number;
+
+  test.afterAll(() => {
+    const cli = createCliRunner();
+    if (catId) cli.run('resource-category', 'delete', String(catId));
+  });
+
+  test('create resource-category with section-config and custom-mrql-result', async ({ cli }) => {
+    const sectionConfig = '{"resources":false}';
+    const customMRQL = '<div>{{ entity.Name }}</div>';
+    const cat = cli.runJson<ResourceCategory>('resource-category', 'create',
+      '--name', `rcat-fields-${suffix}`,
+      '--section-config', sectionConfig,
+      '--custom-mrql-result', customMRQL
+    );
+    expect(cat.ID).toBeGreaterThan(0);
+    catId = cat.ID;
+  });
+});
+
 test.describe('Resource Category create without required name', () => {
   test('create resource category without --name fails', async ({ cli }) => {
     cli.runExpectError('resource-category', 'create');

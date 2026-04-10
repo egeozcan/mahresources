@@ -489,6 +489,31 @@ test.describe('Resources set-dimensions', () => {
   });
 });
 
+test.describe('Resource edit-meta', () => {
+  const suffix = Date.now();
+  let resourceId: number;
+
+  test.beforeAll(() => {
+    const cli = createCliRunner();
+    const result = cli.runJson<Resource | Resource[]>('resource', 'upload', SAMPLE_DOC, '--meta', '{"existing":"value"}');
+    const res = Array.isArray(result) ? result[0] : result;
+    resourceId = res.ID;
+  });
+
+  test.afterAll(() => {
+    const cli = createCliRunner();
+    cli.run('resource', 'delete', String(resourceId));
+  });
+
+  test('edit-meta sets a new field', async ({ cli }) => {
+    cli.runOrFail('resource', 'edit-meta', String(resourceId), 'newField', '"hello"');
+    const res = cli.runJson<any>('resource', 'get', String(resourceId));
+    const meta = typeof res.Meta === 'string' ? JSON.parse(res.Meta) : res.Meta;
+    expect(meta.newField).toBe('hello');
+    expect(meta.existing).toBe('value');
+  });
+});
+
 test.describe('Resources bulk delete', () => {
   let id1: number;
   let id2: number;

@@ -34,6 +34,8 @@ func NewRelationTypeCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd.AddCommand(newRelationTypeCreateCmd(c, opts))
 	cmd.AddCommand(newRelationTypeEditCmd(c, opts))
 	cmd.AddCommand(newRelationTypeDeleteCmd(c, opts))
+	cmd.AddCommand(newRelationTypeEditNameCmd(c, opts))
+	cmd.AddCommand(newRelationTypeEditDescriptionCmd(c, opts))
 
 	return cmd
 }
@@ -161,6 +163,60 @@ func newRelationTypeDeleteCmd(c *client.Client, opts *output.Options) *cobra.Com
 				output.PrintSingle(*opts, nil, raw)
 			} else {
 				output.PrintMessage("Relation type deleted successfully.")
+			}
+			return nil
+		},
+	}
+}
+
+func newRelationTypeEditNameCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "edit-name <id> <new-name>",
+		Short: "Edit a relation type's name",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			q := url.Values{}
+			q.Set("id", args[0])
+
+			form := url.Values{}
+			form.Set("Name", args[1])
+
+			var raw json.RawMessage
+			if err := c.PostForm("/v1/relationType/editName", q, form, &raw); err != nil {
+				return err
+			}
+
+			if opts.JSON {
+				output.PrintSingle(*opts, nil, raw)
+			} else {
+				output.PrintMessage("Relation type name updated successfully.")
+			}
+			return nil
+		},
+	}
+}
+
+func newRelationTypeEditDescriptionCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "edit-description <id> <new-description>",
+		Short: "Edit a relation type's description",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			q := url.Values{}
+			q.Set("id", args[0])
+
+			form := url.Values{}
+			form.Set("Description", args[1])
+
+			var raw json.RawMessage
+			if err := c.PostForm("/v1/relationType/editDescription", q, form, &raw); err != nil {
+				return err
+			}
+
+			if opts.JSON {
+				output.PrintSingle(*opts, nil, raw)
+			} else {
+				output.PrintMessage("Relation type description updated successfully.")
 			}
 			return nil
 		},

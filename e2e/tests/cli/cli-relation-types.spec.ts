@@ -104,6 +104,40 @@ test.describe('Relation Types list', () => {
   });
 });
 
+test.describe('Relation type edit-name / edit-description', () => {
+  const suffix = Date.now();
+  let rtId: number;
+
+  test.beforeAll(() => {
+    const cli = createCliRunner();
+    const rt = cli.runJson<RelationType>('relation-type', 'create', '--name', `rt-${suffix}`, '--description', `desc-${suffix}`, '--from-category', '1', '--to-category', '1');
+    rtId = rt.ID;
+  });
+
+  test.afterAll(() => {
+    const cli = createCliRunner();
+    cli.run('relation-type', 'delete', String(rtId));
+  });
+
+  test('edit-name updates the relation type name', async ({ cli }) => {
+    const newName = `rt-${suffix}-renamed`;
+    cli.runOrFail('relation-type', 'edit-name', String(rtId), newName);
+    const list = cli.runJson<RelationType[]>('relation-types', 'list');
+    const match = list.find(rt => rt.ID === rtId);
+    expect(match).toBeDefined();
+    expect(match!.Name).toBe(newName);
+  });
+
+  test('edit-description updates the relation type description', async ({ cli }) => {
+    const newDesc = `desc-${suffix}-updated`;
+    cli.runOrFail('relation-type', 'edit-description', String(rtId), newDesc);
+    const list = cli.runJson<RelationType[]>('relation-types', 'list');
+    const match = list.find(rt => rt.ID === rtId);
+    expect(match).toBeDefined();
+    expect(match!.Description).toBe(newDesc);
+  });
+});
+
 test.describe('Relation Type create without required name', () => {
   test('create relation type without --name fails', async ({ cli }) => {
     cli.runExpectError('relation-type', 'create');

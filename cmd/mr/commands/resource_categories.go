@@ -80,7 +80,7 @@ func newResourceCategoryGetCmd(c *client.Client, opts *output.Options) *cobra.Co
 }
 
 func newResourceCategoryCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
-	var name, description, customHeader, customSidebar, customSummary, customAvatar, metaSchema string
+	var name, description, customHeader, customSidebar, customSummary, customAvatar, metaSchema, sectionConfig, customMRQLResult string
 
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -104,6 +104,12 @@ func newResourceCategoryCreateCmd(c *client.Client, opts *output.Options) *cobra
 			}
 			if metaSchema != "" {
 				body["MetaSchema"] = metaSchema
+			}
+			if sectionConfig != "" {
+				body["SectionConfig"] = sectionConfig
+			}
+			if customMRQLResult != "" {
+				body["CustomMRQLResult"] = customMRQLResult
 			}
 
 			var raw json.RawMessage
@@ -133,6 +139,8 @@ func newResourceCategoryCreateCmd(c *client.Client, opts *output.Options) *cobra
 	cmd.Flags().StringVar(&customSummary, "custom-summary", "", "Custom summary HTML")
 	cmd.Flags().StringVar(&customAvatar, "custom-avatar", "", "Custom avatar HTML")
 	cmd.Flags().StringVar(&metaSchema, "meta-schema", "", "Meta schema JSON")
+	cmd.Flags().StringVar(&sectionConfig, "section-config", "", "JSON controlling which sections are visible on resource detail pages for this category")
+	cmd.Flags().StringVar(&customMRQLResult, "custom-mrql-result", "", "Pongo2 template for rendering resources of this category in MRQL results")
 
 	return cmd
 }
