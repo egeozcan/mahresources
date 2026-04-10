@@ -239,6 +239,10 @@ func entityFieldValue(fv reflect.Value) any {
 	if raw, ok := iface.(json.RawMessage); ok {
 		return string(raw)
 	}
+	// fmt.Stringer (covers types.URL, url.URL, and similar wrapper types)
+	if s, ok := iface.(fmt.Stringer); ok {
+		return s.String()
+	}
 
 	switch fv.Kind() {
 	case reflect.String:
@@ -257,7 +261,7 @@ func entityFieldValue(fv reflect.Value) any {
 }
 ```
 
-Add `"reflect"` and `"time"` to the imports.
+Add `"reflect"`, `"time"`, and `"fmt"` to the imports (fmt is needed for the `fmt.Stringer` check on types like `types.URL`).
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -677,9 +681,10 @@ func TestPluginMRQLAdapterScopeResolution(t *testing.T) {
 	adapter := &pluginMRQLAdapter{ctx: ctx}
 
 	// Test scope resolution: looking up parent of a nonexistent entity
-	// should return scope=0 (which means "unresolvable" -> empty results)
+	// should return a sentinel (max uint >> 1) that matches nothing in DB.
+	// NOT 0, because 0 means "no scope filter" = global fan-out.
 	scopeID := adapter.resolveScope("parent", 999999, "group")
-	assert.Equal(t, uint(0), scopeID)
+	assert.Equal(t, ^uint(0)>>1, scopeID)
 
 	// scope="global" always returns 0
 	scopeID = adapter.resolveScope("global", 1, "group")
@@ -725,13 +730,20 @@ func (a *pluginMRQLAdapter) resolveScope(scope string, entityID uint, entityType
 		}
 		return ownerID
 	case "root":
-		current := entityID
+		// First hop: use the actual entity type (resource/note/group) to get
+		// the entity's OwnerId. After that, we're walking groups.
+		ownerID := a.lookupOwnerID(entityID, entityType)
+		if ownerID == 0 {
+			// Entity has no owner — "root" falls back to "entity" per spec
+			return entityID
+		}
+		current := ownerID
 		for i := 0; i < maxScopeTraversalDepth; i++ {
-			ownerID := a.lookupOwnerID(current, "group")
-			if ownerID == 0 {
-				return current
+			parentID := a.lookupOwnerID(current, "group")
+			if parentID == 0 {
+				return current // this group is the root
 			}
-			current = ownerID
+			current = parentID
 		}
 		return current // hit depth limit, use last found
 	default: // "entity" or empty
@@ -767,55 +779,112 @@ func (a *pluginMRQLAdapter) lookupOwnerID(entityID uint, entityType string) uint
 
 - [ ] **Step 4: Implement ExecuteSingleEntityWithScope in mrql_context.go**
 
+The scope filter MUST be applied at the GORM level before `.Find()`, not as in-memory filtering. In-memory filtering breaks LIMIT (you'd get fewer results than requested) and ordering (wrong rows survive). The injection point is between `TranslateWithOptions()` and the `.Find()` call — exactly where the translated `*gorm.DB` is ready but not yet executed.
+
 Add to `application_context/mrql_context.go`:
 
 ```go
 // ExecuteSingleEntityWithScope executes a single-entity MRQL query with an
-// optional owner_id scope filter. If scopeID > 0, an additional WHERE
-// owner_id = scopeID is applied at the GORM level after translation.
+// optional owner_id scope filter applied at the GORM level before execution.
+// This ensures LIMIT, ORDER BY, and pagination operate on the scoped dataset.
 func (ctx *MahresourcesContext) ExecuteSingleEntityWithScope(reqCtx context.Context, q *mrql.Query, entityType mrql.EntityType, opts mrql.TranslateOptions, scopeID uint) (*MRQLResult, error) {
-	result, err := ctx.executeSingleEntity(reqCtx, q, entityType, opts)
+	q.EntityType = entityType
+
+	queryCtx, cancel := context.WithTimeout(reqCtx, MRQLQueryTimeout)
+	defer cancel()
+
+	db, err := mrql.TranslateWithOptions(q, ctx.db.WithContext(queryCtx), opts)
 	if err != nil {
 		return nil, err
 	}
-	// If no scope, return as-is
-	if scopeID == 0 {
-		return result, nil
-	}
-	// Filter results by owner_id in-memory (simpler than injecting into the
-	// GORM chain, and correct for the small result sets shortcodes produce).
-	return filterResultsByOwner(result, scopeID), nil
-}
 
-// filterResultsByOwner removes entities that don't match the given owner ID.
-func filterResultsByOwner(result *MRQLResult, scopeID uint) *MRQLResult {
-	filtered := &MRQLResult{EntityType: result.EntityType}
-	for _, r := range result.Resources {
-		if r.OwnerId != nil && *r.OwnerId == scopeID {
-			filtered.Resources = append(filtered.Resources, r)
-		}
+	if q.Limit < 0 {
+		db = db.Limit(defaultMRQLLimit)
 	}
-	for _, n := range result.Notes {
-		if n.OwnerId != nil && *n.OwnerId == scopeID {
-			filtered.Notes = append(filtered.Notes, n)
-		}
+
+	// Apply scope filter BEFORE execution so LIMIT/ORDER operate on scoped data
+	if scopeID > 0 {
+		db = db.Where("owner_id = ?", scopeID)
 	}
-	for _, g := range result.Groups {
-		if g.OwnerId != nil && *g.OwnerId == scopeID {
-			filtered.Groups = append(filtered.Groups, g)
+
+	result := &MRQLResult{EntityType: entityType.String()}
+
+	switch entityType {
+	case mrql.EntityResource:
+		var resources []models.Resource
+		if err := db.Find(&resources).Error; err != nil {
+			return nil, err
 		}
+		result.Resources = resources
+	case mrql.EntityNote:
+		var notes []models.Note
+		if err := db.Find(&notes).Error; err != nil {
+			return nil, err
+		}
+		result.Notes = notes
+	case mrql.EntityGroup:
+		var groups []models.Group
+		if err := db.Find(&groups).Error; err != nil {
+			return nil, err
+		}
+		result.Groups = groups
 	}
-	return filtered
+
+	return result, nil
 }
 ```
 
-Note: In-memory filtering is simpler than GORM-level injection for the small result sets shortcodes produce (typically <=20 items). For large datasets, the LIMIT already caps results. If performance becomes an issue, this can be moved to GORM-level scoping in a future iteration.
+This duplicates the execution logic from `executeSingleEntity` rather than wrapping it — the scope MUST be injected between translation and execution, and `executeSingleEntity` doesn't expose that seam.
 
-- [ ] **Step 5: Update ExecuteMRQL in the adapter to use resolveScope**
+- [ ] **Step 5: Implement ExecuteMRQLGroupedWithScope in mrql_context.go**
 
-In `plugin_mrql_adapter.go`, update the `ExecuteMRQL` method to call `resolveScope`. The scope and entityType come from the opts. However, `MRQLExecOptions` currently only has `ScopeID` (already resolved). The resolution should happen in the Lua function registration (Task 6) where scope string + entity_id are available. So `ExecuteMRQL` receives the already-resolved `opts.ScopeID`.
+The grouped path also needs scoping. Add:
 
-No change needed here — the adapter already passes `opts.ScopeID` to `ExecuteSingleEntityWithScope`.
+```go
+// ExecuteMRQLGroupedWithScope executes a GROUP BY MRQL query with an optional
+// owner_id scope filter applied at the GORM level before aggregation/bucketing.
+func (ctx *MahresourcesContext) ExecuteMRQLGroupedWithScope(reqCtx context.Context, parsed *mrql.Query, scopeID uint) (*MRQLGroupedResult, error) {
+	if scopeID == 0 {
+		return ctx.ExecuteMRQLGrouped(reqCtx, parsed)
+	}
+
+	queryCtx, cancel := context.WithTimeout(reqCtx, MRQLQueryTimeout)
+	defer cancel()
+
+	if parsed.Limit < 0 {
+		parsed.Limit = defaultMRQLLimit
+	}
+
+	if len(parsed.GroupBy.Aggregates) > 0 {
+		return ctx.executeAggregatedQueryScoped(queryCtx, parsed, scopeID)
+	}
+
+	if parsed.Limit > maxBucketedTotalItems {
+		parsed.Limit = maxBucketedTotalItems
+	}
+	return ctx.executeBucketedQueryScoped(queryCtx, parsed, scopeID)
+}
+```
+
+For `executeAggregatedQueryScoped` and `executeBucketedQueryScoped`, these are thin wrappers that call `TranslateGroupBy` / the bucketed path and inject `.Where("owner_id = ?", scopeID)` on the GORM DB before execution. Look at the existing `executeAggregatedQuery` and `executeBucketedQuery` implementations and add the scope injection at the same seam point (after translation, before execution).
+
+- [ ] **Step 6: Update adapter to use scoped grouped execution**
+
+In `plugin_mrql_adapter.go`, update the GROUP BY path in `ExecuteMRQL`:
+
+```go
+	// GROUP BY path
+	if parsed.GroupBy != nil {
+		if opts.Buckets > 0 {
+			parsed.BucketLimit = opts.Buckets
+		}
+		grouped, err := a.ctx.ExecuteMRQLGroupedWithScope(reqCtx, parsed, opts.ScopeID)
+		if err != nil {
+			return nil, err
+		}
+		return a.convertGrouped(grouped, opts.ScopeID), nil
+	}
+```
 
 - [ ] **Step 6: Run tests**
 
