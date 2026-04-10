@@ -25,17 +25,33 @@ A shared Lua helper `resolve_data_source(ctx)` is called by all shortcode render
 function resolve_data_source(ctx)
   local attrs = ctx.attrs
   if attrs.mrql then
-    return mah.db.mrql_query(attrs.mrql, {
+    local result, err = mah.db.mrql_query(attrs.mrql, {
       scope_entity_id = ctx.entity_id,
       scope = attrs.scope,  -- nil defaults to "entity"
       limit = tonumber(attrs.limit),
       buckets = tonumber(attrs.buckets),
     })
+    if err then
+      return nil, err  -- caller renders styled error div
+    end
+    return result, nil
   elseif attrs.field then
-    return ctx.entity[attrs.field]
+    return ctx.entity[attrs.field], nil
   else
-    return resolve_path(ctx.value, attrs.path)
+    return resolve_path(ctx.value, attrs.path), nil
   end
+end
+```
+
+Callers check the second return value and render a styled error div (matching the built-in `[mrql]` shortcode error style) when non-nil:
+
+```lua
+local data, err = resolve_data_source(ctx)
+if err then
+  return string.format(
+    '<div class="mrql-results mrql-error text-sm text-red-700 bg-red-50 '
+    .. 'border border-red-200 rounded-md p-3 font-mono">%s</div>',
+    html_escape(err))
 end
 ```
 
@@ -137,7 +153,14 @@ Each item in flat/bucketed results includes all entity fields (same set as `ctx.
 ```go
 // MRQLExecutor provides MRQL query execution for plugins.
 type MRQLExecutor interface {
-    ExecuteMRQL(ctx context.Context, query string, limit int, buckets int) (*MRQLResult, error)
+    ExecuteMRQL(ctx context.Context, query string, opts MRQLExecOptions) (*MRQLResult, error)
+}
+
+// MRQLExecOptions carries execution parameters including scope.
+type MRQLExecOptions struct {
+    Limit      int    // max items (default 20)
+    Buckets    int    // max GROUP BY buckets (default 5)
+    ScopeID    uint   // resolved owner_id for scoping (0 = no scope filter)
 }
 
 // MRQLResult mirrors shortcodes.QueryResult in a plugin_system-safe form.
@@ -155,7 +178,9 @@ type MRQLResultGroup struct {
 }
 ```
 
-Injected via `pm.SetMRQLExecutor(executor)` during application startup (same as `SetEntityQuerier`). The adapter implementation in `application_context` wraps the existing MRQL parse/translate/execute pipeline. The `mah.db.mrql_query()` Lua function calls `pm.getMRQLExecutor()` at invocation time.
+Injected via `pm.SetMRQLExecutor(executor)` during application startup (same as `SetEntityQuerier`). The adapter implementation in `application_context` wraps the existing MRQL parse/translate/execute pipeline. The adapter's `ExecuteMRQL` applies `opts.ScopeID` as a GORM `.Where("owner_id = ?", scopeID)` scope before executing the translated query.
+
+**Scope resolution flow:** The `mah.db.mrql_query()` Lua function resolves `scope` + `scope_entity_id` to a concrete `ScopeID` (looking up parent/root via `EntityQuerier` as needed), then passes the resolved ID in `MRQLExecOptions.ScopeID` to the executor. Scope resolution happens in the Lua-Go bridge; the executor only sees the final FK value.
 
 ### Usage Examples
 
