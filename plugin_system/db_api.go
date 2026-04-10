@@ -803,7 +803,29 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 				scopeID = resolveRootScope(db, scopeEntityID, entityType)
 			}
 		default: // "entity"
-			scopeID = scopeEntityID
+			entityType := ""
+			if v, ok := optsMap["entity_type"].(string); ok {
+				entityType = v
+			}
+			// owner_id always points to a group. For group entities, the entity
+			// ID itself is a valid owner_id. For resources/notes, using the raw
+			// entity ID would match an unrelated group with the same numeric ID.
+			// Instead, use the entity's OwnerId (its parent group).
+			if entityType == "group" {
+				scopeID = scopeEntityID
+			} else if scopeEntityID > 0 {
+				db := pm.getDbProvider()
+				if db != nil {
+					ownerID := lookupOwnerViaQuerier(db, scopeEntityID, entityType)
+					if ownerID > 0 {
+						scopeID = ownerID
+					} else {
+						scopeID = unresolvedSentinel
+					}
+				} else {
+					scopeID = unresolvedSentinel
+				}
+			}
 		}
 
 		execOpts := MRQLExecOptions{

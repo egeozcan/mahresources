@@ -43,14 +43,24 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 		return nil
 	}
 
-	// Use request context if available, otherwise background
+	// Use request context if available, otherwise background.
+	// Attach MRQL cache once per page render: the first process_shortcodes tag
+	// creates it and stores the wrapped context back into ctx.Public so
+	// subsequent tags (header, sidebar, avatar, etc.) reuse the same cache.
 	reqCtx := context.Background()
-	if reqCtxVal, ok := ctx.Public["_requestContext"]; ok && reqCtxVal != nil {
-		if rc, ok := reqCtxVal.(context.Context); ok {
+	if rcVal, ok := ctx.Public["_reqCtxWithCache"]; ok && rcVal != nil {
+		if rc, ok := rcVal.(context.Context); ok {
 			reqCtx = rc
 		}
+	} else {
+		if reqCtxVal, ok := ctx.Public["_requestContext"]; ok && reqCtxVal != nil {
+			if rc, ok := reqCtxVal.(context.Context); ok {
+				reqCtx = rc
+			}
+		}
+		reqCtx = plugin_system.WithMRQLCache(reqCtx)
+		ctx.Public["_reqCtxWithCache"] = reqCtx
 	}
-	reqCtx = plugin_system.WithMRQLCache(reqCtx)
 
 	var pluginRenderer shortcodes.PluginRenderer
 	if pmVal, ok := ctx.Public["_pluginManager"]; ok && pmVal != nil {
