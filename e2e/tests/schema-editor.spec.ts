@@ -103,10 +103,20 @@ test.describe('Schema Editor Modal', () => {
     await page.goto(`/category/edit?id=${categoryId}`);
     await page.waitForLoadState('load');
 
-    // Pre-fill the textarea with a known schema
-    await page.locator('#metaSchemaTextarea').fill(
-      '{"type":"object","properties":{"name":{"type":"string"}}}'
-    );
+    // Pre-fill the code editor with a known schema
+    const schemaJson = '{"type":"object","properties":{"name":{"type":"string"}}}';
+    await page.evaluate((value) => {
+      const input = document.getElementById('metaSchemaTextarea') as HTMLInputElement;
+      if (!input) return;
+      input.value = value;
+      const editorContainer = input.parentElement?.querySelector('.cm-editor')?.parentElement as any;
+      if (editorContainer?._cmView) {
+        const view = editorContainer._cmView;
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: value }
+        });
+      }
+    }, schemaJson);
 
     // Open the visual editor
     await page.locator('.visual-editor-btn').click();
@@ -760,6 +770,66 @@ test.describe('Schema Editor Form Mode', () => {
     } finally {
       if (createdGroupId) await apiClient.deleteGroup(createdGroupId);
       await apiClient.deleteCategory(catId);
+    }
+  });
+});
+
+// ── Display mode tests ───────────────────────────────────────────────────────
+
+test.describe('Schema Editor Display Mode', () => {
+  const runId = Date.now();
+
+  test('displays correct label for oneOf labeled enum values', async ({ page, apiClient }) => {
+    // Schema with a oneOf labeled enum (const + title pairs)
+    const schema = JSON.stringify({
+      type: 'object',
+      properties: {
+        status: {
+          type: ['integer', 'null'],
+          description: 'active status',
+          oneOf: [
+            { const: 0, title: 'inactive' },
+            { const: 1, title: 'active' },
+            { const: 2, title: 'hidden' },
+          ],
+        },
+      },
+    });
+
+    const catName = `Display OneOf Test ${runId}`;
+    const cat = await apiClient.createCategory(catName, undefined, { MetaSchema: schema });
+
+    let groupId: number | undefined;
+    try {
+      // Create a group with status=1 via API
+      const group = await apiClient.createGroup({
+        name: `OneOf Display Group ${runId}`,
+        categoryId: cat.ID,
+        meta: JSON.stringify({ status: 1 }),
+      });
+      groupId = group.ID;
+
+      // Navigate to the group display page
+      await page.goto(`/group?id=${groupId}`);
+      await page.waitForLoadState('load');
+
+      // The schema-display-mode should render the labeled enum
+      const displayMode = page.locator('schema-display-mode');
+      await expect(displayMode).toBeVisible({ timeout: 5000 });
+
+      // The field label should show "Status" (titleCase of key), not "hidden"
+      // (resolveSchema merges oneOf titles, polluting the field label)
+      const fieldLabel = displayMode.locator('text=Status');
+      await expect(fieldLabel).toBeVisible({ timeout: 3000 });
+
+      // The pill should show "active" (title for const: 1), not "hidden" or raw "1"
+      // Labeled enums render as indigo pills
+      const pill = displayMode.locator('.bg-indigo-50');
+      await expect(pill).toBeVisible({ timeout: 3000 });
+      await expect(pill).toHaveText('active');
+    } finally {
+      if (groupId) await apiClient.deleteGroup(groupId);
+      await apiClient.deleteCategory(cat.ID);
     }
   });
 });

@@ -92,7 +92,7 @@ function flattenForDisplay(
   for (const [key, rawProp] of Object.entries(resolved.properties) as [string, JSONSchema][]) {
     const path = prefix ? `${prefix}.${key}` : key;
     const prop = resolveSchema(rawProp, root) || rawProp;
-    const rawLabel = prop.title || titleCase(key);
+    const rawLabel = rawProp.title || (!isLabeledEnum(rawProp) && prop.title) || titleCase(key);
     const label = labelPrefix ? `${labelPrefix} \u203A ${rawLabel}` : rawLabel;
     const description = prop.description || '';
     const format = prop.format || '';
@@ -121,11 +121,12 @@ function flattenForDisplay(
       fieldType = fieldType.find((t: string) => t !== 'null') || 'string';
     }
 
-    // Labeled enum detection
+    // Labeled enum detection — check rawProp first (resolveSchema destroys oneOf)
     let enumValues: any[] | null = null;
     let enumLabels: string[] | null = null;
-    if (isLabeledEnum(prop)) {
-      const entries = getLabeledEnumEntries(prop);
+    const enumSource = isLabeledEnum(rawProp) ? rawProp : prop;
+    if (isLabeledEnum(enumSource)) {
+      const entries = getLabeledEnumEntries(enumSource);
       enumValues = entries.map(e => e.value);
       enumLabels = entries.map(e => e.label);
     } else if (Array.isArray(prop.enum)) {
