@@ -43,11 +43,19 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 		return nil
 	}
 
+	// Use request context if available, otherwise background
+	reqCtx := context.Background()
+	if reqCtxVal, ok := ctx.Public["_requestContext"]; ok && reqCtxVal != nil {
+		if rc, ok := reqCtxVal.(context.Context); ok {
+			reqCtx = rc
+		}
+	}
+
 	var pluginRenderer shortcodes.PluginRenderer
 	if pmVal, ok := ctx.Public["_pluginManager"]; ok && pmVal != nil {
 		if pm, ok := pmVal.(*plugin_system.PluginManager); ok && pm != nil {
 			pluginRenderer = func(pluginName string, sc shortcodes.Shortcode, mctx shortcodes.MetaShortcodeContext) (string, error) {
-				return pm.RenderShortcode(context.Background(), pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs, nil)
+				return pm.RenderShortcode(reqCtx, pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs, mctx.Entity)
 			}
 		}
 	}
@@ -56,14 +64,6 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 	if appCtxVal, ok := ctx.Public["_appContext"]; ok && appCtxVal != nil {
 		if appCtx, ok := appCtxVal.(*application_context.MahresourcesContext); ok && appCtx != nil {
 			executor = BuildQueryExecutor(appCtx)
-		}
-	}
-
-	// Use request context if available, otherwise background
-	reqCtx := context.Background()
-	if reqCtxVal, ok := ctx.Public["_requestContext"]; ok && reqCtxVal != nil {
-		if rc, ok := reqCtxVal.(context.Context); ok {
-			reqCtx = rc
 		}
 	}
 

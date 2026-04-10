@@ -52,13 +52,13 @@ type mrqlSavedQueryRequest struct {
 
 // buildPluginRenderer creates a PluginRenderer from the app context's plugin manager.
 // Returns nil if plugins are disabled — shortcodes.Process handles nil gracefully.
-func buildPluginRenderer(appCtx *application_context.MahresourcesContext) shortcodes.PluginRenderer {
+func buildPluginRenderer(appCtx *application_context.MahresourcesContext, reqCtx context.Context) shortcodes.PluginRenderer {
 	pm := appCtx.PluginManager()
 	if pm == nil {
 		return nil
 	}
 	return func(pluginName string, sc shortcodes.Shortcode, mctx shortcodes.MetaShortcodeContext) (string, error) {
-		return pm.RenderShortcode(context.Background(), pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs, nil)
+		return pm.RenderShortcode(reqCtx, pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs, mctx.Entity)
 	}
 }
 
@@ -66,7 +66,7 @@ func buildPluginRenderer(appCtx *application_context.MahresourcesContext) shortc
 // and populates the RenderedHTML field when a template is configured.
 func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, result *application_context.MRQLResult, reqCtx context.Context) {
 	executor := template_filters.BuildQueryExecutor(appCtx)
-	pluginRenderer := buildPluginRenderer(appCtx)
+	pluginRenderer := buildPluginRenderer(appCtx, reqCtx)
 
 	for i := range result.Resources {
 		r := &result.Resources[i]
@@ -131,7 +131,7 @@ func renderMRQLGroupedCustomTemplates(appCtx *application_context.MahresourcesCo
 	}
 
 	executor := template_filters.BuildQueryExecutor(appCtx)
-	pluginRenderer := buildPluginRenderer(appCtx)
+	pluginRenderer := buildPluginRenderer(appCtx, reqCtx)
 
 	for bIdx := range result.Groups {
 		bucket := &result.Groups[bIdx]
