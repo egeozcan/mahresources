@@ -896,8 +896,13 @@ func resolveRootScope(db EntityQuerier, entityID uint, entityType string) uint {
 	// First hop: look up the entity's owner using its actual type
 	ownerID := lookupOwnerViaQuerier(db, entityID, entityType)
 	if ownerID == 0 {
-		// Entity has no owner — root falls back to entity itself
-		return entityID
+		// Entity has no owner. For groups, the entity itself is a valid
+		// owner_id. For resources/notes, returning the raw entity ID would
+		// collide with an unrelated group — use sentinel instead.
+		if entityType == "group" {
+			return entityID
+		}
+		return ^uint(0) >> 1
 	}
 	current := ownerID
 	for i := 0; i < 50; i++ {
