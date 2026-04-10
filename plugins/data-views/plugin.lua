@@ -473,15 +473,73 @@ local function shortcode_error(name, msg)
 end
 
 -- ---------------------------------------------------------------------------
+-- Data source resolution
+-- ---------------------------------------------------------------------------
+
+-- resolve_data_source(ctx) returns the data value for a shortcode.
+-- Checks mrql > field > path. Returns (value, nil) or (nil, error_string).
+local function resolve_data_source(ctx)
+    local attrs = ctx.attrs or {}
+    if attrs.mrql then
+        local result, err = mah.db.mrql_query(attrs.mrql, {
+            scope_entity_id = ctx.entity_id,
+            scope = attrs.scope,
+            entity_type = ctx.entity_type,
+            limit = tonumber(attrs.limit),
+            buckets = tonumber(attrs.buckets),
+        })
+        if err then return nil, err end
+        return result, nil
+    elseif attrs.field then
+        if ctx.entity == nil then return nil, nil end
+        return ctx.entity[attrs.field], nil
+    else
+        local path = attrs["path"]
+        if not path then return nil, nil end
+        return get_nested(ctx.value, path), nil
+    end
+end
+
+-- resolve_scalar_from_mrql(result, aggregate_attr) extracts a single value
+-- from an MRQL result for scalar shortcodes.
+local function resolve_scalar_from_mrql(result, aggregate_attr)
+    if result == nil then return nil end
+    if result.mode == "aggregated" and result.rows then
+        if not aggregate_attr or aggregate_attr == "" then
+            return nil, 'mrql aggregated results require aggregate="column_name" attribute'
+        end
+        local first_row = result.rows[1]
+        if not first_row then return nil end
+        return first_row[aggregate_attr], nil
+    elseif result.mode == "flat" and result.items then
+        return #result.items, nil
+    elseif result.mode == "bucketed" and result.groups then
+        return #result.groups, nil
+    end
+    return nil, nil
+end
+
+-- render_mrql_error(err) renders a styled error div for MRQL errors.
+local function render_mrql_error(err)
+    return string.format(
+        '<div class="mrql-results mrql-error text-sm text-red-700 bg-red-50 '
+        .. 'border border-red-200 rounded-md p-3 font-mono">%s</div>',
+        html_escape(tostring(err)))
+end
+
+-- ---------------------------------------------------------------------------
 -- 1. badge
 -- ---------------------------------------------------------------------------
 
 local function render_badge(ctx)
     local attrs = ctx.attrs or {}
-    local path = attrs["path"]
-    if not path then return shortcode_error("badge", '"path" attribute is required') end
-
-    local val = get_nested(ctx.value, path)
+    local val, err = resolve_data_source(ctx)
+    if err then return render_mrql_error(err) end
+    -- If MRQL result, extract scalar
+    if type(val) == "table" and val.mode then
+        val, err = resolve_scalar_from_mrql(val, attrs.aggregate)
+        if err then return render_mrql_error(err) end
+    end
     if val == nil then return '<div class="py-1.5"></div>' end
     val = tostring(val)
 
@@ -497,13 +555,14 @@ local function render_badge(ctx)
 
     local color = idx and colors[idx] or "#6b7280"
     local label = idx and labels[idx] or val
+    local source_label = attrs.path or attrs.field or attrs.mrql or ""
 
     return string.format(
         '<div title="Badge: %s" class="py-1.5">'
         .. '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border" '
         .. 'style="background-color: %s20; color: %s; border-color: %s">%s</span>'
         .. '</div>',
-        html_escape(path), html_escape(color), html_escape(color), html_escape(color), html_escape(label)
+        html_escape(source_label), html_escape(color), html_escape(color), html_escape(color), html_escape(label)
     )
 end
 
@@ -513,17 +572,21 @@ end
 
 local function render_format(ctx)
     local attrs = ctx.attrs or {}
-    local path = attrs["path"]
-    if not path then return shortcode_error("format", '"path" attribute is required') end
-
-    local val = get_nested(ctx.value, path)
+    local val, err = resolve_data_source(ctx)
+    if err then return render_mrql_error(err) end
+    -- If MRQL result, extract scalar
+    if type(val) == "table" and val.mode then
+        val, err = resolve_scalar_from_mrql(val, attrs.aggregate)
+        if err then return render_mrql_error(err) end
+    end
     local fmt_type = attrs["type"]
     if not fmt_type then return shortcode_error("format", '"type" attribute is required') end
 
     local formatted = format_value(val, fmt_type, attrs)
+    local source_label = attrs.path or attrs.field or attrs.mrql or ""
     return string.format(
         '<div title="Formatted: %s (%s)" class="py-1.5"><span class="font-mono text-sm">%s</span></div>',
-        html_escape(path), html_escape(fmt_type), html_escape(formatted)
+        html_escape(source_label), html_escape(fmt_type), html_escape(formatted)
     )
 end
 
@@ -533,11 +596,15 @@ end
 
 local function render_stat_card(ctx)
     local attrs = ctx.attrs or {}
-    local path = attrs["path"]
-    if not path then return shortcode_error("stat-card", '"path" attribute is required') end
-
-    local val = get_nested(ctx.value, path)
-    local label = attrs["label"] or path
+    local val, err = resolve_data_source(ctx)
+    if err then return render_mrql_error(err) end
+    -- If MRQL result, extract scalar
+    if type(val) == "table" and val.mode then
+        val, err = resolve_scalar_from_mrql(val, attrs.aggregate)
+        if err then return render_mrql_error(err) end
+    end
+    local source_label = attrs.path or attrs.field or attrs.mrql or ""
+    local label = attrs["label"] or source_label
     local fmt_type = attrs["type"] or "number"
     local icon_name = attrs["icon"] or "chart"
 
@@ -551,7 +618,7 @@ local function render_stat_card(ctx)
         .. '<div class="text-2xl font-bold font-mono">%s</div>'
         .. '<div class="text-xs text-stone-500 mt-0.5">%s</div>'
         .. '</div></div>',
-        html_escape(path), html_escape(label), icon_svg, html_escape(formatted), html_escape(label)
+        html_escape(source_label), html_escape(label), icon_svg, html_escape(formatted), html_escape(label)
     )
 end
 
@@ -561,15 +628,20 @@ end
 
 local function render_meter(ctx)
     local attrs = ctx.attrs or {}
-    local path = attrs["path"]
-    if not path then return shortcode_error("meter", '"path" attribute is required') end
-
-    local val = tonumber(get_nested(ctx.value, path)) or 0
+    local raw_val, err = resolve_data_source(ctx)
+    if err then return render_mrql_error(err) end
+    -- If MRQL result, extract scalar
+    if type(raw_val) == "table" and raw_val.mode then
+        raw_val, err = resolve_scalar_from_mrql(raw_val, attrs.aggregate)
+        if err then return render_mrql_error(err) end
+    end
+    local val = tonumber(raw_val) or 0
+    local source_label = attrs.path or attrs.field or attrs.mrql or ""
     local min_val = tonumber(attrs["min"]) or 0
     local max_val = tonumber(attrs["max"]) or 100
     local low = tonumber(attrs["low"]) or 30
     local high = tonumber(attrs["high"]) or 70
-    local label = attrs["label"] or path
+    local label = attrs["label"] or source_label
 
     local range = max_val - min_val
     if range <= 0 then range = 1 end
@@ -589,7 +661,7 @@ local function render_meter(ctx)
         .. '#ef4444 0%%, #ef4444 %.1f%%, #f59e0b %.1f%%, #f59e0b %.1f%%, #22c55e %.1f%%, #22c55e 100%%)"></div>'
         .. '<div class="absolute top-0 h-full w-1 bg-stone-800 rounded" style="left: %.1f%%"></div>'
         .. '</div></div>',
-        html_escape(path), html_escape(tostring(min_val)), html_escape(tostring(max_val)),
+        html_escape(source_label), html_escape(tostring(min_val)), html_escape(tostring(max_val)),
         html_escape(label), html_escape(tostring(val)),
         low_pct, low_pct, high_pct, high_pct,
         val_pct
@@ -602,10 +674,35 @@ end
 
 local function render_sparkline(ctx)
     local attrs = ctx.attrs or {}
-    local path = attrs["path"]
-    if not path then return shortcode_error("sparkline", '"path" attribute is required') end
+    local val, err = resolve_data_source(ctx)
+    if err then return render_mrql_error(err) end
 
-    local data = get_nested(ctx.value, path)
+    -- If MRQL result, extract numeric array
+    local data
+    if type(val) == "table" and val.mode then
+        data = {}
+        if val.mode == "aggregated" and val.rows then
+            local value_key = attrs["value-key"] or attrs.aggregate
+            if not value_key or value_key == "" then
+                return render_mrql_error('mrql aggregated results require value-key or aggregate attribute')
+            end
+            for _, row in ipairs(val.rows) do
+                local n = tonumber(row[value_key])
+                if n then data[#data + 1] = n end
+            end
+        elseif val.mode == "flat" and val.items then
+            local value_key = attrs["value-key"]
+            if value_key then
+                for _, item in ipairs(val.items) do
+                    local n = tonumber(item[value_key])
+                    if n then data[#data + 1] = n end
+                end
+            end
+        end
+    else
+        data = val
+    end
+
     if type(data) ~= "table" or #data == 0 then
         return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No data</span></div>'
     end
@@ -614,6 +711,7 @@ local function render_sparkline(ctx)
     local height = tonumber(attrs["height"]) or 24
     local width = tonumber(attrs["width"]) or 100
     local color = attrs["color"] or "#d97706"
+    local source_label = attrs.path or attrs.field or attrs.mrql or ""
 
     -- Convert to numbers
     local values = {}
@@ -652,7 +750,7 @@ local function render_sparkline(ctx)
         end
         return string.format(
             '<div title="Sparkline: %s (%s)" class="py-1.5"><svg width="%d" height="%d" class="inline-block align-middle">%s</svg></div>',
-            html_escape(path), html_escape(chart_type), width, height, table.concat(rects)
+            html_escape(source_label), html_escape(chart_type), width, height, table.concat(rects)
         )
     end
 
@@ -676,7 +774,7 @@ local function render_sparkline(ctx)
             .. '<polygon points="%s" fill="%s" fill-opacity="0.2" stroke="none"/>'
             .. '<polyline points="%s" fill="none" stroke="%s" stroke-width="1.5"/>'
             .. '</svg></div>',
-            html_escape(path), html_escape(chart_type),
+            html_escape(source_label), html_escape(chart_type),
             width, height,
             area_points, html_escape(color),
             points_str, html_escape(color)
@@ -688,7 +786,7 @@ local function render_sparkline(ctx)
         '<div title="Sparkline: %s (%s)" class="py-1.5"><svg width="%d" height="%d" class="inline-block align-middle">'
         .. '<polyline points="%s" fill="none" stroke="%s" stroke-width="1.5"/>'
         .. '</svg></div>',
-        html_escape(path), html_escape(chart_type), width, height, points_str, html_escape(color)
+        html_escape(source_label), html_escape(chart_type), width, height, points_str, html_escape(color)
     )
 end
 
@@ -698,7 +796,6 @@ end
 
 local function render_table(ctx)
     local attrs = ctx.attrs or {}
-    local entity_type = attrs["type"] or "notes"
     local cols = parse_csv(attrs["cols"] or "name,updated_at")
     local labels = parse_csv(attrs["labels"] or "")
     local limit = tonumber(attrs["limit"]) or 10
@@ -707,6 +804,93 @@ local function render_table(ctx)
     for i = #labels + 1, #cols do
         labels[i] = cols[i]
     end
+
+    -- MRQL data source branch
+    if attrs.mrql then
+        local result, err = resolve_data_source(ctx)
+        if err then return render_mrql_error(err) end
+
+        local rows = {}
+        local entity_type_path = nil
+        if type(result) == "table" and result.mode then
+            entity_type_path = result.entity_type
+            if result.mode == "flat" and result.items then
+                rows = result.items
+            elseif result.mode == "aggregated" and result.rows then
+                rows = result.rows
+            elseif result.mode == "bucketed" and result.groups then
+                -- Flatten: show group key fields as rows
+                for _, group in ipairs(result.groups) do
+                    if group.key then
+                        local row = {}
+                        for k, v in pairs(group.key) do row[k] = v end
+                        row["_count"] = group.items and #group.items or 0
+                        rows[#rows + 1] = row
+                    end
+                end
+            end
+        end
+
+        if #rows == 0 then
+            return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No data</span></div>'
+        end
+
+        -- Auto-detect cols from first row if default
+        if attrs["cols"] == nil or attrs["cols"] == "" then
+            cols = {}
+            labels = {}
+            for k, _ in pairs(rows[1]) do
+                if k ~= "_count" then
+                    cols[#cols + 1] = k
+                end
+            end
+            table.sort(cols)
+            for i = 1, #cols do labels[i] = cols[i] end
+        end
+
+        local parts = {
+            string.format('<div title="Table: %s" class="py-1.5">', html_escape(attrs.mrql)),
+            '<table class="w-full text-sm border-collapse">',
+            '<thead><tr class="border-b border-stone-200">',
+        }
+        for _, label in ipairs(labels) do
+            parts[#parts + 1] = string.format(
+                '<th class="text-left py-1 px-2 font-semibold text-stone-600">%s</th>',
+                html_escape(label)
+            )
+        end
+        parts[#parts + 1] = '</tr></thead><tbody>'
+
+        for _, row in ipairs(rows) do
+            parts[#parts + 1] = '<tr class="border-b border-stone-100 hover:bg-stone-50">'
+            for _, col in ipairs(cols) do
+                local cell_val = row[col]
+                if type(cell_val) == "table" then
+                    cell_val = mah.json.encode(cell_val)
+                end
+                local display = html_escape(tostring(cell_val or ""))
+
+                if col == "name" and row.id and entity_type_path then
+                    parts[#parts + 1] = string.format(
+                        '<td class="py-1 px-2"><a href="/%s?id=%s" class="text-blue-600 hover:underline">%s</a></td>',
+                        html_escape(entity_type_path), tostring(row.id), display
+                    )
+                else
+                    parts[#parts + 1] = string.format(
+                        '<td class="py-1 px-2 text-stone-500">%s</td>',
+                        display
+                    )
+                end
+            end
+            parts[#parts + 1] = '</tr>'
+        end
+
+        parts[#parts + 1] = '</tbody></table></div>'
+        return table.concat(parts, "\n")
+    end
+
+    -- Original entity query path
+    local entity_type = attrs["type"] or "notes"
 
     -- Query entities
     local query_fn
@@ -799,15 +983,51 @@ end
 
 local function render_list(ctx)
     local attrs = ctx.attrs or {}
-    local path = attrs["path"]
-    if not path then return shortcode_error("list", '"path" attribute is required') end
+    local val, err = resolve_data_source(ctx)
+    if err then return render_mrql_error(err) end
 
-    local data = get_nested(ctx.value, path)
+    -- If MRQL result, extract list items
+    local data
+    if type(val) == "table" and val.mode then
+        data = {}
+        if val.mode == "flat" and val.items then
+            for _, item in ipairs(val.items) do
+                data[#data + 1] = item
+            end
+        elseif val.mode == "aggregated" and val.rows then
+            for _, row in ipairs(val.rows) do
+                -- Build "key: value" strings from each row
+                local parts = {}
+                for k, v in pairs(row) do
+                    parts[#parts + 1] = tostring(k) .. ": " .. tostring(v)
+                end
+                data[#data + 1] = table.concat(parts, ", ")
+            end
+        elseif val.mode == "bucketed" and val.groups then
+            for _, group in ipairs(val.groups) do
+                if group.key then
+                    local parts = {}
+                    for k, v in pairs(group.key) do
+                        parts[#parts + 1] = tostring(k) .. ": " .. tostring(v)
+                    end
+                    local label = table.concat(parts, ", ")
+                    if group.items then
+                        label = label .. " (" .. #group.items .. ")"
+                    end
+                    data[#data + 1] = label
+                end
+            end
+        end
+    else
+        data = val
+    end
+
     if type(data) ~= "table" or #data == 0 then
         return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No items</span></div>'
     end
 
     local style = attrs["style"] or "bullet"
+    local source_label = attrs.path or attrs.field or attrs.mrql or ""
 
     --- Extract display text from an item
     local function item_text(item)
@@ -823,7 +1043,7 @@ local function render_list(ctx)
         return mah.json.encode(item)
     end
 
-    local title_text = string.format("List: %s (%s)", path, style)
+    local title_text = string.format("List: %s (%s)", source_label, style)
 
     if style == "comma" then
         local texts = {}
@@ -865,11 +1085,42 @@ end
 
 local function render_count_badge(ctx)
     local attrs = ctx.attrs or {}
-    local path = attrs["path"]
-    local entity_type = attrs["type"]
     local label = attrs["label"] or ""
     local icon_name = attrs["icon"]
     local count = 0
+
+    -- MRQL data source branch
+    if attrs.mrql then
+        local result, err = resolve_data_source(ctx)
+        if err then return render_mrql_error(err) end
+        if type(result) == "table" and result.mode then
+            if result.mode == "flat" and result.items then
+                count = #result.items
+            elseif result.mode == "aggregated" and result.rows then
+                -- Use aggregate attr to extract a specific count value
+                local agg = attrs.aggregate
+                if agg and result.rows[1] then
+                    count = tonumber(result.rows[1][agg]) or 0
+                else
+                    count = #result.rows
+                end
+            elseif result.mode == "bucketed" and result.groups then
+                count = #result.groups
+            end
+        end
+        local icon_svg = icon_name and get_icon(icon_name) or ""
+        local title_text = string.format("Count: %s", attrs.mrql)
+        return string.format(
+            '<div title="%s" class="py-1.5">'
+            .. '<span class="inline-flex items-center gap-1 text-sm font-medium text-stone-600">'
+            .. '%s<span class="font-mono font-bold">%d</span>'
+            .. '<span>%s</span></span></div>',
+            html_escape(title_text), icon_svg, count, html_escape(label)
+        )
+    end
+
+    local path = attrs["path"]
+    local entity_type = attrs["type"]
 
     if entity_type then
         -- Entity count mode
@@ -908,7 +1159,7 @@ local function render_count_badge(ctx)
             end
         end
     else
-        return shortcode_error("count-badge", '"path" or "type" attribute is required')
+        return shortcode_error("count-badge", '"path", "type", or "mrql" attribute is required')
     end
 
     local icon_svg = icon_name and get_icon(icon_name) or ""
@@ -1024,16 +1275,20 @@ end
 
 local function render_barcode(ctx)
     local attrs = ctx.attrs or {}
-    local path = attrs["path"]
-    if not path then return shortcode_error("barcode", '"path" attribute is required') end
-
-    local val = get_nested(ctx.value, path)
+    local val, err = resolve_data_source(ctx)
+    if err then return render_mrql_error(err) end
+    -- If MRQL result, extract scalar
+    if type(val) == "table" and val.mode then
+        val, err = resolve_scalar_from_mrql(val, attrs.aggregate)
+        if err then return render_mrql_error(err) end
+    end
     if val == nil then
         return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No value</span></div>'
     end
 
     local text = tostring(val)
     local size = tonumber(attrs["size"]) or 50
+    local source_label = attrs.path or attrs.field or attrs.mrql or ""
 
     local barcode_svg = code128_svg(text, size)
     if barcode_svg == "" then
@@ -1045,7 +1300,7 @@ local function render_barcode(ctx)
         .. '<div class="border border-stone-200 rounded p-2 bg-white max-w-full overflow-hidden">%s</div>'
         .. '<div class="text-xs text-stone-500 mt-1 font-mono truncate">%s</div>'
         .. '</div>',
-        html_escape(path), barcode_svg, html_escape(text)
+        html_escape(source_label), barcode_svg, html_escape(text)
     )
 end
 
@@ -1055,10 +1310,13 @@ end
 
 local function render_qr_code(ctx)
     local attrs = ctx.attrs or {}
-    local path = attrs["path"]
-    if not path then return shortcode_error("qr-code", '"path" attribute is required') end
-
-    local val = get_nested(ctx.value, path)
+    local val, err = resolve_data_source(ctx)
+    if err then return render_mrql_error(err) end
+    -- If MRQL result, extract scalar
+    if type(val) == "table" and val.mode then
+        val, err = resolve_scalar_from_mrql(val, attrs.aggregate)
+        if err then return render_mrql_error(err) end
+    end
     if val == nil then
         return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No value</span></div>'
     end
@@ -1067,6 +1325,7 @@ local function render_qr_code(ctx)
     local size = tonumber(attrs["size"]) or 128
     local fg = attrs["color"] or "#000000"
     local bg = attrs["bg"] or "#ffffff"
+    local source_label = attrs.path or attrs.field or attrs.mrql or ""
 
     -- Render a placeholder that Alpine fills via the injected QR encoder
     return string.format(
@@ -1077,7 +1336,7 @@ local function render_qr_code(ctx)
         .. '</div>'
         .. '<div class="text-xs text-stone-500 mt-1 font-mono truncate">%s</div>'
         .. '</div>',
-        html_escape(path),
+        html_escape(source_label),
         html_escape(json_value(text)), size, html_escape(json_value(fg)), html_escape(json_value(bg)),
         html_escape(text)
     )
@@ -1089,10 +1348,13 @@ end
 
 local function render_link_preview(ctx)
     local attrs = ctx.attrs or {}
-    local path = attrs["path"]
-    if not path then return shortcode_error("link-preview", '"path" attribute is required') end
-
-    local val = get_nested(ctx.value, path)
+    local val, err = resolve_data_source(ctx)
+    if err then return render_mrql_error(err) end
+    -- If MRQL result, extract scalar
+    if type(val) == "table" and val.mode then
+        val, err = resolve_scalar_from_mrql(val, attrs.aggregate)
+        if err then return render_mrql_error(err) end
+    end
     if val == nil then
         return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No link</span></div>'
     end
@@ -1110,6 +1372,8 @@ local function render_link_preview(ctx)
         return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No link</span></div>'
     end
 
+    local source_label = attrs.path or attrs.field or attrs.mrql or ""
+
     return string.format(
         '<div title="Link: %s" class="py-1.5">'
         .. '<a href="%s" target="_blank" rel="noopener" '
@@ -1121,7 +1385,7 @@ local function render_link_preview(ctx)
         .. '</span>'
         .. '<span class="shrink-0 ml-auto text-stone-400">%s</span>'
         .. '</a></div>',
-        html_escape(path),
+        html_escape(source_label),
         html_escape(url),
         get_icon("globe", "w-8 h-8"),
         html_escape(url),
@@ -1168,41 +1432,81 @@ end
 
 local function render_bar_chart(ctx)
     local attrs = ctx.attrs or {}
-    local path = attrs["path"]
-    if not path then return shortcode_error("bar-chart", '"path" attribute is required') end
-
-    local data = get_nested(ctx.value, path)
-    if type(data) ~= "table" then
-        return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No data</span></div>'
-    end
+    local val, err = resolve_data_source(ctx)
+    if err then return render_mrql_error(err) end
 
     local color = attrs["color"] or "#d97706"
     local label_key = attrs["label-key"]
     local value_key = attrs["value-key"]
+    local source_label = attrs.path or attrs.field or attrs.mrql or ""
 
     -- Extract label/value pairs
     local entries = {}
 
-    -- Check if it's an array of objects or a plain object
-    local is_array = #data > 0
+    if type(val) == "table" and val.mode then
+        -- MRQL result
+        if val.mode == "aggregated" and val.rows then
+            -- Use label-key and value-key to extract from rows
+            local lk = label_key
+            local vk = value_key
+            -- Auto-detect keys if not specified: first string-ish key as label, first numeric as value
+            if (not lk or not vk) and val.rows[1] then
+                for k, v in pairs(val.rows[1]) do
+                    if not vk and type(v) == "number" then vk = k end
+                    if not lk and type(v) == "string" then lk = k end
+                end
+            end
+            if lk and vk then
+                for _, row in ipairs(val.rows) do
+                    local lbl = tostring(row[lk] or "")
+                    local v = tonumber(row[vk]) or 0
+                    entries[#entries + 1] = { label = lbl, value = v }
+                end
+            end
+        elseif val.mode == "flat" and val.items then
+            if label_key and value_key then
+                for _, item in ipairs(val.items) do
+                    local lbl = tostring(item[label_key] or "")
+                    local v = tonumber(item[value_key]) or 0
+                    entries[#entries + 1] = { label = lbl, value = v }
+                end
+            end
+        elseif val.mode == "bucketed" and val.groups then
+            for _, group in ipairs(val.groups) do
+                if group.key then
+                    local parts = {}
+                    for k, v in pairs(group.key) do parts[#parts + 1] = tostring(v) end
+                    local lbl = table.concat(parts, ", ")
+                    local v = group.items and #group.items or 0
+                    entries[#entries + 1] = { label = lbl, value = v }
+                end
+            end
+        end
+    elseif type(val) == "table" then
+        local data = val
+        -- Check if it's an array of objects or a plain object
+        local is_array = #data > 0
 
-    if is_array and label_key and value_key then
-        for _, item in ipairs(data) do
-            if type(item) == "table" then
-                local lbl = tostring(item[label_key] or "")
-                local val = tonumber(item[value_key]) or 0
-                entries[#entries + 1] = { label = lbl, value = val }
+        if is_array and label_key and value_key then
+            for _, item in ipairs(data) do
+                if type(item) == "table" then
+                    local lbl = tostring(item[label_key] or "")
+                    local v = tonumber(item[value_key]) or 0
+                    entries[#entries + 1] = { label = lbl, value = v }
+                end
+            end
+        else
+            -- Plain object: keys as labels, values as numbers
+            local keys = {}
+            for k, _ in pairs(data) do keys[#keys + 1] = k end
+            table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+            for _, k in ipairs(keys) do
+                local v = tonumber(data[k]) or 0
+                entries[#entries + 1] = { label = tostring(k), value = v }
             end
         end
     else
-        -- Plain object: keys as labels, values as numbers
-        local keys = {}
-        for k, _ in pairs(data) do keys[#keys + 1] = k end
-        table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
-        for _, k in ipairs(keys) do
-            local val = tonumber(data[k]) or 0
-            entries[#entries + 1] = { label = tostring(k), value = val }
-        end
+        return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No data</span></div>'
     end
 
     if #entries == 0 then
@@ -1216,7 +1520,7 @@ local function render_bar_chart(ctx)
     end
     if max_val == 0 then max_val = 1 end
 
-    local parts = { string.format('<div title="Bar chart: %s" class="py-1.5 max-w-full overflow-hidden"><div class="space-y-1 text-sm">', html_escape(path)) }
+    local parts = { string.format('<div title="Bar chart: %s" class="py-1.5 max-w-full overflow-hidden"><div class="space-y-1 text-sm">', html_escape(source_label)) }
     for _, e in ipairs(entries) do
         local pct = (e.value / max_val) * 100
         parts[#parts + 1] = string.format(
@@ -1241,13 +1545,8 @@ end
 
 local function render_pie_chart(ctx)
     local attrs = ctx.attrs or {}
-    local path = attrs["path"]
-    if not path then return shortcode_error("pie-chart", '"path" attribute is required') end
-
-    local data = get_nested(ctx.value, path)
-    if type(data) ~= "table" then
-        return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No data</span></div>'
-    end
+    local val, err = resolve_data_source(ctx)
+    if err then return render_mrql_error(err) end
 
     local size = tonumber(attrs["size"]) or 120
     local is_donut = attrs["donut"] == "true"
@@ -1255,31 +1554,82 @@ local function render_pie_chart(ctx)
     local value_key = attrs["value-key"]
     local colors = parse_csv(attrs["colors"] or "")
     if #colors == 0 then colors = DEFAULT_COLORS end
+    local source_label = attrs.path or attrs.field or attrs.mrql or ""
 
     -- Extract entries
     local entries = {}
-    local is_array = #data > 0
 
-    if is_array and label_key and value_key then
-        for _, item in ipairs(data) do
-            if type(item) == "table" then
-                local lbl = tostring(item[label_key] or "")
-                local val = tonumber(item[value_key]) or 0
-                if val > 0 then
-                    entries[#entries + 1] = { label = lbl, value = val }
+    if type(val) == "table" and val.mode then
+        -- MRQL result
+        if val.mode == "aggregated" and val.rows then
+            local lk = label_key
+            local vk = value_key
+            -- Auto-detect keys if not specified
+            if (not lk or not vk) and val.rows[1] then
+                for k, v in pairs(val.rows[1]) do
+                    if not vk and type(v) == "number" then vk = k end
+                    if not lk and type(v) == "string" then lk = k end
+                end
+            end
+            if lk and vk then
+                for _, row in ipairs(val.rows) do
+                    local lbl = tostring(row[lk] or "")
+                    local v = tonumber(row[vk]) or 0
+                    if v > 0 then
+                        entries[#entries + 1] = { label = lbl, value = v }
+                    end
+                end
+            end
+        elseif val.mode == "flat" and val.items then
+            if label_key and value_key then
+                for _, item in ipairs(val.items) do
+                    local lbl = tostring(item[label_key] or "")
+                    local v = tonumber(item[value_key]) or 0
+                    if v > 0 then
+                        entries[#entries + 1] = { label = lbl, value = v }
+                    end
+                end
+            end
+        elseif val.mode == "bucketed" and val.groups then
+            for _, group in ipairs(val.groups) do
+                if group.key then
+                    local parts = {}
+                    for k, v in pairs(group.key) do parts[#parts + 1] = tostring(v) end
+                    local lbl = table.concat(parts, ", ")
+                    local v = group.items and #group.items or 0
+                    if v > 0 then
+                        entries[#entries + 1] = { label = lbl, value = v }
+                    end
+                end
+            end
+        end
+    elseif type(val) == "table" then
+        local data = val
+        local is_array = #data > 0
+
+        if is_array and label_key and value_key then
+            for _, item in ipairs(data) do
+                if type(item) == "table" then
+                    local lbl = tostring(item[label_key] or "")
+                    local v = tonumber(item[value_key]) or 0
+                    if v > 0 then
+                        entries[#entries + 1] = { label = lbl, value = v }
+                    end
+                end
+            end
+        else
+            local keys = {}
+            for k, _ in pairs(data) do keys[#keys + 1] = k end
+            table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+            for _, k in ipairs(keys) do
+                local v = tonumber(data[k]) or 0
+                if v > 0 then
+                    entries[#entries + 1] = { label = tostring(k), value = v }
                 end
             end
         end
     else
-        local keys = {}
-        for k, _ in pairs(data) do keys[#keys + 1] = k end
-        table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
-        for _, k in ipairs(keys) do
-            local val = tonumber(data[k]) or 0
-            if val > 0 then
-                entries[#entries + 1] = { label = tostring(k), value = val }
-            end
-        end
+        return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No data</span></div>'
     end
 
     if #entries == 0 then
@@ -1291,8 +1641,8 @@ local function render_pie_chart(ctx)
     for _, e in ipairs(entries) do total = total + e.value end
     if total == 0 then total = 1 end
 
-    -- For solid pie: r=9, stroke-width=18 → outer edge = 9+9 = 18 (fits viewBox 36x36)
-    -- For donut: r=14, stroke-width=6 → outer edge = 14+3 = 17 (fits viewBox 36x36)
+    -- For solid pie: r=9, stroke-width=18 -> outer edge = 9+9 = 18 (fits viewBox 36x36)
+    -- For donut: r=14, stroke-width=6 -> outer edge = 14+3 = 17 (fits viewBox 36x36)
     local radius = is_donut and 14 or 9
     local stroke_width = is_donut and 6 or (radius * 2)
     local circumference = 2 * math.pi * radius
@@ -1333,7 +1683,7 @@ local function render_pie_chart(ctx)
         .. '<svg class="shrink-0" width="%d" height="%d" viewBox="0 0 36 36">%s</svg>'
         .. '<div class="text-xs space-y-1 min-w-0">%s</div>'
         .. '</div></div>',
-        html_escape(path), size, size, table.concat(circles), table.concat(legend)
+        html_escape(source_label), size, size, table.concat(circles), table.concat(legend)
     )
 end
 
@@ -1343,10 +1693,13 @@ end
 
 local function render_conditional(ctx)
     local attrs = ctx.attrs or {}
-    local path = attrs["path"]
-    if not path then return shortcode_error("conditional", '"path" attribute is required') end
-
-    local val = get_nested(ctx.value, path)
+    local val, err = resolve_data_source(ctx)
+    if err then return render_mrql_error(err) end
+    -- If MRQL result, extract scalar
+    if type(val) == "table" and val.mode then
+        val, err = resolve_scalar_from_mrql(val, attrs.aggregate)
+        if err then return render_mrql_error(err) end
+    end
 
     -- Evaluate condition
     local condition_met = false
@@ -1370,6 +1723,7 @@ local function render_conditional(ctx)
     if not condition_met then return "" end
 
     -- Build title
+    local source_label = attrs.path or attrs.field or attrs.mrql or ""
     local operator = ""
     local cond_value = ""
     if attrs["eq"] then operator = "eq"; cond_value = attrs["eq"]
@@ -1380,7 +1734,7 @@ local function render_conditional(ctx)
     elseif attrs["empty"] then operator = "empty"; cond_value = ""
     elseif attrs["not-empty"] then operator = "not-empty"; cond_value = ""
     end
-    local title_text = string.format("Conditional: %s %s %s", path, operator, cond_value)
+    local title_text = string.format("Conditional: %s %s %s", source_label, operator, cond_value)
 
     -- Render content
     local output
@@ -1410,9 +1764,115 @@ end
 
 local function render_timeline_chart(ctx)
     local attrs = ctx.attrs or {}
-    local entity_type = attrs["type"] or "groups"
     local date_path = attrs["date-path"] or "timeline"
     local limit = tonumber(attrs["limit"]) or 10
+
+    -- Parse ISO date to epoch-ish number for comparison (YYYYMMDD as integer)
+    local function date_to_num(iso)
+        if not iso or type(iso) ~= "string" then return nil end
+        local y, m, d = iso:match("(%d%d%d%d)-(%d%d)-(%d%d)")
+        if not y then return nil end
+        return tonumber(y) * 10000 + tonumber(m) * 100 + tonumber(d)
+    end
+
+    -- MRQL data source branch: use flat items with date fields
+    if attrs.mrql then
+        local result, err = resolve_data_source(ctx)
+        if err then return render_mrql_error(err) end
+
+        local timeline_entries = {}
+        local global_min = nil
+        local global_max = nil
+
+        if type(result) == "table" and result.mode == "flat" and result.items then
+            local start_key = attrs["start-key"] or "startDate"
+            local end_key = attrs["end-key"] or "endDate"
+            local name_key = attrs["name-key"] or "name"
+            local entity_type_path = result.entity_type
+
+            for _, item in ipairs(result.items) do
+                local start_str = tostring(item[start_key] or "")
+                local end_str = tostring(item[end_key] or "")
+                local start_num = date_to_num(start_str)
+                local end_num = date_to_num(end_str)
+
+                if start_num and end_num then
+                    timeline_entries[#timeline_entries + 1] = {
+                        id = item.id,
+                        name = item[name_key] or "(untitled)",
+                        start_num = start_num,
+                        end_num = end_num,
+                        type_path = entity_type_path,
+                    }
+                    if not global_min or start_num < global_min then global_min = start_num end
+                    if not global_max or end_num > global_max then global_max = end_num end
+                end
+            end
+        end
+
+        if #timeline_entries == 0 then
+            return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No timeline data</span></div>'
+        end
+
+        local range = global_max - global_min
+        if range <= 0 then range = 1 end
+
+        local min_label = format_date(string.format("%04d-%02d-%02d",
+            math.floor(global_min / 10000),
+            math.floor((global_min % 10000) / 100),
+            global_min % 100
+        ))
+        local max_label = format_date(string.format("%04d-%02d-%02d",
+            math.floor(global_max / 10000),
+            math.floor((global_max % 10000) / 100),
+            global_max % 100
+        ))
+
+        local parts = {
+            string.format('<div title="Timeline: %s" class="py-1.5 text-sm overflow-hidden max-w-full">', html_escape(attrs.mrql)),
+            '<div class="flex text-xs text-stone-400 mb-1">',
+            '<span>' .. html_escape(min_label) .. '</span>',
+            '<span class="ml-auto">' .. html_escape(max_label) .. '</span>',
+            '</div>',
+            '<div class="space-y-1">',
+        }
+
+        for _, entry in ipairs(timeline_entries) do
+            local start_pct = ((entry.start_num - global_min) / range) * 100
+            local width_pct = ((entry.end_num - entry.start_num) / range) * 100
+            width_pct = math.max(width_pct, 1)
+
+            if entry.id and entry.type_path then
+                parts[#parts + 1] = string.format(
+                    '<div class="flex items-center gap-1">'
+                    .. '<a href="/%s?id=%s" class="w-20 shrink-0 truncate text-blue-600 hover:underline text-xs">%s</a>'
+                    .. '<div class="flex-1 min-w-0 relative h-4 bg-stone-100 rounded">'
+                    .. '<div class="absolute h-full rounded bg-amber-500" style="left: %.1f%%; width: %.1f%%"></div>'
+                    .. '</div>'
+                    .. '</div>',
+                    html_escape(entry.type_path), tostring(entry.id), html_escape(tostring(entry.name)),
+                    start_pct, width_pct
+                )
+            else
+                parts[#parts + 1] = string.format(
+                    '<div class="flex items-center gap-1">'
+                    .. '<span class="w-20 shrink-0 truncate text-xs text-stone-600">%s</span>'
+                    .. '<div class="flex-1 min-w-0 relative h-4 bg-stone-100 rounded">'
+                    .. '<div class="absolute h-full rounded bg-amber-500" style="left: %.1f%%; width: %.1f%%"></div>'
+                    .. '</div>'
+                    .. '</div>',
+                    html_escape(tostring(entry.name)),
+                    start_pct, width_pct
+                )
+            end
+        end
+
+        parts[#parts + 1] = '</div></div>'
+        return table.concat(parts, "\n")
+    end
+
+    -- Original entity query path
+    local entity_type = attrs["type"] or "groups"
 
     -- Query entities
     local query_fn
@@ -1436,14 +1896,6 @@ local function render_timeline_chart(ctx)
 
     if not items or #items == 0 then
         return '<div class="py-1.5"><span class="text-sm text-stone-400 italic">No data</span></div>'
-    end
-
-    -- Parse ISO date to epoch-ish number for comparison (YYYYMMDD as integer)
-    local function date_to_num(iso)
-        if not iso or type(iso) ~= "string" then return nil end
-        local y, m, d = iso:match("(%d%d%d%d)-(%d%d)-(%d%d)")
-        if not y then return nil end
-        return tonumber(y) * 10000 + tonumber(m) * 100 + tonumber(d)
     end
 
     -- Extract timeline data from each entity's meta
@@ -1472,8 +1924,6 @@ local function render_timeline_chart(ctx)
                         name = item.name or "(untitled)",
                         start_num = start_num,
                         end_num = end_num,
-                        start_str = tostring(start_date),
-                        end_str = tostring(end_date),
                     }
                     if not global_min or start_num < global_min then global_min = start_num end
                     if not global_max or end_num > global_max then global_max = end_num end
@@ -1654,7 +2104,11 @@ function init()
         render = render_badge,
         description = "Display a colored pill badge based on a meta field value. Map specific values to colors and labels for visual status indicators.",
         attrs = {
-            { name = "path", type = "string", required = true, description = "Dot-path to the meta field (e.g. 'status' or 'project.phase')" },
+            { name = "path", type = "string", description = "Dot-path to the meta field (e.g. 'status' or 'project.phase')" },
+            { name = "field", type = "string", description = "Entity property name (e.g. 'ContentType', 'Name')" },
+            { name = "mrql", type = "string", description = "MRQL query expression" },
+            { name = "scope", type = "string", description = "MRQL scope: 'entity' (default), 'parent', 'root', or 'global'" },
+            { name = "aggregate", type = "string", description = "Column name to extract from aggregated MRQL results" },
             { name = "values", type = "CSV", description = "Comma-separated values to match against" },
             { name = "colors", type = "CSV", description = "Comma-separated hex colors corresponding to each value" },
             { name = "labels", type = "CSV", description = "Comma-separated display labels corresponding to each value" },
@@ -1681,7 +2135,11 @@ function init()
         render = render_format,
         description = "Display a meta field value with a specific format such as currency, percent, date, filesize, number, or duration.",
         attrs = {
-            { name = "path", type = "string", required = true, description = "Dot-path to the meta field" },
+            { name = "path", type = "string", description = "Dot-path to the meta field" },
+            { name = "field", type = "string", description = "Entity property name (e.g. 'FileSize', 'CreatedAt')" },
+            { name = "mrql", type = "string", description = "MRQL query expression" },
+            { name = "scope", type = "string", description = "MRQL scope: 'entity' (default), 'parent', 'root', or 'global'" },
+            { name = "aggregate", type = "string", description = "Column name to extract from aggregated MRQL results" },
             { name = "type", type = "string", required = true, description = "Format type: 'currency', 'percent', 'date', 'filesize', 'number', or 'duration'" },
             { name = "currency", type = "string", default = "$", description = "Currency symbol (only for type=currency)" },
             { name = "decimals", type = "number", description = "Number of decimal places (default 2 for currency, 1 for percent)" },
@@ -1710,7 +2168,11 @@ function init()
         render = render_stat_card,
         description = "Display a KPI card with a large formatted number, label, and icon. Useful for dashboards and summary views.",
         attrs = {
-            { name = "path", type = "string", required = true, description = "Dot-path to the meta field containing the value" },
+            { name = "path", type = "string", description = "Dot-path to the meta field containing the value" },
+            { name = "field", type = "string", description = "Entity property name (e.g. 'FileSize', 'Name')" },
+            { name = "mrql", type = "string", description = "MRQL query expression" },
+            { name = "scope", type = "string", description = "MRQL scope: 'entity' (default), 'parent', 'root', or 'global'" },
+            { name = "aggregate", type = "string", description = "Column name to extract from aggregated MRQL results" },
             { name = "label", type = "string", description = "Display label below the value (defaults to the path)" },
             { name = "type", type = "string", default = "number", description = "Format type for the value: 'currency', 'percent', 'date', 'filesize', 'number', or 'duration'" },
             { name = "icon", type = "string", default = "chart", description = "Icon name: 'chart', 'users', 'files', 'clock', 'check', 'file', 'note', 'folder', 'star'" },
@@ -1740,7 +2202,11 @@ function init()
         render = render_meter,
         description = "Display a horizontal gauge bar with red/yellow/green color zones and a position indicator. Ideal for scores, progress, or threshold values.",
         attrs = {
-            { name = "path", type = "string", required = true, description = "Dot-path to the numeric meta field" },
+            { name = "path", type = "string", description = "Dot-path to the numeric meta field" },
+            { name = "field", type = "string", description = "Entity property name (e.g. 'FileSize')" },
+            { name = "mrql", type = "string", description = "MRQL query expression" },
+            { name = "scope", type = "string", description = "MRQL scope: 'entity' (default), 'parent', 'root', or 'global'" },
+            { name = "aggregate", type = "string", description = "Column name to extract from aggregated MRQL results" },
             { name = "min", type = "number", default = "0", description = "Minimum value of the range" },
             { name = "max", type = "number", default = "100", description = "Maximum value of the range" },
             { name = "low", type = "number", default = "30", description = "Threshold below which the zone is red" },
@@ -1769,7 +2235,10 @@ function init()
         render = render_sparkline,
         description = "Render a compact inline SVG chart from an array of numbers. Supports line, area, and bar chart types.",
         attrs = {
-            { name = "path", type = "string", required = true, description = "Dot-path to a meta field containing an array of numbers" },
+            { name = "path", type = "string", description = "Dot-path to a meta field containing an array of numbers" },
+            { name = "mrql", type = "string", description = "MRQL query expression (aggregated: use value-key for values)" },
+            { name = "scope", type = "string", description = "MRQL scope: 'entity' (default), 'parent', 'root', or 'global'" },
+            { name = "value-key", type = "string", description = "Field name for numeric values in MRQL results" },
             { name = "type", type = "string", default = "line", description = "Chart type: 'line', 'area', or 'bar'" },
             { name = "height", type = "number", default = "24", description = "SVG height in pixels" },
             { name = "width", type = "number", default = "100", description = "SVG width in pixels" },
@@ -1795,9 +2264,11 @@ function init()
         name = "table",
         label = "Entity Table",
         render = render_table,
-        description = "Display a table of entities (notes, resources, or groups) owned by the current group. Columns can reference entity fields or meta sub-fields.",
+        description = "Display a table of entities (notes, resources, or groups) owned by the current group, or from an MRQL query. Columns can reference entity fields or meta sub-fields.",
         attrs = {
             { name = "type", type = "string", default = "notes", description = "Entity type to query: 'notes', 'resources', or 'groups'" },
+            { name = "mrql", type = "string", description = "MRQL query expression (overrides type-based query)" },
+            { name = "scope", type = "string", description = "MRQL scope: 'entity' (default), 'parent', 'root', or 'global'" },
             { name = "cols", type = "CSV", default = "name,updated_at", description = "Comma-separated column names. Use 'meta.path' for meta fields" },
             { name = "labels", type = "CSV", description = "Comma-separated column headers (defaults to column names)" },
             { name = "limit", type = "number", default = "10", description = "Maximum number of rows to display" },
@@ -1821,7 +2292,9 @@ function init()
         render = render_list,
         description = "Render a meta array as a formatted list. Supports bullet, numbered, comma-separated, and pill styles.",
         attrs = {
-            { name = "path", type = "string", required = true, description = "Dot-path to a meta field containing an array" },
+            { name = "path", type = "string", description = "Dot-path to a meta field containing an array" },
+            { name = "mrql", type = "string", description = "MRQL query expression" },
+            { name = "scope", type = "string", description = "MRQL scope: 'entity' (default), 'parent', 'root', or 'global'" },
             { name = "style", type = "string", default = "bullet", description = "List style: 'bullet', 'numbered', 'comma', or 'pill'" },
         },
         examples = {
@@ -1847,6 +2320,9 @@ function init()
         attrs = {
             { name = "type", type = "string", description = "Entity type to count: 'notes', 'resources', or 'groups'. Counts entities owned by the current group" },
             { name = "path", type = "string", description = "Dot-path to a meta array to count items from (alternative to type)" },
+            { name = "mrql", type = "string", description = "MRQL query expression (flat: counts items; aggregated: use aggregate attr)" },
+            { name = "scope", type = "string", description = "MRQL scope: 'entity' (default), 'parent', 'root', or 'global'" },
+            { name = "aggregate", type = "string", description = "Column name to extract count from aggregated MRQL results" },
             { name = "count-where", type = "string", description = "Field name within array objects to filter on (requires path)" },
             { name = "eq", type = "string", description = "Count only items where count-where field equals this value" },
             { name = "neq", type = "string", description = "Count only items where count-where field does not equal this value" },
@@ -1923,7 +2399,11 @@ function init()
         render = render_barcode,
         description = "Generate a Code 128 barcode SVG from a meta field value. Displays the barcode with the encoded text below it.",
         attrs = {
-            { name = "path", type = "string", required = true, description = "Dot-path to the meta field containing the text to encode" },
+            { name = "path", type = "string", description = "Dot-path to the meta field containing the text to encode" },
+            { name = "field", type = "string", description = "Entity property name (e.g. 'Hash', 'OriginalName')" },
+            { name = "mrql", type = "string", description = "MRQL query expression" },
+            { name = "scope", type = "string", description = "MRQL scope: 'entity' (default), 'parent', 'root', or 'global'" },
+            { name = "aggregate", type = "string", description = "Column name to extract from aggregated MRQL results" },
             { name = "size", type = "number", default = "50", description = "Height of the barcode in pixels" },
         },
         examples = {
@@ -1946,7 +2426,11 @@ function init()
         render = render_qr_code,
         description = "Generate a QR code SVG from a meta field value. Rendered client-side via an injected JavaScript QR encoder.",
         attrs = {
-            { name = "path", type = "string", required = true, description = "Dot-path to the meta field containing the text to encode" },
+            { name = "path", type = "string", description = "Dot-path to the meta field containing the text to encode" },
+            { name = "field", type = "string", description = "Entity property name (e.g. 'Name', 'Hash')" },
+            { name = "mrql", type = "string", description = "MRQL query expression" },
+            { name = "scope", type = "string", description = "MRQL scope: 'entity' (default), 'parent', 'root', or 'global'" },
+            { name = "aggregate", type = "string", description = "Column name to extract from aggregated MRQL results" },
             { name = "size", type = "number", default = "128", description = "Width and height of the QR code in pixels" },
             { name = "color", type = "CSS color", default = "#000000", description = "Foreground (module) color" },
             { name = "bg", type = "CSS color", default = "#ffffff", description = "Background color" },
@@ -1974,7 +2458,11 @@ function init()
         render = render_link_preview,
         description = "Display a styled link card with a globe icon, URL, domain, and external-link indicator. The meta field can be a URL string or an object with href/url and host/domain fields.",
         attrs = {
-            { name = "path", type = "string", required = true, description = "Dot-path to a meta field containing a URL string or link object ({href, host})" },
+            { name = "path", type = "string", description = "Dot-path to a meta field containing a URL string or link object ({href, host})" },
+            { name = "field", type = "string", description = "Entity property name (e.g. 'URL')" },
+            { name = "mrql", type = "string", description = "MRQL query expression" },
+            { name = "scope", type = "string", description = "MRQL scope: 'entity' (default), 'parent', 'root', or 'global'" },
+            { name = "aggregate", type = "string", description = "Column name to extract from aggregated MRQL results" },
         },
         examples = {
             { title = "Simple URL", code = '[plugin:data-views:link-preview path="website"]',
@@ -2021,7 +2509,9 @@ function init()
         render = render_bar_chart,
         description = "Display a horizontal bar chart from a meta object or array of objects. Keys become labels and values become bar widths, scaled to the maximum.",
         attrs = {
-            { name = "path", type = "string", required = true, description = "Dot-path to the meta field containing data (object or array of objects)" },
+            { name = "path", type = "string", description = "Dot-path to the meta field containing data (object or array of objects)" },
+            { name = "mrql", type = "string", description = "MRQL query expression (aggregated results auto-detect label/value keys)" },
+            { name = "scope", type = "string", description = "MRQL scope: 'entity' (default), 'parent', 'root', or 'global'" },
             { name = "color", type = "CSS color", default = "#d97706", description = "Bar fill color" },
             { name = "label-key", type = "string", description = "Field name for labels when data is an array of objects" },
             { name = "value-key", type = "string", description = "Field name for values when data is an array of objects" },
@@ -2049,7 +2539,9 @@ function init()
         render = render_pie_chart,
         description = "Display an SVG pie or donut chart with a color legend from a meta object or array of objects. Segments are proportional to their values.",
         attrs = {
-            { name = "path", type = "string", required = true, description = "Dot-path to the meta field containing data (object or array of objects)" },
+            { name = "path", type = "string", description = "Dot-path to the meta field containing data (object or array of objects)" },
+            { name = "mrql", type = "string", description = "MRQL query expression (aggregated results auto-detect label/value keys)" },
+            { name = "scope", type = "string", description = "MRQL scope: 'entity' (default), 'parent', 'root', or 'global'" },
             { name = "size", type = "number", default = "120", description = "Width and height of the chart in pixels" },
             { name = "donut", type = "boolean", default = "false", description = "Render as a donut chart with a hollow center" },
             { name = "label-key", type = "string", description = "Field name for labels when data is an array of objects" },
@@ -2079,7 +2571,11 @@ function init()
         render = render_conditional,
         description = "Conditionally render content based on a meta field value. Supports equality, comparison, contains, and empty/not-empty checks.",
         attrs = {
-            { name = "path", type = "string", required = true, description = "Dot-path to the meta field to evaluate" },
+            { name = "path", type = "string", description = "Dot-path to the meta field to evaluate" },
+            { name = "field", type = "string", description = "Entity property name to evaluate" },
+            { name = "mrql", type = "string", description = "MRQL query expression" },
+            { name = "scope", type = "string", description = "MRQL scope: 'entity' (default), 'parent', 'root', or 'global'" },
+            { name = "aggregate", type = "string", description = "Column name to extract from aggregated MRQL results" },
             { name = "eq", type = "string", description = "Show content when field equals this value" },
             { name = "neq", type = "string", description = "Show content when field does not equal this value" },
             { name = "gt", type = "number", description = "Show content when field is greater than this value" },
@@ -2115,7 +2611,12 @@ function init()
         description = "Display a horizontal timeline (Gantt-style) of owned entities. Each entity's meta must contain a date range object with start and end dates.",
         attrs = {
             { name = "type", type = "string", default = "groups", description = "Entity type to query: 'groups', 'notes', or 'resources'" },
+            { name = "mrql", type = "string", description = "MRQL query expression (flat results with date fields)" },
+            { name = "scope", type = "string", description = "MRQL scope: 'entity' (default), 'parent', 'root', or 'global'" },
             { name = "date-path", type = "string", default = "timeline", description = "Dot-path within each entity's meta to the date range object" },
+            { name = "start-key", type = "string", default = "startDate", description = "Field name for start date in MRQL result items" },
+            { name = "end-key", type = "string", default = "endDate", description = "Field name for end date in MRQL result items" },
+            { name = "name-key", type = "string", default = "name", description = "Field name for label in MRQL result items" },
             { name = "limit", type = "number", default = "10", description = "Maximum number of entities to display" },
         },
         examples = {
