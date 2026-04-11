@@ -54,6 +54,8 @@ The export page and CLI expose three toggle groups. The same toggles exist in th
 - **D2 Tags** — definitions with `Meta`.
 - **D3 GroupRelationTypes** — definitions with `FromCategory`, `ToCategory`, `BackRelation`.
 
+**Name-based fallback when schema defs are excluded.** References to schema defs from entity payloads always carry both the `*_ref` (export_id) and the source `*_name`. If a toggle is off at export time the `*_ref` is empty and only the name travels. At import, the mapper resolves by `*_ref` first, falls back to exact-name lookup, and finally — for required fields like `ResourceCategoryId` which must not be null — falls back to the destination's default (ID 1) and adds a warning to the apply job result. For optional fields (`Category` on Group, `NoteType` on Note), an unresolved name becomes null. Tag references with no match become a tag creation with just the name and no Meta.
+
 ### 4.4 Always preserved
 
 - `Meta` and `OwnMeta` JSON columns on every entity are always exported as raw JSON, regardless of toggles.
@@ -131,6 +133,18 @@ Leading underscore names keep `resources/` listings from scanning them. In `-mem
 
 None. This feature reads and writes existing tables; no new schema.
 
+### 5.10 New configuration flags
+
+Three new CLI flags / env vars, to be added to the config table in `CLAUDE.md`, the README flag reference, and the `.env.example` if one exists:
+
+| Flag | Env Variable | Default | Purpose |
+|------|--------------|---------|---------|
+| `-max-import-size` | `MAX_IMPORT_SIZE` | `10737418240` (10 GB) | Upper bound on the size of an import tar upload. |
+| `-max-job-concurrency` | `MAX_JOB_CONCURRENCY` | `6` | Concurrency budget for the shared job manager (replaces the hard-coded `MaxConcurrentDownloads = 3`). |
+| `-export-retention` | `EXPORT_RETENTION` | `24h` | How long completed export tars stay in `_exports/` before retention cleanup deletes them. |
+
+The bump in concurrency from `3` to `6` is documented in §10.3.
+
 ## 6. Tar layout and manifest schema
 
 ### 6.1 Tar layout
@@ -151,10 +165,12 @@ notes/
   <export_id>.json                  # inline NoteBlocks
 resources/
   <export_id>.json                  # metadata, refs blobs/previews
+series/
+  <export_id>.json                  # Series definitions (if F4 on)
 blobs/
-  <sha1>                            # raw file bytes, content-addressed
-  versions/
-    <sha1>                          # historical version bytes (F2)
+  <sha1>                            # raw file bytes, content-addressed (covers
+                                    # both current-version and historical-version
+                                    # content; one blob per unique hash)
 previews/
   <resource_export_id>/<name>       # preview bytes (F3)
 ```
@@ -199,6 +215,7 @@ Properties:
     "groups": 42,
     "notes": 180,
     "resources": 900,
+    "series": 12,
     "blobs": 840,
     "previews": 1680,
     "versions": 0
@@ -206,7 +223,8 @@ Properties:
   "entries": {
     "groups":    [{"export_id": "g0001", "name": "Books", "source_id": 17, "path": "groups/g0001.json"}],
     "notes":     [{"export_id": "n0001", "name": "Review", "source_id": 54, "owner": "g0001", "path": "notes/n0001.json"}],
-    "resources": [{"export_id": "r0001", "name": "cover.jpg", "source_id": 9001, "owner": "g0001", "hash": "abcd...", "path": "resources/r0001.json"}]
+    "resources": [{"export_id": "r0001", "name": "cover.jpg", "source_id": 9001, "owner": "g0001", "hash": "abcd...", "path": "resources/r0001.json"}],
+    "series":    [{"export_id": "s0001", "name": "Volumes", "source_id": 77, "path": "series/s0001.json"}]
   },
   "schema_defs": {
     "categories":           [{"export_id": "c0001", "name": "Books", "source_id": 3, "path": "schemas/categories.json"}],
@@ -272,6 +290,8 @@ Each `<export_id>.json` file contains the full entity state with foreign keys re
 
 **Resource (`resources/r0001.json`)**: Resource fields, `owner_ref`, `resource_category_ref`, `tags`, `groups` (m2m), `notes` (m2m), `blob_ref: "<sha1>"` (or `null`), `versions: [{version_number, blob_ref, comment, created_at}, ...]`, `previews: ["<name1>", "<name2>"]`, `series_ref: "s0001"` (or `null`), `meta`, `own_meta`.
 
+**Series (`series/s0001.json`)**: Series metadata (name, description, any Meta), no member list — membership is inverted, each Resource payload carries its own `series_ref`. Only written when `F4` is on and only for Series that have at least one in-scope resource. Series referenced by a resource whose siblings include out-of-scope resources emit `resource_series_sibling` dangling references for the missing members.
+
 **Schema def files** (`schemas/categories.json` etc.) are arrays of full definitions with `export_id`, `source_id`, name, description, all Custom HTML templates, MetaSchema, SectionConfig.
 
 ### 6.4 Compatibility rules
@@ -324,12 +344,13 @@ defer w.Close()
 // phase 3 — write manifest (counts finalized)
 w.WriteManifest(plan.toManifest())
 
-// phase 4 — schema defs
+// phase 4 — schema defs and Series
 if request.SchemaDefs.CategoriesAndTypes {
     w.WriteSchemaDefs(plan.categories, plan.noteTypes, plan.resourceCategories)
 }
 if request.SchemaDefs.Tags             { w.WriteTags(plan.tags) }
 if request.SchemaDefs.GroupRelationTypes { w.WriteGroupRelationTypes(plan.grts) }
+if request.Fidelity.ResourceSeries      { w.WriteSeries(plan.series) }
 
 // phase 5 — groups, notes, resources (streamed via FindInBatches)
 for group := range plan.GroupsBatched() {
@@ -349,9 +370,9 @@ for resource := range plan.ResourcesBatched() {
     }
     if request.Fidelity.ResourceVersions {
         for version := range resource.Versions {
-            if !plan.versionBlobWritten[version.Hash] {
-                w.WriteVersionBlob(version.Hash, fileSystem.Open(version.Location))
-                plan.versionBlobWritten[version.Hash] = true
+            if !plan.blobWritten[version.Hash] {
+                w.WriteBlob(version.Hash, fileSystem.Open(version.Location))
+                plan.blobWritten[version.Hash] = true
             }
         }
     }
@@ -451,6 +472,11 @@ for def in plan.mappings.categories {
 }
 // ... same for note_types, resource_categories, tags, group_relation_types
 
+// step 1b — materialize Series (always create new; no name-mapping)
+for series in plan.items.SelectedSeries() {
+    idMap[series.export_id] = createSeries(r.ReadSeries(series.export_id))
+}
+
 // step 2 — groups in topological order (roots first)
 for group in plan.items.walkSelected() {
     if group.skippedByUser { continue }
@@ -528,6 +554,16 @@ job.setStatus(completed)
 - **Resource blob restore fails.** Disk full, permissions, etc. The batch transaction rolls back, the job fails with the failing batch identified.
 - **Disk pressure during upload.** Upload size is capped at `-max-import-size` (default 10 GB).
 - **Missing alt-fs.** Resources written during import always go to the default save path. Alt-fs configurations don't need to match between instances.
+
+### 10.3 Operational notes (download_queue implications)
+
+The existing `DownloadManager` (`download_queue/manager.go`) holds jobs in an in-memory map (`jobs map[string]*DownloadJob`). Generalizing it for export/import jobs inherits two consequences that need to be handled:
+
+- **Server restart wipes in-progress jobs.** If the server restarts mid-export or mid-import, the job is gone from memory. For exports, the partial tar file under `_exports/<jobId>.tar` is orphaned (no job to retain it, no sweep to remove it). Same for `_imports/<jobId>.tar` and `.plan.json`. **Mitigation:** on startup, scan `_exports/` and `_imports/` for files whose job IDs are not in the in-memory manager, delete them. Implement as part of the manager's `NewDownloadManager` (or a small init function called from `application_context/context.go`).
+- **Shared concurrency budget.** The manager uses a 3-slot semaphore for all jobs (`MaxConcurrentDownloads = 3`). If export and import jobs share it, a long export can starve remote-resource downloads and vice versa. **Mitigation:** either increase the budget to something like 6 slots and document the new default, or split into per-type semaphores (e.g. 3 downloads, 2 exports, 2 imports). The second option is cleaner but requires touching more of the manager. Recommend the first as the cheap fix, with a config flag (`-max-job-concurrency`) to raise it.
+- **Queue size.** `MaxQueueSize = 100` is fine — the total number of active jobs is bounded, and completed exports/imports expire on retention.
+
+Both mitigations are part of the implementation plan and are not optional.
 
 ## 11. CLI
 
