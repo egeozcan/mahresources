@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Client wraps HTTP communication with the mahresources API.
@@ -291,6 +292,37 @@ func (c *Client) DownloadFile(path string, query url.Values, destPath string) (i
 	defer out.Close()
 
 	return io.Copy(out, resp.Body)
+}
+
+// JobStatus is the JSON shape returned by /v1/jobs/get.
+type JobStatus struct {
+	ID         string `json:"id"`
+	Status     string `json:"status"`
+	Phase      string `json:"phase,omitempty"`
+	Progress   int64  `json:"progress"`
+	TotalSize  int64  `json:"totalSize"`
+	Error      string `json:"error,omitempty"`
+	ResultPath string `json:"resultPath,omitempty"`
+}
+
+// PollJob polls /v1/jobs/get?id=<jobID> every interval until the job
+// reaches a terminal state (completed/failed/cancelled) or until
+// totalTimeout elapses.
+func (c *Client) PollJob(jobID string, interval, totalTimeout time.Duration) (*JobStatus, error) {
+	deadline := time.Now().Add(totalTimeout)
+	for {
+		var status JobStatus
+		if err := c.Get("/v1/jobs/get", url.Values{"id": []string{jobID}}, &status); err != nil {
+			return nil, err
+		}
+		if status.Status == "completed" || status.Status == "failed" || status.Status == "cancelled" {
+			return &status, nil
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("client: job %s did not complete within %s (last status: %s)", jobID, totalTimeout, status.Status)
+		}
+		time.Sleep(interval)
+	}
 }
 
 // GetRaw performs a GET request and returns the raw response.

@@ -1585,6 +1585,18 @@ func registerDownloadRoutes(r *openapi.Registry) {
 		Tags:        []string{"jobs"},
 	})
 
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/jobs/get",
+		OperationID:          "getJob",
+		Summary:              "Get a single background job by ID",
+		Description:          "Returns the current status of a job. Used by the CLI client's polling loop.",
+		Tags:                 []string{"jobs"},
+		IDQueryParam:         "id",
+		IDRequired:           true,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
 	// Plugin action routes via jobs
 	r.Register(openapi.RouteInfo{
 		Method:               http.MethodPost,

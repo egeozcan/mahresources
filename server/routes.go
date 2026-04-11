@@ -517,6 +517,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/jobs/resume").HandlerFunc(api_handlers.GetDownloadResumeHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/jobs/retry").HandlerFunc(api_handlers.GetDownloadRetryHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/jobs/events").HandlerFunc(api_handlers.GetDownloadEventsHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/jobs/get").HandlerFunc(api_handlers.GetDownloadJobHandler(appContext))
 
 	// Group exports
 	router.Methods(http.MethodPost).Path("/v1/groups/export/estimate").HandlerFunc(api_handlers.GetExportEstimateHandler(appContext))

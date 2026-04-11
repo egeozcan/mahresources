@@ -163,6 +163,26 @@ func GetDownloadRetryHandler(ctx DownloadQueueReader) func(writer http.ResponseW
 	}
 }
 
+// GetDownloadJobHandler handles GET /v1/jobs/get
+// Returns a single job by ID. Used by the CLI client's PollJob helper to check
+// terminal state without subscribing to SSE.
+func GetDownloadJobHandler(ctx DownloadQueueReader) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("id")
+		if id == "" {
+			http_utils.HandleError(fmt.Errorf("id is required"), w, r, http.StatusBadRequest)
+			return
+		}
+		job, ok := ctx.DownloadManager().GetJob(id)
+		if !ok {
+			http_utils.HandleError(fmt.Errorf("job not found"), w, r, http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(w).Encode(job.Snapshot())
+	}
+}
+
 // JobEventsContext combines download and plugin action capabilities for the SSE stream.
 type JobEventsContext interface {
 	DownloadQueueReader

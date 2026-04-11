@@ -2605,6 +2605,24 @@ paths:
             summary: Server-Sent Events stream for job updates (canonical path)
             tags:
                 - jobs
+    /v1/jobs/get:
+        get:
+            description: Returns the current status of a job. Used by the CLI client's polling loop.
+            operationId: getJob
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Get a single background job by ID
+            tags:
+                - jobs
     /v1/jobs/pause:
         post:
             operationId: jobsPause
