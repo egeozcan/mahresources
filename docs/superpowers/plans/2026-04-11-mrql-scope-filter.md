@@ -461,10 +461,21 @@ func ResolveScope(q *Query, db *gorm.DB) (uint, error) {
 
 	switch v := q.Scope.Value.(type) {
 	case *NumberLiteral:
-		id := uint(v.Raw)
-		if v.Value == 0 {
-			id = 0
+		if v.Unit != "" {
+			return 0, &ScopeError{
+				Message: fmt.Sprintf("SCOPE does not accept unit suffixes, got %q", v.Token.Value),
+				Pos:     v.Token.Pos,
+				Length:  v.Token.Length,
+			}
 		}
+		if v.Value != float64(int64(v.Value)) {
+			return 0, &ScopeError{
+				Message: fmt.Sprintf("SCOPE requires an integer group ID, got %v", v.Value),
+				Pos:     v.Token.Pos,
+				Length:  v.Token.Length,
+			}
+		}
+		id := uint(v.Value)
 		if id == 0 {
 			return 0, nil // SCOPE 0 = global
 		}
@@ -585,9 +596,12 @@ func ResolveScopeSubtreeIDs(db *gorm.DB, scopeGroupID uint) ([]uint, error) {
 // ApplyScopeFilter applies scope subtree filtering to a GORM DB.
 // For EntityGroup, filters by `id IN subtree` (includes the scoped group itself).
 // For all other entity types, filters by `owner_id IN subtree`.
+// When subtreeIDs is empty (nonexistent scope group / sentinel), injects WHERE 1=0
+// to guarantee zero results. Never returns the original DB unchanged for a non-zero
+// scope — that would silently fan out to global results.
 func ApplyScopeFilter(db *gorm.DB, entityType EntityType, subtreeIDs []uint) *gorm.DB {
 	if len(subtreeIDs) == 0 {
-		return db
+		return db.Where("1 = 0") // no-match: scope group has no subtree
 	}
 	if entityType == EntityGroup {
 		return db.Where("id IN ?", subtreeIDs)
@@ -980,7 +994,59 @@ With:
 bucketDB, err := mrql.TranslateGroupByBucket(parsed, ctx.db.WithContext(reqCtx), key, opts)
 ```
 
-- [ ] **Step 3: Update plugin_mrql_adapter.go**
+- [ ] **Step 3: Wire explicit SCOPE into the normal ExecuteMRQL path**
+
+The standard CLI/API execution path (`ExecuteMRQL` at `mrql_context.go:51`) parses the query and calls `executeSingleEntity` with `TranslateOptions{}`. If a user writes `type = "resource" SCOPE 42`, the parser sets `parsed.Scope` but nothing reads it — the query runs unscoped.
+
+Fix: after parsing/validating in `ExecuteMRQL`, resolve `parsed.Scope` and set `opts.ScopeGroupID`:
+
+```go
+func (ctx *MahresourcesContext) ExecuteMRQL(reqCtx context.Context, queryStr string, limit, page int) (*MRQLResult, error) {
+	// ... existing parse/validate code ...
+
+	opts := mrql.TranslateOptions{}
+
+	// Resolve explicit SCOPE clause from the query
+	if parsed.Scope != nil {
+		scopeID, err := mrql.ResolveScope(parsed, ctx.db)
+		if err != nil {
+			return nil, err
+		}
+		opts.ScopeGroupID = scopeID
+	}
+
+	if entityType != mrql.EntityUnspecified {
+		return ctx.executeSingleEntity(reqCtx, parsed, entityType, opts)
+	}
+	return ctx.executeCrossEntity(reqCtx, parsed, opts)
+}
+```
+
+Apply the same pattern in `ExecuteMRQLGrouped` (line 147) — resolve `parsed.Scope` before dispatching to aggregated/bucketed paths:
+
+```go
+func (ctx *MahresourcesContext) ExecuteMRQLGrouped(reqCtx context.Context, q *mrql.Query) (*MRQLGroupedResult, error) {
+	// ... existing limit logic ...
+
+	opts := mrql.TranslateOptions{}
+	if q.Scope != nil {
+		scopeID, err := mrql.ResolveScope(q, ctx.db)
+		if err != nil {
+			return nil, err
+		}
+		opts.ScopeGroupID = scopeID
+	}
+
+	if len(q.GroupBy.Aggregates) > 0 {
+		return ctx.executeAggregatedQuery(reqCtx, q, opts)
+	}
+	// ... bucketed path with opts ...
+}
+```
+
+Update `executeAggregatedQuery` and `executeBucketedQuery` signatures to accept `TranslateOptions` and pass them through to `TranslateGroupBy`/`TranslateGroupByKeys`/`TranslateGroupByBucket`.
+
+- [ ] **Step 4: Update plugin_mrql_adapter.go**
 
 In `application_context/plugin_mrql_adapter.go`, update `ExecuteMRQL` (line 51):
 
@@ -990,12 +1056,12 @@ translateOpts := mrql.TranslateOptions{}
 
 This already passes `TranslateOptions{}` to `ExecuteSingleEntityWithScope`. The scope is set inside that method from the `scopeID` parameter. No change needed here — the adapter already passes `opts.ScopeID` to the WithScope methods.
 
-- [ ] **Step 4: Run Go unit tests**
+- [ ] **Step 5: Run Go unit tests**
 
 Run: `cd /Users/egecan/Code/mahresources && go test --tags 'json1 fts5' ./... -count=1`
 Expected: All PASS. The behavioral change (flat → tree) only affects scoped queries, and existing tests should still pass since the test data hierarchy hasn't changed.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add application_context/mrql_context.go application_context/plugin_mrql_adapter.go
@@ -1165,11 +1231,11 @@ parsed.EntityType = entityType
 result, err := appCtx.ExecuteSingleEntityWithScope(reqCtx, parsed, entityType, translateOpts, scopeGroupID)
 ```
 
-If the parsed query has an explicit SCOPE clause, resolve it and override the shortcode-provided scope:
+If the parsed query has an explicit SCOPE clause, resolve it and override the shortcode-provided scope. Note: `MahresourcesContext` has a private `ctx.db` field, so `executeMRQLForShortcode` receives `appCtx` which is the `*MahresourcesContext`. The scope resolution call uses the DB that is already accessible within the `application_context` package:
 ```go
 // Explicit SCOPE in query string takes precedence over shortcode attribute
 if parsed.Scope != nil {
-	resolvedID, err := mrql.ResolveScope(parsed, appCtx.GetDB())
+	resolvedID, err := mrql.ResolveScope(parsed, appCtx.db)
 	if err != nil {
 		return nil, err
 	}
@@ -1177,26 +1243,80 @@ if parsed.Scope != nil {
 }
 ```
 
-- [ ] **Step 7: Update MetaShortcodeContext construction**
+Note: `executeMRQLForShortcode` is in `server/template_handlers/template_filters/`, not in `application_context/`. It receives `appCtx *application_context.MahresourcesContext` but can't access `appCtx.db` (private). Two options:
+- **Option A:** Move the SCOPE resolution into a new public method on `MahresourcesContext`: `func (ctx *MahresourcesContext) ResolveMRQLScope(q *mrql.Query) (uint, error)` that calls `mrql.ResolveScope(q, ctx.db)`.
+- **Option B:** Let the execution layer methods (`ExecuteSingleEntityWithScope`, `ExecuteMRQLGroupedWithScope`) check `parsed.Scope` themselves since they already have `ctx.db`.
+
+**Prefer Option A** — it keeps the shortcode executor in control of precedence logic (explicit SCOPE vs shortcode attribute) while delegating DB access to the app context.
+
+- [ ] **Step 7: Extend QueryResultItem with precomputed scope IDs for nested contexts**
+
+The recursive child context in `renderFlatWithCustom` (mrql_handler.go:98) creates a `MetaShortcodeContext` for each result item. With the new scope fields, these child contexts need `ScopeGroupID`, `ParentGroupID`, and `RootGroupID`. The shortcode layer is DB-free, so these must be precomputed.
+
+In `shortcodes/processor.go`, extend `QueryResultItem`:
+
+```go
+type QueryResultItem struct {
+	EntityType       string
+	EntityID         uint
+	Entity           any
+	Meta             json.RawMessage
+	MetaSchema       string
+	CustomMRQLResult string
+	ScopeGroupID     uint // precomputed: owning group ID (or sentinel for ownerless)
+	ParentGroupID    uint // precomputed: owner's owner ID
+	RootGroupID      uint // precomputed: root of ownership chain
+}
+```
+
+In `shortcode_query_executor.go`, when building `QueryResultItem` from each entity, look up the entity's `OwnerId` and resolve the chain:
+
+```go
+// For a resource:
+scopeID := mrql.UnresolvedScopeSentinel
+if r.OwnerId != nil && *r.OwnerId > 0 {
+	scopeID = *r.OwnerId
+}
+item.ScopeGroupID = scopeID
+item.ParentGroupID = appCtx.ResolveParentScopeID(scopeID)
+item.RootGroupID = appCtx.ResolveRootScopeID(scopeID)
+```
+
+Add `ResolveParentScopeID(groupID uint) uint` and `ResolveRootScopeID(groupID uint) uint` public methods to `MahresourcesContext` that wrap the existing logic from `db_api.go`'s `resolveParentScope` / `resolveRootScope`, returning the sentinel for failures.
+
+In `renderFlatWithCustom`, use the precomputed values:
+
+```go
+childCtx := MetaShortcodeContext{
+	EntityType:    item.EntityType,
+	EntityID:      item.EntityID,
+	Meta:          item.Meta,
+	MetaSchema:    item.MetaSchema,
+	Entity:        item.Entity,
+	ScopeGroupID:  item.ScopeGroupID,
+	ParentGroupID: item.ParentGroupID,
+	RootGroupID:   item.RootGroupID,
+}
+```
+
+- [ ] **Step 8: Update MetaShortcodeContext construction in template handlers**
 
 Search for all places that construct `MetaShortcodeContext` in the template handlers and populate the new scope fields. The caller needs to look up the entity's `owner_id` for entity scope, the owner's owner for parent scope, and walk to root.
 
-This logic mirrors `resolveParentScope` / `resolveRootScope` in `db_api.go`. Extract reusable helpers or call the existing functions from the template handler code.
-
 Key locations to update:
 - Template handlers that render group/resource/note detail pages
-- The recursive child context creation in `mrql_handler.go` `renderFlatWithCustom` (line 98)
+- Use the same `ResolveParentScopeID` / `ResolveRootScopeID` helpers added in Step 7
 
-- [ ] **Step 8: Fix all compilation errors and run tests**
+- [ ] **Step 9: Fix all compilation errors and run tests**
 
 Run: `cd /Users/egecan/Code/mahresources && go test --tags 'json1 fts5' ./shortcodes/... -v -count=1`
 Then: `cd /Users/egecan/Code/mahresources && go test --tags 'json1 fts5' ./... -count=1`
 Expected: All PASS.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
-git add shortcodes/ server/template_handlers/
+git add shortcodes/ server/template_handlers/ application_context/
 git commit -m "feat: add scope attribute to [mrql] shortcode"
 ```
 
