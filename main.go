@@ -100,6 +100,8 @@ func main() {
 	seedDB := flag.String("seed-db", os.Getenv("SEED_DB"), "Path to SQLite file to use as basis for memory-db (env: SEED_DB)")
 	seedFS := flag.String("seed-fs", os.Getenv("SEED_FS"), "Path to directory to use as read-only base for memory-fs (env: SEED_FS)")
 	maxDBConnections := flag.Int("max-db-connections", parseIntEnv("MAX_DB_CONNECTIONS", 0), "Limit database connection pool size, useful for SQLite under test load (env: MAX_DB_CONNECTIONS)")
+	maxJobConcurrency := flag.Int("max-job-concurrency", parseIntEnv("MAX_JOB_CONCURRENCY", 6), "Concurrency budget for the shared background job manager (env: MAX_JOB_CONCURRENCY)")
+	exportRetention := flag.Duration("export-retention", parseDurationEnv("EXPORT_RETENTION", 24*time.Hour), "How long completed group-export tars stay on disk before cleanup (env: EXPORT_RETENTION)")
 	cleanupLogsDays := flag.Int("cleanup-logs-days", parseIntEnv("CLEANUP_LOGS_DAYS", 0), "Delete log entries older than N days on startup (0=disabled) (env: CLEANUP_LOGS_DAYS)")
 
 	// Hash worker options
@@ -211,6 +213,8 @@ func main() {
 		HashCacheSize:                *hashCacheSize,
 		EphemeralMode:                *ephemeral,
 		SkipFTS:                      *skipFTS,
+		MaxJobConcurrency:            *maxJobConcurrency,
+		ExportRetention:              *exportRetention,
 	}
 
 	context, db, mainFs := application_context.CreateContextWithConfig(cfg)
@@ -280,15 +284,15 @@ func main() {
 		&models.SavedMRQLQuery{},
 		// Tables with FK to independent tables
 		&models.Group{},             // FK to Category (self-referencing Owner is handled by GORM)
-		&models.GroupRelationType{},  // FK to Category
+		&models.GroupRelationType{}, // FK to Category
 		&models.Resource{},          // FK to ResourceCategory, Series, Group
 		// Tables with FK to Resource/Group/Note
-		&models.Note{},              // FK to Group, NoteType; many2many with Resource
-		&models.ResourceVersion{},   // FK to Resource
-		&models.NoteBlock{},         // FK to Note
-		&models.Preview{},           // FK to Resource
-		&models.GroupRelation{},     // FK to Group, GroupRelationType
-		&models.ImageHash{},         // FK to Resource
+		&models.Note{},               // FK to Group, NoteType; many2many with Resource
+		&models.ResourceVersion{},    // FK to Resource
+		&models.NoteBlock{},          // FK to Note
+		&models.Preview{},            // FK to Resource
+		&models.GroupRelation{},      // FK to Group, GroupRelationType
+		&models.ImageHash{},          // FK to Resource
 		&models.ResourceSimilarity{}, // FK to Resource
 	); err != nil {
 		log.Fatalf("failed to migrate: %v", err)

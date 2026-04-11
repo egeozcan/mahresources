@@ -33,11 +33,11 @@ type PopularTag struct {
 }
 
 type MahresourcesConfig struct {
-	DbType         string
-	DbDsn          string
-	DbReadOnlyDsn  string
-	AltFileSystems map[string]string
-	FfmpegPath     string
+	DbType           string
+	DbDsn            string
+	DbReadOnlyDsn    string
+	AltFileSystems   map[string]string
+	FfmpegPath       string
 	LibreOfficePath  string
 	BindAddress      string
 	SharePort        string
@@ -86,17 +86,21 @@ type MahresourcesConfig struct {
 	FileSavePath string
 	// SkipFTS indicates whether Full-Text Search initialization was skipped
 	SkipFTS bool
+	// MaxJobConcurrency is the concurrency budget for the shared background job manager
+	MaxJobConcurrency int
+	// ExportRetention is how long completed group-export tars stay on disk
+	ExportRetention time.Duration
 }
 
 // MahresourcesInputConfig holds all configuration options that can be passed
 // via command-line flags or environment variables
 type MahresourcesInputConfig struct {
-	FileSavePath   string
-	DbType         string
-	DbDsn          string
-	DbReadOnlyDsn  string
-	DbLogFile      string
-	BindAddress    string
+	FileSavePath     string
+	DbType           string
+	DbDsn            string
+	DbReadOnlyDsn    string
+	DbLogFile        string
+	BindAddress      string
 	FfmpegPath       string
 	LibreOfficePath  string
 	SharePort        string
@@ -145,14 +149,18 @@ type MahresourcesInputConfig struct {
 	EphemeralMode bool
 	// SkipFTS indicates whether Full-Text Search initialization was skipped
 	SkipFTS bool
+	// MaxJobConcurrency is the concurrency budget for the shared background job manager
+	MaxJobConcurrency int
+	// ExportRetention is how long completed group-export tars stay on disk
+	ExportRetention time.Duration
 }
 
 type MahresourcesLocks struct {
-	ThumbnailGenerationLock           *lib.IDLock[uint]
-	VideoThumbnailGenerationLock      *lib.IDLock[uint]
-	OfficeDocumentGenerationLock      *lib.IDLock[uint]
-	ResourceHashLock                  *lib.IDLock[string]
-	VersionUploadLock                 *lib.IDLock[uint]
+	ThumbnailGenerationLock      *lib.IDLock[uint]
+	VideoThumbnailGenerationLock *lib.IDLock[uint]
+	OfficeDocumentGenerationLock *lib.IDLock[uint]
+	ResourceHashLock             *lib.IDLock[string]
+	VersionUploadLock            *lib.IDLock[uint]
 }
 
 type MahresourcesContext struct {
@@ -243,11 +251,14 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		DefaultResourceCategoryID: 1,
 	}
 
-	// Initialize download manager with timeout config
-	ctx.downloadManager = download_queue.NewDownloadManager(ctx, download_queue.TimeoutConfig{
+	// Initialize download manager with timeout config and concurrency/retention config
+	ctx.downloadManager = download_queue.NewDownloadManagerWithConfig(ctx, download_queue.TimeoutConfig{
 		ConnectTimeout: config.RemoteResourceConnectTimeout,
 		IdleTimeout:    config.RemoteResourceIdleTimeout,
 		OverallTimeout: config.RemoteResourceOverallTimeout,
+	}, download_queue.ManagerConfig{
+		Concurrency:     config.MaxJobConcurrency,
+		ExportRetention: config.ExportRetention,
 	})
 
 	// Initialize plugin manager unless disabled
@@ -696,6 +707,8 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		MaxDBConnections:             cfg.MaxDBConnections,
 		FileSavePath:                 cfg.FileSavePath,
 		SkipFTS:                      cfg.SkipFTS,
+		MaxJobConcurrency:            cfg.MaxJobConcurrency,
+		ExportRetention:              cfg.ExportRetention,
 	}), db, mainFs
 }
 

@@ -23,6 +23,15 @@ const (
 	PausedJobRetentionDuration = 24 * time.Hour
 )
 
+// ManagerConfig controls runtime parameters of the DownloadManager. Zero
+// values fall back to the package constants MaxConcurrentDownloads and
+// JobRetentionDuration.
+type ManagerConfig struct {
+	Concurrency     int           // max concurrent jobs across all sources
+	JobRetention    time.Duration // how long completed/failed jobs linger in memory
+	ExportRetention time.Duration // how long completed export tars live on disk
+}
+
 // ResourceCreator is the interface needed to create resources
 // This avoids a circular dependency with application_context
 type ResourceCreator interface {
@@ -38,28 +47,42 @@ type TimeoutConfig struct {
 
 // DownloadManager manages background download jobs
 type DownloadManager struct {
-	mu            sync.RWMutex
-	jobs          map[string]*DownloadJob
-	jobOrder      []string // Maintains insertion order
-	resourceCtx   ResourceCreator
-	timeoutConfig TimeoutConfig
-	semaphore     chan struct{}
-	subscribers   map[chan JobEvent]struct{}
-	subscribersMu sync.RWMutex
-	cleanupTicker *time.Ticker
-	done          chan struct{}
+	mu              sync.RWMutex
+	jobs            map[string]*DownloadJob
+	jobOrder        []string // Maintains insertion order
+	resourceCtx     ResourceCreator
+	timeoutConfig   TimeoutConfig
+	semaphore       chan struct{}
+	subscribers     map[chan JobEvent]struct{}
+	subscribersMu   sync.RWMutex
+	cleanupTicker   *time.Ticker
+	done            chan struct{}
+	concurrency     int
+	jobRetention    time.Duration
+	exportRetention time.Duration
 }
 
-// NewDownloadManager creates a new download manager
-func NewDownloadManager(resourceCtx ResourceCreator, timeoutConfig TimeoutConfig) *DownloadManager {
+// NewDownloadManagerWithConfig constructs a DownloadManager with the given
+// runtime config. Zero-value Concurrency and JobRetention fall back to the
+// package constants so existing call sites that don't care stay simple.
+func NewDownloadManagerWithConfig(resourceCtx ResourceCreator, timeoutConfig TimeoutConfig, cfg ManagerConfig) *DownloadManager {
+	if cfg.Concurrency <= 0 {
+		cfg.Concurrency = MaxConcurrentDownloads
+	}
+	if cfg.JobRetention <= 0 {
+		cfg.JobRetention = JobRetentionDuration
+	}
 	dm := &DownloadManager{
-		jobs:          make(map[string]*DownloadJob),
-		jobOrder:      make([]string, 0),
-		resourceCtx:   resourceCtx,
-		timeoutConfig: timeoutConfig,
-		semaphore:     make(chan struct{}, MaxConcurrentDownloads),
-		subscribers:   make(map[chan JobEvent]struct{}),
-		done:          make(chan struct{}),
+		jobs:            make(map[string]*DownloadJob),
+		jobOrder:        make([]string, 0),
+		resourceCtx:     resourceCtx,
+		timeoutConfig:   timeoutConfig,
+		semaphore:       make(chan struct{}, cfg.Concurrency),
+		subscribers:     make(map[chan JobEvent]struct{}),
+		done:            make(chan struct{}),
+		concurrency:     cfg.Concurrency,
+		jobRetention:    cfg.JobRetention,
+		exportRetention: cfg.ExportRetention,
 	}
 
 	// Start cleanup goroutine
@@ -68,6 +91,17 @@ func NewDownloadManager(resourceCtx ResourceCreator, timeoutConfig TimeoutConfig
 
 	return dm
 }
+
+// NewDownloadManager is the legacy constructor. Kept as a thin wrapper so
+// existing callers that don't care about concurrency/retention tuning still
+// work. Delegates to NewDownloadManagerWithConfig.
+func NewDownloadManager(resourceCtx ResourceCreator, timeoutConfig TimeoutConfig) *DownloadManager {
+	return NewDownloadManagerWithConfig(resourceCtx, timeoutConfig, ManagerConfig{})
+}
+
+// ExportRetention returns how long completed group-export tars should
+// linger on disk before the sweep deletes them.
+func (m *DownloadManager) ExportRetention() time.Duration { return m.exportRetention }
 
 // generateShortID creates a short random ID for display
 func generateShortID() string {
@@ -527,13 +561,17 @@ func (dm *DownloadManager) cleanupLoop() {
 	}
 }
 
-// cleanupOldJobs removes jobs that completed more than JobRetentionDuration ago
+// cleanupOldJobs removes jobs that completed more than jobRetention ago
 // and paused jobs older than PausedJobRetentionDuration
 func (dm *DownloadManager) cleanupOldJobs() {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
-	completedCutoff := time.Now().Add(-JobRetentionDuration)
+	retention := dm.jobRetention
+	if retention <= 0 {
+		retention = JobRetentionDuration
+	}
+	completedCutoff := time.Now().Add(-retention)
 	pausedCutoff := time.Now().Add(-PausedJobRetentionDuration)
 	newOrder := make([]string, 0, len(dm.jobOrder))
 
