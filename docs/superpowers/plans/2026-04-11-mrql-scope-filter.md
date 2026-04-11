@@ -1011,17 +1011,84 @@ func (ctx *MahresourcesContext) ExecuteMRQLGrouped(reqCtx context.Context, q *mr
 
 Update `executeAggregatedQuery` and `executeBucketedQuery` signatures to accept `TranslateOptions` and pass them through to `TranslateGroupBy`/`TranslateGroupByKeys`/`TranslateGroupByBucket`.
 
-- [ ] **Step 4: Update plugin_mrql_adapter.go**
+- [ ] **Step 4: Update plugin_mrql_adapter.go — explicit SCOPE wins over plugin scope**
 
-In `application_context/plugin_mrql_adapter.go`, update `ExecuteMRQL` (line 51):
+The plugin adapter currently passes `opts.ScopeID` (resolved by the Lua/Go bridge from entity/parent/root/global) straight into `ExecuteSingleEntityWithScope` and `ExecuteMRQLGroupedWithScope`. If the MRQL query string itself contains `SCOPE 42`, the parsed AST has `Scope` set, but the adapter ignores it and overwrites with the plugin-provided scope.
+
+Fix: after parsing, check `parsed.Scope`. If present, resolve it and use it instead of `opts.ScopeID`:
 
 ```go
-translateOpts := mrql.TranslateOptions{}
+func (a *pluginMRQLAdapter) ExecuteMRQL(reqCtx context.Context, query string, opts plugin_system.MRQLExecOptions) (*plugin_system.MRQLResult, error) {
+	parsed, err := mrql.Parse(query)
+	if err != nil {
+		return nil, err
+	}
+	if err := mrql.Validate(parsed); err != nil {
+		return nil, err
+	}
+
+	if opts.Limit > 0 {
+		parsed.Limit = opts.Limit
+	}
+
+	entityType := mrql.ExtractEntityType(parsed)
+	if entityType == mrql.EntityUnspecified {
+		return nil, fmt.Errorf("MRQL query must specify an entity type (e.g. type=resource)")
+	}
+	parsed.EntityType = entityType
+
+	// Explicit SCOPE in query string takes precedence over plugin-provided scope
+	scopeID := opts.ScopeID
+	if parsed.Scope != nil {
+		resolvedID, err := mrql.ResolveScope(parsed, a.ctx.db)
+		if err != nil {
+			return nil, err
+		}
+		scopeID = resolvedID
+	}
+
+	// GROUP BY path
+	if parsed.GroupBy != nil {
+		if opts.Buckets > 0 {
+			parsed.BucketLimit = opts.Buckets
+		}
+		grouped, err := a.ctx.ExecuteMRQLGroupedWithScope(reqCtx, parsed, scopeID)
+		if err != nil {
+			return nil, err
+		}
+		return a.convertGrouped(grouped), nil
+	}
+
+	// Flat path
+	translateOpts := mrql.TranslateOptions{}
+	result, err := a.ctx.ExecuteSingleEntityWithScope(reqCtx, parsed, entityType, translateOpts, scopeID)
+	if err != nil {
+		return nil, err
+	}
+	return a.convertFlat(result), nil
+}
 ```
 
-This already passes `TranslateOptions{}` to `ExecuteSingleEntityWithScope`. The scope is set inside that method from the `scopeID` parameter. No change needed here — the adapter already passes `opts.ScopeID` to the WithScope methods.
+- [ ] **Step 5: Write test for explicit SCOPE precedence in plugin path**
 
-- [ ] **Step 5: Run Go unit tests**
+Add to `application_context/plugin_mrql_adapter_test.go` (or wherever adapter tests live — if no test file exists yet, the translator tests in Task 4 can cover the translator-level behavior, and an E2E test in Task 9 should cover the full plugin path):
+
+The key test scenario: a data-views shortcode passes `scope="entity"` (resolving to group 1), but the MRQL query string contains `SCOPE 3`. The query should be scoped to group 3's subtree, not group 1's.
+
+If unit-testing the adapter directly isn't practical (it requires a full `MahresourcesContext`), add this as a targeted E2E test in Task 9:
+
+```typescript
+test('explicit SCOPE in data-views MRQL overrides plugin scope attribute', async ({ page }) => {
+  // Create hierarchy: groupA -> groupB, groupC (unrelated)
+  // Create resource owned by groupC
+  // On groupA's page, use a data-views shortcode with scope="entity" and
+  // mrql='type = "resource" SCOPE <groupC.id>'
+  // Verify the resource from groupC appears (explicit SCOPE wins)
+  // Verify resources from groupA's subtree do NOT appear
+});
+```
+
+- [ ] **Step 6: Run Go unit tests**
 
 Run: `cd /Users/egecan/Code/mahresources && go test --tags 'json1 fts5' ./... -count=1`
 Expected: All PASS. The behavioral change (flat → tree) only affects scoped queries, and existing tests should still pass since the test data hierarchy hasn't changed.
