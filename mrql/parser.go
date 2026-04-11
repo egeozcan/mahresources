@@ -43,12 +43,21 @@ func (p *parser) parseQuery() (*Query, error) {
 	// Parse optional WHERE expression — but only if the next token looks like
 	// the start of an expression. ORDER BY, LIMIT, OFFSET signal no WHERE clause.
 	tok := p.lexer.Peek()
-	if tok.Type != TokenEOF && tok.Type != TokenOrderBy && tok.Type != TokenLimit && tok.Type != TokenOffset && tok.Type != TokenGroupBy {
+	if tok.Type != TokenEOF && tok.Type != TokenOrderBy && tok.Type != TokenLimit && tok.Type != TokenOffset && tok.Type != TokenGroupBy && tok.Type != TokenScope {
 		var err error
 		q.Where, err = p.parseExpression()
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	// Optional SCOPE
+	if p.lexer.Peek().Type == TokenScope {
+		scope, err := p.parseScope()
+		if err != nil {
+			return nil, err
+		}
+		q.Scope = scope
 	}
 
 	// Optional GROUP BY
@@ -458,6 +467,58 @@ func (p *parser) parseValue() (Node, error) {
 			Message: fmt.Sprintf("expected value (string, number, date, function, or identifier), got %q", tok.Value),
 			Pos:     tok.Pos,
 			Length:  tok.Length,
+		}
+	}
+}
+
+// parseScope = "SCOPE" (NUMBER | STRING)
+// SCOPE accepts a plain integer (group ID) or a string (group name).
+// Unit suffixes (kb, mb, gb) are not allowed for scope IDs.
+func (p *parser) parseScope() (*ScopeClause, error) {
+	scopeTok := p.lexer.Next() // consume SCOPE
+
+	valTok := p.lexer.Next()
+	switch valTok.Type {
+	case TokenNumber:
+		// Reject unit suffixes — scope IDs must be plain integers.
+		lower := strings.ToLower(valTok.Value)
+		if strings.HasSuffix(lower, "kb") || strings.HasSuffix(lower, "mb") || strings.HasSuffix(lower, "gb") {
+			return nil, &ParseError{
+				Message: fmt.Sprintf("SCOPE requires a plain integer or string, got %q", valTok.Value),
+				Pos:     valTok.Pos,
+				Length:  valTok.Length,
+			}
+		}
+		val, err := strconv.ParseFloat(valTok.Value, 64)
+		if err != nil {
+			return nil, &ParseError{
+				Message: fmt.Sprintf("invalid number in SCOPE %q: %v", valTok.Value, err),
+				Pos:     valTok.Pos,
+				Length:  valTok.Length,
+			}
+		}
+		rawBytes := int64(val)
+		return &ScopeClause{
+			Token: scopeTok,
+			Value: &NumberLiteral{
+				Token: valTok,
+				Value: val,
+				Unit:  "",
+				Raw:   rawBytes,
+			},
+		}, nil
+
+	case TokenString:
+		return &ScopeClause{
+			Token: scopeTok,
+			Value: &StringLiteral{Token: valTok, Value: valTok.Value},
+		}, nil
+
+	default:
+		return nil, &ParseError{
+			Message: fmt.Sprintf("expected number or string after SCOPE, got %q", valTok.Value),
+			Pos:     valTok.Pos,
+			Length:  valTok.Length,
 		}
 	}
 }

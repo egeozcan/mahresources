@@ -1186,3 +1186,72 @@ func TestParser_MetaSubpathParsing(t *testing.T) {
 		}
 	})
 }
+
+func TestParserScopeNumeric(t *testing.T) {
+	q := mustParse(t, `type = "resource" SCOPE 42`)
+	if q.Scope == nil {
+		t.Fatal("expected Scope to be set")
+	}
+	num, ok := q.Scope.Value.(*NumberLiteral)
+	if !ok {
+		t.Fatalf("expected NumberLiteral, got %T", q.Scope.Value)
+	}
+	if num.Value != 42 {
+		t.Errorf("expected scope value 42, got %v", num.Value)
+	}
+}
+
+func TestParserScopeString(t *testing.T) {
+	q := mustParse(t, `type = "resource" SCOPE "My Project"`)
+	if q.Scope == nil {
+		t.Fatal("expected Scope to be set")
+	}
+	str, ok := q.Scope.Value.(*StringLiteral)
+	if !ok {
+		t.Fatalf("expected StringLiteral, got %T", q.Scope.Value)
+	}
+	if str.Value != "My Project" {
+		t.Errorf("expected scope value %q, got %q", "My Project", str.Value)
+	}
+}
+
+func TestParserScopeBeforeGroupBy(t *testing.T) {
+	q := mustParse(t, `type = "resource" SCOPE 7 GROUP BY contentType COUNT() ORDER BY count DESC`)
+	if q.Scope == nil {
+		t.Fatal("expected Scope to be set")
+	}
+	if q.GroupBy == nil {
+		t.Fatal("expected GroupBy to be set")
+	}
+	if len(q.OrderBy) == 0 {
+		t.Fatal("expected OrderBy to be set")
+	}
+}
+
+func TestParserScopeAlone(t *testing.T) {
+	q := mustParse(t, `SCOPE 123`)
+	if q.Where != nil {
+		t.Fatal("expected Where to be nil")
+	}
+	if q.Scope == nil {
+		t.Fatal("expected Scope to be set")
+	}
+	num := q.Scope.Value.(*NumberLiteral)
+	if num.Value != 123 {
+		t.Errorf("expected 123, got %v", num.Value)
+	}
+}
+
+func TestParserScopeInvalidValue(t *testing.T) {
+	pe := mustFail(t, `type = "resource" SCOPE`)
+	if pe == nil {
+		t.Fatal("expected parse error")
+	}
+}
+
+func TestParserNoScope(t *testing.T) {
+	q := mustParse(t, `type = "resource" ORDER BY name`)
+	if q.Scope != nil {
+		t.Error("expected Scope to be nil")
+	}
+}
