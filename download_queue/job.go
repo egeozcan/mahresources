@@ -20,23 +20,36 @@ const (
 	JobStatusPaused      JobStatus = "paused"
 )
 
+const (
+	JobSourceDownload    = "download"
+	JobSourcePlugin      = "plugin"
+	JobSourceGroupExport = "group-export"
+)
+
 // DownloadJob represents a single remote URL download task
 type DownloadJob struct {
-	ID              string    `json:"id"`
-	URL             string    `json:"url"`
-	Status          JobStatus `json:"status"`
-	Progress        int64     `json:"progress"`
-	TotalSize       int64     `json:"totalSize"`
-	ProgressPercent float64   `json:"progressPercent"`
-	Error           string    `json:"error,omitempty"`
-	ResourceID      *uint     `json:"resourceId,omitempty"`
-	CreatedAt       time.Time `json:"createdAt"`
+	ID              string     `json:"id"`
+	URL             string     `json:"url"`
+	Status          JobStatus  `json:"status"`
+	Progress        int64      `json:"progress"`
+	TotalSize       int64      `json:"totalSize"`
+	ProgressPercent float64    `json:"progressPercent"`
+	Error           string     `json:"error,omitempty"`
+	ResourceID      *uint      `json:"resourceId,omitempty"`
+	CreatedAt       time.Time  `json:"createdAt"`
 	StartedAt       *time.Time `json:"startedAt,omitempty"`
 	CompletedAt     *time.Time `json:"completedAt,omitempty"`
-	Source          string     `json:"source"` // "download" or "plugin"
+	Source          string     `json:"source"` // "download", "plugin", or "group-export"
+
+	Phase      string   `json:"phase,omitempty"`
+	PhaseCount int64    `json:"phaseCount,omitempty"`
+	PhaseTotal int64    `json:"phaseTotal,omitempty"`
+	ResultPath string   `json:"resultPath,omitempty"`
+	Warnings   []string `json:"warnings,omitempty"`
 
 	// Internal fields (not serialized to JSON)
 	creator *query_models.ResourceFromRemoteCreator
+	runFn   func(ctx context.Context, j *DownloadJob, p ProgressSink) error
 	ctx     context.Context
 	cancel  context.CancelFunc
 	mu      sync.RWMutex
@@ -164,6 +177,35 @@ func (j *DownloadJob) CanResume() bool {
 func (j *DownloadJob) CanRetry() bool {
 	status := j.GetStatus()
 	return status == JobStatusFailed || status == JobStatusCancelled
+}
+
+// SetPhase safely sets the job's current phase name.
+func (j *DownloadJob) SetPhase(phase string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.Phase = phase
+}
+
+// SetPhaseProgress safely sets the per-phase progress counters.
+func (j *DownloadJob) SetPhaseProgress(current, total int64) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.PhaseCount = current
+	j.PhaseTotal = total
+}
+
+// AppendWarning safely appends a warning message to the job.
+func (j *DownloadJob) AppendWarning(msg string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.Warnings = append(j.Warnings, msg)
+}
+
+// SetResultPath safely sets the result file path for the job.
+func (j *DownloadJob) SetResultPath(path string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.ResultPath = path
 }
 
 // JobEvent represents a change in job state for SSE broadcasting

@@ -12,12 +12,12 @@ import (
 // ProgressReader wraps an io.Reader and tracks bytes read
 // Implements interfaces.File (io.Reader + io.Closer)
 type ProgressReader struct {
-	reader      io.Reader
-	downloaded  int64
-	onProgress  func(downloaded int64)
-	onComplete  func()
-	completed   bool
-	completeMu  sync.Mutex
+	reader     io.Reader
+	downloaded int64
+	onProgress func(downloaded int64)
+	onComplete func()
+	completed  bool
+	completeMu sync.Mutex
 }
 
 // NewProgressReader creates a new progress-tracking reader

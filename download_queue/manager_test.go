@@ -2,6 +2,7 @@ package download_queue
 
 import (
 	"context"
+	"errors"
 	"mahresources/models/query_models"
 	"strings"
 	"testing"
@@ -36,10 +37,13 @@ func addTestJob(dm *DownloadManager, id string, status JobStatus) *DownloadJob {
 // TestMakeRoomForNewJob tests the eviction priority logic
 func TestMakeRoomForNewJob(t *testing.T) {
 	tests := []struct {
-		name           string
-		existingJobs   []struct{ id string; status JobStatus }
-		expectRoom     bool
-		expectEvicted  string // empty if no eviction expected
+		name         string
+		existingJobs []struct {
+			id     string
+			status JobStatus
+		}
+		expectRoom    bool
+		expectEvicted string // empty if no eviction expected
 	}{
 		{
 			name:         "empty queue has room",
@@ -48,7 +52,10 @@ func TestMakeRoomForNewJob(t *testing.T) {
 		},
 		{
 			name: "evicts oldest completed first",
-			existingJobs: []struct{ id string; status JobStatus }{
+			existingJobs: []struct {
+				id     string
+				status JobStatus
+			}{
 				{"completed1", JobStatusCompleted},
 				{"failed1", JobStatusFailed},
 				{"completed2", JobStatusCompleted},
@@ -58,7 +65,10 @@ func TestMakeRoomForNewJob(t *testing.T) {
 		},
 		{
 			name: "evicts failed when no completed",
-			existingJobs: []struct{ id string; status JobStatus }{
+			existingJobs: []struct {
+				id     string
+				status JobStatus
+			}{
 				{"failed1", JobStatusFailed},
 				{"pending1", JobStatusPending},
 				{"cancelled1", JobStatusCancelled},
@@ -68,7 +78,10 @@ func TestMakeRoomForNewJob(t *testing.T) {
 		},
 		{
 			name: "evicts cancelled when no completed or failed",
-			existingJobs: []struct{ id string; status JobStatus }{
+			existingJobs: []struct {
+				id     string
+				status JobStatus
+			}{
 				{"pending1", JobStatusPending},
 				{"cancelled1", JobStatusCancelled},
 				{"downloading1", JobStatusDownloading},
@@ -78,7 +91,10 @@ func TestMakeRoomForNewJob(t *testing.T) {
 		},
 		{
 			name: "cannot evict when all active",
-			existingJobs: []struct{ id string; status JobStatus }{
+			existingJobs: []struct {
+				id     string
+				status JobStatus
+			}{
 				{"pending1", JobStatusPending},
 				{"downloading1", JobStatusDownloading},
 				{"processing1", JobStatusProcessing},
@@ -87,7 +103,10 @@ func TestMakeRoomForNewJob(t *testing.T) {
 		},
 		{
 			name: "cannot evict when all paused",
-			existingJobs: []struct{ id string; status JobStatus }{
+			existingJobs: []struct {
+				id     string
+				status JobStatus
+			}{
 				{"paused1", JobStatusPaused},
 				{"paused2", JobStatusPaused},
 			},
@@ -95,7 +114,10 @@ func TestMakeRoomForNewJob(t *testing.T) {
 		},
 		{
 			name: "cannot evict mixed active and paused",
-			existingJobs: []struct{ id string; status JobStatus }{
+			existingJobs: []struct {
+				id     string
+				status JobStatus
+			}{
 				{"pending1", JobStatusPending},
 				{"paused1", JobStatusPaused},
 				{"downloading1", JobStatusDownloading},
@@ -104,8 +126,11 @@ func TestMakeRoomForNewJob(t *testing.T) {
 		},
 		{
 			name: "prefers completed over failed even if failed is older",
-			existingJobs: []struct{ id string; status JobStatus }{
-				{"failed1", JobStatusFailed},      // oldest
+			existingJobs: []struct {
+				id     string
+				status JobStatus
+			}{
+				{"failed1", JobStatusFailed},       // oldest
 				{"completed1", JobStatusCompleted}, // newer but preferred
 				{"pending1", JobStatusPending},
 			},
@@ -167,7 +192,6 @@ func TestMakeRoomForNewJob(t *testing.T) {
 		})
 	}
 }
-
 
 // TestEvictJob tests the eviction helper function
 func TestEvictJob(t *testing.T) {
@@ -413,8 +437,11 @@ func TestEvictionOrder(t *testing.T) {
 // TestActiveCount tests the ActiveCount method
 func TestActiveCount(t *testing.T) {
 	tests := []struct {
-		name     string
-		jobs     []struct{ id string; status JobStatus }
+		name string
+		jobs []struct {
+			id     string
+			status JobStatus
+		}
 		expected int
 	}{
 		{
@@ -424,7 +451,10 @@ func TestActiveCount(t *testing.T) {
 		},
 		{
 			name: "all active",
-			jobs: []struct{ id string; status JobStatus }{
+			jobs: []struct {
+				id     string
+				status JobStatus
+			}{
 				{"pending", JobStatusPending},
 				{"downloading", JobStatusDownloading},
 				{"processing", JobStatusProcessing},
@@ -433,7 +463,10 @@ func TestActiveCount(t *testing.T) {
 		},
 		{
 			name: "mixed statuses",
-			jobs: []struct{ id string; status JobStatus }{
+			jobs: []struct {
+				id     string
+				status JobStatus
+			}{
 				{"pending", JobStatusPending},
 				{"completed", JobStatusCompleted},
 				{"failed", JobStatusFailed},
@@ -443,7 +476,10 @@ func TestActiveCount(t *testing.T) {
 		},
 		{
 			name: "none active",
-			jobs: []struct{ id string; status JobStatus }{
+			jobs: []struct {
+				id     string
+				status JobStatus
+			}{
 				{"completed", JobStatusCompleted},
 				{"failed", JobStatusFailed},
 				{"cancelled", JobStatusCancelled},
@@ -774,4 +810,102 @@ func TestCleanupPausedJobs(t *testing.T) {
 	if _, exists := dm.jobs["new_paused"]; !exists {
 		t.Error("recently paused job should still exist")
 	}
+}
+
+func TestSubmitJob_RunsRunFnAndCompletes(t *testing.T) {
+	dm := createTestManager()
+
+	called := make(chan struct{})
+	job, err := dm.SubmitJob(JobSourceGroupExport, "preparing", func(ctx context.Context, j *DownloadJob, p ProgressSink) error {
+		p.SetPhase("running")
+		p.UpdateProgress(50, 100)
+		close(called)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("SubmitJob: %v", err)
+	}
+
+	select {
+	case <-called:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runFn never invoked")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if job.GetStatus() == JobStatusCompleted {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("job final status = %s, want completed", job.GetStatus())
+}
+
+func TestSubmitJob_FailureRecordsError(t *testing.T) {
+	dm := createTestManager()
+
+	job, err := dm.SubmitJob(JobSourceGroupExport, "init", func(ctx context.Context, j *DownloadJob, p ProgressSink) error {
+		return errors.New("boom")
+	})
+	if err != nil {
+		t.Fatalf("SubmitJob: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if job.GetStatus() == JobStatusFailed {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if job.GetStatus() != JobStatusFailed {
+		t.Fatalf("status = %s", job.GetStatus())
+	}
+	if !strings.Contains(job.Error, "boom") {
+		t.Fatalf("error = %q", job.Error)
+	}
+}
+
+func TestSubmitJob_ProgressSinkBroadcastsToSubscribers(t *testing.T) {
+	dm := createTestManager()
+
+	events, unsub := dm.Subscribe()
+	defer unsub()
+
+	releaseMidFlight := make(chan struct{})
+	done := make(chan struct{})
+	_, err := dm.SubmitJob(JobSourceGroupExport, "init", func(ctx context.Context, j *DownloadJob, p ProgressSink) error {
+		p.SetPhase("walking")
+		p.UpdateProgress(10, 100)
+		p.AppendWarning("noticed X")
+		<-releaseMidFlight
+		close(done)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("SubmitJob: %v", err)
+	}
+
+	sawPhase := false
+	sawWarning := false
+	deadline := time.After(2 * time.Second)
+	for !(sawPhase && sawWarning) {
+		select {
+		case ev := <-events:
+			if ev.Type != "updated" {
+				continue
+			}
+			if ev.Job.Phase == "walking" {
+				sawPhase = true
+			}
+			if len(ev.Job.Warnings) > 0 {
+				sawWarning = true
+			}
+		case <-deadline:
+			t.Fatalf("missed mid-flight SSE updates (phase=%v warning=%v)", sawPhase, sawWarning)
+		}
+	}
+	close(releaseMidFlight)
+	<-done
 }
