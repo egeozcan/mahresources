@@ -50,6 +50,7 @@ A personal information management system built in Go. Organize files, notes, and
 - **Bulk Operations** — Tag, merge, delete, or update many items at once
 - **Plugin System** — Extend functionality with Lua plugins, custom actions, and hooks
 - **Dual API** — Every route serves both HTML and JSON (append `.json` or set `Accept: application/json`)
+- **Group Export / Import** — export a group subtree (with resources, notes, tags, categories) to a self-contained tar archive via the `/admin/export` page, HTTP API, or `mr group export` CLI
 - **SQLite & Postgres** — Choose the database that fits your needs
 
 ## Quick Start
