@@ -56,8 +56,8 @@ For large files or slow connections, enable **Download in background**:
 Paste images or files from the clipboard to create resources:
 
 1. Copy an image or file to the clipboard (e.g., screenshot, copied image from a webpage)
-2. Press **Ctrl+V** / **Cmd+V** anywhere in the application
-3. A modal appears showing a preview of the pasted content
+2. Navigate to a group or note detail page, or a list view filtered by a single owner
+3. Press **Ctrl+V** / **Cmd+V** -- a modal appears showing a preview of the pasted content
 4. Set optional fields: tags, resource category, series
 5. Click **Upload**
 
@@ -296,9 +296,9 @@ The Download Cockpit manages background URL downloads and plugin action jobs:
 
 - Access it via the floating button in the bottom-right corner, or press **Cmd/Ctrl+Shift+D**
 - View active, pending, and completed downloads
-- Pause and resume active downloads
-- Retry failed downloads
-- Cancel pending downloads
+- Pause pending or downloading jobs, and resume paused ones
+- Retry failed or cancelled downloads
+- Cancel pending or downloading jobs
 
 Each download shows:
 - Source URL

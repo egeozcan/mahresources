@@ -1,5 +1,5 @@
 ---
-sidebar_position: 18
+sidebar_position: 21
 title: CLI (mr)
 ---
 
@@ -423,7 +423,10 @@ mr mrql --page 2 --limit 50 'type = resource AND contentType ~ "image/*"'
 | Flag | Description |
 |------|-------------|
 | `-f`, `--file` | Read query from a file |
-| `--limit` | Maximum number of results (default 50) |
+| `--limit` | Items per bucket for GROUP BY, or total items for regular queries |
+| `--buckets` | Groups per page for bucketed GROUP BY queries |
+| `--offset` | Bucket offset for cursor-based GROUP BY pagination |
+| `--render` | Request server-side template rendering via CustomMRQLResult |
 
 #### Subcommands
 

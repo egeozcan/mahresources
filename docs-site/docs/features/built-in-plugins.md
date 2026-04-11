@@ -5,9 +5,9 @@ title: Built-in Plugins
 
 # Built-in Plugins
 
-Mahresources ships with three plugins in the `plugins/` directory. They are not enabled by default. Enable them from the plugin management page or via the API.
+Mahresources ships with six plugins in the `plugins/` directory. They are not enabled by default. Enable them from the plugin management page or via the API.
 
-Each plugin registers shortcodes for use in custom template fields (CustomHeader, CustomSidebar, CustomSummary, CustomAvatar, CustomMRQLResult) and entity descriptions. Full interactive documentation with live previews is available on each plugin's documentation page after enabling.
+The data-views, meta-editors, and widgets plugins register shortcodes for use in custom template fields (CustomHeader, CustomSidebar, CustomSummary, CustomAvatar, CustomMRQLResult) and entity descriptions. Full interactive documentation with live previews is available on each plugin's documentation page after enabling.
 
 ## data-views
 
@@ -75,6 +75,41 @@ Dashboard-style shortcodes for category custom templates. These query owned enti
 | `tree` | Group hierarchy visualization (ancestors and children) |
 
 Usage: `[plugin:widgets:summary]`
+
+## example-blocks
+
+Demonstrates custom plugin block types for the note block editor via `mah.block_type()`.
+
+| Block Type | Description |
+|------------|-------------|
+| `counter` | A click counter block with label editing and +1 increment |
+
+Usage: Enable the plugin, then add a "Counter" block in the note block editor.
+
+## example-plugin
+
+Reference implementation demonstrating the plugin API: injections, hooks, pages, menus, settings, and the database/HTTP/KV APIs. Most API calls are commented out to serve as copy-paste examples.
+
+| Feature | Description |
+|---------|-------------|
+| Page injection | Footer banner controlled by a boolean setting |
+| Hooks | Logs note and resource creation events |
+| Custom page | `/plugins/example-plugin/info` displays the greeting setting |
+| Menu item | "Plugin Info" links to the custom page |
+
+## fal-ai
+
+AI-powered image processing using [fal.ai](https://fal.ai). Requires a FAL.AI API key configured in plugin settings.
+
+| Action | Description |
+|--------|-------------|
+| `colorize` | Colorize black and white images |
+| `upscale` | Upscale image resolution (multiple model options) |
+| `restore` | Restore and enhance old or damaged photos |
+| `edit` | Edit image using a text prompt |
+| `vectorize` | Convert raster image to SVG |
+
+Also provides a **Generate Image** page (`/plugins/fal-ai/generate`) for text-to-image generation.
 
 ## Enabling a Plugin
 

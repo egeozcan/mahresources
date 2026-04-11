@@ -15,9 +15,9 @@ For an overview of Group concepts (ownership vs relationships, deletion behavior
 1. Navigate to **Groups** in the top menu
 2. Click the **Add** button
 3. Fill in required fields:
-   - **Category** - The type of group (required in the create form; the API allows it to be empty)
    - **Name** - Display name (required)
 4. Optionally add:
+   - **Category** - The type of group
    - **Description** - Text describing the group. Type `@` to mention and link to resources, notes, other groups, or tags (see [Mentions](../features/mentions.md))
    - **URL** - External link associated with the group
    - **Tags** - Labels for the group itself

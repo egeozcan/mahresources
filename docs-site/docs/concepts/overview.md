@@ -76,7 +76,7 @@ Tags are flat labels applied to Resources, Notes, and Groups. Multiple Tags use 
 
 ### Metadata (Meta)
 
-Every Resource, Note, Group, and Tag has a `meta` field for storing arbitrary JSON data:
+Every Resource, Note, Group, Tag, and Series has a `meta` field for storing arbitrary JSON data:
 
 ```json
 {
@@ -87,7 +87,7 @@ Every Resource, Note, Group, and Tag has a `meta` field for storing arbitrary JS
 }
 ```
 
-Metadata is searchable via MetaQuery parameters and supports eight comparison operators (EQ, LI, NE, NL, GT, GE, LT, LE). Categories and Resource Categories can define a JSON Schema to validate metadata fields.
+Metadata is searchable via MetaQuery parameters and supports eight comparison operators (EQ, LI, NE, NL, GT, GE, LT, LE). Categories, Resource Categories, and Note Types can define a JSON Schema to validate metadata fields.
 
 ### Full-Text Search
 
@@ -147,4 +147,4 @@ These bulk operations apply to Resources, Groups, and Notes. The available opera
 | **Note** | Deleted independently |
 | **Category** | Groups are preserved; CategoryId set to NULL |
 | **Note Type** | Notes are preserved; NoteTypeId set to NULL |
-| **Resource Category** | Resources of that category have their category set to NULL (preserved) |
+| **Resource Category** | Resources are reassigned to the default resource category (preserved) |

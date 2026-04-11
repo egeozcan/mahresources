@@ -11,17 +11,17 @@ The Admin Overview page (`/admin/overview`) provides a real-time dashboard of yo
 
 The Server Health section displays live metrics fetched from `/v1/admin/server-stats`:
 
-- **Uptime** — how long the server has been running since last start
-- **Heap Alloc / Heap In Use** — current Go heap memory usage
-- **Sys Memory** — total memory obtained from the OS
-- **GC Runs** — number of garbage collection cycles
-- **Goroutines** — number of active goroutines
-- **Go Version** — the Go runtime version used to build the binary
-- **DB Type** — SQLite or PostgreSQL
-- **DB Size** — on-disk size of the database file (SQLite only)
-- **DB Connections** — connections in use vs. total open connections
-- **Hash Workers** — whether the background perceptual hash worker is enabled and how many workers are active
-- **Downloads Queued** — number of pending background downloads
+- **Uptime**: how long the server has been running since last start
+- **Heap Alloc / Heap In Use**: current Go heap memory usage
+- **Sys Memory**: total memory obtained from the OS
+- **GC Runs**: number of garbage collection cycles
+- **Goroutines**: number of active goroutines
+- **Go Version**: the Go runtime version used to build the binary
+- **DB Type**: SQLite or PostgreSQL
+- **DB Size**: on-disk size of the database file (SQLite only)
+- **DB Connections**: connections in use vs. total open connections
+- **Hash Workers**: whether the background perceptual hash worker is enabled and how many workers are active
+- **Downloads Queued**: number of pending background downloads
 
 The section uses `aria-live="polite"` so screen readers announce updates automatically.
 
@@ -42,21 +42,21 @@ The Configuration section (part of the data stats response at `/v1/admin/data-st
 
 The Data Overview section shows entity counts and storage totals, also from `/v1/admin/data-stats`:
 
-- **Total Storage** and **Version Storage** — formatted byte sizes for all files and version history
-- Entity count cards for Resources, Notes, Groups, Tags, Categories, Resource Categories, Note Types, Queries, Relations, Relation Types, Log Entries, and Resource Versions
+- **Total Storage** and **Version Storage**: formatted byte sizes for all files and version history
+- Entity count cards for Resources, Notes, Groups, Tags, Categories, Resource Categories, Note Types, Series, Queries, Relations, Relation Types, Log Entries, and Resource Versions
 - Each entity card is a clickable link to the corresponding list page
-- Weekly growth indicators appear below resource, note, and group counts
+- Growth indicators (7-day, 30-day, and 90-day) appear below resource, note, and group counts
 
 ## Detailed Statistics
 
 The Detailed Statistics section fetches from `/v1/admin/data-stats/expensive` asynchronously (computed on demand, so it may take a few seconds on large instances):
 
-- **Storage by Content Type** — a table of MIME types ranked by total bytes and file count
-- **Top Tags** — the tags associated with the most resources
-- **Top Categories** — the group categories with the most groups
-- **Orphaned Resources** — counts of resources without tags and resources without groups
-- **Similarity Detection** — total hashed images and similar pairs found by the perceptual hash worker
-- **Log Statistics** — total log entries, breakdown by log level, and errors in the last 24 hours
+- **Storage by Content Type**: a table of MIME types ranked by total bytes and file count
+- **Top Tags**: the tags associated with the most resources
+- **Top Categories**: the group categories with the most groups
+- **Orphaned Resources**: counts of resources without tags and resources without groups
+- **Similarity Detection**: total hashed images and similar pairs found by the perceptual hash worker
+- **Log Statistics**: total log entries, breakdown by log level, and errors in the last 24 hours
 
 A loading spinner is shown while expensive stats are being computed.
 

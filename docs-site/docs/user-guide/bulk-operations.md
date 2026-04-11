@@ -51,7 +51,7 @@ When you select one or more items, the bulk editor appears inline above the list
 | Add Groups | Yes | Yes | - | - |
 | Update Dimensions | Yes | - | - | - |
 | Compare | Yes (2 only) | - | - | - |
-| Merge | Detail page only | - | - | Yes |
+| Merge | Detail page only | - | Detail page only | Yes |
 | Delete | Yes | Yes | Yes | Yes |
 
 ## Adding Tags
@@ -60,7 +60,7 @@ When you select one or more items, the bulk editor appears inline above the list
 2. In the **Add Tag** form in the bulk editor, search for tags using autocomplete
 3. Click **Add**
 
-Tags are added immediately. Existing tags on items are preserved. If a tag doesn't exist yet, type the name and click **+** to create it.
+Tags are added immediately. Existing tags on items are preserved. If a tag does not exist yet, type the name and click **+** to create it.
 
 ## Removing Tags
 

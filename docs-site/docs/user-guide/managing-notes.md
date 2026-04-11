@@ -245,7 +245,7 @@ The block editor supports eight built-in block types. Plugins can register addit
 | Block Type | Description |
 |------------|-------------|
 | **Text** | Rich text content |
-| **Heading** | Section heading (H1, H2, or H3) |
+| **Heading** | Section heading (H1-H6) |
 | **Divider** | Horizontal separator line |
 | **Gallery** | Resource thumbnails in a grid layout |
 | **References** | Linked group cards |
@@ -266,7 +266,7 @@ Each block type has its own editing interface:
 
 **Text blocks**: A textarea appears for entering Markdown-formatted text.
 
-**Heading blocks**: A dropdown to select the heading level (H1, H2, H3) and a text input for the heading text.
+**Heading blocks**: A dropdown to select the heading level (H1-H6) and a text input for the heading text.
 
 **Divider blocks**: No content to edit - displays as a horizontal line.
 
@@ -324,7 +324,7 @@ The note's **Description** field (shown in the main content area and note lists)
 - When you edit the first text block, the Description field updates to match
 - When you create a new text block and it becomes the first one, its content becomes the Description
 - If you delete the first text block, the next text block's content becomes the Description
-- This ensures backward compatibility with notes that don't use the block editor
+- This ensures backward compatibility with notes that do not use the block editor
 
 ## Notes in Context
 

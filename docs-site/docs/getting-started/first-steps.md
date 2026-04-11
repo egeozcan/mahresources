@@ -82,10 +82,10 @@ Global search finds items across all entity types -- resources, notes, groups, t
 
 1. Press **Cmd+K** (Mac) or **Ctrl+K** (Windows/Linux)
 2. Start typing your search query
-3. Results appear instantly, showing Resources, Notes, and Groups
+3. Results appear instantly across all entity types (Resources, Notes, Groups, Tags, Categories, Queries, and more)
 4. Click a result to navigate directly to it
 
-Results come from the FTS5 full-text index and appear as you type.
+Results come from the FTS5 full-text index when available, falling back to LIKE-based search otherwise.
 
 ## Step 7: Explore Relationships
 

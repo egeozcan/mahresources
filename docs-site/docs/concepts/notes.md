@@ -21,16 +21,14 @@ A Note stores text content with optional start and end dates, a type classificat
 | `noteTypeId` | integer | Optional FK to a Note Type for categorization |
 | `shareToken` | string (nullable) | Optional 32-character token for public sharing, generated on demand (unique across all Notes) |
 | `ownerId` | integer | FK to owning Group |
+| `createdAt` | datetime | Creation timestamp |
+| `updatedAt` | datetime | Last update timestamp |
 
 ## Ownership and Deletion
 
 A Note can be owned by one Group. The owner appears as the Note's parent in the UI.
 
-:::warning Cascade on owner deletion
-
-Deleting the owner Group **deletes all Notes it owns**. This is a cascade delete (ON DELETE CASCADE), not a soft delete.
-
-:::
+When the owner Group is deleted, the Note's `ownerId` is set to NULL (ON DELETE SET NULL). The Note is preserved as unowned.
 
 ## Date Ranges
 
@@ -49,13 +47,16 @@ Deleting a Note Type **sets `noteTypeId` to NULL** on all Notes of that type. Th
 | Property | Description |
 |----------|-------------|
 | `name` | Type identifier (e.g., "Meeting Notes") |
+| `description` | Optional description of the note type |
 | `customHeader` | HTML template for the Note display header |
 | `customSidebar` | HTML template for the sidebar |
 | `customSummary` | HTML template for list views |
-| `description` | Optional description of the note type |
+| `customAvatar` | HTML template for Note avatars |
+| `customMRQLResult` | HTML template for rendering Notes of this type in MRQL query results |
+| `metaSchema` | JSON Schema for metadata validation on Notes of this type |
+| `sectionConfig` | JSON config controlling which sections are visible on Note detail pages |
 | `createdAt` | Creation timestamp |
 | `updatedAt` | Last update timestamp |
-| `customAvatar` | HTML template for Note avatars |
 
 Templates have access to the `note` object and its metadata via Pongo2 (Django-like) syntax:
 
@@ -95,7 +96,7 @@ The Note's `description` field syncs bidirectionally with the first text block:
 
 ### Ownership
 - One Group can own a Note (appears in the owner's "Owned Notes")
-- Deleting the owner cascades to the Note
+- Deleting the owner sets the Note's `ownerId` to NULL (Note preserved)
 
 ### Related Groups
 - Many-to-many via `groups_related_notes`

@@ -17,7 +17,7 @@ When you share a note:
 3. A share URL is created: `/s/{token}`
 4. The shared note is accessible on the share server (separate port)
 
-The share URL is unguessable - knowing one token doesn't help discover others. Tokens persist until you explicitly unshare the note.
+The share URL is unguessable. Knowing one token does not help discover others. Tokens persist until you explicitly unshare the note.
 
 ## What Gets Shared
 

@@ -20,9 +20,11 @@ On larger screens, the navigation displays as a two-tier horizontal menu:
 - **Resources** - File uploads and management
 - **Tags** - Labels for categorization
 - **Groups** - Hierarchical organization
-- **Queries** - Saved database queries
+- **MRQL** - MRQL query language interface
 
 **Admin dropdown** (click to expand):
+- **Overview** - Admin dashboard
+- **Queries** - Saved database queries
 - **Categories** - Group type definitions
 - **Resource Categories** - Resource classification types
 - **Relations** - Group-to-group relationships
@@ -87,11 +89,13 @@ List views offer alternative display modes. Use the selector at the top of the l
 - **Thumbnails** (default) - Card grid with thumbnail previews
 - **Details** - Full table with all columns
 - **Simple** - Compact list with essential information
+- **Timeline** - Chronological timeline view
 
 **Groups:**
 - **List** (default) - Standard list view
 - **Text** - Text-focused view
 - **Tree** - Hierarchical tree visualization
+- **Timeline** - Chronological timeline view
 
 ### Sidebar Filters
 
@@ -179,7 +183,7 @@ Each section includes:
 |----------|---------|--------|
 | Cmd/Ctrl + K | Any page | Open/close global search |
 | Cmd/Ctrl + Shift + D | Any page | Toggle Download Cockpit |
-| Cmd/Ctrl + V | Group or note detail pages | Open paste upload modal (when clipboard has content) |
+| Cmd/Ctrl + V | Any page with upload context | Open paste upload modal (requires group/note detail page, or list filtered by owner) |
 | Escape | Any page | Close dialogs, dropdowns, modals, and inline editors |
 
 ### Global Search
@@ -212,7 +216,7 @@ Each section includes:
 | Double-click | Toggle native resolution zoom |
 | Ctrl + Scroll | Zoom toward cursor position |
 | 1-9 | Toggle tag slot on active tab (requires quick tag panel open) |
-| Z / X / C / V / B | Switch to QUICK 1 / QUICK 2 / QUICK 3 / RECENT / LAST tab (requires quick tag panel open) |
+| Z / X / C / V / B | Switch to QUICK 1 / QUICK 2 / QUICK 3 / QUICK 4 / RECENT tab (requires quick tag panel open) |
 | 0 | Focus tag editor |
 | Escape | Close lightbox |
 
@@ -261,10 +265,10 @@ The panel has five tabs:
 | QUICK 1 | Z | 9 manually assigned tag slots |
 | QUICK 2 | X | 9 manually assigned tag slots |
 | QUICK 3 | C | 9 manually assigned tag slots |
-| RECENT | V | Auto-populated with the 9 most recently used tags |
-| LAST | B | Auto-populated with up to 9 tags from the most recently modified resource |
+| QUICK 4 | V | 9 manually assigned tag slots |
+| RECENT | B | Auto-populated with the 9 most recently used tags |
 
-Total configurable capacity: 27 slots across the three QUICK tabs.
+Total configurable capacity: 36 slots across the four QUICK tabs.
 
 **Setup:**
 
@@ -275,7 +279,7 @@ Total configurable capacity: 27 slots across the three QUICK tabs.
 
 **Usage:**
 
-- Press **Z/X/C/V/B** to switch tabs
+- Press **Z/X/C/V** to switch QUICK tabs, **B** for RECENT
 - Press **1** through **9** to toggle the tag in that slot on the active tab
 - Click a tag slot button to toggle the tag
 - Tags are applied or removed immediately via API calls

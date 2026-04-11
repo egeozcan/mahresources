@@ -14,6 +14,8 @@ A Series groups Resources that share common metadata -- pages of a scanned docum
 | `name` | string | Display name |
 | `slug` | string | Unique identifier (used for assignment during upload) |
 | `meta` | JSON | Shared metadata for all Resources in the Series |
+| `createdAt` | datetime | Creation timestamp |
+| `updatedAt` | datetime | Last update timestamp |
 
 ## Metadata Computation
 

@@ -163,15 +163,15 @@ Instead of writing JSON Schema by hand, you can use the visual editor to build s
 
 ### Editor Tabs
 
-**Edit Schema** — The visual builder with a tree view on the left and a property editor on the right. Click nodes in the tree to edit their type, constraints, and metadata. Use the "+ Property" button to add new fields.
+**Edit Schema**: The visual builder with a tree view on the left and a property editor on the right. Click nodes in the tree to edit their type, constraints, and metadata. Use the "+ Property" button to add new fields.
 
 ![Schema Editor Modal](/img/schema-editor-modal.png)
 
-**Preview Form** — Shows a live preview of the form that will be generated from your schema. This is exactly what users will see when creating or editing entities in this category.
+**Preview Form**: Shows a live preview of the form that will be generated from your schema. This is exactly what users will see when creating or editing entities in this category.
 
 ![Schema Editor Preview](/img/schema-editor-preview.png)
 
-**Raw JSON** — The full JSON Schema as editable text. Changes here sync with the visual editor. Use this for advanced schemas that the visual editor doesn't fully support.
+**Raw JSON**: The full JSON Schema as editable text. Changes here sync with the visual editor. Use this for advanced schemas that the visual editor does not fully support.
 
 ### Building a Schema
 
@@ -238,7 +238,7 @@ Object values are automatically detected and rendered as smart widgets when they
 |-------|---------------|---------|
 | **URL / Location** | `href` + `host` or `hostname` | Clickable link with host subtitle |
 | **GeoLocation** | `latitude` + `longitude` (or `lat` + `lng`) | Coordinates with OpenStreetMap link |
-| **Date Range** | `start` + `end` (both valid dates) | Formatted range "Mar 15, 2024 — Apr 1, 2024" |
+| **Date Range** | `start` + `end` (both valid dates) | Formatted range "Mar 15, 2024 - Apr 1, 2024" |
 | **Dimensions** | `width` + `height` (both numbers) | "1920 x 1080" |
 
 Shape detection runs automatically. To override it, use the `x-display` annotation (see below).
@@ -309,11 +309,11 @@ Schema-driven filter fields appear alongside the existing free-form metadata fil
 
 ### Known Limitations
 
-**Mixed-type enums with identical string representations** — Enum schemas that contain values of different JSON types which stringify the same way (e.g., `enum: [1, "1"]` or `enum: [null, "null"]`) cannot be distinguished in the search UI. HTML form controls carry string values only, so selecting "1" from such an enum will always submit the non-string variant (numeric `1`). Avoid mixing types that collide when converted to strings; use a single consistent type per enum instead.
+**Mixed-type enums with identical string representations**: Enum schemas that contain values of different JSON types which stringify the same way (e.g., `enum: [1, "1"]` or `enum: [null, "null"]`) cannot be distinguished in the search UI. HTML form controls carry string values only, so selecting "1" from such an enum will always submit the non-string variant (numeric `1`). Avoid mixing types that collide when converted to strings; use a single consistent type per enum instead.
 
-**Variant scoring does not penalize extra properties** — When the form renders `oneOf`/`anyOf` variants, it picks the best-matching branch by scoring discriminator fields (`const`, `enum`) and key overlap. Extra properties beyond what a variant declares do not reduce its score, even if the variant has `additionalProperties: false`. This is intentional: the scoring function selects the correct *variant*, not validates data. Extra keys are handled separately by `stripStaleKeys` on schema switch and by server-side validation.
+**Variant scoring does not penalize extra properties**: When the form renders `oneOf`/`anyOf` variants, it picks the best-matching branch by scoring discriminator fields (`const`, `enum`) and key overlap. Extra properties beyond what a variant declares do not reduce its score, even if the variant has `additionalProperties: false`. This is intentional: the scoring function selects the correct *variant*, not validates data. Extra keys are handled separately by `stripStaleKeys` on schema switch and by server-side validation.
 
-**Conditional branch data cleanup with `additionalProperties: true`** — When a schema uses `if/then/else` and the user switches between branches, data from the inactive branch is automatically removed for fields declared exclusively in that branch. For nested objects under shared keys, stale nested keys are only cleaned up when the nested schema sets `additionalProperties: false`. If both branches share an object property whose schema allows additional properties (the default), keys introduced by one branch will persist after switching to the other. To ensure clean branch transitions for nested objects, set `additionalProperties: false` on nested object schemas that differ between branches.
+**Conditional branch data cleanup with `additionalProperties: true`**: When a schema uses `if/then/else` and the user switches between branches, data from the inactive branch is automatically removed for fields declared exclusively in that branch. For nested objects under shared keys, stale nested keys are only cleaned up when the nested schema sets `additionalProperties: false`. If both branches share an object property whose schema allows additional properties (the default), keys introduced by one branch will persist after switching to the other. To ensure clean branch transitions for nested objects, set `additionalProperties: false` on nested object schemas that differ between branches.
 
 ## Free-Form Metadata
 

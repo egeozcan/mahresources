@@ -20,7 +20,9 @@ Relationship Types define the kinds of connections that can exist between groups
 | `description` | Explanation of what this relationship means |
 | `fromCategoryId` | Optional: restrict source to this Category |
 | `toCategoryId` | Optional: restrict target to this Category |
-| `backRelationId` | Optional: inverse relationship type |
+| `backRelationId` | Optional: FK to the inverse relationship type |
+| `createdAt` | Creation timestamp |
+| `updatedAt` | Last update timestamp |
 
 ### Examples
 
@@ -73,6 +75,8 @@ Relations are instances of RelationTypes connecting specific groups.
 | `fromGroupId` | Source group |
 | `toGroupId` | Target group |
 | `relationTypeId` | Type of relationship |
+| `createdAt` | Creation timestamp |
+| `updatedAt` | Last update timestamp |
 
 ### Creating Relations
 

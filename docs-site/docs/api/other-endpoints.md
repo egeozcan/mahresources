@@ -123,6 +123,14 @@ POST /v1/tag/editName?id={id}
 POST /v1/tag/editDescription?id={id}
 ```
 
+### Timeline
+
+```
+GET /v1/tags/timeline
+```
+
+See [Timeline Endpoints](#timeline-endpoints) below for details.
+
 ---
 
 ## Categories API
@@ -429,7 +437,7 @@ GET /v1/search
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `q` | string | **Required.** Search query |
-| `limit` | integer | Maximum results (default: 20, max: 200) |
+| `limit` | integer | Maximum results (default: 20, max: 50) |
 | `types` | string | Entity types to search (comma-separated: `resource`, `note`, `group`, `tag`, `category`, `query`, `relationType`, `noteType`, `resourceCategory`) |
 
 #### Example
@@ -770,6 +778,12 @@ POST /v1/series
 POST /v1/series/delete?Id={id}
 ```
 
+### Inline Editing
+
+```
+POST /v1/series/editName?id={id}
+```
+
 ### Remove Resource from Series
 
 ```
@@ -934,3 +948,50 @@ POST /v1/mrql/saved/run
 | `render=1` | Process `CustomMRQLResult` templates server-side |
 
 Looks up the saved query by ID first, then by name. Revalidates the saved query before execution (schema changes may have invalidated it since save time). Returns the same response format as the execute endpoint.
+
+---
+
+## Admin Stats API
+
+Server and data statistics for monitoring.
+
+### Server Stats
+
+```
+GET /v1/admin/server-stats
+```
+
+Returns server runtime information (memory usage, goroutines, uptime, etc.).
+
+### Data Stats
+
+```
+GET /v1/admin/data-stats
+```
+
+Returns entity counts and storage statistics.
+
+### Expensive Data Stats
+
+```
+GET /v1/admin/data-stats/expensive
+```
+
+Returns statistics that require heavier queries (e.g., orphan counts, duplicate detection). Separated from the main stats endpoint to avoid blocking.
+
+---
+
+## Timeline Endpoints
+
+Each major entity type has a timeline endpoint that returns entities grouped by time period, suitable for timeline/calendar views.
+
+| Entity | Endpoint |
+|--------|----------|
+| Resources | `GET /v1/resources/timeline` |
+| Notes | `GET /v1/notes/timeline` |
+| Groups | `GET /v1/groups/timeline` |
+| Tags | `GET /v1/tags/timeline` |
+| Categories | `GET /v1/categories/timeline` |
+| Queries | `GET /v1/queries/timeline` |
+
+Each accepts the same query parameters as the corresponding list endpoint, plus timeline-specific parameters for date range and granularity.

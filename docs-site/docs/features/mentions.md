@@ -45,14 +45,10 @@ When you save an entity, mentions in the description are parsed and synced to re
 | Entity | Behavior | Details |
 |--------|----------|---------|
 | Note | Additive | Mentions add relations. Removing a mention does not remove the relation. Parses both description and text block content. |
-| Group | Mixed | Tag and group mentions are additive. Resource and note mentions use replace: removing a mention removes the relation. |
+| Group | Additive | Mentions add relations. Removing a mention does not remove the relation. |
 | Resource | Additive | Mentions add relations. Removing a mention does not remove the relation. |
 
-:::warning Group mention syncing uses replace for resources and notes
-
-When you remove a `@[resource:...]` or `@[note:...]` mention from a group description, that relation is removed on save. This differs from notes and resources, where mentions are additive only.
-
-:::
+All three entity types use additive syncing: mentions create relations on save, but removing a mention does not remove the relation.
 
 ## Rendering
 

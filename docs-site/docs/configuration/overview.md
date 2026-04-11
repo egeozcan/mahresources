@@ -73,6 +73,7 @@ Command-line flags take precedence over environment variables, so a flag overrid
 | `-remote-connect-timeout` | `REMOTE_CONNECT_TIMEOUT` | Timeout for remote connections | `30s` |
 | `-remote-idle-timeout` | `REMOTE_IDLE_TIMEOUT` | Timeout for idle transfers | `60s` |
 | `-remote-overall-timeout` | `REMOTE_OVERALL_TIMEOUT` | Maximum total download time | `30m` |
+| `-mrql-query-timeout` | `MRQL_QUERY_TIMEOUT` | Maximum execution time for MRQL queries | `10s` |
 | `-share-port` | `SHARE_PORT` | Port for public share server | (disabled) |
 | `-share-bind-address` | `SHARE_BIND_ADDRESS` | Share server bind address | `0.0.0.0` |
 | `-cleanup-logs-days` | `CLEANUP_LOGS_DAYS` | Delete log entries older than N days on startup | `0` (disabled) |

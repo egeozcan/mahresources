@@ -174,7 +174,7 @@ COPY index.css vite.config.js postcss.config.js ./
 RUN npm run build-css && npm run build-js
 
 # Stage 2: Build Go binary
-FROM golang:1.24-alpine AS go-builder
+FROM golang:1.25-alpine AS go-builder
 RUN apk add --no-cache gcc musl-dev sqlite-dev
 WORKDIR /app
 COPY go.mod go.sum ./

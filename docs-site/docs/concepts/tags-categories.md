@@ -156,7 +156,9 @@ Categories define types of Groups with custom presentation and optional metadata
 | `customSidebar` | HTML template for group page sidebars |
 | `customSummary` | HTML template for list views |
 | `customAvatar` | HTML template for group avatars/icons |
+| `customMRQLResult` | HTML template for rendering Groups of this category in MRQL query results |
 | `metaSchema` | JSON Schema for metadata validation |
+| `sectionConfig` | JSON config controlling which sections are visible on group detail pages |
 | `createdAt` | Creation timestamp |
 | `updatedAt` | Last update timestamp |
 
@@ -342,7 +344,10 @@ Resource Categories work like Categories but apply to Resources instead of Group
 | `customSidebar` | HTML template for resource page sidebars |
 | `customSummary` | HTML template for list views |
 | `customAvatar` | HTML template for resource avatars/icons |
+| `customMRQLResult` | HTML template for rendering Resources of this category in MRQL query results |
 | `metaSchema` | JSON Schema for metadata validation |
+| `autoDetectRules` | JSON rules for auto-assigning this category on upload (see [Auto-Detect Rules](./resources.md#auto-detect-rules)) |
+| `sectionConfig` | JSON config controlling which sections are visible on resource detail pages |
 | `createdAt` | Creation timestamp |
 | `updatedAt` | Last update timestamp |
 
@@ -352,7 +357,7 @@ Resource Categories work like Categories but apply to Resources instead of Group
 - **Unique names**: Each name must be unique
 - **One-to-many**: A resource category can have multiple resources, but each resource has at most one resource category
 - **Custom presentation**: Templates customize how resources appear (same system as Categories for Groups)
-- **Deletion behavior**: Deleting a resource category preserves all resources; their ResourceCategoryId is set to NULL
+- **Deletion behavior**: Deleting a resource category reassigns all its resources to the default resource category
 
 ### Use Cases
 
@@ -403,6 +408,6 @@ GET /v1/resources?resourceCategoryId=1
 | Cardinality | Many-to-many | One-to-many | One-to-many | One-to-many |
 | Structure | Flat | Single level | Single level | Single level |
 | Presentation | None | Custom templates | Custom templates | Custom templates |
-| Validation | None | JSON Schema | JSON Schema | None |
+| Validation | None | JSON Schema | JSON Schema | JSON Schema |
 | Purpose | Cross-cutting labels | Group type definition | Resource type definition | Note type definition |
-| On delete | Removed from entities | Groups preserved (CategoryId → NULL) | Resources preserved (ResourceCategoryId → NULL) | Notes preserved (NoteTypeId → NULL) |
+| On delete | Removed from entities | Groups preserved (CategoryId -> NULL) | Resources reassigned to default category | Notes preserved (NoteTypeId -> NULL) |

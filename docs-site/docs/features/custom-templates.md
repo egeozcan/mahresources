@@ -289,6 +289,11 @@ The `sectionConfig` is a JSON object. Each key corresponds to a section on the d
   "metaJson": true,
   "metaSchemaDisplay": true,
   "description": true,
+  "merge": true,
+  "clone": true,
+  "treeLink": true,
+  "owner": true,
+  "breadcrumb": true,
   "ownEntities": {
     "state": "default",
     "ownNotes": true,

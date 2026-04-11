@@ -56,9 +56,8 @@ func (ctx *MahresourcesContext) syncMentionsForNote(note *models.Note) {
 }
 
 // syncMentionsForGroup parses @-mentions from the group's description
-// and adds any referenced entities as relations.
-// Tags and RelatedGroups use Append (also managed by form).
-// RelatedNotes and RelatedResources use Replace (solely mention-managed).
+// and adds any referenced entities as relations (additive only -- never
+// removes manually-added relations).
 func (ctx *MahresourcesContext) syncMentionsForGroup(group *models.Group) {
 	mentions := lib.ParseMentions(group.Description)
 	grouped := lib.GroupMentionsByType(mentions)

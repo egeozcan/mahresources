@@ -45,13 +45,7 @@ Company (Group)
 
 - Each Group can have one owner (parent)
 - Root Groups have no owner
-- Deleting a parent Group deletes its child Groups and owned Notes. Owned Resources are preserved with `ownerId` set to NULL.
-
-:::danger Group deletion cascades to child Groups and owned Notes
-
-When you delete a Group, its child Groups and owned Notes are cascade-deleted. Owned Resources survive with their owner set to NULL.
-
-:::
+- Deleting a parent Group sets `ownerId` to NULL on all owned entities (child Groups, Notes, and Resources are preserved as unowned)
 
 ### Ancestor Chain
 
@@ -65,9 +59,9 @@ The `GET /v1/group/tree/children` endpoint returns child Groups with counts, sup
 
 | Connection | Cardinality | Deletion Behavior |
 |------------|-------------|-------------------|
-| Owned Groups | one-to-many | CASCADE (deleted with parent) |
-| Owned Notes | one-to-many | CASCADE (deleted with parent) |
-| Owned Resources | one-to-many | SET NULL (Resources preserved) |
+| Owned Groups | one-to-many | SET NULL (child Groups preserved as unowned) |
+| Owned Notes | one-to-many | SET NULL (Notes preserved as unowned) |
+| Owned Resources | one-to-many | SET NULL (Resources preserved as unowned) |
 | Related Groups | many-to-many | Independent lifecycle |
 | Related Notes | many-to-many | Independent lifecycle |
 | Related Resources | many-to-many | Independent lifecycle |
@@ -81,11 +75,7 @@ Categories support:
 - JSON Schema metadata validation via `metaSchema`
 - Category-based filtering in queries
 
-:::danger Deleting a Category cascades to Groups
-
-Deleting a Category cascade-deletes all Groups assigned to that Category.
-
-:::
+Deleting a Category sets `categoryId` to NULL on all Groups of that Category. The Groups are preserved, just uncategorized.
 
 ## Name Search
 

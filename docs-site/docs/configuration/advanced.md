@@ -157,6 +157,19 @@ Configure timeouts for downloading remote resources:
   ...
 ```
 
+## MRQL Query Timeout
+
+Limits the maximum execution time for MRQL (Mahresources Query Language) queries:
+
+| Flag | Env Variable | Default | Description |
+|------|--------------|---------|-------------|
+| `-mrql-query-timeout` | `MRQL_QUERY_TIMEOUT` | `10s` | Maximum execution time for a single MRQL query |
+
+```bash
+# Allow longer-running MRQL queries
+./mahresources -mrql-query-timeout=30s ...
+```
+
 ## Server Binding
 
 Configure the server address and port:
@@ -287,6 +300,7 @@ Each plugin lives in a subdirectory of the plugin path and must contain a `plugi
 | `-remote-connect-timeout` | `REMOTE_CONNECT_TIMEOUT` | `30s` | Connection timeout |
 | `-remote-idle-timeout` | `REMOTE_IDLE_TIMEOUT` | `60s` | Idle timeout |
 | `-remote-overall-timeout` | `REMOTE_OVERALL_TIMEOUT` | `30m` | Total download timeout |
+| `-mrql-query-timeout` | `MRQL_QUERY_TIMEOUT` | `10s` | Maximum MRQL query execution time |
 | `-skip-fts` | `SKIP_FTS=1` | `false` | Skip full-text search initialization |
 | `-skip-version-migration` | `SKIP_VERSION_MIGRATION=1` | `false` | Skip version migration |
 | `-max-db-connections` | `MAX_DB_CONNECTIONS` | `0` (no limit) | Connection pool limit |

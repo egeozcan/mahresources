@@ -209,4 +209,4 @@ The API is organized into these categories:
 - **[Notes](./notes)** - Text content and note types
 - **[Groups](./groups)** - Hierarchical organization and relations
 - **[Plugins](./plugins)** - Plugin management, actions, and job monitoring
-- **[Tags, Categories, Queries & More](./other-endpoints)** - Tags, Categories, Queries, Search, Logs, Download Queue
+- **[Tags, Categories, Queries & More](./other-endpoints)** - Tags, Categories, Queries, MRQL, Series, Search, Logs, Download Queue, Admin Stats, Timeline

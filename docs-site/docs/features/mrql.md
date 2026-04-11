@@ -1,5 +1,5 @@
 ---
-sidebar_position: 19
+sidebar_position: 20
 title: MRQL Query Language
 ---
 
@@ -55,7 +55,7 @@ Omit the `type` selector entirely to search all entity types at once (cross-enti
 
 ### Fields
 
-**Common fields** — available on all entity types:
+**Common fields** (available on all entity types):
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -302,7 +302,7 @@ Aggregate functions are case-insensitive (`count()`, `COUNT()`, `Count()` all wo
 
 ### Aggregated Mode
 
-When aggregate functions are present, GROUP BY returns flat rows of computed values — one row per unique combination of the grouped fields.
+When aggregate functions are present, GROUP BY returns flat rows of computed values, one row per unique combination of the grouped fields.
 
 ```
 type = resource GROUP BY contentType COUNT()
@@ -317,7 +317,7 @@ Each result row includes the grouped field values plus one key per aggregate fun
 
 ### Bucketed Mode
 
-When no aggregate functions are specified, GROUP BY returns entities organized into named buckets — one bucket per unique value of the grouped field.
+When no aggregate functions are specified, GROUP BY returns entities organized into named buckets, one bucket per unique value of the grouped field.
 
 ```
 type = resource GROUP BY contentType LIMIT 5
@@ -334,7 +334,7 @@ In bucketed mode, `LIMIT` applies **per bucket** (maximum items per group), not 
 
 ### Constraints
 
-- GROUP BY requires `type = "resource|note|group"` — cross-entity grouping is not supported
+- GROUP BY requires `type = "resource|note|group"` (cross-entity grouping is not supported)
 - Traversal paths are supported: `owner.name`, `owner.parent.name`, `owner.meta.key`, etc.
 - Maximum 1000 buckets in bucketed mode
 
@@ -367,7 +367,7 @@ type = group AND parent.parent.name = "Root"
 type = group AND parent.parent.tags = "org-level"
 ```
 
-Maximum traversal depth is 5 parts (4 traversal steps + 1 leaf field).
+Maximum traversal depth is 8 parts (7 traversal steps + 1 leaf field).
 
 ### Valid Traversal Subfields
 
@@ -377,7 +377,7 @@ At the end of a traversal chain, you can access any group field:
 - **Relation:** `tags` (match by tag name), `parent`, `children`
 - **Meta:** `meta.<key>` (e.g., `owner.meta.region`)
 
-Traversal fields follow the same operators as regular fields. Traversal deeper than 5 levels is not supported.
+Traversal fields follow the same operators as regular fields. Traversal deeper than 8 parts is not supported.
 
 ## Cross-Entity Queries
 

@@ -26,7 +26,7 @@ Every file in Mahresources is a Resource: images, documents, videos, or anything
 | `hashType` | Hash algorithm used (SHA1) |
 | `location` | Storage path relative to the storage root |
 | `storageLocation` | Which alternative filesystem contains the file (nil = default) |
-| `resourceCategoryId` | Optional Resource Category for typed presentation |
+| `resourceCategoryId` | Resource Category for typed presentation (not null, defaults to system default category ID 1) |
 | `seriesId` | FK to Series for shared metadata grouping |
 | `ownMeta` | Resource-specific metadata when in a Series (diff from Series meta) |
 | `ownerId` | FK to owner Group |
@@ -160,7 +160,7 @@ Resources connect to other entities in several ways:
 
 ## Auto-Detect Rules
 
-Resource Categories can define auto-detect rules that automatically assign a category when a resource is uploaded. The resource category field is always optional on the upload form — when omitted, the system matches the uploaded file's properties against all defined rules and picks the best match. If no rules match, the system default category is used.
+Resource Categories can define auto-detect rules that automatically assign a category when a resource is uploaded. The resource category field is always optional on the upload form. When omitted, the system matches the uploaded file's properties against all defined rules and picks the best match. If no rules match, the system default category is used.
 
 ### Rule Format
 
@@ -240,7 +240,7 @@ Range fields use `{"min": N}`, `{"max": N}`, or `{"min": N, "max": N}`. At least
 1. Navigate to **Resource Categories**
 2. Create or edit a category
 3. Enter the JSON rules in the **Auto-Detect Rules** field
-4. Save — validation runs on save and rejects invalid rules
+4. Save (validation runs on save and rejects invalid rules)
 
 ## API Operations
 

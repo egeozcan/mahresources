@@ -18,6 +18,8 @@ Note Blocks provide a structured content system within Notes. Each block has a t
 | `content` | JSON | Data edited in edit mode (defaults to `{}`) |
 | `state` | JSON | Runtime/UI state (defaults to `{}`) |
 | `noteId` | integer | FK to the parent Note |
+| `createdAt` | datetime | Creation timestamp |
+| `updatedAt` | datetime | Last update timestamp |
 
 ## Content vs State
 
