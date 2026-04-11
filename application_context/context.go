@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -262,12 +261,10 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		ExportRetention: config.ExportRetention,
 	})
 
-	// Sweep orphaned export tars at startup
-	sweepDir := "_exports"
-	if config.FileSavePath != "" {
-		sweepDir = filepath.Join(config.FileSavePath, "_exports")
-	}
-	removed, sweepErr := download_queue.SweepOrphanedExports(filesystem, sweepDir, ctx.downloadManager.ExportRetention())
+	// Sweep orphaned export tars at startup. `filesystem` is already rooted at
+	// FileSavePath via BasePathFs in disk mode, so the path stays root-relative —
+	// matching how resource_upload_context writes into "/resources/...".
+	removed, sweepErr := download_queue.SweepOrphanedExports(filesystem, "_exports", ctx.downloadManager.ExportRetention())
 	if sweepErr != nil {
 		log.Printf("warning: SweepOrphanedExports failed: %v", sweepErr)
 	} else if removed > 0 {

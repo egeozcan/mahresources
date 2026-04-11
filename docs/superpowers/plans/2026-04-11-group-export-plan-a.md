@@ -2255,10 +2255,10 @@ Expected: PASS.
 In `NewMahresourcesContext`, after the download manager is constructed and `ctx.fs` is set, add:
 
 ```go
-exportsDir := constants.ExportsSubdir // e.g. "_exports", defined in constants pkg or inline
-// Use filepath.Join with FileSavePath; for memory FS modes, the dir lives at root of the in-memory tree.
-sweepDir := filepath.Join(config.FileSavePath, exportsDir)
-removed, sweepErr := download_queue.SweepOrphanedExports(ctx.fs, sweepDir, ctx.downloadManager.ExportRetention())
+// Sweep orphaned export tars at startup. `filesystem` is already rooted at
+// FileSavePath via BasePathFs in disk mode, so the path stays root-relative —
+// matching how resource_upload_context writes into "/resources/...".
+removed, sweepErr := download_queue.SweepOrphanedExports(filesystem, "_exports", ctx.downloadManager.ExportRetention())
 if sweepErr != nil {
 	log.Printf("warning: SweepOrphanedExports failed: %v", sweepErr)
 } else if removed > 0 {
@@ -2266,9 +2266,7 @@ if sweepErr != nil {
 }
 ```
 
-If a `constants` package doesn't define `ExportsSubdir`, hard-code `"_exports"` and add a `// TODO: move to constants pkg if Plan B introduces _imports/` comment line. (Or just inline both strings — nothing forces this into a constants package.)
-
-The `sweepDir` resolution needs to handle the memory-FS case correctly. In memory mode, `config.FileSavePath` may be empty; in that case use just `"/_exports"`. Match whatever convention the existing code uses for resolving paths — search for `FileSavePath` usage in `application_context/` to see how other dirs are joined.
+`filesystem` is a `BasePathFs` wrapper in disk mode, so always pass a root-relative path (`"_exports"`). Do NOT prepend `config.FileSavePath` — the wrapper already handles that. If `path/filepath` is no longer used elsewhere in `context.go` after this change, remove the import.
 
 - [ ] **Step 6: Build and run all relevant tests**
 
@@ -3934,11 +3932,12 @@ func GetExportSubmitHandler(ctx interfaces.GroupExporter, fs afero.Fs) func(http
 
 func buildExportRunFn(ctx interfaces.GroupExporter, fs afero.Fs, req *application_context.ExportRequest) download_queue.JobRunFn {
 	return func(jobCtx context.Context, j *download_queue.DownloadJob, sink download_queue.ProgressSink) error {
-		exportsDir := filepath.Join(ctx.FileSavePath(), "_exports")
-		if err := fs.MkdirAll(exportsDir, 0755); err != nil {
+		// fs is already rooted at FileSavePath (BasePathFs in disk mode), so the
+		// tar path stays root-relative — matching resource_upload_context.
+		if err := fs.MkdirAll("_exports", 0755); err != nil {
 			return fmt.Errorf("mkdir _exports: %w", err)
 		}
-		tarPath := filepath.Join(exportsDir, j.ID+".tar")
+		tarPath := filepath.Join("_exports", j.ID+".tar")
 
 		f, err := fs.Create(tarPath)
 		if err != nil {
