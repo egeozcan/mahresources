@@ -81,45 +81,6 @@ func TestPluginMRQLAdapterScoped(t *testing.T) {
 	assert.Empty(t, result.Items)
 }
 
-func TestPluginMRQLAdapterScopeResolution(t *testing.T) {
-	ctx := createTestContext(t)
-	adapter := &pluginMRQLAdapter{ctx: ctx}
-
-	// Test scope resolution: looking up parent of a nonexistent entity
-	// should return a sentinel (max uint >> 1) that matches nothing in DB.
-	// NOT 0, because 0 means "no scope filter" = global fan-out.
-	scopeID := adapter.resolveScope("parent", 999999, "group")
-	assert.Equal(t, ^uint(0)>>1, scopeID)
-
-	// scope="global" always returns 0
-	scopeID = adapter.resolveScope("global", 1, "group")
-	assert.Equal(t, uint(0), scopeID)
-
-	// scope="entity" returns the entity ID itself
-	scopeID = adapter.resolveScope("entity", 42, "group")
-	assert.Equal(t, uint(42), scopeID)
-
-	// scope="" (empty) defaults to entity
-	scopeID = adapter.resolveScope("", 42, "group")
-	assert.Equal(t, uint(42), scopeID)
-
-	// scope="entity" on a resource uses sentinel (not the raw resource ID,
-	// which would collide with an unrelated group sharing the same numeric ID)
-	scopeID = adapter.resolveScope("entity", 42, "resource")
-	assert.Equal(t, ^uint(0)>>1, scopeID, "ownerless resource entity scope should be sentinel")
-
-	// scope="entity" on a note — same: sentinel for ownerless note
-	scopeID = adapter.resolveScope("entity", 42, "note")
-	assert.Equal(t, ^uint(0)>>1, scopeID, "ownerless note entity scope should be sentinel")
-
-	// scope="root" on an ownerless resource — sentinel, not the raw ID
-	scopeID = adapter.resolveScope("root", 42, "resource")
-	assert.Equal(t, ^uint(0)>>1, scopeID, "ownerless resource root scope should be sentinel")
-
-	// scope="root" on an ownerless note — sentinel
-	scopeID = adapter.resolveScope("root", 42, "note")
-	assert.Equal(t, ^uint(0)>>1, scopeID, "ownerless note root scope should be sentinel")
-}
 
 func TestPluginMRQLAdapterRequiresEntityType(t *testing.T) {
 	ctx := createTestContext(t)

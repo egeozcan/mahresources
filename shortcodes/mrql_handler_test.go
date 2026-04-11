@@ -141,8 +141,7 @@ func TestMRQLShortcodeNoQueryOrSaved(t *testing.T) {
 
 func TestMRQLShortcodeRecursionDepthCap(t *testing.T) {
 	callCount := 0
-	var executor QueryExecutor
-	executor = func(ctx context.Context, query string, savedName string, limit int, buckets int) (*QueryResult, error) {
+	var executor QueryExecutor = func(ctx context.Context, query string, savedName string, limit int, buckets int) (*QueryResult, error) {
 		callCount++
 		return &QueryResult{
 			EntityType: "resource",
