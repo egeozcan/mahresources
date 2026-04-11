@@ -1,6 +1,8 @@
 package application_context
 
 import (
+	"fmt"
+
 	"mahresources/models/query_models"
 )
 
@@ -54,6 +56,27 @@ func (ctx *MahresourcesContext) GetGroupTreeChildren(parentID uint, limit int) (
 	}
 
 	return results, nil
+}
+
+// collectSubtreeGroupIDs returns the flat list of all group IDs in the subtree
+// rooted at rootID (including the root itself). It uses a recursive CTE with
+// no artificial per-parent cap so it works correctly for large subtrees.
+// A defensive ceiling of 1_000_000 rows is applied.
+func (ctx *MahresourcesContext) collectSubtreeGroupIDs(rootID uint) ([]uint, error) {
+	var ids []uint
+	err := ctx.db.Raw(`
+		WITH RECURSIVE tree AS (
+			SELECT id FROM groups WHERE id = ?
+			UNION ALL
+			SELECT g.id FROM groups g JOIN tree ON g.owner_id = tree.id
+		)
+		SELECT id FROM tree
+		LIMIT 1000000
+	`, rootID).Scan(&ids).Error
+	if err != nil {
+		return nil, fmt.Errorf("collectSubtreeGroupIDs(%d): %w", rootID, err)
+	}
+	return ids, nil
 }
 
 // GetGroupTreeDown returns a tree of groups starting from rootID, going maxLevels deep.
