@@ -59,6 +59,9 @@ func mustCreateGroup(t *testing.T, ctx *MahresourcesContext, name string, ownerI
 	if err := ctx.db.Create(&g).Error; err != nil {
 		t.Fatalf("create group %q: %v", name, err)
 	}
+	t.Cleanup(func() {
+		ctx.db.Unscoped().Delete(&models.Group{}, g.ID)
+	})
 	return &g
 }
 
@@ -82,6 +85,10 @@ func mustCreateResource(t *testing.T, ctx *MahresourcesContext, name string, own
 	if err := ctx.db.Create(&r).Error; err != nil {
 		t.Fatalf("create resource %q: %v", name, err)
 	}
+	t.Cleanup(func() {
+		ctx.db.Unscoped().Delete(&models.Resource{}, r.ID)
+		_ = ctx.fs.Remove(location)
+	})
 	return &r
 }
 
@@ -91,5 +98,8 @@ func mustCreateNote(t *testing.T, ctx *MahresourcesContext, name string, ownerID
 	if err := ctx.db.Create(&n).Error; err != nil {
 		t.Fatalf("create note %q: %v", name, err)
 	}
+	t.Cleanup(func() {
+		ctx.db.Unscoped().Delete(&models.Note{}, n.ID)
+	})
 	return &n
 }
