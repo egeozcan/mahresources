@@ -433,3 +433,205 @@ func TestBuildExportPlan_CollectsLargeSubtreeWithoutTruncation(t *testing.T) {
 		t.Fatalf("plan.groupIDs = %d, want %d", got, want)
 	}
 }
+
+func TestStreamExport_BlobsToggle(t *testing.T) {
+	cases := []struct {
+		name     string
+		fidelity archive.ExportFidelity
+		wantBlob bool
+	}{
+		{"blobs on", archive.ExportFidelity{ResourceBlobs: true}, true},
+		{"blobs off", archive.ExportFidelity{ResourceBlobs: false}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := createTestContext(t)
+			root := mustCreateGroup(t, ctx, "Root", nil)
+			mustCreateResource(t, ctx, "img.png", &root.ID, []byte("PNGDATA"))
+
+			req := &ExportRequest{
+				RootGroupIDs: []uint{root.ID},
+				Scope:        archive.ExportScope{Subtree: true, OwnedResources: true},
+				Fidelity:     tc.fidelity,
+			}
+			var buf bytes.Buffer
+			if err := ctx.StreamExport(context.Background(), req, &buf, nil); err != nil {
+				t.Fatalf("StreamExport: %v", err)
+			}
+
+			r, _ := archive.NewReader(&buf)
+			defer r.Close()
+			if _, err := r.ReadManifest(); err != nil {
+				t.Fatalf("ReadManifest: %v", err)
+			}
+
+			c := newExportCollector()
+			if err := r.Walk(c); err != nil {
+				t.Fatalf("Walk: %v", err)
+			}
+
+			if tc.wantBlob && len(c.blobs) == 0 {
+				t.Errorf("expected blob in archive, got none")
+			}
+			if !tc.wantBlob && len(c.blobs) != 0 {
+				t.Errorf("expected no blobs, got %d", len(c.blobs))
+			}
+		})
+	}
+}
+
+func mustUploadNewVersion(t *testing.T, ctx *MahresourcesContext, resourceID uint, content []byte, comment string) *models.ResourceVersion {
+	t.Helper()
+	hash := fmt.Sprintf("%x", sha1.Sum(content))
+	// Load the resource to get the existing version number.
+	var r models.Resource
+	if err := ctx.db.First(&r, resourceID).Error; err != nil {
+		t.Fatalf("load resource: %v", err)
+	}
+	// Find the current highest version number for this resource.
+	var maxVersion int
+	ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceID).Select("COALESCE(MAX(version_number), 0)").Row().Scan(&maxVersion)
+
+	nextNumber := maxVersion + 1
+	location := fmt.Sprintf("/resources/versions/%s", hash)
+	if err := afero.WriteFile(ctx.fs, location, content, 0644); err != nil {
+		t.Fatalf("write version blob: %v", err)
+	}
+
+	v := models.ResourceVersion{
+		ResourceID:    resourceID,
+		VersionNumber: nextNumber,
+		Hash:          hash,
+		HashType:      "SHA1",
+		FileSize:      int64(len(content)),
+		Location:      location,
+		Comment:       comment,
+	}
+	if err := ctx.db.Create(&v).Error; err != nil {
+		t.Fatalf("create version: %v", err)
+	}
+
+	// Point the resource at the new version.
+	ctx.db.Model(&r).Update("current_version_id", v.ID)
+
+	t.Cleanup(func() {
+		ctx.db.Unscoped().Delete(&models.ResourceVersion{}, v.ID)
+		_ = ctx.fs.Remove(location)
+	})
+	return &v
+}
+
+func TestStreamExport_VersionHistoryRoundTrip(t *testing.T) {
+	ctx := createTestContext(t)
+	root := mustCreateGroup(t, ctx, "Root", nil)
+	res := mustCreateResource(t, ctx, "img.png", &root.ID, []byte("v1bytes"))
+
+	// Create version 1 row for the initial resource.
+	mustUploadNewVersion(t, ctx, res.ID, []byte("v1bytes"), "initial")
+	// Create version 2.
+	mustUploadNewVersion(t, ctx, res.ID, []byte("v2bytes"), "updated")
+
+	req := &ExportRequest{
+		RootGroupIDs: []uint{root.ID},
+		Scope:        archive.ExportScope{Subtree: true, OwnedResources: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true, ResourceVersions: true},
+	}
+	var buf bytes.Buffer
+	if err := ctx.StreamExport(context.Background(), req, &buf, nil); err != nil {
+		t.Fatalf("StreamExport: %v", err)
+	}
+
+	r, _ := archive.NewReader(&buf)
+	defer r.Close()
+	if _, err := r.ReadManifest(); err != nil {
+		t.Fatalf("ReadManifest: %v", err)
+	}
+
+	c := newExportCollector()
+	if err := r.Walk(c); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+
+	if len(c.resources) != 1 {
+		t.Fatalf("expected 1 resource, got %d", len(c.resources))
+	}
+	var rp *archive.ResourcePayload
+	for _, v := range c.resources {
+		rp = v
+	}
+	if len(rp.Versions) < 2 {
+		t.Fatalf("expected at least 2 versions in payload, got %d", len(rp.Versions))
+	}
+	if rp.CurrentVersionRef == "" {
+		t.Fatalf("current_version_ref not set")
+	}
+
+	// Both version blobs should be present in the archive.
+	if len(c.blobs) < 2 {
+		t.Fatalf("expected at least 2 unique blobs, got %d", len(c.blobs))
+	}
+}
+
+func mustInsertPreview(t *testing.T, ctx *MahresourcesContext, resID uint, w, h uint, contentType string, data []byte) *models.Preview {
+	t.Helper()
+	prev := models.Preview{
+		ResourceId:  &resID,
+		Width:       w,
+		Height:      h,
+		ContentType: contentType,
+		Data:        data,
+	}
+	if err := ctx.db.Create(&prev).Error; err != nil {
+		t.Fatalf("insert preview: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx.db.Unscoped().Delete(&models.Preview{}, prev.ID)
+	})
+	return &prev
+}
+
+func TestStreamExport_PreviewsRoundTrip(t *testing.T) {
+	ctx := createTestContext(t)
+	root := mustCreateGroup(t, ctx, "Root", nil)
+	res := mustCreateResource(t, ctx, "img.png", &root.ID, []byte("PNGDATA"))
+
+	mustInsertPreview(t, ctx, res.ID, 200, 200, "image/jpeg", []byte("JPEGPREV"))
+
+	req := &ExportRequest{
+		RootGroupIDs: []uint{root.ID},
+		Scope:        archive.ExportScope{Subtree: true, OwnedResources: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true, ResourcePreviews: true},
+	}
+	var buf bytes.Buffer
+	if err := ctx.StreamExport(context.Background(), req, &buf, nil); err != nil {
+		t.Fatalf("StreamExport: %v", err)
+	}
+
+	r, _ := archive.NewReader(&buf)
+	defer r.Close()
+	if _, err := r.ReadManifest(); err != nil {
+		t.Fatalf("ReadManifest: %v", err)
+	}
+
+	c := newExportCollector()
+	if err := r.Walk(c); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+
+	if len(c.resources) != 1 {
+		t.Fatalf("resources = %d", len(c.resources))
+	}
+	var rp *archive.ResourcePayload
+	for _, v := range c.resources {
+		rp = v
+	}
+	if len(rp.Previews) != 1 {
+		t.Fatalf("payload previews = %d", len(rp.Previews))
+	}
+	previewID := rp.Previews[0].PreviewExportID
+	if data, ok := c.previews[previewID]; !ok {
+		t.Fatalf("preview %q missing from archive", previewID)
+	} else if string(data) != "JPEGPREV" {
+		t.Fatalf("preview bytes = %q", data)
+	}
+}
