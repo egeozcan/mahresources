@@ -572,9 +572,9 @@ local function render_status_badge(ctx)
 
     local xdata = string.format(
         '{ val: %s, saving: false, saved: false, options: %s, colors: %s, labels: %s, '
-        .. 'next() { let i = this.options.indexOf(this.val); let n = (i + 1) %% this.options.length; this.save(this.options[n]); }, '
-        .. 'getColor() { let i = this.options.indexOf(this.val); return i >= 0 ? this.colors[i] : this.colors[0]; }, '
-        .. 'getLabel() { let i = this.options.indexOf(this.val); return i >= 0 ? (this.labels[i] || this.options[i]) : (this.val || this.labels[0] || this.options[0]); }, '
+        .. 'next() { let o = Array.isArray(this.options) ? this.options : []; let i = o.indexOf(this.val); let n = (i + 1) %% o.length; if (o[n] != null) this.save(o[n]); }, '
+        .. 'getColor() { let o = Array.isArray(this.options) ? this.options : []; let c = Array.isArray(this.colors) ? this.colors : []; let i = o.indexOf(this.val); return i >= 0 ? (c[i] || c[0] || "#9ca3af") : (c[0] || "#9ca3af"); }, '
+        .. 'getLabel() { let o = Array.isArray(this.options) ? this.options : []; let l = Array.isArray(this.labels) ? this.labels : []; let i = o.indexOf(this.val); return i >= 0 ? (l[i] || o[i]) : (this.val || l[0] || o[0] || ""); }, '
         .. 'async save(v) { '
         .. 'this.saving = true; '
         .. 'try { await window.__metaEditorsSave(\'%s\', %d, \'%s\', v); this.val = v; this.saved = true; setTimeout(() => this.saved = false, 1500); } '

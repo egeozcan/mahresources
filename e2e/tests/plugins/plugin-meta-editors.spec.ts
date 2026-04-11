@@ -212,4 +212,64 @@ test.describe('Meta-editors plugin shortcodes', () => {
     const datePicker = page.locator('input[type="date"]');
     await expect(datePicker).toBeVisible({ timeout: 5000 });
   });
+
+  test('date-range renders with object value {start, end}', async ({ page, apiClient }) => {
+    // date-range expects value as {start, end} object, not a string
+    const cat2 = await apiClient.createCategory(
+      `DateRange Test ${Date.now()}`,
+      '',
+      { CustomHeader: '[plugin:meta-editors:date-range path="period"]' },
+    );
+    const grp2 = await apiClient.createGroup({
+      name: `DateRange Group ${Date.now()}`,
+      categoryId: cat2.ID,
+      meta: JSON.stringify({ period: { start: '2024-01-15', end: '2024-06-30' } }),
+    });
+
+    await page.goto(`/group?id=${grp2.ID}`);
+    await page.waitForLoadState('load');
+
+    // Both date inputs should have values populated
+    const dateInputs = page.locator('main input[type="date"]');
+    await expect(dateInputs).toHaveCount(2, { timeout: 5000 });
+    await expect(dateInputs.first()).toHaveValue('2024-01-15');
+    await expect(dateInputs.last()).toHaveValue('2024-06-30');
+
+    await apiClient.deleteGroup(grp2.ID);
+    await apiClient.deleteCategory(cat2.ID);
+  });
+
+  test('status-badge renders without JS errors even with missing options attr', async ({
+    page,
+    apiClient,
+  }) => {
+    // Simulates typo: using "values" instead of "options"
+    const cat2 = await apiClient.createCategory(
+      `BadBadge Test ${Date.now()}`,
+      '',
+      {
+        CustomHeader:
+          '[plugin:meta-editors:status-badge path="status" values="a,b,c" colors="#aaa,#bbb,#ccc" labels="A,B,C"]',
+      },
+    );
+    const grp2 = await apiClient.createGroup({
+      name: `BadBadge Group ${Date.now()}`,
+      categoryId: cat2.ID,
+      meta: JSON.stringify({ status: 'a' }),
+    });
+
+    const consoleErrors: string[] = [];
+    page.on('pageerror', (err) => consoleErrors.push(err.message));
+
+    await page.goto(`/group?id=${grp2.ID}`);
+    await page.waitForLoadState('load');
+    // Give Alpine time to initialize
+    await page.waitForTimeout(500);
+
+    // Should have zero JS errors (no TypeError: indexOf is not a function)
+    expect(consoleErrors).toHaveLength(0);
+
+    await apiClient.deleteGroup(grp2.ID);
+    await apiClient.deleteCategory(cat2.ID);
+  });
 });

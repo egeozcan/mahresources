@@ -215,4 +215,72 @@ test.describe('Data-views plugin shortcodes', () => {
     const barcode = page.locator('.sidebar-group svg').first();
     await expect(barcode).toBeVisible({ timeout: 5000 });
   });
+
+  test('bar-chart accepts x-axis/y-axis as attribute aliases', async ({
+    page,
+    apiClient,
+  }) => {
+    const cat2 = await apiClient.createCategory(
+      `BarAlias Test ${Date.now()}`,
+      '',
+      {
+        CustomHeader:
+          '[plugin:data-views:bar-chart path="scores" x-axis="name" y-axis="score"]',
+      },
+    );
+    const grp2 = await apiClient.createGroup({
+      name: `BarAlias Group ${Date.now()}`,
+      categoryId: cat2.ID,
+      meta: JSON.stringify({
+        scores: [
+          { name: 'Alpha', score: 90 },
+          { name: 'Beta', score: 60 },
+        ],
+      }),
+    });
+
+    await page.goto(`/group?id=${grp2.ID}`);
+    await page.waitForLoadState('load');
+
+    // Should show label names from x-axis attr, not numeric indices
+    await expect(page.locator('main >> text=Alpha')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('main >> text=Beta')).toBeVisible();
+
+    await apiClient.deleteGroup(grp2.ID);
+    await apiClient.deleteCategory(cat2.ID);
+  });
+
+  test('pie-chart accepts label-field/value-field as attribute aliases', async ({
+    page,
+    apiClient,
+  }) => {
+    const cat2 = await apiClient.createCategory(
+      `PieAlias Test ${Date.now()}`,
+      '',
+      {
+        CustomHeader:
+          '[plugin:data-views:pie-chart path="dist" label-field="cat" value-field="amt" size="100"]',
+      },
+    );
+    const grp2 = await apiClient.createGroup({
+      name: `PieAlias Group ${Date.now()}`,
+      categoryId: cat2.ID,
+      meta: JSON.stringify({
+        dist: [
+          { cat: 'Red', amt: 40 },
+          { cat: 'Blue', amt: 60 },
+        ],
+      }),
+    });
+
+    await page.goto(`/group?id=${grp2.ID}`);
+    await page.waitForLoadState('load');
+
+    // Should render pie chart legend with category names (not "No data")
+    await expect(page.locator('main >> text=/Red/')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('main >> text=/Blue/')).toBeVisible();
+
+    await apiClient.deleteGroup(grp2.ID);
+    await apiClient.deleteCategory(cat2.ID);
+  });
 });

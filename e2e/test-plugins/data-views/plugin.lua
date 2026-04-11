@@ -1196,8 +1196,8 @@ local function render_bar_chart(ctx)
     end
 
     local color = attrs["color"] or "#d97706"
-    local label_key = attrs["label-key"]
-    local value_key = attrs["value-key"]
+    local label_key = attrs["label-key"] or attrs["x-axis"]
+    local value_key = attrs["value-key"] or attrs["y-axis"]
 
     -- Extract label/value pairs
     local entries = {}
@@ -1270,8 +1270,8 @@ local function render_pie_chart(ctx)
 
     local size = tonumber(attrs["size"]) or 120
     local is_donut = attrs["donut"] == "true"
-    local label_key = attrs["label-key"]
-    local value_key = attrs["value-key"]
+    local label_key = attrs["label-key"] or attrs["label-field"]
+    local value_key = attrs["value-key"] or attrs["value-field"]
     local colors = parse_csv(attrs["colors"] or "")
     if #colors == 0 then colors = DEFAULT_COLORS end
 
