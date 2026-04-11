@@ -208,6 +208,50 @@ func (j *DownloadJob) SetResultPath(path string) {
 	j.ResultPath = path
 }
 
+// GetError safely returns the job's error message.
+func (j *DownloadJob) GetError() string {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.Error
+}
+
+// Snapshot returns a shallow value-copy of the job's exported fields. The
+// returned *DownloadJob is a fresh struct whose fields are safe to read
+// without acquiring j.mu — it's a point-in-time capture. The copy does not
+// share the original's mutex, context, or runFn; don't mutate it or pass
+// it back to the manager.
+//
+// Used by notifySubscribers so JobEvent.Job can be read by subscribers
+// without racing setters that may fire concurrently.
+func (j *DownloadJob) Snapshot() *DownloadJob {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	snap := &DownloadJob{
+		ID:              j.ID,
+		URL:             j.URL,
+		Status:          j.Status,
+		Progress:        j.Progress,
+		TotalSize:       j.TotalSize,
+		ProgressPercent: j.ProgressPercent,
+		Error:           j.Error,
+		ResourceID:      j.ResourceID,
+		CreatedAt:       j.CreatedAt,
+		StartedAt:       j.StartedAt,
+		CompletedAt:     j.CompletedAt,
+		Source:          j.Source,
+		Phase:           j.Phase,
+		PhaseCount:      j.PhaseCount,
+		PhaseTotal:      j.PhaseTotal,
+		ResultPath:      j.ResultPath,
+	}
+	// Deep-copy the Warnings slice so subscribers can't observe a torn append.
+	if j.Warnings != nil {
+		snap.Warnings = make([]string, len(j.Warnings))
+		copy(snap.Warnings, j.Warnings)
+	}
+	return snap
+}
+
 // JobEvent represents a change in job state for SSE broadcasting
 type JobEvent struct {
 	Type string       `json:"type"` // "added", "updated", "removed"

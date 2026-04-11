@@ -675,7 +675,7 @@ func TestRetry(t *testing.T) {
 		if job.GetStatus() != JobStatusPending {
 			t.Errorf("expected pending status after retry, got %s", job.GetStatus())
 		}
-		if job.Error != "" {
+		if job.GetError() != "" {
 			t.Error("error should be cleared after retry")
 		}
 	})
@@ -862,8 +862,8 @@ func TestSubmitJob_FailureRecordsError(t *testing.T) {
 	if job.GetStatus() != JobStatusFailed {
 		t.Fatalf("status = %s", job.GetStatus())
 	}
-	if !strings.Contains(job.Error, "boom") {
-		t.Fatalf("error = %q", job.Error)
+	if !strings.Contains(job.GetError(), "boom") {
+		t.Fatalf("error = %q", job.GetError())
 	}
 }
 

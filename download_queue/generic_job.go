@@ -29,27 +29,27 @@ type managedSink struct {
 
 func (s *managedSink) SetPhase(phase string) {
 	s.j.SetPhase(phase)
-	s.m.notifySubscribers(JobEvent{Type: "updated", Job: s.j})
+	s.m.notifySubscribers(JobEvent{Type: "updated", Job: s.j.Snapshot()})
 }
 
 func (s *managedSink) SetPhaseProgress(current, total int64) {
 	s.j.SetPhaseProgress(current, total)
-	s.m.notifySubscribers(JobEvent{Type: "updated", Job: s.j})
+	s.m.notifySubscribers(JobEvent{Type: "updated", Job: s.j.Snapshot()})
 }
 
 func (s *managedSink) UpdateProgress(done, total int64) {
 	s.j.UpdateProgress(done, total)
-	s.m.notifySubscribers(JobEvent{Type: "updated", Job: s.j})
+	s.m.notifySubscribers(JobEvent{Type: "updated", Job: s.j.Snapshot()})
 }
 
 func (s *managedSink) AppendWarning(msg string) {
 	s.j.AppendWarning(msg)
-	s.m.notifySubscribers(JobEvent{Type: "updated", Job: s.j})
+	s.m.notifySubscribers(JobEvent{Type: "updated", Job: s.j.Snapshot()})
 }
 
 func (s *managedSink) SetResultPath(path string) {
 	s.j.SetResultPath(path)
-	s.m.notifySubscribers(JobEvent{Type: "updated", Job: s.j})
+	s.m.notifySubscribers(JobEvent{Type: "updated", Job: s.j.Snapshot()})
 }
 
 // SubmitJob enqueues a generic background job.
@@ -86,7 +86,7 @@ func (m *DownloadManager) SubmitJob(source, initialPhase string, runFn JobRunFn)
 
 	m.mu.Unlock()
 
-	m.notifySubscribers(JobEvent{Type: "added", Job: job})
+	m.notifySubscribers(JobEvent{Type: "added", Job: job.Snapshot()})
 
 	go m.processGenericJob(job)
 
@@ -101,7 +101,7 @@ func (m *DownloadManager) processGenericJob(j *DownloadJob) {
 	case m.semaphore <- struct{}{}:
 	case <-j.ctx.Done():
 		j.SetStatus(JobStatusCancelled)
-		m.notifySubscribers(JobEvent{Type: "updated", Job: j})
+		m.notifySubscribers(JobEvent{Type: "updated", Job: j.Snapshot()})
 		return
 	}
 	defer func() { <-m.semaphore }()
@@ -109,12 +109,16 @@ func (m *DownloadManager) processGenericJob(j *DownloadJob) {
 	now := time.Now()
 	j.SetStartedAt(now)
 	j.SetStatus(JobStatusProcessing)
-	m.notifySubscribers(JobEvent{Type: "updated", Job: j})
+	m.notifySubscribers(JobEvent{Type: "updated", Job: j.Snapshot()})
 
 	sink := &managedSink{m: m, j: j}
 	err := j.runFn(j.ctx, j, sink)
 	completedAt := time.Now()
 	j.SetCompletedAt(completedAt)
+
+	if j.GetStatus() == JobStatusPaused {
+		return
+	}
 
 	if err != nil {
 		if j.ctx.Err() != nil {
@@ -126,5 +130,5 @@ func (m *DownloadManager) processGenericJob(j *DownloadJob) {
 	} else {
 		j.SetStatus(JobStatusCompleted)
 	}
-	m.notifySubscribers(JobEvent{Type: "updated", Job: j})
+	m.notifySubscribers(JobEvent{Type: "updated", Job: j.Snapshot()})
 }
