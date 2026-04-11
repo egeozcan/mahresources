@@ -1093,7 +1093,7 @@ test('explicit SCOPE in data-views MRQL overrides plugin scope attribute', async
 Run: `cd /Users/egecan/Code/mahresources && go test --tags 'json1 fts5' ./... -count=1`
 Expected: All PASS. The behavioral change (flat → tree) only affects scoped queries, and existing tests should still pass since the test data hierarchy hasn't changed.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add application_context/mrql_context.go application_context/plugin_mrql_adapter.go
