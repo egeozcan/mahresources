@@ -257,6 +257,7 @@ func (ctx *MahresourcesContext) collectDanglingRefs(plan *exportPlan) error {
 			Preload("RelatedResources").
 			Preload("RelatedNotes").
 			Where("id IN ?", plan.groupIDs).
+			Order("id").
 			Find(&groups).Error; err != nil {
 			return fmt.Errorf("preload m2m for dangling detection: %w", err)
 		}
@@ -315,6 +316,7 @@ func (ctx *MahresourcesContext) collectDanglingRefs(plan *exportPlan) error {
 			Preload("ToGroup").
 			Preload("RelationType").
 			Where("from_group_id IN ?", plan.groupIDs).
+			Order("id").
 			Find(&relations).Error; err != nil {
 			return fmt.Errorf("load GroupRelations for dangling detection: %w", err)
 		}
@@ -351,6 +353,7 @@ func (ctx *MahresourcesContext) collectDanglingRefs(plan *exportPlan) error {
 		var sibs []models.Resource
 		if err := ctx.db.
 			Where("series_id IN ? AND id NOT IN ?", plan.seriesIDs, plan.resourceIDs).
+			Order("id").
 			Find(&sibs).Error; err != nil {
 			return fmt.Errorf("load series siblings for dangling detection: %w", err)
 		}
@@ -367,6 +370,7 @@ func (ctx *MahresourcesContext) collectDanglingRefs(plan *exportPlan) error {
 			if err := ctx.db.Model(&models.Resource{}).
 				Select("id, series_id").
 				Where("id IN ? AND series_id IS NOT NULL", plan.resourceIDs).
+				Order("id").
 				Scan(&rows).Error; err != nil {
 				return fmt.Errorf("load resource series IDs for dangling detection: %w", err)
 			}
@@ -408,6 +412,6 @@ func (p *exportPlan) isGroupInScope(id uint) bool {
 // appendDangling adds a DanglingRef to the plan, assigning it a unique ID.
 func (p *exportPlan) appendDangling(ref archive.DanglingRef) {
 	p.danglingNext++
-	ref.ID = fmt.Sprintf("d%04d", p.danglingNext)
+	ref.ID = fmt.Sprintf("dr%04d", p.danglingNext)
 	p.dangling = append(p.dangling, ref)
 }
