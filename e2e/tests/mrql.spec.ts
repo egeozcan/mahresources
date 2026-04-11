@@ -443,3 +443,177 @@ test.describe('MRQL GROUP BY', () => {
     await expect(heading).toBeVisible();
   });
 });
+
+test.describe('MRQL SCOPE', () => {
+  // Track created entity IDs for cleanup
+  let categoryId: number;
+  let parentGroupId: number;
+  let childGroupId: number;
+  let grandchildGroupId: number;
+  let scopedResourceId: number;
+  let unscopedResourceId: number;
+  let duplicateGroupId: number;
+
+  const suffix = `scope-${Date.now()}`;
+
+  test.beforeAll(async () => {
+    const baseUrl = getWorkerBaseUrl();
+    const ctx = await playwrightRequest.newContext({ baseURL: baseUrl });
+    const api = new ApiClient(ctx, baseUrl);
+
+    // Create a category (required for groups)
+    const category = await api.createCategory(`Scope Test Category ${suffix}`);
+    categoryId = category.ID;
+
+    // Create group hierarchy: parent → child → grandchild
+    const parent = await api.createGroup({
+      name: `Scope Parent ${suffix}`,
+      description: 'Parent group for SCOPE tests',
+      categoryId: categoryId,
+    });
+    parentGroupId = parent.ID;
+
+    const child = await api.createGroup({
+      name: `Scope Child ${suffix}`,
+      description: 'Child group for SCOPE tests',
+      categoryId: categoryId,
+      ownerId: parentGroupId,
+    });
+    childGroupId = child.ID;
+
+    const grandchild = await api.createGroup({
+      name: `Scope Grandchild ${suffix}`,
+      description: 'Grandchild group for SCOPE tests',
+      categoryId: categoryId,
+      ownerId: childGroupId,
+    });
+    grandchildGroupId = grandchild.ID;
+
+    // Create a resource owned by the child group (scoped)
+    const imgPath = path.join(__dirname, '../test-assets/sample-image.png');
+    const scopedRes = await api.createResource({
+      filePath: imgPath,
+      name: `Scoped Resource ${suffix}`,
+      ownerId: childGroupId,
+    });
+    scopedResourceId = scopedRes.ID;
+
+    // Create a resource with no owner (unscoped — outside the hierarchy)
+    const unscopedRes = await api.createResource({
+      filePath: imgPath,
+      name: `Unscoped Resource ${suffix}`,
+    });
+    unscopedResourceId = unscopedRes.ID;
+
+    await ctx.dispose();
+  });
+
+  test.afterAll(async () => {
+    const baseUrl = getWorkerBaseUrl();
+    const ctx = await playwrightRequest.newContext({ baseURL: baseUrl });
+    const api = new ApiClient(ctx, baseUrl);
+
+    // Cleanup in reverse dependency order
+    try { if (scopedResourceId) await api.deleteResource(scopedResourceId); } catch { /* ignore */ }
+    try { if (unscopedResourceId) await api.deleteResource(unscopedResourceId); } catch { /* ignore */ }
+    try { if (duplicateGroupId) await api.deleteGroup(duplicateGroupId); } catch { /* ignore */ }
+    try { if (grandchildGroupId) await api.deleteGroup(grandchildGroupId); } catch { /* ignore */ }
+    try { if (childGroupId) await api.deleteGroup(childGroupId); } catch { /* ignore */ }
+    try { if (parentGroupId) await api.deleteGroup(parentGroupId); } catch { /* ignore */ }
+    try { if (categoryId) await api.deleteCategory(categoryId); } catch { /* ignore */ }
+
+    await ctx.dispose();
+  });
+
+  test('SCOPE by ID returns subtree resources', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+
+    await mrql.enterQuery(`type = "resource" SCOPE ${parentGroupId}`);
+    await mrql.executeQuery();
+
+    // Should not show an error
+    const errorText = await mrql.getErrors();
+    expect(errorText).toBeFalsy();
+
+    // The scoped resource should appear
+    const resultsText = await mrql.resultsSection.textContent();
+    expect(resultsText).toContain(`Scoped Resource ${suffix}`);
+
+    // The unscoped resource should NOT appear
+    expect(resultsText).not.toContain(`Unscoped Resource ${suffix}`);
+  });
+
+  test('SCOPE by name returns subtree resources', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+
+    await mrql.enterQuery(`type = "resource" SCOPE "Scope Parent ${suffix}"`);
+    await mrql.executeQuery();
+
+    // Should not show an error
+    const errorText = await mrql.getErrors();
+    expect(errorText).toBeFalsy();
+
+    // The scoped resource should appear
+    const resultsText = await mrql.resultsSection.textContent();
+    expect(resultsText).toContain(`Scoped Resource ${suffix}`);
+  });
+
+  test('SCOPE for groups includes the scoped group itself', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+
+    await mrql.enterQuery(`type = "group" SCOPE ${parentGroupId}`);
+    await mrql.executeQuery();
+
+    // Should not show an error
+    const errorText = await mrql.getErrors();
+    expect(errorText).toBeFalsy();
+
+    // All 3 groups in the hierarchy should appear
+    const resultsText = await mrql.resultsSection.textContent();
+    expect(resultsText).toContain(`Scope Parent ${suffix}`);
+    expect(resultsText).toContain(`Scope Child ${suffix}`);
+    expect(resultsText).toContain(`Scope Grandchild ${suffix}`);
+  });
+
+  test('SCOPE with nonexistent ID shows error', async ({ page }) => {
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+
+    await mrql.enterQuery('type = "resource" SCOPE 999999');
+    await mrql.executeQuery();
+
+    // Should show an error about the scope group not being found
+    const errorText = await mrql.getErrors();
+    expect(errorText).toBeTruthy();
+    expect(errorText!.toLowerCase()).toContain('scope group not found');
+  });
+
+  test('SCOPE with ambiguous name shows error', async ({ page }) => {
+    // Create a second group with the same name to trigger ambiguity
+    const baseUrl = getWorkerBaseUrl();
+    const ctx = await playwrightRequest.newContext({ baseURL: baseUrl });
+    const api = new ApiClient(ctx, baseUrl);
+
+    const dupGroup = await api.createGroup({
+      name: `Scope Parent ${suffix}`,
+      description: 'Duplicate group to test ambiguous scope',
+      categoryId: categoryId,
+    });
+    duplicateGroupId = dupGroup.ID;
+    await ctx.dispose();
+
+    const mrql = new MRQLPage(page);
+    await mrql.navigate();
+
+    await mrql.enterQuery(`type = "resource" SCOPE "Scope Parent ${suffix}"`);
+    await mrql.executeQuery();
+
+    // Should show an error about ambiguous scope
+    const errorText = await mrql.getErrors();
+    expect(errorText).toBeTruthy();
+    expect(errorText!.toLowerCase()).toContain('ambiguous');
+  });
+});

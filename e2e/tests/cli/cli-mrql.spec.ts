@@ -405,3 +405,58 @@ test.describe('MRQL GROUP BY', () => {
     }
   });
 });
+
+test.describe('MRQL SCOPE via CLI', () => {
+  const suffix = Date.now();
+  let parentGroupId: number;
+  let childGroupId: number;
+  let scopedResourceId: number;
+
+  test.beforeAll(() => {
+    const cli = createCliRunner();
+
+    // Create group hierarchy: parent → child
+    const parent = JSON.parse(
+      cli.runOrFail('group', 'create', '--name', `CliScopeParent-${suffix}`, '--json').stdout,
+    );
+    parentGroupId = parent.ID;
+
+    const child = JSON.parse(
+      cli.runOrFail('group', 'create', '--name', `CliScopeChild-${suffix}`, '--owner-id', String(parentGroupId), '--json').stdout,
+    );
+    childGroupId = child.ID;
+
+    // Upload a resource owned by the child group
+    const sampleImg = path.join(__dirname, '../../test-assets/sample-image.png');
+    const r = JSON.parse(
+      cli.runOrFail('resource', 'upload', sampleImg, '--name', `cli-scope-res-${suffix}`, '--owner-id', String(childGroupId), '--json').stdout,
+    );
+    const res = Array.isArray(r) ? r[0] : r;
+    scopedResourceId = res.ID;
+  });
+
+  test.afterAll(() => {
+    const cli = createCliRunner();
+    if (scopedResourceId) cli.run('resource', 'delete', String(scopedResourceId));
+    if (childGroupId) cli.run('group', 'delete', String(childGroupId));
+    if (parentGroupId) cli.run('group', 'delete', String(parentGroupId));
+  });
+
+  test('SCOPE by ID returns filtered results', async ({ cli }) => {
+    const result = cli.run('mrql', `type = "resource" SCOPE ${parentGroupId}`, '--json');
+    expect(result.exitCode).toBe(0);
+
+    const parsed = JSON.parse(result.stdout);
+    // The scoped resource should appear in results
+    const names = (parsed.resources || []).map((r: any) => r.Name);
+    expect(names).toContain(`cli-scope-res-${suffix}`);
+  });
+
+  test('SCOPE with nonexistent ID returns error', async ({ cli }) => {
+    const result = cli.run('mrql', 'type = "resource" SCOPE 999999');
+    expect(result.exitCode).not.toBe(0);
+
+    const combined = result.stdout + result.stderr;
+    expect(combined.toLowerCase()).toContain('scope group not found');
+  });
+});
