@@ -28,7 +28,7 @@ Examples:
 ```
 type = "resource" AND name ~ "photo" SCOPE 42 ORDER BY created LIMIT 10
 type = "note" SCOPE "My Project"
-type = "resource" SCOPE 7 GROUP BY contentType ORDER BY count DESC
+type = "resource" SCOPE 7 GROUP BY contentType COUNT() ORDER BY count DESC
 SCOPE 123
 ```
 
@@ -116,7 +116,7 @@ The `[mrql]` shortcode gains a `scope` attribute:
 
 | Keyword | Resolution |
 |---------|------------|
-| `entity` (default) | If context is a group: that group's ID. If resource/note: its `owner_id`. |
+| `entity` (default) | If context is a group: that group's ID. If resource/note: its `owner_id`. If the resource/note has no owner (owner_id = 0), resolves to the no-match sentinel — returns empty results, never fans out to global scope. |
 | `parent` | The owning group's `owner_id` (one level up). |
 | `root` | Walk ownership chain to the top. |
 | `global` | No scope filter. |
