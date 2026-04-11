@@ -110,6 +110,7 @@ Embeds MRQL query results inline. Executes a query and renders the results in on
 | `format` | No | auto | Render format: `table`, `list`, `compact`, `custom`, or empty for auto |
 | `limit` | No | `20` | Maximum number of results |
 | `buckets` | No | `5` | Number of buckets for bucketed GROUP BY queries |
+| `scope` | No | `"entity"` | Scope filter: `entity` (default), `parent`, `root`, `global`, or a numeric group ID |
 
 *Either `query` or `saved` is required.
 
@@ -128,6 +129,17 @@ Embeds MRQL query results inline. Executes a query and renders the results in on
 **For aggregated GROUP BY queries:** Always renders as an HTML table of aggregated rows (column headers from the GROUP BY fields and aggregate functions).
 
 **For bucketed GROUP BY queries:** Renders bucket groups, each with a header bar showing the key values and item count, followed by the items rendered using the specified format.
+
+### Scope
+
+The `scope` attribute limits query results to a group's subtree. By default, it scopes to the current entity's owning group:
+
+- `entity` (default) -- the entity's owning group and its subtree
+- `parent` -- the parent group's subtree
+- `root` -- the root group's subtree (everything in the hierarchy)
+- `global` -- no scope filter
+
+An explicit `SCOPE` clause in the MRQL query takes precedence over the attribute.
 
 ### Nesting
 

@@ -273,6 +273,52 @@ type = note ORDER BY updated ASC, name ASC LIMIT 50 OFFSET 100
 
 The default sort order when `ORDER BY` is omitted is implementation-defined (typically insertion order).
 
+## Scope
+
+The `SCOPE` clause filters query results to entities within a group's ownership subtree. Place `SCOPE` after the filter expression and before `GROUP BY`:
+
+```
+type = "resource" SCOPE 42 ORDER BY created LIMIT 10
+type = "note" SCOPE "My Project"
+```
+
+### Scope by ID
+
+`SCOPE <number>` filters to the group with that ID and all its descendants:
+
+```
+type = resource SCOPE 42
+```
+
+This returns all resources owned by group 42 or any group underneath it in the hierarchy.
+
+### Scope by Name
+
+`SCOPE "group name"` looks up the group by name (case-insensitive):
+
+```
+type = resource SCOPE "Vacation Photos"
+```
+
+If multiple groups share the same name, MRQL returns an error listing all matches with their IDs so you can switch to `SCOPE <id>`.
+
+### Scope with GROUP BY
+
+Scope is applied before grouping:
+
+```
+type = resource SCOPE 42 GROUP BY contentType COUNT()
+```
+
+### No Scope
+
+Omitting `SCOPE` or using `SCOPE 0` returns all matching entities regardless of ownership.
+
+### Entity Types
+
+- **Resources and Notes:** Scope filters by `owner_id` -- entities owned by groups in the subtree.
+- **Groups:** Scope filters by `id` -- the scoped group itself and all its descendants.
+
 ## GROUP BY and Aggregation
 
 Group results by field values with optional aggregate functions. GROUP BY requires an explicit entity type (`type = "resource"`, `type = "note"`, or `type = "group"`).

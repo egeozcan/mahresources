@@ -87,6 +87,11 @@ GROUP BY (bucketed — returns grouped entities):
   mr mrql 'type = resource GROUP BY contentType LIMIT 5'
   mr mrql --buckets 10 --page 2 'type = resource GROUP BY contentType LIMIT 5'
 
+Scope (filter to group subtree):
+  mr mrql 'type = resource SCOPE 42'
+  mr mrql 'type = note SCOPE "My Project" ORDER BY created'
+  mr mrql 'type = resource SCOPE 7 GROUP BY contentType COUNT()'
+
 Rendering:
   mr mrql --render 'type = resource AND tags = "photo"'
   The --render flag requests server-side template rendering using CustomMRQLResult
