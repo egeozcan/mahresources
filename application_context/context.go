@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -260,6 +261,18 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		Concurrency:     config.MaxJobConcurrency,
 		ExportRetention: config.ExportRetention,
 	})
+
+	// Sweep orphaned export tars at startup
+	sweepDir := "_exports"
+	if config.FileSavePath != "" {
+		sweepDir = filepath.Join(config.FileSavePath, "_exports")
+	}
+	removed, sweepErr := download_queue.SweepOrphanedExports(filesystem, sweepDir, ctx.downloadManager.ExportRetention())
+	if sweepErr != nil {
+		log.Printf("warning: SweepOrphanedExports failed: %v", sweepErr)
+	} else if removed > 0 {
+		log.Printf("startup: removed %d orphaned export tars", removed)
+	}
 
 	// Initialize plugin manager unless disabled
 	if !config.PluginsDisabled {
