@@ -567,46 +567,31 @@ type ScopeError struct {
 
 func (e *ScopeError) Error() string { return e.Message }
 
-// ResolveScopeSubtreeIDs resolves the full subtree of group IDs for a given
-// scope group ID using a recursive CTE. Returns the scope group's own ID plus
-// all descendant group IDs. The depth is capped at 50 levels.
-func ResolveScopeSubtreeIDs(db *gorm.DB, scopeGroupID uint) ([]uint, error) {
-	if scopeGroupID == 0 {
-		return nil, nil
-	}
+// scopeCTE is the recursive CTE SQL that collects all group IDs in a subtree.
+// Used inline in WHERE clauses — no separate prefetch query needed.
+// Both SQLite (3.35+) and PostgreSQL support CTEs inside IN subqueries.
+const scopeCTE = `WITH RECURSIVE scope_tree(id, depth) AS (
+	SELECT id, 0 FROM groups WHERE id = ?
+	UNION ALL
+	SELECT g.id, st.depth + 1 FROM groups g
+	INNER JOIN scope_tree st ON g.owner_id = st.id
+	WHERE st.depth < 50
+) SELECT id FROM scope_tree`
 
-	var ids []uint
-	err := db.Raw(`
-		WITH RECURSIVE scope_tree(id, depth) AS (
-			SELECT id, 0 FROM groups WHERE id = ?
-			UNION ALL
-			SELECT g.id, st.depth + 1 FROM groups g
-			INNER JOIN scope_tree st ON g.owner_id = st.id
-			WHERE st.depth < 50
-		)
-		SELECT id FROM scope_tree
-	`, scopeGroupID).Scan(&ids).Error
-
-	if err != nil {
-		return nil, fmt.Errorf("scope subtree resolution failed: %w", err)
-	}
-	return ids, nil
-}
-
-// ApplyScopeFilter applies scope subtree filtering to a GORM DB.
-// For EntityGroup, filters by `id IN subtree` (includes the scoped group itself).
-// For all other entity types, filters by `owner_id IN subtree`.
-// When subtreeIDs is empty (nonexistent scope group / sentinel), injects WHERE 1=0
-// to guarantee zero results. Never returns the original DB unchanged for a non-zero
-// scope — that would silently fan out to global results.
-func ApplyScopeFilter(db *gorm.DB, entityType EntityType, subtreeIDs []uint) *gorm.DB {
-	if len(subtreeIDs) == 0 {
-		return db.Where("1 = 0") // no-match: scope group has no subtree
-	}
+// ApplyScopeCTE injects an inline recursive CTE into a GORM query to filter
+// entities to a group's ownership subtree. No separate prefetch query needed —
+// the CTE runs as part of the main query.
+//
+// For EntityGroup: WHERE id IN (CTE) — includes the scoped group itself.
+// For other types: WHERE owner_id IN (CTE) — entities owned by subtree groups.
+//
+// When scopeGroupID doesn't exist (including the sentinel value), the CTE
+// returns zero rows, so IN (empty set) naturally yields no results.
+func ApplyScopeCTE(db *gorm.DB, entityType EntityType, scopeGroupID uint) *gorm.DB {
 	if entityType == EntityGroup {
-		return db.Where("id IN ?", subtreeIDs)
+		return db.Where(fmt.Sprintf("id IN (%s)", scopeCTE), scopeGroupID)
 	}
-	return db.Where("owner_id IN ?", subtreeIDs)
+	return db.Where(fmt.Sprintf("owner_id IN (%s)", scopeCTE), scopeGroupID)
 }
 ```
 
@@ -615,63 +600,61 @@ func ApplyScopeFilter(db *gorm.DB, entityType EntityType, subtreeIDs []uint) *go
 Run: `cd /Users/egecan/Code/mahresources && go test --tags 'json1 fts5' ./mrql/... -run TestResolveScope -v`
 Expected: All PASS.
 
-- [ ] **Step 5: Write tests for ResolveScopeSubtreeIDs**
+- [ ] **Step 5: Write test for ApplyScopeCTE**
 
 Add to `mrql/scope_test.go`:
 
 ```go
-func TestResolveScopeSubtreeIDs(t *testing.T) {
+func TestApplyScopeCTEResourceSubtree(t *testing.T) {
 	db := setupTestDB(t)
-	// Test DB hierarchy: Vacation(1) -> Work(2) -> Sub-Work(4)
-	//                    Vacation(1) -> Photos(5)
-	//                    Archive(3) — no parent
+	// Vacation(1) -> Work(2) -> Sub-Work(4), Vacation(1) -> Photos(5)
+	// sunset.jpg owned by Vacation(1), report.pdf owned by Work(2)
+	result := db.Table("resources")
+	result = ApplyScopeCTE(result, EntityResource, 1)
 
-	ids, err := ResolveScopeSubtreeIDs(db, 1)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
 	}
-	// Vacation(1) + Work(2) + Sub-Work(4) + Photos(5)
-	if len(ids) != 4 {
-		t.Errorf("expected 4 subtree IDs, got %d: %v", len(ids), ids)
-	}
-	idSet := make(map[uint]bool)
-	for _, id := range ids {
-		idSet[id] = true
-	}
-	for _, want := range []uint{1, 2, 4, 5} {
-		if !idSet[want] {
-			t.Errorf("expected subtree to contain ID %d", want)
-		}
+	// Both resources have owners in Vacation's subtree
+	if len(resources) != 2 {
+		t.Errorf("expected 2, got %d", len(resources))
 	}
 }
 
-func TestResolveScopeSubtreeIDsLeaf(t *testing.T) {
+func TestApplyScopeCTEGroupInclusive(t *testing.T) {
 	db := setupTestDB(t)
-	// Sub-Work(4) has no children
-	ids, err := ResolveScopeSubtreeIDs(db, 4)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	result := db.Table("groups")
+	result = ApplyScopeCTE(result, EntityGroup, 1)
+
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query error: %v", err)
 	}
-	if len(ids) != 1 || ids[0] != 4 {
-		t.Errorf("expected [4], got %v", ids)
+	// Vacation(1), Work(2), Sub-Work(4), Photos(5)
+	if len(groups) != 4 {
+		t.Errorf("expected 4, got %d", len(groups))
 	}
 }
 
-func TestResolveScopeSubtreeIDsZero(t *testing.T) {
+func TestApplyScopeCTENonexistentIDEmpty(t *testing.T) {
 	db := setupTestDB(t)
-	ids, err := ResolveScopeSubtreeIDs(db, 0)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	result := db.Table("resources")
+	result = ApplyScopeCTE(result, EntityResource, 99999)
+
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
 	}
-	if ids != nil {
-		t.Errorf("expected nil for scope 0, got %v", ids)
+	if len(resources) != 0 {
+		t.Errorf("expected 0 for nonexistent scope, got %d", len(resources))
 	}
 }
 ```
 
-- [ ] **Step 6: Run subtree tests**
+- [ ] **Step 6: Run CTE tests**
 
-Run: `cd /Users/egecan/Code/mahresources && go test --tags 'json1 fts5' ./mrql/... -run TestResolveScopeSubtree -v`
+Run: `cd /Users/egecan/Code/mahresources && go test --tags 'json1 fts5' ./mrql/... -run TestApplyScopeCTE -v`
 Expected: All PASS.
 
 - [ ] **Step 7: Run full mrql test suite**
@@ -820,27 +803,13 @@ type TranslateOptions struct {
 In `mrql/translator.go`, in `TranslateWithOptions()`, after the WHERE clause translation (around line 64) and before ORDER BY (line 67), add:
 
 ```go
-	// Apply scope filter (subtree-based)
+	// Apply scope filter — inline recursive CTE, no separate query
 	if opts.ScopeGroupID > 0 {
-		subtreeIDs, err := ResolveScopeSubtreeIDs(db, opts.ScopeGroupID)
-		if err != nil {
-			return nil, err
-		}
-		result = ApplyScopeFilter(result, entityType, subtreeIDs)
+		result = ApplyScopeCTE(result, entityType, opts.ScopeGroupID)
 	}
 ```
 
-Note: `db` here is the original `*gorm.DB` passed to the function (not `result`), which is needed for the CTE query. But `result` is what we're building the query on. The `ResolveScopeSubtreeIDs` should run on a fresh session to avoid polluting the main query. Update the call:
-
-```go
-	if opts.ScopeGroupID > 0 {
-		subtreeIDs, err := ResolveScopeSubtreeIDs(db.Session(&gorm.Session{NewDB: true}), opts.ScopeGroupID)
-		if err != nil {
-			return nil, err
-		}
-		result = ApplyScopeFilter(result, entityType, subtreeIDs)
-	}
-```
+This embeds the recursive CTE directly in the WHERE clause of the main query. No separate prefetch needed — the CTE runs as part of a single SQL statement. For nonexistent IDs (including the sentinel), the CTE returns zero rows, naturally yielding empty results.
 
 - [ ] **Step 5: Apply scope to TranslateGroupByKeys and TranslateGroupByBucket**
 
@@ -853,13 +822,9 @@ func TranslateGroupByKeys(q *Query, db *gorm.DB, opts TranslateOptions) ([]map[s
 
 After the WHERE clause translation (line 43), before the JOIN block, add:
 ```go
-	// Apply scope filter
+	// Apply scope filter — inline CTE, same pattern as TranslateWithOptions
 	if opts.ScopeGroupID > 0 {
-		subtreeIDs, err := ResolveScopeSubtreeIDs(db.Session(&gorm.Session{NewDB: true}), opts.ScopeGroupID)
-		if err != nil {
-			return nil, err
-		}
-		result = ApplyScopeFilter(result, entityType, subtreeIDs)
+		result = ApplyScopeCTE(result, entityType, opts.ScopeGroupID)
 	}
 ```
 
@@ -868,7 +833,7 @@ Update `TranslateGroupByBucket` signature (line 105):
 func TranslateGroupByBucket(q *Query, db *gorm.DB, key map[string]any, opts TranslateOptions) (*gorm.DB, error) {
 ```
 
-After the WHERE clause translation (line 129), add the same scope filter block.
+After the WHERE clause translation (line 129), add the same `ApplyScopeCTE` block.
 
 Update `TranslateGroupBy` signature in `mrql/translator.go` (line 1492):
 ```go
@@ -1215,27 +1180,22 @@ Update `executeMRQLForShortcode` to accept and use `scopeGroupID`:
 func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context.MahresourcesContext, query string, savedName string, limit int, buckets int, scopeGroupID uint) (*shortcodes.QueryResult, error) {
 ```
 
-In the GROUP BY path (line 62), use scoped execution:
-```go
-grouped, err := appCtx.ExecuteMRQLGroupedWithScope(reqCtx, parsed, scopeGroupID)
-```
+First, add a public scope resolution method to `MahresourcesContext` in `application_context/mrql_context.go`:
 
-In the flat path (line 70), use scoped execution:
 ```go
-translateOpts := mrql.TranslateOptions{ScopeGroupID: scopeGroupID}
-entityType := mrql.ExtractEntityType(parsed)
-if entityType == mrql.EntityUnspecified {
-	return nil, fmt.Errorf("entity type required")
+// ResolveMRQLScope resolves a parsed query's SCOPE clause to a group ID.
+// Returns 0 if no SCOPE clause is present. Errors on not-found or ambiguous names.
+func (ctx *MahresourcesContext) ResolveMRQLScope(q *mrql.Query) (uint, error) {
+	return mrql.ResolveScope(q, ctx.db)
 }
-parsed.EntityType = entityType
-result, err := appCtx.ExecuteSingleEntityWithScope(reqCtx, parsed, entityType, translateOpts, scopeGroupID)
 ```
 
-If the parsed query has an explicit SCOPE clause, resolve it and override the shortcode-provided scope. Note: `MahresourcesContext` has a private `ctx.db` field, so `executeMRQLForShortcode` receives `appCtx` which is the `*MahresourcesContext`. The scope resolution call uses the DB that is already accessible within the `application_context` package:
+Then in `executeMRQLForShortcode`, after parsing/validating, resolve explicit SCOPE precedence:
+
 ```go
 // Explicit SCOPE in query string takes precedence over shortcode attribute
 if parsed.Scope != nil {
-	resolvedID, err := mrql.ResolveScope(parsed, appCtx.db)
+	resolvedID, err := appCtx.ResolveMRQLScope(parsed)
 	if err != nil {
 		return nil, err
 	}
@@ -1243,11 +1203,35 @@ if parsed.Scope != nil {
 }
 ```
 
-Note: `executeMRQLForShortcode` is in `server/template_handlers/template_filters/`, not in `application_context/`. It receives `appCtx *application_context.MahresourcesContext` but can't access `appCtx.db` (private). Two options:
-- **Option A:** Move the SCOPE resolution into a new public method on `MahresourcesContext`: `func (ctx *MahresourcesContext) ResolveMRQLScope(q *mrql.Query) (uint, error)` that calls `mrql.ResolveScope(q, ctx.db)`.
-- **Option B:** Let the execution layer methods (`ExecuteSingleEntityWithScope`, `ExecuteMRQLGroupedWithScope`) check `parsed.Scope` themselves since they already have `ctx.db`.
+For the GROUP BY path, use scoped execution:
+```go
+grouped, err := appCtx.ExecuteMRQLGroupedWithScope(reqCtx, parsed, scopeGroupID)
+```
 
-**Prefer Option A** — it keeps the shortcode executor in control of precedence logic (explicit SCOPE vs shortcode attribute) while delegating DB access to the app context.
+For the flat path, **preserve cross-entity support** — do NOT switch to `ExecuteSingleEntityWithScope` which requires an explicit type. Instead, inject scopeGroupID into the parsed query's execution via a new scoped variant of `ExecuteMRQL`:
+
+Add to `application_context/mrql_context.go`:
+
+```go
+// ExecuteMRQLScoped is like ExecuteMRQL but accepts a pre-parsed query and scope.
+// Supports cross-entity queries (no type required) with scope filtering.
+func (ctx *MahresourcesContext) ExecuteMRQLScoped(reqCtx context.Context, parsed *mrql.Query, scopeGroupID uint) (*MRQLResult, error) {
+	entityType := mrql.ExtractEntityType(parsed)
+	opts := mrql.TranslateOptions{ScopeGroupID: scopeGroupID}
+
+	if entityType != mrql.EntityUnspecified {
+		return ctx.executeSingleEntity(reqCtx, parsed, entityType, opts)
+	}
+	return ctx.executeCrossEntity(reqCtx, parsed, opts)
+}
+```
+
+Then the shortcode executor flat path becomes:
+```go
+result, err := appCtx.ExecuteMRQLScoped(reqCtx, parsed, scopeGroupID)
+```
+
+This preserves cross-entity queries (`name ~ "foo"` without `type = ...`) while applying scope.
 
 - [ ] **Step 7: Extend QueryResultItem with precomputed scope IDs for nested contexts**
 
