@@ -26,8 +26,9 @@ func RenderMRQLShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 	limit := parseIntAttr(sc.Attrs["limit"], defaultMRQLShortcodeLimit)
 	buckets := parseIntAttr(sc.Attrs["buckets"], defaultMRQLShortcodeBuckets)
 	format := sc.Attrs["format"] // "" means auto-resolve
+	scopeGroupID := resolveScopeKeyword(sc.Attrs["scope"], ctx)
 
-	result, err := executor(reqCtx, query, saved, limit, buckets)
+	result, err := executor(reqCtx, query, saved, limit, buckets, scopeGroupID)
 	if err != nil {
 		return fmt.Sprintf(
 			`<div class="mrql-results mrql-error text-sm text-red-700 bg-red-50 border border-red-200 rounded-md p-3 font-mono">%s</div>`,
@@ -96,11 +97,14 @@ func renderFlatWithCustom(reqCtx context.Context, items []QueryResultItem, rende
 	for _, item := range items {
 		if item.CustomMRQLResult != "" {
 			childCtx := MetaShortcodeContext{
-				EntityType: item.EntityType,
-				EntityID:   item.EntityID,
-				Meta:       item.Meta,
-				MetaSchema: item.MetaSchema,
-				Entity:     item.Entity,
+				EntityType:    item.EntityType,
+				EntityID:      item.EntityID,
+				Meta:          item.Meta,
+				MetaSchema:    item.MetaSchema,
+				Entity:        item.Entity,
+				ScopeGroupID:  item.ScopeGroupID,
+				ParentGroupID: item.ParentGroupID,
+				RootGroupID:   item.RootGroupID,
 			}
 			rendered := processWithDepth(reqCtx, item.CustomMRQLResult, childCtx, renderer, executor, depth+1)
 			b.WriteString(rendered)
@@ -140,4 +144,24 @@ func parseIntAttr(s string, defaultVal int) int {
 		return defaultVal
 	}
 	return v
+}
+
+// resolveScopeKeyword maps a scope attribute value to a concrete group ID
+// using the precomputed scope fields in MetaShortcodeContext.
+func resolveScopeKeyword(scope string, ctx MetaShortcodeContext) uint {
+	switch scope {
+	case "global":
+		return 0
+	case "parent":
+		return ctx.ParentGroupID
+	case "root":
+		return ctx.RootGroupID
+	case "":
+		return ctx.ScopeGroupID
+	default:
+		if id, err := strconv.ParseUint(scope, 10, 64); err == nil {
+			return uint(id)
+		}
+		return ctx.ScopeGroupID
+	}
 }

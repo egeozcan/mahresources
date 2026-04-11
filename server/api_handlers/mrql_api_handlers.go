@@ -63,6 +63,31 @@ func buildPluginRenderer(appCtx *application_context.MahresourcesContext, reqCtx
 	}
 }
 
+// resolveAPIScopeFields computes scope, parent, and root group IDs for an entity
+// when rendering custom MRQL templates via the API.
+func resolveAPIScopeFields(appCtx *application_context.MahresourcesContext, entityType string, ownerID *uint, entityID uint) (scopeID, parentID, rootID uint) {
+	if entityType == "group" {
+		scopeID = entityID
+		if ownerID != nil && *ownerID > 0 {
+			parentID = *ownerID
+		} else {
+			parentID = mrql.UnresolvedScopeSentinel
+		}
+		rootID = appCtx.ResolveRootScopeID(entityID)
+		return
+	}
+	if ownerID != nil && *ownerID > 0 {
+		scopeID = *ownerID
+		parentID = appCtx.ResolveParentScopeID(*ownerID)
+		rootID = appCtx.ResolveRootScopeID(*ownerID)
+	} else {
+		scopeID = mrql.UnresolvedScopeSentinel
+		parentID = mrql.UnresolvedScopeSentinel
+		rootID = mrql.UnresolvedScopeSentinel
+	}
+	return
+}
+
 // renderMRQLCustomTemplates processes CustomMRQLResult templates for each result entity
 // and populates the RenderedHTML field when a template is configured.
 func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, result *application_context.MRQLResult, reqCtx context.Context) {
@@ -79,10 +104,11 @@ func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, 
 			}
 		}
 		if r.ResourceCategory != nil && r.ResourceCategory.CustomMRQLResult != "" {
+			scopeID, parentID, rootID := resolveAPIScopeFields(appCtx, "resource", r.OwnerId, r.ID)
 			mctx := shortcodes.MetaShortcodeContext{
 				EntityType: "resource", EntityID: r.ID,
 				Meta: json.RawMessage(r.Meta), MetaSchema: r.ResourceCategory.MetaSchema,
-				Entity: r,
+				Entity: r, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 			}
 			r.RenderedHTML = shortcodes.Process(reqCtx, r.ResourceCategory.CustomMRQLResult, mctx, pluginRenderer, executor)
 		}
@@ -97,10 +123,11 @@ func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, 
 			}
 		}
 		if n.NoteType != nil && n.NoteType.CustomMRQLResult != "" {
+			scopeID, parentID, rootID := resolveAPIScopeFields(appCtx, "note", n.OwnerId, n.ID)
 			mctx := shortcodes.MetaShortcodeContext{
 				EntityType: "note", EntityID: n.ID,
 				Meta: json.RawMessage(n.Meta), MetaSchema: n.NoteType.MetaSchema,
-				Entity: n,
+				Entity: n, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 			}
 			n.RenderedHTML = shortcodes.Process(reqCtx, n.NoteType.CustomMRQLResult, mctx, pluginRenderer, executor)
 		}
@@ -115,10 +142,11 @@ func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, 
 			}
 		}
 		if g.Category != nil && g.Category.CustomMRQLResult != "" {
+			scopeID, parentID, rootID := resolveAPIScopeFields(appCtx, "group", g.OwnerId, g.ID)
 			mctx := shortcodes.MetaShortcodeContext{
 				EntityType: "group", EntityID: g.ID,
 				Meta: json.RawMessage(g.Meta), MetaSchema: g.Category.MetaSchema,
-				Entity: g,
+				Entity: g, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 			}
 			g.RenderedHTML = shortcodes.Process(reqCtx, g.Category.CustomMRQLResult, mctx, pluginRenderer, executor)
 		}
@@ -148,10 +176,11 @@ func renderMRQLGroupedCustomTemplates(appCtx *application_context.MahresourcesCo
 					}
 				}
 				if r.ResourceCategory != nil && r.ResourceCategory.CustomMRQLResult != "" {
+					scopeID, parentID, rootID := resolveAPIScopeFields(appCtx, "resource", r.OwnerId, r.ID)
 					mctx := shortcodes.MetaShortcodeContext{
 						EntityType: "resource", EntityID: r.ID,
 						Meta: json.RawMessage(r.Meta), MetaSchema: r.ResourceCategory.MetaSchema,
-						Entity: r,
+						Entity: r, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 					}
 					r.RenderedHTML = shortcodes.Process(reqCtx, r.ResourceCategory.CustomMRQLResult, mctx, pluginRenderer, executor)
 				}
@@ -167,10 +196,11 @@ func renderMRQLGroupedCustomTemplates(appCtx *application_context.MahresourcesCo
 					}
 				}
 				if n.NoteType != nil && n.NoteType.CustomMRQLResult != "" {
+					scopeID, parentID, rootID := resolveAPIScopeFields(appCtx, "note", n.OwnerId, n.ID)
 					mctx := shortcodes.MetaShortcodeContext{
 						EntityType: "note", EntityID: n.ID,
 						Meta: json.RawMessage(n.Meta), MetaSchema: n.NoteType.MetaSchema,
-						Entity: n,
+						Entity: n, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 					}
 					n.RenderedHTML = shortcodes.Process(reqCtx, n.NoteType.CustomMRQLResult, mctx, pluginRenderer, executor)
 				}
@@ -186,10 +216,11 @@ func renderMRQLGroupedCustomTemplates(appCtx *application_context.MahresourcesCo
 					}
 				}
 				if g.Category != nil && g.Category.CustomMRQLResult != "" {
+					scopeID, parentID, rootID := resolveAPIScopeFields(appCtx, "group", g.OwnerId, g.ID)
 					mctx := shortcodes.MetaShortcodeContext{
 						EntityType: "group", EntityID: g.ID,
 						Meta: json.RawMessage(g.Meta), MetaSchema: g.Category.MetaSchema,
-						Entity: g,
+						Entity: g, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 					}
 					g.RenderedHTML = shortcodes.Process(reqCtx, g.Category.CustomMRQLResult, mctx, pluginRenderer, executor)
 				}

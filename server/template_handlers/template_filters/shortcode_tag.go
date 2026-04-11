@@ -130,13 +130,52 @@ func buildMetaContext(entity any) *shortcodes.MetaShortcodeContext {
 		return nil
 	}
 
+	// Extract scope fields from owner_id
+	scopeID, parentID, rootID := extractScopeFields(v, entityType, id)
+
 	return &shortcodes.MetaShortcodeContext{
-		EntityType: entityType,
-		EntityID:   id,
-		Meta:       metaJSON,
-		MetaSchema: metaSchema,
-		Entity:     entity,
+		EntityType:    entityType,
+		EntityID:      id,
+		Meta:          metaJSON,
+		MetaSchema:    metaSchema,
+		Entity:        entity,
+		ScopeGroupID:  scopeID,
+		ParentGroupID: parentID,
+		RootGroupID:   rootID,
 	}
+}
+
+// extractScopeFields extracts scope group IDs from an entity using reflection.
+// For groups: ScopeGroupID = entity ID, ParentGroupID = OwnerId, RootGroupID = sentinel (no DB here).
+// For resources/notes: ScopeGroupID = OwnerId value, parent/root = sentinel (no DB access here).
+// The template tag has no app context, so parent/root resolution is best-effort.
+func extractScopeFields(v reflect.Value, entityType string, entityID uint) (scopeID, parentID, rootID uint) {
+	sentinel := uint(^uint(0) >> 1) // mrql.UnresolvedScopeSentinel
+
+	if entityType == "group" {
+		scopeID = entityID
+		ownerField := v.FieldByName("OwnerId")
+		if ownerField.IsValid() && ownerField.Kind() == reflect.Ptr && !ownerField.IsNil() {
+			parentID = uint(ownerField.Elem().Uint())
+		} else {
+			parentID = sentinel
+		}
+		rootID = sentinel // would need DB walk; sentinel is safe
+		return
+	}
+
+	// Resources and notes
+	ownerField := v.FieldByName("OwnerId")
+	if ownerField.IsValid() && ownerField.Kind() == reflect.Ptr && !ownerField.IsNil() {
+		oid := uint(ownerField.Elem().Uint())
+		if oid > 0 {
+			scopeID = oid
+			parentID = sentinel // would need DB lookup
+			rootID = sentinel   // would need DB walk
+			return
+		}
+	}
+	return sentinel, sentinel, sentinel
 }
 
 // extractCategorySchema reads the MetaSchema field from a preloaded category/type relation.

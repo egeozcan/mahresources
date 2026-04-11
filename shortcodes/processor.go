@@ -14,8 +14,9 @@ type PluginRenderer func(pluginName string, sc Shortcode, ctx MetaShortcodeConte
 
 // QueryExecutor is a callback that executes an MRQL query and returns results.
 // query is the raw MRQL expression, savedName is an optional saved query name,
-// limit caps the number of returned items, and buckets controls grouping bucket count.
-type QueryExecutor func(ctx context.Context, query string, savedName string, limit int, buckets int) (*QueryResult, error)
+// limit caps the number of returned items, buckets controls grouping bucket count,
+// and scopeGroupID restricts results to a group subtree (0 means global/no filter).
+type QueryExecutor func(ctx context.Context, query string, savedName string, limit int, buckets int, scopeGroupID uint) (*QueryResult, error)
 
 // QueryResult holds the output of a QueryExecutor call.
 type QueryResult struct {
@@ -34,6 +35,9 @@ type QueryResultItem struct {
 	Meta             json.RawMessage
 	MetaSchema       string
 	CustomMRQLResult string
+	ScopeGroupID     uint // precomputed: owning group ID (or sentinel for ownerless)
+	ParentGroupID    uint // precomputed: owner's owner ID
+	RootGroupID      uint // precomputed: root of ownership chain
 }
 
 // QueryResultGroup is a bucket of QueryResultItems sharing a common key.

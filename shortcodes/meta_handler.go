@@ -11,11 +11,14 @@ import (
 
 // MetaShortcodeContext holds the entity context needed to render [meta] shortcodes.
 type MetaShortcodeContext struct {
-	EntityType string          // "group", "resource", "note"
-	EntityID   uint
-	Meta       json.RawMessage // entity's full Meta JSON
-	MetaSchema string          // category's MetaSchema JSON string (may be empty)
-	Entity     any             // the full entity object (Group, Resource, Note, etc.)
+	EntityType    string          // "group", "resource", "note"
+	EntityID      uint
+	Meta          json.RawMessage // entity's full Meta JSON
+	MetaSchema    string          // category's MetaSchema JSON string (may be empty)
+	Entity        any             // the full entity object (Group, Resource, Note, etc.)
+	ScopeGroupID  uint            // resolved "entity" scope (owning group or sentinel for ownerless)
+	ParentGroupID uint            // resolved "parent" scope (owner's owner)
+	RootGroupID   uint            // resolved "root" scope (top of chain)
 }
 
 // RenderMetaShortcode expands a [meta] shortcode into a <meta-shortcode> custom element.

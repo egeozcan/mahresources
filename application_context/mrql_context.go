@@ -921,3 +921,51 @@ func (ctx *MahresourcesContext) executeBucketedQueryScoped(reqCtx context.Contex
 		TotalGroups: len(allKeys),
 	}, nil
 }
+
+// ResolveMRQLScope resolves a parsed query's SCOPE clause to a group ID.
+func (ctx *MahresourcesContext) ResolveMRQLScope(q *mrql.Query) (uint, error) {
+	return mrql.ResolveScope(q, ctx.db)
+}
+
+// ExecuteMRQLScoped executes a pre-parsed MRQL query with scope filtering.
+// Supports cross-entity queries.
+func (ctx *MahresourcesContext) ExecuteMRQLScoped(reqCtx context.Context, parsed *mrql.Query, scopeGroupID uint) (*MRQLResult, error) {
+	entityType := mrql.ExtractEntityType(parsed)
+	opts := mrql.TranslateOptions{ScopeGroupID: scopeGroupID}
+	if entityType != mrql.EntityUnspecified {
+		return ctx.executeSingleEntity(reqCtx, parsed, entityType, opts)
+	}
+	return ctx.executeCrossEntity(reqCtx, parsed, opts)
+}
+
+// ResolveParentScopeID returns the owner_id of the group with the given ID.
+// Returns mrql.UnresolvedScopeSentinel if the group doesn't exist or has no owner.
+func (ctx *MahresourcesContext) ResolveParentScopeID(groupID uint) uint {
+	if groupID == 0 {
+		return mrql.UnresolvedScopeSentinel
+	}
+	var ownerID *uint
+	err := ctx.db.Table("groups").Select("owner_id").Where("id = ?", groupID).Scan(&ownerID).Error
+	if err != nil || ownerID == nil || *ownerID == 0 {
+		return mrql.UnresolvedScopeSentinel
+	}
+	return *ownerID
+}
+
+// ResolveRootScopeID walks the ownership chain from the given group ID to find
+// the root group. Returns mrql.UnresolvedScopeSentinel if the group doesn't exist.
+func (ctx *MahresourcesContext) ResolveRootScopeID(groupID uint) uint {
+	if groupID == 0 {
+		return mrql.UnresolvedScopeSentinel
+	}
+	current := groupID
+	for i := 0; i < 50; i++ {
+		var ownerID *uint
+		err := ctx.db.Table("groups").Select("owner_id").Where("id = ?", current).Scan(&ownerID).Error
+		if err != nil || ownerID == nil || *ownerID == 0 {
+			return current
+		}
+		current = *ownerID
+	}
+	return current
+}

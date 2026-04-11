@@ -15,14 +15,14 @@ import (
 // context to execute MRQL queries. It preloads categories on result entities to
 // extract CustomMRQLResult templates.
 func BuildQueryExecutor(appCtx *application_context.MahresourcesContext) shortcodes.QueryExecutor {
-	return func(reqCtx context.Context, query string, savedName string, limit int, buckets int) (*shortcodes.QueryResult, error) {
-		return executeMRQLForShortcode(reqCtx, appCtx, query, savedName, limit, buckets)
+	return func(reqCtx context.Context, query string, savedName string, limit int, buckets int, scopeGroupID uint) (*shortcodes.QueryResult, error) {
+		return executeMRQLForShortcode(reqCtx, appCtx, query, savedName, limit, buckets, scopeGroupID)
 	}
 }
 
 // executeMRQLForShortcode runs an MRQL query and converts the result into shortcode types.
 // It detects GROUP BY queries and routes them through ExecuteMRQLGrouped.
-func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context.MahresourcesContext, query string, savedName string, limit int, buckets int) (*shortcodes.QueryResult, error) {
+func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context.MahresourcesContext, query string, savedName string, limit int, buckets int, scopeGroupID uint) (*shortcodes.QueryResult, error) {
 	// Resolve saved query name to query string
 	actualQuery := query
 	if savedName != "" && query == "" {
@@ -47,6 +47,15 @@ func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context
 		parsed.Limit = limit
 	}
 
+	// Explicit SCOPE in the query text takes precedence over the shortcode scope attr
+	if parsed.Scope != nil {
+		resolvedID, err := appCtx.ResolveMRQLScope(parsed)
+		if err != nil {
+			return nil, err
+		}
+		scopeGroupID = resolvedID
+	}
+
 	// GROUP BY queries use the grouped execution path
 	if parsed.GroupBy != nil {
 		entityType := mrql.ExtractEntityType(parsed)
@@ -59,15 +68,15 @@ func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context
 			parsed.BucketLimit = buckets
 		}
 
-		grouped, err := appCtx.ExecuteMRQLGrouped(reqCtx, parsed)
+		grouped, err := appCtx.ExecuteMRQLGroupedWithScope(reqCtx, parsed, scopeGroupID)
 		if err != nil {
 			return nil, err
 		}
 		return convertGroupedResultItems(grouped, appCtx), nil
 	}
 
-	// Non-grouped: flat query
-	result, err := appCtx.ExecuteMRQL(reqCtx, actualQuery, limit, 0)
+	// Non-grouped: flat query using scoped execution
+	result, err := appCtx.ExecuteMRQLScoped(reqCtx, parsed, scopeGroupID)
 	if err != nil {
 		return nil, err
 	}
@@ -105,6 +114,16 @@ func convertResultItems(result *application_context.MRQLResult, appCtx *applicat
 			item.MetaSchema = r.ResourceCategory.MetaSchema
 			item.CustomMRQLResult = r.ResourceCategory.CustomMRQLResult
 		}
+		// Populate scope fields
+		if r.OwnerId != nil && *r.OwnerId > 0 {
+			item.ScopeGroupID = *r.OwnerId
+			item.ParentGroupID = appCtx.ResolveParentScopeID(*r.OwnerId)
+			item.RootGroupID = appCtx.ResolveRootScopeID(*r.OwnerId)
+		} else {
+			item.ScopeGroupID = mrql.UnresolvedScopeSentinel
+			item.ParentGroupID = mrql.UnresolvedScopeSentinel
+			item.RootGroupID = mrql.UnresolvedScopeSentinel
+		}
 		items = append(items, item)
 	}
 
@@ -125,6 +144,16 @@ func convertResultItems(result *application_context.MRQLResult, appCtx *applicat
 		if n.NoteType != nil {
 			item.MetaSchema = n.NoteType.MetaSchema
 			item.CustomMRQLResult = n.NoteType.CustomMRQLResult
+		}
+		// Populate scope fields
+		if n.OwnerId != nil && *n.OwnerId > 0 {
+			item.ScopeGroupID = *n.OwnerId
+			item.ParentGroupID = appCtx.ResolveParentScopeID(*n.OwnerId)
+			item.RootGroupID = appCtx.ResolveRootScopeID(*n.OwnerId)
+		} else {
+			item.ScopeGroupID = mrql.UnresolvedScopeSentinel
+			item.ParentGroupID = mrql.UnresolvedScopeSentinel
+			item.RootGroupID = mrql.UnresolvedScopeSentinel
 		}
 		items = append(items, item)
 	}
@@ -147,6 +176,14 @@ func convertResultItems(result *application_context.MRQLResult, appCtx *applicat
 			item.MetaSchema = g.Category.MetaSchema
 			item.CustomMRQLResult = g.Category.CustomMRQLResult
 		}
+		// Groups are their own scope
+		item.ScopeGroupID = g.ID
+		if g.OwnerId != nil && *g.OwnerId > 0 {
+			item.ParentGroupID = *g.OwnerId
+		} else {
+			item.ParentGroupID = mrql.UnresolvedScopeSentinel
+		}
+		item.RootGroupID = appCtx.ResolveRootScopeID(g.ID)
 		items = append(items, item)
 	}
 
@@ -192,6 +229,15 @@ func convertGroupedResultItems(result *application_context.MRQLGroupedResult, ap
 					item.MetaSchema = r.ResourceCategory.MetaSchema
 					item.CustomMRQLResult = r.ResourceCategory.CustomMRQLResult
 				}
+				if r.OwnerId != nil && *r.OwnerId > 0 {
+					item.ScopeGroupID = *r.OwnerId
+					item.ParentGroupID = appCtx.ResolveParentScopeID(*r.OwnerId)
+					item.RootGroupID = appCtx.ResolveRootScopeID(*r.OwnerId)
+				} else {
+					item.ScopeGroupID = mrql.UnresolvedScopeSentinel
+					item.ParentGroupID = mrql.UnresolvedScopeSentinel
+					item.RootGroupID = mrql.UnresolvedScopeSentinel
+				}
 				group.Items = append(group.Items, item)
 			}
 		case []models.Note:
@@ -212,6 +258,15 @@ func convertGroupedResultItems(result *application_context.MRQLGroupedResult, ap
 				if n.NoteType != nil {
 					item.MetaSchema = n.NoteType.MetaSchema
 					item.CustomMRQLResult = n.NoteType.CustomMRQLResult
+				}
+				if n.OwnerId != nil && *n.OwnerId > 0 {
+					item.ScopeGroupID = *n.OwnerId
+					item.ParentGroupID = appCtx.ResolveParentScopeID(*n.OwnerId)
+					item.RootGroupID = appCtx.ResolveRootScopeID(*n.OwnerId)
+				} else {
+					item.ScopeGroupID = mrql.UnresolvedScopeSentinel
+					item.ParentGroupID = mrql.UnresolvedScopeSentinel
+					item.RootGroupID = mrql.UnresolvedScopeSentinel
 				}
 				group.Items = append(group.Items, item)
 			}
@@ -234,6 +289,13 @@ func convertGroupedResultItems(result *application_context.MRQLGroupedResult, ap
 					item.MetaSchema = g.Category.MetaSchema
 					item.CustomMRQLResult = g.Category.CustomMRQLResult
 				}
+				item.ScopeGroupID = g.ID
+				if g.OwnerId != nil && *g.OwnerId > 0 {
+					item.ParentGroupID = *g.OwnerId
+				} else {
+					item.ParentGroupID = mrql.UnresolvedScopeSentinel
+				}
+				item.RootGroupID = appCtx.ResolveRootScopeID(g.ID)
 				group.Items = append(group.Items, item)
 			}
 		}

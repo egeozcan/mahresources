@@ -11,6 +11,7 @@ import (
 	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/models"
+	"mahresources/mrql"
 	"mahresources/plugin_system"
 	"mahresources/server/api_handlers"
 	"mahresources/server/template_handlers"
@@ -173,6 +174,33 @@ func buildEntityDataFromEntity(entity any, entityType string) map[string]any {
 	return data
 }
 
+// resolveEntityScope computes the three scope IDs (scope, parent, root) for an entity.
+// For groups, the caller should set ScopeGroupID = group.ID after this returns.
+// ownerID is the entity's OwnerId pointer.
+func resolveEntityScope(appCtx *application_context.MahresourcesContext, entityType string, ownerID *uint) (scopeID, parentID, rootID uint) {
+	if entityType == "group" {
+		// For groups, scope is self (set by caller). Parent = owner, root = walk chain.
+		if ownerID != nil && *ownerID > 0 {
+			parentID = *ownerID
+		} else {
+			parentID = mrql.UnresolvedScopeSentinel
+		}
+		// rootID will be resolved from the group's own ID by the caller
+		return 0, parentID, mrql.UnresolvedScopeSentinel
+	}
+	// Resources and notes: scope = owner group
+	if ownerID != nil && *ownerID > 0 {
+		scopeID = *ownerID
+		parentID = appCtx.ResolveParentScopeID(*ownerID)
+		rootID = appCtx.ResolveRootScopeID(*ownerID)
+	} else {
+		scopeID = mrql.UnresolvedScopeSentinel
+		parentID = mrql.UnresolvedScopeSentinel
+		rootID = mrql.UnresolvedScopeSentinel
+	}
+	return scopeID, parentID, rootID
+}
+
 // processShortcodesForJSON processes shortcode markup in Custom* fields of
 // entity categories/types so that JSON API consumers (e.g., the lightbox)
 // receive expanded HTML instead of raw [meta ...] shortcode text.
@@ -200,12 +228,16 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 	switch entityType {
 	case "resource":
 		if r, ok := mainEntity.(*models.Resource); ok && r.ResourceCategory != nil {
+			scopeID, parentID, rootID := resolveEntityScope(appCtx, "resource", r.OwnerId)
 			metaCtx := shortcodes.MetaShortcodeContext{
-				EntityType: "resource",
-				EntityID:   r.ID,
-				Meta:       json.RawMessage(r.Meta),
-				MetaSchema: r.ResourceCategory.MetaSchema,
-				Entity:     r,
+				EntityType:    "resource",
+				EntityID:      r.ID,
+				Meta:          json.RawMessage(r.Meta),
+				MetaSchema:    r.ResourceCategory.MetaSchema,
+				Entity:        r,
+				ScopeGroupID:  scopeID,
+				ParentGroupID: parentID,
+				RootGroupID:   rootID,
 			}
 			r.ResourceCategory.CustomHeader = shortcodes.Process(reqCtx, r.ResourceCategory.CustomHeader, metaCtx, pluginRenderer, executor)
 			r.ResourceCategory.CustomSidebar = shortcodes.Process(reqCtx, r.ResourceCategory.CustomSidebar, metaCtx, pluginRenderer, executor)
@@ -214,12 +246,16 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 		}
 	case "group":
 		if g, ok := mainEntity.(*models.Group); ok && g.Category != nil {
+			_, parentID, _ := resolveEntityScope(appCtx, "group", g.OwnerId)
 			metaCtx := shortcodes.MetaShortcodeContext{
-				EntityType: "group",
-				EntityID:   g.ID,
-				Meta:       json.RawMessage(g.Meta),
-				MetaSchema: g.Category.MetaSchema,
-				Entity:     g,
+				EntityType:    "group",
+				EntityID:      g.ID,
+				Meta:          json.RawMessage(g.Meta),
+				MetaSchema:    g.Category.MetaSchema,
+				Entity:        g,
+				ScopeGroupID:  g.ID,
+				ParentGroupID: parentID,
+				RootGroupID:   appCtx.ResolveRootScopeID(g.ID),
 			}
 			g.Category.CustomHeader = shortcodes.Process(reqCtx, g.Category.CustomHeader, metaCtx, pluginRenderer, executor)
 			g.Category.CustomSidebar = shortcodes.Process(reqCtx, g.Category.CustomSidebar, metaCtx, pluginRenderer, executor)
@@ -228,11 +264,15 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 		}
 	case "note":
 		if n, ok := mainEntity.(*models.Note); ok && n.NoteType != nil {
+			scopeID, parentID, rootID := resolveEntityScope(appCtx, "note", n.OwnerId)
 			metaCtx := shortcodes.MetaShortcodeContext{
-				EntityType: "note",
-				EntityID:   n.ID,
-				Meta:       json.RawMessage(n.Meta),
-				Entity:     n,
+				EntityType:    "note",
+				EntityID:      n.ID,
+				Meta:          json.RawMessage(n.Meta),
+				Entity:        n,
+				ScopeGroupID:  scopeID,
+				ParentGroupID: parentID,
+				RootGroupID:   rootID,
 			}
 			n.NoteType.CustomHeader = shortcodes.Process(reqCtx, n.NoteType.CustomHeader, metaCtx, pluginRenderer, executor)
 			n.NoteType.CustomSidebar = shortcodes.Process(reqCtx, n.NoteType.CustomSidebar, metaCtx, pluginRenderer, executor)
