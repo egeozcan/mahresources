@@ -437,7 +437,7 @@ GET /v1/search
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `q` | string | **Required.** Search query |
-| `limit` | integer | Maximum results (default: 20, max: 50) |
+| `limit` | integer | Maximum results (default: 20, max: 200) |
 | `types` | string | Entity types to search (comma-separated: `resource`, `note`, `group`, `tag`, `category`, `query`, `relationType`, `noteType`, `resourceCategory`) |
 
 #### Example
@@ -447,7 +447,7 @@ GET /v1/search
 curl "http://localhost:8181/v1/search?q=project"
 
 # Search with limit
-curl "http://localhost:8181/v1/search?q=project&limit=50"
+curl "http://localhost:8181/v1/search?q=project&limit=100"
 
 # Search specific types
 curl "http://localhost:8181/v1/search?q=project&types=resource,note"
