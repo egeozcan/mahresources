@@ -1,14 +1,192 @@
 package application_context
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha1"
 	"fmt"
+	"io"
 	"testing"
 
 	"github.com/spf13/afero"
 	"mahresources/archive"
 	"mahresources/models"
 )
+
+// exportCollector mirrors archive/reader_test.go's testCollector but lives
+// here because the archive package's test helpers are internal.
+type exportCollector struct {
+	groups       map[string]*archive.GroupPayload
+	notes        map[string]*archive.NotePayload
+	resources    map[string]*archive.ResourcePayload
+	series       map[string]*archive.SeriesPayload
+	blobs        map[string][]byte
+	previews     map[string][]byte
+	categoryDefs []archive.CategoryDef
+	tagDefs      []archive.TagDef
+}
+
+func newExportCollector() *exportCollector {
+	return &exportCollector{
+		groups:    map[string]*archive.GroupPayload{},
+		notes:     map[string]*archive.NotePayload{},
+		resources: map[string]*archive.ResourcePayload{},
+		series:    map[string]*archive.SeriesPayload{},
+		blobs:     map[string][]byte{},
+		previews:  map[string][]byte{},
+	}
+}
+
+func (c *exportCollector) OnGroup(p *archive.GroupPayload) error {
+	c.groups[p.ExportID] = p
+	return nil
+}
+func (c *exportCollector) OnNote(p *archive.NotePayload) error { c.notes[p.ExportID] = p; return nil }
+func (c *exportCollector) OnResource(p *archive.ResourcePayload) error {
+	c.resources[p.ExportID] = p
+	return nil
+}
+func (c *exportCollector) OnSeries(p *archive.SeriesPayload) error {
+	c.series[p.ExportID] = p
+	return nil
+}
+func (c *exportCollector) OnBlob(hash string, body io.Reader, size int64) error {
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return err
+	}
+	c.blobs[hash] = data
+	return nil
+}
+func (c *exportCollector) OnPreview(id string, body io.Reader, size int64) error {
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return err
+	}
+	c.previews[id] = data
+	return nil
+}
+func (c *exportCollector) OnCategoryDefs(defs []archive.CategoryDef) error {
+	c.categoryDefs = defs
+	return nil
+}
+func (c *exportCollector) OnTagDefs(defs []archive.TagDef) error { c.tagDefs = defs; return nil }
+
+func TestStreamExport_FullFidelityRoundTrip(t *testing.T) {
+	ctx := createTestContext(t)
+
+	root := mustCreateGroup(t, ctx, "Root", nil)
+	child := mustCreateGroup(t, ctx, "Child", &root.ID)
+	mustCreateResource(t, ctx, "img.png", &root.ID, []byte("PNGDATA"))
+	mustCreateResource(t, ctx, "doc.pdf", &child.ID, []byte("PDFDATA"))
+	mustCreateNote(t, ctx, "Hello", &root.ID)
+
+	req := &ExportRequest{
+		RootGroupIDs: []uint{root.ID},
+		Scope: archive.ExportScope{
+			Subtree: true, OwnedResources: true, OwnedNotes: true,
+			RelatedM2M: true, GroupRelations: true,
+		},
+		Fidelity: archive.ExportFidelity{ResourceBlobs: true},
+		SchemaDefs: archive.ExportSchemaDefs{
+			CategoriesAndTypes: true, Tags: true, GroupRelationTypes: true,
+		},
+	}
+
+	var buf bytes.Buffer
+	report := func(ev ProgressEvent) {}
+	if err := ctx.StreamExport(context.Background(), req, &buf, report); err != nil {
+		t.Fatalf("StreamExport: %v", err)
+	}
+
+	r, err := archive.NewReader(&buf)
+	if err != nil {
+		t.Fatalf("NewReader: %v", err)
+	}
+	defer r.Close()
+	m, err := r.ReadManifest()
+	if err != nil {
+		t.Fatalf("ReadManifest: %v", err)
+	}
+
+	if m.Counts.Groups != 2 {
+		t.Errorf("groups = %d", m.Counts.Groups)
+	}
+	if m.Counts.Resources != 2 {
+		t.Errorf("resources = %d", m.Counts.Resources)
+	}
+	if m.Counts.Notes != 1 {
+		t.Errorf("notes = %d", m.Counts.Notes)
+	}
+	if m.Counts.Blobs != 2 {
+		t.Errorf("blobs = %d", m.Counts.Blobs)
+	}
+
+	c := newExportCollector()
+	if err := r.Walk(c); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+
+	if len(c.groups) != 2 {
+		t.Errorf("walked groups = %d", len(c.groups))
+	}
+	if len(c.resources) != 2 {
+		t.Errorf("walked resources = %d", len(c.resources))
+	}
+	if len(c.notes) != 1 {
+		t.Errorf("walked notes = %d", len(c.notes))
+	}
+	if len(c.blobs) != 2 {
+		t.Errorf("walked blobs = %d", len(c.blobs))
+	}
+}
+
+func TestStreamExport_BlobMissingRecordsWarning(t *testing.T) {
+	ctx := createTestContext(t)
+
+	root := mustCreateGroup(t, ctx, "Root", nil)
+	r := mustCreateResource(t, ctx, "img.png", &root.ID, []byte("PNGDATA"))
+
+	// Delete the file from the filesystem behind the resource's back.
+	if err := ctx.fs.Remove(r.Location); err != nil {
+		t.Fatalf("remove blob: %v", err)
+	}
+
+	req := &ExportRequest{
+		RootGroupIDs: []uint{root.ID},
+		Scope:        archive.ExportScope{Subtree: true, OwnedResources: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true},
+	}
+
+	var buf bytes.Buffer
+	// Capture reporter events so we can verify warnings flow through.
+	var liveWarnings []string
+	var sawBytes bool
+	report := func(ev ProgressEvent) {
+		if ev.Warning != "" {
+			liveWarnings = append(liveWarnings, ev.Warning)
+		}
+		if ev.BytesWritten > 0 {
+			sawBytes = true
+		}
+	}
+	if err := ctx.StreamExport(context.Background(), req, &buf, report); err != nil {
+		t.Fatalf("StreamExport: %v", err)
+	}
+
+	rdr, _ := archive.NewReader(&buf)
+	defer rdr.Close()
+	m, _ := rdr.ReadManifest()
+	if len(m.Warnings) == 0 {
+		t.Fatalf("expected at least one warning in manifest, got none")
+	}
+	if len(liveWarnings) == 0 {
+		t.Fatalf("expected at least one warning via reporter, got none")
+	}
+	if !sawBytes {
+		t.Fatalf("expected reporter to see BytesWritten > 0")
+	}
+}
 
 func TestEstimateExport_CountsGroupsResourcesNotes(t *testing.T) {
 	ctx := createTestContext(t)
