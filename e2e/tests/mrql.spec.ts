@@ -490,17 +490,17 @@ test.describe('MRQL SCOPE', () => {
     grandchildGroupId = grandchild.ID;
 
     // Create a resource owned by the child group (scoped)
-    const imgPath = path.join(__dirname, '../test-assets/sample-image.png');
     const scopedRes = await api.createResource({
-      filePath: imgPath,
+      filePath: path.join(__dirname, '../test-assets/sample-image-38.png'),
       name: `Scoped Resource ${suffix}`,
       ownerId: childGroupId,
     });
     scopedResourceId = scopedRes.ID;
 
     // Create a resource with no owner (unscoped — outside the hierarchy)
+    // Use a different image file to avoid duplicate hash conflict
     const unscopedRes = await api.createResource({
-      filePath: imgPath,
+      filePath: path.join(__dirname, '../test-assets/sample-image-39.png'),
       name: `Unscoped Resource ${suffix}`,
     });
     unscopedResourceId = unscopedRes.ID;
