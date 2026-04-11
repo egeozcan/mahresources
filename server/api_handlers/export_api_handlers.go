@@ -26,7 +26,6 @@ import (
 type GroupExporter interface {
 	EstimateExport(req *application_context.ExportRequest) (*application_context.ExportEstimate, error)
 	StreamExport(ctx context.Context, req *application_context.ExportRequest, dst io.Writer, report application_context.ReporterFn) error
-	FileSavePath() string
 }
 
 // GroupExporterWithManager extends GroupExporter with access to the download
@@ -167,12 +166,13 @@ func GetExportDownloadHandler(ctx GroupExporterWithManager, fs afero.Fs) func(ht
 			http.Error(w, "job not completed (status: "+string(job.GetStatus())+")", http.StatusConflict)
 			return
 		}
-		if job.ResultPath == "" {
+		resultPath := job.GetResultPath()
+		if resultPath == "" {
 			http.Error(w, "job has no result file", http.StatusInternalServerError)
 			return
 		}
 
-		f, err := fs.Open(job.ResultPath)
+		f, err := fs.Open(resultPath)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				http.Error(w, "export tar no longer exists (likely retention expired)", http.StatusGone)

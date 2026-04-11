@@ -34,10 +34,6 @@ func (m *mockExporter) DownloadManager() *download_queue.DownloadManager {
 	return nil
 }
 
-func (m *mockExporter) FileSavePath() string {
-	return "/tmp"
-}
-
 func TestExportEstimateHandler_ReturnsCounts(t *testing.T) {
 	mock := &mockExporter{
 		estimate: &application_context.ExportEstimate{

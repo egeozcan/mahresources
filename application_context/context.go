@@ -330,11 +330,6 @@ func (ctx *MahresourcesContext) DownloadManager() *download_queue.DownloadManage
 	return ctx.downloadManager
 }
 
-// FileSavePath returns the main file storage directory from config.
-func (ctx *MahresourcesContext) FileSavePath() string {
-	return ctx.Config.FileSavePath
-}
-
 // WithRequest returns a shallow copy of the context with the HTTP request set.
 // This enables log entries to capture request metadata (path, IP, user agent).
 // Use this in HTTP handlers to enable request-aware logging:

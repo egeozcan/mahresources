@@ -215,6 +215,13 @@ func (j *DownloadJob) GetError() string {
 	return j.Error
 }
 
+// GetResultPath safely returns the job's result file path.
+func (j *DownloadJob) GetResultPath() string {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.ResultPath
+}
+
 // Snapshot returns a shallow value-copy of the job's exported fields. The
 // returned *DownloadJob is a fresh struct whose fields are safe to read
 // without acquiring j.mu — it's a point-in-time capture. The copy does not
