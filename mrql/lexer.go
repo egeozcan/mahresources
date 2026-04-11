@@ -310,6 +310,7 @@ var keywordMap = map[string]TokenType{
 	"OFFSET": TokenOffset,
 	"TEXT":   TokenText,
 	"TYPE":   TokenKwType,
+	"SCOPE":  TokenScope,
 }
 
 // aggregateKeywords maps uppercase aggregate function names to token types.

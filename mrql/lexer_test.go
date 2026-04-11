@@ -718,3 +718,27 @@ func TestLexer_GroupByCaseVariations(t *testing.T) {
 		})
 	}
 }
+
+func TestLexerScopeKeyword(t *testing.T) {
+	tests := []struct {
+		input    string
+		wantType TokenType
+		wantVal  string
+	}{
+		{"SCOPE", TokenScope, "SCOPE"},
+		{"scope", TokenScope, "scope"},
+		{"Scope", TokenScope, "Scope"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			l := NewLexer(tc.input)
+			tok := l.Next()
+			if tok.Type != tc.wantType {
+				t.Errorf("input=%q: got type %v, want %v", tc.input, tok.Type, tc.wantType)
+			}
+			if tok.Value != tc.wantVal {
+				t.Errorf("input=%q: got value %q, want %q", tc.input, tok.Value, tc.wantVal)
+			}
+		})
+	}
+}

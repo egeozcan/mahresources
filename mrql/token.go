@@ -32,6 +32,7 @@ const (
 	TokenMax     // MAX (followed by '(')
 	TokenText    // TEXT (for TEXT ~)
 	TokenKwType  // TYPE (also usable as field name via context)
+	TokenScope   // SCOPE
 
 	// Operators
 	TokenEq      // =

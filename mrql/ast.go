@@ -144,6 +144,13 @@ type OrderByClause struct {
 	Ascending bool // true = ASC, false = DESC
 }
 
+// ScopeClause restricts query results to a group's ownership subtree.
+// Value is either a NumberLiteral (group ID) or StringLiteral (group name).
+type ScopeClause struct {
+	Token Token // the SCOPE keyword token
+	Value Node  // NumberLiteral or StringLiteral
+}
+
 // EntityType identifies which entity a query targets.
 type EntityType int
 
@@ -170,6 +177,7 @@ func (e EntityType) String() string {
 // Query is the top-level AST node for a complete MRQL query.
 type Query struct {
 	Where       Node             // the filter expression (may be nil)
+	Scope       *ScopeClause     // SCOPE clause (nil when absent)
 	GroupBy     *GroupByClause   // GROUP BY clause (nil when absent)
 	OrderBy     []OrderByClause  // ORDER BY clauses (may be empty)
 	Limit       int              // -1 if not specified; per-bucket item cap in grouped mode
