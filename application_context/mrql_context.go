@@ -81,6 +81,13 @@ func (ctx *MahresourcesContext) ExecuteMRQL(reqCtx context.Context, queryStr str
 	entityType := mrql.ExtractEntityType(parsed)
 
 	opts := mrql.TranslateOptions{}
+	if parsed.Scope != nil {
+		scopeID, err := mrql.ResolveScope(parsed, ctx.db)
+		if err != nil {
+			return nil, err
+		}
+		opts.ScopeGroupID = scopeID
+	}
 
 	if entityType != mrql.EntityUnspecified {
 		return ctx.executeSingleEntity(reqCtx, parsed, entityType, opts)
@@ -153,21 +160,30 @@ func (ctx *MahresourcesContext) ExecuteMRQLGrouped(reqCtx context.Context, parse
 		parsed.Limit = defaultMRQLLimit
 	}
 
+	opts := mrql.TranslateOptions{}
+	if parsed.Scope != nil {
+		scopeID, err := mrql.ResolveScope(parsed, ctx.db)
+		if err != nil {
+			return nil, err
+		}
+		opts.ScopeGroupID = scopeID
+	}
+
 	if len(parsed.GroupBy.Aggregates) > 0 {
 		// Aggregated: Limit is standard row pagination — no clamping
-		return ctx.executeAggregatedQuery(queryCtx, parsed)
+		return ctx.executeAggregatedQuery(queryCtx, parsed, opts)
 	}
 
 	// Bucketed: clamp per-bucket limit so no single bucket exceeds the item cap
 	if parsed.Limit > maxBucketedTotalItems {
 		parsed.Limit = maxBucketedTotalItems
 	}
-	return ctx.executeBucketedQuery(queryCtx, parsed)
+	return ctx.executeBucketedQuery(queryCtx, parsed, opts)
 }
 
-func (ctx *MahresourcesContext) executeAggregatedQuery(reqCtx context.Context, parsed *mrql.Query) (*MRQLGroupedResult, error) {
+func (ctx *MahresourcesContext) executeAggregatedQuery(reqCtx context.Context, parsed *mrql.Query, opts mrql.TranslateOptions) (*MRQLGroupedResult, error) {
 	db := ctx.db.WithContext(reqCtx)
-	gbResult, err := mrql.TranslateGroupBy(parsed, db, mrql.TranslateOptions{})
+	gbResult, err := mrql.TranslateGroupBy(parsed, db, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -184,10 +200,10 @@ func (ctx *MahresourcesContext) executeAggregatedQuery(reqCtx context.Context, p
 	}, nil
 }
 
-func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, parsed *mrql.Query) (*MRQLGroupedResult, error) {
+func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, parsed *mrql.Query, opts mrql.TranslateOptions) (*MRQLGroupedResult, error) {
 	db := ctx.db.WithContext(reqCtx)
 
-	allKeys, err := mrql.TranslateGroupByKeys(parsed, db, mrql.TranslateOptions{})
+	allKeys, err := mrql.TranslateGroupByKeys(parsed, db, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +248,7 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 			break
 		}
 
-		bucketDB, err := mrql.TranslateGroupByBucket(parsed, ctx.db.WithContext(reqCtx), key, mrql.TranslateOptions{})
+		bucketDB, err := mrql.TranslateGroupByBucket(parsed, ctx.db.WithContext(reqCtx), key, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -695,14 +711,18 @@ func (ctx *MahresourcesContext) DeleteSavedMRQLQuery(id uint) error {
 }
 
 // ExecuteSingleEntityWithScope executes a single-entity MRQL query with an
-// optional owner_id scope filter applied at the GORM level before execution.
-// This ensures LIMIT, ORDER BY, and pagination operate on the scoped dataset.
+// optional scope filter applied via the translator's recursive CTE mechanism.
 // When scopeID is 0, no scope filter is applied (equivalent to global scope).
 func (ctx *MahresourcesContext) ExecuteSingleEntityWithScope(reqCtx context.Context, q *mrql.Query, entityType mrql.EntityType, opts mrql.TranslateOptions, scopeID uint) (*MRQLResult, error) {
 	q.EntityType = entityType
 
 	queryCtx, cancel := context.WithTimeout(reqCtx, MRQLQueryTimeout)
 	defer cancel()
+
+	// Pass scope through TranslateOptions so the translator applies the CTE
+	if scopeID > 0 {
+		opts.ScopeGroupID = scopeID
+	}
 
 	db, err := mrql.TranslateWithOptions(q, ctx.db.WithContext(queryCtx), opts)
 	if err != nil {
@@ -711,11 +731,6 @@ func (ctx *MahresourcesContext) ExecuteSingleEntityWithScope(reqCtx context.Cont
 
 	if q.Limit < 0 {
 		db = db.Limit(defaultMRQLLimit)
-	}
-
-	// Apply scope filter BEFORE execution so LIMIT/ORDER operate on scoped data
-	if scopeID > 0 {
-		db = db.Where("owner_id = ?", scopeID)
 	}
 
 	result := &MRQLResult{EntityType: entityType.String()}
@@ -769,11 +784,11 @@ func (ctx *MahresourcesContext) ExecuteMRQLGroupedWithScope(reqCtx context.Conte
 	return ctx.executeBucketedQueryScoped(queryCtx, parsed, scopeID)
 }
 
-// executeAggregatedQueryScoped is like executeAggregatedQuery but injects an
-// owner_id scope filter on the GORM DB before passing it to TranslateGroupBy.
+// executeAggregatedQueryScoped is like executeAggregatedQuery but applies
+// scope filtering via the translator's recursive CTE mechanism.
 func (ctx *MahresourcesContext) executeAggregatedQueryScoped(reqCtx context.Context, parsed *mrql.Query, scopeID uint) (*MRQLGroupedResult, error) {
-	db := ctx.db.WithContext(reqCtx).Where("owner_id = ?", scopeID)
-	gbResult, err := mrql.TranslateGroupBy(parsed, db, mrql.TranslateOptions{})
+	db := ctx.db.WithContext(reqCtx)
+	gbResult, err := mrql.TranslateGroupBy(parsed, db, mrql.TranslateOptions{ScopeGroupID: scopeID})
 	if err != nil {
 		return nil, err
 	}
@@ -789,13 +804,14 @@ func (ctx *MahresourcesContext) executeAggregatedQueryScoped(reqCtx context.Cont
 	}, nil
 }
 
-// executeBucketedQueryScoped is like executeBucketedQuery but injects an
-// owner_id scope filter on the GORM DB for both key discovery and bucket
-// materialization.
+// executeBucketedQueryScoped is like executeBucketedQuery but applies
+// scope filtering via the translator's recursive CTE mechanism for both
+// key discovery and bucket materialization.
 func (ctx *MahresourcesContext) executeBucketedQueryScoped(reqCtx context.Context, parsed *mrql.Query, scopeID uint) (*MRQLGroupedResult, error) {
-	db := ctx.db.WithContext(reqCtx).Where("owner_id = ?", scopeID)
+	scopeOpts := mrql.TranslateOptions{ScopeGroupID: scopeID}
+	db := ctx.db.WithContext(reqCtx)
 
-	allKeys, err := mrql.TranslateGroupByKeys(parsed, db, mrql.TranslateOptions{})
+	allKeys, err := mrql.TranslateGroupByKeys(parsed, db, scopeOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -832,8 +848,7 @@ func (ctx *MahresourcesContext) executeBucketedQueryScoped(reqCtx context.Contex
 			break
 		}
 
-		// Inject scope on each bucket's DB too
-		bucketDB, err := mrql.TranslateGroupByBucket(parsed, ctx.db.WithContext(reqCtx).Where("owner_id = ?", scopeID), key, mrql.TranslateOptions{})
+		bucketDB, err := mrql.TranslateGroupByBucket(parsed, ctx.db.WithContext(reqCtx), key, scopeOpts)
 		if err != nil {
 			return nil, err
 		}

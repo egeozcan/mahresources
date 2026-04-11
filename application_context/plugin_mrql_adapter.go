@@ -35,12 +35,22 @@ func (a *pluginMRQLAdapter) ExecuteMRQL(reqCtx context.Context, query string, op
 	}
 	parsed.EntityType = entityType
 
+	// Explicit SCOPE in the query string wins over the plugin's external scope.
+	scopeID := opts.ScopeID
+	if parsed.Scope != nil {
+		resolvedID, err := mrql.ResolveScope(parsed, a.ctx.db)
+		if err != nil {
+			return nil, err
+		}
+		scopeID = resolvedID
+	}
+
 	// GROUP BY path
 	if parsed.GroupBy != nil {
 		if opts.Buckets > 0 {
 			parsed.BucketLimit = opts.Buckets
 		}
-		grouped, err := a.ctx.ExecuteMRQLGroupedWithScope(reqCtx, parsed, opts.ScopeID)
+		grouped, err := a.ctx.ExecuteMRQLGroupedWithScope(reqCtx, parsed, scopeID)
 		if err != nil {
 			return nil, err
 		}
@@ -49,7 +59,7 @@ func (a *pluginMRQLAdapter) ExecuteMRQL(reqCtx context.Context, query string, op
 
 	// Flat path
 	translateOpts := mrql.TranslateOptions{}
-	result, err := a.ctx.ExecuteSingleEntityWithScope(reqCtx, parsed, entityType, translateOpts, opts.ScopeID)
+	result, err := a.ctx.ExecuteSingleEntityWithScope(reqCtx, parsed, entityType, translateOpts, scopeID)
 	if err != nil {
 		return nil, err
 	}
