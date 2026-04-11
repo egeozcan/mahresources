@@ -588,6 +588,47 @@ func TestComplete_OrderByInBucketedGroupBySuggestsEntityFields(t *testing.T) {
 	}
 }
 
+// TestComplete_SuggestsScopeAfterValue verifies that SCOPE is suggested after a value expression.
+func TestComplete_SuggestsScopeAfterValue(t *testing.T) {
+	queries := []struct {
+		q string
+		c int
+	}{
+		{`name = "foo" `, 13},
+		{`type = "resource" `, 19},
+		{`(name = "foo") `, 16},
+	}
+	for _, tc := range queries {
+		sugg := Complete(tc.q, tc.c)
+		if !hasSuggestion(sugg, "SCOPE") {
+			t.Errorf("query=%q: expected SCOPE in suggestions, got: %v", tc.q, sugg)
+		}
+	}
+}
+
+// TestComplete_AfterScopeSuggestsValue verifies that after SCOPE the completer
+// suggests a value placeholder (group name or ID).
+func TestComplete_AfterScopeSuggestsValue(t *testing.T) {
+	query := `type = "resource" SCOPE `
+	sugg := Complete(query, len(query))
+	if len(sugg) == 0 {
+		t.Fatal("expected value suggestion after SCOPE, got none")
+	}
+	types := suggestionTypes(sugg)
+	if !types["value"] {
+		t.Errorf("expected 'value' type suggestion after SCOPE, got: %v", sugg)
+	}
+}
+
+// TestComplete_ScopeNotAfterGroupByAggregate verifies that SCOPE does not appear
+// in post-aggregate suggestions (it comes before GROUP BY, not after).
+func TestComplete_ScopeNotAfterGroupByAggregate(t *testing.T) {
+	sugg := Complete(`type = "resource" GROUP BY contentType COUNT() `, 48)
+	if hasSuggestion(sugg, "SCOPE") {
+		t.Error("SCOPE should not be suggested after a GROUP BY aggregate")
+	}
+}
+
 // TestComplete_SuggestionStructure verifies all returned suggestions have non-empty Value and Type.
 func TestComplete_SuggestionStructure(t *testing.T) {
 	queries := []struct {

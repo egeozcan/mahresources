@@ -28,6 +28,7 @@ var operators = []Suggestion{
 var postValueKeywords = []Suggestion{
 	{Value: "AND", Type: "keyword"},
 	{Value: "OR", Type: "keyword"},
+	{Value: "SCOPE", Type: "keyword"},
 	{Value: "GROUP BY", Type: "keyword"},
 	{Value: "ORDER BY", Type: "keyword"},
 	{Value: "LIMIT", Type: "keyword"},
@@ -557,6 +558,13 @@ func suggestionsForContext(tokens []Token, entityType EntityType, cursor int) []
 	switch last.Type {
 	case TokenString, TokenNumber, TokenRelDate, TokenFunc, TokenRParen:
 		return postValueKeywords
+	}
+
+	// After SCOPE — suggest a value hint (group ID or name).
+	if last.Type == TokenScope {
+		return []Suggestion{
+			{Value: `"group name"`, Type: "value", Label: "group name or ID"},
+		}
 	}
 
 	// After ORDER BY, ASC, DESC, LIMIT, OFFSET — no further field completions needed here.
