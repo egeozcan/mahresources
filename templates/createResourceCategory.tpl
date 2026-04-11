@@ -47,18 +47,76 @@
                         <dt class="font-medium text-stone-700 min-w-[7rem]">Custom Avatar</dt>
                         <dd>Icon area next to the category name in list cards</dd>
                     </div>
+                    <div class="flex gap-2">
+                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom MRQL Result</dt>
+                        <dd>Template for this entity type in <code class="bg-stone-100 px-1 rounded">[mrql]</code> results</dd>
+                    </div>
                 </dl>
             </div>
             <div>
                 <h3 class="font-semibold text-stone-700">Shortcodes</h3>
-                <p class="mt-1 text-xs">
-                    <code class="bg-stone-100 px-1 rounded">[meta path="dotted.path" editable=true hide-empty=true]</code>
-                    &mdash; render a metadata field value inline; supports editing and auto-hiding when empty.
-                </p>
-                <p class="mt-1 text-xs">
-                    <code class="bg-stone-100 px-1 rounded">[plugin:name:shortcode attr="val"]</code>
-                    &mdash; render a plugin-provided shortcode.
-                </p>
+                <div class="mt-1 space-y-3 text-xs">
+                    <div>
+                        <code class="bg-stone-100 px-1 rounded">[meta path="dotted.path"]</code>
+                        &mdash; render a metadata field value inline. Schema-aware when a Meta JSON Schema is defined.
+                        <br><span class="text-stone-400 ml-4">
+                            <b class="text-stone-500">path</b> (required) dot-notation into Meta JSON
+                            &middot; <b class="text-stone-500">editable</b>=true show edit button
+                            &middot; <b class="text-stone-500">hide-empty</b>=true hide when absent
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[meta path="status"]
+[meta path="camera.model" editable=true]
+[meta path="location.city" hide-empty=true]
+&lt;div class="flex gap-4"&gt;
+  &lt;strong&gt;Camera:&lt;/strong&gt; [meta path="camera.model"]
+  &lt;strong&gt;ISO:&lt;/strong&gt; [meta path="camera.iso" hide-empty=true]
+&lt;/div&gt;</code></pre>
+                    </div>
+                    <div>
+                        <code class="bg-stone-100 px-1 rounded">[property path="FieldName"]</code>
+                        &mdash; render a struct field of the resource. Output is HTML-escaped by default.
+                        <br><span class="text-stone-400 ml-4">
+                            <b class="text-stone-500">path</b> (required) field name
+                            &middot; <b class="text-stone-500">raw</b>=true skip HTML escaping
+                        </span>
+                        <br><span class="text-stone-400 ml-4">
+                            Fields: <span class="font-mono">ID, Name, Description, CreatedAt, UpdatedAt, OriginalName, ContentType, FileSize, Width, Height, ResourceCategoryId, OwnerId, Meta</span>
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[property path="Name"]
+[property path="OriginalName"]
+[property path="ContentType"]
+&lt;span class="text-stone-400"&gt;[property path="Width"]&times;[property path="Height"]&lt;/span&gt;</code></pre>
+                    </div>
+                    <div>
+                        <code class="bg-stone-100 px-1 rounded">[mrql query='...']</code>
+                        &mdash; inline MRQL query results.
+                        <br><span class="text-stone-400 ml-4">
+                            <b class="text-stone-500">query</b> or <b class="text-stone-500">saved</b> (one required) MRQL expression or saved query name
+                        </span>
+                        <br><span class="text-stone-400 ml-4">
+                            <b class="text-stone-500">format</b>=table|list|compact|custom
+                            &middot; <b class="text-stone-500">limit</b>=20
+                            &middot; <b class="text-stone-500">buckets</b>=5 (for GROUP BY)
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[mrql query='type = resource AND tags = "photos"']
+[mrql query='type = note AND created > -7d' format=table limit=10]
+[mrql query='type = resource AND contentType ~ "image/*"' format=list limit=5]
+[mrql query='type = group AND category = 3 GROUP BY meta.status' buckets=10]
+[mrql saved="recent-uploads" format=compact]</code></pre>
+                        <p class="mt-1 text-stone-400">
+                            <b class="text-stone-500">scope</b>=entity|parent|root|global
+                            &mdash; filter to a group subtree. Default: <code class="bg-stone-100 px-1 rounded">entity</code> (owning group).
+                            An explicit <code class="bg-stone-100 px-1 rounded">SCOPE</code> clause in the query takes precedence.
+                            Nests up to 2 levels deep inside Custom MRQL Result templates.
+                        </p>
+                    </div>
+                    <div>
+                        <code class="bg-stone-100 px-1 rounded">[plugin:name:shortcode attr="val"]</code>
+                        &mdash; render a plugin-provided shortcode. See each plugin's docs page for available shortcodes.
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[plugin:meta-editors:star-rating path="rating"]
+[plugin:meta-editors:slider path="progress" min="0" max="100"]</code></pre>
+                    </div>
+                </div>
             </div>
             <div>
                 <h3 class="font-semibold text-stone-700">HTML &amp; Styling</h3>
