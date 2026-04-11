@@ -186,6 +186,24 @@ func TestStreamExport_BlobMissingRecordsWarning(t *testing.T) {
 	if !sawBytes {
 		t.Fatalf("expected reporter to see BytesWritten > 0")
 	}
+
+	// C2: assert that the walked resource payload has BlobMissing == true and
+	// an empty BlobRef (we must not promise a blob that isn't there).
+	c := newExportCollector()
+	if err := rdr.Walk(c); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if len(c.resources) != 1 {
+		t.Fatalf("expected 1 resource in archive, got %d", len(c.resources))
+	}
+	for _, rp := range c.resources {
+		if !rp.BlobMissing {
+			t.Errorf("expected BlobMissing == true on resource payload, got false")
+		}
+		if rp.BlobRef != "" {
+			t.Errorf("expected empty BlobRef when blob is missing, got %q", rp.BlobRef)
+		}
+	}
 }
 
 func TestEstimateExport_CountsGroupsResourcesNotes(t *testing.T) {

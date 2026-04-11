@@ -157,6 +157,24 @@ func (ctx *MahresourcesContext) buildExportPlan(req *ExportRequest) (*exportPlan
 		}
 	}
 
+	// Phase B2: when F2+F1 are on, include version blob hashes in uniqueHashes
+	// so Counts.Blobs is accurate (C5).
+	if req.Fidelity.ResourceVersions && req.Fidelity.ResourceBlobs && len(plan.resourceIDs) > 0 {
+		var versions []models.ResourceVersion
+		if err := ctx.db.
+			Where("resource_id IN ?", plan.resourceIDs).
+			Order("id").
+			Find(&versions).Error; err != nil {
+			return nil, fmt.Errorf("load resource versions for plan: %w", err)
+		}
+		for _, v := range versions {
+			if v.Hash != "" && !plan.uniqueHashes[v.Hash] {
+				plan.uniqueHashes[v.Hash] = true
+				plan.totalBytes += v.FileSize
+			}
+		}
+	}
+
 	// Phase C: collect notes owned by in-scope groups.
 	if req.Scope.OwnedNotes {
 		notes, err := ctx.findNotesByOwner(plan.groupIDs)
@@ -449,6 +467,13 @@ type ProgressEvent struct {
 // StreamExport. It must be non-blocking; slow callbacks will stall the export.
 type ReporterFn func(ev ProgressEvent)
 
+// previewInfo carries the pre-loaded preview bytes and export ID so we can
+// write preview tar entries without re-querying the database.
+type previewInfo struct {
+	exportID string
+	data     []byte
+}
+
 // blobReadInfo carries the information needed to open and stream a resource blob.
 type blobReadInfo struct {
 	resourceExportID string
@@ -456,6 +481,10 @@ type blobReadInfo struct {
 	size             int64
 	location         string
 	storageLocation  *string
+	// versions holds historical-version blob info (populated when F2+F1 both on).
+	versions []blobReadInfo
+	// previews holds pre-loaded preview bytes (populated when F3 on).
+	previews []previewInfo
 }
 
 // StreamExport walks the export plan built from req, writes a complete tar
@@ -466,7 +495,12 @@ func (ctx *MahresourcesContext) StreamExport(
 	req *ExportRequest,
 	dst io.Writer,
 	report ReporterFn,
-) error {
+) (err error) {
+	// C1: nil-guard — callers may pass nil to discard progress events.
+	if report == nil {
+		report = func(ev ProgressEvent) {}
+	}
+
 	if len(req.RootGroupIDs) == 0 {
 		return fmt.Errorf("export: at least one root group required")
 	}
@@ -492,37 +526,40 @@ func (ctx *MahresourcesContext) StreamExport(
 	}
 
 	// Step 3: build the dangling-lookup helpers we'll need in loadGroupPayload.
-	// key: (fromGroupID, toGroupID, rtID) → dangling.ID string
-	type relKey struct{ from, to, rt uint }
-	danglingByRel := map[relKey]string{}
+	// I5: use a three-key composite (dkey) to avoid collisions when a group has
+	// two dangling relations to the same out-of-scope target with different types.
+	danglingByFromTo := map[dkey]string{}
 	for _, d := range plan.dangling {
 		if d.Kind == archive.DanglingKindGroupRelation {
-			// We can't reconstruct the three-key tuple from a DanglingRef alone
-			// because ToStub only carries SourceID (the to-group ID). We'll fall
-			// back to a two-key lookup (from export ID, to source ID) below.
-			_ = d
-		}
-	}
-	// Build a fast map: from-group export ID + to-group source ID → dangling.ID
-	danglingByFromTo := map[string]string{} // key = fromExportID + ":" + toSourceIDstr
-	for _, d := range plan.dangling {
-		if d.Kind == archive.DanglingKindGroupRelation {
-			key := fmt.Sprintf("%s:%d", d.From, d.ToStub.SourceID)
-			if _, exists := danglingByFromTo[key]; !exists {
-				danglingByFromTo[key] = d.ID
+			k := dkey{from: d.From, to: d.ToStub.SourceID, rel: d.RelationTypeName}
+			if _, exists := danglingByFromTo[k]; !exists {
+				danglingByFromTo[k] = d.ID
 			}
 		}
 	}
-	_ = danglingByRel // silence unused warning (not actually used after refactor)
 
 	// Step 4: open the archive writer.
 	w, err := archive.NewWriter(dst, req.Gzip)
 	if err != nil {
 		return fmt.Errorf("create archive writer: %w", err)
 	}
+	// I1: ensure the writer is always closed exactly once. The named return
+	// value `err` lets the deferred close propagate its own error when the
+	// happy-path completes without error.
+	writerClosed := false
+	defer func() {
+		if !writerClosed {
+			if closeErr := w.Close(); closeErr != nil && err == nil {
+				err = closeErr
+			}
+		}
+	}()
 
 	// Write the manifest now so it is the first tar entry.
-	manifest := plan.toManifest(req, ctx)
+	manifest, manifestErr := plan.toManifest(req, ctx)
+	if manifestErr != nil {
+		return fmt.Errorf("build manifest: %w", manifestErr)
+	}
 	if err := w.WriteManifest(manifest); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
@@ -608,19 +645,29 @@ func (ctx *MahresourcesContext) StreamExport(
 			return fmt.Errorf("write resource %d: %w", id, err)
 		}
 		// Write blob if requested and available.
-		if req.Fidelity.ResourceBlobs && blobInfo != nil {
+		if req.Fidelity.ResourceBlobs && blobInfo != nil && blobInfo.hash != "" {
 			if err := ctx.writeResourceBlob(w, blobInfo, plan, report); err != nil {
 				return fmt.Errorf("write blob for resource %d: %w", id, err)
 			}
+			// C4: write historical-version blobs (only when both F2+F1 are on).
+			if req.Fidelity.ResourceVersions {
+				for idx := range blobInfo.versions {
+					vinfo := &blobInfo.versions[idx]
+					if vinfo.hash == "" || w.HasBlob(vinfo.hash) {
+						continue
+					}
+					if err := ctx.writeResourceBlob(w, vinfo, plan, report); err != nil {
+						return fmt.Errorf("write version blob for resource %d: %w", id, err)
+					}
+				}
+			}
 		}
-		// Write previews if requested.
-		if req.Fidelity.ResourcePreviews && p != nil {
-			for _, prev := range p.Previews {
-				// Load preview bytes from DB.
-				var dbPreview models.Preview
-				if err := ctx.db.Where("resource_id = ? AND width = ? AND height = ?", id, prev.Width, prev.Height).First(&dbPreview).Error; err == nil && len(dbPreview.Data) > 0 {
-					if err := w.WritePreview(prev.PreviewExportID, dbPreview.Data); err != nil {
-						return fmt.Errorf("write preview %s: %w", prev.PreviewExportID, err)
+		// I6: write previews from pre-loaded blobInfo.previews, not via N+1 re-query.
+		if req.Fidelity.ResourcePreviews && blobInfo != nil {
+			for _, prev := range blobInfo.previews {
+				if len(prev.data) > 0 {
+					if err := w.WritePreview(prev.exportID, prev.data); err != nil {
+						return fmt.Errorf("write preview %s: %w", prev.exportID, err)
 					}
 				}
 			}
@@ -628,9 +675,10 @@ func (ctx *MahresourcesContext) StreamExport(
 		report(ProgressEvent{Phase: "resources", PhaseCurrent: i + 1, PhaseTotal: len(plan.resourceIDs), BytesWritten: w.BytesWritten()})
 	}
 
-	// Step 10: finalize.
-	if err := w.Close(); err != nil {
-		return fmt.Errorf("close archive writer: %w", err)
+	// Step 10: finalize — let the deferred close handle it.
+	writerClosed = true
+	if closeErr := w.Close(); closeErr != nil {
+		return fmt.Errorf("close archive writer: %w", closeErr)
 	}
 
 	return nil
@@ -1010,10 +1058,17 @@ func (ctx *MahresourcesContext) writeSeries(w *archive.Writer, plan *exportPlan)
 // loadGroupPayload
 // ────────────────────────────────────────────────────────────────────────────
 
+// dkey is the three-key composite used by the danglingByFromTo map.
+type dkey struct {
+	from string
+	to   uint
+	rel  string
+}
+
 func (ctx *MahresourcesContext) loadGroupPayload(
 	id uint,
 	plan *exportPlan,
-	danglingByFromTo map[string]string,
+	danglingByFromTo map[dkey]string,
 ) (*archive.GroupPayload, error) {
 	var g models.Group
 	if err := ctx.db.
@@ -1100,10 +1155,14 @@ func (ctx *MahresourcesContext) loadGroupPayload(
 			if toRef, ok := plan.groupExportID[*rel.ToGroupId]; ok {
 				grp.ToRef = toRef
 			} else {
-				// Out of scope — look up the dangling ref ID.
+				// Out of scope — look up the dangling ref ID using three-key composite.
 				fromRef := plan.groupExportID[g.ID]
-				key := fmt.Sprintf("%s:%d", fromRef, *rel.ToGroupId)
-				if dID, ok := danglingByFromTo[key]; ok {
+				relTypeName := ""
+				if rel.RelationType != nil {
+					relTypeName = rel.RelationType.Name
+				}
+				k := dkey{from: fromRef, to: *rel.ToGroupId, rel: relTypeName}
+				if dID, ok := danglingByFromTo[k]; ok {
 					grp.DanglingRef = dID
 				}
 			}
@@ -1198,16 +1257,21 @@ func (ctx *MahresourcesContext) loadResourcePayload(
 	plan *exportPlan,
 ) (*archive.ResourcePayload, *blobReadInfo, error) {
 	var r models.Resource
-	if err := ctx.db.
+	q := ctx.db.
 		Preload("Tags").
 		Preload("Notes").
 		Preload("Groups").
 		Preload("ResourceCategory").
 		Preload("Series").
-		Preload("CurrentVersion").
-		Preload("Versions").
-		Preload("Previews").
-		First(&r, id).Error; err != nil {
+		Preload("CurrentVersion")
+	// I3: only preload when the fidelity flag is set.
+	if plan.req.Fidelity.ResourceVersions {
+		q = q.Preload("Versions")
+	}
+	if plan.req.Fidelity.ResourcePreviews {
+		q = q.Preload("Previews")
+	}
+	if err := q.First(&r, id).Error; err != nil {
 		return nil, nil, err
 	}
 
@@ -1255,8 +1319,9 @@ func (ctx *MahresourcesContext) loadResourcePayload(
 			p.SeriesRef = ref
 		}
 	}
+	// C3: use resource-scoped version ref to avoid collisions across resources.
 	if r.CurrentVersionID != nil && r.CurrentVersion != nil {
-		p.CurrentVersionRef = fmt.Sprintf("v%04d", r.CurrentVersion.VersionNumber)
+		p.CurrentVersionRef = fmt.Sprintf("%s-v%d", exportID, r.CurrentVersion.VersionNumber)
 	}
 
 	for _, tag := range r.Tags {
@@ -1277,48 +1342,84 @@ func (ctx *MahresourcesContext) loadResourcePayload(
 		}
 	}
 
-	// Versions (only when fidelity flag is set or we have a current version ref).
-	for i, v := range r.Versions {
-		vp := archive.ResourceVersionPayload{
-			VersionExportID: fmt.Sprintf("v%04d", v.VersionNumber),
-			VersionNumber:   v.VersionNumber,
-			Hash:            v.Hash,
-			HashType:        v.HashType,
-			FileSize:        v.FileSize,
-			ContentType:     v.ContentType,
-			Width:           v.Width,
-			Height:          v.Height,
-			Comment:         v.Comment,
-			CreatedAt:       v.CreatedAt,
-		}
-		if plan.req.Fidelity.ResourceVersions {
-			vp.BlobRef = v.Hash
-		}
-		p.Versions = append(p.Versions, vp)
-		_ = i
-	}
-
-	// Previews.
-	for i, prev := range r.Previews {
-		prevID := fmt.Sprintf("%s_p%d", exportID, i+1)
-		p.Previews = append(p.Previews, archive.PreviewPayload{
-			PreviewExportID: prevID,
-			Width:           prev.Width,
-			Height:          prev.Height,
-			ContentType:     prev.ContentType,
-		})
-	}
-
 	// Build blob info (used by writeResourceBlob).
 	var blob *blobReadInfo
 	if r.Hash != "" {
-		p.BlobRef = r.Hash
-		blob = &blobReadInfo{
-			resourceExportID: exportID,
-			hash:             r.Hash,
-			size:             r.FileSize,
-			location:         r.GetCleanLocation(),
-			storageLocation:  r.StorageLocation,
+		// C2: consult missingBlobs before promising a BlobRef.
+		if plan.missingBlobs != nil && plan.missingBlobs[r.Hash] {
+			p.BlobMissing = true
+			// Don't set BlobRef — the blob isn't there.
+		} else {
+			p.BlobRef = r.Hash
+			blob = &blobReadInfo{
+				resourceExportID: exportID,
+				hash:             r.Hash,
+				size:             r.FileSize,
+				location:         r.GetCleanLocation(),
+				storageLocation:  r.StorageLocation,
+			}
+		}
+	}
+
+	// I3: gate Versions loop on fidelity flag.
+	if plan.req.Fidelity.ResourceVersions {
+		for _, v := range r.Versions {
+			// C3: resource-scoped VersionExportID to avoid cross-resource collisions.
+			vExportID := fmt.Sprintf("%s-v%d", exportID, v.VersionNumber)
+			vp := archive.ResourceVersionPayload{
+				VersionExportID: vExportID,
+				VersionNumber:   v.VersionNumber,
+				Hash:            v.Hash,
+				HashType:        v.HashType,
+				FileSize:        v.FileSize,
+				ContentType:     v.ContentType,
+				Width:           v.Width,
+				Height:          v.Height,
+				Comment:         v.Comment,
+				CreatedAt:       v.CreatedAt,
+			}
+			// C2: set BlobMissing on version payload if the blob was absent.
+			if v.Hash != "" {
+				if plan.missingBlobs != nil && plan.missingBlobs[v.Hash] {
+					vp.BlobMissing = true
+				} else {
+					vp.BlobRef = v.Hash
+					// C4: accumulate version blob info so we can write the actual tar entries.
+					if plan.req.Fidelity.ResourceBlobs && blob != nil {
+						blob.versions = append(blob.versions, blobReadInfo{
+							resourceExportID: vExportID,
+							hash:             v.Hash,
+							size:             v.FileSize,
+							location:         models.Resource{Location: v.Location}.GetCleanLocation(),
+							storageLocation:  v.StorageLocation,
+						})
+					}
+				}
+			}
+			p.Versions = append(p.Versions, vp)
+		}
+	}
+
+	// I3: gate Previews loop on fidelity flag.
+	// I6: use preloaded prev.Data instead of N+1 re-query.
+	if plan.req.Fidelity.ResourcePreviews {
+		for i, prev := range r.Previews {
+			prevExportID := fmt.Sprintf("%s-p%04d", exportID, i+1)
+			p.Previews = append(p.Previews, archive.PreviewPayload{
+				PreviewExportID: prevExportID,
+				Width:           prev.Width,
+				Height:          prev.Height,
+				ContentType:     prev.ContentType,
+			})
+			// blob may be nil when main hash is missing; create a holder so we can
+			// still write preview entries.
+			if blob == nil {
+				blob = &blobReadInfo{resourceExportID: exportID}
+			}
+			blob.previews = append(blob.previews, previewInfo{
+				exportID: prevExportID,
+				data:     prev.Data,
+			})
 		}
 	}
 
@@ -1375,8 +1476,9 @@ func (ctx *MahresourcesContext) writeResourceBlob(
 // ────────────────────────────────────────────────────────────────────────────
 
 // toManifest converts the fully-built exportPlan into the archive.Manifest
-// that will be written as the first tar entry.
-func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) *archive.Manifest {
+// that will be written as the first tar entry. Returns an error if any DB
+// query fails (I2).
+func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) (*archive.Manifest, error) {
 	// Count blobs written — we track unique hashes in plan.uniqueHashes already.
 	blobCount := len(p.uniqueHashes)
 
@@ -1384,13 +1486,17 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) *a
 	// For simplicity we use the plan's resourceIDs and query once.
 	var previewCount int64
 	if req.Fidelity.ResourcePreviews && len(p.resourceIDs) > 0 {
-		ctx.db.Model(&models.Preview{}).Where("resource_id IN ?", p.resourceIDs).Count(&previewCount)
+		if err := ctx.db.Model(&models.Preview{}).Where("resource_id IN ?", p.resourceIDs).Count(&previewCount).Error; err != nil {
+			return nil, fmt.Errorf("count previews: %w", err)
+		}
 	}
 
 	// Count versions.
 	var versionCount int64
 	if req.Fidelity.ResourceVersions && len(p.resourceIDs) > 0 {
-		ctx.db.Model(&models.ResourceVersion{}).Where("resource_id IN ?", p.resourceIDs).Count(&versionCount)
+		if err := ctx.db.Model(&models.ResourceVersion{}).Where("resource_id IN ?", p.resourceIDs).Count(&versionCount).Error; err != nil {
+			return nil, fmt.Errorf("count versions: %w", err)
+		}
 	}
 
 	m := &archive.Manifest{
@@ -1432,7 +1538,9 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) *a
 	}
 	if len(p.groupIDs) > 0 {
 		var rows []nameRow
-		ctx.db.Model(&models.Group{}).Select("id, name").Where("id IN ?", p.groupIDs).Scan(&rows)
+		if err := ctx.db.Model(&models.Group{}).Select("id, name").Where("id IN ?", p.groupIDs).Scan(&rows).Error; err != nil {
+			return nil, fmt.Errorf("load group names for manifest: %w", err)
+		}
 		for _, row := range rows {
 			m.Entries.Groups = append(m.Entries.Groups, archive.GroupEntry{
 				ExportID: p.groupExportID[row.ID],
@@ -1442,14 +1550,27 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) *a
 			})
 		}
 	}
+	// I4: NoteEntry.Owner requires owner_id — use a dedicated struct.
 	if len(p.noteIDs) > 0 {
-		var rows []nameRow
-		ctx.db.Model(&models.Note{}).Select("id, name, owner_id").Where("id IN ?", p.noteIDs).Scan(&rows)
+		type noteRow struct {
+			ID      uint
+			Name    string
+			OwnerID *uint
+		}
+		var rows []noteRow
+		if err := ctx.db.Model(&models.Note{}).Select("id, name, owner_id").Where("id IN ?", p.noteIDs).Scan(&rows).Error; err != nil {
+			return nil, fmt.Errorf("load note names for manifest: %w", err)
+		}
 		for _, row := range rows {
+			ownerRef := ""
+			if row.OwnerID != nil {
+				ownerRef = p.groupExportID[*row.OwnerID]
+			}
 			m.Entries.Notes = append(m.Entries.Notes, archive.NoteEntry{
 				ExportID: p.noteExportID[row.ID],
 				Name:     row.Name,
 				SourceID: row.ID,
+				Owner:    ownerRef,
 				Path:     "notes/" + p.noteExportID[row.ID] + ".json",
 			})
 		}
@@ -1462,7 +1583,9 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) *a
 			Hash    string
 		}
 		var rows []resRow
-		ctx.db.Model(&models.Resource{}).Select("id, name, owner_id, hash").Where("id IN ?", p.resourceIDs).Scan(&rows)
+		if err := ctx.db.Model(&models.Resource{}).Select("id, name, owner_id, hash").Where("id IN ?", p.resourceIDs).Scan(&rows).Error; err != nil {
+			return nil, fmt.Errorf("load resource names for manifest: %w", err)
+		}
 		for _, row := range rows {
 			ownerRef := ""
 			if row.OwnerId != nil {
@@ -1480,7 +1603,9 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) *a
 	}
 	if len(p.seriesIDs) > 0 {
 		var rows []nameRow
-		ctx.db.Model(&models.Series{}).Select("id, name").Where("id IN ?", p.seriesIDs).Scan(&rows)
+		if err := ctx.db.Model(&models.Series{}).Select("id, name").Where("id IN ?", p.seriesIDs).Scan(&rows).Error; err != nil {
+			return nil, fmt.Errorf("load series names for manifest: %w", err)
+		}
 		for _, row := range rows {
 			m.Entries.Series = append(m.Entries.Series, archive.SeriesEntry{
 				ExportID: p.seriesExportID[row.ID],
@@ -1496,7 +1621,9 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) *a
 		catIDs := keysOfUintMap(p.categoryExportID)
 		sortAscUint(catIDs)
 		var rows []nameRow
-		ctx.db.Model(&models.Category{}).Select("id, name").Where("id IN ?", catIDs).Scan(&rows)
+		if err := ctx.db.Model(&models.Category{}).Select("id, name").Where("id IN ?", catIDs).Scan(&rows).Error; err != nil {
+			return nil, fmt.Errorf("load category names for manifest: %w", err)
+		}
 		for _, row := range rows {
 			m.SchemaDefs.Categories = append(m.SchemaDefs.Categories, archive.SchemaDefEntry{
 				ExportID: p.categoryExportID[row.ID],
@@ -1510,7 +1637,9 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) *a
 		ntIDs := keysOfUintMap(p.noteTypeExportID)
 		sortAscUint(ntIDs)
 		var rows []nameRow
-		ctx.db.Model(&models.NoteType{}).Select("id, name").Where("id IN ?", ntIDs).Scan(&rows)
+		if err := ctx.db.Model(&models.NoteType{}).Select("id, name").Where("id IN ?", ntIDs).Scan(&rows).Error; err != nil {
+			return nil, fmt.Errorf("load note type names for manifest: %w", err)
+		}
 		for _, row := range rows {
 			m.SchemaDefs.NoteTypes = append(m.SchemaDefs.NoteTypes, archive.SchemaDefEntry{
 				ExportID: p.noteTypeExportID[row.ID],
@@ -1524,7 +1653,9 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) *a
 		rcIDs := keysOfUintMap(p.resourceCategoryExportID)
 		sortAscUint(rcIDs)
 		var rows []nameRow
-		ctx.db.Model(&models.ResourceCategory{}).Select("id, name").Where("id IN ?", rcIDs).Scan(&rows)
+		if err := ctx.db.Model(&models.ResourceCategory{}).Select("id, name").Where("id IN ?", rcIDs).Scan(&rows).Error; err != nil {
+			return nil, fmt.Errorf("load resource category names for manifest: %w", err)
+		}
 		for _, row := range rows {
 			m.SchemaDefs.ResourceCategories = append(m.SchemaDefs.ResourceCategories, archive.SchemaDefEntry{
 				ExportID: p.resourceCategoryExportID[row.ID],
@@ -1538,7 +1669,9 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) *a
 		tagIDs := keysOfUintMap(p.tagExportID)
 		sortAscUint(tagIDs)
 		var rows []nameRow
-		ctx.db.Model(&models.Tag{}).Select("id, name").Where("id IN ?", tagIDs).Scan(&rows)
+		if err := ctx.db.Model(&models.Tag{}).Select("id, name").Where("id IN ?", tagIDs).Scan(&rows).Error; err != nil {
+			return nil, fmt.Errorf("load tag names for manifest: %w", err)
+		}
 		for _, row := range rows {
 			m.SchemaDefs.Tags = append(m.SchemaDefs.Tags, archive.SchemaDefEntry{
 				ExportID: p.tagExportID[row.ID],
@@ -1552,7 +1685,9 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) *a
 		grtIDs := keysOfUintMap(p.grtExportID)
 		sortAscUint(grtIDs)
 		var rows []nameRow
-		ctx.db.Model(&models.GroupRelationType{}).Select("id, name").Where("id IN ?", grtIDs).Scan(&rows)
+		if err := ctx.db.Model(&models.GroupRelationType{}).Select("id, name").Where("id IN ?", grtIDs).Scan(&rows).Error; err != nil {
+			return nil, fmt.Errorf("load group relation type names for manifest: %w", err)
+		}
 		for _, row := range rows {
 			m.SchemaDefs.GroupRelationTypes = append(m.SchemaDefs.GroupRelationTypes, archive.SchemaDefEntry{
 				ExportID: p.grtExportID[row.ID],
@@ -1563,7 +1698,7 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) *a
 		}
 	}
 
-	return m
+	return m, nil
 }
 
 // ────────────────────────────────────────────────────────────────────────────
