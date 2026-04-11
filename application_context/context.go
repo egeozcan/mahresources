@@ -330,6 +330,13 @@ func (ctx *MahresourcesContext) DownloadManager() *download_queue.DownloadManage
 	return ctx.downloadManager
 }
 
+// GetDefaultFs returns the main filesystem (rooted at FileSavePath via
+// BasePathFs in disk mode, or an in-memory fs in memory mode). Used by
+// handlers that need to read/write files alongside the main resource store.
+func (ctx *MahresourcesContext) GetDefaultFs() afero.Fs {
+	return ctx.fs
+}
+
 // WithRequest returns a shallow copy of the context with the HTTP request set.
 // This enables log entries to capture request metadata (path, IP, user agent).
 // Use this in HTTP handlers to enable request-aware logging:

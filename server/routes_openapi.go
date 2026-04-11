@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"reflect"
 
+	"mahresources/application_context"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/openapi"
@@ -59,6 +60,9 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 
 	// Downloads
 	registerDownloadRoutes(registry)
+
+	// Exports
+	registerExportRoutes(registry)
 
 	// Plugins
 	registerPluginRoutes(registry)
@@ -295,11 +299,11 @@ func registerVersionRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:       http.MethodDelete,
-		Path:         "/v1/resource/version",
-		OperationID:  "deleteVersion",
-		Summary:      "Delete a version",
-		Tags:         []string{"versions"},
+		Method:      http.MethodDelete,
+		Path:        "/v1/resource/version",
+		OperationID: "deleteVersion",
+		Summary:     "Delete a version",
+		Tags:        []string{"versions"},
 		ExtraQueryParams: []openapi.QueryParam{
 			{Name: "resourceId", Type: "integer", Required: true, Description: "Resource ID"},
 			{Name: "versionId", Type: "integer", Required: true, Description: "Version ID"},
@@ -308,11 +312,11 @@ func registerVersionRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:       http.MethodPost,
-		Path:         "/v1/resource/version/delete",
-		OperationID:  "deleteVersionPost",
-		Summary:      "Delete a version (POST alternative)",
-		Tags:         []string{"versions"},
+		Method:      http.MethodPost,
+		Path:        "/v1/resource/version/delete",
+		OperationID: "deleteVersionPost",
+		Summary:     "Delete a version (POST alternative)",
+		Tags:        []string{"versions"},
 		ExtraQueryParams: []openapi.QueryParam{
 			{Name: "resourceId", Type: "integer", Required: true, Description: "Resource ID"},
 			{Name: "versionId", Type: "integer", Required: true, Description: "Version ID"},
@@ -1583,12 +1587,12 @@ func registerDownloadRoutes(r *openapi.Registry) {
 
 	// Plugin action routes via jobs
 	r.Register(openapi.RouteInfo{
-		Method:              http.MethodPost,
-		Path:                "/v1/jobs/action/run",
-		OperationID:         "runPluginAction",
-		Summary:             "Run a plugin action as a background job",
-		Tags:                []string{"jobs", "plugins"},
-		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		Method:               http.MethodPost,
+		Path:                 "/v1/jobs/action/run",
+		OperationID:          "runPluginAction",
+		Summary:              "Run a plugin action as a background job",
+		Tags:                 []string{"jobs", "plugins"},
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 
@@ -1602,6 +1606,48 @@ func registerDownloadRoutes(r *openapi.Registry) {
 			{Name: "jobId", Type: "string", Required: true, Description: "Job ID"},
 		},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+}
+
+func registerExportRoutes(r *openapi.Registry) {
+	exportReqType := reflect.TypeOf(application_context.ExportRequest{})
+	exportEstType := reflect.TypeOf(application_context.ExportEstimate{})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/groups/export/estimate",
+		OperationID:          "estimateGroupExport",
+		Summary:              "Estimate the size and shape of a proposed group export",
+		Description:          "Walks the requested scope without writing a tar; returns counts, unique blob count, dangling reference summary.",
+		Tags:                 []string{"exports"},
+		RequestType:          exportReqType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON},
+		ResponseType:         exportEstType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/groups/export",
+		OperationID:          "submitGroupExport",
+		Summary:              "Enqueue a group export job",
+		Description:          "Schedules a background job that walks the requested scope and writes a tar to the export staging directory. Returns the job ID; poll /v1/jobs/events for progress and download via /v1/exports/{jobId}/download when status=completed.",
+		Tags:                 []string{"exports"},
+		RequestType:          exportReqType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodGet,
+		Path:        "/v1/exports/{jobId}/download",
+		OperationID: "downloadGroupExport",
+		Summary:     "Download a completed group export tar",
+		Description: "Streams the tar file produced by a completed group-export job. Returns 409 if the job isn't completed yet, 410 if the file has expired off disk, 404 if no such job.",
+		Tags:        []string{"exports"},
+		PathParams: []openapi.PathParam{
+			{Name: "jobId", Type: "string", Description: "The job ID returned by submitGroupExport"},
+		},
 	})
 }
 

@@ -127,10 +127,87 @@ components:
             type: object
         ColumnMetaPartial:
             type: object
+        Counts:
+            properties:
+                blobs:
+                    type: integer
+                groups:
+                    type: integer
+                notes:
+                    type: integer
+                previews:
+                    type: integer
+                resources:
+                    type: integer
+                series:
+                    type: integer
+                versions:
+                    type: integer
+            type: object
         EntityIdQuery:
             properties:
                 ID:
                     type: integer
+            type: object
+        ExportEstimate:
+            properties:
+                counts:
+                    $ref: '#/components/schemas/Counts'
+                danglingByKind:
+                    additionalProperties: true
+                    type: object
+                estimatedBytes:
+                    type: integer
+                uniqueBlobs:
+                    type: integer
+            type: object
+        ExportFidelity:
+            properties:
+                resource_blobs:
+                    type: boolean
+                resource_previews:
+                    type: boolean
+                resource_series:
+                    type: boolean
+                resource_versions:
+                    type: boolean
+            type: object
+        ExportRequest:
+            properties:
+                fidelity:
+                    $ref: '#/components/schemas/ExportFidelity'
+                gzip:
+                    type: boolean
+                rootGroupIds:
+                    items:
+                        type: integer
+                    type: array
+                schemaDefs:
+                    $ref: '#/components/schemas/ExportSchemaDefs'
+                scope:
+                    $ref: '#/components/schemas/ExportScope'
+            type: object
+        ExportSchemaDefs:
+            properties:
+                categories_and_types:
+                    type: boolean
+                group_relation_types:
+                    type: boolean
+                tags:
+                    type: boolean
+            type: object
+        ExportScope:
+            properties:
+                group_relations:
+                    type: boolean
+                owned_notes:
+                    type: boolean
+                owned_resources:
+                    type: boolean
+                related_m2m:
+                    type: boolean
+                subtree:
+                    type: boolean
             type: object
         GlobalSearchQuery:
             properties:
@@ -1826,6 +1903,23 @@ paths:
             summary: Submit a URL for background download
             tags:
                 - downloads
+    /v1/exports/{jobId}/download:
+        get:
+            description: Streams the tar file produced by a completed group-export job. Returns 409 if the job isn't completed yet, 410 if the file has expired off disk, 404 if no such job.
+            operationId: downloadGroupExport
+            parameters:
+                - description: The job ID returned by submitGroupExport
+                  in: path
+                  name: jobId
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: Successful response
+            summary: Download a completed group export tar
+            tags:
+                - exports
     /v1/group:
         get:
             operationId: getGroup
@@ -2196,6 +2290,44 @@ paths:
             summary: Bulk delete groups
             tags:
                 - groups
+    /v1/groups/export:
+        post:
+            description: Schedules a background job that walks the requested scope and writes a tar to the export staging directory. Returns the job ID; poll /v1/jobs/events for progress and download via /v1/exports/{jobId}/download when status=completed.
+            operationId: submitGroupExport
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/ExportRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Enqueue a group export job
+            tags:
+                - exports
+    /v1/groups/export/estimate:
+        post:
+            description: Walks the requested scope without writing a tar; returns counts, unique blob count, dangling reference summary.
+            operationId: estimateGroupExport
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/ExportRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ExportEstimate'
+                    description: Successful response
+            summary: Estimate the size and shape of a proposed group export
+            tags:
+                - exports
     /v1/groups/merge:
         post:
             operationId: mergeGroups
@@ -5553,6 +5685,8 @@ tags:
       name: categories
     - description: Operations related to downloads
       name: downloads
+    - description: Operations related to exports
+      name: exports
     - description: Operations related to groups
       name: groups
     - description: Operations related to jobs

@@ -517,6 +517,11 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/jobs/retry").HandlerFunc(api_handlers.GetDownloadRetryHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/jobs/events").HandlerFunc(api_handlers.GetDownloadEventsHandler(appContext))
 
+	// Group exports
+	router.Methods(http.MethodPost).Path("/v1/groups/export/estimate").HandlerFunc(api_handlers.GetExportEstimateHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/groups/export").HandlerFunc(api_handlers.GetExportSubmitHandler(appContext, appContext.GetDefaultFs()))
+	router.Methods(http.MethodGet).Path("/v1/exports/{jobId}/download").HandlerFunc(api_handlers.GetExportDownloadHandler(appContext, appContext.GetDefaultFs()))
+
 	// Plugin action routes
 	router.Methods(http.MethodGet).Path("/v1/plugin/actions").HandlerFunc(api_handlers.GetPluginActionsHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/jobs/action/run").HandlerFunc(api_handlers.GetActionRunHandler(appContext))
