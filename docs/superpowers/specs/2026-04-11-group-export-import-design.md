@@ -43,9 +43,9 @@ The export page and CLI expose three toggle groups. The same toggles exist in th
 
 ### 4.2 Fidelity
 
-- **F1 Resource file bytes** — if on, raw file bytes are packed into the tar under `blobs/`. If off, only metadata and hashes are exported (manifest-only mode).
-- **F2 Resource version history** — if on, all historical `ResourceVersion` rows and their blobs are included. If off, only the current version.
-- **F3 Resource previews** — if on, generated previews/thumbnails are packed under `previews/`.
+- **F1 Resource file bytes** — if on, raw file bytes are packed into the tar under `blobs/`. If off, only metadata and hashes are exported (manifest-only mode). **Manifest-only exports are only usable for same-instance restores**: on import, resources whose hashes are not already present on the destination cannot be materialized (there are no bytes to write). The export UI surfaces this as a warning when F1 is toggled off. At import, the parse phase computes `manifest_only_missing_hashes` — the count of resources in the archive whose hashes do not exist on the destination — and surfaces it prominently in the review screen. If the count is non-zero, the user must either check a "proceed anyway (skip unresolvable resources)" box or abandon the import. The apply job then treats missing-hash resources as skipped and lists them in the job result's warnings.
+- **F2 Resource version history** — if on, all historical `ResourceVersion` rows and their blobs are included. If off, only the current version. Same manifest-only-hash semantics apply to historical version blobs.
+- **F3 Resource previews** — if on, `Preview` rows (each containing `Data []byte`, `Width`, `Height`, `ContentType`) are serialized into the tar. Preview bytes live inside the DB, not the filesystem, so export just reads the column.
 - **F4 Resource Series** — if on, Series membership is preserved; cross-subtree series siblings become dangling references.
 
 ### 4.3 Schema defs
@@ -54,7 +54,22 @@ The export page and CLI expose three toggle groups. The same toggles exist in th
 - **D2 Tags** — definitions with `Meta`.
 - **D3 GroupRelationTypes** — definitions with `FromCategory`, `ToCategory`, `BackRelation`.
 
-**Name-based fallback when schema defs are excluded.** References to schema defs from entity payloads always carry both the `*_ref` (export_id) and the source `*_name`. If a toggle is off at export time the `*_ref` is empty and only the name travels. At import, the mapper resolves by `*_ref` first, falls back to exact-name lookup, and finally — for required fields like `ResourceCategoryId` which must not be null — falls back to the destination's default (ID 1) and adds a warning to the apply job result. For optional fields (`Category` on Group, `NoteType` on Note), an unresolved name becomes null. Tag references with no match become a tag creation with just the name and no Meta.
+**Name-based fallback when schema defs are excluded.** References from entity payloads to schema defs always carry both the `*_ref` (export_id, if present in the archive) and a human-identifying key that doesn't depend on the archive. If a schema-def toggle is off at export time, the `*_ref` is omitted and only the identifying key travels. The identifying key is type-specific because the destination schema has different uniqueness guarantees for each type:
+
+| Type | Identifying key | Destination uniqueness | Auto-map behavior |
+|------|-----------------|------------------------|-------------------|
+| `Category` | `name` | `uniqueIndex:unique_category_name` — unique | Exact match → auto-map |
+| `ResourceCategory` | `name` | `uniqueIndex:unique_resource_category_name` — unique | Exact match → auto-map |
+| `Tag` | `name` | `uniqueIndex:unique_tag_name` — unique | Exact match → auto-map |
+| `NoteType` | `name` | indexed, **not unique** | Single match → auto-map. Multiple matches → mark entry **ambiguous**, force user to pick explicitly (no default), apply job fails if left unresolved. |
+| `GroupRelationType` | `(name, from_category_name, to_category_name)` composite | `uniqueIndex:unique_rel_type` on `(name, from_category_id, to_category_id)` | Composite match by resolving `from_category_name` and `to_category_name` against already-mapped destination Category IDs. Single composite match → auto-map. Multiple matches (shouldn't happen given the composite uniqueness, defensive) → ambiguous. No composite match → create new. |
+| `Series` | `slug` | `uniqueIndex` on `Slug` — unique | Exact slug match → reuse existing Series. No match → create new, preserving the source slug. |
+
+Resolution at import time walks in this order:
+1. Resolve by `*_ref` if present in the archive's schema_defs section.
+2. Otherwise resolve by the type's identifying key against the destination DB.
+3. If still unresolved and the field is required (`ResourceCategoryId` is `not null;default:1`), fall back to ResourceCategory ID 1 and record a warning in the apply job result. For optional fields (`Category` on Group, `NoteType` on Note, `SeriesID` on Resource, all via nullable foreign keys), an unresolved ref becomes `null`. Tag references with no match become a tag creation with just the name and empty Meta — Tag names are unique, so this is safe.
+4. **Ambiguous** entries (type `NoteType` with multiple destination matches) must be resolved by the user in the review UI. The apply job refuses to start if any required ambiguous entry is left unresolved.
 
 ### 4.4 Always preserved
 
@@ -166,13 +181,16 @@ notes/
 resources/
   <export_id>.json                  # metadata, refs blobs/previews
 series/
-  <export_id>.json                  # Series definitions (if F4 on)
+  <export_id>.json                  # Series (if F4 on)
 blobs/
   <sha1>                            # raw file bytes, content-addressed (covers
                                     # both current-version and historical-version
                                     # content; one blob per unique hash)
 previews/
-  <resource_export_id>/<name>       # preview bytes (F3)
+  <preview_export_id>               # raw preview bytes (if F3 on);
+                                    # each Preview row gets its own export_id
+                                    # (e.g. p0042), metadata lives in the parent
+                                    # resource payload
 ```
 
 Properties:
@@ -288,9 +306,12 @@ Each `<export_id>.json` file contains the full entity state with foreign keys re
 
 **Note (`notes/n0001.json`)**: Note fields, `owner_ref`, `note_type_ref`, `tags`, `resources`, `groups` (m2m), inline `blocks` array with `{type, position, content, state}`.
 
-**Resource (`resources/r0001.json`)**: Resource fields, `owner_ref`, `resource_category_ref`, `tags`, `groups` (m2m), `notes` (m2m), `blob_ref: "<sha1>"` (or `null`), `versions: [{version_number, blob_ref, comment, created_at}, ...]`, `previews: ["<name1>", "<name2>"]`, `series_ref: "s0001"` (or `null`), `meta`, `own_meta`.
+**Resource (`resources/r0001.json`)**: Resource fields (`name`, `original_name`, `original_location`, `hash`, `hash_type`, `file_size`, `content_type`, `content_category`, `width`, `height`, `description`, `meta`, `own_meta`, `category` legacy string), `owner_ref`, `resource_category_ref` (with `resource_category_name` fallback), `tags` (refs + names), `groups` (m2m), `notes` (m2m), `blob_ref: "<sha1>"` (or `null` for manifest-only mode), `series_ref: "s0001"` (or `null`), and two nested collections when F2/F3 are on:
 
-**Series (`series/s0001.json`)**: Series metadata (name, description, any Meta), no member list — membership is inverted, each Resource payload carries its own `series_ref`. Only written when `F4` is on and only for Series that have at least one in-scope resource. Series referenced by a resource whose siblings include out-of-scope resources emit `resource_series_sibling` dangling references for the missing members.
+- `versions: [{version_export_id, version_number, hash, hash_type, file_size, content_type, width, height, comment, created_at, blob_ref: "<sha1>"}, ...]` — captured whenever F2 is on. The resource payload also carries `current_version_ref: "v0003"` so the importer can set `CurrentVersionID` after creating the version rows.
+- `previews: [{preview_export_id, width, height, content_type}, ...]` — captured whenever F3 is on. The actual bytes live in the tar at `previews/<preview_export_id>`. Preview bytes come from the `Data []byte` column in the DB, not from the filesystem.
+
+**Series (`series/s0001.json`)**: `{export_id, source_id, name, slug, meta}`. The `Series` model has no `Description` field — `GetDescription()` returns an empty string. `slug` is the stable unique identifier (`uniqueIndex` on `Slug`), carried so that same-instance restore and cross-instance migration can reconcile existing Series by slug rather than name. No member list — membership is inverted, each Resource payload carries its own `series_ref`. Only written when `F4` is on and only for Series that have at least one in-scope resource. Series referenced by a resource whose siblings include out-of-scope resources emit `resource_series_sibling` dangling references for the missing members.
 
 **Schema def files** (`schemas/categories.json` etc.) are arrays of full definitions with `export_id`, `source_id`, name, description, all Custom HTML templates, MetaSchema, SectionConfig.
 
@@ -378,7 +399,8 @@ for resource := range plan.ResourcesBatched() {
     }
     if request.Fidelity.ResourcePreviews {
         for preview := range resource.Previews {
-            w.WritePreview(resource.ExportID, preview.Name, fileSystem.Open(preview.Path))
+            // Preview.Data comes from the DB column, not the filesystem.
+            w.WritePreview(preview.ExportID, preview.Data)
         }
     }
     job.reportProgress("resources", resourceCount++)
@@ -418,13 +440,26 @@ Upload size is capped at a configurable maximum (`-max-import-size`, default 10 
 ```
 r := archive.NewReader(stagingPath)
 manifest := r.ReadManifest()         // rejects unknown schema_version
+
+// Two passes build the mapping set:
+// Pass 1 — definitions present in the manifest's schema_defs section.
+defsInManifest := collectSchemaDefsFromManifest(manifest)
+
+// Pass 2 — names referenced by entity payloads but NOT present in defs.
+// This handles the "schema defs toggled off at export" case where entity
+// payloads still carry resource_category_name / tag names / etc. but the
+// archive has no definition rows to seed from.
+referencedKeys := scanEntityPayloadsForReferences(r, manifest)
+synthesizedDefs := referencedKeys.filter(k => k not in defsInManifest).toStubMappings()
+
 plan := ImportPlan{
     job_id: ...,
     manifest: manifest,
     source_instance_id: manifest.SourceInstanceID,
-    items: buildItemTree(manifest),        // hierarchical: roots → subgroups → owned counts
-    mappings: buildMappings(manifest, db), // name-based suggestions for schema defs
+    items: buildItemTree(manifest),
+    mappings: buildMappings(defsInManifest.unionWith(synthesizedDefs), db),
     conflicts: detectConflicts(manifest, db),
+    manifest_only_missing_hashes: countMissingHashes(manifest, db),  // only when F1 was off
 }
 persistPlan(plan)                          // → _imports/<jobId>.plan.json
 job.setStatus(completed)
@@ -432,8 +467,9 @@ job.setStatus(completed)
 
 **Plan components:**
 - **`items`** — hierarchical tree mirroring the manifest's group forest, with descendant counts on each node. The UI uses this to render the review tree with checkboxes.
-- **`mappings`** — one entry per Category, NoteType, ResourceCategory, Tag, GroupRelationType present in the manifest. Each entry has `{source_name, source_export_id, suggestion, destination_id, alternatives}`. Matching is exact case-sensitive on `name`. Exact match → `suggestion: "map"` with `destination_id` set. No exact match → `suggestion: "create"`. Case-insensitive near-matches appear in `alternatives` flagged as "close_match".
-- **`conflicts`** — summary counts: resources in the tar whose hashes exist in the destination, groups whose names exist under the chosen parent.
+- **`mappings`** — one entry per destination-resolvable schema def reference, built from both (a) the manifest's `schema_defs` section (if D1/D2/D3 were on at export) and (b) a scan of entity payloads for `*_name` keys that don't appear in (a). Matching rules per type are specified in §4.3. Each entry has `{source_key, source_export_id (may be null), suggestion, destination_id, alternatives, ambiguous}`. Unique-by-name types (Category, Tag, ResourceCategory) produce at most one match and are `ambiguous: false`. `NoteType` entries with >1 destination name match are marked `ambiguous: true` — the review UI forces explicit user choice and the apply job refuses to start while any remain. `GroupRelationType` matches use a composite `(name, from_category_name, to_category_name)` key resolved against already-mapped destination categories.
+- **`conflicts`** — summary counts: resources in the tar whose hashes exist in the destination (→ will be skipped if the collision policy is "skip"), groups whose names exist under the chosen parent (informational — groups always create new).
+- **`manifest_only_missing_hashes`** — non-zero only when F1 was off at export. Count of resources in the archive whose hashes are absent from the destination DB and filesystem. Surfaced prominently in the review UI; user must explicitly acknowledge before apply.
 
 The parse job writes the plan JSON to disk and does not hold DB state open. The plan is persistent and reloadable by job ID.
 
@@ -441,18 +477,19 @@ The parse job writes the plan JSON to disk and does not hold DB state open. The 
 
 `adminImport()` Alpine component fetches `GET /v1/imports/{jobId}/plan` and renders:
 
-1. **Header.** Source instance, created_at, schema version, counts, warnings.
+1. **Header.** Source instance, created_at, schema version, counts, warnings. If `manifest_only_missing_hashes > 0`, a prominent warning banner: "This archive was exported without file bytes. N resources reference hashes that do not exist on this instance and cannot be imported. Check the box below to acknowledge they will be skipped." The apply button is disabled until the box is checked or the count becomes zero.
 2. **Global options.**
    - **Parent group picker** — autocomplete; default empty, imported roots land as top-level groups.
    - **Resource collision policy** — single dropdown: `Skip (use existing)` (default) or `Create duplicate row`. Applied to the entire import.
-3. **Mapping panel** (collapsible sections per entity type, one table each for Categories / NoteTypes / ResourceCategories / Tags / GroupRelationTypes).
-   - Columns: `[✓] include`, `Source name`, `Action`, `Destination`.
+3. **Mapping panel** (collapsible sections per entity type, one table each for Categories / NoteTypes / ResourceCategories / Tags / GroupRelationTypes / Series).
+   - Columns: `[✓] include`, `Source key`, `Action`, `Destination`.
    - Action dropdown: "Map to existing" or "Create new".
-   - Exact-name matches pre-filled as "Map to existing" with the destination pointed to the matched row. User can flip to "Create new" with one click.
-   - Near-matches pre-filled as "Create new" but with the close match at the top of the destination autocomplete.
+   - **Unambiguous unique-by-key types** (Category, Tag, ResourceCategory, Series-by-slug, GroupRelationType composite match): exact matches are pre-filled as "Map to existing" with the destination pointed to the matched row. User can flip to "Create new" with one click.
+   - **Ambiguous entries** (NoteType with multiple destination name matches): rendered with a distinctive "Ambiguous — please choose" badge, action fixed to "Map to existing", destination field is empty and required. No auto-map is applied even though a name match exists. The apply button is disabled until all ambiguous entries in required positions are resolved.
+   - **No match** — pre-filled as "Create new". User can pick a destination manually from an autocomplete that ranks close-by-name candidates on top.
 4. **Dangling references panel.** One row per stub in `manifest.dangling_references`: `[kind] from <export_id> → stub "<stub name>"`. Dropdown to "Map to destination entity" (autocomplete over existing entities of the right type) or "Drop relation".
 5. **Item tree.** Hierarchical tree with checkboxes. Unchecking a group unchecks its descendants. Counts of owned resources and notes roll up.
-6. **Apply button.** Collects all decisions into an `ImportDecisions` payload, POSTs to `/v1/imports/{jobId}/apply`, enqueues the apply job. The UI subscribes to SSE and shows progress.
+6. **Apply button.** Collects all decisions into an `ImportDecisions` payload, POSTs to `/v1/imports/{jobId}/apply`, enqueues the apply job. Disabled while the plan has any unresolved ambiguous entries or any unacknowledged missing-hash warning. The UI subscribes to SSE and shows progress.
 
 ### 9.4 Phase 4 — Apply (job)
 
@@ -462,22 +499,65 @@ plan := loadPlan(jobId)
 r := archive.NewReader(stagingPath)
 idMap := {}  // export_id → destination_id
 
-// step 1 — resolve schema defs first
+// Guard — refuse to start if any required ambiguous mapping is unresolved
+// or any missing-hash acknowledgement is outstanding.
+if plan.hasUnresolvedAmbiguities(decisions) {
+    job.setStatus(failed, "unresolved ambiguous mappings in review plan")
+    return
+}
+if plan.manifest_only_missing_hashes > 0 && !decisions.acknowledgeMissingHashes {
+    job.setStatus(failed, "missing-hash acknowledgement required")
+    return
+}
+
+// step 1 — resolve schema defs.
+// Unique-by-name types (Category, Tag, ResourceCategory):
 for def in plan.mappings.categories {
-    if decisions.categoryActions[def.export_id] == "map" {
-        idMap[def.export_id] = decisions.categoryActions[def.export_id].destID
+    if decisions.categoryActions[def.source_key] == "map" {
+        idMap[def.source_key] = decisions.categoryActions[def.source_key].destID
     } else {
-        idMap[def.export_id] = createCategory(r.ReadCategory(def))
+        idMap[def.source_key] = createCategory(r.ReadCategory(def))
     }
 }
-// ... same for note_types, resource_categories, tags, group_relation_types
+// ... tags, resource_categories follow the same pattern.
 
-// step 1b — materialize Series (always create new; no name-mapping)
-for series in plan.items.SelectedSeries() {
-    idMap[series.export_id] = createSeries(r.ReadSeries(series.export_id))
+// NoteType (possibly ambiguous): decisions must provide an explicit destID
+// for every map-action entry.
+for def in plan.mappings.note_types {
+    if decisions.noteTypeActions[def.source_key] == "map" {
+        destID := decisions.noteTypeActions[def.source_key].destID
+        assert destID != nil  // enforced by the review gate above
+        idMap[def.source_key] = destID
+    } else {
+        idMap[def.source_key] = createNoteType(r.ReadNoteType(def))
+    }
 }
 
-// step 2 — groups in topological order (roots first)
+// GroupRelationType (composite match on name + categories):
+for def in plan.mappings.group_relation_types {
+    if decisions.grtActions[def.source_key] == "map" {
+        idMap[def.source_key] = decisions.grtActions[def.source_key].destID
+    } else {
+        idMap[def.source_key] = createGroupRelationType(
+            r.ReadGroupRelationType(def),
+            fromCategoryID: idMap[def.from_category_key],
+            toCategoryID:   idMap[def.to_category_key],
+        )
+    }
+}
+
+// step 1b — Series: reuse by slug if present, otherwise create new.
+// Series have a unique Slug, so collision-by-slug implies "same Series".
+for s in plan.items.SelectedSeries() {
+    series := r.ReadSeries(s.export_id)
+    if existing := findSeriesBySlug(series.slug); existing != nil {
+        idMap[s.export_id] = existing.ID
+    } else {
+        idMap[s.export_id] = createSeries(series)  // preserves source slug
+    }
+}
+
+// step 2 — groups in topological order (roots first).
 for group in plan.items.walkSelected() {
     if group.skippedByUser { continue }
     g := r.ReadGroup(group.export_id)
@@ -486,21 +566,63 @@ for group in plan.items.walkSelected() {
     job.reportProgress("groups", groupCount++)
 }
 
-// step 3 — resources, batched
+// step 3 — resources, batched. Within each batch:
+//   (a) resolve collision policy
+//   (b) write current-version blob
+//   (c) create Resource row
+//   (d) create ResourceVersion rows (F2)
+//   (e) set CurrentVersionID on the Resource row
+//   (f) create Preview rows (F3)
 for batch in plan.items.SelectedResourceBatches(size=500) {
     tx := db.Begin()
-    for r in batch {
-        res := archive.ReadResource(r.export_id)
+    for resEntry in batch {
+        res := archive.ReadResource(resEntry.export_id)
+
+        // (a) Skip-on-hash policy.
         if existing := findByHash(res.hash); existing != nil && decisions.resourceCollision == "skip" {
-            idMap[r.export_id] = existing.ID
+            idMap[resEntry.export_id] = existing.ID
             continue
         }
-        if res.blob_ref {
-            blobBytes := archive.ReadBlob(res.blob_ref)
-            storeBlob(blobBytes, destinationLocation(res))
+
+        // (a') Manifest-only missing-hash handling.
+        if res.blob_ref == null && findByHash(res.hash) == null {
+            // No bytes in the tar, no bytes on the destination: unrecoverable.
+            plan.warnings.append("resource skipped: missing bytes for hash " + res.hash)
+            idMap[resEntry.export_id] = null  // subsequent link steps treat null as pruned
+            continue
         }
+
+        // (b) Current-version blob bytes.
+        if res.blob_ref != null {
+            blobBytes := archive.ReadBlob(res.blob_ref)
+            storeBlob(blobBytes, destinationLocationFor(res))
+        }
+
+        // (c) Resource row.
         dest := createResource(res, idMap)
-        idMap[r.export_id] = dest.ID
+        idMap[resEntry.export_id] = dest.ID
+
+        // (d) Historical version rows (F2).
+        for v in res.versions {
+            if v.blob_ref != null && !plan.blobsRestored[v.blob_ref] {
+                storeBlob(archive.ReadBlob(v.blob_ref), destinationLocationForVersion(dest, v))
+                plan.blobsRestored[v.blob_ref] = true
+            }
+            versionDest := createResourceVersion(dest.ID, v)
+            idMap[v.version_export_id] = versionDest.ID
+        }
+
+        // (e) Wire CurrentVersionID now that version rows exist.
+        if res.current_version_ref != null {
+            dest.CurrentVersionID = idMap[res.current_version_ref]
+            saveResource(dest)
+        }
+
+        // (f) Preview rows (F3). Preview.Data is a DB column, not a filesystem file.
+        for p in res.previews {
+            previewBytes := archive.ReadPreview(p.preview_export_id)
+            createPreview(dest.ID, p.width, p.height, p.content_type, previewBytes)
+        }
     }
     tx.Commit()
     job.reportProgress("resources", resourceCount += len(batch))
@@ -509,9 +631,10 @@ for batch in plan.items.SelectedResourceBatches(size=500) {
 // step 4 — notes (with inline blocks), batched
 ...
 
-// step 5 — apply m2m relationships
+// step 5 — apply m2m relationships (treats both "pruned" and "skipped due
+// to missing hash" as link targets that should be dropped).
 for link in plan.m2mLinks {
-    if link.target not in idMap { continue }  // pruned — drop link
+    if link.target not in idMap || idMap[link.target] == null { continue }
     applyLink(link)
 }
 
@@ -554,6 +677,11 @@ job.setStatus(completed)
 - **Resource blob restore fails.** Disk full, permissions, etc. The batch transaction rolls back, the job fails with the failing batch identified.
 - **Disk pressure during upload.** Upload size is capped at `-max-import-size` (default 10 GB).
 - **Missing alt-fs.** Resources written during import always go to the default save path. Alt-fs configurations don't need to match between instances.
+- **Manifest-only archive with destination-missing hashes.** The parse job computes `manifest_only_missing_hashes` and surfaces it in the plan. The review UI blocks the apply button until the user explicitly acknowledges the count. Unacknowledged apply requests are rejected up front. Acknowledged apply runs skip the missing-hash resources, record them in `plan.warnings`, and include them in the final job result so the user knows exactly which entries were dropped. This makes F1-off archives safe to use as same-instance restores and prevents the footgun of uploading one onto an instance that doesn't have the bytes.
+- **Ambiguous NoteType name match.** Parse marks the entry `ambiguous: true`. The review UI forces explicit user choice. The apply job refuses to start if any required ambiguous entry is left unresolved. If the user chose "create new", ambiguity is not a problem — a new NoteType row is created. Resolution is per-entry, not global.
+- **GroupRelationType composite match requires Categories to resolve first.** The parse step computes the composite key `(name, from_category_name, to_category_name)` but can only attempt destination resolution after the Category mappings are known. The review UI handles this by showing GroupRelationType suggestions as "pending Category mapping" rows that recompute their suggested destination whenever a Category mapping changes.
+- **Series slug collision with same-slug destination row.** Treated as "reuse existing Series" — this is the intended behavior, not an error. Source Series metadata (name, Meta) is discarded in favor of the destination's. A warning is emitted so the user knows a reuse happened.
+- **Series slug collision with a different Series on the destination (different name, same slug).** Still "reuse existing Series" because slug is the authoritative unique key. The user sees a warning listing each reused Series by slug so they can reconcile manually if needed. We don't attempt to pick "which Series is really the same" — that's a policy call we shouldn't make automatically.
 
 ### 10.3 Operational notes (download_queue implications)
 
@@ -626,14 +754,22 @@ Pure Go tests, no DB. Round-trip properties:
 
 Using the existing ephemeral-DB + memory-fs harness:
 
-- `TestExportImport_RoundTrip_FullFidelity` — create a group tree with subgroups, resources, notes, tags, categories, relations; export with all toggles on; import into a fresh DB; assert deep equality (adjusting for reassigned IDs).
+- `TestExportImport_RoundTrip_FullFidelity` — create a group tree with subgroups, resources, notes, tags, categories, relations, versions, previews, series; export with all toggles on; import into a fresh DB; assert deep equality (adjusting for reassigned IDs).
 - `TestExport_ToggleCombinations` — table-driven, each toggle combination produces the expected manifest shape.
 - `TestImport_NameBasedMapping` — seed destination DB with matching names; parse a tar; assert mapping suggestions point at the right destination IDs.
 - `TestImport_ResourceCollisionSkip` — destination already has a resource with a matching hash; import reuses existing, doesn't write a duplicate blob.
 - `TestImport_DanglingReferenceStubs` — export a subtree whose groups have out-of-scope references; import elsewhere; assert the dangling panel shows the right stubs and user decisions are honored.
 - `TestImport_PartialApplyFailureSurfacesProgress` — inject a failure mid-apply; assert the job result reports what was committed.
 - `TestExport_BlobMissing` — delete a file on disk before packing; export completes with `blob_missing: true` and a warning in the manifest.
-- `TestExportImport_RoundTrip_ManifestOnly` — export with `resource_blobs: false`; import reuses existing resources by hash; no blobs in the tar.
+- `TestExportImport_RoundTrip_ManifestOnly_SameInstance` — export with `resource_blobs: false`; import into the same DB; all hashes already exist, so resources are reused via the skip-on-hash policy; assert no warnings.
+- `TestImport_ManifestOnly_CrossInstanceMissingHashes` — export with `resource_blobs: false`; import into a fresh DB that does not have the hashes; assert parse produces non-zero `manifest_only_missing_hashes`; assert apply refuses to start without acknowledgement; assert apply with acknowledgement skips the missing-hash resources and records them in the job result.
+- `TestExportImport_RoundTrip_VersionHistory` — export a resource with multiple historical versions (F2 on); import; assert `ResourceVersion` rows are recreated, `CurrentVersionID` points to the right row, historical blobs are written to the destination filesystem.
+- `TestExportImport_RoundTrip_Previews` — export a resource with generated previews (F3 on); import; assert `Preview` rows are recreated with matching `Data`, `Width`, `Height`, `ContentType`.
+- `TestImport_NoteTypeAmbiguousMatch` — seed destination with two NoteTypes named "Diary"; parse a tar referencing a NoteType "Diary"; assert the mapping entry is `ambiguous: true`; assert apply refuses to start without an explicit user decision; assert apply with an explicit map proceeds.
+- `TestImport_GroupRelationTypeCompositeMatch` — destination has a `DerivedFrom` GroupRelationType with different (FromCategory, ToCategory) than the source; parse; assert the composite match detects the mismatch and suggests "create new" rather than auto-mapping by name only.
+- `TestExportImport_SchemaDefsOffFallsBackToNames` — export with `D1` off; parse builds mappings from `*_name` references scanned out of entity payloads; assert mappings resolve correctly at apply time (or fall back to default ResourceCategory with a warning where required).
+- `TestExportImport_Series_SlugCollision` — destination already has a Series with slug `volumes`; export from a source that has a differently-named Series with slug `volumes`; import; assert the destination Series is reused and a warning is emitted.
+- `TestExportImport_Series_SlugPreserved` — export a Series with slug `foo-bar`; import into an empty destination; assert the new Series has slug `foo-bar` (not regenerated).
 - `TestExportImport_Series` — export a subtree containing a Series with in-scope and out-of-scope members; assert in-scope members preserve Series membership and out-of-scope members become dangling references.
 
 All integration tests run under both SQLite and Postgres (gated by the existing `postgres` build tag).
