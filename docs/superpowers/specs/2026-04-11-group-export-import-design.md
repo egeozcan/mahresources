@@ -63,7 +63,7 @@ The export page and CLI expose three toggle groups. The same toggles exist in th
 | `Tag` | `name` | `uniqueIndex:unique_tag_name` — unique | Exact match → auto-map |
 | `NoteType` | `name` | indexed, **not unique** | Single match → auto-map. Multiple matches → mark entry **ambiguous**, force user to pick explicitly (no default), apply job fails if left unresolved. |
 | `GroupRelationType` | `(name, from_category_name, to_category_name)` composite | `uniqueIndex:unique_rel_type` on `(name, from_category_id, to_category_id)` | Composite match by resolving `from_category_name` and `to_category_name` against already-mapped destination Category IDs. Single composite match → auto-map. Multiple matches (shouldn't happen given the composite uniqueness, defensive) → ambiguous. No composite match → create new. |
-| `Series` | `slug` | `uniqueIndex` on `Slug` — unique | Exact slug match → reuse existing Series. No match → create new, preserving the source slug. |
+| `Series` | `slug` | `uniqueIndex` on `Slug` — unique | Exact slug match → reuse existing Series (automatic, no UI override). No match → create new, preserving the source slug. Because slug is authoritative and unique, Series reconciliation is deterministic and Series do not appear in the mapping panel — they get a read-only informational panel in the review UI instead. |
 
 Resolution at import time walks in this order:
 1. Resolve by `*_ref` if present in the archive's schema_defs section.
@@ -467,7 +467,7 @@ job.setStatus(completed)
 
 **Plan components:**
 - **`items`** — hierarchical tree mirroring the manifest's group forest, with descendant counts on each node. The UI uses this to render the review tree with checkboxes.
-- **`mappings`** — one entry per destination-resolvable schema def reference, built from both (a) the manifest's `schema_defs` section (if D1/D2/D3 were on at export) and (b) a scan of entity payloads for `*_name` keys that don't appear in (a). Matching rules per type are specified in §4.3. Each entry has `{source_key, source_export_id (may be null), suggestion, destination_id, alternatives, ambiguous}`. Unique-by-name types (Category, Tag, ResourceCategory) produce at most one match and are `ambiguous: false`. `NoteType` entries with >1 destination name match are marked `ambiguous: true` — the review UI forces explicit user choice and the apply job refuses to start while any remain. `GroupRelationType` matches use a composite `(name, from_category_name, to_category_name)` key resolved against already-mapped destination categories.
+- **`mappings`** — one entry per destination-resolvable schema def reference, built from both (a) the manifest's `schema_defs` section (if D1/D2/D3 were on at export) and (b) a scan of entity payloads for `*_name` keys that don't appear in (a). Matching rules per type are specified in §4.3. Each entry has `{source_key, source_export_id (may be null), has_payload, suggestion, destination_id, alternatives, ambiguous}`. `has_payload` is `true` when the entry came from pass 1 (a full definition file is present under `schemas/`), `false` when the entry came from pass 2 (synthesized from entity-payload references only). The apply step branches on `has_payload` when it creates a new destination row: `true` reads the full payload (MetaSchema, Custom HTML, SectionConfig); `false` creates a minimum-viable row from the synthesized keys and records a warning. Unique-by-name types (Category, Tag, ResourceCategory) produce at most one match and are `ambiguous: false`. `NoteType` entries with >1 destination name match are marked `ambiguous: true` — the review UI forces explicit user choice and the apply job refuses to start while any remain. `GroupRelationType` matches use a composite `(name, from_category_name, to_category_name)` key resolved against already-mapped destination categories.
 - **`conflicts`** — summary counts: resources in the tar whose hashes exist in the destination (→ will be skipped if the collision policy is "skip"), groups whose names exist under the chosen parent (informational — groups always create new).
 - **`manifest_only_missing_hashes`** — non-zero only when F1 was off at export. Count of resources in the archive whose hashes are absent from the destination DB and filesystem. Surfaced prominently in the review UI; user must explicitly acknowledge before apply.
 
@@ -481,15 +481,16 @@ The parse job writes the plan JSON to disk and does not hold DB state open. The 
 2. **Global options.**
    - **Parent group picker** — autocomplete; default empty, imported roots land as top-level groups.
    - **Resource collision policy** — single dropdown: `Skip (use existing)` (default) or `Create duplicate row`. Applied to the entire import.
-3. **Mapping panel** (collapsible sections per entity type, one table each for Categories / NoteTypes / ResourceCategories / Tags / GroupRelationTypes / Series).
+3. **Mapping panel** (collapsible sections per entity type, one table each for Categories / NoteTypes / ResourceCategories / Tags / GroupRelationTypes).
    - Columns: `[✓] include`, `Source key`, `Action`, `Destination`.
    - Action dropdown: "Map to existing" or "Create new".
-   - **Unambiguous unique-by-key types** (Category, Tag, ResourceCategory, Series-by-slug, GroupRelationType composite match): exact matches are pre-filled as "Map to existing" with the destination pointed to the matched row. User can flip to "Create new" with one click.
+   - **Unambiguous unique-by-key types** (Category, Tag, ResourceCategory, GroupRelationType composite match): exact matches are pre-filled as "Map to existing" with the destination pointed to the matched row. User can flip to "Create new" with one click.
    - **Ambiguous entries** (NoteType with multiple destination name matches): rendered with a distinctive "Ambiguous — please choose" badge, action fixed to "Map to existing", destination field is empty and required. No auto-map is applied even though a name match exists. The apply button is disabled until all ambiguous entries in required positions are resolved.
    - **No match** — pre-filled as "Create new". User can pick a destination manually from an autocomplete that ranks close-by-name candidates on top.
-4. **Dangling references panel.** One row per stub in `manifest.dangling_references`: `[kind] from <export_id> → stub "<stub name>"`. Dropdown to "Map to destination entity" (autocomplete over existing entities of the right type) or "Drop relation".
-5. **Item tree.** Hierarchical tree with checkboxes. Unchecking a group unchecks its descendants. Counts of owned resources and notes roll up.
-6. **Apply button.** Collects all decisions into an `ImportDecisions` payload, POSTs to `/v1/imports/{jobId}/apply`, enqueues the apply job. Disabled while the plan has any unresolved ambiguous entries or any unacknowledged missing-hash warning. The UI subscribes to SSE and shows progress.
+4. **Series reconciliation panel** (informational, read-only). Series use `Slug` as the authoritative unique key, so reconciliation is deterministic — no user choice is offered. The panel lists each Series in the archive with one of three labels: `Reuse existing` (destination already has a Series with the same slug), `Create new` (no slug collision, source slug will be preserved), or `Missing` (Series referenced by resources in the archive but no payload present because F4 was off). This exists so the user can see what will happen without being able to override it, matching the apply rule in §9.4 step 1b.
+5. **Dangling references panel.** One row per stub in `manifest.dangling_references`: `[kind] from <export_id> → stub "<stub name>"`. Dropdown to "Map to destination entity" (autocomplete over existing entities of the right type) or "Drop relation".
+6. **Item tree.** Hierarchical tree with checkboxes. Unchecking a group unchecks its descendants. Counts of owned resources and notes roll up.
+7. **Apply button.** Collects all decisions into an `ImportDecisions` payload, POSTs to `/v1/imports/{jobId}/apply`, enqueues the apply job. Disabled while the plan has any unresolved ambiguous entries or any unacknowledged missing-hash warning. The UI subscribes to SSE and shows progress.
 
 ### 9.4 Phase 4 — Apply (job)
 
@@ -511,15 +512,35 @@ if plan.manifest_only_missing_hashes > 0 && !decisions.acknowledgeMissingHashes 
 }
 
 // step 1 — resolve schema defs.
+//
+// Every mapping entry carries a `has_payload` flag set by the parser.
+// - has_payload == true  → the archive has a full definition file under
+//                          schemas/ (D1/D2/D3 was on at export). Creating
+//                          a new destination row uses that file so all
+//                          MetaSchema / Custom HTML / SectionConfig travels.
+// - has_payload == false → mapping was synthesized from an entity payload
+//                          reference (D1/D2/D3 was off at export). Creating
+//                          a new destination row uses the synthesized key
+//                          only: minimum-viable row with just `name`
+//                          (and the composite keys for GroupRelationType).
+//                          A warning is recorded in the apply job result.
+
 // Unique-by-name types (Category, Tag, ResourceCategory):
 for def in plan.mappings.categories {
     if decisions.categoryActions[def.source_key] == "map" {
         idMap[def.source_key] = decisions.categoryActions[def.source_key].destID
-    } else {
+        continue
+    }
+    if def.has_payload {
         idMap[def.source_key] = createCategory(r.ReadCategory(def))
+    } else {
+        idMap[def.source_key] = createCategoryFromName(def.source_key)
+        plan.warnings.append("created minimal Category '" + def.source_key +
+                             "' — archive carried no definition payload")
     }
 }
-// ... tags, resource_categories follow the same pattern.
+// ... tags and resource_categories follow the same pattern, using
+// createTagFromName / createResourceCategoryFromName for the no-payload path.
 
 // NoteType (possibly ambiguous): decisions must provide an explicit destID
 // for every map-action entry.
@@ -528,30 +549,54 @@ for def in plan.mappings.note_types {
         destID := decisions.noteTypeActions[def.source_key].destID
         assert destID != nil  // enforced by the review gate above
         idMap[def.source_key] = destID
-    } else {
+        continue
+    }
+    if def.has_payload {
         idMap[def.source_key] = createNoteType(r.ReadNoteType(def))
+    } else {
+        idMap[def.source_key] = createNoteTypeFromName(def.source_key)
+        plan.warnings.append("created minimal NoteType '" + def.source_key + "'")
     }
 }
 
-// GroupRelationType (composite match on name + categories):
+// GroupRelationType (composite match on name + categories).
+// The synthesized form requires all three keys (name, from, to) — parse
+// pulls them from the group.relationships entries that reference the type.
 for def in plan.mappings.group_relation_types {
     if decisions.grtActions[def.source_key] == "map" {
         idMap[def.source_key] = decisions.grtActions[def.source_key].destID
-    } else {
+        continue
+    }
+    if def.has_payload {
         idMap[def.source_key] = createGroupRelationType(
             r.ReadGroupRelationType(def),
             fromCategoryID: idMap[def.from_category_key],
             toCategoryID:   idMap[def.to_category_key],
         )
+    } else {
+        idMap[def.source_key] = createGroupRelationTypeFromKeys(
+            name:           def.name,
+            fromCategoryID: idMap[def.from_category_key],
+            toCategoryID:   idMap[def.to_category_key],
+        )
+        plan.warnings.append("created minimal GroupRelationType '" + def.name +
+                             "' — archive carried no definition payload")
     }
 }
 
-// step 1b — Series: reuse by slug if present, otherwise create new.
-// Series have a unique Slug, so collision-by-slug implies "same Series".
+// step 1b — Series: automatic slug-based reconciliation, no decisions honored.
+// Series have a unique Slug, so a slug collision implies "same Series".
+// The review UI shows a read-only panel listing reuse/create per Series —
+// there is no user override, since "create new under a colliding slug"
+// would require regenerating the slug and thereby break the contract that
+// source slugs are preserved on import.
 for s in plan.items.SelectedSeries() {
     series := r.ReadSeries(s.export_id)
     if existing := findSeriesBySlug(series.slug); existing != nil {
         idMap[s.export_id] = existing.ID
+        plan.warnings.append("reused existing Series by slug '" + series.slug +
+                             "' (source name '" + series.name + "', " +
+                             "destination name '" + existing.Name + "')")
     } else {
         idMap[s.export_id] = createSeries(series)  // preserves source slug
     }
@@ -767,7 +812,8 @@ Using the existing ephemeral-DB + memory-fs harness:
 - `TestExportImport_RoundTrip_Previews` — export a resource with generated previews (F3 on); import; assert `Preview` rows are recreated with matching `Data`, `Width`, `Height`, `ContentType`.
 - `TestImport_NoteTypeAmbiguousMatch` — seed destination with two NoteTypes named "Diary"; parse a tar referencing a NoteType "Diary"; assert the mapping entry is `ambiguous: true`; assert apply refuses to start without an explicit user decision; assert apply with an explicit map proceeds.
 - `TestImport_GroupRelationTypeCompositeMatch` — destination has a `DerivedFrom` GroupRelationType with different (FromCategory, ToCategory) than the source; parse; assert the composite match detects the mismatch and suggests "create new" rather than auto-mapping by name only.
-- `TestExportImport_SchemaDefsOffFallsBackToNames` — export with `D1` off; parse builds mappings from `*_name` references scanned out of entity payloads; assert mappings resolve correctly at apply time (or fall back to default ResourceCategory with a warning where required).
+- `TestExportImport_SchemaDefsOffFallsBackToNames_MapToExisting` — export with `D1` off; destination DB already has rows with the referenced names; parse synthesizes mappings from entity payloads, apply resolves them to the existing destination rows, no minimal-row creation happens.
+- `TestExportImport_SchemaDefsOffFallsBackToNames_CreateNew` — export with `D1` off; destination DB does NOT have matching rows; parse synthesizes mappings with `has_payload: false`; apply creates minimum-viable destination rows from the synthesized keys alone (name for Categories/Tags/ResourceCategories/NoteTypes, composite `(name, from_category, to_category)` for GroupRelationType); assert each created row has only the synthesized fields populated and a warning for each is recorded in the apply job result.
 - `TestExportImport_Series_SlugCollision` — destination already has a Series with slug `volumes`; export from a source that has a differently-named Series with slug `volumes`; import; assert the destination Series is reused and a warning is emitted.
 - `TestExportImport_Series_SlugPreserved` — export a Series with slug `foo-bar`; import into an empty destination; assert the new Series has slug `foo-bar` (not regenerated).
 - `TestExportImport_Series` — export a subtree containing a Series with in-scope and out-of-scope members; assert in-scope members preserve Series membership and out-of-scope members become dangling references.
