@@ -8,6 +8,7 @@ import (
 
 	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
+	"mahresources/mrql"
 	"mahresources/plugin_system"
 	"mahresources/shortcodes"
 )
@@ -37,7 +38,12 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 		return nil
 	}
 
-	metaCtx := buildMetaContext(entity)
+	var appCtx *application_context.MahresourcesContext
+	if appCtxVal, ok := ctx.Public["_appContext"]; ok && appCtxVal != nil {
+		appCtx, _ = appCtxVal.(*application_context.MahresourcesContext)
+	}
+
+	metaCtx := buildMetaContext(entity, appCtx)
 	if metaCtx == nil {
 		_, _ = writer.WriteString(content)
 		return nil
@@ -86,8 +92,9 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 }
 
 // buildMetaContext uses reflection to extract entity type, ID, Meta, and MetaSchema
-// from Group, Resource, or Note model structs.
-func buildMetaContext(entity any) *shortcodes.MetaShortcodeContext {
+// from Group, Resource, or Note model structs. When appCtx is non-nil, scope fields
+// (parent, root) are resolved via DB; otherwise falls back to best-effort sentinels.
+func buildMetaContext(entity any, appCtx *application_context.MahresourcesContext) *shortcodes.MetaShortcodeContext {
 	v := reflect.ValueOf(entity)
 	if v.Kind() == reflect.Ptr {
 		if v.IsNil() {
@@ -130,8 +137,8 @@ func buildMetaContext(entity any) *shortcodes.MetaShortcodeContext {
 		return nil
 	}
 
-	// Extract scope fields from owner_id
-	scopeID, parentID, rootID := extractScopeFields(v, entityType, id)
+	// Extract scope fields — DB-backed when appCtx is available
+	scopeID, parentID, rootID := resolveScopeFromEntity(v, entityType, id, appCtx)
 
 	return &shortcodes.MetaShortcodeContext{
 		EntityType:    entityType,
@@ -145,37 +152,53 @@ func buildMetaContext(entity any) *shortcodes.MetaShortcodeContext {
 	}
 }
 
-// extractScopeFields extracts scope group IDs from an entity using reflection.
-// For groups: ScopeGroupID = entity ID, ParentGroupID = OwnerId, RootGroupID = sentinel (no DB here).
-// For resources/notes: ScopeGroupID = OwnerId value, parent/root = sentinel (no DB access here).
-// The template tag has no app context, so parent/root resolution is best-effort.
-func extractScopeFields(v reflect.Value, entityType string, entityID uint) (scopeID, parentID, rootID uint) {
-	sentinel := uint(^uint(0) >> 1) // mrql.UnresolvedScopeSentinel
+// resolveScopeFromEntity resolves scope group IDs for an entity.
+// When appCtx is available, uses DB-backed resolution for parent/root.
+// Otherwise falls back to sentinel values.
+func resolveScopeFromEntity(v reflect.Value, entityType string, entityID uint, appCtx *application_context.MahresourcesContext) (scopeID, parentID, rootID uint) {
+	sentinel := mrql.UnresolvedScopeSentinel
 
-	if entityType == "group" {
-		scopeID = entityID
-		ownerField := v.FieldByName("OwnerId")
-		if ownerField.IsValid() && ownerField.Kind() == reflect.Ptr && !ownerField.IsNil() {
-			parentID = uint(ownerField.Elem().Uint())
-		} else {
-			parentID = sentinel
-		}
-		rootID = sentinel // would need DB walk; sentinel is safe
-		return
-	}
-
-	// Resources and notes
+	// Extract OwnerId via reflection
+	var ownerID *uint
 	ownerField := v.FieldByName("OwnerId")
 	if ownerField.IsValid() && ownerField.Kind() == reflect.Ptr && !ownerField.IsNil() {
 		oid := uint(ownerField.Elem().Uint())
 		if oid > 0 {
-			scopeID = oid
-			parentID = sentinel // would need DB lookup
-			rootID = sentinel   // would need DB walk
-			return
+			ownerID = &oid
 		}
 	}
-	return sentinel, sentinel, sentinel
+
+	if entityType == "group" {
+		scopeID = entityID
+		if ownerID != nil {
+			parentID = *ownerID
+		} else {
+			parentID = sentinel
+		}
+		if appCtx != nil {
+			rootID = appCtx.ResolveRootScopeID(entityID)
+		} else {
+			rootID = sentinel
+		}
+		return
+	}
+
+	// Resources and notes
+	if ownerID != nil {
+		scopeID = *ownerID
+		if appCtx != nil {
+			parentID = appCtx.ResolveParentScopeID(*ownerID)
+			rootID = appCtx.ResolveRootScopeID(*ownerID)
+		} else {
+			parentID = sentinel
+			rootID = sentinel
+		}
+	} else {
+		scopeID = sentinel
+		parentID = sentinel
+		rootID = sentinel
+	}
+	return
 }
 
 // extractCategorySchema reads the MetaSchema field from a preloaded category/type relation.
