@@ -2663,7 +2663,7 @@ func TestComprehensive_GroupByAggregatedCount(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -2700,7 +2700,7 @@ func TestComprehensive_GroupByAggregatedSumAvg(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -2753,7 +2753,7 @@ func TestComprehensive_GroupByAggregatedMeta(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -2786,7 +2786,7 @@ func TestComprehensive_GroupByAggregatedWithFilter(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -2817,7 +2817,7 @@ func TestComprehensive_GroupByAggregatedOrderByLimit(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -2849,7 +2849,7 @@ func TestComprehensive_GroupByMinMax(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -2884,7 +2884,7 @@ func TestComprehensive_GroupByMultipleKeys(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -2922,7 +2922,7 @@ func TestComprehensive_GroupByNotesByOwner(t *testing.T) {
 	}
 	q.EntityType = EntityNote
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -2958,7 +2958,7 @@ func TestComprehensive_GroupByAllAggregates(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -2990,7 +2990,7 @@ func TestComprehensive_GroupByBucketedSimple(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	keys, err := TranslateGroupByKeys(q, db)
+	keys, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("keys: %v", err)
 	}
@@ -3002,7 +3002,7 @@ func TestComprehensive_GroupByBucketedSimple(t *testing.T) {
 	// Fetch items for each bucket
 	totalResources := 0
 	for _, key := range keys {
-		bucketDB, err := TranslateGroupByBucket(q, db, key)
+		bucketDB, err := TranslateGroupByBucket(q, db, key, TranslateOptions{})
 		if err != nil {
 			t.Fatalf("bucket: %v", err)
 		}
@@ -3036,13 +3036,13 @@ func TestComprehensive_GroupByBucketedLimitEnforcement(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	keys, err := TranslateGroupByKeys(q, db)
+	keys, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("keys: %v", err)
 	}
 
 	for _, key := range keys {
-		bucketDB, err := TranslateGroupByBucket(q, db, key)
+		bucketDB, err := TranslateGroupByBucket(q, db, key, TranslateOptions{})
 		if err != nil {
 			t.Fatalf("bucket: %v", err)
 		}
@@ -3068,7 +3068,7 @@ func TestComprehensive_GroupByBucketedWithFilter(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	keys, err := TranslateGroupByKeys(q, db)
+	keys, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("keys: %v", err)
 	}
@@ -3083,7 +3083,7 @@ func TestComprehensive_GroupByBucketedWithFilter(t *testing.T) {
 			t.Errorf("unexpected bucket key contentType=%q", ct)
 		}
 
-		bucketDB, err := TranslateGroupByBucket(q, db, key)
+		bucketDB, err := TranslateGroupByBucket(q, db, key, TranslateOptions{})
 		if err != nil {
 			t.Fatalf("bucket: %v", err)
 		}
@@ -3109,7 +3109,7 @@ func TestComprehensive_GroupByBucketedNotes(t *testing.T) {
 	}
 	q.EntityType = EntityNote
 
-	keys, err := TranslateGroupByKeys(q, db)
+	keys, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("keys: %v", err)
 	}
@@ -3119,7 +3119,7 @@ func TestComprehensive_GroupByBucketedNotes(t *testing.T) {
 	}
 
 	for _, key := range keys {
-		bucketDB, err := TranslateGroupByBucket(q, db, key)
+		bucketDB, err := TranslateGroupByBucket(q, db, key, TranslateOptions{})
 		if err != nil {
 			t.Fatalf("bucket: %v", err)
 		}
@@ -3152,7 +3152,7 @@ func TestComprehensive_GroupByEmptyResultSet(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -3176,7 +3176,7 @@ func TestComprehensive_GroupByBucketedEmptyResultSet(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	keys, err := TranslateGroupByKeys(q, db)
+	keys, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("keys: %v", err)
 	}
@@ -3197,7 +3197,7 @@ func TestComprehensive_GroupByTranslateReturnsNilForBucketed(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -3218,7 +3218,7 @@ func TestComprehensive_GroupByGroupsByMetaRegion(t *testing.T) {
 	}
 	q.EntityType = EntityGroup
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -3255,7 +3255,7 @@ func TestComprehensive_GroupByAggregatedOrderByAscending(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -3294,7 +3294,7 @@ func TestComprehensive_GroupByTraversalOwnerName(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -3339,7 +3339,7 @@ func TestComprehensive_GroupByTraversalBucketed(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	keys, err := TranslateGroupByKeys(q, db)
+	keys, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("keys: %v", err)
 	}
@@ -3367,7 +3367,7 @@ func TestComprehensive_GroupByTraversalDeep(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -3402,7 +3402,7 @@ func TestComprehensive_GroupByTagsRelationWithCount(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -3446,7 +3446,7 @@ func TestComprehensive_GroupByOwnerRelationWithCount(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -3486,7 +3486,7 @@ func TestComprehensive_GroupByWithWhereFilterOnSameField(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -3515,7 +3515,7 @@ func TestComprehensive_GroupByCreatedDatetime(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -3550,7 +3550,7 @@ func TestComprehensive_GroupBySumOnMetaNumericField(t *testing.T) {
 	}
 	q.EntityType = EntityNote
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -3582,7 +3582,7 @@ func TestComprehensive_GroupByBucketedWithOrderBy(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	keys, err := TranslateGroupByKeys(q, db)
+	keys, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("keys: %v", err)
 	}
@@ -3592,7 +3592,7 @@ func TestComprehensive_GroupByBucketedWithOrderBy(t *testing.T) {
 
 	// Fetch items and verify order within buckets
 	for _, key := range keys {
-		bucketDB, err := TranslateGroupByBucket(q, db, key)
+		bucketDB, err := TranslateGroupByBucket(q, db, key, TranslateOptions{})
 		if err != nil {
 			t.Fatalf("bucket: %v", err)
 		}
@@ -3619,7 +3619,7 @@ func TestComprehensive_GroupByBucketedByMetaField(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	keys, err := TranslateGroupByKeys(q, db)
+	keys, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("keys: %v", err)
 	}
@@ -3631,7 +3631,7 @@ func TestComprehensive_GroupByBucketedByMetaField(t *testing.T) {
 
 	// Verify each bucket returns resources
 	for _, key := range keys {
-		bucketDB, err := TranslateGroupByBucket(q, db, key)
+		bucketDB, err := TranslateGroupByBucket(q, db, key, TranslateOptions{})
 		if err != nil {
 			t.Fatalf("bucket: %v", err)
 		}
@@ -3660,7 +3660,7 @@ func TestComprehensive_GroupByOwnerTagsTraversal(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -3695,7 +3695,7 @@ func TestComprehensive_GroupByMultipleKeysWithTraversal(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -3749,7 +3749,7 @@ func TestComprehensive_GroupByTraversalMetaLeaf(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -3788,7 +3788,7 @@ func TestComprehensive_GroupByOwnerMetaPriority(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -3823,7 +3823,7 @@ func TestComprehensive_GroupByOwnerMetaRegionBucketed(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	keys, err := TranslateGroupByKeys(q, db)
+	keys, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("keys: %v", err)
 	}
@@ -3854,7 +3854,7 @@ func TestComprehensive_GroupByParentMetaRegionOnGroups(t *testing.T) {
 	}
 	q.EntityType = EntityGroup
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -3892,7 +3892,7 @@ func TestComprehensive_GroupByOwnerMetaNonexistent(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -3937,7 +3937,7 @@ func TestBugfix_GroupByOwnerUsesIDNotName(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -3973,7 +3973,7 @@ func TestBugfix_TranslateGroupByKeysReturnsAllKeys(t *testing.T) {
 	q.BucketLimit = 1 // should be ignored by translator
 	q.Offset = 2      // should be ignored by translator
 
-	keys, err := TranslateGroupByKeys(q, db)
+	keys, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("keys: %v", err)
 	}
@@ -4010,7 +4010,7 @@ func TestBugfix_GroupedQueryAppliesDefaultLimit(t *testing.T) {
 	// Simulate what ExecuteMRQLGrouped does: set default limit
 	q2.Limit = 1000
 
-	bucketDB, err := TranslateGroupByBucket(q2, db, map[string]any{"contentType": "image/jpeg"})
+	bucketDB, err := TranslateGroupByBucket(q2, db, map[string]any{"contentType": "image/jpeg"}, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("bucket: %v", err)
 	}
@@ -4051,7 +4051,7 @@ func TestBugfix_BucketedLimitIsPerBucketNotKeyCount(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	keys, err := TranslateGroupByKeys(q, db)
+	keys, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("keys: %v", err)
 	}
@@ -4082,7 +4082,7 @@ func TestBugfix_BucketedOrderByNotAppliedToKeysQuery(t *testing.T) {
 	tc := &translateContext{db: db, entityType: EntityResource, tableName: "resources"}
 	_ = tc // suppress unused — we just need to verify TranslateGroupByKeys works
 
-	keys, err := TranslateGroupByKeys(q, db)
+	keys, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("keys query failed (ORDER BY leaked to keys query): %v", err)
 	}
@@ -4091,7 +4091,7 @@ func TestBugfix_BucketedOrderByNotAppliedToKeysQuery(t *testing.T) {
 	}
 
 	// Verify ORDER BY still works within a bucket
-	bucketDB, err := TranslateGroupByBucket(q, db, keys[0])
+	bucketDB, err := TranslateGroupByBucket(q, db, keys[0], TranslateOptions{})
 	if err != nil {
 		t.Fatalf("bucket: %v", err)
 	}
@@ -4123,7 +4123,7 @@ func TestBugfix_GroupByParentRelationField(t *testing.T) {
 	}
 	q.EntityType = EntityGroup
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate failed (parent not handled): %v", err)
 	}
@@ -4149,7 +4149,7 @@ func TestBugfix_GroupByChildrenRelationField(t *testing.T) {
 	}
 	q.EntityType = EntityGroup
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate failed (children not handled): %v", err)
 	}
@@ -4175,7 +4175,7 @@ func TestBugfix_GroupByOwnerSelectGroupByConsistency(t *testing.T) {
 
 	// On SQLite this always works; on PostgreSQL the old code would fail because
 	// SELECT _gb_owner.name ... GROUP BY resources.owner_id is invalid.
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -4211,7 +4211,7 @@ func TestBugfix_BucketedTotalItemsCapped(t *testing.T) {
 	// Simulate execution layer setting default limit
 	q.Limit = 1000
 
-	keys, err := TranslateGroupByKeys(q, db)
+	keys, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("keys: %v", err)
 	}
@@ -4219,7 +4219,7 @@ func TestBugfix_BucketedTotalItemsCapped(t *testing.T) {
 	// Count total items across all buckets
 	totalItems := 0
 	for _, key := range keys {
-		bucketDB, err := TranslateGroupByBucket(q, db, key)
+		bucketDB, err := TranslateGroupByBucket(q, db, key, TranslateOptions{})
 		if err != nil {
 			t.Fatalf("bucket: %v", err)
 		}
@@ -4234,7 +4234,7 @@ func TestBugfix_BucketedTotalItemsCapped(t *testing.T) {
 	// at scale — the execution layer should enforce a global cap.
 	// For now just verify the per-bucket limit is applied.
 	for _, key := range keys {
-		bucketDB, err := TranslateGroupByBucket(q, db, key)
+		bucketDB, err := TranslateGroupByBucket(q, db, key, TranslateOptions{})
 		if err != nil {
 			t.Fatalf("bucket: %v", err)
 		}
@@ -4260,11 +4260,11 @@ func TestBugfix_BucketedKeysHaveDeterministicOrder(t *testing.T) {
 	q.EntityType = EntityResource
 
 	// Run twice — results should be in the same order
-	keys1, err := TranslateGroupByKeys(q, db)
+	keys1, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("keys1: %v", err)
 	}
-	keys2, err := TranslateGroupByKeys(q, db)
+	keys2, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("keys2: %v", err)
 	}
@@ -4310,13 +4310,13 @@ func TestBugfix_BucketedRelationJoinNoDuplicates(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	keys, err := TranslateGroupByKeys(q, db)
+	keys, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("keys: %v", err)
 	}
 
 	for _, key := range keys {
-		bucketDB, err := TranslateGroupByBucket(q, db, key)
+		bucketDB, err := TranslateGroupByBucket(q, db, key, TranslateOptions{})
 		if err != nil {
 			t.Fatalf("bucket: %v", err)
 		}
@@ -4355,7 +4355,7 @@ func TestBugfix_BucketedRelationKeysIncludeID(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	keys, err := TranslateGroupByKeys(q, db)
+	keys, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("keys: %v", err)
 	}
@@ -4395,7 +4395,7 @@ func TestBugfix_TranslateGroupByKeysIgnoresPagination(t *testing.T) {
 	q.BucketLimit = 1
 	q.Offset = 2
 
-	keys, err := TranslateGroupByKeys(q, db)
+	keys, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("keys: %v", err)
 	}
@@ -4480,7 +4480,7 @@ func TestBugfix_OrderByDroppedAliasTranslatesCorrectly(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -4523,7 +4523,7 @@ func TestBugfix_OrderBySurvivorAliasAlsoWorks(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -4551,7 +4551,7 @@ func TestBugfix_MetaAggregateSafeNumericCast(t *testing.T) {
 	q.EntityType = EntityNote
 
 	// This should NOT crash — non-numeric values should be treated as NULL
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate failed (unsafe numeric cast): %v", err)
 	}
@@ -4574,7 +4574,7 @@ func TestBugfix_BucketLimitClampedToMax(t *testing.T) {
 	q.EntityType = EntityResource
 	q.BucketLimit = 5000 // exceeds MaxBuckets
 
-	keys, err := TranslateGroupByKeys(q, db)
+	keys, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("keys: %v", err)
 	}
@@ -4715,7 +4715,7 @@ func TestBugfix_ItemCapWarnsWithBucketCount(t *testing.T) {
 	q.EntityType = EntityResource
 	q.Limit = 1 // 1 item per bucket
 
-	keys, err := TranslateGroupByKeys(q, db)
+	keys, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("keys: %v", err)
 	}
@@ -4727,7 +4727,7 @@ func TestBugfix_ItemCapWarnsWithBucketCount(t *testing.T) {
 
 	// Each bucket with Limit=1 should return at most 1 item
 	for _, key := range keys {
-		bucketDB, err := TranslateGroupByBucket(q, db, key)
+		bucketDB, err := TranslateGroupByBucket(q, db, key, TranslateOptions{})
 		if err != nil {
 			t.Fatalf("bucket: %v", err)
 		}
@@ -4762,7 +4762,7 @@ func TestBugfix_MaxMetaReturnsValueNotNull(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -4797,7 +4797,7 @@ func TestBugfix_SumMetaUsesNumericCast(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -4830,7 +4830,7 @@ func TestBugfix_MaxMetaStringNotDropped(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -5054,7 +5054,7 @@ func TestComprehensive_MetaSubpathGroupBy(t *testing.T) {
 	if err := Validate(q); err != nil {
 		t.Fatalf("validation error: %v", err)
 	}
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate error: %v", err)
 	}
@@ -5074,7 +5074,7 @@ func TestComprehensive_MetaSubpathGroupByTraversal(t *testing.T) {
 	if err := Validate(q); err != nil {
 		t.Fatalf("validation error: %v", err)
 	}
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate error: %v", err)
 	}

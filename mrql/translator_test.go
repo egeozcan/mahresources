@@ -1138,7 +1138,7 @@ func TestTranslate_GroupByAggregated_Simple(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 	q.EntityType = EntityResource
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -1163,7 +1163,7 @@ func TestTranslate_GroupByAggregated_WithFilter(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 	q.EntityType = EntityResource
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -1194,7 +1194,7 @@ func TestTranslate_GroupByAggregated_Meta(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 	q.EntityType = EntityResource
-	result, err := TranslateGroupBy(q, db)
+	result, err := TranslateGroupBy(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -1215,7 +1215,7 @@ func TestTranslate_GroupByBucketed_Simple(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 	q.EntityType = EntityResource
-	keys, err := TranslateGroupByKeys(q, db)
+	keys, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate keys: %v", err)
 	}
@@ -1241,7 +1241,7 @@ func TestTranslate_GroupByBucketed_ItemsQuery(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 	// Get a bucket query for a specific key
-	bucketDB, err := TranslateGroupByBucket(q, db, map[string]any{"contentType": "image/png"})
+	bucketDB, err := TranslateGroupByBucket(q, db, map[string]any{"contentType": "image/png"}, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate bucket: %v", err)
 	}
@@ -1266,7 +1266,7 @@ func TestTranslate_GroupByBucketed_CorrectResults(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	keys, err := TranslateGroupByKeys(q, db)
+	keys, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate keys: %v", err)
 	}
@@ -1278,7 +1278,7 @@ func TestTranslate_GroupByBucketed_CorrectResults(t *testing.T) {
 
 	// Check that each bucket returns the right items
 	for _, key := range keys {
-		bucketDB, err := TranslateGroupByBucket(q, db, key)
+		bucketDB, err := TranslateGroupByBucket(q, db, key, TranslateOptions{})
 		if err != nil {
 			t.Fatalf("translate bucket for %v: %v", key, err)
 		}
@@ -1306,7 +1306,7 @@ func TestTranslate_GroupByBucketed_WithFilter(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	keys, err := TranslateGroupByKeys(q, db)
+	keys, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate keys: %v", err)
 	}
@@ -1329,7 +1329,7 @@ func TestTranslate_GroupByBucketed_NilValue(t *testing.T) {
 	}
 	q.EntityType = EntityResource
 
-	keys, err := TranslateGroupByKeys(q, db)
+	keys, err := TranslateGroupByKeys(q, db, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate keys: %v", err)
 	}
@@ -1347,7 +1347,7 @@ func TestTranslate_GroupByBucketed_NilValue(t *testing.T) {
 	}
 
 	// The nil bucket should return only unowned resources
-	nilBucketDB, err := TranslateGroupByBucket(q, db, map[string]any{"owner": nil})
+	nilBucketDB, err := TranslateGroupByBucket(q, db, map[string]any{"owner": nil}, TranslateOptions{})
 	if err != nil {
 		t.Fatalf("translate nil bucket: %v", err)
 	}
@@ -1375,6 +1375,98 @@ func newSQLiteTC(tableName string) *translateContext {
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
 	return &translateContext{db: db, tableName: tableName}
+}
+
+// ---- Scope filter tests ----
+
+func TestTranslateScopeResourcesByOwner(t *testing.T) {
+	db := setupTestDB(t)
+	q := mustParse(t, `type = "resource" SCOPE 1`)
+	q.EntityType = EntityResource
+	Validate(q)
+
+	opts := TranslateOptions{ScopeGroupID: 1}
+	result, err := TranslateWithOptions(q, db, opts)
+	if err != nil {
+		t.Fatalf("translate error: %v", err)
+	}
+
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+
+	// sunset.jpg (owner=1) and report.pdf (owner=2) both in Vacation subtree {1,2,4,5}
+	if len(resources) != 2 {
+		t.Errorf("expected 2 scoped resources, got %d", len(resources))
+	}
+}
+
+func TestTranslateScopeGroupsInclusive(t *testing.T) {
+	db := setupTestDB(t)
+	q := mustParse(t, `type = "group" SCOPE 1`)
+	q.EntityType = EntityGroup
+	Validate(q)
+
+	opts := TranslateOptions{ScopeGroupID: 1}
+	result, err := TranslateWithOptions(q, db, opts)
+	if err != nil {
+		t.Fatalf("translate error: %v", err)
+	}
+
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+
+	// Vacation(1), Work(2), Sub-Work(4), Photos(5)
+	if len(groups) != 4 {
+		t.Errorf("expected 4 scoped groups, got %d", len(groups))
+	}
+}
+
+func TestTranslateScopeLeafGroup(t *testing.T) {
+	db := setupTestDB(t)
+	q := mustParse(t, `type = "resource" SCOPE 4`)
+	q.EntityType = EntityResource
+	Validate(q)
+
+	opts := TranslateOptions{ScopeGroupID: 4}
+	result, err := TranslateWithOptions(q, db, opts)
+	if err != nil {
+		t.Fatalf("translate error: %v", err)
+	}
+
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+
+	if len(resources) != 0 {
+		t.Errorf("expected 0 scoped resources, got %d", len(resources))
+	}
+}
+
+func TestTranslateScopeZeroNoFilter(t *testing.T) {
+	db := setupTestDB(t)
+	q := mustParse(t, `type = "resource"`)
+	q.EntityType = EntityResource
+	Validate(q)
+
+	opts := TranslateOptions{ScopeGroupID: 0}
+	result, err := TranslateWithOptions(q, db, opts)
+	if err != nil {
+		t.Fatalf("translate error: %v", err)
+	}
+
+	var resources []testResource
+	if err := result.Find(&resources).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+
+	if len(resources) != 4 {
+		t.Errorf("expected 4 resources with no scope, got %d", len(resources))
+	}
 }
 
 func TestMetaJsonExpr(t *testing.T) {

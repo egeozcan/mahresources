@@ -12,7 +12,7 @@ const MaxBuckets = 1000
 
 // TranslateGroupByKeys executes a SELECT DISTINCT query to get unique bucket keys.
 // Returns a slice of maps, each containing the group-by field values for one bucket.
-func TranslateGroupByKeys(q *Query, db *gorm.DB) ([]map[string]any, error) {
+func TranslateGroupByKeys(q *Query, db *gorm.DB, opts TranslateOptions) ([]map[string]any, error) {
 	if q.GroupBy == nil || len(q.GroupBy.Aggregates) > 0 {
 		return nil, &TranslateError{Message: "TranslateGroupByKeys requires GROUP BY without aggregates", Pos: 0}
 	}
@@ -40,6 +40,11 @@ func TranslateGroupByKeys(q *Query, db *gorm.DB) ([]map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	// Apply scope filter — inline recursive CTE, no separate query
+	if opts.ScopeGroupID > 0 {
+		result = ApplyScopeCTE(result, entityType, opts.ScopeGroupID)
 	}
 
 	// Add JOINs for relation fields
@@ -102,7 +107,7 @@ func TranslateGroupByKeys(q *Query, db *gorm.DB) ([]map[string]any, error) {
 // TranslateGroupByBucket returns a GORM DB scoped to a specific bucket.
 // The key map contains group-by field names mapped to their values.
 // The caller should use the returned DB to Find entities and apply LIMIT.
-func TranslateGroupByBucket(q *Query, db *gorm.DB, key map[string]any) (*gorm.DB, error) {
+func TranslateGroupByBucket(q *Query, db *gorm.DB, key map[string]any, opts TranslateOptions) (*gorm.DB, error) {
 	entityType := q.EntityType
 	if entityType == EntityUnspecified {
 		entityType = ExtractEntityType(q)
@@ -126,6 +131,11 @@ func TranslateGroupByBucket(q *Query, db *gorm.DB, key map[string]any) (*gorm.DB
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	// Apply scope filter — inline recursive CTE, no separate query
+	if opts.ScopeGroupID > 0 {
+		result = ApplyScopeCTE(result, entityType, opts.ScopeGroupID)
 	}
 
 	// Add JOINs for relation fields

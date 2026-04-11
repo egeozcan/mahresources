@@ -21,6 +21,7 @@ func (e *TranslateError) Error() string {
 
 // TranslateOptions provides configurable options for query translation.
 type TranslateOptions struct {
+	ScopeGroupID uint // resolved scope group ID; 0 = no scope
 }
 
 // Translate converts a validated MRQL Query AST into a GORM DB query.
@@ -61,6 +62,11 @@ func TranslateWithOptions(q *Query, db *gorm.DB, opts TranslateOptions) (*gorm.D
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	// Apply scope filter — inline recursive CTE, no separate query
+	if opts.ScopeGroupID > 0 {
+		result = ApplyScopeCTE(result, entityType, opts.ScopeGroupID)
 	}
 
 	// Translate ORDER BY clauses
@@ -1489,7 +1495,7 @@ type GroupByResult struct {
 // TranslateGroupBy translates and executes a GROUP BY query.
 // For aggregated mode (aggregates present), it returns flat rows.
 // For bucketed mode (no aggregates), it returns nil -- the caller handles bucketing.
-func TranslateGroupBy(q *Query, db *gorm.DB) (*GroupByResult, error) {
+func TranslateGroupBy(q *Query, db *gorm.DB, opts TranslateOptions) (*GroupByResult, error) {
 	if q.GroupBy == nil {
 		return nil, &TranslateError{Message: "TranslateGroupBy called without GROUP BY clause", Pos: 0}
 	}
@@ -1517,6 +1523,11 @@ func TranslateGroupBy(q *Query, db *gorm.DB) (*GroupByResult, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	// Apply scope filter — inline recursive CTE, no separate query
+	if opts.ScopeGroupID > 0 {
+		result = ApplyScopeCTE(result, entityType, opts.ScopeGroupID)
 	}
 
 	if len(q.GroupBy.Aggregates) > 0 {
