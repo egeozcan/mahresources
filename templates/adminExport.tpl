@@ -38,28 +38,28 @@
     <fieldset class="space-y-2">
       <legend class="text-sm font-semibold text-stone-700">Scope</legend>
       <label class="flex items-center gap-2"><input type="checkbox" x-model="scope.subtree"> Include all descendants (S1)</label>
-      <label class="flex items-center gap-2"><input type="checkbox" x-model="scope.ownedResources"> Include owned resources (S2)</label>
-      <label class="flex items-center gap-2"><input type="checkbox" x-model="scope.ownedNotes"> Include owned notes (S3)</label>
-      <label class="flex items-center gap-2"><input type="checkbox" x-model="scope.relatedM2M"> Include related (m2m) entities (S4)</label>
-      <label class="flex items-center gap-2"><input type="checkbox" x-model="scope.groupRelations"> Include typed group relations (S5)</label>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="scope.owned_resources"> Include owned resources (S2)</label>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="scope.owned_notes"> Include owned notes (S3)</label>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="scope.related_m2m"> Include related (m2m) entities (S4)</label>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="scope.group_relations"> Include typed group relations (S5)</label>
     </fieldset>
 
     <fieldset class="space-y-2 mt-4">
       <legend class="text-sm font-semibold text-stone-700">Fidelity</legend>
-      <label class="flex items-center gap-2"><input type="checkbox" x-model="fidelity.resourceBlobs"> Include resource file bytes (F1)</label>
-      <label class="flex items-center gap-2"><input type="checkbox" x-model="fidelity.resourceVersions"> Include version history (F2)</label>
-      <label class="flex items-center gap-2"><input type="checkbox" x-model="fidelity.resourcePreviews"> Include previews (F3)</label>
-      <label class="flex items-center gap-2"><input type="checkbox" x-model="fidelity.resourceSeries"> Preserve Series membership (F4)</label>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="fidelity.resource_blobs"> Include resource file bytes (F1)</label>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="fidelity.resource_versions"> Include version history (F2)</label>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="fidelity.resource_previews"> Include previews (F3)</label>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="fidelity.resource_series"> Preserve Series membership (F4)</label>
     </fieldset>
 
     <fieldset class="space-y-2 mt-4">
       <legend class="text-sm font-semibold text-stone-700">Schema definitions</legend>
-      <label class="flex items-center gap-2"><input type="checkbox" x-model="schemaDefs.categoriesAndTypes"> Include Categories, NoteTypes, ResourceCategories (D1)</label>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="schemaDefs.categories_and_types"> Include Categories, NoteTypes, ResourceCategories (D1)</label>
       <label class="flex items-center gap-2"><input type="checkbox" x-model="schemaDefs.tags"> Include Tag definitions (D2)</label>
-      <label class="flex items-center gap-2"><input type="checkbox" x-model="schemaDefs.groupRelationTypes"> Include GroupRelationType definitions (D3)</label>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="schemaDefs.group_relation_types"> Include GroupRelationType definitions (D3)</label>
     </fieldset>
 
-    <p x-show="!fidelity.resourceBlobs" class="mt-3 text-sm text-amber-700">
+    <p x-show="!fidelity.resource_blobs" class="mt-3 text-sm text-amber-700">
       Warning: manifest-only exports can only be re-imported into instances that already hold the resource bytes.
     </p>
   </section>

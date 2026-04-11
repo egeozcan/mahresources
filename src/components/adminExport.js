@@ -5,21 +5,21 @@ export function adminExport(initial = {}) {
     groupResults: [],
     scope: {
       subtree: true,
-      ownedResources: true,
-      ownedNotes: true,
-      relatedM2M: true,
-      groupRelations: true,
+      owned_resources: true,
+      owned_notes: true,
+      related_m2m: true,
+      group_relations: true,
     },
     fidelity: {
-      resourceBlobs: true,
-      resourceVersions: false,
-      resourcePreviews: false,
-      resourceSeries: true,
+      resource_blobs: true,
+      resource_versions: false,
+      resource_previews: false,
+      resource_series: true,
     },
     schemaDefs: {
-      categoriesAndTypes: true,
+      categories_and_types: true,
       tags: true,
-      groupRelationTypes: true,
+      group_relation_types: true,
     },
     estimateResult: null,
     job: null,
@@ -113,23 +113,34 @@ export function adminExport(initial = {}) {
         this.eventSource.close();
       }
       this.eventSource = new EventSource('/v1/jobs/events');
+      const handleJobPayload = (payload) => {
+        if (!payload.job || payload.job.id !== jobId) return;
+        this.job = payload.job;
+        if (payload.job.status === 'completed') {
+          this.jobInProgress = false;
+          this.triggerDownload();
+          this.eventSource.close();
+          this.eventSource = null;
+        } else if (payload.job.status === 'failed' || payload.job.status === 'cancelled') {
+          this.jobInProgress = false;
+          this.eventSource.close();
+          this.eventSource = null;
+        }
+      };
       const handler = (event) => {
         try {
-          const payload = JSON.parse(event.data);
-          if (!payload.job || payload.job.id !== jobId) return;
-          this.job = payload.job;
-          if (payload.job.status === 'completed') {
-            this.jobInProgress = false;
-            this.triggerDownload();
-            this.eventSource.close();
-            this.eventSource = null;
-          } else if (payload.job.status === 'failed' || payload.job.status === 'cancelled') {
-            this.jobInProgress = false;
-            this.eventSource.close();
-            this.eventSource = null;
-          }
+          handleJobPayload(JSON.parse(event.data));
         } catch (e) { /* ignore parse errors */ }
       };
+      // Handle init event: if job already completed before we subscribed, pick it up.
+      this.eventSource.addEventListener('init', (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          const jobs = payload.jobs || [];
+          const found = jobs.find(j => j.id === jobId);
+          if (found) handleJobPayload({ job: found });
+        } catch (e) { /* ignore parse errors */ }
+      });
       this.eventSource.addEventListener('added', handler);
       this.eventSource.addEventListener('updated', handler);
       this.eventSource.addEventListener('removed', handler);
