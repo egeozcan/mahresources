@@ -17,11 +17,18 @@ Making scope a MRQL-native concept solves both: tree-based filtering through a s
 
 ### Syntax
 
-`SCOPE` is a top-level clause, positioned after `WHERE` and before `ORDER BY`:
+MRQL is expression-first (no `WHERE` keyword). `SCOPE` is a top-level clause positioned after the filter expression and before `GROUP BY`:
 
 ```
-WHERE type = "resource" AND name ~ "photo" SCOPE 42 ORDER BY created LIMIT 10
-WHERE type = "note" SCOPE "My Project"
+[expression] [SCOPE <id|"name">] [GROUP BY ...] [ORDER BY ...] [LIMIT n] [OFFSET n]
+```
+
+Examples:
+
+```
+type = "resource" AND name ~ "photo" SCOPE 42 ORDER BY created LIMIT 10
+type = "note" SCOPE "My Project"
+type = "resource" SCOPE 7 GROUP BY contentType ORDER BY count DESC
 SCOPE 123
 ```
 
@@ -42,20 +49,24 @@ New `ScopeExpr` field on the `Query` struct, holding either a `NumberLiteral` (g
 
 When `Query.Scope` is present, the translator:
 
-1. **Resolves string names** to group IDs via `SELECT id, name, category_id FROM groups WHERE name = ?`.
+1. **Resolves string names** to group IDs via a case-insensitive lookup: `SELECT id, name, category_id FROM groups WHERE LOWER(name) = LOWER(?)`. This matches MRQL's case-insensitive string comparison semantics.
 2. **Emits a recursive CTE** to collect the full subtree:
 
 ```sql
-WITH RECURSIVE scope_tree AS (
-    SELECT id FROM groups WHERE id = ?
+WITH RECURSIVE scope_tree(id, depth) AS (
+    SELECT id, 0 FROM groups WHERE id = ?
     UNION ALL
-    SELECT g.id FROM groups g
+    SELECT g.id, st.depth + 1 FROM groups g
     INNER JOIN scope_tree st ON g.owner_id = st.id
-    WHERE depth < 50
+    WHERE st.depth < 50
 )
 ```
 
-3. **Injects** `WHERE owner_id IN (SELECT id FROM scope_tree)` into the query, composed with existing WHERE conditions.
+3. **Injects the scope filter**, varying by entity type:
+   - **Resources and notes:** `WHERE owner_id IN (SELECT id FROM scope_tree)` — entities owned by any group in the subtree.
+   - **Groups:** `WHERE id IN (SELECT id FROM scope_tree)` — the scoped group itself and all its descendants.
+
+   This distinction is necessary because `owner_id IN scope_tree` would exclude the scoped group itself for group queries (its `owner_id` points to its parent, not itself).
 
 Works identically on SQLite and Postgres.
 
@@ -63,7 +74,7 @@ Works identically on SQLite and Postgres.
 
 ### Ambiguous group name
 
-When `SCOPE "name"` matches multiple groups, return an error listing all matches with context:
+When `SCOPE "name"` matches multiple groups (case-insensitive), return an error listing all matches with context:
 
 ```
 ambiguous scope "My Project": found 3 groups:
@@ -73,9 +84,16 @@ ambiguous scope "My Project": found 3 groups:
 Use SCOPE <id> to specify which group.
 ```
 
-### No match
+### No match — string name
 
 `SCOPE "nonexistent"` returns: `scope group not found: "nonexistent"`.
+
+### No match — numeric ID
+
+Behavior depends on origin:
+
+- **Explicit user-authored `SCOPE <id>` in a query:** Error with `scope group not found: id 999`. Users who type an explicit ID expect it to exist; a silent empty result would be confusing.
+- **Internally resolved scope (shortcode/plugin keyword resolution):** Returns empty results (no error). This matches the existing data-views sentinel behavior (`^uint(0) >> 1`) where ownerless entities scoped to parent/root yield no results rather than errors. The resolution functions already handle this — they return a sentinel when the owner chain is broken, and the CTE against a nonexistent ID naturally produces an empty subtree.
 
 ### Global / no scope
 
@@ -85,16 +103,13 @@ Use SCOPE <id> to specify which group.
 
 The recursive CTE depth cap (50 levels) truncates silently. Circular data is a data problem, not a query error.
 
-### Entity type interaction
-
-All three entity types (resources, notes, groups) have `owner_id`, so scope works uniformly across entity types.
-
 ## Shortcode `[mrql]` Scope Support
 
 The `[mrql]` shortcode gains a `scope` attribute:
 
 ```
-[mrql query='WHERE type = "resource" ORDER BY created LIMIT 5' scope="parent"]
+[mrql query='type = "resource" ORDER BY created LIMIT 5' scope="parent"]
+[mrql saved="my-saved-query" scope="root"]
 ```
 
 ### Keywords
@@ -112,6 +127,28 @@ The `[mrql]` shortcode gains a `scope` attribute:
 2. Shortcode `scope` attribute, resolved to a group ID and injected into the parsed AST.
 3. Default: `entity` (rendering entity's group).
 
+### Saved query support
+
+The current `QueryExecutor` signature is:
+
+```go
+type QueryExecutor func(ctx context.Context, query string, savedName string, limit int, buckets int) (*QueryResult, error)
+```
+
+This has no way to pass scope. The saved query lookup and parsing happens inside `BuildQueryExecutor` (`shortcode_query_executor.go`), so `[mrql saved="foo" scope="parent"]` currently has nowhere to inject the resolved scope.
+
+**Fix:** Extend `QueryExecutor` to accept a scope group ID:
+
+```go
+type QueryExecutor func(ctx context.Context, query string, savedName string, limit int, buckets int, scopeGroupID uint) (*QueryResult, error)
+```
+
+The executor implementation in `BuildQueryExecutor` resolves the saved name to a query string, parses it, and then injects the `scopeGroupID` into the parsed AST's `Scope` field (only if the parsed query doesn't already have an explicit SCOPE clause). This way:
+
+- `[mrql saved="foo" scope="parent"]` — saved query is loaded, parent scope is injected.
+- `[mrql saved="foo"]` — saved query is loaded, default entity scope is injected.
+- A saved query with its own `SCOPE` clause — the explicit SCOPE wins, shortcode attribute is ignored.
+
 ## Data-Views Plugin Retrofit
 
 ### What changes
@@ -119,6 +156,7 @@ The `[mrql]` shortcode gains a `scope` attribute:
 - The Go-side execution path (`MRQLExecOptions.ScopeID`) now feeds into the MRQL AST scope mechanism instead of a flat `WHERE owner_id = ?`.
 - `resolveParentScope`, `resolveRootScope`, `lookupOwnerViaQuerier` in `db_api.go` remain — they resolve keywords to a group ID. The resolved ID is injected into the parsed AST as a `SCOPE`, going through the recursive CTE subtree path.
 - The Lua plugin code is unchanged — it still passes `scope` and `scope_entity_id` to `mah.db.mrql_query()`.
+- When resolution returns the sentinel value (`^uint(0) >> 1`), the executor skips scope injection and returns empty results (preserving existing behavior for ownerless entities).
 
 ### Behavioral change
 
