@@ -869,6 +869,44 @@ func (ctx *MahresourcesContext) preScanBlobs(plan *exportPlan, report ReporterFn
 			report(ProgressEvent{Warning: msg})
 		}
 	}
+
+	// Also pre-scan version blobs when F2 is enabled.
+	if plan.req.Fidelity.ResourceVersions && len(plan.resourceIDs) > 0 {
+		type versionRow struct {
+			Hash            string
+			Location        string
+			StorageLocation *string
+		}
+		var versionRows []versionRow
+		if err := ctx.db.Model(&models.ResourceVersion{}).
+			Select("hash, location, storage_location").
+			Where("resource_id IN ? AND hash != ''", plan.resourceIDs).
+			Find(&versionRows).Error; err != nil {
+			return err
+		}
+		for _, vr := range versionRows {
+			if checked[vr.Hash] {
+				continue
+			}
+			checked[vr.Hash] = true
+			fs, err := ctx.GetFsForStorageLocation(vr.StorageLocation)
+			if err != nil {
+				msg := fmt.Sprintf("version blob %s: storage unavailable: %v", vr.Hash, err)
+				plan.warnings = append(plan.warnings, msg)
+				plan.missingBlobs[vr.Hash] = true
+				report(ProgressEvent{Warning: msg})
+				continue
+			}
+			cleanLoc := models.Resource{Location: vr.Location}.GetCleanLocation()
+			if _, statErr := fs.Stat(cleanLoc); statErr != nil {
+				msg := fmt.Sprintf("version blob %s: file missing: %v", vr.Hash, statErr)
+				plan.warnings = append(plan.warnings, msg)
+				plan.missingBlobs[vr.Hash] = true
+				report(ProgressEvent{Warning: msg})
+			}
+		}
+	}
+
 	return nil
 }
 

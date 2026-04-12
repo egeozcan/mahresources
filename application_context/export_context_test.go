@@ -718,3 +718,62 @@ func TestStreamExport_VersionBlobsWrittenEvenWhenCurrentBlobMissing(t *testing.T
 		t.Errorf("expected manifest warnings for missing current blob")
 	}
 }
+
+func TestStreamExport_MissingVersionBlobAppearsInManifestWarnings(t *testing.T) {
+	ctx := createTestContext(t)
+	root := mustCreateGroup(t, ctx, "Root", nil)
+	res := mustCreateResource(t, ctx, "img.png", &root.ID, []byte("v1bytes"))
+
+	// Add a second version.
+	v2 := mustUploadNewVersion(t, ctx, res.ID, []byte("v2bytes"), "v2")
+
+	// Delete the v2 version's blob file ONLY (leave the current/v1 intact).
+	if err := ctx.fs.Remove(v2.Location); err != nil {
+		t.Fatalf("remove v2 blob: %v", err)
+	}
+
+	req := &ExportRequest{
+		RootGroupIDs: []uint{root.ID},
+		Scope:        archive.ExportScope{Subtree: true, OwnedResources: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true, ResourceVersions: true},
+	}
+
+	var buf bytes.Buffer
+	if err := ctx.StreamExport(context.Background(), req, &buf, nil); err != nil {
+		t.Fatalf("StreamExport: %v", err)
+	}
+
+	r, _ := archive.NewReader(&buf)
+	defer r.Close()
+	m, _ := r.ReadManifest()
+
+	// The manifest should contain a warning about the missing version blob.
+	if len(m.Warnings) == 0 {
+		t.Fatalf("expected at least one warning in manifest for missing v2 blob, got none")
+	}
+
+	// Walk and check the version payload.
+	c := newExportCollector()
+	if err := r.Walk(c); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+
+	var rp *archive.ResourcePayload
+	for _, v := range c.resources {
+		rp = v
+	}
+
+	// The v2 version entry should have BlobMissing=true.
+	foundMissingVersion := false
+	for _, v := range rp.Versions {
+		if v.BlobMissing {
+			foundMissingVersion = true
+		}
+	}
+	if !foundMissingVersion {
+		t.Errorf("expected at least one version with BlobMissing=true")
+		for i, v := range rp.Versions {
+			t.Logf("  version[%d]: hash=%s blobRef=%s blobMissing=%v", i, v.Hash, v.BlobRef, v.BlobMissing)
+		}
+	}
+}
