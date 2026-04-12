@@ -12,16 +12,21 @@ type NoteType struct {
 	Name        string    `gorm:"index"`
 	Description string
 	Notes       []*Note `gorm:"foreignKey:NoteTypeId;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
-	// CustomHeader is used in the note page
+	// CustomHeader is rendered at the top of the note detail page body, above the description.
+	// Shortcodes are processed server-side; an Alpine entity variable is available.
 	CustomHeader string `gorm:"type:text"`
-	// CustomSidebar is used in the note page
+	// CustomSidebar is rendered in the note detail page sidebar (both default and wide layouts).
+	// Shortcodes are processed server-side; an Alpine entity variable is available.
 	CustomSidebar string `gorm:"type:text"`
-	// CustomSummary is used in the note list page
+	// CustomSummary is rendered on note cards in list views, below the title.
+	// Shortcodes are processed server-side; an Alpine entity variable is available.
 	CustomSummary string `gorm:"type:text"`
-	// CustomAvatar is used when linking to a note with this type
+	// CustomAvatar replaces the default initials avatar on note cards in list views.
+	// Shortcodes are processed server-side; an Alpine entity variable is available.
 	CustomAvatar string `gorm:"type:text"`
-	// CustomMRQLResult is a template (HTML + shortcodes) for rendering notes of this
-	// type in MRQL query results.
+	// CustomMRQLResult is an HTML+shortcode template for rendering notes of this type
+	// in [mrql] query results. Processed entirely server-side; Alpine directives are not
+	// initialized in the rendered output.
 	CustomMRQLResult string `gorm:"type:text"`
 	// MetaSchema defines the JSON Schema for notes of this type
 	MetaSchema string `gorm:"type:text"`

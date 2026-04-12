@@ -8,7 +8,10 @@
         <header class="card-header">
             {% if !fullText %}
             <div class="card-avatar">
-                {% include "partials/avatar.tpl" with initials=entity.Initials() %}
+                {% process_shortcodes entity.Category.CustomAvatar entity %}
+                {% if not entity.Category.CustomAvatar %}
+                    {% include "partials/avatar.tpl" with initials=entity.Initials() %}
+                {% endif %}
             </div>
             {% endif %}
 

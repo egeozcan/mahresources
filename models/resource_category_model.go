@@ -14,16 +14,21 @@ type ResourceCategory struct {
 	Description string      `gorm:"index"`
 	Resources   []*Resource `gorm:"foreignKey:ResourceCategoryId;constraint:OnUpdate:CASCADE;"`
 
-	// CustomHeader is used in the resource category page
+	// CustomHeader is rendered at the top of the resource detail page body, above the description.
+	// Shortcodes are processed server-side; an Alpine entity variable is available.
 	CustomHeader string `gorm:"type:text"`
-	// CustomSidebar is used in the resource category page
+	// CustomSidebar is rendered in the resource detail page sidebar and lightbox panel.
+	// Shortcodes are processed server-side; an Alpine entity variable is available.
 	CustomSidebar string `gorm:"type:text"`
-	// CustomSummary is used in the resource category list page
+	// CustomSummary is rendered on resource cards in list views, below the title.
+	// Shortcodes are processed server-side; an Alpine entity variable is available.
 	CustomSummary string `gorm:"type:text"`
-	// CustomAvatar is used when linking to resources with this category
+	// CustomAvatar is shown next to the category name on resource cards in list views.
+	// Shortcodes are processed server-side; an Alpine entity variable is available.
 	CustomAvatar string `gorm:"type:text"`
-	// CustomMRQLResult is a template (HTML + shortcodes) for rendering resources of this
-	// category in MRQL query results.
+	// CustomMRQLResult is an HTML+shortcode template for rendering resources of this category
+	// in [mrql] query results. Processed entirely server-side; Alpine directives are not
+	// initialized in the rendered output.
 	CustomMRQLResult string `gorm:"type:text"`
 	// MetaSchema is a JSON schema for the meta field of resources in this category
 	MetaSchema string `gorm:"type:text"`

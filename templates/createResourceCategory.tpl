@@ -33,23 +33,23 @@
                 <dl class="mt-1 space-y-1 text-xs">
                     <div class="flex gap-2">
                         <dt class="font-medium text-stone-700 min-w-[7rem]">Custom Header</dt>
-                        <dd>Top of the detail page, above the description</dd>
+                        <dd>Top of the resource detail page, above the description</dd>
                     </div>
                     <div class="flex gap-2">
                         <dt class="font-medium text-stone-700 min-w-[7rem]">Custom Sidebar</dt>
-                        <dd>Right sidebar on the detail page</dd>
+                        <dd>Resource detail page sidebar and lightbox panel</dd>
                     </div>
                     <div class="flex gap-2">
                         <dt class="font-medium text-stone-700 min-w-[7rem]">Custom Summary</dt>
-                        <dd>List view cards, below the description</dd>
+                        <dd>Resource cards in list views, below the title</dd>
                     </div>
                     <div class="flex gap-2">
                         <dt class="font-medium text-stone-700 min-w-[7rem]">Custom Avatar</dt>
-                        <dd>Icon area next to the category name in list cards</dd>
+                        <dd>Shown next to the category name on resource cards</dd>
                     </div>
                     <div class="flex gap-2">
                         <dt class="font-medium text-stone-700 min-w-[7rem]">Custom MRQL Result</dt>
-                        <dd>Template for this entity type in <code class="bg-stone-100 px-1 rounded">[mrql]</code> results</dd>
+                        <dd>Server-rendered template in <code class="bg-stone-100 px-1 rounded">[mrql]</code> results; Alpine directives not available</dd>
                     </div>
                 </dl>
             </div>
@@ -132,11 +132,11 @@
             </div>
         </div>
 
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Header" name="CustomHeader" value=resourceCategory.CustomHeader mode="html" %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=resourceCategory.CustomSidebar mode="html" %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary" name="CustomSummary" value=resourceCategory.CustomSummary mode="html" %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=resourceCategory.CustomAvatar mode="html" %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom MRQL Result" name="CustomMRQLResult" value=resourceCategory.CustomMRQLResult mode="html" %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Header" name="CustomHeader" value=resourceCategory.CustomHeader mode="html" description="Rendered at the top of the resource detail page, above the description." %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=resourceCategory.CustomSidebar mode="html" description="Rendered in the resource detail page sidebar and lightbox panel." %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary" name="CustomSummary" value=resourceCategory.CustomSummary mode="html" description="Rendered on resource cards in list views, below the title." %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=resourceCategory.CustomAvatar mode="html" description="Shown next to the category name on resource cards." %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom MRQL Result" name="CustomMRQLResult" value=resourceCategory.CustomMRQLResult mode="html" description="Server-rendered in [mrql] results. Shortcodes work; Alpine directives do not." %}
     </fieldset>
     <div class="flex gap-2 items-start">
         <div class="flex-1">
