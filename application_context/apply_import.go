@@ -674,6 +674,27 @@ func (s *applyState) applyGroups() error {
 	return walk(s.plan.Items)
 }
 
+// batchAccumulator buffers result additions within a batch transaction. Only
+// merged into the main ImportApplyResult after a successful tx.Commit(), so a
+// rolled-back batch never leaks uncommitted IDs into the persisted cleanup payload.
+type batchAccumulator struct {
+	createdResources   int
+	createdResourceIDs []uint
+	createdVersions    int
+	createdPreviews    int
+	createdNotes       int
+	createdNoteIDs     []uint
+}
+
+func (b *batchAccumulator) mergeInto(r *ImportApplyResult) {
+	r.CreatedResources += b.createdResources
+	r.CreatedResourceIDs = append(r.CreatedResourceIDs, b.createdResourceIDs...)
+	r.CreatedVersions += b.createdVersions
+	r.CreatedPreviews += b.createdPreviews
+	r.CreatedNotes += b.createdNotes
+	r.CreatedNoteIDs = append(r.CreatedNoteIDs, b.createdNoteIDs...)
+}
+
 // resEntry pairs an export ID with its resource payload for ordered iteration.
 type resEntry struct {
 	exportID string
@@ -712,9 +733,13 @@ func (s *applyState) applyResources() error {
 		batch := entries[batchStart:batchEnd]
 		batchNum := batchStart/applyBatchSize + 1
 
+		// Buffer per-batch result additions so a rolled-back batch doesn't
+		// leak uncommitted IDs into the persisted cleanup payload.
+		batchResult := &batchAccumulator{}
+
 		tx := s.ctx.db.Begin()
 		for _, entry := range batch {
-			if err := s.applyOneResource(tx, entry.exportID, entry.payload); err != nil {
+			if err := s.applyOneResource(tx, entry.exportID, entry.payload, batchResult); err != nil {
 				tx.Rollback()
 				return fmt.Errorf("batch %d, resource %s: %w", batchNum, entry.exportID, err)
 			}
@@ -723,6 +748,9 @@ func (s *applyState) applyResources() error {
 			return fmt.Errorf("commit batch %d: %w", batchNum, err)
 		}
 
+		// Merge only after successful commit.
+		batchResult.mergeInto(s.result)
+
 		s.sink.SetPhaseProgress(int64(batchEnd), int64(len(entries)))
 	}
 	return nil
@@ -730,7 +758,7 @@ func (s *applyState) applyResources() error {
 
 // applyOneResource creates a single resource row plus its versions, wires
 // CurrentVersionID, and creates preview rows — all within the caller's tx.
-func (s *applyState) applyOneResource(tx *gorm.DB, exportID string, rp *archive.ResourcePayload) error {
+func (s *applyState) applyOneResource(tx *gorm.DB, exportID string, rp *archive.ResourcePayload, batch *batchAccumulator) error {
 	// (a) Skip-on-hash collision
 	if rp.Hash != "" {
 		var existing models.Resource
@@ -827,8 +855,8 @@ func (s *applyState) applyOneResource(tx *gorm.DB, exportID string, rp *archive.
 
 	s.idMap[exportID] = r.ID
 	s.createdResourceIDs[exportID] = true
-	s.result.CreatedResources++
-	s.result.CreatedResourceIDs = append(s.result.CreatedResourceIDs, r.ID)
+	batch.createdResources++
+	batch.createdResourceIDs = append(batch.createdResourceIDs, r.ID)
 
 	// (d) Resource versions
 	for _, vp := range rp.Versions {
@@ -854,7 +882,7 @@ func (s *applyState) applyOneResource(tx *gorm.DB, exportID string, rp *archive.
 			return fmt.Errorf("create version %s: %w", vp.VersionExportID, err)
 		}
 		s.idMap[vp.VersionExportID] = ver.ID
-		s.result.CreatedVersions++
+		batch.createdVersions++
 	}
 
 	// (e) Wire CurrentVersionID
@@ -884,7 +912,7 @@ func (s *applyState) applyOneResource(tx *gorm.DB, exportID string, rp *archive.
 		}
 		// Free memory after use
 		delete(s.previewData, pp.PreviewExportID)
-		s.result.CreatedPreviews++
+		batch.createdPreviews++
 	}
 
 	return nil
@@ -946,9 +974,11 @@ func (s *applyState) applyNotes() error {
 		batch := entries[batchStart:batchEnd]
 		batchNum := batchStart/applyBatchSize + 1
 
+		batchResult := &batchAccumulator{}
+
 		tx := s.ctx.db.Begin()
 		for _, entry := range batch {
-			if err := s.applyOneNote(tx, entry.exportID, entry.payload); err != nil {
+			if err := s.applyOneNote(tx, entry.exportID, entry.payload, batchResult); err != nil {
 				tx.Rollback()
 				return fmt.Errorf("batch %d, note %s: %w", batchNum, entry.exportID, err)
 			}
@@ -957,13 +987,15 @@ func (s *applyState) applyNotes() error {
 			return fmt.Errorf("commit note batch %d: %w", batchNum, err)
 		}
 
+		batchResult.mergeInto(s.result)
+
 		s.sink.SetPhaseProgress(int64(batchEnd), int64(len(entries)))
 	}
 	return nil
 }
 
 // applyOneNote creates a single note row plus its blocks within the caller's tx.
-func (s *applyState) applyOneNote(tx *gorm.DB, exportID string, np *archive.NotePayload) error {
+func (s *applyState) applyOneNote(tx *gorm.DB, exportID string, np *archive.NotePayload, batch *batchAccumulator) error {
 	n := models.Note{
 		Name:        np.Name,
 		Description: np.Description,
@@ -1007,8 +1039,8 @@ func (s *applyState) applyOneNote(tx *gorm.DB, exportID string, np *archive.Note
 	}
 
 	s.idMap[exportID] = n.ID
-	s.result.CreatedNotes++
-	s.result.CreatedNoteIDs = append(s.result.CreatedNoteIDs, n.ID)
+	batch.createdNotes++
+	batch.createdNoteIDs = append(batch.createdNoteIDs, n.ID)
 
 	// Create NoteBlock rows
 	for _, bp := range np.Blocks {

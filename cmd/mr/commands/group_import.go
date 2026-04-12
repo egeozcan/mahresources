@@ -66,14 +66,21 @@ Use --decisions to supply a decisions JSON file for full control.`,
 				fmt.Fprintf(cmd.ErrOrStderr(), "Plan saved to %s\n", opts.PlanOutput)
 			}
 
-			if outOpts.JSON {
-				raw, _ := json.Marshal(plan)
-				output.PrintSingle(*outOpts, nil, raw)
+			// Print plan summary (or JSON in dry-run mode). For non-dry-run,
+			// only print human-readable summary to stderr — the apply result
+			// is the primary output and we must not emit two JSON documents.
+			if opts.DryRun {
+				if outOpts.JSON {
+					raw, _ := json.Marshal(plan)
+					output.PrintSingle(*outOpts, nil, raw)
+				} else {
+					printPlanSummary(cmd, &plan)
+				}
 			} else {
 				printPlanSummary(cmd, &plan)
 			}
 
-			// ── Dry-run: print plan, clean up, exit ─────────────────
+			// ── Dry-run: clean up, exit ─────────────────────────────
 			if opts.DryRun {
 				_ = c.Delete("/v1/imports/"+url.PathEscape(parseResp.JobID), url.Values{}, nil)
 				return nil
@@ -185,7 +192,10 @@ func buildCLIDecisions(plan *application_context.ImportPlan, opts *importCmdOpti
 		d.ParentGroupID = &pid
 	}
 
-	// Accept all mapping suggestions.
+	// Accept unambiguous mapping suggestions. Ambiguous entries (e.g. NoteType
+	// with multiple destination matches) are left without an action so
+	// ValidateForApply rejects the apply, forcing the user to provide a
+	// --decisions file with an explicit choice.
 	allMappings := [][]application_context.MappingEntry{
 		plan.Mappings.Categories,
 		plan.Mappings.NoteTypes,
@@ -195,6 +205,14 @@ func buildCLIDecisions(plan *application_context.ImportPlan, opts *importCmdOpti
 	}
 	for _, entries := range allMappings {
 		for _, e := range entries {
+			if e.Ambiguous {
+				// Leave action empty — ValidateForApply will reject the apply.
+				d.MappingActions[e.DecisionKey] = application_context.MappingAction{
+					Include: true,
+					Action:  "",
+				}
+				continue
+			}
 			action := e.Suggestion
 			if action == "" {
 				action = "create"
