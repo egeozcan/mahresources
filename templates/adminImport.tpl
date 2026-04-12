@@ -1,15 +1,10 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
-<div x-data="adminImport()" class="space-y-6 max-w-4xl mx-auto">
-  <header>
-    <h1 class="text-2xl font-semibold text-stone-900">Import Groups</h1>
-    <p class="text-stone-600 mt-1">Upload an export tar to review and import groups into this instance.</p>
-  </header>
-
+<div x-data="adminImport()" class="space-y-6">
   <!-- Upload Section -->
-  <section aria-label="Upload" class="rounded-lg bg-white border border-stone-200 p-5 space-y-4">
-    <h2 class="text-lg font-medium text-stone-800">Upload Archive</h2>
+  <section aria-label="Upload" class="space-y-4">
+    <h2 class="text-sm font-medium font-mono text-stone-700">Upload Archive</h2>
     <div class="space-y-3">
       <label class="block">
         <span class="text-sm text-stone-600">Select a .tar or .tar.gz file</span>
@@ -24,7 +19,7 @@
       </div>
       <button @click="upload()"
               :disabled="!selectedFile || uploading"
-              class="px-4 py-2 bg-emerald-700 text-white rounded hover:bg-emerald-800 disabled:opacity-50 text-sm font-medium"
+              class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50"
               data-testid="import-upload-button">
         <span x-show="!uploading">Upload &amp; Parse</span>
         <span x-show="uploading">Uploading...</span>
@@ -33,8 +28,8 @@
   </section>
 
   <!-- Parse Progress -->
-  <section x-show="jobId && !plan" aria-label="Parse progress" class="rounded-lg bg-white border border-stone-200 p-5 space-y-3">
-    <h2 class="text-lg font-medium text-stone-800">Parsing Archive</h2>
+  <section x-show="jobId && !plan" aria-label="Parse progress" class="border-t border-stone-200 pt-5 space-y-3">
+    <h2 class="text-sm font-medium font-mono text-stone-700">Parsing Archive</h2>
     <div class="text-sm text-stone-600" data-testid="import-parse-progress">
       <span x-text="job?.phase || 'queued'"></span>
       <span x-show="job?.status === 'failed'" class="text-red-700 font-medium" x-text="'Error: ' + job?.error"></span>
@@ -45,14 +40,14 @@
   </section>
 
   <!-- Error -->
-  <div x-show="error" class="rounded-lg bg-red-50 border border-red-200 p-4 text-red-800 text-sm" data-testid="import-error" x-text="error"></div>
+  <div x-show="error" class="rounded-md bg-red-50 p-4 text-red-800 text-sm" data-testid="import-error" x-text="error"></div>
 
   <!-- Review Section (shown after parse completes) -->
   <template x-if="plan">
     <div class="space-y-6">
       <!-- Header Info -->
-      <section aria-label="Archive summary" class="rounded-lg bg-white border border-stone-200 p-5 space-y-3">
-        <h2 class="text-lg font-medium text-stone-800">Archive Summary</h2>
+      <section aria-label="Archive summary" class="border-t border-stone-200 pt-5 space-y-3">
+        <h2 class="text-sm font-medium font-mono text-stone-700">Archive Summary</h2>
         <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm" data-testid="import-summary">
           <dt class="text-stone-500">Schema version</dt>
           <dd x-text="plan.schema_version"></dd>
@@ -73,22 +68,22 @@
 
       <!-- Missing Hashes Warning -->
       <section x-show="plan.manifest_only_missing_hashes > 0" aria-label="Missing hashes warning"
-               class="rounded-lg bg-amber-50 border border-amber-300 p-5 space-y-3" data-testid="import-missing-hashes-warning">
-        <h2 class="text-lg font-medium text-amber-800">Missing File Bytes</h2>
+               class="rounded-md bg-amber-50 p-4 space-y-3" data-testid="import-missing-hashes-warning">
+        <h2 class="text-sm font-medium font-mono text-amber-800">Missing File Bytes</h2>
         <p class="text-sm text-amber-700">
           This archive was exported without file bytes.
           <strong x-text="plan.manifest_only_missing_hashes"></strong> resources reference hashes
           that do not exist on this instance and cannot be imported.
         </p>
         <label class="flex items-center gap-2 text-sm">
-          <input type="checkbox" x-model="decisions.acknowledge_missing_hashes" class="rounded border-stone-300">
+          <input type="checkbox" x-model="decisions.acknowledge_missing_hashes" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
           <span class="text-amber-800">I understand these resources will be skipped</span>
         </label>
       </section>
 
       <!-- Global Options -->
-      <section aria-label="Import options" class="rounded-lg bg-white border border-stone-200 p-5 space-y-4" data-testid="import-options">
-        <h2 class="text-lg font-medium text-stone-800">Import Options</h2>
+      <section aria-label="Import options" class="border-t border-stone-200 pt-5 space-y-4" data-testid="import-options">
+        <h2 class="text-sm font-medium font-mono text-stone-700">Import Options</h2>
         <div class="grid grid-cols-2 gap-6">
           <div>
             <label class="block text-sm font-medium text-stone-700 mb-1">Parent Group</label>
@@ -96,7 +91,7 @@
             <div class="relative">
               <input type="text" x-model="parentGroupQuery" @input.debounce.300ms="searchParentGroups()"
                      placeholder="Search groups..."
-                     class="w-full px-3 py-1.5 border border-stone-300 rounded text-sm focus:outline-none focus:border-stone-500">
+                     class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">
               <div x-show="parentGroupResults.length > 0" class="absolute z-10 w-full bg-white border border-stone-200 rounded shadow-lg mt-1 max-h-48 overflow-y-auto">
                 <button x-show="decisions.parent_group_id" @click="decisions.parent_group_id = null; parentGroupName = ''; parentGroupResults = []"
                         class="w-full text-left px-3 py-2 text-sm text-stone-400 hover:bg-stone-50 border-b">
@@ -118,7 +113,7 @@
             <label class="block text-sm font-medium text-stone-700 mb-1" for="collision-policy">Resource Collision Policy</label>
             <p class="text-xs text-stone-500 mb-2">When a resource with the same hash already exists on this instance.</p>
             <select id="collision-policy" x-model="decisions.resource_collision_policy"
-                    class="w-full px-3 py-1.5 border border-stone-300 rounded text-sm">
+                    class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">
               <option value="skip">Skip (use existing)</option>
               <option value="duplicate">Create duplicate row</option>
             </select>
@@ -127,8 +122,8 @@
       </section>
 
       <!-- Warnings -->
-      <section x-show="plan.warnings?.length > 0" aria-label="Warnings" class="rounded-lg bg-amber-50 border border-amber-200 p-5" data-testid="import-warnings">
-        <h2 class="text-lg font-medium text-amber-800 mb-2">Warnings</h2>
+      <section x-show="plan.warnings?.length > 0" aria-label="Warnings" class="rounded-md bg-amber-50 p-4" data-testid="import-warnings">
+        <h2 class="text-sm font-medium font-mono text-amber-800 mb-2">Warnings</h2>
         <ul class="list-disc list-inside text-sm text-amber-700 space-y-1">
           <template x-for="w in plan.warnings" :key="w">
             <li x-text="w"></li>
@@ -137,8 +132,8 @@
       </section>
 
       <!-- Mapping Panel -->
-      <section aria-label="Schema mappings" class="rounded-lg bg-white border border-stone-200 p-5 space-y-4" data-testid="import-mappings">
-        <h2 class="text-lg font-medium text-stone-800">Schema Mappings</h2>
+      <section aria-label="Schema mappings" class="border-t border-stone-200 pt-5 space-y-4" data-testid="import-mappings">
+        <h2 class="text-sm font-medium font-mono text-stone-700">Schema Mappings</h2>
 
         <template x-for="[label, key] in [['Categories', 'categories'], ['Note Types', 'note_types'], ['Resource Categories', 'resource_categories'], ['Tags', 'tags'], ['Group Relation Types', 'group_relation_types']]" :key="key">
           <details x-show="plan.mappings[key]?.length > 0" class="border border-stone-200 rounded">
@@ -159,7 +154,7 @@
                       <td class="py-2">
                         <input type="checkbox" :checked="isMappingIncluded(entry)"
                                @change="toggleMappingInclude(entry, $event.target.checked)"
-                               class="rounded border-stone-300">
+                               class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
                       </td>
                       <td class="py-2">
                         <span x-text="entry.source_key"></span>
@@ -221,8 +216,8 @@
 
       <!-- Series Info Panel (read-only, slug-based) -->
       <section x-show="plan.series_info?.length > 0" aria-label="Series reconciliation"
-               class="rounded-lg bg-white border border-stone-200 p-5 space-y-3" data-testid="import-series">
-        <h2 class="text-lg font-medium text-stone-800">Series</h2>
+               class="border-t border-stone-200 pt-5 space-y-3" data-testid="import-series">
+        <h2 class="text-sm font-medium font-mono text-stone-700">Series</h2>
         <p class="text-sm text-stone-500">Series are matched by slug. No user action needed.</p>
         <table class="w-full text-sm">
           <thead><tr class="text-left text-stone-500 border-b"><th class="pb-2">Name</th><th class="pb-2">Slug</th><th class="pb-2">Action</th></tr></thead>
@@ -244,8 +239,8 @@
 
       <!-- Dangling References (interactive) -->
       <section x-show="plan.dangling_refs?.length > 0" aria-label="Dangling references"
-               class="rounded-lg bg-white border border-stone-200 p-5 space-y-3" data-testid="import-dangling">
-        <h2 class="text-lg font-medium text-stone-800">Dangling References</h2>
+               class="border-t border-stone-200 pt-5 space-y-3" data-testid="import-dangling">
+        <h2 class="text-sm font-medium font-mono text-stone-700">Dangling References</h2>
         <p class="text-sm text-stone-500">These references point to entities outside the archive. Choose how to handle each one.</p>
         <table class="w-full text-sm">
           <thead><tr class="text-left text-stone-500 border-b"><th class="pb-2">Kind</th><th class="pb-2">From</th><th class="pb-2">Target</th><th class="pb-2">Action</th></tr></thead>
@@ -284,15 +279,15 @@
       </section>
 
       <!-- Item Tree (checkboxes for pruning, arbitrary depth) -->
-      <section aria-label="Import items" class="rounded-lg bg-white border border-stone-200 p-5 space-y-3" data-testid="import-items">
-        <h2 class="text-lg font-medium text-stone-800">Items</h2>
+      <section aria-label="Import items" class="border-t border-stone-200 pt-5 space-y-3" data-testid="import-items">
+        <h2 class="text-sm font-medium font-mono text-stone-700">Items</h2>
         <p class="text-sm text-stone-500">Uncheck items to exclude them from the import.</p>
         <div class="space-y-0.5">
           <template x-for="fi in flattenedItems" :key="fi.export_id">
             <div class="flex items-center gap-2 text-sm py-1" :style="'padding-left:' + (fi.depth * 1.5) + 'rem'">
               <input type="checkbox" :checked="!isExcluded(fi.export_id)"
                      @change="toggleItem(fi.item, $event.target.checked)"
-                     class="rounded border-stone-300">
+                     class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
               <span :class="fi.depth === 0 ? 'font-medium text-stone-800' : 'text-stone-700'" x-text="fi.name"></span>
               <span class="text-xs text-stone-400"
                     x-text="fi.descendant_resource_count + ' resources, ' + fi.descendant_note_count + ' notes'"></span>
@@ -302,15 +297,15 @@
       </section>
 
       <!-- Apply Section -->
-      <section aria-label="Apply" class="rounded-lg bg-white border border-stone-200 p-5 space-y-3" data-testid="import-apply">
-        <h2 class="text-lg font-medium text-stone-800">Apply Import</h2>
+      <section aria-label="Apply" class="border-t border-stone-200 pt-5 space-y-3" data-testid="import-apply">
+        <h2 class="text-sm font-medium font-mono text-stone-700">Apply Import</h2>
         <p x-show="!applyJobId && !applyResult" class="text-sm text-stone-500 mb-3">Review your decisions above, then apply.</p>
 
         <!-- Apply button -->
         <div x-show="!applyJobId && !applyResult">
           <button @click="apply()"
                   :disabled="hasIncompleteDecisions() || applying"
-                  class="px-4 py-2 bg-emerald-700 text-white rounded hover:bg-emerald-800 disabled:opacity-50 text-sm font-medium"
+                  class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50"
                   data-testid="import-apply-button">
             <span x-show="!applying">Apply Import</span>
             <span x-show="applying">Submitting...</span>
@@ -331,7 +326,7 @@
             </div>
           </div>
           <button @click="cancelApply()"
-                  class="px-3 py-1.5 bg-stone-200 text-stone-700 rounded hover:bg-stone-300 text-sm">
+                  class="inline-flex justify-center py-2 px-4 border border-stone-300 rounded-md shadow-sm text-sm font-medium font-mono text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
             Cancel
           </button>
         </div>

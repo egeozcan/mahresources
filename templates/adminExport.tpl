@@ -1,15 +1,8 @@
 {% extends "/layouts/base.tpl" %}
 {% block body %}
 <div x-data="adminExport({ preselectedIds: '{{ preselectedGroupIds|default:"" }}' })" class="space-y-6">
-  <header class="rounded-lg bg-white border border-stone-200 p-5">
-    <h1 class="text-xl font-semibold text-stone-800">Export Groups</h1>
-    <p class="mt-1 text-sm text-stone-600">
-      Pick one or more groups, choose what to include, and download a self-contained tar.
-    </p>
-  </header>
-
-  <section aria-label="Group picker" class="rounded-lg bg-white border border-stone-200 p-5">
-    <h2 class="text-base font-semibold text-stone-800 mb-3">Groups</h2>
+  <section aria-label="Group picker" class="space-y-3">
+    <h2 class="text-sm font-medium font-mono text-stone-700">Groups</h2>
     <div class="flex flex-wrap gap-2 mb-3" data-testid="export-group-chips">
       <template x-for="g in selectedGroups" :key="g.id">
         <span class="inline-flex items-center gap-1 rounded-full bg-stone-100 px-3 py-1 text-xs">
@@ -19,7 +12,7 @@
       </template>
     </div>
     <input type="text" x-model="groupQuery" @input.debounce.250ms="searchGroups()"
-           placeholder="Search to add groups..." class="w-full rounded border border-stone-300 px-2 py-1"
+           placeholder="Search to add groups..." class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded"
            aria-label="Search groups to add" />
     <ul x-show="groupResults.length > 0" class="mt-2 max-h-48 overflow-y-auto border border-stone-200 rounded">
       <template x-for="g in groupResults" :key="g.id">
@@ -32,31 +25,31 @@
     </ul>
   </section>
 
-  <section aria-label="Toggles" class="rounded-lg bg-white border border-stone-200 p-5">
-    <h2 class="text-base font-semibold text-stone-800 mb-3">What to include</h2>
+  <section aria-label="Toggles" class="border-t border-stone-200 pt-5 space-y-3">
+    <h2 class="text-sm font-medium font-mono text-stone-700">What to include</h2>
 
     <fieldset class="space-y-2">
-      <legend class="text-sm font-semibold text-stone-700">Scope</legend>
-      <label class="flex items-center gap-2"><input type="checkbox" x-model="scope.subtree"> Include all descendants (S1)</label>
-      <label class="flex items-center gap-2"><input type="checkbox" x-model="scope.owned_resources"> Include owned resources (S2)</label>
-      <label class="flex items-center gap-2"><input type="checkbox" x-model="scope.owned_notes"> Include owned notes (S3)</label>
-      <label class="flex items-center gap-2"><input type="checkbox" x-model="scope.related_m2m"> Include related (m2m) entities (S4)</label>
-      <label class="flex items-center gap-2"><input type="checkbox" x-model="scope.group_relations"> Include typed group relations (S5)</label>
+      <legend class="text-sm font-medium font-mono text-stone-700">Scope</legend>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="scope.subtree" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600"> Include all descendants (S1)</label>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="scope.owned_resources" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600"> Include owned resources (S2)</label>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="scope.owned_notes" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600"> Include owned notes (S3)</label>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="scope.related_m2m" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600"> Include related (m2m) entities (S4)</label>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="scope.group_relations" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600"> Include typed group relations (S5)</label>
     </fieldset>
 
     <fieldset class="space-y-2 mt-4">
-      <legend class="text-sm font-semibold text-stone-700">Fidelity</legend>
-      <label class="flex items-center gap-2"><input type="checkbox" x-model="fidelity.resource_blobs"> Include resource file bytes (F1)</label>
-      <label class="flex items-center gap-2"><input type="checkbox" x-model="fidelity.resource_versions"> Include version history (F2)</label>
-      <label class="flex items-center gap-2"><input type="checkbox" x-model="fidelity.resource_previews"> Include previews (F3)</label>
-      <label class="flex items-center gap-2"><input type="checkbox" x-model="fidelity.resource_series"> Preserve Series membership (F4)</label>
+      <legend class="text-sm font-medium font-mono text-stone-700">Fidelity</legend>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="fidelity.resource_blobs" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600"> Include resource file bytes (F1)</label>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="fidelity.resource_versions" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600"> Include version history (F2)</label>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="fidelity.resource_previews" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600"> Include previews (F3)</label>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="fidelity.resource_series" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600"> Preserve Series membership (F4)</label>
     </fieldset>
 
     <fieldset class="space-y-2 mt-4">
-      <legend class="text-sm font-semibold text-stone-700">Schema definitions</legend>
-      <label class="flex items-center gap-2"><input type="checkbox" x-model="schemaDefs.categories_and_types"> Include Categories, NoteTypes, ResourceCategories (D1)</label>
-      <label class="flex items-center gap-2"><input type="checkbox" x-model="schemaDefs.tags"> Include Tag definitions (D2)</label>
-      <label class="flex items-center gap-2"><input type="checkbox" x-model="schemaDefs.group_relation_types"> Include GroupRelationType definitions (D3)</label>
+      <legend class="text-sm font-medium font-mono text-stone-700">Schema definitions</legend>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="schemaDefs.categories_and_types" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600"> Include Categories, NoteTypes, ResourceCategories (D1)</label>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="schemaDefs.tags" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600"> Include Tag definitions (D2)</label>
+      <label class="flex items-center gap-2"><input type="checkbox" x-model="schemaDefs.group_relation_types" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600"> Include GroupRelationType definitions (D3)</label>
     </fieldset>
 
     <p x-show="!fidelity.resource_blobs" class="mt-3 text-sm text-amber-700">
@@ -64,10 +57,10 @@
     </p>
   </section>
 
-  <section aria-label="Estimate" class="rounded-lg bg-white border border-stone-200 p-5">
-    <h2 class="text-base font-semibold text-stone-800 mb-3">Estimate</h2>
+  <section aria-label="Estimate" class="border-t border-stone-200 pt-5 space-y-3">
+    <h2 class="text-sm font-medium font-mono text-stone-700">Estimate</h2>
     <button type="button" @click="estimate()" :disabled="selectedGroups.length === 0"
-            class="rounded bg-stone-800 text-white px-3 py-1 disabled:opacity-50"
+            class="inline-flex justify-center py-2 px-4 border border-stone-300 rounded-md shadow-sm text-sm font-medium font-mono text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50"
             data-testid="export-estimate-button">
       Compute estimate
     </button>
@@ -96,9 +89,9 @@
     </div>
   </section>
 
-  <section aria-label="Run export" class="rounded-lg bg-white border border-stone-200 p-5">
+  <section aria-label="Run export" class="border-t border-stone-200 pt-5">
     <button type="button" @click="submit()" :disabled="selectedGroups.length === 0 || jobInProgress"
-            class="rounded bg-emerald-700 text-white px-3 py-1 disabled:opacity-50"
+            class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50"
             data-testid="export-submit-button">
       Start export
     </button>
@@ -128,7 +121,7 @@
         <button type="button"
                 x-show="canCancel()"
                 @click="cancel()"
-                class="rounded bg-red-700 text-white px-3 py-1"
+                class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-red-700 hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600"
                 data-testid="export-cancel-button">
           Cancel
         </button>
