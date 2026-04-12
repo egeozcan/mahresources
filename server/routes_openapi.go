@@ -1702,6 +1702,33 @@ func registerImportRoutes(r *openapi.Registry) {
 			{Name: "jobId", Type: "string", Description: "The job ID to clean up"},
 		},
 	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodPost,
+		Path:        "/v1/imports/{jobId}/apply",
+		OperationID: "applyGroupImport",
+		Summary:     "Apply an import with user decisions",
+		Description: "Validates decisions against the plan, consumes the plan file, and enqueues an apply job. Returns 409 if already applied.",
+		Tags:        []string{"imports"},
+		PathParams: []openapi.PathParam{
+			{Name: "jobId", Type: "string", Description: "The parse job ID whose plan to apply"},
+		},
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodGet,
+		Path:        "/v1/imports/{jobId}/result",
+		OperationID: "getImportResult",
+		Summary:     "Get the import apply result",
+		Description: "Returns the ImportApplyResult JSON for a completed apply job.",
+		Tags:        []string{"imports"},
+		PathParams: []openapi.PathParam{
+			{Name: "jobId", Type: "string", Description: "The apply job ID whose result to fetch"},
+		},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
 }
 
 func registerPluginRoutes(r *openapi.Registry) {

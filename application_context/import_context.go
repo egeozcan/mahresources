@@ -119,11 +119,17 @@ func (ctx *MahresourcesContext) ParseImport(cancelCtx context.Context, jobID, ta
 }
 
 // LoadImportPlan reads a previously persisted plan from _imports/<jobID>.plan.json.
+// Falls back to _imports/<jobID>.plan.applied.json if the original has been
+// consumed by an apply operation.
 func (ctx *MahresourcesContext) LoadImportPlan(jobID string) (*ImportPlan, error) {
 	planPath := importPlanPath(jobID)
 	f, err := ctx.fs.Open(planPath)
 	if err != nil {
-		return nil, fmt.Errorf("open plan file: %w", err)
+		consumedPath := filepath.Join("_imports", jobID+".plan.applied.json")
+		f, err = ctx.fs.Open(consumedPath)
+		if err != nil {
+			return nil, fmt.Errorf("open plan file: %w", err)
+		}
 	}
 	defer f.Close()
 
@@ -134,10 +140,17 @@ func (ctx *MahresourcesContext) LoadImportPlan(jobID string) (*ImportPlan, error
 	return &plan, nil
 }
 
-// DeleteImportFiles removes the plan JSON and the tar file for a given job.
+// DeleteImportFiles removes the plan JSON, consumed plan, result, and the tar
+// file for a given job.
 func (ctx *MahresourcesContext) DeleteImportFiles(jobID string) error {
 	planPath := importPlanPath(jobID)
 	_ = ctx.fs.Remove(planPath)
+
+	consumedPath := filepath.Join("_imports", jobID+".plan.applied.json")
+	_ = ctx.fs.Remove(consumedPath)
+
+	resultPath := filepath.Join("_imports", jobID+".result.json")
+	_ = ctx.fs.Remove(resultPath)
 
 	// Try common tar paths
 	tarPath := filepath.Join("_imports", jobID+".tar")

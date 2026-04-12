@@ -529,6 +529,8 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/groups/import/parse").HandlerFunc(api_handlers.GetImportParseHandler(appContext, appContext.Config.MaxImportSize))
 	router.Methods(http.MethodGet).Path("/v1/imports/{jobId}/plan").HandlerFunc(api_handlers.GetImportPlanHandler(appContext))
 	router.Methods(http.MethodDelete).Path("/v1/imports/{jobId}").HandlerFunc(api_handlers.GetImportDeleteHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/imports/{jobId}/apply").HandlerFunc(api_handlers.GetImportApplyHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/imports/{jobId}/result").HandlerFunc(api_handlers.GetImportResultHandler(appContext))
 
 	// Plugin action routes
 	router.Methods(http.MethodGet).Path("/v1/plugin/actions").HandlerFunc(api_handlers.GetPluginActionsHandler(appContext))

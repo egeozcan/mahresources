@@ -2559,6 +2559,25 @@ paths:
             summary: Cancel and clean up an import
             tags:
                 - imports
+    /v1/imports/{jobId}/apply:
+        post:
+            description: Validates decisions against the plan, consumes the plan file, and enqueues an apply job. Returns 409 if already applied.
+            operationId: applyGroupImport
+            parameters:
+                - description: The parse job ID whose plan to apply
+                  in: path
+                  name: jobId
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Apply an import with user decisions
+            tags:
+                - imports
     /v1/imports/{jobId}/plan:
         get:
             description: Returns the ImportPlan JSON for a completed parse job.
@@ -2576,6 +2595,25 @@ paths:
                         application/json: {}
                     description: Successful response
             summary: Get the parsed import plan
+            tags:
+                - imports
+    /v1/imports/{jobId}/result:
+        get:
+            description: Returns the ImportApplyResult JSON for a completed apply job.
+            operationId: getImportResult
+            parameters:
+                - description: The apply job ID whose result to fetch
+                  in: path
+                  name: jobId
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Get the import apply result
             tags:
                 - imports
     /v1/jobs/action/job:

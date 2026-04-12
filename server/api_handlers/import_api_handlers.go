@@ -25,6 +25,7 @@ import (
 // server/interfaces would create an import cycle.
 type GroupImporter interface {
 	ParseImport(ctx context.Context, jobID, tarPath string) (*application_context.ImportPlan, error)
+	ApplyImport(ctx context.Context, parseJobID string, decisions *application_context.ImportDecisions, sink download_queue.ProgressSink) (*application_context.ImportApplyResult, error)
 	LoadImportPlan(jobID string) (*application_context.ImportPlan, error)
 	DeleteImportFiles(jobID string) error
 	DownloadManager() *download_queue.DownloadManager
@@ -165,6 +166,137 @@ func GetImportPlanHandler(ctx GroupImporter) func(http.ResponseWriter, *http.Req
 
 		w.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(w).Encode(plan)
+	}
+}
+
+// GetImportResultHandler — GET /v1/imports/{jobId}/result
+//
+// Returns the ImportApplyResult JSON for a completed apply job. Returns 404 if
+// the result file does not exist yet.
+func GetImportResultHandler(ctx GroupImporter) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		jobID := vars["jobId"]
+		if jobID == "" {
+			http.Error(w, "jobId path parameter is required", http.StatusBadRequest)
+			return
+		}
+
+		resultPath := filepath.Join("_imports", jobID+".result.json")
+		f, err := ctx.GetDefaultFs().Open(resultPath)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				http.Error(w, "import result not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer f.Close()
+
+		w.Header().Set("Content-Type", constants.JSON)
+		_, _ = io.Copy(w, f)
+	}
+}
+
+// GetImportApplyHandler — POST /v1/imports/{jobId}/apply
+//
+// Accepts ImportDecisions JSON, validates against the plan, consumes the plan
+// file (rename to .plan.applied.json), and enqueues an apply job.
+// Returns 202 with {"jobId": "..."}.
+func GetImportApplyHandler(ctx GroupImporter) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		parseJobID := vars["jobId"]
+		if parseJobID == "" {
+			http.Error(w, "jobId path parameter is required", http.StatusBadRequest)
+			return
+		}
+
+		fs := ctx.GetDefaultFs()
+		planPath := filepath.Join("_imports", parseJobID+".plan.json")
+
+		// 1. Check that the plan file still exists (not already consumed).
+		if _, err := fs.Stat(planPath); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				http.Error(w, "already applied or expired", http.StatusConflict)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// 2. Load the plan.
+		plan, err := ctx.LoadImportPlan(parseJobID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// 3. Decode decisions from the request body.
+		var decisions application_context.ImportDecisions
+		if err := json.NewDecoder(r.Body).Decode(&decisions); err != nil {
+			http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		// 4. Validate decisions against the plan.
+		if err := plan.ValidateForApply(&decisions); err != nil {
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+
+		// 5. Consume the plan by renaming to .plan.applied.json.
+		consumedPath := filepath.Join("_imports", parseJobID+".plan.applied.json")
+		if err := fs.Rename(planPath, consumedPath); err != nil {
+			http.Error(w, "failed to consume plan: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// 6. Enqueue the apply job.
+		runFn := buildImportApplyRunFn(ctx, parseJobID, consumedPath, &decisions)
+		job, err := ctx.DownloadManager().SubmitJob(download_queue.JobSourceGroupImportApply, "queued", runFn)
+		if err != nil {
+			// Restore the plan file on enqueue failure.
+			_ = fs.Rename(consumedPath, planPath)
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+
+		w.Header().Set("Content-Type", constants.JSON)
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]any{"jobId": job.ID})
+	}
+}
+
+func buildImportApplyRunFn(ctx GroupImporter, parseJobID, consumedPlanPath string, decisions *application_context.ImportDecisions) download_queue.JobRunFn {
+	return func(jobCtx context.Context, j *download_queue.DownloadJob, sink download_queue.ProgressSink) error {
+		result, err := ctx.ApplyImport(jobCtx, parseJobID, decisions, sink)
+
+		// Persist the result even on failure (partial-failure results list
+		// created IDs for manual cleanup).
+		if result != nil {
+			resultPath := filepath.Join("_imports", parseJobID+".result.json")
+			if data, marshalErr := json.Marshal(result); marshalErr == nil {
+				_ = afero.WriteFile(ctx.GetDefaultFs(), resultPath, data, 0644)
+				sink.SetResultPath(resultPath)
+			}
+		}
+
+		if err != nil {
+			return err
+		}
+
+		// Forward warnings to the job sink.
+		for _, w := range result.Warnings {
+			sink.AppendWarning(w)
+		}
+
+		// Clean up the consumed plan on success.
+		_ = ctx.GetDefaultFs().Remove(consumedPlanPath)
+
+		sink.SetPhase("completed")
+		return nil
 	}
 }
 
