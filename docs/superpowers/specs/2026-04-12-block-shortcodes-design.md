@@ -96,7 +96,10 @@ The existing `maxRecursionDepth` (currently 2) is bumped to 10 to accommodate re
 
 ### Handler Logic
 
-1. **Resolve value**: uses a new `extractRawValueAtPath` helper that navigates the meta JSON by dot-notation path and returns the raw `any` value (string, float64, bool, nil) — not JSON-encoded text. The existing `extractValueAtPath` returns JSON-encoded strings (e.g., `"active"` with surrounding quotes) which is correct for the `[meta]` shortcode's data attributes but wrong for conditional string comparisons.
+1. **Resolve value**: three condition sources, checked in order: `mrql` > `field` > `path`.
+   - **`path`**: uses a new `extractRawValueAtPath` helper that navigates the meta JSON by dot-notation path and returns the raw `any` value (string, float64, bool, nil) — not JSON-encoded text. The existing `extractValueAtPath` returns JSON-encoded strings (e.g., `"active"` with surrounding quotes) which is correct for the `[meta]` shortcode's data attributes but wrong for conditional comparisons.
+   - **`field`**: reads an entity struct field by name via reflection (reuses the same approach as `RenderPropertyShortcode`). e.g., `field="Name"` reads the entity's `Name` field. Returns the raw Go value.
+   - **`mrql`** (+ optional `scope`, `aggregate`): runs an MRQL query via the `QueryExecutor` callback (already threaded through `processWithDepth`). For flat results, the value is the item count. For aggregated results, the value is the first row's column named by `aggregate`. `scope` restricts results to a group subtree (same semantics as `[mrql scope="..."]`).
 2. **Evaluate condition**: checks one operator attribute against the resolved raw value. Strings are compared directly, numbers via `strconv.ParseFloat`.
 3. **Select branch**: if condition is true, select `InnerContent`. If false, select `ElseContent` (may be empty). The parser has already split these structurally.
 4. **Expand and return**: the selected branch is recursively processed through `processWithDepth` to expand nested shortcodes. The unselected branch is never processed — no wasted work or side effects.
@@ -118,7 +121,7 @@ Only one operator per shortcode. If multiple are present, first match in the ord
 ### Registration
 
 - `conditional` added to the parser's shortcode name regex pattern.
-- New case in `processWithDepth`'s switch statement.
+- New case in `processWithDepth`'s switch statement. The handler receives the `MetaShortcodeContext` (for `path` and `field` resolution) and the `QueryExecutor` callback (for `mrql` resolution) — both already available in `processWithDepth`.
 - Non-block usage (`[conditional path="x" eq="y"]` without closing tag) is valid but does nothing useful (empty inner content, returns empty string).
 
 ## Plugin Removal
@@ -127,17 +130,15 @@ Remove the `conditional` shortcode from `plugins/data-views/plugin.lua` entirely
 
 ### Feature delta vs. plugin version
 
-The plugin version supports attributes the built-in intentionally does not carry forward:
-
 | Plugin attribute | Built-in status | Notes |
 |-----------------|----------------|-------|
 | `path` | Kept | Same — dot-notation meta lookup as condition source |
-| `field` | Removed | Was a condition source (entity struct field). Not carried forward — `path` covers the primary use case. Could be added later if needed. |
-| `mrql` / `scope` / `aggregate` | Removed | Were condition sources (run a query, compare the result). Not carried forward — these are genuinely lost capabilities, not replaceable by composition since `[mrql]` inside the block only affects rendered content, not the condition evaluation. Could be added later as additional condition source attributes. |
+| `field` | Kept | Same — entity struct field as condition source |
+| `mrql` / `scope` / `aggregate` | Kept | Same — query-based condition source |
 | `html` / `content` | Replaced | Block body replaces these entirely |
 | `class` | Replaced | Use HTML directly in the block body: `<div class="...">` |
 
-The built-in version trades two condition source modes (`field`, `mrql`) for block syntax with nesting. The `path`-based condition covers the primary use case. The dropped condition sources can be added as future attributes if demand arises.
+All condition sources are preserved. The block syntax replaces the content-delivery attributes (`html`, `content`, `class`) with something strictly more capable.
 
 ## Testing
 
