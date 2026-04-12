@@ -68,6 +68,7 @@ func TestShortcodeRendering(t *testing.T) {
 		json.RawMessage(`{"rating": 4}`),
 		map[string]string{"max": "3"},
 		nil,
+		"", false,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "<span>★★★</span>", html)
@@ -102,6 +103,7 @@ func TestShortcodeRenderContext(t *testing.T) {
 		json.RawMessage(`{}`),
 		map[string]string{},
 		nil,
+		"", false,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "resource:42", html)
@@ -135,13 +137,13 @@ func TestShortcodeNonStringReturnErrors(t *testing.T) {
 	defer pm.Close()
 	require.NoError(t, pm.EnablePlugin("sc-badret"))
 
-	_, err = pm.RenderShortcode(context.Background(), "sc-badret", "plugin:sc-badret:nilret", "group", 1, json.RawMessage(`{}`), nil, nil)
+	_, err = pm.RenderShortcode(context.Background(), "sc-badret", "plugin:sc-badret:nilret", "group", 1, json.RawMessage(`{}`), nil, nil, "", false)
 	assert.Error(t, err, "nil return should be an error")
 
-	_, err = pm.RenderShortcode(context.Background(), "sc-badret", "plugin:sc-badret:numret", "group", 1, json.RawMessage(`{}`), nil, nil)
+	_, err = pm.RenderShortcode(context.Background(), "sc-badret", "plugin:sc-badret:numret", "group", 1, json.RawMessage(`{}`), nil, nil, "", false)
 	assert.Error(t, err, "number return should be an error")
 
-	_, err = pm.RenderShortcode(context.Background(), "sc-badret", "plugin:sc-badret:boolret", "group", 1, json.RawMessage(`{}`), nil, nil)
+	_, err = pm.RenderShortcode(context.Background(), "sc-badret", "plugin:sc-badret:boolret", "group", 1, json.RawMessage(`{}`), nil, nil, "", false)
 	assert.Error(t, err, "boolean return should be an error")
 }
 
@@ -246,6 +248,7 @@ func TestShortcodeEntityContext(t *testing.T) {
 		json.RawMessage(`{"rating": 5}`),
 		map[string]string{},
 		&testResourceEntity{Name: "photo.jpg", FileSize: 1024},
+		"", false,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "photo.jpg:1024", html)
@@ -255,4 +258,57 @@ type testResourceEntity struct {
 	Name        string
 	FileSize    int64
 	ContentType string
+}
+
+func TestRenderShortcodeBlockContext(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "sc-block", `
+		plugin = { name = "sc-block", version = "1.0" }
+		function init()
+			mah.shortcode({
+				name = "wrapper",
+				label = "Wrapper",
+				render = function(ctx)
+					if ctx.is_block then
+						return "<div class=\"block\">" .. ctx.inner_content .. "</div>"
+					end
+					return "<span>inline</span>"
+				end
+			})
+		end
+	`)
+
+	pm, err := NewPluginManager(dir)
+	require.NoError(t, err)
+	defer pm.Close()
+
+	require.NoError(t, pm.EnablePlugin("sc-block"))
+
+	// Inline mode: is_block=false, inner_content=""
+	inlineResult, err := pm.RenderShortcode(
+		context.Background(),
+		"sc-block",
+		"plugin:sc-block:wrapper",
+		"group", 1,
+		json.RawMessage(`{}`),
+		map[string]string{},
+		nil,
+		"", false,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "<span>inline</span>", inlineResult)
+
+	// Block mode: is_block=true, inner_content populated
+	blockResult, err := pm.RenderShortcode(
+		context.Background(),
+		"sc-block",
+		"plugin:sc-block:wrapper",
+		"group", 1,
+		json.RawMessage(`{}`),
+		map[string]string{},
+		nil,
+		"hello world", true,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, `<div class="block">hello world</div>`, blockResult)
 }

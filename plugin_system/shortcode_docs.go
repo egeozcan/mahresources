@@ -148,8 +148,8 @@ func (pm *PluginManager) HandleDocsPage(pluginName, path string) (string, error)
 // renderExamplePreview attempts to render a shortcode example with its example data.
 // Returns the rendered HTML or empty string if rendering fails or the code doesn't match.
 func renderExamplePreview(pm *PluginManager, pluginName, fullTypeName string, ex ShortcodeDocExample) string {
-	// Parse the shortcode from the example code to extract attrs
-	parsed := shortcodes.Parse(ex.Code)
+	// Parse the shortcode from the example code to extract attrs (use ParseWithBlocks to support block shortcodes)
+	parsed := shortcodes.ParseWithBlocks(ex.Code)
 	if len(parsed) != 1 || parsed[0].Name != fullTypeName {
 		return ""
 	}
@@ -160,7 +160,7 @@ func renderExamplePreview(pm *PluginManager, pluginName, fullTypeName string, ex
 		return ""
 	}
 
-	result, err := pm.renderShortcodeForDocs(pluginName, fullTypeName, metaJSON, parsed[0].Attrs)
+	result, err := pm.renderShortcodeForDocs(pluginName, fullTypeName, metaJSON, parsed[0].Attrs, parsed[0].InnerContent, parsed[0].IsBlock)
 	if err != nil {
 		log.Printf("[plugin] docs preview: render failed for %s: %v", fullTypeName, err)
 		return ""

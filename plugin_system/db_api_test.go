@@ -778,6 +778,7 @@ func TestMRQLQueryLuaFunction(t *testing.T) {
 		json.RawMessage(`{}`),
 		map[string]string{},
 		nil,
+		"", false,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "flat:resource", html)

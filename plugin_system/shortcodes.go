@@ -189,7 +189,7 @@ func (pm *PluginManager) GetPluginShortcode(fullTypeName string) *PluginShortcod
 	return nil
 }
 
-func (pm *PluginManager) RenderShortcode(reqCtx context.Context, pluginName, fullTypeName, entityType string, entityID uint, meta json.RawMessage, attrs map[string]string, entity any) (string, error) {
+func (pm *PluginManager) RenderShortcode(reqCtx context.Context, pluginName, fullTypeName, entityType string, entityID uint, meta json.RawMessage, attrs map[string]string, entity any, innerContent string, isBlock bool) (string, error) {
 	if pm.closed.Load() {
 		return "", fmt.Errorf("plugin manager is closed")
 	}
@@ -234,11 +234,13 @@ func (pm *PluginManager) RenderShortcode(reqCtx context.Context, pluginName, ful
 	}
 
 	ctxData := map[string]any{
-		"entity_type": entityType,
-		"entity_id":   float64(entityID),
-		"value":       metaMap,
-		"attrs":       attrsMap,
-		"settings":    settings,
+		"entity_type":   entityType,
+		"entity_id":     float64(entityID),
+		"value":         metaMap,
+		"attrs":         attrsMap,
+		"settings":      settings,
+		"inner_content": innerContent,
+		"is_block":      isBlock,
 	}
 
 	if entity != nil {
@@ -347,7 +349,7 @@ func entityFieldValue(fv reflect.Value) any {
 // renderShortcodeForDocs renders a shortcode in documentation preview mode.
 // It uses entityType "group" with entityID 0 and sets preview=true in the
 // context so plugins can disable side effects (e.g. meta-editors skip saves).
-func (pm *PluginManager) renderShortcodeForDocs(pluginName, fullTypeName string, meta json.RawMessage, attrs map[string]string) (string, error) {
+func (pm *PluginManager) renderShortcodeForDocs(pluginName, fullTypeName string, meta json.RawMessage, attrs map[string]string, innerContent string, isBlock bool) (string, error) {
 	if pm.closed.Load() {
 		return "", fmt.Errorf("plugin manager is closed")
 	}
@@ -392,12 +394,14 @@ func (pm *PluginManager) renderShortcodeForDocs(pluginName, fullTypeName string,
 	}
 
 	ctxData := map[string]any{
-		"entity_type": "group",
-		"entity_id":   float64(0),
-		"value":       metaMap,
-		"attrs":       attrsMap,
-		"settings":    settings,
-		"preview":     true,
+		"entity_type":   "group",
+		"entity_id":     float64(0),
+		"value":         metaMap,
+		"attrs":         attrsMap,
+		"settings":      settings,
+		"preview":       true,
+		"inner_content": innerContent,
+		"is_block":      isBlock,
 	}
 
 	tbl := goToLuaTable(L, ctxData)
