@@ -23,7 +23,8 @@ type Shortcode struct {
     Raw          string   // full matched text (opening+closing for blocks, tag for self-closing)
     Start        int      // byte offset of opening tag start
     End          int      // byte offset of closing tag end (or opening tag end if self-closing)
-    InnerContent string   // content between [name]...[/name], empty for self-closing
+    InnerContent string   // content between [name]...[else] or [/name], empty for self-closing
+    ElseContent  string   // content after [else] in a block shortcode, empty if no [else]
     IsBlock      bool     // true if matched as [name]...[/name] pair
 }
 ```
@@ -42,22 +43,32 @@ Two-phase approach extending the existing regex parser:
 - New `ParseWithBlocks()` function returns both self-closing and block shortcodes.
 - The processor switches to `ParseWithBlocks()`.
 
+**Output contract**: `ParseWithBlocks()` returns only top-level (non-overlapping) shortcodes. Nested shortcodes inside a block's `InnerContent` are not returned — they are left as raw text for recursive processing by the handler or the processor. This preserves the processor's linear Start/End splice algorithm unchanged.
+
 ### `[else]` Handling
 
-`[else]` is not a parser-level token. It is a literal string inside block content. The `conditional` handler splits `InnerContent` on `[else]` internally. This keeps the parser simple and avoids special-casing in the general pipeline.
+`[else]` is a parser-level token recognized inside block shortcodes. When the parser matches a block pair, it scans the inner content for the first top-level `[else]` (not nested inside a deeper block) and splits the content into `InnerContent` (true branch) and `ElseContent` (false branch). This is structural, not a post-processing string split.
+
+The `Shortcode` struct gets an additional field:
+
+```go
+ElseContent string // content after [else] in a block shortcode, empty if no [else]
+```
 
 ## Processing Pipeline Changes
 
 `processWithDepth` switches to `ParseWithBlocks()`:
 
 - **Self-closing shortcodes**: behavior identical to today.
-- **Block shortcodes**: inner content is recursively processed through `processWithDepth` first (expanding nested shortcodes), then the handler receives the fully-rendered `InnerContent`.
+- **Block shortcodes**: the handler receives raw `InnerContent` and `ElseContent`. Handlers that need expansion call `processWithDepth` on the branch they select. Handlers that don't care about branching can expand `InnerContent` unconditionally.
 
-This means handlers always see expanded inner content. A `[conditional]` wrapping `[meta path="x"]` receives the rendered `<meta-shortcode>` element, not the raw shortcode text.
+This means the conditional handler evaluates its condition first, then only expands the taken branch. Shortcodes in the untaken branch are never executed — no wasted MRQL queries or plugin side effects.
 
 ### Plugin Renderer
 
-No signature change needed. `PluginRenderer` already receives the full `Shortcode` struct, which now includes `InnerContent` and `IsBlock`. On the Lua side, the context table gains an `inner_content` string field (empty for self-closing shortcodes).
+No signature change needed. `PluginRenderer` already receives the full `Shortcode` struct, which now includes `InnerContent`, `ElseContent`, and `IsBlock`. On the Lua side, the context table gains `inner_content` and `else_content` string fields (empty for self-closing shortcodes).
+
+Plugin block shortcodes receive raw (unexpanded) inner content. If a plugin wants nested shortcodes expanded, it returns the raw content and the processor handles expansion. Alternatively, plugin shortcodes can treat inner content as a template string without expansion — this is the plugin's choice.
 
 ### Recursion Depth
 
@@ -85,22 +96,22 @@ The existing `maxRecursionDepth` (currently 2) is bumped to 10 to accommodate re
 
 ### Handler Logic
 
-1. **Resolve value**: uses `extractValueAtPath` from `meta_handler.go` to read from entity meta JSON via the `path` attribute.
-2. **Evaluate condition**: checks one operator attribute against the resolved value.
-3. **Split on `[else]`**: if `InnerContent` contains `[else]`, split into true/false branches. Only the first `[else]` is recognized (subsequent ones are literal text in the else branch).
-4. **Return**: matching branch content, or empty string if condition fails with no else branch.
+1. **Resolve value**: uses a new `extractRawValueAtPath` helper that navigates the meta JSON by dot-notation path and returns the raw `any` value (string, float64, bool, nil) — not JSON-encoded text. The existing `extractValueAtPath` returns JSON-encoded strings (e.g., `"active"` with surrounding quotes) which is correct for the `[meta]` shortcode's data attributes but wrong for conditional string comparisons.
+2. **Evaluate condition**: checks one operator attribute against the resolved raw value. Strings are compared directly, numbers via `strconv.ParseFloat`.
+3. **Select branch**: if condition is true, select `InnerContent`. If false, select `ElseContent` (may be empty). The parser has already split these structurally.
+4. **Expand and return**: the selected branch is recursively processed through `processWithDepth` to expand nested shortcodes. The unselected branch is never processed — no wasted work or side effects.
 
 ### Supported Operators
 
 | Attribute | Condition |
 |-----------|-----------|
-| `eq` | String equality: `tostring(value) == attr` |
-| `neq` | String inequality: `tostring(value) != attr` |
-| `gt` | Numeric greater than: `tonumber(value) > tonumber(attr)` |
-| `lt` | Numeric less than: `tonumber(value) < tonumber(attr)` |
-| `contains` | Substring match: `strings.Contains(tostring(value), attr)` |
-| `empty` | Value is empty/missing (attribute value ignored, presence triggers) |
-| `not-empty` | Value is non-empty (attribute value ignored, presence triggers) |
+| `eq` | String equality: `fmt.Sprint(value) == attr` (raw value, not JSON-encoded) |
+| `neq` | String inequality: `fmt.Sprint(value) != attr` |
+| `gt` | Numeric: `toFloat(value) > toFloat(attr)`, false if either non-numeric |
+| `lt` | Numeric: `toFloat(value) < toFloat(attr)`, false if either non-numeric |
+| `contains` | Substring: `strings.Contains(fmt.Sprint(value), attr)` |
+| `empty` | Value is nil or empty string (attribute value ignored, presence triggers) |
+| `not-empty` | Value is non-nil and non-empty (attribute value ignored, presence triggers) |
 
 Only one operator per shortcode. If multiple are present, first match in the order above wins.
 
@@ -113,6 +124,20 @@ Only one operator per shortcode. If multiple are present, first match in the ord
 ## Plugin Removal
 
 Remove the `conditional` shortcode from `plugins/data-views/plugin.lua` entirely. This includes the `render_conditional` function and its `mah.shortcode()` registration.
+
+### Feature delta vs. plugin version
+
+The plugin version supports attributes the built-in intentionally does not carry forward:
+
+| Plugin attribute | Built-in equivalent | Rationale |
+|-----------------|--------------------|----|
+| `path` | `path` | Same — dot-notation meta lookup |
+| `field` | (dropped) | Use `[property]` inside the block instead |
+| `mrql` / `scope` / `aggregate` | (dropped) | Use `[mrql]` inside the block instead — block shortcodes make composition the answer |
+| `html` / `content` | (dropped) | Block body replaces these entirely |
+| `class` | (dropped) | Use HTML directly in the block body: `<div class="...">` |
+
+The block syntax makes the built-in version strictly more capable despite having fewer attributes — content goes in the body (with full HTML and nested shortcodes) instead of being crammed into attribute values.
 
 ## Testing
 
