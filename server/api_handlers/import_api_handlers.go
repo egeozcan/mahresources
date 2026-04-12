@@ -94,17 +94,35 @@ func GetImportParseHandler(ctx GroupImporter, maxSize int64) func(http.ResponseW
 			return
 		}
 
+		// Store the staging tar path so the delete handler can clean it up
+		// even if the worker hasn't renamed it to <jobID>.tar yet (e.g. the
+		// job was cancelled while still queued). URL is unused for generic
+		// jobs; we repurpose it as "source file path".
+		job.SetURL(finalPath)
+
 		w.Header().Set("Content-Type", constants.JSON)
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]any{"jobId": job.ID})
 	}
 }
 
-func buildImportParseRunFn(ctx GroupImporter, tarPath string) download_queue.JobRunFn {
+func buildImportParseRunFn(ctx GroupImporter, stagingTarPath string) download_queue.JobRunFn {
 	return func(jobCtx context.Context, j *download_queue.DownloadJob, sink download_queue.ProgressSink) error {
 		sink.SetPhase("parsing")
 
-		plan, err := ctx.ParseImport(jobCtx, j.ID, tarPath)
+		// Rename the staging tar to _imports/<jobID>.tar so that
+		// DeleteImportFiles can always find it by job ID. This runs
+		// inside the worker (not the handler) so it also covers the case
+		// where the job sat in the queue before being dispatched.
+		fs := ctx.GetDefaultFs()
+		canonicalPath := filepath.Join("_imports", j.ID+".tar")
+		if stagingTarPath != canonicalPath {
+			if err := fs.Rename(stagingTarPath, canonicalPath); err != nil {
+				return fmt.Errorf("rename staged tar: %w", err)
+			}
+		}
+
+		plan, err := ctx.ParseImport(jobCtx, j.ID, canonicalPath)
 		if err != nil {
 			return err
 		}
@@ -161,8 +179,11 @@ func GetImportDeleteHandler(ctx GroupImporter) func(http.ResponseWriter, *http.R
 			return
 		}
 
-		// Cancel the job if it exists and is still active
+		// Cancel the job if it exists and is still active, and collect
+		// the staging tar path (stored in URL) so we can clean it up.
+		var stagingTarPath string
 		if job, ok := ctx.DownloadManager().GetJob(jobID); ok {
+			stagingTarPath = job.GetURL()
 			status := job.GetStatus()
 			if status == download_queue.JobStatusPending || status == download_queue.JobStatusDownloading || status == download_queue.JobStatusProcessing {
 				_ = ctx.DownloadManager().Cancel(jobID)
@@ -172,6 +193,13 @@ func GetImportDeleteHandler(ctx GroupImporter) func(http.ResponseWriter, *http.R
 		if err := ctx.DeleteImportFiles(jobID); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+
+		// Also remove the staging tar if the worker hasn't renamed it yet.
+		// DeleteImportFiles looks for _imports/<jobID>.tar; the staging
+		// file may still be at the imp-<timestamp>.tar path.
+		if stagingTarPath != "" {
+			_ = ctx.GetDefaultFs().Remove(stagingTarPath)
 		}
 
 		w.WriteHeader(http.StatusNoContent)
