@@ -54,6 +54,7 @@ const sidebars: SidebarsConfig = {
       label: 'Advanced Features',
       items: [
         'features/admin-overview',
+        'features/export-import',
         'features/versioning',
         'features/image-similarity',
         'features/saved-queries',
@@ -76,7 +77,6 @@ const sidebars: SidebarsConfig = {
         'features/timeline-view',
         'features/mrql',
         'features/cli',
-        'features/export-import',
       ],
     },
     {
