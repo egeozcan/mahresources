@@ -19,6 +19,17 @@ import (
 // against the local database. The resulting ImportPlan is persisted as JSON to
 // _imports/<jobID>.plan.json and returned.
 func (ctx *MahresourcesContext) ParseImport(cancelCtx context.Context, jobID, tarPath string) (*ImportPlan, error) {
+	// Normalize the tar to _imports/<jobID>.tar so DeleteImportFiles can
+	// find it by job ID alone. The handler stages the upload under a
+	// temporary name to avoid the SubmitJob race, so we rename here.
+	canonicalPath := filepath.Join("_imports", jobID+".tar")
+	if tarPath != canonicalPath {
+		if renErr := ctx.fs.Rename(tarPath, canonicalPath); renErr == nil {
+			tarPath = canonicalPath
+		}
+		// If rename fails (e.g. same path), fall through and open tarPath as-is.
+	}
+
 	f, err := ctx.fs.Open(tarPath)
 	if err != nil {
 		return nil, fmt.Errorf("open import tar: %w", err)
@@ -90,6 +101,10 @@ func (ctx *MahresourcesContext) ParseImport(cancelCtx context.Context, jobID, ta
 	// Resolve series via slug
 	plan.SeriesInfo = ctx.resolveSeriesInfo(collector.series)
 
+	if err := cancelCtx.Err(); err != nil {
+		return nil, err
+	}
+
 	// Resolve dangling references from the manifest
 	plan.DanglingRefs = resolveDanglingRefs(manifest.Dangling)
 
@@ -101,6 +116,10 @@ func (ctx *MahresourcesContext) ParseImport(cancelCtx context.Context, jobID, ta
 
 	// Build hierarchical item tree
 	plan.Items = buildItemTree(collector)
+
+	if err := cancelCtx.Err(); err != nil {
+		return nil, err
+	}
 
 	// Persist the plan
 	if err := ctx.persistImportPlan(plan); err != nil {
