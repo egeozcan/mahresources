@@ -46,6 +46,21 @@ func (ctx *MahresourcesContext) EstimateExport(req *ExportRequest) (*ExportEstim
 		return nil, err
 	}
 
+	// Pre-scan blob availability so the estimate reflects only available blobs.
+	if req.Fidelity.ResourceBlobs && len(plan.resourceIDs) > 0 {
+		noopReport := func(ev ProgressEvent) {}
+		if err := ctx.preScanBlobs(plan, noopReport); err != nil {
+			return nil, fmt.Errorf("pre-scan blobs for estimate: %w", err)
+		}
+		// Subtract missing blobs from counts.
+		for hash := range plan.missingBlobs {
+			if size, ok := plan.uniqueHashes[hash]; ok {
+				plan.totalBytes -= size
+				delete(plan.uniqueHashes, hash)
+			}
+		}
+	}
+
 	est := &ExportEstimate{
 		Counts: archive.Counts{
 			Groups:    len(plan.groupIDs),
@@ -91,7 +106,7 @@ type exportPlan struct {
 	dangling     []archive.DanglingRef
 	danglingNext int
 
-	uniqueHashes map[string]bool
+	uniqueHashes map[string]int64
 	totalBytes   int64
 
 	warnings []string
@@ -115,7 +130,7 @@ func (ctx *MahresourcesContext) buildExportPlan(req *ExportRequest) (*exportPlan
 		resourceCategoryExportID: map[uint]string{},
 		tagExportID:              map[uint]string{},
 		grtExportID:              map[uint]string{},
-		uniqueHashes:             map[string]bool{},
+		uniqueHashes:             map[string]int64{},
 	}
 
 	// Phase A: collect group IDs in scope.
@@ -150,9 +165,11 @@ func (ctx *MahresourcesContext) buildExportPlan(req *ExportRequest) (*exportPlan
 		for _, r := range resources {
 			plan.resourceIDs = append(plan.resourceIDs, r.ID)
 			plan.resourceExportID[r.ID] = fmt.Sprintf("r%04d", len(plan.resourceExportID)+1)
-			if r.Hash != "" && !plan.uniqueHashes[r.Hash] {
-				plan.uniqueHashes[r.Hash] = true
-				plan.totalBytes += r.FileSize
+			if r.Hash != "" {
+				if _, seen := plan.uniqueHashes[r.Hash]; !seen {
+					plan.uniqueHashes[r.Hash] = r.FileSize
+					plan.totalBytes += r.FileSize
+				}
 			}
 		}
 	}
@@ -168,9 +185,11 @@ func (ctx *MahresourcesContext) buildExportPlan(req *ExportRequest) (*exportPlan
 			return nil, fmt.Errorf("load resource versions for plan: %w", err)
 		}
 		for _, v := range versions {
-			if v.Hash != "" && !plan.uniqueHashes[v.Hash] {
-				plan.uniqueHashes[v.Hash] = true
-				plan.totalBytes += v.FileSize
+			if v.Hash != "" {
+				if _, seen := plan.uniqueHashes[v.Hash]; !seen {
+					plan.uniqueHashes[v.Hash] = v.FileSize
+					plan.totalBytes += v.FileSize
+				}
 			}
 		}
 	}
@@ -522,6 +541,14 @@ func (ctx *MahresourcesContext) StreamExport(
 	if req.Fidelity.ResourceBlobs && len(plan.resourceIDs) > 0 {
 		if err := ctx.preScanBlobs(plan, report); err != nil {
 			return fmt.Errorf("pre-scan blobs: %w", err)
+		}
+		// Adjust counts to exclude missing blobs — the manifest should reflect
+		// what's actually in the tar, not what was in the DB.
+		for hash := range plan.missingBlobs {
+			if size, ok := plan.uniqueHashes[hash]; ok {
+				plan.totalBytes -= size
+				delete(plan.uniqueHashes, hash)
+			}
 		}
 	}
 

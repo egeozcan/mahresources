@@ -777,3 +777,87 @@ func TestStreamExport_MissingVersionBlobAppearsInManifestWarnings(t *testing.T) 
 		}
 	}
 }
+
+func TestStreamExport_MissingBlobNotCountedInManifest(t *testing.T) {
+	ctx := createTestContext(t)
+	root := mustCreateGroup(t, ctx, "Root", nil)
+
+	// Create two resources with different hashes.
+	res1 := mustCreateResource(t, ctx, "exists.png", &root.ID, []byte("AAAA"))
+	res2 := mustCreateResource(t, ctx, "missing.png", &root.ID, []byte("BBBB"))
+	_ = res1
+
+	// Delete res2's blob from the filesystem — its hash becomes missing.
+	if err := ctx.fs.Remove(res2.Location); err != nil {
+		t.Fatalf("remove blob: %v", err)
+	}
+
+	req := &ExportRequest{
+		RootGroupIDs: []uint{root.ID},
+		Scope:        archive.ExportScope{Subtree: true, OwnedResources: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true},
+	}
+
+	var buf bytes.Buffer
+	if err := ctx.StreamExport(context.Background(), req, &buf, nil); err != nil {
+		t.Fatalf("StreamExport: %v", err)
+	}
+
+	r, _ := archive.NewReader(&buf)
+	defer r.Close()
+	m, _ := r.ReadManifest()
+
+	// Walk to count actual blobs in the tar.
+	c := newExportCollector()
+	if err := r.Walk(c); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+
+	actualBlobCount := len(c.blobs)
+	if m.Counts.Blobs != actualBlobCount {
+		t.Errorf("manifest.Counts.Blobs = %d, but only %d blobs in tar", m.Counts.Blobs, actualBlobCount)
+	}
+
+	// The manifest should report 1 blob (exists.png), not 2.
+	if m.Counts.Blobs != 1 {
+		t.Errorf("manifest.Counts.Blobs = %d, want 1 (one blob missing)", m.Counts.Blobs)
+	}
+}
+
+func TestEstimateExport_MissingBlobNotCountedInEstimate(t *testing.T) {
+	ctx := createTestContext(t)
+	root := mustCreateGroup(t, ctx, "Root", nil)
+
+	res1 := mustCreateResource(t, ctx, "exists.png", &root.ID, []byte("AAAA"))
+	res2 := mustCreateResource(t, ctx, "missing.png", &root.ID, []byte("BBBB"))
+	_ = res1
+
+	// Delete res2's blob.
+	if err := ctx.fs.Remove(res2.Location); err != nil {
+		t.Fatalf("remove blob: %v", err)
+	}
+
+	req := ExportRequest{
+		RootGroupIDs: []uint{root.ID},
+		Scope:        archive.ExportScope{Subtree: true, OwnedResources: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true},
+	}
+
+	est, err := ctx.EstimateExport(&req)
+	if err != nil {
+		t.Fatalf("EstimateExport: %v", err)
+	}
+
+	// Estimate should reflect only the available blobs.
+	if est.UniqueBlobs != 1 {
+		t.Errorf("UniqueBlobs = %d, want 1", est.UniqueBlobs)
+	}
+	if est.EstimatedBytes <= 0 {
+		t.Errorf("EstimatedBytes = %d, want >0 (at least the size of exists.png)", est.EstimatedBytes)
+	}
+	// EstimatedBytes should be the size of ONLY the existing blob, not both.
+	existsSize := int64(len("AAAA"))
+	if est.EstimatedBytes != existsSize {
+		t.Errorf("EstimatedBytes = %d, want %d (only the existing blob)", est.EstimatedBytes, existsSize)
+	}
+}
