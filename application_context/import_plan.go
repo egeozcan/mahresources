@@ -1,5 +1,7 @@
 package application_context
 
+import "fmt"
+
 // ImportPlan is the parsed result of an import tar. Persisted as JSON to
 // _imports/<jobId>.plan.json and served via GET /v1/imports/{jobId}/plan.
 type ImportPlan struct {
@@ -128,4 +130,66 @@ type MappingAction struct {
 type DanglingAction struct {
 	Action        string `json:"action"`
 	DestinationID *uint  `json:"destination_id,omitempty"`
+}
+
+// ImportApplyResult summarizes what the apply job did. Persisted as JSON to
+// _imports/<jobId>.result.json so the UI/CLI can fetch it, and so partial-failure
+// results list created IDs for manual cleanup (spec §9.5).
+type ImportApplyResult struct {
+	CreatedCategories         int      `json:"created_categories"`
+	CreatedNoteTypes          int      `json:"created_note_types"`
+	CreatedResourceCategories int      `json:"created_resource_categories"`
+	CreatedTags               int      `json:"created_tags"`
+	CreatedGRTs               int      `json:"created_grts"`
+	CreatedSeries             int      `json:"created_series"`
+	ReusedSeries              int      `json:"reused_series"`
+	CreatedGroups             int      `json:"created_groups"`
+	CreatedResources          int      `json:"created_resources"`
+	SkippedByHash             int      `json:"skipped_by_hash"`
+	SkippedMissingBytes       int      `json:"skipped_missing_bytes"`
+	CreatedNotes              int      `json:"created_notes"`
+	CreatedPreviews           int      `json:"created_previews"`
+	CreatedVersions           int      `json:"created_versions"`
+	Warnings                  []string `json:"warnings"`
+
+	// Created IDs per phase — enables manual cleanup after partial failure.
+	CreatedGroupIDs    []uint `json:"created_group_ids,omitempty"`
+	CreatedResourceIDs []uint `json:"created_resource_ids,omitempty"`
+	CreatedNoteIDs     []uint `json:"created_note_ids,omitempty"`
+}
+
+func (p *ImportPlan) HasUnresolvedAmbiguities(decisions *ImportDecisions) bool {
+	allMappings := make([]MappingEntry, 0)
+	allMappings = append(allMappings, p.Mappings.Categories...)
+	allMappings = append(allMappings, p.Mappings.NoteTypes...)
+	allMappings = append(allMappings, p.Mappings.ResourceCategories...)
+	allMappings = append(allMappings, p.Mappings.Tags...)
+	allMappings = append(allMappings, p.Mappings.GroupRelationTypes...)
+
+	for _, entry := range allMappings {
+		if !entry.Ambiguous {
+			continue
+		}
+		action, ok := decisions.MappingActions[entry.DecisionKey]
+		if ok && !action.Include {
+			continue
+		}
+		if !ok || action.Action == "" {
+			return true
+		}
+		if action.Action == "map" && action.DestinationID == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *ImportPlan) ValidateForApply(decisions *ImportDecisions) error {
+	if p.HasUnresolvedAmbiguities(decisions) {
+		return fmt.Errorf("unresolved ambiguous mappings in review plan")
+	}
+	if p.ManifestOnlyMissingHashes > 0 && !decisions.AcknowledgeMissingHashes {
+		return fmt.Errorf("missing-hash acknowledgement required: %d resources have no bytes", p.ManifestOnlyMissingHashes)
+	}
+	return nil
 }
