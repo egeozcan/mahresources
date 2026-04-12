@@ -21,9 +21,11 @@ const (
 )
 
 const (
-	JobSourceDownload    = "download"
-	JobSourcePlugin      = "plugin"
-	JobSourceGroupExport = "group-export"
+	JobSourceDownload        = "download"
+	JobSourcePlugin          = "plugin"
+	JobSourceGroupExport     = "group-export"
+	JobSourceGroupImportParse = "group-import-parse"
+	JobSourceGroupImportApply = "group-import-apply"
 )
 
 // DownloadJob represents a single remote URL download task

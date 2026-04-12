@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -67,6 +68,19 @@ func parseIntEnv(envVar string, defaultVal int) int {
 	return i
 }
 
+// parseInt64Env parses an int64 from an environment variable, returning the default if not set or invalid
+func parseInt64Env(envVar string, defaultVal int64) int64 {
+	s := os.Getenv(envVar)
+	if s == "" {
+		return defaultVal
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return defaultVal
+	}
+	return v
+}
+
 // getEnvOrDefault returns the value of the environment variable or a default if not set
 func getEnvOrDefault(envVar string, defaultVal string) string {
 	val := os.Getenv(envVar)
@@ -102,6 +116,7 @@ func main() {
 	maxDBConnections := flag.Int("max-db-connections", parseIntEnv("MAX_DB_CONNECTIONS", 0), "Limit database connection pool size, useful for SQLite under test load (env: MAX_DB_CONNECTIONS)")
 	maxJobConcurrency := flag.Int("max-job-concurrency", parseIntEnv("MAX_JOB_CONCURRENCY", 6), "Concurrency budget for the shared background job manager (env: MAX_JOB_CONCURRENCY)")
 	exportRetention := flag.Duration("export-retention", parseDurationEnv("EXPORT_RETENTION", 24*time.Hour), "How long completed group-export tars stay on disk before cleanup (env: EXPORT_RETENTION)")
+	maxImportSize := flag.Int64("max-import-size", parseInt64Env("MAX_IMPORT_SIZE", 10737418240), "Maximum import tar upload size in bytes (env: MAX_IMPORT_SIZE)")
 	cleanupLogsDays := flag.Int("cleanup-logs-days", parseIntEnv("CLEANUP_LOGS_DAYS", 0), "Delete log entries older than N days on startup (0=disabled) (env: CLEANUP_LOGS_DAYS)")
 
 	// Hash worker options
@@ -215,6 +230,7 @@ func main() {
 		SkipFTS:                      *skipFTS,
 		MaxJobConcurrency:            *maxJobConcurrency,
 		ExportRetention:              *exportRetention,
+		MaxImportSize:                *maxImportSize,
 	}
 
 	context, db, mainFs := application_context.CreateContextWithConfig(cfg)

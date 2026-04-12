@@ -90,6 +90,8 @@ type MahresourcesConfig struct {
 	MaxJobConcurrency int
 	// ExportRetention is how long completed group-export tars stay on disk
 	ExportRetention time.Duration
+	// MaxImportSize is the upper bound on import tar upload size in bytes
+	MaxImportSize int64
 }
 
 // MahresourcesInputConfig holds all configuration options that can be passed
@@ -153,6 +155,8 @@ type MahresourcesInputConfig struct {
 	MaxJobConcurrency int
 	// ExportRetention is how long completed group-export tars stay on disk
 	ExportRetention time.Duration
+	// MaxImportSize is the upper bound on import tar upload size in bytes
+	MaxImportSize int64
 }
 
 type MahresourcesLocks struct {
@@ -269,6 +273,13 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		log.Printf("warning: SweepOrphanedExports failed: %v", sweepErr)
 	} else if removed > 0 {
 		log.Printf("startup: removed %d orphaned export tars", removed)
+	}
+
+	removed, sweepErr = download_queue.SweepOrphanedExports(filesystem, "_imports", ctx.downloadManager.ExportRetention())
+	if sweepErr != nil {
+		log.Printf("warning: sweep _imports failed: %v", sweepErr)
+	} else if removed > 0 {
+		log.Printf("startup: removed %d orphaned import files", removed)
 	}
 
 	// Wire periodic export-tar sweep into the manager's cleanup loop so tars
@@ -739,6 +750,7 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		SkipFTS:                      cfg.SkipFTS,
 		MaxJobConcurrency:            cfg.MaxJobConcurrency,
 		ExportRetention:              cfg.ExportRetention,
+		MaxImportSize:                cfg.MaxImportSize,
 	}), db, mainFs
 }
 
