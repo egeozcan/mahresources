@@ -25,7 +25,7 @@ test.describe('Data-views plugin shortcodes', () => {
           '[plugin:data-views:sparkline path="history" type="line" height="32" width="120"]',
           '[plugin:data-views:bar-chart path="scores" label-key="name" value-key="score"]',
           '[plugin:data-views:pie-chart path="distribution" label-key="category" value-key="amount" size="100"]',
-          '[plugin:data-views:conditional path="featured" eq="true" content="Featured Item"]',
+          '[conditional path="featured" eq="true"]Featured Item[/conditional]',
         ].join('\n'),
         CustomSidebar: [
           '[plugin:data-views:list path="ingredients" style="bullet"]',

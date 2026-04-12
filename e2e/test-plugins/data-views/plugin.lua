@@ -24,7 +24,6 @@ plugin = {
         .. "[plugin:data-views:json-tree] -- Expandable JSON tree. Attrs: path, expanded.\n"
         .. "[plugin:data-views:bar-chart] -- Horizontal bar chart. Attrs: path, label-key, value-key, color.\n"
         .. "[plugin:data-views:pie-chart] -- SVG pie/donut chart. Attrs: path, label-key, value-key, size, donut, colors.\n"
-        .. "[plugin:data-views:conditional] -- Conditionally render content. Attrs: path, eq/neq/gt/lt/contains/empty/not-empty, content, html, class.\n"
         .. "[plugin:data-views:timeline-chart] -- Horizontal timeline of owned entities. Attrs: type, date-path, limit.",
 }
 
@@ -1357,73 +1356,6 @@ local function render_pie_chart(ctx)
 end
 
 -- ---------------------------------------------------------------------------
--- 16. conditional
--- ---------------------------------------------------------------------------
-
-local function render_conditional(ctx)
-    local attrs = ctx.attrs or {}
-    local path = attrs["path"]
-    if not path then return shortcode_error("conditional", '"path" attribute is required') end
-
-    local val = get_nested(ctx.value, path)
-
-    -- Evaluate condition
-    local condition_met = false
-
-    if attrs["eq"] then
-        condition_met = tostring(val or "") == attrs["eq"]
-    elseif attrs["neq"] then
-        condition_met = tostring(val or "") ~= attrs["neq"]
-    elseif attrs["gt"] then
-        condition_met = (tonumber(val) or 0) > (tonumber(attrs["gt"]) or 0)
-    elseif attrs["lt"] then
-        condition_met = (tonumber(val) or 0) < (tonumber(attrs["lt"]) or 0)
-    elseif attrs["contains"] then
-        condition_met = tostring(val or ""):find(attrs["contains"], 1, true) ~= nil
-    elseif attrs["empty"] then
-        condition_met = val == nil or val == ""
-    elseif attrs["not-empty"] then
-        condition_met = val ~= nil and val ~= ""
-    end
-
-    if not condition_met then return "" end
-
-    -- Build title
-    local operator = ""
-    local cond_value = ""
-    if attrs["eq"] then operator = "eq"; cond_value = attrs["eq"]
-    elseif attrs["neq"] then operator = "neq"; cond_value = attrs["neq"]
-    elseif attrs["gt"] then operator = "gt"; cond_value = attrs["gt"]
-    elseif attrs["lt"] then operator = "lt"; cond_value = attrs["lt"]
-    elseif attrs["contains"] then operator = "contains"; cond_value = attrs["contains"]
-    elseif attrs["empty"] then operator = "empty"; cond_value = ""
-    elseif attrs["not-empty"] then operator = "not-empty"; cond_value = ""
-    end
-    local title_text = string.format("Conditional: %s %s %s", path, operator, cond_value)
-
-    -- Render content
-    local output
-    if attrs["html"] then
-        -- Intentionally unescaped for trusted admin content
-        output = attrs["html"]
-    elseif attrs["content"] then
-        output = html_escape(attrs["content"])
-    else
-        return ""
-    end
-
-    local css_class = attrs["class"]
-    if css_class then
-        return string.format(
-            '<div title="%s" class="py-1.5"><div class="%s">%s</div></div>',
-            html_escape(title_text), html_escape(css_class), output
-        )
-    end
-
-    return string.format('<div title="%s" class="py-1.5">%s</div>', html_escape(title_text), output)
-end
-
--- ---------------------------------------------------------------------------
 -- 17. timeline-chart
 -- ---------------------------------------------------------------------------
 
@@ -1681,6 +1613,5 @@ function init()
     mah.shortcode({ name = "json-tree",      label = "JSON Tree",          render = render_json_tree_shortcode })
     mah.shortcode({ name = "bar-chart",      label = "Bar Chart",          render = render_bar_chart })
     mah.shortcode({ name = "pie-chart",      label = "Pie Chart",          render = render_pie_chart })
-    mah.shortcode({ name = "conditional",    label = "Conditional Content", render = render_conditional })
     mah.shortcode({ name = "timeline-chart", label = "Timeline Chart",     render = render_timeline_chart })
 end
