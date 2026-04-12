@@ -815,6 +815,8 @@ The `render` function receives a single `ctx` table:
 | `ctx.value` | Entity's full Meta as a Lua table |
 | `ctx.attrs` | Shortcode attributes as a key-value table |
 | `ctx.settings` | Plugin settings key-value pairs |
+| `ctx.inner_content` | Content between opening and closing tags (empty for self-closing shortcodes) |
+| `ctx.is_block` | `true` if the shortcode was used as a block `[name]...[/name]`, `false` otherwise |
 
 ### Name Rules
 
@@ -823,6 +825,12 @@ Must match `^[a-z][a-z0-9_-]{0,49}$`. The system expands the shortcode name to `
 ### Execution
 
 Server-side at template render time. 5-second timeout per render call. Returned HTML is inlined directly into the page. Use `mah.html_escape(str)` when rendering user-supplied content.
+
+### Block Shortcodes
+
+Plugin shortcodes support block mode. When used as `[plugin:name:sc]content[/plugin:name:sc]`, the render function receives `ctx.inner_content` with the raw content between tags, and `ctx.is_block = true`. Nested shortcodes inside plugin block output are expanded automatically after the plugin render function returns.
+
+In docs preview, nested shortcodes inside plugin block output are not expanded (they render as literal text). This is a preview-only limitation.
 
 ### Example
 

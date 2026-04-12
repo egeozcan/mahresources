@@ -11,7 +11,7 @@ The data-views, meta-editors, and widgets plugins register shortcodes for use in
 
 ## data-views
 
-Data visualization shortcodes for rendering metadata values, charts, tables, and conditional content. All charts use pure HTML/CSS or SVG with no JavaScript dependencies.
+Data visualization shortcodes for rendering metadata values, charts, and tables. All charts use pure HTML/CSS or SVG with no JavaScript dependencies.
 
 | Shortcode | Description |
 |-----------|-------------|
@@ -31,7 +31,6 @@ Data visualization shortcodes for rendering metadata values, charts, tables, and
 | `json-tree` | Collapsible JSON tree view of a meta field |
 | `bar-chart` | Horizontal bar chart from an object or array meta field |
 | `pie-chart` | SVG pie chart from an object or array meta field |
-| `conditional` | Show or hide content based on a meta field value (if/then/else) |
 | `timeline-chart` | Horizontal timeline from an array of date-range objects |
 
 Usage: `[plugin:data-views:badge path="status"]`
