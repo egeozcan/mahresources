@@ -21,9 +21,11 @@ const (
 )
 
 const (
-	JobSourceDownload    = "download"
-	JobSourcePlugin      = "plugin"
-	JobSourceGroupExport = "group-export"
+	JobSourceDownload        = "download"
+	JobSourcePlugin          = "plugin"
+	JobSourceGroupExport     = "group-export"
+	JobSourceGroupImportParse = "group-import-parse"
+	JobSourceGroupImportApply = "group-import-apply"
 )
 
 // DownloadJob represents a single remote URL download task
@@ -80,6 +82,21 @@ func (j *DownloadJob) SetError(err string) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	j.Error = err
+}
+
+// SetURL safely sets the job's URL field. For generic jobs this is unused
+// by the core manager; callers can repurpose it to store a source file path.
+func (j *DownloadJob) SetURL(url string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.URL = url
+}
+
+// GetURL safely returns the job's URL field.
+func (j *DownloadJob) GetURL() string {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.URL
 }
 
 // SetResourceID safely sets the completed resource ID.

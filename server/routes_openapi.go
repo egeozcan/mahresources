@@ -64,6 +64,9 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 	// Exports
 	registerExportRoutes(registry)
 
+	// Imports
+	registerImportRoutes(registry)
+
 	// Plugins
 	registerPluginRoutes(registry)
 
@@ -1659,6 +1662,44 @@ func registerExportRoutes(r *openapi.Registry) {
 		Tags:        []string{"exports"},
 		PathParams: []openapi.PathParam{
 			{Name: "jobId", Type: "string", Description: "The job ID returned by submitGroupExport"},
+		},
+	})
+}
+
+func registerImportRoutes(r *openapi.Registry) {
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/groups/import/parse",
+		OperationID:          "parseGroupImport",
+		Summary:              "Upload an import tar and start parsing",
+		Description:          "Accepts a multipart file upload, stages the tar, and enqueues a parse job.",
+		Tags:                 []string{"imports"},
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeMultipart},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodGet,
+		Path:        "/v1/imports/{jobId}/plan",
+		OperationID: "getImportPlan",
+		Summary:     "Get the parsed import plan",
+		Description: "Returns the ImportPlan JSON for a completed parse job.",
+		Tags:        []string{"imports"},
+		PathParams: []openapi.PathParam{
+			{Name: "jobId", Type: "string", Description: "The job ID returned by parseGroupImport"},
+		},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodDelete,
+		Path:        "/v1/imports/{jobId}",
+		OperationID: "deleteGroupImport",
+		Summary:     "Cancel and clean up an import",
+		Description: "Cancels any running parse/apply job and deletes the staged tar and plan files.",
+		Tags:        []string{"imports"},
+		PathParams: []openapi.PathParam{
+			{Name: "jobId", Type: "string", Description: "The job ID to clean up"},
 		},
 	})
 }

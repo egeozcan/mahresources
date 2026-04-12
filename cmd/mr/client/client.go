@@ -268,6 +268,65 @@ func (c *Client) UploadFile(path string, query url.Values, fieldName string, fil
 	return decodeResponse(resp, result)
 }
 
+// UploadFileStreaming performs a multipart file upload without buffering the
+// entire file in RAM. It uses an io.Pipe so the multipart encoder writes
+// directly into the HTTP request body, keeping memory usage bounded even for
+// multi-GB files.
+func (c *Client) UploadFileStreaming(path string, query url.Values, fieldName string, filePath string, extraFields map[string]string, result any) error {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+
+	// Write the multipart body in a goroutine so it streams into the pipe.
+	errCh := make(chan error, 1)
+	go func() {
+		defer pw.Close()
+
+		part, err := writer.CreateFormFile(fieldName, filepath.Base(filePath))
+		if err != nil {
+			errCh <- err
+			return
+		}
+		if _, err := io.Copy(part, file); err != nil {
+			errCh <- err
+			return
+		}
+		for k, v := range extraFields {
+			if err := writer.WriteField(k, v); err != nil {
+				errCh <- err
+				return
+			}
+		}
+		errCh <- writer.Close()
+	}()
+
+	req, err := http.NewRequest(http.MethodPost, c.buildURL(path, query), pr)
+	if err != nil {
+		pr.Close()
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	// Check the goroutine's error
+	if writeErr := <-errCh; writeErr != nil {
+		return fmt.Errorf("multipart write: %w", writeErr)
+	}
+
+	return decodeResponse(resp, result)
+}
+
 // DownloadFile streams the response body to a file on disk.
 func (c *Client) DownloadFile(path string, query url.Values, destPath string) (int64, error) {
 	req, err := http.NewRequest(http.MethodGet, c.buildURL(path, query), nil)
