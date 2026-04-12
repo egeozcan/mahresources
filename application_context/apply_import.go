@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/afero"
+	"gorm.io/gorm"
 	"mahresources/archive"
 	"mahresources/download_queue"
 	"mahresources/models"
@@ -673,9 +674,241 @@ func (s *applyState) applyGroups() error {
 	return walk(s.plan.Items)
 }
 
-// Stubs — implemented in subsequent tasks. Each returns nil so the test
-// compiles and runs (it will fail on assertions, not compilation).
-func (s *applyState) applyResources() error         { return nil }
+// resEntry pairs an export ID with its resource payload for ordered iteration.
+type resEntry struct {
+	exportID string
+	payload  *archive.ResourcePayload
+}
+
+// applyResources creates resource rows in batches of applyBatchSize. Each batch
+// runs inside a single DB transaction covering the resource row, version rows,
+// CurrentVersionID wiring, and preview rows.
+func (s *applyState) applyResources() error {
+	// Build ordered list, excluding resources whose owner was excluded or unmapped.
+	var entries []resEntry
+	for exportID, rp := range s.collector.resources {
+		if s.isExcluded(exportID) {
+			continue
+		}
+		// Owner must be resolvable (mapped or absent). If OwnerRef is set but
+		// not in idMap, the owner group was excluded — skip this resource.
+		if rp.OwnerRef != "" {
+			if _, ok := s.idMap[rp.OwnerRef]; !ok {
+				continue
+			}
+		}
+		entries = append(entries, resEntry{exportID: exportID, payload: rp})
+	}
+
+	for batchStart := 0; batchStart < len(entries); batchStart += applyBatchSize {
+		if err := s.cancelCtx.Err(); err != nil {
+			return err
+		}
+
+		batchEnd := batchStart + applyBatchSize
+		if batchEnd > len(entries) {
+			batchEnd = len(entries)
+		}
+		batch := entries[batchStart:batchEnd]
+		batchNum := batchStart/applyBatchSize + 1
+
+		tx := s.ctx.db.Begin()
+		for _, entry := range batch {
+			if err := s.applyOneResource(tx, entry.exportID, entry.payload); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("batch %d, resource %s: %w", batchNum, entry.exportID, err)
+			}
+		}
+		if err := tx.Commit().Error; err != nil {
+			return fmt.Errorf("commit batch %d: %w", batchNum, err)
+		}
+
+		s.sink.SetPhaseProgress(int64(batchEnd), int64(len(entries)))
+	}
+	return nil
+}
+
+// applyOneResource creates a single resource row plus its versions, wires
+// CurrentVersionID, and creates preview rows — all within the caller's tx.
+func (s *applyState) applyOneResource(tx *gorm.DB, exportID string, rp *archive.ResourcePayload) error {
+	// (a) Skip-on-hash collision
+	if rp.Hash != "" {
+		var existing models.Resource
+		if err := tx.Where("hash = ?", rp.Hash).First(&existing).Error; err == nil {
+			if s.decisions.ResourceCollisionPolicy == "skip" {
+				s.idMap[exportID] = existing.ID
+				// Do NOT mark as created — skipped resources get no previews/versions
+				s.result.SkippedByHash++
+				return nil
+			}
+		}
+	}
+
+	// (a') Manifest-only missing bytes
+	if rp.BlobMissing || (rp.BlobRef == "" && rp.Hash != "") {
+		// Check if hash exists on destination
+		var existing models.Resource
+		if err := tx.Where("hash = ?", rp.Hash).First(&existing).Error; err == nil {
+			// Reuse existing
+			s.idMap[exportID] = existing.ID
+			s.result.SkippedByHash++
+			return nil
+		}
+		// No existing resource with this hash — skip with warning
+		s.result.SkippedMissingBytes++
+		s.result.Warnings = append(s.result.Warnings,
+			fmt.Sprintf("resource %s (%s): blob missing and no existing resource with hash %s", exportID, rp.Name, rp.Hash))
+		return nil
+	}
+
+	// (b) Blob location
+	loc := s.blobPaths[rp.Hash]
+	if loc == "" {
+		loc = importBlobLocation(rp.Hash, rp.ContentType)
+	}
+
+	// (c) Create resource row
+	r := models.Resource{
+		Name:             rp.Name,
+		OriginalName:     rp.OriginalName,
+		OriginalLocation: rp.OriginalLocation,
+		Hash:             rp.Hash,
+		HashType:         rp.HashType,
+		Location:         loc,
+		Description:      rp.Description,
+		Width:            rp.Width,
+		Height:           rp.Height,
+		FileSize:         rp.FileSize,
+		Category:         rp.Category,
+		ContentType:      rp.ContentType,
+		ContentCategory:  rp.ContentCategory,
+		CreatedAt:        rp.CreatedAt,
+		UpdatedAt:        rp.UpdatedAt,
+	}
+
+	// Resolve OwnerRef
+	if rp.OwnerRef != "" {
+		if ownerID, ok := s.idMap[rp.OwnerRef]; ok {
+			r.OwnerId = &ownerID
+		}
+	}
+
+	// Resolve ResourceCategory
+	r.ResourceCategoryId = s.resolveResourceCategoryID(rp)
+
+	// Resolve SeriesRef
+	if rp.SeriesRef != "" {
+		if seriesID, ok := s.idMap[rp.SeriesRef]; ok {
+			r.SeriesID = &seriesID
+		}
+	}
+
+	// Marshal Meta
+	if rp.Meta != nil {
+		m, err := json.Marshal(rp.Meta)
+		if err != nil {
+			return fmt.Errorf("marshal meta: %w", err)
+		}
+		r.Meta = types.JSON(m)
+	}
+
+	// Marshal OwnMeta
+	if rp.OwnMeta != nil {
+		m, err := json.Marshal(rp.OwnMeta)
+		if err != nil {
+			return fmt.Errorf("marshal own_meta: %w", err)
+		}
+		r.OwnMeta = types.JSON(m)
+	}
+
+	if err := tx.Create(&r).Error; err != nil {
+		return fmt.Errorf("create resource: %w", err)
+	}
+
+	s.idMap[exportID] = r.ID
+	s.createdResourceIDs[exportID] = true
+	s.result.CreatedResources++
+	s.result.CreatedResourceIDs = append(s.result.CreatedResourceIDs, r.ID)
+
+	// (d) Resource versions
+	for _, vp := range rp.Versions {
+		vLoc := s.blobPaths[vp.Hash]
+		if vLoc == "" {
+			vLoc = importBlobLocation(vp.Hash, vp.ContentType)
+		}
+
+		ver := models.ResourceVersion{
+			ResourceID:    r.ID,
+			VersionNumber: vp.VersionNumber,
+			Hash:          vp.Hash,
+			HashType:      vp.HashType,
+			FileSize:      vp.FileSize,
+			ContentType:   vp.ContentType,
+			Width:         vp.Width,
+			Height:        vp.Height,
+			Location:      vLoc,
+			Comment:       vp.Comment,
+			CreatedAt:     vp.CreatedAt,
+		}
+		if err := tx.Create(&ver).Error; err != nil {
+			return fmt.Errorf("create version %s: %w", vp.VersionExportID, err)
+		}
+		s.idMap[vp.VersionExportID] = ver.ID
+		s.result.CreatedVersions++
+	}
+
+	// (e) Wire CurrentVersionID
+	if rp.CurrentVersionRef != "" {
+		if cvID, ok := s.idMap[rp.CurrentVersionRef]; ok {
+			if err := tx.Model(&r).Update("current_version_id", cvID).Error; err != nil {
+				return fmt.Errorf("wire current_version_id: %w", err)
+			}
+		}
+	}
+
+	// (f) Previews
+	for _, pp := range rp.Previews {
+		data, ok := s.previewData[pp.PreviewExportID]
+		if !ok || len(data) == 0 {
+			continue
+		}
+		preview := models.Preview{
+			ResourceId:  &r.ID,
+			Data:        data,
+			Width:       pp.Width,
+			Height:      pp.Height,
+			ContentType: pp.ContentType,
+		}
+		if err := tx.Create(&preview).Error; err != nil {
+			return fmt.Errorf("create preview %s: %w", pp.PreviewExportID, err)
+		}
+		// Free memory after use
+		delete(s.previewData, pp.PreviewExportID)
+		s.result.CreatedPreviews++
+	}
+
+	return nil
+}
+
+// resolveResourceCategoryID resolves the resource category for a resource payload.
+// Tries ResourceCategoryRef -> idMap, then ResourceCategoryName -> DecisionKeyFor -> idMap,
+// fallback to 1.
+func (s *applyState) resolveResourceCategoryID(rp *archive.ResourcePayload) uint {
+	// Try ref first
+	if rp.ResourceCategoryRef != "" {
+		if id, ok := s.idMap[rp.ResourceCategoryRef]; ok {
+			return id
+		}
+	}
+	// Try name via decision key
+	if rp.ResourceCategoryName != "" {
+		key := DecisionKeyFor("resource_category", MappingEntry{SourceKey: rp.ResourceCategoryName})
+		if id, ok := s.idMap[key]; ok {
+			return id
+		}
+	}
+	return 1
+}
 func (s *applyState) applyNotes() error              { return nil }
 func (s *applyState) applyM2MLinks() error           { return nil }
 func (s *applyState) applyDanglingDecisions() error  { return nil }
