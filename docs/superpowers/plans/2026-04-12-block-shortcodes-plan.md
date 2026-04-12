@@ -406,6 +406,15 @@ func TestSplitElseMultipleSelfClosingBeforeElse(t *testing.T) {
 	assert.Equal(t, "no", elseBranch)
 }
 
+func TestSplitElseSelfClosingSameNameAsLaterBlock(t *testing.T) {
+	// A self-closing [conditional] followed by a block [conditional] and then [else].
+	// The self-closing must NOT cause [else] to be missed.
+	input := `[conditional path="x" eq="1"][conditional path="y" eq="2"]inner[/conditional][else]fallback`
+	ifBranch, elseBranch := SplitElse(input)
+	assert.Equal(t, `[conditional path="x" eq="1"][conditional path="y" eq="2"]inner[/conditional]`, ifBranch)
+	assert.Equal(t, "fallback", elseBranch)
+}
+
 func TestSplitElseNestedMultipleLevels(t *testing.T) {
 	// Two levels of nesting — [else] at depth 0 is the split point
 	input := `before[conditional path="a" eq="1"][conditional path="b" eq="2"]deep[else]deep-else[/conditional][else]mid-else[/conditional][else]top-else`
@@ -432,49 +441,47 @@ import "strings"
 const elseTag = "[else]"
 
 // SplitElse splits content on the first top-level [else] tag.
-// [else] tags nested inside block shortcodes (tracked by depth) are ignored.
-// Only matched block pairs (opening tag with a corresponding closing tag) affect depth.
-// Self-closing shortcodes do not change depth.
+// [else] tags nested inside block shortcodes are ignored.
+// Uses ParseWithBlocks to identify block regions, then finds the first
+// [else] that is not inside any block's span.
 // Returns (ifBranch, elseBranch). If no top-level [else] is found, elseBranch is empty.
 func SplitElse(content string) (string, string) {
-	depth := 0
+	// Find all block spans so we know which byte ranges to skip.
+	blocks := ParseWithBlocks(content)
+
 	i := 0
-
 	for i < len(content) {
-		// Check for closing tags that decrease depth.
-		if content[i] == '[' && i+1 < len(content) && content[i+1] == '/' {
-			if loc := closingTagPattern.FindStringIndex(content[i:]); loc != nil && loc[0] == 0 {
-				depth--
-				if depth < 0 {
-					depth = 0
+		if content[i] == '[' && strings.HasPrefix(content[i:], elseTag) {
+			// Check this [else] is not inside any block's inner span.
+			insideBlock := false
+			for _, b := range blocks {
+				if !b.IsBlock {
+					continue
 				}
-				i += loc[1]
-				continue
+				// The block's inner content spans from after the opening tag
+				// to before the closing tag. Compute the inner span:
+				// opening tag ends at b.Start + len(opening tag).
+				// We need the byte range of InnerContent within content.
+				// For a block, Start is the opening tag start, End is closing tag end.
+				// InnerContent starts right after the opening tag.
+				// Find where InnerContent starts by locating the first ']' after b.Start.
+				openEnd := strings.Index(content[b.Start:], "]")
+				if openEnd < 0 {
+					continue
+				}
+				innerStart := b.Start + openEnd + 1
+				// InnerContent ends just before the closing tag.
+				closingTag := "[/" + b.Name + "]"
+				innerEnd := b.End - len(closingTag)
+				if i > innerStart && i < innerEnd {
+					insideBlock = true
+					break
+				}
+			}
+			if !insideBlock {
+				return content[:i], content[i+len(elseTag):]
 			}
 		}
-
-		// Check for opening tags. Only increase depth if a matching closing tag
-		// exists later — otherwise it's a self-closing shortcode.
-		if content[i] == '[' && i+1 < len(content) && content[i+1] != '/' && content[i+1] != 'e' {
-			if loc := shortcodePattern.FindStringIndex(content[i:]); loc != nil && loc[0] == 0 {
-				// Extract the name to build the closing tag pattern
-				m := shortcodePattern.FindStringSubmatch(content[i:])
-				if m != nil {
-					closingTag := "[/" + m[1] + "]"
-					if strings.Contains(content[i+loc[1]:], closingTag) {
-						depth++
-					}
-				}
-				i += loc[1]
-				continue
-			}
-		}
-
-		// Check for [else] at depth 0.
-		if depth == 0 && content[i] == '[' && strings.HasPrefix(content[i:], elseTag) {
-			return content[:i], content[i+len(elseTag):]
-		}
-
 		i++
 	}
 
@@ -813,9 +820,26 @@ func TestConditionalMRQLSourceAggregatedNoAggregate(t *testing.T) {
 		IsBlock:      true,
 	}
 	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
-	// Missing aggregate attr — resolveConditionalValue returns nil
+	// Missing aggregate attr — renders error div matching plugin behavior
 	result := RenderConditionalShortcode(context.Background(), sc, ctx, nil, executor, 0)
-	assert.Equal(t, "", result)
+	assert.Contains(t, result, "mrql-error")
+	assert.Contains(t, result, "aggregate")
+}
+
+func TestConditionalMRQLSourceExecutorError(t *testing.T) {
+	executor := func(ctx context.Context, query, saved string, limit, buckets int, scopeGroupID uint) (*QueryResult, error) {
+		return nil, fmt.Errorf("query syntax error")
+	}
+	sc := Shortcode{
+		Name:         "conditional",
+		Attrs:        map[string]string{"mrql": "bad query", "gt": "0"},
+		InnerContent: "should not show",
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+	result := RenderConditionalShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Contains(t, result, "mrql-error")
+	assert.Contains(t, result, "query syntax error")
 }
 
 func TestConditionalMRQLSourceBucketed(t *testing.T) {
@@ -910,7 +934,8 @@ func extractRawValueAtPath(metaRaw json.RawMessage, path string) any {
 
 // resolveConditionalValue resolves the condition value from the shortcode's
 // data source attributes. Checked in order: mrql > field > path.
-func resolveConditionalValue(reqCtx context.Context, sc Shortcode, ctx MetaShortcodeContext, executor QueryExecutor) any {
+// Returns (value, nil) on success, or (nil, error) for MRQL failures.
+func resolveConditionalValue(reqCtx context.Context, sc Shortcode, ctx MetaShortcodeContext, executor QueryExecutor) (any, error) {
 	// MRQL source
 	if query := sc.Attrs["mrql"]; query != "" && executor != nil {
 		scope := resolveScopeKeyword(sc.Attrs["scope"], ctx)
@@ -918,23 +943,29 @@ func resolveConditionalValue(reqCtx context.Context, sc Shortcode, ctx MetaShort
 		buckets := parseIntAttr(sc.Attrs["buckets"], defaultMRQLShortcodeBuckets)
 
 		result, err := executor(reqCtx, query, "", limit, buckets, scope)
-		if err != nil || result == nil {
-			return nil
+		if err != nil {
+			return nil, err
+		}
+		if result == nil {
+			return nil, nil
 		}
 
 		switch result.Mode {
 		case "flat", "":
-			return float64(len(result.Items))
+			return float64(len(result.Items)), nil
 		case "aggregated":
 			agg := sc.Attrs["aggregate"]
-			if agg == "" || len(result.Rows) == 0 {
-				return nil
+			if agg == "" {
+				return nil, fmt.Errorf("mrql aggregated results require aggregate=\"column_name\" attribute")
 			}
-			return result.Rows[0][agg]
+			if len(result.Rows) == 0 {
+				return nil, nil
+			}
+			return result.Rows[0][agg], nil
 		case "bucketed":
-			return float64(len(result.Groups))
+			return float64(len(result.Groups)), nil
 		}
-		return nil
+		return nil, nil
 	}
 
 	// Field source
@@ -942,22 +973,22 @@ func resolveConditionalValue(reqCtx context.Context, sc Shortcode, ctx MetaShort
 		v := reflect.ValueOf(ctx.Entity)
 		if v.Kind() == reflect.Ptr {
 			if v.IsNil() {
-				return nil
+				return nil, nil
 			}
 			v = v.Elem()
 		}
 		if v.Kind() != reflect.Struct {
-			return nil
+			return nil, nil
 		}
 		field := v.FieldByName(fieldName)
 		if !field.IsValid() {
-			return nil
+			return nil, nil
 		}
-		return formatFieldValue(field)
+		return formatFieldValue(field), nil
 	}
 
 	// Path source (default)
-	return extractRawValueAtPath(ctx.Meta, sc.Attrs["path"])
+	return extractRawValueAtPath(ctx.Meta, sc.Attrs["path"]), nil
 }
 
 // evaluateCondition checks the resolved value against the shortcode's operator attributes.
@@ -1020,7 +1051,13 @@ func RenderConditionalShortcode(reqCtx context.Context, sc Shortcode, ctx MetaSh
 		return ""
 	}
 
-	value := resolveConditionalValue(reqCtx, sc, ctx, executor)
+	value, err := resolveConditionalValue(reqCtx, sc, ctx, executor)
+	if err != nil {
+		return fmt.Sprintf(
+			`<div class="mrql-results mrql-error text-sm text-red-700 bg-red-50 border border-red-200 rounded-md p-3 font-mono">%s</div>`,
+			html.EscapeString(err.Error()),
+		)
+	}
 	conditionMet := evaluateCondition(value, sc.Attrs)
 
 	ifBranch, elseBranch := SplitElse(sc.InnerContent)
@@ -1348,9 +1385,11 @@ func renderExamplePreview(pm *PluginManager, pluginName, fullTypeName string, ex
 }
 ```
 
-- [ ] **Step 5: Update the template handler's plugin renderer callback**
+- [ ] **Step 5: Update all three RenderShortcode call sites**
 
-In `server/template_handlers/template_filters/shortcode_tag.go` (line 74), update the closure to pass the new fields:
+There are three call sites that call `pm.RenderShortcode` and need the new `innerContent, isBlock` parameters:
+
+**a) `server/template_handlers/template_filters/shortcode_tag.go` (line 75)** — this is the main template rendering path. Update the closure:
 
 ```go
 			pluginRenderer = func(pluginName string, sc shortcodes.Shortcode, mctx shortcodes.MetaShortcodeContext) (string, error) {
@@ -1358,11 +1397,23 @@ In `server/template_handlers/template_filters/shortcode_tag.go` (line 74), updat
 			}
 ```
 
+**b) `server/routes.go` (line 221)** — the plugin renderer callback in route setup. Add `sc.InnerContent, sc.IsBlock`:
+
+```go
+			return pm.RenderShortcode(reqCtx, pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs, mctx.Entity, sc.InnerContent, sc.IsBlock)
+```
+
+**c) `server/api_handlers/mrql_api_handlers.go` (line 62)** — the MRQL API handler's plugin renderer. Add `sc.InnerContent, sc.IsBlock`:
+
+```go
+		return pm.RenderShortcode(reqCtx, pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs, mctx.Entity, sc.InnerContent, sc.IsBlock)
+```
+
 - [ ] **Step 6: Fix all compilation errors from signature change**
 
 Run: `go build --tags 'json1 fts5' ./...`
 
-Any call sites that use the old `RenderShortcode` signature (without `innerContent`/`isBlock`) need updating. Add `"", false` for existing self-closing call sites (e.g., in tests).
+All three call sites above plus any test call sites need the new parameters. Add `"", false` for existing self-closing call sites in tests.
 
 - [ ] **Step 7: Add preview divergence test**
 
@@ -1413,7 +1464,7 @@ Expected: PASS
 - [ ] **Step 9: Commit**
 
 ```bash
-git add plugin_system/shortcodes.go plugin_system/shortcode_docs.go plugin_system/shortcodes_test.go server/template_handlers/template_filters/shortcode_tag.go
+git add plugin_system/shortcodes.go plugin_system/shortcode_docs.go plugin_system/shortcodes_test.go server/template_handlers/template_filters/shortcode_tag.go server/routes.go server/api_handlers/mrql_api_handlers.go
 git commit -m "feat: pass inner_content and is_block to plugin shortcodes"
 ```
 
@@ -1607,7 +1658,15 @@ git commit -m "test: add E2E tests for built-in conditional shortcode"
 
 - [ ] **Step 1: Add block shortcode syntax and conditional documentation**
 
-In `docs-site/docs/features/shortcodes.md`, after the existing Syntax section (line 21), add block syntax documentation. Then add a new `[conditional]` section before the Plugin Shortcodes section (line 164).
+In `docs-site/docs/features/shortcodes.md`:
+
+First, update the built-in shortcode list (line 18) to include `conditional`:
+
+```markdown
+- **Built-in:** `[meta ...]`, `[property ...]`, `[mrql ...]`, `[conditional ...]...[/conditional]`
+```
+
+Then, after the existing Syntax section (line 21), add block syntax documentation. Then add a new `[conditional]` section before the Plugin Shortcodes section (line 164).
 
 Add after line 21 (after the existing syntax paragraph):
 
