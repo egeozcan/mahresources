@@ -268,6 +268,7 @@ npm run report         # View HTML test report
 - No authentication/authorization - designed for private networks only
 - Fully aware that we can inject all kinds of content via unescaped via CustomHeader, CustomSidebar, etc. and that's okay.
 - A11y is important. Very important.
+- The group export/import archive format (manifest schema version 1) is a stable public contract. `archive/manifest.go` defines the schema. Rules: readers reject unknown major `schema_version` values with a clear error; unknown top-level keys in the manifest are silently ignored (forward compatibility). Breaking changes require bumping `schema_version`. Do not change field names, remove fields, or alter semantics without a version bump.
 - SQLite requires `--tags json1` build flag for JSON query support
 - Image processing uses bild and nfnt/resize libraries
 - File system abstraction via Afero supports multiple storage locations
