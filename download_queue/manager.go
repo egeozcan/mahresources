@@ -585,11 +585,10 @@ func (dm *DownloadManager) cleanupLoop() {
 func (dm *DownloadManager) cleanupOldJobs() {
 	dm.mu.Lock()
 
-	retention := dm.jobRetention
-	if retention <= 0 {
-		retention = JobRetentionDuration
+	baseRetention := dm.jobRetention
+	if baseRetention <= 0 {
+		baseRetention = JobRetentionDuration
 	}
-	completedCutoff := time.Now().Add(-retention)
 	pausedCutoff := time.Now().Add(-PausedJobRetentionDuration)
 	newOrder := make([]string, 0, len(dm.jobOrder))
 
@@ -597,9 +596,19 @@ func (dm *DownloadManager) cleanupOldJobs() {
 		job := dm.jobs[id]
 		shouldRemove := false
 
-		// Remove completed/failed/cancelled jobs after retention period
-		if completedAt := job.GetCompletedAt(); completedAt != nil && completedAt.Before(completedCutoff) {
-			shouldRemove = true
+		// Remove completed/failed/cancelled jobs after the appropriate retention
+		// period. Completed export jobs use exportRetention (which matches how
+		// long the tar file stays on disk); all other terminal jobs use the
+		// shorter jobRetention. Failed/cancelled export jobs have no downloadable
+		// tar, so they also fall back to jobRetention.
+		if completedAt := job.GetCompletedAt(); completedAt != nil {
+			retention := baseRetention
+			if job.Source == JobSourceGroupExport && job.Status == JobStatusCompleted && dm.exportRetention > 0 {
+				retention = dm.exportRetention
+			}
+			if completedAt.Before(time.Now().Add(-retention)) {
+				shouldRemove = true
+			}
 		}
 
 		// Remove paused jobs after longer retention period (based on creation time)

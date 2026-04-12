@@ -1002,6 +1002,96 @@ func TestGenericJob_RetryDispatchesToGenericPath(t *testing.T) {
 	}
 }
 
+// TestCleanupOldJobs_ExportJobUsesExportRetention verifies that completed
+// group-export jobs are retained in memory for exportRetention, not the
+// shorter jobRetention that applies to regular download/plugin jobs.
+func TestCleanupOldJobs_ExportJobUsesExportRetention(t *testing.T) {
+	dm := NewDownloadManagerWithConfig(nil, TimeoutConfig{}, ManagerConfig{
+		JobRetention:    1 * time.Hour,
+		ExportRetention: 24 * time.Hour,
+	})
+
+	// Manually insert a completed export job that finished 2 hours ago.
+	// With jobRetention=1h it would normally be evicted.
+	// With exportRetention=24h it should survive.
+	twoHoursAgo := time.Now().Add(-2 * time.Hour)
+	exportJob := &DownloadJob{
+		ID:         "export-job-1",
+		Status:     JobStatusCompleted,
+		Source:     JobSourceGroupExport,
+		CreatedAt:  twoHoursAgo.Add(-1 * time.Minute),
+		ResultPath: "_exports/export-job-1.tar",
+	}
+	exportJob.SetCompletedAt(twoHoursAgo)
+
+	// Also insert a completed download job that finished 2 hours ago.
+	// With jobRetention=1h it SHOULD be evicted.
+	downloadJob := &DownloadJob{
+		ID:        "download-job-1",
+		Status:    JobStatusCompleted,
+		Source:    JobSourceDownload,
+		CreatedAt: twoHoursAgo.Add(-1 * time.Minute),
+	}
+	downloadJob.SetCompletedAt(twoHoursAgo)
+
+	dm.mu.Lock()
+	dm.jobs["export-job-1"] = exportJob
+	dm.jobs["download-job-1"] = downloadJob
+	dm.jobOrder = append(dm.jobOrder, "export-job-1", "download-job-1")
+	dm.mu.Unlock()
+
+	// Run cleanup.
+	dm.cleanupOldJobs()
+
+	// The download job should be evicted (completed 2h ago > 1h retention).
+	dm.mu.RLock()
+	_, downloadExists := dm.jobs["download-job-1"]
+	_, exportExists := dm.jobs["export-job-1"]
+	dm.mu.RUnlock()
+
+	if downloadExists {
+		t.Errorf("download job should have been evicted (2h old, 1h retention)")
+	}
+	if !exportExists {
+		t.Errorf("export job should NOT have been evicted (2h old, but 24h export retention)")
+	}
+}
+
+// TestCleanupOldJobs_ExportJobEvictedAfterExportRetention verifies that
+// completed export jobs are still evicted once exportRetention has elapsed.
+func TestCleanupOldJobs_ExportJobEvictedAfterExportRetention(t *testing.T) {
+	dm := NewDownloadManagerWithConfig(nil, TimeoutConfig{}, ManagerConfig{
+		JobRetention:    1 * time.Hour,
+		ExportRetention: 24 * time.Hour,
+	})
+
+	// Insert a completed export job that finished 25 hours ago — past export retention.
+	twentyFiveHoursAgo := time.Now().Add(-25 * time.Hour)
+	exportJob := &DownloadJob{
+		ID:         "old-export",
+		Status:     JobStatusCompleted,
+		Source:     JobSourceGroupExport,
+		CreatedAt:  twentyFiveHoursAgo.Add(-1 * time.Minute),
+		ResultPath: "_exports/old-export.tar",
+	}
+	exportJob.SetCompletedAt(twentyFiveHoursAgo)
+
+	dm.mu.Lock()
+	dm.jobs["old-export"] = exportJob
+	dm.jobOrder = append(dm.jobOrder, "old-export")
+	dm.mu.Unlock()
+
+	dm.cleanupOldJobs()
+
+	dm.mu.RLock()
+	_, exists := dm.jobs["old-export"]
+	dm.mu.RUnlock()
+
+	if exists {
+		t.Errorf("export job should have been evicted (25h old, 24h export retention)")
+	}
+}
+
 // TestDownloadManager_PeriodicSweepRemovesExpiredTars verifies that
 // cleanupOldJobs calls the exportSweepFn when set, so expired export tars are
 // purged periodically and not only at startup.
