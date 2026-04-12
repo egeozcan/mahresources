@@ -23,8 +23,7 @@ type Shortcode struct {
     Raw          string   // full matched text (opening+closing for blocks, tag for self-closing)
     Start        int      // byte offset of opening tag start
     End          int      // byte offset of closing tag end (or opening tag end if self-closing)
-    InnerContent string   // content between [name]...[else] or [/name], empty for self-closing
-    ElseContent  string   // content after [else] in a block shortcode, empty if no [else]
+    InnerContent string   // content between [name]...[/name], empty for self-closing
     IsBlock      bool     // true if matched as [name]...[/name] pair
 }
 ```
@@ -47,13 +46,11 @@ Two-phase approach extending the existing regex parser:
 
 ### `[else]` Handling
 
-`[else]` is a parser-level token recognized inside block shortcodes. When the parser matches a block pair, it scans the inner content for the first top-level `[else]` (not nested inside a deeper block) and splits the content into `InnerContent` (true branch) and `ElseContent` (false branch). This is structural, not a post-processing string split.
+`[else]` splitting is handler-level, not parser-level. The parser does not know about `[else]` — it returns the full content between `[name]` and `[/name]` as `InnerContent`. The `conditional` handler splits `InnerContent` on the first top-level `[else]` internally using a helper function `splitElse(content string) (ifBranch, elseBranch string)` that is aware of nested block depth (so `[else]` inside a nested block is not mistaken for the outer split point).
 
-The `Shortcode` struct gets an additional field:
+This keeps `[else]` specific to handlers that opt into it. Plugin block shortcodes and future built-ins receive the full `InnerContent` with any literal `[else]` text intact.
 
-```go
-ElseContent string // content after [else] in a block shortcode, empty if no [else]
-```
+The `ElseContent` field is removed from the `Shortcode` struct — it is not needed since splitting is handler-side.
 
 ## Processing Pipeline Changes
 
@@ -66,7 +63,7 @@ This means the conditional handler evaluates its condition first, then only expa
 
 ### Plugin Renderer
 
-No signature change needed. `PluginRenderer` already receives the full `Shortcode` struct, which now includes `InnerContent`, `ElseContent`, and `IsBlock`. On the Lua side, the context table gains `inner_content` and `else_content` string fields (empty for self-closing shortcodes).
+No signature change needed. `PluginRenderer` already receives the full `Shortcode` struct, which now includes `InnerContent` and `IsBlock`. On the Lua side, the context table gains an `inner_content` string field (empty for self-closing shortcodes).
 
 Plugin block shortcodes receive raw (unexpanded) inner content. The processor applies a post-plugin expansion pass: after the plugin renderer returns, if the shortcode was a block (`IsBlock == true`), the processor runs `processWithDepth` on the plugin's output to expand any shortcodes the plugin left intact or injected. This mirrors how MRQL already gets a recursive expansion pass via `processWithDepth` in `RenderMRQLShortcode`. If a plugin wants to suppress expansion (treating inner content as a literal template), it can HTML-escape the bracket syntax in its output.
 
@@ -101,7 +98,7 @@ The existing `maxRecursionDepth` (currently 2) is bumped to 10 to accommodate re
    - **`field`**: reads an entity struct field by name via reflection (reuses the same approach as `RenderPropertyShortcode`). e.g., `field="Name"` reads the entity's `Name` field. Returns the raw Go value.
    - **`mrql`** (+ optional `scope`, `aggregate`): runs an MRQL query via the `QueryExecutor` callback (already threaded through `processWithDepth`). For flat results, the value is the item count. For aggregated results, the value is the first row's column named by `aggregate`. `scope` restricts results to a group subtree (same semantics as `[mrql scope="..."]`).
 2. **Evaluate condition**: checks one operator attribute against the resolved raw value. Strings are compared directly, numbers via `strconv.ParseFloat`.
-3. **Select branch**: if condition is true, select `InnerContent`. If false, select `ElseContent` (may be empty). The parser has already split these structurally.
+3. **Select branch**: the handler calls `splitElse(InnerContent)` to get `(ifBranch, elseBranch)`. If condition is true, select `ifBranch`. If false, select `elseBranch` (may be empty).
 4. **Expand and return**: the selected branch is recursively processed through `processWithDepth` to expand nested shortcodes. The unselected branch is never processed — no wasted work or side effects.
 
 ### Supported Operators
@@ -154,8 +151,16 @@ All condition sources are preserved. The block syntax replaces the content-deliv
 
 ### Plugin Integration
 
-- Verify plugin shortcodes receive `inner_content` and `else_content` in Lua context table.
+- Verify plugin shortcodes receive `inner_content` in Lua context table.
 - Existing self-closing plugin shortcode tests pass unchanged.
+
+### Plugin Docs Preview
+
+The plugin docs preview pipeline (`renderShortcodeForDocs` in `plugin_system/shortcodes.go`) currently parses examples using the self-closing-only path. This needs updating:
+
+- **`plugin_system/shortcode_docs.go`** (or wherever example parsing happens): switch to `ParseWithBlocks()` so block shortcode examples preview correctly.
+- **`plugin_system/shortcodes.go` `renderShortcodeForDocs`**: pass `InnerContent` and `IsBlock` through to the Lua context table, same as the runtime path.
+- Add test coverage for a plugin block shortcode example rendering in docs preview.
 
 ### Downstream Updates from Plugin Removal
 
