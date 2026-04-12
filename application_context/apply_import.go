@@ -2,15 +2,19 @@ package application_context
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
+	"net/url"
 	"path"
 	"path/filepath"
 
 	"github.com/spf13/afero"
 	"mahresources/archive"
 	"mahresources/download_queue"
+	"mahresources/models"
+	"mahresources/models/types"
 )
 
 const applyBatchSize = 500
@@ -315,12 +319,410 @@ func (s *applyState) resolveTagIDs(refs []archive.TagRef) []uint {
 	return ids
 }
 
+// applySchemaDefDecisions resolves categories, note types, resource categories,
+// tags, and group relation types according to the user's mapping decisions.
+// For each entry: "map" reuses an existing DB row, "create" inserts a new one.
+// IDs are stored in s.idMap keyed by both DecisionKey and SourceExportID.
+func (s *applyState) applySchemaDefDecisions() error {
+	// --- Categories ---
+	for _, entry := range s.plan.Mappings.Categories {
+		action, ok := s.decisions.MappingActions[entry.DecisionKey]
+		if ok && action.Action == "map" && action.DestinationID != nil {
+			s.idMap[entry.DecisionKey] = *action.DestinationID
+			if entry.SourceExportID != "" {
+				s.idMap[entry.SourceExportID] = *action.DestinationID
+			}
+			continue
+		}
+		if ok && !action.Include {
+			continue
+		}
+		// Create new category
+		cat := models.Category{Name: entry.SourceKey}
+		if entry.HasPayload {
+			if def := findCategoryDef(s.collector.categoryDefs, entry.SourceExportID); def != nil {
+				cat.Name = def.Name
+				cat.Description = def.Description
+				cat.CustomHeader = def.CustomHeader
+				cat.CustomSidebar = def.CustomSidebar
+				cat.CustomSummary = def.CustomSummary
+				cat.CustomAvatar = def.CustomAvatar
+				cat.CustomMRQLResult = def.CustomMRQLResult
+				cat.MetaSchema = def.MetaSchema
+				if def.SectionConfig != nil {
+					sc, _ := json.Marshal(def.SectionConfig)
+					cat.SectionConfig = sc
+				}
+			}
+		}
+		if err := s.ctx.db.Create(&cat).Error; err != nil {
+			return fmt.Errorf("create category %q: %w", cat.Name, err)
+		}
+		s.idMap[entry.DecisionKey] = cat.ID
+		if entry.SourceExportID != "" {
+			s.idMap[entry.SourceExportID] = cat.ID
+		}
+		s.result.CreatedCategories++
+	}
+
+	// --- Note Types ---
+	for _, entry := range s.plan.Mappings.NoteTypes {
+		action, ok := s.decisions.MappingActions[entry.DecisionKey]
+		if ok && action.Action == "map" && action.DestinationID != nil {
+			s.idMap[entry.DecisionKey] = *action.DestinationID
+			if entry.SourceExportID != "" {
+				s.idMap[entry.SourceExportID] = *action.DestinationID
+			}
+			continue
+		}
+		if ok && !action.Include {
+			continue
+		}
+		nt := models.NoteType{Name: entry.SourceKey}
+		if entry.HasPayload {
+			if def := findNoteTypeDef(s.collector.noteTypeDefs, entry.SourceExportID); def != nil {
+				nt.Name = def.Name
+				nt.Description = def.Description
+				nt.CustomHeader = def.CustomHeader
+				nt.CustomSidebar = def.CustomSidebar
+				nt.CustomSummary = def.CustomSummary
+				nt.CustomAvatar = def.CustomAvatar
+				nt.CustomMRQLResult = def.CustomMRQLResult
+				nt.MetaSchema = def.MetaSchema
+				if def.SectionConfig != nil {
+					sc, _ := json.Marshal(def.SectionConfig)
+					nt.SectionConfig = sc
+				}
+			}
+		}
+		if err := s.ctx.db.Create(&nt).Error; err != nil {
+			return fmt.Errorf("create note type %q: %w", nt.Name, err)
+		}
+		s.idMap[entry.DecisionKey] = nt.ID
+		if entry.SourceExportID != "" {
+			s.idMap[entry.SourceExportID] = nt.ID
+		}
+		s.result.CreatedNoteTypes++
+	}
+
+	// --- Resource Categories ---
+	for _, entry := range s.plan.Mappings.ResourceCategories {
+		action, ok := s.decisions.MappingActions[entry.DecisionKey]
+		if ok && action.Action == "map" && action.DestinationID != nil {
+			s.idMap[entry.DecisionKey] = *action.DestinationID
+			if entry.SourceExportID != "" {
+				s.idMap[entry.SourceExportID] = *action.DestinationID
+			}
+			continue
+		}
+		if ok && !action.Include {
+			continue
+		}
+		rc := models.ResourceCategory{Name: entry.SourceKey}
+		if entry.HasPayload {
+			if def := findResourceCategoryDef(s.collector.resourceCategoryDefs, entry.SourceExportID); def != nil {
+				rc.Name = def.Name
+				rc.Description = def.Description
+				rc.CustomHeader = def.CustomHeader
+				rc.CustomSidebar = def.CustomSidebar
+				rc.CustomSummary = def.CustomSummary
+				rc.CustomAvatar = def.CustomAvatar
+				rc.CustomMRQLResult = def.CustomMRQLResult
+				rc.MetaSchema = def.MetaSchema
+				rc.AutoDetectRules = def.AutoDetectRules
+				if def.SectionConfig != nil {
+					sc, _ := json.Marshal(def.SectionConfig)
+					rc.SectionConfig = sc
+				}
+			}
+		}
+		if err := s.ctx.db.Create(&rc).Error; err != nil {
+			return fmt.Errorf("create resource category %q: %w", rc.Name, err)
+		}
+		s.idMap[entry.DecisionKey] = rc.ID
+		if entry.SourceExportID != "" {
+			s.idMap[entry.SourceExportID] = rc.ID
+		}
+		s.result.CreatedResourceCategories++
+	}
+
+	// --- Tags ---
+	for _, entry := range s.plan.Mappings.Tags {
+		action, ok := s.decisions.MappingActions[entry.DecisionKey]
+		if ok && action.Action == "map" && action.DestinationID != nil {
+			s.idMap[entry.DecisionKey] = *action.DestinationID
+			if entry.SourceExportID != "" {
+				s.idMap[entry.SourceExportID] = *action.DestinationID
+			}
+			continue
+		}
+		if ok && !action.Include {
+			continue
+		}
+		tag := models.Tag{Name: entry.SourceKey}
+		if entry.HasPayload {
+			if def := findTagDef(s.collector.tagDefs, entry.SourceExportID); def != nil {
+				tag.Name = def.Name
+				tag.Description = def.Description
+				if def.Meta != nil {
+					m, _ := json.Marshal(def.Meta)
+					tag.Meta = m
+				}
+			}
+		}
+		if err := s.ctx.db.Create(&tag).Error; err != nil {
+			return fmt.Errorf("create tag %q: %w", tag.Name, err)
+		}
+		s.idMap[entry.DecisionKey] = tag.ID
+		if entry.SourceExportID != "" {
+			s.idMap[entry.SourceExportID] = tag.ID
+		}
+		s.result.CreatedTags++
+	}
+
+	// --- Group Relation Types (first pass: create rows) ---
+	// We track which entries were created so the second pass can wire BackRelationId.
+	type grtCreated struct {
+		entry MappingEntry
+		id    uint
+	}
+	var createdGRTs []grtCreated
+
+	for _, entry := range s.plan.Mappings.GroupRelationTypes {
+		action, ok := s.decisions.MappingActions[entry.DecisionKey]
+		if ok && action.Action == "map" && action.DestinationID != nil {
+			s.idMap[entry.DecisionKey] = *action.DestinationID
+			if entry.SourceExportID != "" {
+				s.idMap[entry.SourceExportID] = *action.DestinationID
+			}
+			continue
+		}
+		if ok && !action.Include {
+			continue
+		}
+		grt := models.GroupRelationType{Name: entry.SourceKey}
+		if entry.HasPayload {
+			if def := findGRTDef(s.collector.grtDefs, entry.SourceExportID); def != nil {
+				grt.Name = def.Name
+				grt.Description = def.Description
+				// Resolve FromCategoryId via already-mapped categories
+				if def.FromCategoryName != "" {
+					fromKey := DecisionKeyFor("category", MappingEntry{SourceKey: def.FromCategoryName})
+					if catID, ok := s.idMap[fromKey]; ok {
+						grt.FromCategoryId = &catID
+					} else if def.FromCategoryRef != "" {
+						if catID, ok := s.idMap[def.FromCategoryRef]; ok {
+							grt.FromCategoryId = &catID
+						}
+					}
+				}
+				// Resolve ToCategoryId via already-mapped categories
+				if def.ToCategoryName != "" {
+					toKey := DecisionKeyFor("category", MappingEntry{SourceKey: def.ToCategoryName})
+					if catID, ok := s.idMap[toKey]; ok {
+						grt.ToCategoryId = &catID
+					} else if def.ToCategoryRef != "" {
+						if catID, ok := s.idMap[def.ToCategoryRef]; ok {
+							grt.ToCategoryId = &catID
+						}
+					}
+				}
+			}
+		}
+		if err := s.ctx.db.Create(&grt).Error; err != nil {
+			return fmt.Errorf("create GRT %q: %w", grt.Name, err)
+		}
+		s.idMap[entry.DecisionKey] = grt.ID
+		if entry.SourceExportID != "" {
+			s.idMap[entry.SourceExportID] = grt.ID
+		}
+		createdGRTs = append(createdGRTs, grtCreated{entry: entry, id: grt.ID})
+		s.result.CreatedGRTs++
+	}
+
+	// --- Group Relation Types (second pass: wire BackRelationId) ---
+	for _, cg := range createdGRTs {
+		def := findGRTDef(s.collector.grtDefs, cg.entry.SourceExportID)
+		if def == nil || def.BackRelationRef == "" {
+			continue
+		}
+		backID, ok := s.idMap[def.BackRelationRef]
+		if !ok {
+			continue
+		}
+		if err := s.ctx.db.Model(&models.GroupRelationType{}).Where("id = ?", cg.id).
+			Update("back_relation_id", backID).Error; err != nil {
+			return fmt.Errorf("wire GRT back-relation %d -> %d: %w", cg.id, backID, err)
+		}
+	}
+
+	return nil
+}
+
+// applySeries resolves series references: reuse existing or create new.
+func (s *applyState) applySeries() error {
+	for _, sm := range s.plan.SeriesInfo {
+		if sm.Action == "reuse_existing" && sm.DestID != nil {
+			s.idMap[sm.ExportID] = *sm.DestID
+			s.result.ReusedSeries++
+			s.result.Warnings = append(s.result.Warnings,
+				fmt.Sprintf("reused existing series %q (slug=%s, id=%d)", sm.Name, sm.Slug, *sm.DestID))
+			continue
+		}
+		// Create new series
+		sp := s.collector.series[sm.ExportID]
+		series := models.Series{
+			Name: sm.Name,
+			Slug: sm.Slug,
+		}
+		if sp != nil {
+			series.Name = sp.Name
+			series.Slug = sp.Slug
+			if sp.Meta != nil {
+				m, _ := json.Marshal(sp.Meta)
+				series.Meta = m
+			}
+		}
+		if err := s.ctx.db.Create(&series).Error; err != nil {
+			return fmt.Errorf("create series %q: %w", series.Name, err)
+		}
+		s.idMap[sm.ExportID] = series.ID
+		s.result.CreatedSeries++
+	}
+	return nil
+}
+
+// applyGroups creates groups in topological order (depth-first walk of the
+// item tree) so that parent groups are always created before their children.
+func (s *applyState) applyGroups() error {
+	var walk func(items []ImportPlanItem) error
+	walk = func(items []ImportPlanItem) error {
+		for _, item := range items {
+			if item.Kind != "group" {
+				continue
+			}
+			if s.isExcluded(item.ExportID) {
+				continue
+			}
+
+			gp, ok := s.collector.groups[item.ExportID]
+			if !ok {
+				s.result.Warnings = append(s.result.Warnings,
+					fmt.Sprintf("group %s referenced in plan but not found in archive", item.ExportID))
+				continue
+			}
+
+			g := models.Group{
+				Name:        gp.Name,
+				Description: gp.Description,
+			}
+
+			// Meta
+			if gp.Meta != nil {
+				m, _ := json.Marshal(gp.Meta)
+				g.Meta = m
+			}
+
+			// URL
+			if gp.URL != "" {
+				parsed, err := url.Parse(gp.URL)
+				if err == nil {
+					u := types.URL(*parsed)
+					g.URL = &u
+				}
+			}
+
+			// Owner: resolve from OwnerRef (parent in the archive), fall back
+			// to decisions.ParentGroupID for root groups.
+			if gp.OwnerRef != "" {
+				if ownerID, ok := s.idMap[gp.OwnerRef]; ok {
+					g.OwnerId = &ownerID
+				}
+			} else if s.decisions.ParentGroupID != nil {
+				g.OwnerId = s.decisions.ParentGroupID
+			}
+
+			// Category: try CategoryRef first, then CategoryName lookup
+			if gp.CategoryRef != "" {
+				if catID, ok := s.idMap[gp.CategoryRef]; ok {
+					g.CategoryId = &catID
+				}
+			}
+			if g.CategoryId == nil && gp.CategoryName != "" {
+				catKey := DecisionKeyFor("category", MappingEntry{SourceKey: gp.CategoryName})
+				if catID, ok := s.idMap[catKey]; ok {
+					g.CategoryId = &catID
+				}
+			}
+
+			if err := s.ctx.db.Create(&g).Error; err != nil {
+				return fmt.Errorf("create group %q: %w", g.Name, err)
+			}
+			s.idMap[item.ExportID] = g.ID
+			s.result.CreatedGroupIDs = append(s.result.CreatedGroupIDs, g.ID)
+			s.result.CreatedGroups++
+
+			// Recurse into children
+			if err := walk(item.Children); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	return walk(s.plan.Items)
+}
+
 // Stubs — implemented in subsequent tasks. Each returns nil so the test
 // compiles and runs (it will fail on assertions, not compilation).
-func (s *applyState) applySchemaDefDecisions() error { return nil }
-func (s *applyState) applySeries() error             { return nil }
-func (s *applyState) applyGroups() error             { return nil }
-func (s *applyState) applyResources() error          { return nil }
+func (s *applyState) applyResources() error         { return nil }
 func (s *applyState) applyNotes() error              { return nil }
 func (s *applyState) applyM2MLinks() error           { return nil }
 func (s *applyState) applyDanglingDecisions() error  { return nil }
+
+// --- Schema def lookup helpers ---
+
+func findCategoryDef(defs []archive.CategoryDef, exportID string) *archive.CategoryDef {
+	for i := range defs {
+		if defs[i].ExportID == exportID {
+			return &defs[i]
+		}
+	}
+	return nil
+}
+
+func findNoteTypeDef(defs []archive.NoteTypeDef, exportID string) *archive.NoteTypeDef {
+	for i := range defs {
+		if defs[i].ExportID == exportID {
+			return &defs[i]
+		}
+	}
+	return nil
+}
+
+func findResourceCategoryDef(defs []archive.ResourceCategoryDef, exportID string) *archive.ResourceCategoryDef {
+	for i := range defs {
+		if defs[i].ExportID == exportID {
+			return &defs[i]
+		}
+	}
+	return nil
+}
+
+func findTagDef(defs []archive.TagDef, exportID string) *archive.TagDef {
+	for i := range defs {
+		if defs[i].ExportID == exportID {
+			return &defs[i]
+		}
+	}
+	return nil
+}
+
+func findGRTDef(defs []archive.GroupRelationTypeDef, exportID string) *archive.GroupRelationTypeDef {
+	for i := range defs {
+		if defs[i].ExportID == exportID {
+			return &defs[i]
+		}
+	}
+	return nil
+}
