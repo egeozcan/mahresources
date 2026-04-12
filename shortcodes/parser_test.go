@@ -134,3 +134,83 @@ func TestParseMRQLWithHTMLEntityQuotes(t *testing.T) {
 	assert.Equal(t, "type = 'resource'", result[0].Attrs["query"])
 	assert.Equal(t, "10", result[0].Attrs["limit"])
 }
+
+func TestParseWithBlocksSimplePair(t *testing.T) {
+	result := ParseWithBlocks(`[conditional path="x" eq="1"]hello[/conditional]`)
+	require.Len(t, result, 1)
+	assert.Equal(t, "conditional", result[0].Name)
+	assert.Equal(t, "1", result[0].Attrs["eq"])
+	assert.Equal(t, "hello", result[0].InnerContent)
+	assert.True(t, result[0].IsBlock)
+	assert.Equal(t, 0, result[0].Start)
+	assert.Equal(t, len(`[conditional path="x" eq="1"]hello[/conditional]`), result[0].End)
+}
+
+func TestParseWithBlocksSelfClosingUnchanged(t *testing.T) {
+	result := ParseWithBlocks(`[meta path="a"]`)
+	require.Len(t, result, 1)
+	assert.Equal(t, "meta", result[0].Name)
+	assert.Equal(t, "", result[0].InnerContent)
+	assert.False(t, result[0].IsBlock)
+}
+
+func TestParseWithBlocksNestedBlocks(t *testing.T) {
+	input := `[conditional path="a" eq="1"]outer[conditional path="b" eq="2"]inner[/conditional]after[/conditional]`
+	result := ParseWithBlocks(input)
+	require.Len(t, result, 1)
+	assert.Equal(t, "conditional", result[0].Name)
+	assert.True(t, result[0].IsBlock)
+	assert.Contains(t, result[0].InnerContent, `[conditional path="b" eq="2"]inner[/conditional]`)
+	assert.Contains(t, result[0].InnerContent, "outer")
+	assert.Contains(t, result[0].InnerContent, "after")
+}
+
+func TestParseWithBlocksMixedSelfClosingAndBlock(t *testing.T) {
+	input := `[meta path="x"][conditional path="a" eq="1"]body[/conditional][meta path="y"]`
+	result := ParseWithBlocks(input)
+	require.Len(t, result, 3)
+	assert.Equal(t, "meta", result[0].Name)
+	assert.False(t, result[0].IsBlock)
+	assert.Equal(t, "conditional", result[1].Name)
+	assert.True(t, result[1].IsBlock)
+	assert.Equal(t, "body", result[1].InnerContent)
+	assert.Equal(t, "meta", result[2].Name)
+	assert.False(t, result[2].IsBlock)
+}
+
+func TestParseWithBlocksUnmatchedClosingIgnored(t *testing.T) {
+	result := ParseWithBlocks(`text[/conditional]more`)
+	assert.Empty(t, result)
+}
+
+func TestParseWithBlocksUnmatchedOpeningStaysSelfClosing(t *testing.T) {
+	result := ParseWithBlocks(`[conditional path="x" eq="1"]no closing tag`)
+	require.Len(t, result, 1)
+	assert.False(t, result[0].IsBlock)
+	assert.Equal(t, "", result[0].InnerContent)
+}
+
+func TestParseWithBlocksElseIsLiteralContent(t *testing.T) {
+	input := `[conditional path="x" eq="1"]yes[else]no[/conditional]`
+	result := ParseWithBlocks(input)
+	require.Len(t, result, 1)
+	assert.True(t, result[0].IsBlock)
+	assert.Equal(t, "yes[else]no", result[0].InnerContent)
+}
+
+func TestParseWithBlocksPluginBlock(t *testing.T) {
+	input := `[plugin:test:wrap]content[/plugin:test:wrap]`
+	result := ParseWithBlocks(input)
+	require.Len(t, result, 1)
+	assert.Equal(t, "plugin:test:wrap", result[0].Name)
+	assert.True(t, result[0].IsBlock)
+	assert.Equal(t, "content", result[0].InnerContent)
+}
+
+func TestParseWithBlocksTopLevelOnly(t *testing.T) {
+	input := `[conditional path="a" eq="1"][meta path="x"][/conditional]`
+	result := ParseWithBlocks(input)
+	require.Len(t, result, 1)
+	assert.True(t, result[0].IsBlock)
+	assert.Equal(t, `[meta path="x"]`, result[0].InnerContent)
+}
