@@ -330,3 +330,97 @@ test.describe('Shortcode if/then/else schema', () => {
     if (catId) await apiClient.deleteCategory(catId);
   });
 });
+
+test.describe('Built-in conditional shortcode', () => {
+  let categoryId: number;
+  let activeGroupId: number;
+  let inactiveGroupId: number;
+
+  test.beforeAll(async ({ apiClient }) => {
+    const cat = await apiClient.createCategory(
+      `Conditional Test ${Date.now()}`,
+      'Tests built-in conditional shortcode',
+      {
+        CustomSidebar: [
+          '[conditional path="status" eq="active"]<span class="cond-active">Active</span>[/conditional]',
+          '[conditional path="status" eq="active"]<span class="cond-if">IF branch</span>[else]<span class="cond-else">ELSE branch</span>[/conditional]',
+          '[conditional path="count" gt="5"]<span class="cond-gt">High count</span>[/conditional]',
+          '[conditional path="status" not-empty="true"]<span class="cond-notempty">Has status</span>[/conditional]',
+          '[conditional path="status" eq="active"][meta path="status"][/conditional]',
+        ].join('\n'),
+      },
+    );
+    categoryId = cat.ID;
+
+    const activeGroup = await apiClient.createGroup({
+      name: `Active Group ${Date.now()}`,
+      categoryId: cat.ID,
+      meta: JSON.stringify({ status: 'active', count: 10 }),
+    });
+    activeGroupId = activeGroup.ID;
+
+    const inactiveGroup = await apiClient.createGroup({
+      name: `Inactive Group ${Date.now()}`,
+      categoryId: cat.ID,
+      meta: JSON.stringify({ status: 'inactive', count: 2 }),
+    });
+    inactiveGroupId = inactiveGroup.ID;
+  });
+
+  test.afterAll(async ({ apiClient }) => {
+    if (inactiveGroupId) await apiClient.deleteGroup(inactiveGroupId);
+    if (activeGroupId) await apiClient.deleteGroup(activeGroupId);
+    if (categoryId) await apiClient.deleteCategory(categoryId);
+  });
+
+  test('shows content when condition is true', async ({ page }) => {
+    await page.goto(`/group?id=${activeGroupId}`);
+    await page.waitForLoadState('load');
+    await expect(page.locator('.cond-active')).toBeVisible({ timeout: 5000 });
+  });
+
+  test('hides content when condition is false', async ({ page }) => {
+    await page.goto(`/group?id=${inactiveGroupId}`);
+    await page.waitForLoadState('load');
+    await expect(page.locator('.cond-active')).not.toBeVisible({ timeout: 3000 });
+  });
+
+  test('shows else branch when condition is false', async ({ page }) => {
+    await page.goto(`/group?id=${inactiveGroupId}`);
+    await page.waitForLoadState('load');
+    await expect(page.locator('.cond-else')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.cond-if')).not.toBeVisible({ timeout: 3000 });
+  });
+
+  test('shows if branch when condition is true', async ({ page }) => {
+    await page.goto(`/group?id=${activeGroupId}`);
+    await page.waitForLoadState('load');
+    await expect(page.locator('.cond-if')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.cond-else')).not.toBeVisible({ timeout: 3000 });
+  });
+
+  test('gt operator works with numeric values', async ({ page }) => {
+    await page.goto(`/group?id=${activeGroupId}`);
+    await page.waitForLoadState('load');
+    await expect(page.locator('.cond-gt')).toBeVisible({ timeout: 5000 });
+  });
+
+  test('gt operator hides when value is below threshold', async ({ page }) => {
+    await page.goto(`/group?id=${inactiveGroupId}`);
+    await page.waitForLoadState('load');
+    await expect(page.locator('.cond-gt')).not.toBeVisible({ timeout: 3000 });
+  });
+
+  test('not-empty operator shows when value exists', async ({ page }) => {
+    await page.goto(`/group?id=${activeGroupId}`);
+    await page.waitForLoadState('load');
+    await expect(page.locator('.cond-notempty')).toBeVisible({ timeout: 5000 });
+  });
+
+  test('nested shortcodes expand inside conditional', async ({ page }) => {
+    await page.goto(`/group?id=${activeGroupId}`);
+    await page.waitForLoadState('load');
+    const metaShortcode = page.locator('meta-shortcode[data-path="status"]');
+    await expect(metaShortcode).toBeVisible({ timeout: 5000 });
+  });
+});
