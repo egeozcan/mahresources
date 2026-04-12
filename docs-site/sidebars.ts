@@ -76,6 +76,14 @@ const sidebars: SidebarsConfig = {
         'features/timeline-view',
         'features/mrql',
         'features/cli',
+        'features/export-import',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Guides',
+      items: [
+        'guides/export-import-guide',
       ],
     },
     {

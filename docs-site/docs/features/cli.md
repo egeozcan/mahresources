@@ -332,6 +332,20 @@ mr groups add-meta --ids 1,2 --meta '{"region":"EU"}'
 mr groups merge --winner 1 --losers 2,3
 mr groups delete --ids 4,5
 mr groups meta-keys
+
+# Export a group subtree to a tar archive
+mr group export <id> [<id>...] -o output.tar
+mr group export <id> --include-versions --include-previews -o full.tar
+mr group export <id> --no-blobs -o metadata-only.tar
+mr group export <id> --gzip -o output.tar.gz
+
+# Import a tar archive
+mr group import <tarfile>
+mr group import <tarfile> --dry-run --plan-output plan.json
+mr group import <tarfile> --decisions decisions.json
+mr group import <tarfile> --parent-group 42
+mr group import <tarfile> --on-resource-conflict duplicate
+mr group import <tarfile> --acknowledge-missing-hashes
 ```
 
 ### relation / relation-type / relation-types
