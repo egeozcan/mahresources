@@ -3,6 +3,7 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"time"
@@ -66,10 +67,8 @@ Use --decisions to supply a decisions JSON file for full control.`,
 				fmt.Fprintf(cmd.ErrOrStderr(), "Plan saved to %s\n", opts.PlanOutput)
 			}
 
-			// Print plan summary (or JSON in dry-run mode). For non-dry-run,
-			// only print human-readable summary to stderr — the apply result
-			// is the primary output and we must not emit two JSON documents.
 			if opts.DryRun {
+				// Dry-run: plan is the primary output — write to stdout (JSON or text).
 				if outOpts.JSON {
 					raw, _ := json.Marshal(plan)
 					output.PrintSingle(*outOpts, nil, raw)
@@ -77,7 +76,9 @@ Use --decisions to supply a decisions JSON file for full control.`,
 					printPlanSummary(cmd, &plan)
 				}
 			} else {
-				printPlanSummary(cmd, &plan)
+				// Apply path: plan summary goes to stderr so stdout stays clean
+				// for the apply result (especially in --json mode).
+				printPlanSummaryToWriter(cmd.ErrOrStderr(), &plan)
 			}
 
 			// ── Dry-run: clean up, exit ─────────────────────────────
@@ -192,10 +193,6 @@ func buildCLIDecisions(plan *application_context.ImportPlan, opts *importCmdOpti
 		d.ParentGroupID = &pid
 	}
 
-	// Accept unambiguous mapping suggestions. Ambiguous entries (e.g. NoteType
-	// with multiple destination matches) are left without an action so
-	// ValidateForApply rejects the apply, forcing the user to provide a
-	// --decisions file with an explicit choice.
 	allMappings := [][]application_context.MappingEntry{
 		plan.Mappings.Categories,
 		plan.Mappings.NoteTypes,
@@ -205,8 +202,16 @@ func buildCLIDecisions(plan *application_context.ImportPlan, opts *importCmdOpti
 	}
 	for _, entries := range allMappings {
 		for _, e := range entries {
+			// Ambiguous entries always require explicit choice (--decisions file).
 			if e.Ambiguous {
-				// Leave action empty — ValidateForApply will reject the apply.
+				d.MappingActions[e.DecisionKey] = application_context.MappingAction{
+					Include: true,
+					Action:  "",
+				}
+				continue
+			}
+			// --auto-map=false: leave all mappings unresolved, forcing a --decisions file.
+			if !opts.AutoMap {
 				d.MappingActions[e.DecisionKey] = application_context.MappingAction{
 					Include: true,
 					Action:  "",
@@ -287,7 +292,10 @@ func printPartialResult(cmd *cobra.Command, r *application_context.ImportApplyRe
 }
 
 func printPlanSummary(cmd *cobra.Command, plan *application_context.ImportPlan) {
-	w := cmd.OutOrStdout()
+	printPlanSummaryToWriter(cmd.OutOrStdout(), plan)
+}
+
+func printPlanSummaryToWriter(w io.Writer, plan *application_context.ImportPlan) {
 	fmt.Fprintf(w, "Import Plan (schema v%d)\n", plan.SchemaVersion)
 	if plan.SourceInstanceID != "" {
 		fmt.Fprintf(w, "  Source: %s\n", plan.SourceInstanceID)
