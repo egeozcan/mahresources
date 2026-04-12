@@ -60,6 +60,7 @@ type DownloadManager struct {
 	concurrency     int
 	jobRetention    time.Duration
 	exportRetention time.Duration
+	exportSweepFn   func() // called by cleanupOldJobs to sweep expired export tars from disk
 }
 
 // NewDownloadManagerWithConfig constructs a DownloadManager with the given
@@ -102,6 +103,15 @@ func NewDownloadManager(resourceCtx ResourceCreator, timeoutConfig TimeoutConfig
 // ExportRetention returns how long completed group-export tars should
 // linger on disk before the sweep deletes them.
 func (m *DownloadManager) ExportRetention() time.Duration { return m.exportRetention }
+
+// SetExportSweepFn registers a function that cleanupOldJobs will call
+// periodically to sweep expired export tars from disk. Called by
+// application_context during initialization.
+func (m *DownloadManager) SetExportSweepFn(fn func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.exportSweepFn = fn
+}
 
 // generateShortID creates a short random ID for display
 func generateShortID() string {
@@ -451,8 +461,12 @@ func (dm *DownloadManager) Resume(jobID string) error {
 
 	dm.mu.Unlock()
 
-	// Start download in background
-	go dm.processJob(job)
+	// Start download in background — dispatch to the correct processor.
+	if job.runFn != nil {
+		go dm.processGenericJob(job)
+	} else {
+		go dm.processJob(job)
+	}
 
 	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
 
@@ -487,8 +501,12 @@ func (dm *DownloadManager) Retry(jobID string) error {
 
 	dm.mu.Unlock()
 
-	// Start download in background
-	go dm.processJob(job)
+	// Start download in background — dispatch to the correct processor.
+	if job.runFn != nil {
+		go dm.processGenericJob(job)
+	} else {
+		go dm.processJob(job)
+	}
 
 	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
 
@@ -562,10 +580,10 @@ func (dm *DownloadManager) cleanupLoop() {
 }
 
 // cleanupOldJobs removes jobs that completed more than jobRetention ago
-// and paused jobs older than PausedJobRetentionDuration
+// and paused jobs older than PausedJobRetentionDuration. It also calls
+// exportSweepFn (if set) to purge expired export tars from disk.
 func (dm *DownloadManager) cleanupOldJobs() {
 	dm.mu.Lock()
-	defer dm.mu.Unlock()
 
 	retention := dm.jobRetention
 	if retention <= 0 {
@@ -598,6 +616,14 @@ func (dm *DownloadManager) cleanupOldJobs() {
 	}
 
 	dm.jobOrder = newOrder
+	sweepFn := dm.exportSweepFn
+
+	dm.mu.Unlock()
+
+	// Sweep expired export tars from disk outside the lock (involves I/O).
+	if sweepFn != nil {
+		sweepFn()
+	}
 }
 
 // Shutdown gracefully shuts down the download manager

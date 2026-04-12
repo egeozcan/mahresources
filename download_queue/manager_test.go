@@ -5,8 +5,11 @@ import (
 	"errors"
 	"mahresources/models/query_models"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/spf13/afero"
 )
 
 // createTestManager creates a DownloadManager for testing with a small max queue size
@@ -908,4 +911,135 @@ func TestSubmitJob_ProgressSinkBroadcastsToSubscribers(t *testing.T) {
 	}
 	close(releaseMidFlight)
 	<-done
+}
+
+func TestGenericJob_CannotBePaused(t *testing.T) {
+	dm := createTestManager()
+
+	// Submit a generic job that blocks until we release it.
+	block := make(chan struct{})
+	job, err := dm.SubmitJob(JobSourceGroupExport, "running", func(ctx context.Context, j *DownloadJob, p ProgressSink) error {
+		<-block
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("SubmitJob: %v", err)
+	}
+	defer close(block)
+
+	// Wait for the job to start processing.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if job.GetStatus() == JobStatusProcessing {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if job.GetStatus() != JobStatusProcessing {
+		t.Fatalf("job didn't reach processing, status = %s", job.GetStatus())
+	}
+
+	// CanPause should return false for generic jobs.
+	if job.CanPause() {
+		t.Errorf("CanPause() = true for a generic job, want false")
+	}
+
+	// Attempting to pause should fail.
+	if err := dm.Pause(job.ID); err == nil {
+		t.Errorf("Pause() succeeded for a generic job, want error")
+	}
+}
+
+func TestGenericJob_RetryDispatchesToGenericPath(t *testing.T) {
+	dm := createTestManager()
+
+	// Submit a generic job that fails immediately.
+	runCount := int32(0)
+	job, err := dm.SubmitJob(JobSourceGroupExport, "init", func(ctx context.Context, j *DownloadJob, p ProgressSink) error {
+		n := atomic.AddInt32(&runCount, 1)
+		if n == 1 {
+			return errors.New("first attempt fails")
+		}
+		p.SetPhase("retried-success")
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("SubmitJob: %v", err)
+	}
+
+	// Wait for the job to fail.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if job.GetStatus() == JobStatusFailed {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if job.GetStatus() != JobStatusFailed {
+		t.Fatalf("job didn't fail, status = %s", job.GetStatus())
+	}
+
+	// Retry should re-dispatch through processGenericJob, NOT processJob.
+	if err := dm.Retry(job.ID); err != nil {
+		t.Fatalf("Retry: %v", err)
+	}
+
+	// Wait for the retry to complete.
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if job.GetStatus() == JobStatusCompleted {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if job.GetStatus() != JobStatusCompleted {
+		t.Fatalf("retried job didn't complete, status = %s", job.GetStatus())
+	}
+
+	// Verify runFn was called twice (initial + retry).
+	if got := atomic.LoadInt32(&runCount); got != 2 {
+		t.Errorf("runFn called %d times, want 2", got)
+	}
+}
+
+// TestDownloadManager_PeriodicSweepRemovesExpiredTars verifies that
+// cleanupOldJobs calls the exportSweepFn when set, so expired export tars are
+// purged periodically and not only at startup.
+func TestDownloadManager_PeriodicSweepRemovesExpiredTars(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	if err := fs.MkdirAll("_exports", 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Write an expired tar (backdated by 48 h).
+	if err := afero.WriteFile(fs, "_exports/old.tar", []byte("old"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := fs.Chtimes("_exports/old.tar", time.Now().Add(-48*time.Hour), time.Now().Add(-48*time.Hour)); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	// Write a fresh tar.
+	if err := afero.WriteFile(fs, "_exports/fresh.tar", []byte("new"), 0644); err != nil {
+		t.Fatalf("write fresh: %v", err)
+	}
+
+	// Create a manager with an exportSweepFn wired in.
+	dm := createTestManager()
+	dm.exportRetention = 24 * time.Hour
+	dm.SetExportSweepFn(func() {
+		SweepOrphanedExports(fs, "_exports", dm.exportRetention) //nolint:errcheck
+	})
+
+	// Trigger cleanup manually (simulates the periodic loop firing).
+	dm.cleanupOldJobs()
+
+	// The expired tar must be gone.
+	if exists, _ := afero.Exists(fs, "_exports/old.tar"); exists {
+		t.Errorf("expired tar still exists after cleanupOldJobs")
+	}
+	// The fresh tar must remain.
+	if exists, _ := afero.Exists(fs, "_exports/fresh.tar"); !exists {
+		t.Errorf("fresh tar was removed by cleanupOldJobs")
+	}
 }

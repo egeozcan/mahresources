@@ -162,10 +162,16 @@ func (j *DownloadJob) IsActive() bool {
 	return status == JobStatusPending || status == JobStatusDownloading || status == JobStatusProcessing
 }
 
-// CanPause returns true if the job can be paused
+// CanPause returns true if the job can be paused.
+// Generic jobs (runFn != nil, e.g. group-export) can never be paused because
+// their runFn is a streaming operation that can't be suspended and resumed.
 func (j *DownloadJob) CanPause() bool {
-	status := j.GetStatus()
-	return status == JobStatusPending || status == JobStatusDownloading
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	if j.runFn != nil {
+		return false
+	}
+	return j.Status == JobStatusPending || j.Status == JobStatusDownloading
 }
 
 // CanResume returns true if the job can be resumed
