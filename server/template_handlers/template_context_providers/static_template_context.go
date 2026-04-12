@@ -92,6 +92,14 @@ var baseTemplateContext = pongo2.Context{
 			Url:  "/noteTypes",
 		},
 		{
+			Name: "Export",
+			Url:  "/admin/export",
+		},
+		{
+			Name: "Import",
+			Url:  "/admin/import",
+		},
+		{
 			Name: "Logs",
 			Url:  "/logs",
 		},
