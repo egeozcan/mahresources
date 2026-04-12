@@ -2328,6 +2328,18 @@ paths:
             summary: Estimate the size and shape of a proposed group export
             tags:
                 - exports
+    /v1/groups/import/parse:
+        post:
+            description: Accepts a multipart file upload, stages the tar, and enqueues a parse job.
+            operationId: parseGroupImport
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Upload an import tar and start parsing
+            tags:
+                - imports
     /v1/groups/merge:
         post:
             operationId: mergeGroups
@@ -2530,6 +2542,42 @@ paths:
             tags:
                 - groups
                 - timeline
+    /v1/imports/{jobId}:
+        delete:
+            description: Cancels any running parse/apply job and deletes the staged tar and plan files.
+            operationId: deleteGroupImport
+            parameters:
+                - description: The job ID to clean up
+                  in: path
+                  name: jobId
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: Successful response
+            summary: Cancel and clean up an import
+            tags:
+                - imports
+    /v1/imports/{jobId}/plan:
+        get:
+            description: Returns the ImportPlan JSON for a completed parse job.
+            operationId: getImportPlan
+            parameters:
+                - description: The job ID returned by parseGroupImport
+                  in: path
+                  name: jobId
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Get the parsed import plan
+            tags:
+                - imports
     /v1/jobs/action/job:
         get:
             operationId: getActionJob
@@ -5707,6 +5755,8 @@ tags:
       name: exports
     - description: Operations related to groups
       name: groups
+    - description: Operations related to imports
+      name: imports
     - description: Operations related to jobs
       name: jobs
     - description: Operations related to logs

@@ -97,6 +97,7 @@ var templates = map[string]templateInformation{
 
 	"/admin/overview": {template_context_providers.AdminOverviewContextProvider, "adminOverview.tpl", http.MethodGet},
 	"/admin/export":   {template_context_providers.AdminExportContextProvider, "adminExport.tpl", http.MethodGet},
+	"/admin/import":   {template_context_providers.AdminImportContextProvider, "adminImport.tpl", http.MethodGet},
 
 	"/mrql": {template_context_providers.MRQLContextProvider, "mrql.tpl", http.MethodGet},
 }
@@ -523,6 +524,11 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/groups/export/estimate").HandlerFunc(api_handlers.GetExportEstimateHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/groups/export").HandlerFunc(api_handlers.GetExportSubmitHandler(appContext, appContext.GetDefaultFs()))
 	router.Methods(http.MethodGet).Path("/v1/exports/{jobId}/download").HandlerFunc(api_handlers.GetExportDownloadHandler(appContext, appContext.GetDefaultFs()))
+
+	// Group imports
+	router.Methods(http.MethodPost).Path("/v1/groups/import/parse").HandlerFunc(api_handlers.GetImportParseHandler(appContext, appContext.Config.MaxImportSize))
+	router.Methods(http.MethodGet).Path("/v1/imports/{jobId}/plan").HandlerFunc(api_handlers.GetImportPlanHandler(appContext))
+	router.Methods(http.MethodDelete).Path("/v1/imports/{jobId}").HandlerFunc(api_handlers.GetImportDeleteHandler(appContext))
 
 	// Plugin action routes
 	router.Methods(http.MethodGet).Path("/v1/plugin/actions").HandlerFunc(api_handlers.GetPluginActionsHandler(appContext))
