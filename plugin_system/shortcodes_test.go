@@ -312,3 +312,45 @@ func TestRenderShortcodeBlockContext(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, `<div class="block">hello world</div>`, blockResult)
 }
+
+func TestDocsPreviewBlockShortcodeNoNestedExpansion(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "sc-preview", `
+		plugin = { name = "sc-preview", version = "1.0" }
+		function init()
+			mah.shortcode({
+				name = "echo",
+				label = "Echo",
+				description = "Echoes inner content",
+				render = function(ctx)
+					return ctx.inner_content or ""
+				end,
+				examples = {
+					{
+						title = "With nested shortcode",
+						code = '[plugin:sc-preview:echo]has [meta path="x"] inside[/plugin:sc-preview:echo]',
+						example_data = { x = "val" },
+					},
+				},
+			})
+		end
+	`)
+
+	pm, err := NewPluginManager(dir)
+	require.NoError(t, err)
+	defer pm.Close()
+
+	require.NoError(t, pm.EnablePlugin("sc-preview"))
+
+	// Docs preview: nested shortcodes should render as literal text, NOT expanded
+	pm.mu.RLock()
+	items := pm.collectDocItems("sc-preview")
+	pm.mu.RUnlock()
+
+	require.Len(t, items, 1)
+	require.Len(t, items[0].Examples, 1)
+
+	preview := renderExamplePreview(pm, "sc-preview", "plugin:sc-preview:echo", items[0].Examples[0])
+	assert.Contains(t, preview, `[meta path="x"]`)
+	assert.NotContains(t, preview, "<meta-shortcode")
+}

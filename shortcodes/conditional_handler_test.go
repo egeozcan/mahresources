@@ -200,15 +200,31 @@ func TestConditionalElseBranchTrue(t *testing.T) {
 	assert.Equal(t, "yes", result)
 }
 
-func TestConditionalSelfClosingReturnsEmpty(t *testing.T) {
+func TestConditionalSelfClosingPreservesRaw(t *testing.T) {
 	sc := Shortcode{
 		Name:    "conditional",
 		Attrs:   map[string]string{"path": "status", "eq": "active"},
+		Raw:     `[conditional path="status" eq="active"]`,
 		IsBlock: false, // self-closing: no IsBlock
 	}
 	ctx := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"status": "active"})}
 	result := RenderConditionalShortcode(context.Background(), sc, ctx, nil, nil, 0)
-	assert.Equal(t, "", result)
+	// Unmatched conditional must NOT silently eat the tag — preserve it as literal text
+	assert.Equal(t, `[conditional path="status" eq="active"]`, result)
+}
+
+func TestProcessUnmatchedConditionalPreservesContent(t *testing.T) {
+	ctx := MetaShortcodeContext{
+		EntityType: "group",
+		EntityID:   1,
+		Meta:       makeMetaJSON(t, map[string]any{"status": "inactive"}),
+	}
+	// Unmatched [conditional] without closing tag — must not expose trailing content
+	input := `[conditional path="status" eq="active"]SECRET`
+	result := Process(context.Background(), input, ctx, nil, nil)
+	assert.Contains(t, result, `[conditional path="status" eq="active"]`)
+	assert.Contains(t, result, "SECRET")
+	assert.Equal(t, input, result) // entire input preserved as-is
 }
 
 func TestConditionalFieldSource(t *testing.T) {

@@ -132,7 +132,7 @@ func toFloat(v any) (float64, bool) {
 
 func RenderConditionalShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcodeContext, renderer PluginRenderer, executor QueryExecutor, depth int) string {
 	if !sc.IsBlock {
-		return ""
+		return sc.Raw
 	}
 	value, err := resolveConditionalValue(reqCtx, sc, ctx, executor)
 	if err != nil {
