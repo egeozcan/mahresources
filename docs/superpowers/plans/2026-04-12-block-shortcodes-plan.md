@@ -415,6 +415,15 @@ func TestSplitElseSelfClosingSameNameAsLaterBlock(t *testing.T) {
 	assert.Equal(t, "fallback", elseBranch)
 }
 
+func TestSplitElseNestedBlockStartsWithElse(t *testing.T) {
+	// A nested block whose inner content starts immediately with [else].
+	// The outer [else] must be the split point, not the nested one.
+	input := `[conditional path="a" eq="1"][else]nested-else[/conditional][else]outer-else`
+	ifBranch, elseBranch := SplitElse(input)
+	assert.Equal(t, `[conditional path="a" eq="1"][else]nested-else[/conditional]`, ifBranch)
+	assert.Equal(t, "outer-else", elseBranch)
+}
+
 func TestSplitElseNestedMultipleLevels(t *testing.T) {
 	// Two levels of nesting — [else] at depth 0 is the split point
 	input := `before[conditional path="a" eq="1"][conditional path="b" eq="2"]deep[else]deep-else[/conditional][else]mid-else[/conditional][else]top-else`
@@ -473,7 +482,7 @@ func SplitElse(content string) (string, string) {
 				// InnerContent ends just before the closing tag.
 				closingTag := "[/" + b.Name + "]"
 				innerEnd := b.End - len(closingTag)
-				if i > innerStart && i < innerEnd {
+				if i >= innerStart && i < innerEnd {
 					insideBlock = true
 					break
 				}
