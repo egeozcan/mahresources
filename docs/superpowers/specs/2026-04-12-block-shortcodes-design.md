@@ -57,13 +57,13 @@ The `ElseContent` field is removed from the `Shortcode` struct — it is not nee
 `processWithDepth` switches to `ParseWithBlocks()`:
 
 - **Self-closing shortcodes**: behavior identical to today.
-- **Block shortcodes**: the handler receives raw `InnerContent` and `ElseContent`. Handlers that need expansion call `processWithDepth` on the branch they select. Handlers that don't care about branching can expand `InnerContent` unconditionally.
+- **Block shortcodes**: the handler receives raw `InnerContent` (the full text between `[name]` and `[/name]`). Handlers that need branching (like `conditional`) call `splitElse(InnerContent)` to get `(ifBranch, elseBranch)`, then expand only the selected branch via `processWithDepth`. Handlers that don't care about branching expand `InnerContent` unconditionally.
 
-This means the conditional handler evaluates its condition first, then only expands the taken branch. Shortcodes in the untaken branch are never executed — no wasted MRQL queries or plugin side effects.
+This means the conditional handler evaluates its condition first, splits on `[else]`, then only expands the taken branch. Shortcodes in the untaken branch are never executed — no wasted MRQL queries or plugin side effects.
 
 ### Plugin Renderer
 
-No signature change needed. `PluginRenderer` already receives the full `Shortcode` struct, which now includes `InnerContent` and `IsBlock`. On the Lua side, the context table gains an `inner_content` string field (empty for self-closing shortcodes).
+No signature change needed. `PluginRenderer` already receives the full `Shortcode` struct, which now includes `InnerContent` and `IsBlock`. On the Lua side, the context table gains two fields: `inner_content` (string, empty for self-closing) and `is_block` (boolean). The `is_block` field lets plugins distinguish a self-closing `[name /]` from an explicitly empty block `[name][/name]`.
 
 Plugin block shortcodes receive raw (unexpanded) inner content. The processor applies a post-plugin expansion pass: after the plugin renderer returns, if the shortcode was a block (`IsBlock == true`), the processor runs `processWithDepth` on the plugin's output to expand any shortcodes the plugin left intact or injected. This mirrors how MRQL already gets a recursive expansion pass via `processWithDepth` in `RenderMRQLShortcode`. If a plugin wants to suppress expansion (treating inner content as a literal template), it can HTML-escape the bracket syntax in its output.
 
@@ -96,7 +96,7 @@ The existing `maxRecursionDepth` (currently 2) is bumped to 10 to accommodate re
 1. **Resolve value**: three condition sources, checked in order: `mrql` > `field` > `path`.
    - **`path`**: uses a new `extractRawValueAtPath` helper that navigates the meta JSON by dot-notation path and returns the raw `any` value (string, float64, bool, nil) — not JSON-encoded text. The existing `extractValueAtPath` returns JSON-encoded strings (e.g., `"active"` with surrounding quotes) which is correct for the `[meta]` shortcode's data attributes but wrong for conditional comparisons.
    - **`field`**: reads an entity struct field by name via reflection (reuses the same approach as `RenderPropertyShortcode`). e.g., `field="Name"` reads the entity's `Name` field. Returns the raw Go value.
-   - **`mrql`** (+ optional `scope`, `aggregate`): runs an MRQL query via the `QueryExecutor` callback (already threaded through `processWithDepth`). For flat results, the value is the item count. For aggregated results, the value is the first row's column named by `aggregate`. `scope` restricts results to a group subtree (same semantics as `[mrql scope="..."]`).
+   - **`mrql`** (+ optional `scope`, `aggregate`): runs an MRQL query via the `QueryExecutor` callback (already threaded through `processWithDepth`). Scalar extraction by result mode: **flat** — item count; **aggregated** — first row's column named by `aggregate` (error if `aggregate` not provided); **bucketed** — number of groups. `scope` restricts results to a group subtree (same semantics as `[mrql scope="..."]`). This matches the current plugin's `resolve_scalar_from_mrql` behavior exactly.
 2. **Evaluate condition**: checks one operator attribute against the resolved raw value. Strings are compared directly, numbers via `strconv.ParseFloat`.
 3. **Select branch**: the handler calls `splitElse(InnerContent)` to get `(ifBranch, elseBranch)`. If condition is true, select `ifBranch`. If false, select `elseBranch` (may be empty).
 4. **Expand and return**: the selected branch is recursively processed through `processWithDepth` to expand nested shortcodes. The unselected branch is never processed — no wasted work or side effects.
