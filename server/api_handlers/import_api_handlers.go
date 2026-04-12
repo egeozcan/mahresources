@@ -110,15 +110,17 @@ func buildImportParseRunFn(ctx GroupImporter, stagingTarPath string) download_qu
 	return func(jobCtx context.Context, j *download_queue.DownloadJob, sink download_queue.ProgressSink) error {
 		sink.SetPhase("parsing")
 
-		// Rename the staging tar to _imports/<jobID>.tar so that
-		// DeleteImportFiles can always find it by job ID. This runs
-		// inside the worker (not the handler) so it also covers the case
-		// where the job sat in the queue before being dispatched.
+		// Normalize to _imports/<jobID>.tar so DeleteImportFiles can find
+		// it by job ID. On first run the file is at the staging path; on
+		// retry it is already at the canonical path (the first attempt
+		// renamed it), so skip the rename if the staging path is gone.
 		fs := ctx.GetDefaultFs()
 		canonicalPath := filepath.Join("_imports", j.ID+".tar")
 		if stagingTarPath != canonicalPath {
-			if err := fs.Rename(stagingTarPath, canonicalPath); err != nil {
-				return fmt.Errorf("rename staged tar: %w", err)
+			if exists, _ := afero.Exists(fs, stagingTarPath); exists {
+				if err := fs.Rename(stagingTarPath, canonicalPath); err != nil {
+					return fmt.Errorf("rename staged tar: %w", err)
+				}
 			}
 		}
 
