@@ -159,7 +159,8 @@ All condition sources are preserved. The block syntax replaces the content-deliv
 The plugin docs preview pipeline (`renderShortcodeForDocs` in `plugin_system/shortcodes.go`) currently parses examples using the self-closing-only path. This needs updating:
 
 - **`plugin_system/shortcode_docs.go`** (or wherever example parsing happens): switch to `ParseWithBlocks()` so block shortcode examples preview correctly.
-- **`plugin_system/shortcodes.go` `renderShortcodeForDocs`**: pass `InnerContent` and `IsBlock` through to the Lua context table, same as the runtime path.
+- **`plugin_system/shortcodes.go` `renderShortcodeForDocs`**: pass `inner_content` and `is_block` through to the Lua context table, same as the runtime path.
+- **Post-render expansion**: docs preview does not support nested shortcode expansion. The preview environment lacks the full `MetaShortcodeContext` and `QueryExecutor` needed for built-in shortcode expansion, and the preview is scoped to a single plugin's shortcode. This is an acceptable limitation — docs examples show the plugin's own output, not a full rendering pipeline. If a plugin block shortcode returns raw nested shortcodes in its preview, they will appear as literal text.
 - Add test coverage for a plugin block shortcode example rendering in docs preview.
 
 ### Downstream Updates from Plugin Removal
@@ -169,3 +170,11 @@ Removing `data-views:conditional` requires updates in:
 - **`e2e/test-plugins/data-views/plugin.lua`**: remove the `conditional` shortcode registration (line 1684), `render_conditional` function (line 1363), and the help text reference (line 27).
 - **`e2e/tests/plugins/plugin-data-views.spec.ts`**: remove or rewrite the `conditional` test (line 160) and the shortcode reference in group creation (line 28). The test should exercise the built-in `[conditional]` instead.
 - **`plugins/data-views/plugin.lua`**: remove `render_conditional` (line 1694), `mah.shortcode` registration (line 2569), and examples (lines 2591-2595).
+
+### Docs Site
+
+Update the docs site (`docs-site/`) to document:
+
+- Block shortcode syntax (`[name]...[/name]`) and nesting
+- The built-in `[conditional]` shortcode with all condition sources (`path`, `field`, `mrql`), operators, and `[else]` support
+- Examples showing block shortcodes with nested content and conditionals
