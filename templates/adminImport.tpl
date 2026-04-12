@@ -301,18 +301,135 @@
         </div>
       </section>
 
-      <!-- Apply Section (placeholder for Plan C) -->
+      <!-- Apply Section -->
       <section aria-label="Apply" class="rounded-lg bg-white border border-stone-200 p-5 space-y-3" data-testid="import-apply">
         <h2 class="text-lg font-medium text-stone-800">Apply Import</h2>
-        <p class="text-sm text-stone-500 mb-3">Review your decisions above, then apply.</p>
-        <button disabled
-                class="px-4 py-2 bg-emerald-700 text-white rounded text-sm font-medium opacity-50 cursor-not-allowed"
-                data-testid="import-apply-button">
-          Apply (coming in next update)
-        </button>
-        <p class="text-xs text-stone-400 mt-2">
-          The apply endpoint will be wired in Plan C. Your decisions above are captured and will be sent as the ImportDecisions payload.
-        </p>
+        <p x-show="!applyJobId && !applyResult" class="text-sm text-stone-500 mb-3">Review your decisions above, then apply.</p>
+
+        <!-- Apply button -->
+        <div x-show="!applyJobId && !applyResult">
+          <button @click="apply()"
+                  :disabled="hasIncompleteDecisions() || applying"
+                  class="px-4 py-2 bg-emerald-700 text-white rounded hover:bg-emerald-800 disabled:opacity-50 text-sm font-medium"
+                  data-testid="import-apply-button">
+            <span x-show="!applying">Apply Import</span>
+            <span x-show="applying">Submitting...</span>
+          </button>
+          <p x-show="hasIncompleteDecisions()" class="text-xs text-amber-600 mt-2">
+            Resolve all decisions above before applying.
+          </p>
+        </div>
+
+        <!-- Progress display -->
+        <div x-show="applyJobId && applying" class="space-y-2">
+          <div class="flex items-center gap-3">
+            <div class="text-sm text-stone-600">
+              Phase: <span class="font-medium" x-text="applyPhase || 'queued'"></span>
+            </div>
+            <div x-show="applyJob?.status === 'processing'" class="flex-1 bg-stone-100 rounded-full h-2">
+              <div class="bg-emerald-600 h-2 rounded-full transition-all" :style="'width:' + Math.max(5, (applyJob?.progressPercent || 0)) + '%'"></div>
+            </div>
+          </div>
+          <button @click="cancelApply()"
+                  class="px-3 py-1.5 bg-stone-200 text-stone-700 rounded hover:bg-stone-300 text-sm">
+            Cancel
+          </button>
+        </div>
+
+        <!-- Success result -->
+        <template x-if="applyResult && !error">
+          <div class="space-y-3" data-testid="import-apply-result">
+            <div class="flex items-center gap-2 text-emerald-700">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+              <span class="font-medium">Import completed</span>
+            </div>
+            <dl class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+              <dt class="text-stone-500">Groups created</dt>
+              <dd x-text="applyResult.created_groups"></dd>
+              <dt class="text-stone-500">Resources created</dt>
+              <dd x-text="applyResult.created_resources"></dd>
+              <dt class="text-stone-500">Notes created</dt>
+              <dd x-text="applyResult.created_notes"></dd>
+              <dt class="text-stone-500">Skipped (hash match)</dt>
+              <dd x-text="applyResult.skipped_by_hash"></dd>
+              <dt class="text-stone-500">Skipped (missing bytes)</dt>
+              <dd x-text="applyResult.skipped_missing_bytes"></dd>
+              <dt class="text-stone-500">Categories created</dt>
+              <dd x-text="applyResult.created_categories"></dd>
+              <dt class="text-stone-500">Tags created</dt>
+              <dd x-text="applyResult.created_tags"></dd>
+              <dt class="text-stone-500">Series created</dt>
+              <dd x-text="applyResult.created_series"></dd>
+              <dt class="text-stone-500">Series reused</dt>
+              <dd x-text="applyResult.reused_series"></dd>
+              <dt class="text-stone-500">Previews created</dt>
+              <dd x-text="applyResult.created_previews"></dd>
+              <dt class="text-stone-500">Versions created</dt>
+              <dd x-text="applyResult.created_versions"></dd>
+            </dl>
+            <template x-if="applyResult.warnings?.length > 0">
+              <div class="rounded bg-amber-50 border border-amber-200 p-3">
+                <p class="text-sm font-medium text-amber-800 mb-1">Warnings</p>
+                <ul class="list-disc list-inside text-xs text-amber-700 space-y-0.5">
+                  <template x-for="w in applyResult.warnings" :key="w">
+                    <li x-text="w"></li>
+                  </template>
+                </ul>
+              </div>
+            </template>
+            <template x-if="applyResult.created_group_ids?.length > 0">
+              <div>
+                <p class="text-sm font-medium text-stone-700 mb-1">Created Groups</p>
+                <div class="flex flex-wrap gap-1">
+                  <template x-for="gid in applyResult.created_group_ids" :key="gid">
+                    <a :href="'/group?id=' + gid" class="text-xs text-emerald-700 underline hover:text-emerald-900" x-text="'#' + gid"></a>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+
+        <!-- Failure with partial results -->
+        <template x-if="applyResult && error">
+          <div class="space-y-3" data-testid="import-apply-error">
+            <div class="flex items-center gap-2 text-red-700">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+              <span class="font-medium">Import failed (partial results below)</span>
+            </div>
+            <p class="text-sm text-red-600" x-text="error"></p>
+            <template x-if="applyResult.created_group_ids?.length > 0">
+              <div>
+                <p class="text-sm font-medium text-stone-700 mb-1">Created Groups (may need cleanup)</p>
+                <div class="flex flex-wrap gap-1">
+                  <template x-for="gid in applyResult.created_group_ids" :key="gid">
+                    <a :href="'/group?id=' + gid" class="text-xs text-red-700 underline hover:text-red-900" x-text="'#' + gid"></a>
+                  </template>
+                </div>
+              </div>
+            </template>
+            <template x-if="applyResult.created_resource_ids?.length > 0">
+              <div>
+                <p class="text-sm font-medium text-stone-700 mb-1">Created Resources (may need cleanup)</p>
+                <div class="flex flex-wrap gap-1">
+                  <template x-for="rid in applyResult.created_resource_ids" :key="rid">
+                    <a :href="'/resource?id=' + rid" class="text-xs text-red-700 underline hover:text-red-900" x-text="'#' + rid"></a>
+                  </template>
+                </div>
+              </div>
+            </template>
+            <template x-if="applyResult.created_note_ids?.length > 0">
+              <div>
+                <p class="text-sm font-medium text-stone-700 mb-1">Created Notes (may need cleanup)</p>
+                <div class="flex flex-wrap gap-1">
+                  <template x-for="nid in applyResult.created_note_ids" :key="nid">
+                    <a :href="'/note?id=' + nid" class="text-xs text-red-700 underline hover:text-red-900" x-text="'#' + nid"></a>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
       </section>
     </div>
   </template>

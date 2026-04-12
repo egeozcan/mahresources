@@ -24,11 +24,20 @@ export function adminImport() {
     parentGroupName: '',
     flattenedItems: [],  // pre-computed flat list with depth for rendering
 
+    // Apply state
+    applying: false,
+    applyJobId: null,
+    applyJob: null,
+    applyPhase: '',
+    applyResult: null,
+    applyEventSource: null,
+
     destroy() {
       if (this.eventSource) {
         this.eventSource.close();
         this.eventSource = null;
       }
+      this.closeApplySSE();
     },
 
     async upload() {
@@ -432,6 +441,95 @@ export function adminImport() {
       if (!this.job) return;
       try {
         await fetch('/v1/jobs/cancel?id=' + encodeURIComponent(this.job.id), { method: 'POST' });
+      } catch (e) { /* ignore */ }
+    },
+
+    async apply() {
+      if (this.hasIncompleteDecisions() || this.applying) return;
+      this.applying = true;
+      this.applyResult = null;
+      this.applyJob = null;
+      this.applyPhase = '';
+      this.error = null;
+
+      try {
+        const resp = await fetch(`/v1/imports/${encodeURIComponent(this.jobId)}/apply`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.decisions),
+        });
+        if (!resp.ok) {
+          const text = await resp.text();
+          throw new Error(text || `HTTP ${resp.status}`);
+        }
+        const data = await resp.json();
+        this.applyJobId = data.jobId;
+        this.subscribeApplyProgress(data.jobId);
+      } catch (err) {
+        this.error = err.message;
+        this.applying = false;
+      }
+    },
+
+    subscribeApplyProgress(jobId) {
+      this.closeApplySSE();
+      this.applyEventSource = new EventSource('/v1/jobs/events');
+
+      const handleJobPayload = (payload) => {
+        if (!payload.job || payload.job.id !== jobId) return;
+        this.applyJob = payload.job;
+        this.applyPhase = payload.job.phase || '';
+        if (payload.job.status === 'completed') {
+          this.applying = false;
+          this.fetchApplyResult();
+          this.closeApplySSE();
+        } else if (payload.job.status === 'failed' || payload.job.status === 'cancelled') {
+          this.applying = false;
+          this.error = payload.job.error || `Apply job ${payload.job.status}`;
+          this.fetchApplyResult(); // partial-failure may have result
+          this.closeApplySSE();
+        }
+      };
+
+      const handler = (event) => {
+        try {
+          handleJobPayload(JSON.parse(event.data));
+        } catch (e) { /* ignore parse errors */ }
+      };
+
+      this.applyEventSource.addEventListener('init', (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          const jobs = payload.jobs || [];
+          const found = jobs.find(j => j.id === jobId);
+          if (found) handleJobPayload({ job: found });
+        } catch (e) { /* ignore parse errors */ }
+      });
+
+      this.applyEventSource.addEventListener('added', handler);
+      this.applyEventSource.addEventListener('updated', handler);
+      this.applyEventSource.addEventListener('removed', handler);
+    },
+
+    async fetchApplyResult() {
+      try {
+        const resp = await fetch(`/v1/imports/${encodeURIComponent(this.jobId)}/result`);
+        if (!resp.ok) return; // 404 means no result yet
+        this.applyResult = await resp.json();
+      } catch (e) { /* ignore */ }
+    },
+
+    closeApplySSE() {
+      if (this.applyEventSource) {
+        this.applyEventSource.close();
+        this.applyEventSource = null;
+      }
+    },
+
+    async cancelApply() {
+      if (!this.applyJobId) return;
+      try {
+        await fetch('/v1/jobs/cancel?id=' + encodeURIComponent(this.applyJobId), { method: 'POST' });
       } catch (e) { /* ignore */ }
     },
   };
