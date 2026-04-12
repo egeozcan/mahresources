@@ -243,15 +243,15 @@ func TestParseImport_BasicPlan(t *testing.T) {
 func TestParseImport_AmbiguousNoteType(t *testing.T) {
 	ctx := createTestContext(t)
 
-	// Seed destination DB with TWO NoteTypes named "Diary"
-	if err := ctx.db.Create(&models.NoteType{Name: "Diary"}).Error; err != nil {
+	// Seed destination DB with TWO NoteTypes named "ParseTestDiary"
+	if err := ctx.db.Create(&models.NoteType{Name: "ParseTestDiary"}).Error; err != nil {
 		t.Fatalf("create note type 1: %v", err)
 	}
-	if err := ctx.db.Create(&models.NoteType{Name: "Diary"}).Error; err != nil {
+	if err := ctx.db.Create(&models.NoteType{Name: "ParseTestDiary"}).Error; err != nil {
 		t.Fatalf("create note type 2: %v", err)
 	}
 
-	// Build a tar with a NoteType schema def named "Diary"
+	// Build a tar with a NoteType schema def named "ParseTestDiary"
 	var buf bytes.Buffer
 	w, err := archive.NewWriter(&buf, false)
 	if err != nil {
@@ -275,7 +275,7 @@ func TestParseImport_AmbiguousNoteType(t *testing.T) {
 	}
 
 	err = w.WriteNoteTypeDefs([]archive.NoteTypeDef{
-		{ExportID: "nt0001", SourceID: 1, Name: "Diary"},
+		{ExportID: "nt0001", SourceID: 1, Name: "ParseTestDiary"},
 	})
 	if err != nil {
 		t.Fatalf("WriteNoteTypeDefs: %v", err)

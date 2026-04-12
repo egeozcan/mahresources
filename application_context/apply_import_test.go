@@ -619,8 +619,8 @@ func TestApplyImport_SeriesSlugPreserved(t *testing.T) {
 func TestApplyImport_AmbiguousNoteTypeRequiresDecision(t *testing.T) {
 	srcCtx := createTestContext(t)
 
-	// Create a NoteType "Diary" and a note using it.
-	nt := models.NoteType{Name: "Diary"}
+	// Create a NoteType "ApplyTestDiary" and a note using it.
+	nt := models.NoteType{Name: "ApplyTestDiary"}
 	if err := srcCtx.db.Create(&nt).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -643,8 +643,8 @@ func TestApplyImport_AmbiguousNoteTypeRequiresDecision(t *testing.T) {
 	}
 	tarBytes := tarBuf.Bytes()
 
-	// In shared DB, create a SECOND NoteType "Diary" to trigger ambiguity.
-	nt2 := models.NoteType{Name: "Diary"}
+	// In shared DB, create a SECOND NoteType "ApplyTestDiary" to trigger ambiguity.
+	nt2 := models.NoteType{Name: "ApplyTestDiary"}
 	if err := srcCtx.db.Create(&nt2).Error; err != nil {
 		t.Fatal(err)
 	}

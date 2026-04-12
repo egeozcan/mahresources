@@ -9,41 +9,46 @@ import (
 func TestGetGroupTreeRoots(t *testing.T) {
 	ctx := createTestContext(t)
 
-	// Create root groups (no owner)
-	root1 := &models.Group{Name: "Root A"}
-	root2 := &models.Group{Name: "Root B"}
+	// Use unique names to avoid collision with other tests via shared-cache SQLite.
+	root1 := &models.Group{Name: "TreeTestRootA"}
+	root2 := &models.Group{Name: "TreeTestRootB"}
 	ctx.db.Create(root1)
 	ctx.db.Create(root2)
 
 	// Create a child group under root1
-	child := &models.Group{Name: "Child of A", OwnerId: &root1.ID}
+	child := &models.Group{Name: "TreeTestChildOfA", OwnerId: &root1.ID}
 	ctx.db.Create(child)
 
-	roots, err := ctx.GetGroupTreeRoots(50)
+	roots, err := ctx.GetGroupTreeRoots(200)
 	if err != nil {
 		t.Fatalf("GetGroupTreeRoots() error: %v", err)
 	}
 
-	if len(roots) != 2 {
-		t.Fatalf("expected 2 roots, got %d", len(roots))
+	// Find our specific roots by name (shared DB may contain other tests' groups)
+	if len(roots) < 2 {
+		t.Fatalf("expected at least 2 roots, got %d", len(roots))
 	}
 
-	// Results are ordered by name
-	if roots[0].Name != "Root A" {
-		t.Errorf("first root name = %q, want %q", roots[0].Name, "Root A")
+	var foundA, foundB bool
+	for _, r := range roots {
+		switch r.Name {
+		case "TreeTestRootA":
+			foundA = true
+			if r.ChildCount != 1 {
+				t.Errorf("TreeTestRootA childCount = %d, want 1", r.ChildCount)
+			}
+		case "TreeTestRootB":
+			foundB = true
+			if r.ChildCount != 0 {
+				t.Errorf("TreeTestRootB childCount = %d, want 0", r.ChildCount)
+			}
+		}
 	}
-	if roots[1].Name != "Root B" {
-		t.Errorf("second root name = %q, want %q", roots[1].Name, "Root B")
+	if !foundA {
+		t.Error("TreeTestRootA not found in roots")
 	}
-
-	// Root A should have 1 child
-	if roots[0].ChildCount != 1 {
-		t.Errorf("Root A childCount = %d, want 1", roots[0].ChildCount)
-	}
-
-	// Root B should have 0 children
-	if roots[1].ChildCount != 0 {
-		t.Errorf("Root B childCount = %d, want 0", roots[1].ChildCount)
+	if !foundB {
+		t.Error("TreeTestRootB not found in roots")
 	}
 }
 
