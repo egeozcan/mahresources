@@ -644,21 +644,23 @@ func (ctx *MahresourcesContext) StreamExport(
 		if err := w.WriteResource(p); err != nil {
 			return fmt.Errorf("write resource %d: %w", id, err)
 		}
-		// Write blob if requested and available.
+		// F1: write current-version blob if requested and available.
 		if req.Fidelity.ResourceBlobs && blobInfo != nil && blobInfo.hash != "" {
 			if err := ctx.writeResourceBlob(w, blobInfo, plan, report); err != nil {
 				return fmt.Errorf("write blob for resource %d: %w", id, err)
 			}
-			// C4: write historical-version blobs (only when both F2+F1 are on).
-			if req.Fidelity.ResourceVersions {
-				for idx := range blobInfo.versions {
-					vinfo := &blobInfo.versions[idx]
-					if vinfo.hash == "" || w.HasBlob(vinfo.hash) {
-						continue
-					}
-					if err := ctx.writeResourceBlob(w, vinfo, plan, report); err != nil {
-						return fmt.Errorf("write version blob for resource %d: %w", id, err)
-					}
+		}
+		// C4/F2: write historical-version blobs — independent of whether the
+		// current blob is present. Even when the current file is missing,
+		// older version files may still be intact.
+		if req.Fidelity.ResourceBlobs && req.Fidelity.ResourceVersions && blobInfo != nil {
+			for idx := range blobInfo.versions {
+				vinfo := &blobInfo.versions[idx]
+				if vinfo.hash == "" || w.HasBlob(vinfo.hash) {
+					continue
+				}
+				if err := ctx.writeResourceBlob(w, vinfo, plan, report); err != nil {
+					return fmt.Errorf("write version blob for resource %d: %w", id, err)
 				}
 			}
 		}
@@ -1349,6 +1351,9 @@ func (ctx *MahresourcesContext) loadResourcePayload(
 		if plan.missingBlobs != nil && plan.missingBlobs[r.Hash] {
 			p.BlobMissing = true
 			// Don't set BlobRef — the blob isn't there.
+			// Still create a blobReadInfo holder so version blobs can be
+			// accumulated below even when the current file is missing.
+			blob = &blobReadInfo{resourceExportID: exportID}
 		} else {
 			p.BlobRef = r.Hash
 			blob = &blobReadInfo{

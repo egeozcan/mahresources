@@ -635,3 +635,86 @@ func TestStreamExport_PreviewsRoundTrip(t *testing.T) {
 		t.Fatalf("preview bytes = %q", data)
 	}
 }
+
+// keys returns the map keys as a sorted slice — used in test failure messages.
+func keys[K comparable, V any](m map[K]V) []K {
+	out := make([]K, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+func TestStreamExport_VersionBlobsWrittenEvenWhenCurrentBlobMissing(t *testing.T) {
+	ctx := createTestContext(t)
+	root := mustCreateGroup(t, ctx, "Root", nil)
+	res := mustCreateResource(t, ctx, "img.png", &root.ID, []byte("v1bytes"))
+
+	// Add a second version whose file exists.
+	mustUploadNewVersion(t, ctx, res.ID, []byte("v2bytes"), "v2")
+
+	// Delete the CURRENT version's blob from the filesystem, simulating a
+	// missing file. The historical version files should still be exportable.
+	if err := ctx.fs.Remove(res.Location); err != nil {
+		t.Fatalf("remove current blob: %v", err)
+	}
+
+	req := &ExportRequest{
+		RootGroupIDs: []uint{root.ID},
+		Scope:        archive.ExportScope{Subtree: true, OwnedResources: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true, ResourceVersions: true},
+	}
+
+	var buf bytes.Buffer
+	if err := ctx.StreamExport(context.Background(), req, &buf, nil); err != nil {
+		t.Fatalf("StreamExport: %v", err)
+	}
+
+	r, _ := archive.NewReader(&buf)
+	defer r.Close()
+	m, _ := r.ReadManifest()
+
+	c := newExportCollector()
+	if err := r.Walk(c); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+
+	// The resource should be marked BlobMissing for the current version.
+	if len(c.resources) != 1 {
+		t.Fatalf("resources = %d", len(c.resources))
+	}
+	var rp *archive.ResourcePayload
+	for _, v := range c.resources {
+		rp = v
+	}
+	if !rp.BlobMissing {
+		t.Errorf("expected BlobMissing=true for the current version")
+	}
+
+	// But the historical version blobs SHOULD still be in the archive —
+	// they weren't deleted, only the current file was.
+	if len(rp.Versions) < 1 {
+		t.Fatalf("expected at least 1 version entry, got %d", len(rp.Versions))
+	}
+
+	// At least one version blob should exist in the archive (the v2 file
+	// that wasn't deleted).
+	versionBlobFound := false
+	for _, v := range rp.Versions {
+		if v.BlobRef != "" && !v.BlobMissing {
+			if _, ok := c.blobs[v.BlobRef]; ok {
+				versionBlobFound = true
+			}
+		}
+	}
+	if !versionBlobFound {
+		t.Errorf("no version blobs found in archive; expected at least v2's blob to be present")
+		t.Logf("versions: %+v", rp.Versions)
+		t.Logf("blobs in archive: %v", keys(c.blobs))
+	}
+
+	// Manifest should have at least one warning for the missing current blob.
+	if len(m.Warnings) == 0 {
+		t.Errorf("expected manifest warnings for missing current blob")
+	}
+}
