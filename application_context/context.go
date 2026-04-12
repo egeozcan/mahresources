@@ -271,6 +271,19 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		log.Printf("startup: removed %d orphaned export tars", removed)
 	}
 
+	// Wire periodic export-tar sweep into the manager's cleanup loop so tars
+	// are purged every 5 minutes, not only at startup.
+	exportFs := filesystem
+	exportRetention := ctx.downloadManager.ExportRetention()
+	ctx.downloadManager.SetExportSweepFn(func() {
+		n, err := download_queue.SweepOrphanedExports(exportFs, "_exports", exportRetention)
+		if err != nil {
+			log.Printf("warning: periodic SweepOrphanedExports failed: %v", err)
+		} else if n > 0 {
+			log.Printf("periodic sweep: removed %d expired export tars", n)
+		}
+	})
+
 	// Initialize plugin manager unless disabled
 	if !config.PluginsDisabled {
 		pluginPath := config.PluginPath
