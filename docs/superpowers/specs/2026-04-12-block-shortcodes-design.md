@@ -68,7 +68,7 @@ This means the conditional handler evaluates its condition first, then only expa
 
 No signature change needed. `PluginRenderer` already receives the full `Shortcode` struct, which now includes `InnerContent`, `ElseContent`, and `IsBlock`. On the Lua side, the context table gains `inner_content` and `else_content` string fields (empty for self-closing shortcodes).
 
-Plugin block shortcodes receive raw (unexpanded) inner content. If a plugin wants nested shortcodes expanded, it returns the raw content and the processor handles expansion. Alternatively, plugin shortcodes can treat inner content as a template string without expansion — this is the plugin's choice.
+Plugin block shortcodes receive raw (unexpanded) inner content. The processor applies a post-plugin expansion pass: after the plugin renderer returns, if the shortcode was a block (`IsBlock == true`), the processor runs `processWithDepth` on the plugin's output to expand any shortcodes the plugin left intact or injected. This mirrors how MRQL already gets a recursive expansion pass via `processWithDepth` in `RenderMRQLShortcode`. If a plugin wants to suppress expansion (treating inner content as a literal template), it can HTML-escape the bracket syntax in its output.
 
 ### Recursion Depth
 
@@ -129,15 +129,15 @@ Remove the `conditional` shortcode from `plugins/data-views/plugin.lua` entirely
 
 The plugin version supports attributes the built-in intentionally does not carry forward:
 
-| Plugin attribute | Built-in equivalent | Rationale |
-|-----------------|--------------------|----|
-| `path` | `path` | Same — dot-notation meta lookup |
-| `field` | (dropped) | Use `[property]` inside the block instead |
-| `mrql` / `scope` / `aggregate` | (dropped) | Use `[mrql]` inside the block instead — block shortcodes make composition the answer |
-| `html` / `content` | (dropped) | Block body replaces these entirely |
-| `class` | (dropped) | Use HTML directly in the block body: `<div class="...">` |
+| Plugin attribute | Built-in status | Notes |
+|-----------------|----------------|-------|
+| `path` | Kept | Same — dot-notation meta lookup as condition source |
+| `field` | Removed | Was a condition source (entity struct field). Not carried forward — `path` covers the primary use case. Could be added later if needed. |
+| `mrql` / `scope` / `aggregate` | Removed | Were condition sources (run a query, compare the result). Not carried forward — these are genuinely lost capabilities, not replaceable by composition since `[mrql]` inside the block only affects rendered content, not the condition evaluation. Could be added later as additional condition source attributes. |
+| `html` / `content` | Replaced | Block body replaces these entirely |
+| `class` | Replaced | Use HTML directly in the block body: `<div class="...">` |
 
-The block syntax makes the built-in version strictly more capable despite having fewer attributes — content goes in the body (with full HTML and nested shortcodes) instead of being crammed into attribute values.
+The built-in version trades two condition source modes (`field`, `mrql`) for block syntax with nesting. The `path`-based condition covers the primary use case. The dropped condition sources can be added as future attributes if demand arises.
 
 ## Testing
 
@@ -153,5 +153,13 @@ The block syntax makes the built-in version strictly more capable despite having
 
 ### Plugin Integration
 
-- Verify plugin shortcodes receive `inner_content` in Lua context table.
-- Existing plugin shortcode tests pass unchanged (self-closing behavior preserved).
+- Verify plugin shortcodes receive `inner_content` and `else_content` in Lua context table.
+- Existing self-closing plugin shortcode tests pass unchanged.
+
+### Downstream Updates from Plugin Removal
+
+Removing `data-views:conditional` requires updates in:
+
+- **`e2e/test-plugins/data-views/plugin.lua`**: remove the `conditional` shortcode registration (line 1684), `render_conditional` function (line 1363), and the help text reference (line 27).
+- **`e2e/tests/plugins/plugin-data-views.spec.ts`**: remove or rewrite the `conditional` test (line 160) and the shortcode reference in group creation (line 28). The test should exercise the built-in `[conditional]` instead.
+- **`plugins/data-views/plugin.lua`**: remove `render_conditional` (line 1694), `mah.shortcode` registration (line 2569), and examples (lines 2591-2595).
