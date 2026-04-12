@@ -391,6 +391,21 @@ func TestSplitElseEmptyBranches(t *testing.T) {
 	assert.Equal(t, "", elseBranch)
 }
 
+func TestSplitElseSelfClosingBeforeElse(t *testing.T) {
+	// Self-closing shortcodes must NOT affect depth — [else] should still be found
+	input := `[meta path="x"][else]fallback`
+	ifBranch, elseBranch := SplitElse(input)
+	assert.Equal(t, `[meta path="x"]`, ifBranch)
+	assert.Equal(t, "fallback", elseBranch)
+}
+
+func TestSplitElseMultipleSelfClosingBeforeElse(t *testing.T) {
+	input := `[meta path="a"][property path="Name"][else]no`
+	ifBranch, elseBranch := SplitElse(input)
+	assert.Equal(t, `[meta path="a"][property path="Name"]`, ifBranch)
+	assert.Equal(t, "no", elseBranch)
+}
+
 func TestSplitElseNestedMultipleLevels(t *testing.T) {
 	// Two levels of nesting — [else] at depth 0 is the split point
 	input := `before[conditional path="a" eq="1"][conditional path="b" eq="2"]deep[else]deep-else[/conditional][else]mid-else[/conditional][else]top-else`
@@ -418,30 +433,37 @@ const elseTag = "[else]"
 
 // SplitElse splits content on the first top-level [else] tag.
 // [else] tags nested inside block shortcodes (tracked by depth) are ignored.
+// Only matched block pairs (opening tag with a corresponding closing tag) affect depth.
+// Self-closing shortcodes do not change depth.
 // Returns (ifBranch, elseBranch). If no top-level [else] is found, elseBranch is empty.
 func SplitElse(content string) (string, string) {
 	depth := 0
 	i := 0
 
 	for i < len(content) {
-		// Check for opening tags that increase depth.
-		if content[i] == '[' && i+1 < len(content) && content[i+1] != '/' && content[i+1] != 'e' {
-			if loc := shortcodePattern.FindStringIndex(content[i:]); loc != nil && loc[0] == 0 {
-				// Check if there's a matching closing tag somewhere — meaning this could be a block.
-				// We count it as depth increase; if it's actually self-closing, the depth will
-				// balance when we don't find a closer, but that's fine — we're conservative.
-				depth++
-				i += loc[1]
-				continue
-			}
-		}
-
 		// Check for closing tags that decrease depth.
 		if content[i] == '[' && i+1 < len(content) && content[i+1] == '/' {
 			if loc := closingTagPattern.FindStringIndex(content[i:]); loc != nil && loc[0] == 0 {
 				depth--
 				if depth < 0 {
 					depth = 0
+				}
+				i += loc[1]
+				continue
+			}
+		}
+
+		// Check for opening tags. Only increase depth if a matching closing tag
+		// exists later — otherwise it's a self-closing shortcode.
+		if content[i] == '[' && i+1 < len(content) && content[i+1] != '/' && content[i+1] != 'e' {
+			if loc := shortcodePattern.FindStringIndex(content[i:]); loc != nil && loc[0] == 0 {
+				// Extract the name to build the closing tag pattern
+				m := shortcodePattern.FindStringSubmatch(content[i:])
+				if m != nil {
+					closingTag := "[/" + m[1] + "]"
+					if strings.Contains(content[i+loc[1]:], closingTag) {
+						depth++
+					}
 				}
 				i += loc[1]
 				continue
@@ -600,6 +622,30 @@ func TestConditionalLt(t *testing.T) {
 	assert.Equal(t, "low", result)
 }
 
+func TestConditionalGtNonNumericReturnsFalse(t *testing.T) {
+	sc := Shortcode{
+		Name:         "conditional",
+		Attrs:        map[string]string{"path": "name", "gt": "50"},
+		InnerContent: "should not show",
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{Meta: json.RawMessage(`{"name":"hello"}`)}
+	result := RenderConditionalShortcode(nil, sc, ctx, nil, nil, 0)
+	assert.Equal(t, "", result)
+}
+
+func TestConditionalLtNonNumericReturnsFalse(t *testing.T) {
+	sc := Shortcode{
+		Name:         "conditional",
+		Attrs:        map[string]string{"path": "name", "lt": "50"},
+		InnerContent: "should not show",
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{Meta: json.RawMessage(`{"name":"hello"}`)}
+	result := RenderConditionalShortcode(nil, sc, ctx, nil, nil, 0)
+	assert.Equal(t, "", result)
+}
+
 func TestConditionalContains(t *testing.T) {
 	sc := Shortcode{
 		Name:         "conditional",
@@ -696,6 +742,118 @@ func TestConditionalBoolEq(t *testing.T) {
 	ctx := MetaShortcodeContext{Meta: json.RawMessage(`{"featured":true}`)}
 	result := RenderConditionalShortcode(nil, sc, ctx, nil, nil, 0)
 	assert.Equal(t, "featured", result)
+}
+
+func TestConditionalMRQLSourceFlat(t *testing.T) {
+	// MRQL flat result: condition value = item count
+	executor := func(ctx context.Context, query, saved string, limit, buckets int, scopeGroupID uint) (*QueryResult, error) {
+		return &QueryResult{
+			Mode:  "flat",
+			Items: []QueryResultItem{{}, {}, {}}, // 3 items
+		}, nil
+	}
+	sc := Shortcode{
+		Name:         "conditional",
+		Attrs:        map[string]string{"mrql": "type = resource", "gt": "2"},
+		InnerContent: "many",
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+	result := RenderConditionalShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Equal(t, "many", result)
+}
+
+func TestConditionalMRQLSourceFlatFalse(t *testing.T) {
+	executor := func(ctx context.Context, query, saved string, limit, buckets int, scopeGroupID uint) (*QueryResult, error) {
+		return &QueryResult{
+			Mode:  "flat",
+			Items: []QueryResultItem{{}}, // 1 item
+		}, nil
+	}
+	sc := Shortcode{
+		Name:         "conditional",
+		Attrs:        map[string]string{"mrql": "type = resource", "gt": "2"},
+		InnerContent: "many",
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+	result := RenderConditionalShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Equal(t, "", result)
+}
+
+func TestConditionalMRQLSourceAggregated(t *testing.T) {
+	executor := func(ctx context.Context, query, saved string, limit, buckets int, scopeGroupID uint) (*QueryResult, error) {
+		return &QueryResult{
+			Mode: "aggregated",
+			Rows: []map[string]any{{"total": float64(100)}},
+		}, nil
+	}
+	sc := Shortcode{
+		Name:         "conditional",
+		Attrs:        map[string]string{"mrql": "type = resource GROUP BY category", "aggregate": "total", "gt": "50"},
+		InnerContent: "high total",
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+	result := RenderConditionalShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Equal(t, "high total", result)
+}
+
+func TestConditionalMRQLSourceAggregatedNoAggregate(t *testing.T) {
+	executor := func(ctx context.Context, query, saved string, limit, buckets int, scopeGroupID uint) (*QueryResult, error) {
+		return &QueryResult{
+			Mode: "aggregated",
+			Rows: []map[string]any{{"total": float64(100)}},
+		}, nil
+	}
+	sc := Shortcode{
+		Name:         "conditional",
+		Attrs:        map[string]string{"mrql": "type = resource GROUP BY category", "gt": "50"},
+		InnerContent: "should not show",
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+	// Missing aggregate attr — resolveConditionalValue returns nil
+	result := RenderConditionalShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Equal(t, "", result)
+}
+
+func TestConditionalMRQLSourceBucketed(t *testing.T) {
+	executor := func(ctx context.Context, query, saved string, limit, buckets int, scopeGroupID uint) (*QueryResult, error) {
+		return &QueryResult{
+			Mode:   "bucketed",
+			Groups: []QueryResultGroup{{}, {}, {}, {}}, // 4 groups
+		}, nil
+	}
+	sc := Shortcode{
+		Name:         "conditional",
+		Attrs:        map[string]string{"mrql": "type = resource GROUP BY category", "gt": "3"},
+		InnerContent: "many groups",
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+	result := RenderConditionalShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Equal(t, "many groups", result)
+}
+
+func TestConditionalMRQLSourcePriorityOverPath(t *testing.T) {
+	// MRQL takes priority over path — even if path would match, mrql result is used
+	executor := func(ctx context.Context, query, saved string, limit, buckets int, scopeGroupID uint) (*QueryResult, error) {
+		return &QueryResult{
+			Mode:  "flat",
+			Items: []QueryResultItem{}, // 0 items
+		}, nil
+	}
+	sc := Shortcode{
+		Name:         "conditional",
+		Attrs:        map[string]string{"mrql": "type = resource", "path": "status", "gt": "0"},
+		InnerContent: "should not show",
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1, Meta: json.RawMessage(`{"status":"active"}`)}
+	// MRQL returns 0 items, gt "0" is false (0 > 0 is false)
+	result := RenderConditionalShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Equal(t, "", result)
 }
 ```
 
@@ -812,10 +970,14 @@ func evaluateCondition(value any, attrs map[string]string) bool {
 		return fmt.Sprint(value) != attrs["neq"]
 	}
 	if gtStr, ok := attrs["gt"]; ok {
-		return toFloat(value) > toFloat(gtStr)
+		lhs, lhsOk := toFloat(value)
+		rhs, rhsOk := toFloat(gtStr)
+		return lhsOk && rhsOk && lhs > rhs
 	}
 	if ltStr, ok := attrs["lt"]; ok {
-		return toFloat(value) < toFloat(ltStr)
+		lhs, lhsOk := toFloat(value)
+		rhs, rhsOk := toFloat(ltStr)
+		return lhsOk && rhsOk && lhs < rhs
 	}
 	if substr, ok := attrs["contains"]; ok {
 		return strings.Contains(fmt.Sprint(value), substr)
@@ -829,23 +991,24 @@ func evaluateCondition(value any, attrs map[string]string) bool {
 	return false
 }
 
-// toFloat attempts to parse a value as float64. Returns 0 and false on failure.
-func toFloat(v any) float64 {
+// toFloat attempts to parse a value as float64.
+// Returns (value, true) on success, (0, false) if the value is not numeric.
+func toFloat(v any) (float64, bool) {
 	switch val := v.(type) {
 	case float64:
-		return val
+		return val, true
 	case string:
 		f, err := strconv.ParseFloat(val, 64)
 		if err != nil {
-			return 0
+			return 0, false
 		}
-		return f
+		return f, true
 	default:
 		f, err := strconv.ParseFloat(fmt.Sprint(v), 64)
 		if err != nil {
-			return 0
+			return 0, false
 		}
-		return f
+		return f, true
 	}
 }
 
@@ -1439,6 +1602,8 @@ git commit -m "test: add E2E tests for built-in conditional shortcode"
 
 **Files:**
 - Modify: `docs-site/docs/features/shortcodes.md`
+- Modify: `docs-site/docs/features/built-in-plugins.md`
+- Modify: `docs-site/docs/features/plugin-lua-api.md`
 
 - [ ] **Step 1: Add block shortcode syntax and conditional documentation**
 
@@ -1563,10 +1728,40 @@ The plugin receives `inner_content` and `is_block` in its render context. Nested
 Note: in docs preview, nested shortcodes inside plugin block output are not expanded (they render as literal text). This is a preview-only limitation; runtime rendering expands them normally.
 ```
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 2: Update built-in-plugins.md**
+
+In `docs-site/docs/features/built-in-plugins.md`, remove `conditional` from the data-views shortcode table (line 34). Update the plugin description (line 14) to remove "conditional content" since conditional is now built-in.
+
+- [ ] **Step 3: Update plugin-lua-api.md**
+
+In `docs-site/docs/features/plugin-lua-api.md`, update the Render Context table (line 809) to add the new fields:
+
+```markdown
+| Field | Description |
+|-------|-------------|
+| `ctx.entity_type` | `"group"`, `"resource"`, or `"note"` |
+| `ctx.entity_id` | Entity ID |
+| `ctx.value` | Entity's full Meta as a Lua table |
+| `ctx.attrs` | Shortcode attributes as a key-value table |
+| `ctx.settings` | Plugin settings key-value pairs |
+| `ctx.inner_content` | Content between opening and closing tags (empty for self-closing shortcodes) |
+| `ctx.is_block` | `true` if the shortcode was used as a block `[name]...[/name]`, `false` otherwise |
+```
+
+Also add a note after the Execution section (line 825):
+
+```markdown
+### Block Shortcodes
+
+Plugin shortcodes support block mode. When used as `[plugin:name:sc]content[/plugin:name:sc]`, the render function receives `ctx.inner_content` with the raw content between tags, and `ctx.is_block = true`. Nested shortcodes inside plugin block output are expanded automatically after the plugin render function returns.
+
+In docs preview, nested shortcodes inside plugin block output are not expanded (they render as literal text). This is a preview-only limitation.
+```
+
+- [ ] **Step 4: Commit**
 
 ```bash
-git add docs-site/docs/features/shortcodes.md
+git add docs-site/docs/features/shortcodes.md docs-site/docs/features/built-in-plugins.md docs-site/docs/features/plugin-lua-api.md
 git commit -m "docs: add block shortcode syntax and conditional shortcode docs"
 ```
 
