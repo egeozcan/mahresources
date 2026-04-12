@@ -63,7 +63,7 @@ This means the conditional handler evaluates its condition first, splits on `[el
 
 ### Plugin Renderer
 
-No signature change needed. `PluginRenderer` already receives the full `Shortcode` struct, which now includes `InnerContent` and `IsBlock`. On the Lua side, the context table gains two fields: `inner_content` (string, empty for self-closing) and `is_block` (boolean). The `is_block` field lets plugins distinguish a self-closing `[name /]` from an explicitly empty block `[name][/name]`.
+No signature change needed. `PluginRenderer` already receives the full `Shortcode` struct, which now includes `InnerContent` and `IsBlock`. On the Lua side, the context table gains two fields: `inner_content` (string, empty for self-closing) and `is_block` (boolean). The `is_block` field lets plugins distinguish a self-closing `[name ...]` from an explicitly empty block `[name][/name]`.
 
 Plugin block shortcodes receive raw (unexpanded) inner content. The processor applies a post-plugin expansion pass: after the plugin renderer returns, if the shortcode was a block (`IsBlock == true`), the processor runs `processWithDepth` on the plugin's output to expand any shortcodes the plugin left intact or injected. This mirrors how MRQL already gets a recursive expansion pass via `processWithDepth` in `RenderMRQLShortcode`. If a plugin wants to suppress expansion (treating inner content as a literal template), it can HTML-escape the bracket syntax in its output.
 
@@ -161,6 +161,7 @@ The plugin docs preview pipeline (`renderShortcodeForDocs` in `plugin_system/sho
 - **`plugin_system/shortcode_docs.go`** (or wherever example parsing happens): switch to `ParseWithBlocks()` so block shortcode examples preview correctly.
 - **`plugin_system/shortcodes.go` `renderShortcodeForDocs`**: pass `inner_content` and `is_block` through to the Lua context table, same as the runtime path.
 - **Post-render expansion**: docs preview does not support nested shortcode expansion. The preview environment lacks the full `MetaShortcodeContext` and `QueryExecutor` needed for built-in shortcode expansion, and the preview is scoped to a single plugin's shortcode. This is an acceptable limitation — docs examples show the plugin's own output, not a full rendering pipeline. If a plugin block shortcode returns raw nested shortcodes in its preview, they will appear as literal text.
+- Add an explicit test that verifies a plugin block shortcode preview with nested shortcodes in its output renders those as literal text (not expanded). This documents the intentional divergence from runtime behavior.
 - Add test coverage for a plugin block shortcode example rendering in docs preview.
 
 ### Downstream Updates from Plugin Removal
@@ -178,3 +179,4 @@ Update the docs site (`docs-site/`) to document:
 - Block shortcode syntax (`[name]...[/name]`) and nesting
 - The built-in `[conditional]` shortcode with all condition sources (`path`, `field`, `mrql`), operators, and `[else]` support
 - Examples showing block shortcodes with nested content and conditionals
+- Note for plugin authors: docs preview does not expand nested shortcodes inside plugin block shortcode output (they render as literal text). Runtime rendering expands them normally.
