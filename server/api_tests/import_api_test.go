@@ -2,6 +2,7 @@ package api_tests
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -24,7 +25,7 @@ type mockImportContext struct {
 	plan        *application_context.ImportPlan
 }
 
-func (m *mockImportContext) ParseImport(jobID, tarPath string) (*application_context.ImportPlan, error) {
+func (m *mockImportContext) ParseImport(_ context.Context, jobID, tarPath string) (*application_context.ImportPlan, error) {
 	if m.parseErr != nil {
 		return nil, m.parseErr
 	}

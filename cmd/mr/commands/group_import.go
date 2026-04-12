@@ -34,7 +34,7 @@ Use --plan-output to save the plan JSON to a file.`,
 			var parseResp struct {
 				JobID string `json:"jobId"`
 			}
-			if err := c.UploadFile("/v1/groups/import/parse", url.Values{}, "file", tarPath, nil, &parseResp); err != nil {
+			if err := c.UploadFileStreaming("/v1/groups/import/parse", url.Values{}, "file", tarPath, nil, &parseResp); err != nil {
 				return fmt.Errorf("upload: %w", err)
 			}
 			fmt.Fprintf(cmd.ErrOrStderr(), "Parse job: %s\n", parseResp.JobID)

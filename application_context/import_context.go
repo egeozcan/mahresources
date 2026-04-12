@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,7 +18,7 @@ import (
 // notes, resources, series, and schema defs, then resolves name-based mappings
 // against the local database. The resulting ImportPlan is persisted as JSON to
 // _imports/<jobID>.plan.json and returned.
-func (ctx *MahresourcesContext) ParseImport(jobID, tarPath string) (*ImportPlan, error) {
+func (ctx *MahresourcesContext) ParseImport(cancelCtx context.Context, jobID, tarPath string) (*ImportPlan, error) {
 	f, err := ctx.fs.Open(tarPath)
 	if err != nil {
 		return nil, fmt.Errorf("open import tar: %w", err)
@@ -42,10 +43,16 @@ func (ctx *MahresourcesContext) ParseImport(jobID, tarPath string) (*ImportPlan,
 		series:    make(map[string]*archive.SeriesPayload),
 	}
 
+	if err := cancelCtx.Err(); err != nil {
+		return nil, err
+	}
 	if err := r.Walk(collector); err != nil {
 		return nil, fmt.Errorf("walk archive: %w", err)
 	}
 
+	if err := cancelCtx.Err(); err != nil {
+		return nil, err
+	}
 	plan := &ImportPlan{
 		JobID:            jobID,
 		SchemaVersion:    manifest.SchemaVersion,
@@ -75,6 +82,10 @@ func (ctx *MahresourcesContext) ParseImport(jobID, tarPath string) (*ImportPlan,
 	plan.Mappings.ResourceCategories = ctx.resolveResourceCategories(collector.resourceCategoryDefs)
 	plan.Mappings.Tags = ctx.resolveTags(collector.tagDefs, collector)
 	plan.Mappings.GroupRelationTypes = ctx.resolveGRTDefs(collector.grtDefs)
+
+	if err := cancelCtx.Err(); err != nil {
+		return nil, err
+	}
 
 	// Resolve series via slug
 	plan.SeriesInfo = ctx.resolveSeriesInfo(collector.series)

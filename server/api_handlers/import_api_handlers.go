@@ -24,7 +24,7 @@ import (
 // imported by application_context, so adding application_context types to
 // server/interfaces would create an import cycle.
 type GroupImporter interface {
-	ParseImport(jobID, tarPath string) (*application_context.ImportPlan, error)
+	ParseImport(ctx context.Context, jobID, tarPath string) (*application_context.ImportPlan, error)
 	LoadImportPlan(jobID string) (*application_context.ImportPlan, error)
 	DeleteImportFiles(jobID string) error
 	DownloadManager() *download_queue.DownloadManager
@@ -74,23 +74,25 @@ func GetImportParseHandler(ctx GroupImporter, maxSize int64) func(http.ResponseW
 		}
 		stagingFile.Close()
 
-		tarPath := "" // set after job ID is known
-
-		runFn := buildImportParseRunFn(ctx, &tarPath)
-		job, err := ctx.DownloadManager().SubmitJob(download_queue.JobSourceGroupImportParse, "queued", runFn)
-		if err != nil {
-			_ = fs.Remove(stagingPath)
-			http.Error(w, err.Error(), http.StatusServiceUnavailable)
-			return
-		}
-
-		finalPath := filepath.Join("_imports", job.ID+".tar")
+		// Generate a stable import ID and rename the staging file BEFORE
+		// enqueuing the job. SubmitJob may dispatch the worker immediately
+		// (if a semaphore slot is free), so the tar must be at its final
+		// path before the job function can reference it.
+		importID := fmt.Sprintf("imp-%d", time.Now().UnixNano())
+		finalPath := filepath.Join("_imports", importID+".tar")
 		if renErr := fs.Rename(stagingPath, finalPath); renErr != nil {
 			_ = fs.Remove(stagingPath)
 			http.Error(w, "failed to finalize upload: "+renErr.Error(), http.StatusInternalServerError)
 			return
 		}
-		tarPath = finalPath
+
+		runFn := buildImportParseRunFn(ctx, finalPath)
+		job, err := ctx.DownloadManager().SubmitJob(download_queue.JobSourceGroupImportParse, "queued", runFn)
+		if err != nil {
+			_ = fs.Remove(finalPath)
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
 
 		w.Header().Set("Content-Type", constants.JSON)
 		w.WriteHeader(http.StatusAccepted)
@@ -98,17 +100,16 @@ func GetImportParseHandler(ctx GroupImporter, maxSize int64) func(http.ResponseW
 	}
 }
 
-func buildImportParseRunFn(ctx GroupImporter, tarPath *string) download_queue.JobRunFn {
+func buildImportParseRunFn(ctx GroupImporter, tarPath string) download_queue.JobRunFn {
 	return func(jobCtx context.Context, j *download_queue.DownloadJob, sink download_queue.ProgressSink) error {
 		sink.SetPhase("parsing")
 
-		path := *tarPath
-		plan, err := ctx.ParseImport(j.ID, path)
+		plan, err := ctx.ParseImport(jobCtx, j.ID, tarPath)
 		if err != nil {
 			return err
 		}
 
-		sink.SetResultPath(path)
+		sink.SetResultPath(filepath.Join("_imports", j.ID+".plan.json"))
 		sink.SetPhase("completed")
 
 		for _, w := range plan.Warnings {
