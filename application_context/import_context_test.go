@@ -239,6 +239,354 @@ func TestParseImport_BasicPlan(t *testing.T) {
 	}
 }
 
+func TestParseImport_AmbiguousNoteType(t *testing.T) {
+	ctx := createTestContext(t)
+
+	// Seed destination DB with TWO NoteTypes named "Diary"
+	if err := ctx.db.Create(&models.NoteType{Name: "Diary"}).Error; err != nil {
+		t.Fatalf("create note type 1: %v", err)
+	}
+	if err := ctx.db.Create(&models.NoteType{Name: "Diary"}).Error; err != nil {
+		t.Fatalf("create note type 2: %v", err)
+	}
+
+	// Build a tar with a NoteType schema def named "Diary"
+	var buf bytes.Buffer
+	w, err := archive.NewWriter(&buf, false)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+
+	err = w.WriteManifest(&archive.Manifest{
+		SchemaVersion: 1,
+		CreatedAt:     time.Now().UTC(),
+		CreatedBy:     "test",
+		Roots:         []string{"g0001"},
+		Counts:        archive.Counts{Groups: 1},
+		Entries: archive.Entries{
+			Groups: []archive.GroupEntry{
+				{ExportID: "g0001", Name: "Root Group", SourceID: 1, Path: "groups/g0001.json"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+
+	err = w.WriteNoteTypeDefs([]archive.NoteTypeDef{
+		{ExportID: "nt0001", SourceID: 1, Name: "Diary"},
+	})
+	if err != nil {
+		t.Fatalf("WriteNoteTypeDefs: %v", err)
+	}
+
+	err = w.WriteGroup(&archive.GroupPayload{
+		ExportID:  "g0001",
+		SourceID:  1,
+		Name:      "Root Group",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("WriteGroup: %v", err)
+	}
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	tarPath := "_imports/test-ambiguous-notetype.tar"
+	if err := ctx.fs.MkdirAll("_imports", 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := afero.WriteFile(ctx.fs, tarPath, buf.Bytes(), 0644); err != nil {
+		t.Fatalf("write tar: %v", err)
+	}
+
+	plan, err := ctx.ParseImport("test-ambiguous-notetype", tarPath)
+	if err != nil {
+		t.Fatalf("ParseImport: %v", err)
+	}
+
+	if len(plan.Mappings.NoteTypes) != 1 {
+		t.Fatalf("NoteTypes mappings = %d, want 1", len(plan.Mappings.NoteTypes))
+	}
+	nt := plan.Mappings.NoteTypes[0]
+	if !nt.Ambiguous {
+		t.Errorf("Ambiguous = false, want true")
+	}
+	if nt.Suggestion != "" {
+		t.Errorf("Suggestion = %q, want ''", nt.Suggestion)
+	}
+	if len(nt.Alternatives) != 2 {
+		t.Errorf("Alternatives = %d, want 2", len(nt.Alternatives))
+	}
+}
+
+func TestParseImport_ManifestOnlyMissingHashes(t *testing.T) {
+	ctx := createTestContext(t)
+
+	// Build a manifest-only tar (ResourceBlobs = false) with one resource that has BlobMissing = true
+	var buf bytes.Buffer
+	w, err := archive.NewWriter(&buf, false)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+
+	err = w.WriteManifest(&archive.Manifest{
+		SchemaVersion: 1,
+		CreatedAt:     time.Now().UTC(),
+		CreatedBy:     "test",
+		Roots:         []string{"g0001"},
+		Counts:        archive.Counts{Groups: 1, Resources: 1},
+		ExportOptions: archive.ExportOptions{
+			Fidelity: archive.ExportFidelity{
+				ResourceBlobs: false,
+			},
+		},
+		Entries: archive.Entries{
+			Groups: []archive.GroupEntry{
+				{ExportID: "g0001", Name: "Root Group", SourceID: 1, Path: "groups/g0001.json"},
+			},
+			Resources: []archive.ResourceEntry{
+				{ExportID: "r0001", Name: "Missing Resource", SourceID: 1, Hash: "deadbeef", Path: "resources/r0001.json"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+
+	err = w.WriteGroup(&archive.GroupPayload{
+		ExportID:  "g0001",
+		SourceID:  1,
+		Name:      "Root Group",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("WriteGroup: %v", err)
+	}
+
+	err = w.WriteResource(&archive.ResourcePayload{
+		ExportID:    "r0001",
+		SourceID:    1,
+		Name:        "Missing Resource",
+		Hash:        "deadbeef",
+		BlobRef:     "",
+		BlobMissing: true,
+		OwnerRef:    "g0001",
+		CreatedAt:   time.Now().UTC(),
+		UpdatedAt:   time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("WriteResource: %v", err)
+	}
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	tarPath := "_imports/test-manifest-only.tar"
+	if err := ctx.fs.MkdirAll("_imports", 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := afero.WriteFile(ctx.fs, tarPath, buf.Bytes(), 0644); err != nil {
+		t.Fatalf("write tar: %v", err)
+	}
+
+	plan, err := ctx.ParseImport("test-manifest-only", tarPath)
+	if err != nil {
+		t.Fatalf("ParseImport: %v", err)
+	}
+
+	if plan.ManifestOnlyMissingHashes != 1 {
+		t.Errorf("ManifestOnlyMissingHashes = %d, want 1", plan.ManifestOnlyMissingHashes)
+	}
+}
+
+func TestParseImport_SchemaDefsOff_FallsBackToNames(t *testing.T) {
+	ctx := createTestContext(t)
+
+	// Seed destination with a Category named "SchemaCat" (unique name to avoid collision with other tests)
+	cat := models.Category{Name: "SchemaCat"}
+	if err := ctx.db.Create(&cat).Error; err != nil {
+		t.Fatalf("create category: %v", err)
+	}
+
+	// Build a tar with schema defs toggled OFF. Group payload references CategoryName: "SchemaCat".
+	var buf bytes.Buffer
+	w, err := archive.NewWriter(&buf, false)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+
+	err = w.WriteManifest(&archive.Manifest{
+		SchemaVersion: 1,
+		CreatedAt:     time.Now().UTC(),
+		CreatedBy:     "test",
+		Roots:         []string{"g0001"},
+		Counts:        archive.Counts{Groups: 1},
+		ExportOptions: archive.ExportOptions{
+			SchemaDefs: archive.ExportSchemaDefs{
+				CategoriesAndTypes: false,
+				Tags:               false,
+				GroupRelationTypes: false,
+			},
+		},
+		// SchemaDefs arrays are empty (no schema def entries)
+		Entries: archive.Entries{
+			Groups: []archive.GroupEntry{
+				{ExportID: "g0001", Name: "Root Group", SourceID: 1, Path: "groups/g0001.json"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+
+	// No schema def files written. Group payload uses CategoryName without CategoryRef.
+	err = w.WriteGroup(&archive.GroupPayload{
+		ExportID:     "g0001",
+		SourceID:     1,
+		Name:         "Root Group",
+		CategoryName: "SchemaCat",
+		// No CategoryRef (schema defs are off)
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("WriteGroup: %v", err)
+	}
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	tarPath := "_imports/test-schemadefs-off.tar"
+	if err := ctx.fs.MkdirAll("_imports", 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := afero.WriteFile(ctx.fs, tarPath, buf.Bytes(), 0644); err != nil {
+		t.Fatalf("write tar: %v", err)
+	}
+
+	plan, err := ctx.ParseImport("test-schemadefs-off", tarPath)
+	if err != nil {
+		t.Fatalf("ParseImport: %v", err)
+	}
+
+	if len(plan.Mappings.Categories) != 1 {
+		t.Fatalf("Categories mappings = %d, want 1", len(plan.Mappings.Categories))
+	}
+	catMapping := plan.Mappings.Categories[0]
+	if catMapping.HasPayload {
+		t.Errorf("HasPayload = true, want false (synthesized from payload scan)")
+	}
+	if catMapping.Suggestion != "map" {
+		t.Errorf("Suggestion = %q, want 'map'", catMapping.Suggestion)
+	}
+	if catMapping.DestinationID == nil {
+		t.Fatalf("DestinationID is nil, want non-nil")
+	}
+	if *catMapping.DestinationID != cat.ID {
+		t.Errorf("DestinationID = %d, want %d", *catMapping.DestinationID, cat.ID)
+	}
+}
+
+func TestParseImport_SeriesSlugReuse(t *testing.T) {
+	ctx := createTestContext(t)
+
+	// Seed destination with a Series named "My Volumes" with slug "volumes"
+	series := models.Series{Name: "My Volumes", Slug: "volumes"}
+	if err := ctx.db.Create(&series).Error; err != nil {
+		t.Fatalf("create series: %v", err)
+	}
+
+	// Build a tar with a Series payload having slug "volumes"
+	var buf bytes.Buffer
+	w, err := archive.NewWriter(&buf, false)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+
+	err = w.WriteManifest(&archive.Manifest{
+		SchemaVersion: 1,
+		CreatedAt:     time.Now().UTC(),
+		CreatedBy:     "test",
+		Roots:         []string{"g0001"},
+		Counts:        archive.Counts{Groups: 1, Series: 1},
+		ExportOptions: archive.ExportOptions{
+			Fidelity: archive.ExportFidelity{
+				ResourceSeries: true,
+			},
+		},
+		Entries: archive.Entries{
+			Groups: []archive.GroupEntry{
+				{ExportID: "g0001", Name: "Root Group", SourceID: 1, Path: "groups/g0001.json"},
+			},
+			Series: []archive.SeriesEntry{
+				{ExportID: "s0001", Name: "My Series", SourceID: 1, Path: "series/s0001.json"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+
+	err = w.WriteGroup(&archive.GroupPayload{
+		ExportID:  "g0001",
+		SourceID:  1,
+		Name:      "Root Group",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("WriteGroup: %v", err)
+	}
+
+	err = w.WriteSeries(&archive.SeriesPayload{
+		ExportID: "s0001",
+		SourceID: 1,
+		Name:     "My Series",
+		Slug:     "volumes",
+	})
+	if err != nil {
+		t.Fatalf("WriteSeries: %v", err)
+	}
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	tarPath := "_imports/test-series-slug.tar"
+	if err := ctx.fs.MkdirAll("_imports", 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := afero.WriteFile(ctx.fs, tarPath, buf.Bytes(), 0644); err != nil {
+		t.Fatalf("write tar: %v", err)
+	}
+
+	plan, err := ctx.ParseImport("test-series-slug", tarPath)
+	if err != nil {
+		t.Fatalf("ParseImport: %v", err)
+	}
+
+	if len(plan.SeriesInfo) != 1 {
+		t.Fatalf("SeriesInfo = %d, want 1", len(plan.SeriesInfo))
+	}
+	sm := plan.SeriesInfo[0]
+	if sm.Action != "reuse_existing" {
+		t.Errorf("Action = %q, want 'reuse_existing'", sm.Action)
+	}
+	if sm.Slug != "volumes" {
+		t.Errorf("Slug = %q, want 'volumes'", sm.Slug)
+	}
+	if sm.DestName != "My Volumes" {
+		t.Errorf("DestName = %q, want 'My Volumes'", sm.DestName)
+	}
+}
+
 func TestParseImport_NameBasedMapping_ExistingCategory(t *testing.T) {
 	ctx := createTestContext(t)
 

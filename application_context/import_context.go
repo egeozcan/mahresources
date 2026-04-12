@@ -63,7 +63,14 @@ func (ctx *MahresourcesContext) ParseImport(jobID, tarPath string) (*ImportPlan,
 	}
 
 	// Resolve mappings
-	plan.Mappings.Categories = ctx.resolveCategories(collector.categoryDefs)
+	categoryMappings := ctx.resolveCategories(collector.categoryDefs)
+	// If the export shipped no schema defs for categories, discover names from payloads.
+	if len(collector.categoryDefs) == 0 {
+		for _, name := range discoverCategoryNamesFromPayloads(collector) {
+			categoryMappings = append(categoryMappings, ctx.resolveCategoryByName(name, false))
+		}
+	}
+	plan.Mappings.Categories = categoryMappings
 	plan.Mappings.NoteTypes = ctx.resolveNoteTypes(collector.noteTypeDefs)
 	plan.Mappings.ResourceCategories = ctx.resolveResourceCategories(collector.resourceCategoryDefs)
 	plan.Mappings.Tags = ctx.resolveTags(collector.tagDefs, collector)
@@ -233,6 +240,28 @@ func (ctx *MahresourcesContext) resolveCategories(defs []archive.CategoryDef) []
 	return entries
 }
 
+// resolveCategoryByName creates a MappingEntry for a category name discovered
+// from payloads (not from a schema def). HasPayload is set to the given value.
+func (ctx *MahresourcesContext) resolveCategoryByName(name string, hasPayload bool) MappingEntry {
+	entry := MappingEntry{
+		SourceKey:  name,
+		HasPayload: hasPayload,
+	}
+	entry.DecisionKey = DecisionKeyFor("category", entry)
+
+	var cat models.Category
+	result := ctx.db.Where("name = ?", name).First(&cat)
+	if result.Error == nil {
+		entry.Suggestion = "map"
+		id := cat.ID
+		entry.DestinationID = &id
+		entry.DestinationName = cat.Name
+	} else {
+		entry.Suggestion = "create"
+	}
+	return entry
+}
+
 func (ctx *MahresourcesContext) resolveNoteTypes(defs []archive.NoteTypeDef) []MappingEntry {
 	entries := make([]MappingEntry, 0, len(defs))
 	for _, def := range defs {
@@ -243,17 +272,22 @@ func (ctx *MahresourcesContext) resolveNoteTypes(defs []archive.NoteTypeDef) []M
 		}
 		entry.DecisionKey = DecisionKeyFor("note_type", entry)
 
-		var nt models.NoteType
-		result := ctx.db.Where("name = ?", def.Name).First(&nt)
-		if result.Error == nil {
+		var nts []models.NoteType
+		ctx.db.Where("name = ?", def.Name).Find(&nts)
+		switch len(nts) {
+		case 0:
+			entry.Suggestion = "create"
+		case 1:
 			entry.Suggestion = "map"
-			id := nt.ID
+			id := nts[0].ID
 			entry.DestinationID = &id
-			entry.DestinationName = nt.Name
-		} else if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-			entry.Suggestion = "create"
-		} else {
-			entry.Suggestion = "create"
+			entry.DestinationName = nts[0].Name
+		default:
+			entry.Ambiguous = true
+			entry.Suggestion = ""
+			for _, nt := range nts {
+				entry.Alternatives = append(entry.Alternatives, MappingAlternative{ID: nt.ID, Name: nt.Name})
+			}
 		}
 
 		entries = append(entries, entry)
