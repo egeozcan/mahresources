@@ -23,7 +23,8 @@ func newGroupImportCmd(c *client.Client, outOpts *output.Options) *cobra.Command
 		Long: `Upload an export tar, parse it, and optionally apply it.
 
 Use --dry-run to parse and print the plan without applying.
-Use --plan-output to save the plan JSON to a file.`,
+Use --plan-output to save the plan JSON to a file.
+Use --decisions to supply a decisions JSON file for full control.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			tarPath := args[0]
@@ -31,6 +32,7 @@ Use --plan-output to save the plan JSON to a file.`,
 				return fmt.Errorf("tar file not found: %w", err)
 			}
 
+			// ── Upload & parse ──────────────────────────────────────
 			var parseResp struct {
 				JobID string `json:"jobId"`
 			}
@@ -52,6 +54,7 @@ Use --plan-output to save the plan JSON to a file.`,
 				return fmt.Errorf("fetch plan: %w", err)
 			}
 
+			// ── Plan output ─────────────────────────────────────────
 			if opts.PlanOutput != "" {
 				data, err := json.MarshalIndent(plan, "", "  ")
 				if err != nil {
@@ -70,12 +73,74 @@ Use --plan-output to save the plan JSON to a file.`,
 				printPlanSummary(cmd, &plan)
 			}
 
+			// ── Dry-run: print plan, clean up, exit ─────────────────
 			if opts.DryRun {
 				_ = c.Delete("/v1/imports/"+url.PathEscape(parseResp.JobID), url.Values{}, nil)
 				return nil
 			}
 
-			fmt.Fprintf(cmd.ErrOrStderr(), "Apply is not yet implemented. Use --dry-run or the web UI.\n")
+			// ── Build decisions ──────────────────────────────────────
+			var decisions application_context.ImportDecisions
+			if opts.Decisions != "" {
+				data, err := os.ReadFile(opts.Decisions)
+				if err != nil {
+					return fmt.Errorf("read decisions file: %w", err)
+				}
+				if err := json.Unmarshal(data, &decisions); err != nil {
+					return fmt.Errorf("parse decisions file: %w", err)
+				}
+			} else {
+				decisions = buildCLIDecisions(&plan, opts)
+			}
+
+			// ── Guard: missing hashes ────────────────────────────────
+			if plan.ManifestOnlyMissingHashes > 0 && !decisions.AcknowledgeMissingHashes {
+				return fmt.Errorf(
+					"%d resources have no bytes in the tar; pass --acknowledge-missing-hashes to proceed",
+					plan.ManifestOnlyMissingHashes,
+				)
+			}
+
+			// ── POST decisions → apply ───────────────────────────────
+			importBase := "/v1/imports/" + url.PathEscape(parseResp.JobID)
+
+			var applyResp struct {
+				JobID string `json:"jobId"`
+			}
+			if err := c.Post(importBase+"/apply", nil, &decisions, &applyResp); err != nil {
+				return fmt.Errorf("apply: %w", err)
+			}
+			fmt.Fprintf(cmd.ErrOrStderr(), "Apply job: %s\n", applyResp.JobID)
+
+			// ── Poll apply job ───────────────────────────────────────
+			applyJob, err := c.PollJob(applyResp.JobID, opts.PollInterval, opts.Timeout)
+			if err != nil {
+				return err
+			}
+
+			// ── Fetch result (best-effort) ───────────────────────────
+			var result application_context.ImportApplyResult
+			resultErr := c.Get(importBase+"/result", url.Values{}, &result)
+
+			if applyJob.Status != "completed" {
+				if resultErr == nil {
+					printPartialResult(cmd, &result)
+				}
+				return fmt.Errorf("apply job %s ended with status %s: %s", applyResp.JobID, applyJob.Status, applyJob.Error)
+			}
+
+			// ── Success output ───────────────────────────────────────
+			if resultErr == nil {
+				if outOpts.JSON {
+					raw, _ := json.Marshal(result)
+					output.PrintSingle(*outOpts, nil, raw)
+				} else {
+					printApplyResult(cmd, &result)
+				}
+			} else {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Import applied successfully (could not fetch result details).\n")
+			}
+
 			return nil
 		},
 	}
@@ -84,15 +149,123 @@ Use --plan-output to save the plan JSON to a file.`,
 	cmd.Flags().StringVar(&opts.PlanOutput, "plan-output", "", "Write the plan JSON to a file")
 	cmd.Flags().DurationVar(&opts.PollInterval, "poll-interval", 1*time.Second, "Polling interval")
 	cmd.Flags().DurationVar(&opts.Timeout, "timeout", 30*time.Minute, "Max total wait time")
+	cmd.Flags().UintVar(&opts.ParentGroupID, "parent-group", 0, "Parent group ID for imported top-level groups")
+	cmd.Flags().StringVar(&opts.OnResourceConflict, "on-resource-conflict", "skip", `Resource collision policy: "skip" or "duplicate"`)
+	cmd.Flags().BoolVar(&opts.AutoMap, "auto-map", true, "Automatically accept plan mapping suggestions")
+	cmd.Flags().BoolVar(&opts.AcknowledgeMissingHashes, "acknowledge-missing-hashes", false, "Proceed even when some resources have no bytes")
+	cmd.Flags().StringVar(&opts.Decisions, "decisions", "", "Path to a decisions JSON file (overrides other flags)")
 
 	return cmd
 }
 
 type importCmdOptions struct {
-	DryRun       bool
-	PlanOutput   string
-	PollInterval time.Duration
-	Timeout      time.Duration
+	DryRun                   bool
+	PlanOutput               string
+	PollInterval             time.Duration
+	Timeout                  time.Duration
+	ParentGroupID            uint
+	OnResourceConflict       string
+	AutoMap                  bool
+	AcknowledgeMissingHashes bool
+	Decisions                string
+}
+
+// buildCLIDecisions constructs ImportDecisions from the plan suggestions and
+// CLI flag overrides, suitable for non-interactive apply.
+func buildCLIDecisions(plan *application_context.ImportPlan, opts *importCmdOptions) application_context.ImportDecisions {
+	d := application_context.ImportDecisions{
+		ResourceCollisionPolicy:  opts.OnResourceConflict,
+		AcknowledgeMissingHashes: opts.AcknowledgeMissingHashes,
+		MappingActions:           make(map[string]application_context.MappingAction),
+		DanglingActions:          make(map[string]application_context.DanglingAction),
+	}
+
+	if opts.ParentGroupID != 0 {
+		pid := opts.ParentGroupID
+		d.ParentGroupID = &pid
+	}
+
+	// Accept all mapping suggestions.
+	allMappings := [][]application_context.MappingEntry{
+		plan.Mappings.Categories,
+		plan.Mappings.NoteTypes,
+		plan.Mappings.ResourceCategories,
+		plan.Mappings.Tags,
+		plan.Mappings.GroupRelationTypes,
+	}
+	for _, entries := range allMappings {
+		for _, e := range entries {
+			action := e.Suggestion
+			if action == "" {
+				action = "create"
+			}
+			var destID *uint
+			if e.DestinationID != nil {
+				id := *e.DestinationID
+				destID = &id
+			}
+			d.MappingActions[e.DecisionKey] = application_context.MappingAction{
+				Include:       true,
+				Action:        action,
+				DestinationID: destID,
+			}
+		}
+	}
+
+	// Drop all dangling refs.
+	for _, dr := range plan.DanglingRefs {
+		d.DanglingActions[dr.ID] = application_context.DanglingAction{
+			Action: "drop",
+		}
+	}
+
+	return d
+}
+
+// printApplyResult prints a human-readable summary of a successful apply.
+func printApplyResult(cmd *cobra.Command, r *application_context.ImportApplyResult) {
+	w := cmd.OutOrStdout()
+	fmt.Fprintf(w, "Import applied successfully.\n")
+	fmt.Fprintf(w, "  Groups:    %d created\n", r.CreatedGroups)
+	fmt.Fprintf(w, "  Resources: %d created, %d skipped (hash match), %d skipped (missing bytes)\n",
+		r.CreatedResources, r.SkippedByHash, r.SkippedMissingBytes)
+	fmt.Fprintf(w, "  Notes:     %d created\n", r.CreatedNotes)
+	if r.CreatedCategories > 0 || r.CreatedNoteTypes > 0 || r.CreatedResourceCategories > 0 ||
+		r.CreatedTags > 0 || r.CreatedGRTs > 0 {
+		fmt.Fprintf(w, "  Schema: %d categories, %d note types, %d resource categories, %d tags, %d relation types\n",
+			r.CreatedCategories, r.CreatedNoteTypes, r.CreatedResourceCategories, r.CreatedTags, r.CreatedGRTs)
+	}
+	if r.CreatedSeries > 0 || r.ReusedSeries > 0 {
+		fmt.Fprintf(w, "  Series: %d created, %d reused\n", r.CreatedSeries, r.ReusedSeries)
+	}
+	if r.CreatedPreviews > 0 {
+		fmt.Fprintf(w, "  Previews:  %d created\n", r.CreatedPreviews)
+	}
+	if r.CreatedVersions > 0 {
+		fmt.Fprintf(w, "  Versions:  %d created\n", r.CreatedVersions)
+	}
+	for _, warn := range r.Warnings {
+		fmt.Fprintf(w, "  WARNING: %s\n", warn)
+	}
+}
+
+// printPartialResult prints created IDs from a partial-failure result so
+// the user can perform manual cleanup.
+func printPartialResult(cmd *cobra.Command, r *application_context.ImportApplyResult) {
+	w := cmd.ErrOrStderr()
+	fmt.Fprintf(w, "Partial result before failure:\n")
+	if len(r.CreatedGroupIDs) > 0 {
+		fmt.Fprintf(w, "  Created group IDs:    %v\n", r.CreatedGroupIDs)
+	}
+	if len(r.CreatedResourceIDs) > 0 {
+		fmt.Fprintf(w, "  Created resource IDs: %v\n", r.CreatedResourceIDs)
+	}
+	if len(r.CreatedNoteIDs) > 0 {
+		fmt.Fprintf(w, "  Created note IDs:     %v\n", r.CreatedNoteIDs)
+	}
+	for _, warn := range r.Warnings {
+		fmt.Fprintf(w, "  WARNING: %s\n", warn)
+	}
 }
 
 func printPlanSummary(cmd *cobra.Command, plan *application_context.ImportPlan) {
