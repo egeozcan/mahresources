@@ -46,9 +46,9 @@ type QueryResultGroup struct {
 	Items []QueryResultItem
 }
 
-// maxRecursionDepth limits how deeply [mrql] shortcodes may nest inside each
+// maxRecursionDepth limits how deeply shortcodes may nest inside each
 // other's output to prevent runaway recursive expansion.
-const maxRecursionDepth = 2
+const maxRecursionDepth = 10
 
 // Process parses shortcodes in input and replaces them with rendered HTML.
 // Built-in "meta" and "property" shortcodes are handled directly.
@@ -60,7 +60,11 @@ func Process(reqCtx context.Context, input string, ctx MetaShortcodeContext, ren
 }
 
 func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeContext, renderer PluginRenderer, executor QueryExecutor, depth int) string {
-	shortcodes := Parse(input)
+	if depth >= maxRecursionDepth {
+		return input
+	}
+
+	shortcodes := ParseWithBlocks(input)
 	if len(shortcodes) == 0 {
 		return input
 	}
@@ -75,6 +79,8 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 		var replacement string
 
 		switch {
+		case sc.Name == "conditional":
+			replacement = RenderConditionalShortcode(reqCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "meta":
 			replacement = RenderMetaShortcode(sc, ctx)
 		case sc.Name == "property":
@@ -92,6 +98,10 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 					html, err := renderer(parts[1], sc, ctx)
 					if err == nil {
 						replacement = html
+						// Post-plugin expansion for block shortcodes
+						if sc.IsBlock && depth+1 < maxRecursionDepth {
+							replacement = processWithDepth(reqCtx, replacement, ctx, renderer, executor, depth+1)
+						}
 					} else {
 						replacement = sc.Raw
 					}

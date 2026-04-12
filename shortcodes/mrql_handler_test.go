@@ -161,11 +161,11 @@ func TestMRQLShortcodeRecursionDepthCap(t *testing.T) {
 	sc := Shortcode{Name: "mrql", Attrs: map[string]string{"query": "test"}, Raw: `[mrql query="test"]`}
 	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
 
-	// Depth 0 → executes, custom template contains [mrql] → depth 1 executes,
-	// that custom template also contains [mrql] → depth 2 hits cap, left as raw
+	// Depth 0 → executes, custom template contains [mrql] → depth 1 executes, …
+	// repeats until depth maxRecursionDepth-1, then the shortcode is left as raw.
 	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
-	assert.Equal(t, 2, callCount) // should execute exactly twice (depth 0 and 1)
-	assert.Contains(t, html, `[mrql query="type = 'resource'"]`) // depth-2 shortcode left raw
+	assert.Equal(t, maxRecursionDepth, callCount) // executes exactly maxRecursionDepth times
+	assert.Contains(t, html, `[mrql query="type = 'resource'"]`) // depth-cap shortcode left raw
 }
 
 func TestMRQLShortcodeSavedQuery(t *testing.T) {
