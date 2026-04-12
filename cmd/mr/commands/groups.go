@@ -50,6 +50,7 @@ func NewGroupCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd.AddCommand(newGroupChildrenCmd(c, opts))
 	cmd.AddCommand(newGroupCloneCmd(c, opts))
 	cmd.AddCommand(newGroupExportCmd(c, opts))
+	cmd.AddCommand(newGroupImportCmd(c, opts))
 
 	return cmd
 }
