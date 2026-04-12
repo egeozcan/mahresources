@@ -909,9 +909,421 @@ func (s *applyState) resolveResourceCategoryID(rp *archive.ResourcePayload) uint
 	}
 	return 1
 }
-func (s *applyState) applyNotes() error              { return nil }
-func (s *applyState) applyM2MLinks() error           { return nil }
-func (s *applyState) applyDanglingDecisions() error  { return nil }
+// noteEntry pairs an export ID with its note payload for ordered iteration.
+type noteEntry struct {
+	exportID string
+	payload  *archive.NotePayload
+}
+
+// applyNotes creates note rows in batches of applyBatchSize. Each batch
+// runs inside a single DB transaction covering the note row and its blocks.
+func (s *applyState) applyNotes() error {
+	// Build ordered list, excluding notes whose owner was excluded or unmapped.
+	var entries []noteEntry
+	for exportID, np := range s.collector.notes {
+		if s.isExcluded(exportID) {
+			continue
+		}
+		// Owner must be resolvable (mapped or absent). If OwnerRef is set but
+		// not in idMap, the owner group was excluded — skip this note.
+		if np.OwnerRef != "" {
+			if _, ok := s.idMap[np.OwnerRef]; !ok {
+				continue
+			}
+		}
+		entries = append(entries, noteEntry{exportID: exportID, payload: np})
+	}
+
+	for batchStart := 0; batchStart < len(entries); batchStart += applyBatchSize {
+		if err := s.cancelCtx.Err(); err != nil {
+			return err
+		}
+
+		batchEnd := batchStart + applyBatchSize
+		if batchEnd > len(entries) {
+			batchEnd = len(entries)
+		}
+		batch := entries[batchStart:batchEnd]
+		batchNum := batchStart/applyBatchSize + 1
+
+		tx := s.ctx.db.Begin()
+		for _, entry := range batch {
+			if err := s.applyOneNote(tx, entry.exportID, entry.payload); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("batch %d, note %s: %w", batchNum, entry.exportID, err)
+			}
+		}
+		if err := tx.Commit().Error; err != nil {
+			return fmt.Errorf("commit note batch %d: %w", batchNum, err)
+		}
+
+		s.sink.SetPhaseProgress(int64(batchEnd), int64(len(entries)))
+	}
+	return nil
+}
+
+// applyOneNote creates a single note row plus its blocks within the caller's tx.
+func (s *applyState) applyOneNote(tx *gorm.DB, exportID string, np *archive.NotePayload) error {
+	n := models.Note{
+		Name:        np.Name,
+		Description: np.Description,
+		CreatedAt:   np.CreatedAt,
+		UpdatedAt:   np.UpdatedAt,
+		StartDate:   np.StartDate,
+		EndDate:     np.EndDate,
+	}
+
+	// Resolve OwnerRef
+	if np.OwnerRef != "" {
+		if ownerID, ok := s.idMap[np.OwnerRef]; ok {
+			n.OwnerId = &ownerID
+		}
+	}
+
+	// Resolve NoteType: try NoteTypeRef first, then NoteTypeName lookup
+	if np.NoteTypeRef != "" {
+		if ntID, ok := s.idMap[np.NoteTypeRef]; ok {
+			n.NoteTypeId = &ntID
+		}
+	}
+	if n.NoteTypeId == nil && np.NoteTypeName != "" {
+		ntKey := DecisionKeyFor("note_type", MappingEntry{SourceKey: np.NoteTypeName})
+		if ntID, ok := s.idMap[ntKey]; ok {
+			n.NoteTypeId = &ntID
+		}
+	}
+
+	// Marshal Meta
+	if np.Meta != nil {
+		m, err := json.Marshal(np.Meta)
+		if err != nil {
+			return fmt.Errorf("marshal note meta: %w", err)
+		}
+		n.Meta = types.JSON(m)
+	}
+
+	if err := tx.Create(&n).Error; err != nil {
+		return fmt.Errorf("create note %q: %w", n.Name, err)
+	}
+
+	s.idMap[exportID] = n.ID
+	s.result.CreatedNotes++
+	s.result.CreatedNoteIDs = append(s.result.CreatedNoteIDs, n.ID)
+
+	// Create NoteBlock rows
+	for _, bp := range np.Blocks {
+		block := models.NoteBlock{
+			NoteID:   n.ID,
+			Type:     bp.Type,
+			Position: bp.Position,
+		}
+
+		// Content defaults to {} if nil
+		if bp.Content != nil {
+			c, err := json.Marshal(bp.Content)
+			if err != nil {
+				return fmt.Errorf("marshal block content: %w", err)
+			}
+			block.Content = types.JSON(c)
+		} else {
+			block.Content = types.JSON([]byte("{}"))
+		}
+
+		// State defaults to {} if nil
+		if bp.State != nil {
+			st, err := json.Marshal(bp.State)
+			if err != nil {
+				return fmt.Errorf("marshal block state: %w", err)
+			}
+			block.State = types.JSON(st)
+		} else {
+			block.State = types.JSON([]byte("{}"))
+		}
+
+		if err := tx.Create(&block).Error; err != nil {
+			return fmt.Errorf("create note block (note %q, pos %s): %w", n.Name, bp.Position, err)
+		}
+	}
+
+	return nil
+}
+
+// applyM2MLinks wires all many-to-many relationships for groups, resources,
+// and notes. Tags, RelatedGroups/Resources/Notes, and typed GroupRelation rows.
+func (s *applyState) applyM2MLinks() error {
+	// --- Groups: Tags, RelatedGroups, RelatedResources, RelatedNotes, GroupRelations ---
+	for exportID, gp := range s.collector.groups {
+		destID, ok := s.idMap[exportID]
+		if !ok {
+			continue // group was excluded or not created
+		}
+		group := models.Group{ID: destID}
+
+		// Tags
+		tagIDs := s.resolveTagIDs(gp.Tags)
+		if len(tagIDs) > 0 {
+			tags := BuildAssociationSlicePtr(tagIDs, TagPtrFromID)
+			if err := s.ctx.db.Model(&group).Association("Tags").Append(tags); err != nil {
+				return fmt.Errorf("group %s tags: %w", exportID, err)
+			}
+		}
+
+		// RelatedGroups
+		relGroupIDs := s.resolveRefIDs(gp.RelatedGroups)
+		if len(relGroupIDs) > 0 {
+			groups := BuildAssociationSlicePtr(relGroupIDs, GroupPtrFromID)
+			if err := s.ctx.db.Model(&group).Association("RelatedGroups").Append(groups); err != nil {
+				return fmt.Errorf("group %s related groups: %w", exportID, err)
+			}
+		}
+
+		// RelatedResources
+		relResIDs := s.resolveRefIDs(gp.RelatedResources)
+		if len(relResIDs) > 0 {
+			resources := BuildAssociationSlicePtr(relResIDs, ResourcePtrFromID)
+			if err := s.ctx.db.Model(&group).Association("RelatedResources").Append(resources); err != nil {
+				return fmt.Errorf("group %s related resources: %w", exportID, err)
+			}
+		}
+
+		// RelatedNotes
+		relNoteIDs := s.resolveRefIDs(gp.RelatedNotes)
+		if len(relNoteIDs) > 0 {
+			notes := BuildAssociationSlicePtr(relNoteIDs, NotePtrFromID)
+			if err := s.ctx.db.Model(&group).Association("RelatedNotes").Append(notes); err != nil {
+				return fmt.Errorf("group %s related notes: %w", exportID, err)
+			}
+		}
+
+		// GroupRelation rows (typed relationships with ToRef in scope)
+		for _, rel := range gp.Relationships {
+			if rel.ToRef == "" {
+				continue // dangling — handled by applyDanglingDecisions
+			}
+			toID, ok := s.idMap[rel.ToRef]
+			if !ok {
+				continue // target not created
+			}
+			grtID := s.resolveGRTID(rel)
+			if grtID == 0 {
+				continue // relation type not resolved
+			}
+			gr := models.GroupRelation{
+				FromGroupId:    &destID,
+				ToGroupId:      &toID,
+				RelationTypeId: &grtID,
+				Name:           rel.Name,
+				Description:    rel.Description,
+			}
+			if err := s.ctx.db.Create(&gr).Error; err != nil {
+				return fmt.Errorf("group %s relation to %s: %w", exportID, rel.ToRef, err)
+			}
+		}
+	}
+
+	// --- Resources: Tags, Groups, Notes ---
+	for exportID, rp := range s.collector.resources {
+		destID, ok := s.idMap[exportID]
+		if !ok {
+			continue
+		}
+		resource := models.Resource{ID: destID}
+
+		// Tags
+		tagIDs := s.resolveTagIDs(rp.Tags)
+		if len(tagIDs) > 0 {
+			tags := BuildAssociationSlicePtr(tagIDs, TagPtrFromID)
+			if err := s.ctx.db.Model(&resource).Association("Tags").Append(tags); err != nil {
+				return fmt.Errorf("resource %s tags: %w", exportID, err)
+			}
+		}
+
+		// Groups (m2m)
+		groupIDs := s.resolveRefIDs(rp.Groups)
+		if len(groupIDs) > 0 {
+			groups := BuildAssociationSlicePtr(groupIDs, GroupPtrFromID)
+			if err := s.ctx.db.Model(&resource).Association("Groups").Append(groups); err != nil {
+				return fmt.Errorf("resource %s groups: %w", exportID, err)
+			}
+		}
+
+		// Notes (m2m)
+		noteIDs := s.resolveRefIDs(rp.Notes)
+		if len(noteIDs) > 0 {
+			notes := BuildAssociationSlicePtr(noteIDs, NotePtrFromID)
+			if err := s.ctx.db.Model(&resource).Association("Notes").Append(notes); err != nil {
+				return fmt.Errorf("resource %s notes: %w", exportID, err)
+			}
+		}
+	}
+
+	// --- Notes: Tags, Resources, Groups ---
+	for exportID, np := range s.collector.notes {
+		destID, ok := s.idMap[exportID]
+		if !ok {
+			continue
+		}
+		note := models.Note{ID: destID}
+
+		// Tags
+		tagIDs := s.resolveTagIDs(np.Tags)
+		if len(tagIDs) > 0 {
+			tags := BuildAssociationSlicePtr(tagIDs, TagPtrFromID)
+			if err := s.ctx.db.Model(&note).Association("Tags").Append(tags); err != nil {
+				return fmt.Errorf("note %s tags: %w", exportID, err)
+			}
+		}
+
+		// Resources (m2m)
+		resIDs := s.resolveRefIDs(np.Resources)
+		if len(resIDs) > 0 {
+			resources := BuildAssociationSlicePtr(resIDs, ResourcePtrFromID)
+			if err := s.ctx.db.Model(&note).Association("Resources").Append(resources); err != nil {
+				return fmt.Errorf("note %s resources: %w", exportID, err)
+			}
+		}
+
+		// Groups (m2m)
+		groupIDs := s.resolveRefIDs(np.Groups)
+		if len(groupIDs) > 0 {
+			groups := BuildAssociationSlicePtr(groupIDs, GroupPtrFromID)
+			if err := s.ctx.db.Model(&note).Association("Groups").Append(groups); err != nil {
+				return fmt.Errorf("note %s groups: %w", exportID, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// resolveRefIDs converts a slice of export ID references to destination DB IDs.
+// References that are not in the idMap (excluded or not created) are skipped.
+func (s *applyState) resolveRefIDs(refs []string) []uint {
+	ids := make([]uint, 0, len(refs))
+	for _, ref := range refs {
+		if destID, ok := s.idMap[ref]; ok {
+			ids = append(ids, destID)
+		}
+	}
+	return ids
+}
+
+// resolveGRTID resolves the GroupRelationType ID for a relationship payload.
+// Tries TypeRef -> idMap first, fallback to composite decision key.
+func (s *applyState) resolveGRTID(rel archive.GroupRelationPayload) uint {
+	if rel.TypeRef != "" {
+		if id, ok := s.idMap[rel.TypeRef]; ok {
+			return id
+		}
+	}
+	// Composite key fallback: grt:TypeName|FromCategoryName|ToCategoryName
+	if rel.TypeName != "" {
+		key := DecisionKeyFor("grt", MappingEntry{
+			SourceKey:        rel.TypeName,
+			FromCategoryName: rel.FromCategoryName,
+			ToCategoryName:   rel.ToCategoryName,
+		})
+		if id, ok := s.idMap[key]; ok {
+			return id
+		}
+	}
+	return 0
+}
+
+// applyDanglingDecisions processes dangling reference decisions (map or drop).
+// For "map" actions, it creates the appropriate m2m link or GroupRelation row
+// pointing to the user-chosen destination entity.
+func (s *applyState) applyDanglingDecisions() error {
+	for _, dr := range s.plan.DanglingRefs {
+		action, ok := s.decisions.DanglingActions[dr.ID]
+		if !ok || action.Action == "drop" {
+			continue
+		}
+		// action.Action == "map"
+		fromID, ok := s.idMap[dr.FromExportID]
+		if !ok {
+			continue // source entity was excluded
+		}
+		if action.DestinationID == nil {
+			continue // no destination specified
+		}
+		destID := *action.DestinationID
+
+		switch dr.Kind {
+		case "related_group":
+			group := models.Group{ID: fromID}
+			target := &models.Group{ID: destID}
+			if err := s.ctx.db.Model(&group).Association("RelatedGroups").Append(target); err != nil {
+				return fmt.Errorf("dangling %s related_group %d->%d: %w", dr.ID, fromID, destID, err)
+			}
+
+		case "related_resource":
+			group := models.Group{ID: fromID}
+			target := &models.Resource{ID: destID}
+			if err := s.ctx.db.Model(&group).Association("RelatedResources").Append(target); err != nil {
+				return fmt.Errorf("dangling %s related_resource %d->%d: %w", dr.ID, fromID, destID, err)
+			}
+
+		case "related_note":
+			group := models.Group{ID: fromID}
+			target := &models.Note{ID: destID}
+			if err := s.ctx.db.Model(&group).Association("RelatedNotes").Append(target); err != nil {
+				return fmt.Errorf("dangling %s related_note %d->%d: %w", dr.ID, fromID, destID, err)
+			}
+
+		case "group_relation":
+			grtID := s.resolveGRTForDanglingRef(dr)
+			if grtID == 0 {
+				s.result.Warnings = append(s.result.Warnings,
+					fmt.Sprintf("dangling ref %s: could not resolve group relation type, skipping", dr.ID))
+				continue
+			}
+			gr := models.GroupRelation{
+				FromGroupId:    &fromID,
+				ToGroupId:      &destID,
+				RelationTypeId: &grtID,
+			}
+			if err := s.ctx.db.Create(&gr).Error; err != nil {
+				return fmt.Errorf("dangling %s group_relation %d->%d: %w", dr.ID, fromID, destID, err)
+			}
+		}
+	}
+	return nil
+}
+
+// resolveGRTForDanglingRef finds the GroupRelationType ID for a dangling
+// group_relation reference by scanning the owning group's relationship
+// payloads for the matching DanglingRef.
+func (s *applyState) resolveGRTForDanglingRef(dr DanglingRefPlan) uint {
+	fromGroup, ok := s.collector.groups[dr.FromExportID]
+	if !ok {
+		return 0
+	}
+	for _, rel := range fromGroup.Relationships {
+		if rel.DanglingRef != dr.ID {
+			continue
+		}
+		// Found the matching relationship — resolve its type
+		if rel.TypeRef != "" {
+			if id, ok := s.idMap[rel.TypeRef]; ok {
+				return id
+			}
+		}
+		// Composite key fallback
+		if rel.TypeName != "" {
+			key := DecisionKeyFor("grt", MappingEntry{
+				SourceKey:        rel.TypeName,
+				FromCategoryName: rel.FromCategoryName,
+				ToCategoryName:   rel.ToCategoryName,
+			})
+			if id, ok := s.idMap[key]; ok {
+				return id
+			}
+		}
+		break
+	}
+	return 0
+}
 
 // --- Schema def lookup helpers ---
 

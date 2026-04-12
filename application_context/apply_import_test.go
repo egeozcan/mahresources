@@ -84,8 +84,13 @@ func TestApplyImport_FullRoundTrip(t *testing.T) {
 		t.Fatalf("expected 2 groups, got %d", plan.Counts.Groups)
 	}
 
-	// Build default decisions (accept all suggestions)
+	// Build default decisions (accept all suggestions).
+	// Use "duplicate" collision policy because createTestContext uses
+	// file::memory:?cache=shared — all contexts share the same SQLite DB,
+	// so the source resource's hash is visible in dstCtx. "duplicate" forces
+	// a new resource row even when the hash already exists.
 	decisions := buildDefaultDecisions(plan)
+	decisions.ResourceCollisionPolicy = "duplicate"
 
 	// Apply
 	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
@@ -104,24 +109,39 @@ func TestApplyImport_FullRoundTrip(t *testing.T) {
 		t.Errorf("expected 1 created note, got %d", result.CreatedNotes)
 	}
 
-	// Verify groups exist in destination
+	// Verify groups exist in destination (2 source + 2 imported in shared DB)
 	var groups []models.Group
 	dstCtx.db.Find(&groups)
-	if len(groups) != 2 {
-		t.Fatalf("expected 2 groups in DB, got %d", len(groups))
+	if len(groups) != 4 {
+		t.Fatalf("expected 4 groups in DB (2 source + 2 imported), got %d", len(groups))
 	}
 
-	// Verify resource blob on disk
+	// Verify resource blob on disk (2 total: source + imported duplicate)
 	var resources []models.Resource
 	dstCtx.db.Find(&resources)
-	if len(resources) != 1 {
-		t.Fatalf("expected 1 resource in DB, got %d", len(resources))
+	if len(resources) != 2 {
+		t.Fatalf("expected 2 resources in DB (source + imported), got %d", len(resources))
 	}
-	r := resources[0]
-	if r.Location == "" {
-		t.Fatal("resource Location is empty")
+	// Find the imported resource (the one created by apply)
+	var imported *models.Resource
+	for i := range resources {
+		for _, createdID := range result.CreatedResourceIDs {
+			if resources[i].ID == createdID {
+				imported = &resources[i]
+				break
+			}
+		}
+		if imported != nil {
+			break
+		}
 	}
-	blobFile, err := dstCtx.fs.Open(r.Location)
+	if imported == nil {
+		t.Fatal("could not find imported resource among created IDs")
+	}
+	if imported.Location == "" {
+		t.Fatal("imported resource Location is empty")
+	}
+	blobFile, err := dstCtx.fs.Open(imported.Location)
 	if err != nil {
 		t.Fatalf("open blob: %v", err)
 	}
@@ -131,20 +151,22 @@ func TestApplyImport_FullRoundTrip(t *testing.T) {
 		t.Errorf("blob content mismatch: got %q, want %q", blobData, content)
 	}
 
-	// Verify tag was created on destination and associated
+	// Verify tag exists and is named correctly
 	var destTags []models.Tag
 	dstCtx.db.Find(&destTags)
-	if len(destTags) != 1 {
-		t.Fatalf("expected 1 tag, got %d", len(destTags))
+	foundTag := false
+	for _, tag := range destTags {
+		if tag.Name == "fiction" {
+			foundTag = true
+		}
 	}
-	if destTags[0].Name != "fiction" {
-		t.Errorf("tag name = %q, want %q", destTags[0].Name, "fiction")
+	if !foundTag {
+		t.Error("imported tag 'fiction' not found")
 	}
 
 	// Verify category was created on destination
 	var destCats []models.Category
 	dstCtx.db.Find(&destCats)
-	// Destination starts with a default category (ID=1), plus our imported one
 	found := false
 	for _, c := range destCats {
 		if c.Name == "Books" {
@@ -155,14 +177,17 @@ func TestApplyImport_FullRoundTrip(t *testing.T) {
 		t.Error("imported category 'Books' not found")
 	}
 
-	// Verify note exists
+	// Verify note exists (2 total: source + imported in shared DB)
 	var notes []models.Note
 	dstCtx.db.Find(&notes)
-	if len(notes) != 1 {
-		t.Fatalf("expected 1 note, got %d", len(notes))
+	foundNote := false
+	for _, n := range notes {
+		if n.Name == "My Note" {
+			foundNote = true
+		}
 	}
-	if notes[0].Name != "My Note" {
-		t.Errorf("note name = %q, want %q", notes[0].Name, "My Note")
+	if !foundNote {
+		t.Fatal("imported note 'My Note' not found")
 	}
 }
 
