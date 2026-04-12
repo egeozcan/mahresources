@@ -191,6 +191,198 @@ func TestApplyImport_FullRoundTrip(t *testing.T) {
 	}
 }
 
+func TestApplyImport_ResourceCollisionSkip(t *testing.T) {
+	// Shared-DB: srcCtx and dstCtx use the same SQLite database.
+	// Export a resource from srcCtx, then import with "skip" policy.
+	// The resource hash already exists in the shared DB, so ApplyImport
+	// should skip it rather than creating a duplicate.
+	srcCtx := createTestContext(t)
+
+	content := []byte("SHARED CONTENT")
+	root := mustCreateGroup(t, srcCtx, "SkipRoot", nil)
+	mustCreateResource(t, srcCtx, "shared.txt", &root.ID, content)
+
+	// --- Export ---
+	var tarBuf bytes.Buffer
+	err := srcCtx.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{root.ID},
+		Scope:        archive.ExportScope{Subtree: true, OwnedResources: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true},
+	}, &tarBuf, func(ev ProgressEvent) {})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	tarBytes := tarBuf.Bytes()
+
+	// --- Destination (shares DB with source) ---
+	dstCtx := createTestContext(t)
+
+	// Count resources before import (includes source resource due to shared DB)
+	var countBefore int64
+	dstCtx.db.Model(&models.Resource{}).Count(&countBefore)
+
+	// Stage the tar for import
+	jobID := "test-collision-skip"
+	tarPath := filepath.Join("_imports", jobID+".tar")
+	dstCtx.fs.MkdirAll("_imports", 0755)
+	afero.WriteFile(dstCtx.fs, tarPath, tarBytes, 0644)
+
+	// Parse
+	plan, err := dstCtx.ParseImport(context.Background(), jobID, tarPath)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	// Apply with "skip" collision policy (the default from buildDefaultDecisions)
+	decisions := buildDefaultDecisions(plan)
+	decisions.ResourceCollisionPolicy = "skip"
+
+	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	// Resource should be skipped because its hash already exists in the shared DB
+	if result.SkippedByHash < 1 {
+		t.Errorf("expected SkippedByHash >= 1, got %d", result.SkippedByHash)
+	}
+	if result.CreatedResources != 0 {
+		t.Errorf("expected CreatedResources == 0, got %d", result.CreatedResources)
+	}
+
+	// Verify no new resources were added
+	var countAfter int64
+	dstCtx.db.Model(&models.Resource{}).Count(&countAfter)
+	if countAfter != countBefore {
+		t.Errorf("resource count changed: before=%d, after=%d; expected no change", countBefore, countAfter)
+	}
+}
+
+func TestValidateForApply_MissingHashAcknowledgement(t *testing.T) {
+	// Unit test for the ValidateForApply gate on ManifestOnlyMissingHashes.
+	// When the plan reports missing hashes and the user hasn't acknowledged,
+	// validation must reject. When acknowledged, it must pass.
+	plan := &ImportPlan{
+		ManifestOnlyMissingHashes: 5,
+	}
+	decisions := &ImportDecisions{
+		AcknowledgeMissingHashes: false,
+		MappingActions:           make(map[string]MappingAction),
+		DanglingActions:          make(map[string]DanglingAction),
+	}
+
+	err := plan.ValidateForApply(decisions)
+	if err == nil {
+		t.Fatal("expected error when AcknowledgeMissingHashes is false and plan has missing hashes")
+	}
+
+	// Now acknowledge
+	decisions.AcknowledgeMissingHashes = true
+	err = plan.ValidateForApply(decisions)
+	if err != nil {
+		t.Fatalf("expected no error when AcknowledgeMissingHashes is true, got: %v", err)
+	}
+}
+
+func TestApplyImport_SchemaDefsMapToExisting(t *testing.T) {
+	// When the source archive includes a category that already exists in the
+	// destination (shared DB), ParseImport should suggest "map" and ApplyImport
+	// should reuse the existing category rather than creating a new one.
+	srcCtx := createTestContext(t)
+
+	// Create a category and a group that uses it
+	cat := &models.Category{Name: "SharedCat", Description: "Shared category"}
+	if err := srcCtx.db.Create(cat).Error; err != nil {
+		t.Fatal(err)
+	}
+	root := mustCreateGroup(t, srcCtx, "CatRoot", nil)
+	srcCtx.db.Model(root).Update("category_id", cat.ID)
+
+	// --- Export with schema defs ---
+	var tarBuf bytes.Buffer
+	err := srcCtx.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{root.ID},
+		Scope:        archive.ExportScope{Subtree: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true},
+		SchemaDefs:   archive.ExportSchemaDefs{CategoriesAndTypes: true},
+	}, &tarBuf, func(ev ProgressEvent) {})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	tarBytes := tarBuf.Bytes()
+
+	// --- Destination (shares DB -- "SharedCat" already exists) ---
+	dstCtx := createTestContext(t)
+
+	// Count categories before import
+	var catCountBefore int64
+	dstCtx.db.Model(&models.Category{}).Count(&catCountBefore)
+
+	// Stage tar
+	jobID := "test-schema-map"
+	tarPath := filepath.Join("_imports", jobID+".tar")
+	dstCtx.fs.MkdirAll("_imports", 0755)
+	afero.WriteFile(dstCtx.fs, tarPath, tarBytes, 0644)
+
+	// Parse -- should suggest "map" for SharedCat
+	plan, err := dstCtx.ParseImport(context.Background(), jobID, tarPath)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	// Verify the category mapping suggests "map"
+	foundCatMapping := false
+	for _, m := range plan.Mappings.Categories {
+		if m.DestinationName == "SharedCat" && m.Suggestion == "map" {
+			foundCatMapping = true
+			if m.DestinationID == nil {
+				t.Fatal("category mapping DestinationID is nil")
+			}
+			if *m.DestinationID != cat.ID {
+				t.Errorf("category mapping DestinationID = %d, want %d", *m.DestinationID, cat.ID)
+			}
+		}
+	}
+	if !foundCatMapping {
+		t.Fatalf("expected category mapping with suggestion 'map' for SharedCat, mappings: %+v", plan.Mappings.Categories)
+	}
+
+	// Apply with default decisions (which accept the "map" suggestion)
+	decisions := buildDefaultDecisions(plan)
+	decisions.ResourceCollisionPolicy = "skip"
+
+	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	// No new category should be created -- the existing one was reused
+	if result.CreatedCategories != 0 {
+		t.Errorf("expected CreatedCategories == 0 (mapped to existing), got %d", result.CreatedCategories)
+	}
+
+	// Category count should not have changed
+	var catCountAfter int64
+	dstCtx.db.Model(&models.Category{}).Count(&catCountAfter)
+	if catCountAfter != catCountBefore {
+		t.Errorf("category count changed: before=%d, after=%d; expected no change", catCountBefore, catCountAfter)
+	}
+
+	// Verify the imported group points to the existing category
+	var importedGroups []models.Group
+	dstCtx.db.Where("name = ?", "CatRoot").Find(&importedGroups)
+	// Shared DB: there will be the original + the imported copy
+	foundWithCat := false
+	for _, g := range importedGroups {
+		if g.CategoryId != nil && *g.CategoryId == cat.ID {
+			foundWithCat = true
+		}
+	}
+	if !foundWithCat {
+		t.Error("no imported group points to the existing SharedCat category")
+	}
+}
+
 // buildDefaultDecisions creates decisions that accept all plan suggestions.
 func buildDefaultDecisions(plan *ImportPlan) *ImportDecisions {
 	d := &ImportDecisions{
