@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"mahresources/application_context"
@@ -95,5 +96,34 @@ func TestExportEstimateHandler_EstimatorErrorIs400(t *testing.T) {
 	api_handlers.GetExportEstimateHandler(mock)(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestExportContentTypeAndFilename(t *testing.T) {
+	// Plain tar: must return application/x-tar and a .tar (not .tar.gz) filename.
+	ct, fn := api_handlers.ExportContentTypeAndFilename("_exports/abc.tar")
+	if ct != "application/x-tar" {
+		t.Errorf("tar: content-type = %q, want application/x-tar", ct)
+	}
+	if !strings.HasSuffix(fn, ".tar") || strings.HasSuffix(fn, ".tar.gz") {
+		t.Errorf("tar: filename = %q, want suffix .tar (not .tar.gz)", fn)
+	}
+
+	// Gzipped tar (.tar.gz): must return application/gzip and a .tar.gz filename.
+	ct, fn = api_handlers.ExportContentTypeAndFilename("_exports/abc.tar.gz")
+	if ct != "application/gzip" {
+		t.Errorf("gzip (.tar.gz): content-type = %q, want application/gzip", ct)
+	}
+	if !strings.HasSuffix(fn, ".tar.gz") {
+		t.Errorf("gzip (.tar.gz): filename = %q, want suffix .tar.gz", fn)
+	}
+
+	// Gzipped tar (.tgz): same expectations.
+	ct, fn = api_handlers.ExportContentTypeAndFilename("_exports/abc.tgz")
+	if ct != "application/gzip" {
+		t.Errorf("gzip (.tgz): content-type = %q, want application/gzip", ct)
+	}
+	if !strings.HasSuffix(fn, ".tar.gz") {
+		t.Errorf("gzip (.tgz): filename = %q, want suffix .tar.gz", fn)
 	}
 }

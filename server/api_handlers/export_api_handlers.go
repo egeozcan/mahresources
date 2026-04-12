@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -90,7 +91,11 @@ func buildExportRunFn(ctx GroupExporter, fs afero.Fs, req *application_context.E
 		if err := fs.MkdirAll("_exports", 0755); err != nil {
 			return fmt.Errorf("mkdir _exports: %w", err)
 		}
-		tarPath := filepath.Join("_exports", j.ID+".tar")
+		ext := ".tar"
+		if req.Gzip {
+			ext = ".tar.gz"
+		}
+		tarPath := filepath.Join("_exports", j.ID+ext)
 
 		f, err := fs.Create(tarPath)
 		if err != nil {
@@ -145,6 +150,16 @@ func buildExportRunFn(ctx GroupExporter, fs afero.Fs, req *application_context.E
 	}
 }
 
+// ExportContentTypeAndFilename returns the correct Content-Type and a
+// timestamped suggested filename based on whether the export was gzipped.
+func ExportContentTypeAndFilename(resultPath string) (contentType, filename string) {
+	ts := time.Now().UTC().Format("20060102-150405")
+	if strings.HasSuffix(resultPath, ".tar.gz") || strings.HasSuffix(resultPath, ".tgz") {
+		return "application/gzip", fmt.Sprintf("mahresources-export-%s.tar.gz", ts)
+	}
+	return "application/x-tar", fmt.Sprintf("mahresources-export-%s.tar", ts)
+}
+
 // GetExportDownloadHandler — GET /v1/exports/{jobId}/download
 //
 // Looks up the job (via gorilla mux path param), verifies completed status,
@@ -183,8 +198,8 @@ func GetExportDownloadHandler(ctx GroupExporterWithManager, fs afero.Fs) func(ht
 		}
 		defer f.Close()
 
-		filename := fmt.Sprintf("mahresources-export-%s.tar", time.Now().UTC().Format("20060102-150405"))
-		w.Header().Set("Content-Type", "application/x-tar")
+		contentType, filename := ExportContentTypeAndFilename(resultPath)
+		w.Header().Set("Content-Type", contentType)
 		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 		_, _ = io.Copy(w, f)
 	}
