@@ -101,6 +101,11 @@ Use --decisions to supply a decisions JSON file for full control.`,
 				decisions = buildCLIDecisions(&plan, opts)
 			}
 
+			// ── Guard: --auto-map=false requires --decisions ─────────
+			if !opts.AutoMap && opts.Decisions == "" {
+				return fmt.Errorf("--auto-map=false requires --decisions <file> to provide explicit mapping choices")
+			}
+
 			// ── Guard: missing hashes ────────────────────────────────
 			if plan.ManifestOnlyMissingHashes > 0 && !decisions.AcknowledgeMissingHashes {
 				return fmt.Errorf(
