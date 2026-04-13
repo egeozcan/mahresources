@@ -86,6 +86,8 @@ This is a global per-import policy, alongside the existing `ResourceCollisionPol
 
 ### Apply Behavior
 
+This table applies to Group, Note, and schema def entities. Resource has additional rules — see Resource-Specific Behavior below.
+
 | Policy | Scalars | Meta | M2M Relationships | Timestamps |
 |--------|---------|------|-------------------|------------|
 | **merge** | Incoming wins (overwrite) | Deep merge (incoming keys overwrite, existing-only keys preserved, recursive) | Union (add incoming, keep existing) | Preserve `CreatedAt`, set `UpdatedAt` = now |
@@ -100,13 +102,20 @@ Resources have additional state beyond scalars and M2M: blob bytes, version hist
 
 **Collision detection order**: GUID match is checked first. If a GUID match is found, the GUID collision policy applies and hash matching is skipped entirely for that resource. If no GUID match, fall through to the existing `ResourceCollisionPolicy` hash-based logic.
 
-**Per-policy resource details**:
+**Resource fields are split into two groups**:
 
-| Policy | Blob / File | Versions | Previews | Hash field |
-|--------|-------------|----------|----------|------------|
-| **merge** | Keep existing blob. If incoming hash differs, log a warning but do not replace the file. | Keep existing versions. Do not import incoming versions (they reference a potentially different blob lineage). | Keep existing previews. | Keep existing hash unchanged. |
+- **Non-blob scalars**: Name, OriginalName, OriginalLocation, Description, Category, ContentType, ContentCategory, Width, Height, FileSize, ResourceCategoryId, OwnMeta. These follow the generic scalar rules (merge = incoming wins, replace = incoming overwrites).
+- **Blob-coupled fields**: Hash, HashType, Location, StorageLocation, blob bytes, versions, previews. These are treated as a unit because they are physically tied to the file on disk.
+
+**Per-policy blob-coupled behavior**:
+
+| Policy | Blob bytes on disk | Versions | Previews | Hash / HashType / Location |
+|--------|-------------------|----------|----------|---------------------------|
+| **merge** | Keep existing. If incoming hash differs, add a warning to the result. | Keep existing. Do not import incoming versions. | Keep existing. | Keep existing unchanged. |
 | **skip** | No change. | No change. | No change. | No change. |
-| **replace** | Replace blob on disk with incoming blob (if present in archive). | Delete existing versions, import incoming versions. | Delete existing previews, import incoming previews. | Overwrite hash with incoming value. |
+| **replace** | Replace with incoming blob if present in archive; if archive has no blob bytes, keep existing and add a warning (see below). | Delete existing versions, import incoming versions. | Delete existing previews, import incoming previews. | Overwrite with incoming values. |
+
+**Replace with missing blob bytes**: If the archive was exported without `resource_blobs` fidelity, the incoming resource has metadata but no file. In this case, replace updates non-blob scalars and M2M only, keeps the existing blob/hash/versions/previews intact, and adds a warning: "Resource <name>: blob not present in archive, keeping existing file."
 
 **Rationale for merge not touching blobs**: Merge is the conservative default. Silently replacing a file's bytes is destructive and not reversible. If the user wants to update the actual file content, they should use `replace`.
 
@@ -124,11 +133,19 @@ Schema defs have unique-name constraints (e.g., `unique_tag_name`, `unique_categ
 
 **Resolution**: When a GUID match is found, the merge/replace applies to the GUID-matched entity. If the incoming name would violate a unique constraint against a *different* local entity, the import plan flags this as a conflict requiring user decision:
 
-- **Option A**: Rename the incoming entity (user provides a new name)
+- **Option A**: Rename — apply the GUID match but use a user-provided name instead of the incoming name
 - **Option B**: Map to the name-colliding entity instead (discard the GUID match)
 - **Option C**: Skip this entity
 
-The import plan's `MappingEntry` already supports `Ambiguous` + `Alternatives` — GUID-vs-name conflicts surface through this same mechanism, with an additional `GUIDConflict bool` field to distinguish them from pure name ambiguities.
+The import plan's `MappingEntry` already supports `Ambiguous` + `Alternatives` — GUID-vs-name conflicts surface through this same mechanism. New fields on `MappingEntry`:
+
+- `GUIDConflict bool` `json:"guid_conflict,omitempty"` — distinguishes GUID-vs-name conflicts from pure name ambiguities
+- `GUIDMatchID uint` `json:"guid_match_id,omitempty"` — the local entity matched by GUID
+- `GUIDMatchName string` `json:"guid_match_name,omitempty"` — its current name
+
+New field on `MappingAction` to carry a user-provided rename:
+
+- `RenameTo string` `json:"rename_to,omitempty"` — when set with `Action: "create"`, the GUID-matched entity is updated using this name instead of the incoming name. Only used for GUID conflict resolution (Option A).
 
 **GroupRelationType composite uniqueness**: GroupRelationTypes are identified by (Name, FromCategory, ToCategory). GUID match takes priority; if the incoming payload's composite key collides with a different local GRT, the same conflict resolution mechanism applies.
 
@@ -152,7 +169,7 @@ Example queries:
 
 For Group, Note, Resource detail pages: show GUID as a small, muted metadata line (e.g., in sidebar or metadata section). Include click-to-copy using existing clipboard utilities from `src/index.js`.
 
-Schema def entities (Category, NoteType, etc.) — no UI change. GUIDs accessible via API and MRQL.
+Schema def entities (Category, NoteType, etc.) — no UI change. GUIDs accessible via API JSON responses.
 
 ### Import Review
 
