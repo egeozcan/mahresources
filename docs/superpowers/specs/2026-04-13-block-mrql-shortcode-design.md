@@ -72,9 +72,11 @@ The `[mrql]` section (starting at line 112) documents only self-closing usage. A
 - Empty/whitespace-only blocks fall back to normal rendering
 - Works with flat and bucketed results; aggregated results ignore inner content
 
+Also fix the stale nesting limit: the "Nesting" subsection (line 158) says `[mrql]` nests "up to 2 levels deep" — the actual runtime limit is 10 (`maxRecursionDepth` in `shortcodes/processor.go`). Correct this.
+
 ### `docs-site/docs/features/custom-templates.md`
 
-The "Custom MRQL Result Templates" section (starting at line 367) describes the category-level `customMRQLResult` field. Add a note explaining that block `[mrql]` provides an inline alternative that overrides `customMRQLResult` when both are present.
+The "Custom MRQL Result Templates" section (starting at line 367) contains unconditional statements like "the custom template is used" and "if any returned entity has a customMRQLResult, custom rendering is used." These need to be revised (not just appended to) to reflect the new precedence rule: when a block `[mrql]` provides a non-empty inner template, it overrides `customMRQLResult` for all items. Rewrite the "How It Works" and "Format Auto-Resolution" subsections to make this explicit.
 
 ## Testing
 
