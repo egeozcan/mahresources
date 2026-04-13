@@ -25,29 +25,31 @@ Each Category (for Groups), Resource Category (for Resources), and Note Type (fo
 | **CustomSummary** | Entity cards in list views |
 | **CustomAvatar** | Avatar/icon when linking to the entity |
 
-## Template Approaches
+## How Custom Templates Are Rendered
 
-Two approaches are available for accessing entity data in custom templates:
+Custom template content is processed in two ways:
 
-- **Pongo2 + Alpine.js hybrid**: Pongo2 serializes the entity to JSON at render time using the `|json` filter, and Alpine.js reads it client-side. This is the approach shown in the examples below and is suitable when you need reactive bindings or JavaScript logic.
-- **Pure Pongo2**: Reference entity fields directly with server-side syntax (`{{ group.Name }}`, `{{ note.Description }}`). This is simpler when no client-side interactivity is needed.
+- **Shortcodes** (`[meta]`, `[property]`, `[mrql]`, and plugin shortcodes) are expanded server-side.
+- **Alpine.js directives** (`x-text`, `x-if`, `:class`, `@click`, etc.) work because the outer page template already wraps custom content in an `x-data` scope with the full entity available as `entity`.
 
-Both approaches work within custom template fields.
+:::caution Pongo2 expressions do not work
+
+Custom template content is **not** evaluated as a Pongo2 template. Expressions like `{{ group.Name }}` or `{{ group|json }}` will appear as literal text in the rendered HTML. Use Alpine.js directives or shortcodes instead.
+
+:::
 
 ## Accessing Entity Data
 
-Templates have access to the entity data through Alpine.js. The entity is available as a JavaScript object:
+The entity is already available as `entity` in the Alpine.js scope. You do not need to add an `x-data` wrapper -- the outer template provides it.
 
 ```html
-<div x-data="{ entity: {{ group|json }} }">
-  <!-- Your template here -->
-  <h2 x-text="entity.Name"></h2>
-  <p x-text="entity.Description"></p>
-</div>
+<!-- Your template content -- no x-data wrapper needed -->
+<h2 x-text="entity.Name"></h2>
+<p x-text="entity.Description"></p>
 ```
 
 For Groups, the entity includes:
-- `ID`, `Name`, `Description`
+- `ID`, `Name`, `Description`, `URL`
 - `CategoryId`, `OwnerId`
 - `Meta` (JSON metadata object)
 - `CreatedAt`, `UpdatedAt`
@@ -59,6 +61,13 @@ For Notes, the entity includes:
 - `StartDate`, `EndDate`
 - `CreatedAt`, `UpdatedAt`
 
+For Resources, the entity includes:
+- `ID`, `Name`, `OriginalName`, `Description`
+- `ResourceCategoryId`, `OwnerId`
+- `Meta` (JSON metadata object)
+- `Hash`, `ContentType`, `FileSize`, `Width`, `Height`
+- `CreatedAt`, `UpdatedAt`
+
 ## Basic Examples
 
 ### Display Metadata Fields
@@ -66,15 +75,13 @@ For Notes, the entity includes:
 If groups in a "Person" category have metadata like `{"birthDate": "1990-01-15", "occupation": "Engineer"}`:
 
 ```html
-<div x-data="{ entity: {{ group|json }} }">
-  <dl class="grid grid-cols-2 gap-2">
-    <dt class="font-medium">Birth Date</dt>
-    <dd x-text="entity.Meta?.birthDate || 'Unknown'"></dd>
+<dl class="grid grid-cols-2 gap-2">
+  <dt class="font-medium">Birth Date</dt>
+  <dd x-text="entity.Meta?.birthDate || 'Unknown'"></dd>
 
-    <dt class="font-medium">Occupation</dt>
-    <dd x-text="entity.Meta?.occupation || 'Unknown'"></dd>
-  </dl>
-</div>
+  <dt class="font-medium">Occupation</dt>
+  <dd x-text="entity.Meta?.occupation || 'Unknown'"></dd>
+</dl>
 ```
 
 ### Conditional Display
@@ -82,14 +89,12 @@ If groups in a "Person" category have metadata like `{"birthDate": "1990-01-15",
 Show different content based on metadata:
 
 ```html
-<div x-data="{ entity: {{ group|json }} }">
-  <template x-if="entity.Meta?.status === 'active'">
-    <span class="px-2 py-1 bg-green-100 text-green-800 rounded">Active</span>
-  </template>
-  <template x-if="entity.Meta?.status === 'archived'">
-    <span class="px-2 py-1 bg-gray-100 text-gray-600 rounded">Archived</span>
-  </template>
-</div>
+<template x-if="entity.Meta?.status === 'active'">
+  <span class="px-2 py-1 bg-green-100 text-green-800 rounded">Active</span>
+</template>
+<template x-if="entity.Meta?.status === 'archived'">
+  <span class="px-2 py-1 bg-gray-100 text-gray-600 rounded">Archived</span>
+</template>
 ```
 
 ### Link to Related Content
@@ -97,22 +102,20 @@ Show different content based on metadata:
 Create links using entity data:
 
 ```html
-<div x-data="{ entity: {{ group|json }} }">
-  <template x-if="entity.Meta?.website">
-    <a :href="entity.Meta.website"
-       class="text-blue-600 hover:underline"
-       target="_blank">
-      Visit Website
-    </a>
-  </template>
+<template x-if="entity.Meta?.website">
+  <a :href="entity.Meta.website"
+     class="text-blue-600 hover:underline"
+     target="_blank">
+    Visit Website
+  </a>
+</template>
 
-  <template x-if="entity.Meta?.relatedGroupId">
-    <a :href="'/group?id=' + entity.Meta.relatedGroupId"
-       class="text-blue-600 hover:underline">
-      View Related Group
-    </a>
-  </template>
-</div>
+<template x-if="entity.Meta?.relatedGroupId">
+  <a :href="'/group?id=' + entity.Meta.relatedGroupId"
+     class="text-blue-600 hover:underline">
+    View Related Group
+  </a>
+</template>
 ```
 
 ## Advanced Examples
@@ -122,28 +125,26 @@ Create links using entity data:
 Use `x-for` to render lists, tables, or grids from array metadata. This pattern works for image galleries, badge lists, data tables, and any repeating content.
 
 ```html
-<div x-data="{ entity: {{ group|json }} }">
-  <template x-if="entity.Meta?.records && entity.Meta.records.length > 0">
-    <table class="w-full text-sm">
-      <thead>
+<template x-if="entity.Meta?.records && entity.Meta.records.length > 0">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b">
+        <th class="text-left py-2">Date</th>
+        <th class="text-left py-2">Event</th>
+        <th class="text-right py-2">Value</th>
+      </tr>
+    </thead>
+    <tbody>
+      <template x-for="record in entity.Meta.records" :key="record.date">
         <tr class="border-b">
-          <th class="text-left py-2">Date</th>
-          <th class="text-left py-2">Event</th>
-          <th class="text-right py-2">Value</th>
+          <td class="py-2" x-text="record.date"></td>
+          <td class="py-2" x-text="record.event"></td>
+          <td class="py-2 text-right" x-text="record.value"></td>
         </tr>
-      </thead>
-      <tbody>
-        <template x-for="record in entity.Meta.records" :key="record.date">
-          <tr class="border-b">
-            <td class="py-2" x-text="record.date"></td>
-            <td class="py-2" x-text="record.event"></td>
-            <td class="py-2 text-right" x-text="record.value"></td>
-          </tr>
-        </template>
-      </tbody>
-    </table>
-  </template>
-</div>
+      </template>
+    </tbody>
+  </table>
+</template>
 ```
 
 ### Dynamic Styling from Metadata
@@ -151,20 +152,18 @@ Use `x-for` to render lists, tables, or grids from array metadata. This pattern 
 Combine `:class` bindings with metadata values for status badges, progress bars, or conditional formatting.
 
 ```html
-<div x-data="{ entity: {{ group|json }} }">
-  <template x-if="entity.Meta?.progress !== undefined">
-    <div class="mt-4">
-      <div class="flex justify-between text-sm mb-1">
-        <span>Progress</span>
-        <span x-text="entity.Meta.progress + '%'"></span>
-      </div>
-      <div class="w-full bg-gray-200 rounded-full h-2">
-        <div class="bg-blue-600 h-2 rounded-full"
-             :style="'width: ' + entity.Meta.progress + '%'"></div>
-      </div>
+<template x-if="entity.Meta?.progress !== undefined">
+  <div class="mt-4">
+    <div class="flex justify-between text-sm mb-1">
+      <span>Progress</span>
+      <span x-text="entity.Meta.progress + '%'"></span>
     </div>
-  </template>
-</div>
+    <div class="w-full bg-gray-200 rounded-full h-2">
+      <div class="bg-blue-600 h-2 rounded-full"
+           :style="'width: ' + entity.Meta.progress + '%'"></div>
+    </div>
+  </div>
+</template>
 ```
 
 ## CustomSummary Example
@@ -172,7 +171,7 @@ Combine `:class` bindings with metadata values for status badges, progress bars,
 The CustomSummary template appears in list views. Keep it compact:
 
 ```html
-<div x-data="{ entity: {{ group|json }} }" class="text-sm text-gray-600">
+<div class="text-sm text-gray-600">
   <template x-if="entity.Meta?.status">
     <span class="inline-block px-2 py-0.5 text-xs rounded"
           :class="{
@@ -193,18 +192,16 @@ The CustomSummary template appears in list views. Keep it compact:
 The CustomAvatar template controls how the entity appears when linked:
 
 ```html
-<div x-data="{ entity: {{ group|json }} }">
-  <template x-if="entity.Meta?.avatarUrl">
-    <img :src="entity.Meta.avatarUrl"
-         class="w-8 h-8 rounded-full object-cover">
-  </template>
-  <template x-if="!entity.Meta?.avatarUrl">
-    <div class="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center">
-      <span class="text-xs font-medium text-gray-600"
-            x-text="entity.Name?.charAt(0) || '?'"></span>
-    </div>
-  </template>
-</div>
+<template x-if="entity.Meta?.avatarUrl">
+  <img :src="entity.Meta.avatarUrl"
+       class="w-8 h-8 rounded-full object-cover">
+</template>
+<template x-if="!entity.Meta?.avatarUrl">
+  <div class="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center">
+    <span class="text-xs font-medium text-gray-600"
+          x-text="entity.Name?.charAt(0) || '?'"></span>
+  </div>
+</template>
 ```
 
 ## Creating Categories with Templates
@@ -242,7 +239,7 @@ The CustomAvatar template controls how the entity appears when linked:
 
 ## Shortcodes
 
-Shortcodes let you embed dynamic content in custom templates without writing Alpine.js or Pongo2 code. Three built-in shortcodes are available:
+Shortcodes let you embed dynamic content in custom templates without writing Alpine.js code. Three built-in shortcodes are available:
 
 - **`[meta]`** -- Schema-aware metadata display with optional inline editing
 - **`[property]`** -- Entity field values (Name, CreatedAt, etc.)
@@ -374,7 +371,7 @@ Categories, Resource Categories, and Note Types can define a `customMRQLResult` 
 ### How It Works
 
 1. Set the `customMRQLResult` field on a Category, Resource Category, or Note Type
-2. When an `[mrql]` shortcode query returns entities of that type, the custom template is used instead of the default card layout
+2. When an `[mrql]` shortcode query returns entities of that type, the custom template is used instead of the default card layout -- unless the `[mrql]` shortcode itself provides a [block template](./shortcodes.md#block-syntax), which takes precedence over all category-level templates
 3. The template has access to the entity context, so shortcodes like `[meta]` and `[property]` work inside it
 
 ### Setting via the UI
@@ -397,14 +394,14 @@ A Category with this `customMRQLResult`:
 
 When an `[mrql]` query returns groups in this category, each result renders using this template instead of the default link card.
 
-### Format Auto-Resolution
+### Format and Template Precedence
 
-When no explicit `format` is set on the `[mrql]` shortcode:
-- If any returned entity has a `customMRQLResult`, custom rendering is used
-- Entities without a custom template fall back to the default card layout
-- Use `format="custom"` to explicitly request custom rendering
+Template selection follows this priority:
 
-See [Shortcodes](./shortcodes.md) for all `[mrql]` format options.
+1. **Block template** -- if the `[mrql]` shortcode uses block syntax with non-empty content, that block body is the per-item template. `customMRQLResult` and `format` are both ignored.
+2. **Explicit `format`** -- `format="table"`, `format="list"`, or `format="compact"` override custom template rendering.
+3. **`customMRQLResult`** -- when `format` is empty (auto) or `"custom"`, entities with a `customMRQLResult` use it; entities without one fall back to the default card layout.
+4. **Default card layout** -- used when none of the above apply.
 
 ## Styling Tips
 
@@ -426,6 +423,21 @@ Use Tailwind responsive prefixes:
 ```html
 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
   <!-- Content adapts to screen size -->
+</div>
+```
+
+## Nested Alpine.js Scopes
+
+If you need additional reactive state (toggles, counters, etc.), create a nested `x-data` scope. The parent `entity` variable remains accessible:
+
+```html
+<div x-data="{ showDetails: false }">
+  <button @click="showDetails = !showDetails" class="text-sm text-blue-600">
+    Toggle Details
+  </button>
+  <div x-show="showDetails" class="mt-2">
+    <p x-text="entity.Meta?.notes || 'No notes'"></p>
+  </div>
 </div>
 ```
 
