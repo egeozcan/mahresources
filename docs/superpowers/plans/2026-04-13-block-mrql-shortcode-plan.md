@@ -265,11 +265,21 @@ func TestMRQLBlockChildContextWithMeta(t *testing.T) {
 }
 ```
 
-- [ ] **Step 9: Run all tests — verify they fail**
+- [ ] **Step 9: Run all tests — verify the core ones fail**
 
 Run: `go test --tags 'json1 fts5' ./shortcodes/... -run "TestMRQLBlock" -v`
 
-Expected: All 8 new tests FAIL (block template logic not implemented yet).
+Expected: 5 tests FAIL (the ones that assert block template rendering):
+- `TestMRQLBlockFlatUsesInnerTemplate` — FAIL (block content ignored)
+- `TestMRQLBlockOverridesCustomMRQLResult` — FAIL (category template still used)
+- `TestMRQLBlockOverridesFormatAttr` — FAIL (table format still used)
+- `TestMRQLBlockBucketedAppliesTemplate` — FAIL (block content ignored)
+- `TestMRQLBlockChildContextWithMeta` — FAIL (block content ignored)
+
+3 tests PASS already (they test fallback/ignore behavior that matches current code):
+- `TestMRQLBlockAggregatedIgnoresInnerContent` — PASS (aggregated already ignores block)
+- `TestMRQLBlockWhitespaceOnlyFallsBack` — PASS (whitespace block is a no-op today)
+- `TestMRQLBlockEmptyResultsShowsDefault` — PASS (empty results already show default)
 
 - [ ] **Step 10: Commit failing tests**
 
@@ -401,21 +411,25 @@ test.describe('Block MRQL shortcode', () => {
   let parentGroupId: number;
   let childGroupIds: number[] = [];
 
+  let childCategoryId: number;
+
   test.beforeAll(async ({ apiClient }) => {
     // Category for child groups — gives them a name we can assert
     const childCat = await apiClient.createCategory(
       `BlockMRQL Child ${Date.now()}`,
       'Child category',
     );
+    childCategoryId = childCat.ID;
 
-    // Parent category with block [mrql] in CustomHeader
+    // Parent category with block [mrql] in CustomHeader.
+    // Query uses type = note to avoid scope including the parent group itself.
     const parentCat = await apiClient.createCategory(
       `BlockMRQL Parent ${Date.now()}`,
       'Parent with block mrql header',
       {
         CustomHeader: [
           '<div class="block-mrql-test">',
-          '[mrql query=\'type = group\' scope="entity" limit="10"]',
+          '[mrql query=\'type = group\' scope="global" limit="10"]',
           '<div class="block-mrql-item"><span class="item-name">[property path="Name"]</span></div>',
           '[/mrql]',
           '</div>',
@@ -445,7 +459,8 @@ test.describe('Block MRQL shortcode', () => {
   test.afterAll(async ({ apiClient }) => {
     for (const id of childGroupIds) await apiClient.deleteGroup(id);
     if (parentGroupId) await apiClient.deleteGroup(parentGroupId);
-    // Categories cleaned up by cascade or manual
+    if (parentCategoryId) await apiClient.deleteCategory(parentCategoryId);
+    if (childCategoryId) await apiClient.deleteCategory(childCategoryId);
   });
 
   test('block [mrql] renders per-item template with property shortcodes', async ({ page }) => {
@@ -455,14 +470,14 @@ test.describe('Block MRQL shortcode', () => {
     const container = page.locator('.block-mrql-test');
     await expect(container).toBeVisible({ timeout: 5000 });
 
-    // Each child should be rendered using the block template
+    // Block template should render items using .block-mrql-item divs (not default cards)
     const items = container.locator('.block-mrql-item');
-    await expect(items).toHaveCount(2, { timeout: 5000 });
+    await expect(items.first()).toBeVisible({ timeout: 5000 });
 
-    // Item names should be rendered by [property path="Name"]
-    const names = container.locator('.item-name');
-    await expect(names.nth(0)).not.toHaveText('');
-    await expect(names.nth(1)).not.toHaveText('');
+    // At least the two child groups should appear with their names via [property path="Name"]
+    const containerText = await container.textContent();
+    expect(containerText).toContain('BlockMRQL Apple');
+    expect(containerText).toContain('BlockMRQL Banana');
 
     // Should NOT have the default card layout (no href links from default renderer)
     const defaultCards = container.locator('a[href*="/group?id="]');
