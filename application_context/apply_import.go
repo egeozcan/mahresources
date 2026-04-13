@@ -341,6 +341,21 @@ func (s *applyState) applySchemaDefDecisions() error {
 			}
 			continue
 		}
+		if ok && action.Action == "guid_rename" {
+			if action.RenameTo == "" {
+				return fmt.Errorf("guid_rename action for %s requires rename_to", entry.DecisionKey)
+			}
+			if err := s.ctx.db.Model(&models.Category{}).
+				Where("id = ?", entry.GUIDMatchID).
+				Update("name", action.RenameTo).Error; err != nil {
+				return fmt.Errorf("guid_rename category %s: %w", entry.DecisionKey, err)
+			}
+			s.idMap[entry.DecisionKey] = entry.GUIDMatchID
+			if entry.SourceExportID != "" {
+				s.idMap[entry.SourceExportID] = entry.GUIDMatchID
+			}
+			continue
+		}
 		if ok && !action.Include {
 			continue
 		}
@@ -382,6 +397,21 @@ func (s *applyState) applySchemaDefDecisions() error {
 			}
 			continue
 		}
+		if ok && action.Action == "guid_rename" {
+			if action.RenameTo == "" {
+				return fmt.Errorf("guid_rename action for %s requires rename_to", entry.DecisionKey)
+			}
+			if err := s.ctx.db.Model(&models.NoteType{}).
+				Where("id = ?", entry.GUIDMatchID).
+				Update("name", action.RenameTo).Error; err != nil {
+				return fmt.Errorf("guid_rename note type %s: %w", entry.DecisionKey, err)
+			}
+			s.idMap[entry.DecisionKey] = entry.GUIDMatchID
+			if entry.SourceExportID != "" {
+				s.idMap[entry.SourceExportID] = entry.GUIDMatchID
+			}
+			continue
+		}
 		if ok && !action.Include {
 			continue
 		}
@@ -419,6 +449,21 @@ func (s *applyState) applySchemaDefDecisions() error {
 			s.idMap[entry.DecisionKey] = *action.DestinationID
 			if entry.SourceExportID != "" {
 				s.idMap[entry.SourceExportID] = *action.DestinationID
+			}
+			continue
+		}
+		if ok && action.Action == "guid_rename" {
+			if action.RenameTo == "" {
+				return fmt.Errorf("guid_rename action for %s requires rename_to", entry.DecisionKey)
+			}
+			if err := s.ctx.db.Model(&models.ResourceCategory{}).
+				Where("id = ?", entry.GUIDMatchID).
+				Update("name", action.RenameTo).Error; err != nil {
+				return fmt.Errorf("guid_rename resource category %s: %w", entry.DecisionKey, err)
+			}
+			s.idMap[entry.DecisionKey] = entry.GUIDMatchID
+			if entry.SourceExportID != "" {
+				s.idMap[entry.SourceExportID] = entry.GUIDMatchID
 			}
 			continue
 		}
@@ -463,6 +508,21 @@ func (s *applyState) applySchemaDefDecisions() error {
 			}
 			continue
 		}
+		if ok && action.Action == "guid_rename" {
+			if action.RenameTo == "" {
+				return fmt.Errorf("guid_rename action for %s requires rename_to", entry.DecisionKey)
+			}
+			if err := s.ctx.db.Model(&models.Tag{}).
+				Where("id = ?", entry.GUIDMatchID).
+				Update("name", action.RenameTo).Error; err != nil {
+				return fmt.Errorf("guid_rename tag %s: %w", entry.DecisionKey, err)
+			}
+			s.idMap[entry.DecisionKey] = entry.GUIDMatchID
+			if entry.SourceExportID != "" {
+				s.idMap[entry.SourceExportID] = entry.GUIDMatchID
+			}
+			continue
+		}
 		if ok && !action.Include {
 			continue
 		}
@@ -501,6 +561,21 @@ func (s *applyState) applySchemaDefDecisions() error {
 			s.idMap[entry.DecisionKey] = *action.DestinationID
 			if entry.SourceExportID != "" {
 				s.idMap[entry.SourceExportID] = *action.DestinationID
+			}
+			continue
+		}
+		if ok && action.Action == "guid_rename" {
+			if action.RenameTo == "" {
+				return fmt.Errorf("guid_rename action for %s requires rename_to", entry.DecisionKey)
+			}
+			if err := s.ctx.db.Model(&models.GroupRelationType{}).
+				Where("id = ?", entry.GUIDMatchID).
+				Update("name", action.RenameTo).Error; err != nil {
+				return fmt.Errorf("guid_rename group relation type %s: %w", entry.DecisionKey, err)
+			}
+			s.idMap[entry.DecisionKey] = entry.GUIDMatchID
+			if entry.SourceExportID != "" {
+				s.idMap[entry.SourceExportID] = entry.GUIDMatchID
 			}
 			continue
 		}
