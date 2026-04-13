@@ -117,6 +117,16 @@ The map key is the shell group's export ID (e.g., `"g0005"`). Shell groups not p
 - `create`: New group row with archived name, category, tags, meta. Pulled-in resources/notes owned by this shell are imported with the newly created group as owner.
 - M2m wiring works unchanged — pulled-in entities resolve links through `idMap`.
 
+### Merge Semantics for map_to_existing
+
+When a shell group is mapped to an existing destination group, the relation-wiring phase can encounter conflicts: the destination group may already have m2m associations or typed GroupRelation rows that collide with what the archive wants to create.
+
+**GroupRelation rows** have a unique constraint on `(FromGroupId, ToGroupId, RelationTypeId)` (`group_relation_model.go:28-32`). The current apply code does a raw `db.Create` (`apply_import.go:1150`), which would fail on duplicates. When wiring relations for a `map_to_existing` shell, the apply phase must use **conflict-ignore** semantics: attempt the insert, and if the unique constraint fires, skip the row silently. This is the correct behavior because the existing relation already expresses the same intent.
+
+**M2m join-table rows** (RelatedGroups, RelatedResources, RelatedNotes, Tags) are wired via GORM's `Association("...").Append(...)`, which already handles duplicates gracefully on the join table — duplicate inserts are no-ops. No change needed here.
+
+**Owned resources/notes**: when a pulled-in resource's `OwnerRef` resolves to an existing group via `map_to_existing`, the resource is created with that group as owner. No conflict is possible since it's a new resource row with a new ID.
+
 ### ImportApplyResult Changes
 
 `ImportApplyResult` gains counters for shell group handling:
@@ -130,22 +140,31 @@ MappedShellGroups  int `json:"mapped_shell_groups"`
 
 ### Export
 
-**CLI:** New flag `--related-depth N` (default 0).
+**CLI:** New flag `--related-depth N` (default 0). The export command uses positional args for group IDs (`group_export.go:28`), not `--group`:
 ```
-mr export --group 42 --related-depth 2
+mr group export 42 --related-depth 2
 ```
+
+`--related-depth` is added to `exportCmdOptions` and registered via `registerExportFlags`. It is a plain `IntVar`, not a triState pair — there is no `--no-related-depth`.
 
 **API (export request body):** New field `"relatedDepth": 2`.
 
-Existing `relatedM2M` and `groupRelations` scope flags still control which edge types are walked. `relatedDepth` controls how far.
+Existing `--include-related` / `--no-related` (maps to `RelatedM2M`) and `--include-group-relations` / `--no-group-relations` scope flags still control which edge types are walked. `relatedDepth` controls how far.
 
 ### Import
 
 **API (import plan response):** Shell groups appear with `"shell": true` on their entries. No new endpoints.
 
+**CLI:** `buildCLIDecisions` (`group_import.go:188`) is extended to populate `ShellGroupActions`:
+- Default behavior (no flags): all shell groups get `Action: "create"`. This parallels how schema-def mappings default to the plan's suggestion.
+- `--decisions <file>`: a JSON file can specify per-shell-group `map_to_existing` entries with destination IDs, overriding the default. This is the only way to use `map_to_existing` from the CLI — same pattern as ambiguous NoteType mappings, which also require `--decisions`.
+- No new CLI flag for `map_to_existing` — it's an uncommon, per-group decision that doesn't lend itself to a single flag. The `--decisions` file is the right mechanism.
+
 ### Template UI
 
 Numeric input for related depth, defaulting to 0. Shown when RelatedM2M or GroupRelations scope flag is toggled on.
+
+Import review screen: shell groups are visually distinguished in the plan tree. Each shell group gets a dropdown with `create` (default) and `map_to_existing` (with a group picker). The decision is sent as part of `ShellGroupActions` in the apply request.
 
 ## Testing
 
@@ -165,6 +184,10 @@ Numeric input for related depth, defaulting to 0. Shown when RelatedM2M or Group
 | Series on BFS resources | BFS-discovered resource has a Series. Verify SeriesRef is set and series payload is in archive |
 | Shell group with owned entities | Shell group owns pulled-in resources. Import plan shows correct resource counts on the shell item |
 | Shell group map validation | `map_to_existing` with nil DestinationID rejected by ValidateForApply |
+| Map duplicate GroupRelation | Shell mapped to existing group that already has the same typed relation. Verify conflict-ignore: no error, no duplicate row |
+| Map duplicate m2m | Shell mapped to existing group that already has a RelatedResource in common. Verify no error, no duplicate join row |
+| CLI default shell create | CLI import with no `--decisions` file. All shell groups get `Action: "create"` |
+| CLI decisions file map | CLI import with `--decisions` specifying `map_to_existing` for a shell. Verify mapping applied |
 
 ### E2E Tests
 
