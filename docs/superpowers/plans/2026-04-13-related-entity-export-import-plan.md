@@ -1603,12 +1603,26 @@ In `templates/adminExport.tpl`, in the estimate output section (after the Groups
       <div x-show="(estimateResult?.counts?.shell_groups || 0) > 0">Shell groups: <span x-text="estimateResult?.counts?.shell_groups || 0"></span></div>
 ```
 
-- [ ] **Step 4: Add shell group indicator in import plan tree**
+- [ ] **Step 4: Add `shell` to flattened items and show badge in template**
 
-In `templates/adminImport.tpl`, find where plan items are displayed and add a visual indicator. Look for where `item.name` is rendered and add:
+In `src/components/adminImport.js`, in `initDecisionsFromPlan`, update the `flatten` function to copy the `shell` flag (line 157):
+
+```js
+          this.flattenedItems.push({
+            export_id: item.export_id,
+            name: item.name,
+            shell: item.shell || false,
+            depth,
+            descendant_resource_count: item.descendant_resource_count || 0,
+            descendant_note_count: item.descendant_note_count || 0,
+            item, // keep reference for toggleItem recursive walk
+          });
+```
+
+In `templates/adminImport.tpl`, on line 291 after the `fi.name` span, add a shell badge:
 
 ```html
-<span x-show="item.shell" class="ml-1 text-xs text-stone-400 font-mono">(shell)</span>
+              <span x-show="fi.shell" class="ml-1 text-xs text-stone-400 font-mono">(shell)</span>
 ```
 
 - [ ] **Step 5: Add shell group decisions to import JS component**
@@ -1706,31 +1720,31 @@ In `hasIncompleteDecisions()`, add a shell group check (after the dangling refs 
 
 - [ ] **Step 6: Add shell group decision UI to import template**
 
-In `templates/adminImport.tpl`, in the item tree rendering, after the shell indicator from Step 4, add a decision control that appears only for shell groups. Follow the existing dangling ref decision pattern:
+In `templates/adminImport.tpl`, inside the `x-for="fi in flattenedItems"` loop (line 286), after the shell badge from Step 4, add a decision control. This sits inside the same `<div>` that holds the checkbox and name, using `fi.*` to match the iteration variable:
 
 ```html
-<template x-if="item.shell && !isExcluded(item.export_id)">
-  <div class="mt-1 flex items-center gap-2 text-xs">
-    <select @change="setShellAction(item.export_id, $event.target.value)"
-            class="text-xs border-stone-300 rounded py-0.5">
-      <option value="create" :selected="getShellAction(item.export_id) === 'create'">Create new</option>
-      <option value="map_to_existing" :selected="getShellAction(item.export_id) === 'map_to_existing'">Map to existing</option>
-    </select>
-    <template x-if="getShellAction(item.export_id) === 'map_to_existing'">
-      <span class="flex items-center gap-1">
-        <input type="text" placeholder="Search groups..."
-               @input.debounce.300ms="searchShellDest(item.export_id, $event.target.value)"
-               class="text-xs border-stone-300 rounded py-0.5 w-40">
-        <span x-show="shellGroupDestNames[item.export_id]"
-              class="text-stone-600" x-text="shellGroupDestNames[item.export_id]"></span>
-        <template x-for="result in (shellGroupSearchResults[item.export_id] || [])" :key="result.id">
-          <button type="button" @click="setShellDest(item.export_id, result.id, result.name)"
-                  class="text-xs text-blue-700 underline" x-text="result.name"></button>
-        </template>
-      </span>
-    </template>
-  </div>
-</template>
+            <template x-if="fi.shell && !isExcluded(fi.export_id)">
+              <div class="ml-2 flex items-center gap-2 text-xs">
+                <select @change="setShellAction(fi.export_id, $event.target.value)"
+                        class="text-xs border-stone-300 rounded py-0.5">
+                  <option value="create" :selected="getShellAction(fi.export_id) === 'create'">Create new</option>
+                  <option value="map_to_existing" :selected="getShellAction(fi.export_id) === 'map_to_existing'">Map to existing</option>
+                </select>
+                <template x-if="getShellAction(fi.export_id) === 'map_to_existing'">
+                  <span class="flex items-center gap-1">
+                    <input type="text" placeholder="Search groups..."
+                           @input.debounce.300ms="searchShellDest(fi.export_id, $event.target.value)"
+                           class="text-xs border-stone-300 rounded py-0.5 w-40">
+                    <span x-show="shellGroupDestNames[fi.export_id]"
+                          class="text-stone-600" x-text="shellGroupDestNames[fi.export_id]"></span>
+                    <template x-for="result in (shellGroupSearchResults[fi.export_id] || [])" :key="result.id">
+                      <button type="button" @click="setShellDest(fi.export_id, result.id, result.name)"
+                              class="text-xs text-blue-700 underline" x-text="result.name"></button>
+                    </template>
+                  </span>
+                </template>
+              </div>
+            </template>
 ```
 
 - [ ] **Step 7: Build frontend**
