@@ -1162,6 +1162,7 @@ func (ctx *MahresourcesContext) writeCategoryDefs(w *archive.Writer, plan *expor
 		defs = append(defs, archive.CategoryDef{
 			ExportID:         plan.categoryExportID[row.ID],
 			SourceID:         row.ID,
+			GUID:             ctx.ensureGUID("categories", row.ID, row.GUID),
 			Name:             row.Name,
 			Description:      row.Description,
 			CustomHeader:     row.CustomHeader,
@@ -1190,6 +1191,7 @@ func (ctx *MahresourcesContext) writeNoteTypeDefs(w *archive.Writer, plan *expor
 		defs = append(defs, archive.NoteTypeDef{
 			ExportID:         plan.noteTypeExportID[row.ID],
 			SourceID:         row.ID,
+			GUID:             ctx.ensureGUID("note_types", row.ID, row.GUID),
 			Name:             row.Name,
 			Description:      row.Description,
 			CustomHeader:     row.CustomHeader,
@@ -1219,6 +1221,7 @@ func (ctx *MahresourcesContext) writeResourceCategoryDefs(w *archive.Writer, pla
 			CategoryDef: archive.CategoryDef{
 				ExportID:         plan.resourceCategoryExportID[row.ID],
 				SourceID:         row.ID,
+				GUID:             ctx.ensureGUID("resource_categories", row.ID, row.GUID),
 				Name:             row.Name,
 				Description:      row.Description,
 				CustomHeader:     row.CustomHeader,
@@ -1249,6 +1252,7 @@ func (ctx *MahresourcesContext) writeTagDefs(w *archive.Writer, plan *exportPlan
 		defs = append(defs, archive.TagDef{
 			ExportID:    plan.tagExportID[row.ID],
 			SourceID:    row.ID,
+			GUID:        ctx.ensureGUID("tags", row.ID, row.GUID),
 			Name:        row.Name,
 			Description: row.Description,
 			Meta:        jsonToMap(row.Meta),
@@ -1276,6 +1280,7 @@ func (ctx *MahresourcesContext) writeGroupRelationTypeDefs(w *archive.Writer, pl
 		def := archive.GroupRelationTypeDef{
 			ExportID:    plan.grtExportID[row.ID],
 			SourceID:    row.ID,
+			GUID:        ctx.ensureGUID("group_relation_types", row.ID, row.GUID),
 			Name:        row.Name,
 			Description: row.Description,
 		}
@@ -1372,6 +1377,7 @@ func (ctx *MahresourcesContext) loadGroupPayload(
 		RelatedNotes:     []string{},
 		Relationships:    []archive.GroupRelationPayload{},
 	}
+	p.GUID = ctx.ensureGUID("groups", g.ID, g.GUID)
 
 	if g.URL != nil {
 		u := url.URL(*g.URL)
@@ -1481,6 +1487,7 @@ func (ctx *MahresourcesContext) loadNotePayload(id uint, plan *exportPlan) (*arc
 		Groups:      []string{},
 		Blocks:      []archive.NoteBlockPayload{},
 	}
+	p.GUID = ctx.ensureGUID("notes", n.ID, n.GUID)
 
 	if n.OwnerId != nil {
 		if ref, ok := plan.groupExportID[*n.OwnerId]; ok {
@@ -1577,6 +1584,7 @@ func (ctx *MahresourcesContext) loadResourcePayload(
 		Versions:         []archive.ResourceVersionPayload{},
 		Previews:         []archive.PreviewPayload{},
 	}
+	p.GUID = ctx.ensureGUID("resources", r.ID, r.GUID)
 
 	if r.OwnerId != nil {
 		if ref, ok := plan.groupExportID[*r.OwnerId]; ok {
@@ -1815,15 +1823,17 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) (*
 	type nameRow struct {
 		ID   uint
 		Name string
+		GUID *string
 	}
 	if len(p.groupIDs) > 0 {
 		var rows []nameRow
-		if err := ctx.db.Model(&models.Group{}).Select("id, name").Where("id IN ?", p.groupIDs).Scan(&rows).Error; err != nil {
+		if err := ctx.db.Model(&models.Group{}).Select("id, name, guid").Where("id IN ?", p.groupIDs).Scan(&rows).Error; err != nil {
 			return nil, fmt.Errorf("load group names for manifest: %w", err)
 		}
 		for _, row := range rows {
 			m.Entries.Groups = append(m.Entries.Groups, archive.GroupEntry{
 				ExportID: p.groupExportID[row.ID],
+				GUID:     ptrToString(row.GUID),
 				Name:     row.Name,
 				SourceID: row.ID,
 				Path:     "groups/" + p.groupExportID[row.ID] + ".json",
@@ -1837,9 +1847,10 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) (*
 			ID      uint
 			Name    string
 			OwnerID *uint
+			GUID    *string
 		}
 		var rows []noteRow
-		if err := ctx.db.Model(&models.Note{}).Select("id, name, owner_id").Where("id IN ?", p.noteIDs).Scan(&rows).Error; err != nil {
+		if err := ctx.db.Model(&models.Note{}).Select("id, name, owner_id, guid").Where("id IN ?", p.noteIDs).Scan(&rows).Error; err != nil {
 			return nil, fmt.Errorf("load note names for manifest: %w", err)
 		}
 		for _, row := range rows {
@@ -1849,6 +1860,7 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) (*
 			}
 			m.Entries.Notes = append(m.Entries.Notes, archive.NoteEntry{
 				ExportID: p.noteExportID[row.ID],
+				GUID:     ptrToString(row.GUID),
 				Name:     row.Name,
 				SourceID: row.ID,
 				Owner:    ownerRef,
@@ -1862,9 +1874,10 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) (*
 			Name    string
 			OwnerId *uint
 			Hash    string
+			GUID    *string
 		}
 		var rows []resRow
-		if err := ctx.db.Model(&models.Resource{}).Select("id, name, owner_id, hash").Where("id IN ?", p.resourceIDs).Scan(&rows).Error; err != nil {
+		if err := ctx.db.Model(&models.Resource{}).Select("id, name, owner_id, hash, guid").Where("id IN ?", p.resourceIDs).Scan(&rows).Error; err != nil {
 			return nil, fmt.Errorf("load resource names for manifest: %w", err)
 		}
 		for _, row := range rows {
@@ -1874,6 +1887,7 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) (*
 			}
 			m.Entries.Resources = append(m.Entries.Resources, archive.ResourceEntry{
 				ExportID: p.resourceExportID[row.ID],
+				GUID:     ptrToString(row.GUID),
 				Name:     row.Name,
 				SourceID: row.ID,
 				Owner:    ownerRef,
@@ -1902,12 +1916,13 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) (*
 		catIDs := keysOfUintMap(p.categoryExportID)
 		sortAscUint(catIDs)
 		var rows []nameRow
-		if err := ctx.db.Model(&models.Category{}).Select("id, name").Where("id IN ?", catIDs).Scan(&rows).Error; err != nil {
+		if err := ctx.db.Model(&models.Category{}).Select("id, name, guid").Where("id IN ?", catIDs).Scan(&rows).Error; err != nil {
 			return nil, fmt.Errorf("load category names for manifest: %w", err)
 		}
 		for _, row := range rows {
 			m.SchemaDefs.Categories = append(m.SchemaDefs.Categories, archive.SchemaDefEntry{
 				ExportID: p.categoryExportID[row.ID],
+				GUID:     ptrToString(row.GUID),
 				Name:     row.Name,
 				SourceID: row.ID,
 				Path:     "schemas/categories.json",
@@ -1918,12 +1933,13 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) (*
 		ntIDs := keysOfUintMap(p.noteTypeExportID)
 		sortAscUint(ntIDs)
 		var rows []nameRow
-		if err := ctx.db.Model(&models.NoteType{}).Select("id, name").Where("id IN ?", ntIDs).Scan(&rows).Error; err != nil {
+		if err := ctx.db.Model(&models.NoteType{}).Select("id, name, guid").Where("id IN ?", ntIDs).Scan(&rows).Error; err != nil {
 			return nil, fmt.Errorf("load note type names for manifest: %w", err)
 		}
 		for _, row := range rows {
 			m.SchemaDefs.NoteTypes = append(m.SchemaDefs.NoteTypes, archive.SchemaDefEntry{
 				ExportID: p.noteTypeExportID[row.ID],
+				GUID:     ptrToString(row.GUID),
 				Name:     row.Name,
 				SourceID: row.ID,
 				Path:     "schemas/note_types.json",
@@ -1934,12 +1950,13 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) (*
 		rcIDs := keysOfUintMap(p.resourceCategoryExportID)
 		sortAscUint(rcIDs)
 		var rows []nameRow
-		if err := ctx.db.Model(&models.ResourceCategory{}).Select("id, name").Where("id IN ?", rcIDs).Scan(&rows).Error; err != nil {
+		if err := ctx.db.Model(&models.ResourceCategory{}).Select("id, name, guid").Where("id IN ?", rcIDs).Scan(&rows).Error; err != nil {
 			return nil, fmt.Errorf("load resource category names for manifest: %w", err)
 		}
 		for _, row := range rows {
 			m.SchemaDefs.ResourceCategories = append(m.SchemaDefs.ResourceCategories, archive.SchemaDefEntry{
 				ExportID: p.resourceCategoryExportID[row.ID],
+				GUID:     ptrToString(row.GUID),
 				Name:     row.Name,
 				SourceID: row.ID,
 				Path:     "schemas/resource_categories.json",
@@ -1950,12 +1967,13 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) (*
 		tagIDs := keysOfUintMap(p.tagExportID)
 		sortAscUint(tagIDs)
 		var rows []nameRow
-		if err := ctx.db.Model(&models.Tag{}).Select("id, name").Where("id IN ?", tagIDs).Scan(&rows).Error; err != nil {
+		if err := ctx.db.Model(&models.Tag{}).Select("id, name, guid").Where("id IN ?", tagIDs).Scan(&rows).Error; err != nil {
 			return nil, fmt.Errorf("load tag names for manifest: %w", err)
 		}
 		for _, row := range rows {
 			m.SchemaDefs.Tags = append(m.SchemaDefs.Tags, archive.SchemaDefEntry{
 				ExportID: p.tagExportID[row.ID],
+				GUID:     ptrToString(row.GUID),
 				Name:     row.Name,
 				SourceID: row.ID,
 				Path:     "schemas/tags.json",
@@ -1966,12 +1984,13 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) (*
 		grtIDs := keysOfUintMap(p.grtExportID)
 		sortAscUint(grtIDs)
 		var rows []nameRow
-		if err := ctx.db.Model(&models.GroupRelationType{}).Select("id, name").Where("id IN ?", grtIDs).Scan(&rows).Error; err != nil {
+		if err := ctx.db.Model(&models.GroupRelationType{}).Select("id, name, guid").Where("id IN ?", grtIDs).Scan(&rows).Error; err != nil {
 			return nil, fmt.Errorf("load group relation type names for manifest: %w", err)
 		}
 		for _, row := range rows {
 			m.SchemaDefs.GroupRelationTypes = append(m.SchemaDefs.GroupRelationTypes, archive.SchemaDefEntry{
 				ExportID: p.grtExportID[row.ID],
+				GUID:     ptrToString(row.GUID),
 				Name:     row.Name,
 				SourceID: row.ID,
 				Path:     "schemas/group_relation_types.json",
@@ -2005,6 +2024,37 @@ func keysOfUintBoolMap(m map[uint]bool) []uint {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
+}
+
+// ensureGUID assigns a UUID v7 to the given entity row if it has none.
+// Uses an atomic conditional UPDATE to handle concurrent exports safely.
+// Returns the GUID (either pre-existing or newly assigned).
+func (ctx *MahresourcesContext) ensureGUID(table string, id uint, existing *string) string {
+	if existing != nil && *existing != "" {
+		return *existing
+	}
+	guid := types.NewUUIDv7()
+	result := ctx.db.Exec(
+		fmt.Sprintf("UPDATE %s SET guid = ? WHERE id = ? AND guid IS NULL", table),
+		guid, id,
+	)
+	if result.RowsAffected == 0 {
+		// Another concurrent export already assigned a GUID — read it back.
+		var readBack string
+		ctx.db.Raw(fmt.Sprintf("SELECT guid FROM %s WHERE id = ?", table), id).Scan(&readBack)
+		if readBack != "" {
+			return readBack
+		}
+	}
+	return guid
+}
+
+// ptrToString safely dereferences a *string, returning "" for nil.
+func ptrToString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // jsonToMap converts a types.JSON field to map[string]any. Returns an empty
