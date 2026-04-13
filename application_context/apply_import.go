@@ -811,6 +811,25 @@ func (s *applyState) applyResources() error {
 // applyOneResource creates a single resource row plus its versions, wires
 // CurrentVersionID, and creates preview rows — all within the caller's tx.
 func (s *applyState) applyOneResource(tx *gorm.DB, exportID string, rp *archive.ResourcePayload, batch *batchAccumulator) error {
+	// (a0) GUID collision takes precedence over hash collision
+	if rp.GUID != "" {
+		var existing models.Resource
+		if err := tx.Where("guid = ?", rp.GUID).First(&existing).Error; err == nil {
+			s.idMap[exportID] = existing.ID
+
+			switch s.decisions.GUIDCollisionPolicy {
+			case "skip":
+				return nil
+			case "merge":
+				return s.mergeResource(tx, &existing, rp)
+			case "replace":
+				return s.replaceResource(tx, &existing, rp, batch)
+			default:
+				return s.mergeResource(tx, &existing, rp)
+			}
+		}
+	}
+
 	// (a) Skip-on-hash collision
 	if rp.Hash != "" {
 		var existing models.Resource
@@ -989,6 +1008,249 @@ func (s *applyState) resolveResourceCategoryID(rp *archive.ResourcePayload) uint
 	}
 	return 1
 }
+// mergeResource updates an existing resource's non-blob scalar fields (incoming wins),
+// deep-merges meta/ownMeta, resolves owner and resource category, and unions M2M tags.
+// Blob-derived metadata (ContentType, Width, Height, FileSize, ContentCategory) and
+// blob-coupled fields (Hash, Location, blob bytes, versions, previews) are NOT updated —
+// they stay in sync with the existing blob.
+func (s *applyState) mergeResource(tx *gorm.DB, existing *models.Resource, rp *archive.ResourcePayload) error {
+	// Non-blob scalars: incoming wins
+	updates := map[string]any{
+		"name":              rp.Name,
+		"original_name":     rp.OriginalName,
+		"original_location": rp.OriginalLocation,
+		"description":       rp.Description,
+		"category":          rp.Category,
+		"updated_at":        time.Now(),
+	}
+
+	// ResourceCategory
+	if rp.ResourceCategoryRef != "" {
+		if rcID, ok := s.idMap[rp.ResourceCategoryRef]; ok {
+			updates["resource_category_id"] = rcID
+		}
+	} else if rp.ResourceCategoryName != "" {
+		rcKey := DecisionKeyFor("resource_category", MappingEntry{SourceKey: rp.ResourceCategoryName})
+		if rcID, ok := s.idMap[rcKey]; ok {
+			updates["resource_category_id"] = rcID
+		}
+	}
+
+	// Owner
+	if rp.OwnerRef != "" {
+		if ownerID, ok := s.idMap[rp.OwnerRef]; ok {
+			updates["owner_id"] = ownerID
+		}
+	}
+
+	// OwnMeta: deep merge
+	if rp.OwnMeta != nil {
+		existingOwnMeta := jsonToMap(existing.OwnMeta)
+		merged := types.DeepMergeJSON(existingOwnMeta, rp.OwnMeta)
+		m, _ := json.Marshal(merged)
+		updates["own_meta"] = types.JSON(m)
+	}
+
+	// Meta: deep merge
+	if rp.Meta != nil {
+		existingMeta := jsonToMap(existing.Meta)
+		merged := types.DeepMergeJSON(existingMeta, rp.Meta)
+		m, _ := json.Marshal(merged)
+		updates["meta"] = types.JSON(m)
+	}
+
+	// Blob-derived metadata (ContentType, Width, Height, FileSize, ContentCategory):
+	// NOT updated — stays in sync with kept blob.
+
+	// Blob-coupled fields (Hash, Location, etc.): NOT updated.
+	if rp.Hash != "" && rp.Hash != existing.Hash {
+		s.result.Warnings = append(s.result.Warnings,
+			fmt.Sprintf("Resource %q: GUID merge kept existing blob (hash %s), incoming has different hash %s", rp.Name, existing.Hash, rp.Hash))
+	}
+
+	if err := tx.Model(existing).Updates(updates).Error; err != nil {
+		return err
+	}
+
+	// M2M: union tags
+	for _, tr := range rp.Tags {
+		tagID := s.resolveTagID(tr)
+		if tagID == 0 {
+			continue
+		}
+		tx.Exec(
+			"INSERT INTO resource_tags (resource_id, tag_id) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM resource_tags WHERE resource_id = ? AND tag_id = ?)",
+			existing.ID, tagID, existing.ID, tagID,
+		)
+	}
+
+	return nil
+}
+
+// replaceResource overwrites an existing resource's non-blob scalar fields and meta.
+// When the archive contains a blob for this resource, blob-derived metadata and
+// blob-coupled fields (Hash, Location, blob bytes, versions, previews) are also replaced.
+// When no blob is present in the archive, those fields are kept and a warning is emitted.
+// Tags are cleared and reset to the incoming set.
+func (s *applyState) replaceResource(tx *gorm.DB, existing *models.Resource, rp *archive.ResourcePayload, batch *batchAccumulator) error {
+	hasBlobInArchive := s.blobPaths[rp.Hash] != ""
+
+	// Non-blob scalars always updated
+	updates := map[string]any{
+		"name":              rp.Name,
+		"original_name":     rp.OriginalName,
+		"original_location": rp.OriginalLocation,
+		"description":       rp.Description,
+		"category":          rp.Category,
+		"updated_at":        time.Now(),
+	}
+
+	// ResourceCategory
+	if rp.ResourceCategoryRef != "" {
+		if rcID, ok := s.idMap[rp.ResourceCategoryRef]; ok {
+			updates["resource_category_id"] = rcID
+		}
+	} else if rp.ResourceCategoryName != "" {
+		rcKey := DecisionKeyFor("resource_category", MappingEntry{SourceKey: rp.ResourceCategoryName})
+		if rcID, ok := s.idMap[rcKey]; ok {
+			updates["resource_category_id"] = rcID
+		}
+	}
+
+	// Owner
+	if rp.OwnerRef != "" {
+		if ownerID, ok := s.idMap[rp.OwnerRef]; ok {
+			updates["owner_id"] = ownerID
+		}
+	}
+
+	// Meta: incoming replaces entirely
+	if rp.Meta != nil {
+		m, _ := json.Marshal(rp.Meta)
+		updates["meta"] = types.JSON(m)
+	}
+	if rp.OwnMeta != nil {
+		m, _ := json.Marshal(rp.OwnMeta)
+		updates["own_meta"] = types.JSON(m)
+	}
+
+	if hasBlobInArchive {
+		// Full replace: blob-derived metadata + blob-coupled fields
+		updates["hash"] = rp.Hash
+		updates["hash_type"] = rp.HashType
+		updates["file_size"] = rp.FileSize
+		updates["content_type"] = rp.ContentType
+		updates["content_category"] = rp.ContentCategory
+		updates["width"] = rp.Width
+		updates["height"] = rp.Height
+
+		// Replace blob on disk
+		blobSrc := s.blobPaths[rp.Hash]
+		if existing.Location != "" && blobSrc != "" {
+			srcFile, err := s.ctx.fs.Open(blobSrc)
+			if err != nil {
+				return fmt.Errorf("open replacement blob: %w", err)
+			}
+			defer srcFile.Close()
+
+			dstFile, err := s.ctx.fs.Create(existing.GetCleanLocation())
+			if err != nil {
+				return fmt.Errorf("create replacement blob: %w", err)
+			}
+			defer dstFile.Close()
+
+			if _, err := io.Copy(dstFile, srcFile); err != nil {
+				return fmt.Errorf("copy replacement blob: %w", err)
+			}
+		}
+
+		// Delete existing versions and previews
+		tx.Where("resource_id = ?", existing.ID).Delete(&models.ResourceVersion{})
+		tx.Where("resource_id = ?", existing.ID).Delete(&models.Preview{})
+
+		// Track replaced resource so callers can find it (same semantics as createdResourceIDs)
+		batch.createdResourceIDs = append(batch.createdResourceIDs, existing.ID)
+
+		// Create incoming versions
+		for _, vp := range rp.Versions {
+			vLoc := s.blobPaths[vp.Hash]
+			if vLoc == "" {
+				vLoc = importBlobLocation(vp.Hash, vp.ContentType)
+			}
+			ver := models.ResourceVersion{
+				ResourceID:    existing.ID,
+				VersionNumber: vp.VersionNumber,
+				Hash:          vp.Hash,
+				HashType:      vp.HashType,
+				FileSize:      vp.FileSize,
+				ContentType:   vp.ContentType,
+				Width:         vp.Width,
+				Height:        vp.Height,
+				Location:      vLoc,
+				Comment:       vp.Comment,
+				CreatedAt:     vp.CreatedAt,
+			}
+			if err := tx.Create(&ver).Error; err != nil {
+				return fmt.Errorf("create version %s: %w", vp.VersionExportID, err)
+			}
+			s.idMap[vp.VersionExportID] = ver.ID
+			batch.createdVersions++
+		}
+
+		// Wire CurrentVersionID
+		if rp.CurrentVersionRef != "" {
+			if cvID, ok := s.idMap[rp.CurrentVersionRef]; ok {
+				if err := tx.Model(existing).Update("current_version_id", cvID).Error; err != nil {
+					return fmt.Errorf("wire current_version_id: %w", err)
+				}
+			}
+		}
+
+		// Create incoming previews
+		for _, pp := range rp.Previews {
+			data, ok := s.previewData[pp.PreviewExportID]
+			if !ok || len(data) == 0 {
+				continue
+			}
+			preview := models.Preview{
+				ResourceId:  &existing.ID,
+				Data:        data,
+				Width:       pp.Width,
+				Height:      pp.Height,
+				ContentType: pp.ContentType,
+			}
+			if err := tx.Create(&preview).Error; err != nil {
+				return fmt.Errorf("create preview %s: %w", pp.PreviewExportID, err)
+			}
+			delete(s.previewData, pp.PreviewExportID)
+			batch.createdPreviews++
+		}
+	} else {
+		// No blob in archive — keep existing file, warn
+		s.result.Warnings = append(s.result.Warnings,
+			fmt.Sprintf("Resource %q: blob not present in archive, keeping existing file", rp.Name))
+	}
+
+	if err := tx.Model(existing).Updates(updates).Error; err != nil {
+		return err
+	}
+
+	// M2M: clear existing, set incoming
+	tx.Exec("DELETE FROM resource_tags WHERE resource_id = ?", existing.ID)
+	for _, tr := range rp.Tags {
+		tagID := s.resolveTagID(tr)
+		if tagID == 0 {
+			continue
+		}
+		tx.Exec(
+			"INSERT INTO resource_tags (resource_id, tag_id) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM resource_tags WHERE resource_id = ? AND tag_id = ?)",
+			existing.ID, tagID, existing.ID, tagID,
+		)
+	}
+
+	return nil
+}
+
 // noteEntry pairs an export ID with its note payload for ordered iteration.
 type noteEntry struct {
 	exportID string

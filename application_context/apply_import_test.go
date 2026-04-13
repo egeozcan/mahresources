@@ -86,18 +86,16 @@ func TestApplyImport_FullRoundTrip(t *testing.T) {
 	}
 
 	// Build default decisions (accept all suggestions).
-	// Use "duplicate" collision policy because createTestContext uses
-	// file::memory:?cache=shared — all contexts share the same SQLite DB,
-	// so the source resource's hash is visible in dstCtx. "duplicate" forces
-	// a new resource row even when the hash already exists.
+	// createTestContext uses file::memory:?cache=shared — all contexts share the same SQLite DB,
+	// so the source resource's GUID and hash are both visible in dstCtx.
 	//
-	// GUIDCollisionPolicy: the source groups/notes already exist in the shared
-	// DB with their GUIDs, so GUID collision fires for every group and note.
-	// "skip" prevents double-creation while still wiring idMap for downstream
-	// M2M links. Resources are not affected by GUIDCollisionPolicy.
+	// GUIDCollisionPolicy: all entities (groups, notes, resources) have GUIDs.
+	// "replace" updates existing rows with incoming data, keeping the same DB row.
+	// Groups and notes fire GUID collision and are replaced in-place.
+	// The resource is also replaced in-place, so CreatedResources stays 0 but the
+	// resource row is updated and its blob is re-written.
 	decisions := buildDefaultDecisions(plan)
-	decisions.ResourceCollisionPolicy = "duplicate"
-	decisions.GUIDCollisionPolicy = "skip"
+	decisions.GUIDCollisionPolicy = "replace"
 
 	// Apply
 	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
@@ -105,46 +103,31 @@ func TestApplyImport_FullRoundTrip(t *testing.T) {
 		t.Fatalf("apply: %v", err)
 	}
 
-	// With GUIDCollisionPolicy=skip the existing groups and notes are reused
-	// (not double-created), so CreatedGroups/CreatedNotes == 0. The resource
-	// is still newly created because ResourceCollisionPolicy="duplicate".
-	if result.CreatedResources != 1 {
-		t.Errorf("expected 1 created resource, got %d", result.CreatedResources)
+	// With GUIDCollisionPolicy=replace, all entities are replaced in-place (not newly created).
+	// CreatedResources stays 0 since no new rows are inserted.
+	if result.CreatedResources != 0 {
+		t.Errorf("expected 0 created resources (replaced in-place), got %d", result.CreatedResources)
 	}
 
-	// Verify groups exist in destination (2 source groups; GUID skip means no new rows)
+	// Verify groups exist in destination (2 source groups; GUID replace means no new rows)
 	var groups []models.Group
 	dstCtx.db.Find(&groups)
 	if len(groups) != 2 {
-		t.Fatalf("expected 2 groups in DB (source only, GUID skip), got %d", len(groups))
+		t.Fatalf("expected 2 groups in DB (source only, GUID replace), got %d", len(groups))
 	}
 
-	// Verify resource blob on disk (2 total: source + imported duplicate)
+	// Verify resource still exists (1 row: replaced in-place)
 	var resources []models.Resource
 	dstCtx.db.Find(&resources)
-	if len(resources) != 2 {
-		t.Fatalf("expected 2 resources in DB (source + imported), got %d", len(resources))
+	if len(resources) != 1 {
+		t.Fatalf("expected 1 resource in DB (source replaced in-place), got %d", len(resources))
 	}
-	// Find the imported resource (the one created by apply)
-	var imported *models.Resource
-	for i := range resources {
-		for _, createdID := range result.CreatedResourceIDs {
-			if resources[i].ID == createdID {
-				imported = &resources[i]
-				break
-			}
-		}
-		if imported != nil {
-			break
-		}
+	// The existing resource row should have blob on disk
+	existing := resources[0]
+	if existing.Location == "" {
+		t.Fatal("resource Location is empty")
 	}
-	if imported == nil {
-		t.Fatal("could not find imported resource among created IDs")
-	}
-	if imported.Location == "" {
-		t.Fatal("imported resource Location is empty")
-	}
-	blobFile, err := dstCtx.fs.Open(imported.Location)
+	blobFile, err := dstCtx.fs.Open(existing.Location)
 	if err != nil {
 		t.Fatalf("open blob: %v", err)
 	}
@@ -236,19 +219,21 @@ func TestApplyImport_ResourceCollisionSkip(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 
-	// Apply with "skip" collision policy (the default from buildDefaultDecisions)
+	// Apply with "skip" collision policy. With GUID collision taking precedence over
+	// hash collision, GUIDCollisionPolicy=skip ensures the resource is skipped via
+	// the GUID path (no new row, no merge). ResourceCollisionPolicy=skip handles
+	// resources that have hashes but no GUID in the archive.
 	decisions := buildDefaultDecisions(plan)
 	decisions.ResourceCollisionPolicy = "skip"
+	decisions.GUIDCollisionPolicy = "skip"
 
 	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
-	// Resource should be skipped because its hash already exists in the shared DB
-	if result.SkippedByHash < 1 {
-		t.Errorf("expected SkippedByHash >= 1, got %d", result.SkippedByHash)
-	}
+	// Resource should be skipped (either via GUID collision or hash collision).
+	// CreatedResources must be 0 and the total count must not change.
 	if result.CreatedResources != 0 {
 		t.Errorf("expected CreatedResources == 0, got %d", result.CreatedResources)
 	}
@@ -436,22 +421,25 @@ func TestApplyImport_VersionHistoryRoundTrip(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 
+	// GUIDCollisionPolicy=replace: the resource exists in the shared DB with the same GUID,
+	// so it is replaced in-place. Existing versions/previews are deleted and incoming ones created.
 	decisions := buildDefaultDecisions(plan)
-	decisions.ResourceCollisionPolicy = "duplicate"
+	decisions.GUIDCollisionPolicy = "replace"
 
 	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
-	if result.CreatedResources != 1 {
-		t.Fatalf("expected 1 created resource, got %d", result.CreatedResources)
-	}
+	// CreatedResources is 0 (replaced in-place), but versions should be created.
 	if result.CreatedVersions < 1 {
 		t.Errorf("expected at least 1 created version, got %d", result.CreatedVersions)
 	}
 
-	// Find imported resource and preload its Versions.
+	// Find the replaced resource via result.CreatedResourceIDs (tracked by replaceResource).
+	if len(result.CreatedResourceIDs) == 0 {
+		t.Fatal("expected at least one entry in CreatedResourceIDs (replaced resource)")
+	}
 	importedResID := result.CreatedResourceIDs[0]
 	var importedRes models.Resource
 	if err := dstCtx.db.Preload("Versions").First(&importedRes, importedResID).Error; err != nil {
@@ -509,22 +497,25 @@ func TestApplyImport_PreviewsRoundTrip(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 
+	// GUIDCollisionPolicy=replace: the resource exists in the shared DB with the same GUID,
+	// so it is replaced in-place. Existing previews are deleted and incoming ones created.
 	decisions := buildDefaultDecisions(plan)
-	decisions.ResourceCollisionPolicy = "duplicate"
+	decisions.GUIDCollisionPolicy = "replace"
 
 	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
-	if result.CreatedResources != 1 {
-		t.Fatalf("expected 1 created resource, got %d", result.CreatedResources)
-	}
+	// CreatedResources is 0 (replaced in-place), but previews should be created.
 	if result.CreatedPreviews < 1 {
 		t.Errorf("expected at least 1 created preview, got %d", result.CreatedPreviews)
 	}
 
-	// Find imported resource's previews.
+	// Find the replaced resource via result.CreatedResourceIDs (tracked by replaceResource).
+	if len(result.CreatedResourceIDs) == 0 {
+		t.Fatal("expected at least one entry in CreatedResourceIDs (replaced resource)")
+	}
 	importedResID := result.CreatedResourceIDs[0]
 	var previews []models.Preview
 	if err := dstCtx.db.Where("resource_id = ?", importedResID).Find(&previews).Error; err != nil {
@@ -591,8 +582,10 @@ func TestApplyImport_SeriesSlugPreserved(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 
+	// GUIDCollisionPolicy=replace: the resource exists in the shared DB with the same GUID,
+	// so it is replaced in-place. The incoming SeriesRef should be wired.
 	decisions := buildDefaultDecisions(plan)
-	decisions.ResourceCollisionPolicy = "duplicate"
+	decisions.GUIDCollisionPolicy = "replace"
 
 	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
 	if err != nil {
@@ -604,7 +597,10 @@ func TestApplyImport_SeriesSlugPreserved(t *testing.T) {
 		t.Errorf("expected ReusedSeries >= 1, got %d", result.ReusedSeries)
 	}
 
-	// Find the imported resource and verify its SeriesID.
+	// The resource was replaced in-place; find it via CreatedResourceIDs.
+	if len(result.CreatedResourceIDs) == 0 {
+		t.Fatal("expected at least one entry in CreatedResourceIDs (replaced resource)")
+	}
 	importedResID := result.CreatedResourceIDs[0]
 	var importedRes models.Resource
 	if err := dstCtx.db.First(&importedRes, importedResID).Error; err != nil {
@@ -956,38 +952,34 @@ func TestApplyImport_ShellGroupCreate(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 
-	// GUIDCollisionPolicy=skip: GroupA and GroupB already exist in the shared DB
-	// (created by srcCtx). Using skip prevents double-creation while preserving
-	// idMap wiring so the imported resource can still be owned by GroupB.
+	// GUIDCollisionPolicy=replace: GroupA, GroupB, and the resource all exist in the shared DB.
+	// "replace" updates them in-place (no new rows) while preserving idMap wiring so the
+	// replaced resource remains owned by GroupB.
 	decisions := buildDefaultDecisions(plan)
-	decisions.ResourceCollisionPolicy = "duplicate"
-	decisions.GUIDCollisionPolicy = "skip"
+	decisions.GUIDCollisionPolicy = "replace"
 
 	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
-	// With GUID skip, no new groups are created — the existing GroupA and GroupB are reused.
+	// With GUID replace, no new groups are created — the existing GroupA and GroupB are replaced in-place.
 	if result.CreatedGroups != 0 {
-		t.Errorf("expected CreatedGroups=0 (GUID skip), got %d", result.CreatedGroups)
-	}
-	if result.CreatedResources != 1 {
-		t.Errorf("expected CreatedResources=1, got %d", result.CreatedResources)
+		t.Errorf("expected CreatedGroups=0 (GUID replace), got %d", result.CreatedGroups)
 	}
 
-	// Verify imported resource is owned by GroupB (resolved via GUID skip idMap wiring)
+	// Verify the resource (replaced in-place) is owned by GroupB
 	var importedRes models.Resource
-	if err := dstCtx.db.Where("name = ?", "external.txt").Order("id DESC").First(&importedRes).Error; err != nil {
-		t.Fatalf("find imported resource: %v", err)
+	if err := dstCtx.db.Where("name = ?", "external.txt").First(&importedRes).Error; err != nil {
+		t.Fatalf("find resource: %v", err)
 	}
 	if importedRes.OwnerId == nil {
-		t.Fatal("imported resource OwnerId is nil")
+		t.Fatal("resource OwnerId is nil")
 	}
 	var ownerGroup models.Group
 	dstCtx.db.Where("id = ?", *importedRes.OwnerId).First(&ownerGroup)
 	if ownerGroup.Name != "GroupB" {
-		t.Errorf("imported resource owner name = %q, want %q", ownerGroup.Name, "GroupB")
+		t.Errorf("resource owner name = %q, want %q", ownerGroup.Name, "GroupB")
 	}
 }
 
@@ -1046,8 +1038,10 @@ func TestApplyImport_ShellGroupMapToExisting(t *testing.T) {
 		t.Fatal("no shell group found in plan")
 	}
 
+	// GUIDCollisionPolicy=replace: the resource exists in the shared DB with the same GUID.
+	// "replace" updates it in-place and tracks it in CreatedResourceIDs.
 	decisions := buildDefaultDecisions(plan)
-	decisions.ResourceCollisionPolicy = "duplicate"
+	decisions.GUIDCollisionPolicy = "replace"
 	decisions.ShellGroupActions[shellExportID] = ShellGroupAction{
 		Action:        "map_to_existing",
 		DestinationID: &targetGroup.ID,
