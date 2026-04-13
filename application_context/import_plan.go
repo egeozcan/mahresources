@@ -157,6 +157,8 @@ type ImportApplyResult struct {
 	CreatedNotes              int      `json:"created_notes"`
 	CreatedPreviews           int      `json:"created_previews"`
 	CreatedVersions           int      `json:"created_versions"`
+	CreatedShellGroups        int      `json:"created_shell_groups"`
+	MappedShellGroups         int      `json:"mapped_shell_groups"`
 	Warnings                  []string `json:"warnings"`
 
 	// Created IDs per phase — enables manual cleanup after partial failure.

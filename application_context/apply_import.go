@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/afero"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"mahresources/archive"
 	"mahresources/download_queue"
 	"mahresources/models"
@@ -613,6 +614,20 @@ func (s *applyState) applyGroups() error {
 				continue
 			}
 
+			// Shell group handling: check ShellGroupActions
+			if gp.Shell && s.decisions.ShellGroupActions != nil {
+				if action, ok := s.decisions.ShellGroupActions[item.ExportID]; ok {
+					if action.Action == "map_to_existing" && action.DestinationID != nil {
+						s.idMap[item.ExportID] = *action.DestinationID
+						s.result.MappedShellGroups++
+						if err := walk(item.Children); err != nil {
+							return err
+						}
+						continue
+					}
+				}
+			}
+
 			g := models.Group{
 				Name:        gp.Name,
 				Description: gp.Description,
@@ -662,6 +677,9 @@ func (s *applyState) applyGroups() error {
 			s.idMap[item.ExportID] = g.ID
 			s.result.CreatedGroupIDs = append(s.result.CreatedGroupIDs, g.ID)
 			s.result.CreatedGroups++
+			if gp.Shell {
+				s.result.CreatedShellGroups++
+			}
 
 			// Recurse into children
 			if err := walk(item.Children); err != nil {
@@ -1147,7 +1165,7 @@ func (s *applyState) applyM2MLinks() error {
 				Name:           rel.Name,
 				Description:    rel.Description,
 			}
-			if err := s.ctx.db.Create(&gr).Error; err != nil {
+			if err := s.ctx.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&gr).Error; err != nil {
 				return fmt.Errorf("group %s relation to %s: %w", exportID, rel.ToRef, err)
 			}
 		}
@@ -1315,7 +1333,7 @@ func (s *applyState) applyDanglingDecisions() error {
 				ToGroupId:      &destID,
 				RelationTypeId: &grtID,
 			}
-			if err := s.ctx.db.Create(&gr).Error; err != nil {
+			if err := s.ctx.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&gr).Error; err != nil {
 				return fmt.Errorf("dangling %s group_relation %d->%d: %w", dr.ID, fromID, destID, err)
 			}
 		}

@@ -858,12 +858,261 @@ func TestApplyImport_SchemaDefsOffCreatesMinimal(t *testing.T) {
 	}
 }
 
+func TestApplyImport_ShellGroupCreate(t *testing.T) {
+	// GroupA (root) has a RelatedResource owned by GroupB.
+	// Export GroupA with RelatedDepth=1 => GroupB becomes a shell group.
+	// Import with default decisions => shell group is created.
+	srcCtx := createTestContext(t)
+
+	groupA := mustCreateGroup(t, srcCtx, "GroupA", nil)
+	groupB := mustCreateGroup(t, srcCtx, "GroupB", nil)
+	res := mustCreateResource(t, srcCtx, "external.txt", &groupB.ID, []byte("EXT"))
+	mustLinkRelatedResource(t, srcCtx, groupA.ID, res.ID)
+
+	var tarBuf bytes.Buffer
+	err := srcCtx.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{groupA.ID},
+		Scope:        archive.ExportScope{OwnedResources: true, RelatedM2M: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true},
+		RelatedDepth: 1,
+	}, &tarBuf, func(ev ProgressEvent) {})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	tarBytes := tarBuf.Bytes()
+
+	dstCtx := createTestContext(t)
+
+	jobID := "test-shell-create"
+	tarPath := filepath.Join("_imports", jobID+".tar")
+	dstCtx.fs.MkdirAll("_imports", 0755)
+	afero.WriteFile(dstCtx.fs, tarPath, tarBytes, 0644)
+
+	plan, err := dstCtx.ParseImport(context.Background(), jobID, tarPath)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	decisions := buildDefaultDecisions(plan)
+	decisions.ResourceCollisionPolicy = "duplicate"
+
+	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	if result.CreatedGroups != 2 {
+		t.Errorf("expected CreatedGroups=2, got %d", result.CreatedGroups)
+	}
+	if result.CreatedResources != 1 {
+		t.Errorf("expected CreatedResources=1, got %d", result.CreatedResources)
+	}
+	if result.CreatedShellGroups != 1 {
+		t.Errorf("expected CreatedShellGroups=1, got %d", result.CreatedShellGroups)
+	}
+
+	// Verify resource is owned by the created shell group, not GroupA
+	var importedRes models.Resource
+	if err := dstCtx.db.Where("name = ?", "external.txt").Order("id DESC").First(&importedRes).Error; err != nil {
+		t.Fatalf("find imported resource: %v", err)
+	}
+	if importedRes.OwnerId == nil {
+		t.Fatal("imported resource OwnerId is nil")
+	}
+	// The owner should be the newly created shell group (GroupB copy), not GroupA
+	var shellGroup models.Group
+	dstCtx.db.Where("id = ?", *importedRes.OwnerId).First(&shellGroup)
+	if shellGroup.Name != "GroupB" {
+		t.Errorf("imported resource owner name = %q, want %q (the shell group)", shellGroup.Name, "GroupB")
+	}
+}
+
+func TestApplyImport_ShellGroupMapToExisting(t *testing.T) {
+	// GroupA (root) has a RelatedResource owned by GroupB.
+	// Export GroupA with RelatedDepth=1 => GroupB becomes a shell group.
+	// Map the shell to an existing targetGroup in the destination.
+	srcCtx := createTestContext(t)
+
+	groupA := mustCreateGroup(t, srcCtx, "GroupA", nil)
+	groupB := mustCreateGroup(t, srcCtx, "GroupB", nil)
+	res := mustCreateResource(t, srcCtx, "external.txt", &groupB.ID, []byte("MAPEXT"))
+	mustLinkRelatedResource(t, srcCtx, groupA.ID, res.ID)
+
+	var tarBuf bytes.Buffer
+	err := srcCtx.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{groupA.ID},
+		Scope:        archive.ExportScope{OwnedResources: true, RelatedM2M: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true},
+		RelatedDepth: 1,
+	}, &tarBuf, func(ev ProgressEvent) {})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	tarBytes := tarBuf.Bytes()
+
+	dstCtx := createTestContext(t)
+
+	// Create a target group to map the shell to
+	targetGroup := mustCreateGroup(t, dstCtx, "TargetGroup", nil)
+
+	jobID := "test-shell-map"
+	tarPath := filepath.Join("_imports", jobID+".tar")
+	dstCtx.fs.MkdirAll("_imports", 0755)
+	afero.WriteFile(dstCtx.fs, tarPath, tarBytes, 0644)
+
+	plan, err := dstCtx.ParseImport(context.Background(), jobID, tarPath)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	// Find the shell group export ID in the plan
+	var shellExportID string
+	var findShell func(items []ImportPlanItem)
+	findShell = func(items []ImportPlanItem) {
+		for _, item := range items {
+			if item.Shell {
+				shellExportID = item.ExportID
+				return
+			}
+			findShell(item.Children)
+		}
+	}
+	findShell(plan.Items)
+	if shellExportID == "" {
+		t.Fatal("no shell group found in plan")
+	}
+
+	decisions := buildDefaultDecisions(plan)
+	decisions.ResourceCollisionPolicy = "duplicate"
+	decisions.ShellGroupActions[shellExportID] = ShellGroupAction{
+		Action:        "map_to_existing",
+		DestinationID: &targetGroup.ID,
+	}
+
+	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	if result.MappedShellGroups != 1 {
+		t.Errorf("expected MappedShellGroups=1, got %d", result.MappedShellGroups)
+	}
+	if result.CreatedShellGroups != 0 {
+		t.Errorf("expected CreatedShellGroups=0 (mapped, not created), got %d", result.CreatedShellGroups)
+	}
+
+	// Verify the imported resource's owner is the target group
+	if len(result.CreatedResourceIDs) == 0 {
+		t.Fatal("no resources created")
+	}
+	var importedRes models.Resource
+	if err := dstCtx.db.First(&importedRes, result.CreatedResourceIDs[0]).Error; err != nil {
+		t.Fatalf("load imported resource: %v", err)
+	}
+	if importedRes.OwnerId == nil {
+		t.Fatal("imported resource OwnerId is nil")
+	}
+	if *importedRes.OwnerId != targetGroup.ID {
+		t.Errorf("imported resource OwnerId=%d, want %d (targetGroup)", *importedRes.OwnerId, targetGroup.ID)
+	}
+}
+
+func TestApplyImport_ShellGroupMap_DuplicateGroupRelation(t *testing.T) {
+	// A -> (related group) -> B, B -> (typed relation) -> C
+	// Export A with depth 2 and GroupRelations scope so B and C are both shells
+	// and the B->C typed relation is in-scope (non-dangling).
+	// Then map both shells to pre-existing targets that already have the same
+	// typed relation. Apply must succeed (not fail on duplicate).
+	srcCtx := createTestContext(t)
+
+	groupA := mustCreateGroup(t, srcCtx, "GroupA", nil)
+	groupB := mustCreateGroup(t, srcCtx, "GroupB", nil)
+	groupC := mustCreateGroup(t, srcCtx, "GroupC", nil)
+	mustLinkRelatedGroup(t, srcCtx, groupA.ID, groupB.ID)
+
+	grt := mustCreateGroupRelationType(t, srcCtx, "TestRelType")
+	mustCreateGroupRelation(t, srcCtx, groupB.ID, groupC.ID, grt.ID)
+
+	var tarBuf bytes.Buffer
+	err := srcCtx.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{groupA.ID},
+		Scope:        archive.ExportScope{RelatedM2M: true, GroupRelations: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true},
+		SchemaDefs:   archive.ExportSchemaDefs{GroupRelationTypes: true},
+		RelatedDepth: 2,
+	}, &tarBuf, func(ev ProgressEvent) {})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	tarBytes := tarBuf.Bytes()
+
+	// Destination: create targetB, targetC, same GRT, and pre-existing relation
+	dstCtx := createTestContext(t)
+	targetB := mustCreateGroup(t, dstCtx, "TargetB", nil)
+	targetC := mustCreateGroup(t, dstCtx, "TargetC", nil)
+	// GRT already exists in shared DB, so reuse grt.ID
+	mustCreateGroupRelation(t, dstCtx, targetB.ID, targetC.ID, grt.ID)
+
+	jobID := "test-shell-dup-rel"
+	tarPath := filepath.Join("_imports", jobID+".tar")
+	dstCtx.fs.MkdirAll("_imports", 0755)
+	afero.WriteFile(dstCtx.fs, tarPath, tarBytes, 0644)
+
+	plan, err := dstCtx.ParseImport(context.Background(), jobID, tarPath)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	// Find shell group export IDs and map them to target groups
+	decisions := buildDefaultDecisions(plan)
+	decisions.ResourceCollisionPolicy = "skip"
+
+	shellToTarget := map[string]uint{} // name -> target ID
+	var findShells func(items []ImportPlanItem)
+	findShells = func(items []ImportPlanItem) {
+		for _, item := range items {
+			if item.Shell {
+				if item.Name == "GroupB" {
+					shellToTarget[item.ExportID] = targetB.ID
+				} else if item.Name == "GroupC" {
+					shellToTarget[item.ExportID] = targetC.ID
+				}
+			}
+			findShells(item.Children)
+		}
+	}
+	findShells(plan.Items)
+
+	if len(shellToTarget) != 2 {
+		t.Fatalf("expected 2 shell groups, found %d", len(shellToTarget))
+	}
+
+	for exportID, targetID := range shellToTarget {
+		id := targetID // capture
+		decisions.ShellGroupActions[exportID] = ShellGroupAction{
+			Action:        "map_to_existing",
+			DestinationID: &id,
+		}
+	}
+
+	// Apply must succeed despite the duplicate GroupRelation
+	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
+	if err != nil {
+		t.Fatalf("apply should succeed despite duplicate relation: %v", err)
+	}
+
+	if result.MappedShellGroups != 2 {
+		t.Errorf("expected MappedShellGroups=2, got %d", result.MappedShellGroups)
+	}
+}
+
 // buildDefaultDecisions creates decisions that accept all plan suggestions.
 func buildDefaultDecisions(plan *ImportPlan) *ImportDecisions {
 	d := &ImportDecisions{
 		ResourceCollisionPolicy: "skip",
 		MappingActions:          make(map[string]MappingAction),
 		DanglingActions:         make(map[string]DanglingAction),
+		ShellGroupActions:       make(map[string]ShellGroupAction),
 	}
 	allMappings := [][]MappingEntry{
 		plan.Mappings.Categories,
