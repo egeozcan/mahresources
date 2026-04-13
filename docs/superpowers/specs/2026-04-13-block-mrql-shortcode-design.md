@@ -23,7 +23,11 @@ Self-closing `[mrql query="..."]` continues to work unchanged.
 
 ### Template precedence
 
-Block template always wins. When `sc.IsBlock && sc.InnerContent != ""`, the inner content overrides any `CustomMRQLResult` set on the item's category. The `format` attribute is also ignored when a block template is present.
+Block template always wins. The inner content is trimmed (`strings.TrimSpace`) before evaluation. When `sc.IsBlock` and the trimmed inner content is non-empty, it overrides any `CustomMRQLResult` set on the item's category. The `format` attribute is also ignored when a block template is present.
+
+### Empty and whitespace-only blocks
+
+`[mrql query="..."][/mrql]` and `[mrql query="..."]\n[/mrql]` (whitespace-only) both fall back to normal rendering — same as self-closing. The trim-then-check rule means a block is only treated as a template when it contains actual content.
 
 ### Result modes
 
@@ -39,11 +43,11 @@ No `[else]` support. Empty results render the existing "No results." default.
 
 The change is entirely within `RenderMRQLShortcode` in `shortcodes/mrql_handler.go`.
 
-After the executor returns results, if `sc.IsBlock && sc.InnerContent != ""`:
+After the executor returns results, trim `sc.InnerContent` with `strings.TrimSpace`. If `sc.IsBlock` and the trimmed content is non-empty:
 
-1. For **flat** results: set every item's `CustomMRQLResult` to `sc.InnerContent`, then call `renderFlatWithCustom` with `forceCustom=true`.
-2. For **bucketed** results: set every item's `CustomMRQLResult` to `sc.InnerContent` within each group. Override format to `"custom"` so `renderFlat` routes to the custom path.
-3. For **aggregated** results: no change.
+1. For **flat** results: set every item's `CustomMRQLResult` to the trimmed inner content, then call `renderFlatWithCustom` with `forceCustom=true`.
+2. For **bucketed** results: set every item's `CustomMRQLResult` to the trimmed inner content within each group. Override format to `"custom"` so `renderFlat` routes to the custom path.
+3. For **aggregated** results: no change — inner content ignored even if non-empty.
 
 ### Files changed
 
@@ -62,4 +66,7 @@ After the executor returns results, if `sc.IsBlock && sc.InnerContent != ""`:
 - Unit test: block template overrides `CustomMRQLResult` on items
 - Unit test: self-closing `[mrql]` still works unchanged
 - Unit test: block `[mrql]` with empty results shows default "No results."
+- Unit test: whitespace-only block falls back to normal rendering
+- Unit test: block with `format="table"` still uses inner content (block wins over format)
+- Unit test: block body with `[property]` or `[meta]` renders item-specific values (proves child context)
 - E2E test: block `[mrql]` renders correctly on a group detail page
