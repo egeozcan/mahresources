@@ -16,17 +16,18 @@ Series, Preview, ResourceVersion, NoteBlock, and other derivative entities are o
 Each of the 8 models gets:
 
 ```go
-GUID string `gorm:"uniqueIndex;size:36" json:"guid,omitempty"`
+GUID *string `gorm:"uniqueIndex;size:36" json:"guid,omitempty"`
 ```
 
-- Column is nullable. GORM `AutoMigrate` adds it; existing rows get the zero value.
-- SQLite and Postgres both allow multiple NULLs/empty strings in a unique index.
+- Column is nullable (`*string` so GORM maps it to a true SQL NULL, not empty string). `AutoMigrate` adds the column; existing rows are NULL.
+- SQLite and Postgres both allow multiple NULLs in a unique index. Empty string (`''`) is *not* NULL and would violate the unique constraint if duplicated — empty string must never be stored. Any empty-string input (e.g., from a GORM zero-value path) must be normalized to NULL before write.
 - UUID v7 (RFC 9562): time-sortable, 128-bit, standard `xxxxxxxx-xxxx-7xxx-yxxx-xxxxxxxxxxxx` format.
+- A GUID is either a valid 36-character UUID v7 or NULL. No other value is stored.
 
 ### Generation
 
-- **New entities**: GORM `BeforeCreate` hook generates UUID v7 if `GUID` is empty.
-- **Existing entities**: Lazy — generated and persisted on first export. No background worker, no blocking migration. See Export Logic for concurrency handling.
+- **New entities**: GORM `BeforeCreate` hook generates UUID v7 if `GUID` is nil.
+- **Existing entities**: Lazy — generated and persisted on first export (NULL → UUID v7). No background worker, no blocking migration. See Export Logic for concurrency handling.
 - **Helper**: Small shared function in `models/types/` producing UUID v7 from `crypto/rand` + `time`. No external dependency.
 
 ## Export Changes
@@ -44,10 +45,10 @@ This is additive with `omitempty`. Old readers silently ignore unknown fields pe
 
 ### Export Logic
 
-In `export_context.go`, when building payloads: if `entity.GUID == ""`, generate UUID v7 and persist to DB using an atomic conditional update:
+In `export_context.go`, when building payloads: if `entity.GUID == nil`, generate UUID v7 and persist to DB using an atomic conditional update:
 
 ```sql
-UPDATE <table> SET guid = ? WHERE id = ? AND (guid IS NULL OR guid = '')
+UPDATE <table> SET guid = ? WHERE id = ? AND guid IS NULL
 ```
 
 If the update affects 0 rows, another concurrent export already assigned a GUID — re-read the row to get the winning value. This makes the backfill safe under concurrent exports: exactly one writer wins, and all exports for the same entity converge on the same GUID.
