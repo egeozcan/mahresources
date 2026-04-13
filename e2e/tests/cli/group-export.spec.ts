@@ -99,3 +99,57 @@ test.describe('mr group export --no-wait', () => {
     expect(result.stdout.trim()).toMatch(/^[a-zA-Z0-9_-]+$/);
   });
 });
+
+test.describe('mr group export --related-depth', () => {
+  const suffix = Date.now();
+  let groupAId: number;
+  let groupBId: number;
+
+  test.beforeAll(() => {
+    const cli = createCliRunner();
+    // Create GroupB (will be the related group)
+    const groupB = cli.runJson<Group>('group', 'create', '--name', `DepthB_${suffix}`);
+    groupBId = groupB.ID;
+    // Create GroupA with GroupB as a related group
+    const groupA = cli.runJson<Group>('group', 'create', '--name', `DepthA_${suffix}`, '--groups', String(groupBId));
+    groupAId = groupA.ID;
+  });
+
+  test.afterAll(() => {
+    const cli = createCliRunner();
+    cli.run('group', 'delete', String(groupAId));
+    cli.run('group', 'delete', String(groupBId));
+  });
+
+  test('export with --related-depth 1 includes related groups, import creates shell groups', async ({ cli }) => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mr-related-depth-'));
+    const outPath = path.join(tmpDir, 'depth.tar');
+
+    try {
+      // Export with related-depth 1 (--include-related is on by default)
+      cli.runOrFail('group', 'export', String(groupAId), '-o', outPath, '--related-depth', '1');
+
+      const stat = fs.statSync(outPath);
+      expect(stat.size).toBeGreaterThan(0);
+
+      // Verify the tar contains both groups
+      const listing = execSync(`tar -tf ${JSON.stringify(outPath)}`).toString();
+      expect(listing).toContain('manifest.json');
+      // Should have 2 group entries (A + B shell)
+      const groupEntries = listing.split('\n').filter(l => l.match(/^groups\/g\d+\.json$/));
+      expect(groupEntries.length).toBe(2);
+
+      // Import the archive
+      const result = cli.runOrFail(
+        'group', 'import', outPath,
+        '--on-resource-conflict', 'duplicate',
+      );
+
+      expect(result.stdout).toContain('Import applied successfully');
+      // Should create 2 groups (root A + shell B)
+      expect(result.stdout).toMatch(/Groups:\s+2 created/);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
