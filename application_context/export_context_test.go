@@ -317,6 +317,42 @@ func mustLinkRelatedGroup(t *testing.T, ctx *MahresourcesContext, fromID, toID u
 	})
 }
 
+func mustLinkRelatedResource(t *testing.T, ctx *MahresourcesContext, groupID, resourceID uint) {
+	t.Helper()
+	var g models.Group
+	if err := ctx.db.First(&g, groupID).Error; err != nil {
+		t.Fatalf("load group: %v", err)
+	}
+	var r models.Resource
+	if err := ctx.db.First(&r, resourceID).Error; err != nil {
+		t.Fatalf("load resource: %v", err)
+	}
+	if err := ctx.db.Model(&g).Association("RelatedResources").Append(&r); err != nil {
+		t.Fatalf("append related resource: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = ctx.db.Model(&g).Association("RelatedResources").Delete(&r)
+	})
+}
+
+func mustLinkRelatedNote(t *testing.T, ctx *MahresourcesContext, groupID, noteID uint) {
+	t.Helper()
+	var g models.Group
+	if err := ctx.db.First(&g, groupID).Error; err != nil {
+		t.Fatalf("load group: %v", err)
+	}
+	var n models.Note
+	if err := ctx.db.First(&n, noteID).Error; err != nil {
+		t.Fatalf("load note: %v", err)
+	}
+	if err := ctx.db.Model(&g).Association("RelatedNotes").Append(&n); err != nil {
+		t.Fatalf("append related note: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = ctx.db.Model(&g).Association("RelatedNotes").Delete(&n)
+	})
+}
+
 func mustCreateGroupRelationType(t *testing.T, ctx *MahresourcesContext, name string) *models.GroupRelationType {
 	t.Helper()
 	rt := models.GroupRelationType{Name: name}
@@ -859,5 +895,82 @@ func TestEstimateExport_MissingBlobNotCountedInEstimate(t *testing.T) {
 	existsSize := int64(len("AAAA"))
 	if est.EstimatedBytes != existsSize {
 		t.Errorf("EstimatedBytes = %d, want %d (only the existing blob)", est.EstimatedBytes, existsSize)
+	}
+}
+
+func TestStreamExport_RelatedDepth1_IncludesRelatedEntities(t *testing.T) {
+	ctx := createTestContext(t)
+
+	groupA := mustCreateGroup(t, ctx, "GroupA", nil)
+	groupB := mustCreateGroup(t, ctx, "GroupB", nil)
+	groupC := mustCreateGroup(t, ctx, "GroupC", nil)
+
+	res := mustCreateResource(t, ctx, "related.txt", &groupB.ID, []byte("RELDATA"))
+	note := mustCreateNote(t, ctx, "Related Note", &groupB.ID)
+
+	mustLinkRelatedResource(t, ctx, groupA.ID, res.ID)
+	mustLinkRelatedNote(t, ctx, groupA.ID, note.ID)
+	mustLinkRelatedGroup(t, ctx, groupA.ID, groupC.ID)
+
+	var buf bytes.Buffer
+	err := ctx.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{groupA.ID},
+		Scope:        archive.ExportScope{OwnedResources: true, OwnedNotes: true, RelatedM2M: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true},
+		SchemaDefs:   archive.ExportSchemaDefs{CategoriesAndTypes: true, Tags: true},
+		RelatedDepth: 1,
+	}, &buf, nil)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	r, err := archive.NewReader(&buf)
+	if err != nil {
+		t.Fatalf("NewReader: %v", err)
+	}
+	defer r.Close()
+	manifest, err := r.ReadManifest()
+	if err != nil {
+		t.Fatalf("ReadManifest: %v", err)
+	}
+	coll := newExportCollector()
+	if err := r.Walk(coll); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+
+	if len(coll.groups) != 3 {
+		t.Fatalf("expected 3 groups, got %d", len(coll.groups))
+	}
+
+	for _, gp := range coll.groups {
+		if gp.Name == "GroupA" {
+			if gp.Shell {
+				t.Errorf("root group GroupA should not be shell")
+			}
+		} else {
+			if !gp.Shell {
+				t.Errorf("group %q should be shell", gp.Name)
+			}
+		}
+	}
+
+	if len(coll.resources) != 1 {
+		t.Fatalf("expected 1 resource, got %d", len(coll.resources))
+	}
+	if len(coll.notes) != 1 {
+		t.Fatalf("expected 1 note, got %d", len(coll.notes))
+	}
+	if len(coll.blobs) != 1 {
+		t.Fatalf("expected 1 blob, got %d", len(coll.blobs))
+	}
+
+	if manifest.Counts.ShellGroups != 2 {
+		t.Errorf("expected ShellGroups=2, got %d", manifest.Counts.ShellGroups)
+	}
+	if manifest.ExportOptions.RelatedDepth != 1 {
+		t.Errorf("expected RelatedDepth=1, got %d", manifest.ExportOptions.RelatedDepth)
+	}
+	if len(manifest.Dangling) != 0 {
+		t.Errorf("expected 0 dangling refs, got %d", len(manifest.Dangling))
 	}
 }

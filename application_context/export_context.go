@@ -64,8 +64,9 @@ func (ctx *MahresourcesContext) EstimateExport(req *ExportRequest) (*ExportEstim
 
 	est := &ExportEstimate{
 		Counts: archive.Counts{
-			Groups:    len(plan.groupIDs),
-			Notes:     len(plan.noteIDs),
+			Groups:      len(plan.groupIDs),
+			ShellGroups: len(plan.shellGroupIDs),
+			Notes:       len(plan.noteIDs),
 			Resources: len(plan.resourceIDs),
 			Series:    len(plan.seriesIDs),
 		},
@@ -114,6 +115,11 @@ type exportPlan struct {
 	// missingBlobs is the set of hashes whose backing file was not found during
 	// the pre-scan phase. writeResourceBlob consults this to skip re-attempts.
 	missingBlobs map[string]bool
+
+	// shellGroupIDs tracks groups discovered via BFS (related depth traversal)
+	// rather than ownership. Shell groups get Shell: true in the manifest and
+	// their owned entities are NOT collected.
+	shellGroupIDs map[uint]bool
 }
 
 // buildExportPlan walks the DB starting from req.RootGroupIDs, collecting all
@@ -175,8 +181,29 @@ func (ctx *MahresourcesContext) buildExportPlan(req *ExportRequest) (*exportPlan
 		}
 	}
 
-	// Phase B2: when F2+F1 are on, include version blob hashes in uniqueHashes
-	// so Counts.Blobs is accurate (C5).
+	// Phase C: collect notes owned by in-scope groups.
+	if req.Scope.OwnedNotes {
+		notes, err := ctx.findNotesByOwner(plan.groupIDs)
+		if err != nil {
+			return nil, err
+		}
+		for _, n := range notes {
+			plan.noteIDs = append(plan.noteIDs, n.ID)
+			plan.noteExportID[n.ID] = fmt.Sprintf("n%04d", len(plan.noteExportID)+1)
+		}
+	}
+
+	// Phase BFS: follow m2m edges to related entities up to RelatedDepth hops.
+	plan.shellGroupIDs = map[uint]bool{}
+	if req.RelatedDepth > 0 {
+		if err := ctx.bfsRelatedEntities(plan); err != nil {
+			return nil, fmt.Errorf("bfs related entities: %w", err)
+		}
+	}
+
+	// Phase B2 (moved after BFS): when F2+F1 are on, include version blob hashes
+	// in uniqueHashes so Counts.Blobs and EstimatedBytes cover all resources
+	// (both owned and BFS-discovered).
 	if req.Fidelity.ResourceVersions && req.Fidelity.ResourceBlobs && len(plan.resourceIDs) > 0 {
 		var versions []models.ResourceVersion
 		if err := ctx.db.
@@ -195,25 +222,16 @@ func (ctx *MahresourcesContext) buildExportPlan(req *ExportRequest) (*exportPlan
 		}
 	}
 
-	// Phase C: collect notes owned by in-scope groups.
-	if req.Scope.OwnedNotes {
-		notes, err := ctx.findNotesByOwner(plan.groupIDs)
-		if err != nil {
-			return nil, err
-		}
-		for _, n := range notes {
-			plan.noteIDs = append(plan.noteIDs, n.ID)
-			plan.noteExportID[n.ID] = fmt.Sprintf("n%04d", len(plan.noteExportID)+1)
-		}
-	}
-
-	// Phase D: collect series referenced by in-scope resources.
+	// Phase D: collect series referenced by in-scope resources (both owned and BFS-discovered).
 	if req.Fidelity.ResourceSeries && len(plan.resourceIDs) > 0 {
 		seriesIDs, err := ctx.findSeriesForResources(plan.resourceIDs)
 		if err != nil {
 			return nil, err
 		}
 		for _, sid := range seriesIDs {
+			if _, exists := plan.seriesExportID[sid]; exists {
+				continue // already collected
+			}
 			plan.seriesIDs = append(plan.seriesIDs, sid)
 			plan.seriesExportID[sid] = fmt.Sprintf("s%04d", len(plan.seriesExportID)+1)
 		}
@@ -225,6 +243,194 @@ func (ctx *MahresourcesContext) buildExportPlan(req *ExportRequest) (*exportPlan
 	}
 
 	return plan, nil
+}
+
+// bfsRelatedEntities runs a BFS from in-scope groups, following enabled m2m
+// edges up to plan.req.RelatedDepth hops. Discovered groups become shells,
+// discovered resources/notes get full payloads. Only groups spawn the next hop.
+func (ctx *MahresourcesContext) bfsRelatedEntities(plan *exportPlan) error {
+	req := plan.req
+	frontier := make([]uint, len(plan.groupIDs))
+	copy(frontier, plan.groupIDs)
+
+	for level := 1; level <= req.RelatedDepth; level++ {
+		if len(frontier) == 0 {
+			break
+		}
+
+		// Snapshot lengths so we can slice out newly added IDs afterward.
+		resStart := len(plan.resourceIDs)
+		noteStart := len(plan.noteIDs)
+
+		var newGroupIDs []uint
+
+		if req.Scope.RelatedM2M {
+			ids, err := ctx.bfsCollectM2M(plan, frontier)
+			if err != nil {
+				return fmt.Errorf("bfs m2m level %d: %w", level, err)
+			}
+			newGroupIDs = append(newGroupIDs, ids...)
+		}
+
+		if req.Scope.GroupRelations {
+			ids, err := ctx.bfsCollectGroupRelations(plan, frontier)
+			if err != nil {
+				return fmt.Errorf("bfs group-relations level %d: %w", level, err)
+			}
+			newGroupIDs = append(newGroupIDs, ids...)
+		}
+
+		newResourceIDs := plan.resourceIDs[resStart:]
+		newNoteIDs := plan.noteIDs[noteStart:]
+
+		ownerGroupIDs, err := ctx.bfsEnsureOwners(plan, newResourceIDs, newNoteIDs)
+		if err != nil {
+			return fmt.Errorf("bfs ensure owners level %d: %w", level, err)
+		}
+		newGroupIDs = append(newGroupIDs, ownerGroupIDs...)
+
+		frontier = newGroupIDs
+	}
+
+	return nil
+}
+
+// bfsCollectM2M follows RelatedGroups, RelatedResources, RelatedNotes edges
+// from frontier groups. Returns newly discovered group IDs.
+func (ctx *MahresourcesContext) bfsCollectM2M(plan *exportPlan, frontier []uint) ([]uint, error) {
+	var groups []models.Group
+	if err := ctx.db.
+		Preload("RelatedGroups").
+		Preload("RelatedResources").
+		Preload("RelatedNotes").
+		Where("id IN ?", frontier).
+		Find(&groups).Error; err != nil {
+		return nil, err
+	}
+
+	var newGroupIDs []uint
+
+	for _, g := range groups {
+		for _, rg := range g.RelatedGroups {
+			if _, exists := plan.groupExportID[rg.ID]; !exists {
+				plan.groupIDs = append(plan.groupIDs, rg.ID)
+				plan.groupExportID[rg.ID] = fmt.Sprintf("g%04d", len(plan.groupExportID)+1)
+				plan.shellGroupIDs[rg.ID] = true
+				newGroupIDs = append(newGroupIDs, rg.ID)
+			}
+		}
+
+		for _, rr := range g.RelatedResources {
+			if _, exists := plan.resourceExportID[rr.ID]; !exists {
+				plan.resourceIDs = append(plan.resourceIDs, rr.ID)
+				plan.resourceExportID[rr.ID] = fmt.Sprintf("r%04d", len(plan.resourceExportID)+1)
+				if rr.Hash != "" {
+					if _, seen := plan.uniqueHashes[rr.Hash]; !seen {
+						plan.uniqueHashes[rr.Hash] = rr.FileSize
+						plan.totalBytes += rr.FileSize
+					}
+				}
+			}
+		}
+
+		for _, rn := range g.RelatedNotes {
+			if _, exists := plan.noteExportID[rn.ID]; !exists {
+				plan.noteIDs = append(plan.noteIDs, rn.ID)
+				plan.noteExportID[rn.ID] = fmt.Sprintf("n%04d", len(plan.noteExportID)+1)
+			}
+		}
+	}
+
+	return newGroupIDs, nil
+}
+
+// bfsCollectGroupRelations follows typed GroupRelation edges from frontier
+// groups. Returns newly discovered group IDs (as shells).
+func (ctx *MahresourcesContext) bfsCollectGroupRelations(plan *exportPlan, frontier []uint) ([]uint, error) {
+	var relations []models.GroupRelation
+	if err := ctx.db.
+		Where("from_group_id IN ?", frontier).
+		Find(&relations).Error; err != nil {
+		return nil, err
+	}
+
+	var newGroupIDs []uint
+
+	for _, rel := range relations {
+		if rel.ToGroupId == nil {
+			continue
+		}
+		toID := *rel.ToGroupId
+		if _, exists := plan.groupExportID[toID]; !exists {
+			plan.groupIDs = append(plan.groupIDs, toID)
+			plan.groupExportID[toID] = fmt.Sprintf("g%04d", len(plan.groupExportID)+1)
+			plan.shellGroupIDs[toID] = true
+			newGroupIDs = append(newGroupIDs, toID)
+		}
+	}
+
+	return newGroupIDs, nil
+}
+
+// bfsEnsureOwners adds owning groups of BFS-discovered resources/notes as
+// shell groups if they're not already in scope. Only examines the newly
+// discovered IDs (newResourceIDs / newNoteIDs) to avoid re-scanning the full
+// plan on every BFS level. Returns newly added group IDs so they can enter the
+// BFS frontier. Uses batch queries to avoid N+1.
+func (ctx *MahresourcesContext) bfsEnsureOwners(plan *exportPlan, newResourceIDs, newNoteIDs []uint) ([]uint, error) {
+	var newGroupIDs []uint
+
+	if len(newResourceIDs) > 0 {
+		type ownerRow struct {
+			ID      uint
+			OwnerID *uint
+		}
+		var rows []ownerRow
+		if err := ctx.db.Model(&models.Resource{}).
+			Select("id, owner_id").
+			Where("id IN ? AND owner_id IS NOT NULL", newResourceIDs).
+			Scan(&rows).Error; err != nil {
+			return nil, fmt.Errorf("bfs ensure resource owners: %w", err)
+		}
+		for _, row := range rows {
+			if row.OwnerID == nil {
+				continue
+			}
+			if _, exists := plan.groupExportID[*row.OwnerID]; !exists {
+				plan.groupIDs = append(plan.groupIDs, *row.OwnerID)
+				plan.groupExportID[*row.OwnerID] = fmt.Sprintf("g%04d", len(plan.groupExportID)+1)
+				plan.shellGroupIDs[*row.OwnerID] = true
+				newGroupIDs = append(newGroupIDs, *row.OwnerID)
+			}
+		}
+	}
+
+	if len(newNoteIDs) > 0 {
+		type ownerRow struct {
+			ID      uint
+			OwnerID *uint
+		}
+		var rows []ownerRow
+		if err := ctx.db.Model(&models.Note{}).
+			Select("id, owner_id").
+			Where("id IN ? AND owner_id IS NOT NULL", newNoteIDs).
+			Scan(&rows).Error; err != nil {
+			return nil, fmt.Errorf("bfs ensure note owners: %w", err)
+		}
+		for _, row := range rows {
+			if row.OwnerID == nil {
+				continue
+			}
+			if _, exists := plan.groupExportID[*row.OwnerID]; !exists {
+				plan.groupIDs = append(plan.groupIDs, *row.OwnerID)
+				plan.groupExportID[*row.OwnerID] = fmt.Sprintf("g%04d", len(plan.groupExportID)+1)
+				plan.shellGroupIDs[*row.OwnerID] = true
+				newGroupIDs = append(newGroupIDs, *row.OwnerID)
+			}
+		}
+	}
+
+	return newGroupIDs, nil
 }
 
 func (ctx *MahresourcesContext) findResourcesByOwner(groupIDs []uint) ([]models.Resource, error) {
@@ -1154,6 +1360,7 @@ func (ctx *MahresourcesContext) loadGroupPayload(
 	p := &archive.GroupPayload{
 		ExportID:         plan.groupExportID[g.ID],
 		SourceID:         g.ID,
+		Shell:            plan.shellGroupIDs[g.ID],
 		Name:             g.Name,
 		Description:      g.Description,
 		Meta:             jsonToMap(g.Meta),
@@ -1575,14 +1782,16 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) (*
 		CreatedAt:     time.Now().UTC(),
 		CreatedBy:     "mahresources",
 		ExportOptions: archive.ExportOptions{
-			Scope:      req.Scope,
-			Fidelity:   req.Fidelity,
-			SchemaDefs: req.SchemaDefs,
-			Gzip:       req.Gzip,
+			Scope:        req.Scope,
+			Fidelity:     req.Fidelity,
+			SchemaDefs:   req.SchemaDefs,
+			Gzip:         req.Gzip,
+			RelatedDepth: req.RelatedDepth,
 		},
 		Counts: archive.Counts{
-			Groups:    len(p.groupIDs),
-			Notes:     len(p.noteIDs),
+			Groups:      len(p.groupIDs),
+			ShellGroups: len(p.shellGroupIDs),
+			Notes:       len(p.noteIDs),
 			Resources: len(p.resourceIDs),
 			Series:    len(p.seriesIDs),
 			Blobs:     blobCount,
@@ -1618,6 +1827,7 @@ func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) (*
 				Name:     row.Name,
 				SourceID: row.ID,
 				Path:     "groups/" + p.groupExportID[row.ID] + ".json",
+				Shell:    p.shellGroupIDs[row.ID],
 			})
 		}
 	}
