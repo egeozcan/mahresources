@@ -30,7 +30,7 @@ Each Category (for Groups), Resource Category (for Resources), and Note Type (fo
 Custom template content is processed in two ways:
 
 - **Shortcodes** (`[meta]`, `[property]`, `[mrql]`, and plugin shortcodes) are expanded server-side.
-- **Alpine.js directives** (`x-text`, `x-if`, `:class`, `@click`, etc.) work because the outer page template already wraps custom content in an `x-data` scope with the full entity available as `entity`.
+- **Alpine.js directives** (`x-text`, `x-if`, `:class`, `@click`, etc.) work in CustomHeader, CustomSidebar, CustomSummary, and CustomAvatar because the outer page template wraps custom content in an `x-data` scope with the full entity available as `entity`. Alpine directives do **not** work in `customMRQLResult` templates, which are rendered server-side by the shortcode engine -- use shortcodes (`[meta]`, `[property]`, `[conditional]`) instead.
 
 :::caution Pongo2 expressions do not work
 

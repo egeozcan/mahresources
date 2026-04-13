@@ -107,7 +107,7 @@
                             <b class="text-stone-500">scope</b>=entity|parent|root|global
                             &mdash; filter to a group subtree. Default: <code class="bg-stone-100 px-1 rounded">entity</code> (current group).
                             An explicit <code class="bg-stone-100 px-1 rounded">SCOPE</code> clause in the query takes precedence.
-                            Nests up to 2 levels deep inside Custom MRQL Result templates.
+                            Nests up to 10 levels deep inside Custom MRQL Result templates.
                         </p>
                     </div>
                     <div>
