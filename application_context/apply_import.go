@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/afero"
 	"gorm.io/gorm"
@@ -37,6 +38,10 @@ func (ctx *MahresourcesContext) ApplyImport(
 	}
 	if err := plan.ValidateForApply(decisions); err != nil {
 		return nil, err
+	}
+
+	if decisions.GUIDCollisionPolicy == "" {
+		decisions.GUIDCollisionPolicy = "merge"
 	}
 
 	tarPath := filepath.Join("_imports", parseJobID+".tar")
@@ -628,6 +633,35 @@ func (s *applyState) applyGroups() error {
 				}
 			}
 
+			// GUID collision handling
+			if gp.GUID != "" {
+				var existing models.Group
+				if err := s.ctx.db.Where("guid = ?", gp.GUID).First(&existing).Error; err == nil {
+					s.idMap[item.ExportID] = existing.ID
+
+					switch s.decisions.GUIDCollisionPolicy {
+					case "skip":
+						if err := walk(item.Children); err != nil {
+							return err
+						}
+						continue
+					case "merge":
+						if err := s.mergeGroup(&existing, gp); err != nil {
+							return fmt.Errorf("merge group %q: %w", gp.Name, err)
+						}
+					case "replace":
+						if err := s.replaceGroup(&existing, gp); err != nil {
+							return fmt.Errorf("replace group %q: %w", gp.Name, err)
+						}
+					}
+
+					if err := walk(item.Children); err != nil {
+						return err
+					}
+					continue
+				}
+			}
+
 			g := models.Group{
 				Name:        gp.Name,
 				Description: gp.Description,
@@ -1014,6 +1048,28 @@ func (s *applyState) applyNotes() error {
 
 // applyOneNote creates a single note row plus its blocks within the caller's tx.
 func (s *applyState) applyOneNote(tx *gorm.DB, exportID string, np *archive.NotePayload, batch *batchAccumulator) error {
+	// GUID collision handling
+	if np.GUID != "" {
+		var existing models.Note
+		if err := tx.Where("guid = ?", np.GUID).First(&existing).Error; err == nil {
+			s.idMap[exportID] = existing.ID
+
+			switch s.decisions.GUIDCollisionPolicy {
+			case "skip":
+				return nil
+			case "merge":
+				if err := s.mergeNote(tx, &existing, np); err != nil {
+					return fmt.Errorf("merge note %q: %w", np.Name, err)
+				}
+			case "replace":
+				if err := s.replaceNote(tx, &existing, np); err != nil {
+					return fmt.Errorf("replace note %q: %w", np.Name, err)
+				}
+			}
+			return nil
+		}
+	}
+
 	n := models.Note{
 		Name:        np.Name,
 		Description: np.Description,
@@ -1373,6 +1429,332 @@ func (s *applyState) resolveGRTForDanglingRef(dr DanglingRefPlan) uint {
 		break
 	}
 	return 0
+}
+
+// --- GUID collision helpers ---
+
+// resolveCategoryID looks up a category ID from CategoryRef or CategoryName.
+func (s *applyState) resolveCategoryID(catRef, catName string) *uint {
+	if catRef != "" {
+		if catID, ok := s.idMap[catRef]; ok {
+			return &catID
+		}
+	}
+	if catName != "" {
+		catKey := DecisionKeyFor("category", MappingEntry{SourceKey: catName})
+		if catID, ok := s.idMap[catKey]; ok {
+			return &catID
+		}
+	}
+	return nil
+}
+
+// resolveTagID resolves a single TagRef to a destination DB tag ID.
+func (s *applyState) resolveTagID(tr archive.TagRef) uint {
+	if tr.Ref != "" {
+		if id, ok := s.idMap[tr.Ref]; ok {
+			return id
+		}
+	}
+	tagKey := DecisionKeyFor("tag", MappingEntry{SourceKey: tr.Name})
+	if id, ok := s.idMap[tagKey]; ok {
+		return id
+	}
+	return 0
+}
+
+// unionGroupTags adds any tags from gp not already on the group (union semantics).
+func (s *applyState) unionGroupTags(groupID uint, gp *archive.GroupPayload) error {
+	for _, tr := range gp.Tags {
+		tagID := s.resolveTagID(tr)
+		if tagID == 0 {
+			continue
+		}
+		s.ctx.db.Exec(
+			"INSERT INTO group_tags (group_id, tag_id) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM group_tags WHERE group_id = ? AND tag_id = ?)",
+			groupID, tagID, groupID, tagID,
+		)
+	}
+	return nil
+}
+
+// mergeGroup updates an existing group's scalars (incoming wins), deep-merges
+// meta, resolves owner and category, and unions tags.
+func (s *applyState) mergeGroup(existing *models.Group, gp *archive.GroupPayload) error {
+	updates := map[string]any{
+		"name":        gp.Name,
+		"description": gp.Description,
+		"updated_at":  time.Now(),
+	}
+	if gp.URL != "" {
+		parsed, err := url.Parse(gp.URL)
+		if err == nil {
+			u := types.URL(*parsed)
+			updates["url"] = &u
+		}
+	}
+
+	// Meta: deep merge (incoming keys overwrite, existing keys preserved)
+	if gp.Meta != nil {
+		existingMeta := jsonToMap(existing.Meta)
+		merged := types.DeepMergeJSON(existingMeta, gp.Meta)
+		m, _ := json.Marshal(merged)
+		updates["meta"] = types.JSON(m)
+	}
+
+	// Owner
+	if gp.OwnerRef != "" {
+		if ownerID, ok := s.idMap[gp.OwnerRef]; ok {
+			updates["owner_id"] = ownerID
+		}
+	}
+
+	// Category
+	catID := s.resolveCategoryID(gp.CategoryRef, gp.CategoryName)
+	if catID != nil {
+		updates["category_id"] = *catID
+	}
+
+	if err := s.ctx.db.Model(existing).Updates(updates).Error; err != nil {
+		return err
+	}
+
+	return s.unionGroupTags(existing.ID, gp)
+}
+
+// replaceGroup overwrites an existing group's scalars and meta entirely and
+// resets its tags to the incoming set.
+func (s *applyState) replaceGroup(existing *models.Group, gp *archive.GroupPayload) error {
+	updates := map[string]any{
+		"name":        gp.Name,
+		"description": gp.Description,
+		"updated_at":  time.Now(),
+	}
+	if gp.URL != "" {
+		parsed, err := url.Parse(gp.URL)
+		if err == nil {
+			u := types.URL(*parsed)
+			updates["url"] = &u
+		}
+	} else {
+		updates["url"] = nil
+	}
+
+	// Meta: incoming replaces entirely
+	if gp.Meta != nil {
+		m, _ := json.Marshal(gp.Meta)
+		updates["meta"] = types.JSON(m)
+	} else {
+		updates["meta"] = types.JSON("null")
+	}
+
+	if gp.OwnerRef != "" {
+		if ownerID, ok := s.idMap[gp.OwnerRef]; ok {
+			updates["owner_id"] = ownerID
+		}
+	}
+
+	catID := s.resolveCategoryID(gp.CategoryRef, gp.CategoryName)
+	if catID != nil {
+		updates["category_id"] = *catID
+	}
+
+	if err := s.ctx.db.Model(existing).Updates(updates).Error; err != nil {
+		return err
+	}
+
+	// Tags: clear all existing, set incoming
+	s.ctx.db.Exec("DELETE FROM group_tags WHERE group_id = ?", existing.ID)
+	return s.unionGroupTags(existing.ID, gp)
+}
+
+// resolveNoteTypeID resolves a NoteType ID from NoteTypeRef or NoteTypeName.
+func (s *applyState) resolveNoteTypeID(np *archive.NotePayload) *uint {
+	if np.NoteTypeRef != "" {
+		if id, ok := s.idMap[np.NoteTypeRef]; ok {
+			return &id
+		}
+	}
+	if np.NoteTypeName != "" {
+		ntKey := DecisionKeyFor("note_type", MappingEntry{SourceKey: np.NoteTypeName})
+		if id, ok := s.idMap[ntKey]; ok {
+			return &id
+		}
+	}
+	return nil
+}
+
+// unionNoteTags adds tags from np not already on the note (union semantics).
+func (s *applyState) unionNoteTags(noteID uint, np *archive.NotePayload) {
+	for _, tr := range np.Tags {
+		tagID := s.resolveTagID(tr)
+		if tagID == 0 {
+			continue
+		}
+		s.ctx.db.Exec(
+			"INSERT INTO note_tags (note_id, tag_id) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM note_tags WHERE note_id = ? AND tag_id = ?)",
+			noteID, tagID, noteID, tagID,
+		)
+	}
+}
+
+// mergeNote updates an existing note's scalars (incoming wins), deep-merges
+// meta, resolves NoteTypeId/OwnerId, and unions M2M (tags, resources, groups).
+// Existing blocks are preserved.
+func (s *applyState) mergeNote(tx *gorm.DB, existing *models.Note, np *archive.NotePayload) error {
+	updates := map[string]any{
+		"name":        np.Name,
+		"description": np.Description,
+		"updated_at":  time.Now(),
+		"start_date":  np.StartDate,
+		"end_date":    np.EndDate,
+	}
+
+	// Meta: deep merge
+	if np.Meta != nil {
+		existingMeta := jsonToMap(existing.Meta)
+		merged := types.DeepMergeJSON(existingMeta, np.Meta)
+		m, _ := json.Marshal(merged)
+		updates["meta"] = types.JSON(m)
+	}
+
+	// Owner
+	if np.OwnerRef != "" {
+		if ownerID, ok := s.idMap[np.OwnerRef]; ok {
+			updates["owner_id"] = ownerID
+		}
+	}
+
+	// NoteType
+	if ntID := s.resolveNoteTypeID(np); ntID != nil {
+		updates["note_type_id"] = *ntID
+	}
+
+	if err := tx.Model(existing).Updates(updates).Error; err != nil {
+		return err
+	}
+
+	// M2M: union tags
+	s.unionNoteTags(existing.ID, np)
+
+	// M2M: union resources
+	for _, ref := range np.Resources {
+		if resID, ok := s.idMap[ref]; ok {
+			tx.Exec(
+				"INSERT INTO resource_notes (resource_id, note_id) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM resource_notes WHERE resource_id = ? AND note_id = ?)",
+				resID, existing.ID, resID, existing.ID,
+			)
+		}
+	}
+
+	// M2M: union groups
+	for _, ref := range np.Groups {
+		if grpID, ok := s.idMap[ref]; ok {
+			tx.Exec(
+				"INSERT INTO groups_related_notes (group_id, note_id) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM groups_related_notes WHERE group_id = ? AND note_id = ?)",
+				grpID, existing.ID, grpID, existing.ID,
+			)
+		}
+	}
+
+	return nil
+}
+
+// replaceNote overwrites an existing note's scalars and meta, clears+resets
+// M2M, and replaces blocks with the incoming set.
+func (s *applyState) replaceNote(tx *gorm.DB, existing *models.Note, np *archive.NotePayload) error {
+	updates := map[string]any{
+		"name":        np.Name,
+		"description": np.Description,
+		"updated_at":  time.Now(),
+		"start_date":  np.StartDate,
+		"end_date":    np.EndDate,
+	}
+
+	// Meta: incoming replaces entirely
+	if np.Meta != nil {
+		m, _ := json.Marshal(np.Meta)
+		updates["meta"] = types.JSON(m)
+	} else {
+		updates["meta"] = types.JSON("null")
+	}
+
+	// Owner
+	if np.OwnerRef != "" {
+		if ownerID, ok := s.idMap[np.OwnerRef]; ok {
+			updates["owner_id"] = ownerID
+		}
+	}
+
+	// NoteType
+	if ntID := s.resolveNoteTypeID(np); ntID != nil {
+		updates["note_type_id"] = *ntID
+	}
+
+	if err := tx.Model(existing).Updates(updates).Error; err != nil {
+		return err
+	}
+
+	// Tags: clear all existing, set incoming
+	tx.Exec("DELETE FROM note_tags WHERE note_id = ?", existing.ID)
+	s.unionNoteTags(existing.ID, np)
+
+	// Resources: clear all existing, set incoming
+	tx.Exec("DELETE FROM resource_notes WHERE note_id = ?", existing.ID)
+	for _, ref := range np.Resources {
+		if resID, ok := s.idMap[ref]; ok {
+			tx.Exec(
+				"INSERT INTO resource_notes (resource_id, note_id) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM resource_notes WHERE resource_id = ? AND note_id = ?)",
+				resID, existing.ID, resID, existing.ID,
+			)
+		}
+	}
+
+	// Groups: clear all existing, set incoming
+	tx.Exec("DELETE FROM groups_related_notes WHERE note_id = ?", existing.ID)
+	for _, ref := range np.Groups {
+		if grpID, ok := s.idMap[ref]; ok {
+			tx.Exec(
+				"INSERT INTO groups_related_notes (group_id, note_id) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM groups_related_notes WHERE group_id = ? AND note_id = ?)",
+				grpID, existing.ID, grpID, existing.ID,
+			)
+		}
+	}
+
+	// Blocks: delete existing, create incoming
+	if err := tx.Where("note_id = ?", existing.ID).Delete(&models.NoteBlock{}).Error; err != nil {
+		return fmt.Errorf("delete existing blocks: %w", err)
+	}
+	for _, bp := range np.Blocks {
+		block := models.NoteBlock{
+			NoteID:   existing.ID,
+			Type:     bp.Type,
+			Position: bp.Position,
+		}
+		if bp.Content != nil {
+			c, err := json.Marshal(bp.Content)
+			if err != nil {
+				return fmt.Errorf("marshal block content: %w", err)
+			}
+			block.Content = types.JSON(c)
+		} else {
+			block.Content = types.JSON([]byte("{}"))
+		}
+		if bp.State != nil {
+			st, err := json.Marshal(bp.State)
+			if err != nil {
+				return fmt.Errorf("marshal block state: %w", err)
+			}
+			block.State = types.JSON(st)
+		} else {
+			block.State = types.JSON([]byte("{}"))
+		}
+		if err := tx.Create(&block).Error; err != nil {
+			return fmt.Errorf("create replaced note block (note %q, pos %s): %w", np.Name, bp.Position, err)
+		}
+	}
+
+	return nil
 }
 
 // --- Schema def lookup helpers ---
