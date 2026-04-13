@@ -422,14 +422,15 @@ test.describe('Block MRQL shortcode', () => {
     childCategoryId = childCat.ID;
 
     // Parent category with block [mrql] in CustomHeader.
-    // Query uses type = note to avoid scope including the parent group itself.
+    // Query scoped to "entity" (the parent group's subtree) so only
+    // children are returned — deterministic, no flakiness from other test data.
     const parentCat = await apiClient.createCategory(
       `BlockMRQL Parent ${Date.now()}`,
       'Parent with block mrql header',
       {
         CustomHeader: [
           '<div class="block-mrql-test">',
-          '[mrql query=\'type = group\' scope="global" limit="10"]',
+          `[mrql query='type = group AND category = ${childCat.ID}' scope="entity" limit="10"]`,
           '<div class="block-mrql-item"><span class="item-name">[property path="Name"]</span></div>',
           '[/mrql]',
           '</div>',
@@ -445,7 +446,7 @@ test.describe('Block MRQL shortcode', () => {
     });
     parentGroupId = parent.ID;
 
-    // Create two child groups owned by the parent
+    // Create two child groups owned by the parent (in child category)
     for (const name of ['Apple', 'Banana']) {
       const child = await apiClient.createGroup({
         name: `BlockMRQL ${name} ${Date.now()}`,
@@ -595,9 +596,8 @@ Categories, Resource Categories, and Note Types can define a `customMRQLResult` 
 ### How It Works
 
 1. Set the `customMRQLResult` field on a Category, Resource Category, or Note Type
-2. When an `[mrql]` shortcode query returns entities of that type, the custom template is used instead of the default card layout
+2. When an `[mrql]` shortcode query returns entities of that type, the custom template is used instead of the default card layout -- unless the `[mrql]` shortcode itself provides a [block template](./shortcodes.md#block-syntax), which takes precedence over all category-level templates
 3. The template has access to the entity context, so shortcodes like `[meta]` and `[property]` work inside it
-4. If the `[mrql]` shortcode uses [block syntax](./shortcodes.md#block-syntax), the block template takes precedence over `customMRQLResult` for all items
 
 ### Setting via the UI
 
