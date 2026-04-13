@@ -155,7 +155,7 @@ An explicit `SCOPE` clause in the MRQL query takes precedence over the attribute
 
 ### Nesting
 
-`[mrql]` shortcodes can nest up to 2 levels deep. This allows CustomMRQLResult templates to contain their own `[mrql]` shortcodes. Beyond the depth limit, nested shortcodes are left as-is.
+Shortcodes can nest up to 10 levels deep (the processing recursion limit). This allows CustomMRQLResult templates and block templates to contain their own shortcodes, including nested `[mrql]` queries. Beyond the depth limit, unprocessed shortcodes are left as literal text.
 
 ### Examples
 
@@ -172,6 +172,33 @@ In a custom template:
 <h3>Recent Photos</h3>
 [mrql query='type = resource AND contentType ~ "image/*" AND created > -30d' format=list limit=5]
 ```
+
+### Block Syntax
+
+`[mrql]` supports block mode, where the inner content becomes a per-item template:
+
+```
+[mrql query='type = resource AND tags = "recipe"' limit="5"]
+  <div class="recipe-card">
+    <h3>[property path="Name"]</h3>
+    <p>Cook time: [meta path="cooking.time"] min</p>
+  </div>
+[/mrql]
+```
+
+Each result entity gets its own shortcode context, so `[meta]`, `[property]`, `[conditional]`, nested `[mrql]`, and plugin shortcodes all work inside the block body.
+
+**Precedence rules:**
+
+- Block template overrides any `customMRQLResult` set on the entity's category
+- Block template overrides the `format` attribute (the block body is the format)
+- Empty or whitespace-only blocks (`[mrql query="..."][/mrql]`) fall back to normal rendering
+
+**Result modes:**
+
+- **Flat queries:** Block template applied per entity
+- **Bucketed GROUP BY:** Block template applied per entity within each bucket; bucket headers render normally
+- **Aggregated GROUP BY:** Block template ignored; aggregated table renders as usual
 
 ## `[conditional]` -- Conditional Display
 
