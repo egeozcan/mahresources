@@ -12,6 +12,7 @@ export function adminImport() {
     decisions: {
       parent_group_id: null,
       resource_collision_policy: 'skip',
+      guid_collision_policy: 'merge',
       acknowledge_missing_hashes: false,
       mapping_actions: {},    // keyed by source_export_id or source_key
       dangling_actions: {},   // keyed by dangling ref id

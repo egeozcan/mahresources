@@ -64,6 +64,11 @@
           <dt class="text-stone-500">Hash collisions (will skip)</dt>
           <dd x-text="plan.conflicts.resource_hash_matches"></dd>
         </dl>
+        <template x-if="plan && plan.conflicts && plan.conflicts.guid_matches > 0">
+          <p class="text-sm text-amber-700">
+            <span x-text="plan.conflicts.guid_matches"></span> entities match by GUID
+          </p>
+        </template>
       </section>
 
       <!-- Missing Hashes Warning -->
@@ -118,6 +123,18 @@
               <option value="duplicate">Create duplicate row</option>
             </select>
           </div>
+        </div>
+        <div x-show="plan && plan.conflicts && plan.conflicts.guid_matches > 0" class="mt-4">
+          <label class="block text-sm font-medium text-stone-700 mb-1" for="guid-collision-policy">GUID Collision Policy</label>
+          <p class="text-xs text-stone-500 mb-2">
+            <span x-text="plan.conflicts.guid_matches"></span> entities match by GUID. Choose what happens to existing entities.
+          </p>
+          <select id="guid-collision-policy" x-model="decisions.guid_collision_policy"
+                  class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">
+            <option value="merge">Merge (update fields, union tags)</option>
+            <option value="skip">Skip (keep existing)</option>
+            <option value="replace">Replace (overwrite everything)</option>
+          </select>
         </div>
       </section>
 
