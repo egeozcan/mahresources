@@ -26,7 +26,7 @@ GUID string `gorm:"uniqueIndex;size:36" json:"guid,omitempty"`
 ### Generation
 
 - **New entities**: GORM `BeforeCreate` hook generates UUID v7 if `GUID` is empty.
-- **Existing entities**: Lazy — generated and persisted on first export. No background worker, no blocking migration.
+- **Existing entities**: Lazy — generated and persisted on first export. No background worker, no blocking migration. See Export Logic for concurrency handling.
 - **Helper**: Small shared function in `models/types/` producing UUID v7 from `crypto/rand` + `time`. No external dependency.
 
 ## Export Changes
@@ -44,7 +44,15 @@ This is additive with `omitempty`. Old readers silently ignore unknown fields pe
 
 ### Export Logic
 
-In `export_context.go`, when building payloads: if `entity.GUID == ""`, generate UUID v7, persist to DB (`UPDATE ... SET guid = ? WHERE id = ?`), then write to the payload. This is the lazy backfill path for pre-existing entities.
+In `export_context.go`, when building payloads: if `entity.GUID == ""`, generate UUID v7 and persist to DB using an atomic conditional update:
+
+```sql
+UPDATE <table> SET guid = ? WHERE id = ? AND (guid IS NULL OR guid = '')
+```
+
+If the update affects 0 rows, another concurrent export already assigned a GUID — re-read the row to get the winning value. This makes the backfill safe under concurrent exports: exactly one writer wins, and all exports for the same entity converge on the same GUID.
+
+The generated (or re-read) GUID is then written to the archive payload.
 
 ## Import Changes
 
@@ -86,19 +94,57 @@ This is a global per-import policy, alongside the existing `ResourceCollisionPol
 
 For all three policies, the existing entity's DB ID is mapped into `idMap` so downstream relationship wiring (M2M, owner refs) resolves correctly.
 
+### Resource-Specific Behavior
+
+Resources have additional state beyond scalars and M2M: blob bytes, version history, previews, and content-addressed hash identity. GUID matching and hash matching can interact, so the precedence is:
+
+**Collision detection order**: GUID match is checked first. If a GUID match is found, the GUID collision policy applies and hash matching is skipped entirely for that resource. If no GUID match, fall through to the existing `ResourceCollisionPolicy` hash-based logic.
+
+**Per-policy resource details**:
+
+| Policy | Blob / File | Versions | Previews | Hash field |
+|--------|-------------|----------|----------|------------|
+| **merge** | Keep existing blob. If incoming hash differs, log a warning but do not replace the file. | Keep existing versions. Do not import incoming versions (they reference a potentially different blob lineage). | Keep existing previews. | Keep existing hash unchanged. |
+| **skip** | No change. | No change. | No change. | No change. |
+| **replace** | Replace blob on disk with incoming blob (if present in archive). | Delete existing versions, import incoming versions. | Delete existing previews, import incoming previews. | Overwrite hash with incoming value. |
+
+**Rationale for merge not touching blobs**: Merge is the conservative default. Silently replacing a file's bytes is destructive and not reversible. If the user wants to update the actual file content, they should use `replace`.
+
 ### Schema Def Resolution Order
 
 1. GUID match (exact, takes priority)
 2. Name match (existing behavior, fallback)
 3. User decision (create new / map to existing)
 
+### Schema Def Unique-Name Conflicts
+
+Schema defs have unique-name constraints (e.g., `unique_tag_name`, `unique_category_name`). GUID matching can conflict with these:
+
+**Scenario**: Incoming tag has GUID=X, Name="Foo". Local DB has tag with GUID=X, Name="Bar" (renamed since last export). Local DB also has a different tag with Name="Foo" (name collision).
+
+**Resolution**: When a GUID match is found, the merge/replace applies to the GUID-matched entity. If the incoming name would violate a unique constraint against a *different* local entity, the import plan flags this as a conflict requiring user decision:
+
+- **Option A**: Rename the incoming entity (user provides a new name)
+- **Option B**: Map to the name-colliding entity instead (discard the GUID match)
+- **Option C**: Skip this entity
+
+The import plan's `MappingEntry` already supports `Ambiguous` + `Alternatives` — GUID-vs-name conflicts surface through this same mechanism, with an additional `GUIDConflict bool` field to distinguish them from pure name ambiguities.
+
+**GroupRelationType composite uniqueness**: GroupRelationTypes are identified by (Name, FromCategory, ToCategory). GUID match takes priority; if the incoming payload's composite key collides with a different local GRT, the same conflict resolution mechanism applies.
+
 ## MRQL Integration
 
-Add `guid` to the MRQL translator's field whitelist for all 8 entity types. Standard string field — supports `=`, `!=`, `IN`, `LIKE`, etc.
+MRQL currently supports three entity types: `resource`, `note`, `group`. Add `guid` as a `FieldString` entry to `commonFields` in `mrql/fields.go`:
+
+```go
+{Name: "guid", Type: FieldString, Column: "guid"},
+```
+
+This makes `guid` queryable on all three supported entity types. The other 5 entity types (Category, NoteType, ResourceCategory, Tag, GroupRelationType) do not have MRQL support and are not in scope for MRQL changes.
 
 Example queries:
-- `guid = "0193a7f1-7b1a-7000-8abc-def012345678"`
-- `guid != ""`
+- `type = "group" guid = "0193a7f1-7b1a-7000-8abc-def012345678"`
+- `type = "resource" guid != ""`
 
 ## UI
 
@@ -123,6 +169,9 @@ Schema def entities (Category, NoteType, etc.) — no UI change. GUIDs accessibl
 
 - Unit tests for UUID v7 generation helper.
 - Unit tests for deep merge utility.
+- Unit test for concurrent lazy backfill (two goroutines exporting the same entity converge on one GUID).
 - E2E round-trip: export with GUIDs, re-import with each policy (merge/skip/replace), verify outcomes.
 - E2E: import archive without GUIDs (old format) still works — backward compatibility.
-- MRQL tests for `guid` field queries.
+- E2E: resource GUID match with different hash — verify merge keeps existing blob, replace swaps it.
+- E2E: schema def GUID-vs-name conflict — verify conflict surfaces in import plan.
+- MRQL tests for `guid` field queries on resource, note, group.
