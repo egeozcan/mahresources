@@ -26,6 +26,7 @@ var commonFields = []FieldDef{
 	{Name: "created", Type: FieldDateTime, Column: "created_at"},
 	{Name: "updated", Type: FieldDateTime, Column: "updated_at"},
 	{Name: "tags", Type: FieldRelation, Column: "tags"},
+	{Name: "guid", Type: FieldString, Column: "guid"},
 	// "meta" prefix is handled separately via FieldMeta lookup
 }
 

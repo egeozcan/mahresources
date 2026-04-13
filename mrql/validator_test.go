@@ -855,6 +855,21 @@ func TestValidate_GroupByMultipleAggregateOrderKeys(t *testing.T) {
 	}
 }
 
+func TestLookupField_GUID(t *testing.T) {
+	for _, et := range []EntityType{EntityResource, EntityNote, EntityGroup} {
+		fd, ok := LookupField(et, "guid")
+		if !ok {
+			t.Fatalf("guid not found for entity type %v", et)
+		}
+		if fd.Type != FieldString {
+			t.Fatalf("guid should be FieldString, got %v", fd.Type)
+		}
+		if fd.Column != "guid" {
+			t.Fatalf("guid column should be 'guid', got %q", fd.Column)
+		}
+	}
+}
+
 func TestValidate_MetaSubpathFields(t *testing.T) {
 	valid := []struct {
 		name  string
