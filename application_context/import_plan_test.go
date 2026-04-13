@@ -180,4 +180,21 @@ func TestValidateForApply_ShellGroupMapWithoutDest(t *testing.T) {
 	}
 }
 
+func TestValidateForApply_ExcludedShellGroupSkipped(t *testing.T) {
+	plan := &ImportPlan{}
+	decisions := &ImportDecisions{
+		ResourceCollisionPolicy: "skip",
+		MappingActions:          map[string]MappingAction{},
+		DanglingActions:         map[string]DanglingAction{},
+		ShellGroupActions: map[string]ShellGroupAction{
+			"g0005": {Action: "map_to_existing", DestinationID: nil},
+		},
+		ExcludedItems: []string{"g0005"},
+	}
+	err := plan.ValidateForApply(decisions)
+	if err != nil {
+		t.Fatalf("excluded shell group should not cause validation error, got: %v", err)
+	}
+}
+
 func uintPtr(v uint) *uint { return &v }

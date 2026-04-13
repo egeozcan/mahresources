@@ -200,8 +200,15 @@ func (p *ImportPlan) ValidateForApply(decisions *ImportDecisions) error {
 	if p.ManifestOnlyMissingHashes > 0 && !decisions.AcknowledgeMissingHashes {
 		return fmt.Errorf("missing-hash acknowledgement required: %d resources have no bytes", p.ManifestOnlyMissingHashes)
 	}
-	// Validate shell group decisions
+	// Validate shell group decisions (skip excluded items — they won't be applied)
+	excludedSet := make(map[string]bool, len(decisions.ExcludedItems))
+	for _, id := range decisions.ExcludedItems {
+		excludedSet[id] = true
+	}
 	for exportID, action := range decisions.ShellGroupActions {
+		if excludedSet[exportID] {
+			continue
+		}
 		if action.Action == "map_to_existing" && action.DestinationID == nil {
 			return fmt.Errorf("shell group %s: map_to_existing requires a destination_id", exportID)
 		}

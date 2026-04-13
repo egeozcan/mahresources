@@ -238,8 +238,9 @@ export function adminImport() {
         if (stored?.action === 'map' && !stored.destination_id) return true;
       }
 
-      // Check shell group decisions
+      // Check shell group decisions (skip excluded items)
       for (const [exportId, action] of Object.entries(this.decisions.shell_group_actions)) {
+        if (this.decisions.excluded_items.includes(exportId)) continue;
         if (action.action === 'map_to_existing' && !action.destination_id) return true;
       }
 
