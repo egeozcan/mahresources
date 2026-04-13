@@ -186,10 +186,18 @@ func TestStreamExport_RelatedDepth1_IncludesRelatedEntities(t *testing.T) {
 		t.Fatalf("export: %v", err)
 	}
 
-	coll := newExportCollector()
-	manifest, err := archive.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()), coll)
+	r, err := archive.NewReader(&buf)
 	if err != nil {
-		t.Fatalf("read archive: %v", err)
+		t.Fatalf("NewReader: %v", err)
+	}
+	defer r.Close()
+	manifest, err := r.ReadManifest()
+	if err != nil {
+		t.Fatalf("ReadManifest: %v", err)
+	}
+	coll := newExportCollector()
+	if err := r.Walk(coll); err != nil {
+		t.Fatalf("Walk: %v", err)
 	}
 
 	// GroupA is in scope (root), GroupB and GroupC should be shell groups.
@@ -258,7 +266,7 @@ In `application_context/export_context.go`, add to the `exportPlan` struct (afte
 
 - [ ] **Step 5: Implement BFS phase in `buildExportPlan`**
 
-In `application_context/export_context.go`, replace the section from `// Phase D:` through `return plan, nil` (lines 209-226) with:
+In `application_context/export_context.go`, replace the section from `// Phase B2:` through `return plan, nil` (lines 177-226) with the following. This moves the version-hash accounting (B2) to after BFS so BFS-discovered resources are included in blob counts, then runs series collection (D) and dangling refs (E) over the fully expanded scope:
 
 ```go
 	// Phase BFS: follow m2m edges to related entities up to RelatedDepth hops.
@@ -266,6 +274,27 @@ In `application_context/export_context.go`, replace the section from `// Phase D
 	if req.RelatedDepth > 0 {
 		if err := ctx.bfsRelatedEntities(plan); err != nil {
 			return nil, fmt.Errorf("bfs related entities: %w", err)
+		}
+	}
+
+	// Phase B2 (moved after BFS): when F2+F1 are on, include version blob hashes
+	// in uniqueHashes so Counts.Blobs and EstimatedBytes cover all resources
+	// (both owned and BFS-discovered).
+	if req.Fidelity.ResourceVersions && req.Fidelity.ResourceBlobs && len(plan.resourceIDs) > 0 {
+		var versions []models.ResourceVersion
+		if err := ctx.db.
+			Where("resource_id IN ?", plan.resourceIDs).
+			Order("id").
+			Find(&versions).Error; err != nil {
+			return nil, fmt.Errorf("load resource versions for plan: %w", err)
+		}
+		for _, v := range versions {
+			if v.Hash != "" {
+				if _, seen := plan.uniqueHashes[v.Hash]; !seen {
+					plan.uniqueHashes[v.Hash] = v.FileSize
+					plan.totalBytes += v.FileSize
+				}
+			}
 		}
 	}
 
@@ -329,9 +358,14 @@ func (ctx *MahresourcesContext) bfsRelatedEntities(plan *exportPlan) error {
 		}
 
 		// For newly discovered resources/notes, ensure their owner is in scope.
-		if err := ctx.bfsEnsureOwners(plan); err != nil {
+		// Owner-discovered groups also enter the frontier so depth>1 walks
+		// their outgoing relations (e.g., A -> related resource owned by B,
+		// depth 2 should then walk B's relations).
+		ownerGroupIDs, err := ctx.bfsEnsureOwners(plan)
+		if err != nil {
 			return fmt.Errorf("bfs ensure owners level %d: %w", level, err)
 		}
+		newGroupIDs = append(newGroupIDs, ownerGroupIDs...)
 
 		frontier = newGroupIDs
 	}
@@ -418,8 +452,11 @@ func (ctx *MahresourcesContext) bfsCollectGroupRelations(plan *exportPlan, front
 }
 
 // bfsEnsureOwners adds owning groups of BFS-discovered resources/notes as
-// shell groups if they're not already in scope. Uses batch queries to avoid N+1.
-func (ctx *MahresourcesContext) bfsEnsureOwners(plan *exportPlan) error {
+// shell groups if they're not already in scope. Returns newly added group IDs
+// so they can enter the BFS frontier. Uses batch queries to avoid N+1.
+func (ctx *MahresourcesContext) bfsEnsureOwners(plan *exportPlan) ([]uint, error) {
+	var newGroupIDs []uint
+
 	// Batch query resource owners
 	if len(plan.resourceIDs) > 0 {
 		type ownerRow struct {
@@ -431,7 +468,7 @@ func (ctx *MahresourcesContext) bfsEnsureOwners(plan *exportPlan) error {
 			Select("id, owner_id").
 			Where("id IN ? AND owner_id IS NOT NULL", plan.resourceIDs).
 			Scan(&rows).Error; err != nil {
-			return fmt.Errorf("bfs ensure resource owners: %w", err)
+			return nil, fmt.Errorf("bfs ensure resource owners: %w", err)
 		}
 		for _, row := range rows {
 			if row.OwnerID == nil {
@@ -441,6 +478,7 @@ func (ctx *MahresourcesContext) bfsEnsureOwners(plan *exportPlan) error {
 				plan.groupIDs = append(plan.groupIDs, *row.OwnerID)
 				plan.groupExportID[*row.OwnerID] = fmt.Sprintf("g%04d", len(plan.groupExportID)+1)
 				plan.shellGroupIDs[*row.OwnerID] = true
+				newGroupIDs = append(newGroupIDs, *row.OwnerID)
 			}
 		}
 	}
@@ -456,7 +494,7 @@ func (ctx *MahresourcesContext) bfsEnsureOwners(plan *exportPlan) error {
 			Select("id, owner_id").
 			Where("id IN ? AND owner_id IS NOT NULL", plan.noteIDs).
 			Scan(&rows).Error; err != nil {
-			return fmt.Errorf("bfs ensure note owners: %w", err)
+			return nil, fmt.Errorf("bfs ensure note owners: %w", err)
 		}
 		for _, row := range rows {
 			if row.OwnerID == nil {
@@ -466,11 +504,12 @@ func (ctx *MahresourcesContext) bfsEnsureOwners(plan *exportPlan) error {
 				plan.groupIDs = append(plan.groupIDs, *row.OwnerID)
 				plan.groupExportID[*row.OwnerID] = fmt.Sprintf("g%04d", len(plan.groupExportID)+1)
 				plan.shellGroupIDs[*row.OwnerID] = true
+				newGroupIDs = append(newGroupIDs, *row.OwnerID)
 			}
 		}
 	}
 
-	return nil
+	return newGroupIDs, nil
 }
 ```
 
@@ -568,8 +607,11 @@ func TestStreamExport_RelatedDepth0_NoBFS(t *testing.T) {
 		t.Fatalf("export: %v", err)
 	}
 
+	r, _ := archive.NewReader(&buf)
+	defer r.Close()
+	manifest, _ := r.ReadManifest()
 	coll := newExportCollector()
-	manifest, _ := archive.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()), coll)
+	r.Walk(coll)
 
 	if len(coll.groups) != 1 {
 		t.Errorf("expected 1 group, got %d", len(coll.groups))
@@ -610,8 +652,11 @@ func TestStreamExport_RelatedDepth2_Chaining(t *testing.T) {
 		t.Fatalf("export: %v", err)
 	}
 
+	r, _ := archive.NewReader(&buf)
+	defer r.Close()
+	manifest, _ := r.ReadManifest()
 	coll := newExportCollector()
-	manifest, _ := archive.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()), coll)
+	r.Walk(coll)
 
 	// A (root) + B (shell, depth 1) + C (shell, owner of res)
 	if len(coll.groups) != 3 {
@@ -647,8 +692,11 @@ func TestStreamExport_RelatedDepth_EarlyTermination(t *testing.T) {
 		t.Fatalf("export: %v", err)
 	}
 
+	r, _ := archive.NewReader(&buf)
+	defer r.Close()
+	r.ReadManifest()
 	coll := newExportCollector()
-	archive.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()), coll)
+	r.Walk(coll)
 
 	if len(coll.groups) != 2 {
 		t.Errorf("expected 2 groups (A + B shell), got %d", len(coll.groups))
@@ -682,8 +730,11 @@ func TestStreamExport_RelatedDepth_Dedup(t *testing.T) {
 		t.Fatalf("export: %v", err)
 	}
 
+	r, _ := archive.NewReader(&buf)
+	defer r.Close()
+	r.ReadManifest()
 	coll := newExportCollector()
-	archive.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()), coll)
+	r.Walk(coll)
 
 	if len(coll.resources) != 1 {
 		t.Errorf("expected 1 resource (no duplicates), got %d", len(coll.resources))
@@ -711,8 +762,11 @@ func TestStreamExport_RelatedDepth_NoRelatedM2M(t *testing.T) {
 		t.Fatalf("export: %v", err)
 	}
 
+	r, _ := archive.NewReader(&buf)
+	defer r.Close()
+	r.ReadManifest()
 	coll := newExportCollector()
-	archive.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()), coll)
+	r.Walk(coll)
 
 	// RelatedM2M off = no BFS even with depth > 0
 	if len(coll.groups) != 1 {
@@ -752,8 +806,11 @@ func TestStreamExport_RelatedDepth_SeriesOnBFSResource(t *testing.T) {
 		t.Fatalf("export: %v", err)
 	}
 
+	r, _ := archive.NewReader(&buf)
+	defer r.Close()
+	r.ReadManifest()
 	coll := newExportCollector()
-	archive.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()), coll)
+	r.Walk(coll)
 
 	if len(coll.series) != 1 {
 		t.Errorf("expected 1 series, got %d", len(coll.series))
@@ -790,8 +847,11 @@ func TestStreamExport_RelatedDepth_DanglingBeyondDepth(t *testing.T) {
 		t.Fatalf("export: %v", err)
 	}
 
+	r, _ := archive.NewReader(&buf)
+	defer r.Close()
+	manifest, _ := r.ReadManifest()
 	coll := newExportCollector()
-	manifest, _ := archive.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()), coll)
+	r.Walk(coll)
 
 	if len(coll.groups) != 2 {
 		t.Errorf("expected 2 groups (A + B shell), got %d", len(coll.groups))
@@ -1238,6 +1298,10 @@ Expected: PASS
 func TestApplyImport_ShellGroupMap_DuplicateGroupRelation(t *testing.T) {
 	srcCtx := createTestContext(t)
 
+	// Setup: A -> (related) -> B, B -> (typed relation) -> C.
+	// Export with depth 2 so B is a shell AND C is also a shell (both in scope).
+	// This ensures B->C is encoded as an in-scope ToRef (not dangling),
+	// exercising the applyM2MLinks GroupRelation code path.
 	grt := mustCreateGroupRelationType(t, srcCtx, "TestRelType")
 	groupA := mustCreateGroup(t, srcCtx, "A", nil)
 	groupB := mustCreateGroup(t, srcCtx, "B", nil)
@@ -1245,13 +1309,14 @@ func TestApplyImport_ShellGroupMap_DuplicateGroupRelation(t *testing.T) {
 
 	mustCreateGroupRelation(t, srcCtx, groupB.ID, groupC.ID, grt.ID)
 	mustLinkRelatedGroup(t, srcCtx, groupA.ID, groupB.ID)
+	mustLinkRelatedGroup(t, srcCtx, groupB.ID, groupC.ID)
 
 	var tarBuf bytes.Buffer
 	err := srcCtx.StreamExport(context.Background(), &ExportRequest{
 		RootGroupIDs: []uint{groupA.ID},
 		Scope:        archive.ExportScope{RelatedM2M: true, GroupRelations: true},
 		SchemaDefs:   archive.ExportSchemaDefs{CategoriesAndTypes: true, Tags: true, GroupRelationTypes: true},
-		RelatedDepth: 1,
+		RelatedDepth: 2, // depth 2: A pulls B (depth 1), B pulls C (depth 2)
 	}, &tarBuf, nil)
 	if err != nil {
 		t.Fatalf("export: %v", err)
@@ -1259,12 +1324,12 @@ func TestApplyImport_ShellGroupMap_DuplicateGroupRelation(t *testing.T) {
 
 	dstCtx := createTestContext(t)
 
-	// Create target group + the same relation type + a group to be the "C" target
+	// Create target groups + the same relation type, and pre-create the
+	// relation that would conflict when B is mapped to targetB.
 	dstGRT := mustCreateGroupRelationType(t, dstCtx, "TestRelType")
-	targetGroup := mustCreateGroup(t, dstCtx, "TargetB", nil)
-	dstGroupC := mustCreateGroup(t, dstCtx, "TargetC", nil)
-	// Pre-create the relation that would conflict
-	mustCreateGroupRelation(t, dstCtx, targetGroup.ID, dstGroupC.ID, dstGRT.ID)
+	targetB := mustCreateGroup(t, dstCtx, "TargetB", nil)
+	targetC := mustCreateGroup(t, dstCtx, "TargetC", nil)
+	mustCreateGroupRelation(t, dstCtx, targetB.ID, targetC.ID, dstGRT.ID)
 
 	jobID := "test-shell-dup-rel"
 	tarPath := filepath.Join("_imports", jobID+".tar")
@@ -1278,25 +1343,29 @@ func TestApplyImport_ShellGroupMap_DuplicateGroupRelation(t *testing.T) {
 
 	decisions := buildDefaultDecisions(plan)
 
-	// Map shell group B -> targetGroup
-	var shellExportID string
+	// Map both shell groups to existing targets
 	var walkFind func(items []ImportPlanItem)
 	walkFind = func(items []ImportPlanItem) {
 		for _, item := range items {
-			if item.Shell {
-				shellExportID = item.ExportID
+			if item.Shell && item.Name == "B" {
+				decisions.ShellGroupActions[item.ExportID] = ShellGroupAction{
+					Action:        "map_to_existing",
+					DestinationID: &targetB.ID,
+				}
+			}
+			if item.Shell && item.Name == "C" {
+				decisions.ShellGroupActions[item.ExportID] = ShellGroupAction{
+					Action:        "map_to_existing",
+					DestinationID: &targetC.ID,
+				}
 			}
 			walkFind(item.Children)
 		}
 	}
 	walkFind(plan.Items)
 
-	decisions.ShellGroupActions[shellExportID] = ShellGroupAction{
-		Action:        "map_to_existing",
-		DestinationID: &targetGroup.ID,
-	}
-
-	// This should NOT fail even though the relation already exists
+	// This should NOT fail — the B->C GroupRelation already exists on the
+	// destination, and the conflict-ignore clause silently skips the duplicate.
 	_, err = dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
 	if err != nil {
 		t.Fatalf("apply should succeed with conflict-ignore, got: %v", err)
@@ -1306,34 +1375,15 @@ func TestApplyImport_ShellGroupMap_DuplicateGroupRelation(t *testing.T) {
 
 - [ ] **Step 10: Implement conflict-ignore for GroupRelation creation**
 
-In `application_context/apply_import.go`, in the GroupRelation wiring section (~line 1150), replace `s.ctx.db.Create(&gr)` with conflict-ignore logic:
+In `application_context/apply_import.go`, in the GroupRelation wiring section (~line 1150), replace the raw `s.ctx.db.Create(&gr)` with GORM's `OnConflict{DoNothing: true}` clause, following the existing pattern in `hash_worker/worker.go:464`:
 
 ```go
-			if err := s.ctx.db.Create(&gr).Error; err != nil {
-				// Conflict-ignore: if this is a unique constraint violation
-				// (e.g., when a shell group is mapped to an existing group that
-				// already has this relation), skip silently.
-				if isUniqueConstraintError(err) {
-					continue
-				}
+			if err := s.ctx.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&gr).Error; err != nil {
 				return fmt.Errorf("group %s relation to %s: %w", exportID, rel.ToRef, err)
 			}
 ```
 
-Add the helper (in `apply_import.go`):
-
-```go
-// isUniqueConstraintError checks if a GORM error is a unique constraint violation.
-func isUniqueConstraintError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "unique constraint") || strings.Contains(msg, "duplicate key") || strings.Contains(msg, "unique")
-}
-```
-
-Add `"strings"` to the imports if not already present.
+Add `"gorm.io/gorm/clause"` to the imports if not already present.
 
 - [ ] **Step 11: Run the conflict test**
 
