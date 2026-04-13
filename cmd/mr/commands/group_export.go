@@ -73,7 +73,8 @@ func newGroupExportCmd(c *client.Client, outOpts *output.Options) *cobra.Command
 					Tags:               opts.IncludeTagDefs.value(),
 					GroupRelationTypes: opts.IncludeGRTDefs.value(),
 				},
-				Gzip: opts.Gzip,
+				Gzip:         opts.Gzip,
+				RelatedDepth: opts.RelatedDepth,
 			}
 
 			var resp struct {
@@ -160,6 +161,7 @@ type exportCmdOptions struct {
 	Wait                      triState
 	PollInterval              time.Duration
 	Timeout                   time.Duration
+	RelatedDepth              int
 }
 
 func registerExportFlags(cmd *cobra.Command, opts *exportCmdOptions) {
@@ -241,4 +243,5 @@ func registerExportFlags(cmd *cobra.Command, opts *exportCmdOptions) {
 	cmd.Flags().Bool("no-wait", false, "return immediately after submitting the job")
 	cmd.Flags().DurationVar(&opts.PollInterval, "poll-interval", 1*time.Second, "polling interval")
 	cmd.Flags().DurationVar(&opts.Timeout, "timeout", 30*time.Minute, "max total wait time")
+	cmd.Flags().IntVar(&opts.RelatedDepth, "related-depth", 0, "follow m2m relationships up to N hops deep (0 = off)")
 }
