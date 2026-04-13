@@ -4,12 +4,15 @@ import (
 	"mahresources/models/types"
 	"time"
 	"unicode/utf8"
+
+	"gorm.io/gorm"
 )
 
 type Group struct {
 	ID        uint      `gorm:"primarykey"`
 	CreatedAt time.Time `gorm:"index"`
 	UpdatedAt time.Time `gorm:"index"`
+	GUID      *string   `gorm:"uniqueIndex;size:36" json:"guid,omitempty"`
 
 	Name        string `gorm:"index"`
 	Description string
@@ -37,6 +40,14 @@ type Group struct {
 
 	// RenderedHTML is a transient field populated by the API when render=1 is set.
 	RenderedHTML string `gorm:"-" json:"renderedHTML,omitempty"`
+}
+
+func (g *Group) BeforeCreate(tx *gorm.DB) error {
+	if g.GUID == nil {
+		guid := types.NewUUIDv7()
+		g.GUID = &guid
+	}
+	return nil
 }
 
 func (g Group) GetId() uint {

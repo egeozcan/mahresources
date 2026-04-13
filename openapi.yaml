@@ -71,6 +71,9 @@ components:
                     format: date-time
                     readOnly: true
                     type: string
+                guid:
+                    nullable: true
+                    type: string
                 sectionConfig:
                     additionalProperties: true
                     description: Arbitrary JSON data
@@ -141,6 +144,8 @@ components:
                     type: integer
                 series:
                     type: integer
+                shell_groups:
+                    type: integer
                 versions:
                     type: integer
             type: object
@@ -178,6 +183,8 @@ components:
                     $ref: '#/components/schemas/ExportFidelity'
                 gzip:
                     type: boolean
+                relatedDepth:
+                    type: integer
                 rootGroupIds:
                     items:
                         type: integer
@@ -301,6 +308,9 @@ components:
                 UpdatedAt:
                     format: date-time
                     readOnly: true
+                    type: string
+                guid:
+                    nullable: true
                     type: string
                 renderedHTML:
                     type: string
@@ -476,6 +486,9 @@ components:
                     format: date-time
                     readOnly: true
                     type: string
+                guid:
+                    nullable: true
+                    type: string
             type: object
         GroupRelationTypePartial:
             properties:
@@ -633,6 +646,9 @@ components:
                     items:
                         $ref: '#/components/schemas/NoteBlockPartial'
                     type: array
+                guid:
+                    nullable: true
+                    type: string
                 renderedHTML:
                     type: string
                 shareToken:
@@ -818,6 +834,9 @@ components:
                 UpdatedAt:
                     format: date-time
                     readOnly: true
+                    type: string
+                guid:
+                    nullable: true
                     type: string
             type: object
         NoteTypeEditor:
@@ -1025,6 +1044,9 @@ components:
                 currentVersionId:
                     nullable: true
                     type: integer
+                guid:
+                    nullable: true
+                    type: string
                 ownMeta:
                     additionalProperties: true
                     description: Arbitrary JSON data
@@ -1079,6 +1101,9 @@ components:
                 UpdatedAt:
                     format: date-time
                     readOnly: true
+                    type: string
+                guid:
+                    nullable: true
                     type: string
                 sectionConfig:
                     additionalProperties: true
@@ -1483,6 +1508,9 @@ components:
                 UpdatedAt:
                     format: date-time
                     readOnly: true
+                    type: string
+                guid:
+                    nullable: true
                     type: string
             type: object
         TagCreator:

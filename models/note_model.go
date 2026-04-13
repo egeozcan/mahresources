@@ -4,12 +4,15 @@ import (
 	"mahresources/models/types"
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type Note struct {
 	ID          uint      `gorm:"primarykey"`
 	CreatedAt   time.Time `gorm:"index"`
 	UpdatedAt   time.Time `gorm:"index"`
+	GUID        *string   `gorm:"uniqueIndex;size:36" json:"guid,omitempty"`
 	Name        string    `gorm:"index"`
 	Description string
 	Meta        types.JSON
@@ -27,6 +30,14 @@ type Note struct {
 
 	// RenderedHTML is a transient field populated by the API when render=1 is set.
 	RenderedHTML string `gorm:"-" json:"renderedHTML,omitempty"`
+}
+
+func (n *Note) BeforeCreate(tx *gorm.DB) error {
+	if n.GUID == nil {
+		guid := types.NewUUIDv7()
+		n.GUID = &guid
+	}
+	return nil
 }
 
 func (a Note) GetId() uint {

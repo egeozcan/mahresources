@@ -3,12 +3,15 @@ package models
 import (
 	"mahresources/models/types"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type NoteType struct {
 	ID          uint      `gorm:"primarykey"`
 	CreatedAt   time.Time `gorm:"index"`
 	UpdatedAt   time.Time `gorm:"index"`
+	GUID        *string   `gorm:"uniqueIndex;size:36" json:"guid,omitempty"`
 	Name        string    `gorm:"index"`
 	Description string
 	Notes       []*Note `gorm:"foreignKey:NoteTypeId;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
@@ -32,6 +35,14 @@ type NoteType struct {
 	MetaSchema string `gorm:"type:text"`
 	// SectionConfig controls which sections are visible on note detail pages
 	SectionConfig types.JSON `gorm:"type:json"`
+}
+
+func (n *NoteType) BeforeCreate(tx *gorm.DB) error {
+	if n.GUID == nil {
+		guid := types.NewUUIDv7()
+		n.GUID = &guid
+	}
+	return nil
 }
 
 func (a NoteType) GetId() uint {

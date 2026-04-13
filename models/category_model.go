@@ -3,12 +3,15 @@ package models
 import (
 	"mahresources/models/types"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type Category struct {
 	ID        uint      `gorm:"primarykey"`
 	CreatedAt time.Time `gorm:"index"`
 	UpdatedAt time.Time `gorm:"index"`
+	GUID      *string   `gorm:"uniqueIndex;size:36" json:"guid,omitempty"`
 
 	Name        string   `gorm:"uniqueIndex:unique_category_name"`
 	Description string   `gorm:"index"`
@@ -34,6 +37,14 @@ type Category struct {
 	MetaSchema string `gorm:"type:text"`
 	// SectionConfig is a JSON config controlling which sections are visible on group detail pages
 	SectionConfig types.JSON `json:"sectionConfig"`
+}
+
+func (c *Category) BeforeCreate(tx *gorm.DB) error {
+	if c.GUID == nil {
+		guid := types.NewUUIDv7()
+		c.GUID = &guid
+	}
+	return nil
 }
 
 func (c Category) GetId() uint {

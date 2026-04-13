@@ -5,12 +5,15 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type Resource struct {
 	ID               uint      `gorm:"primarykey"`
 	CreatedAt        time.Time `gorm:"index"`
 	UpdatedAt        time.Time `gorm:"index"`
+	GUID             *string   `gorm:"uniqueIndex;size:36" json:"guid,omitempty"`
 	Name             string    `gorm:"index"`
 	OriginalName     string    `gorm:"index"`
 	OriginalLocation string    `gorm:"index"`
@@ -43,6 +46,14 @@ type Resource struct {
 
 	// RenderedHTML is a transient field populated by the API when render=1 is set.
 	RenderedHTML string `gorm:"-" json:"renderedHTML,omitempty"`
+}
+
+func (r *Resource) BeforeCreate(tx *gorm.DB) error {
+	if r.GUID == nil {
+		guid := types.NewUUIDv7()
+		r.GUID = &guid
+	}
+	return nil
 }
 
 func (r Resource) GetCleanLocation() string {
