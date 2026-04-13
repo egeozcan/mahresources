@@ -164,4 +164,20 @@ func TestDecisionKeyFor(t *testing.T) {
 	}
 }
 
+func TestValidateForApply_ShellGroupMapWithoutDest(t *testing.T) {
+	plan := &ImportPlan{}
+	decisions := &ImportDecisions{
+		ResourceCollisionPolicy: "skip",
+		MappingActions:          map[string]MappingAction{},
+		DanglingActions:         map[string]DanglingAction{},
+		ShellGroupActions: map[string]ShellGroupAction{
+			"g0005": {Action: "map_to_existing", DestinationID: nil},
+		},
+	}
+	err := plan.ValidateForApply(decisions)
+	if err == nil {
+		t.Fatal("expected validation error for map_to_existing without destination_id")
+	}
+}
+
 func uintPtr(v uint) *uint { return &v }

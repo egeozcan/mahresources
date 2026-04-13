@@ -36,6 +36,7 @@ type ImportPlanItem struct {
 	ExportID                string           `json:"export_id"`
 	Kind                    string           `json:"kind"`
 	Name                    string           `json:"name"`
+	Shell                   bool             `json:"shell,omitempty"`
 	OwnerRef                string           `json:"owner_ref,omitempty"`
 	ResourceCount           int              `json:"resource_count,omitempty"`
 	NoteCount               int              `json:"note_count,omitempty"`
@@ -113,12 +114,13 @@ type ConflictSummary struct {
 
 // ImportDecisions holds all user decisions from the review screen.
 type ImportDecisions struct {
-	ParentGroupID            *uint                    `json:"parent_group_id,omitempty"`
-	ResourceCollisionPolicy  string                   `json:"resource_collision_policy"`
-	AcknowledgeMissingHashes bool                     `json:"acknowledge_missing_hashes,omitempty"`
-	MappingActions           map[string]MappingAction  `json:"mapping_actions"`
-	DanglingActions          map[string]DanglingAction `json:"dangling_actions"`
-	ExcludedItems            []string                 `json:"excluded_items"`
+	ParentGroupID            *uint                       `json:"parent_group_id,omitempty"`
+	ResourceCollisionPolicy  string                      `json:"resource_collision_policy"`
+	AcknowledgeMissingHashes bool                        `json:"acknowledge_missing_hashes,omitempty"`
+	MappingActions           map[string]MappingAction    `json:"mapping_actions"`
+	DanglingActions          map[string]DanglingAction   `json:"dangling_actions"`
+	ShellGroupActions        map[string]ShellGroupAction `json:"shell_group_actions,omitempty"`
+	ExcludedItems            []string                    `json:"excluded_items"`
 }
 
 type MappingAction struct {
@@ -130,6 +132,11 @@ type MappingAction struct {
 type DanglingAction struct {
 	Action        string `json:"action"`
 	DestinationID *uint  `json:"destination_id,omitempty"`
+}
+
+type ShellGroupAction struct {
+	Action        string `json:"action"`                   // "create" or "map_to_existing"
+	DestinationID *uint  `json:"destination_id,omitempty"` // required when Action = "map_to_existing"
 }
 
 // ImportApplyResult summarizes what the apply job did. Persisted as JSON to
@@ -190,6 +197,12 @@ func (p *ImportPlan) ValidateForApply(decisions *ImportDecisions) error {
 	}
 	if p.ManifestOnlyMissingHashes > 0 && !decisions.AcknowledgeMissingHashes {
 		return fmt.Errorf("missing-hash acknowledgement required: %d resources have no bytes", p.ManifestOnlyMissingHashes)
+	}
+	// Validate shell group decisions
+	for exportID, action := range decisions.ShellGroupActions {
+		if action.Action == "map_to_existing" && action.DestinationID == nil {
+			return fmt.Errorf("shell group %s: map_to_existing requires a destination_id", exportID)
+		}
 	}
 	return nil
 }

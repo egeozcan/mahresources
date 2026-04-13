@@ -3,6 +3,7 @@ package application_context
 import (
 	"bytes"
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -585,6 +586,59 @@ func TestParseImport_SeriesSlugReuse(t *testing.T) {
 	}
 	if sm.DestName != "My Volumes" {
 		t.Errorf("DestName = %q, want 'My Volumes'", sm.DestName)
+	}
+}
+
+func TestParseImport_ShellGroups_MarkedInPlan(t *testing.T) {
+	srcCtx := createTestContext(t)
+
+	groupA := mustCreateGroup(t, srcCtx, "GroupA", nil)
+	groupB := mustCreateGroup(t, srcCtx, "GroupB", nil)
+	res := mustCreateResource(t, srcCtx, "rel.txt", &groupB.ID, []byte("REL"))
+	mustLinkRelatedResource(t, srcCtx, groupA.ID, res.ID)
+
+	var tarBuf bytes.Buffer
+	err := srcCtx.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{groupA.ID},
+		Scope:        archive.ExportScope{OwnedResources: true, RelatedM2M: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true},
+		SchemaDefs:   archive.ExportSchemaDefs{CategoriesAndTypes: true, Tags: true},
+		RelatedDepth: 1,
+	}, &tarBuf, nil)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	dstCtx := createTestContext(t)
+	jobID := "test-shell-plan"
+	tarPath := filepath.Join("_imports", jobID+".tar")
+	dstCtx.fs.MkdirAll("_imports", 0755)
+	afero.WriteFile(dstCtx.fs, tarPath, tarBuf.Bytes(), 0644)
+
+	plan, err := dstCtx.ParseImport(context.Background(), jobID, tarPath)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	var foundShell bool
+	var walkItems func(items []ImportPlanItem)
+	walkItems = func(items []ImportPlanItem) {
+		for _, item := range items {
+			if item.Name == "GroupB" {
+				if !item.Shell {
+					t.Errorf("expected GroupB to have Shell=true in plan")
+				}
+				foundShell = true
+				if item.ResourceCount != 1 {
+					t.Errorf("expected shell group resource count=1, got %d", item.ResourceCount)
+				}
+			}
+			walkItems(item.Children)
+		}
+	}
+	walkItems(plan.Items)
+	if !foundShell {
+		t.Error("shell group GroupB not found in plan items")
 	}
 }
 

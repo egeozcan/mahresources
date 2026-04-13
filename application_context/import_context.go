@@ -587,6 +587,7 @@ func buildItemTree(collector *importDataCollector) []ImportPlanItem {
 			ExportID: g.ExportID,
 			Kind:     "group",
 			Name:     g.Name,
+			Shell:    g.Shell,
 			OwnerRef: g.OwnerRef,
 		}
 	}
