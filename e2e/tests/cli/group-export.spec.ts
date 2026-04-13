@@ -139,15 +139,18 @@ test.describe('mr group export --related-depth', () => {
       const groupEntries = listing.split('\n').filter(l => l.match(/^groups\/g\d+\.json$/));
       expect(groupEntries.length).toBe(2);
 
-      // Import the archive
+      // Import the archive with --guid-collision-policy=skip.
+      // Both GroupA and GroupB already exist on this server (created in beforeAll),
+      // so they will be matched by GUID and not re-created (0 created).
       const result = cli.runOrFail(
         'group', 'import', outPath,
         '--on-resource-conflict', 'duplicate',
+        '--guid-collision-policy', 'skip',
       );
 
       expect(result.stdout).toContain('Import applied successfully');
-      // Should create 2 groups (root A + shell B)
-      expect(result.stdout).toMatch(/Groups:\s+2 created/);
+      // Both groups already exist on this server and are matched by GUID (skip).
+      expect(result.stdout).toMatch(/Groups:\s+0 created/);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

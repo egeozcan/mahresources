@@ -164,6 +164,7 @@ Use --decisions to supply a decisions JSON file for full control.`,
 	cmd.Flags().DurationVar(&opts.Timeout, "timeout", 30*time.Minute, "Max total wait time")
 	cmd.Flags().UintVar(&opts.ParentGroupID, "parent-group", 0, "Parent group ID for imported top-level groups")
 	cmd.Flags().StringVar(&opts.OnResourceConflict, "on-resource-conflict", "skip", `Resource collision policy: "skip" or "duplicate"`)
+	cmd.Flags().StringVar(&opts.GUIDCollisionPolicy, "guid-collision-policy", "", `GUID collision policy: "merge", "skip", or "replace" (default: server default = "merge")`)
 	cmd.Flags().BoolVar(&opts.AutoMap, "auto-map", true, "Automatically accept plan mapping suggestions")
 	cmd.Flags().BoolVar(&opts.AcknowledgeMissingHashes, "acknowledge-missing-hashes", false, "Proceed even when some resources have no bytes")
 	cmd.Flags().StringVar(&opts.Decisions, "decisions", "", "Path to a decisions JSON file (overrides other flags)")
@@ -178,6 +179,7 @@ type importCmdOptions struct {
 	Timeout                  time.Duration
 	ParentGroupID            uint
 	OnResourceConflict       string
+	GUIDCollisionPolicy      string
 	AutoMap                  bool
 	AcknowledgeMissingHashes bool
 	Decisions                string
@@ -188,6 +190,7 @@ type importCmdOptions struct {
 func buildCLIDecisions(plan *application_context.ImportPlan, opts *importCmdOptions) application_context.ImportDecisions {
 	d := application_context.ImportDecisions{
 		ResourceCollisionPolicy:  opts.OnResourceConflict,
+		GUIDCollisionPolicy:      opts.GUIDCollisionPolicy,
 		AcknowledgeMissingHashes: opts.AcknowledgeMissingHashes,
 		MappingActions:           make(map[string]application_context.MappingAction),
 		DanglingActions:          make(map[string]application_context.DanglingAction),

@@ -61,15 +61,19 @@ test.describe('CLI: group import (full apply)', () => {
       expect(listing).toContain('manifest.json');
 
       // Run full apply import with --auto-map (default) and --on-resource-conflict=duplicate
-      // to avoid skip-by-hash since the same resource already exists on this server
+      // to avoid skip-by-hash since the same resource already exists on this server.
+      // Use --guid-collision-policy=skip so GUID-matched groups are wired for relationships
+      // but not re-created (since they already exist on this server).
       const result = cli.runOrFail(
         'group', 'import', tarPath,
         '--on-resource-conflict', 'duplicate',
+        '--guid-collision-policy', 'skip',
       );
 
-      // Verify output indicates success
+      // Verify output indicates success. Groups: 0 created because the group already
+      // exists on this server and is matched by GUID (skip policy keeps it as-is).
       expect(result.stdout).toContain('Import applied successfully');
-      expect(result.stdout).toMatch(/Groups:\s+1 created/);
+      expect(result.stdout).toMatch(/Groups:\s+0 created/);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -88,14 +92,17 @@ test.describe('CLI: group import (full apply)', () => {
         '--include-resources',
       );
 
-      // Default collision policy is "skip" — hash-matched resources should be skipped
+      // Use --on-resource-conflict=skip and --guid-collision-policy=skip.
+      // The group already exists on this server and will be matched by GUID,
+      // so it will not be re-created (0 created).
       const result = cli.runOrFail(
         'group', 'import', tarPath,
         '--on-resource-conflict', 'skip',
+        '--guid-collision-policy', 'skip',
       );
 
       expect(result.stdout).toContain('Import applied successfully');
-      expect(result.stdout).toMatch(/Groups:\s+1 created/);
+      expect(result.stdout).toMatch(/Groups:\s+0 created/);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

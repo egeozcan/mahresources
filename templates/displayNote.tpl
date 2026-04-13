@@ -98,9 +98,9 @@
 
     {% if note.GUID %}
     <div class="sidebar-group">
-        <p class="text-xs text-stone-400 break-all cursor-pointer" title="Click to copy GUID" onclick="navigator.clipboard.writeText('{{ note.GUID }}')">
+        <button type="button" class="text-xs text-stone-600 break-all cursor-pointer text-left bg-transparent border-0 p-0 w-full" title="Click to copy GUID" onclick="navigator.clipboard.writeText('{{ note.GUID }}')">
             GUID: {{ note.GUID }}
-        </p>
+        </button>
     </div>
     {% endif %}
 {% endblock %}
