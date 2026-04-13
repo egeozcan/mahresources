@@ -310,4 +310,12 @@
         {% include "partials/pluginActionsSidebar.tpl" with entityId=resource.ID entityType="resource" %}
         {% plugin_slot "resource_detail_sidebar" %}
     </div>
+
+    {% if resource.GUID %}
+    <div class="sidebar-group">
+        <p class="text-xs text-stone-400 break-all cursor-pointer" title="Click to copy GUID" onclick="navigator.clipboard.writeText('{{ resource.GUID }}')">
+            GUID: {{ resource.GUID }}
+        </p>
+    </div>
+    {% endif %}
 {% endblock %}

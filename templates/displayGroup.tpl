@@ -135,4 +135,12 @@
         {% include "partials/pluginActionsSidebar.tpl" with entityId=group.ID entityType="group" %}
         {% plugin_slot "group_detail_sidebar" %}
     </div>
+
+    {% if group.GUID %}
+    <div class="sidebar-group">
+        <p class="text-xs text-stone-400 break-all cursor-pointer" title="Click to copy GUID" onclick="navigator.clipboard.writeText('{{ group.GUID }}')">
+            GUID: {{ group.GUID }}
+        </p>
+    </div>
+    {% endif %}
 {% endblock %}

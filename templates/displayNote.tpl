@@ -95,4 +95,12 @@
         {% plugin_slot "note_detail_sidebar" %}
     </div>
     {% endif %}
+
+    {% if note.GUID %}
+    <div class="sidebar-group">
+        <p class="text-xs text-stone-400 break-all cursor-pointer" title="Click to copy GUID" onclick="navigator.clipboard.writeText('{{ note.GUID }}')">
+            GUID: {{ note.GUID }}
+        </p>
+    </div>
+    {% endif %}
 {% endblock %}
