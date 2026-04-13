@@ -424,3 +424,83 @@ test.describe('Built-in conditional shortcode', () => {
     await expect(metaShortcode).toBeVisible({ timeout: 5000 });
   });
 });
+
+test.describe('Block MRQL shortcode', () => {
+  let parentCategoryId: number;
+  let parentGroupId: number;
+  let childGroupIds: number[] = [];
+
+  let childCategoryId: number;
+
+  test.beforeAll(async ({ apiClient }) => {
+    // Category for child groups — gives them a name we can assert
+    const childCat = await apiClient.createCategory(
+      `BlockMRQL Child ${Date.now()}`,
+      'Child category',
+    );
+    childCategoryId = childCat.ID;
+
+    // Parent category with block [mrql] in CustomHeader.
+    // Query scoped to "entity" (the parent group's subtree) so only
+    // children are returned — deterministic, no flakiness from other test data.
+    const parentCat = await apiClient.createCategory(
+      `BlockMRQL Parent ${Date.now()}`,
+      'Parent with block mrql header',
+      {
+        CustomHeader: [
+          '<div class="block-mrql-test">',
+          `[mrql query='type = group AND category = ${childCat.ID}' scope="entity" limit="10"]`,
+          '<div class="block-mrql-item"><span class="item-name">[property path="Name"]</span></div>',
+          '[/mrql]',
+          '</div>',
+        ].join('\n'),
+      },
+    );
+    parentCategoryId = parentCat.ID;
+
+    // Parent group that owns child groups
+    const parent = await apiClient.createGroup({
+      name: `BlockMRQL Parent Group ${Date.now()}`,
+      categoryId: parentCat.ID,
+    });
+    parentGroupId = parent.ID;
+
+    // Create two child groups owned by the parent (in child category)
+    for (const name of ['Apple', 'Banana']) {
+      const child = await apiClient.createGroup({
+        name: `BlockMRQL ${name} ${Date.now()}`,
+        categoryId: childCat.ID,
+        ownerId: parentGroupId,
+      });
+      childGroupIds.push(child.ID);
+    }
+  });
+
+  test.afterAll(async ({ apiClient }) => {
+    for (const id of childGroupIds) await apiClient.deleteGroup(id);
+    if (parentGroupId) await apiClient.deleteGroup(parentGroupId);
+    if (parentCategoryId) await apiClient.deleteCategory(parentCategoryId);
+    if (childCategoryId) await apiClient.deleteCategory(childCategoryId);
+  });
+
+  test('block [mrql] renders per-item template with property shortcodes', async ({ page }) => {
+    await page.goto(`/group?id=${parentGroupId}`);
+    await page.waitForLoadState('load');
+
+    const container = page.locator('.block-mrql-test');
+    await expect(container).toBeVisible({ timeout: 5000 });
+
+    // Block template should render items using .block-mrql-item divs (not default cards)
+    const items = container.locator('.block-mrql-item');
+    await expect(items.first()).toBeVisible({ timeout: 5000 });
+
+    // At least the two child groups should appear with their names via [property path="Name"]
+    const containerText = await container.textContent();
+    expect(containerText).toContain('BlockMRQL Apple');
+    expect(containerText).toContain('BlockMRQL Banana');
+
+    // Should NOT have the default card layout (no href links from default renderer)
+    const defaultCards = container.locator('a[href*="/group?id="]');
+    await expect(defaultCards).toHaveCount(0);
+  });
+});
