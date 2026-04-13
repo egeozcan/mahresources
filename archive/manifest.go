@@ -68,6 +68,7 @@ type Entries struct {
 
 type GroupEntry struct {
 	ExportID string `json:"export_id"`
+	GUID     string `json:"guid,omitempty"`
 	Name     string `json:"name"`
 	SourceID uint   `json:"source_id"`
 	Path     string `json:"path"`
@@ -76,6 +77,7 @@ type GroupEntry struct {
 
 type NoteEntry struct {
 	ExportID string `json:"export_id"`
+	GUID     string `json:"guid,omitempty"`
 	Name     string `json:"name"`
 	SourceID uint   `json:"source_id"`
 	Owner    string `json:"owner"`
@@ -84,6 +86,7 @@ type NoteEntry struct {
 
 type ResourceEntry struct {
 	ExportID string `json:"export_id"`
+	GUID     string `json:"guid,omitempty"`
 	Name     string `json:"name"`
 	SourceID uint   `json:"source_id"`
 	Owner    string `json:"owner,omitempty"`
@@ -108,6 +111,7 @@ type SchemaDefIndex struct {
 
 type SchemaDefEntry struct {
 	ExportID string `json:"export_id"`
+	GUID     string `json:"guid,omitempty"`
 	Name     string `json:"name"`
 	SourceID uint   `json:"source_id"`
 	Path     string `json:"path"`
@@ -141,6 +145,7 @@ const (
 type GroupPayload struct {
 	ExportID         string                 `json:"export_id"`
 	SourceID         uint                   `json:"source_id"`
+	GUID             string                 `json:"guid,omitempty"`
 	Shell            bool                   `json:"shell,omitempty"`
 	Name             string                 `json:"name"`
 	Description      string                 `json:"description"`
@@ -183,6 +188,7 @@ type TagRef struct {
 type NotePayload struct {
 	ExportID     string             `json:"export_id"`
 	SourceID     uint               `json:"source_id"`
+	GUID         string             `json:"guid,omitempty"`
 	Name         string             `json:"name"`
 	Description  string             `json:"description"`
 	OwnerRef     string             `json:"owner_ref,omitempty"`
@@ -212,6 +218,7 @@ type NoteBlockPayload struct {
 type ResourcePayload struct {
 	ExportID             string                   `json:"export_id"`
 	SourceID             uint                     `json:"source_id"`
+	GUID                 string                   `json:"guid,omitempty"`
 	Name                 string                   `json:"name"`
 	OriginalName         string                   `json:"original_name"`
 	OriginalLocation     string                   `json:"original_location"`
@@ -278,6 +285,7 @@ type SeriesPayload struct {
 type CategoryDef struct {
 	ExportID         string         `json:"export_id"`
 	SourceID         uint           `json:"source_id"`
+	GUID             string         `json:"guid,omitempty"`
 	Name             string         `json:"name"`
 	Description      string         `json:"description"`
 	CustomHeader     string         `json:"custom_header"`
@@ -302,6 +310,7 @@ type ResourceCategoryDef struct {
 type TagDef struct {
 	ExportID    string         `json:"export_id"`
 	SourceID    uint           `json:"source_id"`
+	GUID        string         `json:"guid,omitempty"`
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	Meta        map[string]any `json:"meta"`
@@ -310,6 +319,7 @@ type TagDef struct {
 type GroupRelationTypeDef struct {
 	ExportID         string `json:"export_id"`
 	SourceID         uint   `json:"source_id"`
+	GUID             string `json:"guid,omitempty"`
 	Name             string `json:"name"`
 	Description      string `json:"description"`
 	FromCategoryRef  string `json:"from_category_ref,omitempty"`
