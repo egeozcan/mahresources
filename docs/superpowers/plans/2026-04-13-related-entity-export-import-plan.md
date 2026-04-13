@@ -561,6 +561,23 @@ In `application_context/export_context.go`, in `loadGroupPayload` (near line 115
 		// ... rest unchanged
 ```
 
+- [ ] **Step 8b: Update `EstimateExport` to include ShellGroups**
+
+In `application_context/export_context.go`, in `EstimateExport` (~line 64), add `ShellGroups` to the estimate counts:
+
+```go
+	est := &ExportEstimate{
+		Counts: archive.Counts{
+			Groups:      len(plan.groupIDs),
+			ShellGroups: len(plan.shellGroupIDs),
+			Notes:       len(plan.noteIDs),
+			Resources:   len(plan.resourceIDs),
+			Series:      len(plan.seriesIDs),
+		},
+```
+
+This ensures the estimate API response includes the shell group count so the UI can show it before the user commits to the export.
+
 - [ ] **Step 9: Run the test**
 
 Run: `go test --tags 'json1 fts5' ./application_context/... -run TestStreamExport_RelatedDepth1 -v`
@@ -1385,6 +1402,28 @@ In `application_context/apply_import.go`, in the GroupRelation wiring section (~
 
 Add `"gorm.io/gorm/clause"` to the imports if not already present.
 
+- [ ] **Step 10b: Apply the same conflict-ignore to `applyDanglingDecisions`**
+
+In `application_context/apply_import.go`, in `applyDanglingDecisions` (~line 1318), the `case "group_relation":` branch also does a raw `db.Create`. Apply the same `OnConflict` clause so that mapping a dangling group_relation to an existing destination that already has the same typed relation doesn't fail:
+
+```go
+		case "group_relation":
+			grtID := s.resolveGRTForDanglingRef(dr)
+			if grtID == 0 {
+				s.result.Warnings = append(s.result.Warnings,
+					fmt.Sprintf("dangling ref %s: could not resolve group relation type, skipping", dr.ID))
+				continue
+			}
+			gr := models.GroupRelation{
+				FromGroupId:    &fromID,
+				ToGroupId:      &destID,
+				RelationTypeId: &grtID,
+			}
+			if err := s.ctx.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&gr).Error; err != nil {
+				return fmt.Errorf("dangling %s group_relation %d->%d: %w", dr.ID, fromID, destID, err)
+			}
+```
+
 - [ ] **Step 11: Run the conflict test**
 
 Run: `go test --tags 'json1 fts5' ./application_context/... -run TestApplyImport_ShellGroupMap_Duplicate -v`
@@ -1572,13 +1611,129 @@ In `templates/adminImport.tpl`, find where plan items are displayed and add a vi
 <span x-show="item.shell" class="ml-1 text-xs text-stone-400 font-mono">(shell)</span>
 ```
 
-- [ ] **Step 5: Add shell group decision controls in import review**
+- [ ] **Step 5: Add shell group decisions to import JS component**
 
-In `src/components/adminImport.js`, add `shellGroupActions` to the component state and populate it from the plan. Add a method to handle shell group decision changes. When submitting apply, include `shell_group_actions` in the decisions payload.
+In `src/components/adminImport.js`, add `shell_group_actions` to the decisions object (line 18):
 
-This depends on the exact structure of `adminImport.js` — the implementation should follow the existing pattern for dangling ref decisions.
+```js
+    decisions: {
+      parent_group_id: null,
+      resource_collision_policy: 'skip',
+      acknowledge_missing_hashes: false,
+      mapping_actions: {},
+      dangling_actions: {},
+      excluded_items: [],
+      shell_group_actions: {},  // keyed by shell group export_id
+    },
+```
 
-- [ ] **Step 6: Build frontend**
+Add shell group search results state (after `danglingDestNames` near line 316):
+
+```js
+    shellGroupSearchResults: {},  // {exportId: [{id, name}]}
+    shellGroupDestNames: {},      // {exportId: name} for display
+```
+
+In `initDecisionsFromPlan()`, after the dangling ref loop (line 151), add shell group defaults:
+
+```js
+      // Default all shell groups to "create"
+      const walkShells = (items) => {
+        for (const item of items) {
+          if (item.shell) {
+            this.decisions.shell_group_actions[item.export_id] = {
+              action: 'create',
+              destination_id: null,
+            };
+          }
+          if (item.children?.length) walkShells(item.children);
+        }
+      };
+      walkShells(this.plan.items || []);
+```
+
+Add shell group decision helpers (after the dangling ref helpers):
+
+```js
+    // --- Shell group decision helpers ---
+
+    getShellAction(exportId) {
+      return this.decisions.shell_group_actions[exportId]?.action || 'create';
+    },
+
+    setShellAction(exportId, action) {
+      if (!this.decisions.shell_group_actions[exportId]) {
+        this.decisions.shell_group_actions[exportId] = {};
+      }
+      this.decisions.shell_group_actions[exportId].action = action;
+      if (action === 'create') {
+        this.decisions.shell_group_actions[exportId].destination_id = null;
+        delete this.shellGroupDestNames[exportId];
+      }
+    },
+
+    setShellDest(exportId, destId, destName) {
+      if (!this.decisions.shell_group_actions[exportId]) {
+        this.decisions.shell_group_actions[exportId] = { action: 'map_to_existing' };
+      }
+      this.decisions.shell_group_actions[exportId].destination_id = destId;
+      this.shellGroupDestNames[exportId] = destName;
+      this.shellGroupSearchResults[exportId] = [];
+    },
+
+    async searchShellDest(exportId, query) {
+      if (!query) { this.shellGroupSearchResults[exportId] = []; return; }
+      try {
+        const res = await fetch('/v1/groups?name=' + encodeURIComponent(query) + '&maxResults=8');
+        if (!res.ok) return;
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : (data.items || []);
+        this.shellGroupSearchResults[exportId] = list.map(g => ({ id: g.ID || g.id, name: g.Name || g.name }));
+      } catch (e) {
+        this.shellGroupSearchResults[exportId] = [];
+      }
+    },
+```
+
+In `hasIncompleteDecisions()`, add a shell group check (after the dangling refs check, before the missing-hash check):
+
+```js
+      // Check shell group decisions
+      for (const [exportId, action] of Object.entries(this.decisions.shell_group_actions)) {
+        if (action.action === 'map_to_existing' && !action.destination_id) return true;
+      }
+```
+
+- [ ] **Step 6: Add shell group decision UI to import template**
+
+In `templates/adminImport.tpl`, in the item tree rendering, after the shell indicator from Step 4, add a decision control that appears only for shell groups. Follow the existing dangling ref decision pattern:
+
+```html
+<template x-if="item.shell && !isExcluded(item.export_id)">
+  <div class="mt-1 flex items-center gap-2 text-xs">
+    <select @change="setShellAction(item.export_id, $event.target.value)"
+            class="text-xs border-stone-300 rounded py-0.5">
+      <option value="create" :selected="getShellAction(item.export_id) === 'create'">Create new</option>
+      <option value="map_to_existing" :selected="getShellAction(item.export_id) === 'map_to_existing'">Map to existing</option>
+    </select>
+    <template x-if="getShellAction(item.export_id) === 'map_to_existing'">
+      <span class="flex items-center gap-1">
+        <input type="text" placeholder="Search groups..."
+               @input.debounce.300ms="searchShellDest(item.export_id, $event.target.value)"
+               class="text-xs border-stone-300 rounded py-0.5 w-40">
+        <span x-show="shellGroupDestNames[item.export_id]"
+              class="text-stone-600" x-text="shellGroupDestNames[item.export_id]"></span>
+        <template x-for="result in (shellGroupSearchResults[item.export_id] || [])" :key="result.id">
+          <button type="button" @click="setShellDest(item.export_id, result.id, result.name)"
+                  class="text-xs text-blue-700 underline" x-text="result.name"></button>
+        </template>
+      </span>
+    </template>
+  </div>
+</template>
+```
+
+- [ ] **Step 7: Build frontend**
 
 Run: `npm run build-js && npm run build-css`
 Expected: BUILD SUCCESS
