@@ -58,6 +58,24 @@ After the executor returns results, trim `sc.InnerContent` with `strings.TrimSpa
 - `shortcodes/parser.go` — `ParseWithBlocks` already handles `[mrql]...[/mrql]`
 - `shortcodes/processor.go` — dispatch already passes full `Shortcode` struct with `IsBlock` and `InnerContent`
 
+## Documentation
+
+Two docs-site pages need updates:
+
+### `docs-site/docs/features/shortcodes.md`
+
+The `[mrql]` section (starting at line 112) documents only self-closing usage. Add a "Block Syntax" subsection after the existing examples showing:
+
+- Block syntax with inner content as per-item template
+- That `[meta]`, `[property]`, `[conditional]`, nested `[mrql]`, and plugin shortcodes work inside the block body
+- Template precedence: block template overrides `CustomMRQLResult` and `format` attribute
+- Empty/whitespace-only blocks fall back to normal rendering
+- Works with flat and bucketed results; aggregated results ignore inner content
+
+### `docs-site/docs/features/custom-templates.md`
+
+The "Custom MRQL Result Templates" section (starting at line 367) describes the category-level `customMRQLResult` field. Add a note explaining that block `[mrql]` provides an inline alternative that overrides `customMRQLResult` when both are present.
+
 ## Testing
 
 - Unit test: block `[mrql]` with flat results uses inner content as template
