@@ -43,6 +43,9 @@ type ImportPlanItem struct {
 	DescendantResourceCount int              `json:"descendant_resource_count,omitempty"`
 	DescendantNoteCount     int              `json:"descendant_note_count,omitempty"`
 	Children                []ImportPlanItem `json:"children,omitempty"`
+	GUIDMatch               bool             `json:"guid_match,omitempty"`
+	GUIDMatchID             uint             `json:"guid_match_id,omitempty"`
+	GUIDMatchName           string           `json:"guid_match_name,omitempty"`
 }
 
 type ImportMappings struct {
@@ -59,17 +62,20 @@ type ImportMappings struct {
 // with a type discriminator so same-named entries across different mapping
 // types never collide. Format: "<type>:<identity>".
 type MappingEntry struct {
-	DecisionKey     string `json:"decision_key"`
-	SourceKey       string `json:"source_key"`
-	SourceExportID  string `json:"source_export_id,omitempty"`
-	HasPayload      bool   `json:"has_payload"`
-	Suggestion      string `json:"suggestion"`
-	DestinationID   *uint  `json:"destination_id,omitempty"`
-	DestinationName string `json:"destination_name,omitempty"`
-	Ambiguous       bool   `json:"ambiguous,omitempty"`
-	Alternatives    []MappingAlternative `json:"alternatives,omitempty"`
-	FromCategoryName string `json:"from_category_name,omitempty"`
-	ToCategoryName   string `json:"to_category_name,omitempty"`
+	DecisionKey      string               `json:"decision_key"`
+	SourceKey        string               `json:"source_key"`
+	SourceExportID   string               `json:"source_export_id,omitempty"`
+	HasPayload       bool                 `json:"has_payload"`
+	Suggestion       string               `json:"suggestion"`
+	DestinationID    *uint                `json:"destination_id,omitempty"`
+	DestinationName  string               `json:"destination_name,omitempty"`
+	Ambiguous        bool                 `json:"ambiguous,omitempty"`
+	Alternatives     []MappingAlternative `json:"alternatives,omitempty"`
+	FromCategoryName string               `json:"from_category_name,omitempty"`
+	ToCategoryName   string               `json:"to_category_name,omitempty"`
+	GUIDConflict     bool                 `json:"guid_conflict,omitempty"`
+	GUIDMatchID      uint                 `json:"guid_match_id,omitempty"`
+	GUIDMatchName    string               `json:"guid_match_name,omitempty"`
 }
 
 type MappingAlternative struct {
@@ -110,12 +116,14 @@ type DanglingRefPlan struct {
 
 type ConflictSummary struct {
 	ResourceHashMatches int `json:"resource_hash_matches"`
+	GUIDMatches         int `json:"guid_matches"`
 }
 
 // ImportDecisions holds all user decisions from the review screen.
 type ImportDecisions struct {
 	ParentGroupID            *uint                       `json:"parent_group_id,omitempty"`
 	ResourceCollisionPolicy  string                      `json:"resource_collision_policy"`
+	GUIDCollisionPolicy      string                      `json:"guid_collision_policy,omitempty"`
 	AcknowledgeMissingHashes bool                        `json:"acknowledge_missing_hashes,omitempty"`
 	MappingActions           map[string]MappingAction    `json:"mapping_actions"`
 	DanglingActions          map[string]DanglingAction   `json:"dangling_actions"`
@@ -127,6 +135,7 @@ type MappingAction struct {
 	Include       bool   `json:"include"`
 	Action        string `json:"action"`
 	DestinationID *uint  `json:"destination_id,omitempty"`
+	RenameTo      string `json:"rename_to,omitempty"`
 }
 
 type DanglingAction struct {

@@ -106,6 +106,9 @@ func (ctx *MahresourcesContext) ParseImport(cancelCtx context.Context, jobID, ta
 	// Build hierarchical item tree
 	plan.Items = buildItemTree(collector)
 
+	// Detect GUID matches for content entities
+	ctx.resolveGUIDMatches(plan, collector)
+
 	if err := cancelCtx.Err(); err != nil {
 		return nil, err
 	}
@@ -254,6 +257,34 @@ func (ctx *MahresourcesContext) resolveCategories(defs []archive.CategoryDef) []
 		}
 		entry.DecisionKey = DecisionKeyFor("category", entry)
 
+		// GUID-first resolution
+		if def.GUID != "" {
+			var guidMatch models.Category
+			if err := ctx.db.Where("guid = ?", def.GUID).First(&guidMatch).Error; err == nil {
+				entry.Suggestion = "map"
+				id := guidMatch.ID
+				entry.DestinationID = &id
+				entry.DestinationName = guidMatch.Name
+				entry.GUIDMatchID = guidMatch.ID
+				entry.GUIDMatchName = guidMatch.Name
+
+				// Check for name conflict: GUID points to one entity, name points to another
+				if guidMatch.Name != def.Name {
+					var nameMatch models.Category
+					if err := ctx.db.Where("name = ?", def.Name).First(&nameMatch).Error; err == nil && nameMatch.ID != guidMatch.ID {
+						entry.GUIDConflict = true
+						entry.Ambiguous = true
+						entry.Alternatives = append(entry.Alternatives, MappingAlternative{
+							ID:   nameMatch.ID,
+							Name: nameMatch.Name,
+						})
+					}
+				}
+				entries = append(entries, entry)
+				continue
+			}
+		}
+
 		var cat models.Category
 		result := ctx.db.Where("name = ?", def.Name).First(&cat)
 		if result.Error == nil {
@@ -304,6 +335,34 @@ func (ctx *MahresourcesContext) resolveNoteTypes(defs []archive.NoteTypeDef) []M
 		}
 		entry.DecisionKey = DecisionKeyFor("note_type", entry)
 
+		// GUID-first resolution
+		if def.GUID != "" {
+			var guidMatch models.NoteType
+			if err := ctx.db.Where("guid = ?", def.GUID).First(&guidMatch).Error; err == nil {
+				entry.Suggestion = "map"
+				id := guidMatch.ID
+				entry.DestinationID = &id
+				entry.DestinationName = guidMatch.Name
+				entry.GUIDMatchID = guidMatch.ID
+				entry.GUIDMatchName = guidMatch.Name
+
+				// Check for name conflict: GUID points to one entity, name points to another
+				if guidMatch.Name != def.Name {
+					var nameMatch models.NoteType
+					if err := ctx.db.Where("name = ?", def.Name).First(&nameMatch).Error; err == nil && nameMatch.ID != guidMatch.ID {
+						entry.GUIDConflict = true
+						entry.Ambiguous = true
+						entry.Alternatives = append(entry.Alternatives, MappingAlternative{
+							ID:   nameMatch.ID,
+							Name: nameMatch.Name,
+						})
+					}
+				}
+				entries = append(entries, entry)
+				continue
+			}
+		}
+
 		var nts []models.NoteType
 		ctx.db.Where("name = ?", def.Name).Find(&nts)
 		switch len(nts) {
@@ -337,6 +396,34 @@ func (ctx *MahresourcesContext) resolveResourceCategories(defs []archive.Resourc
 		}
 		entry.DecisionKey = DecisionKeyFor("resource_category", entry)
 
+		// GUID-first resolution
+		if def.GUID != "" {
+			var guidMatch models.ResourceCategory
+			if err := ctx.db.Where("guid = ?", def.GUID).First(&guidMatch).Error; err == nil {
+				entry.Suggestion = "map"
+				id := guidMatch.ID
+				entry.DestinationID = &id
+				entry.DestinationName = guidMatch.Name
+				entry.GUIDMatchID = guidMatch.ID
+				entry.GUIDMatchName = guidMatch.Name
+
+				// Check for name conflict: GUID points to one entity, name points to another
+				if guidMatch.Name != def.Name {
+					var nameMatch models.ResourceCategory
+					if err := ctx.db.Where("name = ?", def.Name).First(&nameMatch).Error; err == nil && nameMatch.ID != guidMatch.ID {
+						entry.GUIDConflict = true
+						entry.Ambiguous = true
+						entry.Alternatives = append(entry.Alternatives, MappingAlternative{
+							ID:   nameMatch.ID,
+							Name: nameMatch.Name,
+						})
+					}
+				}
+				entries = append(entries, entry)
+				continue
+			}
+		}
+
 		var rc models.ResourceCategory
 		result := ctx.db.Where("name = ?", def.Name).First(&rc)
 		if result.Error == nil {
@@ -368,6 +455,34 @@ func (ctx *MahresourcesContext) resolveTags(defs []archive.TagDef, collector *im
 			HasPayload:     true,
 		}
 		entry.DecisionKey = DecisionKeyFor("tag", entry)
+
+		// GUID-first resolution
+		if def.GUID != "" {
+			var guidMatch models.Tag
+			if err := ctx.db.Where("guid = ?", def.GUID).First(&guidMatch).Error; err == nil {
+				entry.Suggestion = "map"
+				id := guidMatch.ID
+				entry.DestinationID = &id
+				entry.DestinationName = guidMatch.Name
+				entry.GUIDMatchID = guidMatch.ID
+				entry.GUIDMatchName = guidMatch.Name
+
+				// Check for name conflict: GUID points to one entity, name points to another
+				if guidMatch.Name != def.Name {
+					var nameMatch models.Tag
+					if err := ctx.db.Where("name = ?", def.Name).First(&nameMatch).Error; err == nil && nameMatch.ID != guidMatch.ID {
+						entry.GUIDConflict = true
+						entry.Ambiguous = true
+						entry.Alternatives = append(entry.Alternatives, MappingAlternative{
+							ID:   nameMatch.ID,
+							Name: nameMatch.Name,
+						})
+					}
+				}
+				entries = append(entries, entry)
+				continue
+			}
+		}
 
 		var tag models.Tag
 		result := ctx.db.Where("name = ?", def.Name).First(&tag)
@@ -448,6 +563,34 @@ func (ctx *MahresourcesContext) resolveGRTDefs(defs []archive.GroupRelationTypeD
 			ToCategoryName:   def.ToCategoryName,
 		}
 		entry.DecisionKey = DecisionKeyFor("grt", entry)
+
+		// GUID-first resolution
+		if def.GUID != "" {
+			var guidMatch models.GroupRelationType
+			if err := ctx.db.Where("guid = ?", def.GUID).First(&guidMatch).Error; err == nil {
+				entry.Suggestion = "map"
+				id := guidMatch.ID
+				entry.DestinationID = &id
+				entry.DestinationName = guidMatch.Name
+				entry.GUIDMatchID = guidMatch.ID
+				entry.GUIDMatchName = guidMatch.Name
+
+				// Check for name conflict: GUID points to one entity, name points to another
+				if guidMatch.Name != def.Name {
+					matched, nameMatchGRT := ctx.matchGRT(def.Name, def.FromCategoryName, def.ToCategoryName)
+					if matched && nameMatchGRT.ID != guidMatch.ID {
+						entry.GUIDConflict = true
+						entry.Ambiguous = true
+						entry.Alternatives = append(entry.Alternatives, MappingAlternative{
+							ID:   nameMatchGRT.ID,
+							Name: nameMatchGRT.Name,
+						})
+					}
+				}
+				entries = append(entries, entry)
+				continue
+			}
+		}
 
 		// GRT has a composite unique constraint: name + from_category_id + to_category_id.
 		// We try to match by name AND category names.
@@ -547,6 +690,56 @@ func danglingFromName(d archive.DanglingRef) string {
 	// Best-effort: the from field is an export ID (e.g. "g0001").
 	// We use it as the name since the actual group name isn't in DanglingRef.
 	return d.From
+}
+
+// --- GUID match detection for content entities ---
+
+// resolveGUIDMatches walks the item tree (groups and notes) and checks each
+// entity's GUID against the local database. Matching items are annotated with
+// GUIDMatch/GUIDMatchID/GUIDMatchName, and the plan's GUIDMatches counter is
+// incremented. Resources are checked separately since they appear as counts in
+// the tree, not as direct item nodes.
+func (ctx *MahresourcesContext) resolveGUIDMatches(plan *ImportPlan, collector *importDataCollector) {
+	var walk func(items []ImportPlanItem)
+	walk = func(items []ImportPlanItem) {
+		for i := range items {
+			item := &items[i]
+			switch item.Kind {
+			case "group":
+				if gp, ok := collector.groups[item.ExportID]; ok && gp.GUID != "" {
+					var existing models.Group
+					if err := ctx.db.Where("guid = ?", gp.GUID).First(&existing).Error; err == nil {
+						item.GUIDMatch = true
+						item.GUIDMatchID = existing.ID
+						item.GUIDMatchName = existing.Name
+						plan.Conflicts.GUIDMatches++
+					}
+				}
+			case "note":
+				if np, ok := collector.notes[item.ExportID]; ok && np.GUID != "" {
+					var existing models.Note
+					if err := ctx.db.Where("guid = ?", np.GUID).First(&existing).Error; err == nil {
+						item.GUIDMatch = true
+						item.GUIDMatchID = existing.ID
+						item.GUIDMatchName = existing.Name
+						plan.Conflicts.GUIDMatches++
+					}
+				}
+			}
+			walk(item.Children)
+		}
+	}
+	walk(plan.Items)
+
+	// Resources appear as counts in items, not as direct children. Check them separately.
+	for _, rp := range collector.resources {
+		if rp.GUID != "" {
+			var existing models.Resource
+			if err := ctx.db.Where("guid = ?", rp.GUID).First(&existing).Error; err == nil {
+				plan.Conflicts.GUIDMatches++
+			}
+		}
+	}
 }
 
 // --- Hash conflicts ---

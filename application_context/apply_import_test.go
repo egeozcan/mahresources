@@ -617,47 +617,108 @@ func TestApplyImport_SeriesSlugPreserved(t *testing.T) {
 }
 
 func TestApplyImport_AmbiguousNoteTypeRequiresDecision(t *testing.T) {
-	srcCtx := createTestContext(t)
+	// Build an archive manually that contains a NoteTypeDef with NO GUID.
+	// Without a GUID, the resolver falls back to name-based lookup, which can
+	// find multiple matches and trigger the Ambiguous flag.
+	ctx := createTestContext(t)
 
-	// Create a NoteType "ApplyTestDiary" and a note using it.
-	nt := models.NoteType{Name: "ApplyTestDiary"}
-	if err := srcCtx.db.Create(&nt).Error; err != nil {
+	// Create TWO NoteTypes with the same name "AmbigDiary" to seed ambiguity.
+	// NoteType name is not uniquely indexed, so duplicates are allowed.
+	nt := models.NoteType{Name: "AmbigDiary"}
+	if err := ctx.db.Create(&nt).Error; err != nil {
 		t.Fatal(err)
 	}
-	root := mustCreateGroup(t, srcCtx, "DiaryRoot", nil)
-	note := mustCreateNote(t, srcCtx, "My Diary Entry", &root.ID)
-	if err := srcCtx.db.Model(note).Update("note_type_id", nt.ID).Error; err != nil {
+	nt2 := models.NoteType{Name: "AmbigDiary"}
+	if err := ctx.db.Create(&nt2).Error; err != nil {
 		t.Fatal(err)
 	}
 
-	// --- Export with schema defs ---
+	root := mustCreateGroup(t, ctx, "DiaryRoot", nil)
+	note := mustCreateNote(t, ctx, "My Diary Entry", &root.ID)
+	if err := ctx.db.Model(note).Update("note_type_id", nt.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	// Build the archive manually so the NoteTypeDef has no GUID.
+	// This ensures name-based resolution is used and triggers ambiguity.
 	var tarBuf bytes.Buffer
-	err := srcCtx.StreamExport(context.Background(), &ExportRequest{
-		RootGroupIDs: []uint{root.ID},
-		Scope:        archive.ExportScope{Subtree: true, OwnedNotes: true},
-		Fidelity:     archive.ExportFidelity{ResourceBlobs: true},
-		SchemaDefs:   archive.ExportSchemaDefs{CategoriesAndTypes: true},
-	}, &tarBuf, func(ev ProgressEvent) {})
+	w, err := archive.NewWriter(&tarBuf, false)
 	if err != nil {
-		t.Fatalf("export: %v", err)
+		t.Fatalf("NewWriter: %v", err)
+	}
+
+	// Write manifest first (required by archive format).
+	if err := w.WriteManifest(&archive.Manifest{
+		SchemaVersion: 1,
+		CreatedAt:     time.Now().UTC(),
+		CreatedBy:     "test",
+		Roots:         []string{"g0001"},
+		Counts:        archive.Counts{Groups: 1, Notes: 1},
+		ExportOptions: archive.ExportOptions{
+			SchemaDefs: archive.ExportSchemaDefs{CategoriesAndTypes: true},
+		},
+		Entries: archive.Entries{
+			Groups: []archive.GroupEntry{
+				{ExportID: "g0001", Name: root.Name, SourceID: root.ID, Path: "groups/g0001.json"},
+			},
+			Notes: []archive.NoteEntry{
+				{ExportID: "n0001", Name: note.Name, SourceID: note.ID, Owner: "g0001", Path: "notes/n0001.json"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+
+	// Write a NoteTypeDef without a GUID so name-based resolution is used.
+	noteTypeDef := archive.NoteTypeDef{
+		ExportID: "nt0001",
+		SourceID: nt.ID,
+		// GUID intentionally omitted to force name-based resolution.
+		Name: "AmbigDiary",
+	}
+	if err := w.WriteNoteTypeDefs([]archive.NoteTypeDef{noteTypeDef}); err != nil {
+		t.Fatalf("WriteNoteTypeDefs: %v", err)
+	}
+
+	// Write a minimal group payload.
+	if err := w.WriteGroup(&archive.GroupPayload{
+		ExportID:  "g0001",
+		SourceID:  root.ID,
+		Name:      root.Name,
+		Tags:      []archive.TagRef{},
+		Meta:      map[string]any{},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("WriteGroup: %v", err)
+	}
+
+	// Write a note that references the NoteType def.
+	if err := w.WriteNote(&archive.NotePayload{
+		ExportID:    "n0001",
+		SourceID:    note.ID,
+		Name:        note.Name,
+		OwnerRef:    "g0001",
+		NoteTypeRef: "nt0001",
+		Tags:        []archive.TagRef{},
+		Meta:        map[string]any{},
+		CreatedAt:   time.Now().UTC(),
+		UpdatedAt:   time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("WriteNote: %v", err)
+	}
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
 	tarBytes := tarBuf.Bytes()
 
-	// In shared DB, create a SECOND NoteType "ApplyTestDiary" to trigger ambiguity.
-	nt2 := models.NoteType{Name: "ApplyTestDiary"}
-	if err := srcCtx.db.Create(&nt2).Error; err != nil {
-		t.Fatal(err)
-	}
-
-	// --- Destination ---
-	dstCtx := createTestContext(t)
-
 	jobID := "test-ambiguous-nt-apply"
 	tarPath := filepath.Join("_imports", jobID+".tar")
-	dstCtx.fs.MkdirAll("_imports", 0755)
-	afero.WriteFile(dstCtx.fs, tarPath, tarBytes, 0644)
+	ctx.fs.MkdirAll("_imports", 0755)
+	afero.WriteFile(ctx.fs, tarPath, tarBytes, 0644)
 
-	plan, err := dstCtx.ParseImport(context.Background(), jobID, tarPath)
+	plan, err := ctx.ParseImport(context.Background(), jobID, tarPath)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -671,7 +732,7 @@ func TestApplyImport_AmbiguousNoteTypeRequiresDecision(t *testing.T) {
 		}
 	}
 	if ambiguousEntry == nil {
-		t.Fatal("expected an ambiguous NoteType mapping for 'Diary'")
+		t.Fatal("expected an ambiguous NoteType mapping for 'AmbigDiary'")
 	}
 
 	// Build decisions but manually set the ambiguous entry's action to "" to
@@ -700,7 +761,7 @@ func TestApplyImport_AmbiguousNoteTypeRequiresDecision(t *testing.T) {
 		t.Fatalf("expected ValidateForApply to pass after fix, got: %v", err)
 	}
 
-	result, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
+	result, err := ctx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -710,7 +771,7 @@ func TestApplyImport_AmbiguousNoteTypeRequiresDecision(t *testing.T) {
 		t.Fatal("no notes were created")
 	}
 	var importedNote models.Note
-	if err := dstCtx.db.First(&importedNote, result.CreatedNoteIDs[0]).Error; err != nil {
+	if err := ctx.db.First(&importedNote, result.CreatedNoteIDs[0]).Error; err != nil {
 		t.Fatalf("load imported note: %v", err)
 	}
 	if importedNote.NoteTypeId == nil {
