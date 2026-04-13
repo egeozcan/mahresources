@@ -191,6 +191,7 @@ func buildCLIDecisions(plan *application_context.ImportPlan, opts *importCmdOpti
 		AcknowledgeMissingHashes: opts.AcknowledgeMissingHashes,
 		MappingActions:           make(map[string]application_context.MappingAction),
 		DanglingActions:          make(map[string]application_context.DanglingAction),
+		ShellGroupActions:        make(map[string]application_context.ShellGroupAction),
 	}
 
 	if opts.ParentGroupID != 0 {
@@ -246,6 +247,20 @@ func buildCLIDecisions(plan *application_context.ImportPlan, opts *importCmdOpti
 			Action: "drop",
 		}
 	}
+
+	// Default all shell groups to "create".
+	var walkItems func(items []application_context.ImportPlanItem)
+	walkItems = func(items []application_context.ImportPlanItem) {
+		for _, item := range items {
+			if item.Shell {
+				d.ShellGroupActions[item.ExportID] = application_context.ShellGroupAction{
+					Action: "create",
+				}
+			}
+			walkItems(item.Children)
+		}
+	}
+	walkItems(plan.Items)
 
 	return d
 }
