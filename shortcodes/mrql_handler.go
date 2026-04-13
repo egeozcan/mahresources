@@ -40,6 +40,18 @@ func RenderMRQLShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 		return ""
 	}
 
+	// Block template: trim and check. Non-empty trimmed content overrides
+	// CustomMRQLResult on every item and forces custom rendering.
+	blockTemplate := ""
+	if sc.IsBlock {
+		blockTemplate = strings.TrimSpace(sc.InnerContent)
+	}
+
+	if blockTemplate != "" {
+		applyBlockTemplate(result, blockTemplate)
+		format = "custom"
+	}
+
 	var inner string
 
 	switch result.Mode {
@@ -52,6 +64,20 @@ func RenderMRQLShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 	}
 
 	return fmt.Sprintf(`<div class="mrql-results">%s</div>`, inner)
+}
+
+// applyBlockTemplate stamps every entity item in the result with the block
+// template, overriding any category-level CustomMRQLResult. Aggregated results
+// have no items so they are unaffected.
+func applyBlockTemplate(result *QueryResult, tpl string) {
+	for i := range result.Items {
+		result.Items[i].CustomMRQLResult = tpl
+	}
+	for i := range result.Groups {
+		for j := range result.Groups[i].Items {
+			result.Groups[i].Items[j].CustomMRQLResult = tpl
+		}
+	}
 }
 
 // renderFlat renders flat result items using the resolved format.
