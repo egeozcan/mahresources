@@ -974,3 +974,237 @@ func TestStreamExport_RelatedDepth1_IncludesRelatedEntities(t *testing.T) {
 		t.Errorf("expected 0 dangling refs, got %d", len(manifest.Dangling))
 	}
 }
+
+func TestStreamExport_RelatedDepth0_NoBFS(t *testing.T) {
+	ctx := createTestContext(t)
+	groupA := mustCreateGroup(t, ctx, "GroupA", nil)
+	groupB := mustCreateGroup(t, ctx, "GroupB", nil)
+	res := mustCreateResource(t, ctx, "external.txt", &groupB.ID, []byte("EXT"))
+	mustLinkRelatedResource(t, ctx, groupA.ID, res.ID)
+
+	var buf bytes.Buffer
+	err := ctx.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{groupA.ID},
+		Scope:        archive.ExportScope{OwnedResources: true, RelatedM2M: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true},
+		RelatedDepth: 0,
+	}, &buf, nil)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	r, _ := archive.NewReader(&buf)
+	defer r.Close()
+	manifest, _ := r.ReadManifest()
+	coll := newExportCollector()
+	r.Walk(coll)
+
+	if len(coll.groups) != 1 {
+		t.Errorf("expected 1 group, got %d", len(coll.groups))
+	}
+	if len(coll.resources) != 0 {
+		t.Errorf("expected 0 resources, got %d", len(coll.resources))
+	}
+	if len(manifest.Dangling) != 1 {
+		t.Errorf("expected 1 dangling ref, got %d", len(manifest.Dangling))
+	}
+}
+
+func TestStreamExport_RelatedDepth2_Chaining(t *testing.T) {
+	ctx := createTestContext(t)
+	groupA := mustCreateGroup(t, ctx, "A", nil)
+	groupB := mustCreateGroup(t, ctx, "B", nil)
+	groupC := mustCreateGroup(t, ctx, "C", nil)
+	res := mustCreateResource(t, ctx, "deep.txt", &groupC.ID, []byte("DEEP"))
+	mustLinkRelatedGroup(t, ctx, groupA.ID, groupB.ID)
+	mustLinkRelatedResource(t, ctx, groupB.ID, res.ID)
+
+	var buf bytes.Buffer
+	err := ctx.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{groupA.ID},
+		Scope:        archive.ExportScope{OwnedResources: true, RelatedM2M: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true},
+		RelatedDepth: 2,
+	}, &buf, nil)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	r, _ := archive.NewReader(&buf)
+	defer r.Close()
+	manifest, _ := r.ReadManifest()
+	coll := newExportCollector()
+	r.Walk(coll)
+
+	if len(coll.groups) != 3 {
+		t.Fatalf("expected 3 groups, got %d", len(coll.groups))
+	}
+	if len(coll.resources) != 1 {
+		t.Fatalf("expected 1 resource, got %d", len(coll.resources))
+	}
+	if manifest.Counts.ShellGroups != 2 {
+		t.Errorf("expected 2 shell groups, got %d", manifest.Counts.ShellGroups)
+	}
+}
+
+func TestStreamExport_RelatedDepth_EarlyTermination(t *testing.T) {
+	ctx := createTestContext(t)
+	groupA := mustCreateGroup(t, ctx, "A", nil)
+	groupB := mustCreateGroup(t, ctx, "B", nil)
+	mustLinkRelatedGroup(t, ctx, groupA.ID, groupB.ID)
+
+	var buf bytes.Buffer
+	err := ctx.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{groupA.ID},
+		Scope:        archive.ExportScope{RelatedM2M: true},
+		RelatedDepth: 3,
+	}, &buf, nil)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	r, _ := archive.NewReader(&buf)
+	defer r.Close()
+	r.ReadManifest()
+	coll := newExportCollector()
+	r.Walk(coll)
+
+	if len(coll.groups) != 2 {
+		t.Errorf("expected 2 groups (A + B shell), got %d", len(coll.groups))
+	}
+}
+
+func TestStreamExport_RelatedDepth_Dedup(t *testing.T) {
+	ctx := createTestContext(t)
+	groupA := mustCreateGroup(t, ctx, "A", nil)
+	groupB := mustCreateGroup(t, ctx, "B", &groupA.ID)
+	groupC := mustCreateGroup(t, ctx, "C", nil)
+	res := mustCreateResource(t, ctx, "shared.txt", &groupC.ID, []byte("SHARED"))
+	mustLinkRelatedResource(t, ctx, groupA.ID, res.ID)
+	mustLinkRelatedResource(t, ctx, groupB.ID, res.ID)
+
+	var buf bytes.Buffer
+	err := ctx.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{groupA.ID},
+		Scope:        archive.ExportScope{Subtree: true, OwnedResources: true, RelatedM2M: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true},
+		RelatedDepth: 1,
+	}, &buf, nil)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	r, _ := archive.NewReader(&buf)
+	defer r.Close()
+	r.ReadManifest()
+	coll := newExportCollector()
+	r.Walk(coll)
+
+	if len(coll.resources) != 1 {
+		t.Errorf("expected 1 resource (no duplicates), got %d", len(coll.resources))
+	}
+}
+
+func TestStreamExport_RelatedDepth_NoRelatedM2M(t *testing.T) {
+	ctx := createTestContext(t)
+	groupA := mustCreateGroup(t, ctx, "A", nil)
+	groupB := mustCreateGroup(t, ctx, "B", nil)
+	mustLinkRelatedGroup(t, ctx, groupA.ID, groupB.ID)
+
+	var buf bytes.Buffer
+	err := ctx.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{groupA.ID},
+		Scope:        archive.ExportScope{RelatedM2M: false},
+		RelatedDepth: 1,
+	}, &buf, nil)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	r, _ := archive.NewReader(&buf)
+	defer r.Close()
+	r.ReadManifest()
+	coll := newExportCollector()
+	r.Walk(coll)
+
+	if len(coll.groups) != 1 {
+		t.Errorf("expected 1 group (no BFS), got %d", len(coll.groups))
+	}
+}
+
+func TestStreamExport_RelatedDepth_SeriesOnBFSResource(t *testing.T) {
+	ctx := createTestContext(t)
+	groupA := mustCreateGroup(t, ctx, "A", nil)
+	groupB := mustCreateGroup(t, ctx, "B", nil)
+
+	series := &models.Series{Name: "Test Series", Slug: "test-series"}
+	if err := ctx.db.Create(series).Error; err != nil {
+		t.Fatalf("create series: %v", err)
+	}
+	t.Cleanup(func() { ctx.db.Unscoped().Delete(&models.Series{}, series.ID) })
+
+	res := mustCreateResource(t, ctx, "series-member.txt", &groupB.ID, []byte("SERIESDATA"))
+	ctx.db.Model(res).Update("series_id", series.ID)
+	mustLinkRelatedResource(t, ctx, groupA.ID, res.ID)
+
+	var buf bytes.Buffer
+	err := ctx.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{groupA.ID},
+		Scope:        archive.ExportScope{OwnedResources: true, RelatedM2M: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true, ResourceSeries: true},
+		RelatedDepth: 1,
+	}, &buf, nil)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	r, _ := archive.NewReader(&buf)
+	defer r.Close()
+	r.ReadManifest()
+	coll := newExportCollector()
+	r.Walk(coll)
+
+	if len(coll.series) != 1 {
+		t.Errorf("expected 1 series, got %d", len(coll.series))
+	}
+	for _, rp := range coll.resources {
+		if rp.SeriesRef == "" {
+			t.Errorf("expected SeriesRef to be set on BFS-discovered resource")
+		}
+	}
+}
+
+func TestStreamExport_RelatedDepth_DanglingBeyondDepth(t *testing.T) {
+	ctx := createTestContext(t)
+	groupA := mustCreateGroup(t, ctx, "A", nil)
+	groupB := mustCreateGroup(t, ctx, "B", nil)
+	groupC := mustCreateGroup(t, ctx, "C", nil)
+	mustLinkRelatedGroup(t, ctx, groupA.ID, groupB.ID)
+	mustLinkRelatedGroup(t, ctx, groupB.ID, groupC.ID)
+
+	var buf bytes.Buffer
+	err := ctx.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{groupA.ID},
+		Scope:        archive.ExportScope{RelatedM2M: true},
+		RelatedDepth: 1,
+	}, &buf, nil)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	r, _ := archive.NewReader(&buf)
+	defer r.Close()
+	manifest, _ := r.ReadManifest()
+	coll := newExportCollector()
+	r.Walk(coll)
+
+	if len(coll.groups) != 2 {
+		t.Errorf("expected 2 groups (A + B shell), got %d", len(coll.groups))
+	}
+	if len(manifest.Dangling) != 1 {
+		t.Fatalf("expected 1 dangling ref, got %d", len(manifest.Dangling))
+	}
+	if manifest.Dangling[0].Kind != archive.DanglingKindRelatedGroup {
+		t.Errorf("expected dangling kind %s, got %s", archive.DanglingKindRelatedGroup, manifest.Dangling[0].Kind)
+	}
+}
