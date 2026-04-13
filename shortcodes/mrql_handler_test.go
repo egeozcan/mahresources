@@ -201,3 +201,215 @@ func TestMRQLShortcodeDefaultLimits(t *testing.T) {
 
 // Ensure the json import is used (Meta field uses json.RawMessage in the test struct)
 var _ = json.RawMessage{}
+
+func TestMRQLBlockFlatUsesInnerTemplate(t *testing.T) {
+	result := &QueryResult{
+		EntityType: "resource",
+		Mode:       "flat",
+		Items: []QueryResultItem{
+			{EntityType: "resource", EntityID: 1, Entity: testEntity{ID: 1, Name: "Alpha"}, Meta: []byte(`{}`)},
+			{EntityType: "resource", EntityID: 2, Entity: testEntity{ID: 2, Name: "Beta"}, Meta: []byte(`{}`)},
+		},
+	}
+	executor := mockExecutor(result, nil)
+	sc := Shortcode{
+		Name:         "mrql",
+		Attrs:        map[string]string{"query": "test"},
+		Raw:          `[mrql query="test"]<span class="item">[property path="Name"]</span>[/mrql]`,
+		InnerContent: `<span class="item">[property path="Name"]</span>`,
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Contains(t, html, `<span class="item">Alpha</span>`)
+	assert.Contains(t, html, `<span class="item">Beta</span>`)
+}
+
+func TestMRQLBlockOverridesCustomMRQLResult(t *testing.T) {
+	result := &QueryResult{
+		EntityType: "resource",
+		Mode:       "flat",
+		Items: []QueryResultItem{
+			{
+				EntityType:       "resource",
+				EntityID:         1,
+				Entity:           testEntity{ID: 1, Name: "Item"},
+				Meta:             []byte(`{}`),
+				CustomMRQLResult: `<div class="category-template">CATEGORY</div>`,
+			},
+		},
+	}
+	executor := mockExecutor(result, nil)
+	sc := Shortcode{
+		Name:         "mrql",
+		Attrs:        map[string]string{"query": "test"},
+		Raw:          `[mrql query="test"]<p class="block-tpl">[property path="Name"]</p>[/mrql]`,
+		InnerContent: `<p class="block-tpl">[property path="Name"]</p>`,
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Contains(t, html, `<p class="block-tpl">Item</p>`)
+	assert.NotContains(t, html, "CATEGORY")
+}
+
+func TestMRQLBlockOverridesFormatAttr(t *testing.T) {
+	result := &QueryResult{
+		EntityType: "resource",
+		Mode:       "flat",
+		Items: []QueryResultItem{
+			{EntityType: "resource", EntityID: 1, Entity: testEntity{ID: 1, Name: "Row"}, Meta: []byte(`{}`)},
+		},
+	}
+	executor := mockExecutor(result, nil)
+	sc := Shortcode{
+		Name:         "mrql",
+		Attrs:        map[string]string{"query": "test", "format": "table"},
+		Raw:          `[mrql query="test" format="table"]<b>[property path="Name"]</b>[/mrql]`,
+		InnerContent: `<b>[property path="Name"]</b>`,
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Contains(t, html, "<b>Row</b>")
+	assert.NotContains(t, html, "<table")
+}
+
+func TestMRQLBlockBucketedAppliesTemplate(t *testing.T) {
+	result := &QueryResult{
+		EntityType: "resource",
+		Mode:       "bucketed",
+		Groups: []QueryResultGroup{
+			{
+				Key: map[string]any{"type": "photo"},
+				Items: []QueryResultItem{
+					{EntityType: "resource", EntityID: 1, Entity: testEntity{ID: 1, Name: "Sunset"}, Meta: []byte(`{}`)},
+					{EntityType: "resource", EntityID: 2, Entity: testEntity{ID: 2, Name: "Mountain"}, Meta: []byte(`{}`)},
+				},
+			},
+		},
+	}
+	executor := mockExecutor(result, nil)
+	sc := Shortcode{
+		Name:         "mrql",
+		Attrs:        map[string]string{"query": "test"},
+		Raw:          `[mrql query="test"]<em>[property path="Name"]</em>[/mrql]`,
+		InnerContent: `<em>[property path="Name"]</em>`,
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Contains(t, html, "<em>Sunset</em>")
+	assert.Contains(t, html, "<em>Mountain</em>")
+	assert.Contains(t, html, "photo")
+}
+
+func TestMRQLBlockAggregatedIgnoresInnerContent(t *testing.T) {
+	result := &QueryResult{
+		EntityType: "resource",
+		Mode:       "aggregated",
+		Rows: []map[string]any{
+			{"category": "photo", "count": float64(10)},
+		},
+	}
+	executor := mockExecutor(result, nil)
+	sc := Shortcode{
+		Name:         "mrql",
+		Attrs:        map[string]string{"query": "test"},
+		Raw:          `[mrql query="test"]SHOULD NOT APPEAR[/mrql]`,
+		InnerContent: `SHOULD NOT APPEAR`,
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.NotContains(t, html, "SHOULD NOT APPEAR")
+	assert.Contains(t, html, "<table")
+	assert.Contains(t, html, "photo")
+}
+
+func TestMRQLBlockWhitespaceOnlyFallsBack(t *testing.T) {
+	result := &QueryResult{
+		EntityType: "resource",
+		Mode:       "flat",
+		Items: []QueryResultItem{
+			{EntityType: "resource", EntityID: 1, Entity: testEntity{ID: 1, Name: "Fallback"}, Meta: []byte(`{}`)},
+		},
+	}
+	executor := mockExecutor(result, nil)
+	sc := Shortcode{
+		Name:         "mrql",
+		Attrs:        map[string]string{"query": "test"},
+		Raw:          "[mrql query=\"test\"]\n  \n[/mrql]",
+		InnerContent: "\n  \n",
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Contains(t, html, "Fallback")
+	assert.Contains(t, html, `href="/resource?id=1"`)
+}
+
+func TestMRQLBlockEmptyResultsShowsDefault(t *testing.T) {
+	result := &QueryResult{
+		EntityType: "resource",
+		Mode:       "flat",
+		Items:      []QueryResultItem{},
+	}
+	executor := mockExecutor(result, nil)
+	sc := Shortcode{
+		Name:         "mrql",
+		Attrs:        map[string]string{"query": "test"},
+		Raw:          `[mrql query="test"]<b>[property path="Name"]</b>[/mrql]`,
+		InnerContent: `<b>[property path="Name"]</b>`,
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Contains(t, html, "No results.")
+}
+
+func TestMRQLBlockChildContextWithMeta(t *testing.T) {
+	result := &QueryResult{
+		EntityType: "resource",
+		Mode:       "flat",
+		Items: []QueryResultItem{
+			{
+				EntityType: "resource",
+				EntityID:   1,
+				Entity:     testEntity{ID: 1, Name: "Item A"},
+				Meta:       []byte(`{"rating": 5}`),
+				MetaSchema: `{"type":"object","properties":{"rating":{"type":"integer"}}}`,
+			},
+			{
+				EntityType: "resource",
+				EntityID:   2,
+				Entity:     testEntity{ID: 2, Name: "Item B"},
+				Meta:       []byte(`{"rating": 3}`),
+				MetaSchema: `{"type":"object","properties":{"rating":{"type":"integer"}}}`,
+			},
+		},
+	}
+	executor := mockExecutor(result, nil)
+	sc := Shortcode{
+		Name:         "mrql",
+		Attrs:        map[string]string{"query": "test"},
+		Raw:          `[mrql query="test"][property path="Name"] [meta path="rating"][/mrql]`,
+		InnerContent: `[property path="Name"] [meta path="rating"]`,
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Contains(t, html, "Item A")
+	assert.Contains(t, html, "Item B")
+	assert.Contains(t, html, `data-path="rating"`)
+	assert.Contains(t, html, `data-entity-id="1"`)
+	assert.Contains(t, html, `data-entity-id="2"`)
+}
