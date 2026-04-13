@@ -35,6 +35,12 @@
       <label class="flex items-center gap-2"><input type="checkbox" x-model="scope.owned_notes" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600"> Include owned notes (S3)</label>
       <label class="flex items-center gap-2"><input type="checkbox" x-model="scope.related_m2m" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600"> Include related (m2m) entities (S4)</label>
       <label class="flex items-center gap-2"><input type="checkbox" x-model="scope.group_relations" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600"> Include typed group relations (S5)</label>
+      <div class="flex items-center gap-2 mt-2" x-show="scope.related_m2m || scope.group_relations">
+        <label for="related-depth" class="text-sm text-stone-600">Related depth (0 = off):</label>
+        <input type="number" id="related-depth" x-model.number="relatedDepth" min="0" max="10"
+               class="w-20 text-sm border-stone-300 rounded focus:ring-1 focus:ring-amber-600 focus:border-amber-600"
+               data-testid="export-related-depth">
+      </div>
     </fieldset>
 
     <fieldset class="space-y-2 mt-4">
@@ -66,6 +72,7 @@
     </button>
     <div x-show="estimateResult" class="mt-3 text-sm text-stone-700 space-y-1" data-testid="export-estimate-output">
       <div>Groups: <span x-text="estimateResult?.counts?.groups || 0"></span></div>
+      <div x-show="(estimateResult?.counts?.shell_groups || 0) > 0">Shell groups: <span x-text="estimateResult?.counts?.shell_groups || 0"></span></div>
       <div>Notes: <span x-text="estimateResult?.counts?.notes || 0"></span></div>
       <div>Resources: <span x-text="estimateResult?.counts?.resources || 0"></span></div>
       <div>Series: <span x-text="estimateResult?.counts?.series || 0"></span></div>

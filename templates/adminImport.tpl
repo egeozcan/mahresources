@@ -284,13 +284,38 @@
         <p class="text-sm text-stone-500">Uncheck items to exclude them from the import.</p>
         <div class="space-y-0.5">
           <template x-for="fi in flattenedItems" :key="fi.export_id">
-            <div class="flex items-center gap-2 text-sm py-1" :style="'padding-left:' + (fi.depth * 1.5) + 'rem'">
-              <input type="checkbox" :checked="!isExcluded(fi.export_id)"
-                     @change="toggleItem(fi.item, $event.target.checked)"
-                     class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
-              <span :class="fi.depth === 0 ? 'font-medium text-stone-800' : 'text-stone-700'" x-text="fi.name"></span>
-              <span class="text-xs text-stone-400"
-                    x-text="fi.descendant_resource_count + ' resources, ' + fi.descendant_note_count + ' notes'"></span>
+            <div :style="'padding-left:' + (fi.depth * 1.5) + 'rem'">
+              <div class="flex items-center gap-2 text-sm py-1">
+                <input type="checkbox" :checked="!isExcluded(fi.export_id)"
+                       @change="toggleItem(fi.item, $event.target.checked)"
+                       class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
+                <span :class="fi.depth === 0 ? 'font-medium text-stone-800' : 'text-stone-700'" x-text="fi.name"></span>
+                <span x-show="fi.shell" class="ml-1 text-xs text-stone-400 font-mono">(shell)</span>
+                <span class="text-xs text-stone-400"
+                      x-text="fi.descendant_resource_count + ' resources, ' + fi.descendant_note_count + ' notes'"></span>
+              </div>
+              <template x-if="fi.shell && !isExcluded(fi.export_id)">
+                <div class="ml-2 flex items-center gap-2 text-xs">
+                  <select @change="setShellAction(fi.export_id, $event.target.value)"
+                          class="text-xs border-stone-300 rounded py-0.5">
+                    <option value="create" :selected="getShellAction(fi.export_id) === 'create'">Create new</option>
+                    <option value="map_to_existing" :selected="getShellAction(fi.export_id) === 'map_to_existing'">Map to existing</option>
+                  </select>
+                  <template x-if="getShellAction(fi.export_id) === 'map_to_existing'">
+                    <span class="flex items-center gap-1">
+                      <input type="text" placeholder="Search groups..."
+                             @input.debounce.300ms="searchShellDest(fi.export_id, $event.target.value)"
+                             class="text-xs border-stone-300 rounded py-0.5 w-40">
+                      <span x-show="shellGroupDestNames[fi.export_id]"
+                            class="text-stone-600" x-text="shellGroupDestNames[fi.export_id]"></span>
+                      <template x-for="result in (shellGroupSearchResults[fi.export_id] || [])" :key="result.id">
+                        <button type="button" @click="setShellDest(fi.export_id, result.id, result.name)"
+                                class="text-xs text-blue-700 underline" x-text="result.name"></button>
+                      </template>
+                    </span>
+                  </template>
+                </div>
+              </template>
             </div>
           </template>
         </div>

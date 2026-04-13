@@ -21,6 +21,7 @@ export function adminExport(initial = {}) {
       tags: true,
       group_relation_types: true,
     },
+    relatedDepth: 0,
     estimateResult: null,
     job: null,
     jobInProgress: false,
@@ -75,6 +76,7 @@ export function adminExport(initial = {}) {
         scope: this.scope,
         fidelity: this.fidelity,
         schemaDefs: this.schemaDefs,
+        relatedDepth: this.relatedDepth,
       };
     },
 

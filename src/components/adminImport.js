@@ -16,6 +16,7 @@ export function adminImport() {
       mapping_actions: {},    // keyed by source_export_id or source_key
       dangling_actions: {},   // keyed by dangling ref id
       excluded_items: [],     // export IDs unchecked in the item tree
+      shell_group_actions: {},
     },
 
     // UI helpers
@@ -150,6 +151,20 @@ export function adminImport() {
         this.decisions.dangling_actions[d.id] = { action: 'drop' };
       }
 
+      // Default all shell groups to "create"
+      const walkShells = (items) => {
+        for (const item of items) {
+          if (item.shell) {
+            this.decisions.shell_group_actions[item.export_id] = {
+              action: 'create',
+              destination_id: null,
+            };
+          }
+          if (item.children?.length) walkShells(item.children);
+        }
+      };
+      walkShells(this.plan.items || []);
+
       // Flatten the hierarchical item tree for rendering with depth-based indent
       this.flattenedItems = [];
       const flatten = (items, depth) => {
@@ -158,6 +173,7 @@ export function adminImport() {
             export_id: item.export_id,
             name: item.name,
             depth,
+            shell: item.shell || false,
             descendant_resource_count: item.descendant_resource_count || 0,
             descendant_note_count: item.descendant_note_count || 0,
             item, // keep reference for toggleItem recursive walk
@@ -220,6 +236,11 @@ export function adminImport() {
       for (const d of (this.plan.dangling_refs || [])) {
         const stored = this.decisions.dangling_actions[d.id];
         if (stored?.action === 'map' && !stored.destination_id) return true;
+      }
+
+      // Check shell group decisions
+      for (const [exportId, action] of Object.entries(this.decisions.shell_group_actions)) {
+        if (action.action === 'map_to_existing' && !action.destination_id) return true;
       }
 
       // Check missing-hash acknowledgement
@@ -314,6 +335,8 @@ export function adminImport() {
 
     danglingSearchResults: {},  // {danglingId: [{id, name}]}
     danglingDestNames: {},      // {danglingId: name} for display
+    shellGroupSearchResults: {},
+    shellGroupDestNames: {},
 
     setDanglingAction(danglingId, action, destId) {
       this.decisions.dangling_actions[danglingId] = {
@@ -365,6 +388,45 @@ export function adminImport() {
         this.danglingSearchResults[d.id] = list.map(e => ({ id: e.ID || e.id, name: e.Name || e.name }));
       } catch (e) {
         this.danglingSearchResults[d.id] = [];
+      }
+    },
+
+    // --- Shell group decision helpers ---
+
+    getShellAction(exportId) {
+      return this.decisions.shell_group_actions[exportId]?.action || 'create';
+    },
+
+    setShellAction(exportId, action) {
+      if (!this.decisions.shell_group_actions[exportId]) {
+        this.decisions.shell_group_actions[exportId] = {};
+      }
+      this.decisions.shell_group_actions[exportId].action = action;
+      if (action === 'create') {
+        this.decisions.shell_group_actions[exportId].destination_id = null;
+        delete this.shellGroupDestNames[exportId];
+      }
+    },
+
+    setShellDest(exportId, destId, destName) {
+      if (!this.decisions.shell_group_actions[exportId]) {
+        this.decisions.shell_group_actions[exportId] = { action: 'map_to_existing' };
+      }
+      this.decisions.shell_group_actions[exportId].destination_id = destId;
+      this.shellGroupDestNames[exportId] = destName;
+      this.shellGroupSearchResults[exportId] = [];
+    },
+
+    async searchShellDest(exportId, query) {
+      if (!query) { this.shellGroupSearchResults[exportId] = []; return; }
+      try {
+        const res = await fetch('/v1/groups?name=' + encodeURIComponent(query) + '&maxResults=8');
+        if (!res.ok) return;
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : (data.items || []);
+        this.shellGroupSearchResults[exportId] = list.map(g => ({ id: g.ID || g.id, name: g.Name || g.name }));
+      } catch (e) {
+        this.shellGroupSearchResults[exportId] = [];
       }
     },
 
