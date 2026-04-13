@@ -23,6 +23,7 @@ type ExportRequest struct {
 	Fidelity     archive.ExportFidelity   `json:"fidelity"`
 	SchemaDefs   archive.ExportSchemaDefs `json:"schemaDefs"`
 	Gzip         bool                     `json:"gzip"`
+	RelatedDepth int                      `json:"relatedDepth,omitempty"`
 }
 
 // ExportEstimate is the result of EstimateExport. Cheap to compute — no

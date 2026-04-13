@@ -20,10 +20,11 @@ type Manifest struct {
 }
 
 type ExportOptions struct {
-	Scope      ExportScope      `json:"scope"`
-	Fidelity   ExportFidelity   `json:"fidelity"`
-	SchemaDefs ExportSchemaDefs `json:"schema_defs"`
-	Gzip       bool             `json:"gzip"`
+	Scope        ExportScope      `json:"scope"`
+	Fidelity     ExportFidelity   `json:"fidelity"`
+	SchemaDefs   ExportSchemaDefs `json:"schema_defs"`
+	Gzip         bool             `json:"gzip"`
+	RelatedDepth int              `json:"related_depth,omitempty"`
 }
 
 type ExportScope struct {
@@ -48,8 +49,9 @@ type ExportSchemaDefs struct {
 }
 
 type Counts struct {
-	Groups    int `json:"groups"`
-	Notes     int `json:"notes"`
+	Groups      int `json:"groups"`
+	ShellGroups int `json:"shell_groups,omitempty"`
+	Notes       int `json:"notes"`
 	Resources int `json:"resources"`
 	Series    int `json:"series"`
 	Blobs     int `json:"blobs"`
@@ -69,6 +71,7 @@ type GroupEntry struct {
 	Name     string `json:"name"`
 	SourceID uint   `json:"source_id"`
 	Path     string `json:"path"`
+	Shell    bool   `json:"shell,omitempty"`
 }
 
 type NoteEntry struct {
@@ -138,6 +141,7 @@ const (
 type GroupPayload struct {
 	ExportID         string                 `json:"export_id"`
 	SourceID         uint                   `json:"source_id"`
+	Shell            bool                   `json:"shell,omitempty"`
 	Name             string                 `json:"name"`
 	Description      string                 `json:"description"`
 	URL              string                 `json:"url"`
