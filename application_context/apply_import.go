@@ -70,7 +70,7 @@ func (ctx *MahresourcesContext) ApplyImport(
 		return nil, err
 	}
 	state.collector = collector
-	state.markLegacyIfNeeded()
+	state.evaluateRetrySafety()
 
 	// --- Phase 2: create DB entities in batched transactions ---
 	// From this point on, every error return includes state.result so the
@@ -336,15 +336,28 @@ func (s *applyState) resolveTagIDs(refs []archive.TagRef) []uint {
 	return ids
 }
 
-// markLegacyIfNeeded scans the collected payloads for groups or notes that
-// lack a GUID. If any are missing one, the archive predates entity GUIDs
-// and retrying the same plan against a partially-committed DB would
-// duplicate those rows — group and note names aren't uniquely indexed, so
-// applyGroups/applyNotes have no way to detect the prior-run survivors.
-// In that case, mark the result retry-unsafe so the handler skips its
-// plan restore and the user must re-upload the archive to get a fresh
-// parse that sees the current DB state.
-func (s *applyState) markLegacyIfNeeded() {
+// evaluateRetrySafety decides whether replaying this plan against a DB that
+// might already hold rows from a prior partial run is safe. Unsafe when:
+//
+//   - any group or note in the archive lacks a GUID (legacy pre-GUID
+//     format): group/note names aren't uniquely indexed, so applyGroups /
+//     applyNotes can't recognize the prior-run rows and would duplicate
+//     the tree;
+//
+//   - GUIDCollisionPolicy == "skip": on retry, the rows created by the
+//     first run now trigger the GUID collision path and land in the skip
+//     branches, which add them to skippedM2M. applyM2MLinks then drops
+//     the archive's tags / related entities / group relations for those
+//     rows, so the retry would silently complete with an incomplete
+//     graph.
+//
+// The handler reads result.RetrySafe to decide whether to restore the
+// consumed plan for a retry; false means the user must re-upload.
+func (s *applyState) evaluateRetrySafety() {
+	if s.decisions.GUIDCollisionPolicy == "skip" {
+		s.result.RetrySafe = false
+		return
+	}
 	for _, gp := range s.collector.groups {
 		if gp.GUID == "" {
 			s.result.RetrySafe = false

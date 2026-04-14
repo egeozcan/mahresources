@@ -175,15 +175,35 @@ type ImportApplyResult struct {
 	CreatedResourceIDs []uint `json:"created_resource_ids,omitempty"`
 	CreatedNoteIDs     []uint `json:"created_note_ids,omitempty"`
 
-	// RetrySafe is true when the archive carries a GUID on every group and
-	// note, so replaying the same plan against a partially-committed DB
-	// won't duplicate rows (GUID collision handling and schema-def GUID/name
-	// idempotency cover the rest). Pre-GUID "legacy" archives set this to
-	// false — the handler must NOT restore the plan on failure, because
-	// retrying would insert a second copy of the tree (group/note names
-	// aren't uniquely indexed). Defaults true; flipped false by
-	// markLegacyIfNeeded() after Phase 1 collection.
+	// RetrySafe is true when replaying the same plan against a
+	// partially-committed DB is idempotent. Flipped false by
+	// evaluateRetrySafety() after Phase 1 collection for:
+	//   - pre-GUID archives (group/note names aren't uniquely indexed, so
+	//     replay would duplicate the tree); and
+	//   - GUIDCollisionPolicy=skip (replay would hit the skip branches for
+	//     rows created by the first run and skip their M2M wiring).
+	// The apply handler checks this alongside HasMutations() to decide
+	// whether restoring the consumed plan is safe.
 	RetrySafe bool `json:"retry_safe"`
+}
+
+// HasMutations reports whether the apply committed any DB rows. Used by
+// the apply handler to decide whether restoring the consumed plan is
+// safe even for retry-unsafe archives — a failure before any mutation
+// can always be retried, since the DB state is unchanged.
+func (r *ImportApplyResult) HasMutations() bool {
+	if r == nil {
+		return false
+	}
+	if r.CreatedCategories > 0 || r.CreatedNoteTypes > 0 ||
+		r.CreatedResourceCategories > 0 || r.CreatedTags > 0 ||
+		r.CreatedGRTs > 0 || r.CreatedSeries > 0 ||
+		r.CreatedGroups > 0 || r.CreatedResources > 0 ||
+		r.CreatedNotes > 0 || r.CreatedShellGroups > 0 ||
+		r.CreatedVersions > 0 || r.CreatedPreviews > 0 {
+		return true
+	}
+	return len(r.CreatedGroupIDs) > 0 || len(r.CreatedResourceIDs) > 0 || len(r.CreatedNoteIDs) > 0
 }
 
 func (p *ImportPlan) HasUnresolvedAmbiguities(decisions *ImportDecisions) bool {

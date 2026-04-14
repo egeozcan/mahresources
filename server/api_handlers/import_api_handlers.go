@@ -269,6 +269,34 @@ func GetImportApplyHandler(ctx GroupImporter) func(http.ResponseWriter, *http.Re
 	}
 }
 
+// shouldRestorePlan decides whether a failed apply's consumed plan should
+// be renamed back to .plan.json so the user can POST /apply again. Restore
+// in three cases:
+//
+//   - result == nil: ApplyImport failed before Phase 1 finished, so no
+//     DB writes happened (safe to replay regardless of archive format).
+//
+//   - result.HasMutations() is false: Phase 1 succeeded but Phase 2 aborted
+//     before any row was committed (e.g., cancelled context at the
+//     inter-phase checkpoint). Still a clean DB, safe to replay.
+//
+//   - result.RetrySafe: Phase 2 mutated rows, but the archive carries
+//     GUIDs on every group/note and the policy isn't "skip", so replay
+//     is idempotent via GUID collision handling and schema-def
+//     GUID/name lookups.
+//
+// Otherwise (legacy archive mid-apply, or skip policy mid-apply), leave
+// the plan at .plan.applied.json and force the user to re-upload.
+func shouldRestorePlan(result *application_context.ImportApplyResult) bool {
+	if result == nil {
+		return true
+	}
+	if !result.HasMutations() {
+		return true
+	}
+	return result.RetrySafe
+}
+
 func buildImportApplyRunFn(ctx GroupImporter, parseJobID, consumedPlanPath string, decisions *application_context.ImportDecisions) download_queue.JobRunFn {
 	return func(jobCtx context.Context, j *download_queue.DownloadJob, sink download_queue.ProgressSink) error {
 		result, err := ctx.ApplyImport(jobCtx, parseJobID, decisions, sink)
@@ -284,13 +312,7 @@ func buildImportApplyRunFn(ctx GroupImporter, parseJobID, consumedPlanPath strin
 		}
 
 		if err != nil {
-			// Restore the plan so POST /apply works again — but only when
-			// the archive is retry-safe. Legacy pre-GUID archives would
-			// duplicate groups/notes on replay (names aren't uniquely
-			// indexed); the user must re-upload to get a fresh parse.
-			// result == nil means ApplyImport failed before Phase 1 finished
-			// (no DB writes yet), which is also safe to restore.
-			if result == nil || result.RetrySafe {
+			if shouldRestorePlan(result) {
 				planPath := filepath.Join("_imports", parseJobID+".plan.json")
 				if renameErr := ctx.GetDefaultFs().Rename(consumedPlanPath, planPath); renameErr != nil {
 					sink.AppendWarning(fmt.Sprintf("could not restore plan for retry: %v", renameErr))
