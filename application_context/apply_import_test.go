@@ -8,11 +8,61 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/spf13/afero"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 	"mahresources/archive"
+	"mahresources/constants"
 	"mahresources/download_queue"
 	"mahresources/models"
 )
+
+// createGUIDIsolatedContext returns a context backed by an in-memory SQLite
+// DB unique to this test (named cache), so source and destination instances
+// don't share rows. Schema includes everything ApplyImport / StreamExport touch.
+func createGUIDIsolatedContext(t *testing.T, name string) *MahresourcesContext {
+	t.Helper()
+
+	dsn := "file:" + name + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(
+		&models.Query{},
+		&models.Resource{},
+		&models.ResourceVersion{},
+		&models.Note{},
+		&models.Tag{},
+		&models.Group{},
+		&models.Category{},
+		&models.NoteType{},
+		&models.Preview{},
+		&models.GroupRelation{},
+		&models.GroupRelationType{},
+		&models.ImageHash{},
+		&models.ResourceSimilarity{},
+		&models.LogEntry{},
+		&models.ResourceCategory{},
+		&models.Series{},
+		&models.NoteBlock{},
+		&models.PluginKV{},
+	); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	config := &MahresourcesConfig{DbType: constants.DbTypeSqlite}
+	fs := afero.NewMemMapFs()
+	sqlDB, _ := db.DB()
+	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
+	ctx := NewMahresourcesContext(fs, db, readOnlyDB, config)
+
+	defaultRC := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}
+	defaultRC.ID = 1
+	db.FirstOrCreate(defaultRC, 1)
+	return ctx
+}
 
 // noopSink satisfies download_queue.ProgressSink for tests.
 type noopSink struct{}
@@ -1196,4 +1246,120 @@ func buildDefaultDecisions(plan *ImportPlan) *ImportDecisions {
 		d.DanglingActions[dr.ID] = DanglingAction{Action: "drop"}
 	}
 	return d
+}
+
+// TestApplyImport_GUIDSkipDoesNotPolluteM2MLinks verifies that when
+// GUIDCollisionPolicy is "skip", the existing entity's tags are NOT modified
+// by applyM2MLinks. Pre-seeds dst with rows that share GUIDs with src but
+// have no tag links, then imports with skip and asserts no tags were added.
+func TestApplyImport_GUIDSkipDoesNotPolluteM2MLinks(t *testing.T) {
+	// --- Source: group + resource + note, each linked to one tag ---
+	srcCtx := createGUIDIsolatedContext(t, "skip_pollute_src")
+
+	tagFoo := &models.Tag{Name: "skip-tag-foo"}
+	if err := srcCtx.db.Create(tagFoo).Error; err != nil {
+		t.Fatal(err)
+	}
+	root := mustCreateGroup(t, srcCtx, "SkipPolluteRoot", nil)
+	if err := srcCtx.db.Model(root).Association("Tags").Append(tagFoo); err != nil {
+		t.Fatal(err)
+	}
+
+	res := mustCreateResource(t, srcCtx, "skip-pollute.txt", &root.ID, []byte("SKIP_POLLUTE"))
+	if err := srcCtx.db.Model(res).Association("Tags").Append(tagFoo); err != nil {
+		t.Fatal(err)
+	}
+
+	note := mustCreateNote(t, srcCtx, "SkipPolluteNote", &root.ID)
+	if err := srcCtx.db.Model(note).Association("Tags").Append(tagFoo); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reload to capture auto-generated GUIDs.
+	srcCtx.db.First(root, root.ID)
+	srcCtx.db.First(res, res.ID)
+	srcCtx.db.First(note, note.ID)
+	if root.GUID == nil || res.GUID == nil || note.GUID == nil {
+		t.Fatal("expected source rows to have GUIDs")
+	}
+
+	// --- Export ---
+	var tarBuf bytes.Buffer
+	if err := srcCtx.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{root.ID},
+		Scope:        archive.ExportScope{Subtree: true, OwnedResources: true, OwnedNotes: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true},
+		SchemaDefs:   archive.ExportSchemaDefs{Tags: true},
+	}, &tarBuf, func(ev ProgressEvent) {}); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	// --- Destination: pre-seed rows with the SAME GUIDs as source but no tags ---
+	dstCtx := createGUIDIsolatedContext(t, "skip_pollute_dst")
+
+	preGroup := &models.Group{Name: "DstGroup", GUID: root.GUID}
+	if err := dstCtx.db.Create(preGroup).Error; err != nil {
+		t.Fatalf("seed dst group: %v", err)
+	}
+
+	// Resource needs a blob on disk so subsequent reads work; the bytes
+	// content doesn't matter for this test.
+	preBlobLoc := "/resources/dst-blob.txt"
+	if err := afero.WriteFile(dstCtx.fs, preBlobLoc, []byte("DST_BLOB"), 0644); err != nil {
+		t.Fatalf("write dst blob: %v", err)
+	}
+	preRes := &models.Resource{
+		Name:               "DstRes",
+		GUID:               res.GUID,
+		Hash:               res.Hash,
+		HashType:           "SHA1",
+		FileSize:           int64(len("DST_BLOB")),
+		Location:           preBlobLoc,
+		ResourceCategoryId: 1,
+	}
+	if err := dstCtx.db.Create(preRes).Error; err != nil {
+		t.Fatalf("seed dst resource: %v", err)
+	}
+
+	preNote := &models.Note{Name: "DstNote", GUID: note.GUID}
+	if err := dstCtx.db.Create(preNote).Error; err != nil {
+		t.Fatalf("seed dst note: %v", err)
+	}
+
+	// Sanity: dst has zero tag links before import.
+	assertM2MCount := func(label, table, idCol string, id uint, want int64) {
+		t.Helper()
+		var got int64
+		dstCtx.db.Table(table).Where(idCol+" = ?", id).Count(&got)
+		if got != want {
+			t.Errorf("%s: expected %d row(s), got %d", label, want, got)
+		}
+	}
+	assertM2MCount("pre group_tags", "group_tags", "group_id", preGroup.ID, 0)
+	assertM2MCount("pre resource_tags", "resource_tags", "resource_id", preRes.ID, 0)
+	assertM2MCount("pre note_tags", "note_tags", "note_id", preNote.ID, 0)
+
+	// --- Apply with skip policy ---
+	jobID := "test-skip-pollute"
+	tarPath := filepath.Join("_imports", jobID+".tar")
+	dstCtx.fs.MkdirAll("_imports", 0755)
+	afero.WriteFile(dstCtx.fs, tarPath, tarBuf.Bytes(), 0644)
+
+	plan, err := dstCtx.ParseImport(context.Background(), jobID, tarPath)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	decisions := buildDefaultDecisions(plan)
+	decisions.GUIDCollisionPolicy = "skip"
+	decisions.ResourceCollisionPolicy = "skip"
+
+	if _, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	// Post-import: skipped entities must still have ZERO tag links.
+	assertM2MCount("post group_tags", "group_tags", "group_id", preGroup.ID, 0)
+	assertM2MCount("post resource_tags", "resource_tags", "resource_id", preRes.ID, 0)
+	assertM2MCount("post note_tags", "note_tags", "note_id", preNote.ID, 0)
 }

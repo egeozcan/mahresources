@@ -55,6 +55,7 @@ func (ctx *MahresourcesContext) ApplyImport(
 		sink:               sink,
 		cancelCtx:          cancelCtx,
 		idMap:              make(map[string]uint),
+		skippedM2M:         make(map[string]bool),
 		blobPaths:          make(map[string]string),
 		previewData:        make(map[string][]byte),
 		createdResourceIDs: make(map[string]bool),
@@ -146,6 +147,12 @@ type applyState struct {
 	// idMap tracks export_id -> destination DB ID for all created/mapped entities.
 	// Also stores decision_key -> destination ID for schema def mappings.
 	idMap map[string]uint
+
+	// skippedM2M holds export IDs of entities whose existing rows must NOT
+	// receive M2M wiring (tags, related entities, group relations) from the
+	// archive. Populated by GUID-skip, hash-skip, and manifest-only-missing-bytes
+	// branches; honored by applyM2MLinks.
+	skippedM2M map[string]bool
 
 	// blobPaths: hash -> filesystem path (computed during collection, written during walk)
 	blobPaths map[string]string
@@ -716,6 +723,7 @@ func (s *applyState) applyGroups() error {
 
 					switch s.decisions.GUIDCollisionPolicy {
 					case "skip":
+						s.skippedM2M[item.ExportID] = true
 						if err := walk(item.Children); err != nil {
 							return err
 						}
@@ -894,6 +902,7 @@ func (s *applyState) applyOneResource(tx *gorm.DB, exportID string, rp *archive.
 
 			switch s.decisions.GUIDCollisionPolicy {
 			case "skip":
+				s.skippedM2M[exportID] = true
 				return nil
 			case "merge":
 				return s.mergeResource(tx, &existing, rp)
@@ -911,6 +920,7 @@ func (s *applyState) applyOneResource(tx *gorm.DB, exportID string, rp *archive.
 		if err := tx.Where("hash = ?", rp.Hash).First(&existing).Error; err == nil {
 			if s.decisions.ResourceCollisionPolicy == "skip" {
 				s.idMap[exportID] = existing.ID
+				s.skippedM2M[exportID] = true
 				// Do NOT mark as created — skipped resources get no previews/versions
 				s.result.SkippedByHash++
 				return nil
@@ -925,6 +935,7 @@ func (s *applyState) applyOneResource(tx *gorm.DB, exportID string, rp *archive.
 		if err := tx.Where("hash = ?", rp.Hash).First(&existing).Error; err == nil {
 			// Reuse existing
 			s.idMap[exportID] = existing.ID
+			s.skippedM2M[exportID] = true
 			s.result.SkippedByHash++
 			return nil
 		}
@@ -1393,6 +1404,7 @@ func (s *applyState) applyOneNote(tx *gorm.DB, exportID string, np *archive.Note
 
 			switch s.decisions.GUIDCollisionPolicy {
 			case "skip":
+				s.skippedM2M[exportID] = true
 				return nil
 			case "merge":
 				if err := s.mergeNote(tx, &existing, np); err != nil {
@@ -1496,6 +1508,9 @@ func (s *applyState) applyOneNote(tx *gorm.DB, exportID string, np *archive.Note
 func (s *applyState) applyM2MLinks() error {
 	// --- Groups: Tags, RelatedGroups, RelatedResources, RelatedNotes, GroupRelations ---
 	for exportID, gp := range s.collector.groups {
+		if s.skippedM2M[exportID] {
+			continue // skip policy: existing row must not be modified
+		}
 		destID, ok := s.idMap[exportID]
 		if !ok {
 			continue // group was excluded or not created
@@ -1566,6 +1581,9 @@ func (s *applyState) applyM2MLinks() error {
 
 	// --- Resources: Tags, Groups, Notes ---
 	for exportID, rp := range s.collector.resources {
+		if s.skippedM2M[exportID] {
+			continue // skip / hash-skip / missing-bytes policy: leave existing rows alone
+		}
 		destID, ok := s.idMap[exportID]
 		if !ok {
 			continue
@@ -1602,6 +1620,9 @@ func (s *applyState) applyM2MLinks() error {
 
 	// --- Notes: Tags, Resources, Groups ---
 	for exportID, np := range s.collector.notes {
+		if s.skippedM2M[exportID] {
+			continue // skip policy: leave existing row alone
+		}
 		destID, ok := s.idMap[exportID]
 		if !ok {
 			continue
