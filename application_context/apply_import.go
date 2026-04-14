@@ -837,6 +837,14 @@ func (s *applyState) applySeries() error {
 				series.Meta = m
 			}
 		}
+		// Idempotency: a row with this slug may already exist from a
+		// prior partial apply that was retried. Reuse its ID rather
+		// than hitting the unique slug constraint.
+		var existing models.Series
+		if err := s.ctx.db.Where("slug = ?", series.Slug).First(&existing).Error; err == nil {
+			s.idMap[sm.ExportID] = existing.ID
+			continue
+		}
 		if err := s.ctx.db.Create(&series).Error; err != nil {
 			return fmt.Errorf("create series %q: %w", series.Name, err)
 		}

@@ -1912,3 +1912,64 @@ func TestApplyImport_RetryIsIdempotentForPayloadlessSchemaDefs(t *testing.T) {
 		t.Errorf("retry created duplicate tag: count=%d", got)
 	}
 }
+
+// TestApplyImport_RetryAfterSeriesCreatedIsIdempotent verifies that when a
+// partial apply created a new Series row and the plan is restored, the
+// retry does NOT fail on the unique slug constraint. Same retry pattern
+// as the schema-def idempotency tests, specialised to the series path.
+func TestApplyImport_RetryAfterSeriesCreatedIsIdempotent(t *testing.T) {
+	srcCtx := createGUIDIsolatedContext(t, "retry_series_src")
+
+	series := models.Series{Name: "Vol", Slug: "retry-series-slug"}
+	if err := srcCtx.db.Create(&series).Error; err != nil {
+		t.Fatal(err)
+	}
+	root := mustCreateGroup(t, srcCtx, "RetrySeriesRoot", nil)
+	res := mustCreateResource(t, srcCtx, "series-res.txt", &root.ID, []byte("SERIES_RES"))
+	if err := srcCtx.db.Model(res).Update("series_id", series.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	var tarBuf bytes.Buffer
+	if err := srcCtx.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{root.ID},
+		Scope:        archive.ExportScope{Subtree: true, OwnedResources: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true, ResourceSeries: true},
+	}, &tarBuf, func(ev ProgressEvent) {}); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	dstCtx := createGUIDIsolatedContext(t, "retry_series_dst")
+
+	jobID := "test-retry-series"
+	tarPath := filepath.Join("_imports", jobID+".tar")
+	dstCtx.fs.MkdirAll("_imports", 0755)
+	afero.WriteFile(dstCtx.fs, tarPath, tarBuf.Bytes(), 0644)
+
+	plan, err := dstCtx.ParseImport(context.Background(), jobID, tarPath)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	decisions := buildDefaultDecisions(plan)
+
+	// First apply: creates the series (dst is empty, so plan's SeriesInfo
+	// entry has Action="create").
+	if _, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+	var seriesCount int64
+	dstCtx.db.Model(&models.Series{}).Where("slug = ?", "retry-series-slug").Count(&seriesCount)
+	if seriesCount != 1 {
+		t.Fatalf("expected 1 series row after first apply, got %d", seriesCount)
+	}
+
+	// Retry with the same plan (which still says Action="create"). Must
+	// not fail on the unique slug constraint.
+	if _, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+		t.Fatalf("retry apply: %v", err)
+	}
+	dstCtx.db.Model(&models.Series{}).Where("slug = ?", "retry-series-slug").Count(&seriesCount)
+	if seriesCount != 1 {
+		t.Errorf("retry duplicated series: count=%d", seriesCount)
+	}
+}
