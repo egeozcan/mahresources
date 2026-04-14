@@ -147,12 +147,10 @@ func (ctx *MahresourcesContext) getExistingThumbnail(
 	httpContext context.Context,
 ) (models.Preview, error) {
 	var thumbnail models.Preview
+	// Use raw SQL conditions: GORM's struct-based Where silently drops zero-valued
+	// fields, which would cause width=0 or height=0 to match arbitrary rows.
 	err := ctx.db.WithContext(httpContext).
-		Where(&models.Preview{
-			Width:      width,
-			Height:     height,
-			ResourceId: &resourceId,
-		}).
+		Where("resource_id = ? AND width = ? AND height = ?", resourceId, width, height).
 		Omit(clause.Associations).
 		First(&thumbnail).Error
 	return thumbnail, err
@@ -179,12 +177,10 @@ func (ctx *MahresourcesContext) getOrCreateNullThumbnail(
 	var nullThumbnail models.Preview
 	var fileBytes []byte
 
+	// Use raw SQL: GORM's struct Where would drop the Width=0 and Height=0
+	// conditions and return any preview row for the resource.
 	err := ctx.db.WithContext(httpContext).
-		Where(&models.Preview{
-			Width:      0,
-			Height:     0,
-			ResourceId: &resource.ID,
-		}).
+		Where("resource_id = ? AND width = 0 AND height = 0", resource.ID).
 		Omit(clause.Associations).
 		First(&nullThumbnail).Error
 
