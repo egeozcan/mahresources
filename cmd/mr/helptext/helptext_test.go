@@ -52,9 +52,6 @@ func TestLoadExampleHasNoLeadingNewline(t *testing.T) {
 	if strings.HasPrefix(h.Example, "\n") {
 		t.Errorf("Example has leading newline: %q", h.Example)
 	}
-	if strings.HasPrefix(h.Example, " \n") {
-		t.Errorf("Example has leading space+newline: %q", h.Example)
-	}
 	trimmed := strings.TrimLeft(h.Example, " \t")
 	if !strings.HasPrefix(trimmed, "#") {
 		t.Errorf("Example first non-whitespace char should be #, got: %q", h.Example)
