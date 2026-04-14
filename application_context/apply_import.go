@@ -378,6 +378,10 @@ func (s *applyState) applySchemaDefDecisions() error {
 				cat.CustomAvatar = def.CustomAvatar
 				cat.CustomMRQLResult = def.CustomMRQLResult
 				cat.MetaSchema = def.MetaSchema
+				if def.GUID != "" {
+					guid := def.GUID
+					cat.GUID = &guid
+				}
 				if def.SectionConfig != nil {
 					sc, _ := json.Marshal(def.SectionConfig)
 					cat.SectionConfig = sc
@@ -433,6 +437,10 @@ func (s *applyState) applySchemaDefDecisions() error {
 				nt.CustomAvatar = def.CustomAvatar
 				nt.CustomMRQLResult = def.CustomMRQLResult
 				nt.MetaSchema = def.MetaSchema
+				if def.GUID != "" {
+					guid := def.GUID
+					nt.GUID = &guid
+				}
 				if def.SectionConfig != nil {
 					sc, _ := json.Marshal(def.SectionConfig)
 					nt.SectionConfig = sc
@@ -489,6 +497,10 @@ func (s *applyState) applySchemaDefDecisions() error {
 				rc.CustomMRQLResult = def.CustomMRQLResult
 				rc.MetaSchema = def.MetaSchema
 				rc.AutoDetectRules = def.AutoDetectRules
+				if def.GUID != "" {
+					guid := def.GUID
+					rc.GUID = &guid
+				}
 				if def.SectionConfig != nil {
 					sc, _ := json.Marshal(def.SectionConfig)
 					rc.SectionConfig = sc
@@ -538,6 +550,10 @@ func (s *applyState) applySchemaDefDecisions() error {
 			if def := findTagDef(s.collector.tagDefs, entry.SourceExportID); def != nil {
 				tag.Name = def.Name
 				tag.Description = def.Description
+				if def.GUID != "" {
+					guid := def.GUID
+					tag.GUID = &guid
+				}
 				if def.Meta != nil {
 					m, _ := json.Marshal(def.Meta)
 					tag.Meta = m
@@ -594,6 +610,10 @@ func (s *applyState) applySchemaDefDecisions() error {
 			if def := findGRTDef(s.collector.grtDefs, entry.SourceExportID); def != nil {
 				grt.Name = def.Name
 				grt.Description = def.Description
+				if def.GUID != "" {
+					guid := def.GUID
+					grt.GUID = &guid
+				}
 				// Resolve FromCategoryId via already-mapped categories
 				if def.FromCategoryName != "" {
 					fromKey := DecisionKeyFor("category", MappingEntry{SourceKey: def.FromCategoryName})

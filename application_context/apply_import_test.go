@@ -1524,3 +1524,143 @@ func TestApplyImport_ReplaceUsesAttachedFs(t *testing.T) {
 		t.Errorf("main fs unexpectedly contains %q — replaceResource wrote to wrong backend", altLocation)
 	}
 }
+
+// TestApplyImport_PreservesSchemaDefGUIDsOnCreate verifies that the create
+// paths for Category, NoteType, ResourceCategory, Tag, and GroupRelationType
+// copy the archive's GUID into the new row, so the GUID-first resolver can
+// track schema definitions across subsequent imports.
+func TestApplyImport_PreservesSchemaDefGUIDsOnCreate(t *testing.T) {
+	srcCtx := createGUIDIsolatedContext(t, "schema_guid_src")
+
+	// Source schema definitions.
+	cat := &models.Category{Name: "SchemaCat"}
+	if err := srcCtx.db.Create(cat).Error; err != nil {
+		t.Fatal(err)
+	}
+	noteType := &models.NoteType{Name: "SchemaNoteType"}
+	if err := srcCtx.db.Create(noteType).Error; err != nil {
+		t.Fatal(err)
+	}
+	rc := &models.ResourceCategory{Name: "SchemaRC"}
+	if err := srcCtx.db.Create(rc).Error; err != nil {
+		t.Fatal(err)
+	}
+	tag := &models.Tag{Name: "schema-tag"}
+	if err := srcCtx.db.Create(tag).Error; err != nil {
+		t.Fatal(err)
+	}
+	grt := &models.GroupRelationType{Name: "schema-grt"}
+	if err := srcCtx.db.Create(grt).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	root := mustCreateGroup(t, srcCtx, "SchemaRoot", nil)
+	srcCtx.db.Model(root).Update("category_id", cat.ID)
+	if err := srcCtx.db.Model(root).Association("Tags").Append(tag); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wire a resource to `rc` so the ResourceCategory def actually gets exported.
+	res := mustCreateResource(t, srcCtx, "schema-res.txt", &root.ID, []byte("SCHEMA_RES"))
+	srcCtx.db.Model(res).Update("resource_category_id", rc.ID)
+
+	// Create a second group and a GroupRelation of type `grt` so the GRT def gets exported.
+	otherGroup := mustCreateGroup(t, srcCtx, "SchemaOther", nil)
+	relation := &models.GroupRelation{
+		FromGroupId:    &root.ID,
+		ToGroupId:      &otherGroup.ID,
+		RelationTypeId: &grt.ID,
+	}
+	if err := srcCtx.db.Create(relation).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	note := mustCreateNote(t, srcCtx, "SchemaNote", &root.ID)
+	srcCtx.db.Model(note).Update("note_type_id", noteType.ID)
+
+	// Reload to capture auto-generated GUIDs.
+	srcCtx.db.First(cat, cat.ID)
+	srcCtx.db.First(noteType, noteType.ID)
+	srcCtx.db.First(rc, rc.ID)
+	srcCtx.db.First(tag, tag.ID)
+	srcCtx.db.First(grt, grt.ID)
+	for label, ptr := range map[string]*string{
+		"cat":      cat.GUID,
+		"noteType": noteType.GUID,
+		"rc":       rc.GUID,
+		"tag":      tag.GUID,
+		"grt":      grt.GUID,
+	} {
+		if ptr == nil {
+			t.Fatalf("source %s GUID is nil", label)
+		}
+	}
+
+	var tarBuf bytes.Buffer
+	if err := srcCtx.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{root.ID},
+		Scope:        archive.ExportScope{Subtree: true, OwnedResources: true, OwnedNotes: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true},
+		SchemaDefs: archive.ExportSchemaDefs{
+			CategoriesAndTypes: true,
+			Tags:               true,
+			GroupRelationTypes: true,
+		},
+	}, &tarBuf, func(ev ProgressEvent) {}); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	dstCtx := createGUIDIsolatedContext(t, "schema_guid_dst")
+
+	jobID := "test-schema-guid-preserve"
+	tarPath := filepath.Join("_imports", jobID+".tar")
+	dstCtx.fs.MkdirAll("_imports", 0755)
+	afero.WriteFile(dstCtx.fs, tarPath, tarBuf.Bytes(), 0644)
+
+	plan, err := dstCtx.ParseImport(context.Background(), jobID, tarPath)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	decisions := buildDefaultDecisions(plan)
+	if _, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	check := func(t *testing.T, label string, load func() (*string, error), want string) {
+		t.Helper()
+		got, err := load()
+		if err != nil {
+			t.Fatalf("%s: load failed: %v", label, err)
+		}
+		if got == nil || *got != want {
+			t.Errorf("%s: GUID = %v, want %q", label, got, want)
+		}
+	}
+
+	check(t, "Category", func() (*string, error) {
+		var c models.Category
+		err := dstCtx.db.Where("name = ?", "SchemaCat").First(&c).Error
+		return c.GUID, err
+	}, *cat.GUID)
+	check(t, "NoteType", func() (*string, error) {
+		var nt models.NoteType
+		err := dstCtx.db.Where("name = ?", "SchemaNoteType").First(&nt).Error
+		return nt.GUID, err
+	}, *noteType.GUID)
+	check(t, "ResourceCategory", func() (*string, error) {
+		var r models.ResourceCategory
+		err := dstCtx.db.Where("name = ?", "SchemaRC").First(&r).Error
+		return r.GUID, err
+	}, *rc.GUID)
+	check(t, "Tag", func() (*string, error) {
+		var tg models.Tag
+		err := dstCtx.db.Where("name = ?", "schema-tag").First(&tg).Error
+		return tg.GUID, err
+	}, *tag.GUID)
+	check(t, "GroupRelationType", func() (*string, error) {
+		var rt models.GroupRelationType
+		err := dstCtx.db.Where("name = ?", "schema-grt").First(&rt).Error
+		return rt.GUID, err
+	}, *grt.GUID)
+}
