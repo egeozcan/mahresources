@@ -333,6 +333,22 @@ func (s *applyState) resolveTagIDs(refs []archive.TagRef) []uint {
 	return ids
 }
 
+// findSchemaDefByGUID looks up a schema-def row by GUID so retries after a
+// partial apply reuse rows created on a prior run instead of hitting the
+// unique constraint. Returns (id, true) on match, (0, false) otherwise.
+// guid == nil (fresh import) short-circuits to (0, false).
+func (s *applyState) findSchemaDefByGUID(model any, guid *string) (uint, bool) {
+	if guid == nil || *guid == "" {
+		return 0, false
+	}
+	var id uint
+	err := s.ctx.db.Model(model).Where("guid = ?", *guid).Limit(1).Pluck("id", &id).Error
+	if err != nil || id == 0 {
+		return 0, false
+	}
+	return id, true
+}
+
 // applySchemaDefDecisions resolves categories, note types, resource categories,
 // tags, and group relation types according to the user's mapping decisions.
 // For each entry: "map" reuses an existing DB row, "create" inserts a new one.
@@ -387,6 +403,16 @@ func (s *applyState) applySchemaDefDecisions() error {
 					cat.SectionConfig = sc
 				}
 			}
+		}
+		// Idempotency: a row with this GUID may already exist from a prior
+		// partial apply that was retried. Reuse it rather than hitting the
+		// unique constraint.
+		if id, found := s.findSchemaDefByGUID(&models.Category{}, cat.GUID); found {
+			s.idMap[entry.DecisionKey] = id
+			if entry.SourceExportID != "" {
+				s.idMap[entry.SourceExportID] = id
+			}
+			continue
 		}
 		if err := s.ctx.db.Create(&cat).Error; err != nil {
 			return fmt.Errorf("create category %q: %w", cat.Name, err)
@@ -446,6 +472,14 @@ func (s *applyState) applySchemaDefDecisions() error {
 					nt.SectionConfig = sc
 				}
 			}
+		}
+		// Idempotency: reuse an existing GUID-matched row on retry.
+		if id, found := s.findSchemaDefByGUID(&models.NoteType{}, nt.GUID); found {
+			s.idMap[entry.DecisionKey] = id
+			if entry.SourceExportID != "" {
+				s.idMap[entry.SourceExportID] = id
+			}
+			continue
 		}
 		if err := s.ctx.db.Create(&nt).Error; err != nil {
 			return fmt.Errorf("create note type %q: %w", nt.Name, err)
@@ -507,6 +541,14 @@ func (s *applyState) applySchemaDefDecisions() error {
 				}
 			}
 		}
+		// Idempotency: reuse an existing GUID-matched row on retry.
+		if id, found := s.findSchemaDefByGUID(&models.ResourceCategory{}, rc.GUID); found {
+			s.idMap[entry.DecisionKey] = id
+			if entry.SourceExportID != "" {
+				s.idMap[entry.SourceExportID] = id
+			}
+			continue
+		}
 		if err := s.ctx.db.Create(&rc).Error; err != nil {
 			return fmt.Errorf("create resource category %q: %w", rc.Name, err)
 		}
@@ -559,6 +601,14 @@ func (s *applyState) applySchemaDefDecisions() error {
 					tag.Meta = m
 				}
 			}
+		}
+		// Idempotency: reuse an existing GUID-matched row on retry.
+		if id, found := s.findSchemaDefByGUID(&models.Tag{}, tag.GUID); found {
+			s.idMap[entry.DecisionKey] = id
+			if entry.SourceExportID != "" {
+				s.idMap[entry.SourceExportID] = id
+			}
+			continue
 		}
 		if err := s.ctx.db.Create(&tag).Error; err != nil {
 			return fmt.Errorf("create tag %q: %w", tag.Name, err)
@@ -637,6 +687,14 @@ func (s *applyState) applySchemaDefDecisions() error {
 					}
 				}
 			}
+		}
+		// Idempotency: reuse an existing GUID-matched row on retry.
+		if id, found := s.findSchemaDefByGUID(&models.GroupRelationType{}, grt.GUID); found {
+			s.idMap[entry.DecisionKey] = id
+			if entry.SourceExportID != "" {
+				s.idMap[entry.SourceExportID] = id
+			}
+			continue
 		}
 		if err := s.ctx.db.Create(&grt).Error; err != nil {
 			return fmt.Errorf("create GRT %q: %w", grt.Name, err)

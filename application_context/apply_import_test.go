@@ -1724,3 +1724,95 @@ func TestApplyImport_PreservesSchemaDefGUIDsOnCreate(t *testing.T) {
 		return rt.GUID, err
 	}, *grt.GUID)
 }
+
+// TestApplyImport_RetryAfterPartialApplyIsIdempotent verifies that applying
+// the same plan twice does NOT fail on UNIQUE constraint violations for
+// schema definitions. This is the recovery path after a partial apply
+// failure (e.g., post-commit blob copy failure): the plan is restored and
+// the user retries with the same decisions. Schema defs created by the
+// first run must be detected by GUID and reused, not re-created.
+func TestApplyImport_RetryAfterPartialApplyIsIdempotent(t *testing.T) {
+	srcCtx := createGUIDIsolatedContext(t, "retry_idempotent_src")
+
+	// Source schema defs with payloads (so they end up in the archive).
+	cat := &models.Category{Name: "RetryCat"}
+	if err := srcCtx.db.Create(cat).Error; err != nil {
+		t.Fatal(err)
+	}
+	noteType := &models.NoteType{Name: "RetryNoteType"}
+	if err := srcCtx.db.Create(noteType).Error; err != nil {
+		t.Fatal(err)
+	}
+	tag := &models.Tag{Name: "retry-tag"}
+	if err := srcCtx.db.Create(tag).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	root := mustCreateGroup(t, srcCtx, "RetryRoot", nil)
+	srcCtx.db.Model(root).Update("category_id", cat.ID)
+	if err := srcCtx.db.Model(root).Association("Tags").Append(tag); err != nil {
+		t.Fatal(err)
+	}
+	note := mustCreateNote(t, srcCtx, "RetryNote", &root.ID)
+	srcCtx.db.Model(note).Update("note_type_id", noteType.ID)
+
+	var tarBuf bytes.Buffer
+	if err := srcCtx.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{root.ID},
+		Scope:        archive.ExportScope{Subtree: true, OwnedResources: true, OwnedNotes: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true},
+		SchemaDefs:   archive.ExportSchemaDefs{CategoriesAndTypes: true, Tags: true},
+	}, &tarBuf, func(ev ProgressEvent) {}); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	dstCtx := createGUIDIsolatedContext(t, "retry_idempotent_dst")
+
+	jobID := "test-retry-idempotent"
+	tarPath := filepath.Join("_imports", jobID+".tar")
+	dstCtx.fs.MkdirAll("_imports", 0755)
+	afero.WriteFile(dstCtx.fs, tarPath, tarBuf.Bytes(), 0644)
+
+	plan, err := dstCtx.ParseImport(context.Background(), jobID, tarPath)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	decisions := buildDefaultDecisions(plan)
+
+	// First apply — succeeds, creates schema defs.
+	if _, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+
+	countRow := func(table, name string) int64 {
+		var n int64
+		dstCtx.db.Table(table).Where("name = ?", name).Count(&n)
+		return n
+	}
+	if got := countRow("categories", "RetryCat"); got != 1 {
+		t.Fatalf("expected 1 RetryCat after first apply, got %d", got)
+	}
+	if got := countRow("note_types", "RetryNoteType"); got != 1 {
+		t.Fatalf("expected 1 RetryNoteType after first apply, got %d", got)
+	}
+	if got := countRow("tags", "retry-tag"); got != 1 {
+		t.Fatalf("expected 1 retry-tag after first apply, got %d", got)
+	}
+
+	// Retry with the same plan + decisions — must succeed without duplicating.
+	// LoadImportPlan falls back to .plan.applied.json so the second call
+	// resolves the plan even after the normal handler flow has renamed it.
+	if _, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+		t.Fatalf("retry apply: %v", err)
+	}
+
+	if got := countRow("categories", "RetryCat"); got != 1 {
+		t.Errorf("expected 1 RetryCat after retry, got %d", got)
+	}
+	if got := countRow("note_types", "RetryNoteType"); got != 1 {
+		t.Errorf("expected 1 RetryNoteType after retry, got %d", got)
+	}
+	if got := countRow("tags", "retry-tag"); got != 1 {
+		t.Errorf("expected 1 retry-tag after retry, got %d", got)
+	}
+}
