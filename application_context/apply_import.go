@@ -59,7 +59,9 @@ func (ctx *MahresourcesContext) ApplyImport(
 		blobPaths:          make(map[string]string),
 		previewData:        make(map[string][]byte),
 		createdResourceIDs: make(map[string]bool),
-		result:             &ImportApplyResult{},
+		// RetrySafe defaults true — Phase 1 collection flips it false for
+		// legacy pre-GUID archives that would duplicate groups/notes on retry.
+		result: &ImportApplyResult{RetrySafe: true},
 	}
 
 	collector, err := state.collectAndWriteBlobs(tarPath)
@@ -68,6 +70,7 @@ func (ctx *MahresourcesContext) ApplyImport(
 		return nil, err
 	}
 	state.collector = collector
+	state.markLegacyIfNeeded()
 
 	// --- Phase 2: create DB entities in batched transactions ---
 	// From this point on, every error return includes state.result so the
@@ -331,6 +334,29 @@ func (s *applyState) resolveTagIDs(refs []archive.TagRef) []uint {
 		}
 	}
 	return ids
+}
+
+// markLegacyIfNeeded scans the collected payloads for groups or notes that
+// lack a GUID. If any are missing one, the archive predates entity GUIDs
+// and retrying the same plan against a partially-committed DB would
+// duplicate those rows — group and note names aren't uniquely indexed, so
+// applyGroups/applyNotes have no way to detect the prior-run survivors.
+// In that case, mark the result retry-unsafe so the handler skips its
+// plan restore and the user must re-upload the archive to get a fresh
+// parse that sees the current DB state.
+func (s *applyState) markLegacyIfNeeded() {
+	for _, gp := range s.collector.groups {
+		if gp.GUID == "" {
+			s.result.RetrySafe = false
+			return
+		}
+	}
+	for _, np := range s.collector.notes {
+		if np.GUID == "" {
+			s.result.RetrySafe = false
+			return
+		}
+	}
 }
 
 // findSchemaDefByGUID looks up a schema-def row by GUID so retries after a

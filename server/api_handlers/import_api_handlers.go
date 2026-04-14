@@ -284,12 +284,17 @@ func buildImportApplyRunFn(ctx GroupImporter, parseJobID, consumedPlanPath strin
 		}
 
 		if err != nil {
-			// Restore the plan so POST /apply works again. Without this,
-			// GetImportApplyHandler's "already applied or expired" 409 check
-			// would block the retry path that our error messages advise.
-			planPath := filepath.Join("_imports", parseJobID+".plan.json")
-			if renameErr := ctx.GetDefaultFs().Rename(consumedPlanPath, planPath); renameErr != nil {
-				sink.AppendWarning(fmt.Sprintf("could not restore plan for retry: %v", renameErr))
+			// Restore the plan so POST /apply works again — but only when
+			// the archive is retry-safe. Legacy pre-GUID archives would
+			// duplicate groups/notes on replay (names aren't uniquely
+			// indexed); the user must re-upload to get a fresh parse.
+			// result == nil means ApplyImport failed before Phase 1 finished
+			// (no DB writes yet), which is also safe to restore.
+			if result == nil || result.RetrySafe {
+				planPath := filepath.Join("_imports", parseJobID+".plan.json")
+				if renameErr := ctx.GetDefaultFs().Rename(consumedPlanPath, planPath); renameErr != nil {
+					sink.AppendWarning(fmt.Sprintf("could not restore plan for retry: %v", renameErr))
+				}
 			}
 			return err
 		}

@@ -174,6 +174,16 @@ type ImportApplyResult struct {
 	CreatedGroupIDs    []uint `json:"created_group_ids,omitempty"`
 	CreatedResourceIDs []uint `json:"created_resource_ids,omitempty"`
 	CreatedNoteIDs     []uint `json:"created_note_ids,omitempty"`
+
+	// RetrySafe is true when the archive carries a GUID on every group and
+	// note, so replaying the same plan against a partially-committed DB
+	// won't duplicate rows (GUID collision handling and schema-def GUID/name
+	// idempotency cover the rest). Pre-GUID "legacy" archives set this to
+	// false — the handler must NOT restore the plan on failure, because
+	// retrying would insert a second copy of the tree (group/note names
+	// aren't uniquely indexed). Defaults true; flipped false by
+	// markLegacyIfNeeded() after Phase 1 collection.
+	RetrySafe bool `json:"retry_safe"`
 }
 
 func (p *ImportPlan) HasUnresolvedAmbiguities(decisions *ImportDecisions) bool {
