@@ -1523,6 +1523,66 @@ func TestApplyImport_ReplaceUsesAttachedFs(t *testing.T) {
 	if exists, _ := afero.Exists(dstCtx.fs, altLocation); exists {
 		t.Errorf("main fs unexpectedly contains %q — replaceResource wrote to wrong backend", altLocation)
 	}
+
+	// The staging temp file must not linger after a successful copy.
+	tmpPath := altLocation + ".mrimport.tmp"
+	if exists, _ := afero.Exists(altFs, tmpPath); exists {
+		t.Errorf("temp staging file %q still exists after successful replace", tmpPath)
+	}
+}
+
+// TestApplyImport_ReplaceBlobCopyFailureFailsImport verifies that when the
+// post-commit blob copy can't be performed (e.g., storage_location points to
+// an unattached alt fs), the import returns an error rather than silently
+// committing stale-blob state.
+func TestApplyImport_ReplaceBlobCopyFailureFailsImport(t *testing.T) {
+	srcCtx := createGUIDIsolatedContext(t, "altfs_replace_fail_src")
+	root := mustCreateGroup(t, srcCtx, "AltFsFailRoot", nil)
+	res := mustCreateResource(t, srcCtx, "altfs-fail.txt", &root.ID, []byte("NEW_BYTES"))
+	srcCtx.db.First(res, res.ID)
+
+	// Dst: seed a resource with StorageLocation pointing to an alt fs that
+	// is NOT attached. GetFsForStorageLocation fails when copyBlob runs.
+	dstCtx := createGUIDIsolatedContext(t, "altfs_replace_fail_dst")
+	missing := "nonexistent-altfs"
+	preRes := &models.Resource{
+		Name:               "DstFailRes",
+		GUID:               res.GUID,
+		Hash:               res.Hash,
+		HashType:           "SHA1",
+		Location:           "alt/fail.txt",
+		StorageLocation:    &missing,
+		ResourceCategoryId: 1,
+	}
+	if err := dstCtx.db.Create(preRes).Error; err != nil {
+		t.Fatalf("seed dst resource: %v", err)
+	}
+
+	var tarBuf bytes.Buffer
+	if err := srcCtx.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{root.ID},
+		Scope:        archive.ExportScope{Subtree: true, OwnedResources: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true},
+	}, &tarBuf, func(ev ProgressEvent) {}); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	jobID := "test-altfs-replace-fail"
+	tarPath := filepath.Join("_imports", jobID+".tar")
+	dstCtx.fs.MkdirAll("_imports", 0755)
+	afero.WriteFile(dstCtx.fs, tarPath, tarBuf.Bytes(), 0644)
+
+	plan, err := dstCtx.ParseImport(context.Background(), jobID, tarPath)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	decisions := buildDefaultDecisions(plan)
+	decisions.GUIDCollisionPolicy = "replace"
+
+	if _, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err == nil {
+		t.Fatal("expected ApplyImport to fail when alt fs is not attached, got nil")
+	}
 }
 
 // TestApplyImport_PreservesSchemaDefGUIDsOnCreate verifies that the create

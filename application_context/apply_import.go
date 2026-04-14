@@ -867,41 +867,60 @@ func (b *batchAccumulator) mergeInto(r *ImportApplyResult) {
 }
 
 // performPendingBlobCopies runs the deferred blob copies for a successfully
-// committed batch. Failures here are post-commit, so they cannot roll back
-// the DB write — they are recorded as warnings instead so the user can
-// retry the import.
-func (s *applyState) performPendingBlobCopies(copies []pendingBlobCopy) {
+// committed batch. The DB rows are already committed by the time we get here,
+// so any failure leaves DB and disk out of sync. Returning an error makes the
+// import fail loudly, signalling the user to re-run (the GUID-replace path is
+// idempotent). copyBlob itself writes via temp+rename so a mid-write failure
+// never corrupts the live file.
+func (s *applyState) performPendingBlobCopies(copies []pendingBlobCopy) error {
 	for _, c := range copies {
 		if err := s.copyBlob(c); err != nil {
-			s.result.Warnings = append(s.result.Warnings,
-				fmt.Sprintf("post-commit blob copy for resource %q failed: %v (re-run import to retry)", c.resourceName, err))
+			return fmt.Errorf("post-commit blob copy for resource %q failed (DB metadata already updated; re-run the import with GUIDCollisionPolicy=replace to retry): %w", c.resourceName, err)
 		}
 	}
+	return nil
 }
 
-// copyBlob copies the new blob bytes from the import staging area to the
-// resource's actual storage backend. Uses GetFsForStorageLocation so
-// attached (alt-fs) resources are written through the right Afero fs.
+// importTempBlobSuffix is appended to the destination path while staging a
+// replacement blob. The final `Rename` is atomic on POSIX filesystems and on
+// Afero's MemMapFs, so the live file is never observed mid-write.
+const importTempBlobSuffix = ".mrimport.tmp"
+
+// copyBlob stages the new blob bytes on the resource's actual storage
+// backend (alt-fs aware) and atomically renames them into place. Any failure
+// — including a missing alt fs, a disk-full mid-write, or a failed Close —
+// leaves the live file untouched.
 func (s *applyState) copyBlob(c pendingBlobCopy) error {
+	dstFs, err := s.ctx.GetFsForStorageLocation(c.storageLocation)
+	if err != nil {
+		return fmt.Errorf("resolve storage backend: %w", err)
+	}
+
 	srcFile, err := s.ctx.fs.Open(c.src)
 	if err != nil {
 		return fmt.Errorf("open replacement blob: %w", err)
 	}
 	defer srcFile.Close()
 
-	dstFs, err := s.ctx.GetFsForStorageLocation(c.storageLocation)
+	tmpPath := c.dst + importTempBlobSuffix
+	dstFile, err := dstFs.Create(tmpPath)
 	if err != nil {
-		return fmt.Errorf("resolve storage backend: %w", err)
+		return fmt.Errorf("create staging blob %q: %w", tmpPath, err)
 	}
 
-	dstFile, err := dstFs.Create(c.dst)
-	if err != nil {
-		return fmt.Errorf("create replacement blob: %w", err)
+	if _, copyErr := io.Copy(dstFile, srcFile); copyErr != nil {
+		dstFile.Close()
+		_ = dstFs.Remove(tmpPath)
+		return fmt.Errorf("write staging blob: %w", copyErr)
 	}
-	defer dstFile.Close()
+	if closeErr := dstFile.Close(); closeErr != nil {
+		_ = dstFs.Remove(tmpPath)
+		return fmt.Errorf("close staging blob: %w", closeErr)
+	}
 
-	if _, err := io.Copy(dstFile, srcFile); err != nil {
-		return fmt.Errorf("copy replacement blob: %w", err)
+	if err := dstFs.Rename(tmpPath, c.dst); err != nil {
+		_ = dstFs.Remove(tmpPath)
+		return fmt.Errorf("rename staging blob %q -> %q: %w", tmpPath, c.dst, err)
 	}
 	return nil
 }
@@ -962,10 +981,13 @@ func (s *applyState) applyResources() error {
 		// Merge only after successful commit.
 		batchResult.mergeInto(s.result)
 
-		// Now that the tx is durable, run any deferred blob copies. Errors
-		// here are surfaced as warnings rather than failing the import,
-		// because the DB rows are already committed.
-		s.performPendingBlobCopies(batchResult.pendingBlobCopies)
+		// Now that the tx is durable, run any deferred blob copies. Any
+		// failure here leaves DB and on-disk state out of sync — fail the
+		// import so the user is signalled to retry (the GUID-replace path
+		// is idempotent).
+		if err := s.performPendingBlobCopies(batchResult.pendingBlobCopies); err != nil {
+			return fmt.Errorf("batch %d: %w", batchNum, err)
+		}
 
 		s.sink.SetPhaseProgress(int64(batchEnd), int64(len(entries)))
 	}
