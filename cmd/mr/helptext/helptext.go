@@ -59,6 +59,9 @@ func parse(s string) (Help, error) {
 			inFrontMatter = false
 			continue
 		case inFrontMatter:
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
 			idx := strings.Index(line, ":")
 			if idx < 0 {
 				return Help{}, fmt.Errorf("front matter line %d missing colon: %q", lineNum, line)
@@ -91,7 +94,7 @@ func parse(s string) (Help, error) {
 	}
 
 	longStr := strings.TrimSpace(long.String())
-	exampleStr := strings.TrimRight(example.String(), "\n")
+	exampleStr := strings.TrimSpace(example.String())
 	if longStr == "" {
 		return Help{}, fmt.Errorf("missing `# Long` section")
 	}

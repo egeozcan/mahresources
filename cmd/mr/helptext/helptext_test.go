@@ -46,3 +46,27 @@ func TestLoadMalformedFrontMatterPanics(t *testing.T) {
 	}()
 	Load(testFS, "testdata/malformed_front_matter.md")
 }
+
+func TestLoadExampleHasNoLeadingNewline(t *testing.T) {
+	h := Load(testFS, "testdata/valid.md")
+	if strings.HasPrefix(h.Example, "\n") {
+		t.Errorf("Example has leading newline: %q", h.Example)
+	}
+	if strings.HasPrefix(h.Example, " \n") {
+		t.Errorf("Example has leading space+newline: %q", h.Example)
+	}
+	trimmed := strings.TrimLeft(h.Example, " \t")
+	if !strings.HasPrefix(trimmed, "#") {
+		t.Errorf("Example first non-whitespace char should be #, got: %q", h.Example)
+	}
+}
+
+func TestLoadFrontMatterAllowsBlankLines(t *testing.T) {
+	h := Load(testFS, "testdata/blank_line_in_front_matter.md")
+	if got, want := h.Annotations["outputShape"], "Resource object"; got != want {
+		t.Errorf("Annotations[outputShape] = %q, want %q", got, want)
+	}
+	if got, want := h.Annotations["exitCodes"], "0 on success; 1 on any error"; got != want {
+		t.Errorf("Annotations[exitCodes] = %q, want %q", got, want)
+	}
+}
