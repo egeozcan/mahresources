@@ -346,6 +346,11 @@ func (s *applyState) resolveTagIDs(refs []archive.TagRef) []uint {
 //     M2M wiring (skip policy) or inserts a duplicate row (non-skip
 //     policies);
 //
+//   - any NoteTypeDef lacks a GUID: note_type name is not uniquely
+//     indexed and the "create" action may intentionally produce a new
+//     same-named row, so we can't use name-based idempotency. Without
+//     GUID-based idempotency, retry would silently duplicate the def;
+//
 //   - GUIDCollisionPolicy == "skip": on retry, the rows created by the
 //     first run now trigger the GUID collision path and land in the skip
 //     branches, which add them to skippedM2M. applyM2MLinks then drops
@@ -374,6 +379,12 @@ func (s *applyState) evaluateRetrySafety() {
 	}
 	for _, rp := range s.collector.resources {
 		if rp.GUID == "" {
+			s.result.RetrySafe = false
+			return
+		}
+	}
+	for _, nt := range s.collector.noteTypeDefs {
+		if nt.GUID == "" {
 			s.result.RetrySafe = false
 			return
 		}
@@ -573,19 +584,14 @@ func (s *applyState) applySchemaDefDecisions() error {
 				}
 			}
 		}
-		// Idempotency: reuse an existing GUID-matched or name-matched row
-		// on retry. NoteType has no unique-name index so the bug from
-		// missing this fallback is silent duplication rather than a
-		// constraint failure; resolveNoteTypeID would then repoint notes
-		// at the duplicate.
+		// Idempotency: reuse an existing GUID-matched row on retry. We
+		// intentionally do NOT fall back to a name lookup here — NoteType
+		// name is not uniquely indexed, and the UI lets users insist on
+		// "create" even when an existing row shares the name. Silently
+		// reusing by name would override that choice. Retry-safety for
+		// no-GUID NoteTypeDefs is handled at the gate in
+		// evaluateRetrySafety instead (forces the user to re-upload).
 		if id, found := s.findSchemaDefByGUID(&models.NoteType{}, nt.GUID); found {
-			s.idMap[entry.DecisionKey] = id
-			if entry.SourceExportID != "" {
-				s.idMap[entry.SourceExportID] = id
-			}
-			continue
-		}
-		if id, found := s.findSchemaDefByName(&models.NoteType{}, nt.Name); found {
 			s.idMap[entry.DecisionKey] = id
 			if entry.SourceExportID != "" {
 				s.idMap[entry.SourceExportID] = id

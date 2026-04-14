@@ -1974,15 +1974,105 @@ func TestApplyImport_RetryAfterSeriesCreatedIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestApplyImport_RetryIsIdempotentForPayloadlessNoteTypeAndGRT verifies
-// retry idempotency for NoteTypeDef and GroupRelationTypeDef entries
-// shipped without a GUID. NoteType has no unique name index so the bug
-// is silent duplication; GRT has a composite (name+from_cat+to_cat)
-// unique index so the bug is a hard UNIQUE constraint failure.
-func TestApplyImport_RetryIsIdempotentForPayloadlessNoteTypeAndGRT(t *testing.T) {
-	ctx := createGUIDIsolatedContext(t, "retry_nt_grt_noguid")
+// TestApplyImport_NoGUIDNoteTypeCreateRespectsUserChoice verifies that
+// when the user explicitly picks Action="create" for a no-GUID
+// NoteTypeDef whose name matches an existing row, the apply inserts a
+// new row instead of silently remapping to the old one. NoteType has no
+// unique-name index so duplicate names are a valid, intentional choice.
+func TestApplyImport_NoGUIDNoteTypeCreateRespectsUserChoice(t *testing.T) {
+	ctx := createGUIDIsolatedContext(t, "noguid_nt_explicit_create")
 
-	ntName := "NoGUIDRetryNoteType"
+	// Pre-existing NoteType in dst DB with the same name the archive uses.
+	existing := &models.NoteType{Name: "DupNoteType"}
+	if err := ctx.db.Create(existing).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	w, err := archive.NewWriter(&buf, false)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	if err := w.WriteManifest(&archive.Manifest{
+		SchemaVersion: 1,
+		CreatedAt:     time.Now().UTC(),
+		CreatedBy:     "test",
+		Roots:         []string{"g0001"},
+		Counts:        archive.Counts{Groups: 1},
+		ExportOptions: archive.ExportOptions{
+			SchemaDefs: archive.ExportSchemaDefs{CategoriesAndTypes: true},
+		},
+		Entries: archive.Entries{
+			Groups: []archive.GroupEntry{
+				{ExportID: "g0001", Name: "Anchor", SourceID: 1, Path: "groups/g0001.json"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	if err := w.WriteNoteTypeDefs([]archive.NoteTypeDef{{
+		ExportID: "nt0001",
+		SourceID: 1,
+		Name:     "DupNoteType",
+		// GUID intentionally absent.
+	}}); err != nil {
+		t.Fatalf("WriteNoteTypeDefs: %v", err)
+	}
+	if err := w.WriteGroup(&archive.GroupPayload{
+		ExportID:  "g0001",
+		SourceID:  1,
+		Name:      "Anchor",
+		GUID:      "019d8a00-0000-7000-8000-000000000040",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("WriteGroup: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	jobID := "noguid-nt-explicit-create"
+	tarPath := filepath.Join("_imports", jobID+".tar")
+	ctx.fs.MkdirAll("_imports", 0755)
+	afero.WriteFile(ctx.fs, tarPath, buf.Bytes(), 0644)
+
+	plan, err := ctx.ParseImport(context.Background(), jobID, tarPath)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	decisions := buildDefaultDecisions(plan)
+	// Explicitly override any NoteType mapping to create — mirrors the UI
+	// letting users insist on a new row even when the parse suggests map.
+	for _, entry := range plan.Mappings.NoteTypes {
+		decisions.MappingActions[entry.DecisionKey] = MappingAction{
+			Include: true,
+			Action:  "create",
+		}
+	}
+
+	if _, err := ctx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var count int64
+	ctx.db.Model(&models.NoteType{}).Where("name = ?", "DupNoteType").Count(&count)
+	if count != 2 {
+		t.Errorf("expected 2 DupNoteType rows after explicit create, got %d", count)
+	}
+}
+
+// TestApplyImport_RetryIsIdempotentForPayloadlessGRT verifies retry
+// idempotency for a GroupRelationTypeDef shipped without a GUID. GRT has
+// a composite (name+from_cat+to_cat) unique index, and the composite
+// tuple uniquely identifies the schema semantic — so name+cats-based
+// reuse is safe. NoteType is deliberately NOT covered by the same kind
+// of retry idempotency because its name is non-unique and duplicate
+// names can be a valid "create" choice; no-GUID NoteTypeDefs are gated
+// as retry-unsafe instead.
+func TestApplyImport_RetryIsIdempotentForPayloadlessGRT(t *testing.T) {
+	ctx := createGUIDIsolatedContext(t, "retry_grt_noguid")
+
 	grtName := "noguid-retry-grt"
 
 	var buf bytes.Buffer
@@ -1997,10 +2087,7 @@ func TestApplyImport_RetryIsIdempotentForPayloadlessNoteTypeAndGRT(t *testing.T)
 		Roots:         []string{"g0001"},
 		Counts:        archive.Counts{Groups: 1},
 		ExportOptions: archive.ExportOptions{
-			SchemaDefs: archive.ExportSchemaDefs{
-				CategoriesAndTypes: true,
-				GroupRelationTypes: true,
-			},
+			SchemaDefs: archive.ExportSchemaDefs{GroupRelationTypes: true},
 		},
 		Entries: archive.Entries{
 			Groups: []archive.GroupEntry{
@@ -2010,18 +2097,6 @@ func TestApplyImport_RetryIsIdempotentForPayloadlessNoteTypeAndGRT(t *testing.T)
 	}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
-	// NoteTypeDef with no GUID — resolveNoteTypes will plan this as create
-	// on a fresh dst DB, then local BeforeCreate assigns a GUID that the
-	// restored plan still doesn't carry.
-	if err := w.WriteNoteTypeDefs([]archive.NoteTypeDef{{
-		ExportID: "nt0001",
-		SourceID: 1,
-		Name:     ntName,
-	}}); err != nil {
-		t.Fatalf("WriteNoteTypeDefs: %v", err)
-	}
-	// GRTDef with no GUID and no from/to cats. resolveGRTDefs plans this
-	// as create; second run must not fail on unique_rel_type.
 	if err := w.WriteGroupRelationTypeDefs([]archive.GroupRelationTypeDef{{
 		ExportID: "rt0001",
 		SourceID: 1,
@@ -2043,7 +2118,7 @@ func TestApplyImport_RetryIsIdempotentForPayloadlessNoteTypeAndGRT(t *testing.T)
 		t.Fatalf("close writer: %v", err)
 	}
 
-	jobID := "test-retry-nt-grt"
+	jobID := "test-retry-grt"
 	tarPath := filepath.Join("_imports", jobID+".tar")
 	ctx.fs.MkdirAll("_imports", 0755)
 	afero.WriteFile(ctx.fs, tarPath, buf.Bytes(), 0644)
@@ -2063,21 +2138,89 @@ func TestApplyImport_RetryIsIdempotentForPayloadlessNoteTypeAndGRT(t *testing.T)
 		ctx.db.Table(table).Where("name = ?", name).Count(&n)
 		return n
 	}
-	if got := countRow("note_types", ntName); got != 1 {
-		t.Fatalf("expected 1 note type after first apply, got %d", got)
-	}
 	if got := countRow("group_relation_types", grtName); got != 1 {
 		t.Fatalf("expected 1 GRT after first apply, got %d", got)
 	}
 
-	// Retry with the same plan — no duplicates, no UNIQUE failures.
 	if _, err := ctx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
 		t.Fatalf("retry apply: %v", err)
 	}
-	if got := countRow("note_types", ntName); got != 1 {
-		t.Errorf("retry duplicated note type: count=%d", got)
-	}
 	if got := countRow("group_relation_types", grtName); got != 1 {
 		t.Errorf("retry duplicated GRT: count=%d", got)
+	}
+}
+
+// TestApplyImport_NoGUIDNoteTypeDefMarksRetryUnsafe verifies that an
+// archive carrying a NoteTypeDef without a GUID flips RetrySafe=false,
+// forcing a re-upload instead of a restored-plan retry (retry would
+// silently duplicate the def since name isn't uniquely indexed and we
+// can't distinguish a prior-run create from a user's explicit create).
+func TestApplyImport_NoGUIDNoteTypeDefMarksRetryUnsafe(t *testing.T) {
+	ctx := createGUIDIsolatedContext(t, "noguid_nt_unsafe")
+
+	var buf bytes.Buffer
+	w, err := archive.NewWriter(&buf, false)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	if err := w.WriteManifest(&archive.Manifest{
+		SchemaVersion: 1,
+		CreatedAt:     time.Now().UTC(),
+		CreatedBy:     "test",
+		Roots:         []string{"g0001"},
+		Counts:        archive.Counts{Groups: 1},
+		ExportOptions: archive.ExportOptions{
+			SchemaDefs: archive.ExportSchemaDefs{CategoriesAndTypes: true},
+		},
+		Entries: archive.Entries{
+			Groups: []archive.GroupEntry{
+				{ExportID: "g0001", Name: "Anchor", SourceID: 1, Path: "groups/g0001.json"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	if err := w.WriteNoteTypeDefs([]archive.NoteTypeDef{{
+		ExportID: "nt0001",
+		SourceID: 1,
+		Name:     "UnsafeNoGUIDNT",
+		// GUID intentionally absent.
+	}}); err != nil {
+		t.Fatalf("WriteNoteTypeDefs: %v", err)
+	}
+	if err := w.WriteGroup(&archive.GroupPayload{
+		ExportID:  "g0001",
+		SourceID:  1,
+		Name:      "Anchor",
+		GUID:      "019d8a00-0000-7000-8000-000000000050",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("WriteGroup: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	jobID := "noguid-nt-unsafe"
+	tarPath := filepath.Join("_imports", jobID+".tar")
+	ctx.fs.MkdirAll("_imports", 0755)
+	afero.WriteFile(ctx.fs, tarPath, buf.Bytes(), 0644)
+
+	plan, err := ctx.ParseImport(context.Background(), jobID, tarPath)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	decisions := buildDefaultDecisions(plan)
+
+	result, err := ctx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.RetrySafe {
+		t.Error("expected RetrySafe=false when archive carries a NoteTypeDef without a GUID")
 	}
 }
