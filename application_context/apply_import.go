@@ -813,6 +813,17 @@ func (s *applyState) applyGroups() error {
 	return walk(s.plan.Items)
 }
 
+// pendingBlobCopy describes a blob copy that must run AFTER the surrounding
+// transaction commits, so a rolled-back tx never leaves a partially written
+// or truncated file behind. The destination is resolved through the
+// resource's storage backend (alt-fs aware), not bare ctx.fs.
+type pendingBlobCopy struct {
+	src             string
+	dst             string
+	storageLocation *string
+	resourceName    string
+}
+
 // batchAccumulator buffers result additions within a batch transaction. Only
 // merged into the main ImportApplyResult after a successful tx.Commit(), so a
 // rolled-back batch never leaks uncommitted IDs into the persisted cleanup payload.
@@ -823,6 +834,7 @@ type batchAccumulator struct {
 	createdPreviews    int
 	createdNotes       int
 	createdNoteIDs     []uint
+	pendingBlobCopies  []pendingBlobCopy
 }
 
 func (b *batchAccumulator) mergeInto(r *ImportApplyResult) {
@@ -832,6 +844,46 @@ func (b *batchAccumulator) mergeInto(r *ImportApplyResult) {
 	r.CreatedPreviews += b.createdPreviews
 	r.CreatedNotes += b.createdNotes
 	r.CreatedNoteIDs = append(r.CreatedNoteIDs, b.createdNoteIDs...)
+}
+
+// performPendingBlobCopies runs the deferred blob copies for a successfully
+// committed batch. Failures here are post-commit, so they cannot roll back
+// the DB write — they are recorded as warnings instead so the user can
+// retry the import.
+func (s *applyState) performPendingBlobCopies(copies []pendingBlobCopy) {
+	for _, c := range copies {
+		if err := s.copyBlob(c); err != nil {
+			s.result.Warnings = append(s.result.Warnings,
+				fmt.Sprintf("post-commit blob copy for resource %q failed: %v (re-run import to retry)", c.resourceName, err))
+		}
+	}
+}
+
+// copyBlob copies the new blob bytes from the import staging area to the
+// resource's actual storage backend. Uses GetFsForStorageLocation so
+// attached (alt-fs) resources are written through the right Afero fs.
+func (s *applyState) copyBlob(c pendingBlobCopy) error {
+	srcFile, err := s.ctx.fs.Open(c.src)
+	if err != nil {
+		return fmt.Errorf("open replacement blob: %w", err)
+	}
+	defer srcFile.Close()
+
+	dstFs, err := s.ctx.GetFsForStorageLocation(c.storageLocation)
+	if err != nil {
+		return fmt.Errorf("resolve storage backend: %w", err)
+	}
+
+	dstFile, err := dstFs.Create(c.dst)
+	if err != nil {
+		return fmt.Errorf("create replacement blob: %w", err)
+	}
+	defer dstFile.Close()
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		return fmt.Errorf("copy replacement blob: %w", err)
+	}
+	return nil
 }
 
 // resEntry pairs an export ID with its resource payload for ordered iteration.
@@ -889,6 +941,11 @@ func (s *applyState) applyResources() error {
 
 		// Merge only after successful commit.
 		batchResult.mergeInto(s.result)
+
+		// Now that the tx is durable, run any deferred blob copies. Errors
+		// here are surfaced as warnings rather than failing the import,
+		// because the DB rows are already committed.
+		s.performPendingBlobCopies(batchResult.pendingBlobCopies)
 
 		s.sink.SetPhaseProgress(int64(batchEnd), int64(len(entries)))
 	}
@@ -1238,24 +1295,18 @@ func (s *applyState) replaceResource(tx *gorm.DB, existing *models.Resource, rp 
 		updates["width"] = rp.Width
 		updates["height"] = rp.Height
 
-		// Replace blob on disk
+		// Defer the blob copy until after the tx commits so a rollback never
+		// leaves the existing file truncated or half-written. Resolve the
+		// destination filesystem from the resource's storage backend so
+		// attached (alt-fs) resources are written through the right Afero fs.
 		blobSrc := s.blobPaths[rp.Hash]
 		if existing.Location != "" && blobSrc != "" {
-			srcFile, err := s.ctx.fs.Open(blobSrc)
-			if err != nil {
-				return fmt.Errorf("open replacement blob: %w", err)
-			}
-			defer srcFile.Close()
-
-			dstFile, err := s.ctx.fs.Create(existing.GetCleanLocation())
-			if err != nil {
-				return fmt.Errorf("create replacement blob: %w", err)
-			}
-			defer dstFile.Close()
-
-			if _, err := io.Copy(dstFile, srcFile); err != nil {
-				return fmt.Errorf("copy replacement blob: %w", err)
-			}
+			batch.pendingBlobCopies = append(batch.pendingBlobCopies, pendingBlobCopy{
+				src:             blobSrc,
+				dst:             existing.GetCleanLocation(),
+				storageLocation: existing.StorageLocation,
+				resourceName:    rp.Name,
+			})
 		}
 
 		// Delete existing versions and previews

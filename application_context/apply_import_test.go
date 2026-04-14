@@ -1441,3 +1441,86 @@ func TestApplyImport_PreservesGUIDsOnCreate(t *testing.T) {
 		t.Errorf("dst note GUID = %v, want %q", dstNote.GUID, srcNoteGUID)
 	}
 }
+
+// TestApplyImport_ReplaceUsesAttachedFs verifies that replaceResource writes
+// the new blob bytes to the resource's attached filesystem (StorageLocation),
+// not the main fs. With the bug, ctx.fs.Create(existing.GetCleanLocation())
+// writes to the main fs instead of the alt fs, so reads through
+// GetFsForStorageLocation continue to serve the old content.
+func TestApplyImport_ReplaceUsesAttachedFs(t *testing.T) {
+	srcCtx := createGUIDIsolatedContext(t, "altfs_replace_src")
+
+	root := mustCreateGroup(t, srcCtx, "AltFsReplaceRoot", nil)
+	originalContent := []byte("ORIGINAL_BYTES")
+	res := mustCreateResource(t, srcCtx, "altfs.txt", &root.ID, originalContent)
+	srcCtx.db.First(root, root.ID)
+	srcCtx.db.First(res, res.ID)
+
+	// --- Destination: pre-seed the resource on an attached filesystem ---
+	dstCtx := createGUIDIsolatedContext(t, "altfs_replace_dst")
+	altFs := afero.NewMemMapFs()
+	dstCtx.altFileSystems["altfs"] = altFs
+
+	altLocation := "alt/" + res.Hash + ".txt"
+	if err := afero.WriteFile(altFs, altLocation, []byte("OLD_ALT_BYTES"), 0644); err != nil {
+		t.Fatalf("seed alt blob: %v", err)
+	}
+	storage := "altfs"
+	preRes := &models.Resource{
+		Name:               "DstAltRes",
+		GUID:               res.GUID,
+		Hash:               res.Hash,
+		HashType:           "SHA1",
+		FileSize:           int64(len("OLD_ALT_BYTES")),
+		Location:           altLocation,
+		StorageLocation:    &storage,
+		ResourceCategoryId: 1,
+	}
+	if err := dstCtx.db.Create(preRes).Error; err != nil {
+		t.Fatalf("seed dst resource: %v", err)
+	}
+
+	// --- Export ---
+	var tarBuf bytes.Buffer
+	if err := srcCtx.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{root.ID},
+		Scope:        archive.ExportScope{Subtree: true, OwnedResources: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true},
+	}, &tarBuf, func(ev ProgressEvent) {}); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	jobID := "test-altfs-replace"
+	tarPath := filepath.Join("_imports", jobID+".tar")
+	dstCtx.fs.MkdirAll("_imports", 0755)
+	afero.WriteFile(dstCtx.fs, tarPath, tarBuf.Bytes(), 0644)
+
+	plan, err := dstCtx.ParseImport(context.Background(), jobID, tarPath)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	decisions := buildDefaultDecisions(plan)
+	decisions.GUIDCollisionPolicy = "replace"
+
+	if _, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	// After replace, the bytes on the alt fs at altLocation must match the
+	// archived original blob (the import wrote through the right backend).
+	gotAlt, err := afero.ReadFile(altFs, altLocation)
+	if err != nil {
+		t.Fatalf("read alt blob after replace: %v", err)
+	}
+	if !bytes.Equal(gotAlt, originalContent) {
+		t.Errorf("alt blob content after replace = %q, want %q", gotAlt, originalContent)
+	}
+
+	// The main fs must NOT have been written at the alt's relative path.
+	// (With the bug, ctx.fs.Create(existing.GetCleanLocation()) writes to
+	// main fs at altLocation.)
+	if exists, _ := afero.Exists(dstCtx.fs, altLocation); exists {
+		t.Errorf("main fs unexpectedly contains %q — replaceResource wrote to wrong backend", altLocation)
+	}
+}
