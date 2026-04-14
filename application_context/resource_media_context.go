@@ -301,40 +301,52 @@ func decodeImageDimensions(data []byte) (uint, uint, error) {
 }
 
 // computeActualTargetDims derives the pixel dimensions a thumbnail should
-// actually have, applying caps and preserving the resource's aspect ratio
-// when one axis is zero. Returns the requested values unchanged when the
-// resource has unknown dims (zero width or height) — callers then pass
-// those zeros to the resize library which derives the missing axis from
-// the source image.
+// actually have. Mirrors the legacy behavior of capping the explicitly
+// requested axes against MaxThumbWidth/MaxThumbHeight while letting the
+// auto-derived axis follow the source aspect ratio (which may itself
+// exceed MaxThumb for extreme aspect ratios — same as imaging.Resize
+// would produce when given a zero axis).
+//
+// Returns zero-bearing requested values unchanged when the resource has
+// unknown dims, so callers pass those zeros to the resize library which
+// derives the missing axis from the source image.
 func computeActualTargetDims(resource models.Resource, reqW, reqH uint) (uint, uint) {
+	// Cap requested dims first — matches the previous LoadOrCreateThumbnailForResource
+	// behavior of clamping the user-provided width/height up front.
+	if float64(reqW) > constants.MaxThumbWidth {
+		reqW = uint(constants.MaxThumbWidth)
+	}
+	if float64(reqH) > constants.MaxThumbHeight {
+		reqH = uint(constants.MaxThumbHeight)
+	}
+
 	rW, rH := resource.Width, resource.Height
 	knownAspect := rW > 0 && rH > 0
 
-	var iW, iH float64
-	switch {
-	case reqW > 0 && reqH > 0:
-		iW, iH = float64(reqW), float64(reqH)
-	case reqW == 0 && reqH == 0:
+	if reqW > 0 && reqH > 0 {
+		return reqW, reqH
+	}
+	if reqW == 0 && reqH == 0 {
 		if !knownAspect {
 			return 0, 0
 		}
-		iW, iH = float64(rW), float64(rH)
-	case reqW > 0:
-		if !knownAspect {
-			return reqW, 0
-		}
-		iW = float64(reqW)
-		iH = iW * float64(rH) / float64(rW)
-	default: // reqH > 0, reqW == 0
-		if !knownAspect {
-			return 0, reqH
-		}
-		iH = float64(reqH)
-		iW = iH * float64(rW) / float64(rH)
+		// Both axes auto: scale the source down so neither exceeds its cap.
+		iW, iH := float64(rW), float64(rH)
+		scale := math.Min(1.0, math.Min(constants.MaxThumbWidth/iW, constants.MaxThumbHeight/iH))
+		return uint(math.Round(iW * scale)), uint(math.Round(iH * scale))
 	}
-
-	scale := math.Min(1.0, math.Min(constants.MaxThumbWidth/iW, constants.MaxThumbHeight/iH))
-	return uint(math.Round(iW * scale)), uint(math.Round(iH * scale))
+	if !knownAspect {
+		return reqW, reqH
+	}
+	// One axis specified; derive the other from the resource aspect ratio.
+	// The derived axis is intentionally NOT clamped to MaxThumb so we match
+	// imaging.Resize's existing behavior when called with one zero axis.
+	if reqW > 0 {
+		h := float64(reqW) * float64(rH) / float64(rW)
+		return reqW, uint(math.Round(h))
+	}
+	w := float64(reqH) * float64(rW) / float64(rH)
+	return uint(math.Round(w)), reqH
 }
 
 // generateImageThumbnail resizes the provided image data to the desired dimensions.

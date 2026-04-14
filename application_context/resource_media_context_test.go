@@ -1,7 +1,13 @@
 package application_context
 
 import (
+	"bytes"
+	"image"
+	"image/color"
 	"testing"
+
+	"github.com/disintegration/imaging"
+	"mahresources/models"
 )
 
 func TestGetJPEGQuality(t *testing.T) {
@@ -188,5 +194,79 @@ func TestParseFFmpegError(t *testing.T) {
 				t.Errorf("parseFFmpegError() category = %q, want %q", gotCategory, tt.wantCategory)
 			}
 		})
+	}
+}
+
+func TestComputeActualTargetDims(t *testing.T) {
+	tests := []struct {
+		name              string
+		resourceW, resourceH uint
+		reqW, reqH        uint
+		wantW, wantH      uint
+	}{
+		// Both axes zero, known aspect — full size scaled to fit MaxThumb (600).
+		{"both zero, 1920x1080", 1920, 1080, 0, 0, 600, 338},
+		{"both zero, 1000x1000", 1000, 1000, 0, 0, 600, 600},
+
+		// Height only, known aspect — width derived from aspect ratio, no
+		// implicit cap on the derived axis (matches imaging.Resize behavior).
+		{"h-only, 1920x1080", 1920, 1080, 0, 400, 711, 400},
+		{"h-only, 2000x1500 (the bug repro)", 2000, 1500, 0, 400, 533, 400},
+		{"h-only portrait, 1000x2000", 1000, 2000, 0, 400, 200, 400},
+
+		// Width only, known aspect — height derived.
+		{"w-only, 1920x1080", 1920, 1080, 200, 0, 200, 113},
+
+		// Both axes specified — passed through, capped, square shape preserved.
+		{"forced square 64x64", 1920, 1080, 64, 64, 64, 64},
+		{"forced square 96x96", 1920, 1080, 96, 96, 96, 96},
+		{"forced 700x700, capped to MaxThumb", 1920, 1080, 700, 700, 600, 600},
+
+		// Requested axis above cap is clamped first; derived axis follows.
+		{"req w above cap derives capped", 1920, 1080, 700, 0, 600, 338},
+		{"req h above cap derives capped", 1920, 1080, 0, 700, 1067, 600},
+
+		// Resource dims unknown — pass-through (zeros allowed for resize lib to derive).
+		{"unknown resource, h-only", 0, 0, 0, 400, 0, 400},
+		{"unknown resource, w-only", 0, 0, 200, 0, 200, 0},
+		{"unknown resource, both zero", 0, 0, 0, 0, 0, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := models.Resource{Width: tt.resourceW, Height: tt.resourceH}
+			gotW, gotH := computeActualTargetDims(res, tt.reqW, tt.reqH)
+			if gotW != tt.wantW || gotH != tt.wantH {
+				t.Errorf("computeActualTargetDims(W=%d,H=%d, req=%d,%d) = (%d, %d); want (%d, %d)",
+					tt.resourceW, tt.resourceH, tt.reqW, tt.reqH, gotW, gotH, tt.wantW, tt.wantH)
+			}
+		})
+	}
+}
+
+func TestDecodeImageDimensions(t *testing.T) {
+	// Build a tiny 17x29 JPEG in memory and assert the helper recovers those dims.
+	src := image.NewRGBA(image.Rect(0, 0, 17, 29))
+	for x := 0; x < 17; x++ {
+		for y := 0; y < 29; y++ {
+			src.Set(x, y, color.RGBA{R: uint8(x * 10), G: uint8(y * 5), B: 0, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := imaging.Encode(&buf, src, imaging.JPEG, imaging.JPEGQuality(80)); err != nil {
+		t.Fatalf("encode jpeg: %v", err)
+	}
+
+	w, h, err := decodeImageDimensions(buf.Bytes())
+	if err != nil {
+		t.Fatalf("decodeImageDimensions: %v", err)
+	}
+	if w != 17 || h != 29 {
+		t.Errorf("decodeImageDimensions = (%d, %d); want (17, 29)", w, h)
+	}
+
+	// Invalid bytes should error, not panic.
+	if _, _, err := decodeImageDimensions([]byte("not an image")); err == nil {
+		t.Error("expected error for invalid bytes; got nil")
 	}
 }
