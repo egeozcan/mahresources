@@ -1363,3 +1363,81 @@ func TestApplyImport_GUIDSkipDoesNotPolluteM2MLinks(t *testing.T) {
 	assertM2MCount("post resource_tags", "resource_tags", "resource_id", preRes.ID, 0)
 	assertM2MCount("post note_tags", "note_tags", "note_id", preNote.ID, 0)
 }
+
+// TestApplyImport_PreservesGUIDsOnCreate verifies that the create paths for
+// Group, Note, and Resource copy the archive's GUID into the new row, so a
+// clean-instance import preserves identity for round-tripping.
+func TestApplyImport_PreservesGUIDsOnCreate(t *testing.T) {
+	srcCtx := createGUIDIsolatedContext(t, "guid_preserve_src")
+
+	root := mustCreateGroup(t, srcCtx, "PreserveRoot", nil)
+	res := mustCreateResource(t, srcCtx, "preserve.txt", &root.ID, []byte("PRESERVE_BLOB"))
+	note := mustCreateNote(t, srcCtx, "PreserveNote", &root.ID)
+
+	// Reload to capture the auto-generated GUIDs from BeforeCreate.
+	srcCtx.db.First(root, root.ID)
+	srcCtx.db.First(res, res.ID)
+	srcCtx.db.First(note, note.ID)
+
+	if root.GUID == nil || res.GUID == nil || note.GUID == nil {
+		t.Fatalf("expected source rows to have GUIDs after create: group=%v res=%v note=%v",
+			root.GUID, res.GUID, note.GUID)
+	}
+	srcGroupGUID := *root.GUID
+	srcResGUID := *res.GUID
+	srcNoteGUID := *note.GUID
+
+	var tarBuf bytes.Buffer
+	if err := srcCtx.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{root.ID},
+		Scope:        archive.ExportScope{Subtree: true, OwnedResources: true, OwnedNotes: true},
+		Fidelity:     archive.ExportFidelity{ResourceBlobs: true},
+	}, &tarBuf, func(ev ProgressEvent) {}); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	// Destination uses an isolated DB so the create paths are exercised
+	// (no GUID collision branch).
+	dstCtx := createGUIDIsolatedContext(t, "guid_preserve_dst")
+
+	jobID := "test-preserve-guids"
+	tarPath := filepath.Join("_imports", jobID+".tar")
+	dstCtx.fs.MkdirAll("_imports", 0755)
+	afero.WriteFile(dstCtx.fs, tarPath, tarBuf.Bytes(), 0644)
+
+	plan, err := dstCtx.ParseImport(context.Background(), jobID, tarPath)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	decisions := buildDefaultDecisions(plan)
+	decisions.GUIDCollisionPolicy = "merge" // irrelevant — no collisions in fresh dst
+
+	if _, err := dstCtx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var dstGroup models.Group
+	if err := dstCtx.db.Where("name = ?", "PreserveRoot").First(&dstGroup).Error; err != nil {
+		t.Fatalf("load dst group: %v", err)
+	}
+	if dstGroup.GUID == nil || *dstGroup.GUID != srcGroupGUID {
+		t.Errorf("dst group GUID = %v, want %q", dstGroup.GUID, srcGroupGUID)
+	}
+
+	var dstRes models.Resource
+	if err := dstCtx.db.Where("name = ?", "preserve.txt").First(&dstRes).Error; err != nil {
+		t.Fatalf("load dst resource: %v", err)
+	}
+	if dstRes.GUID == nil || *dstRes.GUID != srcResGUID {
+		t.Errorf("dst resource GUID = %v, want %q", dstRes.GUID, srcResGUID)
+	}
+
+	var dstNote models.Note
+	if err := dstCtx.db.Where("name = ?", "PreserveNote").First(&dstNote).Error; err != nil {
+		t.Fatalf("load dst note: %v", err)
+	}
+	if dstNote.GUID == nil || *dstNote.GUID != srcNoteGUID {
+		t.Errorf("dst note GUID = %v, want %q", dstNote.GUID, srcNoteGUID)
+	}
+}

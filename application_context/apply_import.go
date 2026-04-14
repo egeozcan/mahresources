@@ -749,6 +749,10 @@ func (s *applyState) applyGroups() error {
 				Name:        gp.Name,
 				Description: gp.Description,
 			}
+			if gp.GUID != "" {
+				guid := gp.GUID
+				g.GUID = &guid
+			}
 
 			// Meta
 			if gp.Meta != nil {
@@ -969,6 +973,10 @@ func (s *applyState) applyOneResource(tx *gorm.DB, exportID string, rp *archive.
 		ContentCategory:  rp.ContentCategory,
 		CreatedAt:        rp.CreatedAt,
 		UpdatedAt:        rp.UpdatedAt,
+	}
+	if rp.GUID != "" {
+		guid := rp.GUID
+		r.GUID = &guid
 	}
 
 	// Resolve OwnerRef
@@ -1426,6 +1434,10 @@ func (s *applyState) applyOneNote(tx *gorm.DB, exportID string, np *archive.Note
 		UpdatedAt:   np.UpdatedAt,
 		StartDate:   np.StartDate,
 		EndDate:     np.EndDate,
+	}
+	if np.GUID != "" {
+		guid := np.GUID
+		n.GUID = &guid
 	}
 
 	// Resolve OwnerRef
