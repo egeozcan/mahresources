@@ -349,6 +349,24 @@ func (s *applyState) findSchemaDefByGUID(model any, guid *string) (uint, bool) {
 	return id, true
 }
 
+// findSchemaDefByName is the name-based fallback for retry idempotency when
+// the archive carried no GUID (e.g., schema defs turned off at export time
+// so ParseImport synthesized name-only "create" mappings). A previous run
+// already inserted a row with this name and a locally-generated GUID; on
+// retry the unique-name index would otherwise fail the create. Only useful
+// for models with a unique name index: Category, ResourceCategory, Tag.
+func (s *applyState) findSchemaDefByName(model any, name string) (uint, bool) {
+	if name == "" {
+		return 0, false
+	}
+	var id uint
+	err := s.ctx.db.Model(model).Where("name = ?", name).Limit(1).Pluck("id", &id).Error
+	if err != nil || id == 0 {
+		return 0, false
+	}
+	return id, true
+}
+
 // applySchemaDefDecisions resolves categories, note types, resource categories,
 // tags, and group relation types according to the user's mapping decisions.
 // For each entry: "map" reuses an existing DB row, "create" inserts a new one.
@@ -404,10 +422,18 @@ func (s *applyState) applySchemaDefDecisions() error {
 				}
 			}
 		}
-		// Idempotency: a row with this GUID may already exist from a prior
-		// partial apply that was retried. Reuse it rather than hitting the
-		// unique constraint.
+		// Idempotency: a row with this GUID or unique name may already exist
+		// from a prior partial apply that was retried. Reuse it rather than
+		// hitting the unique constraint. Name is the fallback for archives
+		// that shipped no GUID (schema defs off at export).
 		if id, found := s.findSchemaDefByGUID(&models.Category{}, cat.GUID); found {
+			s.idMap[entry.DecisionKey] = id
+			if entry.SourceExportID != "" {
+				s.idMap[entry.SourceExportID] = id
+			}
+			continue
+		}
+		if id, found := s.findSchemaDefByName(&models.Category{}, cat.Name); found {
 			s.idMap[entry.DecisionKey] = id
 			if entry.SourceExportID != "" {
 				s.idMap[entry.SourceExportID] = id
@@ -541,8 +567,15 @@ func (s *applyState) applySchemaDefDecisions() error {
 				}
 			}
 		}
-		// Idempotency: reuse an existing GUID-matched row on retry.
+		// Idempotency: reuse an existing GUID- or name-matched row on retry.
 		if id, found := s.findSchemaDefByGUID(&models.ResourceCategory{}, rc.GUID); found {
+			s.idMap[entry.DecisionKey] = id
+			if entry.SourceExportID != "" {
+				s.idMap[entry.SourceExportID] = id
+			}
+			continue
+		}
+		if id, found := s.findSchemaDefByName(&models.ResourceCategory{}, rc.Name); found {
 			s.idMap[entry.DecisionKey] = id
 			if entry.SourceExportID != "" {
 				s.idMap[entry.SourceExportID] = id
@@ -602,8 +635,15 @@ func (s *applyState) applySchemaDefDecisions() error {
 				}
 			}
 		}
-		// Idempotency: reuse an existing GUID-matched row on retry.
+		// Idempotency: reuse an existing GUID- or name-matched row on retry.
 		if id, found := s.findSchemaDefByGUID(&models.Tag{}, tag.GUID); found {
+			s.idMap[entry.DecisionKey] = id
+			if entry.SourceExportID != "" {
+				s.idMap[entry.SourceExportID] = id
+			}
+			continue
+		}
+		if id, found := s.findSchemaDefByName(&models.Tag{}, tag.Name); found {
 			s.idMap[entry.DecisionKey] = id
 			if entry.SourceExportID != "" {
 				s.idMap[entry.SourceExportID] = id

@@ -1816,3 +1816,99 @@ func TestApplyImport_RetryAfterPartialApplyIsIdempotent(t *testing.T) {
 		t.Errorf("expected 1 retry-tag after retry, got %d", got)
 	}
 }
+
+// TestApplyImport_RetryIsIdempotentForPayloadlessSchemaDefs verifies that
+// retrying a partial apply works even when the plan's schema-def mappings
+// carried no GUID (HasPayload=false path, e.g., archive had schema defs
+// turned off so ParseImport synthesized name-only "create" mappings).
+// The first run inserts a row with a locally generated GUID; the restored
+// plan still has no GUID, so the GUID-based idempotency lookup misses.
+// The code must fall back to a name lookup to avoid the unique-name
+// constraint on the second run.
+func TestApplyImport_RetryIsIdempotentForPayloadlessSchemaDefs(t *testing.T) {
+	ctx := createGUIDIsolatedContext(t, "retry_noguid_payload")
+
+	catName := "NoGUIDRetryCat"
+	tagName := "noguid-retry-tag"
+
+	var buf bytes.Buffer
+	w, err := archive.NewWriter(&buf, false)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	if err := w.WriteManifest(&archive.Manifest{
+		SchemaVersion: 1,
+		CreatedAt:     time.Now().UTC(),
+		CreatedBy:     "test",
+		Roots:         []string{"g0001"},
+		Counts:        archive.Counts{Groups: 1},
+		ExportOptions: archive.ExportOptions{
+			SchemaDefs: archive.ExportSchemaDefs{
+				CategoriesAndTypes: false,
+				Tags:               false,
+				GroupRelationTypes: false,
+			},
+		},
+		Entries: archive.Entries{
+			Groups: []archive.GroupEntry{
+				{ExportID: "g0001", Name: "NoGUIDGroup", SourceID: 1, Path: "groups/g0001.json"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	if err := w.WriteGroup(&archive.GroupPayload{
+		ExportID:     "g0001",
+		SourceID:     1,
+		Name:         "NoGUIDGroup",
+		CategoryName: catName,
+		Tags:         []archive.TagRef{{Name: tagName}},
+		CreatedAt:    time.Now().UTC(),
+		UpdatedAt:    time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("WriteGroup: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	jobID := "test-retry-noguid"
+	tarPath := filepath.Join("_imports", jobID+".tar")
+	ctx.fs.MkdirAll("_imports", 0755)
+	afero.WriteFile(ctx.fs, tarPath, buf.Bytes(), 0644)
+
+	plan, err := ctx.ParseImport(context.Background(), jobID, tarPath)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	decisions := buildDefaultDecisions(plan)
+
+	if _, err := ctx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+
+	countRow := func(table, name string) int64 {
+		var n int64
+		ctx.db.Table(table).Where("name = ?", name).Count(&n)
+		return n
+	}
+	if got := countRow("categories", catName); got != 1 {
+		t.Fatalf("expected 1 %s after first apply, got %d", catName, got)
+	}
+	if got := countRow("tags", tagName); got != 1 {
+		t.Fatalf("expected 1 %s after first apply, got %d", tagName, got)
+	}
+
+	// Retry. The plan still has no GUIDs on the synthesized entries, so
+	// GUID lookup misses and name lookup must kick in.
+	if _, err := ctx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+		t.Fatalf("retry apply: %v", err)
+	}
+
+	if got := countRow("categories", catName); got != 1 {
+		t.Errorf("retry created duplicate category: count=%d", got)
+	}
+	if got := countRow("tags", tagName); got != 1 {
+		t.Errorf("retry created duplicate tag: count=%d", got)
+	}
+}
