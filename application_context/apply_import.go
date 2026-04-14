@@ -339,10 +339,12 @@ func (s *applyState) resolveTagIDs(refs []archive.TagRef) []uint {
 // evaluateRetrySafety decides whether replaying this plan against a DB that
 // might already hold rows from a prior partial run is safe. Unsafe when:
 //
-//   - any group or note in the archive lacks a GUID (legacy pre-GUID
-//     format): group/note names aren't uniquely indexed, so applyGroups /
-//     applyNotes can't recognize the prior-run rows and would duplicate
-//     the tree;
+//   - any group, note, or resource in the archive lacks a GUID (legacy
+//     pre-GUID format or mixed-format archive): group/note names aren't
+//     uniquely indexed, and a GUID-less resource falls into the hash
+//     collision branch of applyOneResource which either silently drops
+//     M2M wiring (skip policy) or inserts a duplicate row (non-skip
+//     policies);
 //
 //   - GUIDCollisionPolicy == "skip": on retry, the rows created by the
 //     first run now trigger the GUID collision path and land in the skip
@@ -366,6 +368,12 @@ func (s *applyState) evaluateRetrySafety() {
 	}
 	for _, np := range s.collector.notes {
 		if np.GUID == "" {
+			s.result.RetrySafe = false
+			return
+		}
+	}
+	for _, rp := range s.collector.resources {
+		if rp.GUID == "" {
 			s.result.RetrySafe = false
 			return
 		}
