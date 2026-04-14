@@ -875,7 +875,7 @@ func (b *batchAccumulator) mergeInto(r *ImportApplyResult) {
 func (s *applyState) performPendingBlobCopies(copies []pendingBlobCopy) error {
 	for _, c := range copies {
 		if err := s.copyBlob(c); err != nil {
-			return fmt.Errorf("post-commit blob copy for resource %q failed (DB metadata already updated; re-run the import with GUIDCollisionPolicy=replace to retry): %w", c.resourceName, err)
+			return fmt.Errorf("post-commit blob copy for resource %q failed (DB metadata already updated; fix the storage backend and re-apply the import — the GUID-replace path is idempotent and will finish the blob copy): %w", c.resourceName, err)
 		}
 	}
 	return nil

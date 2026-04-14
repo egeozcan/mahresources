@@ -284,6 +284,13 @@ func buildImportApplyRunFn(ctx GroupImporter, parseJobID, consumedPlanPath strin
 		}
 
 		if err != nil {
+			// Restore the plan so POST /apply works again. Without this,
+			// GetImportApplyHandler's "already applied or expired" 409 check
+			// would block the retry path that our error messages advise.
+			planPath := filepath.Join("_imports", parseJobID+".plan.json")
+			if renameErr := ctx.GetDefaultFs().Rename(consumedPlanPath, planPath); renameErr != nil {
+				sink.AppendWarning(fmt.Sprintf("could not restore plan for retry: %v", renameErr))
+			}
 			return err
 		}
 
