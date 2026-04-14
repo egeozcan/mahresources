@@ -383,12 +383,63 @@ func (s *applyState) evaluateRetrySafety() {
 			return
 		}
 	}
-	for _, nt := range s.collector.noteTypeDefs {
-		if nt.GUID == "" {
-			s.result.RetrySafe = false
-			return
+	if !s.noteTypeDefsAreRetrySafe() {
+		s.result.RetrySafe = false
+		return
+	}
+}
+
+// noteTypeDefsAreRetrySafe returns false only if the archive carries a
+// NoteTypeDef WITHOUT a GUID whose decision would take the create branch
+// of applySchemaDefDecisions. Mapped (or guid_rename/skip) no-GUID defs
+// stay retry-safe because replay would resolve to the same idMap entry
+// without creating a new row — NoteType's non-unique name is irrelevant
+// when no Create runs.
+func (s *applyState) noteTypeDefsAreRetrySafe() bool {
+	if len(s.collector.noteTypeDefs) == 0 {
+		return true
+	}
+	entryByExport := make(map[string]MappingEntry, len(s.plan.Mappings.NoteTypes))
+	for _, entry := range s.plan.Mappings.NoteTypes {
+		if entry.SourceExportID != "" {
+			entryByExport[entry.SourceExportID] = entry
 		}
 	}
+	for _, nt := range s.collector.noteTypeDefs {
+		if nt.GUID != "" {
+			continue
+		}
+		entry, ok := entryByExport[nt.ExportID]
+		if !ok {
+			// No decision entry for this def — applySchemaDefDecisions
+			// wouldn't process it, but treat as unsafe out of caution.
+			return false
+		}
+		action, has := s.decisions.MappingActions[entry.DecisionKey]
+		if decisionTakesCreatePath(action, has) {
+			return false
+		}
+	}
+	return true
+}
+
+// decisionTakesCreatePath mirrors applySchemaDefDecisions's branch order:
+// map (with DestinationID), guid_rename, skip, then fall-through create.
+// Returns true when the decision would reach the create branch.
+func decisionTakesCreatePath(action MappingAction, has bool) bool {
+	if !has {
+		return true // no decision → default create
+	}
+	if action.Action == "map" && action.DestinationID != nil {
+		return false
+	}
+	if action.Action == "guid_rename" {
+		return false
+	}
+	if !action.Include {
+		return false
+	}
+	return true
 }
 
 // findSchemaDefByGUID looks up a schema-def row by GUID so retries after a

@@ -2150,6 +2150,99 @@ func TestApplyImport_RetryIsIdempotentForPayloadlessGRT(t *testing.T) {
 	}
 }
 
+// TestApplyImport_NoGUIDNoteTypeMappedIsRetrySafe verifies that an
+// archive carrying a no-GUID NoteTypeDef stays retry-safe when the
+// user's decision is "map" (reuse existing). The create branch — which
+// is the actual risky path for duplication — is never taken on retry,
+// so restoring the plan and replaying is fine.
+func TestApplyImport_NoGUIDNoteTypeMappedIsRetrySafe(t *testing.T) {
+	ctx := createGUIDIsolatedContext(t, "noguid_nt_mapped_safe")
+
+	// Pre-create a NoteType so the no-GUID def's parse resolves to "map".
+	if err := ctx.db.Create(&models.NoteType{Name: "MapTargetNT"}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	w, err := archive.NewWriter(&buf, false)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	if err := w.WriteManifest(&archive.Manifest{
+		SchemaVersion: 1,
+		CreatedAt:     time.Now().UTC(),
+		CreatedBy:     "test",
+		Roots:         []string{"g0001"},
+		Counts:        archive.Counts{Groups: 1},
+		ExportOptions: archive.ExportOptions{
+			SchemaDefs: archive.ExportSchemaDefs{CategoriesAndTypes: true},
+		},
+		Entries: archive.Entries{
+			Groups: []archive.GroupEntry{
+				{ExportID: "g0001", Name: "Anchor", SourceID: 1, Path: "groups/g0001.json"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	if err := w.WriteNoteTypeDefs([]archive.NoteTypeDef{{
+		ExportID: "nt0001",
+		SourceID: 1,
+		Name:     "MapTargetNT",
+		// GUID intentionally absent.
+	}}); err != nil {
+		t.Fatalf("WriteNoteTypeDefs: %v", err)
+	}
+	if err := w.WriteGroup(&archive.GroupPayload{
+		ExportID:  "g0001",
+		SourceID:  1,
+		Name:      "Anchor",
+		GUID:      "019d8a00-0000-7000-8000-000000000060",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("WriteGroup: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	jobID := "noguid-nt-mapped-safe"
+	tarPath := filepath.Join("_imports", jobID+".tar")
+	ctx.fs.MkdirAll("_imports", 0755)
+	afero.WriteFile(ctx.fs, tarPath, buf.Bytes(), 0644)
+
+	plan, err := ctx.ParseImport(context.Background(), jobID, tarPath)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	// Sanity: parse suggested "map" for this entry (there's exactly one
+	// existing NoteType with the same name).
+	var mappedEntry *MappingEntry
+	for i := range plan.Mappings.NoteTypes {
+		if plan.Mappings.NoteTypes[i].SourceExportID == "nt0001" {
+			mappedEntry = &plan.Mappings.NoteTypes[i]
+			break
+		}
+	}
+	if mappedEntry == nil {
+		t.Fatal("no mapping entry for nt0001")
+	}
+	if mappedEntry.Suggestion != "map" {
+		t.Fatalf("expected Suggestion=map for no-GUID def with existing name match, got %q", mappedEntry.Suggestion)
+	}
+
+	decisions := buildDefaultDecisions(plan)
+
+	result, err := ctx.ApplyImport(context.Background(), jobID, decisions, noopSink{})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if !result.RetrySafe {
+		t.Error("expected RetrySafe=true when the no-GUID NoteType's decision is map")
+	}
+}
+
 // TestApplyImport_NoGUIDNoteTypeDefMarksRetryUnsafe verifies that an
 // archive carrying a NoteTypeDef without a GUID flips RetrySafe=false,
 // forcing a re-upload instead of a restored-plan retry (retry would
