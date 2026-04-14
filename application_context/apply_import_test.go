@@ -1973,3 +1973,111 @@ func TestApplyImport_RetryAfterSeriesCreatedIsIdempotent(t *testing.T) {
 		t.Errorf("retry duplicated series: count=%d", seriesCount)
 	}
 }
+
+// TestApplyImport_RetryIsIdempotentForPayloadlessNoteTypeAndGRT verifies
+// retry idempotency for NoteTypeDef and GroupRelationTypeDef entries
+// shipped without a GUID. NoteType has no unique name index so the bug
+// is silent duplication; GRT has a composite (name+from_cat+to_cat)
+// unique index so the bug is a hard UNIQUE constraint failure.
+func TestApplyImport_RetryIsIdempotentForPayloadlessNoteTypeAndGRT(t *testing.T) {
+	ctx := createGUIDIsolatedContext(t, "retry_nt_grt_noguid")
+
+	ntName := "NoGUIDRetryNoteType"
+	grtName := "noguid-retry-grt"
+
+	var buf bytes.Buffer
+	w, err := archive.NewWriter(&buf, false)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	if err := w.WriteManifest(&archive.Manifest{
+		SchemaVersion: 1,
+		CreatedAt:     time.Now().UTC(),
+		CreatedBy:     "test",
+		Roots:         []string{"g0001"},
+		Counts:        archive.Counts{Groups: 1},
+		ExportOptions: archive.ExportOptions{
+			SchemaDefs: archive.ExportSchemaDefs{
+				CategoriesAndTypes: true,
+				GroupRelationTypes: true,
+			},
+		},
+		Entries: archive.Entries{
+			Groups: []archive.GroupEntry{
+				{ExportID: "g0001", Name: "Anchor", SourceID: 1, Path: "groups/g0001.json"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	// NoteTypeDef with no GUID — resolveNoteTypes will plan this as create
+	// on a fresh dst DB, then local BeforeCreate assigns a GUID that the
+	// restored plan still doesn't carry.
+	if err := w.WriteNoteTypeDefs([]archive.NoteTypeDef{{
+		ExportID: "nt0001",
+		SourceID: 1,
+		Name:     ntName,
+	}}); err != nil {
+		t.Fatalf("WriteNoteTypeDefs: %v", err)
+	}
+	// GRTDef with no GUID and no from/to cats. resolveGRTDefs plans this
+	// as create; second run must not fail on unique_rel_type.
+	if err := w.WriteGroupRelationTypeDefs([]archive.GroupRelationTypeDef{{
+		ExportID: "rt0001",
+		SourceID: 1,
+		Name:     grtName,
+	}}); err != nil {
+		t.Fatalf("WriteGroupRelationTypeDefs: %v", err)
+	}
+	if err := w.WriteGroup(&archive.GroupPayload{
+		ExportID:  "g0001",
+		SourceID:  1,
+		Name:      "Anchor",
+		GUID:      "019d8a00-0000-7000-8000-000000000020",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("WriteGroup: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	jobID := "test-retry-nt-grt"
+	tarPath := filepath.Join("_imports", jobID+".tar")
+	ctx.fs.MkdirAll("_imports", 0755)
+	afero.WriteFile(ctx.fs, tarPath, buf.Bytes(), 0644)
+
+	plan, err := ctx.ParseImport(context.Background(), jobID, tarPath)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	decisions := buildDefaultDecisions(plan)
+
+	if _, err := ctx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+
+	countRow := func(table, name string) int64 {
+		var n int64
+		ctx.db.Table(table).Where("name = ?", name).Count(&n)
+		return n
+	}
+	if got := countRow("note_types", ntName); got != 1 {
+		t.Fatalf("expected 1 note type after first apply, got %d", got)
+	}
+	if got := countRow("group_relation_types", grtName); got != 1 {
+		t.Fatalf("expected 1 GRT after first apply, got %d", got)
+	}
+
+	// Retry with the same plan — no duplicates, no UNIQUE failures.
+	if _, err := ctx.ApplyImport(context.Background(), jobID, decisions, noopSink{}); err != nil {
+		t.Fatalf("retry apply: %v", err)
+	}
+	if got := countRow("note_types", ntName); got != 1 {
+		t.Errorf("retry duplicated note type: count=%d", got)
+	}
+	if got := countRow("group_relation_types", grtName); got != 1 {
+		t.Errorf("retry duplicated GRT: count=%d", got)
+	}
+}

@@ -400,8 +400,9 @@ func (s *applyState) findSchemaDefByGUID(model any, guid *string) (uint, bool) {
 // the archive carried no GUID (e.g., schema defs turned off at export time
 // so ParseImport synthesized name-only "create" mappings). A previous run
 // already inserted a row with this name and a locally-generated GUID; on
-// retry the unique-name index would otherwise fail the create. Only useful
-// for models with a unique name index: Category, ResourceCategory, Tag.
+// retry the unique-name index would otherwise fail the create. Also used
+// for NoteType which has no unique-name index but still must not be
+// silently duplicated on a retry (duplicate would poison resolveNoteTypeID).
 func (s *applyState) findSchemaDefByName(model any, name string) (uint, bool) {
 	if name == "" {
 		return 0, false
@@ -409,6 +410,32 @@ func (s *applyState) findSchemaDefByName(model any, name string) (uint, bool) {
 	var id uint
 	err := s.ctx.db.Model(model).Where("name = ?", name).Limit(1).Pluck("id", &id).Error
 	if err != nil || id == 0 {
+		return 0, false
+	}
+	return id, true
+}
+
+// findGRTByCompositeKey is GRT's analog of findSchemaDefByName. GRT's
+// uniqueness is the composite (name, from_category_id, to_category_id),
+// so name alone is insufficient. Used on retry when a prior partial apply
+// already inserted this GRT without a GUID we can key on.
+func (s *applyState) findGRTByCompositeKey(grt *models.GroupRelationType) (uint, bool) {
+	if grt.Name == "" {
+		return 0, false
+	}
+	q := s.ctx.db.Model(&models.GroupRelationType{}).Where("name = ?", grt.Name)
+	if grt.FromCategoryId != nil {
+		q = q.Where("from_category_id = ?", *grt.FromCategoryId)
+	} else {
+		q = q.Where("from_category_id IS NULL")
+	}
+	if grt.ToCategoryId != nil {
+		q = q.Where("to_category_id = ?", *grt.ToCategoryId)
+	} else {
+		q = q.Where("to_category_id IS NULL")
+	}
+	var id uint
+	if err := q.Limit(1).Pluck("id", &id).Error; err != nil || id == 0 {
 		return 0, false
 	}
 	return id, true
@@ -546,8 +573,19 @@ func (s *applyState) applySchemaDefDecisions() error {
 				}
 			}
 		}
-		// Idempotency: reuse an existing GUID-matched row on retry.
+		// Idempotency: reuse an existing GUID-matched or name-matched row
+		// on retry. NoteType has no unique-name index so the bug from
+		// missing this fallback is silent duplication rather than a
+		// constraint failure; resolveNoteTypeID would then repoint notes
+		// at the duplicate.
 		if id, found := s.findSchemaDefByGUID(&models.NoteType{}, nt.GUID); found {
+			s.idMap[entry.DecisionKey] = id
+			if entry.SourceExportID != "" {
+				s.idMap[entry.SourceExportID] = id
+			}
+			continue
+		}
+		if id, found := s.findSchemaDefByName(&models.NoteType{}, nt.Name); found {
 			s.idMap[entry.DecisionKey] = id
 			if entry.SourceExportID != "" {
 				s.idMap[entry.SourceExportID] = id
@@ -775,8 +813,18 @@ func (s *applyState) applySchemaDefDecisions() error {
 				}
 			}
 		}
-		// Idempotency: reuse an existing GUID-matched row on retry.
+		// Idempotency: reuse an existing GUID- or composite-key matched
+		// row on retry. GRT's unique constraint is composite
+		// (name + from_category_id + to_category_id), so name alone is
+		// insufficient.
 		if id, found := s.findSchemaDefByGUID(&models.GroupRelationType{}, grt.GUID); found {
+			s.idMap[entry.DecisionKey] = id
+			if entry.SourceExportID != "" {
+				s.idMap[entry.SourceExportID] = id
+			}
+			continue
+		}
+		if id, found := s.findGRTByCompositeKey(&grt); found {
 			s.idMap[entry.DecisionKey] = id
 			if entry.SourceExportID != "" {
 				s.idMap[entry.SourceExportID] = id
