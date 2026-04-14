@@ -240,6 +240,54 @@ func getJPEGQuality(width, height uint) int {
 	}
 }
 
+// decodeImageDimensions reads only the header of a JPEG/PNG to get pixel dims.
+// Cheaper than image.Decode; used on our own re-encoded JPEG output to record
+// the actual stored size in Preview rows.
+func decodeImageDimensions(data []byte) (uint, uint, error) {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return 0, 0, err
+	}
+	return uint(cfg.Width), uint(cfg.Height), nil
+}
+
+// computeActualTargetDims derives the pixel dimensions a thumbnail should
+// actually have, applying caps and preserving the resource's aspect ratio
+// when one axis is zero. Returns the requested values unchanged when the
+// resource has unknown dims (zero width or height) — callers then pass
+// those zeros to the resize library which derives the missing axis from
+// the source image.
+func computeActualTargetDims(resource models.Resource, reqW, reqH uint) (uint, uint) {
+	rW, rH := resource.Width, resource.Height
+	knownAspect := rW > 0 && rH > 0
+
+	var iW, iH float64
+	switch {
+	case reqW > 0 && reqH > 0:
+		iW, iH = float64(reqW), float64(reqH)
+	case reqW == 0 && reqH == 0:
+		if !knownAspect {
+			return 0, 0
+		}
+		iW, iH = float64(rW), float64(rH)
+	case reqW > 0:
+		if !knownAspect {
+			return reqW, 0
+		}
+		iW = float64(reqW)
+		iH = iW * float64(rH) / float64(rW)
+	default: // reqH > 0, reqW == 0
+		if !knownAspect {
+			return 0, reqH
+		}
+		iH = float64(reqH)
+		iW = iH * float64(rW) / float64(rH)
+	}
+
+	scale := math.Min(1.0, math.Min(constants.MaxThumbWidth/iW, constants.MaxThumbHeight/iH))
+	return uint(math.Round(iW * scale)), uint(math.Round(iH * scale))
+}
+
 // generateImageThumbnail resizes the provided image data to the desired dimensions.
 func (ctx *MahresourcesContext) generateImageThumbnail(
 	imageData []byte,
