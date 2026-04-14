@@ -52,19 +52,33 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(
 	width = uint(math.Min(constants.MaxThumbWidth, float64(width)))
 	height = uint(math.Min(constants.MaxThumbHeight, float64(height)))
 
-	// Attempt to retrieve an existing thumbnail with the specified dimensions
-	existingThumbnail, err := ctx.getExistingThumbnail(resourceId, width, height, httpContext)
+	// Retrieve the resource from the database (needed to compute target dims and to branch).
+	resource, err := ctx.getResourceForThumbnail(resourceId, httpContext)
+	if err != nil {
+		return nil, fmt.Errorf("error retrieving resource: %w", err)
+	}
+
+	isImage := strings.HasPrefix(resource.ContentType, "image/") && resource.ContentType != "image/svg+xml"
+	isSVG := resource.ContentType == "image/svg+xml"
+
+	// For images and SVGs, derive the actual target dimensions from the
+	// resource's known aspect ratio. Lookups and saves use these so callers
+	// requesting only height never collide with the legacy (0, H) rows.
+	targetW, targetH := width, height
+	if isImage || isSVG {
+		tW, tH := computeActualTargetDims(resource, width, height)
+		if tW > 0 || tH > 0 {
+			targetW, targetH = tW, tH
+		}
+	}
+
+	// Attempt to retrieve an existing thumbnail with the target dimensions
+	existingThumbnail, err := ctx.getExistingThumbnail(resourceId, targetW, targetH, httpContext)
 	if err == nil {
 		return &existingThumbnail, nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("error retrieving existing thumbnail: %w", err)
-	}
-
-	// Retrieve the resource from the database
-	resource, err := ctx.getResourceForThumbnail(resourceId, httpContext)
-	if err != nil {
-		return nil, fmt.Errorf("error retrieving resource: %w", err)
 	}
 
 	// Get the filesystem interface for the resource's storage location
@@ -73,59 +87,94 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(
 		return nil, fmt.Errorf("error getting filesystem: %w", storageError)
 	}
 
-	// Attempt to find or create a null thumbnail (original image without size)
-	nullThumbnail, _, err := ctx.getOrCreateNullThumbnail(resource, fs, httpContext)
-	if err != nil {
-		return nil, fmt.Errorf("error handling null thumbnail: %w", err)
-	}
-
 	var fileBytes []byte
 
-	// Depending on the resource's content type, generate the appropriate thumbnail
-	if nullThumbnail.ID != 0 {
-		// If a null thumbnail exists, resize it to the desired dimensions
-		fileBytes, err = ctx.generateImageThumbnail(nullThumbnail.Data, width, height)
-		if err != nil {
-			return nil, fmt.Errorf("error generating image thumbnail from null thumbnail: %w", err)
-		}
-	} else if resource.ContentType == "image/svg+xml" {
-		// Handle SVG resources with dedicated SVG renderer
-		fileBytes, err = ctx.generateSVGThumbnailFromFile(fs, resource.GetCleanLocation(), width, height, httpContext)
+	switch {
+	case isSVG:
+		// Always render SVG from the original file — never resize from a
+		// cached thumbnail, satisfying Rules 1 & 2 (no smaller, no different
+		// aspect ratio sources).
+		fileBytes, err = ctx.generateSVGThumbnailFromFile(fs, resource.GetCleanLocation(), targetW, targetH, httpContext)
 		if err != nil {
 			return nil, fmt.Errorf("error generating SVG thumbnail from file: %w", err)
 		}
-	} else if strings.HasPrefix(resource.ContentType, "image/") {
-		// Handle image resources by generating a thumbnail directly from the image file
-		fileBytes, err = ctx.generateImageThumbnailFromFile(fs, resource.GetCleanLocation(), width, height, httpContext)
+
+	case isImage:
+		// Always decode from the original image file. Skipping the null
+		// thumbnail / cached-preview source path eliminates any chance of
+		// resizing from a polluted cached preview (Rules 1 & 2).
+		fileBytes, err = ctx.generateImageThumbnailFromFile(fs, resource.GetCleanLocation(), targetW, targetH, httpContext)
 		if err != nil {
 			return nil, fmt.Errorf("error generating image thumbnail from file: %w", err)
 		}
-	} else if strings.HasPrefix(resource.ContentType, "video/") {
-		// Handle video resources by generating a thumbnail from the video
-		fileBytes, err = ctx.generateVideoThumbnail(resource, fs, width, height, httpContext)
-		if err != nil {
-			return nil, fmt.Errorf("error generating video thumbnail: %w", err)
+
+	case strings.HasPrefix(resource.ContentType, "video/"):
+		// Videos keep the (0,0) canonical-source optimization: ffmpeg output
+		// is correctly proportioned by construction, and re-running ffmpeg
+		// per request is expensive.
+		nullThumbnail, _, nerr := ctx.getOrCreateNullThumbnail(resource, fs, httpContext)
+		if nerr != nil {
+			return nil, fmt.Errorf("error handling null thumbnail: %w", nerr)
 		}
-	} else if isOfficeDocument(resource.ContentType) {
-		// Handle office documents (docx, xlsx, pptx, etc.) using LibreOffice
-		fileBytes, err = ctx.generateOfficeDocumentThumbnail(resource, fs, width, height, httpContext)
-		if err != nil {
-			return nil, fmt.Errorf("error generating office document thumbnail: %w", err)
+		if nullThumbnail.ID != 0 {
+			fileBytes, err = ctx.generateImageThumbnail(nullThumbnail.Data, targetW, targetH)
+			if err != nil {
+				return nil, fmt.Errorf("error generating image thumbnail from null thumbnail: %w", err)
+			}
+		} else {
+			fileBytes, err = ctx.generateVideoThumbnail(resource, fs, targetW, targetH, httpContext)
+			if err != nil {
+				return nil, fmt.Errorf("error generating video thumbnail: %w", err)
+			}
 		}
-		if fileBytes == nil {
-			// LibreOffice not available, skip thumbnail generation
-			return nil, nil
+
+	case isOfficeDocument(resource.ContentType):
+		// Office documents: same canonical-source pattern as video.
+		nullThumbnail, _, nerr := ctx.getOrCreateNullThumbnail(resource, fs, httpContext)
+		if nerr != nil {
+			return nil, fmt.Errorf("error handling null thumbnail: %w", nerr)
 		}
-	} else {
+		if nullThumbnail.ID != 0 {
+			fileBytes, err = ctx.generateImageThumbnail(nullThumbnail.Data, targetW, targetH)
+			if err != nil {
+				return nil, fmt.Errorf("error generating image thumbnail from null thumbnail: %w", err)
+			}
+		} else {
+			fileBytes, err = ctx.generateOfficeDocumentThumbnail(resource, fs, targetW, targetH, httpContext)
+			if err != nil {
+				return nil, fmt.Errorf("error generating office document thumbnail: %w", err)
+			}
+			if fileBytes == nil {
+				// LibreOffice not available, skip thumbnail generation
+				return nil, nil
+			}
+		}
+
+	default:
 		// Unsupported content type; no thumbnail to generate
 		return nil, nil
 	}
 
-	// Create and save the new preview (thumbnail) to the database
+	// Determine the dimensions to persist. Image/SVG thumbnails record the
+	// actual decoded pixel dimensions of the JPEG output so that future
+	// lookups by computed target dims hit the cache (and so legacy polluted
+	// rows with zero width remain unreachable). Video/office paths preserve
+	// the legacy behavior of saving the requested dims.
+	saveW, saveH := targetW, targetH
+	if isImage || isSVG {
+		if aw, ah, decErr := decodeImageDimensions(fileBytes); decErr == nil {
+			saveW, saveH = aw, ah
+		} else {
+			log.Printf("warning: could not decode generated thumbnail dims for resource %d: %v", resource.ID, decErr)
+		}
+	} else {
+		saveW, saveH = width, height
+	}
+
 	preview := &models.Preview{
 		Data:        fileBytes,
-		Width:       width,
-		Height:      height,
+		Width:       saveW,
+		Height:      saveH,
 		ContentType: "image/jpeg",
 		ResourceId:  &resource.ID,
 	}
