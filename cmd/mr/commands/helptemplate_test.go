@@ -30,6 +30,9 @@ func TestApplyHelpCustomizationsAddsSeeAlso(t *testing.T) {
 	if !strings.Contains(out, "resource edit") || !strings.Contains(out, "resource versions") {
 		t.Errorf("help missing related commands:\n%s", out)
 	}
+	if strings.Contains(out, "\n\n\n") {
+		t.Errorf("help has triple-newline (bad whitespace):\n%q", out)
+	}
 }
 
 func TestApplyHelpCustomizationsDisablesSortFlags(t *testing.T) {
@@ -39,10 +42,16 @@ func TestApplyHelpCustomizationsDisablesSortFlags(t *testing.T) {
 
 	ApplyHelpCustomizations(root)
 
-	if root.Flags().SortFlags {
-		t.Error("root SortFlags should be false")
-	}
-	if child.Flags().SortFlags {
-		t.Error("child SortFlags should be false")
+	for _, c := range []*cobra.Command{root, child} {
+		name := c.Name()
+		if c.Flags().SortFlags {
+			t.Errorf("%s Flags().SortFlags should be false", name)
+		}
+		if c.LocalFlags().SortFlags {
+			t.Errorf("%s LocalFlags().SortFlags should be false", name)
+		}
+		if c.InheritedFlags().SortFlags {
+			t.Errorf("%s InheritedFlags().SortFlags should be false", name)
+		}
 	}
 }
