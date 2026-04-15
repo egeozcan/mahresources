@@ -29,13 +29,6 @@ Positional arguments:
 
     mr resource edit-description 42 ""
 
-**upload**
-
-    GRP=$(mr group create --name "doctest-desc-$$-$RANDOM" --json | jq -r '.ID')
-    ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "desc-test-$$" --json | jq -r '.[0].ID')
-    mr resource edit-description $ID "hello world"
-    mr resource get $ID --json | jq -e '.Description == "hello world"'
-
 
 ## Flags
 

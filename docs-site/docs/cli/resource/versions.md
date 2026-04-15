@@ -30,13 +30,6 @@ Positional arguments:
 
     mr resource versions 42 --json | jq -r '.[0].id'
 
-**upload a resource**
-
-    GRP=$(mr group create --name "doctest-versions-$$-$RANDOM" --json | jq -r '.ID')
-    ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "versions-test-$$" --json | jq -r '.[0].ID')
-    mr resource version-upload $ID ./testdata/sample.png
-    mr resource versions $ID --json | jq -e 'length >= 2'
-
 
 ## Flags
 

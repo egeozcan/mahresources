@@ -30,15 +30,6 @@ Positional arguments:
 
     mr resource versions-compare 42 --v1 17 --v2 21 --json | jq -r .sameHash
 
-**upload same file twice**
-
-    GRP=$(mr group create --name "doctest-vcompare-$$-$RANDOM" --json | jq -r '.ID')
-    ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "compare-test-$$" --json | jq -r '.[0].ID')
-    V1=$(mr resource versions $ID --json | jq -r '.[0].id')
-    mr resource version-upload $ID ./testdata/sample.jpg
-    V2=$(mr resource versions $ID --json | jq -r '.[0].id')
-    mr resource versions-compare $ID --v1 $V1 --v2 $V2 --json | jq -e '.sameHash == true'
-
 
 ## Flags
 

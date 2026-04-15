@@ -28,13 +28,6 @@ required.
     IDS=$(mr resources list --tags 5 --json | jq -r 'map(.id) | join(",")')
     mr resources set-dimensions --ids $IDS --width 800 --height 600
 
-**upload**
-
-    GRP=$(mr group create --name "doctest-setdim-$$-$RANDOM" --json | jq -r '.ID')
-    ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "setdim-$$" --json | jq -r '.[0].ID')
-    mr resources set-dimensions --ids $ID --width 1024 --height 768
-    mr resource get $ID --json | jq -e '.Width == 1024'
-
 
 ## Flags
 

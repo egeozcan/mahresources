@@ -35,12 +35,6 @@ to get the raw bucket data for scripting.
 
     mr resources timeline --granularity yearly --tags 5 --json
 
-**upload a fixture and verify timeline has at least one non-zero bucket**
-
-    GRP=$(mr group create --name "doctest-timeline-$$-$RANDOM" --json | jq -r '.ID')
-    ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "timeline-$$" --json | jq -r '.[0].ID')
-    mr resources timeline --granularity weekly --columns 4 --json | jq -e '[.buckets[].created] | add >= 1'
-
 
 ## Flags
 
@@ -81,4 +75,3 @@ to get the raw bucket data for scripting.
 ## See Also
 
 - [`mr resources list`](./list.md)
-- [`mr groups timeline`](../groups/timeline.md)

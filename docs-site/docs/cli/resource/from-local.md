@@ -26,10 +26,6 @@ deploying pre-staged assets.
 
     mr resource from-local --path /srv/imports/doc.pdf --name "Doc" --tags 3,7
 
-**path only valid on the real target server**
-
-    mr resource from-local --path /tmp/sample.jpg --name "from-local-test"
-
 
 ## Flags
 

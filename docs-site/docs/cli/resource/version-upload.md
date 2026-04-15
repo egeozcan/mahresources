@@ -31,15 +31,6 @@ Positional arguments:
 
     mr resource version-upload 42 ./photo_v2.jpg --comment "color corrected"
 
-**upload**
-
-    GRP=$(mr group create --name "doctest-vupload-$$-$RANDOM" --json | jq -r '.ID')
-    ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "vup-test-$$" --json | jq -r '.[0].ID')
-    BEFORE=$(mr resource versions $ID --json | jq -r 'length')
-    mr resource version-upload $ID ./testdata/sample.png
-    AFTER=$(mr resource versions $ID --json | jq -r 'length')
-    test "$AFTER" -gt "$BEFORE"
-
 
 ## Flags
 

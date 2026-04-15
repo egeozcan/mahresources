@@ -33,13 +33,6 @@ Positional arguments:
 
     mr resource edit-meta 5 address.postalCode 10115
 
-**upload**
-
-    GRP=$(mr group create --name "doctest-editmeta-$$-$RANDOM" --json | jq -r '.ID')
-    ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "meta-test-$$" --json | jq -r '.[0].ID')
-    mr resource edit-meta $ID priority 5
-    mr resource get $ID --json | jq -e '.Meta.priority == 5'
-
 
 ## Flags
 

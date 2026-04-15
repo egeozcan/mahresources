@@ -30,15 +30,6 @@ Positional arguments:
 
     mr resource preview 42 -o preview.jpg -w 256 --height 256
 
-**tolerate preview-not-available for formats without thumbnail**
-
-    GRP=$(mr group create --name "doctest-preview-$$-$RANDOM" --json | jq -r '.ID')
-    ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "preview-test-$$" --json | jq -r '.[0].ID')
-    OUT=$(mktemp)
-    mr resource preview $ID -o $OUT
-    test -s $OUT
-    rm -f $OUT
-
 
 ## Flags
 

@@ -30,12 +30,6 @@ Positional arguments:
 
     mr resource upload ./photo.jpg --owner-id 3 --meta '{"camera":"Pixel"}'
 
-**upload a fixture and verify the returned id**
-
-    GRP=$(mr group create --name "doctest-upload-$$-$RANDOM" --json | jq -r '.ID')
-    ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "upload-test-$$" --json | jq -r '.[0].ID')
-    mr resource get $ID --json | jq -e '.ID > 0'
-
 
 ## Flags
 

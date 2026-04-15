@@ -24,14 +24,6 @@ and are required.
 
     mr resources list --content-type image/jpeg --json | jq -r 'map(.id) | join(",")' | xargs -I {} mr resources add-groups --ids {} --groups 7
 
-**create group**
-
-    GRP=$(mr group create --name "doctest-addgroups-$$-$RANDOM" --json | jq -r '.ID')
-    OWNER=$(mr group create --name "doctest-addgroups-owner-$$-$RANDOM" --json | jq -r '.ID')
-    ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$OWNER --name "addgroup-$$" --json | jq -r '.[0].ID')
-    mr resources add-groups --ids $ID --groups $GRP
-    mr resource get $ID --json | jq -e '(.Groups | length) >= 1'
-
 
 ## Flags
 
@@ -56,4 +48,3 @@ and are required.
 
 - [`mr resources add-tags`](./add-tags.md)
 - [`mr resources add-meta`](./add-meta.md)
-- [`mr groups list`](../groups/list.md)

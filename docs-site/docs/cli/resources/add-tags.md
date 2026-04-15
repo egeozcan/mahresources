@@ -24,15 +24,6 @@ accept comma-separated unsigned integer lists and are required.
 
     mr resources add-tags --ids 1,2,3 --tags 5,6,7
 
-**create tag**
-
-    TAG=$(mr tag create --name "add-tags-test-$$-$RANDOM" --json | jq -r '.ID')
-    GRP=$(mr group create --name "doctest-addtags-$$-$RANDOM" --json | jq -r '.ID')
-    ID1=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "addtag-a-$$" --json | jq -r '.[0].ID')
-    ID2=$(mr resource upload ./testdata/sample.png --owner-id=$GRP --name "addtag-b-$$" --json | jq -r '.[0].ID')
-    mr resources add-tags --ids $ID1,$ID2 --tags $TAG
-    mr resources list --tags $TAG --json | jq -e 'length >= 2'
-
 
 ## Flags
 
@@ -57,4 +48,3 @@ accept comma-separated unsigned integer lists and are required.
 
 - [`mr resources remove-tags`](./remove-tags.md)
 - [`mr resources replace-tags`](./replace-tags.md)
-- [`mr tags list`](../tags/list.md)

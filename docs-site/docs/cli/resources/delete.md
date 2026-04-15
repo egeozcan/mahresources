@@ -25,13 +25,6 @@ of unsigned ints). The current CLI has no dry-run; pipe
 
     mr resources list --tags 7 --json | jq -r 'map(.id) | join(",")' | xargs -I {} mr resources delete --ids {}
 
-**upload**
-
-    GRP=$(mr group create --name "doctest-bulkdel-$$-$RANDOM" --json | jq -r '.ID')
-    ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "bulkdel-$$" --json | jq -r '.[0].ID')
-    mr resources delete --ids $ID
-    ! mr resource get $ID 2>/dev/null
-
 
 ## Flags
 

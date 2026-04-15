@@ -85,35 +85,61 @@ func dumpCommandTree(root *cobra.Command, format, output string) error {
 }
 
 // writeMarkdown renders the command tree as Markdown pages under outputDir.
-// One page per command plus a root index.md. Parent-group commands are
-// written to <group>/index.md; leaves to <group>/<leaf>.md. See Also links
-// are computed as relative paths between pages.
+// Only commands whose top-level group is in lintAllowlist are published — the
+// generator refuses to emit half-migrated pages that would ship empty Long /
+// Example sections to users. As migration PRs extend the lint allowlist they
+// automatically extend the published docs.
+//
+// One page per published command plus a root index.md. Parent-group commands
+// are written to <group>/index.md; leaves to <group>/<leaf>.md. See Also
+// links are computed as relative paths between pages.
 func writeMarkdown(tree dumpRoot, outputDir string) error {
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return err
 	}
 
+	published := make([]dumpCommand, 0, len(tree.Commands))
+	for _, c := range tree.Commands {
+		if isPublished(c.Path) {
+			published = append(published, c)
+		}
+	}
+	publishedTree := tree
+	publishedTree.Commands = published
+
 	// Build a path-to-output-file map so See Also can generate correct
 	// relative links regardless of which page is being written.
 	outputPath := map[string]string{}
-	for _, c := range tree.Commands {
+	for _, c := range published {
 		outputPath[c.Path] = commandOutputPath(c, outputDir)
 	}
 
-	if err := writeRootIndex(tree, outputDir, outputPath); err != nil {
+	if err := writeRootIndex(publishedTree, outputDir, outputPath); err != nil {
 		return err
 	}
 
-	for _, c := range tree.Commands {
+	for _, c := range published {
 		target := outputPath[c.Path]
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}
-		if err := writeCommandPage(c, tree, target, outputPath); err != nil {
+		if err := writeCommandPage(c, publishedTree, target, outputPath); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// isPublished reports whether a command at `path` (e.g., "resource get" or
+// "resources") should be emitted by the Markdown generator. A command is
+// published when its top-level group appears in lintAllowlist — the same
+// signal that says its help content is ready for public review.
+func isPublished(path string) bool {
+	top := path
+	if idx := strings.IndexByte(path, ' '); idx >= 0 {
+		top = path[:idx]
+	}
+	return lintAllowlist[top]
 }
 
 // commandOutputPath returns the on-disk path for a dumped command.
@@ -328,9 +354,16 @@ func writeCommandPage(c dumpCommand, tree dumpRoot, targetPath string, outputPat
 		}
 	}
 
-	// Examples.
+	// Examples. Doctest blocks are CI-only (they create groups, reference
+	// repo-local ./testdata fixtures, and use shell tricks like `$$`/$RANDOM
+	// that aren't meaningful to a human reading the docs). Filter them out
+	// of the published page so users only see reference examples written
+	// for them.
 	var examples []commandPageExample
 	for _, e := range c.Examples {
+		if e.Doctest {
+			continue
+		}
 		examples = append(examples, commandPageExample{
 			Label:   e.Label,
 			Command: strings.ReplaceAll(e.Command, "\n", "\n    "),

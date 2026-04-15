@@ -30,12 +30,6 @@ Positional arguments:
 
     mr resource get 42 --json | jq -r .Name
 
-**upload a fixture and verify the resource is retrievable**
-
-    GRP=$(mr group create --name "doctest-get-$$-$RANDOM" --json | jq -r '.ID')
-    ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "doctest-get-$$" --json | jq -r '.[0].ID')
-    mr resource get $ID --json | jq -e '.ID > 0 and (.Name | length) > 0'
-
 
 ## Flags
 

@@ -30,15 +30,6 @@ Positional arguments:
 
     mr resource download 42
 
-**upload**
-
-    GRP=$(mr group create --name "doctest-download-$$-$RANDOM" --json | jq -r '.ID')
-    ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "dl-test-$$" --json | jq -r '.[0].ID')
-    OUT=$(mktemp)
-    mr resource download $ID -o $OUT
-    test -s $OUT
-    rm -f $OUT
-
 
 ## Flags
 

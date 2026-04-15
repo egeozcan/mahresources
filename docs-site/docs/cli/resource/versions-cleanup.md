@@ -29,15 +29,6 @@ Positional arguments:
 
     mr resource versions-cleanup 42 --older-than-days 90 --dry-run
 
-**create 3 versions**
-
-    GRP=$(mr group create --name "doctest-vcleanup-$$-$RANDOM" --json | jq -r '.ID')
-    ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "cleanup-test-$$" --json | jq -r '.[0].ID')
-    mr resource version-upload $ID ./testdata/sample.png
-    mr resource version-upload $ID ./testdata/sample.txt
-    mr resource versions-cleanup $ID --keep 1
-    mr resource versions $ID --json | jq -e 'length == 1'
-
 
 ## Flags
 

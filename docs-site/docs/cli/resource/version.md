@@ -29,14 +29,6 @@ Positional arguments:
 
     mr resource version 17 --json | jq -r .size
 
-**upload**
-
-    GRP=$(mr group create --name "doctest-version-$$-$RANDOM" --json | jq -r '.ID')
-    ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "version-test-$$" --json | jq -r '.[0].ID')
-    mr resource version-upload $ID ./testdata/sample.png
-    VID=$(mr resource versions $ID --json | jq -r '.[0].id')
-    mr resource version $VID --json | jq -e '.id > 0'
-
 
 ## Flags
 

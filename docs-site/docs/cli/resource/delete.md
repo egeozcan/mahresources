@@ -28,13 +28,6 @@ Positional arguments:
 
     mr resource delete 42 --json | jq .
 
-**upload**
-
-    GRP=$(mr group create --name "doctest-del-$$-$RANDOM" --json | jq -r '.ID')
-    ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "to-delete-$$" --json | jq -r '.[0].ID')
-    mr resource delete $ID
-    ! mr resource get $ID 2>/dev/null
-
 
 ## Flags
 

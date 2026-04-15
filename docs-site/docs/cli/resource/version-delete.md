@@ -24,17 +24,6 @@ leave the Resource with zero versions.
 
     mr resource versions 42 --json | jq -r '.[1:][].id' | xargs -I {} mr resource version-delete --resource-id 42 --version-id {}
 
-**upload**
-
-    GRP=$(mr group create --name "doctest-vdel-$$-$RANDOM" --json | jq -r '.ID')
-    ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "vdel-test-$$" --json | jq -r '.[0].ID')
-    VOLD=$(mr resource versions $ID --json | jq -r '.[-1].id')
-    mr resource version-upload $ID ./testdata/sample.png
-    BEFORE=$(mr resource versions $ID --json | jq -r 'length')
-    mr resource version-delete --resource-id $ID --version-id $VOLD
-    AFTER=$(mr resource versions $ID --json | jq -r 'length')
-    test "$AFTER" -lt "$BEFORE"
-
 
 ## Flags
 

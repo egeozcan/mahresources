@@ -30,13 +30,6 @@ Positional arguments:
 
     mr resources list --content-type image/jpeg --json | jq -r '.[].id' | xargs -I {} mr resource recalculate-dimensions {}
 
-**upload a known-dimension fixture and verify dimensions populate**
-
-    GRP=$(mr group create --name "doctest-recalc-$$-$RANDOM" --json | jq -r '.ID')
-    ID=$(mr resource upload ./testdata/sample.png --owner-id=$GRP --name "recalc-test-$$" --json | jq -r '.[0].ID')
-    mr resource recalculate-dimensions $ID
-    mr resource get $ID --json | jq -e '.Width > 0'
-
 
 ## Flags
 

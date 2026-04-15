@@ -30,14 +30,6 @@ Positional arguments:
 
     mr resource edit 42 --tags 5,7
 
-**upload**
-
-    GRP=$(mr group create --name "doctest-edit-$$-$RANDOM" --json | jq -r '.ID')
-    ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "orig-$$" --json | jq -r '.[0].ID')
-    NEWNAME="edited-$$"
-    mr resource edit $ID --name "$NEWNAME"
-    mr resource get $ID --json | jq -e --arg n "$NEWNAME" '.Name == $n'
-
 
 ## Flags
 

@@ -26,10 +26,6 @@ creation.
 
     mr resource from-url --url https://example.com/doc.pdf --name "Paper" --meta '{"source":"arxiv"}' --groups 5
 
-**ephemeral server has no outbound access**
-
-    mr resource from-url --url https://example.com/tiny.jpg --name "from-url-test"
-
 
 ## Flags
 

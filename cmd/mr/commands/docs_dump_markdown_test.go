@@ -7,6 +7,19 @@ import (
 	"testing"
 )
 
+// allowTestGroups registers the synthetic command groups used by these tests
+// in the lint allowlist for the duration of the test. writeMarkdown filters
+// its output to allowlisted groups, so tests building synthetic `foo`/`baz`/
+// `res` trees must opt those groups in.
+func allowTestGroups(t *testing.T) {
+	t.Helper()
+	t.Cleanup(SetLintAllowlistForTest(map[string]bool{
+		"foo": true,
+		"baz": true,
+		"res": true,
+	}))
+}
+
 // buildTestTree constructs a minimal dumpRoot directly (no Cobra) for testing writeMarkdown.
 func buildTestTree() dumpRoot {
 	return dumpRoot{
@@ -55,7 +68,7 @@ func buildTestTree() dumpRoot {
 
 func TestDumpMarkdown_RootIndex(t *testing.T) {
 	dir := t.TempDir()
-	tree := buildTestTree()
+	tree := buildTestTree(); allowTestGroups(t)
 	if err := writeMarkdown(tree, dir); err != nil {
 		t.Fatalf("writeMarkdown error: %v", err)
 	}
@@ -75,7 +88,7 @@ func TestDumpMarkdown_RootIndex(t *testing.T) {
 
 func TestDumpMarkdown_FooGroupIndex(t *testing.T) {
 	dir := t.TempDir()
-	tree := buildTestTree()
+	tree := buildTestTree(); allowTestGroups(t)
 	if err := writeMarkdown(tree, dir); err != nil {
 		t.Fatalf("writeMarkdown error: %v", err)
 	}
@@ -93,7 +106,7 @@ func TestDumpMarkdown_FooGroupIndex(t *testing.T) {
 
 func TestDumpMarkdown_FooBarLeaf(t *testing.T) {
 	dir := t.TempDir()
-	tree := buildTestTree()
+	tree := buildTestTree(); allowTestGroups(t)
 	if err := writeMarkdown(tree, dir); err != nil {
 		t.Fatalf("writeMarkdown error: %v", err)
 	}
@@ -132,7 +145,7 @@ func TestDumpMarkdown_FooBarLeaf(t *testing.T) {
 
 func TestDumpMarkdown_FooBarSeeAlsoLinks(t *testing.T) {
 	dir := t.TempDir()
-	tree := buildTestTree()
+	tree := buildTestTree(); allowTestGroups(t)
 	if err := writeMarkdown(tree, dir); err != nil {
 		t.Fatalf("writeMarkdown error: %v", err)
 	}
@@ -164,7 +177,7 @@ func TestDumpMarkdown_FooBarSeeAlsoLinks(t *testing.T) {
 
 func TestDumpMarkdown_BazHelpExists(t *testing.T) {
 	dir := t.TempDir()
-	tree := buildTestTree()
+	tree := buildTestTree(); allowTestGroups(t)
 	if err := writeMarkdown(tree, dir); err != nil {
 		t.Fatalf("writeMarkdown error: %v", err)
 	}
@@ -176,7 +189,7 @@ func TestDumpMarkdown_BazHelpExists(t *testing.T) {
 
 func TestDumpMarkdown_UsageLine(t *testing.T) {
 	dir := t.TempDir()
-	tree := buildTestTree()
+	tree := buildTestTree(); allowTestGroups(t)
 	if err := writeMarkdown(tree, dir); err != nil {
 		t.Fatalf("writeMarkdown error: %v", err)
 	}
@@ -208,6 +221,7 @@ func TestDumpMarkdown_PositionalArgs_Exact(t *testing.T) {
 			},
 		},
 	}
+	allowTestGroups(t)
 	if err := writeMarkdown(tree, dir); err != nil {
 		t.Fatalf("writeMarkdown error: %v", err)
 	}
@@ -241,6 +255,7 @@ func TestDumpMarkdown_PositionalArgs_None(t *testing.T) {
 			},
 		},
 	}
+	allowTestGroups(t)
 	if err := writeMarkdown(tree, dir); err != nil {
 		t.Fatalf("writeMarkdown error: %v", err)
 	}
@@ -258,7 +273,7 @@ func TestDumpMarkdown_PositionalArgs_None(t *testing.T) {
 
 func TestDumpMarkdown_FooBarSeeAlsoFullLink(t *testing.T) {
 	dir := t.TempDir()
-	tree := buildTestTree()
+	tree := buildTestTree(); allowTestGroups(t)
 	if err := writeMarkdown(tree, dir); err != nil {
 		t.Fatalf("writeMarkdown error: %v", err)
 	}

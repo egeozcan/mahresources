@@ -31,15 +31,6 @@ via the global `--page` flag (default page size 50).
 
     mr resources list --tags 5 --created-after 2026-01-01 --json | jq -r '.[].Name'
 
-**upload two fixtures with a known tag**
-
-    TAG=$(mr tag create --name "list-test-$$-$RANDOM" --json | jq -r '.ID')
-    GRP=$(mr group create --name "doctest-list-$$-$RANDOM" --json | jq -r '.ID')
-    ID1=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "list-a-$$" --json | jq -r '.[0].ID')
-    ID2=$(mr resource upload ./testdata/sample.png --owner-id=$GRP --name "list-b-$$" --json | jq -r '.[0].ID')
-    mr resources add-tags --ids $ID1,$ID2 --tags $TAG
-    mr resources list --tags $TAG --json | jq -e 'length >= 2'
-
 
 ## Flags
 
@@ -82,5 +73,3 @@ Array of resources with id, name, content type, size, dimensions, owner id, crea
 ## See Also
 
 - [`mr resource get`](../resource/get.md)
-- [`mr groups list`](../groups/list.md)
-- [`mr mrql`](../mrql/index.md)

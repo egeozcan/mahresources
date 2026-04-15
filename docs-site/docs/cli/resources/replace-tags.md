@@ -25,16 +25,6 @@ semantics. Pass `--tags ""` to clear all tags.
 
     mr resources replace-tags --ids 1 --tags ""
 
-**replace with two tags**
-
-    T1=$(mr tag create --name "replace-t1-$$-$RANDOM" --json | jq -r '.ID')
-    T2=$(mr tag create --name "replace-t2-$$-$RANDOM" --json | jq -r '.ID')
-    GRP=$(mr group create --name "doctest-replacetags-$$-$RANDOM" --json | jq -r '.ID')
-    ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "replacetag-$$" --json | jq -r '.[0].ID')
-    mr resources replace-tags --ids $ID --tags $T1,$T2
-    mr resources replace-tags --ids $ID --tags $T1
-    mr resource get $ID --json | jq -e '(.Tags | length) == 1'
-
 
 ## Flags
 
@@ -59,4 +49,3 @@ semantics. Pass `--tags ""` to clear all tags.
 
 - [`mr resources add-tags`](./add-tags.md)
 - [`mr resources remove-tags`](./remove-tags.md)
-- [`mr tags list`](../tags/list.md)
