@@ -231,7 +231,7 @@ func newResourceEditCmd(c *client.Client, opts *output.Options) *cobra.Command {
 				body["Height"] = height
 			}
 			if cmd.Flags().Changed("series-id") {
-				body["SeriesID"] = seriesID
+				body["SeriesId"] = seriesID
 			}
 
 			var raw json.RawMessage
