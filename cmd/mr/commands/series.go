@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -8,10 +9,14 @@ import (
 	"time"
 
 	"mahresources/cmd/mr/client"
+	"mahresources/cmd/mr/helptext"
 	"mahresources/cmd/mr/output"
 
 	"github.com/spf13/cobra"
 )
+
+//go:embed series_help/*.md
+var seriesHelpFS embed.FS
 
 // seriesResponse is a lightweight struct matching the API's Series JSON shape.
 type seriesResponse struct {
@@ -25,9 +30,12 @@ type seriesResponse struct {
 
 // NewSeriesCmd returns the "series" command with get/create/edit/delete/remove-resource/list subcommands.
 func NewSeriesCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
+	help := helptext.Load(seriesHelpFS, "series_help/series.md")
 	seriesCmd := &cobra.Command{
-		Use:   "series",
-		Short: "Manage resource series (list, create, edit, delete)",
+		Use:         "series",
+		Short:       "Manage resource series (list, create, edit, delete)",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	seriesCmd.AddCommand(newSeriesGetCmd(c, opts))
@@ -42,10 +50,14 @@ func NewSeriesCmd(c *client.Client, opts *output.Options, page *int) *cobra.Comm
 }
 
 func newSeriesGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(seriesHelpFS, "series_help/series_get.md")
 	return &cobra.Command{
-		Use:   "get <id>",
-		Short: "Get a series by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "get <id>",
+		Short:       "Get a series by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -76,9 +88,13 @@ func newSeriesGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
 func newSeriesCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var name string
 
+	help := helptext.Load(seriesHelpFS, "series_help/series_create.md")
 	cmd := &cobra.Command{
-		Use:   "create",
-		Short: "Create a new series",
+		Use:         "create",
+		Short:       "Create a new series",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body := map[string]string{"Name": name}
 
@@ -110,10 +126,14 @@ func newSeriesCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 func newSeriesEditCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var name, meta string
 
+	help := helptext.Load(seriesHelpFS, "series_help/series_edit.md")
 	cmd := &cobra.Command{
-		Use:   "edit <id>",
-		Short: "Edit a series",
-		Args:  cobra.ExactArgs(1),
+		Use:         "edit <id>",
+		Short:       "Edit a series",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseUint(args[0], 10, 64)
 			if err != nil {
@@ -150,10 +170,14 @@ func newSeriesEditCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newSeriesDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(seriesHelpFS, "series_help/series_delete.md")
 	return &cobra.Command{
-		Use:   "delete <id>",
-		Short: "Delete a series by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "delete <id>",
+		Short:       "Delete a series by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("Id", args[0])
@@ -174,10 +198,14 @@ func newSeriesDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newSeriesEditNameCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(seriesHelpFS, "series_help/series_edit_name.md")
 	return &cobra.Command{
-		Use:   "edit-name <id> <new-name>",
-		Short: "Edit a series name",
-		Args:  cobra.ExactArgs(2),
+		Use:         "edit-name <id> <new-name>",
+		Short:       "Edit a series name",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -201,10 +229,14 @@ func newSeriesEditNameCmd(c *client.Client, opts *output.Options) *cobra.Command
 }
 
 func newSeriesRemoveResourceCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(seriesHelpFS, "series_help/series_remove_resource.md")
 	return &cobra.Command{
-		Use:   "remove-resource <resource-id>",
-		Short: "Remove a resource from its series",
-		Args:  cobra.ExactArgs(1),
+		Use:         "remove-resource <resource-id>",
+		Short:       "Remove a resource from its series",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -227,9 +259,13 @@ func newSeriesRemoveResourceCmd(c *client.Client, opts *output.Options) *cobra.C
 func newSeriesListCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
 	var name, slug string
 
+	help := helptext.Load(seriesHelpFS, "series_help/series_list.md")
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List series",
+		Use:         "list",
+		Short:       "List series",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("page", strconv.Itoa(*page))

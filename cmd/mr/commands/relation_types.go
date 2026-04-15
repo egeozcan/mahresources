@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -8,10 +9,14 @@ import (
 	"time"
 
 	"mahresources/cmd/mr/client"
+	"mahresources/cmd/mr/helptext"
 	"mahresources/cmd/mr/output"
 
 	"github.com/spf13/cobra"
 )
+
+//go:embed relation_types_help/*.md
+var relationTypesHelpFS embed.FS
 
 // relationTypeResponse is a lightweight struct matching the API's GroupRelationType JSON shape.
 type relationTypeResponse struct {
@@ -26,9 +31,12 @@ type relationTypeResponse struct {
 
 // NewRelationTypeCmd returns the singular "relation-type" command with create/edit/delete subcommands.
 func NewRelationTypeCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(relationTypesHelpFS, "relation_types_help/relation_type.md")
 	cmd := &cobra.Command{
-		Use:   "relation-type",
-		Short: "Create, edit, or delete a relation type",
+		Use:         "relation-type",
+		Short:       "Create, edit, or delete a relation type",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	cmd.AddCommand(newRelationTypeCreateCmd(c, opts))
@@ -41,12 +49,16 @@ func NewRelationTypeCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newRelationTypeCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(relationTypesHelpFS, "relation_types_help/relation_type_create.md")
 	var name, description, reverseName string
 	var fromCategory, toCategory uint
 
 	cmd := &cobra.Command{
-		Use:   "create",
-		Short: "Create a new relation type",
+		Use:         "create",
+		Short:       "Create a new relation type",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body := map[string]any{
 				"Name": name,
@@ -94,12 +106,16 @@ func newRelationTypeCreateCmd(c *client.Client, opts *output.Options) *cobra.Com
 }
 
 func newRelationTypeEditCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(relationTypesHelpFS, "relation_types_help/relation_type_edit.md")
 	var name, description, reverseName string
 	var id, fromCategory, toCategory uint
 
 	cmd := &cobra.Command{
-		Use:   "edit",
-		Short: "Edit a relation type",
+		Use:         "edit",
+		Short:       "Edit a relation type",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body := map[string]any{
 				"Id": id,
@@ -146,10 +162,14 @@ func newRelationTypeEditCmd(c *client.Client, opts *output.Options) *cobra.Comma
 }
 
 func newRelationTypeDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(relationTypesHelpFS, "relation_types_help/relation_type_delete.md")
 	return &cobra.Command{
-		Use:   "delete <id>",
-		Short: "Delete a relation type by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "delete <id>",
+		Short:       "Delete a relation type by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("Id", args[0])
@@ -170,10 +190,14 @@ func newRelationTypeDeleteCmd(c *client.Client, opts *output.Options) *cobra.Com
 }
 
 func newRelationTypeEditNameCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(relationTypesHelpFS, "relation_types_help/relation_type_edit_name.md")
 	return &cobra.Command{
-		Use:   "edit-name <id> <new-name>",
-		Short: "Edit a relation type's name",
-		Args:  cobra.ExactArgs(2),
+		Use:         "edit-name <id> <new-name>",
+		Short:       "Edit a relation type's name",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -197,10 +221,14 @@ func newRelationTypeEditNameCmd(c *client.Client, opts *output.Options) *cobra.C
 }
 
 func newRelationTypeEditDescriptionCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(relationTypesHelpFS, "relation_types_help/relation_type_edit_description.md")
 	return &cobra.Command{
-		Use:   "edit-description <id> <new-description>",
-		Short: "Edit a relation type's description",
-		Args:  cobra.ExactArgs(2),
+		Use:         "edit-description <id> <new-description>",
+		Short:       "Edit a relation type's description",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -225,9 +253,12 @@ func newRelationTypeEditDescriptionCmd(c *client.Client, opts *output.Options) *
 
 // NewRelationTypesCmd returns the plural "relation-types" command with list subcommand.
 func NewRelationTypesCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
+	help := helptext.Load(relationTypesHelpFS, "relation_types_help/relation_types.md")
 	cmd := &cobra.Command{
-		Use:   "relation-types",
-		Short: "List relation types",
+		Use:         "relation-types",
+		Short:       "List relation types",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	cmd.AddCommand(newRelationTypesListCmd(c, opts, page))
@@ -236,11 +267,15 @@ func NewRelationTypesCmd(c *client.Client, opts *output.Options, page *int) *cob
 }
 
 func newRelationTypesListCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
+	help := helptext.Load(relationTypesHelpFS, "relation_types_help/relation_types_list.md")
 	var name, description string
 
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List relation types",
+		Use:         "list",
+		Short:       "List relation types",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("page", strconv.Itoa(*page))

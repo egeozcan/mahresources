@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -8,10 +9,14 @@ import (
 	"time"
 
 	"mahresources/cmd/mr/client"
+	"mahresources/cmd/mr/helptext"
 	"mahresources/cmd/mr/output"
 
 	"github.com/spf13/cobra"
 )
+
+//go:embed note_blocks_help/*.md
+var noteBlocksHelpFS embed.FS
 
 // noteBlockResponse is a lightweight struct matching the API's NoteBlock JSON shape.
 type noteBlockResponse struct {
@@ -27,9 +32,12 @@ type noteBlockResponse struct {
 
 // NewNoteBlockCmd returns the singular "note-block" command with get/create/update/delete subcommands.
 func NewNoteBlockCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(noteBlocksHelpFS, "note_blocks_help/note_block.md")
 	cmd := &cobra.Command{
-		Use:   "note-block",
-		Short: "Get, create, update, or delete a note block",
+		Use:         "note-block",
+		Short:       "Get, create, update, or delete a note block",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	cmd.AddCommand(newNoteBlockGetCmd(c, opts))
@@ -43,10 +51,14 @@ func NewNoteBlockCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newNoteBlockGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(noteBlocksHelpFS, "note_blocks_help/note_block_get.md")
 	return &cobra.Command{
-		Use:   "get <id>",
-		Short: "Get a note block by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "get <id>",
+		Short:       "Get a note block by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -80,9 +92,13 @@ func newNoteBlockCreateCmd(c *client.Client, opts *output.Options) *cobra.Comman
 	var noteID uint
 	var blockType, content, position string
 
+	help := helptext.Load(noteBlocksHelpFS, "note_blocks_help/note_block_create.md")
 	cmd := &cobra.Command{
-		Use:   "create",
-		Short: "Create a new note block",
+		Use:         "create",
+		Short:       "Create a new note block",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body := map[string]any{
 				"NoteID":  noteID,
@@ -125,16 +141,22 @@ func newNoteBlockCreateCmd(c *client.Client, opts *output.Options) *cobra.Comman
 func newNoteBlockUpdateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var content string
 
+	help := helptext.Load(noteBlocksHelpFS, "note_blocks_help/note_block_update.md")
 	cmd := &cobra.Command{
-		Use:   "update <id>",
-		Short: "Update a note block's content",
-		Args:  cobra.ExactArgs(1),
+		Use:         "update <id>",
+		Short:       "Update a note block's content",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
 
+			body := map[string]any{"content": json.RawMessage(content)}
+
 			var raw json.RawMessage
-			if err := c.Put("/v1/note/block", q, json.RawMessage(content), &raw); err != nil {
+			if err := c.Put("/v1/note/block", q, body, &raw); err != nil {
 				return err
 			}
 
@@ -156,16 +178,22 @@ func newNoteBlockUpdateCmd(c *client.Client, opts *output.Options) *cobra.Comman
 func newNoteBlockUpdateStateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var state string
 
+	help := helptext.Load(noteBlocksHelpFS, "note_blocks_help/note_block_update_state.md")
 	cmd := &cobra.Command{
-		Use:   "update-state <id>",
-		Short: "Update a note block's state",
-		Args:  cobra.ExactArgs(1),
+		Use:         "update-state <id>",
+		Short:       "Update a note block's state",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
 
+			body := map[string]any{"state": json.RawMessage(state)}
+
 			var raw json.RawMessage
-			if err := c.Patch("/v1/note/block/state", q, json.RawMessage(state), &raw); err != nil {
+			if err := c.Patch("/v1/note/block/state", q, body, &raw); err != nil {
 				return err
 			}
 
@@ -185,10 +213,14 @@ func newNoteBlockUpdateStateCmd(c *client.Client, opts *output.Options) *cobra.C
 }
 
 func newNoteBlockDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(noteBlocksHelpFS, "note_blocks_help/note_block_delete.md")
 	return &cobra.Command{
-		Use:   "delete <id>",
-		Short: "Delete a note block by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "delete <id>",
+		Short:       "Delete a note block by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -209,9 +241,13 @@ func newNoteBlockDeleteCmd(c *client.Client, opts *output.Options) *cobra.Comman
 }
 
 func newNoteBlockTypesCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(noteBlocksHelpFS, "note_blocks_help/note_block_types.md")
 	return &cobra.Command{
-		Use:   "types",
-		Short: "Show available block types (text, table, calendar, etc.)",
+		Use:         "types",
+		Short:       "Show available block types (text, table, calendar, etc.)",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var raw json.RawMessage
 			if err := c.Get("/v1/note/block/types", nil, &raw); err != nil {
@@ -226,9 +262,12 @@ func newNoteBlockTypesCmd(c *client.Client, opts *output.Options) *cobra.Command
 
 // NewNoteBlocksCmd returns the plural "note-blocks" command with list/reorder/rebalance subcommands.
 func NewNoteBlocksCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(noteBlocksHelpFS, "note_blocks_help/note_blocks.md")
 	cmd := &cobra.Command{
-		Use:   "note-blocks",
-		Short: "List, reorder, or rebalance note blocks",
+		Use:         "note-blocks",
+		Short:       "List, reorder, or rebalance note blocks",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	cmd.AddCommand(newNoteBlocksListCmd(c, opts))
@@ -241,9 +280,13 @@ func NewNoteBlocksCmd(c *client.Client, opts *output.Options) *cobra.Command {
 func newNoteBlocksListCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var noteID uint
 
+	help := helptext.Load(noteBlocksHelpFS, "note_blocks_help/note_blocks_list.md")
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List note blocks for a note",
+		Use:         "list",
+		Short:       "List note blocks for a note",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("noteId", strconv.FormatUint(uint64(noteID), 10))
@@ -284,9 +327,13 @@ func newNoteBlocksReorderCmd(c *client.Client, opts *output.Options) *cobra.Comm
 	var noteID uint
 	var positions string
 
+	help := helptext.Load(noteBlocksHelpFS, "note_blocks_help/note_blocks_reorder.md")
 	cmd := &cobra.Command{
-		Use:   "reorder",
-		Short: "Reorder note blocks",
+		Use:         "reorder",
+		Short:       "Reorder note blocks",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var posMap map[string]string
 			if err := json.Unmarshal([]byte(positions), &posMap); err != nil {
@@ -323,9 +370,13 @@ func newNoteBlocksReorderCmd(c *client.Client, opts *output.Options) *cobra.Comm
 func newNoteBlocksRebalanceCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var noteID uint
 
+	help := helptext.Load(noteBlocksHelpFS, "note_blocks_help/note_blocks_rebalance.md")
 	cmd := &cobra.Command{
-		Use:   "rebalance",
-		Short: "Rebalance note block positions",
+		Use:         "rebalance",
+		Short:       "Rebalance note block positions",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("noteId", strconv.FormatUint(uint64(noteID), 10))

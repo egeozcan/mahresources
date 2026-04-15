@@ -60,4 +60,5 @@ Relation object with ID, Name, Description, FromGroupId, ToGroupId, RelationType
 
 - [`mr relation delete`](./delete.md)
 - [`mr relation edit-name`](./edit-name.md)
+- [`mr relation-type create`](../relation-type/create.md)
 - [`mr group get`](../group/get.md)

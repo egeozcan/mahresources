@@ -42,6 +42,14 @@ sidebar_label: CLI
 | `mr groups meta-keys` | List all unique metadata keys used across groups | [Details](./groups/meta-keys.md) |
 | `mr groups remove-tags` | Remove tags from multiple groups | [Details](./groups/remove-tags.md) |
 | `mr groups timeline` | Display a timeline of group activity | [Details](./groups/timeline.md) |
+| `mr job` | Submit, cancel, pause, or retry a download job | [Details](./job/index.md) |
+| `mr job cancel` | Cancel a job | [Details](./job/cancel.md) |
+| `mr job pause` | Pause a job | [Details](./job/pause.md) |
+| `mr job resume` | Resume a job | [Details](./job/resume.md) |
+| `mr job retry` | Retry a failed job | [Details](./job/retry.md) |
+| `mr job submit` | Submit URLs for download | [Details](./job/submit.md) |
+| `mr jobs` | View the download job queue | [Details](./jobs/index.md) |
+| `mr jobs list` | List the download queue | [Details](./jobs/list.md) |
 | `mr mrql` | Execute and manage MRQL queries | [Details](./mrql/index.md) |
 | `mr mrql delete` | Delete a saved MRQL query by ID | [Details](./mrql/delete.md) |
 | `mr mrql list` | List saved MRQL queries | [Details](./mrql/list.md) |
@@ -56,6 +64,17 @@ sidebar_label: CLI
 | `mr note get` | Get a note by ID | [Details](./note/get.md) |
 | `mr note share` | Generate a share token for a note | [Details](./note/share.md) |
 | `mr note unshare` | Remove the share token from a note | [Details](./note/unshare.md) |
+| `mr note-block` | Get, create, update, or delete a note block | [Details](./note-block/index.md) |
+| `mr note-block create` | Create a new note block | [Details](./note-block/create.md) |
+| `mr note-block delete` | Delete a note block by ID | [Details](./note-block/delete.md) |
+| `mr note-block get` | Get a note block by ID | [Details](./note-block/get.md) |
+| `mr note-block types` | Show available block types (text, table, calendar, etc.) | [Details](./note-block/types.md) |
+| `mr note-block update` | Update a note block's content | [Details](./note-block/update.md) |
+| `mr note-block update-state` | Update a note block's state | [Details](./note-block/update-state.md) |
+| `mr note-blocks` | List, reorder, or rebalance note blocks | [Details](./note-blocks/index.md) |
+| `mr note-blocks list` | List note blocks for a note | [Details](./note-blocks/list.md) |
+| `mr note-blocks rebalance` | Rebalance note block positions | [Details](./note-blocks/rebalance.md) |
+| `mr note-blocks reorder` | Reorder note blocks | [Details](./note-blocks/reorder.md) |
 | `mr note-type` | Get, create, edit, or delete a note type | [Details](./note-type/index.md) |
 | `mr note-type create` | Create a new note type | [Details](./note-type/create.md) |
 | `mr note-type delete` | Delete a note type by ID | [Details](./note-type/delete.md) |
@@ -91,6 +110,14 @@ sidebar_label: CLI
 | `mr relation delete` | Delete a relation by ID | [Details](./relation/delete.md) |
 | `mr relation edit-description` | Edit a relation's description | [Details](./relation/edit-description.md) |
 | `mr relation edit-name` | Edit a relation's name | [Details](./relation/edit-name.md) |
+| `mr relation-type` | Create, edit, or delete a relation type | [Details](./relation-type/index.md) |
+| `mr relation-type create` | Create a new relation type | [Details](./relation-type/create.md) |
+| `mr relation-type delete` | Delete a relation type by ID | [Details](./relation-type/delete.md) |
+| `mr relation-type edit` | Edit a relation type | [Details](./relation-type/edit.md) |
+| `mr relation-type edit-description` | Edit a relation type's description | [Details](./relation-type/edit-description.md) |
+| `mr relation-type edit-name` | Edit a relation type's name | [Details](./relation-type/edit-name.md) |
+| `mr relation-types` | List relation types | [Details](./relation-types/index.md) |
+| `mr relation-types list` | List relation types | [Details](./relation-types/list.md) |
 | `mr resource` | Upload, download, edit, or version a resource | [Details](./resource/index.md) |
 | `mr resource delete` | Delete a resource by ID | [Details](./resource/delete.md) |
 | `mr resource download` | Download a resource file | [Details](./resource/download.md) |
@@ -134,6 +161,14 @@ sidebar_label: CLI
 | `mr resources set-dimensions` | Set dimensions on multiple resources | [Details](./resources/set-dimensions.md) |
 | `mr resources timeline` | Display a timeline of resource activity | [Details](./resources/timeline.md) |
 | `mr resources versions-cleanup` | Clean up old versions across resources | [Details](./resources/versions-cleanup.md) |
+| `mr series` | Manage resource series (list, create, edit, delete) | [Details](./series/index.md) |
+| `mr series create` | Create a new series | [Details](./series/create.md) |
+| `mr series delete` | Delete a series by ID | [Details](./series/delete.md) |
+| `mr series edit` | Edit a series | [Details](./series/edit.md) |
+| `mr series edit-name` | Edit a series name | [Details](./series/edit-name.md) |
+| `mr series get` | Get a series by ID | [Details](./series/get.md) |
+| `mr series list` | List series | [Details](./series/list.md) |
+| `mr series remove-resource` | Remove a resource from its series | [Details](./series/remove-resource.md) |
 | `mr tag` | Get, create, edit, or delete a tag | [Details](./tag/index.md) |
 | `mr tag create` | Create a new tag | [Details](./tag/create.md) |
 | `mr tag delete` | Delete a tag by ID | [Details](./tag/delete.md) |

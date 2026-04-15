@@ -44,6 +44,8 @@ This command has no local flags.
 
 ## See Also
 
+- [`mr relation-type`](../relation-type/index.md)
+- [`mr relation-types list`](../relation-types/list.md)
 - [`mr group get`](../group/get.md)
 - [`mr group children`](../group/children.md)
 - [`mr group parents`](../group/parents.md)

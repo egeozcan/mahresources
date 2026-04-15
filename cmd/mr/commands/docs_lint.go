@@ -33,6 +33,13 @@ var lintAllowlist = map[string]bool{
 	"resource-category":   true,
 	"resource-categories": true,
 	"relation":            true,
+	"relation-type":       true,
+	"relation-types":      true,
+	"note-block":          true,
+	"note-blocks":         true,
+	"series":              true,
+	"job":                 true,
+	"jobs":                true,
 }
 
 // SetLintAllowlistForTest temporarily replaces the production allowlist

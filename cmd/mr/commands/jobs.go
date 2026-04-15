@@ -1,21 +1,29 @@
 package commands
 
 import (
+	"embed"
 	"encoding/json"
 	"net/url"
 	"strings"
 
 	"mahresources/cmd/mr/client"
+	"mahresources/cmd/mr/helptext"
 	"mahresources/cmd/mr/output"
 
 	"github.com/spf13/cobra"
 )
 
+//go:embed jobs_help/*.md
+var jobsHelpFS embed.FS
+
 // NewJobCmd returns the singular "job" command with submit/cancel/pause/resume/retry subcommands.
 func NewJobCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(jobsHelpFS, "jobs_help/job.md")
 	jobCmd := &cobra.Command{
-		Use:   "job",
-		Short: "Submit, cancel, pause, or retry a download job",
+		Use:         "job",
+		Short:       "Submit, cancel, pause, or retry a download job",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	jobCmd.AddCommand(newJobSubmitCmd(c, opts))
@@ -28,12 +36,16 @@ func NewJobCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newJobSubmitCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(jobsHelpFS, "jobs_help/job_submit.md")
 	var urlsStr, tagsStr, groupsStr, name string
 	var ownerID uint
 
 	cmd := &cobra.Command{
-		Use:   "submit",
-		Short: "Submit URLs for download",
+		Use:         "submit",
+		Short:       "Submit URLs for download",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Server expects ResourceFromRemoteCreator with a single URL field.
 			// Multiple URLs are separated by newlines; the server splits them.
@@ -96,10 +108,14 @@ func newJobSubmitCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newJobCancelCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(jobsHelpFS, "jobs_help/job_cancel.md")
 	return &cobra.Command{
-		Use:   "cancel <id>",
-		Short: "Cancel a job",
-		Args:  cobra.ExactArgs(1),
+		Use:         "cancel <id>",
+		Short:       "Cancel a job",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -120,10 +136,14 @@ func newJobCancelCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newJobPauseCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(jobsHelpFS, "jobs_help/job_pause.md")
 	return &cobra.Command{
-		Use:   "pause <id>",
-		Short: "Pause a job",
-		Args:  cobra.ExactArgs(1),
+		Use:         "pause <id>",
+		Short:       "Pause a job",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -144,10 +164,14 @@ func newJobPauseCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newJobResumeCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(jobsHelpFS, "jobs_help/job_resume.md")
 	return &cobra.Command{
-		Use:   "resume <id>",
-		Short: "Resume a job",
-		Args:  cobra.ExactArgs(1),
+		Use:         "resume <id>",
+		Short:       "Resume a job",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -168,10 +192,14 @@ func newJobResumeCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newJobRetryCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(jobsHelpFS, "jobs_help/job_retry.md")
 	return &cobra.Command{
-		Use:   "retry <id>",
-		Short: "Retry a failed job",
-		Args:  cobra.ExactArgs(1),
+		Use:         "retry <id>",
+		Short:       "Retry a failed job",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -193,9 +221,12 @@ func newJobRetryCmd(c *client.Client, opts *output.Options) *cobra.Command {
 
 // NewJobsCmd returns the plural "jobs" command with list subcommand.
 func NewJobsCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(jobsHelpFS, "jobs_help/jobs.md")
 	jobsCmd := &cobra.Command{
-		Use:   "jobs",
-		Short: "View the download job queue",
+		Use:         "jobs",
+		Short:       "View the download job queue",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	jobsCmd.AddCommand(newJobsListCmd(c, opts))
@@ -204,9 +235,13 @@ func NewJobsCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newJobsListCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(jobsHelpFS, "jobs_help/jobs_list.md")
 	return &cobra.Command{
-		Use:   "list",
-		Short: "List the download queue",
+		Use:         "list",
+		Short:       "List the download queue",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var raw json.RawMessage
 			if err := c.Get("/v1/jobs/queue", nil, &raw); err != nil {
