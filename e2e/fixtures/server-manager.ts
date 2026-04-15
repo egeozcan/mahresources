@@ -42,17 +42,29 @@ export async function findAvailablePort(): Promise<number> {
 }
 
 /**
- * Poll until the server responds to HTTP GET /.
+ * Poll until the server is accepting TCP connections on `port`.
+ *
+ * Uses a TCP-level probe rather than `fetch()` because Node's undici client
+ * keeps connections alive in a per-process agent pool even after the response
+ * resolves. Those idle keep-alive sockets hold a server-side connection open
+ * on the same event loop as the test worker and cause `mr docs check-examples`
+ * to deadlock on subsequent HTTP requests. A raw TCP probe opens and closes
+ * cleanly without holding any state.
  */
 export async function waitForServer(port: number, timeout = 30000): Promise<void> {
   const startTime = Date.now();
   while (Date.now() - startTime < timeout) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/`);
-      if (response.ok) return;
-    } catch {
-      // Server not ready yet
-    }
+    const ready = await new Promise<boolean>((resolve) => {
+      const socket = net.createConnection({ host: '127.0.0.1', port }, () => {
+        socket.end();
+        resolve(true);
+      });
+      socket.once('error', () => {
+        socket.destroy();
+        resolve(false);
+      });
+    });
+    if (ready) return;
     await new Promise(r => setTimeout(r, 200));
   }
   throw new Error(`Server on port ${port} did not start within ${timeout}ms`);
@@ -117,15 +129,23 @@ export function startServerProcess(port: number, sharePort: number): ChildProces
     ];
   }
 
+  // Discard server stdout/stderr at the kernel level.
+  //
+  // Using 'pipe' here created a deadlock: cli-doctest's test body is a
+  // single `spawnSync(mr, ['docs', 'check-examples', ...])` which blocks
+  // the Playwright worker's event loop until `mr` exits. During that
+  // blocked window Node cannot drain the server's stdout/stderr pipes.
+  // The server emits ~700 KB of GORM logs over a full doctest run; once
+  // the 16 KB kernel pipe buffer fills, the server blocks on its next
+  // `write()` and stops responding to HTTP requests — deadlocking `mr`
+  // and the spawnSync that's waiting on it.
+  //
+  // Piping to /dev/null via 'ignore' sidesteps the pump entirely.
   const proc = spawn(SERVER_BINARY, args, {
     cwd: PROJECT_ROOT,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', 'ignore', 'ignore'],
     detached: false,
   });
-
-  // Drain stdout/stderr to avoid back-pressure stalls
-  proc.stdout?.on('data', () => {});
-  proc.stderr?.on('data', () => {});
   proc.on('error', (err) => {
     console.error(`[worker server :${port}] spawn error:`, err.message);
   });
