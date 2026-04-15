@@ -17,17 +17,23 @@ pass the global `--json` flag to emit the full record for scripting.
 
 ## Usage
 
-    mr category create
+```bash
+mr category create
+```
 
 ## Examples
 
 **Create a category with just a name**
 
-    mr category create --name "Project"
+```bash
+mr category create --name "Project"
+```
 
 **Create with a description and capture the ID via jq**
 
-    ID=$(mr category create --name "Location" --description "Places you know about" --json | jq -r .ID)
+```bash
+ID=$(mr category create --name "Location" --description "Places you know about" --json | jq -r .ID)
+```
 
 
 ## Flags

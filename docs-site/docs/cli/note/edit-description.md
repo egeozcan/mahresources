@@ -12,7 +12,9 @@ string clears the description.
 
 ## Usage
 
-    mr note edit-description <id> <new-description>
+```bash
+mr note edit-description <id> <new-description>
+```
 
 Positional arguments:
 
@@ -24,11 +26,15 @@ Positional arguments:
 
 **Set the description on note 42**
 
-    mr note edit-description 42 "raw brainstorm, needs polish"
+```bash
+mr note edit-description 42 "raw brainstorm, needs polish"
+```
 
 **Clear the description by passing an empty string**
 
-    mr note edit-description 42 ""
+```bash
+mr note edit-description 42 ""
+```
 
 
 ## Flags

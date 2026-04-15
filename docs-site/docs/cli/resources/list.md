@@ -15,21 +15,29 @@ via the global `--page` flag (default page size 50).
 
 ## Usage
 
-    mr resources list
+```bash
+mr resources list
+```
 
 ## Examples
 
 **List all resources (paged)**
 
-    mr resources list
+```bash
+mr resources list
+```
 
 **Filter by content type**
 
-    mr resources list --content-type image/jpeg
+```bash
+mr resources list --content-type image/jpeg
+```
 
 **Filter by tag + date**
 
-    mr resources list --tags 5 --created-after 2026-01-01 --json | jq -r '.[].Name'
+```bash
+mr resources list --tags 5 --created-after 2026-01-01 --json | jq -r '.[].Name'
+```
 
 
 ## Flags

@@ -15,7 +15,9 @@ description from its `Relationships` array.
 
 ## Usage
 
-    mr relation edit-description <id> <new-description>
+```bash
+mr relation edit-description <id> <new-description>
+```
 
 Positional arguments:
 
@@ -27,11 +29,15 @@ Positional arguments:
 
 **Set the description on relation 7**
 
-    mr relation edit-description 7 "confirmed by archival records"
+```bash
+mr relation edit-description 7 "confirmed by archival records"
+```
 
 **Clear the description by passing an empty string**
 
-    mr relation edit-description 7 ""
+```bash
+mr relation edit-description 7 ""
+```
 
 
 ## Flags

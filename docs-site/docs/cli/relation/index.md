@@ -21,7 +21,9 @@ or query via `mr mrql`.
 
 ## Usage
 
-    mr relation
+```bash
+mr relation
+```
 
 ## Flags
 

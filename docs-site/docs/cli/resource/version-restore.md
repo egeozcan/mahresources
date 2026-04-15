@@ -14,17 +14,23 @@ trail.
 
 ## Usage
 
-    mr resource version-restore
+```bash
+mr resource version-restore
+```
 
 ## Examples
 
 **Restore with a comment**
 
-    mr resource version-restore --resource-id 42 --version-id 17 --comment "revert bad edit"
+```bash
+mr resource version-restore --resource-id 42 --version-id 17 --comment "revert bad edit"
+```
 
 **Silent restore**
 
-    mr resource version-restore --resource-id 42 --version-id 17
+```bash
+mr resource version-restore --resource-id 42 --version-id 17
+```
 
 
 ## Flags

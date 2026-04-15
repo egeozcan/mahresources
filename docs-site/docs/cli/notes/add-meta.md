@@ -15,17 +15,23 @@ semantics. For single-note single-key edits, use `note edit-meta`
 
 ## Usage
 
-    mr notes add-meta
+```bash
+mr notes add-meta
+```
 
 ## Examples
 
 **Set a single key on multiple notes**
 
-    mr notes add-meta --ids 1,2,3 --meta '{"status":"reviewed"}'
+```bash
+mr notes add-meta --ids 1,2,3 --meta '{"status":"reviewed"}'
+```
 
 **Set multiple keys at once (JSON object)**
 
-    mr notes add-meta --ids 1,2 --meta '{"priority":5,"owner":"alice"}'
+```bash
+mr notes add-meta --ids 1,2 --meta '{"priority":5,"owner":"alice"}'
+```
 
 
 ## Flags

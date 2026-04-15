@@ -14,7 +14,9 @@ sibling keys at each level untouched.
 
 ## Usage
 
-    mr resource edit-meta <id> <path> <value>
+```bash
+mr resource edit-meta <id> <path> <value>
+```
 
 Positional arguments:
 
@@ -27,11 +29,15 @@ Positional arguments:
 
 **Set a top-level string field (note: shell-quoted JSON string)**
 
-    mr resource edit-meta 5 status '"active"'
+```bash
+mr resource edit-meta 5 status '"active"'
+```
 
 **Set a nested numeric field (creates address.postalCode if missing)**
 
-    mr resource edit-meta 5 address.postalCode 10115
+```bash
+mr resource edit-meta 5 address.postalCode 10115
+```
 
 
 ## Flags

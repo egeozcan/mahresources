@@ -18,21 +18,29 @@ traversal.
 
 ## Usage
 
-    mr groups list
+```bash
+mr groups list
+```
 
 ## Examples
 
 **List all groups (paged)**
 
-    mr groups list
+```bash
+mr groups list
+```
 
 **Filter by name prefix**
 
-    mr groups list --name "Trips"
+```bash
+mr groups list --name "Trips"
+```
 
 **Filter by owner and tag**
 
-    mr groups list --owner-id 5 --tags 3 --json | jq -r '.[].Name'
+```bash
+mr groups list --owner-id 5 --tags 3 --json | jq -r '.[].Name'
+```
 
 
 ## Flags

@@ -16,7 +16,9 @@ message from the server.
 
 ## Usage
 
-    mr plugin enable <name>
+```bash
+mr plugin enable <name>
+```
 
 Positional arguments:
 
@@ -27,11 +29,15 @@ Positional arguments:
 
 **Enable a plugin by name**
 
-    mr plugin enable my-plugin
+```bash
+mr plugin enable my-plugin
+```
 
 **Enable and confirm via the JSON response**
 
-    mr plugin enable my-plugin --json | jq -e '.enabled == true'
+```bash
+mr plugin enable my-plugin --json | jq -e '.enabled == true'
+```
 
 
 ## Flags

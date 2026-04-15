@@ -16,18 +16,24 @@ for traversing the link in the opposite direction. Sends `POST
 
 ## Usage
 
-    mr relation-type create
+```bash
+mr relation-type create
+```
 
 ## Examples
 
 **Create a basic relation type between two category IDs**
 
-    mr relation-type create --name "references" --from-category 1 --to-category 2
+```bash
+mr relation-type create --name "references" --from-category 1 --to-category 2
+```
 
 **Create with a description and reverse-name**
 
-    ID=$(mr relation-type create --name "depends-on" --description "A depends on B" \
-        --reverse-name "depended-on-by" --from-category 1 --to-category 2 --json | jq -r '.ID')
+```bash
+ID=$(mr relation-type create --name "depends-on" --description "A depends on B" \
+    --reverse-name "depended-on-by" --from-category 1 --to-category 2 --json | jq -r '.ID')
+```
 
 
 ## Flags

@@ -17,7 +17,9 @@ implementation.
 
 ## Usage
 
-    mr docs
+```bash
+mr docs
+```
 
 ## Flags
 

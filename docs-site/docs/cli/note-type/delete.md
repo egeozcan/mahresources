@@ -14,7 +14,9 @@ still returns success.
 
 ## Usage
 
-    mr note-type delete <id>
+```bash
+mr note-type delete <id>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Delete a note type by ID**
 
-    mr note-type delete 42
+```bash
+mr note-type delete 42
+```
 
 **Delete and pipe the result to jq to confirm the response shape**
 
-    mr note-type delete 42 --json | jq .
+```bash
+mr note-type delete 42 --json | jq .
+```
 
 
 ## Flags

@@ -13,7 +13,9 @@ no-op on the server but still returns success.
 
 ## Usage
 
-    mr tag delete <id>
+```bash
+mr tag delete <id>
+```
 
 Positional arguments:
 
@@ -24,11 +26,15 @@ Positional arguments:
 
 **Delete a tag by ID**
 
-    mr tag delete 42
+```bash
+mr tag delete 42
+```
 
 **Delete and pipe the result to jq to confirm the response shape**
 
-    mr tag delete 42 --json | jq .
+```bash
+mr tag delete 42 --json | jq .
+```
 
 
 ## Flags

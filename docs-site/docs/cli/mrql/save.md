@@ -18,7 +18,9 @@ by ID or by name via `mrql run`.
 
 ## Usage
 
-    mr mrql save <name> <query>
+```bash
+mr mrql save <name> <query>
+```
 
 Positional arguments:
 
@@ -30,11 +32,15 @@ Positional arguments:
 
 **Save a simple named query**
 
-    mr mrql save "recent-photos" 'type = resource AND tags = "photo"'
+```bash
+mr mrql save "recent-photos" 'type = resource AND tags = "photo"'
+```
 
 **Save with a description**
 
-    mr mrql save "resources-by-type" 'type = resource GROUP BY contentType COUNT()' --description "Resource count per content type"
+```bash
+mr mrql save "resources-by-type" 'type = resource GROUP BY contentType COUNT()' --description "Resource count per content type"
+```
 
 
 ## Flags

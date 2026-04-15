@@ -13,17 +13,23 @@ array on subsequent `get` responses.
 
 ## Usage
 
-    mr notes add-groups
+```bash
+mr notes add-groups
+```
 
 ## Examples
 
 **Add groups 2 and 3 to notes 1**
 
-    mr notes add-groups --ids 1,2 --groups 2,3
+```bash
+mr notes add-groups --ids 1,2 --groups 2,3
+```
 
 **Bulk from a list query**
 
-    mr notes list --tags 5 --json | jq -r '[.[].ID] | join(",")' | xargs -I {} mr notes add-groups --ids {} --groups 7
+```bash
+mr notes list --tags 5 --json | jq -r '[.[].ID] | join(",")' | xargs -I {} mr notes add-groups --ids {} --groups 7
+```
 
 
 ## Flags

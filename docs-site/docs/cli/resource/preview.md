@@ -13,7 +13,9 @@ previews (e.g., some binary formats or failed decodes).
 
 ## Usage
 
-    mr resource preview <id>
+```bash
+mr resource preview <id>
+```
 
 Positional arguments:
 
@@ -24,18 +26,22 @@ Positional arguments:
 
 **Default preview**
 
-    mr resource preview 42 -o preview.jpg
+```bash
+mr resource preview 42 -o preview.jpg
+```
 
 **Constrained to 256x256 max**
 
-    mr resource preview 42 -o preview.jpg -w 256 --height 256
+```bash
+mr resource preview 42 -o preview.jpg -w 256 --height 256
+```
 
 
 ## Flags
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--output` | string | `` | Output file path (default: preview_<id>) |
+| `--output` | string | `` | Output file path (default: preview_&lt;id&gt;) |
 | `--width` | uint | `0` | Preview width |
 | `--height` | uint | `0` | Preview height |
 ### Inherited global flags

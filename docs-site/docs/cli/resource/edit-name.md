@@ -11,7 +11,9 @@ Update only the name of an existing resource. Shorthand for
 
 ## Usage
 
-    mr resource edit-name <id> <new-name>
+```bash
+mr resource edit-name <id> <new-name>
+```
 
 Positional arguments:
 
@@ -23,11 +25,15 @@ Positional arguments:
 
 **Rename resource 42**
 
-    mr resource edit-name 42 "my new name"
+```bash
+mr resource edit-name 42 "my new name"
+```
 
 **Rename and confirm with a follow-up get**
 
-    mr resource edit-name 42 "renamed" && mr resource get 42 --json | jq -r .Name
+```bash
+mr resource edit-name 42 "renamed" && mr resource get 42 --json | jq -r .Name
+```
 
 
 ## Flags

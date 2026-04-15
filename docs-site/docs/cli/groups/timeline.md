@@ -20,21 +20,29 @@ get the raw bucket data for scripting — the top-level response has a
 
 ## Usage
 
-    mr groups timeline
+```bash
+mr groups timeline
+```
 
 ## Examples
 
 **Monthly timeline anchored at today (default)**
 
-    mr groups timeline
+```bash
+mr groups timeline
+```
 
 **Weekly granularity**
 
-    mr groups timeline --granularity weekly --columns 20
+```bash
+mr groups timeline --granularity weekly --columns 20
+```
 
 **Yearly timeline anchored at 2020**
 
-    mr groups timeline --granularity yearly --anchor 2020-01-01
+```bash
+mr groups timeline --granularity yearly --anchor 2020-01-01
+```
 
 
 ## Flags
@@ -64,7 +72,7 @@ get the raw bucket data for scripting — the top-level response has a
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Object with buckets (array of {label, start, end, created, updated}) and hasMore (bool)
+Object with buckets (array of &#123;label, start, end, created, updated&#125;) and hasMore (bool)
 
 ## Exit Codes
 

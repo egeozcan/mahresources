@@ -14,17 +14,23 @@ client-side `jq` filtering if you only want a subset of keys.
 
 ## Usage
 
-    mr notes meta-keys
+```bash
+mr notes meta-keys
+```
 
 ## Examples
 
 **List all meta keys**
 
-    mr notes meta-keys
+```bash
+mr notes meta-keys
+```
 
 **Filter client-side with jq**
 
-    mr notes meta-keys --json | jq '.[] | select(.key | startswith("project_"))'
+```bash
+mr notes meta-keys --json | jq '.[] | select(.key | startswith("project_"))'
+```
 
 
 ## Flags

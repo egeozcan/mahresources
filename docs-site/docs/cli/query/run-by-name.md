@@ -17,17 +17,23 @@ long-running integrations.
 
 ## Usage
 
-    mr query run-by-name
+```bash
+mr query run-by-name
+```
 
 ## Examples
 
 **Run by name**
 
-    mr query run-by-name --name "count-resources"
+```bash
+mr query run-by-name --name "count-resources"
+```
 
 **Run by name and extract the count column**
 
-    mr query run-by-name --name "count-resources" --json | jq '.[0].n'
+```bash
+mr query run-by-name --name "count-resources" --json | jq '.[0].n'
+```
 
 
 ## Flags

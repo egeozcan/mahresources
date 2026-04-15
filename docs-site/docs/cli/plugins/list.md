@@ -20,17 +20,23 @@ plugin reports, so `plugins list` always emits JSON; piping through
 
 ## Usage
 
-    mr plugins list
+```bash
+mr plugins list
+```
 
 ## Examples
 
 **Show every installed plugin as JSON**
 
-    mr plugins list
+```bash
+mr plugins list
+```
 
 **Print just the names of enabled plugins**
 
-    mr plugins list | jq -r '.[] | select(.enabled == true) | .name'
+```bash
+mr plugins list | jq -r '.[] | select(.enabled == true) | .name'
+```
 
 
 ## Flags

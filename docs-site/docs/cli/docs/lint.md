@@ -17,17 +17,23 @@ block CI.
 
 ## Usage
 
-    mr docs lint
+```bash
+mr docs lint
+```
 
 ## Examples
 
 **Lint the full command tree**
 
-    mr docs lint
+```bash
+mr docs lint
+```
 
 **Use in CI (non-zero exit fails the build)**
 
-    mr docs lint || exit 1
+```bash
+mr docs lint || exit 1
+```
 
 
 ## Flags

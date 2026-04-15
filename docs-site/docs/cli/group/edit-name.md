@@ -13,7 +13,9 @@ record.
 
 ## Usage
 
-    mr group edit-name <id> <new-name>
+```bash
+mr group edit-name <id> <new-name>
+```
 
 Positional arguments:
 
@@ -25,7 +27,9 @@ Positional arguments:
 
 **Rename group 42**
 
-    mr group edit-name 42 "Trips to Berlin"
+```bash
+mr group edit-name 42 "Trips to Berlin"
+```
 
 
 ## Flags

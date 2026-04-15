@@ -14,17 +14,23 @@ linked is a no-op (not an error).
 
 ## Usage
 
-    mr groups remove-tags
+```bash
+mr groups remove-tags
+```
 
 ## Examples
 
 **Remove tag 5 from three groups**
 
-    mr groups remove-tags --ids 10,11,12 --tags 5
+```bash
+mr groups remove-tags --ids 10,11,12 --tags 5
+```
 
 **Remove multiple tags from one group**
 
-    mr groups remove-tags --ids 10 --tags 5,6,7
+```bash
+mr groups remove-tags --ids 10 --tags 5,6,7
+```
 
 
 ## Flags

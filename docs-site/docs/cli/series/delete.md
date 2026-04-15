@@ -13,7 +13,9 @@ a nonexistent ID returns exit code 1.
 
 ## Usage
 
-    mr series delete <id>
+```bash
+mr series delete <id>
+```
 
 Positional arguments:
 
@@ -24,11 +26,15 @@ Positional arguments:
 
 **Delete a series by ID**
 
-    mr series delete 42
+```bash
+mr series delete 42
+```
 
 **Delete and pipe the result to jq to confirm the response shape**
 
-    mr series delete 42 --json | jq .
+```bash
+mr series delete 42 --json | jq .
+```
 
 
 ## Flags

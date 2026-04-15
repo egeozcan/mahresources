@@ -19,17 +19,23 @@ lets scripts filter to just the events they care about.
 
 ## Usage
 
-    mr log entity
+```bash
+mr log entity
+```
 
 ## Examples
 
 **List every log entry for group 42**
 
-    mr log entity --entity-type=group --entity-id=42
+```bash
+mr log entity --entity-type=group --entity-id=42
+```
 
 **Pull only the actions for one resource**
 
-    mr log entity --entity-type=resource --entity-id=7 --json | jq -r '.logs[].action'
+```bash
+mr log entity --entity-type=resource --entity-id=7 --json | jq -r '.logs[].action'
+```
 
 
 ## Flags

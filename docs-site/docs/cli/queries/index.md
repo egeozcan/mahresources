@@ -16,7 +16,9 @@ To execute a query, use `query run <id>` or `query run-by-name --name
 
 ## Usage
 
-    mr queries
+```bash
+mr queries
+```
 
 ## Flags
 

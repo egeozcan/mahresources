@@ -15,7 +15,9 @@ scripting.
 
 ## Usage
 
-    mr note get <id>
+```bash
+mr note get <id>
+```
 
 Positional arguments:
 
@@ -26,11 +28,15 @@ Positional arguments:
 
 **Get a note by ID (table output)**
 
-    mr note get 42
+```bash
+mr note get 42
+```
 
 **Get as JSON and extract the name with jq**
 
-    mr note get 42 --json | jq -r .Name
+```bash
+mr note get 42 --json | jq -r .Name
+```
 
 
 ## Flags

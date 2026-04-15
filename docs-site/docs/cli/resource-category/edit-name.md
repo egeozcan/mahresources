@@ -13,7 +13,9 @@ step, chain with `mr resource-category get <id> --json`.
 
 ## Usage
 
-    mr resource-category edit-name <id> <new-name>
+```bash
+mr resource-category edit-name <id> <new-name>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Rename resource category 42**
 
-    mr resource-category edit-name 42 "Photos"
+```bash
+mr resource-category edit-name 42 "Photos"
+```
 
 **Rename and confirm with a follow-up get**
 
-    mr resource-category edit-name 42 "renamed" && mr resource-category get 42 --json | jq -r .Name
+```bash
+mr resource-category edit-name 42 "renamed" && mr resource-category get 42 --json | jq -r .Name
+```
 
 
 ## Flags

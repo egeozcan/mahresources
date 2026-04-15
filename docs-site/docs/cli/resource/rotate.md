@@ -14,7 +14,9 @@ clockwise).
 
 ## Usage
 
-    mr resource rotate <id>
+```bash
+mr resource rotate <id>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Rotate 90 degrees clockwise**
 
-    mr resource rotate 42 --degrees 90
+```bash
+mr resource rotate 42 --degrees 90
+```
 
 **Rotate 180 degrees**
 
-    mr resource rotate 42 --degrees 180
+```bash
+mr resource rotate 42 --degrees 180
+```
 
 
 ## Flags

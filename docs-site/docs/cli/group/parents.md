@@ -18,7 +18,9 @@ a particular root.
 
 ## Usage
 
-    mr group parents <id>
+```bash
+mr group parents <id>
+```
 
 Positional arguments:
 
@@ -29,11 +31,15 @@ Positional arguments:
 
 **Show the ancestor chain for group 42**
 
-    mr group parents 42
+```bash
+mr group parents 42
+```
 
 **Extract ancestor IDs as CSV**
 
-    mr group parents 42 --json | jq -r 'map(.ID) | join(",")'
+```bash
+mr group parents 42 --json | jq -r 'map(.ID) | join(",")'
+```
 
 
 ## Flags

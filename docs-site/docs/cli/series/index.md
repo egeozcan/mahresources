@@ -20,7 +20,9 @@ attach a resource to a series edit the resource.
 
 ## Usage
 
-    mr series
+```bash
+mr series
+```
 
 ## Flags
 

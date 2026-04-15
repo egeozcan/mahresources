@@ -15,21 +15,29 @@ truncates long Name/Description cells for readability.
 
 ## Usage
 
-    mr queries list
+```bash
+mr queries list
+```
 
 ## Examples
 
 **List all queries (first page)**
 
-    mr queries list
+```bash
+mr queries list
+```
 
 **Filter by a name substring**
 
-    mr queries list --name "count"
+```bash
+mr queries list --name "count"
+```
 
 **JSON + jq: print each query's ID and name**
 
-    mr queries list --json | jq -r '.[] | "\(.ID)\t\(.Name)"'
+```bash
+mr queries list --json | jq -r '.[] | "\(.ID)\t\(.Name)"'
+```
 
 
 ## Flags

@@ -16,18 +16,24 @@ and returns the persisted record.
 
 ## Usage
 
-    mr relation create
+```bash
+mr relation create
+```
 
 ## Examples
 
 **Create a relation linking group 3 to group 4 with relation-type 2**
 
-    mr relation create --from-group-id 3 --to-group-id 4 --relation-type-id 2
+```bash
+mr relation create --from-group-id 3 --to-group-id 4 --relation-type-id 2
+```
 
 **Create a named relation with a description**
 
-    mr relation create --from-group-id 3 --to-group-id 4 --relation-type-id 2 \
-        --name "directed-by" --description "Kubrick directed 2001"
+```bash
+mr relation create --from-group-id 3 --to-group-id 4 --relation-type-id 2 \
+    --name "directed-by" --description "Kubrick directed 2001"
+```
 
 
 ## Flags

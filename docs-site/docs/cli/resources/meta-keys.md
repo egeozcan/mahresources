@@ -13,17 +13,23 @@ with client-side `jq` filtering if you only want a subset of keys.
 
 ## Usage
 
-    mr resources meta-keys
+```bash
+mr resources meta-keys
+```
 
 ## Examples
 
 **List all meta keys**
 
-    mr resources meta-keys
+```bash
+mr resources meta-keys
+```
 
 **Filter client-side with jq**
 
-    mr resources meta-keys --json | jq '.[] | select(startswith("image_"))'
+```bash
+mr resources meta-keys --json | jq '.[] | select(startswith("image_"))'
+```
 
 
 ## Flags

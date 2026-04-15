@@ -16,7 +16,9 @@ create --relation-type-id <id>` when linking two groups.
 
 ## Usage
 
-    mr relation-types
+```bash
+mr relation-types
+```
 
 ## Flags
 

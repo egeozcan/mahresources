@@ -18,22 +18,30 @@ On success prints a confirmation line with the new ID; pass the global
 
 ## Usage
 
-    mr note-type create
+```bash
+mr note-type create
+```
 
 ## Examples
 
 **Create a minimal note type (name only)**
 
-    mr note-type create --name "Meeting Minutes"
+```bash
+mr note-type create --name "Meeting Minutes"
+```
 
 **Create with a JSON Schema constraining metadata**
 
-    mr note-type create --name "Bug Report" \
-      --meta-schema '{"type":"object","properties":{"severity":{"type":"string"}}}'
+```bash
+mr note-type create --name "Bug Report" \
+  --meta-schema '{"type":"object","properties":{"severity":{"type":"string"}}}'
+```
 
 **Capture the new ID via jq for follow-up commands**
 
-    NT=$(mr note-type create --name "Code Review" --json | jq -r .ID)
+```bash
+NT=$(mr note-type create --name "Code Review" --json | jq -r .ID)
+```
 
 
 ## Flags

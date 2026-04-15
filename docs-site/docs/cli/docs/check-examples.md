@@ -17,24 +17,30 @@ The runner pipes each block through `bash -e -o pipefail -c`, with cwd set to
 
 ## Usage
 
-    mr docs check-examples
+```bash
+mr docs check-examples
+```
 
 ## Examples
 
 **Run against a local ephemeral server**
 
-    mr docs check-examples --server http://localhost:8181 --environment=ephemeral
+```bash
+mr docs check-examples --server http://localhost:8181 --environment=ephemeral
+```
 
 **Inherit server URL from the environment**
 
-    MAHRESOURCES_URL=http://localhost:8181 mr docs check-examples --environment=ephemeral
+```bash
+MAHRESOURCES_URL=http://localhost:8181 mr docs check-examples --environment=ephemeral
+```
 
 
 ## Flags
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--environment` | string | `` | Target environment label used by `skip-on=<env>` metadata. Example: `ephemeral` when targeting a seed-less in-memory server. |
+| `--environment` | string | `` | Target environment label used by `skip-on=&lt;env&gt;` metadata. Example: `ephemeral` when targeting a seed-less in-memory server. |
 ### Inherited global flags
 
 | Flag | Type | Default | Description |

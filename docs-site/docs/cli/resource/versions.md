@@ -13,7 +13,9 @@ flag to get the full records for scripting.
 
 ## Usage
 
-    mr resource versions <resource-id>
+```bash
+mr resource versions <resource-id>
+```
 
 Positional arguments:
 
@@ -24,11 +26,15 @@ Positional arguments:
 
 **List versions (table)**
 
-    mr resource versions 42
+```bash
+mr resource versions 42
+```
 
 **Get the newest version's ID via jq**
 
-    mr resource versions 42 --json | jq -r '.[0].id'
+```bash
+mr resource versions 42 --json | jq -r '.[0].id'
+```
 
 
 ## Flags

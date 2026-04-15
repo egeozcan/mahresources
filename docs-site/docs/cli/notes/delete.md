@@ -13,17 +13,23 @@ need to preview targets before deleting.
 
 ## Usage
 
-    mr notes delete
+```bash
+mr notes delete
+```
 
 ## Examples
 
 **Delete specific notes**
 
-    mr notes delete --ids 42,43,44
+```bash
+mr notes delete --ids 42,43,44
+```
 
 **Delete the output of a filter query**
 
-    mr notes list --tags 7 --json | jq -r '[.[].ID] | join(",")' | xargs -I {} mr notes delete --ids {}
+```bash
+mr notes list --tags 7 --json | jq -r '[.[].ID] | join(",")' | xargs -I {} mr notes delete --ids {}
+```
 
 
 ## Flags

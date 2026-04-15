@@ -15,19 +15,25 @@ fields.
 
 ## Usage
 
-    mr note-type edit
+```bash
+mr note-type edit
+```
 
 ## Examples
 
 **Swap the JSON Schema on note type 1**
 
-    mr note-type edit --id 1 \
-      --meta-schema '{"type":"object","properties":{"priority":{"type":"string"}}}'
+```bash
+mr note-type edit --id 1 \
+  --meta-schema '{"type":"object","properties":{"priority":{"type":"string"}}}'
+```
 
 **Update the custom summary template and confirm via list**
 
-    mr note-type edit --id 1 --custom-summary "<div>{{ Note.Name }}</div>"
-    mr note-types list --json | jq '.[] | select(.ID == 1).CustomSummary'
+```bash
+mr note-type edit --id 1 --custom-summary "<div>{{ Note.Name }}</div>"
+mr note-types list --json | jq '.[] | select(.ID == 1).CustomSummary'
+```
 
 
 ## Flags

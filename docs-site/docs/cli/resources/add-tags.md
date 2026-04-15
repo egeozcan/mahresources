@@ -12,17 +12,23 @@ accept comma-separated unsigned integer lists and are required.
 
 ## Usage
 
-    mr resources add-tags
+```bash
+mr resources add-tags
+```
 
 ## Examples
 
 **Add tag 5 to resources 1**
 
-    mr resources add-tags --ids 1,2,3 --tags 5
+```bash
+mr resources add-tags --ids 1,2,3 --tags 5
+```
 
 **Add multiple tags at once**
 
-    mr resources add-tags --ids 1,2,3 --tags 5,6,7
+```bash
+mr resources add-tags --ids 1,2,3 --tags 5,6,7
+```
 
 
 ## Flags

@@ -14,17 +14,23 @@ pass a JSON blob via `--meta` for free-form custom metadata. Sends
 
 ## Usage
 
-    mr group create
+```bash
+mr group create
+```
 
 ## Examples
 
 **Create a top-level group**
 
-    mr group create --name "Trips 2026"
+```bash
+mr group create --name "Trips 2026"
+```
 
 **Create a child group with meta and a category**
 
-    mr group create --name "Berlin" --owner-id 5 --category-id 2 --meta '{"city":"Berlin"}'
+```bash
+mr group create --name "Berlin" --owner-id 5 --category-id 2 --meta '{"city":"Berlin"}'
+```
 
 
 ## Flags

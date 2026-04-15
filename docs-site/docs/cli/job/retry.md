@@ -19,7 +19,9 @@ Persistent failures need an updated URL, which means calling
 
 ## Usage
 
-    mr job retry <id>
+```bash
+mr job retry <id>
+```
 
 Positional arguments:
 
@@ -30,11 +32,15 @@ Positional arguments:
 
 **Retry a specific failed job**
 
-    mr job retry a1b2c3d4
+```bash
+mr job retry a1b2c3d4
+```
 
 **Retry every failed job in the queue**
 
-    mr jobs list --json | jq -r '.jobs[] | select(.status == "failed") | .id' | xargs -I {} mr job retry {}
+```bash
+mr jobs list --json | jq -r '.jobs[] | select(.status == "failed") | .id' | xargs -I {} mr job retry {}
+```
 
 
 ## Flags

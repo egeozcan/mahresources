@@ -20,7 +20,9 @@ filters.
 
 ## Usage
 
-    mr resource-category
+```bash
+mr resource-category
+```
 
 ## Flags
 

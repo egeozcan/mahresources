@@ -12,17 +12,23 @@ comma-separated unsigned integer lists and are required.
 
 ## Usage
 
-    mr notes remove-tags
+```bash
+mr notes remove-tags
+```
 
 ## Examples
 
 **Remove tag 5 from notes 1**
 
-    mr notes remove-tags --ids 1,2 --tags 5
+```bash
+mr notes remove-tags --ids 1,2 --tags 5
+```
 
 **Remove multiple tags at once**
 
-    mr notes remove-tags --ids 1,2,3 --tags 5,6
+```bash
+mr notes remove-tags --ids 1,2,3 --tags 5,6
+```
 
 
 ## Flags

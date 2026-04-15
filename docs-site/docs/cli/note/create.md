@@ -16,17 +16,23 @@ output for use in follow-up commands.
 
 ## Usage
 
-    mr note create
+```bash
+mr note create
+```
 
 ## Examples
 
 **Create a minimal note**
 
-    mr note create --name "shopping list"
+```bash
+mr note create --name "shopping list"
+```
 
 **Create with description**
 
-    mr note create --name "meeting-notes" --description "Q2 planning" --tags 5,6 --owner-id 42
+```bash
+mr note create --name "meeting-notes" --description "Q2 planning" --tags 5,6 --owner-id 42
+```
 
 
 ## Flags

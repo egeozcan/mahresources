@@ -17,7 +17,9 @@ through `jq` when you need to derive IDs from a filter.
 
 ## Usage
 
-    mr tags
+```bash
+mr tags
+```
 
 ## Flags
 

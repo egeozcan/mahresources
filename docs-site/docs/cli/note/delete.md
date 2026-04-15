@@ -12,7 +12,9 @@ exit code 1 with an HTTP 404 error message.
 
 ## Usage
 
-    mr note delete <id>
+```bash
+mr note delete <id>
+```
 
 Positional arguments:
 
@@ -23,11 +25,15 @@ Positional arguments:
 
 **Delete a note by ID**
 
-    mr note delete 42
+```bash
+mr note delete 42
+```
 
 **Delete and pipe the response to jq to confirm**
 
-    mr note delete 42 --json | jq .
+```bash
+mr note delete 42 --json | jq .
+```
 
 
 ## Flags

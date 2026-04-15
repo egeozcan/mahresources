@@ -17,13 +17,17 @@ Both flags are required: `--winner <id>` is a single ID, and
 
 ## Usage
 
-    mr groups merge
+```bash
+mr groups merge
+```
 
 ## Examples
 
 **Merge groups 2 and 3 into winner 1**
 
-    mr groups merge --winner 1 --losers 2,3
+```bash
+mr groups merge --winner 1 --losers 2,3
+```
 
 
 ## Flags

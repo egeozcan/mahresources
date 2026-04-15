@@ -27,7 +27,9 @@ so you can poll and download separately.
 
 ## Usage
 
-    mr group export <id> [<id>...]
+```bash
+mr group export <id> [<id>...]
+```
 
 Positional arguments:
 
@@ -38,15 +40,21 @@ Positional arguments:
 
 **Export group 42 and its subtree to a tar file**
 
-    mr group export 42 --output /tmp/trip-2026.tar
+```bash
+mr group export 42 --output /tmp/trip-2026.tar
+```
 
 **Export two roots**
 
-    mr group export 42 43 --gzip --no-blobs --no-related --output /tmp/shell.tar.gz
+```bash
+mr group export 42 43 --gzip --no-blobs --no-related --output /tmp/shell.tar.gz
+```
 
 **Submit the job and print its ID without waiting**
 
-    mr group export 42 --no-wait
+```bash
+mr group export 42 --no-wait
+```
 
 
 ## Flags

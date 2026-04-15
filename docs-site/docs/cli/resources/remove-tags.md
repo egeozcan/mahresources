@@ -12,17 +12,23 @@ accept comma-separated unsigned integer lists and are required.
 
 ## Usage
 
-    mr resources remove-tags
+```bash
+mr resources remove-tags
+```
 
 ## Examples
 
 **Remove tag 5 from resources 1**
 
-    mr resources remove-tags --ids 1,2 --tags 5
+```bash
+mr resources remove-tags --ids 1,2 --tags 5
+```
 
 **Remove multiple tags at once**
 
-    mr resources remove-tags --ids 1,2,3 --tags 5,6
+```bash
+mr resources remove-tags --ids 1,2,3 --tags 5,6
+```
 
 
 ## Flags

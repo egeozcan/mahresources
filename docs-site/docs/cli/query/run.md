@@ -18,7 +18,9 @@ request body/form values are bound as named SQL parameters.
 
 ## Usage
 
-    mr query run <id>
+```bash
+mr query run <id>
+```
 
 Positional arguments:
 
@@ -29,11 +31,15 @@ Positional arguments:
 
 **Run a query by ID and print the raw JSON array**
 
-    mr query run 42
+```bash
+mr query run 42
+```
 
 **Run and extract the first row's count column with jq**
 
-    mr query run 42 --json | jq '.[0].n'
+```bash
+mr query run 42 --json | jq '.[0].n'
+```
 
 
 ## Flags

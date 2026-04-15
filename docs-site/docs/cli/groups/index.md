@@ -20,7 +20,9 @@ to extract IDs when you need query-based selection.
 
 ## Usage
 
-    mr groups
+```bash
+mr groups
+```
 
 ## Flags
 

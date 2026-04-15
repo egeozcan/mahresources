@@ -19,7 +19,9 @@ to extract IDs when you need query-based selection.
 
 ## Usage
 
-    mr resources
+```bash
+mr resources
+```
 
 ## Flags
 

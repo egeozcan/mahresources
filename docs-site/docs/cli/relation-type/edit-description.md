@@ -16,7 +16,9 @@ the `.Description` field in jq.
 
 ## Usage
 
-    mr relation-type edit-description <id> <new-description>
+```bash
+mr relation-type edit-description <id> <new-description>
+```
 
 Positional arguments:
 
@@ -28,11 +30,15 @@ Positional arguments:
 
 **Set the description on relation-type 5**
 
-    mr relation-type edit-description 5 "references another record"
+```bash
+mr relation-type edit-description 5 "references another record"
+```
 
 **Clear the description by passing an empty string**
 
-    mr relation-type edit-description 5 ""
+```bash
+mr relation-type edit-description 5 ""
+```
 
 
 ## Flags

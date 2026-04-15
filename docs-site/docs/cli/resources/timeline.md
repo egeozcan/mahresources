@@ -19,21 +19,29 @@ to get the raw bucket data for scripting.
 
 ## Usage
 
-    mr resources timeline
+```bash
+mr resources timeline
+```
 
 ## Examples
 
 **Monthly timeline anchored at today (default)**
 
-    mr resources timeline
+```bash
+mr resources timeline
+```
 
 **Weekly granularity**
 
-    mr resources timeline --granularity weekly --columns 12
+```bash
+mr resources timeline --granularity weekly --columns 12
+```
 
 **Yearly timeline filtered by tag**
 
-    mr resources timeline --granularity yearly --tags 5 --json
+```bash
+mr resources timeline --granularity yearly --tags 5 --json
+```
 
 
 ## Flags

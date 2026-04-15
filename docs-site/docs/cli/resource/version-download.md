@@ -13,7 +13,9 @@ older versions by their version ID. Output path defaults to
 
 ## Usage
 
-    mr resource version-download <version-id>
+```bash
+mr resource version-download <version-id>
+```
 
 Positional arguments:
 
@@ -24,18 +26,22 @@ Positional arguments:
 
 **Download a version to an explicit path**
 
-    mr resource version-download 17 -o old.jpg
+```bash
+mr resource version-download 17 -o old.jpg
+```
 
 **Default output path**
 
-    mr resource version-download 17
+```bash
+mr resource version-download 17
+```
 
 
 ## Flags
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--output` | string | `` | Output file path (default: version_<id>) |
+| `--output` | string | `` | Output file path (default: version_&lt;id&gt;) |
 ### Inherited global flags
 
 | Flag | Type | Default | Description |

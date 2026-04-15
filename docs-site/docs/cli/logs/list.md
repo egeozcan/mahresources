@@ -22,21 +22,29 @@ filters.
 
 ## Usage
 
-    mr logs list
+```bash
+mr logs list
+```
 
 ## Examples
 
-**List recent log entries (first page**
+**List recent log entries (first page, table output)**
 
-    mr logs list
+```bash
+mr logs list
+```
 
 **Filter to deletions only**
 
-    mr logs list --action delete --json | jq -r '.logs[] | "\(.entityType) \(.entityId) \(.message)"'
+```bash
+mr logs list --action delete --json | jq -r '.logs[] | "\(.entityType) \(.entityId) \(.message)"'
+```
 
 **Filter by entity type and a date window**
 
-    mr logs list --entity-type group --created-after 2026-01-01T00:00:00Z --json
+```bash
+mr logs list --entity-type group --created-after 2026-01-01T00:00:00Z --json
+```
 
 
 ## Flags

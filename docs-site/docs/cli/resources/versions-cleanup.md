@@ -16,21 +16,29 @@ would be removed without committing any deletes.
 
 ## Usage
 
-    mr resources versions-cleanup
+```bash
+mr resources versions-cleanup
+```
 
 ## Examples
 
 **Keep last 3 versions across all resources**
 
-    mr resources versions-cleanup --keep 3
+```bash
+mr resources versions-cleanup --keep 3
+```
 
 **Preview cleanup of versions older than 90 days**
 
-    mr resources versions-cleanup --older-than-days 90 --owner-id 5 --dry-run
+```bash
+mr resources versions-cleanup --older-than-days 90 --owner-id 5 --dry-run
+```
 
 **Remove all but the latest version across the entire corpus**
 
-    mr resources versions-cleanup --keep 1
+```bash
+mr resources versions-cleanup --keep 1
+```
 
 
 ## Flags

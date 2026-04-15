@@ -20,7 +20,9 @@ filters, or the bulk subcommands under `groups` to mutate many at once.
 
 ## Usage
 
-    mr group
+```bash
+mr group
+```
 
 ## Flags
 

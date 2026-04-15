@@ -20,21 +20,29 @@ for scripting.
 
 ## Usage
 
-    mr notes timeline
+```bash
+mr notes timeline
+```
 
 ## Examples
 
 **Monthly timeline anchored at today (default)**
 
-    mr notes timeline
+```bash
+mr notes timeline
+```
 
 **Weekly granularity**
 
-    mr notes timeline --granularity weekly --columns 12
+```bash
+mr notes timeline --granularity weekly --columns 12
+```
 
 **Yearly timeline filtered by tag**
 
-    mr notes timeline --granularity yearly --tags 5 --json
+```bash
+mr notes timeline --granularity yearly --tags 5 --json
+```
 
 
 ## Flags
@@ -63,7 +71,7 @@ for scripting.
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Object with buckets (array of {label, start, end, created, updated}) and hasMore ({left, right})
+Object with buckets (array of &#123;label, start, end, created, updated&#125;) and hasMore (&#123;left, right&#125;)
 
 ## Exit Codes
 

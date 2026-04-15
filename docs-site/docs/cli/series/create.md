@@ -14,17 +14,23 @@ record for scripting (e.g., piping the new ID into follow-up commands).
 
 ## Usage
 
-    mr series create
+```bash
+mr series create
+```
 
 ## Examples
 
 **Create a series with just a name**
 
-    mr series create --name "spring-2026-photos"
+```bash
+mr series create --name "spring-2026-photos"
+```
 
 **Create and capture the new ID via jq**
 
-    ID=$(mr series create --name "volume-1" --json | jq -r .ID)
+```bash
+ID=$(mr series create --name "volume-1" --json | jq -r .ID)
+```
 
 
 ## Flags

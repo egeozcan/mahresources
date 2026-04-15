@@ -14,7 +14,9 @@ read the name from its `Relationships` array.
 
 ## Usage
 
-    mr relation edit-name <id> <new-name>
+```bash
+mr relation edit-name <id> <new-name>
+```
 
 Positional arguments:
 
@@ -26,12 +28,16 @@ Positional arguments:
 
 **Rename relation 7**
 
-    mr relation edit-name 7 "directed-by"
+```bash
+mr relation edit-name 7 "directed-by"
+```
 
 **Rename and confirm via the source group**
 
-    mr relation edit-name 7 "produced-by" && \
-        mr group get 3 --json | jq -r '.Relationships[] | select(.ID == 7) | .Name'
+```bash
+mr relation edit-name 7 "produced-by" && \
+    mr group get 3 --json | jq -r '.Relationships[] | select(.ID == 7) | .Name'
+```
 
 
 ## Flags

@@ -14,7 +14,9 @@ than cascaded. Use `groups delete --ids=...` for bulk deletion, or
 
 ## Usage
 
-    mr group delete <id>
+```bash
+mr group delete <id>
+```
 
 Positional arguments:
 
@@ -25,7 +27,9 @@ Positional arguments:
 
 **Delete a single group**
 
-    mr group delete 42
+```bash
+mr group delete 42
+```
 
 
 ## Flags

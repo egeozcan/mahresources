@@ -14,7 +14,9 @@ change. Returns `{"id":N,"ok":true}` on success; chain with
 
 ## Usage
 
-    mr note-type edit-name <id> <new-name>
+```bash
+mr note-type edit-name <id> <new-name>
+```
 
 Positional arguments:
 
@@ -26,11 +28,15 @@ Positional arguments:
 
 **Rename note type 1**
 
-    mr note-type edit-name 1 "Team Meeting"
+```bash
+mr note-type edit-name 1 "Team Meeting"
+```
 
 **Rename and confirm with a follow-up get**
 
-    mr note-type edit-name 1 "renamed" && mr note-type get 1 --json | jq -r .Name
+```bash
+mr note-type edit-name 1 "renamed" && mr note-type get 1 --json | jq -r .Name
+```
 
 
 ## Flags

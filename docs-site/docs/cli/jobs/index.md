@@ -18,7 +18,9 @@ use the singular `job` subcommands.
 
 ## Usage
 
-    mr jobs
+```bash
+mr jobs
+```
 
 ## Flags
 

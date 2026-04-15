@@ -13,7 +13,9 @@ command, so changing the name here leaves the slug untouched.
 
 ## Usage
 
-    mr series edit <id>
+```bash
+mr series edit <id>
+```
 
 Positional arguments:
 
@@ -24,11 +26,15 @@ Positional arguments:
 
 **Rename a series and set meta in one call**
 
-    mr series edit 42 --name "volume-1-final" --meta '{"season":"fall"}'
+```bash
+mr series edit 42 --name "volume-1-final" --meta '{"season":"fall"}'
+```
 
 **Rename only (meta unchanged)**
 
-    mr series edit 42 --name "renamed"
+```bash
+mr series edit 42 --name "renamed"
+```
 
 
 ## Flags

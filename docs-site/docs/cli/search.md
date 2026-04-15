@@ -12,7 +12,9 @@ Use `--types` to restrict to a comma-separated subset of entity types (e.g. `--t
 
 ## Usage
 
-    mr search <query>
+```bash
+mr search <query>
+```
 
 Positional arguments:
 
@@ -23,15 +25,21 @@ Positional arguments:
 
 **Simple keyword search across all entities**
 
-    mr search "invoice"
+```bash
+mr search "invoice"
+```
 
 **Restrict to resources only**
 
-    mr search "invoice" --types resources --json
+```bash
+mr search "invoice" --types resources --json
+```
 
 **Cap results and pipe into jq to read the total**
 
-    mr search "report" --limit 5 --json | jq '.total'
+```bash
+mr search "report" --limit 5 --json | jq '.total'
+```
 
 
 ## Flags
@@ -51,7 +59,7 @@ Positional arguments:
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Search response {query (string), total (int), results (array of {id, type, name, score, description, url, extra})}
+Search response &#123;query (string), total (int), results (array of &#123;id, type, name, score, description, url, extra&#125;)&#125;
 
 ## Exit Codes
 

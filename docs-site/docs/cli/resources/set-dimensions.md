@@ -15,18 +15,24 @@ required.
 
 ## Usage
 
-    mr resources set-dimensions
+```bash
+mr resources set-dimensions
+```
 
 ## Examples
 
 **Set dimensions on a single resource**
 
-    mr resources set-dimensions --ids 7 --width 1920 --height 1080
+```bash
+mr resources set-dimensions --ids 7 --width 1920 --height 1080
+```
 
 **Batch update from a tag filter**
 
-    IDS=$(mr resources list --tags 5 --json | jq -r 'map(.id) | join(",")')
-    mr resources set-dimensions --ids $IDS --width 800 --height 600
+```bash
+IDS=$(mr resources list --tags 5 --json | jq -r 'map(.id) | join(",")')
+mr resources set-dimensions --ids $IDS --width 800 --height 600
+```
 
 
 ## Flags

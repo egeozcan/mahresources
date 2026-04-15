@@ -14,7 +14,9 @@ different series instead of detaching it, use `resource edit
 
 ## Usage
 
-    mr series remove-resource <resource-id>
+```bash
+mr series remove-resource <resource-id>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Detach resource 123 from whatever series it belongs to**
 
-    mr series remove-resource 123
+```bash
+mr series remove-resource 123
+```
 
 **Detach and confirm by inspecting the resource's seriesId**
 
-    mr series remove-resource 123 && mr resource get 123 --json | jq .seriesId
+```bash
+mr series remove-resource 123 && mr resource get 123 --json | jq .seriesId
+```
 
 
 ## Flags

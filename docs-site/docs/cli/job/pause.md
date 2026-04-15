@@ -17,7 +17,9 @@ are not re-entrant. Pause is intended for long URL fetches.
 
 ## Usage
 
-    mr job pause <id>
+```bash
+mr job pause <id>
+```
 
 Positional arguments:
 
@@ -28,11 +30,15 @@ Positional arguments:
 
 **Pause a specific job**
 
-    mr job pause a1b2c3d4
+```bash
+mr job pause a1b2c3d4
+```
 
 **Pause every job currently downloading**
 
-    mr jobs list --json | jq -r '.jobs[] | select(.status == "downloading") | .id' | xargs -I {} mr job pause {}
+```bash
+mr jobs list --json | jq -r '.jobs[] | select(.status == "downloading") | .id' | xargs -I {} mr job pause {}
+```
 
 
 ## Flags

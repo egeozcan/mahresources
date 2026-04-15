@@ -14,21 +14,29 @@ columns; pass `--json` for the full array.
 
 ## Usage
 
-    mr categories list
+```bash
+mr categories list
+```
 
 ## Examples
 
 **List all categories (first page)**
 
-    mr categories list
+```bash
+mr categories list
+```
 
 **Filter by name substring**
 
-    mr categories list --name Project
+```bash
+mr categories list --name Project
+```
 
 **JSON output piped into jq**
 
-    mr categories list --json | jq -r '.[].Name'
+```bash
+mr categories list --json | jq -r '.[].Name'
+```
 
 
 ## Flags

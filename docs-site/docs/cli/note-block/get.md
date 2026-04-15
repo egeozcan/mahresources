@@ -14,7 +14,9 @@ scripting.
 
 ## Usage
 
-    mr note-block get <id>
+```bash
+mr note-block get <id>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Get a note block by ID (table output)**
 
-    mr note-block get 42
+```bash
+mr note-block get 42
+```
 
 **Get as JSON and extract the block type**
 
-    mr note-block get 42 --json | jq -r .type
+```bash
+mr note-block get 42 --json | jq -r .type
+```
 
 
 ## Flags

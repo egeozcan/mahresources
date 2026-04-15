@@ -16,17 +16,23 @@ using this type may become inconsistent. Sends `POST
 
 ## Usage
 
-    mr relation-type edit
+```bash
+mr relation-type edit
+```
 
 ## Examples
 
 **Rename a relation type and update its description**
 
-    mr relation-type edit --id 5 --name "referenced-by" --description "backward link"
+```bash
+mr relation-type edit --id 5 --name "referenced-by" --description "backward link"
+```
 
 **Rewire the target category (relation-type 5 now points to category 7)**
 
-    mr relation-type edit --id 5 --to-category 7
+```bash
+mr relation-type edit --id 5 --to-category 7
+```
 
 
 ## Flags

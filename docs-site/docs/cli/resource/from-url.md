@@ -14,17 +14,23 @@ creation.
 
 ## Usage
 
-    mr resource from-url
+```bash
+mr resource from-url
+```
 
 ## Examples
 
 **Create from a URL**
 
-    mr resource from-url --url https://example.com/photo.jpg
+```bash
+mr resource from-url --url https://example.com/photo.jpg
+```
 
 **With metadata and groups**
 
-    mr resource from-url --url https://example.com/doc.pdf --name "Paper" --meta '{"source":"arxiv"}' --groups 5
+```bash
+mr resource from-url --url https://example.com/doc.pdf --name "Paper" --meta '{"source":"arxiv"}' --groups 5
+```
 
 
 ## Flags

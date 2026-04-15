@@ -12,17 +12,23 @@ comma-separated unsigned integer lists and are required.
 
 ## Usage
 
-    mr notes add-tags
+```bash
+mr notes add-tags
+```
 
 ## Examples
 
 **Add tag 5 to notes 1**
 
-    mr notes add-tags --ids 1,2,3 --tags 5
+```bash
+mr notes add-tags --ids 1,2,3 --tags 5
+```
 
 **Add multiple tags at once**
 
-    mr notes add-tags --ids 1,2,3 --tags 5,6,7
+```bash
+mr notes add-tags --ids 1,2,3 --tags 5,6,7
+```
 
 
 ## Flags

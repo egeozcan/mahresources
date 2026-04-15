@@ -13,17 +13,23 @@ of unsigned ints). The current CLI has no dry-run; pipe
 
 ## Usage
 
-    mr resources delete
+```bash
+mr resources delete
+```
 
 ## Examples
 
 **Delete specific resources**
 
-    mr resources delete --ids 42,43,44
+```bash
+mr resources delete --ids 42,43,44
+```
 
 **Delete the output of a filter query**
 
-    mr resources list --tags 7 --json | jq -r 'map(.id) | join(",")' | xargs -I {} mr resources delete --ids {}
+```bash
+mr resources list --tags 7 --json | jq -r 'map(.id) | join(",")' | xargs -I {} mr resources delete --ids {}
+```
 
 
 ## Flags

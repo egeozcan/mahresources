@@ -20,7 +20,9 @@ selection.
 
 ## Usage
 
-    mr notes
+```bash
+mr notes
+```
 
 ## Flags
 

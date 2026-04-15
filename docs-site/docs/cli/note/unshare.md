@@ -14,7 +14,9 @@ field entirely.
 
 ## Usage
 
-    mr note unshare <id>
+```bash
+mr note unshare <id>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Unshare note 42**
 
-    mr note unshare 42
+```bash
+mr note unshare 42
+```
 
 **Unshare and confirm via JSON response**
 
-    mr note unshare 42 --json | jq -e '.success == true'
+```bash
+mr note unshare 42 --json | jq -e '.success == true'
+```
 
 
 ## Flags

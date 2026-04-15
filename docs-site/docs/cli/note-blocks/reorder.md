@@ -19,17 +19,23 @@ rebalance` to normalize them.
 
 ## Usage
 
-    mr note-blocks reorder
+```bash
+mr note-blocks reorder
+```
 
 ## Examples
 
 **Move block 10 to the top and block 11 to the bottom of note 42**
 
-    mr note-blocks reorder --note-id 42 --positions '{"10":"a","11":"z"}'
+```bash
+mr note-blocks reorder --note-id 42 --positions '{"10":"a","11":"z"}'
+```
 
 **Move one block between two siblings using a midpoint string**
 
-    mr note-blocks reorder --note-id 42 --positions '{"10":"m"}'
+```bash
+mr note-blocks reorder --note-id 42 --positions '{"10":"m"}'
+```
 
 
 ## Flags
@@ -37,7 +43,7 @@ rebalance` to normalize them.
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--note-id` | uint | `0` | Note ID (required) **(required)** |
-| `--positions` | string | `` | Positions JSON map (required), e.g. '{"1":"a","2":"b"}' **(required)** |
+| `--positions` | string | `` | Positions JSON map (required), e.g. '&#123;"1":"a","2":"b"&#125;' **(required)** |
 ### Inherited global flags
 
 | Flag | Type | Default | Description |

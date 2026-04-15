@@ -16,17 +16,23 @@ record for scripting.
 
 ## Usage
 
-    mr resource-category create
+```bash
+mr resource-category create
+```
 
 ## Examples
 
 **Create a resource category with just a name**
 
-    mr resource-category create --name "Photos"
+```bash
+mr resource-category create --name "Photos"
+```
 
 **Create with a description and capture the ID via jq**
 
-    ID=$(mr resource-category create --name "Scans" --description "scanned documents" --json | jq -r .ID)
+```bash
+ID=$(mr resource-category create --name "Scans" --description "scanned documents" --json | jq -r .ID)
+```
 
 
 ## Flags

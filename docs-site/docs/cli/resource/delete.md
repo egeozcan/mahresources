@@ -11,7 +11,9 @@ the stored file bytes. Deleting a nonexistent ID returns exit code 1.
 
 ## Usage
 
-    mr resource delete <id>
+```bash
+mr resource delete <id>
+```
 
 Positional arguments:
 
@@ -22,11 +24,15 @@ Positional arguments:
 
 **Delete a resource by ID**
 
-    mr resource delete 42
+```bash
+mr resource delete 42
+```
 
 **Delete and pipe the result to jq to confirm the response**
 
-    mr resource delete 42 --json | jq .
+```bash
+mr resource delete 42 --json | jq .
+```
 
 
 ## Flags

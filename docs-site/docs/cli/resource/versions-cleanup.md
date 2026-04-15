@@ -12,7 +12,9 @@ recent versions (`--keep`) or deletes versions older than N days
 
 ## Usage
 
-    mr resource versions-cleanup <resource-id>
+```bash
+mr resource versions-cleanup <resource-id>
+```
 
 Positional arguments:
 
@@ -23,11 +25,15 @@ Positional arguments:
 
 **Keep only the last 3 versions**
 
-    mr resource versions-cleanup 42 --keep 3
+```bash
+mr resource versions-cleanup 42 --keep 3
+```
 
 **Delete versions older than 90 days (preview)**
 
-    mr resource versions-cleanup 42 --older-than-days 90 --dry-run
+```bash
+mr resource versions-cleanup 42 --older-than-days 90 --dry-run
+```
 
 
 ## Flags

@@ -17,7 +17,9 @@ history. Use `resources list` to discover resources matching filters.
 
 ## Usage
 
-    mr resource
+```bash
+mr resource
+```
 
 ## Flags
 

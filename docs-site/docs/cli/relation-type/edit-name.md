@@ -15,7 +15,9 @@ There is no `relation-type get`: to verify, re-read with
 
 ## Usage
 
-    mr relation-type edit-name <id> <new-name>
+```bash
+mr relation-type edit-name <id> <new-name>
+```
 
 Positional arguments:
 
@@ -27,12 +29,16 @@ Positional arguments:
 
 **Rename relation-type 5**
 
-    mr relation-type edit-name 5 "references"
+```bash
+mr relation-type edit-name 5 "references"
+```
 
 **Rename and confirm via a filtered list**
 
-    mr relation-type edit-name 5 "contains" && \
-        mr relation-types list --name "contains" --json | jq -r '.[] | select(.ID == 5) | .Name'
+```bash
+mr relation-type edit-name 5 "contains" && \
+    mr relation-types list --name "contains" --json | jq -r '.[] | select(.ID == 5) | .Name'
+```
 
 
 ## Flags

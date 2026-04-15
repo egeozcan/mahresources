@@ -16,7 +16,9 @@ state column has a NOT NULL constraint.
 
 ## Usage
 
-    mr note-block update-state <id>
+```bash
+mr note-block update-state <id>
+```
 
 Positional arguments:
 
@@ -27,11 +29,15 @@ Positional arguments:
 
 **Mark a text block as "done" via a custom state field**
 
-    mr note-block update-state 42 --state '{"done":true}'
+```bash
+mr note-block update-state 42 --state '{"done":true}'
+```
 
-**Check off a todo item (todos blocks use `{"checked":[itemId**
+**Check off a todo item (todos blocks use `{"checked":[itemId,...]}`)**
 
-    mr note-block update-state 42 --state '{"checked":["task-1"]}'
+```bash
+mr note-block update-state 42 --state '{"checked":["task-1"]}'
+```
 
 
 ## Flags

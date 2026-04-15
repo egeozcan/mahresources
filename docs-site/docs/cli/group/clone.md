@@ -14,7 +14,9 @@ import` for a deep subtree copy.
 
 ## Usage
 
-    mr group clone <id>
+```bash
+mr group clone <id>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Clone group 42**
 
-    mr group clone 42
+```bash
+mr group clone 42
+```
 
 **Clone and capture the new ID with jq**
 
-    NEW=$(mr group clone 42 --json | jq -r '.ID')
+```bash
+NEW=$(mr group clone 42 --json | jq -r '.ID')
+```
 
 
 ## Flags

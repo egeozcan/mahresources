@@ -19,7 +19,9 @@ confirmation prompt and no undo.
 
 ## Usage
 
-    mr plugin purge-data <name>
+```bash
+mr plugin purge-data <name>
+```
 
 Positional arguments:
 
@@ -30,11 +32,15 @@ Positional arguments:
 
 **Purge all KV data for a plugin by name**
 
-    mr plugin purge-data my-plugin
+```bash
+mr plugin purge-data my-plugin
+```
 
 **Purge and confirm the JSON response**
 
-    mr plugin purge-data my-plugin --json | jq -e '.ok == true'
+```bash
+mr plugin purge-data my-plugin --json | jq -e '.ok == true'
+```
 
 
 ## Flags

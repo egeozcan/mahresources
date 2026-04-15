@@ -321,7 +321,9 @@ sidebar_label: {{.SidebarLabel}}
 
 ## Usage
 
-    {{.UsageLine}}
+` + "```" + `bash
+{{.UsageLine}}
+` + "```" + `
 {{- if .PositionalArgs}}
 
 Positional arguments:
@@ -333,7 +335,9 @@ Positional arguments:
 
 {{range .Examples}}**{{.Label}}**
 
-    {{.Command}}
+` + "```" + `bash
+{{.Command}}
+` + "```" + `
 
 {{end}}
 {{end}}## Flags
@@ -423,7 +427,7 @@ func writeCommandPage(c dumpCommand, tree dumpRoot, targetPath string, outputPat
 		}
 		examples = append(examples, commandPageExample{
 			Label:   e.Label,
-			Command: strings.ReplaceAll(e.Command, "\n", "\n    "),
+			Command: e.Command,
 		})
 	}
 
@@ -434,7 +438,7 @@ func writeCommandPage(c dumpCommand, tree dumpRoot, targetPath string, outputPat
 			Name:        fl.Name,
 			Type:        fl.Type,
 			Default:     fl.Default,
-			Description: fl.Description,
+			Description: escapeMDX(fl.Description),
 			Required:    fl.Required,
 		})
 	}
@@ -454,7 +458,7 @@ func writeCommandPage(c dumpCommand, tree dumpRoot, targetPath string, outputPat
 			Name:        fl.Name,
 			Type:        fl.Type,
 			Default:     fl.Default,
-			Description: fl.Description,
+			Description: escapeMDX(fl.Description),
 		})
 	}
 
@@ -485,8 +489,8 @@ func writeCommandPage(c dumpCommand, tree dumpRoot, targetPath string, outputPat
 		InheritedFlags:    inheritedFlags,
 		HasLocalFlags:     len(localFlags) > 0,
 		HasInheritedFlags: len(inheritedFlags) > 0,
-		OutputShape:       c.OutputShape,
-		ExitCodes:         c.ExitCodes,
+		OutputShape:       escapeMDX(c.OutputShape),
+		ExitCodes:         escapeMDX(c.ExitCodes),
 		SeeAlsoLinks:      seeAlso,
 	}
 
@@ -500,6 +504,30 @@ func writeCommandPage(c dumpCommand, tree dumpRoot, targetPath string, outputPat
 		return err
 	}
 	return t.Execute(f, data)
+}
+
+// escapeMDX makes a free-text string safe for embedding in MDX (Docusaurus)
+// outside of code blocks. Docusaurus parses .md files as MDX, so unescaped
+// `<` is read as a JSX tag opener and `{` as a JSX expression opener.
+// Flag descriptions that include placeholders like `<id>` or output-shape
+// strings that include `{field: type}` would otherwise break the site
+// build with "Expected a closing tag" or "Could not parse expression"
+// errors. Replacing the four MDX-reserved characters with their HTML
+// entities lets MDX treat the text as literal — the rendered page still
+// shows "<id>" and "{field: type}" in the browser because browsers decode
+// HTML entities at render time. This is applied only to rendered-as-
+// paragraph/table-cell strings (flag Description, OutputShape, ExitCodes).
+// Long prose is authored in Markdown and can use backticks for placeholders;
+// Example commands already live inside fenced bash code blocks where MDX
+// does not parse JSX.
+func escapeMDX(s string) string {
+	r := strings.NewReplacer(
+		"<", "&lt;",
+		">", "&gt;",
+		"{", "&#123;",
+		"}", "&#125;",
+	)
+	return r.Replace(s)
 }
 
 // relPath wraps filepath.Rel with slash normalisation so Markdown links
@@ -766,7 +794,7 @@ func parseExamples(s string) []dumpExample {
 }
 
 func applyExampleMetadata(raw string, ex dumpExample) (string, dumpExample) {
-	parts := strings.Split(raw, ",")
+	parts := splitLabelMetadata(raw)
 	label := strings.TrimSpace(parts[0])
 	ex.Label = label
 	for _, p := range parts[1:] {
@@ -791,6 +819,47 @@ func applyExampleMetadata(raw string, ex dumpExample) (string, dumpExample) {
 		}
 	}
 	return label, ex
+}
+
+// splitLabelMetadata splits a mr-doctest label line on commas that live at
+// bracket depth 0. A label like:
+//
+//	Check off a todo item (todos blocks use `{"checked":[itemId,...]}`), timeout=30s
+//
+// must yield [human-text, "timeout=30s"] — not one fragment per comma. The
+// split honors parentheses, square brackets, braces, and backticks so
+// metadata-like separators inside the human description stay intact.
+func splitLabelMetadata(s string) []string {
+	var parts []string
+	var buf strings.Builder
+	depth := 0
+	inTicks := false
+	for _, r := range s {
+		if r == '`' {
+			inTicks = !inTicks
+			buf.WriteRune(r)
+			continue
+		}
+		if !inTicks {
+			switch r {
+			case '(', '[', '{':
+				depth++
+			case ')', ']', '}':
+				if depth > 0 {
+					depth--
+				}
+			case ',':
+				if depth == 0 {
+					parts = append(parts, buf.String())
+					buf.Reset()
+					continue
+				}
+			}
+		}
+		buf.WriteRune(r)
+	}
+	parts = append(parts, buf.String())
+	return parts
 }
 
 func writeJSON(tree dumpRoot, output string) error {

@@ -12,7 +12,9 @@ know the version ID and need its size or comment without a list call.
 
 ## Usage
 
-    mr resource version <version-id>
+```bash
+mr resource version <version-id>
+```
 
 Positional arguments:
 
@@ -23,11 +25,15 @@ Positional arguments:
 
 **Fetch a version by ID**
 
-    mr resource version 17
+```bash
+mr resource version 17
+```
 
 **Extract size via jq**
 
-    mr resource version 17 --json | jq -r .size
+```bash
+mr resource version 17 --json | jq -r .size
+```
 
 
 ## Flags

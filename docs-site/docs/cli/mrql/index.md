@@ -23,7 +23,9 @@ and `delete` to remove one. Saved MRQL queries differ from SQL-based
 
 ## Usage
 
-    mr mrql [query]
+```bash
+mr mrql [query]
+```
 
 Positional arguments:
 

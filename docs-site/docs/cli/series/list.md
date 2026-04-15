@@ -14,21 +14,29 @@ output is a table with ID, NAME, SLUG, and CREATED columns; pass
 
 ## Usage
 
-    mr series list
+```bash
+mr series list
+```
 
 ## Examples
 
 **List all series (first page)**
 
-    mr series list
+```bash
+mr series list
+```
 
 **Filter by name substring**
 
-    mr series list --name volume
+```bash
+mr series list --name volume
+```
 
 **JSON output piped into jq**
 
-    mr series list --json | jq -r '.[].Name'
+```bash
+mr series list --json | jq -r '.[].Name'
+```
 
 
 ## Flags

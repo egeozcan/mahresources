@@ -14,17 +14,23 @@ then deleted. Use to consolidate duplicate or redundant tags (e.g.,
 
 ## Usage
 
-    mr tags merge
+```bash
+mr tags merge
+```
 
 ## Examples
 
 **Merge tags 2 and 3 into winner 1**
 
-    mr tags merge --winner 1 --losers 2,3
+```bash
+mr tags merge --winner 1 --losers 2,3
+```
 
 **Merge the result of a filter**
 
-    mr tags merge --winner 1 --losers $(mr tags list --name "dup-" --json | jq -r 'map(.ID) | join(",")')
+```bash
+mr tags merge --winner 1 --losers $(mr tags list --name "dup-" --json | jq -r 'map(.ID) | join(",")')
+```
 
 
 ## Flags

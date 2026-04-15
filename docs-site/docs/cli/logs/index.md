@@ -20,7 +20,9 @@ use the singular `log` subcommands (`log get`, `log entity`).
 
 ## Usage
 
-    mr logs
+```bash
+mr logs
+```
 
 ## Flags
 

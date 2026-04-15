@@ -19,7 +19,9 @@ inspect the current `values` object before writing a new one.
 
 ## Usage
 
-    mr plugin settings <name>
+```bash
+mr plugin settings <name>
+```
 
 Positional arguments:
 
@@ -30,11 +32,15 @@ Positional arguments:
 
 **Update a plugin's banner text**
 
-    mr plugin settings my-plugin --data '{"banner_text":"Hello from CLI"}'
+```bash
+mr plugin settings my-plugin --data '{"banner_text":"Hello from CLI"}'
+```
 
 **Write multiple settings in one call**
 
-    mr plugin settings my-plugin --data '{"banner_text":"Hi","show_banner":true}'
+```bash
+mr plugin settings my-plugin --data '{"banner_text":"Hi","show_banner":true}'
+```
 
 
 ## Flags

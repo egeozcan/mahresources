@@ -15,7 +15,9 @@ for state changes and `note-blocks reorder` for position changes.
 
 ## Usage
 
-    mr note-block update <id>
+```bash
+mr note-block update <id>
+```
 
 Positional arguments:
 
@@ -26,11 +28,15 @@ Positional arguments:
 
 **Update a text block's content**
 
-    mr note-block update 42 --content '{"text":"new body"}'
+```bash
+mr note-block update 42 --content '{"text":"new body"}'
+```
 
 **Update and print the updated record as JSON**
 
-    mr note-block update 42 --content '{"text":"new body"}' --json | jq .
+```bash
+mr note-block update 42 --content '{"text":"new body"}' --json | jq .
+```
 
 
 ## Flags

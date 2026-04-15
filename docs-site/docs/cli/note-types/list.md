@@ -15,21 +15,29 @@ SectionConfig, and the Custom* rendering fields.
 
 ## Usage
 
-    mr note-types list
+```bash
+mr note-types list
+```
 
 ## Examples
 
 **List all note types (first page)**
 
-    mr note-types list
+```bash
+mr note-types list
+```
 
 **Filter by name substring**
 
-    mr note-types list --name meeting
+```bash
+mr note-types list --name meeting
+```
 
 **JSON output piped into jq to extract just names**
 
-    mr note-types list --json | jq -r '.[].Name'
+```bash
+mr note-types list --json | jq -r '.[].Name'
+```
 
 
 ## Flags

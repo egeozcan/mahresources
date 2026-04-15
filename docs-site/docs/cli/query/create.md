@@ -14,17 +14,23 @@ when executed; writes to the database via `query run` are rejected.
 
 ## Usage
 
-    mr query create
+```bash
+mr query create
+```
 
 ## Examples
 
 **Create a minimal query**
 
-    mr query create --name "count-resources" --text "select count(*) as n from resources"
+```bash
+mr query create --name "count-resources" --text "select count(*) as n from resources"
+```
 
 **Create with a template for custom display**
 
-    mr query create --name "recent-notes" --text "select id, name from notes order by created_at desc limit 10" --template "{{ rows|length }} rows"
+```bash
+mr query create --name "recent-notes" --text "select id, name from notes order by created_at desc limit 10" --template "{{ rows|length }} rows"
+```
 
 
 ## Flags

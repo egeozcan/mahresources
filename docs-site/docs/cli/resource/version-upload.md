@@ -13,7 +13,9 @@ version IDs. The `--comment` flag attaches a free-form note (useful for
 
 ## Usage
 
-    mr resource version-upload <resource-id> <file>
+```bash
+mr resource version-upload <resource-id> <file>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Upload a new version**
 
-    mr resource version-upload 42 ./photo_v2.jpg
+```bash
+mr resource version-upload 42 ./photo_v2.jpg
+```
 
 **With a comment**
 
-    mr resource version-upload 42 ./photo_v2.jpg --comment "color corrected"
+```bash
+mr resource version-upload 42 ./photo_v2.jpg --comment "color corrected"
+```
 
 
 ## Flags

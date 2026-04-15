@@ -20,7 +20,9 @@ an individual block's content, state, or type, use the singular
 
 ## Usage
 
-    mr note-blocks
+```bash
+mr note-blocks
+```
 
 ## Flags
 

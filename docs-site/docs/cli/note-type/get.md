@@ -15,7 +15,9 @@ full record including MetaSchema, SectionConfig, or the Custom* fields.
 
 ## Usage
 
-    mr note-type get <id>
+```bash
+mr note-type get <id>
+```
 
 Positional arguments:
 
@@ -26,11 +28,15 @@ Positional arguments:
 
 **Get a note type by ID (table output)**
 
-    mr note-type get 1
+```bash
+mr note-type get 1
+```
 
 **Get as JSON and extract the name with jq**
 
-    mr note-type get 1 --json | jq -r .Name
+```bash
+mr note-type get 1 --json | jq -r .Name
+```
 
 
 ## Flags

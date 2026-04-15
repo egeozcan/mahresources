@@ -13,7 +13,9 @@ server rejects duplicates. To rename and verify in one step, chain with
 
 ## Usage
 
-    mr tag edit-name <id> <new-name>
+```bash
+mr tag edit-name <id> <new-name>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Rename tag 42**
 
-    mr tag edit-name 42 "important"
+```bash
+mr tag edit-name 42 "important"
+```
 
 **Rename and confirm with a follow-up get**
 
-    mr tag edit-name 42 "renamed" && mr tag get 42 --json | jq -r .Name
+```bash
+mr tag edit-name 42 "renamed" && mr tag get 42 --json | jq -r .Name
+```
 
 
 ## Flags

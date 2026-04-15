@@ -13,7 +13,9 @@ to remove every block on a note, delete the note itself.
 
 ## Usage
 
-    mr note-block delete <id>
+```bash
+mr note-block delete <id>
+```
 
 Positional arguments:
 
@@ -24,11 +26,15 @@ Positional arguments:
 
 **Delete a note block by ID**
 
-    mr note-block delete 42
+```bash
+mr note-block delete 42
+```
 
 **Delete and pipe the response to jq to confirm**
 
-    mr note-block delete 42 --json | jq .
+```bash
+mr note-block delete 42 --json | jq .
+```
 
 
 ## Flags

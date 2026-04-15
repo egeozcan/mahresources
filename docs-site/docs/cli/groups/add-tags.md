@@ -17,17 +17,23 @@ Verify the result by reading a target Group back with
 
 ## Usage
 
-    mr groups add-tags
+```bash
+mr groups add-tags
+```
 
 ## Examples
 
 **Tag three groups with tag 5**
 
-    mr groups add-tags --ids 10,11,12 --tags 5
+```bash
+mr groups add-tags --ids 10,11,12 --tags 5
+```
 
 **Add multiple tags to one group**
 
-    mr groups add-tags --ids 10 --tags 5,6,7
+```bash
+mr groups add-tags --ids 10 --tags 5,6,7
+```
 
 
 ## Flags

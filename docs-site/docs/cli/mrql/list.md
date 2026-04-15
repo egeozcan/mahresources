@@ -17,17 +17,23 @@ field — there is no dedicated `mrql get` subcommand.
 
 ## Usage
 
-    mr mrql list
+```bash
+mr mrql list
+```
 
 ## Examples
 
 **List all saved MRQL queries (first page)**
 
-    mr mrql list
+```bash
+mr mrql list
+```
 
 **JSON + jq: print each saved query's id**
 
-    mr mrql list --json | jq -r '.[] | "\(.id)\t\(.name)\t\(.query)"'
+```bash
+mr mrql list --json | jq -r '.[] | "\(.id)\t\(.name)\t\(.query)"'
+```
 
 
 ## Flags

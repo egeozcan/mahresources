@@ -19,21 +19,29 @@ raw bucket data for scripting.
 
 ## Usage
 
-    mr categories timeline
+```bash
+mr categories timeline
+```
 
 ## Examples
 
 **Monthly timeline anchored at today (default)**
 
-    mr categories timeline
+```bash
+mr categories timeline
+```
 
 **Weekly granularity**
 
-    mr categories timeline --granularity weekly --columns 12
+```bash
+mr categories timeline --granularity weekly --columns 12
+```
 
 **Yearly timeline anchored at a specific date**
 
-    mr categories timeline --granularity yearly --anchor 2020-01-01 --json
+```bash
+mr categories timeline --granularity yearly --anchor 2020-01-01 --json
+```
 
 
 ## Flags
@@ -56,7 +64,7 @@ raw bucket data for scripting.
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Object with buckets ([]{label, start, end, created, updated})
+Object with buckets ([]&#123;label, start, end, created, updated&#125;)
 
 ## Exit Codes
 

@@ -17,7 +17,9 @@ other than pending, downloading, or processing cannot be cancelled.
 
 ## Usage
 
-    mr job cancel <id>
+```bash
+mr job cancel <id>
+```
 
 Positional arguments:
 
@@ -28,11 +30,15 @@ Positional arguments:
 
 **Cancel a specific job**
 
-    mr job cancel a1b2c3d4
+```bash
+mr job cancel a1b2c3d4
+```
 
 **Pipe through jq to cancel every active job**
 
-    mr jobs list --json | jq -r '.jobs[] | select(.status == "downloading" or .status == "pending") | .id' | xargs -I {} mr job cancel {}
+```bash
+mr jobs list --json | jq -r '.jobs[] | select(.status == "downloading" or .status == "pending") | .id' | xargs -I {} mr job cancel {}
+```
 
 
 ## Flags

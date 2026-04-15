@@ -14,7 +14,9 @@ delete. Deleting a nonexistent ID returns exit code 1.
 
 ## Usage
 
-    mr relation-type delete <id>
+```bash
+mr relation-type delete <id>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Delete relation-type 5**
 
-    mr relation-type delete 5
+```bash
+mr relation-type delete 5
+```
 
 **Delete and pipe the result to jq**
 
-    mr relation-type delete 5 --json | jq .
+```bash
+mr relation-type delete 5 --json | jq .
+```
 
 
 ## Flags

@@ -17,7 +17,9 @@ PascalCase — unlike full Group objects returned by `group get`.
 
 ## Usage
 
-    mr group children <id>
+```bash
+mr group children <id>
+```
 
 Positional arguments:
 
@@ -28,11 +30,15 @@ Positional arguments:
 
 **List the direct children of group 42**
 
-    mr group children 42
+```bash
+mr group children 42
+```
 
 **Extract child IDs as CSV**
 
-    mr group children 42 --json | jq -r 'map(.id) | join(",")'
+```bash
+mr group children 42 --json | jq -r 'map(.id) | join(",")'
+```
 
 
 ## Flags

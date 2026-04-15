@@ -14,7 +14,9 @@ emit the raw record for scripting.
 
 ## Usage
 
-    mr category get <id>
+```bash
+mr category get <id>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Get a category by ID (table output)**
 
-    mr category get 42
+```bash
+mr category get 42
+```
 
 **Get as JSON and extract the name with jq**
 
-    mr category get 42 --json | jq -r .Name
+```bash
+mr category get 42 --json | jq -r .Name
+```
 
 
 ## Flags

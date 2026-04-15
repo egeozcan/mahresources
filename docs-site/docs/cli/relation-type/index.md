@@ -24,7 +24,9 @@ and filter by ID in jq, or fetch the full list.
 
 ## Usage
 
-    mr relation-type
+```bash
+mr relation-type
+```
 
 ## Flags
 

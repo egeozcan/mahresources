@@ -14,7 +14,9 @@ already disabled is idempotent and returns `ok`.
 
 ## Usage
 
-    mr plugin disable <name>
+```bash
+mr plugin disable <name>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Disable a plugin by name**
 
-    mr plugin disable my-plugin
+```bash
+mr plugin disable my-plugin
+```
 
 **Disable and confirm via the JSON response**
 
-    mr plugin disable my-plugin --json | jq -e '.enabled == false'
+```bash
+mr plugin disable my-plugin --json | jq -e '.enabled == false'
+```
 
 
 ## Flags

@@ -17,7 +17,9 @@ Singular operations (get, create, edit, delete) live under the sibling
 
 ## Usage
 
-    mr note-types
+```bash
+mr note-types
+```
 
 ## Flags
 

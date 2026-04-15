@@ -18,21 +18,29 @@ global `--json` flag to get the raw bucket data for scripting.
 
 ## Usage
 
-    mr queries timeline
+```bash
+mr queries timeline
+```
 
 ## Examples
 
 **Monthly timeline anchored at today (default)**
 
-    mr queries timeline
+```bash
+mr queries timeline
+```
 
 **Weekly granularity**
 
-    mr queries timeline --granularity weekly --columns 12
+```bash
+mr queries timeline --granularity weekly --columns 12
+```
 
 **Yearly timeline as JSON**
 
-    mr queries timeline --granularity yearly --json
+```bash
+mr queries timeline --granularity yearly --json
+```
 
 
 ## Flags

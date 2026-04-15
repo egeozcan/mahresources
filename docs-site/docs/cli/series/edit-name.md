@@ -14,7 +14,9 @@ this command.
 
 ## Usage
 
-    mr series edit-name <id> <new-name>
+```bash
+mr series edit-name <id> <new-name>
+```
 
 Positional arguments:
 
@@ -26,11 +28,15 @@ Positional arguments:
 
 **Rename series 42**
 
-    mr series edit-name 42 "volume-1-final"
+```bash
+mr series edit-name 42 "volume-1-final"
+```
 
 **Rename and confirm with a follow-up get**
 
-    mr series edit-name 42 "renamed" && mr series get 42 --json | jq -r .Name
+```bash
+mr series edit-name 42 "renamed" && mr series get 42 --json | jq -r .Name
+```
 
 
 ## Flags

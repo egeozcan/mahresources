@@ -12,7 +12,9 @@ not affect execution.
 
 ## Usage
 
-    mr query edit-description <id> <value>
+```bash
+mr query edit-description <id> <value>
+```
 
 Positional arguments:
 
@@ -24,11 +26,15 @@ Positional arguments:
 
 **Set the description on query 42**
 
-    mr query edit-description 42 "Counts resources grouped by content type"
+```bash
+mr query edit-description 42 "Counts resources grouped by content type"
+```
 
 **Clear the description by passing an empty string**
 
-    mr query edit-description 42 ""
+```bash
+mr query edit-description 42 ""
+```
 
 
 ## Flags

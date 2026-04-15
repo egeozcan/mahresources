@@ -16,17 +16,23 @@ expects before calling `note-block create` or `note-block update`.
 
 ## Usage
 
-    mr note-block types
+```bash
+mr note-block types
+```
 
 ## Examples
 
 **List all block types as a table (default)**
 
-    mr note-block types
+```bash
+mr note-block types
+```
 
 **List types as JSON and extract just the names**
 
-    mr note-block types --json | jq -r '.[].type'
+```bash
+mr note-block types --json | jq -r '.[].type'
+```
 
 
 ## Flags

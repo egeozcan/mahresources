@@ -13,7 +13,9 @@ for human-readable context; for structured metadata use `edit-meta`.
 
 ## Usage
 
-    mr group edit-description <id> <new-description>
+```bash
+mr group edit-description <id> <new-description>
+```
 
 Positional arguments:
 
@@ -25,7 +27,9 @@ Positional arguments:
 
 **Update the description on group 42**
 
-    mr group edit-description 42 "Our summer 2026 travel photos"
+```bash
+mr group edit-description 42 "Our summer 2026 travel photos"
+```
 
 
 ## Flags

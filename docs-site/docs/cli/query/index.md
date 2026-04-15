@@ -21,7 +21,9 @@ authoring query text. Use `queries list` to discover existing queries.
 
 ## Usage
 
-    mr query
+```bash
+mr query
+```
 
 ## Flags
 

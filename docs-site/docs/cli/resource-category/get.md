@@ -14,7 +14,9 @@ global `--json` flag to emit the raw record for scripting.
 
 ## Usage
 
-    mr resource-category get <id>
+```bash
+mr resource-category get <id>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Get a resource category by ID (table output)**
 
-    mr resource-category get 42
+```bash
+mr resource-category get 42
+```
 
 **Get as JSON and extract the name with jq**
 
-    mr resource-category get 42 --json | jq -r .Name
+```bash
+mr resource-category get 42 --json | jq -r .Name
+```
 
 
 ## Flags

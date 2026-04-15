@@ -20,7 +20,9 @@ at once.
 
 ## Usage
 
-    mr note
+```bash
+mr note
+```
 
 ## Flags
 

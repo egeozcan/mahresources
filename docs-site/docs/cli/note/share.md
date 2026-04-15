@@ -14,7 +14,9 @@ relative share URL for convenience.
 
 ## Usage
 
-    mr note share <id>
+```bash
+mr note share <id>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Share note 42 and print the share URL**
 
-    mr note share 42 --json | jq -r .shareUrl
+```bash
+mr note share 42 --json | jq -r .shareUrl
+```
 
 **Share and capture just the token for use elsewhere**
 
-    TOKEN=$(mr note share 42 --json | jq -r .shareToken)
+```bash
+TOKEN=$(mr note share 42 --json | jq -r .shareToken)
+```
 
 
 ## Flags

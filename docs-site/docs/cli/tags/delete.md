@@ -14,17 +14,23 @@ entities themselves are preserved). Target tags are selected via
 
 ## Usage
 
-    mr tags delete
+```bash
+mr tags delete
+```
 
 ## Examples
 
 **Delete specific tags**
 
-    mr tags delete --ids 42,43,44
+```bash
+mr tags delete --ids 42,43,44
+```
 
 **Delete all tags matching a name filter**
 
-    mr tags delete --ids $(mr tags list --name "obsolete-" --json | jq -r 'map(.ID) | join(",")')
+```bash
+mr tags delete --ids $(mr tags list --name "obsolete-" --json | jq -r 'map(.ID) | join(",")')
+```
 
 
 ## Flags

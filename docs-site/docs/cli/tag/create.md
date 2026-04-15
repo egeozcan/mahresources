@@ -13,17 +13,23 @@ scripting (e.g., piping the new ID into follow-up commands).
 
 ## Usage
 
-    mr tag create
+```bash
+mr tag create
+```
 
 ## Examples
 
 **Create a tag with just a name**
 
-    mr tag create --name "urgent"
+```bash
+mr tag create --name "urgent"
+```
 
 **Create with a description and capture the ID via jq**
 
-    ID=$(mr tag create --name "archived" --description "archived items" --json | jq -r .ID)
+```bash
+ID=$(mr tag create --name "archived" --description "archived items" --json | jq -r .ID)
+```
 
 
 ## Flags

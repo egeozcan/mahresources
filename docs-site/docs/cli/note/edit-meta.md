@@ -14,7 +14,9 @@ sibling keys at each level untouched.
 
 ## Usage
 
-    mr note edit-meta <id> <path> <value>
+```bash
+mr note edit-meta <id> <path> <value>
+```
 
 Positional arguments:
 
@@ -27,11 +29,15 @@ Positional arguments:
 
 **Set a top-level string field (note: shell-quoted JSON string)**
 
-    mr note edit-meta 5 status '"active"'
+```bash
+mr note edit-meta 5 status '"active"'
+```
 
 **Set a nested numeric field (creates address.postalCode if missing)**
 
-    mr note edit-meta 5 address.postalCode 10115
+```bash
+mr note edit-meta 5 address.postalCode 10115
+```
 
 
 ## Flags

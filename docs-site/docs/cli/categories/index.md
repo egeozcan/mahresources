@@ -18,7 +18,9 @@ IDs from a filter.
 
 ## Usage
 
-    mr categories
+```bash
+mr categories
+```
 
 ## Flags
 

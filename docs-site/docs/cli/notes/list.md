@@ -15,21 +15,29 @@ type. Pagination is via the global `--page` flag (default page size 50).
 
 ## Usage
 
-    mr notes list
+```bash
+mr notes list
+```
 
 ## Examples
 
 **List all notes (first page)**
 
-    mr notes list
+```bash
+mr notes list
+```
 
 **Filter by name substring and owner**
 
-    mr notes list --name meeting --owner-id 42
+```bash
+mr notes list --name meeting --owner-id 42
+```
 
 **Filter by tag + date**
 
-    mr notes list --tags 5 --created-after 2026-01-01 --json | jq -r '.[].Name'
+```bash
+mr notes list --tags 5 --created-after 2026-01-01 --json | jq -r '.[].Name'
+```
 
 
 ## Flags

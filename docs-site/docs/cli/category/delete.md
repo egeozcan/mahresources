@@ -13,7 +13,9 @@ on the server but still returns success.
 
 ## Usage
 
-    mr category delete <id>
+```bash
+mr category delete <id>
+```
 
 Positional arguments:
 
@@ -24,11 +26,15 @@ Positional arguments:
 
 **Delete a category by ID**
 
-    mr category delete 42
+```bash
+mr category delete 42
+```
 
 **Delete and pipe the result to jq to confirm the response shape**
 
-    mr category delete 42 --json | jq .
+```bash
+mr category delete 42 --json | jq .
+```
 
 
 ## Flags

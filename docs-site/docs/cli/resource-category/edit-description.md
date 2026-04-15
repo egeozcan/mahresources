@@ -13,7 +13,9 @@ categories used across many resources without renaming them.
 
 ## Usage
 
-    mr resource-category edit-description <id> <new-description>
+```bash
+mr resource-category edit-description <id> <new-description>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Set a description on resource category 42**
 
-    mr resource-category edit-description 42 "high-resolution scans"
+```bash
+mr resource-category edit-description 42 "high-resolution scans"
+```
 
 **Clear the description by passing an empty string**
 
-    mr resource-category edit-description 42 ""
+```bash
+mr resource-category edit-description 42 ""
+```
 
 
 ## Flags

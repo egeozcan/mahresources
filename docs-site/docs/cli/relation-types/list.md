@@ -14,21 +14,29 @@ scripted workflows: look up a type ID by name and pass it to
 
 ## Usage
 
-    mr relation-types list
+```bash
+mr relation-types list
+```
 
 ## Examples
 
 **List all relation types (paged)**
 
-    mr relation-types list
+```bash
+mr relation-types list
+```
 
 **Filter by name substring**
 
-    mr relation-types list --name references
+```bash
+mr relation-types list --name references
+```
 
 **JSON output + jq to extract the ID for a known name**
 
-    mr relation-types list --name "depends-on" --json | jq -r '.[0].ID'
+```bash
+mr relation-types list --name "depends-on" --json | jq -r '.[0].ID'
+```
 
 
 ## Flags

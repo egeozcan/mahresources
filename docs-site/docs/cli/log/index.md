@@ -20,7 +20,9 @@ query across the whole system, use `logs list`.
 
 ## Usage
 
-    mr log
+```bash
+mr log
+```
 
 ## Flags
 

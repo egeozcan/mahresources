@@ -17,17 +17,23 @@ progress with `jobs list` or the `/v1/download/events` SSE stream.
 
 ## Usage
 
-    mr job submit
+```bash
+mr job submit
+```
 
 ## Examples
 
 **Queue a single download**
 
-    mr job submit --urls https://example.com/photo.jpg
+```bash
+mr job submit --urls https://example.com/photo.jpg
+```
 
 **Queue multiple URLs with tags and an owner group**
 
-    mr job submit --urls https://a.example.com/a.jpg,https://b.example.com/b.jpg --tags 5,7 --owner-id 3
+```bash
+mr job submit --urls https://a.example.com/a.jpg,https://b.example.com/b.jpg --tags 5,7 --owner-id 3
+```
 
 
 ## Flags

@@ -21,7 +21,9 @@ for per-note listing, reorder, and rebalance operations.
 
 ## Usage
 
-    mr note-block
+```bash
+mr note-block
+```
 
 ## Flags
 

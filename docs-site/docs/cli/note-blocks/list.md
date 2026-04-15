@@ -14,17 +14,23 @@ for processing, or to feed block IDs into downstream commands.
 
 ## Usage
 
-    mr note-blocks list
+```bash
+mr note-blocks list
+```
 
 ## Examples
 
 **List every block on note 42 (table output)**
 
-    mr note-blocks list --note-id 42
+```bash
+mr note-blocks list --note-id 42
+```
 
 **Get blocks as JSON and extract id + position pairs**
 
-    mr note-blocks list --note-id 42 --json | jq -r '.[] | [.id, .position] | @tsv'
+```bash
+mr note-blocks list --note-id 42 --json | jq -r '.[] | [.id, .position] | @tsv'
+```
 
 
 ## Flags

@@ -16,7 +16,9 @@ IDs for scripting, and `resource-category` for single-category CRUD.
 
 ## Usage
 
-    mr resource-categories
+```bash
+mr resource-categories
+```
 
 ## Flags
 

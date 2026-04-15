@@ -20,7 +20,9 @@ available note types and feed their IDs into `note create --note-type-id`.
 
 ## Usage
 
-    mr note-type
+```bash
+mr note-type
+```
 
 ## Flags
 

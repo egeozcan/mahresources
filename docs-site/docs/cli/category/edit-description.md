@@ -13,7 +13,9 @@ guidance about what Groups belong under them without renaming.
 
 ## Usage
 
-    mr category edit-description <id> <new-description>
+```bash
+mr category edit-description <id> <new-description>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Set a description on category 42**
 
-    mr category edit-description 42 "places and venues"
+```bash
+mr category edit-description 42 "places and venues"
+```
 
 **Clear the description by passing an empty string**
 
-    mr category edit-description 42 ""
+```bash
+mr category edit-description 42 ""
+```
 
 
 ## Flags

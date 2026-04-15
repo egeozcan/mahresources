@@ -13,7 +13,9 @@ step, chain with `mr category get <id> --json`.
 
 ## Usage
 
-    mr category edit-name <id> <new-name>
+```bash
+mr category edit-name <id> <new-name>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Rename category 42**
 
-    mr category edit-name 42 "Projects"
+```bash
+mr category edit-name 42 "Projects"
+```
 
 **Rename and confirm with a follow-up get**
 
-    mr category edit-name 42 "renamed" && mr category get 42 --json | jq -r .Name
+```bash
+mr category edit-name 42 "renamed" && mr category get 42 --json | jq -r .Name
+```
 
 
 ## Flags

@@ -13,7 +13,9 @@ performed.
 
 ## Usage
 
-    mr resource download <id>
+```bash
+mr resource download <id>
+```
 
 Positional arguments:
 
@@ -24,18 +26,22 @@ Positional arguments:
 
 **Download to an explicit path**
 
-    mr resource download 42 -o ./out.jpg
+```bash
+mr resource download 42 -o ./out.jpg
+```
 
 **Download to the default path (resource_42)**
 
-    mr resource download 42
+```bash
+mr resource download 42
+```
 
 
 ## Flags
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--output` | string | `` | Output file path (default: resource_<id>) |
+| `--output` | string | `` | Output file path (default: resource_&lt;id&gt;) |
 ### Inherited global flags
 
 | Flag | Type | Default | Description |

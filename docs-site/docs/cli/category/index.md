@@ -19,7 +19,9 @@ view creation activity over time.
 
 ## Usage
 
-    mr category
+```bash
+mr category
+```
 
 ## Flags
 

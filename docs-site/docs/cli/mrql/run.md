@@ -24,7 +24,9 @@ records rather than MRQL DSL expressions.
 
 ## Usage
 
-    mr mrql run <name-or-id>
+```bash
+mr mrql run <name-or-id>
+```
 
 Positional arguments:
 
@@ -35,15 +37,21 @@ Positional arguments:
 
 **Run a saved query by ID**
 
-    mr mrql run 42
+```bash
+mr mrql run 42
+```
 
 **Run by name with bucketed GROUP BY pagination**
 
-    mr mrql run "resources-by-type" --buckets 5
+```bash
+mr mrql run "resources-by-type" --buckets 5
+```
 
 **Run and extract result ids with jq**
 
-    mr mrql run "recent-photos" --json | jq -r '.resources[].ID'
+```bash
+mr mrql run "recent-photos" --json | jq -r '.resources[].ID'
+```
 
 
 ## Flags

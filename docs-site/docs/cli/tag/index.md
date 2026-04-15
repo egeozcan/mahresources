@@ -19,7 +19,9 @@ relationships into another.
 
 ## Usage
 
-    mr tag
+```bash
+mr tag
+```
 
 ## Flags
 

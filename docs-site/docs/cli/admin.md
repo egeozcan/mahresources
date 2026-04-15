@@ -12,21 +12,29 @@ Use `--server-only` to fetch just the server health block, or `--data-only` to f
 
 ## Usage
 
-    mr admin
+```bash
+mr admin
+```
 
 ## Examples
 
-**Full admin stats (human-readable**
+**Full admin stats (human-readable, three sections)**
 
-    mr admin
+```bash
+mr admin
+```
 
 **Server health only**
 
-    mr admin --server-only --json
+```bash
+mr admin --server-only --json
+```
 
 **Data counts only**
 
-    mr admin --data-only
+```bash
+mr admin --data-only
+```
 
 
 ## Flags
@@ -46,7 +54,7 @@ Use `--server-only` to fetch just the server health block, or `--data-only` to f
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Combined stats object {serverStats, dataStats, expensiveStats} in JSON mode; three sectioned tables in human mode
+Combined stats object &#123;serverStats, dataStats, expensiveStats&#125; in JSON mode; three sectioned tables in human mode
 
 ## Exit Codes
 

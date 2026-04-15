@@ -15,7 +15,9 @@ the singular `plugin` subcommands.
 
 ## Usage
 
-    mr plugins
+```bash
+mr plugins
+```
 
 ## Flags
 

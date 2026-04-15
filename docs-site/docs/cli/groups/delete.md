@@ -17,17 +17,23 @@ rather than destroy.
 
 ## Usage
 
-    mr groups delete
+```bash
+mr groups delete
+```
 
 ## Examples
 
 **Delete specific groups**
 
-    mr groups delete --ids 42,43,44
+```bash
+mr groups delete --ids 42,43,44
+```
 
 **Delete the output of a filter query**
 
-    mr groups list --tags 7 --json | jq -r 'map(.ID) | join(",")' | xargs -I {} mr groups delete --ids {}
+```bash
+mr groups list --tags 7 --json | jq -r 'map(.ID) | join(",")' | xargs -I {} mr groups delete --ids {}
+```
 
 
 ## Flags

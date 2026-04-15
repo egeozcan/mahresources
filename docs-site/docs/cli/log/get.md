@@ -19,7 +19,9 @@ then look up the triggered row.
 
 ## Usage
 
-    mr log get <id>
+```bash
+mr log get <id>
+```
 
 Positional arguments:
 
@@ -30,11 +32,15 @@ Positional arguments:
 
 **Get a log entry by ID (table output)**
 
-    mr log get 42
+```bash
+mr log get 42
+```
 
 **Get as JSON and extract the action field with jq**
 
-    mr log get 42 --json | jq -r .action
+```bash
+mr log get 42 --json | jq -r .action
+```
 
 
 ## Flags

@@ -17,21 +17,29 @@ user-facing and are excluded from the documented contract.
 
 ## Usage
 
-    mr docs dump
+```bash
+mr docs dump
+```
 
 ## Examples
 
 **Emit JSON to stdout (agent-friendly)**
 
-    mr docs dump --format json
+```bash
+mr docs dump --format json
+```
 
 **Emit JSON to a file**
 
-    mr docs dump --format json --output /tmp/mr-tree.json
+```bash
+mr docs dump --format json --output /tmp/mr-tree.json
+```
 
 **Regenerate docs-site pages**
 
-    mr docs dump --format markdown --output docs-site/docs/cli/
+```bash
+mr docs dump --format markdown --output docs-site/docs/cli/
+```
 
 
 ## Flags

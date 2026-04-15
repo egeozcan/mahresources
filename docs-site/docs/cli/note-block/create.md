@@ -16,17 +16,23 @@ in follow-up commands.
 
 ## Usage
 
-    mr note-block create
+```bash
+mr note-block create
+```
 
 ## Examples
 
 **Create a text block on note 42**
 
-    mr note-block create --note-id 42 --type text --content '{"text":"hello"}'
+```bash
+mr note-block create --note-id 42 --type text --content '{"text":"hello"}'
+```
 
 **Create a heading block with an explicit position**
 
-    mr note-block create --note-id 42 --type heading --content '{"text":"Intro","level":2}' --position a
+```bash
+mr note-block create --note-id 42 --type heading --content '{"text":"Intro","level":2}' --position a
+```
 
 
 ## Flags

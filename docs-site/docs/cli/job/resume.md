@@ -17,7 +17,9 @@ effectively restarts the download from the beginning.
 
 ## Usage
 
-    mr job resume <id>
+```bash
+mr job resume <id>
+```
 
 Positional arguments:
 
@@ -28,11 +30,15 @@ Positional arguments:
 
 **Resume a specific paused job**
 
-    mr job resume a1b2c3d4
+```bash
+mr job resume a1b2c3d4
+```
 
 **Resume every paused job in one pass**
 
-    mr jobs list --json | jq -r '.jobs[] | select(.status == "paused") | .id' | xargs -I {} mr job resume {}
+```bash
+mr jobs list --json | jq -r '.jobs[] | select(.status == "paused") | .id' | xargs -I {} mr job resume {}
+```
 
 
 ## Flags

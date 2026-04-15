@@ -17,17 +17,23 @@ The JSON shape is an array of objects with a `key` field
 
 ## Usage
 
-    mr groups meta-keys
+```bash
+mr groups meta-keys
+```
 
 ## Examples
 
 **List all meta keys**
 
-    mr groups meta-keys
+```bash
+mr groups meta-keys
+```
 
 **Filter client-side with jq**
 
-    mr groups meta-keys --json | jq -r '.[].key | select(startswith("probe_"))'
+```bash
+mr groups meta-keys --json | jq -r '.[].key | select(startswith("probe_"))'
+```
 
 
 ## Flags
@@ -44,7 +50,7 @@ This command has no local flags.
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Array of objects with shape [{"key": string}] — one entry per distinct Meta key across all Groups
+Array of objects with shape [&#123;"key": string&#125;] — one entry per distinct Meta key across all Groups
 
 ## Exit Codes
 

@@ -19,7 +19,9 @@ examples below.
 
 ## Usage
 
-    mr group edit-meta <id> <path> <value>
+```bash
+mr group edit-meta <id> <path> <value>
+```
 
 Positional arguments:
 
@@ -32,15 +34,21 @@ Positional arguments:
 
 **Set a top-level string value**
 
-    mr group edit-meta 5 status '"active"'
+```bash
+mr group edit-meta 5 status '"active"'
+```
 
 **Set a nested field**
 
-    mr group edit-meta 5 address.city '"Berlin"'
+```bash
+mr group edit-meta 5 address.city '"Berlin"'
+```
 
 **Replace a field with an array**
 
-    mr group edit-meta 5 scores '[1,2,3]'
+```bash
+mr group edit-meta 5 scores '[1,2,3]'
+```
 
 
 ## Flags

@@ -19,7 +19,9 @@ check current statuses.
 
 ## Usage
 
-    mr job
+```bash
+mr job
+```
 
 ## Flags
 

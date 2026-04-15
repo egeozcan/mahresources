@@ -13,7 +13,9 @@ success at the server level.
 
 ## Usage
 
-    mr resource-category delete <id>
+```bash
+mr resource-category delete <id>
+```
 
 Positional arguments:
 
@@ -24,11 +26,15 @@ Positional arguments:
 
 **Delete a resource category by ID**
 
-    mr resource-category delete 42
+```bash
+mr resource-category delete 42
+```
 
 **Delete and pipe the result to jq to inspect the response**
 
-    mr resource-category delete 42 --json | jq .
+```bash
+mr resource-category delete 42 --json | jq .
+```
 
 
 ## Flags

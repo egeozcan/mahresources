@@ -13,7 +13,9 @@ global `--json` flag to emit the raw record for scripting.
 
 ## Usage
 
-    mr series get <id>
+```bash
+mr series get <id>
+```
 
 Positional arguments:
 
@@ -24,11 +26,15 @@ Positional arguments:
 
 **Get a series by ID (table output)**
 
-    mr series get 42
+```bash
+mr series get 42
+```
 
 **Get as JSON and extract the name with jq**
 
-    mr series get 42 --json | jq -r .Name
+```bash
+mr series get 42 --json | jq -r .Name
+```
 
 
 ## Flags

@@ -14,17 +14,23 @@ perceptual-hash detection or manual review.
 
 ## Usage
 
-    mr resources merge
+```bash
+mr resources merge
+```
 
 ## Examples
 
 **Merge resources 2 and 3 into winner 1**
 
-    mr resources merge --winner 1 --losers 2,3
+```bash
+mr resources merge --winner 1 --losers 2,3
+```
 
 **Pipe duplicate IDs from a search**
 
-    mr resources merge --winner 1 --losers $(mr resources list --hash abcd1234 --json | jq -r 'map(.id) | join(",")')
+```bash
+mr resources merge --winner 1 --losers $(mr resources list --hash abcd1234 --json | jq -r 'map(.id) | join(",")')
+```
 
 
 ## Flags

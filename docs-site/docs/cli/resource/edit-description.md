@@ -11,7 +11,9 @@ string clears the description. Shorthand for `mr resource edit <id> --descriptio
 
 ## Usage
 
-    mr resource edit-description <id> <new-description>
+```bash
+mr resource edit-description <id> <new-description>
+```
 
 Positional arguments:
 
@@ -23,11 +25,15 @@ Positional arguments:
 
 **Set the description on resource 42**
 
-    mr resource edit-description 42 "scanned contract, Q1 2026"
+```bash
+mr resource edit-description 42 "scanned contract, Q1 2026"
+```
 
 **Clear the description by passing an empty string**
 
-    mr resource edit-description 42 ""
+```bash
+mr resource edit-description 42 ""
+```
 
 
 ## Flags

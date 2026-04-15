@@ -14,21 +14,29 @@ and CREATED columns; pass `--json` for the full array.
 
 ## Usage
 
-    mr resource-categories list
+```bash
+mr resource-categories list
+```
 
 ## Examples
 
 **List all resource categories (first page)**
 
-    mr resource-categories list
+```bash
+mr resource-categories list
+```
 
 **Filter by name substring**
 
-    mr resource-categories list --name photos
+```bash
+mr resource-categories list --name photos
+```
 
 **JSON output piped into jq**
 
-    mr resource-categories list --json | jq -r '.[].Name'
+```bash
+mr resource-categories list --json | jq -r '.[].Name'
+```
 
 
 ## Flags

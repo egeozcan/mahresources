@@ -13,7 +13,9 @@ the global `--json` flag to get the full record for scripting.
 
 ## Usage
 
-    mr resource get <id>
+```bash
+mr resource get <id>
+```
 
 Positional arguments:
 
@@ -24,11 +26,15 @@ Positional arguments:
 
 **Get a resource by ID (table output)**
 
-    mr resource get 42
+```bash
+mr resource get 42
+```
 
 **Get as JSON and extract a single field with jq**
 
-    mr resource get 42 --json | jq -r .Name
+```bash
+mr resource get 42 --json | jq -r .Name
+```
 
 
 ## Flags

@@ -14,7 +14,9 @@ fields. Returns `{"id":N,"ok":true}` on success.
 
 ## Usage
 
-    mr note-type edit-description <id> <new-description>
+```bash
+mr note-type edit-description <id> <new-description>
+```
 
 Positional arguments:
 
@@ -26,11 +28,15 @@ Positional arguments:
 
 **Set a description on note type 1**
 
-    mr note-type edit-description 1 "for weekly engineering standups"
+```bash
+mr note-type edit-description 1 "for weekly engineering standups"
+```
 
 **Clear the description by passing an empty string**
 
-    mr note-type edit-description 1 ""
+```bash
+mr note-type edit-description 1 ""
+```
 
 
 ## Flags

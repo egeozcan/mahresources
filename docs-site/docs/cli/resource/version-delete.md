@@ -12,17 +12,23 @@ leave the Resource with zero versions.
 
 ## Usage
 
-    mr resource version-delete
+```bash
+mr resource version-delete
+```
 
 ## Examples
 
 **Delete an old version**
 
-    mr resource version-delete --resource-id 42 --version-id 17
+```bash
+mr resource version-delete --resource-id 42 --version-id 17
+```
 
 **Pipe a list of old version IDs**
 
-    mr resource versions 42 --json | jq -r '.[1:][].id' | xargs -I {} mr resource version-delete --resource-id 42 --version-id {}
+```bash
+mr resource versions 42 --json | jq -r '.[1:][].id' | xargs -I {} mr resource version-delete --resource-id 42 --version-id {}
+```
 
 
 ## Flags

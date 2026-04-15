@@ -13,7 +13,9 @@ itself; only updates the database record.
 
 ## Usage
 
-    mr resource recalculate-dimensions <id>
+```bash
+mr resource recalculate-dimensions <id>
+```
 
 Positional arguments:
 
@@ -24,11 +26,15 @@ Positional arguments:
 
 **Recalculate dimensions for a single resource**
 
-    mr resource recalculate-dimensions 42
+```bash
+mr resource recalculate-dimensions 42
+```
 
 **Pipe from a list query to bulk-recalculate**
 
-    mr resources list --content-type image/jpeg --json | jq -r '.[].id' | xargs -I {} mr resource recalculate-dimensions {}
+```bash
+mr resources list --content-type image/jpeg --json | jq -r '.[].id' | xargs -I {} mr resource recalculate-dimensions {}
+```
 
 
 ## Flags

@@ -29,7 +29,9 @@ When the server plan reports resources without bytes in the tar,
 
 ## Usage
 
-    mr group import <tarfile>
+```bash
+mr group import <tarfile>
+```
 
 Positional arguments:
 
@@ -40,15 +42,21 @@ Positional arguments:
 
 **Dry-run an import and print the plan**
 
-    mr group import /tmp/trip-2026.tar --dry-run
+```bash
+mr group import /tmp/trip-2026.tar --dry-run
+```
 
 **Import**
 
-    mr group import /tmp/trip-2026.tar --parent-group 17
+```bash
+mr group import /tmp/trip-2026.tar --parent-group 17
+```
 
 **Dry-run to JSON file for review**
 
-    mr group import /tmp/trip-2026.tar --dry-run --plan-output /tmp/plan.json
+```bash
+mr group import /tmp/trip-2026.tar --dry-run --plan-output /tmp/plan.json
+```
 
 
 ## Flags

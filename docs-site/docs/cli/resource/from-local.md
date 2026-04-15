@@ -14,17 +14,23 @@ deploying pre-staged assets.
 
 ## Usage
 
-    mr resource from-local
+```bash
+mr resource from-local
+```
 
 ## Examples
 
 **Create from a server-local path**
 
-    mr resource from-local --path /var/mahresources/incoming/photo.jpg
+```bash
+mr resource from-local --path /var/mahresources/incoming/photo.jpg
+```
 
 **With metadata**
 
-    mr resource from-local --path /srv/imports/doc.pdf --name "Doc" --tags 3,7
+```bash
+mr resource from-local --path /srv/imports/doc.pdf --name "Doc" --tags 3,7
+```
 
 
 ## Flags

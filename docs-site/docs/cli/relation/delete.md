@@ -14,7 +14,9 @@ that the relation no longer appears in its `Relationships` array.
 
 ## Usage
 
-    mr relation delete <id>
+```bash
+mr relation delete <id>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Delete relation 7**
 
-    mr relation delete 7
+```bash
+mr relation delete 7
+```
 
 **Delete and pipe the result to jq**
 
-    mr relation delete 7 --json | jq .
+```bash
+mr relation delete 7 --json | jq .
+```
 
 
 ## Flags

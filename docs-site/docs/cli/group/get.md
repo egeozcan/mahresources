@@ -14,7 +14,9 @@ flag to get the full record for scripting (related collections such as
 
 ## Usage
 
-    mr group get <id>
+```bash
+mr group get <id>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Get a group by ID (table output)**
 
-    mr group get 42
+```bash
+mr group get 42
+```
 
 **Get as JSON and extract a single field with jq**
 
-    mr group get 42 --json | jq -r .Name
+```bash
+mr group get 42 --json | jq -r .Name
+```
 
 
 ## Flags

@@ -18,7 +18,9 @@ resolve a name to its ID first.
 
 ## Usage
 
-    mr mrql delete <id>
+```bash
+mr mrql delete <id>
+```
 
 Positional arguments:
 
@@ -29,11 +31,15 @@ Positional arguments:
 
 **Delete a saved query by ID**
 
-    mr mrql delete 42
+```bash
+mr mrql delete 42
+```
 
 **Delete and inspect the response with jq**
 
-    mr mrql delete 42 --json | jq .
+```bash
+mr mrql delete 42 --json | jq .
+```
 
 
 ## Flags

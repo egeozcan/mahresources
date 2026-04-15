@@ -13,7 +13,9 @@ code 1.
 
 ## Usage
 
-    mr query delete <id>
+```bash
+mr query delete <id>
+```
 
 Positional arguments:
 
@@ -24,11 +26,15 @@ Positional arguments:
 
 **Delete a query by ID**
 
-    mr query delete 42
+```bash
+mr query delete 42
+```
 
 **Delete and pipe the result to jq to confirm**
 
-    mr query delete 42 --json | jq .
+```bash
+mr query delete 42 --json | jq .
+```
 
 
 ## Flags

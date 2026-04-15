@@ -12,17 +12,23 @@ and are required.
 
 ## Usage
 
-    mr resources add-groups
+```bash
+mr resources add-groups
+```
 
 ## Examples
 
 **Add groups 2 and 3 to resources 1**
 
-    mr resources add-groups --ids 1,2 --groups 2,3
+```bash
+mr resources add-groups --ids 1,2 --groups 2,3
+```
 
 **Bulk from a list query**
 
-    mr resources list --content-type image/jpeg --json | jq -r 'map(.id) | join(",")' | xargs -I {} mr resources add-groups --ids {} --groups 7
+```bash
+mr resources list --content-type image/jpeg --json | jq -r 'map(.id) | join(",")' | xargs -I {} mr resources add-groups --ids {} --groups 7
+```
 
 
 ## Flags

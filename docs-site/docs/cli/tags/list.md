@@ -14,21 +14,29 @@ output is a table with ID, NAME, DESCRIPTION, and CREATED columns; pass
 
 ## Usage
 
-    mr tags list
+```bash
+mr tags list
+```
 
 ## Examples
 
 **List all tags (first page)**
 
-    mr tags list
+```bash
+mr tags list
+```
 
 **Filter by name substring**
 
-    mr tags list --name urgent
+```bash
+mr tags list --name urgent
+```
 
 **JSON output piped into jq**
 
-    mr tags list --json | jq -r '.[].Name'
+```bash
+mr tags list --json | jq -r '.[].Name'
+```
 
 
 ## Flags

@@ -17,17 +17,23 @@ MRQL expression.
 
 ## Usage
 
-    mr query schema
+```bash
+mr query schema
+```
 
 ## Examples
 
 **Dump the full schema as JSON**
 
-    mr query schema
+```bash
+mr query schema
+```
 
 **List only the column names of the `resources` table**
 
-    mr query schema --json | jq -r '.resources[]'
+```bash
+mr query schema --json | jq -r '.resources[]'
+```
 
 
 ## Flags

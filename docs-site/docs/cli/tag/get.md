@@ -14,7 +14,9 @@ the raw record for scripting.
 
 ## Usage
 
-    mr tag get <id>
+```bash
+mr tag get <id>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Get a tag by ID (table output)**
 
-    mr tag get 42
+```bash
+mr tag get 42
+```
 
 **Get as JSON and extract the name with jq**
 
-    mr tag get 42 --json | jq -r .Name
+```bash
+mr tag get 42 --json | jq -r .Name
+```
 
 
 ## Flags

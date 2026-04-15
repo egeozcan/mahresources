@@ -13,17 +13,23 @@ semantics. Pass `--tags ""` to clear all tags.
 
 ## Usage
 
-    mr resources replace-tags
+```bash
+mr resources replace-tags
+```
 
 ## Examples
 
-**Replace tags with exactly [5**
+**Replace tags with exactly [5, 7]**
 
-    mr resources replace-tags --ids 1 --tags 5,7
+```bash
+mr resources replace-tags --ids 1 --tags 5,7
+```
 
 **Clear all tags from a resource**
 
-    mr resources replace-tags --ids 1 --tags ""
+```bash
+mr resources replace-tags --ids 1 --tags ""
+```
 
 
 ## Flags

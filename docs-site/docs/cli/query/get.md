@@ -13,7 +13,9 @@ pass the global `--json` flag to get the full record for scripting.
 
 ## Usage
 
-    mr query get <id>
+```bash
+mr query get <id>
+```
 
 Positional arguments:
 
@@ -24,11 +26,15 @@ Positional arguments:
 
 **Get a query by ID (table output)**
 
-    mr query get 42
+```bash
+mr query get 42
+```
 
 **Get as JSON and extract the SQL text**
 
-    mr query get 42 --json | jq -r .Text
+```bash
+mr query get 42 --json | jq -r .Text
+```
 
 
 ## Flags

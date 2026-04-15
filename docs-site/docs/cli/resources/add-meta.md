@@ -15,17 +15,23 @@ semantics. For single-resource single-key edits, use
 
 ## Usage
 
-    mr resources add-meta
+```bash
+mr resources add-meta
+```
 
 ## Examples
 
 **Set a single key on multiple resources**
 
-    mr resources add-meta --ids 1,2,3 --meta '{"status":"reviewed"}'
+```bash
+mr resources add-meta --ids 1,2,3 --meta '{"status":"reviewed"}'
+```
 
 **Set multiple keys at once (JSON object)**
 
-    mr resources add-meta --ids 1,2 --meta '{"priority":5,"owner":"alice"}'
+```bash
+mr resources add-meta --ids 1,2 --meta '{"priority":5,"owner":"alice"}'
+```
 
 
 ## Flags

@@ -18,17 +18,23 @@ stamping the same set of keys across many Groups.
 
 ## Usage
 
-    mr groups add-meta
+```bash
+mr groups add-meta
+```
 
 ## Examples
 
 **Stamp one Meta key across three groups**
 
-    mr groups add-meta --ids 10,11,12 --meta '{"reviewed":true}'
+```bash
+mr groups add-meta --ids 10,11,12 --meta '{"reviewed":true}'
+```
 
 **Merge multiple keys**
 
-    mr groups add-meta --ids 10 --meta '{"season":"winter","owner":"alice"}'
+```bash
+mr groups add-meta --ids 10 --meta '{"season":"winter","owner":"alice"}'
+```
 
 
 ## Flags

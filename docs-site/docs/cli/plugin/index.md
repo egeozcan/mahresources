@@ -21,7 +21,9 @@ plugins and inspect their current enablement and stored settings.
 
 ## Usage
 
-    mr plugin
+```bash
+mr plugin
+```
 
 ## Flags
 

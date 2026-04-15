@@ -13,7 +13,9 @@ existing value (partial update). Collection flags (`--tags`, `--groups`,
 
 ## Usage
 
-    mr resource edit <id>
+```bash
+mr resource edit <id>
+```
 
 Positional arguments:
 
@@ -24,11 +26,15 @@ Positional arguments:
 
 **Rename and update the description**
 
-    mr resource edit 42 --name "renamed" --description "new description"
+```bash
+mr resource edit 42 --name "renamed" --description "new description"
+```
 
 **Attach tags 5 and 7**
 
-    mr resource edit 42 --tags 5,7
+```bash
+mr resource edit 42 --tags 5,7
+```
 
 
 ## Flags

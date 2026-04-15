@@ -15,18 +15,24 @@ content, and state are untouched.
 
 ## Usage
 
-    mr note-blocks rebalance
+```bash
+mr note-blocks rebalance
+```
 
 ## Examples
 
 **Rebalance all block positions on note 42**
 
-    mr note-blocks rebalance --note-id 42
+```bash
+mr note-blocks rebalance --note-id 42
+```
 
 **Rebalance**
 
-    mr note-blocks rebalance --note-id 42
-    mr note-blocks list --note-id 42 --json | jq -r '.[] | [.id, .position] | @tsv'
+```bash
+mr note-blocks rebalance --note-id 42
+mr note-blocks list --note-id 42 --json | jq -r '.[] | [.id, .position] | @tsv'
+```
 
 
 ## Flags

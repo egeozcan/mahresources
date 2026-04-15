@@ -17,17 +17,23 @@ not supported — the full list is returned in one response.
 
 ## Usage
 
-    mr jobs list
+```bash
+mr jobs list
+```
 
 ## Examples
 
 **Show every job (human-readable)**
 
-    mr jobs list
+```bash
+mr jobs list
+```
 
 **Filter to still-running jobs and pull just their URLs**
 
-    mr jobs list --json | jq -r '.jobs[] | select(.status == "downloading" or .status == "pending") | .url'
+```bash
+mr jobs list --json | jq -r '.jobs[] | select(.status == "downloading" or .status == "pending") | .url'
+```
 
 
 ## Flags

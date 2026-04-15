@@ -13,7 +13,9 @@ server API.
 
 ## Usage
 
-    mr note edit-name <id> <new-name>
+```bash
+mr note edit-name <id> <new-name>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Rename note 42**
 
-    mr note edit-name 42 "renamed title"
+```bash
+mr note edit-name 42 "renamed title"
+```
 
 **Rename and confirm with a follow-up get**
 
-    mr note edit-name 42 "final draft" && mr note get 42 --json | jq -r .Name
+```bash
+mr note edit-name 42 "final draft" && mr note get 42 --json | jq -r .Name
+```
 
 
 ## Flags

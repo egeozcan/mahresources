@@ -13,7 +13,9 @@ modify the query Text or Template.
 
 ## Usage
 
-    mr query edit-name <id> <value>
+```bash
+mr query edit-name <id> <value>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Rename query 42**
 
-    mr query edit-name 42 "count-resources-v2"
+```bash
+mr query edit-name 42 "count-resources-v2"
+```
 
 **Rename and confirm with a follow-up get**
 
-    mr query edit-name 42 "renamed" && mr query get 42 --json | jq -r .Name
+```bash
+mr query edit-name 42 "renamed" && mr query get 42 --json | jq -r .Name
+```
 
 
 ## Flags

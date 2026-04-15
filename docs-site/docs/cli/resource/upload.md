@@ -13,7 +13,9 @@ metadata that is merged into the new record.
 
 ## Usage
 
-    mr resource upload <file>
+```bash
+mr resource upload <file>
+```
 
 Positional arguments:
 
@@ -24,11 +26,15 @@ Positional arguments:
 
 **Basic upload (name defaults to the filename)**
 
-    mr resource upload ./photo.jpg
+```bash
+mr resource upload ./photo.jpg
+```
 
 **Upload with ownership and meta JSON**
 
-    mr resource upload ./photo.jpg --owner-id 3 --meta '{"camera":"Pixel"}'
+```bash
+mr resource upload ./photo.jpg --owner-id 3 --meta '{"camera":"Pixel"}'
+```
 
 
 ## Flags

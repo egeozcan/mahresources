@@ -13,7 +13,9 @@ version IDs of the same Resource.
 
 ## Usage
 
-    mr resource versions-compare <resource-id>
+```bash
+mr resource versions-compare <resource-id>
+```
 
 Positional arguments:
 
@@ -24,11 +26,15 @@ Positional arguments:
 
 **Compare two versions (table)**
 
-    mr resource versions-compare 42 --v1 17 --v2 21
+```bash
+mr resource versions-compare 42 --v1 17 --v2 21
+```
 
 **Extract sameHash via jq**
 
-    mr resource versions-compare 42 --v1 17 --v2 21 --json | jq -r .sameHash
+```bash
+mr resource versions-compare 42 --v1 17 --v2 21 --json | jq -r .sameHash
+```
 
 
 ## Flags

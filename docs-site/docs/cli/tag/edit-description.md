@@ -13,7 +13,9 @@ resources without renaming them.
 
 ## Usage
 
-    mr tag edit-description <id> <new-description>
+```bash
+mr tag edit-description <id> <new-description>
+```
 
 Positional arguments:
 
@@ -25,11 +27,15 @@ Positional arguments:
 
 **Set a description on tag 42**
 
-    mr tag edit-description 42 "used for Q1 2026 scans"
+```bash
+mr tag edit-description 42 "used for Q1 2026 scans"
+```
 
 **Clear the description by passing an empty string**
 
-    mr tag edit-description 42 ""
+```bash
+mr tag edit-description 42 ""
+```
 
 
 ## Flags
