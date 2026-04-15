@@ -54,10 +54,11 @@ If the binary already exists but master moved since it was built, rebuild anyway
 go build --tags 'json1 fts5' -o mahresources
 ```
 
-**Ephemeral server pattern.** Every local doctest / check-examples invocation in this plan follows this pattern:
+**Ephemeral server pattern.** Every local doctest / check-examples invocation in this plan follows this pattern. Note the `-plugin-path=./e2e/test-plugins` flag: several shipped doctests (e.g., `plugin enable` / `plugin disable`) exercise the bundled `test-actions` / `test-banner` plugins, which live in `./e2e/test-plugins`, not in the default `./plugins` directory. The E2E harness passes this flag for the same reason (see `e2e/fixtures/server-manager.ts:103,116`). Omitting it causes `mr docs check-examples` to fail on a healthy tree.
 
 ```bash
-./mahresources -ephemeral -bind-address=:8192 -max-db-connections=2 &
+./mahresources -ephemeral -bind-address=:8192 -max-db-connections=2 \
+  -plugin-path=./e2e/test-plugins &
 SERVER_PID=$!
 sleep 1
 # ... run your checks ...
@@ -66,6 +67,8 @@ wait $SERVER_PID 2>/dev/null
 ```
 
 Kill the server in every exit path.
+
+**Docusaurus build verification.** When verifying `npm run build`, **never pipe through `tail` alone** — the pipeline's exit status comes from `tail`, not `npm run build`, so broken-link failures get silently swallowed. Run the build unpiped (`cd docs-site && npm run build`) or use `set -o pipefail` inside a subshell if you want both the tail and the real exit code. The plan's verification steps use the unpiped form.
 
 **Working directory.** All commands in this plan are run from the repo root `/Users/egecan/Code/mahresources/` unless stated otherwise.
 
@@ -111,7 +114,8 @@ Expected: `OK: 3 warnings` (the warnings are the three `docs *` commands that do
 
 Run:
 ```bash
-./mahresources -ephemeral -bind-address=:8192 -max-db-connections=2 &
+./mahresources -ephemeral -bind-address=:8192 -max-db-connections=2 \
+  -plugin-path=./e2e/test-plugins &
 SERVER_PID=$!
 sleep 1
 ./mr docs check-examples --server http://127.0.0.1:8192 --environment ephemeral
@@ -134,11 +138,11 @@ Expected: `CLEAN`. If `DIRTY`, inspect the diff; it likely represents drift from
 
 Run:
 ```bash
-cd docs-site && npm install && npm run build 2>&1 | tail -20
+cd docs-site && npm install && npm run build
 cd ..
 ```
 
-Expected: exit 0, `[SUCCESS] Generated static files in "build"` in the tail output. This confirms `onBrokenLinks: 'throw'` is currently satisfied (any broken link surfaces here).
+Expected: exit 0, `[SUCCESS] Generated static files in "build"` near the end of output. This confirms `onBrokenLinks: 'throw'` is currently satisfied (any broken link surfaces here). Do not pipe through `tail` — it would mask a non-zero exit from `npm run build`.
 
 If all seven steps green, baseline is good — proceed to Task 1. If any step fails, pause and fix on master before starting Phase 4 work.
 
@@ -286,11 +290,11 @@ Expected:
 
 Run:
 ```bash
-cd docs-site && npm run build 2>&1 | tail -5
+cd docs-site && npm run build
 cd ..
 ```
 
-Expected: exit 0, `[SUCCESS] Generated static files`. If the build throws on a broken link, fix the link and re-run before committing.
+Expected: exit 0, `[SUCCESS] Generated static files` near the end. If the build throws on a broken link, fix the link and re-run before committing. Do not pipe through `tail` — the pipeline would return `tail`'s exit status, hiding any build failure.
 
 - [ ] **Step 8: Commit.**
 
@@ -412,11 +416,11 @@ Resulting structure (partial, for reference):
 
 Run:
 ```bash
-cd docs-site && npm run build 2>&1 | tail -15
+cd docs-site && npm run build
 cd ..
 ```
 
-Expected: exit 0, `[SUCCESS] Generated static files`. If `[ERROR] Docusaurus found broken links!` appears, the output names the offending source file — fix that reference (retarget to `/cli/<path>/` or remove) and re-run.
+Expected: exit 0, `[SUCCESS] Generated static files` near the end. If `[ERROR] Docusaurus found broken links!` appears, the output names the offending source file — fix that reference (retarget to `/cli/<path>/` or remove) and re-run. Do not pipe through `tail` — the pipeline masks the real exit code.
 
 To visually verify the sidebar, optionally start the dev server:
 
@@ -485,7 +489,8 @@ The stronger assertion depends on the freshly-created group being visible to `/v
 
 ```bash
 ls mahresources 2>/dev/null || go build --tags 'json1 fts5' -o mahresources
-./mahresources -ephemeral -bind-address=:8192 -max-db-connections=2 &
+./mahresources -ephemeral -bind-address=:8192 -max-db-connections=2 \
+  -plugin-path=./e2e/test-plugins &
 SERVER_PID=$!
 sleep 1
 
@@ -572,13 +577,17 @@ Expected: `OK: 3 warnings`, no `error:` lines mentioning `search`.
 Run:
 ```bash
 ls mahresources 2>/dev/null || go build --tags 'json1 fts5' -o mahresources
-./mahresources -ephemeral -bind-address=:8192 -max-db-connections=2 &
+./mahresources -ephemeral -bind-address=:8192 -max-db-connections=2 \
+  -plugin-path=./e2e/test-plugins &
 SERVER_PID=$!
 sleep 1
 
-./mr docs check-examples --server http://127.0.0.1:8192 --environment ephemeral 2>&1 | tee /tmp/doctest-search.log | tail -5
+./mr docs check-examples --server http://127.0.0.1:8192 --environment ephemeral 2>&1 | tee /tmp/doctest-search.log
+SEARCH_RC=${PIPESTATUS[0]}
+tail -5 /tmp/doctest-search.log
 
 kill $SERVER_PID 2>/dev/null; wait $SERVER_PID 2>/dev/null
+[ $SEARCH_RC -eq 0 ] || { echo "check-examples failed (rc=$SEARCH_RC)"; exit 1; }
 ```
 
 Expected: final line is `... PASS: N  SKIP: M  FAIL: 0`. Specifically, grep the log for the search block:
@@ -625,7 +634,7 @@ Expected: commit succeeds.
 
 ## Task 4: Commit 4 — Widen `note-type get --json` Projection
 
-**Goal:** `cmd/mr/commands/note_types.go:50–93` currently projects the server's note-type API response into a 5-field `noteTypeResponse` struct (`ID`, `Name`, `Description`, `CreatedAt`, `UpdatedAt`) for both the table and `--json` output paths. This drops server-returned fields like `Color`, `MetaSchema`, `SectionConfig`, `CustomHeader`, `CustomSidebar`, `CustomSummary`, `CustomAvatar`, `CustomMRQLResult` when the user passes `--json`. Follow the `resource get` pattern: table path keeps the narrow projection; `--json` path passes the raw API response entry through.
+**Goal:** `cmd/mr/commands/note_types.go:50–93` currently projects the server's note-type API response into a 5-field `noteTypeResponse` struct (`ID`, `Name`, `Description`, `CreatedAt`, `UpdatedAt`) for both the table and `--json` output paths. This drops server-returned fields like `MetaSchema`, `SectionConfig`, `CustomHeader`, `CustomSidebar`, `CustomSummary`, `CustomAvatar`, `CustomMRQLResult`, `GUID` when the user passes `--json` (see `models/note_type_model.go:10–38` for the full struct). Follow the `resource get` pattern: table path keeps the narrow projection; `--json` path passes the raw API response entry through.
 
 **Files:**
 - Modify: `cmd/mr/commands/note_types.go` (specifically `newNoteTypeGetCmd`, lines 50–93)
@@ -650,20 +659,18 @@ Expected: read the file. If the doctest asserts only on `.ID` / `.Name` / `.Desc
 
 - [ ] **Step 2: Write / strengthen the doctest to prove the widening.**
 
-Append (or replace) a doctest block in `cmd/mr/commands/note_types_help/note_type_get.md` that asserts the `--json` path carries a field beyond the narrow 5-key projection. Every note type response from the server includes additional fields — check the server's `NoteType` model to know which. A safe bet: the server's `NoteType` struct in `models/note_type_model.go` (check with `grep -n "type NoteType struct" models/*.go`) includes `Color`, `MetaSchema`, `SectionConfig`. At least one of these is present in responses.
+Append (or replace) a doctest block in `cmd/mr/commands/note_types_help/note_type_get.md` that asserts the `--json` path carries a field beyond the narrow 5-key projection. The server's `NoteType` struct (`models/note_type_model.go:10–38`) has these fields beyond the narrow projection: `CustomHeader`, `CustomSidebar`, `CustomSummary`, `CustomAvatar`, `CustomMRQLResult`, `MetaSchema`, `SectionConfig`, `GUID`. The CLI create command (`cmd/mr/commands/note_types.go:151–160`) exposes `--meta-schema`, `--section-config`, `--custom-header` etc. — any of these is a concrete field we can set at create time and then assert on in the response.
 
 Edit the file so the `# Example` section contains a block like this (keep existing reference examples above; replace/add the doctest):
 
 ```markdown
-  # mr-doctest: create a note type with a color, fetch via --json, assert Color survives projection
+  # mr-doctest: create a note type with a meta schema, fetch via --json, assert the widened fields survive
   NAME="doctest-nt-$$-$RANDOM"
-  NTID=$(mr note-type create --name "$NAME" --json | jq -r '.ID // .id')
-  mr note-type get $NTID --json | jq -e 'has("Color") or has("color") or has("MetaSchema") or has("metaSchema") or has("SectionConfig") or has("sectionConfig")'
+  NTID=$(mr note-type create --name "$NAME" --meta-schema '{"type":"object"}' --json | jq -r '.ID // .id')
+  mr note-type get $NTID --json | jq -e 'has("MetaSchema") or has("metaSchema") or has("SectionConfig") or has("sectionConfig") or has("CustomHeader") or has("customHeader")'
 ```
 
-Rationale: the assertion is tolerant of both PascalCase and camelCase keys (server response casing can vary by endpoint per spec gotcha #3). It asserts that at least one of the widened fields is present — a strict superset of the shape-only check.
-
-Note: `mr note-type create` may not accept a `--color` flag at the CLI level (inspect `cmd/mr/commands/note_types.go` `newNoteTypeCreateCmd` for current flags). If `--color` is unavailable, the server may default it to empty/null; the assertion still holds because `MetaSchema` and `SectionConfig` also survive the widening and are among the `has(...)` checks.
+Rationale: the assertion is tolerant of both PascalCase and camelCase keys (server response casing can vary by endpoint per spec gotcha #3). It asserts that at least one of the widened fields is present — a strict superset of the shape-only check the narrow projection would allow. Using `--meta-schema` on create guarantees at least `MetaSchema` surfaces in the response body, so the first `has(...)` check matches deterministically.
 
 - [ ] **Step 3: Run the doctest against the CURRENT (narrow) code to confirm it FAILS (TDD red).**
 
@@ -671,10 +678,12 @@ Run:
 ```bash
 go build -o mr ./cmd/mr/
 ls mahresources 2>/dev/null || go build --tags 'json1 fts5' -o mahresources
-./mahresources -ephemeral -bind-address=:8192 -max-db-connections=2 &
+./mahresources -ephemeral -bind-address=:8192 -max-db-connections=2 \
+  -plugin-path=./e2e/test-plugins &
 SERVER_PID=$!
 sleep 1
-./mr docs check-examples --server http://127.0.0.1:8192 --environment ephemeral 2>&1 | tee /tmp/doctest-nt.log | grep -A3 "note_type_get"
+./mr docs check-examples --server http://127.0.0.1:8192 --environment ephemeral 2>&1 | tee /tmp/doctest-nt.log
+grep -A3 "note_type_get" /tmp/doctest-nt.log
 kill $SERVER_PID 2>/dev/null; wait $SERVER_PID 2>/dev/null
 ```
 
@@ -766,12 +775,16 @@ Run:
 ```bash
 go build -o mr ./cmd/mr/
 ls mahresources 2>/dev/null || go build --tags 'json1 fts5' -o mahresources
-./mahresources -ephemeral -bind-address=:8192 -max-db-connections=2 &
+./mahresources -ephemeral -bind-address=:8192 -max-db-connections=2 \
+  -plugin-path=./e2e/test-plugins &
 SERVER_PID=$!
 sleep 1
-./mr docs check-examples --server http://127.0.0.1:8192 --environment ephemeral 2>&1 | tee /tmp/doctest-nt-green.log | tail -3
+./mr docs check-examples --server http://127.0.0.1:8192 --environment ephemeral 2>&1 | tee /tmp/doctest-nt-green.log
+GREEN_RC=${PIPESTATUS[0]}
+tail -3 /tmp/doctest-nt-green.log
 grep -A3 "note_type_get\|note-type get" /tmp/doctest-nt-green.log
 kill $SERVER_PID 2>/dev/null; wait $SERVER_PID 2>/dev/null
+[ $GREEN_RC -eq 0 ] || { echo "check-examples failed (rc=$GREEN_RC)"; exit 1; }
 ```
 
 Expected: the tail line reports `PASS: N  SKIP: M  FAIL: 0`. The `note_type_get` doctest block now PASSES.
@@ -780,7 +793,8 @@ Expected: the tail line reports `PASS: N  SKIP: M  FAIL: 0`. The `note_type_get`
 
 Run:
 ```bash
-./mahresources -ephemeral -bind-address=:8192 -max-db-connections=2 &
+./mahresources -ephemeral -bind-address=:8192 -max-db-connections=2 \
+  -plugin-path=./e2e/test-plugins &
 SERVER_PID=$!
 sleep 1
 ./mr --server http://127.0.0.1:8192 note-type create --name "table-check-$$" --json > /tmp/nt-create.json
@@ -825,7 +839,7 @@ fix(cli): widen note-type get --json projection + regen docs
 The shipped newNoteTypeGetCmd projected the server's note-type
 response into a 5-field struct (ID, Name, Description, CreatedAt,
 UpdatedAt) for both the table and --json paths, silently dropping
-fields like Color, MetaSchema, SectionConfig, CustomHeader etc.
+fields like MetaSchema, SectionConfig, CustomHeader, CustomSidebar etc.
 Follow the resource get pattern: decode the list as
 []json.RawMessage, match by ID, and pass the raw entry through to
 output.PrintSingle for the --json path. The table path keeps the
@@ -1114,11 +1128,11 @@ No other files should be modified. If more CLI pages are dirty, something unexpe
 
 Run:
 ```bash
-cd docs-site && npm run build 2>&1 | tail -10
+cd docs-site && npm run build
 cd ..
 ```
 
-Expected: exit 0, `[SUCCESS] Generated static files`. If the build complains about an unresolved link in `mrql-reference.md` (e.g., `./saved-queries.md` not found), fix the link and re-run.
+Expected: exit 0, `[SUCCESS] Generated static files` near the end. If the build complains about an unresolved link in `mrql-reference.md` (e.g., `./saved-queries.md` not found), fix the link and re-run. Do not pipe through `tail` — the pipeline masks the real exit code.
 
 Grep the built output for the new page presence:
 
@@ -1141,11 +1155,15 @@ Doctest — the mrql help change is purely a new prose line, no example changes,
 
 ```bash
 ls mahresources 2>/dev/null || go build --tags 'json1 fts5' -o mahresources
-./mahresources -ephemeral -bind-address=:8192 -max-db-connections=2 &
+./mahresources -ephemeral -bind-address=:8192 -max-db-connections=2 \
+  -plugin-path=./e2e/test-plugins &
 SERVER_PID=$!
 sleep 1
-./mr docs check-examples --server http://127.0.0.1:8192 --environment ephemeral 2>&1 | tail -3
+./mr docs check-examples --server http://127.0.0.1:8192 --environment ephemeral 2>&1 | tee /tmp/doctest-task5.log
+MRQL_RC=${PIPESTATUS[0]}
+tail -3 /tmp/doctest-task5.log
 kill $SERVER_PID 2>/dev/null; wait $SERVER_PID 2>/dev/null
+[ $MRQL_RC -eq 0 ] || { echo "check-examples failed (rc=$MRQL_RC)"; exit 1; }
 ```
 
 Expected: `PASS: N  SKIP: M  FAIL: 0`, same counts as Task 4's post-commit state (Task 4 added one doctest; this task adds none).
@@ -1221,7 +1239,8 @@ Expected: `OK: 3 warnings`, zero errors.
 
 Run:
 ```bash
-./mahresources -ephemeral -bind-address=:8192 -max-db-connections=2 &
+./mahresources -ephemeral -bind-address=:8192 -max-db-connections=2 \
+  -plugin-path=./e2e/test-plugins &
 SERVER_PID=$!
 sleep 1
 ./mr docs check-examples --server http://127.0.0.1:8192 --environment ephemeral
@@ -1253,7 +1272,7 @@ Expected: 304 tests (Phase 3 steady state) exit 0.
 **If this step stalls or takes more than 10 minutes, it's the known Phase 3 flake (gotcha #3).** Mitigation in order:
 
 1. Kill any stuck processes: `pkill -f "mahresources.*ephemeral" 2>/dev/null`.
-2. Raise the DB connection limit: edit `e2e/scripts/run-tests.js` and change the relevant `'-max-db-connections=1'` (or whatever the current value is) to `'-max-db-connections=2'`. Search with `grep -n "max-db-connections" e2e/scripts/run-tests.js` to find the line.
+2. Raise the DB connection limit: edit `e2e/fixtures/server-manager.ts` — the Playwright worker-managed ephemeral server arguments live there, specifically the `'-max-db-connections=1'` entry near line 115. Change it to `'-max-db-connections=2'`. (The old `e2e/scripts/run-tests.js` location is stale; do not edit it.) Confirm with `grep -n "max-db-connections" e2e/fixtures/server-manager.ts`.
 3. Re-run. If it passes, stage the change and land it in Task 7's conditional commit.
 4. If it still stalls, document in Task 7's commit message as a known flake and move on. The authoritative gate is Step 5's `cli-doctest` job, which runs serially and is reliable.
 
@@ -1286,7 +1305,7 @@ Run: `git status --short`
 
 Expected outcomes:
 - **Clean tree:** skip Task 7 entirely. Phase 4 done.
-- **Only `e2e/scripts/run-tests.js` modified** (the `max-db-connections=2` bump from Task 6 Step 6): proceed with this task. Commit message: "test(e2e): raise max-db-connections to 2 for parallel cli suite stability".
+- **Only `e2e/fixtures/server-manager.ts` modified** (the `max-db-connections=2` bump from Task 6 Step 6): proceed with this task. Commit message: "test(e2e): raise max-db-connections to 2 for parallel cli suite stability".
 - **Only regenerated docs-site CLI pages modified** (unexpected drift): re-run `npm run docs-gen` to confirm stable output, then commit with message "chore(cli-docs): settle regenerated docs-site drift".
 - **Something else modified:** investigate before committing. Do not silently stage unexpected changes.
 
@@ -1296,13 +1315,14 @@ Based on Step 1's outcome:
 
 ```bash
 # If raising max-db-connections:
-git add e2e/scripts/run-tests.js
+git add e2e/fixtures/server-manager.ts
 git commit -m "$(cat <<'EOF'
 test(e2e): raise max-db-connections to 2 for parallel cli suite stability
 
 Phase 4 test sweep surfaced the known Phase 3 flake where the
 parallel cli project stalls under -max-db-connections=1 due to
-SQLite lock contention with Playwright workers. Raising to 2
+SQLite lock contention with Playwright workers. Raising the
+per-worker ephemeral-server flag in server-manager.ts to 2
 resolves the stall. The cli-doctest project (serial) is unaffected.
 
 Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
