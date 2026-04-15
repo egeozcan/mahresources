@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -8,10 +9,14 @@ import (
 	"time"
 
 	"mahresources/cmd/mr/client"
+	"mahresources/cmd/mr/helptext"
 	"mahresources/cmd/mr/output"
 
 	"github.com/spf13/cobra"
 )
+
+//go:embed queries_help/*.md
+var queriesHelpFS embed.FS
 
 // queryResponse is a lightweight struct matching the API's Query JSON shape.
 type queryResponse struct {
@@ -26,9 +31,12 @@ type queryResponse struct {
 
 // NewQueryCmd returns the singular "query" command with get/create/delete/edit-name/edit-description/run/run-by-name/schema subcommands.
 func NewQueryCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(queriesHelpFS, "queries_help/query.md")
 	queryCmd := &cobra.Command{
-		Use:   "query",
-		Short: "Get, create, run, or delete a saved query",
+		Use:         "query",
+		Short:       "Get, create, run, or delete a saved query",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	queryCmd.AddCommand(newQueryGetCmd(c, opts))
@@ -44,10 +52,14 @@ func NewQueryCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newQueryGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(queriesHelpFS, "queries_help/query_get.md")
 	return &cobra.Command{
-		Use:   "get <id>",
-		Short: "Get a query by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "get <id>",
+		Short:       "Get a query by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -79,9 +91,13 @@ func newQueryGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
 func newQueryCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var name, text, template string
 
+	help := helptext.Load(queriesHelpFS, "queries_help/query_create.md")
 	cmd := &cobra.Command{
-		Use:   "create",
-		Short: "Create a new query",
+		Use:         "create",
+		Short:       "Create a new query",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body := map[string]string{
 				"Name": name,
@@ -120,10 +136,14 @@ func newQueryCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newQueryDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(queriesHelpFS, "queries_help/query_delete.md")
 	return &cobra.Command{
-		Use:   "delete <id>",
-		Short: "Delete a query by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "delete <id>",
+		Short:       "Delete a query by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("Id", args[0])
@@ -144,10 +164,14 @@ func newQueryDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newQueryEditNameCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(queriesHelpFS, "queries_help/query_edit_name.md")
 	return &cobra.Command{
-		Use:   "edit-name <id> <value>",
-		Short: "Edit a query's name",
-		Args:  cobra.ExactArgs(2),
+		Use:         "edit-name <id> <value>",
+		Short:       "Edit a query's name",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -171,10 +195,14 @@ func newQueryEditNameCmd(c *client.Client, opts *output.Options) *cobra.Command 
 }
 
 func newQueryEditDescriptionCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(queriesHelpFS, "queries_help/query_edit_description.md")
 	return &cobra.Command{
-		Use:   "edit-description <id> <value>",
-		Short: "Edit a query's description",
-		Args:  cobra.ExactArgs(2),
+		Use:         "edit-description <id> <value>",
+		Short:       "Edit a query's description",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -198,10 +226,14 @@ func newQueryEditDescriptionCmd(c *client.Client, opts *output.Options) *cobra.C
 }
 
 func newQueryRunCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(queriesHelpFS, "queries_help/query_run.md")
 	return &cobra.Command{
-		Use:   "run <id>",
-		Short: "Run a query by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "run <id>",
+		Short:       "Run a query by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -220,9 +252,13 @@ func newQueryRunCmd(c *client.Client, opts *output.Options) *cobra.Command {
 func newQueryRunByNameCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var name string
 
+	help := helptext.Load(queriesHelpFS, "queries_help/query_run_by_name.md")
 	cmd := &cobra.Command{
-		Use:   "run-by-name",
-		Short: "Run a query by name",
+		Use:         "run-by-name",
+		Short:       "Run a query by name",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("name", name)
@@ -244,9 +280,13 @@ func newQueryRunByNameCmd(c *client.Client, opts *output.Options) *cobra.Command
 }
 
 func newQuerySchemaCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(queriesHelpFS, "queries_help/query_schema.md")
 	return &cobra.Command{
-		Use:   "schema",
-		Short: "Show database table and column names for query building",
+		Use:         "schema",
+		Short:       "Show database table and column names for query building",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var raw json.RawMessage
 			if err := c.Get("/v1/query/schema", nil, &raw); err != nil {
@@ -261,9 +301,12 @@ func newQuerySchemaCmd(c *client.Client, opts *output.Options) *cobra.Command {
 
 // NewQueriesCmd returns the plural "queries" command with list subcommand.
 func NewQueriesCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
+	help := helptext.Load(queriesHelpFS, "queries_help/queries.md")
 	queriesCmd := &cobra.Command{
-		Use:   "queries",
-		Short: "List saved queries",
+		Use:         "queries",
+		Short:       "List saved queries",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	queriesCmd.AddCommand(newQueriesListCmd(c, opts, page))
@@ -275,9 +318,13 @@ func NewQueriesCmd(c *client.Client, opts *output.Options, page *int) *cobra.Com
 func newQueriesListCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
 	var name string
 
+	help := helptext.Load(queriesHelpFS, "queries_help/queries_list.md")
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List queries",
+		Use:         "list",
+		Short:       "List queries",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("page", strconv.Itoa(*page))
@@ -322,16 +369,13 @@ func newQueriesTimelineCmd(c *client.Client, opts *output.Options) *cobra.Comman
 		name   string
 	)
 
+	help := helptext.Load(queriesHelpFS, "queries_help/queries_timeline.md")
 	cmd := &cobra.Command{
-		Use:   "timeline",
-		Short: "Display a timeline of query activity",
-		Long: `Display a timeline of query creation and update activity as an ASCII bar chart.
-
-Examples:
-  mr queries timeline
-  mr queries timeline --granularity=weekly --columns=20
-  mr queries timeline --granularity=yearly --anchor=2020-01-01
-  mr queries timeline --json`,
+		Use:         "timeline",
+		Short:       "Display a timeline of query activity",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			if name != "" {

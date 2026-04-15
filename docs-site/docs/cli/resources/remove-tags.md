@@ -48,3 +48,4 @@ accept comma-separated unsigned integer lists and are required.
 
 - [`mr resources add-tags`](./add-tags.md)
 - [`mr resources replace-tags`](./replace-tags.md)
+- [`mr tags list`](../tags/list.md)

@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -8,10 +9,14 @@ import (
 	"time"
 
 	"mahresources/cmd/mr/client"
+	"mahresources/cmd/mr/helptext"
 	"mahresources/cmd/mr/output"
 
 	"github.com/spf13/cobra"
 )
+
+//go:embed notes_help/*.md
+var notesHelpFS embed.FS
 
 // noteResponse is a lightweight struct matching the API's Note JSON shape.
 type noteResponse struct {
@@ -27,9 +32,12 @@ type noteResponse struct {
 
 // NewNoteCmd returns the singular "note" command with get/create/delete/edit/share subcommands.
 func NewNoteCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(notesHelpFS, "notes_help/note.md")
 	cmd := &cobra.Command{
-		Use:   "note",
-		Short: "Get, create, edit, delete, or share a note",
+		Use:         "note",
+		Short:       "Get, create, edit, delete, or share a note",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	cmd.AddCommand(newNoteGetCmd(c, opts))
@@ -45,10 +53,14 @@ func NewNoteCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newNoteGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(notesHelpFS, "notes_help/note_get.md")
 	return &cobra.Command{
-		Use:   "get <id>",
-		Short: "Get a note by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "get <id>",
+		Short:       "Get a note by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -90,9 +102,13 @@ func newNoteCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var name, description, tagsStr, groupsStr, resourcesStr, meta string
 	var ownerID, noteTypeID uint
 
+	help := helptext.Load(notesHelpFS, "notes_help/note_create.md")
 	cmd := &cobra.Command{
-		Use:   "create",
-		Short: "Create a new note",
+		Use:         "create",
+		Short:       "Create a new note",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body := map[string]any{"Name": name}
 			if description != "" {
@@ -162,10 +178,14 @@ func newNoteCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newNoteDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(notesHelpFS, "notes_help/note_delete.md")
 	return &cobra.Command{
-		Use:   "delete <id>",
-		Short: "Delete a note by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "delete <id>",
+		Short:       "Delete a note by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("Id", args[0])
@@ -186,10 +206,14 @@ func newNoteDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newNoteEditNameCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(notesHelpFS, "notes_help/note_edit_name.md")
 	return &cobra.Command{
-		Use:   "edit-name <id> <new-name>",
-		Short: "Edit a note's name",
-		Args:  cobra.ExactArgs(2),
+		Use:         "edit-name <id> <new-name>",
+		Short:       "Edit a note's name",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -213,10 +237,14 @@ func newNoteEditNameCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newNoteEditDescriptionCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(notesHelpFS, "notes_help/note_edit_description.md")
 	return &cobra.Command{
-		Use:   "edit-description <id> <new-description>",
-		Short: "Edit a note's description",
-		Args:  cobra.ExactArgs(2),
+		Use:         "edit-description <id> <new-description>",
+		Short:       "Edit a note's description",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -240,19 +268,14 @@ func newNoteEditDescriptionCmd(c *client.Client, opts *output.Options) *cobra.Co
 }
 
 func newNoteEditMetaCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(notesHelpFS, "notes_help/note_edit_meta.md")
 	return &cobra.Command{
-		Use:   "edit-meta <id> <path> <value>",
-		Short: "Edit a single metadata field by JSON path",
-		Long: `Edit a single metadata field using deep-merge-by-path.
-
-The path is a dot-separated JSON path (e.g., "address.city") and the value
-is a JSON literal (e.g., '"Berlin"', '42', '{"nested":"obj"}').
-
-Examples:
-  mr note edit-meta 5 status '"active"'
-  mr note edit-meta 5 address.city '"Berlin"'
-  mr note edit-meta 5 scores '[1,2,3]'`,
-		Args: cobra.ExactArgs(3),
+		Use:         "edit-meta <id> <path> <value>",
+		Short:       "Edit a single metadata field by JSON path",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -277,10 +300,14 @@ Examples:
 }
 
 func newNoteShareCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(notesHelpFS, "notes_help/note_share.md")
 	return &cobra.Command{
-		Use:   "share <id>",
-		Short: "Generate a share token for a note",
-		Args:  cobra.ExactArgs(1),
+		Use:         "share <id>",
+		Short:       "Generate a share token for a note",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("noteId", args[0])
@@ -301,10 +328,14 @@ func newNoteShareCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newNoteUnshareCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(notesHelpFS, "notes_help/note_unshare.md")
 	return &cobra.Command{
-		Use:   "unshare <id>",
-		Short: "Remove the share token from a note",
-		Args:  cobra.ExactArgs(1),
+		Use:         "unshare <id>",
+		Short:       "Remove the share token from a note",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("noteId", args[0])
@@ -326,9 +357,12 @@ func newNoteUnshareCmd(c *client.Client, opts *output.Options) *cobra.Command {
 
 // NewNotesCmd returns the plural "notes" command with list/bulk subcommands.
 func NewNotesCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
+	help := helptext.Load(notesHelpFS, "notes_help/notes.md")
 	cmd := &cobra.Command{
-		Use:   "notes",
-		Short: "List notes and bulk tag/group/meta operations",
+		Use:         "notes",
+		Short:       "List notes and bulk tag/group/meta operations",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	cmd.AddCommand(newNotesListCmd(c, opts, page))
@@ -347,9 +381,13 @@ func newNotesListCmd(c *client.Client, opts *output.Options, page *int) *cobra.C
 	var name, description, tagsStr, groupsStr, createdBefore, createdAfter string
 	var ownerID, noteTypeID uint
 
+	help := helptext.Load(notesHelpFS, "notes_help/notes_list.md")
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List notes",
+		Use:         "list",
+		Short:       "List notes",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("page", strconv.Itoa(*page))
@@ -441,9 +479,13 @@ func newNotesListCmd(c *client.Client, opts *output.Options, page *int) *cobra.C
 func newNotesAddTagsCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var idsStr, tagsStr string
 
+	help := helptext.Load(notesHelpFS, "notes_help/notes_add_tags.md")
 	cmd := &cobra.Command{
-		Use:   "add-tags",
-		Short: "Add tags to multiple notes",
+		Use:         "add-tags",
+		Short:       "Add tags to multiple notes",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ids, err := parseUintList(idsStr)
 			if err != nil {
@@ -484,9 +526,13 @@ func newNotesAddTagsCmd(c *client.Client, opts *output.Options) *cobra.Command {
 func newNotesRemoveTagsCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var idsStr, tagsStr string
 
+	help := helptext.Load(notesHelpFS, "notes_help/notes_remove_tags.md")
 	cmd := &cobra.Command{
-		Use:   "remove-tags",
-		Short: "Remove tags from multiple notes",
+		Use:         "remove-tags",
+		Short:       "Remove tags from multiple notes",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ids, err := parseUintList(idsStr)
 			if err != nil {
@@ -527,9 +573,13 @@ func newNotesRemoveTagsCmd(c *client.Client, opts *output.Options) *cobra.Comman
 func newNotesAddGroupsCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var idsStr, groupsStr string
 
+	help := helptext.Load(notesHelpFS, "notes_help/notes_add_groups.md")
 	cmd := &cobra.Command{
-		Use:   "add-groups",
-		Short: "Add groups to multiple notes",
+		Use:         "add-groups",
+		Short:       "Add groups to multiple notes",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ids, err := parseUintList(idsStr)
 			if err != nil {
@@ -570,9 +620,13 @@ func newNotesAddGroupsCmd(c *client.Client, opts *output.Options) *cobra.Command
 func newNotesAddMetaCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var idsStr, meta string
 
+	help := helptext.Load(notesHelpFS, "notes_help/notes_add_meta.md")
 	cmd := &cobra.Command{
-		Use:   "add-meta",
-		Short: "Add metadata to multiple notes",
+		Use:         "add-meta",
+		Short:       "Add metadata to multiple notes",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ids, err := parseUintList(idsStr)
 			if err != nil {
@@ -609,9 +663,13 @@ func newNotesAddMetaCmd(c *client.Client, opts *output.Options) *cobra.Command {
 func newNotesDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var idsStr string
 
+	help := helptext.Load(notesHelpFS, "notes_help/notes_delete.md")
 	cmd := &cobra.Command{
-		Use:   "delete",
-		Short: "Delete multiple notes",
+		Use:         "delete",
+		Short:       "Delete multiple notes",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ids, err := parseUintList(idsStr)
 			if err != nil {
@@ -643,9 +701,13 @@ func newNotesDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newNotesMetaKeysCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(notesHelpFS, "notes_help/notes_meta_keys.md")
 	return &cobra.Command{
-		Use:   "meta-keys",
-		Short: "List all unique metadata keys used across notes",
+		Use:         "meta-keys",
+		Short:       "List all unique metadata keys used across notes",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var raw json.RawMessage
 			if err := c.Get("/v1/notes/meta/keys", nil, &raw); err != nil {
@@ -677,16 +739,13 @@ func newNotesTimelineCmd(c *client.Client, opts *output.Options) *cobra.Command 
 		ownerID, noteTypeID                                         uint
 	)
 
+	help := helptext.Load(notesHelpFS, "notes_help/notes_timeline.md")
 	cmd := &cobra.Command{
-		Use:   "timeline",
-		Short: "Display a timeline of note activity",
-		Long: `Display a timeline of note creation and update activity as an ASCII bar chart.
-
-Examples:
-  mr notes timeline
-  mr notes timeline --granularity=weekly --columns=20
-  mr notes timeline --granularity=yearly --anchor=2020-01-01
-  mr notes timeline --json`,
+		Use:         "timeline",
+		Short:       "Display a timeline of note activity",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			if name != "" {

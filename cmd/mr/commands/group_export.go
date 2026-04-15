@@ -13,6 +13,7 @@ import (
 	"mahresources/application_context"
 	"mahresources/archive"
 	"mahresources/cmd/mr/client"
+	"mahresources/cmd/mr/helptext"
 	"mahresources/cmd/mr/output"
 )
 
@@ -24,10 +25,14 @@ func newGroupExportCmd(c *client.Client, outOpts *output.Options) *cobra.Command
 
 	opts := &exportCmdOptions{}
 
+	help := helptext.Load(groupsHelpFS, "groups_help/group_export.md")
 	cmd := &cobra.Command{
-		Use:   "export <id> [<id>...]",
-		Short: "Export one or more groups (and their reachable entities) to a tar file",
-		Args:  cobra.MinimumNArgs(1),
+		Use:         "export <id> [<id>...]",
+		Short:       "Export one or more groups to a tar archive",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ids := make([]uint, 0, len(args))
 			for _, a := range args {

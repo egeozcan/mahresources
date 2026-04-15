@@ -48,3 +48,4 @@ and are required.
 
 - [`mr resources add-tags`](./add-tags.md)
 - [`mr resources add-meta`](./add-meta.md)
+- [`mr groups list`](../groups/list.md)

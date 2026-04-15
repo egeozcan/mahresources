@@ -12,21 +12,21 @@ import (
 
 	"mahresources/application_context"
 	"mahresources/cmd/mr/client"
+	"mahresources/cmd/mr/helptext"
 	"mahresources/cmd/mr/output"
 )
 
 func newGroupImportCmd(c *client.Client, outOpts *output.Options) *cobra.Command {
 	opts := &importCmdOptions{}
 
+	help := helptext.Load(groupsHelpFS, "groups_help/group_import.md")
 	cmd := &cobra.Command{
-		Use:   "import <tarfile>",
-		Short: "Import a group export tar into this instance",
-		Long: `Upload an export tar, parse it, and optionally apply it.
-
-Use --dry-run to parse and print the plan without applying.
-Use --plan-output to save the plan JSON to a file.
-Use --decisions to supply a decisions JSON file for full control.`,
-		Args: cobra.ExactArgs(1),
+		Use:         "import <tarfile>",
+		Short:       "Import a group export tar into this instance",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			tarPath := args[0]
 			if _, err := os.Stat(tarPath); err != nil {

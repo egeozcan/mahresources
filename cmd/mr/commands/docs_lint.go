@@ -17,6 +17,14 @@ var lintAllowlist = map[string]bool{
 	"docs":      true,
 	"resource":  true,
 	"resources": true,
+	"group":     true,
+	"groups":    true,
+	"note":      true,
+	"notes":     true,
+	"query":     true,
+	"queries":   true,
+	"tag":       true,
+	"tags":      true,
 }
 
 // SetLintAllowlistForTest temporarily replaces the production allowlist

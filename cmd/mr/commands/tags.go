@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -9,10 +10,14 @@ import (
 	"time"
 
 	"mahresources/cmd/mr/client"
+	"mahresources/cmd/mr/helptext"
 	"mahresources/cmd/mr/output"
 
 	"github.com/spf13/cobra"
 )
+
+//go:embed tags_help/*.md
+var tagsHelpFS embed.FS
 
 // tagResponse is a lightweight struct matching the API's Tag JSON shape.
 type tagResponse struct {
@@ -25,9 +30,12 @@ type tagResponse struct {
 
 // NewTagCmd returns the singular "tag" command with get/create/delete/edit subcommands.
 func NewTagCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(tagsHelpFS, "tags_help/tag.md")
 	tagCmd := &cobra.Command{
-		Use:   "tag",
-		Short: "Get, create, edit, or delete a tag",
+		Use:         "tag",
+		Short:       "Get, create, edit, or delete a tag",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	tagCmd.AddCommand(newTagGetCmd(c, opts))
@@ -40,10 +48,14 @@ func NewTagCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newTagGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(tagsHelpFS, "tags_help/tag_get.md")
 	return &cobra.Command{
-		Use:   "get <id>",
-		Short: "Get a tag by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "get <id>",
+		Short:       "Get a tag by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			targetID, err := strconv.ParseUint(args[0], 10, 64)
 			if err != nil {
@@ -83,9 +95,13 @@ func newTagGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
 func newTagCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var name, description string
 
+	help := helptext.Load(tagsHelpFS, "tags_help/tag_create.md")
 	cmd := &cobra.Command{
-		Use:   "create",
-		Short: "Create a new tag",
+		Use:         "create",
+		Short:       "Create a new tag",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body := map[string]string{"Name": name}
 			if description != "" {
@@ -119,10 +135,14 @@ func newTagCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newTagDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(tagsHelpFS, "tags_help/tag_delete.md")
 	return &cobra.Command{
-		Use:   "delete <id>",
-		Short: "Delete a tag by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "delete <id>",
+		Short:       "Delete a tag by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("Id", args[0])
@@ -143,10 +163,14 @@ func newTagDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newTagEditNameCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(tagsHelpFS, "tags_help/tag_edit_name.md")
 	return &cobra.Command{
-		Use:   "edit-name <id> <new-name>",
-		Short: "Edit a tag's name",
-		Args:  cobra.ExactArgs(2),
+		Use:         "edit-name <id> <new-name>",
+		Short:       "Edit a tag's name",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -170,10 +194,14 @@ func newTagEditNameCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newTagEditDescriptionCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(tagsHelpFS, "tags_help/tag_edit_description.md")
 	return &cobra.Command{
-		Use:   "edit-description <id> <new-description>",
-		Short: "Edit a tag's description",
-		Args:  cobra.ExactArgs(2),
+		Use:         "edit-description <id> <new-description>",
+		Short:       "Edit a tag's description",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -198,9 +226,12 @@ func newTagEditDescriptionCmd(c *client.Client, opts *output.Options) *cobra.Com
 
 // NewTagsCmd returns the plural "tags" command with list/merge/delete subcommands.
 func NewTagsCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
+	help := helptext.Load(tagsHelpFS, "tags_help/tags.md")
 	tagsCmd := &cobra.Command{
-		Use:   "tags",
-		Short: "List, merge, or bulk-delete tags",
+		Use:         "tags",
+		Short:       "List, merge, or bulk-delete tags",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	tagsCmd.AddCommand(newTagsListCmd(c, opts, page))
@@ -214,9 +245,13 @@ func NewTagsCmd(c *client.Client, opts *output.Options, page *int) *cobra.Comman
 func newTagsListCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
 	var name, description string
 
+	help := helptext.Load(tagsHelpFS, "tags_help/tags_list.md")
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List tags",
+		Use:         "list",
+		Short:       "List tags",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("page", strconv.Itoa(*page))
@@ -263,9 +298,13 @@ func newTagsMergeCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var winner uint
 	var losersStr string
 
+	help := helptext.Load(tagsHelpFS, "tags_help/tags_merge.md")
 	cmd := &cobra.Command{
-		Use:   "merge",
-		Short: "Merge tags into a winner",
+		Use:         "merge",
+		Short:       "Merge tags into a winner",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			loserParts := strings.Split(losersStr, ",")
 			var losers []uint
@@ -311,9 +350,13 @@ func newTagsMergeCmd(c *client.Client, opts *output.Options) *cobra.Command {
 func newTagsDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var idsStr string
 
+	help := helptext.Load(tagsHelpFS, "tags_help/tags_delete.md")
 	cmd := &cobra.Command{
-		Use:   "delete",
-		Short: "Delete multiple tags",
+		Use:         "delete",
+		Short:       "Delete multiple tags",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			parts := strings.Split(idsStr, ",")
 			var ids []uint
@@ -359,16 +402,13 @@ func newTagsTimelineCmd(c *client.Client, opts *output.Options) *cobra.Command {
 		name, description string
 	)
 
+	help := helptext.Load(tagsHelpFS, "tags_help/tags_timeline.md")
 	cmd := &cobra.Command{
-		Use:   "timeline",
-		Short: "Display a timeline of tag activity",
-		Long: `Display a timeline of tag creation and update activity as an ASCII bar chart.
-
-Examples:
-  mr tags timeline
-  mr tags timeline --granularity=weekly --columns=20
-  mr tags timeline --granularity=yearly --anchor=2020-01-01
-  mr tags timeline --json`,
+		Use:         "timeline",
+		Short:       "Display a timeline of tag activity",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			if name != "" {

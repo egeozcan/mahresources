@@ -41,3 +41,5 @@ This command has no local flags.
 ## See Also
 
 - [`mr resources list`](../resources/list.md)
+- [`mr groups list`](../groups/list.md)
+- [`mr tags list`](../tags/list.md)

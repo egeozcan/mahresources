@@ -73,3 +73,4 @@ Array of resources with id, name, content type, size, dimensions, owner id, crea
 ## See Also
 
 - [`mr resource get`](../resource/get.md)
+- [`mr groups list`](../groups/list.md)

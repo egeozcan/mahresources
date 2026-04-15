@@ -49,3 +49,4 @@ semantics. Pass `--tags ""` to clear all tags.
 
 - [`mr resources add-tags`](./add-tags.md)
 - [`mr resources remove-tags`](./remove-tags.md)
+- [`mr tags list`](../tags/list.md)

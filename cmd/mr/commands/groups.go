@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -8,10 +9,14 @@ import (
 	"time"
 
 	"mahresources/cmd/mr/client"
+	"mahresources/cmd/mr/helptext"
 	"mahresources/cmd/mr/output"
 
 	"github.com/spf13/cobra"
 )
+
+//go:embed groups_help/*.md
+var groupsHelpFS embed.FS
 
 // groupResponse is a lightweight struct matching the API's Group JSON shape.
 type groupResponse struct {
@@ -35,9 +40,12 @@ type treeNodeResponse struct {
 
 // NewGroupCmd returns the singular "group" command with subcommands.
 func NewGroupCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(groupsHelpFS, "groups_help/group.md")
 	cmd := &cobra.Command{
-		Use:   "group",
-		Short: "Get, create, edit, delete, or clone a group",
+		Use:         "group",
+		Short:       "Get, create, edit, delete, or clone a group",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	cmd.AddCommand(newGroupGetCmd(c, opts))
@@ -56,10 +64,14 @@ func NewGroupCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newGroupGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(groupsHelpFS, "groups_help/group_get.md")
 	return &cobra.Command{
-		Use:   "get <id>",
-		Short: "Get a group by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "get <id>",
+		Short:       "Get a group by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -98,9 +110,13 @@ func newGroupCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var name, description, tagsStr, groupsStr, meta, urlStr string
 	var ownerID, categoryID uint
 
+	help := helptext.Load(groupsHelpFS, "groups_help/group_create.md")
 	cmd := &cobra.Command{
-		Use:   "create",
-		Short: "Create a new group",
+		Use:         "create",
+		Short:       "Create a new group",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body := map[string]any{"Name": name}
 			if description != "" {
@@ -166,10 +182,14 @@ func newGroupCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newGroupDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(groupsHelpFS, "groups_help/group_delete.md")
 	return &cobra.Command{
-		Use:   "delete <id>",
-		Short: "Delete a group by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "delete <id>",
+		Short:       "Delete a group by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("Id", args[0])
@@ -190,10 +210,14 @@ func newGroupDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newGroupEditNameCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(groupsHelpFS, "groups_help/group_edit_name.md")
 	return &cobra.Command{
-		Use:   "edit-name <id> <new-name>",
-		Short: "Edit a group's name",
-		Args:  cobra.ExactArgs(2),
+		Use:         "edit-name <id> <new-name>",
+		Short:       "Edit a group's name",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -217,10 +241,14 @@ func newGroupEditNameCmd(c *client.Client, opts *output.Options) *cobra.Command 
 }
 
 func newGroupEditDescriptionCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(groupsHelpFS, "groups_help/group_edit_description.md")
 	return &cobra.Command{
-		Use:   "edit-description <id> <new-description>",
-		Short: "Edit a group's description",
-		Args:  cobra.ExactArgs(2),
+		Use:         "edit-description <id> <new-description>",
+		Short:       "Edit a group's description",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -244,19 +272,14 @@ func newGroupEditDescriptionCmd(c *client.Client, opts *output.Options) *cobra.C
 }
 
 func newGroupEditMetaCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(groupsHelpFS, "groups_help/group_edit_meta.md")
 	return &cobra.Command{
-		Use:   "edit-meta <id> <path> <value>",
-		Short: "Edit a single metadata field by JSON path",
-		Long: `Edit a single metadata field using deep-merge-by-path.
-
-The path is a dot-separated JSON path (e.g., "address.city") and the value
-is a JSON literal (e.g., '"Berlin"', '42', '{"nested":"obj"}').
-
-Examples:
-  mr group edit-meta 5 status '"active"'
-  mr group edit-meta 5 address.city '"Berlin"'
-  mr group edit-meta 5 scores '[1,2,3]'`,
-		Args: cobra.ExactArgs(3),
+		Use:         "edit-meta <id> <path> <value>",
+		Short:       "Edit a single metadata field by JSON path",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -281,10 +304,14 @@ Examples:
 }
 
 func newGroupParentsCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(groupsHelpFS, "groups_help/group_parents.md")
 	return &cobra.Command{
-		Use:   "parents <id>",
-		Short: "List parent groups of a group",
-		Args:  cobra.ExactArgs(1),
+		Use:         "parents <id>",
+		Short:       "List parent groups of a group",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -321,10 +348,14 @@ func newGroupParentsCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newGroupChildrenCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(groupsHelpFS, "groups_help/group_children.md")
 	return &cobra.Command{
-		Use:   "children <id>",
-		Short: "List child groups (tree children) of a group",
-		Args:  cobra.ExactArgs(1),
+		Use:         "children <id>",
+		Short:       "List child groups (tree children) of a group",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -356,10 +387,14 @@ func newGroupChildrenCmd(c *client.Client, opts *output.Options) *cobra.Command 
 }
 
 func newGroupCloneCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(groupsHelpFS, "groups_help/group_clone.md")
 	return &cobra.Command{
-		Use:   "clone <id>",
-		Short: "Clone a group",
-		Args:  cobra.ExactArgs(1),
+		Use:         "clone <id>",
+		Short:       "Clone a group",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseUint(args[0], 10, 64)
 			if err != nil {
@@ -392,9 +427,12 @@ func newGroupCloneCmd(c *client.Client, opts *output.Options) *cobra.Command {
 
 // NewGroupsCmd returns the plural "groups" command with list/bulk subcommands.
 func NewGroupsCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
+	help := helptext.Load(groupsHelpFS, "groups_help/groups.md")
 	cmd := &cobra.Command{
-		Use:   "groups",
-		Short: "List, merge, or bulk-edit groups",
+		Use:         "groups",
+		Short:       "List, merge, or bulk-edit groups",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	cmd.AddCommand(newGroupsListCmd(c, opts, page))
@@ -413,9 +451,13 @@ func newGroupsListCmd(c *client.Client, opts *output.Options, page *int) *cobra.
 	var name, description, tagsStr, groupsStr, urlStr, createdBefore, createdAfter string
 	var ownerID, categoryID uint
 
+	help := helptext.Load(groupsHelpFS, "groups_help/groups_list.md")
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List groups",
+		Use:         "list",
+		Short:       "List groups",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("page", strconv.Itoa(*page))
@@ -511,9 +553,13 @@ func newGroupsListCmd(c *client.Client, opts *output.Options, page *int) *cobra.
 func newGroupsAddTagsCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var idsStr, tagsStr string
 
+	help := helptext.Load(groupsHelpFS, "groups_help/groups_add_tags.md")
 	cmd := &cobra.Command{
-		Use:   "add-tags",
-		Short: "Add tags to multiple groups",
+		Use:         "add-tags",
+		Short:       "Add tags to multiple groups",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ids, err := parseUintList(idsStr)
 			if err != nil {
@@ -554,9 +600,13 @@ func newGroupsAddTagsCmd(c *client.Client, opts *output.Options) *cobra.Command 
 func newGroupsRemoveTagsCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var idsStr, tagsStr string
 
+	help := helptext.Load(groupsHelpFS, "groups_help/groups_remove_tags.md")
 	cmd := &cobra.Command{
-		Use:   "remove-tags",
-		Short: "Remove tags from multiple groups",
+		Use:         "remove-tags",
+		Short:       "Remove tags from multiple groups",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ids, err := parseUintList(idsStr)
 			if err != nil {
@@ -597,9 +647,13 @@ func newGroupsRemoveTagsCmd(c *client.Client, opts *output.Options) *cobra.Comma
 func newGroupsAddMetaCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var idsStr, meta string
 
+	help := helptext.Load(groupsHelpFS, "groups_help/groups_add_meta.md")
 	cmd := &cobra.Command{
-		Use:   "add-meta",
-		Short: "Add metadata to multiple groups",
+		Use:         "add-meta",
+		Short:       "Add metadata to multiple groups",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ids, err := parseUintList(idsStr)
 			if err != nil {
@@ -636,9 +690,13 @@ func newGroupsAddMetaCmd(c *client.Client, opts *output.Options) *cobra.Command 
 func newGroupsDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var idsStr string
 
+	help := helptext.Load(groupsHelpFS, "groups_help/groups_delete.md")
 	cmd := &cobra.Command{
-		Use:   "delete",
-		Short: "Delete multiple groups",
+		Use:         "delete",
+		Short:       "Delete multiple groups",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ids, err := parseUintList(idsStr)
 			if err != nil {
@@ -673,9 +731,13 @@ func newGroupsMergeCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var winner uint
 	var losersStr string
 
+	help := helptext.Load(groupsHelpFS, "groups_help/groups_merge.md")
 	cmd := &cobra.Command{
-		Use:   "merge",
-		Short: "Merge groups into a winner",
+		Use:         "merge",
+		Short:       "Merge groups into a winner",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			losers, err := parseUintList(losersStr)
 			if err != nil {
@@ -710,9 +772,13 @@ func newGroupsMergeCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newGroupsMetaKeysCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(groupsHelpFS, "groups_help/groups_meta_keys.md")
 	return &cobra.Command{
-		Use:   "meta-keys",
-		Short: "List all unique metadata keys used across groups",
+		Use:         "meta-keys",
+		Short:       "List all unique metadata keys used across groups",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var raw json.RawMessage
 			if err := c.Get("/v1/groups/meta/keys", nil, &raw); err != nil {
@@ -744,16 +810,13 @@ func newGroupsTimelineCmd(c *client.Client, opts *output.Options) *cobra.Command
 		ownerID, categoryID                                                             uint
 	)
 
+	help := helptext.Load(groupsHelpFS, "groups_help/groups_timeline.md")
 	cmd := &cobra.Command{
-		Use:   "timeline",
-		Short: "Display a timeline of group activity",
-		Long: `Display a timeline of group creation and update activity as an ASCII bar chart.
-
-Examples:
-  mr groups timeline
-  mr groups timeline --granularity=weekly --columns=20
-  mr groups timeline --granularity=yearly --anchor=2020-01-01
-  mr groups timeline --json`,
+		Use:         "timeline",
+		Short:       "Display a timeline of group activity",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			if name != "" {
