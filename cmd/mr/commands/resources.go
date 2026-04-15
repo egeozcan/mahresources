@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -9,10 +10,14 @@ import (
 	"time"
 
 	"mahresources/cmd/mr/client"
+	"mahresources/cmd/mr/helptext"
 	"mahresources/cmd/mr/output"
 
 	"github.com/spf13/cobra"
 )
+
+//go:embed resources_help/*.md
+var resourcesHelpFS embed.FS
 
 // resourceResponse is a lightweight struct matching the API's Resource JSON shape.
 type resourceResponse struct {
@@ -75,9 +80,12 @@ func ptrUintStr(p *uint) string {
 
 // NewResourceCmd returns the singular "resource" command tree.
 func NewResourceCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resource.md")
 	cmd := &cobra.Command{
-		Use:   "resource",
-		Short: "Upload, download, edit, or version a resource",
+		Use:         "resource",
+		Short:       "Upload, download, edit, or version a resource",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	cmd.AddCommand(newResourceGetCmd(c, opts))
@@ -106,10 +114,14 @@ func NewResourceCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newResourceGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resource_get.md")
 	return &cobra.Command{
-		Use:   "get <id>",
-		Short: "Get a resource by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "get <id>",
+		Short:       "Get a resource by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -144,6 +156,7 @@ func newResourceGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newResourceEditCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resource_edit.md")
 	var (
 		name, description, tagsStr, groupsStr, notesStr string
 		meta, category, originalName, originalLocation   string
@@ -152,9 +165,12 @@ func newResourceEditCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "edit <id>",
-		Short: "Edit a resource",
-		Args:  cobra.ExactArgs(1),
+		Use:         "edit <id>",
+		Short:       "Edit a resource",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseUint(args[0], 10, 64)
 			if err != nil {
@@ -251,10 +267,14 @@ func newResourceEditCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newResourceDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resource_delete.md")
 	return &cobra.Command{
-		Use:   "delete <id>",
-		Short: "Delete a resource by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "delete <id>",
+		Short:       "Delete a resource by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("Id", args[0])
@@ -275,10 +295,14 @@ func newResourceDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command
 }
 
 func newResourceEditNameCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resource_edit_name.md")
 	return &cobra.Command{
-		Use:   "edit-name <id> <new-name>",
-		Short: "Edit a resource's name",
-		Args:  cobra.ExactArgs(2),
+		Use:         "edit-name <id> <new-name>",
+		Short:       "Edit a resource's name",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -302,10 +326,14 @@ func newResourceEditNameCmd(c *client.Client, opts *output.Options) *cobra.Comma
 }
 
 func newResourceEditDescriptionCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resource_edit_description.md")
 	return &cobra.Command{
-		Use:   "edit-description <id> <new-description>",
-		Short: "Edit a resource's description",
-		Args:  cobra.ExactArgs(2),
+		Use:         "edit-description <id> <new-description>",
+		Short:       "Edit a resource's description",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -329,19 +357,14 @@ func newResourceEditDescriptionCmd(c *client.Client, opts *output.Options) *cobr
 }
 
 func newResourceEditMetaCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resource_edit_meta.md")
 	return &cobra.Command{
-		Use:   "edit-meta <id> <path> <value>",
-		Short: "Edit a single metadata field by JSON path",
-		Long: `Edit a single metadata field using deep-merge-by-path.
-
-The path is a dot-separated JSON path (e.g., "address.city") and the value
-is a JSON literal (e.g., '"Berlin"', '42', '{"nested":"obj"}').
-
-Examples:
-  mr resource edit-meta 5 status '"active"'
-  mr resource edit-meta 5 address.city '"Berlin"'
-  mr resource edit-meta 5 scores '[1,2,3]'`,
-		Args: cobra.ExactArgs(3),
+		Use:         "edit-meta <id> <path> <value>",
+		Short:       "Edit a single metadata field by JSON path",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -370,6 +393,7 @@ Examples:
 // ---------------------------------------------------------------------------
 
 func newResourceUploadCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resource_upload.md")
 	var (
 		name, description, meta, category       string
 		contentCategory, originalName            string
@@ -377,9 +401,12 @@ func newResourceUploadCmd(c *client.Client, opts *output.Options) *cobra.Command
 	)
 
 	cmd := &cobra.Command{
-		Use:   "upload <file>",
-		Short: "Upload a file as a new resource",
-		Args:  cobra.ExactArgs(1),
+		Use:         "upload <file>",
+		Short:       "Upload a file as a new resource",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			filePath := args[0]
 			extra := map[string]string{}
@@ -442,12 +469,16 @@ func newResourceUploadCmd(c *client.Client, opts *output.Options) *cobra.Command
 }
 
 func newResourceDownloadCmd(c *client.Client, _ *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resource_download.md")
 	var outFile string
 
 	cmd := &cobra.Command{
-		Use:   "download <id>",
-		Short: "Download a resource file",
-		Args:  cobra.ExactArgs(1),
+		Use:         "download <id>",
+		Short:       "Download a resource file",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -473,15 +504,19 @@ func newResourceDownloadCmd(c *client.Client, _ *output.Options) *cobra.Command 
 }
 
 func newResourcePreviewCmd(c *client.Client, _ *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resource_preview.md")
 	var (
 		outFile        string
 		width, height  uint
 	)
 
 	cmd := &cobra.Command{
-		Use:   "preview <id>",
-		Short: "Download a scaled thumbnail of a resource",
-		Args:  cobra.ExactArgs(1),
+		Use:         "preview <id>",
+		Short:       "Download a scaled thumbnail of a resource",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("ID", args[0])
@@ -515,6 +550,7 @@ func newResourcePreviewCmd(c *client.Client, _ *output.Options) *cobra.Command {
 }
 
 func newResourceFromURLCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resource_from_url.md")
 	var (
 		remoteURL, name, description string
 		tagsStr, groupsStr           string
@@ -523,8 +559,11 @@ func newResourceFromURLCmd(c *client.Client, opts *output.Options) *cobra.Comman
 	)
 
 	cmd := &cobra.Command{
-		Use:   "from-url",
-		Short: "Create a resource from a remote URL",
+		Use:         "from-url",
+		Short:       "Create a resource from a remote URL",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body := map[string]any{"URL": remoteURL}
 
@@ -591,6 +630,7 @@ func newResourceFromURLCmd(c *client.Client, opts *output.Options) *cobra.Comman
 }
 
 func newResourceFromLocalCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resource_from_local.md")
 	var (
 		localPath, name, description string
 		tagsStr, groupsStr           string
@@ -599,8 +639,11 @@ func newResourceFromLocalCmd(c *client.Client, opts *output.Options) *cobra.Comm
 	)
 
 	cmd := &cobra.Command{
-		Use:   "from-local",
-		Short: "Create a resource from a local server path",
+		Use:         "from-local",
+		Short:       "Create a resource from a local server path",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body := map[string]any{"LocalPath": localPath}
 
@@ -663,12 +706,16 @@ func newResourceFromLocalCmd(c *client.Client, opts *output.Options) *cobra.Comm
 }
 
 func newResourceRotateCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resource_rotate.md")
 	var degrees int
 
 	cmd := &cobra.Command{
-		Use:   "rotate <id>",
-		Short: "Rotate a resource image",
-		Args:  cobra.ExactArgs(1),
+		Use:         "rotate <id>",
+		Short:       "Rotate a resource image",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseUint(args[0], 10, 64)
 			if err != nil {
@@ -701,10 +748,14 @@ func newResourceRotateCmd(c *client.Client, opts *output.Options) *cobra.Command
 }
 
 func newResourceRecalcDimsCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resource_recalculate_dimensions.md")
 	return &cobra.Command{
-		Use:   "recalculate-dimensions <id>",
-		Short: "Recalculate resource dimensions",
-		Args:  cobra.ExactArgs(1),
+		Use:         "recalculate-dimensions <id>",
+		Short:       "Recalculate resource dimensions",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseUint(args[0], 10, 64)
 			if err != nil {
@@ -733,10 +784,14 @@ func newResourceRecalcDimsCmd(c *client.Client, opts *output.Options) *cobra.Com
 // ---------------------------------------------------------------------------
 
 func newResourceVersionsCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resource_versions.md")
 	return &cobra.Command{
-		Use:   "versions <resource-id>",
-		Short: "List versions of a resource",
-		Args:  cobra.ExactArgs(1),
+		Use:         "versions <resource-id>",
+		Short:       "List versions of a resource",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("resourceId", args[0])
@@ -771,10 +826,14 @@ func newResourceVersionsCmd(c *client.Client, opts *output.Options) *cobra.Comma
 }
 
 func newResourceVersionCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resource_version.md")
 	return &cobra.Command{
-		Use:   "version <version-id>",
-		Short: "Get a specific version by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "version <version-id>",
+		Short:       "Get a specific version by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -808,12 +867,16 @@ func newResourceVersionCmd(c *client.Client, opts *output.Options) *cobra.Comman
 }
 
 func newResourceVersionUploadCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resource_version_upload.md")
 	var comment string
 
 	cmd := &cobra.Command{
-		Use:   "version-upload <resource-id> <file>",
-		Short: "Upload a new version of a resource",
-		Args:  cobra.ExactArgs(2),
+		Use:         "version-upload <resource-id> <file>",
+		Short:       "Upload a new version of a resource",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("resourceId", args[0])
@@ -843,12 +906,16 @@ func newResourceVersionUploadCmd(c *client.Client, opts *output.Options) *cobra.
 }
 
 func newResourceVersionDownloadCmd(c *client.Client, _ *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resource_version_download.md")
 	var outFile string
 
 	cmd := &cobra.Command{
-		Use:   "version-download <version-id>",
-		Short: "Download a specific version file",
-		Args:  cobra.ExactArgs(1),
+		Use:         "version-download <version-id>",
+		Short:       "Download a specific version file",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("versionId", args[0])
@@ -874,12 +941,16 @@ func newResourceVersionDownloadCmd(c *client.Client, _ *output.Options) *cobra.C
 }
 
 func newResourceVersionRestoreCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resource_version_restore.md")
 	var resourceID, versionID uint
 	var comment string
 
 	cmd := &cobra.Command{
-		Use:   "version-restore",
-		Short: "Restore a resource to a previous version",
+		Use:         "version-restore",
+		Short:       "Restore a resource to a previous version",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body := map[string]any{
 				"ResourceID": resourceID,
@@ -913,11 +984,15 @@ func newResourceVersionRestoreCmd(c *client.Client, opts *output.Options) *cobra
 }
 
 func newResourceVersionDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resource_version_delete.md")
 	var resourceID, versionID uint
 
 	cmd := &cobra.Command{
-		Use:   "version-delete",
-		Short: "Delete a specific version",
+		Use:         "version-delete",
+		Short:       "Delete a specific version",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("resourceId", strconv.FormatUint(uint64(resourceID), 10))
@@ -946,13 +1021,17 @@ func newResourceVersionDeleteCmd(c *client.Client, opts *output.Options) *cobra.
 }
 
 func newResourceVersionsCleanupCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resource_versions_cleanup.md")
 	var keep, olderThanDays uint
 	var dryRun bool
 
 	cmd := &cobra.Command{
-		Use:   "versions-cleanup <resource-id>",
-		Short: "Clean up old versions of a resource",
-		Args:  cobra.ExactArgs(1),
+		Use:         "versions-cleanup <resource-id>",
+		Short:       "Clean up old versions of a resource",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseUint(args[0], 10, 64)
 			if err != nil {
@@ -997,12 +1076,16 @@ func newResourceVersionsCleanupCmd(c *client.Client, opts *output.Options) *cobr
 }
 
 func newResourceVersionsCompareCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resource_versions_compare.md")
 	var v1, v2 uint
 
 	cmd := &cobra.Command{
-		Use:   "versions-compare <resource-id>",
-		Short: "Compare two versions of a resource",
-		Args:  cobra.ExactArgs(1),
+		Use:         "versions-compare <resource-id>",
+		Short:       "Compare two versions of a resource",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("resourceId", args[0])
@@ -1045,9 +1128,12 @@ func newResourceVersionsCompareCmd(c *client.Client, opts *output.Options) *cobr
 
 // NewResourcesCmd returns the plural "resources" command tree.
 func NewResourcesCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resources.md")
 	cmd := &cobra.Command{
-		Use:   "resources",
-		Short: "List, merge, or bulk-edit resources",
+		Use:         "resources",
+		Short:       "List, merge, or bulk-edit resources",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	cmd.AddCommand(newResourcesListCmd(c, opts, page))
@@ -1067,6 +1153,7 @@ func NewResourcesCmd(c *client.Client, opts *output.Options, page *int) *cobra.C
 }
 
 func newResourcesListCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resources_list.md")
 	var (
 		name, description, contentType string
 		tagsStr, groupsStr, notesStr   string
@@ -1079,8 +1166,11 @@ func newResourcesListCmd(c *client.Client, opts *output.Options, page *int) *cob
 	)
 
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List resources",
+		Use:         "list",
+		Short:       "List resources",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("page", strconv.Itoa(*page))
@@ -1211,11 +1301,15 @@ func newResourcesListCmd(c *client.Client, opts *output.Options, page *int) *cob
 }
 
 func newResourcesAddTagsCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resources_add_tags.md")
 	var idsStr, tagsStr string
 
 	cmd := &cobra.Command{
-		Use:   "add-tags",
-		Short: "Add tags to multiple resources",
+		Use:         "add-tags",
+		Short:       "Add tags to multiple resources",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ids, err := parseUintList(idsStr)
 			if err != nil {
@@ -1254,11 +1348,15 @@ func newResourcesAddTagsCmd(c *client.Client, opts *output.Options) *cobra.Comma
 }
 
 func newResourcesRemoveTagsCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resources_remove_tags.md")
 	var idsStr, tagsStr string
 
 	cmd := &cobra.Command{
-		Use:   "remove-tags",
-		Short: "Remove tags from multiple resources",
+		Use:         "remove-tags",
+		Short:       "Remove tags from multiple resources",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ids, err := parseUintList(idsStr)
 			if err != nil {
@@ -1297,11 +1395,15 @@ func newResourcesRemoveTagsCmd(c *client.Client, opts *output.Options) *cobra.Co
 }
 
 func newResourcesReplaceTagsCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resources_replace_tags.md")
 	var idsStr, tagsStr string
 
 	cmd := &cobra.Command{
-		Use:   "replace-tags",
-		Short: "Replace tags on multiple resources",
+		Use:         "replace-tags",
+		Short:       "Replace tags on multiple resources",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ids, err := parseUintList(idsStr)
 			if err != nil {
@@ -1340,11 +1442,15 @@ func newResourcesReplaceTagsCmd(c *client.Client, opts *output.Options) *cobra.C
 }
 
 func newResourcesAddGroupsCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resources_add_groups.md")
 	var idsStr, groupsStr string
 
 	cmd := &cobra.Command{
-		Use:   "add-groups",
-		Short: "Add groups to multiple resources",
+		Use:         "add-groups",
+		Short:       "Add groups to multiple resources",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ids, err := parseUintList(idsStr)
 			if err != nil {
@@ -1383,11 +1489,15 @@ func newResourcesAddGroupsCmd(c *client.Client, opts *output.Options) *cobra.Com
 }
 
 func newResourcesAddMetaCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resources_add_meta.md")
 	var idsStr, meta string
 
 	cmd := &cobra.Command{
-		Use:   "add-meta",
-		Short: "Add metadata to multiple resources",
+		Use:         "add-meta",
+		Short:       "Add metadata to multiple resources",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ids, err := parseUintList(idsStr)
 			if err != nil {
@@ -1422,11 +1532,15 @@ func newResourcesAddMetaCmd(c *client.Client, opts *output.Options) *cobra.Comma
 }
 
 func newResourcesDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resources_delete.md")
 	var idsStr string
 
 	cmd := &cobra.Command{
-		Use:   "delete",
-		Short: "Delete multiple resources",
+		Use:         "delete",
+		Short:       "Delete multiple resources",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ids, err := parseUintList(idsStr)
 			if err != nil {
@@ -1458,12 +1572,16 @@ func newResourcesDeleteCmd(c *client.Client, opts *output.Options) *cobra.Comman
 }
 
 func newResourcesMergeCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resources_merge.md")
 	var winner uint
 	var losersStr string
 
 	cmd := &cobra.Command{
-		Use:   "merge",
-		Short: "Merge resources into a winner",
+		Use:         "merge",
+		Short:       "Merge resources into a winner",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			losers, err := parseUintList(losersStr)
 			if err != nil {
@@ -1498,12 +1616,16 @@ func newResourcesMergeCmd(c *client.Client, opts *output.Options) *cobra.Command
 }
 
 func newResourcesSetDimensionsCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resources_set_dimensions.md")
 	var idsStr string
 	var width, height uint
 
 	cmd := &cobra.Command{
-		Use:   "set-dimensions",
-		Short: "Set dimensions on multiple resources",
+		Use:         "set-dimensions",
+		Short:       "Set dimensions on multiple resources",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ids, err := parseUintList(idsStr)
 			if err != nil {
@@ -1541,12 +1663,16 @@ func newResourcesSetDimensionsCmd(c *client.Client, opts *output.Options) *cobra
 }
 
 func newResourcesVersionsCleanupCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resources_versions_cleanup.md")
 	var keep, olderThanDays, ownerID uint
 	var dryRun bool
 
 	cmd := &cobra.Command{
-		Use:   "versions-cleanup",
-		Short: "Clean up old versions across resources",
+		Use:         "versions-cleanup",
+		Short:       "Clean up old versions across resources",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body := map[string]any{}
 
@@ -1590,9 +1716,13 @@ func newResourcesVersionsCleanupCmd(c *client.Client, opts *output.Options) *cob
 }
 
 func newResourcesMetaKeysCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resources_meta_keys.md")
 	return &cobra.Command{
-		Use:   "meta-keys",
-		Short: "List all unique metadata keys used across resources",
+		Use:         "meta-keys",
+		Short:       "List all unique metadata keys used across resources",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var raw json.RawMessage
 			if err := c.Get("/v1/resources/meta/keys", nil, &raw); err != nil {
@@ -1618,6 +1748,7 @@ func newResourcesMetaKeysCmd(c *client.Client, opts *output.Options) *cobra.Comm
 }
 
 func newResourcesTimelineCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourcesHelpFS, "resources_help/resources_timeline.md")
 	var (
 		tFlags                                   timelineFlags
 		name, description, contentType           string
@@ -1629,15 +1760,11 @@ func newResourcesTimelineCmd(c *client.Client, opts *output.Options) *cobra.Comm
 	)
 
 	cmd := &cobra.Command{
-		Use:   "timeline",
-		Short: "Display a timeline of resource activity",
-		Long: `Display a timeline of resource creation and update activity as an ASCII bar chart.
-
-Examples:
-  mr resources timeline
-  mr resources timeline --granularity=weekly --columns=20
-  mr resources timeline --granularity=yearly --anchor=2020-01-01
-  mr resources timeline --json`,
+		Use:         "timeline",
+		Short:       "Display a timeline of resource activity",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			if name != "" {
