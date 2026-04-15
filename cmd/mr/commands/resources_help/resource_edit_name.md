@@ -17,6 +17,8 @@ Update only the name of an existing resource. Shorthand for
   mr resource edit-name 42 "renamed" && mr resource get 42 --json | jq -r .name
 
   # mr-doctest: upload, rename, verify
-  ID=$(mr resource upload ./testdata/sample.jpg --name "before" --json | jq -r .id)
-  mr resource edit-name $ID "after"
-  mr resource get $ID --json | jq -e '.name == "after"'
+  GRP=$(mr group create --name "doctest-editname-$$-$RANDOM" --json | jq -r '.ID')
+  ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "before-$$" --json | jq -r '.[0].ID')
+  NEWNAME="after-$$"
+  mr resource edit-name $ID "$NEWNAME"
+  mr resource get $ID --json | jq -e --arg n "$NEWNAME" '.Name == $n'

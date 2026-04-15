@@ -20,6 +20,7 @@ flag to get the full records for scripting.
   mr resource versions 42 --json | jq -r '.[0].id'
 
   # mr-doctest: upload a resource, push a new version, assert the list has 2 entries
-  ID=$(mr resource upload ./testdata/sample.jpg --name "versions-test" --json | jq -r .id)
+  GRP=$(mr group create --name "doctest-versions-$$-$RANDOM" --json | jq -r '.ID')
+  ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "versions-test-$$" --json | jq -r '.[0].ID')
   mr resource version-upload $ID ./testdata/sample.png
   mr resource versions $ID --json | jq -e 'length >= 2'

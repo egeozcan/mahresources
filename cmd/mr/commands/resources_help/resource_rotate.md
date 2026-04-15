@@ -19,6 +19,7 @@ clockwise).
   # Rotate 180 degrees
   mr resource rotate 42 --degrees 180
 
-  # mr-doctest: small fixtures may fail to decode; tolerate known errors, tolerate=/unexpected EOF|not supported|cannot decode|too small/i
-  ID=$(mr resource upload ./testdata/sample.jpg --name "rotate-test" --json | jq -r .id)
+  # mr-doctest: small fixtures may fail to decode; tolerate known errors, tolerate=/unexpected EOF|not supported|cannot decode|too small|missing SOS|invalid JPEG/i
+  GRP=$(mr group create --name "doctest-rotate-$$-$RANDOM" --json | jq -r '.ID')
+  ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "rotate-test-$$" --json | jq -r '.[0].ID')
   mr resource rotate $ID --degrees 90

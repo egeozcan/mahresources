@@ -19,7 +19,8 @@ previews (e.g., some binary formats or failed decodes).
   mr resource preview 42 -o preview.jpg -w 256 --height 256
 
   # mr-doctest: tolerate preview-not-available for formats without thumbnail, tolerate=/preview|no preview|not available|cannot/i
-  ID=$(mr resource upload ./testdata/sample.jpg --name "preview-test" --json | jq -r .id)
+  GRP=$(mr group create --name "doctest-preview-$$-$RANDOM" --json | jq -r '.ID')
+  ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "preview-test-$$" --json | jq -r '.[0].ID')
   OUT=$(mktemp)
   mr resource preview $ID -o $OUT
   test -s $OUT

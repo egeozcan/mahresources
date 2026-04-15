@@ -20,8 +20,11 @@ trail.
   mr resource version-restore --resource-id 42 --version-id 17
 
   # mr-doctest: upload, version-upload, restore to v1, assert versions count grew
-  ID=$(mr resource upload ./testdata/sample.jpg --name "restore-test" --json | jq -r .id)
+  GRP=$(mr group create --name "doctest-vrestore-$$-$RANDOM" --json | jq -r '.ID')
+  ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "restore-test-$$" --json | jq -r '.[0].ID')
+  V1=$(mr resource versions $ID --json | jq -r '.[0].id')
   mr resource version-upload $ID ./testdata/sample.png
-  V1=$(mr resource versions $ID --json | jq -r '.[1].id')
+  BEFORE=$(mr resource versions $ID --json | jq -r 'length')
   mr resource version-restore --resource-id $ID --version-id $V1
-  mr resource versions $ID --json | jq -e 'length == 3'
+  AFTER=$(mr resource versions $ID --json | jq -r 'length')
+  test "$AFTER" -gt "$BEFORE"

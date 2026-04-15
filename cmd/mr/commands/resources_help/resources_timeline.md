@@ -28,5 +28,6 @@ to get the raw bucket data for scripting.
   mr resources timeline --granularity yearly --tags 5 --json
 
   # mr-doctest: upload a fixture and verify timeline has at least one non-zero bucket
-  ID=$(mr resource upload ./testdata/sample.jpg --name "timeline-$$" --json | jq -r .id)
-  mr resources timeline --granularity weekly --columns 4 --json | jq -e 'map(.count // 0) | add >= 1'
+  GRP=$(mr group create --name "doctest-timeline-$$-$RANDOM" --json | jq -r '.ID')
+  ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "timeline-$$" --json | jq -r '.[0].ID')
+  mr resources timeline --granularity weekly --columns 4 --json | jq -e '[.buckets[].created] | add >= 1'

@@ -20,12 +20,13 @@ perceptual-hash detection or manual review.
   mr resources merge --winner 1 --losers $(mr resources list --hash abcd1234 --json | jq -r 'map(.id) | join(",")')
 
   # mr-doctest: create winner + 2 losers with distinct tags, merge, assert winner has all tags
-  T1=$(mr tag create --name "merge-t1-$$" --json | jq -r .id)
-  T2=$(mr tag create --name "merge-t2-$$" --json | jq -r .id)
-  W=$(mr resource upload ./testdata/sample.jpg --name "winner-$$" --json | jq -r .id)
-  L1=$(mr resource upload ./testdata/sample.png --name "loser1-$$" --json | jq -r .id)
-  L2=$(mr resource upload ./testdata/sample.txt --name "loser2-$$" --json | jq -r .id)
+  T1=$(mr tag create --name "merge-t1-$$-$RANDOM" --json | jq -r '.ID')
+  T2=$(mr tag create --name "merge-t2-$$-$RANDOM" --json | jq -r '.ID')
+  GRP=$(mr group create --name "doctest-merge-$$-$RANDOM" --json | jq -r '.ID')
+  W=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "winner-$$" --json | jq -r '.[0].ID')
+  L1=$(mr resource upload ./testdata/sample.png --owner-id=$GRP --name "loser1-$$" --json | jq -r '.[0].ID')
+  L2=$(mr resource upload ./testdata/sample.txt --owner-id=$GRP --name "loser2-$$" --json | jq -r '.[0].ID')
   mr resources add-tags --ids $L1 --tags $T1
   mr resources add-tags --ids $L2 --tags $T2
   mr resources merge --winner $W --losers $L1,$L2
-  mr resource get $W --json | jq -e '([.tags[]? // .Tags[]?] | length) >= 2'
+  mr resource get $W --json | jq -e '(.Tags | length) >= 2'

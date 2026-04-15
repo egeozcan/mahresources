@@ -17,6 +17,7 @@ string clears the description. Shorthand for `mr resource edit <id> --descriptio
   mr resource edit-description 42 ""
 
   # mr-doctest: upload, set description, verify
-  ID=$(mr resource upload ./testdata/sample.jpg --name "desc-test" --json | jq -r .id)
+  GRP=$(mr group create --name "doctest-desc-$$-$RANDOM" --json | jq -r '.ID')
+  ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "desc-test-$$" --json | jq -r '.[0].ID')
   mr resource edit-description $ID "hello world"
-  mr resource get $ID --json | jq -e '.description == "hello world"'
+  mr resource get $ID --json | jq -e '.Description == "hello world"'

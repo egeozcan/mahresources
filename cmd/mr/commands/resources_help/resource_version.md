@@ -19,7 +19,8 @@ know the version ID and need its size or comment without a list call.
   mr resource version 17 --json | jq -r .size
 
   # mr-doctest: upload, version-upload, fetch second version, assert it exists
-  ID=$(mr resource upload ./testdata/sample.jpg --name "version-test" --json | jq -r .id)
+  GRP=$(mr group create --name "doctest-version-$$-$RANDOM" --json | jq -r '.ID')
+  ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "version-test-$$" --json | jq -r '.[0].ID')
   mr resource version-upload $ID ./testdata/sample.png
   VID=$(mr resource versions $ID --json | jq -r '.[0].id')
   mr resource version $VID --json | jq -e '.id > 0'

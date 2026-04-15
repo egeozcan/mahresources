@@ -16,9 +16,8 @@ the stored file bytes. Deleting a nonexistent ID returns exit code 1.
   # Delete and pipe the result to jq to confirm the response
   mr resource delete 42 --json | jq .
 
-  # mr-doctest: upload, delete, expect not-found on follow-up get
-  ID=$(mr resource upload ./testdata/sample.jpg --name "to-delete" --json | jq -r .id)
+  # mr-doctest: upload, delete, verify via tolerant get
+  GRP=$(mr group create --name "doctest-del-$$-$RANDOM" --json | jq -r '.ID')
+  ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "to-delete-$$" --json | jq -r '.[0].ID')
   mr resource delete $ID
-
-  # mr-doctest: follow-up get should fail, tolerate=/not found|404|does not exist/i
-  mr resource get $ID
+  ! mr resource get $ID 2>/dev/null

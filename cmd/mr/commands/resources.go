@@ -1632,22 +1632,20 @@ func newResourcesSetDimensionsCmd(c *client.Client, opts *output.Options) *cobra
 				return fmt.Errorf("parsing --ids: %w", err)
 			}
 
-			body := map[string]any{
-				"ID":     ids,
-				"Width":  width,
-				"Height": height,
+			for _, id := range ids {
+				body := map[string]any{
+					"ID":     id,
+					"Width":  width,
+					"Height": height,
+				}
+
+				var raw json.RawMessage
+				if err := c.Post("/v1/resources/setDimensions", nil, body, &raw); err != nil {
+					return err
+				}
 			}
 
-			var raw json.RawMessage
-			if err := c.Post("/v1/resources/setDimensions", nil, body, &raw); err != nil {
-				return err
-			}
-
-			if opts.JSON {
-				output.PrintSingle(*opts, nil, raw)
-			} else {
-				output.PrintMessage("Dimensions set successfully.")
-			}
+			output.PrintMessage("Dimensions set successfully.")
 			return nil
 		},
 	}

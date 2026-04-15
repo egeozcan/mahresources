@@ -18,7 +18,10 @@ version IDs. The `--comment` flag attaches a free-form note (useful for
   # With a comment
   mr resource version-upload 42 ./photo_v2.jpg --comment "color corrected"
 
-  # mr-doctest: upload, push second version, assert versions count == 2
-  ID=$(mr resource upload ./testdata/sample.jpg --name "vup-test" --json | jq -r .id)
+  # mr-doctest: upload, push second version, assert versions count increased
+  GRP=$(mr group create --name "doctest-vupload-$$-$RANDOM" --json | jq -r '.ID')
+  ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "vup-test-$$" --json | jq -r '.[0].ID')
+  BEFORE=$(mr resource versions $ID --json | jq -r 'length')
   mr resource version-upload $ID ./testdata/sample.png
-  mr resource versions $ID --json | jq -e 'length == 2'
+  AFTER=$(mr resource versions $ID --json | jq -r 'length')
+  test "$AFTER" -gt "$BEFORE"

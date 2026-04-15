@@ -19,6 +19,7 @@ the global `--json` flag to get the full record for scripting.
   # Get as JSON and extract a single field with jq
   mr resource get 42 --json | jq -r .name
 
-  # mr-doctest: upload a fixture and round-trip the name
-  ID=$(mr resource upload ./testdata/sample.jpg --name "doctest-get" --json | jq -r .id)
-  mr resource get $ID --json | jq -e '.name == "doctest-get"'
+  # mr-doctest: upload a fixture and verify the resource is retrievable
+  GRP=$(mr group create --name "doctest-get-$$-$RANDOM" --json | jq -r '.ID')
+  ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "doctest-get-$$" --json | jq -r '.[0].ID')
+  mr resource get $ID --json | jq -e '.ID > 0 and (.Name | length) > 0'

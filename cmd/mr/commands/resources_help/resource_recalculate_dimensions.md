@@ -18,7 +18,8 @@ itself; only updates the database record.
   # Pipe from a list query to bulk-recalculate
   mr resources list --content-type image/jpeg --json | jq -r '.[].id' | xargs -I {} mr resource recalculate-dimensions {}
 
-  # mr-doctest: upload a known-dimension fixture and verify dimensions populate, tolerate=/cannot decode|not an image/i
-  ID=$(mr resource upload ./testdata/sample.jpg --name "recalc-test" --json | jq -r .id)
+  # mr-doctest: upload a known-dimension fixture and verify dimensions populate
+  GRP=$(mr group create --name "doctest-recalc-$$-$RANDOM" --json | jq -r '.ID')
+  ID=$(mr resource upload ./testdata/sample.png --owner-id=$GRP --name "recalc-test-$$" --json | jq -r '.[0].ID')
   mr resource recalculate-dimensions $ID
-  mr resource get $ID --json | jq -e '.width > 0 or .Width > 0'
+  mr resource get $ID --json | jq -e '.Width > 0'

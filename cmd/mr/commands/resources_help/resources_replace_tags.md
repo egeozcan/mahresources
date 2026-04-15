@@ -19,9 +19,10 @@ semantics. Pass `--tags ""` to clear all tags.
   mr resources replace-tags --ids 1 --tags ""
 
   # mr-doctest: replace with two tags, then replace with one, assert the final set size
-  T1=$(mr tag create --name "replace-t1-$$" --json | jq -r .id)
-  T2=$(mr tag create --name "replace-t2-$$" --json | jq -r .id)
-  ID=$(mr resource upload ./testdata/sample.jpg --name "replacetag-$$" --json | jq -r .id)
+  T1=$(mr tag create --name "replace-t1-$$-$RANDOM" --json | jq -r '.ID')
+  T2=$(mr tag create --name "replace-t2-$$-$RANDOM" --json | jq -r '.ID')
+  GRP=$(mr group create --name "doctest-replacetags-$$-$RANDOM" --json | jq -r '.ID')
+  ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "replacetag-$$" --json | jq -r '.[0].ID')
   mr resources replace-tags --ids $ID --tags $T1,$T2
   mr resources replace-tags --ids $ID --tags $T1
-  mr resource get $ID --json | jq -e '([.tags[]? // .Tags[]?] | length) == 1'
+  mr resource get $ID --json | jq -e '(.Tags | length) == 1'

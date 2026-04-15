@@ -25,8 +25,9 @@ would be removed without committing any deletes.
   mr resources versions-cleanup --keep 1
 
   # mr-doctest: upload 2 resources, push extra versions, cleanup keep=1, assert each has 1 version
-  ID1=$(mr resource upload ./testdata/sample.jpg --name "vcu-a-$$" --json | jq -r .id)
-  ID2=$(mr resource upload ./testdata/sample.png --name "vcu-b-$$" --json | jq -r .id)
+  GRP=$(mr group create --name "doctest-vcsbulk-$$-$RANDOM" --json | jq -r '.ID')
+  ID1=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "vcu-a-$$" --json | jq -r '.[0].ID')
+  ID2=$(mr resource upload ./testdata/sample.png --owner-id=$GRP --name "vcu-b-$$" --json | jq -r '.[0].ID')
   mr resource version-upload $ID1 ./testdata/sample.png
   mr resource version-upload $ID2 ./testdata/sample.jpg
   mr resources versions-cleanup --keep 1

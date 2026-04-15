@@ -22,6 +22,7 @@ required.
   mr resources set-dimensions --ids $IDS --width 800 --height 600
 
   # mr-doctest: upload, force known dimensions, assert via get
-  ID=$(mr resource upload ./testdata/sample.jpg --name "setdim-$$" --json | jq -r .id)
+  GRP=$(mr group create --name "doctest-setdim-$$-$RANDOM" --json | jq -r '.ID')
+  ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "setdim-$$" --json | jq -r '.[0].ID')
   mr resources set-dimensions --ids $ID --width 1024 --height 768
-  mr resource get $ID --json | jq -e '(.width // .Width) == 1024'
+  mr resource get $ID --json | jq -e '.Width == 1024'

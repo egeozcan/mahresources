@@ -19,7 +19,8 @@ older versions by their version ID. Output path defaults to
   mr resource version-download 17
 
   # mr-doctest: upload 2 versions, download both, assert sizes differ, timeout=60s
-  ID=$(mr resource upload ./testdata/sample.jpg --name "vdl-test" --json | jq -r .id)
+  GRP=$(mr group create --name "doctest-vdownload-$$-$RANDOM" --json | jq -r '.ID')
+  ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "vdl-test-$$" --json | jq -r '.[0].ID')
   mr resource version-upload $ID ./testdata/sample.png
   V1=$(mr resource versions $ID --json | jq -r '.[1].id')
   V2=$(mr resource versions $ID --json | jq -r '.[0].id')

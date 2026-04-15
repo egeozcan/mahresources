@@ -18,7 +18,8 @@ recent versions (`--keep`) or deletes versions older than N days
   mr resource versions-cleanup 42 --older-than-days 90 --dry-run
 
   # mr-doctest: create 3 versions, cleanup keep=1, assert only 1 remains
-  ID=$(mr resource upload ./testdata/sample.jpg --name "cleanup-test" --json | jq -r .id)
+  GRP=$(mr group create --name "doctest-vcleanup-$$-$RANDOM" --json | jq -r '.ID')
+  ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "cleanup-test-$$" --json | jq -r '.[0].ID')
   mr resource version-upload $ID ./testdata/sample.png
   mr resource version-upload $ID ./testdata/sample.txt
   mr resource versions-cleanup $ID --keep 1

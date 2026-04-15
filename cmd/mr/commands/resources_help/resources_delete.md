@@ -18,8 +18,8 @@ of unsigned ints). The current CLI has no dry-run; pipe
   # Delete the output of a filter query
   mr resources list --tags 7 --json | jq -r 'map(.id) | join(",")' | xargs -I {} mr resources delete --ids {}
 
-  # mr-doctest: upload, delete, assert follow-up get fails, tolerate=/not found|404|does not exist/i
-  ID=$(mr resource upload ./testdata/sample.jpg --name "bulkdel-$$" --json | jq -r .id)
+  # mr-doctest: upload, delete, assert follow-up get fails
+  GRP=$(mr group create --name "doctest-bulkdel-$$-$RANDOM" --json | jq -r '.ID')
+  ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "bulkdel-$$" --json | jq -r '.[0].ID')
   mr resources delete --ids $ID
-  # mr-doctest: verify deletion, expect-exit=1, tolerate=/not found|404|does not exist/i
-  mr resource get $ID
+  ! mr resource get $ID 2>/dev/null

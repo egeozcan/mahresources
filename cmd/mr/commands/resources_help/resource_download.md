@@ -19,7 +19,8 @@ performed.
   mr resource download 42
 
   # mr-doctest: upload, download, assert file exists and is non-empty, timeout=60s
-  ID=$(mr resource upload ./testdata/sample.jpg --name "dl-test" --json | jq -r .id)
+  GRP=$(mr group create --name "doctest-download-$$-$RANDOM" --json | jq -r '.ID')
+  ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "dl-test-$$" --json | jq -r '.[0].ID')
   OUT=$(mktemp)
   mr resource download $ID -o $OUT
   test -s $OUT

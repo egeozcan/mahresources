@@ -21,6 +21,7 @@ semantics. For single-resource single-key edits, use
   mr resources add-meta --ids 1,2 --meta '{"priority":5,"owner":"alice"}'
 
   # mr-doctest: upload, add-meta, verify via get
-  ID=$(mr resource upload ./testdata/sample.jpg --name "addmeta-$$" --json | jq -r .id)
+  GRP=$(mr group create --name "doctest-addmeta-$$-$RANDOM" --json | jq -r '.ID')
+  ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "addmeta-$$" --json | jq -r '.[0].ID')
   mr resources add-meta --ids $ID --meta '{"probe":"hello"}'
-  mr resource get $ID --json | jq -e '.meta.probe == "hello" or .Meta.probe == "hello"'
+  mr resource get $ID --json | jq -e '.Meta.probe == "hello"'

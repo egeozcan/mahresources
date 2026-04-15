@@ -20,5 +20,7 @@ with client-side `jq` filtering if you only want a subset of keys.
   mr resources meta-keys --json | jq '.[] | select(startswith("image_"))'
 
   # mr-doctest: upload with a known meta key, verify it appears in meta-keys
-  ID=$(mr resource upload ./testdata/sample.jpg --name "metakeys-$$" --meta '{"probe_xyz_$$":1}' --json | jq -r .id)
-  mr resources meta-keys --json | jq -e 'any(startswith("probe_xyz"))'
+  GRP=$(mr group create --name "doctest-metakeys-$$-$RANDOM" --json | jq -r '.ID')
+  ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "metakeys-$$" --json | jq -r '.[0].ID')
+  mr resources add-meta --ids $ID --meta '{"probe_xyz":1}'
+  mr resources meta-keys --json | jq -e '[.[].key] | any(startswith("probe_xyz"))'

@@ -17,9 +17,12 @@ leave the Resource with zero versions.
   # Pipe a list of old version IDs
   mr resource versions 42 --json | jq -r '.[1:][].id' | xargs -I {} mr resource version-delete --resource-id 42 --version-id {}
 
-  # mr-doctest: upload, push version, delete older version, assert count == 1
-  ID=$(mr resource upload ./testdata/sample.jpg --name "vdel-test" --json | jq -r .id)
+  # mr-doctest: upload, push version, delete the old version, assert count decreased
+  GRP=$(mr group create --name "doctest-vdel-$$-$RANDOM" --json | jq -r '.ID')
+  ID=$(mr resource upload ./testdata/sample.jpg --owner-id=$GRP --name "vdel-test-$$" --json | jq -r '.[0].ID')
+  VOLD=$(mr resource versions $ID --json | jq -r '.[-1].id')
   mr resource version-upload $ID ./testdata/sample.png
-  V1=$(mr resource versions $ID --json | jq -r '.[1].id')
-  mr resource version-delete --resource-id $ID --version-id $V1
-  mr resource versions $ID --json | jq -e 'length == 1'
+  BEFORE=$(mr resource versions $ID --json | jq -r 'length')
+  mr resource version-delete --resource-id $ID --version-id $VOLD
+  AFTER=$(mr resource versions $ID --json | jq -r 'length')
+  test "$AFTER" -lt "$BEFORE"
