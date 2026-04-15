@@ -15,15 +15,15 @@ already disabled is idempotent and returns `ok`.
 # Example
 
   # Disable a plugin by name
-  mr plugin disable example-plugin
+  mr plugin disable my-plugin
 
   # Disable and confirm via the JSON response
-  mr plugin disable example-plugin --json | jq -e '.enabled == false'
+  mr plugin disable my-plugin --json | jq -e '.enabled == false'
 
   # mr-doctest: disable a bundled plugin and assert the response shape
-  mr plugin disable example-plugin --json | jq -e '.ok == true and .enabled == false and .name == "example-plugin"'
+  mr plugin disable test-actions --json | jq -e '.ok == true and .enabled == false and .name == "test-actions"'
 
   # mr-doctest: enable then disable and verify the list view flips enabled to false
-  mr plugin enable example-plugin --json >/dev/null
-  mr plugin disable example-plugin --json >/dev/null
-  mr plugins list --json | jq -e --arg n "example-plugin" 'map(select(.name == $n))[0].enabled == false'
+  mr plugin enable test-actions --json >/dev/null
+  mr plugin disable test-actions --json >/dev/null
+  mr plugins list --json | jq -e --arg n "test-actions" 'map(select(.name == $n))[0].enabled == false'

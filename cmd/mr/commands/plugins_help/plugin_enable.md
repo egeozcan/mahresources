@@ -17,18 +17,18 @@ message from the server.
 # Example
 
   # Enable a plugin by name
-  mr plugin enable example-plugin
+  mr plugin enable my-plugin
 
   # Enable and confirm via the JSON response
-  mr plugin enable example-plugin --json | jq -e '.enabled == true'
+  mr plugin enable my-plugin --json | jq -e '.enabled == true'
 
   # mr-doctest: disable first to guarantee a clean slate, then enable and assert the response shape
-  mr plugin disable example-plugin --json >/dev/null
-  mr plugin enable example-plugin --json | jq -e '.ok == true and .enabled == true and .name == "example-plugin"'
-  mr plugin disable example-plugin --json >/dev/null
+  mr plugin disable test-actions --json >/dev/null
+  mr plugin enable test-actions --json | jq -e '.ok == true and .enabled == true and .name == "test-actions"'
+  mr plugin disable test-actions --json >/dev/null
 
   # mr-doctest: enable and confirm the list view reports enabled=true
-  mr plugin disable example-plugin --json >/dev/null
-  mr plugin enable example-plugin --json >/dev/null
-  mr plugins list --json | jq -e --arg n "example-plugin" 'map(select(.name == $n))[0].enabled == true'
-  mr plugin disable example-plugin --json >/dev/null
+  mr plugin disable test-actions --json >/dev/null
+  mr plugin enable test-actions --json >/dev/null
+  mr plugins list --json | jq -e --arg n "test-actions" 'map(select(.name == $n))[0].enabled == true'
+  mr plugin disable test-actions --json >/dev/null

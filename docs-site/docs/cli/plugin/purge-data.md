@@ -30,11 +30,11 @@ Positional arguments:
 
 **Purge all KV data for a plugin by name**
 
-    mr plugin purge-data example-plugin
+    mr plugin purge-data my-plugin
 
 **Purge and confirm the JSON response**
 
-    mr plugin purge-data example-plugin --json | jq -e '.ok == true'
+    mr plugin purge-data my-plugin --json | jq -e '.ok == true'
 
 
 ## Flags

@@ -25,11 +25,11 @@ Positional arguments:
 
 **Disable a plugin by name**
 
-    mr plugin disable example-plugin
+    mr plugin disable my-plugin
 
 **Disable and confirm via the JSON response**
 
-    mr plugin disable example-plugin --json | jq -e '.enabled == false'
+    mr plugin disable my-plugin --json | jq -e '.enabled == false'
 
 
 ## Flags

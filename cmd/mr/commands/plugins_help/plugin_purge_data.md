@@ -20,16 +20,16 @@ confirmation prompt and no undo.
 # Example
 
   # Purge all KV data for a plugin by name
-  mr plugin purge-data example-plugin
+  mr plugin purge-data my-plugin
 
   # Purge and confirm the JSON response
-  mr plugin purge-data example-plugin --json | jq -e '.ok == true'
+  mr plugin purge-data my-plugin --json | jq -e '.ok == true'
 
   # mr-doctest: ensure the plugin is disabled, then purge and assert the response shape
-  mr plugin disable example-plugin --json >/dev/null
-  mr plugin purge-data example-plugin --json | jq -e '.ok == true and .name == "example-plugin"'
+  mr plugin disable test-actions --json >/dev/null
+  mr plugin purge-data test-actions --json | jq -e '.ok == true and .name == "test-actions"'
 
   # mr-doctest: purge is idempotent on a disabled plugin with no KV data
-  mr plugin disable example-plugin --json >/dev/null
-  mr plugin purge-data example-plugin --json >/dev/null
-  mr plugin purge-data example-plugin --json | jq -e '.ok == true'
+  mr plugin disable test-actions --json >/dev/null
+  mr plugin purge-data test-actions --json >/dev/null
+  mr plugin purge-data test-actions --json | jq -e '.ok == true'

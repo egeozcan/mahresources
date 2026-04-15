@@ -28,13 +28,13 @@ Positional arguments:
 
 ## Examples
 
-**Update a plugin's greeting setting**
+**Update a plugin's banner text**
 
-    mr plugin settings example-plugin --data '{"greeting":"Hello from CLI"}'
+    mr plugin settings my-plugin --data '{"banner_text":"Hello from CLI"}'
 
 **Write multiple settings in one call**
 
-    mr plugin settings example-plugin --data '{"greeting":"Hi","show_footer":true}'
+    mr plugin settings my-plugin --data '{"banner_text":"Hi","show_banner":true}'
 
 
 ## Flags

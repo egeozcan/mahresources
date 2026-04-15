@@ -27,11 +27,11 @@ Positional arguments:
 
 **Enable a plugin by name**
 
-    mr plugin enable example-plugin
+    mr plugin enable my-plugin
 
 **Enable and confirm via the JSON response**
 
-    mr plugin enable example-plugin --json | jq -e '.enabled == true'
+    mr plugin enable my-plugin --json | jq -e '.enabled == true'
 
 
 ## Flags

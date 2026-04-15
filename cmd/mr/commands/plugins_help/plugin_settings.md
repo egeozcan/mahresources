@@ -19,16 +19,16 @@ inspect the current `values` object before writing a new one.
 
 # Example
 
-  # Update a plugin's greeting setting
-  mr plugin settings example-plugin --data '{"greeting":"Hello from CLI"}'
+  # Update a plugin's banner text
+  mr plugin settings my-plugin --data '{"banner_text":"Hello from CLI"}'
 
   # Write multiple settings in one call
-  mr plugin settings example-plugin --data '{"greeting":"Hi","show_footer":true}'
+  mr plugin settings my-plugin --data '{"banner_text":"Hi","show_banner":true}'
 
-  # mr-doctest: write settings and assert the response shape
-  mr plugin settings example-plugin --data '{"greeting":"doctest-value"}' --json | jq -e '.ok == true and .name == "example-plugin"'
+  # mr-doctest: write settings and assert the response shape (test-banner requires api_key)
+  mr plugin settings test-banner --data '{"banner_text":"doctest-value","api_key":"doctest-key"}' --json | jq -e '.ok == true and .name == "test-banner"'
 
   # mr-doctest: write settings and confirm the value round-trips through plugins list
-  mr plugin settings example-plugin --data '{"greeting":"round-trip"}' --json >/dev/null
-  mr plugins list --json | jq -e --arg n "example-plugin" 'map(select(.name == $n))[0].values.greeting == "round-trip"'
-  mr plugin purge-data example-plugin --json >/dev/null
+  mr plugin settings test-banner --data '{"banner_text":"round-trip","api_key":"doctest-key"}' --json >/dev/null
+  mr plugins list --json | jq -e --arg n "test-banner" 'map(select(.name == $n))[0].values.banner_text == "round-trip"'
+  mr plugin purge-data test-banner --json >/dev/null
