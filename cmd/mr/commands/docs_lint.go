@@ -11,42 +11,16 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// lintAllowlist names the top-level command groups whose subtrees are
-// subject to strict lint rules. Each migration PR adds its group.
-var lintAllowlist = map[string]bool{
-	"docs":                true,
-	"resource":            true,
-	"resources":           true,
-	"group":               true,
-	"groups":              true,
-	"note":                true,
-	"notes":               true,
-	"query":               true,
-	"queries":             true,
-	"tag":                 true,
-	"tags":                true,
-	"mrql":                true,
-	"note-type":           true,
-	"note-types":          true,
-	"category":            true,
-	"categories":          true,
-	"resource-category":   true,
-	"resource-categories": true,
-	"relation":            true,
-	"relation-type":       true,
-	"relation-types":      true,
-	"note-block":          true,
-	"note-blocks":         true,
-	"series":              true,
-	"job":                 true,
-	"jobs":                true,
-	"log":                 true,
-	"logs":                true,
-	"plugin":              true,
-	"plugins":             true,
-	"search":              true,
-	"admin":               true,
-}
+// lintAllowlist was used during the phased migration (Phase 1 through
+// Phase 3) to gate strict lint rules to already-migrated command groups.
+// Phase 3 completed migration of every top-level group in the mr CLI,
+// so the allowlist is now nil: lintCommandTreeTo treats a nil allowlist
+// as "validate every command in the tree".
+//
+// Tests may still call SetLintAllowlistForTest to scope lint to a subset
+// when needed. A test that passes nil restores the production behavior
+// of validating the whole tree.
+var lintAllowlist map[string]bool
 
 // SetLintAllowlistForTest temporarily replaces the production allowlist
 // with the given map. It returns a restore function that the caller must
@@ -81,7 +55,7 @@ func lintCommandTreeTo(root *cobra.Command, stdout, stderr io.Writer) error {
 			continue
 		}
 		top := segments[1]
-		if !lintAllowlist[top] {
+		if lintAllowlist != nil && !lintAllowlist[top] {
 			continue
 		}
 		f, w := lintCommand(c)

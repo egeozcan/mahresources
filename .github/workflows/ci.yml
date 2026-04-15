@@ -27,3 +27,69 @@ jobs:
 
       - name: Run staticcheck
         run: staticcheck ./...
+
+  cli-docs-fresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y gcc libsqlite3-dev
+
+      - name: Build CLI
+        run: go build -o mr ./cmd/mr/
+
+      - name: Run mr docs lint
+        run: ./mr docs lint
+
+      - name: Regenerate docs-site/docs/cli/
+        run: ./mr docs dump --format markdown --output docs-site/docs/cli/
+
+      - name: Fail if regenerated CLI docs differ from committed
+        run: |
+          if ! git diff --quiet -- docs-site/docs/cli/; then
+            echo "::error::docs-site/docs/cli/ is out of sync with CLI help text."
+            echo "Run 'npm run build-cli && npm run docs-gen' locally and commit the result."
+            git diff --stat -- docs-site/docs/cli/
+            exit 1
+          fi
+
+  cli-doctest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y gcc libsqlite3-dev jq
+
+      - name: Build server
+        run: go build --tags 'json1 fts5' -o mahresources
+
+      - name: Build CLI
+        run: go build -o mr ./cmd/mr/
+
+      - name: Install E2E deps
+        working-directory: e2e
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Run CLI doctest against ephemeral server
+        working-directory: e2e
+        run: npm run test:with-server:cli-doctest

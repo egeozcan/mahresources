@@ -185,8 +185,13 @@ func pruneStaleOutput(outputDir string, expected map[string]bool) error {
 // isPublished reports whether a command at `path` (e.g., "resource get" or
 // "resources") should be emitted by the Markdown generator. A command is
 // published when its top-level group appears in lintAllowlist — the same
-// signal that says its help content is ready for public review.
+// signal that says its help content is ready for public review. A nil
+// allowlist means "publish everything", matching the lint function's
+// convention after the Phase 3 migration.
 func isPublished(path string) bool {
+	if lintAllowlist == nil {
+		return true
+	}
 	top := path
 	if idx := strings.IndexByte(path, ' '); idx >= 0 {
 		top = path[:idx]
