@@ -1,6 +1,6 @@
 ---
 exitCodes: 0 on success; 1 on any error
-relatedCmds: resource get, group list, search, mrql
+relatedCmds: resource get, groups list, search, mrql
 ---
 
 # Long

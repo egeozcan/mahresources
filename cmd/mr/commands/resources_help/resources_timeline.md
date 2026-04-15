@@ -1,6 +1,6 @@
 ---
 exitCodes: 0 on success; 1 on any error
-relatedCmds: timeline, resources list
+relatedCmds: resources list, groups timeline
 ---
 
 # Long

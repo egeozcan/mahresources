@@ -1,6 +1,6 @@
 ---
 exitCodes: 0 on success; 1 on any error
-relatedCmds: resources add-tags, resources replace-tags, tag list
+relatedCmds: resources add-tags, resources replace-tags, tags list
 ---
 
 # Long

@@ -1,7 +1,7 @@
 ---
 outputShape: Array of resources with id, name, content type, size, dimensions, owner id, created
 exitCodes: 0 on success; 1 on any error
-relatedCmds: resource get, group list, mrql
+relatedCmds: resource get, groups list, mrql
 ---
 
 # Long
