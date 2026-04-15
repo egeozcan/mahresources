@@ -114,6 +114,15 @@ func writeMarkdown(tree dumpRoot, outputDir string) error {
 		outputPath[c.Path] = commandOutputPath(c, outputDir)
 	}
 
+	// Track every path we're about to write so we can prune stale pages
+	// from prior runs (scope shrink, command removal, allowlist change).
+	expectedFiles := map[string]bool{
+		filepath.Join(outputDir, "index.md"): true,
+	}
+	for _, p := range outputPath {
+		expectedFiles[p] = true
+	}
+
 	if err := writeRootIndex(publishedTree, outputDir, outputPath); err != nil {
 		return err
 	}
@@ -125,6 +134,49 @@ func writeMarkdown(tree dumpRoot, outputDir string) error {
 		}
 		if err := writeCommandPage(c, publishedTree, target, outputPath); err != nil {
 			return err
+		}
+	}
+
+	// Prune stale output. Only touches .md files and now-empty directories
+	// under outputDir, so a user who points --output at a mixed directory
+	// keeps their non-Markdown files.
+	return pruneStaleOutput(outputDir, expectedFiles)
+}
+
+// pruneStaleOutput walks outputDir and removes any `.md` file not in
+// expected, followed by directories that become empty. Files and
+// directories under outputDir that are not Markdown are left alone,
+// so custom `--output` paths with unrelated content stay intact.
+func pruneStaleOutput(outputDir string, expected map[string]bool) error {
+	var dirs []string
+	err := filepath.Walk(outputDir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.IsDir() {
+			if path != outputDir {
+				dirs = append(dirs, path)
+			}
+			return nil
+		}
+		if strings.HasSuffix(path, ".md") && !expected[path] {
+			return os.Remove(path)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	// Deepest paths first so parents get a chance to become empty.
+	sort.Slice(dirs, func(i, j int) bool { return len(dirs[i]) > len(dirs[j]) })
+	for _, d := range dirs {
+		entries, readErr := os.ReadDir(d)
+		if readErr != nil {
+			continue
+		}
+		if len(entries) == 0 {
+			_ = os.Remove(d)
 		}
 	}
 	return nil

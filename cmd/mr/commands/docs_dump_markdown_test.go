@@ -292,3 +292,65 @@ func TestDumpMarkdown_FooBarSeeAlsoFullLink(t *testing.T) {
 		t.Errorf("foo/bar.md: missing cross-group link [`mr baz help`](../baz/help.md)\n---\n%s", text)
 	}
 }
+
+// TestDumpMarkdown_PrunesStaleFiles covers the "scope shrink" path: a
+// previous regeneration left files under <outputDir> that are no longer
+// in the published set; writeMarkdown must remove them (and clean up
+// now-empty parent directories). Non-Markdown files under outputDir are
+// left alone so users who point --output at a mixed directory don't lose
+// unrelated content.
+func TestDumpMarkdown_PrunesStaleFiles(t *testing.T) {
+	dir := t.TempDir()
+
+	// Simulate an earlier regen: create stale pages we expect to be pruned.
+	stalePages := []string{
+		filepath.Join(dir, "stale_leaf.md"),
+		filepath.Join(dir, "removed_group", "index.md"),
+		filepath.Join(dir, "removed_group", "get.md"),
+		filepath.Join(dir, "foo", "old_subcommand.md"),
+	}
+	for _, p := range stalePages {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("stale"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Non-Markdown sibling file that must survive the prune.
+	keepFile := filepath.Join(dir, "_notes.txt")
+	if err := os.WriteFile(keepFile, []byte("keep me"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tree := buildTestTree()
+	allowTestGroups(t)
+	if err := writeMarkdown(tree, dir); err != nil {
+		t.Fatalf("writeMarkdown error: %v", err)
+	}
+
+	// Stale files should be gone.
+	for _, p := range stalePages {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("stale file %q was not pruned (err=%v)", p, err)
+		}
+	}
+	// removed_group directory should be fully removed (was only stale files).
+	if _, err := os.Stat(filepath.Join(dir, "removed_group")); !os.IsNotExist(err) {
+		t.Errorf("removed_group directory was not cleaned up")
+	}
+	// Non-Markdown sibling must still be there.
+	if _, err := os.Stat(keepFile); err != nil {
+		t.Errorf("non-Markdown file was wrongly deleted: %v", err)
+	}
+	// Expected fresh outputs should exist.
+	for _, want := range []string{
+		filepath.Join(dir, "index.md"),
+		filepath.Join(dir, "foo", "index.md"),
+		filepath.Join(dir, "foo", "bar.md"),
+	} {
+		if _, err := os.Stat(want); err != nil {
+			t.Errorf("expected output %q missing: %v", want, err)
+		}
+	}
+}
