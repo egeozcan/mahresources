@@ -44,3 +44,4 @@ This command has no local flags.
 
 - [`mr jobs list`](../jobs/list.md)
 - [`mr resource from-url`](../resource/from-url.md)
+- [`mr admin`](../admin.md)

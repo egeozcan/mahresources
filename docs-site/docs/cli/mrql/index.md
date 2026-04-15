@@ -60,3 +60,4 @@ Positional arguments:
 - [`mr mrql list`](./list.md)
 - [`mr mrql run`](./run.md)
 - [`mr query run`](../query/run.md)
+- [`mr search`](../search.md)

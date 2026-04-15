@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -8,10 +9,14 @@ import (
 	"time"
 
 	"mahresources/cmd/mr/client"
+	"mahresources/cmd/mr/helptext"
 	"mahresources/cmd/mr/output"
 
 	"github.com/spf13/cobra"
 )
+
+//go:embed logs_help/*.md
+var logsHelpFS embed.FS
 
 // logEntryResponse matches the API's LogEntry JSON shape (lowercase keys).
 type logEntryResponse struct {
@@ -37,9 +42,12 @@ type logsListResponse struct {
 
 // NewLogCmd returns the singular "log" command with get/entity subcommands.
 func NewLogCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(logsHelpFS, "logs_help/log.md")
 	logCmd := &cobra.Command{
-		Use:   "log",
-		Short: "View a log entry or entity history",
+		Use:         "log",
+		Short:       "View a log entry or entity history",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	logCmd.AddCommand(newLogGetCmd(c, opts))
@@ -49,10 +57,14 @@ func NewLogCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newLogGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(logsHelpFS, "logs_help/log_get.md")
 	return &cobra.Command{
-		Use:   "get <id>",
-		Short: "Get a log entry by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "get <id>",
+		Short:       "Get a log entry by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -90,12 +102,16 @@ func newLogGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newLogEntityCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(logsHelpFS, "logs_help/log_entity.md")
 	var entityType string
 	var entityID uint
 
 	cmd := &cobra.Command{
-		Use:   "entity",
-		Short: "Get log entries for a specific entity",
+		Use:         "entity",
+		Short:       "Get log entries for a specific entity",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("entityType", entityType)
@@ -127,9 +143,12 @@ func newLogEntityCmd(c *client.Client, opts *output.Options) *cobra.Command {
 
 // NewLogsCmd returns the plural "logs" command with list subcommand.
 func NewLogsCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
+	help := helptext.Load(logsHelpFS, "logs_help/logs.md")
 	logsCmd := &cobra.Command{
-		Use:   "logs",
-		Short: "List and filter audit log entries",
+		Use:         "logs",
+		Short:       "List and filter audit log entries",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	logsCmd.AddCommand(newLogsListCmd(c, opts, page))
@@ -138,12 +157,16 @@ func NewLogsCmd(c *client.Client, opts *output.Options, page *int) *cobra.Comman
 }
 
 func newLogsListCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
+	help := helptext.Load(logsHelpFS, "logs_help/logs_list.md")
 	var level, action, entityType, message, createdBefore, createdAfter string
 	var entityID uint
 
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List log entries",
+		Use:         "list",
+		Short:       "List log entries",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("page", strconv.Itoa(*page))

@@ -50,3 +50,4 @@ perceptual-hash detection or manual review.
 
 - [`mr resource get`](../resource/get.md)
 - [`mr resources delete`](./delete.md)
+- [`mr search`](../search.md)

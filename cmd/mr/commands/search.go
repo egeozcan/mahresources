@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -8,10 +9,14 @@ import (
 	"strings"
 
 	"mahresources/cmd/mr/client"
+	"mahresources/cmd/mr/helptext"
 	"mahresources/cmd/mr/output"
 
 	"github.com/spf13/cobra"
 )
+
+//go:embed search_help/*.md
+var searchHelpFS embed.FS
 
 // searchResult represents a single result from the global search API.
 type searchResult struct {
@@ -36,10 +41,14 @@ func NewSearchCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var typesStr string
 	var limit int
 
+	help := helptext.Load(searchHelpFS, "search_help/search.md")
 	cmd := &cobra.Command{
-		Use:   "search <query>",
-		Short: "Search across all entities",
-		Args:  cobra.ExactArgs(1),
+		Use:         "search <query>",
+		Short:       "Search across all entities",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("q", args[0])

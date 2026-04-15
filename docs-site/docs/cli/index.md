@@ -8,6 +8,7 @@ sidebar_label: CLI
 
 | Command | Short | |
 |---------|-------|--|
+| `mr admin` | Show server and data statistics | [Details](./admin.md) |
 | `mr categories` | List group categories | [Details](./categories/index.md) |
 | `mr categories list` | List categories | [Details](./categories/list.md) |
 | `mr categories timeline` | Display a timeline of category activity | [Details](./categories/timeline.md) |
@@ -50,6 +51,11 @@ sidebar_label: CLI
 | `mr job submit` | Submit URLs for download | [Details](./job/submit.md) |
 | `mr jobs` | View the download job queue | [Details](./jobs/index.md) |
 | `mr jobs list` | List the download queue | [Details](./jobs/list.md) |
+| `mr log` | View a log entry or entity history | [Details](./log/index.md) |
+| `mr log entity` | Get log entries for a specific entity | [Details](./log/entity.md) |
+| `mr log get` | Get a log entry by ID | [Details](./log/get.md) |
+| `mr logs` | List and filter audit log entries | [Details](./logs/index.md) |
+| `mr logs list` | List log entries | [Details](./logs/list.md) |
 | `mr mrql` | Execute and manage MRQL queries | [Details](./mrql/index.md) |
 | `mr mrql delete` | Delete a saved MRQL query by ID | [Details](./mrql/delete.md) |
 | `mr mrql list` | List saved MRQL queries | [Details](./mrql/list.md) |
@@ -93,6 +99,13 @@ sidebar_label: CLI
 | `mr notes meta-keys` | List all unique metadata keys used across notes | [Details](./notes/meta-keys.md) |
 | `mr notes remove-tags` | Remove tags from multiple notes | [Details](./notes/remove-tags.md) |
 | `mr notes timeline` | Display a timeline of note activity | [Details](./notes/timeline.md) |
+| `mr plugin` | Enable, disable, or configure a plugin | [Details](./plugin/index.md) |
+| `mr plugin disable` | Disable a plugin | [Details](./plugin/disable.md) |
+| `mr plugin enable` | Enable a plugin | [Details](./plugin/enable.md) |
+| `mr plugin purge-data` | Purge all data for a plugin | [Details](./plugin/purge-data.md) |
+| `mr plugin settings` | Update plugin settings (pass JSON via --data) | [Details](./plugin/settings.md) |
+| `mr plugins` | List installed plugins | [Details](./plugins/index.md) |
+| `mr plugins list` | List plugins and management info | [Details](./plugins/list.md) |
 | `mr queries` | List saved queries | [Details](./queries/index.md) |
 | `mr queries list` | List queries | [Details](./queries/list.md) |
 | `mr queries timeline` | Display a timeline of query activity | [Details](./queries/timeline.md) |
@@ -161,6 +174,7 @@ sidebar_label: CLI
 | `mr resources set-dimensions` | Set dimensions on multiple resources | [Details](./resources/set-dimensions.md) |
 | `mr resources timeline` | Display a timeline of resource activity | [Details](./resources/timeline.md) |
 | `mr resources versions-cleanup` | Clean up old versions across resources | [Details](./resources/versions-cleanup.md) |
+| `mr search` | Search across all entities | [Details](./search.md) |
 | `mr series` | Manage resource series (list, create, edit, delete) | [Details](./series/index.md) |
 | `mr series create` | Create a new series | [Details](./series/create.md) |
 | `mr series delete` | Delete a series by ID | [Details](./series/delete.md) |

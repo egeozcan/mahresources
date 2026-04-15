@@ -40,6 +40,12 @@ var lintAllowlist = map[string]bool{
 	"series":              true,
 	"job":                 true,
 	"jobs":                true,
+	"log":                 true,
+	"logs":                true,
+	"plugin":              true,
+	"plugins":             true,
+	"search":              true,
+	"admin":               true,
 }
 
 // SetLintAllowlistForTest temporarily replaces the production allowlist

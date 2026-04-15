@@ -1,16 +1,21 @@
 package commands
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
 
 	"mahresources/cmd/mr/client"
+	"mahresources/cmd/mr/helptext"
 	"mahresources/cmd/mr/output"
 
 	"github.com/spf13/cobra"
 )
+
+//go:embed admin_help/*.md
+var adminHelpFS embed.FS
 
 // adminServerStatsResponse matches the ServerStats JSON shape from admin_context.go.
 type adminServerStatsResponse struct {
@@ -154,9 +159,13 @@ func NewAdminCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var serverOnly bool
 	var dataOnly bool
 
+	help := helptext.Load(adminHelpFS, "admin_help/admin.md")
 	cmd := &cobra.Command{
-		Use:   "admin",
-		Short: "Show admin statistics (server health, data counts, expensive stats)",
+		Use:         "admin",
+		Short:       "Show server and data statistics",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Determine which sections to fetch
 			fetchServer := serverOnly || (!serverOnly && !dataOnly)
