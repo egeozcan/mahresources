@@ -84,9 +84,6 @@ func newDocsCheckExamplesCmd() *cobra.Command {
 }
 
 // Stubs; real implementations are in docs_dump.go, docs_lint.go, docs_doctest.go.
-func dumpCommandTree(root *cobra.Command, format, output string) error {
-	return fmt.Errorf("docs dump: not implemented")
-}
 func lintCommandTree(root *cobra.Command) error {
 	return fmt.Errorf("docs lint: not implemented")
 }
