@@ -41,9 +41,9 @@ func newDocsDumpCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "",
-		"Output format: `json` (stdout by default) or `markdown` (requires --output). Required.")
+		"Output format: json (stdout by default) or markdown (requires --output). Required.")
 	cmd.Flags().StringVar(&output, "output", "",
-		"Output path. Required for `markdown`; optional for `json` (stdout when omitted).")
+		"Output `path`. Required for markdown; optional for json (stdout when omitted).")
 	_ = cmd.MarkFlagRequired("format")
 	return cmd
 }

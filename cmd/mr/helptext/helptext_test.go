@@ -58,6 +58,25 @@ func TestLoadExampleHasNoLeadingNewline(t *testing.T) {
 	}
 }
 
+func TestLoadExamplePreservesFirstLineIndent(t *testing.T) {
+	// The `valid.md` fixture's Example section starts with two leading
+	// spaces before the first `# label` line. Cobra renders Example
+	// verbatim, so that indentation must survive parsing. An earlier
+	// implementation used TrimSpace which stripped the first line's
+	// indentation and produced misaligned `--help` output.
+	h := Load(testFS, "testdata/valid.md")
+	if !strings.HasPrefix(h.Example, "  #") {
+		t.Errorf("Example lost first-line indentation; got %q", firstLine(h.Example))
+	}
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
 func TestLoadFrontMatterAllowsBlankLines(t *testing.T) {
 	h := Load(testFS, "testdata/blank_line_in_front_matter.md")
 	if got, want := h.Annotations["outputShape"], "Resource object"; got != want {

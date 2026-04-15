@@ -94,7 +94,7 @@ func parse(s string) (Help, error) {
 	}
 
 	longStr := strings.TrimSpace(long.String())
-	exampleStr := strings.TrimSpace(example.String())
+	exampleStr := trimBlankLines(example.String())
 	if longStr == "" {
 		return Help{}, fmt.Errorf("missing `# Long` section")
 	}
@@ -104,4 +104,20 @@ func parse(s string) (Help, error) {
 		Example:     exampleStr,
 		Annotations: annotations,
 	}, nil
+}
+
+// trimBlankLines strips leading and trailing blank lines without
+// touching indentation on surviving lines. Used for Example content
+// where per-line indentation is semantically meaningful (Cobra renders
+// it verbatim). TrimSpace would strip the first example line's
+// leading indentation, producing misaligned help output.
+func trimBlankLines(s string) string {
+	lines := strings.Split(s, "\n")
+	for len(lines) > 0 && strings.TrimSpace(lines[0]) == "" {
+		lines = lines[1:]
+	}
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return strings.Join(lines, "\n")
 }
