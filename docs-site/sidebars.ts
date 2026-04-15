@@ -76,6 +76,7 @@ const sidebars: SidebarsConfig = {
         'features/mentions',
         'features/timeline-view',
         'features/mrql',
+        'features/mrql-reference',
       ],
     },
     {

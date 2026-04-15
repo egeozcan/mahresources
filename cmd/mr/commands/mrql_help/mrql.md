@@ -5,6 +5,8 @@ relatedCmds: mrql list, mrql run, query run, search
 
 # Long
 
+For the complete DSL syntax reference (operators, fields, GROUP BY, SCOPE, traversal), see the [MRQL Reference](https://egeozcan.github.io/mahresources/features/mrql-reference) docs-site page.
+
 MRQL (Mahresources Query Language) is a small DSL for querying the
 mahresources data model across Resources, Notes, and Groups. A single
 expression selects an entity type and applies filters, scope, ordering,
