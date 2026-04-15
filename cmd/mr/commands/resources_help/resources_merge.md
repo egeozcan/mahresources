@@ -1,12 +1,31 @@
 ---
 exitCodes: 0 on success; 1 on any error
+relatedCmds: resource get, resources delete, search
 ---
 
 # Long
 
-Placeholder.
+Merge one or more "loser" Resources into a single "winner". The
+winner's bytes and ID are preserved; tags, groups, notes, and relations
+from the losers are moved onto the winner; the loser records and their
+file bytes are then deleted. Use to consolidate duplicates after
+perceptual-hash detection or manual review.
 
 # Example
 
-  # Placeholder example
-  mr <placeholder>
+  # Merge resources 2 and 3 into winner 1
+  mr resources merge --winner 1 --losers 2,3
+
+  # Pipe duplicate IDs from a search
+  mr resources merge --winner 1 --losers $(mr resources list --hash abcd1234 --json | jq -r 'map(.id) | join(",")')
+
+  # mr-doctest: create winner + 2 losers with distinct tags, merge, assert winner has all tags
+  T1=$(mr tag create --name "merge-t1-$$" --json | jq -r .id)
+  T2=$(mr tag create --name "merge-t2-$$" --json | jq -r .id)
+  W=$(mr resource upload ./testdata/sample.jpg --name "winner-$$" --json | jq -r .id)
+  L1=$(mr resource upload ./testdata/sample.png --name "loser1-$$" --json | jq -r .id)
+  L2=$(mr resource upload ./testdata/sample.txt --name "loser2-$$" --json | jq -r .id)
+  mr resources add-tags --ids $L1 --tags $T1
+  mr resources add-tags --ids $L2 --tags $T2
+  mr resources merge --winner $W --losers $L1,$L2
+  mr resource get $W --json | jq -e '([.tags[]? // .Tags[]?] | length) >= 2'
