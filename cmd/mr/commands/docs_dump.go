@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"text/template"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -81,9 +84,348 @@ func dumpCommandTree(root *cobra.Command, format, output string) error {
 	}
 }
 
-// writeMarkdown is a placeholder until Task 6 implements it.
-func writeMarkdown(tree dumpRoot, output string) error {
-	return fmt.Errorf("markdown format not implemented yet (Task 6)")
+// writeMarkdown renders the command tree as Markdown pages under outputDir.
+// One page per command plus a root index.md. Parent-group commands are
+// written to <group>/index.md; leaves to <group>/<leaf>.md. See Also links
+// are computed as relative paths between pages.
+func writeMarkdown(tree dumpRoot, outputDir string) error {
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return err
+	}
+
+	// Build a path-to-output-file map so See Also can generate correct
+	// relative links regardless of which page is being written.
+	outputPath := map[string]string{}
+	for _, c := range tree.Commands {
+		outputPath[c.Path] = commandOutputPath(c, outputDir)
+	}
+
+	if err := writeRootIndex(tree, outputDir, outputPath); err != nil {
+		return err
+	}
+
+	for _, c := range tree.Commands {
+		target := outputPath[c.Path]
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		if err := writeCommandPage(c, tree, target, outputPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// commandOutputPath returns the on-disk path for a dumped command.
+// Parent/group commands are written to <group>/index.md;
+// single-word leaves are written to <word>.md at the outputDir root;
+// multi-word leaves are written to <group>/<rest-joined-by-slash>.md.
+func commandOutputPath(c dumpCommand, outputDir string) string {
+	parts := strings.Split(c.Path, " ")
+	if c.IsGroup {
+		all := append([]string{outputDir}, parts...)
+		all = append(all, "index.md")
+		return filepath.Join(all...)
+	}
+	if len(parts) == 1 {
+		return filepath.Join(outputDir, parts[0]+".md")
+	}
+	top := parts[0]
+	rest := strings.Join(parts[1:], "/") + ".md"
+	return filepath.Join(outputDir, top, rest)
+}
+
+type rootIndexData struct {
+	Commands []rootIndexEntry
+}
+
+type rootIndexEntry struct {
+	Path  string
+	Short string
+	Link  string
+}
+
+const rootIndexTmpl = `---
+title: mr CLI
+description: Command-line reference for the mr tool
+sidebar_label: CLI
+---
+
+# mr CLI reference
+
+| Command | Short | |
+|---------|-------|--|
+{{- range .Commands}}
+| ` + "`" + `mr {{.Path}}` + "`" + ` | {{.Short}} | [Details]({{.Link}}) |
+{{- end}}
+`
+
+func writeRootIndex(tree dumpRoot, outputDir string, outputPath map[string]string) error {
+	entries := make([]rootIndexEntry, 0, len(tree.Commands))
+	indexPath := filepath.Join(outputDir, "index.md")
+	indexDir := filepath.Dir(indexPath)
+	for _, c := range tree.Commands {
+		entries = append(entries, rootIndexEntry{
+			Path:  c.Path,
+			Short: c.Short,
+			Link:  relPath(indexDir, outputPath[c.Path]),
+		})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
+
+	f, err := os.Create(indexPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	t, err := template.New("root").Parse(rootIndexTmpl)
+	if err != nil {
+		return err
+	}
+	return t.Execute(f, rootIndexData{Commands: entries})
+}
+
+type commandPageData struct {
+	Title             string
+	Description       string
+	SidebarLabel      string
+	Path              string
+	Long              string
+	UsageLine         string
+	PositionalArgs    []positionalArg
+	Examples          []commandPageExample
+	LocalFlags        []commandPageFlag
+	InheritedFlags    []commandPageFlag
+	HasLocalFlags     bool
+	HasInheritedFlags bool
+	OutputShape       string
+	ExitCodes         string
+	SeeAlsoLinks      []seeAlsoLink
+}
+
+type positionalArg struct {
+	Name string
+	Note string
+}
+
+type commandPageExample struct {
+	Label   string
+	Command string
+}
+
+type commandPageFlag struct {
+	Name        string
+	Type        string
+	Default     string
+	Description string
+	Required    bool
+}
+
+type seeAlsoLink struct {
+	Name string
+	Link string
+}
+
+const commandPageTmpl = `---
+title: mr {{.Path}}
+description: {{.Description}}
+sidebar_label: {{.SidebarLabel}}
+---
+
+# mr {{.Path}}
+
+{{.Long}}
+
+## Usage
+
+    {{.UsageLine}}
+{{- if .PositionalArgs}}
+
+Positional arguments:
+
+{{range .PositionalArgs}}- ` + "`" + `<{{.Name}}>` + "`" + `{{if .Note}} {{.Note}}{{end}}
+{{end}}{{- end}}
+
+## Examples
+
+{{range .Examples}}**{{.Label}}**
+
+    {{.Command}}
+
+{{end}}
+## Flags
+
+{{if .HasLocalFlags}}| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+{{range .LocalFlags}}| ` + "`" + `--{{.Name}}` + "`" + ` | {{.Type}} | ` + "`" + `{{.Default}}` + "`" + ` | {{.Description}}{{if .Required}} **(required)**{{end}} |
+{{end}}{{else}}This command has no local flags.
+{{end}}
+{{- if .HasInheritedFlags}}### Inherited global flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+{{range .InheritedFlags}}| ` + "`" + `--{{.Name}}` + "`" + ` | {{.Type}} | ` + "`" + `{{.Default}}` + "`" + ` | {{.Description}} |
+{{end}}{{end}}
+{{- if .OutputShape}}## Output
+
+{{.OutputShape}}
+
+{{end -}}
+## Exit Codes
+
+{{.ExitCodes}}
+{{- if .SeeAlsoLinks}}
+
+## See Also
+
+{{range .SeeAlsoLinks}}- [` + "`" + `mr {{.Name}}` + "`" + `]({{.Link}})
+{{end}}{{- end}}`
+
+func writeCommandPage(c dumpCommand, tree dumpRoot, targetPath string, outputPath map[string]string) error {
+	pageDir := filepath.Dir(targetPath)
+	parts := strings.Split(c.Path, " ")
+	sidebarLabel := parts[len(parts)-1]
+
+	// Build Usage line. If c.Use starts with the leaf name, strip it and prepend
+	// the full command path. Otherwise just use "mr <path>".
+	usageLine := "mr " + c.Path
+	leafName := parts[len(parts)-1]
+	if c.Use != "" {
+		if strings.HasPrefix(c.Use, leafName) {
+			after := strings.TrimSpace(strings.TrimPrefix(c.Use, leafName))
+			if after != "" {
+				usageLine = "mr " + c.Path + " " + after
+			}
+		} else {
+			usageLine = "mr " + c.Path + " " + c.Use
+		}
+	}
+
+	// Positional args section.
+	var posArgs []positionalArg
+	switch c.Args.Constraint {
+	case "none":
+		// none — no section
+	case "exact":
+		for _, n := range c.Args.Names {
+			posArgs = append(posArgs, positionalArg{Name: n})
+		}
+	case "minimum":
+		for _, n := range c.Args.Names {
+			posArgs = append(posArgs, positionalArg{Name: n, Note: "(variadic; one or more)"})
+		}
+	case "maximum":
+		for _, n := range c.Args.Names {
+			posArgs = append(posArgs, positionalArg{Name: n, Note: "(optional)"})
+		}
+	case "range":
+		for i, n := range c.Args.Names {
+			note := ""
+			if i >= c.Args.Min {
+				note = "(optional)"
+			}
+			posArgs = append(posArgs, positionalArg{Name: n, Note: note})
+		}
+	}
+
+	// Examples.
+	var examples []commandPageExample
+	for _, e := range c.Examples {
+		examples = append(examples, commandPageExample{
+			Label:   e.Label,
+			Command: strings.ReplaceAll(e.Command, "\n", "\n    "),
+		})
+	}
+
+	// Local flags.
+	var localFlags []commandPageFlag
+	for _, fl := range c.LocalFlags {
+		localFlags = append(localFlags, commandPageFlag{
+			Name:        fl.Name,
+			Type:        fl.Type,
+			Default:     fl.Default,
+			Description: fl.Description,
+			Required:    fl.Required,
+		})
+	}
+
+	// Inherited flags: look up in tree.PersistentFlags by name.
+	pfByName := map[string]dumpFlag{}
+	for _, fl := range tree.PersistentFlags {
+		pfByName[fl.Name] = fl
+	}
+	var inheritedFlags []commandPageFlag
+	for _, name := range c.InheritedFlags {
+		fl, ok := pfByName[name]
+		if !ok {
+			continue
+		}
+		inheritedFlags = append(inheritedFlags, commandPageFlag{
+			Name:        fl.Name,
+			Type:        fl.Type,
+			Default:     fl.Default,
+			Description: fl.Description,
+		})
+	}
+
+	// See Also links.
+	var seeAlso []seeAlsoLink
+	for _, related := range c.RelatedCmds {
+		dest, ok := outputPath[related]
+		if !ok {
+			fmt.Fprintf(os.Stderr, "warning: %s references unknown command %q in relatedCmds\n", c.Path, related)
+			continue
+		}
+		seeAlso = append(seeAlso, seeAlsoLink{
+			Name: related,
+			Link: relPath(pageDir, dest),
+		})
+	}
+
+	data := commandPageData{
+		Title:             "mr " + c.Path,
+		Description:       c.Short,
+		SidebarLabel:      sidebarLabel,
+		Path:              c.Path,
+		Long:              c.Long,
+		UsageLine:         usageLine,
+		PositionalArgs:    posArgs,
+		Examples:          examples,
+		LocalFlags:        localFlags,
+		InheritedFlags:    inheritedFlags,
+		HasLocalFlags:     len(localFlags) > 0,
+		HasInheritedFlags: len(inheritedFlags) > 0,
+		OutputShape:       c.OutputShape,
+		ExitCodes:         c.ExitCodes,
+		SeeAlsoLinks:      seeAlso,
+	}
+
+	f, err := os.Create(targetPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	t, err := template.New("page").Parse(commandPageTmpl)
+	if err != nil {
+		return err
+	}
+	return t.Execute(f, data)
+}
+
+// relPath wraps filepath.Rel with slash normalisation so Markdown links
+// produced on Windows still use forward slashes. It also ensures that
+// same-directory links start with "./" (e.g. "./index.md" not "index.md")
+// so that Docusaurus resolves them correctly as relative paths.
+func relPath(fromDir, toFile string) string {
+	rel, err := filepath.Rel(fromDir, toFile)
+	if err != nil {
+		return toFile
+	}
+	s := filepath.ToSlash(rel)
+	if !strings.HasPrefix(s, ".") {
+		s = "./" + s
+	}
+	return s
 }
 
 func buildDump(root *cobra.Command) dumpRoot {
