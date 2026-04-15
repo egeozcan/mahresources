@@ -23,7 +23,7 @@ PascalCase — unlike full Group objects returned by `group get`.
   # Extract child IDs as CSV
   mr group children 42 --json | jq -r 'map(.id) | join(",")'
 
-  # mr-doctest: create parent+child, assert parent's children list has at least one node
+  # mr-doctest: create parent+child, assert the child appears under the queried parent
   P=$(mr group create --name "doctest-ch-$$-$RANDOM" --json | jq -r '.ID')
   C=$(mr group create --name "doctest-ch-child-$$-$RANDOM" --owner-id=$P --json | jq -r '.ID')
-  mr group children $P --json | jq -e 'type == "array"'
+  mr group children $P --json | jq --argjson c "$C" -e 'map(.id) | index($c) != null'

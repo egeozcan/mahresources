@@ -358,7 +358,7 @@ func newGroupChildrenCmd(c *client.Client, opts *output.Options) *cobra.Command 
 		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
-			q.Set("id", args[0])
+			q.Set("parentId", args[0])
 
 			var raw json.RawMessage
 			if err := c.Get("/v1/group/tree/children", q, &raw); err != nil {
