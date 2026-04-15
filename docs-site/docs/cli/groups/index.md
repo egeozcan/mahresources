@@ -46,3 +46,4 @@ This command has no local flags.
 - [`mr group get`](../group/get.md)
 - [`mr group create`](../group/create.md)
 - [`mr resources list`](../resources/list.md)
+- [`mr mrql`](../mrql/index.md)

@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -8,10 +9,14 @@ import (
 	"time"
 
 	"mahresources/cmd/mr/client"
+	"mahresources/cmd/mr/helptext"
 	"mahresources/cmd/mr/output"
 
 	"github.com/spf13/cobra"
 )
+
+//go:embed categories_help/*.md
+var categoriesHelpFS embed.FS
 
 // categoryResponse is a lightweight struct matching the API's Category JSON shape.
 type categoryResponse struct {
@@ -24,9 +29,12 @@ type categoryResponse struct {
 
 // NewCategoryCmd returns the singular "category" command with get/create/delete/edit subcommands.
 func NewCategoryCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(categoriesHelpFS, "categories_help/category.md")
 	cmd := &cobra.Command{
-		Use:   "category",
-		Short: "Get, create, edit, or delete a group category",
+		Use:         "category",
+		Short:       "Get, create, edit, or delete a group category",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	cmd.AddCommand(newCategoryGetCmd(c, opts))
@@ -39,10 +47,14 @@ func NewCategoryCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newCategoryGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(categoriesHelpFS, "categories_help/category_get.md")
 	return &cobra.Command{
-		Use:   "get <id>",
-		Short: "Get a category by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "get <id>",
+		Short:       "Get a category by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			targetID, err := strconv.ParseUint(args[0], 10, 64)
 			if err != nil {
@@ -82,9 +94,13 @@ func newCategoryGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
 func newCategoryCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var name, description, customHeader, customSidebar, customSummary, customAvatar, metaSchema, sectionConfig, customMRQLResult string
 
+	help := helptext.Load(categoriesHelpFS, "categories_help/category_create.md")
 	cmd := &cobra.Command{
-		Use:   "create",
-		Short: "Create a new category",
+		Use:         "create",
+		Short:       "Create a new category",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body := map[string]string{"Name": name}
 			if description != "" {
@@ -146,10 +162,14 @@ func newCategoryCreateCmd(c *client.Client, opts *output.Options) *cobra.Command
 }
 
 func newCategoryDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(categoriesHelpFS, "categories_help/category_delete.md")
 	return &cobra.Command{
-		Use:   "delete <id>",
-		Short: "Delete a category by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "delete <id>",
+		Short:       "Delete a category by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("Id", args[0])
@@ -170,10 +190,14 @@ func newCategoryDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command
 }
 
 func newCategoryEditNameCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(categoriesHelpFS, "categories_help/category_edit_name.md")
 	return &cobra.Command{
-		Use:   "edit-name <id> <new-name>",
-		Short: "Edit a category's name",
-		Args:  cobra.ExactArgs(2),
+		Use:         "edit-name <id> <new-name>",
+		Short:       "Edit a category's name",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -197,10 +221,14 @@ func newCategoryEditNameCmd(c *client.Client, opts *output.Options) *cobra.Comma
 }
 
 func newCategoryEditDescriptionCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(categoriesHelpFS, "categories_help/category_edit_description.md")
 	return &cobra.Command{
-		Use:   "edit-description <id> <new-description>",
-		Short: "Edit a category's description",
-		Args:  cobra.ExactArgs(2),
+		Use:         "edit-description <id> <new-description>",
+		Short:       "Edit a category's description",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -225,9 +253,12 @@ func newCategoryEditDescriptionCmd(c *client.Client, opts *output.Options) *cobr
 
 // NewCategoriesCmd returns the plural "categories" command with list subcommand.
 func NewCategoriesCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
+	help := helptext.Load(categoriesHelpFS, "categories_help/categories.md")
 	cmd := &cobra.Command{
-		Use:   "categories",
-		Short: "List group categories",
+		Use:         "categories",
+		Short:       "List group categories",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	cmd.AddCommand(newCategoriesListCmd(c, opts, page))
@@ -239,9 +270,13 @@ func NewCategoriesCmd(c *client.Client, opts *output.Options, page *int) *cobra.
 func newCategoriesListCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
 	var name, description string
 
+	help := helptext.Load(categoriesHelpFS, "categories_help/categories_list.md")
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List categories",
+		Use:         "list",
+		Short:       "List categories",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("page", strconv.Itoa(*page))
@@ -286,20 +321,17 @@ func newCategoriesListCmd(c *client.Client, opts *output.Options, page *int) *co
 
 func newCategoriesTimelineCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var (
-		tFlags              timelineFlags
+		tFlags            timelineFlags
 		name, description string
 	)
 
+	help := helptext.Load(categoriesHelpFS, "categories_help/categories_timeline.md")
 	cmd := &cobra.Command{
-		Use:   "timeline",
-		Short: "Display a timeline of category activity",
-		Long: `Display a timeline of category creation and update activity as an ASCII bar chart.
-
-Examples:
-  mr categories timeline
-  mr categories timeline --granularity=weekly --columns=20
-  mr categories timeline --granularity=yearly --anchor=2020-01-01
-  mr categories timeline --json`,
+		Use:         "timeline",
+		Short:       "Display a timeline of category activity",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			if name != "" {

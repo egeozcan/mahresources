@@ -44,3 +44,4 @@ This command has no local flags.
 
 - [`mr resource get`](../resource/get.md)
 - [`mr groups list`](../groups/list.md)
+- [`mr mrql`](../mrql/index.md)

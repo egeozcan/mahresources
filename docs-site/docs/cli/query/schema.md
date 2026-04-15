@@ -54,3 +54,4 @@ Object mapping table name (string) to an array of column names (string[])
 
 - [`mr query create`](./create.md)
 - [`mr query run`](./run.md)
+- [`mr mrql`](../mrql/index.md)

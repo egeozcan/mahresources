@@ -41,3 +41,4 @@ This command has no local flags.
 
 - [`mr query get`](../query/get.md)
 - [`mr query run`](../query/run.md)
+- [`mr mrql`](../mrql/index.md)

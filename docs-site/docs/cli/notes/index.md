@@ -45,3 +45,4 @@ This command has no local flags.
 
 - [`mr note get`](../note/get.md)
 - [`mr groups list`](../groups/list.md)
+- [`mr mrql`](../mrql/index.md)

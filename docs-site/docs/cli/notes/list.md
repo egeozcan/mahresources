@@ -65,3 +65,4 @@ Array of Note objects with ID, Name, Description, Meta, Tags, OwnerId, NoteTypeI
 
 - [`mr note get`](../note/get.md)
 - [`mr notes timeline`](./timeline.md)
+- [`mr mrql`](../mrql/index.md)

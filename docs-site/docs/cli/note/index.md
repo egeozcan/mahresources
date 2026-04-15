@@ -44,4 +44,5 @@ This command has no local flags.
 ## See Also
 
 - [`mr notes list`](../notes/list.md)
+- [`mr note-types list`](../note-types/list.md)
 - [`mr groups list`](../groups/list.md)

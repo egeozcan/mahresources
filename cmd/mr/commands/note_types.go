@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -8,10 +9,14 @@ import (
 	"time"
 
 	"mahresources/cmd/mr/client"
+	"mahresources/cmd/mr/helptext"
 	"mahresources/cmd/mr/output"
 
 	"github.com/spf13/cobra"
 )
+
+//go:embed note_types_help/*.md
+var noteTypesHelpFS embed.FS
 
 // noteTypeResponse is a lightweight struct matching the API's NoteType JSON shape.
 type noteTypeResponse struct {
@@ -24,9 +29,12 @@ type noteTypeResponse struct {
 
 // NewNoteTypeCmd returns the singular "note-type" command with get/create/edit/delete subcommands.
 func NewNoteTypeCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(noteTypesHelpFS, "note_types_help/note_type.md")
 	cmd := &cobra.Command{
-		Use:   "note-type",
-		Short: "Get, create, edit, or delete a note type",
+		Use:         "note-type",
+		Short:       "Get, create, edit, or delete a note type",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	cmd.AddCommand(newNoteTypeGetCmd(c, opts))
@@ -40,10 +48,14 @@ func NewNoteTypeCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newNoteTypeGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(noteTypesHelpFS, "note_types_help/note_type_get.md")
 	return &cobra.Command{
-		Use:   "get <id>",
-		Short: "Get a note type by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "get <id>",
+		Short:       "Get a note type by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			targetID, err := strconv.ParseUint(args[0], 10, 64)
 			if err != nil {
@@ -83,9 +95,13 @@ func newNoteTypeGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
 func newNoteTypeCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var name, description, customHeader, customSidebar, customSummary, customAvatar, metaSchema, sectionConfig, customMRQLResult string
 
+	help := helptext.Load(noteTypesHelpFS, "note_types_help/note_type_create.md")
 	cmd := &cobra.Command{
-		Use:   "create",
-		Short: "Create a new note type",
+		Use:         "create",
+		Short:       "Create a new note type",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body := map[string]string{"Name": name}
 			if description != "" {
@@ -150,9 +166,13 @@ func newNoteTypeEditCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var id uint
 	var name, description, customHeader, customSidebar, customSummary, customAvatar, metaSchema, sectionConfig, customMRQLResult string
 
+	help := helptext.Load(noteTypesHelpFS, "note_types_help/note_type_edit.md")
 	cmd := &cobra.Command{
-		Use:   "edit",
-		Short: "Edit a note type",
+		Use:         "edit",
+		Short:       "Edit a note type",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body := map[string]any{"ID": id}
 			if cmd.Flags().Changed("name") {
@@ -213,10 +233,14 @@ func newNoteTypeEditCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newNoteTypeDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(noteTypesHelpFS, "note_types_help/note_type_delete.md")
 	return &cobra.Command{
-		Use:   "delete <id>",
-		Short: "Delete a note type by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "delete <id>",
+		Short:       "Delete a note type by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("Id", args[0])
@@ -237,10 +261,14 @@ func newNoteTypeDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command
 }
 
 func newNoteTypeEditNameCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(noteTypesHelpFS, "note_types_help/note_type_edit_name.md")
 	return &cobra.Command{
-		Use:   "edit-name <id> <new-name>",
-		Short: "Edit a note type's name",
-		Args:  cobra.ExactArgs(2),
+		Use:         "edit-name <id> <new-name>",
+		Short:       "Edit a note type's name",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -264,10 +292,14 @@ func newNoteTypeEditNameCmd(c *client.Client, opts *output.Options) *cobra.Comma
 }
 
 func newNoteTypeEditDescriptionCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(noteTypesHelpFS, "note_types_help/note_type_edit_description.md")
 	return &cobra.Command{
-		Use:   "edit-description <id> <new-description>",
-		Short: "Edit a note type's description",
-		Args:  cobra.ExactArgs(2),
+		Use:         "edit-description <id> <new-description>",
+		Short:       "Edit a note type's description",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -292,9 +324,12 @@ func newNoteTypeEditDescriptionCmd(c *client.Client, opts *output.Options) *cobr
 
 // NewNoteTypesCmd returns the plural "note-types" command with list subcommand.
 func NewNoteTypesCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
+	help := helptext.Load(noteTypesHelpFS, "note_types_help/note_types.md")
 	cmd := &cobra.Command{
-		Use:   "note-types",
-		Short: "List note types",
+		Use:         "note-types",
+		Short:       "List note types",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	cmd.AddCommand(newNoteTypesListCmd(c, opts, page))
@@ -305,9 +340,13 @@ func NewNoteTypesCmd(c *client.Client, opts *output.Options, page *int) *cobra.C
 func newNoteTypesListCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
 	var name, description string
 
+	help := helptext.Load(noteTypesHelpFS, "note_types_help/note_types_list.md")
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List note types",
+		Use:         "list",
+		Short:       "List note types",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("page", strconv.Itoa(*page))

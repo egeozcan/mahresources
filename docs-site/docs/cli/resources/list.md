@@ -74,3 +74,4 @@ Array of resources with id, name, content type, size, dimensions, owner id, crea
 
 - [`mr resource get`](../resource/get.md)
 - [`mr groups list`](../groups/list.md)
+- [`mr mrql`](../mrql/index.md)

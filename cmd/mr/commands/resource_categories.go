@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -8,10 +9,14 @@ import (
 	"time"
 
 	"mahresources/cmd/mr/client"
+	"mahresources/cmd/mr/helptext"
 	"mahresources/cmd/mr/output"
 
 	"github.com/spf13/cobra"
 )
+
+//go:embed resource_categories_help/*.md
+var resourceCategoriesHelpFS embed.FS
 
 // resourceCategoryResponse is a lightweight struct matching the API's ResourceCategory JSON shape.
 type resourceCategoryResponse struct {
@@ -24,9 +29,12 @@ type resourceCategoryResponse struct {
 
 // NewResourceCategoryCmd returns the singular "resource-category" command with get/create/delete/edit subcommands.
 func NewResourceCategoryCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourceCategoriesHelpFS, "resource_categories_help/resource_category.md")
 	cmd := &cobra.Command{
-		Use:   "resource-category",
-		Short: "Get, create, edit, or delete a resource category",
+		Use:         "resource-category",
+		Short:       "Get, create, edit, or delete a resource category",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	cmd.AddCommand(newResourceCategoryGetCmd(c, opts))
@@ -39,10 +47,14 @@ func NewResourceCategoryCmd(c *client.Client, opts *output.Options) *cobra.Comma
 }
 
 func newResourceCategoryGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourceCategoriesHelpFS, "resource_categories_help/resource_category_get.md")
 	return &cobra.Command{
-		Use:   "get <id>",
-		Short: "Get a resource category by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "get <id>",
+		Short:       "Get a resource category by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			targetID, err := strconv.ParseUint(args[0], 10, 64)
 			if err != nil {
@@ -82,9 +94,13 @@ func newResourceCategoryGetCmd(c *client.Client, opts *output.Options) *cobra.Co
 func newResourceCategoryCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var name, description, customHeader, customSidebar, customSummary, customAvatar, metaSchema, sectionConfig, customMRQLResult string
 
+	help := helptext.Load(resourceCategoriesHelpFS, "resource_categories_help/resource_category_create.md")
 	cmd := &cobra.Command{
-		Use:   "create",
-		Short: "Create a new resource category",
+		Use:         "create",
+		Short:       "Create a new resource category",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body := map[string]string{"Name": name}
 			if description != "" {
@@ -146,10 +162,14 @@ func newResourceCategoryCreateCmd(c *client.Client, opts *output.Options) *cobra
 }
 
 func newResourceCategoryDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourceCategoriesHelpFS, "resource_categories_help/resource_category_delete.md")
 	return &cobra.Command{
-		Use:   "delete <id>",
-		Short: "Delete a resource category by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "delete <id>",
+		Short:       "Delete a resource category by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("Id", args[0])
@@ -170,10 +190,14 @@ func newResourceCategoryDeleteCmd(c *client.Client, opts *output.Options) *cobra
 }
 
 func newResourceCategoryEditNameCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourceCategoriesHelpFS, "resource_categories_help/resource_category_edit_name.md")
 	return &cobra.Command{
-		Use:   "edit-name <id> <new-name>",
-		Short: "Edit a resource category's name",
-		Args:  cobra.ExactArgs(2),
+		Use:         "edit-name <id> <new-name>",
+		Short:       "Edit a resource category's name",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -197,10 +221,14 @@ func newResourceCategoryEditNameCmd(c *client.Client, opts *output.Options) *cob
 }
 
 func newResourceCategoryEditDescriptionCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(resourceCategoriesHelpFS, "resource_categories_help/resource_category_edit_description.md")
 	return &cobra.Command{
-		Use:   "edit-description <id> <new-description>",
-		Short: "Edit a resource category's description",
-		Args:  cobra.ExactArgs(2),
+		Use:         "edit-description <id> <new-description>",
+		Short:       "Edit a resource category's description",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -225,9 +253,12 @@ func newResourceCategoryEditDescriptionCmd(c *client.Client, opts *output.Option
 
 // NewResourceCategoriesCmd returns the plural "resource-categories" command with list subcommand.
 func NewResourceCategoriesCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
+	help := helptext.Load(resourceCategoriesHelpFS, "resource_categories_help/resource_categories.md")
 	cmd := &cobra.Command{
-		Use:   "resource-categories",
-		Short: "List resource categories",
+		Use:         "resource-categories",
+		Short:       "List resource categories",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	cmd.AddCommand(newResourceCategoriesListCmd(c, opts, page))
@@ -238,9 +269,13 @@ func NewResourceCategoriesCmd(c *client.Client, opts *output.Options, page *int)
 func newResourceCategoriesListCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
 	var name, description string
 
+	help := helptext.Load(resourceCategoriesHelpFS, "resource_categories_help/resource_categories_list.md")
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List resource categories",
+		Use:         "list",
+		Short:       "List resource categories",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("page", strconv.Itoa(*page))

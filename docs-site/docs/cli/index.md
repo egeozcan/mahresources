@@ -8,6 +8,15 @@ sidebar_label: CLI
 
 | Command | Short | |
 |---------|-------|--|
+| `mr categories` | List group categories | [Details](./categories/index.md) |
+| `mr categories list` | List categories | [Details](./categories/list.md) |
+| `mr categories timeline` | Display a timeline of category activity | [Details](./categories/timeline.md) |
+| `mr category` | Get, create, edit, or delete a group category | [Details](./category/index.md) |
+| `mr category create` | Create a new category | [Details](./category/create.md) |
+| `mr category delete` | Delete a category by ID | [Details](./category/delete.md) |
+| `mr category edit-description` | Edit a category's description | [Details](./category/edit-description.md) |
+| `mr category edit-name` | Edit a category's name | [Details](./category/edit-name.md) |
+| `mr category get` | Get a category by ID | [Details](./category/get.md) |
 | `mr docs` | Introspect and validate the mr CLI's own documentation | [Details](./docs/index.md) |
 | `mr docs check-examples` | Run `# mr-doctest:` example blocks against a live server | [Details](./docs/check-examples.md) |
 | `mr docs dump` | Emit the mr command tree as JSON or Markdown | [Details](./docs/dump.md) |
@@ -33,6 +42,11 @@ sidebar_label: CLI
 | `mr groups meta-keys` | List all unique metadata keys used across groups | [Details](./groups/meta-keys.md) |
 | `mr groups remove-tags` | Remove tags from multiple groups | [Details](./groups/remove-tags.md) |
 | `mr groups timeline` | Display a timeline of group activity | [Details](./groups/timeline.md) |
+| `mr mrql` | Execute and manage MRQL queries | [Details](./mrql/index.md) |
+| `mr mrql delete` | Delete a saved MRQL query by ID | [Details](./mrql/delete.md) |
+| `mr mrql list` | List saved MRQL queries | [Details](./mrql/list.md) |
+| `mr mrql run` | Run a saved MRQL query by name or ID | [Details](./mrql/run.md) |
+| `mr mrql save` | Save a MRQL query | [Details](./mrql/save.md) |
 | `mr note` | Get, create, edit, delete, or share a note | [Details](./note/index.md) |
 | `mr note create` | Create a new note | [Details](./note/create.md) |
 | `mr note delete` | Delete a note by ID | [Details](./note/delete.md) |
@@ -42,6 +56,15 @@ sidebar_label: CLI
 | `mr note get` | Get a note by ID | [Details](./note/get.md) |
 | `mr note share` | Generate a share token for a note | [Details](./note/share.md) |
 | `mr note unshare` | Remove the share token from a note | [Details](./note/unshare.md) |
+| `mr note-type` | Get, create, edit, or delete a note type | [Details](./note-type/index.md) |
+| `mr note-type create` | Create a new note type | [Details](./note-type/create.md) |
+| `mr note-type delete` | Delete a note type by ID | [Details](./note-type/delete.md) |
+| `mr note-type edit` | Edit a note type | [Details](./note-type/edit.md) |
+| `mr note-type edit-description` | Edit a note type's description | [Details](./note-type/edit-description.md) |
+| `mr note-type edit-name` | Edit a note type's name | [Details](./note-type/edit-name.md) |
+| `mr note-type get` | Get a note type by ID | [Details](./note-type/get.md) |
+| `mr note-types` | List note types | [Details](./note-types/index.md) |
+| `mr note-types list` | List note types | [Details](./note-types/list.md) |
 | `mr notes` | List notes and bulk tag/group/meta operations | [Details](./notes/index.md) |
 | `mr notes add-groups` | Add groups to multiple notes | [Details](./notes/add-groups.md) |
 | `mr notes add-meta` | Add metadata to multiple notes | [Details](./notes/add-meta.md) |
@@ -63,6 +86,11 @@ sidebar_label: CLI
 | `mr query run` | Run a query by ID | [Details](./query/run.md) |
 | `mr query run-by-name` | Run a query by name | [Details](./query/run-by-name.md) |
 | `mr query schema` | Show database table and column names for query building | [Details](./query/schema.md) |
+| `mr relation` | Create, edit, or delete a group relation | [Details](./relation/index.md) |
+| `mr relation create` | Create a new group relation | [Details](./relation/create.md) |
+| `mr relation delete` | Delete a relation by ID | [Details](./relation/delete.md) |
+| `mr relation edit-description` | Edit a relation's description | [Details](./relation/edit-description.md) |
+| `mr relation edit-name` | Edit a relation's name | [Details](./relation/edit-name.md) |
 | `mr resource` | Upload, download, edit, or version a resource | [Details](./resource/index.md) |
 | `mr resource delete` | Delete a resource by ID | [Details](./resource/delete.md) |
 | `mr resource download` | Download a resource file | [Details](./resource/download.md) |
@@ -85,6 +113,14 @@ sidebar_label: CLI
 | `mr resource versions` | List versions of a resource | [Details](./resource/versions.md) |
 | `mr resource versions-cleanup` | Clean up old versions of a resource | [Details](./resource/versions-cleanup.md) |
 | `mr resource versions-compare` | Compare two versions of a resource | [Details](./resource/versions-compare.md) |
+| `mr resource-categories` | List resource categories | [Details](./resource-categories/index.md) |
+| `mr resource-categories list` | List resource categories | [Details](./resource-categories/list.md) |
+| `mr resource-category` | Get, create, edit, or delete a resource category | [Details](./resource-category/index.md) |
+| `mr resource-category create` | Create a new resource category | [Details](./resource-category/create.md) |
+| `mr resource-category delete` | Delete a resource category by ID | [Details](./resource-category/delete.md) |
+| `mr resource-category edit-description` | Edit a resource category's description | [Details](./resource-category/edit-description.md) |
+| `mr resource-category edit-name` | Edit a resource category's name | [Details](./resource-category/edit-name.md) |
+| `mr resource-category get` | Get a resource category by ID | [Details](./resource-category/get.md) |
 | `mr resources` | List, merge, or bulk-edit resources | [Details](./resources/index.md) |
 | `mr resources add-groups` | Add groups to multiple resources | [Details](./resources/add-groups.md) |
 | `mr resources add-meta` | Add metadata to multiple resources | [Details](./resources/add-meta.md) |

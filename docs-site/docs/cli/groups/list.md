@@ -70,3 +70,4 @@ Array of Group objects with ID, Name, Description, Meta, OwnerId, CategoryId, Cr
 - [`mr group get`](../group/get.md)
 - [`mr group create`](../group/create.md)
 - [`mr groups timeline`](./timeline.md)
+- [`mr mrql`](../mrql/index.md)

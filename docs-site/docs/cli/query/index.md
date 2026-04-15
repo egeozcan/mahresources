@@ -45,3 +45,4 @@ This command has no local flags.
 ## See Also
 
 - [`mr queries list`](../queries/list.md)
+- [`mr mrql`](../mrql/index.md)

@@ -14,17 +14,25 @@ import (
 // lintAllowlist names the top-level command groups whose subtrees are
 // subject to strict lint rules. Each migration PR adds its group.
 var lintAllowlist = map[string]bool{
-	"docs":      true,
-	"resource":  true,
-	"resources": true,
-	"group":     true,
-	"groups":    true,
-	"note":      true,
-	"notes":     true,
-	"query":     true,
-	"queries":   true,
-	"tag":       true,
-	"tags":      true,
+	"docs":                true,
+	"resource":            true,
+	"resources":           true,
+	"group":               true,
+	"groups":              true,
+	"note":                true,
+	"notes":               true,
+	"query":               true,
+	"queries":             true,
+	"tag":                 true,
+	"tags":                true,
+	"mrql":                true,
+	"note-type":           true,
+	"note-types":          true,
+	"category":            true,
+	"categories":          true,
+	"resource-category":   true,
+	"resource-categories": true,
+	"relation":            true,
 }
 
 // SetLintAllowlistForTest temporarily replaces the production allowlist

@@ -1,16 +1,21 @@
 package commands
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"net/url"
 	"time"
 
 	"mahresources/cmd/mr/client"
+	"mahresources/cmd/mr/helptext"
 	"mahresources/cmd/mr/output"
 
 	"github.com/spf13/cobra"
 )
+
+//go:embed relations_help/*.md
+var relationsHelpFS embed.FS
 
 // relationResponse is a lightweight struct matching the API's GroupRelation JSON shape.
 type relationResponse struct {
@@ -26,9 +31,12 @@ type relationResponse struct {
 
 // NewRelationCmd returns the singular "relation" command with create/delete/edit subcommands.
 func NewRelationCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(relationsHelpFS, "relations_help/relation.md")
 	cmd := &cobra.Command{
-		Use:   "relation",
-		Short: "Create, edit, or delete a group relation",
+		Use:         "relation",
+		Short:       "Create, edit, or delete a group relation",
+		Long:        help.Long,
+		Annotations: help.Annotations,
 	}
 
 	cmd.AddCommand(newRelationCreateCmd(c, opts))
@@ -40,12 +48,16 @@ func NewRelationCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newRelationCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(relationsHelpFS, "relations_help/relation_create.md")
 	var name, description string
 	var fromGroupID, toGroupID, relationTypeID uint
 
 	cmd := &cobra.Command{
-		Use:   "create",
-		Short: "Create a new group relation",
+		Use:         "create",
+		Short:       "Create a new group relation",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body := map[string]any{
 				"FromGroupId":         fromGroupID,
@@ -91,10 +103,14 @@ func newRelationCreateCmd(c *client.Client, opts *output.Options) *cobra.Command
 }
 
 func newRelationDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(relationsHelpFS, "relations_help/relation_delete.md")
 	return &cobra.Command{
-		Use:   "delete <id>",
-		Short: "Delete a relation by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "delete <id>",
+		Short:       "Delete a relation by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("Id", args[0])
@@ -115,10 +131,14 @@ func newRelationDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command
 }
 
 func newRelationEditNameCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(relationsHelpFS, "relations_help/relation_edit_name.md")
 	return &cobra.Command{
-		Use:   "edit-name <id> <new-name>",
-		Short: "Edit a relation's name",
-		Args:  cobra.ExactArgs(2),
+		Use:         "edit-name <id> <new-name>",
+		Short:       "Edit a relation's name",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
@@ -142,10 +162,14 @@ func newRelationEditNameCmd(c *client.Client, opts *output.Options) *cobra.Comma
 }
 
 func newRelationEditDescriptionCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(relationsHelpFS, "relations_help/relation_edit_description.md")
 	return &cobra.Command{
-		Use:   "edit-description <id> <new-description>",
-		Short: "Edit a relation's description",
-		Args:  cobra.ExactArgs(2),
+		Use:         "edit-description <id> <new-description>",
+		Short:       "Edit a relation's description",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])

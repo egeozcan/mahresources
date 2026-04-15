@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,10 +13,14 @@ import (
 	"time"
 
 	"mahresources/cmd/mr/client"
+	"mahresources/cmd/mr/helptext"
 	"mahresources/cmd/mr/output"
 
 	"github.com/spf13/cobra"
 )
+
+//go:embed mrql_help/*.md
+var mrqlHelpFS embed.FS
 
 // mrqlEntity represents a single entity with common fields for display.
 type mrqlEntity struct {
@@ -68,34 +73,13 @@ func NewMRQLCmd(c *client.Client, opts *output.Options, page *int) *cobra.Comman
 		render   bool
 	)
 
+	help := helptext.Load(mrqlHelpFS, "mrql_help/mrql.md")
 	mrqlCmd := &cobra.Command{
-		Use:   "mrql [query]",
-		Short: "Execute and manage MRQL queries",
-		Long: `Execute MRQL (Mahresources Query Language) queries and manage saved queries.
-
-Examples:
-  mr mrql 'type = resource AND tags = "photo"'
-  mr mrql -f query.mrql
-  echo 'tags = "photo"' | mr mrql -
-  mr mrql --limit 10 --page 2 'type = note'
-
-GROUP BY (aggregated — returns computed rows):
-  mr mrql 'type = resource GROUP BY contentType COUNT()'
-  mr mrql 'type = resource GROUP BY owner.name COUNT() SUM(fileSize)'
-
-GROUP BY (bucketed — returns grouped entities):
-  mr mrql 'type = resource GROUP BY contentType LIMIT 5'
-  mr mrql --buckets 10 --page 2 'type = resource GROUP BY contentType LIMIT 5'
-
-Scope (filter to group subtree):
-  mr mrql 'type = resource SCOPE 42'
-  mr mrql 'type = note SCOPE "My Project" ORDER BY created'
-  mr mrql 'type = resource SCOPE 7 GROUP BY contentType COUNT()'
-
-Rendering:
-  mr mrql --render 'type = resource AND tags = "photo"'
-  The --render flag requests server-side template rendering using CustomMRQLResult
-  templates. Results include a renderedHTML field when a template is configured.`,
+		Use:         "mrql [query]",
+		Short:       "Execute and manage MRQL queries",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var queryText string
 
@@ -169,10 +153,14 @@ Rendering:
 func newMRQLSaveCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var description string
 
+	help := helptext.Load(mrqlHelpFS, "mrql_help/mrql_save.md")
 	cmd := &cobra.Command{
-		Use:   "save <name> <query>",
-		Short: "Save a MRQL query",
-		Args:  cobra.ExactArgs(2),
+		Use:         "save <name> <query>",
+		Short:       "Save a MRQL query",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body := map[string]string{
 				"name":  args[0],
@@ -207,9 +195,13 @@ func newMRQLSaveCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newMRQLListCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
+	help := helptext.Load(mrqlHelpFS, "mrql_help/mrql_list.md")
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List saved MRQL queries",
+		Use:         "list",
+		Short:       "List saved MRQL queries",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("page", strconv.Itoa(*page))
@@ -253,10 +245,14 @@ func newMRQLRunCmd(c *client.Client, opts *output.Options, page *int) *cobra.Com
 		render  bool
 	)
 
+	help := helptext.Load(mrqlHelpFS, "mrql_help/mrql_run.md")
 	cmd := &cobra.Command{
-		Use:   "run <name-or-id>",
-		Short: "Run a saved MRQL query by name or ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "run <name-or-id>",
+		Short:       "Run a saved MRQL query by name or ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			// Always send both id and name — the server tries id first,
@@ -446,10 +442,14 @@ func printBucketedOutput(opts output.Options, grouped mrqlGroupedResponse, raw j
 }
 
 func newMRQLDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(mrqlHelpFS, "mrql_help/mrql_delete.md")
 	return &cobra.Command{
-		Use:   "delete <id>",
-		Short: "Delete a saved MRQL query by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "delete <id>",
+		Short:       "Delete a saved MRQL query by ID",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := url.Values{}
 			q.Set("id", args[0])
