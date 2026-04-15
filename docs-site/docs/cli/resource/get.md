@@ -28,7 +28,7 @@ Positional arguments:
 
 **Get as JSON and extract a single field with jq**
 
-    mr resource get 42 --json | jq -r .name
+    mr resource get 42 --json | jq -r .Name
 
 **upload a fixture and verify the resource is retrievable**
 

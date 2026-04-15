@@ -29,7 +29,7 @@ via the global `--page` flag (default page size 50).
 
 **Filter by tag + date**
 
-    mr resources list --tags 5 --created-after 2026-01-01 --json | jq -r '.[].name'
+    mr resources list --tags 5 --created-after 2026-01-01 --json | jq -r '.[].Name'
 
 **upload two fixtures with a known tag**
 

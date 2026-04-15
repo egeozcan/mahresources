@@ -22,7 +22,7 @@ via the global `--page` flag (default page size 50).
   mr resources list --content-type image/jpeg
 
   # Filter by tag + date, JSON + jq
-  mr resources list --tags 5 --created-after 2026-01-01 --json | jq -r '.[].name'
+  mr resources list --tags 5 --created-after 2026-01-01 --json | jq -r '.[].Name'
 
   # mr-doctest: upload two fixtures with a known tag, list by tag, assert count >= 2
   TAG=$(mr tag create --name "list-test-$$-$RANDOM" --json | jq -r '.ID')

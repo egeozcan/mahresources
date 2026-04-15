@@ -27,7 +27,7 @@ Positional arguments:
 
 **Rename and confirm with a follow-up get**
 
-    mr resource edit-name 42 "renamed" && mr resource get 42 --json | jq -r .name
+    mr resource edit-name 42 "renamed" && mr resource get 42 --json | jq -r .Name
 
 **upload**
 

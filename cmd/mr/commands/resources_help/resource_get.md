@@ -17,7 +17,7 @@ the global `--json` flag to get the full record for scripting.
   mr resource get 42
 
   # Get as JSON and extract a single field with jq
-  mr resource get 42 --json | jq -r .name
+  mr resource get 42 --json | jq -r .Name
 
   # mr-doctest: upload a fixture and verify the resource is retrievable
   GRP=$(mr group create --name "doctest-get-$$-$RANDOM" --json | jq -r '.ID')
