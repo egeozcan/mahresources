@@ -124,7 +124,7 @@ mr resources list --content-type image/png
 mr resource upload photo.jpg --name "My Photo" --owner-id 1
 ```
 
-See the [CLI documentation](https://egeozcan.github.io/mahresources/features/cli) for the full command reference.
+See the [CLI documentation](https://egeozcan.github.io/mahresources/cli/) for the full command reference.
 
 ## Scripting & Import
 

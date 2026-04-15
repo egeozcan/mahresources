@@ -10,7 +10,7 @@ This guide covers common export/import workflows: backing up a group tree, resto
 
 ## Prerequisites
 
-- The `mr` CLI binary (see [CLI docs](../features/cli.md))
+- The `mr` CLI binary (see [mr group export](../cli/group/export.md) and [mr group import](../cli/group/import.md))
 - A running Mahresources server that the CLI can reach
 
 ## 1. Backup and Restore (Same Instance)

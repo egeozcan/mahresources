@@ -277,6 +277,10 @@ npm run report         # View HTML test report
 - Tests need to be fixed, regardless of what broke it. 
   - It may be a good idea to run tests before you start to see if there are any failing and fix them beforehand.
 
+## CLI Documentation
+
+When you add or change a command or flag in `cmd/mr/commands/`, update the corresponding `<group>_help/*.md` file. CI runs `./mr docs lint` (the `cli-docs-fresh` job) and `./mr docs check-examples` (the `cli-doctest` job) on every PR. Reference pattern: `cmd/mr/commands/resources_help/resource_get.md`.
+
 ## Workflow Orchestration
 
 ### 1. Plan Node Default
