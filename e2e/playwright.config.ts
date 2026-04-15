@@ -39,5 +39,12 @@ export default defineConfig({
       use: {},
       workers: process.env.CI ? 1 : 2,
     },
+    {
+      name: 'cli-doctest',
+      testMatch: /cli-doctest\.spec\.ts/,
+      fullyParallel: false,
+      use: {},
+      workers: 1,
+    },
   ],
 });

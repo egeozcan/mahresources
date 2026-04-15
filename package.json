@@ -11,6 +11,8 @@
     "watch": "CompileDaemon -exclude-dir=\".git\" -exclude-dir=\"node_modules\" -command=\"npm run build-css && npm run build-js && mahresources\" -build=\"go build --tags 'json1 fts5'\"",
     "build": "npm run build-css && npm run build-js && go build --tags 'json1 fts5'",
     "build-cli": "go build -o mr ./cmd/mr/",
+    "docs-gen": "./mr docs dump --format markdown --output docs-site/docs/cli/",
+    "docs-lint": "./mr docs lint",
     "prepare": "husky",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest"
