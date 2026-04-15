@@ -67,7 +67,7 @@ func newDocsCheckExamplesCmd() *cobra.Command {
 	var server, environment string
 	cmd := &cobra.Command{
 		Use:         "check-examples",
-		Short:       "Execute every `# mr-doctest:` example block against a live server",
+		Short:       "Run `# mr-doctest:` example blocks against a live server",
 		Long:        help.Long,
 		Example:     help.Example,
 		Annotations: help.Annotations,

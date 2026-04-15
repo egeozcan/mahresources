@@ -12,10 +12,12 @@ import (
 )
 
 // lintAllowlist names the top-level command groups whose subtrees are
-// subject to strict lint rules. Phase 1 ships empty; Task 16 adds
-// "docs", "resource", "resources" together once their help content is in.
-// Each subsequent migration PR adds its group.
-var lintAllowlist = map[string]bool{}
+// subject to strict lint rules. Each migration PR adds its group.
+var lintAllowlist = map[string]bool{
+	"docs":      true,
+	"resource":  true,
+	"resources": true,
+}
 
 // SetLintAllowlistForTest temporarily replaces the production allowlist
 // with the given map. It returns a restore function that the caller must
