@@ -6,12 +6,12 @@ sidebar_label: get
 
 # mr note-type get
 
-Get a note type by ID and print its core fields. The server has no
+Get a note type by ID and print its fields. The server has no
 single-NoteType GET endpoint, so the CLI fetches the full list and
 filters in-process; this is slower than a direct lookup on large
-instances. The JSON output is a 5-key projection (ID, Name, Description,
-CreatedAt, UpdatedAt); use `note-types list --json` when you need the
-full record including MetaSchema, SectionConfig, or the Custom* fields.
+instances. The table output shows five core fields (ID, Name, Description,
+Created, Updated). The `--json` flag emits the full server response,
+including MetaSchema, SectionConfig, CustomHeader, and other Custom* fields.
 
 ## Usage
 
@@ -53,7 +53,7 @@ This command has no local flags.
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-NoteType projection with ID (uint), Name (string), Description (string), CreatedAt, UpdatedAt
+Full server NoteType JSON (--json); table with ID, Name, Description, Created, Updated (default)
 
 ## Exit Codes
 

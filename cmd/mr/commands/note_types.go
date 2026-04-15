@@ -62,27 +62,32 @@ func newNoteTypeGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
 				return fmt.Errorf("invalid ID %q: %w", args[0], err)
 			}
 
-			// Note types have no single-get endpoint; fetch list and filter
+			// Note types have no single-get endpoint; fetch list and filter.
+			// Decode as a list of raw entries so --json emits the full server
+			// response shape, not a narrowed 5-field projection.
 			var raw json.RawMessage
 			if err := c.Get("/v1/note/noteTypes", nil, &raw); err != nil {
 				return err
 			}
 
-			var noteTypes []noteTypeResponse
-			if err := json.Unmarshal(raw, &noteTypes); err != nil {
+			var rawList []json.RawMessage
+			if err := json.Unmarshal(raw, &rawList); err != nil {
 				return fmt.Errorf("parsing response: %w", err)
 			}
 
-			for _, nt := range noteTypes {
+			for _, rawNT := range rawList {
+				var nt noteTypeResponse
+				if err := json.Unmarshal(rawNT, &nt); err != nil {
+					continue
+				}
 				if uint64(nt.ID) == targetID {
-					ntJSON, _ := json.Marshal(nt)
 					output.PrintSingle(*opts, []output.KeyValue{
 						{Key: "ID", Value: strconv.FormatUint(uint64(nt.ID), 10)},
 						{Key: "Name", Value: nt.Name},
 						{Key: "Description", Value: nt.Description},
 						{Key: "Created", Value: nt.CreatedAt.Format(time.RFC3339)},
 						{Key: "Updated", Value: nt.UpdatedAt.Format(time.RFC3339)},
-					}, json.RawMessage(ntJSON))
+					}, rawNT)
 					return nil
 				}
 			}
