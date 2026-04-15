@@ -2,7 +2,6 @@ package commands
 
 import (
 	"embed"
-	"fmt"
 
 	"github.com/spf13/cobra"
 
@@ -83,7 +82,3 @@ func newDocsCheckExamplesCmd() *cobra.Command {
 	return cmd
 }
 
-// Stub; real implementation is in docs_doctest.go.
-func checkExamples(root *cobra.Command, server, environment string) error {
-	return fmt.Errorf("docs check-examples: not implemented")
-}
