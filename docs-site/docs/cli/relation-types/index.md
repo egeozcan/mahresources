@@ -18,9 +18,6 @@ create --relation-type-id <id>` when linking two groups.
 
     mr relation-types
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

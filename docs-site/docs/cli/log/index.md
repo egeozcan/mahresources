@@ -22,9 +22,6 @@ query across the whole system, use `logs list`.
 
     mr log
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

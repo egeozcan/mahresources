@@ -21,9 +21,6 @@ relationships into another.
 
     mr tag
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

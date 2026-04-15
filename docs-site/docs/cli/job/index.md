@@ -21,9 +21,6 @@ check current statuses.
 
     mr job
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

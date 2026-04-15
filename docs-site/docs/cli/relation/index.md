@@ -23,9 +23,6 @@ or query via `mr mrql`.
 
     mr relation
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

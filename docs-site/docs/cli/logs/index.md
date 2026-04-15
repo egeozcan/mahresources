@@ -22,9 +22,6 @@ use the singular `log` subcommands (`log get`, `log entity`).
 
     mr logs
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

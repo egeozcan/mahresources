@@ -22,9 +22,6 @@ attach a resource to a series edit the resource.
 
     mr series
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

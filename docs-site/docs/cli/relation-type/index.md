@@ -26,9 +26,6 @@ and filter by ID in jq, or fetch the full list.
 
     mr relation-type
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

@@ -19,9 +19,6 @@ through `jq` when you need to derive IDs from a filter.
 
     mr tags
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

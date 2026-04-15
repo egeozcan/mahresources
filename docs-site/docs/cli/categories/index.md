@@ -20,9 +20,6 @@ IDs from a filter.
 
     mr categories
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

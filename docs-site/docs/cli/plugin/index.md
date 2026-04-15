@@ -23,9 +23,6 @@ plugins and inspect their current enablement and stored settings.
 
     mr plugin
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

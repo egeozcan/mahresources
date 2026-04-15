@@ -22,9 +22,6 @@ an individual block's content, state, or type, use the singular
 
     mr note-blocks
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

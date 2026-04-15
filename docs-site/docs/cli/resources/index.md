@@ -21,9 +21,6 @@ to extract IDs when you need query-based selection.
 
     mr resources
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

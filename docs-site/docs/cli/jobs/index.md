@@ -20,9 +20,6 @@ use the singular `job` subcommands.
 
     mr jobs
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

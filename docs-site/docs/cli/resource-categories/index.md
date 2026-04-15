@@ -18,9 +18,6 @@ IDs for scripting, and `resource-category` for single-category CRUD.
 
     mr resource-categories
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

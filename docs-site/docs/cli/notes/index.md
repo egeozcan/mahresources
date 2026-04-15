@@ -22,9 +22,6 @@ selection.
 
     mr notes
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

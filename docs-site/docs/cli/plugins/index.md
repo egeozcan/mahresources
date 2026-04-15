@@ -17,9 +17,6 @@ the singular `plugin` subcommands.
 
     mr plugins
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

@@ -23,9 +23,6 @@ authoring query text. Use `queries list` to discover existing queries.
 
     mr query
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

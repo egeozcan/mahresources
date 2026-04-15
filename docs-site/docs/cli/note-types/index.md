@@ -19,9 +19,6 @@ Singular operations (get, create, edit, delete) live under the sibling
 
     mr note-types
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

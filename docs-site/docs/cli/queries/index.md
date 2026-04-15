@@ -18,9 +18,6 @@ To execute a query, use `query run <id>` or `query run-by-name --name
 
     mr queries
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

@@ -22,9 +22,6 @@ available note types and feed their IDs into `note create --note-type-id`.
 
     mr note-type
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

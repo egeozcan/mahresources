@@ -22,9 +22,6 @@ filters.
 
     mr resource-category
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

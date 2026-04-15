@@ -329,14 +329,14 @@ Positional arguments:
 {{range .PositionalArgs}}- ` + "`" + `<{{.Name}}>` + "`" + `{{if .Note}} {{.Note}}{{end}}
 {{end}}{{- end}}
 
-## Examples
+{{if .Examples}}## Examples
 
 {{range .Examples}}**{{.Label}}**
 
     {{.Command}}
 
 {{end}}
-## Flags
+{{end}}## Flags
 
 {{if .HasLocalFlags}}| Flag | Type | Default | Description |
 |------|------|---------|-------------|

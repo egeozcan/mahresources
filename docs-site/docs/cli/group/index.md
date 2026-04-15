@@ -22,9 +22,6 @@ filters, or the bulk subcommands under `groups` to mutate many at once.
 
     mr group
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

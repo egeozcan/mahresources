@@ -21,9 +21,6 @@ view creation activity over time.
 
     mr category
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

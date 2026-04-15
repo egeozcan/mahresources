@@ -22,9 +22,6 @@ at once.
 
     mr note
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

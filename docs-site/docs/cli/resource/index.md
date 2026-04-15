@@ -19,9 +19,6 @@ history. Use `resources list` to discover resources matching filters.
 
     mr resource
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

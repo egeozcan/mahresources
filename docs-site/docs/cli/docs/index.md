@@ -19,9 +19,6 @@ implementation.
 
     mr docs
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

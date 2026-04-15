@@ -23,9 +23,6 @@ for per-note listing, reorder, and rebalance operations.
 
     mr note-block
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.

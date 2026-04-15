@@ -30,9 +30,6 @@ Positional arguments:
 - `<query>` (optional)
 
 
-## Examples
-
-
 ## Flags
 
 | Flag | Type | Default | Description |

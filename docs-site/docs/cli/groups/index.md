@@ -22,9 +22,6 @@ to extract IDs when you need query-based selection.
 
     mr groups
 
-## Examples
-
-
 ## Flags
 
 This command has no local flags.
