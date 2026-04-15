@@ -21,7 +21,7 @@ Use `--types` to restrict to a comma-separated subset of entity types (e.g. `--t
   # Cap results and pipe into jq to read the total
   mr search "report" --limit 5 --json | jq '.total'
 
-  # mr-doctest: create a uniquely-named group and confirm search returns a response shape
+  # mr-doctest: create a uniquely-named group and confirm search finds it by ID
   NAME="doctest-search-$$-$RANDOM"
-  mr group create --name "$NAME" --json > /dev/null
-  mr search "$NAME" --json | jq -e '.total >= 0 and (.results | type == "array")'
+  GID=$(mr group create --name "$NAME" --json | jq -r '.ID')
+  mr search "$NAME" --json | jq -e --argjson g "$GID" '.total >= 1 and ([.results[].id] | any(. == $g))'
