@@ -80,6 +80,9 @@ func main() {
 	rootCmd.AddCommand(commands.NewPluginCmd(c, opts))
 	rootCmd.AddCommand(commands.NewPluginsCmd(c, opts))
 	rootCmd.AddCommand(commands.NewAdminCmd(c, opts))
+	rootCmd.AddCommand(commands.NewDocsCmd())
+
+	commands.ApplyHelpCustomizations(rootCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
