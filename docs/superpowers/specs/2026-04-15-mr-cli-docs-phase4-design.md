@@ -4,17 +4,17 @@
 **Status:** Approved for planning
 **Parent spec:** `docs/superpowers/specs/2026-04-14-mr-cli-docs-design.md`
 **Sibling spec:** `docs/superpowers/specs/2026-04-15-mr-cli-docs-phase3-design.md`
-**Scope:** Execution-level design for Phase 4 (polish + cleanup). Closes the mr CLI documentation overhaul by deleting the superseded hand-written CLI page, wiring the generated `docs-site/docs/cli/` tree into the Docusaurus sidebar, updating project-level references (README, `CLAUDE.md`, stray internal links), shipping two previously-optional quality fixes (`note-type get --json` projection widening and a standalone MRQL reference page), and running a full verification sweep.
+**Scope:** Execution-level design for Phase 4 (polish + cleanup). Closes the mr CLI documentation overhaul by deleting the superseded hand-written CLI page, wiring the generated `docs-site/docs/cli/` tree into the Docusaurus sidebar, updating project-level references (README, `CLAUDE.md`, stray internal links), shipping two previously-optional quality fixes (`note-type get --json` projection widening and a standalone MRQL reference page), strengthening one weak doctest assertion (`mr search`) surfaced during spec review, and running a full verification sweep.
 
 ## Relationship to the Parent and Sibling Specs
 
 The parent spec (2026-04-14) defines the template, the `helptext` package, the `mr docs` command group, the doctest runner, and the docs-site generation pipeline. The Phase 3 delta (2026-04-15) covered migration of the remaining 147 commands and wired the `cli-docs-fresh` and `cli-doctest` CI jobs. Neither is changed here.
 
-Phase 4 is strictly additive cleanup. It ships seven work items across five commits on `master`. No new design primitives are introduced.
+Phase 4 is strictly additive cleanup. It ships eight work items across six commits on `master`. No new design primitives are introduced.
 
 ## Scope
 
-Phase 4 delivers seven concrete work items. Each maps to a bounded set of file edits so plan-time task decomposition is mechanical.
+Phase 4 delivers eight concrete work items. Each maps to a bounded set of file edits so plan-time task decomposition is mechanical.
 
 ### 1. Delete the old hand-written CLI page
 
@@ -114,6 +114,34 @@ Wiring:
 - `docs-site/docs/features/mrql.md` — add a "See also" line at the end pointing to `./mrql-reference`.
 - `docs-site/sidebars.ts` — add `'features/mrql-reference'` immediately after the existing `'features/mrql'` entry in the Advanced Features items array so the two live together in nav.
 
+### 8. Strengthen the `mr search` doctest assertion
+
+Surfaced during spec review. The current doctest in `cmd/mr/commands/search_help/search.md:24–27` creates a uniquely-named group and then asserts only that the response has a valid shape:
+
+```bash
+# mr-doctest: create a uniquely-named group and confirm search returns a response shape
+NAME="doctest-search-$$-$RANDOM"
+mr group create --name "$NAME" --json > /dev/null
+mr search "$NAME" --json | jq -e '.total >= 0 and (.results | type == "array")'
+```
+
+That assertion passes against a completely broken search index (which would still emit `{"total": 0, "results": []}` for any query). Tighten it to verify that the freshly-created group actually surfaces in results. Prefer asserting by the created group's numeric ID rather than by name, to avoid dependency on FTS tokenization quirks (dashes, underscores, digit-only suffixes):
+
+```bash
+# mr-doctest: create a uniquely-named group and confirm search finds it
+NAME="doctest-search-$$-$RANDOM"
+GID=$(mr group create --name "$NAME" --json | jq -r '.ID')
+mr search "$NAME" --json | jq -e --argjson g "$GID" '.total >= 1 and ([.results[].id] | any(. == $g))'
+```
+
+Plan-time verification:
+
+- Confirm FTS indexing is synchronous on `POST /v1/group` (SQLite FTS5 triggers typically are; if there's an async path, the assertion will flake). If async, fall back to a short retry loop or polling inside the doctest.
+- Regenerate `docs-site/docs/cli/search.md` via `npm run docs-gen`.
+- Run `./mr docs check-examples --server http://127.0.0.1:8192 --environment ephemeral` with just this block and confirm PASS before committing.
+
+Out of scope for this item: auditing every other doctest for similarly weak shape-only assertions. The `mr search` case was surfaced by review; a systematic audit belongs in a Phase 5 ticket.
+
 ## Test & Verification Plan
 
 ### Per-commit Local Simulation
@@ -159,7 +187,7 @@ Commit 1 carries pure docs/markdown text and does not touch CLI help or the `doc
 
 ## Commit Sequence
 
-Five commits on `master`, ordered by CI risk (lowest first) per Approach B:
+Six commits on `master`, ordered by CI risk (lowest first) per Approach B:
 
 1. **`docs: add CLI docs workflow note, fix stray CLI links`**
    - `CLAUDE.md` — new `## CLI Documentation` section (item 5).
@@ -172,13 +200,18 @@ Five commits on `master`, ordered by CI risk (lowest first) per Approach B:
    - `docs-site/sidebars.ts` — `features/cli` entry removed, `CLI Reference` top-level section added (item 2).
    - Exercises `onBrokenLinks: 'throw'` during a local `cd docs-site && npm run build` pre-commit check. No CLI CI surface.
 
-3. **`fix(cli): widen note-type get --json projection + regen docs`**
+3. **`fix(cli): strengthen mr search doctest assertion + regen docs`**
+   - `cmd/mr/commands/search_help/search.md` — doctest tightened to verify the created group surfaces in results by ID (item 8).
+   - `docs-site/docs/cli/search.md` — regenerated via `npm run docs-gen`.
+   - First commit that can trip `cli-docs-fresh` (if the regen is stale) and `cli-doctest` (if the stronger assertion flakes against an async FTS indexer). Narrow surface ships alone so that if `cli-doctest` fails here, the cause is obvious.
+
+4. **`fix(cli): widen note-type get --json projection + regen docs`**
    - `cmd/mr/commands/note_types.go` — `--json` path passes raw response through (item 6).
    - `cmd/mr/commands/note_types_help/note_type_get.md` — update doctest if projection change alters assertion inputs.
    - `docs-site/docs/cli/note-type/get.md` — regenerated via `npm run docs-gen`.
-   - First commit that can trip `cli-docs-fresh` (if the regen is stale) and `cli-doctest` (if the doctest assertion breaks). Smallest possible diff for that failure class, which is the reason it ships alone.
+   - Separate commit from item 8 because the failure modes are different: item 8 can flake on async FTS; item 6 can break the table path. Bisecting is easier with one-concern-per-commit.
 
-4. **`docs: add MRQL reference page, link from mrql help`**
+5. **`docs: add MRQL reference page, link from mrql help`**
    - `docs-site/docs/features/mrql-reference.md` — new page (item 7).
    - `cmd/mr/commands/mrql_help/mrql.md` — back-link line added.
    - `docs-site/docs/features/mrql.md` — "See also" line added.
@@ -186,7 +219,7 @@ Five commits on `master`, ordered by CI risk (lowest first) per Approach B:
    - `docs-site/docs/cli/mrql/index.md` — regenerated.
    - Exercises `cli-docs-fresh` again since mrql help text changes.
 
-5. **(Conditional) `chore: trailing cleanup from Phase 4 verification`**
+6. **(Conditional) `chore: trailing cleanup from Phase 4 verification`**
    - Only if the full test sweep surfaces drift (e.g., unexpected docs-site regen delta from some cross-effect). Omit otherwise.
 
 ## Risks and Mitigations
@@ -206,6 +239,9 @@ Mitigation: if it reproduces in step 6 of the full test sweep, raise `-max-db-co
 **Risk: Widening `note-type get --json` breaks the non-JSON table output.**
 Mitigation: the change is scoped to the `--json` branch of the command's `RunE`. The table-path projection is untouched. Doctests and E2E CLI specs for `mr note-type get` (without `--json`) must still pass.
 
+**Risk: Stronger `mr search` assertion flakes against an async FTS indexer.**
+Mitigation: verify during plan execution whether `POST /v1/group` updates the FTS index synchronously (inspect the server path in `application_context/group_context.go` and the DB triggers). If async, add a short bounded retry loop inside the doctest (try up to 3 times with a small sleep) rather than weakening the assertion back to shape-only. If retry also proves flaky, fall back to asserting `.total >= 1` by name match (less ID-robust but still stronger than shape-only) and record the trade-off inline in the doctest comment.
+
 **Risk: MRQL reference page creates circular nav confusion between `features/mrql` (concept) and `features/mrql-reference` (reference).**
 Mitigation: the two are adjacent in the sidebar and cross-linked. Clear labels: "MRQL" for the concept page, "MRQL Reference" for the DSL reference. Prose at the top of each page explicitly directs readers to the other for the opposite use case.
 
@@ -221,6 +257,7 @@ Mitigation: out-of-scope items surfaced during the test sweep (cosmetic docs dri
 - `CLAUDE.md` has a `## CLI Documentation` section describing the help-file-update workflow and the two CI gates.
 - `cmd/mr/commands/note_types.go`'s `--json` path emits raw API response bodies; `mr note-type get --json` surfaces fields beyond the prior 5-key projection.
 - `docs-site/docs/features/mrql-reference.md` exists; `cmd/mr/commands/mrql_help/mrql.md` links to it; `docs-site/docs/features/mrql.md` links to it; the sidebar lists it adjacent to `features/mrql`.
+- `cmd/mr/commands/search_help/search.md` doctest asserts the freshly-created group is findable (by ID or name), not merely that the response shape is valid.
 - Full test sweep (7 steps) is green.
 - The `cli-docs-fresh` and `cli-doctest` CI jobs have been exercised by at least one real push to `master` and passed.
 
@@ -228,6 +265,7 @@ Mitigation: out-of-scope items surfaced during the test sweep (cosmetic docs dri
 
 - **Sidebar wiring approach:** top-level `CLI Reference` section using `autogenerated`, not inline under Advanced Features. Matches the "generated docs evolve with the CLI, zero sidebar maintenance" goal.
 - **Optional polish items:** both in scope. `note-type get --json` widening promoted to required item 6; MRQL reference page promoted to required item 7.
-- **Commit strategy:** five logical commits ordered by CI risk (Approach B), not one atomic commit.
+- **Spec-review finding:** the weak `mr search` doctest assertion promoted to required item 8. Other Phase 3 artifact inaccuracies (stale plan/design guidance for `plugin`, `log get`, and `admin`) do not affect shipped code and are left alone — Phase 3 artifacts are historical.
+- **Commit strategy:** six logical commits ordered by CI risk (Approach B), not one atomic commit.
 - **Branch:** `master`. No feature branch.
 - **Execution style:** inline coordinator work. No subagent dispatch required; Phase 4 is small enough that per-task dispatch overhead is not justified.
