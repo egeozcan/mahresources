@@ -1,12 +1,12 @@
 import * as Diff from 'diff';
 
-export function textDiff({ leftUrl, rightUrl }) {
+export function textDiff({ leftUrl = null, rightUrl = null, leftText = null, rightText = null }) {
   return {
     mode: 'unified',
     loading: true,
     error: null,
-    leftText: '',
-    rightText: '',
+    leftText: leftText ?? '',
+    rightText: rightText ?? '',
     unifiedDiff: [],
     splitLeft: [],
     splitRight: [],
@@ -14,6 +14,11 @@ export function textDiff({ leftUrl, rightUrl }) {
 
     async init() {
       try {
+        if (leftText !== null && rightText !== null) {
+          this.computeDiff();
+          return;
+        }
+
         const [leftRes, rightRes] = await Promise.all([
           fetch(leftUrl),
           fetch(rightUrl)

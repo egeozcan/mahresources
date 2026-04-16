@@ -18,6 +18,10 @@ type GroupReader interface {
 	FindParentsOfGroup(id uint) ([]models.Group, error)
 }
 
+type GroupComparer interface {
+	CompareGroupsCross(g1ID uint, g2ID uint) (*models.GroupComparison, error)
+}
+
 // --- Granular Group Writer Interfaces ---
 
 // GroupCreator handles group creation operations

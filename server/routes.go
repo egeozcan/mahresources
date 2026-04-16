@@ -49,12 +49,13 @@ var templates = map[string]templateInformation{
 
 	"/series": {template_context_providers.SeriesContextProvider, "displaySeries.tpl", http.MethodGet},
 
-	"/group/new":   {template_context_providers.GroupCreateContextProvider, "createGroup.tpl", http.MethodGet},
-	"/groups":      {template_context_providers.GroupsListContextProvider, "listGroups.tpl", http.MethodGet},
-	"/groups/text": {template_context_providers.GroupsListContextProvider, "listGroupsText.tpl", http.MethodGet},
-	"/group":       {template_context_providers.GroupContextProvider, "displayGroup.tpl", http.MethodGet},
-	"/group/edit":  {template_context_providers.GroupCreateContextProvider, "createGroup.tpl", http.MethodGet},
-	"/group/tree":  {template_context_providers.GroupTreeContextProvider, "displayGroupTree.tpl", http.MethodGet},
+	"/group/new":     {template_context_providers.GroupCreateContextProvider, "createGroup.tpl", http.MethodGet},
+	"/groups":        {template_context_providers.GroupsListContextProvider, "listGroups.tpl", http.MethodGet},
+	"/groups/text":   {template_context_providers.GroupsListContextProvider, "listGroupsText.tpl", http.MethodGet},
+	"/group":         {template_context_providers.GroupContextProvider, "displayGroup.tpl", http.MethodGet},
+	"/group/compare": {template_context_providers.GroupCompareContextProvider, "groupCompare.tpl", http.MethodGet},
+	"/group/edit":    {template_context_providers.GroupCreateContextProvider, "createGroup.tpl", http.MethodGet},
+	"/group/tree":    {template_context_providers.GroupTreeContextProvider, "displayGroupTree.tpl", http.MethodGet},
 
 	"/tag/new":  {template_context_providers.TagCreateContextProvider, "createTag.tpl", http.MethodGet},
 	"/tags":     {template_context_providers.TagListContextProvider, "listTags.tpl", http.MethodGet},
