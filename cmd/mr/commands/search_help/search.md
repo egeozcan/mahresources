@@ -22,6 +22,6 @@ Use `--types` to restrict to a comma-separated subset of entity types (e.g. `--t
   mr search "report" --limit 5 --json | jq '.total'
 
   # mr-doctest: create a uniquely-named group and confirm search finds it by ID
-  NAME="doctest-search-$$-$RANDOM"
+  NAME="doctestsearch$$r$RANDOM"
   GID=$(mr group create --name "$NAME" --json | jq -r '.ID')
   mr search "$NAME" --json | jq -e --argjson g "$GID" '.total >= 1 and ([.results[].id] | any(. == $g))'
