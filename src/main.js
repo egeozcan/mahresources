@@ -59,6 +59,7 @@ import { registerPasteUploadStore, setupPasteListener } from './components/paste
 import { multiSort } from './components/multiSort.js';
 import { downloadCockpit } from './components/downloadCockpit.js';
 import { compareView } from './components/compareView.js';
+import { groupCompareView } from './components/groupCompareView.js';
 import { imageCompare } from './components/imageCompare.js';
 import { textDiff } from './components/textDiff.js';
 import { blockEditor } from './components/blockEditor.js';
@@ -126,6 +127,7 @@ Alpine.data('globalSearch', globalSearch);
 Alpine.data('multiSort', multiSort);
 Alpine.data('downloadCockpit', downloadCockpit);
 Alpine.data('compareView', compareView);
+Alpine.data('groupCompareView', groupCompareView);
 Alpine.data('imageCompare', imageCompare);
 Alpine.data('textDiff', textDiff);
 Alpine.data('blockEditor', blockEditor);
