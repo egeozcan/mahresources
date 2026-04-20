@@ -93,13 +93,13 @@
                                 <div>
                                     <label for="crop-w-{{ resource.ID }}" class="block text-xs text-stone-600">Width</label>
                                     <input id="crop-w-{{ resource.ID }}" type="number" min="1" step="1"
-                                        x-model.number="rect.width" @input="clampRect()"
+                                        x-model.number="rect.width" @input="clampRect('w')"
                                         class="w-full rounded-md border-stone-300 text-sm">
                                 </div>
                                 <div>
                                     <label for="crop-h-{{ resource.ID }}" class="block text-xs text-stone-600">Height</label>
                                     <input id="crop-h-{{ resource.ID }}" type="number" min="1" step="1"
-                                        x-model.number="rect.height" @input="clampRect()"
+                                        x-model.number="rect.height" @input="clampRect('h')"
                                         class="w-full rounded-md border-stone-300 text-sm">
                                 </div>
                             </div>

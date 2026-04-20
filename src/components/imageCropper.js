@@ -115,7 +115,12 @@ export function imageCropper({ resourceId, imageUrl, initialWidth = 0, initialHe
       this.clampRect();
     },
 
-    clampRect() {
+    // clampRect keeps the rect inside the image and, when an aspect preset is
+    // active, enforces the ratio. `driver` names the axis the caller just
+    // changed ('w' or 'h' from the numeric inputs, 'auto' for drag/preset
+    // changes). Height-driven edits derive width from height, and vice versa,
+    // so both numeric inputs remain usable under a locked aspect.
+    clampRect(driver = 'auto') {
       if (!this.naturalW || !this.naturalH) return;
       let { x, y, width, height } = this.rect;
       x = Math.max(0, Math.min(this.naturalW - 1, Math.floor(x || 0)));
@@ -125,14 +130,19 @@ export function imageCropper({ resourceId, imageUrl, initialWidth = 0, initialHe
 
       const ratio = this._aspectRatio();
       if (ratio && width > 0 && height > 0) {
-        // Aspect locked: trim both dimensions proportionally so the
-        // submitted rect actually matches the preset. Without this, hitting
-        // an edge clips one axis and breaks the ratio.
         const maxW = Math.max(0, this.naturalW - x);
-        const maxHFromBounds = Math.max(0, this.naturalH - y);
-        const maxWFromH = maxHFromBounds / ratio;
-        width = Math.floor(Math.min(width, maxW, maxWFromH));
-        height = Math.floor(width * ratio);
+        const maxH = Math.max(0, this.naturalH - y);
+        if (driver === 'h') {
+          // Height is authoritative — derive width from it.
+          const maxHFromW = maxW * ratio;
+          height = Math.floor(Math.min(height, maxH, maxHFromW));
+          width = Math.floor(height / ratio);
+        } else {
+          // Width is authoritative (drag, preset apply, 'w' input).
+          const maxWFromH = maxH / ratio;
+          width = Math.floor(Math.min(width, maxW, maxWFromH));
+          height = Math.floor(width * ratio);
+        }
       } else {
         if (x + width > this.naturalW) width = this.naturalW - x;
         if (y + height > this.naturalH) height = this.naturalH - y;

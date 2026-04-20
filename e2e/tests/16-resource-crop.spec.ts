@@ -126,6 +126,29 @@ test.describe.serial('Resource crop', () => {
     await dialog.locator('button:has-text("Cancel")').click();
   });
 
+  test('locked aspect: editing height also drives width', async ({ apiClient, resourcePage, page }) => {
+    const resourceId = await createCropResource(apiClient, `Crop h-driver ${testRunId}`, 'sample-image-2.png');
+    await resourcePage.gotoDisplay(resourceId);
+
+    await page.locator(`#crop-open-${resourceId}`).click();
+    const dialog = page.locator(`#crop-modal-${resourceId}`);
+    await expect(dialog).toBeVisible();
+
+    await dialog.locator(`#crop-aspect-${resourceId}`).selectOption('1:1');
+    await dialog.locator(`#crop-x-${resourceId}`).fill('0');
+    await dialog.locator(`#crop-y-${resourceId}`).fill('0');
+    await dialog.locator(`#crop-w-${resourceId}`).fill('40');
+    // Now drive from height — it should stick, and width should follow.
+    await dialog.locator(`#crop-h-${resourceId}`).fill('15');
+
+    const widthValue = await dialog.locator(`#crop-w-${resourceId}`).inputValue();
+    const heightValue = await dialog.locator(`#crop-h-${resourceId}`).inputValue();
+    expect(Number(heightValue)).toBe(15);
+    expect(Number(widthValue)).toBe(15);
+
+    await dialog.locator('button:has-text("Cancel")').click();
+  });
+
   test('zero-width rect disables the Crop button', async ({ apiClient, resourcePage, page, request }) => {
     const resourceId = await createCropResource(apiClient, `Crop invalid ${testRunId}`, 'sample-image-38.png');
     await resourcePage.gotoDisplay(resourceId);
