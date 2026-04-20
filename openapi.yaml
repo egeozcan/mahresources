@@ -149,6 +149,21 @@ components:
                 versions:
                     type: integer
             type: object
+        CropResourceQuery:
+            properties:
+                Comment:
+                    type: string
+                Height:
+                    type: integer
+                ID:
+                    type: integer
+                Width:
+                    type: integer
+                X:
+                    type: integer
+                "Y":
+                    type: integer
+            type: object
         EntityIdQuery:
             properties:
                 ID:
@@ -5096,6 +5111,24 @@ paths:
                 "200":
                     description: Successful response
             summary: Bulk add tags to resources
+            tags:
+                - resources
+    /v1/resources/crop:
+        post:
+            operationId: cropResource
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/CropResourceQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/CropResourceQuery'
+                required: true
+            responses:
+                "200":
+                    description: Successful response
+            summary: Crop a resource image and save the result as a new version
             tags:
                 - resources
     /v1/resources/delete:

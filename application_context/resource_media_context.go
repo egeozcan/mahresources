@@ -1389,3 +1389,197 @@ func (ctx *MahresourcesContext) RotateResource(resourceId uint, degrees int) err
 
 	return nil
 }
+
+// CropResource crops the resource's current image to the given rectangle
+// (in the current image's natural pixel coordinates) and stores the result
+// as a new ResourceVersion that becomes the current version. Source format
+// is preserved where an encoder is available (JPEG, PNG); GIF and WebP
+// sources are re-encoded as PNG because we have no encoder for them and
+// quantizing GIF output would hurt quality. Animation is dropped.
+func (ctx *MahresourcesContext) CropResource(
+	resourceId uint,
+	x, y, width, height int,
+	userComment string,
+) error {
+	if width <= 0 {
+		return errors.New("crop width must be positive")
+	}
+	if height <= 0 {
+		return errors.New("crop height must be positive")
+	}
+	if x < 0 || y < 0 {
+		return errors.New("crop origin must be non-negative")
+	}
+
+	// Serialize per-resource version operations.
+	ctx.locks.VersionUploadLock.Acquire(resourceId)
+	defer ctx.locks.VersionUploadLock.Release(resourceId)
+
+	var resource models.Resource
+	if err := ctx.db.First(&resource, resourceId).Error; err != nil {
+		return err
+	}
+
+	if !resource.IsImage() {
+		return errors.New("resource is not an image")
+	}
+
+	fs, err := ctx.GetFsForStorageLocation(resource.StorageLocation)
+	if err != nil {
+		return err
+	}
+
+	f, err := fs.Open(resource.GetCleanLocation())
+	if err != nil {
+		return err
+	}
+	srcBytes, readErr := io.ReadAll(f)
+	f.Close()
+	if readErr != nil {
+		return fmt.Errorf("failed to read source image: %w", readErr)
+	}
+	if len(srcBytes) == 0 {
+		return fmt.Errorf("source image at %q is empty (size %d), cannot be cropped", resource.GetCleanLocation(), resource.FileSize)
+	}
+
+	img, format, err := image.Decode(bytes.NewReader(srcBytes))
+	if err != nil {
+		return fmt.Errorf("image cannot be cropped: decode failed (source %d bytes, content-type %q): %w", len(srcBytes), resource.ContentType, err)
+	}
+
+	bounds := img.Bounds()
+	imgW, imgH := bounds.Dx(), bounds.Dy()
+	if x+width > imgW || y+height > imgH {
+		return fmt.Errorf(
+			"crop rectangle must be within image bounds (image is %dx%d, requested %d,%d %dx%d)",
+			imgW, imgH, x, y, width, height,
+		)
+	}
+
+	// imaging.Crop uses absolute coordinates from the image origin; translate
+	// from (x, y, w, h) relative to the image bounds' top-left.
+	cropRect := image.Rect(bounds.Min.X+x, bounds.Min.Y+y, bounds.Min.X+x+width, bounds.Min.Y+y+height)
+	cropped := imaging.Crop(img, cropRect)
+
+	var outBuf bytes.Buffer
+	var outExt string
+	var formatNote string
+	switch format {
+	case "jpeg":
+		if err := imaging.Encode(&outBuf, cropped, imaging.JPEG, imaging.JPEGQuality(95)); err != nil {
+			return fmt.Errorf("failed to encode cropped JPEG: %w", err)
+		}
+		outExt = ".jpg"
+	case "png":
+		if err := imaging.Encode(&outBuf, cropped, imaging.PNG); err != nil {
+			return fmt.Errorf("failed to encode cropped PNG: %w", err)
+		}
+		outExt = ".png"
+	case "gif":
+		if err := imaging.Encode(&outBuf, cropped, imaging.PNG); err != nil {
+			return fmt.Errorf("failed to encode cropped GIF as PNG: %w", err)
+		}
+		outExt = ".png"
+		formatNote = " (animation dropped, re-encoded as PNG)"
+	case "webp":
+		if err := imaging.Encode(&outBuf, cropped, imaging.PNG); err != nil {
+			return fmt.Errorf("failed to encode cropped WebP as PNG: %w", err)
+		}
+		outExt = ".png"
+		formatNote = " (re-encoded as PNG)"
+	default:
+		return fmt.Errorf("image format %q cannot be cropped", format)
+	}
+
+	croppedBytes := outBuf.Bytes()
+	hash := computeSHA1(croppedBytes)
+	contentType := detectContentType(croppedBytes)
+	outW, outH := getDimensionsFromContent(croppedBytes, contentType)
+	location := buildVersionResourcePath(hash, outExt)
+
+	if exists, _ := afero.Exists(ctx.fs, location); !exists {
+		if err := ctx.storeVersionFile(location, croppedBytes); err != nil {
+			return err
+		}
+	}
+
+	// Lazy migration: materialize v1 if this resource was created before the
+	// versioning system existed.
+	var versionCount int64
+	ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceId).Count(&versionCount)
+	if versionCount == 0 {
+		v1 := models.ResourceVersion{
+			ResourceID:      resourceId,
+			VersionNumber:   1,
+			Hash:            resource.Hash,
+			HashType:        resource.HashType,
+			FileSize:        resource.FileSize,
+			ContentType:     resource.ContentType,
+			Width:           resource.Width,
+			Height:          resource.Height,
+			Location:        resource.Location,
+			StorageLocation: resource.StorageLocation,
+			Comment:         "Original (before crop)",
+		}
+		if err := ctx.db.Create(&v1).Error; err != nil {
+			return fmt.Errorf("failed to create initial version: %w", err)
+		}
+	}
+
+	var maxVersion int
+	ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceId).Select("COALESCE(MAX(version_number), 0)").Scan(&maxVersion)
+
+	comment := strings.TrimSpace(userComment)
+	if comment == "" {
+		comment = fmt.Sprintf("Cropped to %d×%d", outW, outH)
+	}
+	comment += formatNote
+
+	version := models.ResourceVersion{
+		ResourceID:    resourceId,
+		VersionNumber: maxVersion + 1,
+		Hash:          hash,
+		HashType:      "SHA1",
+		FileSize:      int64(len(croppedBytes)),
+		ContentType:   contentType,
+		Width:         outW,
+		Height:        outH,
+		Location:      location,
+		Comment:       comment,
+	}
+
+	tx := ctx.db.Begin()
+	if err := tx.Create(&version).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	resourceUpdates := map[string]interface{}{
+		"current_version_id": version.ID,
+		"hash":               version.Hash,
+		"hash_type":          version.HashType,
+		"location":           version.Location,
+		"storage_location":   version.StorageLocation,
+		"content_type":       version.ContentType,
+		"width":              version.Width,
+		"height":             version.Height,
+		"file_size":          version.FileSize,
+	}
+	if err := tx.Model(&models.Resource{}).Where("id = ?", resourceId).Updates(resourceUpdates).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	if err := tx.Where("resource_id = ?", resourceId).Delete(&models.Preview{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return err
+	}
+
+	ctx.OnResourceFileChanged(resourceId)
+
+	return nil
+}

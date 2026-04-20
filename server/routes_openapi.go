@@ -902,6 +902,7 @@ func registerResourceRoutes(r *openapi.Registry) {
 	bulkEditMetaQueryType := reflect.TypeOf(query_models.BulkEditMetaQuery{})
 	mergeQueryType := reflect.TypeOf(query_models.MergeQuery{})
 	rotateQueryType := reflect.TypeOf(query_models.RotateResourceQuery{})
+	cropQueryType := reflect.TypeOf(query_models.CropResourceQuery{})
 
 	r.Register(openapi.RouteInfo{
 		Method:               http.MethodGet,
@@ -1117,6 +1118,16 @@ func registerResourceRoutes(r *openapi.Registry) {
 		Summary:             "Rotate a resource image",
 		Tags:                []string{"resources"},
 		RequestType:         rotateQueryType,
+		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:              http.MethodPost,
+		Path:                "/v1/resources/crop",
+		OperationID:         "cropResource",
+		Summary:             "Crop a resource image and save the result as a new version",
+		Tags:                []string{"resources"},
+		RequestType:         cropQueryType,
 		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 	})
 

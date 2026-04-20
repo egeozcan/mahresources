@@ -46,7 +46,6 @@
     --color-emerald-50: oklch(97.9% 0.021 166.113);
     --color-emerald-600: oklch(59.6% 0.145 163.225);
     --color-emerald-700: oklch(50.8% 0.118 165.612);
-    --color-emerald-800: oklch(43.2% 0.095 166.913);
     --color-emerald-900: oklch(37.8% 0.077 168.94);
     --color-teal-500: oklch(70.4% 0.14 182.503);
     --color-teal-600: oklch(60% 0.118 184.704);
@@ -1624,6 +1623,9 @@
   .w-\[18px\] {
     width: 18px;
   }
+  .w-\[90vw\] {
+    width: 90vw;
+  }
   .w-dvw {
     width: 100dvw;
   }
@@ -2897,9 +2899,6 @@
   .text-emerald-700 {
     color: var(--color-emerald-700);
   }
-  .text-emerald-800 {
-    color: var(--color-emerald-800);
-  }
   .text-gray-50 {
     color: var(--color-gray-50);
   }
@@ -3377,6 +3376,14 @@
       color: var(--color-stone-700);
     }
   }
+  .backdrop\:bg-stone-900\/60 {
+    &::backdrop {
+      background-color: color-mix(in srgb, oklch(21.6% 0.006 56.043) 60%, transparent);
+      @supports (color: color-mix(in lab, red, red)) {
+        background-color: color-mix(in oklab, var(--color-stone-900) 60%, transparent);
+      }
+    }
+  }
   .first\:ml-0 {
     &:first-child {
       margin-left: calc(var(--spacing) * 0);
@@ -3572,13 +3579,6 @@
       }
     }
   }
-  .hover\:bg-emerald-800 {
-    &:hover {
-      @media (hover: hover) {
-        background-color: var(--color-emerald-800);
-      }
-    }
-  }
   .hover\:bg-gray-50 {
     &:hover {
       @media (hover: hover) {
@@ -3611,13 +3611,6 @@
     &:hover {
       @media (hover: hover) {
         background-color: var(--color-gray-700);
-      }
-    }
-  }
-  .hover\:bg-green-700 {
-    &:hover {
-      @media (hover: hover) {
-        background-color: var(--color-green-700);
       }
     }
   }
@@ -4144,11 +4137,6 @@
       border-color: var(--color-indigo-500);
     }
   }
-  .focus\:border-stone-500 {
-    &:focus {
-      border-color: var(--color-stone-500);
-    }
-  }
   .focus\:border-transparent {
     &:focus {
       border-color: transparent;
@@ -4311,6 +4299,11 @@
   .disabled\:bg-stone-100 {
     &:disabled {
       background-color: var(--color-stone-100);
+    }
+  }
+  .disabled\:bg-stone-400 {
+    &:disabled {
+      background-color: var(--color-stone-400);
     }
   }
   .disabled\:opacity-30 {
@@ -4827,6 +4820,11 @@
       margin-left: 400px;
     }
   }
+  .lg\:w-64 {
+    @media (width >= 64rem) {
+      width: calc(var(--spacing) * 64);
+    }
+  }
   .lg\:max-w-\[calc\(100vw-450px\)\] {
     @media (width >= 64rem) {
       max-width: calc(100vw - 450px);
@@ -4872,6 +4870,11 @@
   .lg\:grid-cols-6 {
     @media (width >= 64rem) {
       grid-template-columns: repeat(6, minmax(0, 1fr));
+    }
+  }
+  .lg\:flex-row {
+    @media (width >= 64rem) {
+      flex-direction: row;
     }
   }
   .lg\:gap-4 {

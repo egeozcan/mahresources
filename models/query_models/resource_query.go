@@ -81,3 +81,12 @@ type RotateResourceQuery struct {
 	ID      uint
 	Degrees int
 }
+
+type CropResourceQuery struct {
+	ID      uint
+	X       int
+	Y       int
+	Width   int
+	Height  int
+	Comment string
+}
