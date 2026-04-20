@@ -2,7 +2,7 @@
 {# Requires: resource (for ID, Hash, ContentType, Width, Height). #}
 <dialog
     id="crop-modal-{{ resource.ID }}"
-    class="crop-modal p-0 rounded-lg shadow-xl backdrop:bg-stone-900/60"
+    class="crop-modal p-0 m-auto rounded-lg shadow-xl backdrop:bg-stone-900/60"
     aria-labelledby="crop-modal-title-{{ resource.ID }}"
     x-data="imageCropper({
         resourceId: {{ resource.ID }},
@@ -27,7 +27,7 @@
 
             <div class="px-4 py-3">
                 <div class="flex flex-col lg:flex-row gap-4">
-                    <div class="flex-1 min-w-0">
+                    <div class="flex-1 min-w-0 flex flex-col items-center">
                         <div
                             class="crop-stage relative inline-block bg-stone-100 border border-stone-300 select-none"
                             x-ref="stage"
@@ -51,7 +51,7 @@
                                 aria-hidden="true"
                             ></div>
                         </div>
-                        <p class="text-xs text-stone-500 mt-2">Drag on the image to select the crop area, or type exact pixel values below.</p>
+                        <p class="text-xs text-stone-500 mt-2 text-center">Drag on the image to select the crop area, or type exact pixel values below.</p>
                     </div>
 
                     <div class="w-full lg:w-64 space-y-3">
