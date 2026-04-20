@@ -122,8 +122,21 @@ export function imageCropper({ resourceId, imageUrl, initialWidth = 0, initialHe
       y = Math.max(0, Math.min(this.naturalH - 1, Math.floor(y || 0)));
       width = Math.max(0, Math.floor(width || 0));
       height = Math.max(0, Math.floor(height || 0));
-      if (x + width > this.naturalW) width = this.naturalW - x;
-      if (y + height > this.naturalH) height = this.naturalH - y;
+
+      const ratio = this._aspectRatio();
+      if (ratio && width > 0 && height > 0) {
+        // Aspect locked: trim both dimensions proportionally so the
+        // submitted rect actually matches the preset. Without this, hitting
+        // an edge clips one axis and breaks the ratio.
+        const maxW = Math.max(0, this.naturalW - x);
+        const maxHFromBounds = Math.max(0, this.naturalH - y);
+        const maxWFromH = maxHFromBounds / ratio;
+        width = Math.floor(Math.min(width, maxW, maxWFromH));
+        height = Math.floor(width * ratio);
+      } else {
+        if (x + width > this.naturalW) width = this.naturalW - x;
+        if (y + height > this.naturalH) height = this.naturalH - y;
+      }
       this.rect = { x, y, width, height };
     },
 

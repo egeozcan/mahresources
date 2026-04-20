@@ -98,6 +98,34 @@ test.describe.serial('Resource crop', () => {
     expect(versions).toBeLessThanOrEqual(1);
   });
 
+  test('aspect preset stays locked when the rect hits an image edge', async ({ apiClient, resourcePage, page }) => {
+    const resourceId = await createCropResource(apiClient, `Crop aspect ${testRunId}`, 'sample-image-39.png'); // 60×40
+    await resourcePage.gotoDisplay(resourceId);
+
+    await page.locator(`#crop-open-${resourceId}`).click();
+    const dialog = page.locator(`#crop-modal-${resourceId}`);
+    await expect(dialog).toBeVisible();
+
+    // Lock to 1:1 and request a rect whose naive clamp would crop the width
+    // and height independently (producing a non-square rect).
+    await dialog.locator(`#crop-aspect-${resourceId}`).selectOption('1:1');
+    await dialog.locator(`#crop-x-${resourceId}`).fill('40');
+    await dialog.locator(`#crop-y-${resourceId}`).fill('10');
+    await dialog.locator(`#crop-w-${resourceId}`).fill('30');
+    await dialog.locator(`#crop-h-${resourceId}`).fill('30');
+
+    // The clamp must preserve the 1:1 aspect, so W and H end up equal.
+    const widthValue = await dialog.locator(`#crop-w-${resourceId}`).inputValue();
+    const heightValue = await dialog.locator(`#crop-h-${resourceId}`).inputValue();
+    expect(Number(widthValue)).toBeGreaterThan(0);
+    expect(Number(widthValue)).toBe(Number(heightValue));
+    // Both must fit inside the 60×40 image.
+    expect(40 + Number(widthValue)).toBeLessThanOrEqual(60);
+    expect(10 + Number(heightValue)).toBeLessThanOrEqual(40);
+
+    await dialog.locator('button:has-text("Cancel")').click();
+  });
+
   test('zero-width rect disables the Crop button', async ({ apiClient, resourcePage, page, request }) => {
     const resourceId = await createCropResource(apiClient, `Crop invalid ${testRunId}`, 'sample-image-38.png');
     await resourcePage.gotoDisplay(resourceId);

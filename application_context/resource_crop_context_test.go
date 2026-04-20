@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/image/bmp"
+	"golang.org/x/image/tiff"
 	"mahresources/models"
 )
 
@@ -30,6 +33,10 @@ func seedImageResource(t *testing.T, ctx *MahresourcesContext, contentType strin
 		ext = ".gif"
 	case "image/webp":
 		ext = ".webp"
+	case "image/bmp":
+		ext = ".bmp"
+	case "image/tiff":
+		ext = ".tiff"
 	}
 	location := buildVersionResourcePath(hash, ext)
 
@@ -96,7 +103,7 @@ func TestCropResource_JPEG_CreatesNewVersion(t *testing.T) {
 	jpegBytes := makeJPEG(t, 100, 80, color.RGBA{R: 255, G: 100, B: 50, A: 255})
 	resourceID := seedImageResource(t, ctx, "image/jpeg", jpegBytes, 100, 80)
 
-	err := ctx.CropResource(resourceID, 10, 20, 40, 30, "")
+	err := ctx.CropResource(context.Background(), resourceID, 10, 20, 40, 30, "")
 	require.NoError(t, err)
 
 	var versions []models.ResourceVersion
@@ -126,7 +133,7 @@ func TestCropResource_UsesUserComment(t *testing.T) {
 	jpegBytes := makeJPEG(t, 50, 50, color.RGBA{A: 255})
 	resourceID := seedImageResource(t, ctx, "image/jpeg", jpegBytes, 50, 50)
 
-	require.NoError(t, ctx.CropResource(resourceID, 0, 0, 10, 10, "  headshot crop  "))
+	require.NoError(t, ctx.CropResource(context.Background(), resourceID, 0, 0, 10, 10, "  headshot crop  "))
 
 	var v models.ResourceVersion
 	require.NoError(t, ctx.db.Where("resource_id = ? AND version_number = ?", resourceID, 2).First(&v).Error)
@@ -151,7 +158,7 @@ func TestCropResource_PNG_PreservesTransparency(t *testing.T) {
 	resourceID := seedImageResource(t, ctx, "image/png", buf.Bytes(), 40, 40)
 
 	// Crop the fully-transparent quadrant
-	require.NoError(t, ctx.CropResource(resourceID, 0, 0, 20, 20, ""))
+	require.NoError(t, ctx.CropResource(context.Background(), resourceID, 0, 0, 20, 20, ""))
 
 	var v models.ResourceVersion
 	require.NoError(t, ctx.db.Where("resource_id = ? AND version_number = ?", resourceID, 2).First(&v).Error)
@@ -189,7 +196,7 @@ func TestCropResource_InvalidRect(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := ctx.CropResource(resourceID, tc.x, tc.y, tc.w, tc.h, "")
+			err := ctx.CropResource(context.Background(), resourceID, tc.x, tc.y, tc.w, tc.h, "")
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.contains)
 
@@ -216,14 +223,14 @@ func TestCropResource_NotAnImage(t *testing.T) {
 	}
 	require.NoError(t, ctx.db.Create(r).Error)
 
-	err := ctx.CropResource(r.ID, 0, 0, 10, 10, "")
+	err := ctx.CropResource(context.Background(), r.ID, 0, 0, 10, 10, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not an image")
 }
 
 func TestCropResource_ResourceNotFound(t *testing.T) {
 	ctx := setupCropTestCtx(t)
-	err := ctx.CropResource(99999, 0, 0, 10, 10, "")
+	err := ctx.CropResource(context.Background(), 99999, 0, 0, 10, 10, "")
 	require.Error(t, err)
 	assert.True(t, strings.Contains(strings.ToLower(err.Error()), "not found") ||
 		strings.Contains(strings.ToLower(err.Error()), "record"), "expected not-found error, got %v", err)
@@ -237,7 +244,7 @@ func TestCropResource_UnsupportedFormat(t *testing.T) {
 	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="red"/></svg>`)
 	resourceID := seedImageResource(t, ctx, "image/svg+xml", svg, 40, 40)
 
-	err := ctx.CropResource(resourceID, 0, 0, 10, 10, "")
+	err := ctx.CropResource(context.Background(), resourceID, 0, 0, 10, 10, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot be cropped")
 }
@@ -252,7 +259,7 @@ func TestCropResource_LazyMigrationCreatesV1(t *testing.T) {
 	ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceID).Count(&before)
 	require.Equal(t, int64(0), before)
 
-	require.NoError(t, ctx.CropResource(resourceID, 0, 0, 30, 20, ""))
+	require.NoError(t, ctx.CropResource(context.Background(), resourceID, 0, 0, 30, 20, ""))
 
 	var versions []models.ResourceVersion
 	require.NoError(t, ctx.db.Where("resource_id = ?", resourceID).Order("version_number").Find(&versions).Error)
@@ -277,9 +284,49 @@ func TestCropResource_ClearsPreviews(t *testing.T) {
 	}
 	require.NoError(t, ctx.db.Create(preview).Error)
 
-	require.NoError(t, ctx.CropResource(resourceID, 0, 0, 10, 10, ""))
+	require.NoError(t, ctx.CropResource(context.Background(), resourceID, 0, 0, 10, 10, ""))
 
 	var remaining int64
 	ctx.db.Model(&models.Preview{}).Where("resource_id = ?", resourceID).Count(&remaining)
 	assert.Equal(t, int64(0), remaining, "previews must be cleared so they regenerate from the new current version")
+}
+
+func TestCropResource_BMP_ConvertsToPNG(t *testing.T) {
+	ctx := setupCropTestCtx(t)
+	src := image.NewRGBA(image.Rect(0, 0, 30, 20))
+	for x := 0; x < 30; x++ {
+		for y := 0; y < 20; y++ {
+			src.Set(x, y, color.RGBA{R: 10, G: 200, B: 30, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	require.NoError(t, bmp.Encode(&buf, src))
+	resourceID := seedImageResource(t, ctx, "image/bmp", buf.Bytes(), 30, 20)
+
+	require.NoError(t, ctx.CropResource(context.Background(), resourceID, 0, 0, 10, 10, ""))
+
+	var v models.ResourceVersion
+	require.NoError(t, ctx.db.Where("resource_id = ? AND version_number = ?", resourceID, 2).First(&v).Error)
+	assert.Equal(t, "image/png", v.ContentType, "BMP source is re-encoded as PNG since we have no BMP encoder")
+	assert.Contains(t, v.Comment, "re-encoded as PNG")
+}
+
+func TestCropResource_TIFF_ConvertsToPNG(t *testing.T) {
+	ctx := setupCropTestCtx(t)
+	src := image.NewRGBA(image.Rect(0, 0, 30, 20))
+	for x := 0; x < 30; x++ {
+		for y := 0; y < 20; y++ {
+			src.Set(x, y, color.RGBA{R: 40, G: 40, B: 200, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	require.NoError(t, tiff.Encode(&buf, src, nil))
+	resourceID := seedImageResource(t, ctx, "image/tiff", buf.Bytes(), 30, 20)
+
+	require.NoError(t, ctx.CropResource(context.Background(), resourceID, 0, 0, 10, 10, ""))
+
+	var v models.ResourceVersion
+	require.NoError(t, ctx.db.Where("resource_id = ? AND version_number = ?", resourceID, 2).First(&v).Error)
+	assert.Equal(t, "image/png", v.ContentType)
+	assert.Contains(t, v.Comment, "re-encoded as PNG")
 }

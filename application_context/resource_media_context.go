@@ -1397,6 +1397,7 @@ func (ctx *MahresourcesContext) RotateResource(resourceId uint, degrees int) err
 // sources are re-encoded as PNG because we have no encoder for them and
 // quantizing GIF output would hurt quality. Animation is dropped.
 func (ctx *MahresourcesContext) CropResource(
+	httpContext context.Context,
 	resourceId uint,
 	x, y, width, height int,
 	userComment string,
@@ -1442,9 +1443,16 @@ func (ctx *MahresourcesContext) CropResource(
 		return fmt.Errorf("source image at %q is empty (size %d), cannot be cropped", resource.GetCleanLocation(), resource.FileSize)
 	}
 
-	img, format, err := image.Decode(bytes.NewReader(srcBytes))
-	if err != nil {
-		return fmt.Errorf("image cannot be cropped: decode failed (source %d bytes, content-type %q): %w", len(srcBytes), resource.ContentType, err)
+	img, format, decodeErr := image.Decode(bytes.NewReader(srcBytes))
+	if decodeErr != nil {
+		// Fall back to ImageMagick for formats Go doesn't handle natively
+		// (HEIC, AVIF, etc.) — same path used by the thumbnail pipeline.
+		fallbackImg, fbErr := ctx.decodeImageWithFallback(httpContext, bytes.NewReader(srcBytes))
+		if fbErr != nil {
+			return fmt.Errorf("image cannot be cropped: decode failed (source %d bytes, content-type %q): %w", len(srcBytes), resource.ContentType, decodeErr)
+		}
+		img = fallbackImg
+		format = "fallback"
 	}
 
 	bounds := img.Bounds()
@@ -1487,6 +1495,26 @@ func (ctx *MahresourcesContext) CropResource(
 		}
 		outExt = ".png"
 		formatNote = " (re-encoded as PNG)"
+	case "bmp":
+		if err := imaging.Encode(&outBuf, cropped, imaging.PNG); err != nil {
+			return fmt.Errorf("failed to encode cropped BMP as PNG: %w", err)
+		}
+		outExt = ".png"
+		formatNote = " (re-encoded as PNG)"
+	case "tiff":
+		if err := imaging.Encode(&outBuf, cropped, imaging.PNG); err != nil {
+			return fmt.Errorf("failed to encode cropped TIFF as PNG: %w", err)
+		}
+		outExt = ".png"
+		formatNote = " (re-encoded as PNG)"
+	case "fallback":
+		// Anything that needed ImageMagick (HEIC/AVIF/…) goes out as PNG
+		// to preserve transparency and avoid lossy re-encoding.
+		if err := imaging.Encode(&outBuf, cropped, imaging.PNG); err != nil {
+			return fmt.Errorf("failed to encode fallback-decoded image as PNG: %w", err)
+		}
+		outExt = ".png"
+		formatNote = " (decoded via ImageMagick, re-encoded as PNG)"
 	default:
 		return fmt.Errorf("image format %q cannot be cropped", format)
 	}

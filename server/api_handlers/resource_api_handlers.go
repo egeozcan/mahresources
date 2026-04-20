@@ -775,7 +775,7 @@ func GetCropResourceHandler(ctx interfaces.ResourceMediaProcessor) func(writer h
 			return
 		}
 
-		err := ctx.CropResource(editor.ID, editor.X, editor.Y, editor.Width, editor.Height, editor.Comment)
+		err := ctx.CropResource(request.Context(), editor.ID, editor.X, editor.Y, editor.Width, editor.Height, editor.Comment)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
