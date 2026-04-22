@@ -330,6 +330,13 @@ func (ctx *MahresourcesContext) PluginManager() *plugin_system.PluginManager {
 	return ctx.pluginManager
 }
 
+// RegisterAltFs adds an alternative filesystem under the given key. This is
+// used at startup (via NewMahresourcesContext from config) and in tests that
+// need to inject an in-memory alt-fs without going through disk paths.
+func (ctx *MahresourcesContext) RegisterAltFs(key string, fs afero.Fs) {
+	ctx.altFileSystems[key] = fs
+}
+
 // RunBeforePluginHooks executes before-hooks for the given event.
 // If no plugin manager is active, data is returned unmodified.
 func (ctx *MahresourcesContext) RunBeforePluginHooks(event string, data map[string]any) (map[string]any, error) {

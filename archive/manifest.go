@@ -239,6 +239,7 @@ type ResourcePayload struct {
 	Tags                 []TagRef                 `json:"tags"`
 	Groups               []string                 `json:"groups"`
 	Notes                []string                 `json:"notes"`
+	StorageLocation      string                   `json:"storage_location,omitempty"` // BH-023: alt-fs key; empty = default fs
 	BlobRef              string                   `json:"blob_ref,omitempty"`
 	BlobMissing          bool                     `json:"blob_missing,omitempty"`
 	SeriesRef            string                   `json:"series_ref,omitempty"`
