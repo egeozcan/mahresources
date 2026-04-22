@@ -174,6 +174,41 @@ func extractSchemaFieldName(msg string) string {
 	return "\"" + msg[penultimateQuote+1:lastQuote] + "\""
 }
 
+// HandleFormError writes an appropriate error response for a form submission.
+//
+// For HTML-accepting requests (browser forms), it 302-redirects to redirectURL
+// with the submitted form values preserved as query parameters and an "error"
+// param containing the user-facing message. For JSON-accepting requests or
+// .json URL suffixes, it delegates to HandleError (preserves JSON 400 behaviour).
+//
+// BH-006: native form POST errors previously rendered a bare error page,
+// discarding all user input. This helper keeps the user on the create/edit
+// form with their data intact (Post-Redirect-Get pattern).
+func HandleFormError(w http.ResponseWriter, r *http.Request, redirectURL string, err error, form url.Values) {
+	if !RequestAcceptsHTML(r) || strings.HasSuffix(r.URL.Path, ".json") {
+		HandleError(err, w, r, http.StatusBadRequest)
+		return
+	}
+
+	q := url.Values{}
+	for k, vs := range form {
+		// Never echo sensitive fields back via URL.
+		if k == "Password" || k == "Token" {
+			continue
+		}
+		for _, v := range vs {
+			q.Add(k, v)
+		}
+	}
+	q.Set("error", err.Error())
+
+	sep := "?"
+	if strings.Contains(redirectURL, "?") {
+		sep = "&"
+	}
+	http.Redirect(w, r, redirectURL+sep+q.Encode(), http.StatusFound)
+}
+
 func HandleError(err error, writer http.ResponseWriter, request *http.Request, responseCode int) {
 	err = SanitizeSchemaError(err)
 	fmt.Printf("\n[ERROR]: %v\n", err)

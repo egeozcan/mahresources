@@ -1,13 +1,18 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
+{% if queryValues.error.0 %}
+<div class="mb-4 rounded-md bg-red-50 border border-red-200 p-4" role="alert" data-testid="form-error-banner">
+  <p class="text-sm font-medium text-red-800"><strong>Could not save:</strong> {{ queryValues.error.0 }}</p>
+</div>
+{% endif %}
 <form class="space-y-8" method="post" action="/v1/note" x-data="{ preview: '{{ note.Preview|base64 }}' }">
     <input type="hidden" value="{{ note.ID }}" name="ID">
     <div class="space-y-8 sm:space-y-5">
         <div>
             <div class="mt-6 sm:mt-5 space-y-6 sm:space-y-5">
-                {% include "/partials/form/createFormTextInput.tpl" with title="Title" name="Name" value=note.Name required=true %}
-                {% include "/partials/form/createFormTextareaInput.tpl" with title="Text" name="Description" value=note.Description mentionTypes="resource,group,tag" %}
+                {% include "/partials/form/createFormTextInput.tpl" with title="Title" name="Name" value=queryValues.Name.0|default:note.Name required=true %}
+                {% include "/partials/form/createFormTextareaInput.tpl" with title="Text" name="Description" value=queryValues.Description.0|default:note.Description mentionTypes="resource,group,tag" %}
 
 
                 <div class="mt-6 sm:mt-5 space-y-6 sm:space-y-5">

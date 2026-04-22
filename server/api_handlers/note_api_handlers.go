@@ -152,7 +152,11 @@ func GetAddNoteHandler(ctx interfaces.NoteWriteReader) func(writer http.Response
 		note, err := effectiveCtx.CreateOrUpdateNote(&queryVars)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			redirectTarget := "/note/new"
+			if queryVars.ID != 0 {
+				redirectTarget = fmt.Sprintf("/note/edit?id=%d", queryVars.ID)
+			}
+			http_utils.HandleFormError(writer, request, redirectTarget, err, request.PostForm)
 			return
 		}
 
@@ -320,7 +324,11 @@ func GetAddNoteTypeHandler(ctx interfaces.NoteTypeWriter) func(writer http.Respo
 		noteType, err := effectiveCtx.CreateOrUpdateNoteType(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+			redirectTarget := "/noteType/new"
+			if editor.ID != 0 {
+				redirectTarget = fmt.Sprintf("/noteType/edit?id=%d", editor.ID)
+			}
+			http_utils.HandleFormError(writer, request, redirectTarget, err, request.PostForm)
 			return
 		}
 

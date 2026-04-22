@@ -1,6 +1,11 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
+{% if queryValues.error.0 %}
+<div class="mb-4 rounded-md bg-red-50 border border-red-200 p-4" role="alert" data-testid="form-error-banner">
+  <p class="text-sm font-medium text-red-800"><strong>Could not save:</strong> {{ queryValues.error.0 }}</p>
+</div>
+{% endif %}
 <form class="space-y-8" method="post" action="/v1/group">
     {% if group.ID %}
     <input type="hidden" value="{{ group.ID }}" name="ID">
@@ -21,9 +26,9 @@
                     </div>
                 </div>
 
-                {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" value=group.Name required=true id="form-name" %}
-                {% include "/partials/form/createFormTextareaInput.tpl" with title="Description" name="Description" value=group.Description mentionTypes="resource,note,group,tag" %}
-                {% include "/partials/form/createFormTextInput.tpl" with type="url" title="URL" name="URL" value=group.URL|printUrl %}
+                {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" value=queryValues.name.0|default:group.Name required=true id="form-name" %}
+                {% include "/partials/form/createFormTextareaInput.tpl" with title="Description" name="Description" value=queryValues.Description.0|default:group.Description mentionTypes="resource,note,group,tag" %}
+                {% include "/partials/form/createFormTextInput.tpl" with type="url" title="URL" name="URL" value=queryValues.URL.0|default:group.URL|printUrl %}
 
                 <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-stone-200 sm:pt-5">
                     <span class="block text-sm font-medium font-mono text-stone-700">

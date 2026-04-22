@@ -65,6 +65,7 @@ func seedImageResource(t *testing.T, ctx *MahresourcesContext, contentType strin
 	return resource.ID
 }
 
+//lint:ignore U1000 kept for symmetry with makeJPEG; used in future PNG crop tests
 func makePNG(t *testing.T, w, h int, fill color.Color) []byte {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, w, h))

@@ -1,10 +1,15 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
+{% if queryValues.error.0 %}
+<div class="mb-4 rounded-md bg-red-50 border border-red-200 p-4" role="alert" data-testid="form-error-banner">
+  <p class="text-sm font-medium text-red-800"><strong>Could not save:</strong> {{ queryValues.error.0 }}</p>
+</div>
+{% endif %}
 <form
     class="space-y-8"
     method="post"
-    x-data="{ url: '', background: false }"
+    x-data="{ url: '{{ queryValues.URL.0 }}', background: false }"
     :action="url.trim() && background ? '/v1/resource/remote?background=true' : '/v1/resource{% if resource.ID %}/edit{% endif %}'"
     :enctype="url.trim() && background ? 'application/x-www-form-urlencoded' : '{% if !resource.ID %}multipart/form-data{% endif %}'"
 >
@@ -21,7 +26,7 @@
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="max-w-lg flex rounded-md shadow-sm">
                             <input
-                                value="{{ resource.Name }}"
+                                value="{{ queryValues.Name.0|default:resource.Name }}"
                                 type="text"
                                 name="Name"
                                 placeholder="If you leave this empty, the name of the uploaded file will be used"
@@ -52,7 +57,7 @@
                                 aria-haspopup="listbox"
                                 :aria-activedescendant="activeDescendantId"
                                 class="max-w-lg shadow-sm block w-full focus:ring-amber-600 focus:border-amber-600 sm:text-sm border-stone-300 rounded-md font-sans"
-                            >{{ resource.Description }}</textarea>
+                            >{{ queryValues.Description.0|default:resource.Description }}</textarea>
                             {% include "/partials/form/mentionDropdown.tpl" %}
                         </div>
                         <p class="mt-2 text-sm text-stone-500 font-sans">Describe the resource.</p>
