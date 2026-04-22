@@ -62,9 +62,9 @@ New table `runtime_settings`:
 | `reason`     | TEXT          | Optional free-text note supplied on the form (nullable)         |
 | `updated_at` | TIMESTAMP     | GORM auto-managed                                               |
 
-Absent row means "no override, use boot default." JSON envelope supports the four types needed for bucket A (`int64`, `int`, `duration`, `string`) and extends to new types without schema migration.
+Absent row means "no override, use boot default." The JSON envelope supports the five types needed by the in-scope settings (`int64`, `int`, `uint64`, `duration`, `string`) and extends to new types without schema migration. `duration` is encoded as a nanosecond `int64` so the decoder is a single numeric parse — the discriminator `type: "duration"` tells the getter to wrap it back into a `time.Duration`.
 
-Every successful `Set` or `Reset` writes one row to the existing `log_entries` table with `entity_type = "runtime_setting"`, the key and old→new value in `message`, and the request remote address as `actor`. This reuses existing admin-action log infrastructure.
+Every successful `Set` or `Reset` writes one row to the existing `log_entries` table via the existing `Logger` helper (`ctx.LogFromRequest(r).Info(action, entityType, entityID, entityName, message, details)`). No schema changes to `LogEntry` are required — the Audit section below maps each field onto the existing columns.
 
 ## Service API
 
@@ -120,15 +120,30 @@ Persisted value fails bounds at boot (hand-edited DB): log an error, drop the ke
 
 ## Live-Reread Refactors
 
-Three in-scope settings cache their value in a long-lived struct today. Each needs a small local change so the running code re-reads on next use.
+Eight of the eleven in-scope settings cache their value in a long-lived struct today. They cluster into five refactor locations — each a small local change so the running code re-reads on next use.
 
 **MRQL query timeout.** `application_context/mrql_context.go` declares a package-level `var MRQLQueryTimeout time.Duration` with five callsites (lines 152, 194, 426, 769, 820) plus the assignment in `main.go`. Remove the package var and replace each callsite with `appContext.Settings.MRQLQueryTimeout()`. All five call paths already have an `appContext` in scope.
 
-**Download manager timeouts.** `download_queue/manager.go` has two constructors (`NewDownloadManager`, `NewDownloadManagerWithConfig`) that accept a `TimeoutConfig` struct, stored on the manager and read at download start. Add a `TimeoutProvider` interface (`ConnectTimeout() / IdleTimeout() / OverallTimeout()`). Change the manager to hold a provider and call the getters per download. To keep the two existing test callsites (`manager_test.go:1009`, `1063`) small, add a `StaticTimeouts(TimeoutConfig) TimeoutProvider` adapter — tests keep passing a zero `TimeoutConfig{}` via the adapter; production passes `appContext.Settings`.
+**MaxImportSize.** `server/routes.go:546` passes `appContext.Config.MaxImportSize` by value at router construction into `GetImportParseHandler(appContext, maxImportSize int64)`. Change the handler to accept `func() int64` (mirrors `MaxUploadSize` at `routes.go:411`/`439`). At the callsite, pass `func() int64 { return appContext.Settings.MaxImportSize() }`. The handler reads the current value per request.
+
+**Download manager settings (ExportRetention + remote timeouts).** `download_queue/manager.go` has two constructors (`NewDownloadManager`, `NewDownloadManagerWithConfig`) that take a `TimeoutConfig` struct and a `ManagerConfig{ExportRetention: ...}`, stored on the manager at construction. All external reads already go through accessor methods (`manager.ExportRetention()` at `manager.go:105`, and internal timeout reads at download start). Replace the stored fields with a single `DownloadSettings` interface on the manager:
+
+```go
+type DownloadSettings interface {
+    ConnectTimeout() time.Duration
+    IdleTimeout() time.Duration
+    OverallTimeout() time.Duration
+    ExportRetention() time.Duration
+}
+```
+
+The accessor `manager.ExportRetention()` delegates to the provider; internal timeout reads do the same. To keep the two test callsites (`manager_test.go:1011`, `1065`) small, add a `NewStaticDownloadSettings(TimeoutConfig, retention time.Duration) DownloadSettings` adapter. Production passes `appContext.Settings` (which satisfies the interface); tests keep using the static adapter.
+
+Separately, two template context sites at `server/routes.go:122-123` read `appContext.Config.ExportRetention` directly to render UI helper text. Switch both to `appContext.Settings.ExportRetention()` so the `/admin/export` helper line and the cockpit expiry column reflect overrides.
 
 **Hash worker similarity thresholds.** `hash_worker.Config` holds `SimilarityThreshold` and `AHashThreshold`. Replace both fields with getter callbacks `SimilarityThresholdFn func() int` and `AHashThresholdFn func() uint64`. The worker reads them on each pair comparison.
 
-The remaining in-scope settings (`MaxUploadSize`, `MaxImportSize`, `MRQLDefaultLimit`, `ExportRetention`, `SharePublicURL`) are already read per-use from `appContext.Config` and switch trivially to `appContext.Settings.X()` at their callsites.
+The remaining in-scope settings (`MaxUploadSize`, `MRQLDefaultLimit`, `SharePublicURL`) are already read per-use from `appContext.Config` — either via an existing closure (`MaxUploadSize` at `routes.go:411`/`439`) or at template/render time (`MRQLDefaultLimit`, `SharePublicURL`). These switch with a one-line change at each callsite from `appContext.Config.X` to `appContext.Settings.X()`.
 
 ## HTTP API
 
@@ -173,7 +188,7 @@ Each `SettingSpec` carries min/max for numeric and duration types and an optiona
 | `remote_connect_timeout`    | ≥ 1s, ≤ 10m                                                            |
 | `remote_idle_timeout`       | ≥ 1s, ≤ 1h                                                             |
 | `remote_overall_timeout`    | ≥ 10s, ≤ 24h                                                           |
-| `share_public_url`          | Empty OR valid `http(s)://…` URL (parsed via `url.Parse`)              |
+| `share_public_url`          | Empty OR absolute URL with scheme `http` or `https` AND non-empty `Host` (parsed via `url.Parse`; relative and hostless forms rejected) |
 | `hash_similarity_threshold` | ≥ 0, ≤ 64                                                              |
 | `hash_ahash_threshold`      | ≥ 0, ≤ 64                                                              |
 
@@ -185,13 +200,24 @@ DB override always wins. Flag/env is the seed used on first boot and the target 
 
 ## Audit
 
-Every successful `Set` and `Reset` writes one row to `log_entries`:
+Every successful `Set` and `Reset` writes one row to the existing `log_entries` table via `ctx.LogFromRequest(r).Info(...)`. Mapping onto the existing `models.LogEntry` schema — no schema changes required:
 
-- `entity_type = "runtime_setting"`
-- `entity_id` = stable per-key synthetic ID (key is carried in the message)
-- `action = "update"` or `"reset"`
-- `message = "max_upload_size: 1073741824 → 2147483648 (reason: increase for video workflow)"`
-- `actor` = request `RemoteAddr` (there is no authentication on the system)
+| LogEntry column | Value                                                                                    |
+| ---             | ---                                                                                      |
+| `Level`         | `info`                                                                                   |
+| `Action`        | `update` (on `Set`) or `reset` (on `Reset` — reuses `LogActionUpdate` if no `reset` constant exists; otherwise add one) |
+| `EntityType`    | `runtime_setting`                                                                        |
+| `EntityID`      | `nil` (settings are keyed by string, not a DB row ID; `EntityID` is `*uint` so nil is valid) |
+| `EntityName`    | the setting key, e.g. `max_upload_size` (column size 255; keys are short)                |
+| `Message`       | e.g. `max_upload_size: 1073741824 → 2147483648 (reason: increase for video workflow)`    |
+| `Details`       | `{oldValue, newValue, reason, type}` JSON (structured counterpart to `Message`)          |
+| `IPAddress`     | populated automatically by `LogFromRequest`                                              |
+| `RequestPath`   | populated automatically                                                                  |
+| `UserAgent`     | populated automatically                                                                  |
+
+History lookup for a single setting uses `EntityType = "runtime_setting"` + `EntityName = "<key>"` (supported by the existing `LogEntryQuery` which has both fields). `GetEntityHistory(entityType, entityID uint, ...)` is keyed on numeric `entityID` and does not fit our string-keyed model; that's fine — the settings UI queries by type+name through the existing `GetLogEntries` path.
+
+If a new log action constant is desired (`LogActionReset`), add it to `models/log_entry_model.go` alongside the existing `LogActionCreate`/`LogActionUpdate`/`LogActionDelete`/`LogActionSystem`. Otherwise reuse `update` for both set and reset and distinguish in the message.
 
 Failed writes (bounds rejection, DB error) are not logged as entries; they surface in application logs only.
 
@@ -269,8 +295,13 @@ Each follows the existing `helptext.Load` pattern with `## Examples` blocks that
 **Live-reread refactor tests:**
 
 - MRQL: run a query with `MRQLQueryTimeout` override and verify the timeout is honored. Reuse or adapt an existing MRQL timeout test if one exists; otherwise add a focused test against a query that exceeds the configured timeout.
-- Download manager: construct with a `TimeoutProvider`, swap the provider's return value mid-test, verify the next download uses the new value. Local `httptest` server — no real network.
+- `MaxImportSize`: after `PUT /v1/admin/settings/max_import_size=<small>`, a POST to `/v1/groups/import/parse` with a body larger than the override is rejected — proves the handler reads through `appContext.Settings` per-request, not the startup value.
+- Download manager (timeouts): construct with a `DownloadSettings` provider, swap a timeout value mid-test, verify the next download uses the new value. Local `httptest` server — no real network.
+- Download manager (`ExportRetention`): override `export_retention`, call `manager.ExportRetention()`, verify it returns the override — guards the getter-through-provider wiring.
+- Template-context sites: after overriding `export_retention`, load `/admin/export`; assert the helper text reflects the override — covers the two `routes.go:122-123` callsites.
 - Hash worker: set `HashSimilarityThreshold` override, feed a pair whose distance is between old and new threshold, verify the comparison decision matches the override.
+- `HashAHashThreshold` round-trip: stored as `uint64` in the JSON envelope, reloaded via `Load()`, getter returns same value — guards the `uint64` type path.
+- `share_public_url` validation: inputs `""`, `"https://example.com"` accepted; `"/relative"`, `"no-scheme.example.com"`, `"ftp://example.com"`, `"http://"` (empty host) all rejected with 400.
 
 **E2E browser tests — `e2e/tests/admin-settings.spec.ts`:**
 
