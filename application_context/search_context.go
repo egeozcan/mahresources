@@ -381,14 +381,26 @@ func searchEntitiesLike[T searchable](ctx *MahresourcesContext, entityType, sear
 	pattern := "%" + escaped + "%"
 	likeEscape := " ESCAPE '\\'"
 
+	// BH-005a: SQLite's default LIKE is case-insensitive for ASCII *only*.
+	// Non-ASCII characters (e.g. Ä, ş) are byte-compared, so "Spätzle" doesn't
+	// match "SPÄTZLE". Wrap both column and pattern in LOWER() on SQLite; the
+	// Postgres path already uses ILIKE and is case-folded end-to-end.
+	usingSQLite := ctx.Config.DbType != constants.DbTypePosgres
+	buildClause := func(col string) string {
+		if usingSQLite {
+			return "LOWER(" + col + ") " + likeOp + " LOWER(?)" + likeEscape
+		}
+		return col + " " + likeOp + " ?" + likeEscape
+	}
+
 	// Build WHERE clause: always search name and description, plus any extra columns
 	whereParts := []string{
-		"name " + likeOp + " ?" + likeEscape,
-		"description " + likeOp + " ?" + likeEscape,
+		buildClause("name"),
+		buildClause("description"),
 	}
 	args := []any{pattern, pattern}
 	for _, col := range info.extraLikeCols {
-		whereParts = append(whereParts, col+" "+likeOp+" ?"+likeEscape)
+		whereParts = append(whereParts, buildClause(col))
 		args = append(args, pattern)
 	}
 
