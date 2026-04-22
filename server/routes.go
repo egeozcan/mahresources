@@ -403,7 +403,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/resources").HandlerFunc(api_handlers.GetResourcesHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/resources/meta/keys").HandlerFunc(api_handlers.GetResourceMetaKeysHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceUploadHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceUploadHandler(appContext, func() int64 { return appContext.Config.MaxUploadSize }))
 	router.Methods(http.MethodPost).Path("/v1/resource/local").HandlerFunc(api_handlers.GetResourceAddLocalHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resource/remote").HandlerFunc(api_handlers.GetResourceAddRemoteHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resource/delete").HandlerFunc(api_handlers.GetRemoveResourceHandler(appContext))
@@ -431,7 +431,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/resource/version").
 		HandlerFunc(api_handlers.GetVersionHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resource/versions").
-		HandlerFunc(api_handlers.GetUploadVersionHandler(appContext))
+		HandlerFunc(api_handlers.GetUploadVersionHandler(appContext, func() int64 { return appContext.Config.MaxUploadSize }))
 	router.Methods(http.MethodPost).Path("/v1/resource/version/restore").
 		HandlerFunc(api_handlers.GetRestoreVersionHandler(appContext))
 	router.Methods(http.MethodDelete).Path("/v1/resource/version").

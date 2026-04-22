@@ -54,6 +54,18 @@ func formHasField(request *http.Request, field string) bool {
 	return false
 }
 
+// tryFillStructValuesFromRequestWithLimit wraps request.Body in
+// http.MaxBytesReader before delegating to tryFillStructValuesFromRequest.
+// BH-034: resource + version uploads must bound the body size to prevent a
+// single oversize POST from filling the disk. maxBytes <= 0 means no limit
+// (legacy behaviour).
+func tryFillStructValuesFromRequestWithLimit(dst any, w http.ResponseWriter, request *http.Request, maxBytes int64) error {
+	if maxBytes > 0 {
+		request.Body = http.MaxBytesReader(w, request.Body, maxBytes)
+	}
+	return tryFillStructValuesFromRequest(dst, request)
+}
+
 func tryFillStructValuesFromRequest(dst any, request *http.Request) error {
 	contentTypeHeader := request.Header.Get("Content-type")
 

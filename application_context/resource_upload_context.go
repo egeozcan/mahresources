@@ -592,14 +592,28 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 		}
 		img, _, decErr := image.Decode(tempFile)
 		if decErr != nil {
-			return nil, &InvalidImageError{Cause: decErr}
+			// BH-039: Go's stdlib only decodes PNG/JPEG/GIF/BMP/TIFF/WebP
+			// natively (plus whatever we register via _ imports). Formats
+			// like SVG, ICO, AVIF, HEIC return image.ErrFormat — they are
+			// valid images, we just can't extract dimensions here. Accept
+			// them and store with Width=0/Height=0; the thumbnail pipeline
+			// handles them via ffmpeg/libreoffice downstream.
+			if errors.Is(decErr, image.ErrFormat) {
+				preWidth = 0
+				preHeight = 0
+			} else {
+				// BH-011 regression guard: genuine decode failure
+				// (truncated PNG, corrupted JPEG, etc.) — reject.
+				return nil, &InvalidImageError{Cause: decErr}
+			}
+		} else {
+			bounds := img.Bounds()
+			if bounds.Dx() == 0 || bounds.Dy() == 0 {
+				return nil, &InvalidImageError{}
+			}
+			preWidth = bounds.Max.X
+			preHeight = bounds.Max.Y
 		}
-		bounds := img.Bounds()
-		if bounds.Dx() == 0 || bounds.Dy() == 0 {
-			return nil, &InvalidImageError{}
-		}
-		preWidth = bounds.Max.X
-		preHeight = bounds.Max.Y
 	}
 	preFileInfo, err := tempFile.Stat()
 	if err != nil {

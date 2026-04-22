@@ -74,13 +74,25 @@ func GetVersionHandler(ctx interfaces.VersionReader) func(http.ResponseWriter, *
 	}
 }
 
-// GetUploadVersionHandler returns handler for uploading a new version
-func GetUploadVersionHandler(ctx interfaces.VersionWriter) func(http.ResponseWriter, *http.Request) {
+// GetUploadVersionHandler returns handler for uploading a new version.
+//
+// BH-034: maxUploadSize is a getter read at request time (mirrors the
+// pattern in GetResourceUploadHandler). 0 = unlimited. Oversize bodies are
+// bounded by http.MaxBytesReader and surface as ParseMultipartForm errors.
+func GetUploadVersionHandler(ctx interfaces.VersionWriter, maxUploadSize func() int64) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		resourceID, err := strconv.ParseUint(r.URL.Query().Get("resourceId"), 10, 64)
 		if err != nil {
 			http_utils.HandleError(fmt.Errorf("invalid resourceId"), w, r, http.StatusBadRequest)
 			return
+		}
+
+		limit := int64(0)
+		if maxUploadSize != nil {
+			limit = maxUploadSize()
+		}
+		if limit > 0 {
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
 		}
 
 		if err := r.ParseMultipartForm(100 << 20); err != nil {
