@@ -59,16 +59,19 @@ func BuildPrimaryRouter(appContext *application_context.MahresourcesContext, fs 
 func CreateServer(appContext *application_context.MahresourcesContext, fs afero.Fs, altFs map[string]string) *http.Server {
 	router := BuildPrimaryRouter(appContext, fs, altFs)
 
-	// BH-032: wrap the primary router with the same security-headers middleware
-	// the share server uses. This is applied in a separate commit from the
-	// share-server change so a CSP regression here (e.g. a template that loads
-	// a script from a CDN outside 'self') can be rolled back independently
-	// without reverting the share-server hardening. CLAUDE.md documents the
-	// primary server as private-network only; these headers are defense-in-depth
-	// against accidental public exposure and partner-side iframe embedding.
+	// BH-032: wrap the primary router with a CSP-free subset of the share
+	// server's security headers (clickjacking, MIME sniffing, Referer,
+	// HSTS). The strict default-src 'self' CSP the share server ships blocks
+	// enough primary-server template behaviour (inline scripts emitted by
+	// shortcodes, plugin-provided <script>/<style> blocks, the a11y test
+	// suite detected Alpine initialization timing regressions) that applying
+	// it unmodified here would be net-negative for admin UX. A tighter
+	// primary-server CSP is tracked as a separate follow-up so it can be
+	// audited and rolled out on its own cadence, without reverting the
+	// share-server hardening BH-032 shipped.
 	return &http.Server{
 		Addr:         appContext.Config.BindAddress,
-		Handler:      withSecurityHeaders(router),
+		Handler:      withPrimarySecurityHeaders(router),
 		WriteTimeout: 45 * time.Minute,
 		ReadTimeout:  45 * time.Minute,
 	}

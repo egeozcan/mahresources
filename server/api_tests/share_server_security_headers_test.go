@@ -55,11 +55,13 @@ func TestShareServer_SecurityHeaders(t *testing.T) {
 }
 
 // TestPrimaryServer_SecurityHeaders verifies BH-032: the primary server applies
-// the same baseline security headers as the share server on every response.
-// This is defense-in-depth — CLAUDE.md documents the primary as private-network
-// only, but a misconfigured deployment (accidental public exposure, iframe
-// embedding by a partner, etc.) still benefits from clickjacking protection
-// and MIME-type sniffing being off.
+// the CSP-free subset of the share server's security headers on every
+// response (clickjacking, MIME sniffing, Referer suppression, HSTS). The
+// strict CSP the share server ships is intentionally NOT applied to the
+// primary — the primary's template set includes inline scripts emitted by
+// shortcodes and plugin-provided HTML that a default-src 'self' CSP
+// rejects. A tighter primary-server CSP is tracked as a follow-up so it
+// can be rolled out independently.
 func TestPrimaryServer_SecurityHeaders(t *testing.T) {
 	tc := SetupTestEnv(t)
 
@@ -79,11 +81,13 @@ func TestPrimaryServer_SecurityHeaders(t *testing.T) {
 			t.Errorf("%s: expected %q, got %q", hdr, want, got)
 		}
 	}
-	if resp.Header().Get("Content-Security-Policy") == "" {
-		t.Error("Content-Security-Policy header missing")
-	}
 	if resp.Header().Get("Strict-Transport-Security") == "" {
 		t.Error("Strict-Transport-Security header missing")
+	}
+	// CSP is deliberately NOT applied to the primary server yet — see the
+	// withPrimarySecurityHeaders docstring for the rationale.
+	if got := resp.Header().Get("Content-Security-Policy"); got != "" {
+		t.Errorf("primary server must not ship Content-Security-Policy yet (follow-up work): got %q", got)
 	}
 }
 

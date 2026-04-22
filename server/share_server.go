@@ -53,8 +53,9 @@ func NewShareServer(appContext *application_context.MahresourcesContext) *ShareS
 	}
 }
 
-// withSecurityHeaders wraps an http.Handler and applies the baseline security
-// headers every share-server response needs (success and error paths alike):
+// withSecurityHeaders wraps an http.Handler with the baseline security
+// headers the share server needs on every response (success and error
+// paths alike):
 //
 //   - X-Frame-Options: DENY — block clickjacking by refusing to render
 //     shared notes inside a third-party iframe.
@@ -87,6 +88,29 @@ func withSecurityHeaders(next http.Handler) http.Handler {
 				"font-src 'self'; "+
 				"connect-src 'self'; "+
 				"frame-ancestors 'none'")
+		h.Set("Strict-Transport-Security", "max-age=15552000")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// withPrimarySecurityHeaders wraps the primary server's router with the
+// CSP-free subset of the share server's security headers (BH-032). The
+// primary server's templates include remote-served images (resource
+// thumbnails through alternative filesystems, plugin-provided previews)
+// and inline scripts the strict share-server CSP rejects at parse time;
+// shipping that CSP to the primary would break admin templates. The
+// clickjacking / MIME / Referer / HSTS set is still applied because those
+// protect against misconfiguration (accidental public exposure, partner
+// iframe embedding) without depending on the page's resource graph.
+//
+// A tighter primary-server CSP is a follow-up once the template set is
+// audited; tracked separately from BH-032 so it can ship independently.
+func withPrimarySecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Strict-Transport-Security", "max-age=15552000")
 		next.ServeHTTP(w, r)
 	})
