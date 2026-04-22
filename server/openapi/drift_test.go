@@ -41,14 +41,12 @@ var routesExcludedFromOpenAPI = map[string]string{
 // This guards against drift — adding a new /v1/ endpoint without also
 // adding it to server/routes_openapi.go fails this test.
 func TestOpenAPI_RouteRegistrationCoverage(t *testing.T) {
-	// Build a minimal app context + server mux exactly like main.go would.
+	// Build a minimal app context + router exactly like main.go would.
+	// CreateServer wraps the mux.Router in a http.HandlerFunc (BH-032 security
+	// headers middleware), which can't be walked. BuildPrimaryRouter exposes
+	// the raw router before that wrapping specifically for this drift check.
 	ctx := newDriftTestContext(t)
-	srv := server.CreateServer(ctx, afero.NewMemMapFs(), map[string]string{})
-
-	router, ok := srv.Handler.(*mux.Router)
-	if !ok {
-		t.Fatalf("server.Handler is not *mux.Router (got %T); drift check cannot walk routes", srv.Handler)
-	}
+	router := server.BuildPrimaryRouter(ctx, afero.NewMemMapFs(), map[string]string{})
 
 	type liveRoute struct{ Method, Path string }
 	var live []liveRoute

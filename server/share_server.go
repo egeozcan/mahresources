@@ -53,11 +53,74 @@ func NewShareServer(appContext *application_context.MahresourcesContext) *ShareS
 	}
 }
 
+// withSecurityHeaders wraps an http.Handler with the baseline security
+// headers the share server needs on every response (success and error
+// paths alike):
+//
+//   - X-Frame-Options: DENY — block clickjacking by refusing to render
+//     shared notes inside a third-party iframe.
+//   - X-Content-Type-Options: nosniff — MIME type sniffing off, so a
+//     text/html response can never be interpreted as a script.
+//   - Referrer-Policy: no-referrer — the share token lives in the URL path,
+//     so any Referer leak when a shared note embeds an external-hosted image
+//     or font would expose the token to that third party. Suppress entirely.
+//   - Content-Security-Policy: default-src 'self' with 'unsafe-inline' for
+//     script/style (Alpine.js uses inline x-data/x-show expressions and our
+//     pongo2 templates ship inline <style> blocks). img-src includes data:
+//     and blob: so base64-encoded previews and blob: lightbox URLs work.
+//     frame-ancestors 'none' is the modern equivalent of X-Frame-Options.
+//   - Strict-Transport-Security: max-age=180 days — a hint for browsers to
+//     pin HTTPS when the share server sits behind a TLS-terminating proxy.
+//     No-op over plain HTTP; not harmful.
+//
+// BH-032.
+func withSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Content-Security-Policy",
+			"default-src 'self'; "+
+				"script-src 'self' 'unsafe-inline'; "+
+				"style-src 'self' 'unsafe-inline'; "+
+				"img-src 'self' data: blob:; "+
+				"font-src 'self'; "+
+				"connect-src 'self'; "+
+				"frame-ancestors 'none'")
+		h.Set("Strict-Transport-Security", "max-age=15552000")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// withPrimarySecurityHeaders wraps the primary server's router with the
+// CSP-free subset of the share server's security headers (BH-032). The
+// primary server's templates include remote-served images (resource
+// thumbnails through alternative filesystems, plugin-provided previews)
+// and inline scripts the strict share-server CSP rejects at parse time;
+// shipping that CSP to the primary would break admin templates. The
+// clickjacking / MIME / Referer / HSTS set is still applied because those
+// protect against misconfiguration (accidental public exposure, partner
+// iframe embedding) without depending on the page's resource graph.
+//
+// A tighter primary-server CSP is a follow-up once the template set is
+// audited; tracked separately from BH-032 so it can ship independently.
+func withPrimarySecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Strict-Transport-Security", "max-age=15552000")
+		next.ServeHTTP(w, r)
+	})
+}
+
 // Handler returns an http.Handler for the share server's routes (useful for testing).
 func (s *ShareServer) Handler() http.Handler {
 	router := mux.NewRouter()
 	s.registerShareRoutes(router)
-	return router
+	return withSecurityHeaders(router)
 }
 
 // Start begins the share server on the specified address and port.
@@ -74,7 +137,7 @@ func (s *ShareServer) Start(bindAddress string, port string) error {
 	addr := fmt.Sprintf("%s:%s", bindAddress, port)
 	s.server = &http.Server{
 		Addr:         addr,
-		Handler:      router,
+		Handler:      withSecurityHeaders(router), // BH-032
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,

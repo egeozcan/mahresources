@@ -102,6 +102,20 @@ func registerNoteShareRoutes(r *openapi.Registry) {
 		IDRequired:           true,
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
+
+	// BH-035: /admin/shares dashboard bulk-revoke endpoint. Accepts a form-
+	// encoded body with repeated ids=<noteId> entries; non-numeric and
+	// non-existent IDs are silently skipped. Responds 303 See Other
+	// redirecting back to /admin/shares by default, or JSON summary if the
+	// caller sends Accept: application/json.
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/admin/shares/bulk-revoke",
+		OperationID:          "bulkRevokeShares",
+		Summary:              "Revoke share tokens for a list of note IDs",
+		Tags:                 []string{"notes", "admin"},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
 }
 
 func registerBlockRoutes(r *openapi.Registry) {

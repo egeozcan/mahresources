@@ -98,6 +98,13 @@ export function startServerProcess(port: number, sharePort: number): ChildProces
   const pgDsn = process.env.PG_DSN;
 
   let args: string[];
+  // BH-033: ephemeral test servers set SHARE_PUBLIC_URL to the actual
+  // share-server origin so the note-sharing UI renders the Copy URL
+  // button path (the pre-BH-033 bind-address fallback path the tests
+  // were written against). Without this flag set the sidebar shows the
+  // "URL base is not configured" warning instead, which is correct
+  // production behaviour but doesn't match the existing test expectations.
+  const sharePublicURL = `http://127.0.0.1:${sharePort}`;
   if (pgDsn) {
     // Postgres mode: create a per-worker database
     const workerDsn = createWorkerDatabase(pgDsn);
@@ -108,6 +115,7 @@ export function startServerProcess(port: number, sharePort: number): ChildProces
       `-bind-address=:${port}`,
       `-share-port=${sharePort}`,
       '-share-bind-address=127.0.0.1',
+      `-share-public-url=${sharePublicURL}`,
       '-memory-fs',
       '-hash-worker-disabled',
       '-thumb-worker-disabled',
@@ -121,6 +129,7 @@ export function startServerProcess(port: number, sharePort: number): ChildProces
       `-bind-address=:${port}`,
       `-share-port=${sharePort}`,
       '-share-bind-address=127.0.0.1',
+      `-share-public-url=${sharePublicURL}`,
       '-hash-worker-disabled',
       '-thumb-worker-disabled',
       '-skip-version-migration',

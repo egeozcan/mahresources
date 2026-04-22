@@ -90,7 +90,7 @@
 
     {% if sc.Share %}
     <div class="sidebar-group">
-        {% include "/partials/noteShare.tpl" with note=note shareEnabled=shareEnabled shareBaseUrl=shareBaseUrl %}
+        {% include "/partials/noteShare.tpl" with note=note shareEnabled=shareEnabled shareBaseUrl=shareBaseUrl shareUrlConfigured=shareUrlConfigured %}
         {% include "partials/pluginActionsSidebar.tpl" with entityId=note.ID entityType="note" %}
         {% plugin_slot "note_detail_sidebar" %}
     </div>

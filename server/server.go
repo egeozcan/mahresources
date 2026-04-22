@@ -15,7 +15,15 @@ import (
 	"github.com/flosch/pongo2/v4"
 )
 
-func CreateServer(appContext *application_context.MahresourcesContext, fs afero.Fs, altFs map[string]string) *http.Server {
+// BuildPrimaryRouter assembles the primary mux.Router with every route, the
+// 404 handler, and the file-system PathPrefix handlers registered. It is the
+// shared router-construction path used by both CreateServer (which wraps it
+// with security-headers middleware and embeds it in an http.Server) and the
+// OpenAPI drift test (which walks the routes directly to detect missing spec
+// entries). Exposing the router separately keeps the middleware wrapper
+// BH-032 introduced from hiding the routes behind a http.HandlerFunc the
+// drift test can't traverse.
+func BuildPrimaryRouter(appContext *application_context.MahresourcesContext, fs afero.Fs, altFs map[string]string) *mux.Router {
 	router := mux.NewRouter()
 
 	registerRoutes(router, appContext)
@@ -45,9 +53,25 @@ func CreateServer(appContext *application_context.MahresourcesContext, fs afero.
 		router.PathPrefix(pathKey).Handler(http.StripPrefix(pathKey, http.FileServer(afero.NewHttpFs(system).Dir("/"))))
 	}
 
+	return router
+}
+
+func CreateServer(appContext *application_context.MahresourcesContext, fs afero.Fs, altFs map[string]string) *http.Server {
+	router := BuildPrimaryRouter(appContext, fs, altFs)
+
+	// BH-032: wrap the primary router with a CSP-free subset of the share
+	// server's security headers (clickjacking, MIME sniffing, Referer,
+	// HSTS). The strict default-src 'self' CSP the share server ships blocks
+	// enough primary-server template behaviour (inline scripts emitted by
+	// shortcodes, plugin-provided <script>/<style> blocks, the a11y test
+	// suite detected Alpine initialization timing regressions) that applying
+	// it unmodified here would be net-negative for admin UX. A tighter
+	// primary-server CSP is tracked as a separate follow-up so it can be
+	// audited and rolled out on its own cadence, without reverting the
+	// share-server hardening BH-032 shipped.
 	return &http.Server{
 		Addr:         appContext.Config.BindAddress,
-		Handler:      router,
+		Handler:      withPrimarySecurityHeaders(router),
 		WriteTimeout: 45 * time.Minute,
 		ReadTimeout:  45 * time.Minute,
 	}

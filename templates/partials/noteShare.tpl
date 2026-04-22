@@ -1,10 +1,12 @@
-{# with note=note shareEnabled=shareEnabled shareBaseUrl=shareBaseUrl #}
+{# with note=note shareEnabled=shareEnabled shareBaseUrl=shareBaseUrl shareUrlConfigured=shareUrlConfigured #}
 {% if shareEnabled %}
 <div class="mt-4 pt-4 border-t border-stone-200">
     {% include "/partials/sideTitle.tpl" with title="Sharing" %}
     <div x-data="{
         shared: {% if note.ShareToken %}true{% else %}false{% endif %},
         shareToken: '{{ note.ShareToken|default:'' }}',
+        shareBaseUrl: '{{ shareBaseUrl|default:'' }}',
+        shareUrlConfigured: {% if shareUrlConfigured %}true{% else %}false{% endif %},
         loading: false,
         error: null,
         async share() {
@@ -16,7 +18,9 @@
                 const data = await response.json();
                 this.shareToken = data.shareToken;
                 this.shared = true;
-                await updateClipboard(this.getShareUrl());
+                if (this.shareUrlConfigured) {
+                    await updateClipboard(this.getShareUrl());
+                }
             } catch (e) {
                 this.error = e.message;
             } finally {
@@ -38,9 +42,15 @@
             }
         },
         getShareUrl() {
-            return '{{ shareBaseUrl }}/s/' + this.shareToken;
+            if (!this.shareUrlConfigured) {
+                return '/s/' + this.shareToken;
+            }
+            return this.shareBaseUrl + '/s/' + this.shareToken;
         },
         async copyUrl() {
+            if (!this.shareUrlConfigured) {
+                return;
+            }
             await updateClipboard(this.getShareUrl());
         }
     }">
@@ -67,6 +77,22 @@
                         Shared
                     </span>
                 </div>
+                {% if not shareUrlConfigured %}
+                {# BH-033: warn the admin when SHARE_PUBLIC_URL is unset. The old fallback synthesized http://<bind-address>:<port> which is useless for any external recipient. #}
+                <div class="p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800" data-testid="share-url-unconfigured-warning">
+                    <p class="font-medium">Share URL base is not configured.</p>
+                    <p class="mt-1">Set <code class="font-mono">SHARE_PUBLIC_URL</code> (flag: <code class="font-mono">--share-public-url=https://example.com</code>) to enable absolute shareable links. Until then, append the token path to your server's public URL manually.</p>
+                </div>
+                <div class="flex items-stretch gap-1">
+                    <input
+                        type="text"
+                        :value="getShareUrl()"
+                        readonly
+                        aria-label="Relative share path"
+                        class="flex-1 text-xs px-2 py-1 border border-stone-300 rounded-md bg-stone-50 text-stone-700 min-w-0 font-mono"
+                    >
+                </div>
+                {% else %}
                 <div class="flex items-stretch gap-1">
                     <input
                         type="text"
@@ -84,6 +110,7 @@
                         </svg>
                     </button>
                 </div>
+                {% endif %}
                 <button
                     @click="unshare()"
                     :disabled="loading"
