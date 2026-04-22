@@ -81,6 +81,18 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 			dbQuery = dbQuery.Where("EXISTS (?)", hashAndHashDuplicateExists)
 		}
 
+		// BH-037: surface BH-018-style solid-colour images — resources whose
+		// perceptual DHash is exactly zero. Matches against the int column
+		// (migrated hashes) and the old hex string column (pre-migration).
+		if query.ShowDhashZero {
+			dhashZeroSubquery := originalDb.
+				Table("image_hashes ih").
+				Where("resources.id = ih.resource_id").
+				Where("(ih.d_hash_int = 0 OR ih.d_hash = '0000000000000000')").
+				Select("1")
+			dbQuery = dbQuery.Where("EXISTS (?)", dhashZeroSubquery)
+		}
+
 		if query.Name != "" {
 			p, esc := LikePattern(query.Name)
 			dbQuery = dbQuery.Where("resources.name "+likeOperator+" ?"+esc, p)

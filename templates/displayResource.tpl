@@ -163,6 +163,21 @@
                             >⧉</button></dd>
                         </div>
                         {% endif %}
+                        {# BH-037: surface perceptual hashes when present. #}
+                        {% if resource.ImageHash %}
+                        <div class="group relative bg-stone-50 border border-stone-200 hover:border-stone-300 rounded-lg px-4 py-3 col-span-2 md:col-span-3" data-testid="perceptual-hash-row">
+                            <dt class="text-xs text-stone-500 font-mono">Perceptual hash</dt>
+                            <dd class="text-sm mt-0.5 font-mono break-all">
+                                {% if resource.ImageHash.DHash %}DHash: 0x{{ resource.ImageHash.DHash }}{% endif %}
+                                {% if resource.ImageHash.AHash %}{% if resource.ImageHash.DHash %}<br>{% endif %}AHash: 0x{{ resource.ImageHash.AHash }}{% endif %}
+                                {% if resource.ImageHash.DHashInt != nil and resource.ImageHash.GetDHash == 0 %}
+                                <p class="mt-1 text-xs text-amber-700 font-sans">DHash is zero — uniform/solid-colour image. Similar-resource matches on zero DHash are not meaningful (BH-018).</p>
+                                {% else %}
+                                <p class="mt-1 text-xs text-stone-500 font-sans">Used by the perceptual similarity engine.</p>
+                                {% endif %}
+                            </dd>
+                        </div>
+                        {% endif %}
                     </dl>
                 </div>
             </details>
